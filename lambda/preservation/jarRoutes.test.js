@@ -8,12 +8,17 @@ import { describe, it, expect } from 'vitest'
 import {
   handleJarRoute, parseJarRoute, validateJarPatch, validateMove, correctionUseBy, moveUseBy,
 } from './jarRoutes.js'
+import { VALID_SOURCE_KINDS } from './provenance.js'
 
 const HOUSEHOLD = ['user_dave', 'user_jen']
 const STRANGER = ['user_stranger']
 const DAVE = 'user_dave'
 const JAR = '99999999-1111-2222-3333-444444444444'
 const PLACE = 'ffffffff-1111-2222-3333-444444444444'
+const PLANT = 'dddddddd-1111-2222-3333-444444444444'
+const PICK = 'eeeeeeee-1111-2222-3333-444444444444'
+// The Put-Up words rule (brief-common-r2 "Words"): none of these on a surface a person reads.
+const BANNED = ['safe', 'shelf life', 'shelf-stable', 'keeps', 'good', 'ready', 'done', 'expired', 'table', 'default', 'basis']
 
 function mockSql(queue = []) {
   const calls = []
@@ -233,6 +238,14 @@ describe('PATCH — validation', () => {
     [{ notes: 'a', notes_append: 'b' }, /not both/],
     [{ label: ' ' }, /cannot be blank/],
     [{ is_raw: 'yes' }, /true or false/],
+    // R2a: where it's from is a PAIR, always both, judged by provenance.js's rules.
+    [{ source_kind: 'store' }, /source_kind and source_label are edited together/],
+    [{ source_label: 'Kroger' }, /source_kind and source_label are edited together/],
+    [{ source_kind: 'swap', source_label: null }, /source_kind must be one of/],
+    [{ source_kind: 'other', source_label: null }, /source_label is required when source_kind is 'other'/],
+    [{ source_kind: 'other', source_label: '  ' }, /source_label is required when source_kind is 'other'/],
+    [{ source_kind: null, source_label: 'Kroger' }, /source_label needs a source_kind/],
+    [{ source_kind: 'store', source_label: 'x'.repeat(121) }, /120 characters or fewer/],
   ])('%o → 400', (body, want) => expect(validateJarPatch(body)).toMatch(want))
 
   it.each([
@@ -240,7 +253,32 @@ describe('PATCH — validation', () => {
     [{ quantity_value: 2.5, quantity_unit: 'qt' }], [{ quantity_value: null, quantity_unit: null }],
     [{ ph_reading: '3.70' }], [{ label: null }], [{ method: 'other', method_other_text: 'Drinking vinegar' }],
     [{ method_other_text: 'Drinking vinegar' }], [{ package_count: 3, quantity_value: 7.5, quantity_unit: 'qt' }],
+    // R2a: the pair. `null, null` un-chooses; a kind with no name is fine for every kind but Other.
+    [{ source_kind: 'store', source_label: 'Kroger' }], [{ source_kind: 'own_garden', source_label: null }],
+    [{ source_kind: null, source_label: null }], [{ source_kind: 'gift', source_label: null }],
+    [{ source_kind: 'other', source_label: 'Aunt May' }], [{ source_kind: 'store', source_label: 'x'.repeat(120) }],
   ])('%o is accepted', (body) => expect(validateJarPatch(body)).toBeNull())
+
+  // The pair's own check is handed the pair ALONE. A body's plant_id is not a PATCH key (refused above),
+  // so the planting rule can only ever be judged against the stored row: patchJar's job, below.
+  it('a planting sent in the body is an unknown key, never an input to the where-from rule', () => {
+    expect(validateJarPatch({ source_kind: 'store', source_label: 'Kroger', plant_id: PLACE }))
+      .toMatch(/cannot be edited here: plant_id/)
+    expect(validateJarPatch({ source_kind: 'store', source_label: 'Kroger', harvest_log_id: PLACE }))
+      .toMatch(/cannot be edited here: harvest_log_id/)
+  })
+
+  it('every where-from kind the server knows is accepted with a name', () => {
+    for (const kind of VALID_SOURCE_KINDS) {
+      expect(validateJarPatch({ source_kind: kind, source_label: 'somewhere' }), kind).toBeNull()
+    }
+  })
+
+  // Server sentences are user copy: a cached bundle prints them as they are (R2 brief, "Words").
+  it('the pair\'s own sentence has none of the banned words', () => {
+    const words = validateJarPatch({ source_kind: 'store' })
+    for (const w of BANNED) expect(words.toLowerCase(), w).not.toMatch(new RegExp(`\\b${w}\\b`))
+  })
 })
 
 describe('PATCH — what it sends', () => {
@@ -323,6 +361,117 @@ describe('PATCH — what it sends', () => {
     const sql2 = mockSql([[stored()], [], [stored()]])
     await patch(sql2, { quantity_value: 2.5, quantity_unit: 'quarts' })
     expect(after(sql2.batches[0][1], "quantity_unit     = CASE WHEN ? ::boolean THEN")).toBe('qt')
+  })
+})
+
+// Put-Up R2a (contract 4, amendment C1): where it's from, corrected in Edit. The pair is judged against the
+// STORED planting and harvest link (a PATCH body carries neither), by provenance.js's rules. MUTATIONS:
+// judge against the body's planting instead of the stored one → "a planting-linked jar" reds (the write
+// goes out); write body.source_label as sent → "our garden writes no name" reds; drop the pair from the
+// guard → "a non-garden source is GUARDED" reds.
+describe('PATCH — where it\'s from (R2a): the pair, judged against the STORED planting and harvest link', () => {
+  const KIND = 'source_kind       = CASE WHEN ? ::boolean THEN'
+  const LABEL = 'source_label      = CASE WHEN ? ::boolean THEN'
+  const sent = (w) => [after(w, 'source_kind       = CASE WHEN'), after(w, KIND), after(w, LABEL)]
+
+  it('the jar read carries the planting, the harvest link and the stored pair', async () => {
+    const sql = mockSql([[stored()], [], [stored()]])
+    await patch(sql, { source_kind: 'store', source_label: 'Kroger' })
+    expect(sql.calls[0].norm).toContain('p.plant_id, p.harvest_log_id, p.source_kind, p.source_label,')
+  })
+
+  it('a planting-linked jar + a non-garden source → 400 in the validator\'s words, nothing written', async () => {
+    const sql = mockSql([[stored({ plant_id: PLANT })]])
+    const res = await patch(sql, { source_kind: 'store', source_label: 'Kroger' })
+    expect(res).toEqual({ status: 400, body: { error: 'clear the planting before recording a non-garden source' } })
+    expect(sql.calls).toHaveLength(1)
+    expect(sql.batches).toHaveLength(0)
+  })
+
+  it('a harvest-linked jar + a non-garden source → 400 in the validator\'s words, nothing written', async () => {
+    const sql = mockSql([[stored({ harvest_log_id: PICK })]])
+    const res = await patch(sql, { source_kind: 'farm_stand', source_label: null })
+    expect(res).toEqual({ status: 400, body: { error: 'clear the harvest link before recording a non-garden source' } })
+    expect(sql.batches).toHaveLength(0)
+  })
+
+  it.each(VALID_SOURCE_KINDS.filter((k) => k !== 'own_garden'))('%s is refused on a planting-linked jar', async (kind) => {
+    const sql = mockSql([[stored({ plant_id: PLANT })]])
+    expect((await patch(sql, { source_kind: kind, source_label: 'somewhere' })).status).toBe(400)
+    expect(sql.batches).toHaveLength(0)
+  })
+
+  it('our garden on a planting-linked jar saves, and writes no name whatever was sent or stored', async () => {
+    const linked = stored({ plant_id: PLANT, harvest_log_id: PICK, source_kind: 'own_garden', source_label: null })
+    let sql = mockSql([[linked], [], [linked]])
+    expect((await patch(sql, { source_kind: 'own_garden', source_label: null })).status).toBe(200)
+    expect(sent(sql.batches[0][1])).toEqual([true, 'own_garden', null])
+    // Garden clears a stored name (the create's rule, index.js): a row that had a vendor and is corrected
+    // to the garden must not go on naming the vendor.
+    const bought = stored({ source_kind: 'store', source_label: 'Kroger' })
+    sql = mockSql([[bought], [], [bought]])
+    expect((await patch(sql, { source_kind: 'own_garden', source_label: 'Kroger' })).status).toBe(200)
+    expect(sent(sql.batches[0][1])).toEqual([true, 'own_garden', null])
+  })
+
+  it('`null, null` un-chooses on any jar, planting-linked included: both columns are written NULL', async () => {
+    for (const jar of [stored({ source_kind: 'store', source_label: 'Kroger' }), stored({ plant_id: PLANT, source_kind: 'own_garden' })]) {
+      const sql = mockSql([[jar], [], [jar]])
+      expect((await patch(sql, { source_kind: null, source_label: null })).status).toBe(200)
+      expect(sent(sql.batches[0][1])).toEqual([true, null, null])
+    }
+  })
+
+  it('a non-garden source on a jar with no planting and no pick saves: the kind as sent, the name trimmed', async () => {
+    const sql = mockSql([[stored()], [], [{ ...stored(), source_kind: 'store', source_label: 'Kroger' }]])
+    const res = await patch(sql, { source_kind: 'store', source_label: '  Kroger ' })
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ source_kind: 'store', source_label: 'Kroger' })
+    expect(sent(sql.batches[0][1])).toEqual([true, 'store', 'Kroger'])
+    // A kind with no name (every kind but Other allows it) writes a NULL name, never a blank one.
+    const sql2 = mockSql([[stored()], [], [stored()]])
+    await patch(sql2, { source_kind: 'gift', source_label: '   ' })
+    expect(sent(sql2.batches[0][1])).toEqual([true, 'gift', null])
+  })
+
+  it('a non-garden source is GUARDED on the xmin it read; our garden and un-choosing are not', async () => {
+    let sql = mockSql([[stored()], [], [stored()]])
+    await patch(sql, { source_kind: 'store', source_label: 'Kroger' })
+    expect(after(sql.batches[0][1], 'AND (NOT')).toBe(true)
+    expect(after(sql.batches[0][1], 'xmin =')).toBe('4242')
+    for (const body of [{ source_kind: 'own_garden', source_label: null }, { source_kind: null, source_label: null }]) {
+      sql = mockSql([[stored()], [], [stored()]])
+      await patch(sql, body)
+      expect(after(sql.batches[0][1], 'AND (NOT'), JSON.stringify(body)).toBe(false)
+    }
+  })
+
+  it('a non-garden source whose jar changed after the read → 409 client_stale', async () => {
+    const sql = mockSql([[stored()], [], []])
+    const res = await patch(sql, { source_kind: 'store', source_label: 'Kroger' })
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('client_stale')
+  })
+
+  it('a PATCH that does not send the pair leaves both columns as they are, and moves no date', async () => {
+    const sql = mockSql([[stored({ source_kind: 'store', source_label: 'Kroger' })], [], [stored()]])
+    await patch(sql, { label: 'x' })
+    const w = sql.batches[0][1]
+    expect(after(w, 'source_kind       = CASE WHEN')).toBe(false)
+    expect(after(w, 'source_label      = CASE WHEN')).toBe(false)
+    // And the pair alone moves no date: where it came from is not something the date rule reads.
+    const sql2 = mockSql([[stored()], [], [stored()]])
+    await patch(sql2, { source_kind: 'store', source_label: 'Kroger' })
+    expect(after(sql2.batches[0][1], 'use_by_target     = CASE WHEN')).toBe(false)
+    expect(sql2.calls).toHaveLength(3)   // the jar, the actor, the write: no recipe read
+  })
+
+  it('the pair rides with other edits in ONE write', async () => {
+    const sql = mockSql([[stored()], [], [stored()]])
+    await patch(sql, { label: 'x', source_kind: 'u_pick', source_label: 'Hill farm', notes: 'n' })
+    expect(sql.batches).toHaveLength(1)
+    expect(sent(sql.batches[0][1])).toEqual([true, 'u_pick', 'Hill farm'])
+    expect(after(sql.batches[0][1], 'label             = CASE WHEN ? ::boolean THEN')).toBe('x')
   })
 })
 

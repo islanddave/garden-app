@@ -32,6 +32,7 @@ import {
   VALID_METHODS, projectRow, clientStale, countRefusal, normalizeJarText, normalizeJarUnit, isJarDate,
   jarLabelError, jarQuantityError, jarPhError, JAR_TEXTURES, JAR_TEXTURE_METHODS,
 } from './jarRules.js';
+import { validateProvenance, normalizeSourceLabel } from './provenance.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const has = (body, k) => Object.prototype.hasOwnProperty.call(body, k);
@@ -65,11 +66,14 @@ export async function handleJarRoute({ sql, rawPath, method, rawBody, userId, ho
 }
 
 // ── the jar, as the date rules read it ───────────────────────────────────────────────────────────
+// Put-Up R2a: plus the planting and harvest link and the stored where-from pair, which the PATCH's
+// where-from rule is judged against (a PATCH body carries only what changed, never the links).
 async function loadJar(sql, jarId, householdIds) {
   const rows = await sql`
     SELECT p.id, p.method, p.method_other_text, p.label, p.is_raw, p.in_oil, p.texture,
            p.storage_location_id, s.kind AS storage_kind, p.preserved_at, p.preserved_at_precision,
            p.use_by_target, p.use_by_basis, p.storage_moved_at, p.package_count, p.remaining_count,
+           p.plant_id, p.harvest_log_id, p.source_kind, p.source_label,
            p.xmin::text AS row_version
     FROM preservation_log p
     LEFT JOIN storage_location s ON s.id = p.storage_location_id
@@ -163,7 +167,8 @@ export function moveUseBy(stored, destKind, moveDate) {
 // ── PATCH /api/preservation/:id ─────────────────────────────────────────────────────────────────
 // Presence-sentinel (V4 API table): label, container_label, is_raw, in_oil, texture, the pH pair,
 // method (+ method_other_text), discard_by (a date / "none" / "clear"), notes (full replace),
-// notes_append, and the quantity pair (05 §6: "so the zucchini fix has a writer"). Absent = unchanged;
+// notes_append, the quantity pair (05 §6: "so the zucchini fix has a writer"), and the where-from pair
+// (R2a: source_kind with source_label, always both). Absent = unchanged;
 // an explicit null clears where the column is nullable. Anything else is refused: this is not the
 // full-replace PUT, and a key it does not know is a client bug, never something to ignore.
 export const JAR_PATCH_KEYS = [
@@ -174,6 +179,10 @@ export const JAR_PATCH_KEYS = [
   // Integrator request (A3 follow-up): the jar editor's size AND count in the same write, so one
   // failed request can never leave half an edit.
   'package_count',
+  // Put-Up R2a: where it's from, corrected in Edit. A PAIR, always both, like the quantity pair
+  // (`null, null` un-chooses). Judged twice: its own shape in validateJarPatch, and against the
+  // STORED planting and harvest link in patchJar, by provenance.js's rules both times.
+  'source_kind', 'source_label',
 ];
 
 export function validateJarPatch(body) {
@@ -216,6 +225,14 @@ export function validateJarPatch(body) {
   }
   if (has(body, 'quantity_value')) {
     const e = jarQuantityError(body.quantity_value, body.quantity_unit); if (e) return e;
+  }
+  if (has(body, 'source_kind') !== has(body, 'source_label')) {
+    return 'source_kind and source_label are edited together';
+  }
+  // The pair's own shape (a kind this app knows, Other names where, a name needs a kind, 120 at most).
+  // Handed the pair ALONE: the planting and harvest link are the stored row's, judged in patchJar.
+  if (has(body, 'source_kind')) {
+    const e = validateProvenance({ source_kind: body.source_kind, source_label: body.source_label }); if (e) return e;
   }
   if (has(body, 'ph_read_at') && !has(body, 'ph_reading')) return 'ph_read_at travels with ph_reading';
   if (has(body, 'ph_reading')) {
@@ -272,8 +289,26 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
   } else if (corrected) {
     useBy = correctionUseBy(jar, next);
   }
+  // WHERE IT'S FROM (R2a). provenance.js's rules, on the pair as sent and the planting and harvest link
+  // AS STORED: a put-up tied to a planting or a pick is from our garden, so any other source is refused
+  // in the validator's words. The body's own plant_id would decide nothing (it is not a PATCH key).
+  const writeSource = has(body, 'source_kind');
+  const sourceKind = writeSource ? (body.source_kind ?? null) : null;
+  if (writeSource) {
+    const perr = validateProvenance({
+      source_kind: sourceKind, source_label: body.source_label,
+      plant_id: jar.plant_id, harvest_log_id: jar.harvest_log_id,
+    });
+    if (perr) return bad(perr);
+  }
+  // Our garden carries no name (the create's rule), and neither does "un-chosen".
+  const sourceLabel = sourceKind == null || sourceKind === 'own_garden' ? null : normalizeSourceLabel(body.source_label);
+  // A non-garden source was allowed BECAUSE the row read had no planting and no pick, so its write
+  // depends on what was read. Our garden and un-choosing hold on any row.
+  const sourceJudged = sourceKind != null && sourceKind !== 'own_garden';
+
   // The guard rides only on a write that depends on what was read (see the header).
-  const guarded = useBy != null || corrected || textureChanged;
+  const guarded = useBy != null || corrected || textureChanged || sourceJudged;
 
   const method = next.method;
   if (has(body, 'method_other_text') && body.method_other_text != null && method !== 'other') {
@@ -331,6 +366,8 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
       shu_est_high      = CASE WHEN ${has(body, 'shu_est_low')}::boolean THEN ${shuHigh}::int ELSE shu_est_high END,
       shu_est_basis     = CASE WHEN ${has(body, 'shu_est_low')}::boolean THEN ${shuLow == null ? null : 'typed'}::text ELSE shu_est_basis END,
       cooked            = CASE WHEN ${has(body, 'cooked')}::boolean THEN ${body.cooked ?? null}::boolean ELSE cooked END,
+      source_kind       = CASE WHEN ${writeSource}::boolean THEN ${sourceKind}::text ELSE source_kind END,
+      source_label      = CASE WHEN ${writeSource}::boolean THEN ${sourceLabel}::text ELSE source_label END,
       notes             = CASE WHEN ${has(body, 'notes')}::boolean THEN ${normalizeJarText(body.notes)}::text
                                WHEN ${has(body, 'notes_append')}::boolean
                                  THEN concat_ws(E'\\n', NULLIF(btrim(notes), ''), ${normalizeJarText(body.notes_append)}::text)
