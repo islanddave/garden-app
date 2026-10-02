@@ -6,11 +6,12 @@
 //   · backWords returns the origin regardless  -> "names the segment when the press will not pop" reds
 // Lane A2:
 //   · segmentOrigin ignores `onScreen`          -> "is null when no segment is on screen" reds
+//   · originSegment ignores the origin's kind   -> "a recipe or a batch that is CALLED a segment's name" reds
 // CI lane: `npm test` plus the TZ re-run. Nothing here reads a clock.
 import { describe, it, expect } from 'vitest'
 import {
   START_BATCH_CTA, TRY_AGAIN_CTA, PUT_UP_SEGMENTS, RECIPES_SEGMENT, leaveSegment, segmentLabel, leavesByPop,
-  backWords, recipeSearchItems, leavePlan, POP_LANDS_WITHIN_MS, segmentOrigin,
+  backWords, recipeSearchItems, leavePlan, POP_LANDS_WITHIN_MS, segmentOrigin, originSegment,
 } from '../components/putup/goingNow.js'
 import { backLabel, withFrom } from '../components/putup/origin.js'
 
@@ -77,6 +78,30 @@ describe('segmentOrigin — the origin a sender did not name', () => {
       expect(leavesByPop(state, 1)).toBe(true)
       expect(backWords(state, 1, 'not this')).toEqual({ name: s.label, suffix: '' })
       expect(backWords(state, 1, 'not this')).toEqual(backWords(null, 1, segmentLabel(s.value)))
+    }
+  })
+})
+
+describe('originSegment — the segment a restored entry was opened from', () => {
+  it('reads back exactly what segmentOrigin wrote, whatever else rides on the state', () => {
+    for (const s of PUT_UP_SEGMENTS) {
+      expect(originSegment(withFrom(null, segmentOrigin(s.value)))).toBe(s.value)
+      expect(originSegment(withFrom({ background: { pathname: '/today' } }, { label: `  ${s.label} ` }))).toBe(s.value)
+    }
+  })
+
+  it('a recipe or a batch that is CALLED a segment\'s name is a sender, not a segment', () => {
+    expect(originSegment({ from: { label: 'Recipes', kind: 'recipe', id: 'rc-9' } })).toBeNull()
+    expect(originSegment({ from: { label: 'Pantry', kind: 'batch', id: 'kb-9' } })).toBeNull()
+    // Green control: the same label with no kind is the segment.
+    expect(originSegment({ from: { label: 'Pantry' } })).toBe('pantry')
+  })
+
+  it('is null for every other sender, and for a state that names no origin at all', () => {
+    for (const [from] of ORIGINS.filter(([f]) => f.label !== 'Pantry')) expect(originSegment(withFrom(null, from))).toBeNull()
+    for (const state of [null, undefined, {}, { from: null }, { from: 'Recipes' }, { from: { label: 'recipes' } },
+      { from: { label: 'going' } }, { background: { pathname: '/today' } }]) {
+      expect({ state: JSON.stringify(state), seg: originSegment(state) }).toEqual({ state: JSON.stringify(state), seg: null })
     }
   })
 })

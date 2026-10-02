@@ -26,6 +26,7 @@
 //                                                                    segment on screen …"
 //   A2-1c   the segment is named even inside a mode                -> "inside a mode there is no segment on
 //                                                                    screen either …"
+//   A2-1d   a fresh page ignores the segment its entry names       -> "a recipe opened from Recipes, restored …"
 // CI lane: `npm test` plus the TZ re-run. No jest-dom (L-182). Nothing here reads a clock.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -740,6 +741,68 @@ describe('a door that names no origin is opened from the segment on screen', () 
     expect(segment()).toBe('Recipes')
     expect(state()).toBeNull()
     expect(screen.queryByTestId('floor')).toBeNull()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// The segment is the page's own state, not part of the URL. A page that MOUNTS on a mode entry — a reload,
+// a PWA restored from a discard, a return from another route — has lost it, and the list entry under the
+// mode shows whatever a fresh page defaults to. With the segment named as the origin, the Back would then
+// read "← Recipes" and land on the Pantry. So a page that mounts on an entry naming a segment holds it.
+// The stack is seeded as the reload finds it: [the floor, the list at index 0, the mode at index 1].
+describe('a page that mounts on a mode entry holds the segment its origin names', () => {
+  const LIST = [{ url: '/put-up', idx: 0 }]
+
+  it('a recipe opened from Recipes, restored: "← Recipes" lands on Recipes', async () => {
+    renderAt('/put-up?recipe=rc-1', { state: { from: { label: 'Recipes' } }, idx: 1, under: LIST })
+    await screen.findByTestId('recipe-detail')
+    await flush()
+    expect(backBtn().textContent).toBe('← Recipes')
+    tap('putup-mode-back')
+    await waitFor(() => expect(loc()).toBe('/put-up'))
+    expect(window.history.state.idx).toBe(0)                    // the pop, to the list entry under it
+    expect(screen.getByTestId('recipes-view')).toBeTruthy()
+    expect(segment()).toBe('Recipes')
+  })
+
+  // Nothing of the viewer's is going, so a fresh page holds the Pantry — which is not what the Back says.
+  it('the closed list opened from Going now, restored with nothing going: "← Going now" lands on Going now', async () => {
+    going = []
+    renderAt('/put-up?state=closed', { state: { from: { label: 'Going now' } }, idx: 1, under: LIST })
+    await screen.findByTestId('putup-closed-mode')
+    await flush()
+    expect(backBtn().textContent).toBe('← Going now')
+    tap('putup-mode-back')
+    await waitFor(() => expect(loc()).toBe('/put-up'))
+    expect(screen.getByTestId('going-now-view')).toBeTruthy()
+    expect(segment()).toBe('Going now')
+  })
+
+  it('the same at index 0, where the Back pushes: the words and the landing are still that segment', async () => {
+    going = []
+    renderAt('/put-up?batch=kb-1', { state: { from: { label: 'Going now' } }, idx: 0 })
+    await screen.findByTestId('putup-batch-mode')
+    await flush()
+    expect(backBtn().textContent).toBe('← Going now')
+    tap('putup-mode-back')
+    await waitFor(() => expect(screen.getByTestId('going-now-view')).toBeTruthy())
+    expect(window.history.state.idx).toBe(1)
+    expect(segment()).toBe('Going now')
+  })
+
+  // Only a segment's own label, with no kind: a recipe or a batch that happens to be CALLED "Recipes" is a
+  // sender like any other, and a harvest prefill still opens the form.
+  it('an origin that is not a segment changes nothing about where a fresh page lands', async () => {
+    going = []
+    renderAt('/put-up?batch=kb-1', { state: { from: { label: 'Recipes', kind: 'recipe', id: 'rc-9' } }, idx: 0 })
+    await screen.findByTestId('putup-batch-mode')
+    await flush()
+    expect(backBtn().textContent).toBe('← Pantry')
+    cleanup()
+    renderAt('/put-up?batch=kb-1', { state: { from: { label: 'Ristra Cayenne' } }, idx: 0 })
+    await screen.findByTestId('putup-batch-mode')
+    await flush()
+    expect(backBtn().textContent).toBe('← Pantry')
   })
 })
 

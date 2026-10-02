@@ -785,6 +785,17 @@ export function segmentOrigin(view, { onScreen = true } = {}) {
   const label = onScreen ? segmentLabel(view) : null
   return label ? { label } : null
 }
+// The segment an entry's origin names, or null. The segment is the page's own state, not part of the URL:
+// a page that MOUNTS on a mode entry (a reload, a PWA restored from a discard, a return from another
+// route) has lost it, and the list entry under the mode would show whatever a fresh page defaults to —
+// "← Recipes" landing on the Pantry. So the page starts out holding the segment its entry names.
+// Only a segment's own label with NO kind: a recipe or a batch that happens to be called "Pantry" is a
+// sender like any other.
+export function originSegment(state) {
+  const from = readFrom(state)
+  if (!from || from.kind) return null
+  return PUT_UP_SEGMENTS.find(s => s.label === from.label)?.value ?? null
+}
 
 // POP, OR PUSH. A mode's in-page Back pops ONLY when the entry names where it was opened from AND the
 // router's own history index says an app entry sits under it. Either alone is not enough: an entry with

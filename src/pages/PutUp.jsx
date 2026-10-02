@@ -77,7 +77,8 @@ import { FIND_PARAM } from '../lib/putUpClientState.js'
 // URL) and the foot of goingNow.js (pop or push, the Back's words, the segments).
 import { withFrom, modeSearch } from '../components/putup/origin.js'
 import {
-  START_BATCH_CTA, PUT_UP_SEGMENTS, leaveSegment, segmentLabel, segmentOrigin, leavePlan, backWords, recipeSearchItems,
+  START_BATCH_CTA, PUT_UP_SEGMENTS, leaveSegment, segmentLabel, segmentOrigin, originSegment, leavePlan, backWords,
+  recipeSearchItems,
 } from '../components/putup/goingNow.js'
 import { readMarker } from '../lib/backNav.js'
 
@@ -350,7 +351,9 @@ export default function PutUp({
   // Adaptive default: a harvest-triggered open lands on the form; a bare "Put-Up" tap lands on the
   // inventory ("what have I got?") — the more common intent from the More menu. V5-INFLIGHTBATCH-001
   // promotes a bare open to 'going' the moment there is anything to check; see autoDefaultedRef.
-  const [view, setView] = useState(hasPrefill ? 'log' : 'pantry')
+  // R1 (lane A2): a page that mounts ON a mode entry whose origin names a segment starts out holding that
+  // segment (goingNow.js originSegment), so the mode's Back lands on what it says after a reload too.
+  const [view, setView] = useState(() => (hasPrefill ? 'log' : originSegment(location.state) ?? 'pantry'))
   // Put-Up release 1a (V4 §6.1, §10.2) — a door that NAMES its destination. `?view=pantry` is the
   // Pantry segment (B′ release 2 renamed it from "What's put up"); Today's use-soon band links here
   // with it. It counts as a choice already made, so the bare-open promote below never moves someone who
