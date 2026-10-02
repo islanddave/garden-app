@@ -187,7 +187,7 @@ export default function PantryView({
       )}
 
       <div style={{ marginBottom: T.space.md }}>
-        <SegmentedControl ariaLabel="Group by" small value={group} onChange={onGroupChange} options={GROUP_OPTIONS} />
+        <SegmentedControl ariaLabel="Group by" small touch value={group} onChange={onGroupChange} options={GROUP_OPTIONS} />
       </div>
 
       {useSoonOnly && (

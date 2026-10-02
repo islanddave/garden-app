@@ -10,7 +10,8 @@
 //   • M8, the ellipsis rule — "…" opens a step that asks before anything is written, "→" leaves the sheet,
 //     a bare label acts at the tap: the row sheet's action list word for word, Remove… inside Edit, and the
 //     buttons that DO write (the Move panel's own, the count panel's) bare;
-//   • N7 — a put-up's source that is not the garden reads "produce from <name>" in the row sheet.
+//   • N7 — a put-up's source that is not the garden reads "produce from <name>" in the row sheet;
+//   • the Group-by control's two options are the 48 px tap target (SegmentedControl's `touch`).
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -318,5 +319,15 @@ describe('the row sheet\'s record line — a put-up\'s source', () => {
       quantity_value: null, quantity_unit: null, notes: null, preserved_at: null, plant_id: null, source_kind: 'farm_stand', source_label: 'Warner Farms' }) } })
     render(<PantryRowSheet row={PLAIN} fetch={stableFetch.fn} onClose={() => {}} now={NOW.getTime()} />)
     await waitFor(() => expect(screen.getByTestId('row-sheet-record').textContent).toBe('produce from Warner Farms'))
+  })
+})
+
+// Put-Up's floor is 48 px. The Group-by control was the one 40 px target left on the Pantry.
+describe('the Group-by control', () => {
+  it('its two options are the 48 px tap target', () => {
+    render(<PantryHost />)
+    const radios = [...screen.getByRole('radiogroup', { name: 'Group by' }).querySelectorAll('[role="radio"]')]
+    expect(radios.map(r => r.textContent)).toEqual(['By place', 'By what it is'])
+    expect(radios.map(r => r.style.minHeight)).toEqual(['48px', '48px'])
   })
 })
