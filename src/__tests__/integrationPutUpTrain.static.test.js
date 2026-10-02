@@ -26,6 +26,8 @@ const MIGRATIONS = resolve(ROOT, 'migrations')
 
 const TRAIN = [
   'v5-putupmake-001', 'v5-fermentpath-001', 'v5-pantry-001', 'v5-batchbuilder-001', 'v5-recipes-001',
+  // R2a: pantry_item gains an amount and where-from. Its 0a names v5-pantry-001's stamp, so it lists after it.
+  'v5-pantryitemamount-001',
 ]
 // Directories that must already exist on this branch (the later three are skipped until they land).
 const LANDED = ['v5-putupmake-001', 'v5-fermentpath-001']

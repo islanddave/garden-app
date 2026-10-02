@@ -1,0 +1,237 @@
+# gates.yml
+# V5-PUTUPLOGRETIRE-001 R2a B1 — pantry_item gains an amount and where-from. One DDL file:
+#
+#   0a-additive-ddl.sql   stamp '5.0.0-pantryitemamount-001'. Before it: `pre`, IMMEDIATELY before each
+#                         apply (staging, prod, and any Neon branch of prod).
+#   0r-rollback.sql       guarded; valid only while R2a's code is off dev.
+#
+# There is no `sweep` phase. Eight of the nine CHECKs read only the four new columns, which are NULL on
+# every existing row. The ninth, chk_pantry_item_source_plant, also reads plant_id (an existing column),
+# but its first arm is `source_kind IS NULL`, which is true of every existing row, so it cannot meet data.
+#
+# ── SELF-ARMING (the 1b / F / B′ convention) ──────────────────────────────────────────────────────
+# `continuous:` defaults to true, and gate-invariants.yml runs `--all --phase post --continuous-only`
+# against live prod AND staging on every migrations/** push to dev — including before this DDL's sitting.
+# So every post gate that is FALSE today is armed on this migration's own stamp (vacuous before,
+# permanent after); catalog joins only, never `::regclass`; no gate names a new column outside a catalog
+# read or `to_jsonb(row) ->> 'col'`, so every gate is vacuous, never ERROR, on a database without this DDL.
+# Only rowcount_eq / scalar_eq; every gate returns one row per violator. Columns and constraints are
+# NAMED in IN-lists / VALUES — never counted (OPS-PUTUPPROVNAMEDCOLS-001): a later release may add a
+# column or a CHECK to pantry_item without re-pinning anything here.
+#
+# ── THE GATE CENSUS: gates elsewhere this migration must keep green ──────────────────────────────
+#   v5-pantry-001         post_pantry_item_columns and post_pantry_checks_present_and_validated name their
+#                         columns and constraints (no count), so four more columns and nine more CHECKs
+#                         leave them green. post_pantry_item_not_audited: no trigger is added.
+#                         post_pantry_item_ownership_trigger_names_real_columns: no column is renamed.
+#                         Its header's "no CHECK names plant_id" is no longer true after this file
+#                         (chk_pantry_item_source_plant does); the gate that sentence served is the next one.
+#   v4-evtanchordel-001   post_no_setnull_fk_inside_an_anchor_check: chk_pantry_item_source_plant names
+#                         plant_id, an ON DELETE SET NULL column. Its definition has no `IS NOT NULL) OR`
+#                         arm and SET NULL can only make it pass, so the gate stays green — the same shape
+#                         as chk_preservation_log_source_plant, green there since v4-putupprov-001.
+#                         post_no_new_triggers_on_touched_tables: none added.
+#   v4-cascadesweep-001   no FK is added or changed.
+#   v4-putupprov-001      post_all_five_source_checks_validated and its siblings match by conname with no
+#                         table filter: every name here starts chk_pantry_item_, never chk_preservation_log_.
+#   v5-sourcekind-001     post_frozen_check_is_gone matches conname = 'chk_source_kind' on ANY table: the
+#                         item's vocabulary CHECK is chk_pantry_item_source_kind, never that bare name.
+#   v5-putupmake-001      post_unit_check_is_the_permissive_union reads preservation_log only; untouched.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantryitemamount-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_pantry_applied
+    sql: |
+      SELECT count(*) FROM public.schema_version WHERE version = '5.0.0-pantry-001'
+    expect: scalar_eq
+    value: 1
+
+  # Half-applied or hand-applied state: none of the four columns and none of the nine names may exist yet.
+  - name: pre_no_item_amount_shape_yet
+    sql: |
+      SELECT 'column ' || c.column_name AS what
+        FROM information_schema.columns c
+       WHERE c.table_schema = 'public' AND c.table_name = 'pantry_item'
+         AND c.column_name IN ('quantity_value', 'quantity_unit', 'source_kind', 'source_label')
+      UNION ALL
+      SELECT 'constraint ' || con.conname
+        FROM pg_constraint con
+        JOIN pg_class t ON t.oid = con.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = 'public' AND t.relname = 'pantry_item'
+         AND con.conname IN ('chk_pantry_item_quantity_pairing', 'chk_pantry_item_quantity_value',
+                             'chk_pantry_item_quantity_unit', 'chk_pantry_item_source_kind',
+                             'chk_pantry_item_source_label_nonblank', 'chk_pantry_item_source_label_len',
+                             'chk_pantry_item_source_label_kind', 'chk_pantry_item_source_other',
+                             'chk_pantry_item_source_plant')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a mirrors five put-up CHECKs by definition, and post_item_source_checks_match_put_up compares against
+  # them. One row per one that is missing or not validated here.
+  - name: pre_put_up_source_checks_present
+    sql: |
+      SELECT v.con
+        FROM unnest(ARRAY['chk_preservation_log_source_kind', 'chk_preservation_log_source_other',
+                          'chk_preservation_log_source_label_nonblank', 'chk_preservation_log_source_label_len',
+                          'chk_preservation_log_source_plant']) AS v(con)
+       WHERE NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = 'preservation_log'
+                            AND c.conname = v.con AND c.contype = 'c' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ── The apply receipt, armed on the DDL rather than on the stamp it checks ─────────────────────
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.columns c
+                      WHERE c.table_schema = 'public' AND c.table_name = 'pantry_item'
+                        AND c.column_name IN ('quantity_value', 'quantity_unit', 'source_kind', 'source_label'))
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantryitemamount-001')
+    expect: rowcount_eq
+    value: 0
+
+  # ── The four columns: present, of their type, nullable, no default. Named, never counted. ──────
+  - name: post_item_amount_columns
+    sql: |
+      SELECT v.col
+        FROM (VALUES ('quantity_value', 'numeric', 10, 2),
+                     ('quantity_unit',  'text',    NULL, NULL),
+                     ('source_kind',    'text',    NULL, NULL),
+                     ('source_label',   'text',    NULL, NULL)) AS v(col, typ, prec, scale)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantryitemamount-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'pantry_item'
+                            AND c.column_name = v.col AND c.data_type = v.typ
+                            AND c.is_nullable = 'YES' AND c.column_default IS NULL
+                            AND c.numeric_precision IS NOT DISTINCT FROM v.prec
+                            AND c.numeric_scale IS NOT DISTINCT FROM v.scale)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Every CHECK the item route relies on: present by name, on pantry_item, VALIDATED ───────────
+  - name: post_item_amount_checks_present_and_validated
+    sql: |
+      SELECT v.con
+        FROM unnest(ARRAY['chk_pantry_item_quantity_pairing', 'chk_pantry_item_quantity_value',
+                          'chk_pantry_item_quantity_unit', 'chk_pantry_item_source_kind',
+                          'chk_pantry_item_source_label_nonblank', 'chk_pantry_item_source_label_len',
+                          'chk_pantry_item_source_label_kind', 'chk_pantry_item_source_other',
+                          'chk_pantry_item_source_plant']) AS v(con)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantryitemamount-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = 'pantry_item'
+                            AND c.conname = v.con AND c.contype = 'c' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # The item's units are the 25 KITCHEN_UNITS, walked against the live definition so a word lost in a
+  # later DROP + ADD is named. The quotes and the cast are part of the probe, so 'l' is not satisfied by
+  # 'lb' nor 'half-bushel' by 'half-bushels'.
+  - name: post_item_unit_check_carries_the_kitchen_units
+    sql: |
+      SELECT v.word
+        FROM unnest(ARRAY['g','kg','oz','lb','ml','l','tsp','tbsp','fl oz','cup','pint','qt','gal',
+                          'count','clove','head','bunch','pinch','peck','bushel','half-bushel','flat',
+                          'jar','bag','other']) AS v(word)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantryitemamount-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = 'pantry_item'
+                            AND c.conname = 'chk_pantry_item_quantity_unit'
+                            AND strpos(pg_get_constraintdef(c.oid), '''' || v.word || '''::text') > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # ...and none of preservation_log's ten legacy plurals: this table never had the writer that made them.
+  # NOT ARMED: true today (no such constraint), and true after.
+  - name: post_item_unit_check_admits_no_legacy_plural
+    sql: |
+      SELECT v.word
+        FROM unnest(ARRAY['lbs','cups','pints','quarts','bushels','half-bushels','pecks','flats','jars',
+                          'bags']) AS v(word)
+       WHERE EXISTS (SELECT 1
+                       FROM pg_constraint c
+                       JOIN pg_class t ON t.oid = c.conrelid
+                       JOIN pg_namespace n ON n.oid = t.relnamespace
+                      WHERE n.nspname = 'public' AND t.relname = 'pantry_item'
+                        AND c.conname = 'chk_pantry_item_quantity_unit'
+                        AND strpos(pg_get_constraintdef(c.oid), '''' || v.word || '''::text') > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # The five source CHECKs are the put-up's, word for word: the same eight kinds, the same NULL-safe
+  # `IS DISTINCT FROM 'other'` form, the same planting rule. One row per item CHECK whose definition
+  # differs from its put-up twin. This is the drift alarm for the vocabulary's fourth copy: widening
+  # chk_preservation_log_source_kind (provenance.js D1-a) reds this until the item's CHECK is widened too.
+  - name: post_item_source_checks_match_put_up
+    sql: |
+      SELECT v.item_con
+        FROM (VALUES ('chk_pantry_item_source_kind',           'chk_preservation_log_source_kind'),
+                     ('chk_pantry_item_source_other',          'chk_preservation_log_source_other'),
+                     ('chk_pantry_item_source_label_nonblank', 'chk_preservation_log_source_label_nonblank'),
+                     ('chk_pantry_item_source_label_len',      'chk_preservation_log_source_label_len'),
+                     ('chk_pantry_item_source_plant',          'chk_preservation_log_source_plant'))
+             AS v(item_con, jar_con)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantryitemamount-001')
+         AND (SELECT pg_get_constraintdef(c.oid)
+                FROM pg_constraint c
+                JOIN pg_class t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+               WHERE n.nspname = 'public' AND t.relname = 'pantry_item' AND c.conname = v.item_con)
+             IS DISTINCT FROM
+             (SELECT pg_get_constraintdef(c.oid)
+                FROM pg_constraint c
+                JOIN pg_class t ON t.oid = c.conrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+               WHERE n.nspname = 'public' AND t.relname = 'preservation_log' AND c.conname = v.jar_con)
+    expect: rowcount_eq
+    value: 0
+
+  # The NULL-safe form itself, stated absolutely (not only by comparison): `source_kind = 'other'` is NULL
+  # on an unrecorded source and a CHECK passes on NULL (BUG-OPRANKCHECKNULL-001's class).
+  - name: post_item_source_other_is_null_safe
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantryitemamount-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = 'pantry_item'
+                            AND c.conname = 'chk_pantry_item_source_other'
+                            AND strpos(pg_get_constraintdef(c.oid), 'IS DISTINCT FROM ''other''') > 0
+                            AND strpos(pg_get_constraintdef(c.oid), 'COALESCE(') > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Apply-window receipt ──────────────────────────────────────────────────────────────────────
+  # Right after 0a, and until R2a's code writes: no item carries an amount or a source — 0a wrote no data
+  # and 0r's window is open. The first as-is save with an amount ends the window, so continuous: false.
+  # to_jsonb so a runbook run on an unapplied database reports 0, not 42703.
+  - name: post_no_item_amount_row_yet
+    continuous: false
+    sql: |
+      SELECT i.id
+        FROM public.pantry_item i
+       WHERE (to_jsonb(i) ->> 'quantity_value') IS NOT NULL
+          OR (to_jsonb(i) ->> 'quantity_unit')  IS NOT NULL
+          OR (to_jsonb(i) ->> 'source_kind')    IS NOT NULL
+          OR (to_jsonb(i) ->> 'source_label')   IS NOT NULL
+    expect: rowcount_eq
+    value: 0
