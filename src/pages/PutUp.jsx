@@ -83,7 +83,12 @@ import {
 import { readMarker } from '../lib/backNav.js'
 // Put-Up R2a — the jar's Edit (RowEditor) says what the door says: the door's own method words, under an
 // alias because this file's METHOD_LABELS is the log form's and is frozen with it.
-import { METHOD_LABELS as JAR_METHOD_LABELS } from '../components/putup/putItUp.js'
+import { METHOD_LABELS as JAR_METHOD_LABELS, DISCARD_LABELS } from '../components/putup/putItUp.js'
+import { USE_BY_METHODS } from '../components/putup/jarWords.js'
+import { DISCARD_DATE_TEXT } from '../components/pantry/putSomethingUp.js'
+import { HOUSE_DETAIL_TEXT } from '../components/pantry/PantryRowSheet.jsx'
+import SelectChip from '../components/forms/SelectChip.jsx'
+import { labelChrome } from '../components/forms/formStyles.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -2350,6 +2355,23 @@ const jarEachWords = (amountText, unit, countText) => {
   return `${n} containers · ${about}${qtyText(`${each / 100n}.${String(each % 100n).padStart(2, '0')}`)} ${unit} each`
 }
 
+// DISCARD BY, ON EVERY METHOD, SET BY HAND (amendment D12). The door's three chips in the door's words
+// (putItUp.DISCARD_LABELS), each mapped to what the jar PATCH's `discard_by` takes
+// (lambda/preservation/jarRoutes.js patchJar): Work it out -> 'clear' (the date is worked out again by the
+// whole ladder), From the label -> the date (stored as set by hand), No date -> 'none' (no date, set by hand).
+// Cured and cellared produce reads "Use by" here as it does everywhere else (jarWords.USE_BY_METHODS:
+// theirs is a quality span); every other method reads "Discard by".
+const EDIT_DISCARD_LABEL = 'Discard by'
+const EDIT_USE_BY_LABEL = 'Use by'
+const EDIT_DISCARD_DATE_LABEL = 'Discard date from the label'
+const EDIT_USE_BY_DATE_LABEL = 'Use-by date from the label'
+const EDIT_DISCARD_MODES = Object.freeze(['auto', 'date', 'none'])
+const EDIT_DISCARD_SENDS = Object.freeze({ auto: 'clear', none: 'none' })
+// Which chip a stored row opens on, by the server's own rule for what it stores (a date or 'none' from a
+// person stores basis `typed`): typed with a date is his date, typed with none is his "no date", and
+// anything else (a general figure, the recipe, the house estimate, nothing, an older row) was worked out.
+const jarDiscardSeed = (rec) => (rec.use_by_basis === 'typed' ? (rec.use_by_target ? 'date' : 'none') : 'auto')
+
 // Minimal per-row editor — the fields worth changing after the fact. Sends ONE PATCH of what changed.
 function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // What the editor OPENED with, taken once. Every field below seeds from it and `dirty` compares
@@ -2364,6 +2386,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
     method: rec.method || 'whole_freeze',
     methodOther: rec.method_other_text || '',
     useByTarget: rec.use_by_target ? ymd(rec.use_by_target) : '',
+    discardMode: jarDiscardSeed(rec),
     notes: rec.notes || '',
   }))
   const [qtyValue, setQtyValue] = useState(seed.qtyValue)
@@ -2386,6 +2409,15 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // been a dead instruction on an existing row. Seeded through ymd(), so an untouched field is
   // byte-for-byte the stored day and is never sent (release F: only what changed is).
   const [useByTarget, setUseByTarget] = useState(seed.useByTarget)
+  // Put-Up R2a (amendment D12): the date is set by one of three chips on EVERY method. The date field
+  // above is what "From the label" shows, still seeded with the stored day. What counts as a change is
+  // the CHIP, or the date while "From the label" is the chip: tapping "From the label" over a worked-out
+  // date and saving it as it stands IS a change (the date is equal; whose date it is becomes his), and a
+  // date typed and then abandoned for another chip is not one.
+  const [discardMode, setDiscardMode] = useState(seed.discardMode)
+  const discardTouched = discardMode !== seed.discardMode || (discardMode === 'date' && useByTarget !== seed.useByTarget)
+  // "From the label" saved with no date picked: said in place, in the door's sentence, and nothing is sent.
+  const [dateRefused, setDateRefused] = useState(false)
   const [notes, setNotes] = useState(seed.notes)
 
   // Put-Up release 1a (V4 §6.5 "Reload gate"). A deploy's SW reload landing mid-Edit took the typed
@@ -2399,7 +2431,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // deferred reload at the exact moment of the save. The key is per instance (useId) so two open
   // editors can never release each other's hold.
   const dirty = qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit || packageCount !== seed.packageCount || name !== seed.name ||
-    method !== seed.method || methodOther !== seed.methodOther || useByTarget !== seed.useByTarget || notes !== seed.notes
+    method !== seed.method || methodOther !== seed.methodOther || discardTouched || notes !== seed.notes
   const holdReload = dirty || !!busy
   const reloadGateKey = `put-up-row:${useId()}`
   useEffect(() => {
@@ -2427,9 +2459,15 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
       if (method === 'other') patch.method_other_text = methodOther.trim() || null
     }
     if (notes !== seed.notes) patch.notes = notes.trim() || null
-    if (useByTarget !== seed.useByTarget) patch.discard_by = useByTarget || 'clear'
-    onSave(Object.keys(patch).length ? patch : null)
+    if (discardTouched) patch.discard_by = discardMode === 'date' ? useByTarget : EDIT_DISCARD_SENDS[discardMode]
+    // The one thing the date can be refused for here: "From the label" with no date picked.
+    const dateMissing = discardTouched && discardMode === 'date' && !useByTarget
+    setDateRefused(dateMissing)
+    if (!dateMissing) onSave(Object.keys(patch).length ? patch : null)
   }
+
+  const useBy = USE_BY_METHODS.has(method)
+  const discardLabel = useBy ? EDIT_USE_BY_LABEL : EDIT_DISCARD_LABEL
 
   // The echo under the amount: live, from what is typed (jarEachWords).
   const eachWords = jarEachWords(qtyValue, qtyUnit, packageCount)
@@ -2504,18 +2542,38 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
           </Field>
         </div>
       )}
-      {/* Keyed on the LOCAL method state, exactly as the block above is, so switching a row to a
-          house-sourced method reveals the control in the same edit rather than after a save. Shown
-          only for those methods: every other use-by here rests on a tested figure, and offering a
-          hand-override everywhere would be a UX change to all nineteen that nothing asked for. */}
-      {HOUSE_SOURCED_SHELF_LIFE.has(method) && (
-        <div style={{ marginTop: T.space.sm }}>
-          <Field label="Use-by date" htmlFor={`ed-useby-${rec.id}`} optional help={HOUSE_ESTIMATE_CLAIM}>
-            <Input id={`ed-useby-${rec.id}`} type="date" value={useByTarget}
-              onChange={e => setUseByTarget(e.target.value)} aria-label="Use-by date" />
-          </Field>
+      {/* The date, on EVERY method (R2a, amendment D12): a place cannot be re-kinded while its put-ups
+          carry dates worked out for the kind it is now, and "set those dates by hand from Edit" has to be
+          a thing a person can do for any of them. The label and the note are keyed on the LOCAL method
+          state, as the block above is, so a method changed in this edit reads right before the save. */}
+      <div style={{ marginTop: T.space.sm }}>
+        <span style={labelChrome} aria-hidden="true">{discardLabel}</span>
+        <div role="radiogroup" aria-label={discardLabel} data-testid={`ed-discard-${rec.id}`}
+          style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {EDIT_DISCARD_MODES.map(m => (
+            <SelectChip key={m} touch active={discardMode === m} role="radio" aria-checked={discardMode === m}
+              aria-pressed={undefined} data-testid={`ed-discard-${m}-${rec.id}`}
+              onClick={() => { setDiscardMode(m); setDateRefused(false) }}>{DISCARD_LABELS[m]}</SelectChip>
+          ))}
         </div>
-      )}
+        {discardMode === 'date' && (
+          <Input id={`ed-useby-${rec.id}`} type="date" value={useByTarget} aria-invalid={dateRefused || undefined}
+            onChange={e => { setUseByTarget(e.target.value); setDateRefused(false) }}
+            aria-label={useBy ? EDIT_USE_BY_DATE_LABEL : EDIT_DISCARD_DATE_LABEL}
+            style={{ maxWidth: 220, marginTop: 8, minHeight: T.buttonMinHeight }} />
+        )}
+        {dateRefused && (
+          <div role="alert" data-testid={`ed-discard-error-${rec.id}`}
+            style={{ marginTop: T.space.xs, color: P.terra, fontSize: T.type.sm }}>{DISCARD_DATE_TEXT}</div>
+        )}
+        {/* The row sheet's sentence, under the same condition the sheet says it: while the date is the
+            house's. It says "This date is a house estimate", which stops being true of a date he sets
+            himself and of no date at all, so it is said under "Work it out" only. */}
+        {HOUSE_SOURCED_SHELF_LIFE.has(method) && discardMode === 'auto' && (
+          <p role="note" data-testid={`ed-house-${rec.id}`}
+            style={{ margin: `${T.space.xs}px 0 0`, color: P.mid, fontSize: T.type.sm }}>{HOUSE_DETAIL_TEXT}</p>
+        )}
+      </div>
       <div style={{ marginTop: T.space.sm }}>
         <Field label="Notes" htmlFor={`ed-notes-${rec.id}`} optional>
           <Textarea id={`ed-notes-${rec.id}`} value={notes} onChange={e => setNotes(e.target.value)}

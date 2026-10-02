@@ -17,7 +17,7 @@
 // a substring: a reworded claim must break this file, because the wording IS the mitigation.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const fetchMock = vi.fn()
@@ -206,10 +206,16 @@ describe('and the cook can set the real date', () => {
     renderPutUp()
     await openEditor()
 
+    // AMENDED for R2a (lane E; UX 3.4 row 6): the note in the editor is the row sheet's sentence, word for
+    // word. The sheet prints the same sentence above the panel, so it is read INSIDE the editor here.
+    const editor = within(screen.getByTestId('jar-edit-panel'))
+    expect(editor.getByText(SHEET_NOTE), 'the claim follows the number into the editor').toBeTruthy()
+
+    // AMENDED for R2a: the date is one of three chips on every method; "From the label" shows the field.
+    fireEvent.click(editor.getByRole('radio', { name: 'From the label' }))
     // getByLabelText, not getByRole: an <input type="date"> has no implicit ARIA role to query by.
-    const input = screen.getByLabelText('Use-by date')
+    const input = screen.getByLabelText('Discard date from the label')
     expect(input.value, 'the control must open on the stored date, not empty').toBe('2026-10-01')
-    expect(screen.getByText(CLAIM), 'the claim follows the number into the editor').toBeTruthy()
 
     // Release 1b (V4 §5.4, §8.3): the date goes through the PATCH as `discard_by`.
     fireEvent.change(input, { target: { value: '2026-09-18' } })
@@ -219,11 +225,17 @@ describe('and the cook can set the real date', () => {
     expect(lastPut()).toBeNull()
   })
 
-  it('leaves the editor untouched for every other method, and round-trips the stored date', async () => {
+  // AMENDED for R2a (lane E, amendment D12) — REVERSED: the date control IS there for every other method
+  // too (a date has to be settable by hand on any put-up), without the house sentence. What still holds,
+  // unchanged below: an untouched Save sends nothing, so the stored date cannot move.
+  it('offers the date control for every other method too, and round-trips the stored date', async () => {
     wire(storesFixture({ method: 'jam_preserve' }))
     renderPutUp()
     await openEditor()
-    expect(screen.queryByLabelText('Use-by date')).toBeNull()
+    const editor = within(screen.getByTestId('jar-edit-panel'))
+    expect(within(editor.getByRole('radiogroup', { name: 'Discard by' })).getAllByRole('radio').map(r => r.textContent))
+      .toEqual(['Work it out', 'From the label', 'No date'])
+    expect(editor.queryByText(SHEET_NOTE)).toBeNull()
 
     // Release 1b: an untouched Save sends nothing at all, so the stored date cannot move.
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))

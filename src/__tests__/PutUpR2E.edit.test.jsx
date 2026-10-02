@@ -11,7 +11,7 @@
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render, screen, fireEvent, act, within, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 
@@ -29,7 +29,10 @@ vi.mock('../hooks/useCropTypes.js', () => ({ useCropTypes: () => ({ cropTypes: [
 
 import PutUp from '../pages/PutUp.jsx'
 import { rowFromRecord } from './helpers/pantryFake.js'
-import { METHOD_LABELS } from '../components/putup/putItUp.js'
+import { METHOD_LABELS, DISCARD_LABELS } from '../components/putup/putItUp.js'
+import { DISCARD_DATE_TEXT } from '../components/pantry/putSomethingUp.js'
+import { HOUSE_DETAIL_TEXT } from '../components/pantry/PantryRowSheet.jsx'
+import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
 import { validateJarPatch } from '../../lambda/preservation/jarRoutes.js'
 
 const CF1 = { id: 'loc-cf1', label: 'Chest Freezer 1', kind: 'deep_freezer' }
@@ -78,8 +81,13 @@ const seenLabel = (control) => document.querySelector(`label[for="${control.id}"
 // What is seen and what is said, together: one assertion per field, so one cannot change without the other.
 const seenAndSaid = (control) => [seenLabel(control), control.getAttribute('aria-label')]
 
+const save = () => act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })) })
+// The methods a put-up can be given in Edit (every one but "Bought already preserved").
+const METHODS = Object.keys(METHOD_LABELS).filter(m => m !== 'purchased_preserved')
+
 beforeEach(() => {
   fetchMock.mockReset()
+  clearReloadBlocks()
   sessionStorage.clear(); localStorage.clear()
 })
 
@@ -223,5 +231,179 @@ describe('the echo under the amount', () => {
     expect(echo().getAttribute('role')).toBe('status')
     const order = [...panel.querySelectorAll('input, select, textarea, [role="status"]')].map(el => el.id || el.getAttribute('data-testid'))
     expect(order.slice(0, 5)).toEqual(['ed-name-rec-e', 'ed-pkg-rec-e', 'ed-qty-rec-e', 'ed-unit-rec-e', 'ed-each-rec-e'])
+  })
+})
+
+// Amendment D12: a place cannot be re-kinded while its put-ups carry dates worked out for its kind, and
+// the refusal says "set those dates by hand from Edit". So Edit sets a date by hand on EVERY method.
+// What the server stores is its own rule (lambda/preservation/jarRoutes.js patchJar): a date or "none"
+// stores basis `typed`; "clear" works the date out again.
+describe('Discard by, on every method, set by hand', () => {
+  const group = (id = JAR.id) => screen.getByTestId(`ed-discard-${id}`)
+  const chip = (words, id = JAR.id) => within(group(id)).getByRole('radio', { name: words })
+  const chosen = (id = JAR.id) => within(group(id)).getAllByRole('radio').filter(r => r.getAttribute('aria-checked') === 'true').map(r => r.textContent)
+  const dateField = (id = JAR.id) => document.getElementById(`ed-useby-${id}`)
+  // Seen and said, in one assertion: the words above the chips and the group's accessible name.
+  const groupSeenAndSaid = (id = JAR.id) => [group(id).previousElementSibling.textContent, group(id).getAttribute('aria-label')]
+
+  // MUTATION E-M1: show the date only for a house-sourced method (the base) -> a frozen row has no chips.
+  it('Freeze whole shows Discard by', async () => {
+    await openEditor()
+    expect(screen.getByRole('combobox', { name: 'How was it put up?' }).value).toBe('whole_freeze')
+    expect(groupSeenAndSaid()).toEqual(['Discard by', 'Discard by'])
+    expect(within(group()).getAllByRole('radio').map(r => r.textContent)).toEqual([DISCARD_LABELS.auto, DISCARD_LABELS.date, DISCARD_LABELS.none])
+    expect(within(group()).getAllByRole('radio').map(r => r.textContent)).toEqual(['Work it out', 'From the label', 'No date'])
+    expect(chosen()).toEqual(['Work it out'])
+    expect(dateField()).toBeNull()
+  })
+
+  // MUTATION E-M2: one label for every method -> cure and cold store read "Discard by" (or all read "Use by").
+  it('Cure & store and Cold store read Use by; every other method reads Discard by', async () => {
+    await openEditor()
+    fireEvent.click(chip('From the label'))
+    const read = {}
+    for (const m of METHODS) {
+      fireEvent.change(screen.getByRole('combobox', { name: 'How was it put up?' }), { target: { value: m } })
+      read[m] = [...groupSeenAndSaid(), dateField().getAttribute('aria-label')]
+    }
+    const USE_BY = ['Use by', 'Use by', 'Use-by date from the label']
+    const DISCARD = ['Discard by', 'Discard by', 'Discard date from the label']
+    expect(read).toEqual(Object.fromEntries(METHODS.map(m => [m, m === 'cure_store' || m === 'cold_store' ? USE_BY : DISCARD])))
+    cleanup()
+    // A row stored as cured opens reading it.
+    await openEditor({ ...JAR, method: 'cure_store' })
+    expect(groupSeenAndSaid()).toEqual(['Use by', 'Use by'])
+  })
+
+  // Ruling E-2: the chip a stored row opens on is the server's own rule for what it stored.
+  // MUTATION: seed every row on "Work it out" -> a date set by hand opens as if it were worked out.
+  it.each([
+    ['a date set by hand', { use_by_basis: 'typed', use_by_target: '2027-03-01' }, 'From the label', '2027-03-01'],
+    ['no date, set by hand', { use_by_basis: 'typed', use_by_target: null }, 'No date', null],
+    ['a general figure', { use_by_basis: 'table' }, 'Work it out', null],
+    ['the house estimate', { method: 'candy', use_by_basis: 'house' }, 'Work it out', null],
+    ['from the recipe', { use_by_basis: 'recipe' }, 'Work it out', null],
+    ['no date after a move', { use_by_basis: 'none', use_by_target: null }, 'Work it out', null],
+    ['an older row that stored no basis', { use_by_basis: null }, 'Work it out', null],
+  ])('opens on its own chip — %s — and an untouched Save sends nothing', async (_what, stored, opensOn, shownDate) => {
+    await openEditor({ ...JAR, ...stored })
+    expect(chosen()).toEqual([opensOn])
+    expect(dateField()?.value ?? null).toBe(shownDate)
+    expect(isReloadBlocked()).toBe(false)
+    await save()
+    expect(writes()).toEqual([])
+  })
+
+  // MUTATION E-M8: send the date only when it differs from the stored one -> nothing is sent, the basis
+  // stays worked-out, and the re-kind that asked for this is still refused.
+  it('the shown worked-out date, saved as it stands, sends discard_by', async () => {
+    await openEditor()
+    fireEvent.click(chip('From the label'))
+    expect(chosen()).toEqual(['From the label'])
+    expect(dateField().value).toBe('2027-08-10')
+    expect(isReloadBlocked()).toBe(true)
+    await save()
+    expect(writes()).toEqual([['PATCH', { discard_by: '2027-08-10' }]])
+  })
+
+  // MUTATION: offer "No date" only where the base offered a date (candy) -> 18 methods cannot choose it.
+  it('No date is choosable on every method, and sends "none"', async () => {
+    const sent = {}
+    for (const m of METHODS) {
+      await openEditor({ ...JAR, method: m, method_other_text: m === 'other' ? 'Salt-cured' : null })
+      fireEvent.click(chip('No date'))
+      await save()
+      sent[m] = writes()
+      cleanup(); fetchMock.mockReset()
+    }
+    expect(sent).toEqual(Object.fromEntries(METHODS.map(m => [m, [['PATCH', { discard_by: 'none' }]]])))
+  })
+
+  // MUTATION: map "Work it out" to nothing (or to "none") -> a date set by hand can never be given back.
+  it('Work it out, over a date set by hand, sends "clear"', async () => {
+    await openEditor({ ...JAR, use_by_basis: 'typed', use_by_target: '2027-03-01' })
+    fireEvent.click(chip('Work it out'))
+    expect(dateField()).toBeNull()
+    await save()
+    expect(writes()).toEqual([['PATCH', { discard_by: 'clear' }]])
+  })
+
+  it('a date changed under From the label sends the new date, and nothing else', async () => {
+    await openEditor({ ...JAR, use_by_basis: 'typed', use_by_target: '2027-03-01' })
+    fireEvent.change(dateField(), { target: { value: '2027-04-15' } })
+    await save()
+    expect(writes()).toEqual([['PATCH', { discard_by: '2027-04-15' }]])
+  })
+
+  // The door's rule and the door's sentence: From the label needs a date. Nothing is sent, nothing is lost.
+  // MUTATION: send it anyway -> the PATCH carries discard_by: "" and the route answers 400.
+  it('From the label with no date picked says so in place and sends nothing; a date picked sends', async () => {
+    await openEditor({ ...JAR, use_by_basis: 'none', use_by_target: null })
+    fireEvent.click(chip('From the label'))
+    expect(dateField().value).toBe('')
+    fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'top shelf' } })
+    await save()
+    expect(writes()).toEqual([])
+    expect(screen.getByRole('alert').textContent).toBe(DISCARD_DATE_TEXT)
+    expect(DISCARD_DATE_TEXT).toBe('Pick the date from the label — or tap Work it out.')
+    expect(dateField().getAttribute('aria-invalid')).toBe('true')
+    expect(screen.getByRole('textbox', { name: 'Notes' }).value).toBe('top shelf')
+    // Picking a date takes the line away; so does another chip.
+    fireEvent.change(dateField(), { target: { value: '2027-01-05' } })
+    expect(screen.queryByRole('alert')).toBeNull()
+    await save()
+    expect(writes()).toEqual([['PATCH', { notes: 'top shelf', discard_by: '2027-01-05' }]])
+  })
+
+  // What counts as a change is the chip, or the date while From the label is the chip.
+  // MUTATION E-M5's sibling: leave the chip out of `dirty` -> a deploy's reload takes the choice with it.
+  it('a chip change alone holds the reload gate; a chip put back, or a date typed and then abandoned, sends nothing', async () => {
+    await openEditor()
+    expect(isReloadBlocked()).toBe(false)
+    fireEvent.click(chip('No date'))
+    expect(isReloadBlocked()).toBe(true)
+    fireEvent.click(chip('Work it out'))
+    expect(isReloadBlocked()).toBe(false)
+    fireEvent.click(chip('From the label'))
+    fireEvent.change(dateField(), { target: { value: '2028-01-01' } })
+    expect(isReloadBlocked()).toBe(true)
+    fireEvent.click(chip('Work it out'))
+    expect(isReloadBlocked()).toBe(false)
+    await save()
+    expect(writes()).toEqual([])
+  })
+
+  describe('candied: the row sheet\'s sentence, while the date is the house\'s', () => {
+    const CANDY = { ...JAR, id: 'rec-candy', method: 'candy', use_by_basis: 'house', use_by_target: '2027-02-10' }
+    const note = () => screen.queryByTestId('ed-house-rec-candy')
+
+    it('says the row sheet\'s sentence, word for word, under Work it out', async () => {
+      await openEditor(CANDY)
+      expect(note().textContent).toBe(HOUSE_DETAIL_TEXT)
+      expect(HOUSE_DETAIL_TEXT).toBe('No published figure exists for candied fruit. This date is a house estimate, not a tested one. Set your own.')
+      expect(note().getAttribute('role')).toBe('note')
+      // Under the chips, inside the date's own block.
+      expect(group('rec-candy').parentElement.contains(note())).toBe(true)
+      // The claim the base editor carried (it held a banned word) has left the panel.
+      expect(screen.getByTestId('jar-edit-panel').textContent).not.toContain('published guidance')
+    })
+
+    // MUTATION: say it under every chip -> "This date is a house estimate" under a date he set himself.
+    it('stops saying "This date is a house estimate" once the date is his own, or there is none', async () => {
+      await openEditor(CANDY)
+      fireEvent.click(chip('From the label', 'rec-candy'))
+      expect(note()).toBeNull()
+      fireEvent.click(chip('No date', 'rec-candy'))
+      expect(note()).toBeNull()
+      fireEvent.click(chip('Work it out', 'rec-candy'))
+      expect(note().textContent).toBe(HOUSE_DETAIL_TEXT)
+    })
+
+    it('is not said for a method with a published figure, and follows the method as it is changed', async () => {
+      await openEditor()
+      expect(screen.queryByTestId('ed-house-rec-e')).toBeNull()
+      fireEvent.change(screen.getByRole('combobox', { name: 'How was it put up?' }), { target: { value: 'candy' } })
+      expect(screen.getByTestId('ed-house-rec-e').textContent).toBe(HOUSE_DETAIL_TEXT)
+    })
   })
 })

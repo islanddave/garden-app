@@ -437,9 +437,9 @@ const ROW = {
   source_kind: 'own_garden', source_label: null,
 }
 // The two conditional fields each need a row that shows them: 'other' shows the method description,
-// a house-sourced method (candy) shows the use-by date.
+// and (R2a) a date set by hand opens on "From the label", which shows the date field.
 const OTHER_ROW = { ...ROW, method: 'other', method_other_text: 'Vinegar dill pickles' }
-const CANDY_ROW = { ...ROW, method: 'candy', use_by_target: '2027-01-01' }
+const DATED_ROW = { ...ROW, method: 'candy', use_by_target: '2027-01-01', use_by_basis: 'typed' }
 
 // B′ release 2: the editor is reached through the Pantry row's sheet (row → Edit), which reads the full
 // jar (GET /api/preservation/:id) before it opens the SAME editor; the list is GET /api/pantry.
@@ -488,7 +488,7 @@ describe('the jar editor (Pantry row → Edit) — holds the reload gate while d
     ['How many were put up?', ROW, () => screen.getByRole('spinbutton', { name: 'How many were put up?' }), '2'],
     ['How was it put up?', ROW, () => screen.getByRole('combobox', { name: 'How was it put up?' }), 'dehydrate'],
     ['What method?', OTHER_ROW, () => screen.getByRole('textbox', { name: 'Method description' }), 'Fridge pickles'],
-    ['Use-by date', CANDY_ROW, () => screen.getByLabelText('Use-by date'), '2027-02-01'],
+    ['Discard by', DATED_ROW, () => screen.getByLabelText('Discard date from the label'), '2027-02-01'],
     ['Notes', ROW, () => screen.getByRole('textbox', { name: 'Notes' }), 'two went to Jen'],
   ])('%s', async (_field, rec, control, changed) => {
     wireRow({ rec })
