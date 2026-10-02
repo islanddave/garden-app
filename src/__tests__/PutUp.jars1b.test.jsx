@@ -120,7 +120,7 @@ describe('the row editor writes each field to its one writer (V4 §5.4 "From 1b"
   it('a method, name or notes change is a PATCH carrying only what changed', async () => {
     await openEditor()
     fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Reaper, hot' } })
-    fireEvent.change(screen.getByRole('combobox', { name: 'Method' }), { target: { value: 'ferment' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'How was it put up?' }), { target: { value: 'ferment' } })
     fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'the good one' } })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })) })
     await waitFor(() => expect(writes()).toHaveLength(1))
@@ -153,8 +153,8 @@ describe('the row editor writes each field to its one writer (V4 §5.4 "From 1b"
   // write. MUTATION: split the count back onto the PUT -> a PUT appears and this literal reds.
   it('a count change and a method change are ONE PATCH, and no PUT', async () => {
     await openEditor()
-    fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '3' } })
-    fireEvent.change(screen.getByRole('combobox', { name: 'Method' }), { target: { value: 'ferment' } })
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'How many were put up?' }), { target: { value: '3' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'How was it put up?' }), { target: { value: 'ferment' } })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })) })
     await waitFor(() => expect(writes()).toHaveLength(1))
     expect(writes()).toEqual([['PATCH', '/api/preservation/rec-1b', { package_count: 3, method: 'ferment' }]])

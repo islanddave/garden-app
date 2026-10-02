@@ -235,7 +235,7 @@ describe('and the cook can set the real date', () => {
   it('a count edit on a candy row is one PATCH of the count, and never touches its use-by', async () => {
     renderPutUp()
     await openEditor()
-    fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '3' } })
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'How many were put up?' }), { target: { value: '3' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(lastPatch()).not.toBeNull())
     expect(lastPatch()).toEqual({ package_count: 3 })

@@ -233,7 +233,7 @@ describe('the Pantry row and its sheet — a refused write says why, and the edi
   it('a refused Edit keeps the editor open with everything typed (count_below_used)', async () => {
     refuseWritesWith(await serverSays({ error: 'below used', code: 'count_below_used' }))
     await openEditor()
-    fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '1' } })
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'How many were put up?' }), { target: { value: '1' } })
     fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'two went to Jen' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(COUNT_BELOW_USED_TEXT))
@@ -242,7 +242,7 @@ describe('the Pantry row and its sheet — a refused write says why, and the edi
     expect(writeCalls('PUT').length).toBe(0)
     // Still the editor, still his values.
     expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy()
-    expect(screen.getByRole('spinbutton', { name: 'Number of containers' }).value).toBe('1')
+    expect(screen.getByRole('spinbutton', { name: 'How many were put up?' }).value).toBe('1')
     expect(screen.getByRole('textbox', { name: 'Notes' }).value).toBe('two went to Jen')
     expect(screen.queryByRole('button', { name: REFRESH_NOW_LABEL })).toBeNull()
   })

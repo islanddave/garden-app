@@ -485,8 +485,8 @@ describe('the jar editor (Pantry row → Edit) — holds the reload gate while d
   it.each([
     ['How much', ROW, () => screen.getByRole('textbox', { name: 'Quantity' }), '9'],
     ['Unit', ROW, () => screen.getByRole('combobox', { name: 'Unit' }), 'jars'],
-    ['Containers', ROW, () => screen.getByRole('spinbutton', { name: 'Number of containers' }), '2'],
-    ['Method', ROW, () => screen.getByRole('combobox', { name: 'Method' }), 'dehydrate'],
+    ['How many were put up?', ROW, () => screen.getByRole('spinbutton', { name: 'How many were put up?' }), '2'],
+    ['How was it put up?', ROW, () => screen.getByRole('combobox', { name: 'How was it put up?' }), 'dehydrate'],
     ['What method?', OTHER_ROW, () => screen.getByRole('textbox', { name: 'Method description' }), 'Fridge pickles'],
     ['Use-by date', CANDY_ROW, () => screen.getByLabelText('Use-by date'), '2027-02-01'],
     ['Notes', ROW, () => screen.getByRole('textbox', { name: 'Notes' }), 'two went to Jen'],

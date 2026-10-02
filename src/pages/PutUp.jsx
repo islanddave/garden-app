@@ -81,6 +81,9 @@ import {
   backWords, recipeSearchItems,
 } from '../components/putup/goingNow.js'
 import { readMarker } from '../lib/backNav.js'
+// Put-Up R2a — the jar's Edit (RowEditor) says what the door says: the door's own method words, under an
+// alias because this file's METHOD_LABELS is the log form's and is frozen with it.
+import { METHOD_LABELS as JAR_METHOD_LABELS } from '../components/putup/putItUp.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -2316,6 +2319,15 @@ function RefreshNowButton() {
   )
 }
 
+// Put-Up R2a — the jar's Edit panel's own words. NEW constants, each read by RowEditor only: the log form
+// above is frozen in R2a and reads METHOD_GROUPS, UNIT_GROUPS and HOUSE_ESTIMATE_CLAIM as they are, so
+// none of those is edited to change what Edit says. Each of these is BOTH the label a person sees and
+// the name a screen reader says, so the two cannot drift apart.
+const EDIT_COUNT_LABEL = 'How many were put up?'
+const EDIT_METHOD_LABEL = 'How was it put up?'
+// "Bought already preserved" is not something a put-up becomes: Edit offers it only on a row that is one.
+const EDIT_BOUGHT_METHOD = 'purchased_preserved'
+
 // Minimal per-row editor — the fields worth changing after the fact. Sends ONE PATCH of what changed.
 function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // What the editor OPENED with, taken once. Every field below seeds from it and `dirty` compares
@@ -2406,6 +2418,14 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
             onChange={e => setName(e.target.value)} aria-label="Name" />
         </Field>
       </div>
+      {/* The count sits ABOVE the amount (R2a): "How many" alone, beside a row that says "2 left", reads
+          as how many are left — the label says what it is, and the amount under it is the total of them. */}
+      <div style={{ marginBottom: T.space.sm }}>
+        <Field label={EDIT_COUNT_LABEL} htmlFor={`ed-pkg-${rec.id}`}>
+          <Input id={`ed-pkg-${rec.id}`} type="number" min={1} value={packageCount}
+            onChange={e => setPackageCount(e.target.value)} aria-label={EDIT_COUNT_LABEL} />
+        </Field>
+      </div>
       <div style={{ display: 'flex', gap: T.space.sm }}>
         <div style={{ flex: 2 }}>
           <Field label="How much in all" htmlFor={`ed-qty-${rec.id}`}>
@@ -2432,17 +2452,14 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
         </div>
       </div>
       <div style={{ marginTop: T.space.sm }}>
-        <Field label="Containers" htmlFor={`ed-pkg-${rec.id}`}>
-          <Input id={`ed-pkg-${rec.id}`} type="number" min={1} value={packageCount}
-            onChange={e => setPackageCount(e.target.value)} aria-label="Number of containers" />
-        </Field>
-      </div>
-      <div style={{ marginTop: T.space.sm }}>
-        <Field label="Method" htmlFor={`ed-method-${rec.id}`}>
-          <Select id={`ed-method-${rec.id}`} value={method} onChange={e => setMethod(e.target.value)} aria-label="Method">
+        <Field label={EDIT_METHOD_LABEL} htmlFor={`ed-method-${rec.id}`}>
+          <Select id={`ed-method-${rec.id}`} value={method} onChange={e => setMethod(e.target.value)} aria-label={EDIT_METHOD_LABEL}>
+            {/* The form's groups, the door's words for each method (one method reads one way). */}
             {METHOD_GROUPS.map(g => (
               <optgroup key={g.group} label={g.group}>
-                {g.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {g.options.filter(o => o.value !== EDIT_BOUGHT_METHOD || seed.method === EDIT_BOUGHT_METHOD).map(o => (
+                  <option key={o.value} value={o.value}>{JAR_METHOD_LABELS[o.value] ?? o.label}</option>
+                ))}
               </optgroup>
             ))}
           </Select>
