@@ -1259,7 +1259,7 @@ def dispatch_workflow(cfg, workflow, inputs=None):
     """workflow_dispatch `workflow` on main; return the epoch taken just before the call.
 
     Refuses in rehearsal and on any ref but main, structurally: these workflows deploy PROD, and
-    the production environment admits only dev, main and promote-v*."""
+    the production environment admits only dev and main."""
     if cfg.rehearsal or cfg.main_branch != "main":
         raise RevertError(f"refusing to dispatch {workflow} (rehearsal={cfg.rehearsal}, "
                           f"main_branch={cfg.main_branch!r}): it deploys prod")

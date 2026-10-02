@@ -755,7 +755,7 @@ def test_snap_teardown_refuses_any_tag_that_is_not_a_rehearsal_tag(tmp_path, git
 
 SCHEMA = "Prod schema gate — promoted Lambdas' column refs must exist in PROD (L-081; pre-FF, fail-closed)"
 SCHEMA_INSTALL = "Install psycopg2 (prod schema gate)"
-RESOLVE = ("promote-gate.yml", "resolve", "Resolve promote inputs (dispatch OR promote-v* tag)")
+RESOLVE = ("promote-gate.yml", "resolve", "Resolve promote inputs (workflow_dispatch only)")
 SELF_TESTS = [f"scripts/test-schema-audit-phase{t}.py" for t in (1, 2, 4)]
 AUDIT_ARGV = ["scripts/dev-main-schema-audit.py", "--repo-root", ".", "--gate"]
 TIMEOUT_STAND_IN = """#!/bin/sh
@@ -1092,11 +1092,28 @@ def test_resolve_dispatch_defaults_the_schema_gate_on(tmp_path, given, want):
     assert out["require_schema_audit"] == want
 
 
-def test_resolve_tag_path_enforces_the_schema_gate_but_not_integration(tmp_path):
-    proc, out = _resolve(tmp_path, EVENT="push", GH_REF_NAME="promote-v1.2.3", IN_REQINT="true", IN_REQSCHEMA="false")
+def test_promote_gate_has_one_trigger_and_it_is_workflow_dispatch():
+    """The promote-v* tag trigger was retired 2026-10-02 (it shipped prod with the integration gate off). A trigger
+    added here later is a new way to ship, so it has to fail this test first."""
+    wf = _workflow(PROMOTE)
+    assert list(wf.get(True, wf.get("on"))) == ["workflow_dispatch"]
+
+
+@pytest.mark.parametrize("given,want", [("", "true"), ("true", "true"), ("false", "false")])
+def test_resolve_dispatch_defaults_the_integration_gate_on(tmp_path, given, want):
+    proc, out = _resolve(tmp_path, EVENT="workflow_dispatch", IN_REQINT=given)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert out == {"dev_sha": DEV_SHA, "snap_version": "v1.2.3", "require_integration": "false",
+    assert out == {"dev_sha": DEV_SHA, "snap_version": "v1.2.3", "require_integration": want,
                    "require_schema_audit": "true"}
+
+
+@pytest.mark.parametrize("event,ref", [("push", "promote-v1.2.3"), ("push", "dev"), ("schedule", "main"), ("", "dev")])
+def test_resolve_refuses_every_event_but_workflow_dispatch(tmp_path, event, ref):
+    """What the tag path used to resolve (a promote with require_integration=false) is now a refusal with no output."""
+    proc, out = _resolve(tmp_path, EVENT=event, GH_REF_NAME=ref, IN_REQINT="false", IN_REQSCHEMA="false")
+    assert proc.returncode == 1 and out == {}
+    assert _errors(proc) == [
+        f"::error::promote-gate runs on workflow_dispatch only; refusing event '{event}' on ref '{ref}'"]
 
 
 @pytest.mark.parametrize("given", ["True", "yes", "0"])

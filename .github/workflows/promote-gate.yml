@@ -6,9 +6,9 @@ name: promote-gate
 # "pauses the promote job for Dave's approval BEFORE main is touched", was STALE and load-bearingly wrong). VERIFIED
 # LIVE against the environments API (also verified 2026-08-04, OPS-PROMOTEAPPROVAL-001): the `production` environment's
 # protection_rules contain a `branch_policy` entry ONLY — there is NO `required_reviewers` rule, because the required
-# reviewer was REMOVED 2026-06-22 at Dave's direction. That policy gates WHICH refs may deploy (2 branches + the
-# promote-v* tag rule) = MECHANISM, not AUTHORIZATION. Nothing in this workflow waits for a human tap: once it starts,
-# main is fast-forwarded and prod ships. The behavioral dev->main HARD GATE (promote ONLY on an explicit Dave
+# reviewer was REMOVED 2026-06-22 at Dave's direction. That policy gates WHICH refs may deploy (branches dev and
+# main; its promote-v* tag rule was removed 2026-10-02) = MECHANISM, not AUTHORIZATION. Nothing in this workflow
+# waits for a human tap: once it starts, main is fast-forwarded and prod ships. The behavioral dev->main HARD GATE (promote ONLY on an explicit Dave
 # "ship it"/"promote to prod") is therefore the SOLE authorization control. For contrast, the `production-destructive`
 # environment used by revert-gate.yml DOES carry required_reviewers=[islanddave] — do not generalize from it to here.
 # Promote = fast-forward main -> the exact dev SHA (no squash). CI is enforced here (required-checks on main only gate PRs).
@@ -46,10 +46,9 @@ name: promote-gate
 # prod already has the column). The refusal ::error:: names the cause and remedy from the audit's own FAIL/ERROR
 # line, never from the exit code alone:
 #   - column or relation MISSING in prod  -> apply its DDL to prod, then re-run the failed jobs or re-dispatch the
-#                                            SAME SHA (on the tag path, re-run the failed run: the tag can't move);
+#                                            SAME SHA;
 #   - coverage REGRESSED, a contract that cannot be parsed, a failed self-test
-#                                          -> fix it on dev and promote the NEW SHA (on the tag path that
-#                                            promote-v* tag is spent: dispatch the new SHA, or tag a new version);
+#                                          -> fix it on dev and promote the NEW SHA;
 #   - traceback, connection error, hang   -> a crash, not a verdict: re-run the failed jobs.
 # Coverage is the audit's, no more: Phase 1 = columns declared in lambda/**/*columns.test.js contracts, Phase 2 =
 # INSERT column lists, Phase 3 = soft-delete deleted_at targets, Phase 4 = that every relation a handler queries
@@ -90,14 +89,15 @@ name: promote-gate
 # a dev push can find build-and-test=success while integration is still in_progress (conclusion null -> prints "None")
 # and fail-closed. Remedy is to wait for the check and re-dispatch. Escape hatch is preserved: dispatch with
 # require_integration=false to deliberately promote past a red/absent integration run.
-# NOTE: the promote-v* TAG trigger still hardcodes require_integration=false in `resolve` below — a tag push carries
-# no inputs, so it has no way to opt out if it were forced true, and that path (ship-garden.sh) is the break-glass
-# remote ship route. That asymmetry is deliberate and flagged for Dave, not an oversight.
-# require_schema_audit deliberately does NOT follow it: the tag path resolves it to TRUE. The schema gate reads prod
-# directly, so it has no in-flight check to race, and shipping a column prod lacks is exactly the outage it exists
-# for. Recovery per cause is in PROD SCHEMA GATE above.
-# Tag-path consequence: from the moment a handler on dev SELECTs/JOINs a new table or view, or a contract names one,
-# every promote-v* tag refuses until that relation's DDL is on prod (no waiver, no opt-out on that path).
+#
+# TAG TRIGGER RETIRED 2026-10-02 (Dave decision, promote-path review D-G). Until then a pushed `promote-v*` tag also
+# started this workflow (OPS-SHIPTRIGGER-001, 2026-07-09, the route claude-ops/ship-garden.sh used), and that path
+# hardcoded require_integration=false: one tag push by any writer shipped prod past the integration gate. It is
+# closed in three places, and this file is only one of them: (1) the `release-tag-integrity` ruleset (20140435)
+# carries a `creation` rule, so only garden-bot can create a `promote-v*` or `v*` tag (snap.py still tags, as the
+# bot); (2) the `production` environment no longer admits the `promote-v*` tag ref; (3) the `push: tags` trigger and
+# the tag branch of `resolve` are gone, and `resolve` refuses any event but workflow_dispatch. Do not re-add a
+# trigger here without re-deciding all three with Dave. Last tag-path run: promote-v4.91.0, 2026-09-01.
 
 on:
   workflow_dispatch:
@@ -125,17 +125,6 @@ on:
         required: false
         default: false
         type: boolean
-  # OPS-SHIPTRIGGER-001 (2026-07-09): git-channel promote trigger so a Cowork/remote session
-  # can ship WITHOUT api.github.com (which the session egress proxy 403-gates for repos it isn't
-  # bound to). Push an annotated/lightweight tag `promote-vX.Y.Z` pointing AT the exact dev SHA to
-  # promote: the tagged commit becomes dev_sha (== github.sha, so the coupled deploy checks out the
-  # promoted code by construction), and the tag name minus `promote-` becomes snap_version. The
-  # `resolve` job normalises both trigger paths into a single (dev_sha, snap_version) pair that every
-  # downstream job consumes — the workflow_dispatch path is behaviourally unchanged. The
-  # environment:production gate and the garden-bot capability-gate FF still apply identically.
-  push:
-    tags:
-      - 'promote-v*'
 
 permissions:
   contents: write
@@ -143,17 +132,15 @@ permissions:
   actions: write
   checks: read
 
-# OPS-SHIPTRIGGER-001: serialize promotes now that two triggers exist (a promote-v* tag push
-# AND a manual workflow_dispatch could otherwise both fast-forward main concurrently). Queue,
+# Serialize promotes: two dispatches could otherwise both fast-forward main concurrently. Queue,
 # never cancel — a promote mid-FF/snap must run to completion, so cancel-in-progress is false.
 concurrency:
   group: promote-gate
   cancel-in-progress: false
 
 jobs:
-  # OPS-SHIPTRIGGER-001: normalise (dev_sha, snap_version) from EITHER trigger so every downstream
-  # job is trigger-agnostic. workflow_dispatch -> the two inputs verbatim. push (promote-v* tag) ->
-  # dev_sha = github.sha (the commit the tag points to), snap_version = tag name minus the promote- prefix.
+  # Validate and normalise the dispatch inputs once, so every downstream job reads one (dev_sha, snap_version)
+  # pair. workflow_dispatch is the only trigger (header, TAG TRIGGER RETIRED); any other event is refused.
   # Fail-closed: dev_sha must be a 40-hex commit SHA and snap_version must match the snap regex.
   resolve:
     runs-on: ubuntu-latest
@@ -163,7 +150,7 @@ jobs:
       require_integration: ${{ steps.r.outputs.require_integration }}
       require_schema_audit: ${{ steps.r.outputs.require_schema_audit }}
     steps:
-      - name: Resolve promote inputs (dispatch OR promote-v* tag)
+      - name: Resolve promote inputs (workflow_dispatch only)
         id: r
         env:
           EVENT: ${{ github.event_name }}
@@ -171,28 +158,21 @@ jobs:
           IN_SNAP: ${{ github.event.inputs.snap_version }}
           IN_REQINT: ${{ github.event.inputs.require_integration }}
           IN_REQSCHEMA: ${{ github.event.inputs.require_schema_audit }}
-          GH_SHA: ${{ github.sha }}
           GH_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            DEV_SHA="$IN_DEV_SHA"
-            SNAP="$IN_SNAP"
-            # Fallback MUST mirror the declared input default (true) so an API dispatch that omits the
-            # key entirely cannot silently downgrade the gate to advisory. Fail-closed on absence.
-            REQINT="${IN_REQINT:-true}"
-            # Same rule for the prod schema gate (OPS-PROMOTESCHEMAGATE-001).
-            REQSCHEMA="${IN_REQSCHEMA:-true}"
-          else
-            DEV_SHA="$GH_SHA"
-            REQINT="false"
-            # NOT copied from REQINT: the tag path ENFORCES the prod schema gate (header, PROD SCHEMA GATE).
-            REQSCHEMA="true"
-            case "$GH_REF_NAME" in
-              promote-*) SNAP="${GH_REF_NAME#promote-}" ;;
-              *) echo "::error::unexpected trigger ref '$GH_REF_NAME' (expected promote-v*)"; exit 1 ;;
-            esac
+          # One trigger. A run started any other way is refused here, before any gate reads an input, so a
+          # trigger added later cannot inherit dispatch semantics with empty inputs.
+          if [ "$EVENT" != "workflow_dispatch" ]; then
+            echo "::error::promote-gate runs on workflow_dispatch only; refusing event '$EVENT' on ref '$GH_REF_NAME'"; exit 1
           fi
+          DEV_SHA="$IN_DEV_SHA"
+          SNAP="$IN_SNAP"
+          # Fallback MUST mirror the declared input default (true) so an API dispatch that omits the
+          # key entirely cannot silently downgrade the gate to advisory. Fail-closed on absence.
+          REQINT="${IN_REQINT:-true}"
+          # Same rule for the prod schema gate (OPS-PROMOTESCHEMAGATE-001).
+          REQSCHEMA="${IN_REQSCHEMA:-true}"
           if ! printf '%s' "$DEV_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "::error::dev_sha not a 40-hex commit SHA: '$DEV_SHA'"; exit 1
           fi
