@@ -170,3 +170,77 @@ describe('Put-Up B′ — the Pantry components are clean (with nested-interacti
 
 // R2 lane Df additions go directly under this line
 // R2 lane P additions go directly under this line
+// Put-Up R2a, lane P — the Places sheet and the item's Edit with its two new controls join the set, each in
+// its fullest states; and the 48 px rule on every new target (the inline min-height, the only geometry jsdom has).
+import PlacesSheet from '../components/pantry/PlacesSheet.jsx'
+import { apiError as lanePApiError } from './helpers/pantryFake.js'
+
+describe('Put-Up R2a lane P — the Places sheet and Item Edit are clean (with nested-interactive)', () => {
+  const SHELF = { id: 'loc-9', label: 'Garage shelf', kind: 'pantry' }
+  const rowFor = (id) => screen.getAllByTestId('pu-location-row').find(r => r.getAttribute('data-loc-id') === id)
+  function wirePlaces(overrides = {}) {
+    const f = pantryFetch({ rows: ROWS, places: [...PLACES, SHELF], overrides })
+    stableFetch.fn = f
+    return f
+  }
+
+  it('the Pantry with its Edit places door, and the Places list behind it', async () => {
+    const f = wirePlaces()
+    const r = render(<PantryView fetch={f} group="place" onGroupChange={() => {}} rows={ROWS} loading={false} error={false} onReload={() => {}}
+      recent={{}} onRecent={() => {}} />)
+    const door = await screen.findByTestId('pantry-edit-places')
+    expect(parseInt(door.style.minHeight, 10)).toBeGreaterThanOrEqual(48)
+    await expectNoA11yViolations(r.container, { label: 'PantryView with Edit places', rules: NEW_RULES })
+    fireEvent.click(door)
+    await screen.findAllByTestId('pu-location-row')
+    expect(screen.getByRole('dialog', { name: 'Places' })).toBeTruthy()
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PlacesSheet list', rules: NEW_RULES })
+    // Every target on the list is 48 px, and each row's two actions are named for their place.
+    const targets = [...screen.getAllByTestId('pu-location-rename'), ...screen.getAllByTestId('pu-location-delete')]
+    expect(targets.length).toBe(4 + 2)
+    for (const t of targets) expect(parseInt(t.style.minHeight, 10), t.getAttribute('aria-label')).toBeGreaterThanOrEqual(48)
+    expect(rowFor('loc-9').querySelector('[data-testid="pu-location-rename"]').getAttribute('aria-label')).toBe('Edit… — Garage shelf')
+    expect(rowFor('loc-9').querySelector('[data-testid="pu-location-delete"]').getAttribute('aria-label')).toBe('Delete… — Garage shelf')
+  })
+
+  it('the Places sheet — an editor open with the re-kind refusal said; then the delete question; then "Deleted"', async () => {
+    const f = wirePlaces({ 'PUT /api/storage-locations/*': () => { throw lanePApiError(409, { error: 'x', message: 'x', code: 'place_has_dated_jars', n: 2 }) } })
+    const r = render(<PlacesSheet open fetch={f} rows={ROWS} onClose={() => {}} />)
+    const body = r.container.ownerDocument.body
+    await screen.findAllByTestId('pu-location-row')
+    fireEvent.click(rowFor('loc-3').querySelector('[data-testid="pu-location-rename"]'))
+    fireEvent.click(screen.getByTestId('pu-location-kind-pantry'))
+    fireEvent.click(screen.getByTestId('pu-location-save'))
+    await screen.findByTestId('pu-location-refusal')
+    expect(screen.getByRole('radiogroup', { name: 'What kind of place?' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Name' })).toBeTruthy()
+    for (const t of [screen.getByTestId('pu-location-name'), screen.getByTestId('pu-location-save'), screen.getByTestId('pu-location-cancel'),
+      ...screen.getByTestId('pu-location-kinds').querySelectorAll('[role="radio"]')]) {
+      expect(parseInt(t.style.minHeight, 10), t.getAttribute('data-testid')).toBeGreaterThanOrEqual(48)
+    }
+    await expectNoA11yViolations(body, { label: 'PlacesSheet editor, re-kind refused', rules: NEW_RULES })
+
+    fireEvent.click(screen.getByTestId('pu-location-cancel'))
+    fireEvent.click(rowFor('loc-9').querySelector('[data-testid="pu-location-delete"]'))
+    await screen.findByTestId('pu-location-confirm-delete')
+    for (const t of [screen.getByTestId('pu-location-delete-confirm'), screen.getByTestId('pu-location-delete-cancel')]) {
+      expect(parseInt(t.style.minHeight, 10), t.getAttribute('data-testid')).toBeGreaterThanOrEqual(48)
+    }
+    await expectNoA11yViolations(body, { label: 'PlacesSheet delete question', rules: NEW_RULES })
+    fireEvent.click(screen.getByTestId('pu-location-delete-confirm'))
+    await screen.findByTestId('pu-location-deleted')
+    await expectNoA11yViolations(body, { label: 'PlacesSheet after a delete', rules: NEW_RULES })
+  })
+
+  it('a bought item\'s Edit — How much with every unit shown, Where it\'s from with every source shown and its name asked', async () => {
+    wirePlaces()
+    const item = itemRow({ stock_id: 'i9', name: 'Rolled oats', place: SHELF, quantity_value: 2, quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco', where_from: 'Costco' })
+    const r = render(<PantryRowSheet row={item} fetch={stableFetch.fn} onClose={() => {}} />)
+    fireEvent.click(screen.getByTestId('row-edit'))
+    fireEvent.click(await screen.findByTestId('item-edit-amount-unit-more'))
+    fireEvent.click(screen.getByTestId('item-edit-source-more'))
+    expect(screen.getByRole('textbox', { name: 'How much' })).toBe(screen.getByTestId('item-edit-amount-value'))
+    expect(screen.getByRole('radiogroup', { name: "Where it's from" })).toBeTruthy()
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PantryRowSheet item edit, amount and where-from', rules: NEW_RULES })
+  })
+})
