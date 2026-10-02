@@ -6,10 +6,16 @@
 // a11y: WAI-ARIA radiogroup pattern — role=radiogroup wrapper, role=radio options,
 // roving tabindex + Left/Right(Up/Down) arrow selection, aria-checked on the active option.
 // Ships DARK (no runtime importer until the adopting slice).
+//
+// `touch` (V5-PUTUPLOGRETIRE-001): opt-in option height of 48 px, the tap target, for a surface whose floor is
+// 48 (Put-Up). Absent, every caller renders byte-identically. The height comes from the token and is never
+// spelled as a second number here: two layout gates read this file's one numeric height as the primitive's
+// floor (scripts/layout-gate/segmented-control-exemption.mjs) and refuse to run if they find two.
 import React, { useRef } from 'react'
 import { P } from '../../lib/constants.js'
+import { T } from './formStyles.js'
 
-export default function SegmentedControl({ options = [], value, onChange, small, ariaLabel, ...rest }) {
+export default function SegmentedControl({ options = [], value, onChange, small, touch, ariaLabel, ...rest }) {
   const refs = useRef([])
   const idx = options.findIndex(o => o.value === value)
 
@@ -62,6 +68,7 @@ export default function SegmentedControl({ options = [], value, onChange, small,
             onClick={() => select(i)}
             style={{
               minHeight: 40,
+              ...(touch ? { minHeight: T.buttonMinHeight } : null),
               padding: small ? '6px 14px' : '8px 18px',
               borderRadius: 10,
               cursor: 'pointer',
