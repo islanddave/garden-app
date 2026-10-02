@@ -1,10 +1,16 @@
 {
-  "version": "4.168.0",
+  "version": "4.169.0",
   "date": "2026-10-01",
   "highlights": [
-    "Harvests now counts picks from plantings that aren't in a project, and each one opens its planting",
-    "Back to the Harvests list returns you to the same spot every time",
-    "Tab bar editor: put any More page in your bar, up to five",
-    "A page on your bar opens as a tab, with no Back arrow"
+    "Put-Up: Went bad asks how many when several are left, so you can mark only the ones that spoiled",
+    "Back inside Put-Up returns to where you came from (the Pantry, a recipe, a batch), and the phone's Back no longer re-opens what you just left",
+    "Start a batch from one of your recipes or from a past batch, right on the Start sheet",
+    "A Pantry jar names the batch it came from, and its sheet opens what went in",
+    "Moving a jar says what happens to its discard date before you save",
+    "Put it up opens on Today, with both buttons in one row",
+    "Recipes: a clearer recipe sheet, bold and italic in notes, and Made it, ate it all",
+    "The Put-Up search finds recipes as well as the Pantry",
+    "A page on your tab bar now shows its own dot — Release Notes for a new release, Critters for a new visitor",
+    "The Release Notes dot no longer clears itself when the app can't reach the server at launch"
   ]
 }
