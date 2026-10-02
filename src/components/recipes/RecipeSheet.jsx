@@ -80,7 +80,10 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   const ids = { name: `recipe-name-${useId()}`, link: `recipe-link-${useId()}`, notes: `recipe-notes-${useId()}`, keepsN: `recipe-keeps-n-${useId()}` }
 
   const set = (patch) => { setD(x => ({ ...x, ...patch })); setErr(null) }
-  const setLine = (i, patch) => set({ lines: d.lines.map((l, j) => (j === i ? { ...l, ...patch, _keep: undefined } : l)) })
+  // A line edit keeps the line's stored copy (`_keep`): recipes.js lineBody decides from it whether the facts
+  // this sheet does not edit (form, brand, role, note, heat, salt) still belong to the line — they do unless
+  // its name, number or unit changed. Clearing it here dropped them on any edit, "at the end" included.
+  const setLine = (i, patch) => set({ lines: d.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) })
   const dirty = JSON.stringify({ ...d, key: '' }) !== JSON.stringify({ ...JSON.parse(base.current), key: '' })
 
   useEffect(() => {
