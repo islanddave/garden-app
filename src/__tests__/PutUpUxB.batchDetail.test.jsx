@@ -281,9 +281,11 @@ describe('the recipe row — "From <name> →" opens the recipe', () => {
     expect(onOpenRecipe.mock.calls).toEqual([['r1', { label: 'Megatron mash', kind: 'batch', id: 'kb-rec' }]])
     // The origin is one prep's reader takes whole: the page's Back will read "← Megatron mash (batch)".
     expect(readFrom({ from: onOpenRecipe.mock.calls[0][1] })).toEqual({ label: 'Megatron mash', kind: 'batch', id: 'kb-rec' })
-    // "Its lines" and "Made it as written →" follow it, as they did.
+    // "Its lines" follows it, as it did. "Made it as written →" did too, until Put-Up R2a (M2): on this
+    // page the What went in block's button says it, so the row's link is not drawn beside it.
     expect(screen.getByTestId('batch-recipe-lines-toggle').textContent).toBe('Its lines')
-    expect(screen.getByTestId('batch-recipe-as-written').textContent).toBe('Made it as written →')
+    expect(screen.queryByTestId('batch-recipe-as-written')).toBeNull()
+    expect(screen.getByTestId('what-went-in-as-written-add').textContent).toBe('Made it as written')
   })
 
   // The prop absent: exactly the markup the row had. MUTATION: render the link without the prop -> a
@@ -338,16 +340,20 @@ describe('"Made it as written" — a second door, in the empty What went in bloc
     expect(onChanged).toHaveBeenCalled()
   })
 
-  // TWO doors, ONE key set. A write whose answer was lost and is retried from the OTHER door must be a
-  // replay, not a second copy of every line. MUTATION: give each door its own hook -> the keys differ.
-  it('a retry from the other door sends the SAME keys, and each door says its own refusal', async () => {
+  // ONE key set. A write whose answer was lost and is retried must be a replay, not a second copy of every
+  // line. Until Put-Up R2a (M2) the retry here came from the row's link; this page now draws the button
+  // alone, so the retry is the button's (the two-door case is pinned on the hook itself, in
+  // PutUpR2F.asWritten.test.jsx). MUTATION: mint a key set per tap -> the keys differ. MUTATION: give each
+  // door its own hook -> the row is no longer hosted and its link is back beside the button.
+  it('a retry sends the SAME keys, the button says its own refusal, and the row draws no second door', async () => {
     let n = 0
     fetchMock.mockImplementation((path, o = {}) => (o.method === 'POST' && ++n === 1 ? Promise.reject(new Error('502')) : Promise.resolve({ inputs: [] })))
     renderDetail({ batch: FOLLOWING, inputs: [] })
     await act(async () => { fireEvent.click(screen.getByTestId('what-went-in-as-written-add')) })
     expect(screen.getByTestId('what-went-in-as-written-error').textContent).toBe("Couldn't add the lines — try again (nothing is added twice).")
     expect(screen.queryByTestId('batch-recipe-error')).toBeNull()
-    await act(async () => { fireEvent.click(screen.getByTestId('batch-recipe-as-written')) })
+    expect(screen.queryByTestId('batch-recipe-as-written')).toBeNull()
+    await act(async () => { fireEvent.click(screen.getByTestId('what-went-in-as-written-add')) })
     expect(writes()).toHaveLength(2)
     const keys = (i) => writes()[i][2].inputs.map(l => l.idempotency_key)
     expect(keys(1)).toEqual(keys(0))
@@ -394,9 +400,13 @@ describe('the no-recipe row, Jar & heat and the quiet actions', () => {
   // MUTATION: put any of these constants back to T.tapMinHeight -> its row reds.
   it('every quiet action on the page is 48px tall', () => {
     renderDetail({ batch: { ...FOLLOWING, kind: null, start_precision: null, started_at: null }, inputs: [] })
-    const quiet = ['batch-kind-question', 'batch-set-start', 'recipe-ref-open', 'batch-recipe-lines-toggle', 'batch-recipe-as-written',
+    // `batch-recipe-as-written` left this list with Put-Up R2a (M2): the row's link is not drawn on this
+    // page (the button below says it). Its 48 px is pinned where it still shows, on the row alone
+    // (PutUpR2F.asWritten.test.jsx).
+    const quiet = ['batch-kind-question', 'batch-set-start', 'recipe-ref-open', 'batch-recipe-lines-toggle',
       'batch-pause', 'batch-close-open', 'batch-save-as-recipe', 'batch-remove', 'line-add-more']
     expect(quiet.map(id => `${id} ${screen.getByTestId(id).style.minHeight}`)).toEqual(quiet.map(id => `${id} 48px`))
+    expect(screen.queryByTestId('batch-recipe-as-written')).toBeNull()
     fireEvent.click(screen.getByTestId('batch-kind-question'))
     expect(screen.getByTestId('batch-kind-cancel').style.minHeight).toBe('48px')
     fireEvent.click(screen.getByTestId('batch-kind-other'))
