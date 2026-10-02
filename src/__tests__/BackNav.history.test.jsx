@@ -422,6 +422,124 @@ describe('BUG-BACKTWICECLOSESAPP-001 — a Back the registry answers creates NO 
   })
 })
 
+// The return is a traversal, so it is not instant: between the Back and the landing the cursor is on
+// the page's own entry with our marker one step forward. In a browser that window is a frame or two;
+// in jsdom it is two queued tasks. Neither is wide enough to act inside from a test, so these HOLD
+// the registry's history.go(1) and release it by hand. Nothing else is faked: the same history, the
+// same popstate, the real Back (jsdom's back() does not route through the method being held).
+describe('BUG-BACKTWICECLOSESAPP-001 — what happens INSIDE the return\'s window', () => {
+  const drain = () => act(async () => { for (let i = 0; i < TURNS; i++) await new Promise((r) => setTimeout(r, 0)) })
+  let goSpy = null
+  function holdReturn() {
+    const real = window.history.go.bind(window.history)
+    const held = []
+    goSpy = vi.spyOn(window.history, 'go').mockImplementation((n) => { held.push(n) })
+    return {
+      held,
+      release: async () => {
+        const from = pops
+        goSpy.mockRestore(); goSpy = null
+        act(() => { for (const n of held.splice(0)) real(n) })
+        await settle(from)
+      },
+    }
+  }
+  afterEach(() => { if (goSpy) { goSpy.mockRestore(); goSpy = null } })
+
+  it('the sheet CLOSES inside the window: the return lands on a marker nobody owns and steps off it — no dead press', async () => {
+    let closeIt
+    function Host() {
+      const [open, setOpen] = useState(true)
+      closeIt = () => setOpen(false)
+      return (
+        <DismissRegistryProvider>
+          {open && <Sheet open onClose={() => setOpen(false)} title="Row" armsBack backIntercept={() => true}><button>x</button></Sheet>}
+        </DismissRegistryProvider>
+      )
+    }
+    render(<Host />)
+    expect(armed()).toBe(true)
+    const ret = holdReturn()
+
+    await back()                                   // the panel steps back; the return is in flight
+    expect(ret.held, 'SELF-TEST: the registry asked for exactly one return').toEqual([1])
+    expect(atFloor()).toBe(true)                   // the cursor is on the page's entry, the marker one step forward
+
+    act(() => { closeIt() })                       // a save lands and closes the sheet, inside the window
+    await drain()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(atFloor()).toBe(true)                   // disarm() found no marker under it and popped nothing
+
+    await ret.release()                            // the return lands... on a marker nobody owns
+    expect(armed(), 'the cursor was left on an orphan marker').toBe(false)
+    expect(atFloor()).toBe(true)
+
+    // NO DEAD PRESS: the very next Back leaves the page. On an orphan marker it would land here again.
+    const before = pops
+    await back()
+    expect(pops).toBe(before + 1)
+    expect(window.history.state?.__base, 'that Back was eaten by an entry the sheet left behind').toBe(1)
+  })
+
+  it('a SECOND Back inside the window navigates, and dismisses nothing a second time', async () => {
+    function TwoStack() {
+      const [sheet, setSheet] = useState(true)
+      const [dialog, setDialog] = useState(true)
+      return (
+        <DismissRegistryProvider>
+          {sheet && <Sheet open onClose={() => setSheet(false)} title="Sow" armsBack><button>x</button></Sheet>}
+          <BareDialog open={dialog} onClose={() => setDialog(false)} />
+          <span data-testid="state">{`${sheet}:${dialog}`}</span>
+        </DismissRegistryProvider>
+      )
+    }
+    render(<TwoStack />)
+    const ret = holdReturn()
+
+    await back()                                   // closes the dialog; the return for the sheet is in flight
+    expect(screen.getByTestId('state').textContent).toBe('true:false')
+    expect(ret.held).toEqual([1])
+
+    const before = pops
+    await back()                                   // the second press, before the return has landed
+    expect(pops, 'SELF-TEST: the second Back really traversed').toBe(before + 1)
+    expect(window.history.state?.__base).toBe(1)   // it left the page's entry: that is all it did
+    expect(screen.getByTestId('state').textContent, 'one press closed two surfaces').toBe('true:false')
+
+    await ret.release()                            // the late return moves forward again; nobody acts on it
+    expect(screen.getByTestId('state').textContent).toBe('true:false')
+    expect(armed()).toBe(false)
+  })
+
+  it('a return that NEVER lands is forgotten: it does not swallow the next sheet\'s Back', async () => {
+    const onB = vi.fn()
+    let show
+    function Host() {
+      const [which, setWhich] = useState('a')
+      show = setWhich
+      return (
+        <DismissRegistryProvider>
+          {which === 'a' && <Sheet open onClose={() => {}} title="A" armsBack backIntercept={() => true}><button>x</button></Sheet>}
+          {which === 'b' && <Sheet open onClose={onB} title="B" armsBack><button>x</button></Sheet>}
+        </DismissRegistryProvider>
+      )
+    }
+    render(<Host />)
+    holdReturn()                                   // held and never released: the return is cut off
+    await back()
+    expect(atFloor()).toBe(true)
+
+    act(() => { show(null) })                      // A closes inside the window...
+    await drain()
+    act(() => { show('b') })                       // ...and B opens and arms a marker of its own
+    await drain()
+    expect(armed()).toBe(true)
+
+    await back()
+    expect(onB, 'B\'s Back was taken for the stale return and dismissed nothing').toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('ARM-EFFECT-SCALAR-ONLY — typing must not churn history', () => {
   // The single highest-risk line in the slice. If the arm effect keys on the entries ARRAY rather
   // than a scalar, every keystroke that flips `dirty` pushes and pops a history entry.
