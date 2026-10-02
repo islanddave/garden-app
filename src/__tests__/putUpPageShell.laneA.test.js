@@ -84,7 +84,7 @@ describe('segmentOrigin — the origin a sender did not name', () => {
   })
 })
 
-describe('originSegment — the segment a restored entry was opened from', () => {
+describe('originSegment — the segment a pop lands on, when the origin is one', () => {
   it('reads back exactly what segmentOrigin wrote, whatever else rides on the state', () => {
     for (const s of PUT_UP_SEGMENTS) {
       expect(originSegment(withFrom(null, segmentOrigin(s.value)))).toBe(s.value)

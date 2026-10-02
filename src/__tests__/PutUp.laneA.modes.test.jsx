@@ -26,7 +26,7 @@
 //                                                                    segment on screen …"
 //   A2-1c   the segment is named even inside a mode                -> "inside a mode there is no segment on
 //                                                                    screen either …"
-//   A2-1d   a fresh page ignores the segment its entry names       -> "a recipe opened from Recipes, restored …"
+//   A2-1d   the pop does not select the segment its origin names   -> "a recipe opened from Recipes, restored …"
 //   A2-3    leaveMode pops without asking which entry is current   -> "a remove that answers after the Back was
 //                                                                    pressed …"
 //   A2-2a   a pop that lands on its own key is not hopped          -> "as a reload finds it … ONE press lands on
@@ -752,12 +752,13 @@ describe('a door that names no origin is opened from the segment on screen', () 
 })
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
-// The segment is the page's own state, not part of the URL. A page that MOUNTS on a mode entry — a reload,
-// a PWA restored from a discard, a return from another route — has lost it, and the list entry under the
-// mode shows whatever a fresh page defaults to. With the segment named as the origin, the Back would then
-// read "← Recipes" and land on the Pantry. So a page that mounts on an entry naming a segment holds it.
-// The stack is seeded as the reload finds it: [the floor, the list at index 0, the mode at index 1].
-describe('a page that mounts on a mode entry holds the segment its origin names', () => {
+// Which segment the list shows is the page's own state, not part of the URL — and it can have moved since a
+// door was opened. A page that MOUNTS on a mode entry (a reload, a PWA restored from a discard, a return
+// from another route) holds whatever a fresh page defaults to; and the bare-open default is decided on the
+// FIRST list answer, whenever that comes. With a segment named as the origin, the Back would then read
+// "← Recipes" and pop onto the Pantry. So the press selects the segment it names.
+// A restored stack is seeded as the reload finds it: [the floor, the list at index 0, the mode at index 1].
+describe('a pop to a segment lands on THAT segment, whatever the page was holding', () => {
   const LIST = [{ url: '/put-up', idx: 0 }]
 
   it('a recipe opened from Recipes, restored: "← Recipes" lands on Recipes', async () => {
@@ -785,31 +786,84 @@ describe('a page that mounts on a mode entry holds the segment its origin names'
     expect(segment()).toBe('Going now')
   })
 
-  it('the same at index 0, where the Back pushes: the words and the landing are still that segment', async () => {
-    going = []
-    renderAt('/put-up?batch=kb-1', { state: { from: { label: 'Going now' } }, idx: 0 })
+  // The other way round: the viewer's own batch IS going, so a fresh page moves itself to Going now — under
+  // a batch whose Back says "← Pantry".
+  it('a batch opened from the Pantry, restored while the viewer has a batch going: "← Pantry" lands on the Pantry', async () => {
+    renderAt('/put-up?batch=kb-1', { state: { from: { label: 'Pantry' } }, idx: 1, under: LIST })
     await screen.findByTestId('putup-batch-mode')
-    await flush()
-    expect(backBtn().textContent).toBe('← Going now')
+    await flush(); await flush()
+    expect(backBtn().textContent).toBe('← Pantry')
     tap('putup-mode-back')
-    await waitFor(() => expect(screen.getByTestId('going-now-view')).toBeTruthy())
-    expect(window.history.state.idx).toBe(1)
-    expect(segment()).toBe('Going now')
+    await waitFor(() => expect(loc()).toBe('/put-up'))
+    expect(screen.getByTestId('pantry-view')).toBeTruthy()
+    expect(segment()).toBe('Pantry')
   })
 
-  // Only a segment's own label, with no kind: a recipe or a batch that happens to be CALLED "Recipes" is a
-  // sender like any other, and a harvest prefill still opens the form.
-  it('an origin that is not a segment changes nothing about where a fresh page lands', async () => {
+  // No reload at all. The first read of the going list fails; a batch is started from the Pantry; the
+  // re-read that follows is the list's FIRST answer, it holds the viewer's new batch, and the bare-open
+  // default moves the page to Going now — under a batch whose Back says "← Pantry".
+  it('a batch started from the Pantry before the going list first answers: "← Pantry" still lands on the Pantry', async () => {
+    const answer = fetchMock.getMockImplementation()
+    let first = true
+    fetchMock.mockImplementation((path, options) => {
+      if (path.startsWith('/api/kitchen-batches?state=going') && first) { first = false; return Promise.reject(new Error('offline')) }
+      return answer(path, options)
+    })
+    renderAt('/put-up')
+    await screen.findByTestId('pantry-view')
+    await flush()
+    expect(segment()).toBe('Pantry')                            // nothing has answered: the default stands
+    tap('putup-door'); tap('stub-door-escape'); tap('stub-start-it')
+    await waitFor(() => expect(loc()).toBe('/put-up?batch=kb-new'))
+    await flush(); await flush()
+    expect(state()).toEqual({ from: { label: 'Pantry' } })
+    expect(backBtn().textContent).toBe('← Pantry')
+    tap('putup-mode-back')
+    await waitFor(() => expect(loc()).toBe('/put-up'))
+    expect(screen.getByTestId('pantry-view')).toBeTruthy()
+    expect(segment()).toBe('Pantry')
+  })
+
+  // The same rule where a pop does NOT land on the list: a batch opened from a search result's row sheet says
+  // "← Pantry" and pops to the results (lane A's table above holds that landing). The page then holds the
+  // Pantry under them — as it has always held Recipes after the Back from a recipe hit — so that is what
+  // clearing the search shows. Before lane A2 it showed the segment the search was typed on.
+  it('"← Pantry" from the search\'s results still returns to the results, and the cleared search then shows the Pantry', async () => {
+    renderAt('/put-up')
+    await flush()
+    pickSegment('Going now')
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'mega' } })
+    await screen.findByTestId('pantry-search-results')
+    tap('stub-search-batch')
+    await waitFor(() => expect(backBtn().textContent).toBe('← Pantry'))
+    tap('putup-mode-back')
+    await waitFor(() => expect(loc()).toBe('/put-up?find=mega'))
+    expect(screen.getByTestId('pantry-search-results')).toBeTruthy()
+    tap('pantry-search-clear')
+    await waitFor(() => expect(loc()).toBe('/put-up'))
+    expect(screen.getByTestId('pantry-view')).toBeTruthy()
+    expect(segment()).toBe('Pantry')
+  })
+
+  // Only a segment's own label with NO kind names a segment. A recipe that happens to be CALLED "Recipes"
+  // is a sender like any other, and so is a planting: the page keeps the segment it was holding.
+  it('an origin that is not a segment selects nothing: the page keeps what it was holding', async () => {
     going = []
-    renderAt('/put-up?batch=kb-1', { state: { from: { label: 'Recipes', kind: 'recipe', id: 'rc-9' } }, idx: 0 })
+    renderAt('/put-up?batch=kb-1', { state: { from: { label: 'Recipes', kind: 'recipe', id: 'rc-9' } }, idx: 1, under: LIST })
     await screen.findByTestId('putup-batch-mode')
     await flush()
-    expect(backBtn().textContent).toBe('← Pantry')
+    expect(backBtn().textContent).toBe('← Recipes (recipe)')
+    tap('putup-mode-back')
+    await waitFor(() => expect(loc()).toBe('/put-up'))
+    expect(screen.getByTestId('pantry-view')).toBeTruthy()
+    expect(screen.queryByTestId('recipes-view')).toBeNull()
     cleanup()
-    renderAt('/put-up?batch=kb-1', { state: { from: { label: 'Ristra Cayenne' } }, idx: 0 })
+    renderAt('/put-up?batch=kb-1', { state: { from: { label: 'Ristra Cayenne' } }, idx: 1, under: LIST })
     await screen.findByTestId('putup-batch-mode')
     await flush()
-    expect(backBtn().textContent).toBe('← Pantry')
+    tap('putup-mode-back')
+    await waitFor(() => expect(loc()).toBe('/put-up'))
+    expect(screen.getByTestId('pantry-view')).toBeTruthy()
   })
 })
 

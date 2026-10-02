@@ -351,9 +351,7 @@ export default function PutUp({
   // Adaptive default: a harvest-triggered open lands on the form; a bare "Put-Up" tap lands on the
   // inventory ("what have I got?") — the more common intent from the More menu. V5-INFLIGHTBATCH-001
   // promotes a bare open to 'going' the moment there is anything to check; see autoDefaultedRef.
-  // R1 (lane A2): a page that mounts ON a mode entry whose origin names a segment starts out holding that
-  // segment (goingNow.js originSegment), so the mode's Back lands on what it says after a reload too.
-  const [view, setView] = useState(() => (hasPrefill ? 'log' : originSegment(location.state) ?? 'pantry'))
+  const [view, setView] = useState(hasPrefill ? 'log' : 'pantry')
   // Put-Up release 1a (V4 §6.1, §10.2) — a door that NAMES its destination. `?view=pantry` is the
   // Pantry segment (B′ release 2 renamed it from "What's put up"); Today's use-soon band links here
   // with it. It counts as a choice already made, so the bare-open promote below never moves someone who
@@ -555,6 +553,13 @@ export default function PutUp({
       // Put-Up. The entry this call was made for must still be the current one, or it does nothing.
       if (standingOnKey() !== location.key) return
       popStartedRef.current = { key: location.key, at: Date.now(), overMarker: !!readMarker(window.history.state) }
+      // THE POP LANDS ON WHAT THE BACK SAYS. When the origin is a segment, the entry under this one is the
+      // list — and which segment the list shows is this page's own state, not the URL's. It can have moved
+      // since the door was opened: a page that MOUNTED on this entry (a reload, a restored PWA, a return
+      // from another route) holds what a fresh page defaults to, and the bare-open default is decided on
+      // the first list answer, whenever that comes. So the press selects the segment it names.
+      const named = originSegment(location.state)
+      if (named) chooseView(named)
       navigate(-1)
       return
     }

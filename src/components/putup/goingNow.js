@@ -785,10 +785,12 @@ export function segmentOrigin(view, { onScreen = true } = {}) {
   const label = onScreen ? segmentLabel(view) : null
   return label ? { label } : null
 }
-// The segment an entry's origin names, or null. The segment is the page's own state, not part of the URL:
-// a page that MOUNTS on a mode entry (a reload, a PWA restored from a discard, a return from another
-// route) has lost it, and the list entry under the mode would show whatever a fresh page defaults to —
-// "← Recipes" landing on the Pantry. So the page starts out holding the segment its entry names.
+// The segment an entry's origin names, or null. Which segment the list shows is the page's own state, not
+// part of the URL, and it can have moved since the door was opened: a page that MOUNTED on the mode entry
+// (a reload, a PWA restored from a discard, a return from another route) holds what a fresh page defaults
+// to, and the bare-open default is decided on the first list answer, whenever that comes. A pop onto the
+// list would then show that segment under a Back that read "← Recipes". So a pop to a segment SELECTS it
+// (the page asks this at the press), and the words stay true however the page came to be holding another.
 // Only a segment's own label with NO kind: a recipe or a batch that happens to be called "Pantry" is a
 // sender like any other.
 export function originSegment(state) {
