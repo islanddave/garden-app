@@ -102,7 +102,8 @@ const ITEM_AMOUNT_MAX_HUNDREDTHS = 9999999999n;
 
 // A positive number in hundredths, rounded half up ON ITS DECIMAL TEXT — the rounding numeric(10,2) gives the
 // text the driver sends, and the one the door's own parseAmount does (2.345 is 2.35; binary arithmetic says
-// 2.34). null when the text is not plain digits: an exponent form, which is below 0.000001 or 1e21 and up.
+// 2.34). null when the text is not plain digits: a negative, or an exponent form (below 0.000001, or 1e21
+// and up).
 function hundredthsOf(value) {
   const m = /^(\d+)(?:\.(\d+))?$/.exec(String(value));
   if (!m) return null;
@@ -120,8 +121,8 @@ export function amountOf(body) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return { error: 'the amount must be a number' };
   const tooSmall = { error: 'the amount must be above 0' };
   const tooBig = { error: `the amount can be at most ${ITEM_AMOUNT_MAX}` };
-  if (value <= 0) return tooSmall;
   const h = hundredthsOf(value);
+  // No plain-digit text: a negative, or an exponent form (below 0.000001, or 1e21 and up).
   if (h == null) return value < 1 ? tooSmall : tooBig;
   if (h < 1n) return tooSmall;
   if (h > ITEM_AMOUNT_MAX_HUNDREDTHS) return tooBig;
