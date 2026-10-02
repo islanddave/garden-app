@@ -146,7 +146,7 @@ describe('setup: one place and one date for the sitting (required 2, nothing pre
   it('offers any place — the household\'s own, then a template for a kind it has none of — and Not sure', async () => {
     renderWalk()
     const places = within(await screen.findByRole('radiogroup', { name: 'Which place are you at?' })).getAllByRole('radio')
-    expect(places.map(r => r.textContent)).toEqual(['Chest Freezer 1', 'Chest Freezer 2', 'Kitchen fridge', 'Pantry shelf', 'Counter'])
+    expect(places.map(r => r.textContent)).toEqual(['Chest Freezer 1', 'Chest Freezer 2', 'Kitchen fridge', 'Fridge freezer', 'Pantry shelf', 'Counter'])
     const whens = within(screen.getByRole('radiogroup', { name: 'Roughly when did it go in?' })).getAllByRole('radio').map(r => r.textContent)
     expect(whens[0]).toBe('This month')
     expect(whens.at(-1)).toBe('Not sure')

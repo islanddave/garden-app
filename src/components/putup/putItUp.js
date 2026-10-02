@@ -188,8 +188,8 @@ export function containerChoices(pastLabels = []) {
 
 // ── Places (Appendix B) ──────────────────────────────────────────────────────────────────────────
 export const PLACE_TEMPLATES = Object.freeze([
-  { label: 'Fridge', kind: 'fridge' }, { label: 'Freezer', kind: 'deep_freezer' },
-  { label: 'Pantry shelf', kind: 'pantry' }, { label: 'Counter', kind: 'other' },
+  { label: 'Fridge', kind: 'fridge' }, { label: 'Fridge freezer', kind: 'fridge_freezer' },
+  { label: 'Deep freezer', kind: 'deep_freezer' }, { label: 'Pantry shelf', kind: 'pantry' }, { label: 'Counter', kind: 'other' },
 ])
 // The household's own places by label, then a template only for a kind with no place yet. A chip is
 // `{ key, label, kind, id? }`; a template chip has no id and is created server-side by find-or-create.

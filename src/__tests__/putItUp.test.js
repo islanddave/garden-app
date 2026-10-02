@@ -105,7 +105,7 @@ describe('What it is now — method chips by kind (Appendix B)', () => {
 describe('places and rows', () => {
   it('lists own places by label, then a template only for a kind with no place', () => {
     const chips = placeChips([{ id: 'b', label: 'Meat deep freezer', kind: 'deep_freezer' }, { id: 'a', label: 'Chest Freezer 1', kind: 'deep_freezer' }])
-    expect(chips.map(c => c.label)).toEqual(['Chest Freezer 1', 'Meat deep freezer', 'Fridge', 'Pantry shelf', 'Counter'])
+    expect(chips.map(c => c.label)).toEqual(['Chest Freezer 1', 'Meat deep freezer', 'Fridge', 'Fridge freezer', 'Pantry shelf', 'Counter'])
     expect(chips[2]).toEqual({ key: 'new:fridge:fridge', id: null, label: 'Fridge', kind: 'fridge' })
   })
 
