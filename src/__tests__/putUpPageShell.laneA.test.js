@@ -4,11 +4,16 @@
 // MUTATIONS (run for this file):
 //   · leavesByPop ignores the index            -> "an origin alone is not enough" reds
 //   · backWords returns the origin regardless  -> "names the segment when the press will not pop" reds
+// Lane A2:
+//   · segmentOrigin ignores `onScreen`          -> "is null when no segment is on screen" reds
+//   · originSegment ignores the origin's kind   -> "a recipe or a batch that is CALLED a segment's name" reds
+//   · popLanding hops over a live marker        -> "a pop started over a sheet's live marker keeps its latch" reds
 // CI lane: `npm test` plus the TZ re-run. Nothing here reads a clock.
 import { describe, it, expect } from 'vitest'
 import {
   START_BATCH_CTA, TRY_AGAIN_CTA, PUT_UP_SEGMENTS, RECIPES_SEGMENT, leaveSegment, segmentLabel, leavesByPop,
-  backWords, recipeSearchItems, leavePlan, POP_LANDS_WITHIN_MS,
+  backWords, recipeSearchItems, leavePlan, POP_LANDS_WITHIN_MS, segmentOrigin, originSegment,
+  popLanding,
 } from '../components/putup/goingNow.js'
 import { backLabel, withFrom } from '../components/putup/origin.js'
 
@@ -48,6 +53,57 @@ describe('where a push-leave lands', () => {
       expect(leaveSegment(s.value)).toBe(s.value)
       expect(leaveSegment(s.value, { recipe: false })).toBe(s.value)
       expect(leaveSegment(s.value, { recipe: true })).toBe('recipes')
+    }
+  })
+})
+
+// Lane A2: a door that hands the page no origin is opened from the segment on screen.
+describe('segmentOrigin — the origin a sender did not name', () => {
+  it('is the segment\'s own label, and nothing else rides on it', () => {
+    for (const s of PUT_UP_SEGMENTS) {
+      expect(segmentOrigin(s.value)).toEqual({ label: s.label })
+      expect(segmentOrigin(s.value, { onScreen: true })).toEqual({ label: s.label })
+    }
+  })
+
+  it('is null when no segment is on screen (search results, or a mode), and for a value no segment carries', () => {
+    for (const s of PUT_UP_SEGMENTS) expect(segmentOrigin(s.value, { onScreen: false })).toBeNull()
+    for (const v of ['stores', '', null, undefined, 0]) expect(segmentOrigin(v)).toBeNull()
+  })
+
+  // The Back's words on these doors must not change by a letter: the pop reads the origin's label, the push
+  // read the segment's, and they are one string.
+  it('reads back through origin.js as an origin that pops, in the words the push used', () => {
+    for (const s of PUT_UP_SEGMENTS) {
+      const state = withFrom({ background: { pathname: '/today' } }, segmentOrigin(s.value))
+      expect(state).toEqual({ background: { pathname: '/today' }, from: { label: s.label } })
+      expect(leavesByPop(state, 1)).toBe(true)
+      expect(backWords(state, 1, 'not this')).toEqual({ name: s.label, suffix: '' })
+      expect(backWords(state, 1, 'not this')).toEqual(backWords(null, 1, segmentLabel(s.value)))
+    }
+  })
+})
+
+describe('originSegment — the segment a pop lands on, when the origin is one', () => {
+  it('reads back exactly what segmentOrigin wrote, whatever else rides on the state', () => {
+    for (const s of PUT_UP_SEGMENTS) {
+      expect(originSegment(withFrom(null, segmentOrigin(s.value)))).toBe(s.value)
+      expect(originSegment(withFrom({ background: { pathname: '/today' } }, { label: `  ${s.label} ` }))).toBe(s.value)
+    }
+  })
+
+  it('a recipe or a batch that is CALLED a segment\'s name is a sender, not a segment', () => {
+    expect(originSegment({ from: { label: 'Recipes', kind: 'recipe', id: 'rc-9' } })).toBeNull()
+    expect(originSegment({ from: { label: 'Pantry', kind: 'batch', id: 'kb-9' } })).toBeNull()
+    // Green control: the same label with no kind is the segment.
+    expect(originSegment({ from: { label: 'Pantry' } })).toBe('pantry')
+  })
+
+  it('is null for every other sender, and for a state that names no origin at all', () => {
+    for (const [from] of ORIGINS.filter(([f]) => f.label !== 'Pantry')) expect(originSegment(withFrom(null, from))).toBeNull()
+    for (const state of [null, undefined, {}, { from: null }, { from: 'Recipes' }, { from: { label: 'recipes' } },
+      { from: { label: 'going' } }, { background: { pathname: '/today' } }]) {
+      expect({ state: JSON.stringify(state), seg: originSegment(state) }).toEqual({ state: JSON.stringify(state), seg: null })
     }
   })
 })
@@ -109,6 +165,35 @@ describe('leavePlan — what ONE press of the Back does', () => {
 
   it('a wait is only ever about a pop: with nothing to pop to, a recent "started" still pushes', () => {
     expect(press({ historyIndex: 0, started: { key: 'k-batch', at: 10_000 } })).toBe('push')
+  })
+})
+
+// Lane A2: the landing settles the latch, because the router's key does not always change.
+describe('popLanding — what the page does when a traversal lands', () => {
+  const started = { key: 'k-batch', at: 10_000 }
+
+  it('a landing on another entry is the press having worked: the latch is cleared', () => {
+    expect(popLanding({ started, landedKey: 'k-list' })).toBe('clear')
+    expect(popLanding({ started: { ...started, hopped: true }, landedKey: 'k-list' })).toBe('clear')
+    expect(popLanding({ started: { ...started, overMarker: true }, landedKey: 'k-list' })).toBe('clear')
+  })
+
+  it('a landing on the key the pop STARTED from is the twin a restore leaves: hop, once', () => {
+    expect(popLanding({ started, landedKey: 'k-batch' })).toBe('hop')
+    expect(popLanding({ started: { ...started, overMarker: false, hopped: false }, landedKey: 'k-batch' })).toBe('hop')
+    // Bounded: the hop is spent, so a third identical entry clears the latch and waits for a press.
+    expect(popLanding({ started: { ...started, hopped: true }, landedKey: 'k-batch' })).toBe('clear')
+  })
+
+  it('a pop started over a sheet\'s live marker keeps its latch: that landing is by design, and it is never hopped', () => {
+    expect(popLanding({ started: { ...started, overMarker: true }, landedKey: 'k-batch' })).toBe('keep')
+    expect(popLanding({ started: { ...started, overMarker: true, hopped: true }, landedKey: 'k-batch' })).toBe('keep')
+  })
+
+  it('with no pop of the page\'s under way there is nothing to settle, and an entry with no key is nobody\'s twin', () => {
+    for (const landedKey of ['k-batch', 'k-list', undefined, null]) expect(popLanding({ started: null, landedKey })).toBe('clear')
+    for (const landedKey of [undefined, null, '', 7]) expect(popLanding({ started, landedKey })).toBe('clear')
+    expect(popLanding({ started: { key: undefined, at: 1 }, landedKey: undefined })).toBe('clear')
   })
 })
 

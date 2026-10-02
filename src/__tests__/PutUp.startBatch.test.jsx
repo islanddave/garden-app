@@ -145,6 +145,9 @@ describe('Start a batch — the shared sheet, opened from Going now', () => {
     expect(await screen.findByTestId('going-now-view')).toBeTruthy()
   })
 
+  // ⚠ AMENDED by lane A2, in the same commit as the change: the pushed state was `{ background }` alone. A
+  // batch just started names no origin, so the page names the segment it was started on; the background
+  // still rides along, which is what this test is for.
   it('an overlay keeps its background through the open', async () => {
     const background = { pathname: '/today', search: '', hash: '', key: 'bg' }
     renderPage(makeSheet(), { pathname: '/put-up', state: { background } })
@@ -152,7 +155,7 @@ describe('Start a batch — the shared sheet, opened from Going now', () => {
     fireEvent.click(screen.getByTestId('start-a-batch'))
     fireEvent.click(screen.getByRole('button', { name: 'Start it' }))
     await waitFor(() => expect(probeLoc()).toBe('/put-up?batch=kb-new'))
-    expect(JSON.parse(screen.getByTestId('probe-state').textContent)).toEqual({ background })
+    expect(JSON.parse(screen.getByTestId('probe-state').textContent)).toEqual({ background, from: { label: 'Going now' } })
   })
 
   it('closing the sheet leaves the page exactly where it was', async () => {

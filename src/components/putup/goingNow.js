@@ -772,6 +772,33 @@ export function segmentLabel(value) {
   return PUT_UP_SEGMENTS.find(s => s.value === value)?.label ?? null
 }
 
+// THE ORIGIN A SENDER DID NOT NAME: the segment on screen. A Going-now card, the door to the closed list, a
+// Recipes row and a batch just started hand the page no origin, and the entry under their push IS that
+// segment — so the page names it, `{ label: <the segment's own label> }`, and the mode's Back pops to it
+// like any other sender's. Left unnamed, each of them was left by a PUSH, and the system's Back after
+// "← Going now" walked back INTO the batch just left (two entries a visit, on the most-used doors).
+// The Back's words do not change by a letter: a pop reads the origin's label, a push the segment's, and
+// they are the same string.
+// null when NO segment is on screen: over the page search's results (the entry under a hit is the results,
+// not a segment) and inside a mode (the entry under it is that mode). Those doors push, as they always did.
+export function segmentOrigin(view, { onScreen = true } = {}) {
+  const label = onScreen ? segmentLabel(view) : null
+  return label ? { label } : null
+}
+// The segment an entry's origin names, or null. Which segment the list shows is the page's own state, not
+// part of the URL, and it can have moved since the door was opened: a page that MOUNTED on the mode entry
+// (a reload, a PWA restored from a discard, a return from another route) holds what a fresh page defaults
+// to, and the bare-open default is decided on the first list answer, whenever that comes. A pop onto the
+// list would then show that segment under a Back that read "← Recipes". So a pop to a segment SELECTS it
+// (the page asks this at the press), and the words stay true however the page came to be holding another.
+// Only a segment's own label with NO kind: a recipe or a batch that happens to be called "Pantry" is a
+// sender like any other.
+export function originSegment(state) {
+  const from = readFrom(state)
+  if (!from || from.kind) return null
+  return PUT_UP_SEGMENTS.find(s => s.label === from.label)?.value ?? null
+}
+
 // POP, OR PUSH. A mode's in-page Back pops ONLY when the entry names where it was opened from AND the
 // router's own history index says an app entry sits under it. Either alone is not enough: an entry with
 // no origin has nowhere it promised to return to, and an origin can outlive what was under it
@@ -796,11 +823,38 @@ export const POP_LANDS_WITHIN_MS = 1500
 //   push — everything else, including a pop that was started from this entry and never landed: the Back
 //          is never a press that does nothing for good.
 // `entryKey` is the router's key for the entry being left; `started` is `{ key, at }`, the entry the last
-// pop was started from and when (the page clears it whenever the location changes).
+// pop was started from and when (the page clears it when a traversal lands — see popLanding — and whenever
+// the location changes).
 export function leavePlan({ state, historyIndex, entryKey, started = null, nowMs }) {
   if (!leavesByPop(state, historyIndex)) return 'push'
   if (!started || started.key !== entryKey) return 'pop'
   return nowMs - started.at < POP_LANDS_WITHIN_MS ? 'wait' : 'push'
+}
+
+// WHEN A TRAVERSAL LANDS (a popstate), with a pop of the page's own under way: 'hop' | 'clear' | 'keep'.
+// The page's latch (`started`, see leavePlan) used to be dropped only when the router's location key
+// changed. A sheet's Back marker is pushed as a COPY of the entry under it — the same router key and index
+// (context/DismissRegistry.jsx `arm`). Reload with a sheet open and boot reconciliation strips the marker
+// off that copy, leaving two identical entries: the Back's pop landed on the twin, nothing on screen moved,
+// the key had not changed so the latch stood, every press for the next 1.5 s was swallowed, and a later
+// one PUSHED while the label still named the origin. So the landing itself settles the latch:
+//   clear — the pop landed on another entry (the sender: the press worked), or there was no pop of the
+//           page's to settle, or the one hop below has been spent. The next press is a fresh one.
+//   hop   — it landed on an entry with the key it STARTED from: the twin. Go one entry further, ONCE; the
+//           page marks the latch `hopped`, so a third identical entry (two restores) costs a second press,
+//           never a walk of unknown length.
+//   keep  — it landed on its own key, but it was started while a sheet's marker WAS the current entry
+//           (`started.overMarker`): that is the entry under the marker, where such a pop lands by design,
+//           and the closing sheet's own disarm may have a second traversal queued behind it — a hop would
+//           walk past the sender, and a cleared latch would let a second press do the same. The latch
+//           stands, as it did before, until the location changes or it runs out.
+// `started` is `{ key, at, hopped?, overMarker? }`; `landedKey` is history.state.key as the popstate
+// finds it. The same key means the same URL, so the page is still in the mode it pressed Back in.
+export function popLanding({ started, landedKey }) {
+  if (!started) return 'clear'
+  if (typeof landedKey !== 'string' || landedKey === '' || landedKey !== started.key) return 'clear'
+  if (started.overMarker) return 'keep'
+  return started.hopped ? 'clear' : 'hop'
 }
 
 // The words after the Back's arrow, in two parts so the name can shorten on one line while the kind
