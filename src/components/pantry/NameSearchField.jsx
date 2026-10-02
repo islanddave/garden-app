@@ -308,7 +308,7 @@ export default function NameSearchField({
 
   const tied = picked
     ? tiedWords(value.source, tie?.key === key ? tie.label : text)
-    : (value?.crop_type_slug && resolved?.slug === value.crop_type_slug && resolved.q === text.trim() ? tiedWords('crop', resolved.label) : null)
+    : (value?.crop_type_slug && resolved?.slug === value.crop_type_slug ? tiedWords('crop', resolved.label) : null)
   const tieLine = tied && (
     <span id={tieId} data-testid={`${idPrefix}-tie`} style={{ fontSize: T.type.sm, color: P.mid }}>{tied}</span>
   )
