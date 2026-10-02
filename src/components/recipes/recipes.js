@@ -117,13 +117,26 @@ function putUpCountWords(b) {
   return n === 1 ? '1 put-up' : `${n} put-ups`
 }
 
+// The day a batch began, as shortDay takes it. `started_at` is an INSTANT (Start's "Today" sends
+// now.toISOString(), so 9:30 pm on Oct 1 in New York is stored as 2026-10-02T01:30:00.000Z): its day is the
+// reader's local day, never the instant's first ten characters, which are the UTC day. A date-only value has
+// no instant and is read from its parts — `new Date('2026-10-01')` is UTC midnight, which is Sep 30 west of
+// Greenwich. shortDay reads a Date by its local parts and text by its leading YYYY-MM-DD, so text that is
+// not an instant is handed on as it came.
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+function batchDay(at) {
+  if (at instanceof Date || DATE_ONLY.test(String(at))) return at
+  const d = new Date(String(at))
+  return Number.isNaN(d.getTime()) ? at : d
+}
+
 // A batch made from the recipe, dated, with its ending in plain words at equal weight — never a reading.
 // Returns { when, ending } strings. The ending is batchClose.js's own label with the count after it; the one
 // label the count already says ("Put it up", when put-ups follow) is left out, so the row reads
 // "Mojo Oct · Oct 2 · 6 put-ups" and not an instruction (UX pass R1; the closed list drops it the same way).
 export function madeBatchWords(b, now = new Date()) {
   const at = b?.started_at ?? b?.first_recorded_at ?? null
-  const when = at ? shortDay(at, now) : 'date not recorded'
+  const when = at ? shortDay(batchDay(at), now) : 'date not recorded'
   let ending
   if (b?.closed_at || b?.outcome) {
     const count = putUpCountWords(b)
