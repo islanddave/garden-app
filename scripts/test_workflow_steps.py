@@ -1070,7 +1070,7 @@ def _resolve(tmp_path, **env_extra):
     _, step = _step(*RESOLVE)
     out = tmp_path / "output"
     out.write_text("")
-    env = dict(os.environ, GITHUB_OUTPUT=str(out), GH_SHA=DEV_SHA, GH_REF_NAME="dev", IN_DEV_SHA=DEV_SHA,
+    env = dict(os.environ, GITHUB_OUTPUT=str(out), GH_REF_NAME="dev", IN_DEV_SHA=DEV_SHA,
                IN_SNAP="v1.2.3", IN_REQINT="", IN_REQSCHEMA="")
     env.update(env_extra)
     proc = _run_as_runner(tmp_path, step["run"], env)
@@ -1090,6 +1090,20 @@ def test_resolve_dispatch_defaults_the_schema_gate_on(tmp_path, given, want):
     proc, out = _resolve(tmp_path, EVENT="workflow_dispatch", IN_REQSCHEMA=given)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert out["require_schema_audit"] == want
+
+
+def test_resolve_env_maps_each_variable_to_the_context_the_script_assumes():
+    """_resolve() hands the script its variables directly, so the YAML mapping needs its own pin: EVENT wired to
+    anything but github.event_name would turn the workflow_dispatch-only refusal into a refusal of every promote."""
+    _, step = _step(*RESOLVE)
+    assert step["env"] == {
+        "EVENT": "${{ github.event_name }}",
+        "IN_DEV_SHA": "${{ github.event.inputs.dev_sha }}",
+        "IN_SNAP": "${{ github.event.inputs.snap_version }}",
+        "IN_REQINT": "${{ github.event.inputs.require_integration }}",
+        "IN_REQSCHEMA": "${{ github.event.inputs.require_schema_audit }}",
+        "GH_REF_NAME": "${{ github.ref_name }}",
+    }
 
 
 def test_promote_gate_has_one_trigger_and_it_is_workflow_dispatch():
