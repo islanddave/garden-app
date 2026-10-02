@@ -241,7 +241,7 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
         {panel === 'give' && (
           <CountPanel row={row} busy={busy} idPrefix="give" start="one" question="How many did you give away?"
             label="How many given away" cta="Gave it away" onCancel={closePanel}
-            onConfirm={(n) => use('gave_away', { count_used: n, fate: 'given_away' })} />
+            onConfirm={(n, _all, key) => use('gave_away', { count_used: n, fate: 'given_away' }, { key })} />
         )}
         {panel === 'went-bad' && (
           <CountPanel row={row} busy={busy} idPrefix="went-bad" start="all" question={WENT_BAD_QUESTION}

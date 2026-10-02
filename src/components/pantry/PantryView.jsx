@@ -259,6 +259,11 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
   // A synchronous guard: two taps inside one frame both read `busy` false, and each use carries its own
   // key, so both would land (the shipped RecordRow's usingRef, kept).
   const writingRef = useRef(false)
+  // The key of the use this row is trying to make: minted at the first tap, kept while that use has not
+  // landed (a tap after a lost answer is then the server's replay, not a second use), dropped when it lands
+  // so the next use carries its own. It belongs to ONE action: the server answers a key it has seen with
+  // the use it wrote, so "Used it up" sent under a Used one's key would be answered with the Used one.
+  const useKeyRef = useRef(null)
   const [err, setErr] = useState(null)
   const key = rowKey(row)
   const action = inlineAction(row)
@@ -275,9 +280,11 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
         await patchPantryItem(fetch, row.stock_id, { used_up_at: 'now' })
         onRecord({ row, action: USED_UP, use: null, jar: null })
       } else {
+        if (useKeyRef.current?.action !== action) useKeyRef.current = { action, key: mintKey() }
         const r = await useJar(fetch, action === USED_ONE
-          ? { preservation_log_id: row.stock_id, count_used: 1 }
-          : { preservation_log_id: row.stock_id, all_remaining: true })
+          ? { preservation_log_id: row.stock_id, count_used: 1, idempotency_key: useKeyRef.current.key }
+          : { preservation_log_id: row.stock_id, all_remaining: true, idempotency_key: useKeyRef.current.key })
+        useKeyRef.current = null
         onRecord({ row, action, use: r?.use ?? null, jar: r?.jar ?? null })
       }
     } catch (e) {
