@@ -10,6 +10,13 @@ name: snap rehearsal (staging)
 # afterward. SNAP_BRANCH_PREFIX keeps rehearsal branches namespace-separate from production
 # snap-* branches; snap.py's pruner additionally scopes candidates to children of
 # NEON_PROD_BRANCH_ID (here: staging), so a rehearsal prune can never touch prod snapshots.
+#
+# AUTH (rewired 2026-10-02): GitHub calls run as the garden-bot App, minted per run exactly as
+# promote-gate.yml mints it. Until then they ran as secrets.RULESET_READ_PAT, a stored copy of a
+# token that no longer exists (see ruleset-watchdog.yml). A fresh PAT would not have revived this
+# either: since 2026-10-02 ruleset release-tag-integrity (20140435) carries `creation` on
+# refs/tags/v* with garden-bot as its only bypass actor, so no user token can create v0.0.0.
+# The same rule lets only garden-bot DELETE that tag, and this workflow does not delete it.
 
 on:
   push:
@@ -25,7 +32,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     env:
-      GH_TOKEN: ${{ secrets.RULESET_READ_PAT }}
       GITHUB_REPOSITORY: ${{ github.repository }}
       MAIN_SHA: "31e8673032bcb142e3accf6ae96fd45bd1830429"
       SNAP_VERSION: v0.0.0
@@ -40,6 +46,13 @@ jobs:
       CF_DIST: E3FAJTXAORQYDT
       APP_VERSION: rehearsal
     steps:
+      - name: Mint garden-bot installation token
+        id: bot
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547  # v1
+        with:
+          app-id: ${{ secrets.GARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.GARDEN_BOT_PRIVATE_KEY }}
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: dev
@@ -47,21 +60,25 @@ jobs:
       # DIAGNOSTICS (2026-09-10). This workflow makes no curl calls of its own --
       # its GitHub API traffic is inside scripts/snap.py, which already reports
       # `{status}: {body}` on every failure. What it lacked was any signal about
-      # the CREDENTIAL itself: GH_TOKEN is secrets.RULESET_READ_PAT, the same
-      # secret whose read failure made revert-rehearsal die with a bare
-      # `KeyError: 'object'` (run 34507891849). A dead or under-scoped token used
-      # to surface ~4 minutes in, after the pg17 fetch, the OIDC assume and pip.
-      # This probe is the same endpoint and the same reporter, in ~1s, up front.
-      # It changes no rehearsal behaviour: a credential that fails here would
-      # have failed the run anyway, just later and less legibly. It deliberately
-      # declares NO env of its own so it always probes the job-level GH_TOKEN --
-      # a step-local copy would keep passing against the old secret if the job's
-      # credential were ever repointed.
+      # the CREDENTIAL itself: a dead secret made revert-rehearsal die with a bare
+      # `KeyError: 'object'` (run 34507891849), and a dead or under-scoped token
+      # here used to surface ~4 minutes in, after the pg17 fetch, the OIDC assume
+      # and pip. This probe is the same endpoint and the same reporter, in ~1s,
+      # up front. It changes no rehearsal behaviour: a credential that fails here
+      # would have failed the run anyway, just later and less legibly.
+      # A step output cannot be read from job-level env, so each step that talks
+      # to GitHub names the token itself. scripts/test_gh_api_check.py holds them
+      # to ONE source (steps.bot.outputs.token): a probe that passed against one
+      # credential while snap.py ran on another would prove nothing.
+      # What this probe does NOT prove: that the token may CREATE refs/tags/v*.
+      # Only the tag create inside snap.py exercises that bypass.
       - name: Preflight - GH_TOKEN can read git refs
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::GH_TOKEN is empty or unset for this job - check the job-level env GH_TOKEN secret. snap.py cannot create the rehearsal tag without it."
+            echo "::error::GH_TOKEN is empty - the garden-bot token mint step produced no token. snap.py cannot create the rehearsal tag without it."
             exit 1
           fi
           API="https://api.github.com/repos/$GITHUB_REPOSITORY"
@@ -108,11 +125,15 @@ jobs:
         run: pip install boto3 requests --quiet
 
       - name: Run snap (staging-pointed)
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/snap.py
 
       - name: Re-run snap (idempotency — must skip all, exit 0)
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/snap.py
