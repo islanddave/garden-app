@@ -25,8 +25,8 @@
 import { MASS_G, normalizeText } from './kitchenBatch.js';
 import { loadPlantings } from './lineRoutes.js';
 import {
-  isUuid, validateItemCreate, validateItemPatch, acquiredOf, projectItem, jarRow, itemRow, sortPantryRows,
-  matchesQuery, PANTRY_GROUPS,
+  isUuid, validateItemCreate, validateItemPatch, acquiredOf, amountOf, sourceOf, projectItem, jarRow, itemRow,
+  sortPantryRows, matchesQuery, PANTRY_GROUPS, PLANTING_SOURCE_REFUSAL,
 } from './pantryItems.js';
 
 const MASS_UNITS = Object.keys(MASS_G);
@@ -93,7 +93,8 @@ export async function loadPlace(sql, id, householdIds) {
 // live and not used up. The discard-by status is classified here, from the STORED date and basis
 // (pantryItems.js discardOf); from_garden for a put-up is F §2.7's jar rule (its source is our garden, or
 // any of its live preservation_source rows is) — plus a planting link, which chk_preservation_log_source_plant
-// already ties to our garden.
+// already ties to our garden. Both arms read quantity_value, quantity_unit, source_kind and source_label, so
+// both row kinds carry those four AS STORED (R2a: an item's Edit panel is seeded from its list row).
 export async function listPantry(sql, query, householdIds, now) {
   const group = PANTRY_GROUPS.includes(query.group) ? query.group : 'place';
   const placeId = normalizeText(query.place_id);
@@ -102,7 +103,7 @@ export async function listPantry(sql, query, householdIds, now) {
     SELECT p.id, p.user_id, p.label, p.method, p.method_other_text, p.crop_type_slug, p.plant_id, p.batch_id,
            p.package_count, p.remaining_count, p.remaining_amount, p.quantity_value, p.quantity_unit,
            p.preserved_at, p.preserved_at_precision, p.use_by_target, p.use_by_basis, p.storage_location_id,
-           p.source_label, p.notes, p.updated_at,
+           p.source_kind, p.source_label, p.notes, p.updated_at,
            s.label AS place_label, s.kind AS place_kind, ct.display_name AS crop_display_name,
            cv.display_name AS variety_name, gn.display_name AS planting_name, gn.sown_at AS planting_sown_at,
            gn.succession_order AS planting_succession_order,
@@ -126,6 +127,7 @@ export async function listPantry(sql, query, householdIds, now) {
   const items = await sql`
     SELECT i.id, i.user_id, i.name, i.storage_location_id, i.acquired_at, i.acquired_precision, i.use_by_target,
            i.plant_id, i.crop_type_slug, i.notes, i.updated_at,
+           i.quantity_value, i.quantity_unit, i.source_kind, i.source_label,
            s.label AS place_label, s.kind AS place_kind, ct.display_name AS crop_display_name,
            gn.display_name AS planting_name, gn.sown_at AS planting_sown_at,
            gn.succession_order AS planting_succession_order
@@ -147,11 +149,25 @@ export async function listPantry(sql, query, householdIds, now) {
 // ONE statement: the place found or made (by {kind, label}, the put-up route's find-or-create, trimmed and
 // case-insensitive over the household) and the item. A 23505 on uq_pantry_item_idempotency_key (only that
 // one) is a replay; a key held outside the household is 409 with no payload. Never ON CONFLICT on the item.
-const ITEM_CONSTRAINT_MESSAGES = {
+//
+// EVERY CHECK ON pantry_item HAS WORDS HERE (R2a adds the nine of migrations/v5-pantryitemamount-001): a
+// 23514 with no row below is rethrown and reaches the person as a 500. The validators pre-empt all but one —
+// chk_pantry_item_source_plant, which reads the STORED plant_id that a PATCH body cannot carry, so on a PATCH
+// the database decides it and this map answers. These are user copy: a cached bundle prints them verbatim.
+export const ITEM_CONSTRAINT_MESSAGES = {
   chk_pantry_item_name_nonblank: 'Name what it is (at most 120 characters).',
   chk_pantry_item_acquired_precision: 'That is not a date precision this app knows.',
   chk_pantry_item_acquired_pairing: 'A date needs how sure you are of it, and "not sure" has no date.',
   pantry_item_crop_type_slug_fkey: 'That crop is not one this app knows.',
+  chk_pantry_item_quantity_pairing: 'An amount is a number and a unit together. Give both, or clear both.',
+  chk_pantry_item_quantity_value: 'The amount must be a number above 0.',
+  chk_pantry_item_quantity_unit: 'That is not a unit this app knows.',
+  chk_pantry_item_source_kind: 'That is not a source this app knows.',
+  chk_pantry_item_source_label_nonblank: 'A source name cannot be blank.',
+  chk_pantry_item_source_label_len: 'A source name can be at most 120 characters.',
+  chk_pantry_item_source_label_kind: 'A source name needs a source. Say where it came from.',
+  chk_pantry_item_source_other: 'Name where it came from.',
+  chk_pantry_item_source_plant: PLANTING_SOURCE_REFUSAL,
 };
 function itemError(err) {
   if (err?.code !== '23514' && err?.code !== '23503') return null;
@@ -177,6 +193,10 @@ export async function createItem(sql, body, userId, householdIds) {
     crop = crop ?? planting.crop_type_slug ?? null;
   }
   const acq = acquiredOf(body);
+  // The amount as logged and where it came from (validated above): a body without them binds NULL for all
+  // four, which is the row the pre-R2a writer made.
+  const amt = amountOf(body);
+  const src = sourceOf(body, body.plant_id ?? null);
   const newKind = place ? null : body.place.kind;
   const newLabel = place ? null : normalizeText(body.place.label);
   let rows;
@@ -204,14 +224,17 @@ export async function createItem(sql, body, userId, householdIds) {
       ), ins AS (
         INSERT INTO pantry_item (
           user_id, name, storage_location_id, acquired_at, acquired_precision, use_by_target, plant_id,
-          crop_type_slug, notes, idempotency_key
+          crop_type_slug, notes, quantity_value, quantity_unit, source_kind, source_label, idempotency_key
         )
         SELECT ${userId}::text, ${body.name.trim()}::text, (SELECT id FROM place LIMIT 1),
                ${acq.acquired_at}::date, ${acq.acquired_precision}::text, ${body.use_by_target ?? null}::date,
                ${body.plant_id ?? null}::uuid, ${crop}::text, ${normalizeText(body.notes)}::text,
+               ${amt.quantity_value}::numeric, ${amt.quantity_unit}::text,
+               ${src.source_kind}::text, ${src.source_label}::text,
                ${body.idempotency_key}::uuid
         RETURNING id, user_id, name, storage_location_id, acquired_at, acquired_precision, use_by_target,
-                  plant_id, crop_type_slug, used_up_at, notes, created_at, updated_at, deleted_at
+                  plant_id, crop_type_slug, quantity_value, quantity_unit, source_kind, source_label,
+                  used_up_at, notes, created_at, updated_at, deleted_at
       )
       SELECT ins.*, place.label AS place_label, place.kind AS place_kind
       FROM ins LEFT JOIN place ON place.id = ins.storage_location_id
@@ -230,7 +253,8 @@ export async function createItem(sql, body, userId, householdIds) {
 async function replayItem(sql, key, householdIds) {
   const prior = await sql`
     SELECT i.id, i.user_id, i.name, i.storage_location_id, i.acquired_at, i.acquired_precision,
-           i.use_by_target, i.plant_id, i.crop_type_slug, i.used_up_at, i.notes, i.created_at, i.updated_at,
+           i.use_by_target, i.plant_id, i.crop_type_slug, i.quantity_value, i.quantity_unit, i.source_kind,
+           i.source_label, i.used_up_at, i.notes, i.created_at, i.updated_at,
            i.deleted_at, s.label AS place_label, s.kind AS place_kind
     FROM pantry_item i
     LEFT JOIN storage_location s ON s.id = i.storage_location_id
@@ -245,16 +269,23 @@ async function replayItem(sql, key, householdIds) {
 // Presence-sentinel over ITEM_PATCH_KEYS: an absent key is unchanged. used_up_at "now" stamps it (keeping
 // an earlier stamp — a retried tap is a no-op) and null clears it (Undo). A move is storage_location_id
 // (household-loaded). Works on a used-up item (that is how Undo reaches it); a removed one is 404.
+// The amount pair and the source pair each travel together (the validator refuses one alone), so ONE flag
+// writes both columns of a pair: null, null clears the amount, or un-chooses the source. A source that is
+// not our garden on an item tied to a planting is refused by chk_pantry_item_source_plant in the UPDATE
+// itself — the stored plant_id is the database's to read — and answered in words (itemError).
 export async function patchItem(sql, itemId, body, householdIds) {
   if (!isUuid(itemId)) return notFound;
   const verr = validateItemPatch(body);
   if (verr) return bad(verr);
-  const p = Object.fromEntries(['name', 'storage_location_id', 'acquired_at', 'use_by_target', 'notes', 'used_up_at']
-    .map((k) => [k, has(body, k)]));
+  const p = Object.fromEntries([
+    'name', 'storage_location_id', 'acquired_at', 'use_by_target', 'notes', 'used_up_at', 'quantity_value', 'source_kind',
+  ].map((k) => [k, has(body, k)]));
   if (p.storage_location_id && !(await loadPlace(sql, body.storage_location_id, householdIds))) {
     return bad('storage_location_id does not match a place you can use');
   }
   const acq = p.acquired_at ? acquiredOf(body) : { acquired_at: null, acquired_precision: null };
+  const amt = p.quantity_value ? amountOf(body) : { quantity_value: null, quantity_unit: null };
+  const src = p.source_kind ? sourceOf(body) : { source_kind: null, source_label: null };
   let rows;
   try {
     rows = await sql`
@@ -267,6 +298,10 @@ export async function patchItem(sql, itemId, body, householdIds) {
           acquired_precision  = CASE WHEN ${p.acquired_at}::boolean THEN ${acq.acquired_precision}::text ELSE acquired_precision END,
           use_by_target       = CASE WHEN ${p.use_by_target}::boolean THEN ${body.use_by_target ?? null}::date ELSE use_by_target END,
           notes               = CASE WHEN ${p.notes}::boolean THEN ${normalizeText(body.notes)}::text ELSE notes END,
+          quantity_value      = CASE WHEN ${p.quantity_value}::boolean THEN ${amt.quantity_value}::numeric ELSE quantity_value END,
+          quantity_unit       = CASE WHEN ${p.quantity_value}::boolean THEN ${amt.quantity_unit}::text ELSE quantity_unit END,
+          source_kind         = CASE WHEN ${p.source_kind}::boolean THEN ${src.source_kind}::text ELSE source_kind END,
+          source_label        = CASE WHEN ${p.source_kind}::boolean THEN ${src.source_label}::text ELSE source_label END,
           used_up_at          = CASE WHEN NOT ${p.used_up_at}::boolean THEN used_up_at
                                      WHEN ${body.used_up_at === 'now'}::boolean THEN COALESCE(used_up_at, now())
                                      ELSE NULL END
@@ -274,7 +309,8 @@ export async function patchItem(sql, itemId, body, householdIds) {
           AND user_id = ANY(${householdIds})
           AND deleted_at IS NULL
         RETURNING id, user_id, name, storage_location_id, acquired_at, acquired_precision, use_by_target,
-                  plant_id, crop_type_slug, used_up_at, notes, created_at, updated_at, deleted_at
+                  plant_id, crop_type_slug, quantity_value, quantity_unit, source_kind, source_label,
+                  used_up_at, notes, created_at, updated_at, deleted_at
       )
       SELECT upd.*, s.label AS place_label, s.kind AS place_kind
       FROM upd LEFT JOIN storage_location s ON s.id = upd.storage_location_id

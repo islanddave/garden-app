@@ -6,12 +6,17 @@
 // (tests/integration/pantry-*.int.test.js).
 import { describe, it, expect } from 'vitest';
 import {
-  parsePantryRoute, handlePantryRoute, removeJar,
+  parsePantryRoute, handlePantryRoute, removeJar, ITEM_CONSTRAINT_MESSAGES,
 } from './pantryRoutes.js';
 import {
   validateItemCreate, validateItemPatch, acquiredOf, jarRow, itemRow, sortPantryRows, discardOf, matchesQuery,
-  loadPantryItems,
+  loadPantryItems, amountOf, sourceOf, projectItem, ITEM_CREATE_KEYS, ITEM_PATCH_KEYS, ITEM_SOURCE_WORDS,
+  ITEM_AMOUNT_MAX, PLANTING_SOURCE_REFUSAL,
 } from './pantryItems.js';
+import { KITCHEN_UNITS } from './kitchenBatch.js';
+import { JAR_UNITS } from './jarRules.js';
+import { VALID_SOURCE_KINDS } from './provenance.js';
+import { PUTUP_SOURCE_LABELS } from '../../src/lib/dropdownRegistry.js';
 import { handlePantryUses, validateUse } from './pantryUses.js';
 import { handleKitchenRoute } from './kitchenRoutes.js';
 import { lineError } from './kitchenLines.js';
@@ -66,7 +71,7 @@ const jarDb = (over = {}) => ({
   crop_type_slug: 'pepper', plant_id: PLANT, batch_id: BATCH, package_count: 4, remaining_count: 3,
   remaining_amount: null, quantity_value: '32', quantity_unit: 'fl oz', preserved_at: '2026-10-08',
   preserved_at_precision: 'day', use_by_target: '2027-04-08', use_by_basis: 'table', storage_location_id: PLACE,
-  source_label: null, notes: null, updated_at: '2026-10-08T20:00:00.000Z', place_label: 'Kitchen fridge',
+  source_kind: null, source_label: null, notes: null, updated_at: '2026-10-08T20:00:00.000Z', place_label: 'Kitchen fridge',
   place_kind: 'fridge', crop_display_name: 'Pepper', variety_name: 'Megatron', planting_name: 'Megatron jalapeño',
   planting_sown_at: null, planting_succession_order: null, from_garden: true, ...over,
 });
@@ -75,13 +80,14 @@ const bagDb = (over = {}) => jarDb({
   plant_id: null, batch_id: null, package_count: 1, remaining_count: null, remaining_amount: '312.5',
   quantity_value: '1', quantity_unit: 'lb', preserved_at: '2026-09-01', preserved_at_precision: 'month',
   use_by_target: '2027-09-01', use_by_basis: 'table', storage_location_id: '99999999-aaaa-4bbb-8ccc-0000000000f0',
-  source_label: 'Harris farm stand', place_label: 'Deep freezer', place_kind: 'deep_freezer', variety_name: null,
+  source_kind: 'farm_stand', source_label: 'Harris farm stand', place_label: 'Deep freezer', place_kind: 'deep_freezer', variety_name: null,
   planting_name: null, from_garden: false, ...over,
 });
 const itemDb = (over = {}) => ({
   id: ITEM, user_id: JEN, name: 'Arborio rice', storage_location_id: '99999999-aaaa-4bbb-8ccc-0000000000e0',
   acquired_at: '2026-10-03', acquired_precision: 'day', use_by_target: null, plant_id: null, crop_type_slug: null,
   notes: 'the big bag', updated_at: '2026-10-03T15:00:00.000Z', place_label: 'Pantry shelf', place_kind: 'pantry',
+  quantity_value: null, quantity_unit: null, source_kind: null, source_label: null,
   crop_display_name: null, planting_name: null, planting_sown_at: null, planting_succession_order: null, ...over,
 });
 
@@ -132,6 +138,7 @@ describe('GET /api/pantry', () => {
         place: { id: '99999999-aaaa-4bbb-8ccc-0000000000f0', label: 'Deep freezer', kind: 'deep_freezer' },
         where_from: 'Harris farm stand', from_garden: false, plant_id: null, crop_type_slug: 'pepper', batch_id: null,
         stock_mode: 'weighed', count_left: null, count_made: null, grams_left: 312.5, method: 'roast_freeze',
+        quantity_value: 1, quantity_unit: 'lb', source_kind: 'farm_stand', source_label: 'Harris farm stand',
         discard: { date: '2027-09-01', basis: 'table', status: 'ok' },
         acquired_at: '2026-09-01', acquired_precision: 'month', notes: null, created_by: DAVE,
         updated_at: '2026-10-08T20:00:00.000Z',
@@ -141,6 +148,7 @@ describe('GET /api/pantry', () => {
         place: { id: PLACE, label: 'Kitchen fridge', kind: 'fridge' },
         where_from: 'Megatron jalapeño', from_garden: true, plant_id: PLANT, crop_type_slug: 'pepper', batch_id: BATCH,
         stock_mode: 'counted', count_left: 3, count_made: 4, grams_left: null, method: 'hot_sauce',
+        quantity_value: 32, quantity_unit: 'fl oz', source_kind: null, source_label: null,
         discard: { date: '2027-04-08', basis: 'table', status: 'ok' },
         acquired_at: '2026-10-08', acquired_precision: 'day', notes: null, created_by: DAVE,
         updated_at: '2026-10-08T20:00:00.000Z',
@@ -151,6 +159,7 @@ describe('GET /api/pantry', () => {
         place: { id: '99999999-aaaa-4bbb-8ccc-0000000000e0', label: 'Pantry shelf', kind: 'pantry' },
         where_from: null, from_garden: false, plant_id: null, crop_type_slug: null, batch_id: null,
         stock_mode: 'item', count_left: null, count_made: null, grams_left: null, method: null,
+        quantity_value: null, quantity_unit: null, source_kind: null, source_label: null,
         discard: { date: null, basis: null, status: null },
         acquired_at: '2026-10-03', acquired_precision: 'day', notes: 'the big bag', created_by: JEN,
         updated_at: '2026-10-03T15:00:00.000Z',
@@ -746,6 +755,434 @@ describe('a pantry line on the keyed line POST', () => {
     expect(validatePutUp(sitting)).toMatch(/a bought item goes in What went in, not on a bottling/);
     // The refusal is putUp.js's own: How it was made (unkeyed lines) takes a pantry line (B′ release 3).
     expect(lineError({ input_kind: 'pantry', pantry_item_id: ITEM }, { keyed: false })).toBeNull();
+  });
+});
+
+// ── R2a (V5-PUTUPLOGRETIRE-001, contract 5) — an item's amount and where-from ────────────────────────
+// The create, the replay row, the PATCH and the list row carry quantity_value (a JSON number or null),
+// quantity_unit, source_kind and source_label AS STORED. Six hand-written column lists and two projections
+// each have a test below that names them, because an allowlist catches a misspelt key and nothing else
+// catches a key that is allowed and never written, or never returned.
+const FOUR = ['quantity_value', 'quantity_unit', 'source_kind', 'source_label'];
+const BANNED = /\b(safe|shelf life|shelf-stable|keeps|good|ready|done|expired|table|default|basis)\b/i;
+const splitTop = (s) => {
+  const out = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of s) {
+    if (ch === '(') depth += 1;
+    if (ch === ')') depth -= 1;
+    if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+};
+// The create INSERT read BY COLUMN: the column list is the first parenthesis after INSERT INTO pantry_item,
+// the values are the SELECT's top-level expressions up to RETURNING, and each expression holding a `?`
+// takes the next bound value. storage_location_id is a sub-select and binds nothing.
+function insertByColumn(c) {
+  const head = 'INSERT INTO pantry_item (';
+  const open = c.norm.indexOf(head) + head.length;
+  expect(open, 'the statement has the item INSERT').toBeGreaterThan(head.length - 1);
+  const close = c.norm.indexOf(')', open);
+  const columns = c.norm.slice(open, close).split(',').map((s) => s.trim());
+  const selAt = c.norm.indexOf('SELECT', close);
+  const retAt = c.norm.indexOf('RETURNING', selAt);
+  const exprs = splitTop(c.norm.slice(selAt + 'SELECT'.length, retAt));
+  expect(exprs).toHaveLength(columns.length);
+  let n = (c.norm.slice(0, selAt).match(/\?/g) ?? []).length;
+  const binds = {};
+  columns.forEach((col, i) => {
+    if (exprs[i].includes('?')) { binds[col] = c.values[n]; n += 1; } else binds[col] = exprs[i];
+  });
+  const returning = c.norm.slice(retAt + 'RETURNING'.length, c.norm.indexOf(')', retAt)).split(',').map((s) => s.trim());
+  return { columns, binds, returning };
+}
+// A RETURNING or SELECT list, as the names it carries (an `i.` or `p.` alias dropped).
+const listed = (norm, from, to) => norm.slice(norm.indexOf(from) + from.length, norm.indexOf(to, norm.indexOf(from)))
+  .split(',').map((s) => s.trim().replace(/^[a-z]+\./, ''));
+
+describe('R2a — the item allowlists', () => {
+  it('ITEM_CREATE_KEYS is the ten it had plus the four; ITEM_PATCH_KEYS the seven it had plus the four', () => {
+    expect([...ITEM_CREATE_KEYS].sort()).toEqual([
+      'acquired_at', 'acquired_precision', 'crop_type_slug', 'idempotency_key', 'name', 'notes', 'place', 'plant_id',
+      'quantity_unit', 'quantity_value', 'source_kind', 'source_label', 'storage_location_id', 'use_by_target',
+    ]);
+    expect([...ITEM_PATCH_KEYS].sort()).toEqual([
+      'acquired_at', 'acquired_precision', 'name', 'notes', 'quantity_unit', 'quantity_value', 'source_kind',
+      'source_label', 'storage_location_id', 'use_by_target', 'used_up_at',
+    ]);
+  });
+
+  it.each(FOUR)('the create takes %s: a body carrying it is not an unknown field', (key) => {
+    expect(ITEM_CREATE_KEYS).toContain(key);
+    const body = { idempotency_key: K1, name: 'Rice', storage_location_id: PLACE, quantity_value: 2, quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco' };
+    expect(validateItemCreate(body)).toBeNull();
+  });
+
+  it.each(FOUR)('the PATCH takes %s: a body carrying it can be changed here', (key) => {
+    expect(ITEM_PATCH_KEYS).toContain(key);
+    expect(validateItemPatch({ quantity_value: 2, quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco' })).toBeNull();
+  });
+
+  it('plant_id is still not a PATCH key: a planting is never changed here', () => {
+    expect(ITEM_PATCH_KEYS).not.toContain('plant_id');
+    expect(validateItemPatch({ plant_id: PLANT })).toMatch(/cannot be changed here: plant_id/);
+  });
+});
+
+describe('R2a — POST /api/pantry/items with an amount and where-from', () => {
+  const placeRow = [{ id: PLACE, label: 'Pantry shelf', kind: 'pantry' }];
+  const plantRow = [{ id: PLANT, display_name: 'Walla Walla', crop_type_slug: 'onion' }];
+  const stored = (over = {}) => [{
+    ...itemDb({ user_id: DAVE, storage_location_id: PLACE, acquired_at: null, acquired_precision: null, notes: null }),
+    used_up_at: null, created_at: 'c', deleted_at: null, ...over,
+  }];
+  // Every option an as-is save can hold. BOUGHT: a typed name at a known place. FRESH: a planting at a new place.
+  const BOUGHT = {
+    idempotency_key: K1, name: '  Arborio rice ', storage_location_id: PLACE, acquired_at: '2026-10-03',
+    acquired_precision: 'day', use_by_target: '2027-03-01', notes: ' the big bag ', crop_type_slug: 'rice',
+    quantity_value: 2.5, quantity_unit: 'lb', source_kind: 'store', source_label: ' Costco ',
+  };
+  const FRESH = {
+    idempotency_key: K2, name: 'Walla Walla, fresh', place: { kind: 'cold_storage', label: 'Cellar' },
+    acquired_precision: 'unknown', plant_id: PLANT, quantity_value: 6, quantity_unit: 'count', source_kind: 'own_garden',
+  };
+
+  it('the two fixtures between them send every create key, and both pass the validator', () => {
+    expect([...new Set([...Object.keys(BOUGHT), ...Object.keys(FRESH)])].sort()).toEqual([...ITEM_CREATE_KEYS].sort());
+    expect(validateItemCreate(BOUGHT)).toBeNull();
+    expect(validateItemCreate(FRESH)).toBeNull();
+  });
+
+  it('a bought item: every body key that is a column is in the INSERT, bound to what was sent', async () => {
+    const sql = mockSql([placeRow, stored()]);
+    expect((await call(sql, '/api/pantry/items', 'POST', BOUGHT)).status).toBe(201);
+    const { columns, binds } = insertByColumn(sql.calls[1]);
+    expect(columns).toEqual(expect.arrayContaining(FOUR));
+    expect(binds).toMatchObject({
+      user_id: DAVE, name: 'Arborio rice', acquired_at: '2026-10-03', acquired_precision: 'day', use_by_target: '2027-03-01',
+      plant_id: null, crop_type_slug: 'rice', notes: 'the big bag', idempotency_key: K1,
+      quantity_value: 2.5, quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco',
+    });
+    expect(binds.storage_location_id).toBe('(SELECT id FROM place LIMIT 1)');
+  });
+
+  it('a fresh-as-picked item: the planting with our garden beside it, and no name stored for the garden', async () => {
+    const sql = mockSql([plantRow, stored({ plant_id: PLANT })]);
+    expect((await call(sql, '/api/pantry/items', 'POST', FRESH)).status).toBe(201);
+    const { binds } = insertByColumn(sql.calls[1]);
+    expect(binds).toMatchObject({
+      plant_id: PLANT, crop_type_slug: 'onion', quantity_value: 6, quantity_unit: 'count',
+      source_kind: 'own_garden', source_label: null,
+    });
+  });
+
+  it("today's ten keys: all four bound NULL", async () => {
+    const old = { idempotency_key: K1, name: 'Rice', storage_location_id: PLACE, acquired_at: '2026-10-03', acquired_precision: 'day', use_by_target: null, notes: 'x', plant_id: null, crop_type_slug: null };
+    const sql = mockSql([placeRow, stored()]);
+    expect((await call(sql, '/api/pantry/items', 'POST', old)).status).toBe(201);
+    const { binds } = insertByColumn(sql.calls[1]);
+    expect(FOUR.map((k) => binds[k])).toEqual([null, null, null, null]);
+  });
+
+  it('the create RETURNING names the four, and the item answered carries them as stored', async () => {
+    const sql = mockSql([placeRow, stored({ quantity_value: '2.50', quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco' })]);
+    const res = await call(sql, '/api/pantry/items', 'POST', BOUGHT);
+    expect(insertByColumn(sql.calls[1]).returning).toEqual(expect.arrayContaining(FOUR));
+    expect(res.body.item).toMatchObject({ quantity_value: 2.5, quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco' });
+  });
+
+  it('the amount answered is a number, not a string (the driver hands numeric back as text)', () => {
+    const item = projectItem(itemDb({ quantity_value: '2.00', quantity_unit: 'lb' }));
+    expect(item.quantity_value).toBe(2);
+    expect(typeof item.quantity_value).toBe('number');
+    expect(projectItem(itemDb()).quantity_value).toBeNull();
+    const row = itemRow(itemDb({ quantity_value: '0.50', quantity_unit: 'qt' }), 'place', NOW);
+    expect(row.quantity_value).toBe(0.5);
+    expect(typeof jarRow(jarDb(), 'place', NOW).quantity_value).toBe('number');
+  });
+
+  it('projectItem carries each of the four as stored, and null for a row without them', () => {
+    const item = projectItem(itemDb({ quantity_value: '12', quantity_unit: 'count', source_kind: 'gift', source_label: 'Aunt May' }));
+    expect(FOUR.map((k) => item[k])).toEqual([12, 'count', 'gift', 'Aunt May']);
+    expect(FOUR.map((k) => projectItem(itemDb())[k])).toEqual([null, null, null, null]);
+  });
+
+  it('the replay SELECT names the four, and the replayed item carries them', async () => {
+    const sql = mockSql([placeRow, err('23505', 'uq_pantry_item_idempotency_key'), stored({ quantity_value: '2.50', quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco' })]);
+    const res = await call(sql, '/api/pantry/items', 'POST', BOUGHT);
+    expect(res.status).toBe(200);
+    expect(listed(sql.calls[2].norm, 'SELECT ', ' FROM pantry_item i')).toEqual(expect.arrayContaining(FOUR));
+    expect(res.body).toMatchObject({ replayed: true, item: { quantity_value: 2.5, quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco' } });
+  });
+
+  it.each([
+    ['an amount needs its unit, and a unit its amount', { quantity_value: 2 }, /needs its unit/],
+    ['an amount needs its unit, and a unit its amount (the unit alone)', { quantity_unit: 'lb' }, /needs its unit/],
+    ['0 is not an amount', { quantity_value: 0, quantity_unit: 'lb' }, /above 0/],
+    ['a negative is not an amount', { quantity_value: -1, quantity_unit: 'lb' }, /above 0/],
+    ['0.004 rounds to nothing', { quantity_value: 0.004, quantity_unit: 'lb' }, /above 0/],
+    ['an amount typed as text', { quantity_value: '2', quantity_unit: 'lb' }, /must be a number/],
+    ['more than the column holds', { quantity_value: 100000000, quantity_unit: 'lb' }, /at most 99999999\.99/],
+    ['a unit outside the 25 is refused (a plural)', { quantity_value: 2, quantity_unit: 'lbs' }, /quantity_unit must be one of/],
+    ['a unit outside the 25 is refused (quart)', { quantity_value: 2, quantity_unit: 'quart' }, /quantity_unit must be one of/],
+    ['a name with no source', { source_label: 'Costco' }, /needs a source/],
+    ['a kind outside the eight', { source_kind: 'swap' }, /source_kind must be one of/],
+    ['Other needs a name', { source_kind: 'other' }, /needs a name/],
+    ['Other needs a name (a blank one)', { source_kind: 'other', source_label: '   ' }, /needs a name/],
+    ['121 characters refused', { source_kind: 'store', source_label: 'x'.repeat(121) }, /at most 120/],
+    ['a name that is not text', { source_kind: 'store', source_label: 5 }, /must be text/],
+  ])('%s → 400, nothing read', async (_what, over, want) => {
+    const body = { idempotency_key: K1, name: 'Rice', storage_location_id: PLACE, ...over };
+    expect(validateItemCreate(body)).toMatch(want);
+    const sql = mockSql();
+    expect((await call(sql, '/api/pantry/items', 'POST', body)).status).toBe(400);
+    expect(sql.calls).toHaveLength(0);
+  });
+
+  it('a planting item cannot have a non-garden source (create): refused in words, nothing read', async () => {
+    const body = { idempotency_key: K1, name: 'Onions', storage_location_id: PLACE, plant_id: PLANT, source_kind: 'store' };
+    expect(validateItemCreate(body)).toBe(PLANTING_SOURCE_REFUSAL);
+    const sql = mockSql();
+    expect(await call(sql, '/api/pantry/items', 'POST', body)).toEqual({ status: 400, body: { error: PLANTING_SOURCE_REFUSAL } });
+    expect(sql.calls).toHaveLength(0);
+    // our garden beside a planting is the door's own body, and is taken
+    expect(validateItemCreate({ ...body, source_kind: 'own_garden' })).toBeNull();
+  });
+
+  it('the amount is rounded to two places on its decimal text, and the rounded number is what is bound', () => {
+    expect(amountOf({ quantity_value: 0.005, quantity_unit: 'lb' })).toEqual({ quantity_value: 0.01, quantity_unit: 'lb' });
+    expect(amountOf({ quantity_value: 2.345, quantity_unit: 'lb' })).toEqual({ quantity_value: 2.35, quantity_unit: 'lb' });
+    expect(amountOf({ quantity_value: 1.005, quantity_unit: 'qt' })).toEqual({ quantity_value: 1.01, quantity_unit: 'qt' });
+    expect(amountOf({ quantity_value: ITEM_AMOUNT_MAX, quantity_unit: 'g' })).toEqual({ quantity_value: 99999999.99, quantity_unit: 'g' });
+    expect(amountOf({ quantity_value: 99999999.995, quantity_unit: 'g' }).error).toMatch(/at most/);
+    expect(amountOf({ quantity_value: 1e-7, quantity_unit: 'g' }).error).toMatch(/above 0/);
+    expect(amountOf({ quantity_value: 1e21, quantity_unit: 'g' }).error).toMatch(/at most/);
+    expect(amountOf({})).toEqual({ quantity_value: null, quantity_unit: null });
+  });
+
+  it('every one of the 25 kitchen units is taken; none of the jar route\'s ten plurals is', () => {
+    expect(KITCHEN_UNITS).toHaveLength(25);
+    for (const unit of KITCHEN_UNITS) expect(amountOf({ quantity_value: 1, quantity_unit: unit }).error, unit).toBeUndefined();
+    const plurals = JAR_UNITS.filter((u) => !KITCHEN_UNITS.includes(u));
+    expect(plurals).toHaveLength(10);
+    for (const unit of plurals) expect(amountOf({ quantity_value: 1, quantity_unit: unit }).error, unit).toMatch(/must be one of/);
+  });
+
+  it('every one of the eight source kinds is taken; a blank name is stored as none; our garden stores no name', () => {
+    expect(VALID_SOURCE_KINDS).toHaveLength(8);
+    for (const kind of VALID_SOURCE_KINDS) {
+      expect(sourceOf({ source_kind: kind, source_label: 'A name' }).error, kind).toBeUndefined();
+    }
+    expect(sourceOf({ source_kind: 'store', source_label: '   ' })).toEqual({ source_kind: 'store', source_label: null });
+    expect(sourceOf({ source_kind: 'store' })).toEqual({ source_kind: 'store', source_label: null });
+    expect(sourceOf({ source_kind: 'farm_stand', source_label: ' Harris ' })).toEqual({ source_kind: 'farm_stand', source_label: 'Harris' });
+    expect(sourceOf({ source_kind: 'own_garden', source_label: 'Old vendor' })).toEqual({ source_kind: 'own_garden', source_label: null });
+    expect(sourceOf({})).toEqual({ source_kind: null, source_label: null });
+  });
+});
+
+describe('R2a — PATCH /api/pantry/items/:id with an amount and where-from', () => {
+  const path = `/api/pantry/items/${ITEM}`;
+  const row = (over = {}) => [{ ...itemDb(), used_up_at: null, created_at: 'c', deleted_at: null, ...over }];
+  const flag = (c, col) => after(c, `${col} = CASE WHEN`);
+  const bound = (c, col) => after(c, `${col} = CASE WHEN ? ::boolean THEN`);
+
+  it.each([
+    ['the amount pair is edited together (the value alone)', { quantity_value: 2 }, /quantity_value and quantity_unit are edited together/],
+    ['the amount pair is edited together (the unit alone)', { quantity_unit: 'lb' }, /quantity_value and quantity_unit are edited together/],
+    ['a value with a null unit', { quantity_value: 2, quantity_unit: null }, /needs its unit/],
+    ['0 is not an amount', { quantity_value: 0, quantity_unit: 'lb' }, /above 0/],
+    ['a plural unit', { quantity_value: 2, quantity_unit: 'lbs' }, /quantity_unit must be one of/],
+    ['the source pair is edited together (the kind alone)', { source_kind: 'store' }, /source_kind and source_label are edited together/],
+    ['the source pair is edited together (the name alone)', { source_label: 'Costco' }, /source_kind and source_label are edited together/],
+    ['a name with no source', { source_kind: null, source_label: 'Costco' }, /needs a source/],
+    ['Other needs a name', { source_kind: 'other', source_label: null }, /needs a name/],
+    ['a kind outside the eight', { source_kind: 'swap', source_label: null }, /source_kind must be one of/],
+    ['121 characters refused', { source_kind: 'store', source_label: 'x'.repeat(121) }, /at most 120/],
+  ])('%s → 400, nothing sent', async (_what, b, want) => {
+    expect(validateItemPatch(b)).toMatch(want);
+    const sql = mockSql();
+    expect((await call(sql, path, 'PATCH', b)).status).toBe(400);
+    expect(sql.calls).toHaveLength(0);
+  });
+
+  it('PATCH {the amount pair} → 200 and both bound; the source is left alone', async () => {
+    const sql = mockSql([row({ quantity_value: '1.50', quantity_unit: 'qt' })]);
+    const res = await call(sql, path, 'PATCH', { quantity_value: 1.5, quantity_unit: 'qt' });
+    expect(res).toMatchObject({ status: 200, body: { item: { quantity_value: 1.5, quantity_unit: 'qt' } } });
+    const c = sql.calls[0];
+    expect(flag(c, 'quantity_value')).toBe(true);
+    expect(bound(c, 'quantity_value')).toBe(1.5);
+    expect(flag(c, 'quantity_unit')).toBe(true);
+    expect(bound(c, 'quantity_unit')).toBe('qt');
+    expect(flag(c, 'source_kind')).toBe(false);
+    expect(flag(c, 'source_label')).toBe(false);
+    expect(flag(c, 'name')).toBe(false);
+  });
+
+  it('PATCH {the source pair} → 200 and both bound, the name trimmed; the amount is left alone', async () => {
+    const sql = mockSql([row({ source_kind: 'farm_stand', source_label: 'Harris' })]);
+    const res = await call(sql, path, 'PATCH', { source_kind: 'farm_stand', source_label: ' Harris ' });
+    expect(res).toMatchObject({ status: 200, body: { item: { source_kind: 'farm_stand', source_label: 'Harris' } } });
+    const c = sql.calls[0];
+    expect(flag(c, 'source_kind')).toBe(true);
+    expect(bound(c, 'source_kind')).toBe('farm_stand');
+    expect(flag(c, 'source_label')).toBe(true);
+    expect(bound(c, 'source_label')).toBe('Harris');
+    expect(flag(c, 'quantity_value')).toBe(false);
+    expect(flag(c, 'quantity_unit')).toBe(false);
+  });
+
+  it('null, null clears the amount; null, null un-chooses the source', async () => {
+    let sql = mockSql([row()]);
+    await call(sql, path, 'PATCH', { quantity_value: null, quantity_unit: null });
+    expect(flag(sql.calls[0], 'quantity_value')).toBe(true);
+    expect(bound(sql.calls[0], 'quantity_value')).toBeNull();
+    expect(bound(sql.calls[0], 'quantity_unit')).toBeNull();
+    sql = mockSql([row()]);
+    await call(sql, path, 'PATCH', { source_kind: null, source_label: null });
+    expect(flag(sql.calls[0], 'source_kind')).toBe(true);
+    expect(bound(sql.calls[0], 'source_kind')).toBeNull();
+    expect(bound(sql.calls[0], 'source_label')).toBeNull();
+  });
+
+  it('garden clears the name: our garden is bound with a NULL name whatever name was sent', async () => {
+    const sql = mockSql([row({ source_kind: 'own_garden' })]);
+    await call(sql, path, 'PATCH', { source_kind: 'own_garden', source_label: 'Old vendor' });
+    expect(bound(sql.calls[0], 'source_kind')).toBe('own_garden');
+    expect(bound(sql.calls[0], 'source_label')).toBeNull();
+  });
+
+  it('an edit that names neither pair leaves all four as they are', async () => {
+    const sql = mockSql([row({ name: 'Carnaroli' })]);
+    await call(sql, path, 'PATCH', { name: 'Carnaroli' });
+    expect(FOUR.map((k) => flag(sql.calls[0], k))).toEqual([false, false, false, false]);
+  });
+
+  it('the PATCH RETURNING names the four', async () => {
+    const sql = mockSql([row()]);
+    await call(sql, path, 'PATCH', { notes: 'x' });
+    expect(listed(sql.calls[0].norm, 'RETURNING ', ' )')).toEqual(expect.arrayContaining(FOUR));
+  });
+
+  it('a planting item cannot have a non-garden source (PATCH): the database decides, and the answer is in words', async () => {
+    const sql = mockSql([err('23514', 'chk_pantry_item_source_plant')]);
+    expect(await call(sql, path, 'PATCH', { source_kind: 'store', source_label: null }))
+      .toEqual({ status: 400, body: { error: PLANTING_SOURCE_REFUSAL } });
+    // the UPDATE was sent: the stored planting is not in the body, so no validator can decide this
+    expect(sql.calls).toHaveLength(1);
+    expect(sql.calls[0].norm).toContain('UPDATE pantry_item SET');
+  });
+});
+
+describe('R2a — every CHECK the item migration adds answers in words', () => {
+  // The nine names of migrations/v5-pantryitemamount-001/0a-additive-ddl.sql (pantryitemamount-columns.test.js
+  // reads them out of the file and runs each through the route).
+  const NINE = [
+    'chk_pantry_item_quantity_pairing', 'chk_pantry_item_quantity_value', 'chk_pantry_item_quantity_unit',
+    'chk_pantry_item_source_kind', 'chk_pantry_item_source_label_nonblank', 'chk_pantry_item_source_label_len',
+    'chk_pantry_item_source_label_kind', 'chk_pantry_item_source_other', 'chk_pantry_item_source_plant',
+  ];
+  const placeRow = [{ id: PLACE, label: 'Pantry shelf', kind: 'pantry' }];
+
+  it.each(NINE)('a 23514 on %s answers 400 in words, on the create and on the PATCH', async (name) => {
+    const words = ITEM_CONSTRAINT_MESSAGES[name];
+    expect(typeof words, `${name} has words`).toBe('string');
+    expect(words).not.toMatch(/chk_|constraint/i);
+    let sql = mockSql([placeRow, err('23514', name)]);
+    expect(await call(sql, '/api/pantry/items', 'POST', { idempotency_key: K1, name: 'Rice', storage_location_id: PLACE }))
+      .toEqual({ status: 400, body: { error: words } });
+    sql = mockSql([err('23514', name)]);
+    expect(await call(sql, `/api/pantry/items/${ITEM}`, 'PATCH', { notes: 'x' })).toEqual({ status: 400, body: { error: words } });
+  });
+
+  it('a CHECK with no words is still thrown, never answered as a 400', async () => {
+    const sql = mockSql([err('23514', 'chk_pantry_item_not_a_real_one')]);
+    await expect(call(sql, `/api/pantry/items/${ITEM}`, 'PATCH', { notes: 'x' })).rejects.toThrow();
+  });
+
+  it('no sentence the item route can answer holds a banned word', () => {
+    const body = (over) => ({ idempotency_key: K1, name: 'Rice', storage_location_id: PLACE, ...over });
+    const said = [
+      ...Object.values(ITEM_CONSTRAINT_MESSAGES),
+      ...Object.values(ITEM_SOURCE_WORDS),
+      PLANTING_SOURCE_REFUSAL,
+      validateItemCreate(body({ quantity_value: 2 })),
+      validateItemCreate(body({ quantity_value: 0, quantity_unit: 'lb' })),
+      validateItemCreate(body({ quantity_value: '2', quantity_unit: 'lb' })),
+      validateItemCreate(body({ quantity_value: 100000000, quantity_unit: 'lb' })),
+      validateItemCreate(body({ quantity_value: 2, quantity_unit: 'lbs' })),
+      validateItemCreate(body({ source_label: 'Costco' })),
+      validateItemCreate(body({ source_kind: 'swap' })),
+      validateItemCreate(body({ source_kind: 'other' })),
+      validateItemCreate(body({ source_kind: 'store', source_label: 'x'.repeat(121) })),
+      validateItemCreate(body({ source_kind: 'store', source_label: 5 })),
+      validateItemCreate(body({ plant_id: PLANT, source_kind: 'store' })),
+      validateItemPatch({ quantity_value: 2 }),
+      validateItemPatch({ source_kind: 'store' }),
+    ];
+    expect(said.every((s) => typeof s === 'string' && s.length > 0)).toBe(true);
+    for (const s of said) expect(s, s).not.toMatch(BANNED);
+    // the sweep can fail: a sentence carrying one of the words is caught
+    expect('That is the default unit.').toMatch(BANNED);
+  });
+});
+
+describe('R2a — GET /api/pantry carries the four as stored on both row kinds', () => {
+  it('the items arm names the four; the put-ups arm names source_kind beside the three it had', async () => {
+    const sql = mockSql([[jarDb()], [itemDb()]]);
+    await call(sql, '/api/pantry', 'GET');
+    const [jars, items] = sql.calls;
+    for (const k of FOUR) expect(items.norm, k).toContain(`i.${k}`);
+    for (const k of FOUR) expect(jars.norm, k).toMatch(new RegExp(String.raw`SELECT[^;]*?\bp\.${k}\b[^;]*?FROM preservation_log p`));
+    expect(listed(jars.norm, 'SELECT ', ' s.label AS place_label')).toContain('source_kind');
+  });
+
+  it('an item row and a put-up row hold the same four keys, as stored', async () => {
+    const sql = mockSql([[bagDb()], [itemDb({ quantity_value: '2.00', quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco' })]]);
+    const { body } = await call(sql, '/api/pantry', 'GET');
+    const item = body.rows.find((r) => r.stock_kind === 'pantry_item');
+    const jar = body.rows.find((r) => r.stock_kind === 'put_up');
+    expect(FOUR.map((k) => item[k])).toEqual([2, 'lb', 'store', 'Costco']);
+    expect(FOUR.map((k) => jar[k])).toEqual([1, 'lb', 'farm_stand', 'Harris farm stand']);
+    for (const k of FOUR) { expect(item).toHaveProperty(k); expect(jar).toHaveProperty(k); }
+  });
+
+  it.each(['g', 'kg', 'oz', 'lb'])('the amount is as logged, never left: an item of 2 %s has no count and no grams', (unit) => {
+    const row = itemRow(itemDb({ quantity_value: '2.00', quantity_unit: unit }), 'place', NOW);
+    expect(row).toMatchObject({ stock_mode: 'item', count_left: null, count_made: null, grams_left: null, quantity_value: 2, quantity_unit: unit });
+  });
+
+  it('where_from: the planting first; no planting → the stored source, the typed name, else the kind\'s own word', () => {
+    const wf = (over) => itemRow(itemDb(over), 'place', NOW).where_from;
+    expect(wf({ plant_id: PLANT, planting_name: 'Walla Walla', source_kind: 'own_garden' })).toBe('Walla Walla');
+    expect(wf({ source_kind: 'store', source_label: 'Costco' })).toBe('Costco');
+    expect(wf({ source_kind: 'farm_stand' })).toBe('Farm stand');
+    expect(wf({ source_kind: 'gift', source_label: '  ' })).toBe('Gift');
+    expect(wf({ source_kind: 'other', source_label: 'The neighbour' })).toBe('The neighbour');
+    expect(wf({ source_kind: 'own_garden' })).toBe('My garden');
+    expect(wf({})).toBeNull();
+  });
+
+  it('where_from never prints an old vendor beside our garden', () => {
+    expect(itemRow(itemDb({ source_kind: 'own_garden', source_label: 'Old vendor' }), 'place', NOW).where_from).toBe('My garden');
+  });
+
+  it('from_garden is a planting OR our garden named as the source', () => {
+    const fg = (over) => itemRow(itemDb(over), 'place', NOW).from_garden;
+    expect(fg({ plant_id: PLANT })).toBe(true);
+    expect(fg({ source_kind: 'own_garden' })).toBe(true);
+    expect(fg({ source_kind: 'store', source_label: 'Costco' })).toBe(false);
+    expect(fg({})).toBe(false);
+  });
+
+  it('the kind words are the door\'s chip words to the letter; Other has no word of its own', () => {
+    for (const kind of VALID_SOURCE_KINDS.filter((k) => k !== 'other')) {
+      expect(ITEM_SOURCE_WORDS[kind], kind).toBe(PUTUP_SOURCE_LABELS[kind]);
+    }
+    expect(Object.keys(ITEM_SOURCE_WORDS).sort()).toEqual(VALID_SOURCE_KINDS.filter((k) => k !== 'other').sort());
   });
 });
 

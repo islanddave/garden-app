@@ -10,10 +10,11 @@
 // engine (shelfLife.js) wrote them at create/move/correction and a read never re-derives (§3.4 "a rule
 // change never rewrites a stored date"). The status is classifyUseBy's (useBy.js), mapped to words the
 // contract names: ok | soon | past.
-import { KITCHEN_UUID_RE, MASS_G, isMassUnit, normalizeText } from './kitchenBatch.js';
+import { KITCHEN_UUID_RE, KITCHEN_UNITS, MASS_G, isMassUnit, normalizeText } from './kitchenBatch.js';
 import { JAR_PRECISIONS, JAR_LABEL_MAX, isJarDate } from './jarRules.js';
 import { classifyUseBy } from './useBy.js';
 import { plantingLabel } from './attribution.js';
+import { VALID_SOURCE_KINDS, SOURCE_LABEL_MAX, normalizeSourceLabel } from './provenance.js';
 
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const isObj = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
@@ -29,9 +30,15 @@ export const PANTRY_NAME_MAX = JAR_LABEL_MAX;
 export const ITEM_CREATE_KEYS = [
   'idempotency_key', 'name', 'storage_location_id', 'place', 'acquired_at', 'acquired_precision',
   'use_by_target', 'notes', 'plant_id', 'crop_type_slug',
+  'quantity_value', 'quantity_unit', 'source_kind', 'source_label',
 ];
-// The PATCH presence-sentinel allowlist. acquired_at and acquired_precision travel together.
-export const ITEM_PATCH_KEYS = ['name', 'storage_location_id', 'acquired_at', 'acquired_precision', 'use_by_target', 'notes', 'used_up_at'];
+// The PATCH presence-sentinel allowlist. acquired_at and acquired_precision travel together; so do
+// quantity_value and quantity_unit (null, null clears the amount) and source_kind and source_label
+// (null, null un-chooses the source). plant_id is not here: a PATCH cannot change the planting.
+export const ITEM_PATCH_KEYS = [
+  'name', 'storage_location_id', 'acquired_at', 'acquired_precision', 'use_by_target', 'notes', 'used_up_at',
+  'quantity_value', 'quantity_unit', 'source_kind', 'source_label',
+];
 
 // A DATE column leaves as the calendar day it is — jarRules.js calendarDay's rule, restated (it is
 // module-private there): the driver hands a DATE back as a Date at local midnight in the Lambda's zone.
@@ -83,6 +90,70 @@ function notesError(v) {
   return v != null && typeof v !== 'string' ? 'notes must be text' : null;
 }
 
+// quantity_value + quantity_unit — the amount AS LOGGED (chk_pantry_item_quantity_pairing, _quantity_value,
+// _quantity_unit). A number and its unit together, or neither. NOT stock: an item has no count and no
+// remaining, nothing decrements this pair, and no row reports it as what is left. The unit is one of the 25
+// KITCHEN_UNITS — never JAR_UNITS, whose ten plurals exist only for rows the shipped jar picker wrote.
+// The column is numeric(10,2): the value is rounded to two places HERE and the rounded number is what the
+// route binds, so this rule and the CHECK judge the same number (0.004 is 0.00 and is refused; 100000000
+// would be a 22003 and is refused).
+export const ITEM_AMOUNT_MAX = 99999999.99;
+const ITEM_AMOUNT_MAX_HUNDREDTHS = 9999999999n;
+
+// A positive number in hundredths, rounded half up ON ITS DECIMAL TEXT — the rounding numeric(10,2) gives the
+// text the driver sends, and the one the door's own parseAmount does (2.345 is 2.35; binary arithmetic says
+// 2.34). null when the text is not plain digits: an exponent form, which is below 0.000001 or 1e21 and up.
+function hundredthsOf(value) {
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(String(value));
+  if (!m) return null;
+  const frac = m[2] ?? '';
+  let h = BigInt(`${m[1]}${frac.slice(0, 2).padEnd(2, '0')}`);
+  if (frac.length > 2 && frac[2] >= '5') h += 1n;
+  return h;
+}
+
+export function amountOf(body) {
+  const value = body.quantity_value ?? null;
+  const unit = body.quantity_unit ?? null;
+  if (value == null && unit == null) return { quantity_value: null, quantity_unit: null };
+  if (value == null || unit == null) return { error: 'an amount needs its unit, and a unit its amount' };
+  if (typeof value !== 'number' || !Number.isFinite(value)) return { error: 'the amount must be a number' };
+  const tooSmall = { error: 'the amount must be above 0' };
+  const tooBig = { error: `the amount can be at most ${ITEM_AMOUNT_MAX}` };
+  if (value <= 0) return tooSmall;
+  const h = hundredthsOf(value);
+  if (h == null) return value < 1 ? tooSmall : tooBig;
+  if (h < 1n) return tooSmall;
+  if (h > ITEM_AMOUNT_MAX_HUNDREDTHS) return tooBig;
+  if (!KITCHEN_UNITS.includes(unit)) return { error: `quantity_unit must be one of: ${KITCHEN_UNITS.join(', ')}` };
+  return { quantity_value: Number(h) / 100, quantity_unit: unit };
+}
+
+// source_kind + source_label — where it came from, the put-up's eight words (chk_pantry_item_source_kind,
+// _source_other, _source_label_nonblank, _source_label_len, _source_label_kind, _source_plant). A name with
+// no source is refused; 'other' needs a name; a blank name is stored as none; our garden never carries a name
+// (the put-up create's rule). `plantId` is the planting the item is tied to, when the caller knows it: the
+// create passes the body's. A PATCH cannot (plant_id is stored, not sent), so there the CHECK decides and
+// pantryRoutes.js answers it in the same words.
+export const PLANTING_SOURCE_REFUSAL = 'This came from one of your plantings, so it is from the garden. It cannot have another source.';
+export function sourceOf(body, plantId = null) {
+  const kind = body.source_kind ?? null;
+  const raw = body.source_label ?? null;
+  if (raw != null && typeof raw !== 'string') return { error: 'a source name must be text' };
+  const label = normalizeSourceLabel(raw);
+  if (kind == null) {
+    return label == null
+      ? { source_kind: null, source_label: null }
+      : { error: 'a source name needs a source — say where it came from' };
+  }
+  if (!VALID_SOURCE_KINDS.includes(kind)) return { error: `source_kind must be one of: ${VALID_SOURCE_KINDS.join(', ')}` };
+  if (kind === 'own_garden') return { source_kind: kind, source_label: null };
+  if (plantId != null) return { error: PLANTING_SOURCE_REFUSAL };
+  if (kind === 'other' && label == null) return { error: "name where it came from — 'other' needs a name" };
+  if (label != null && label.length > SOURCE_LABEL_MAX) return { error: `a source name can be at most ${SOURCE_LABEL_MAX} characters` };
+  return { source_kind: kind, source_label: label };
+}
+
 export function validateItemCreate(body) {
   if (!isObj(body)) return 'body required';
   const unknown = Object.keys(body).filter((k) => !ITEM_CREATE_KEYS.includes(k));
@@ -102,6 +173,10 @@ export function validateItemCreate(body) {
   if (acq.error) return acq.error;
   if (body.plant_id != null && !isUuid(body.plant_id)) return 'plant_id must be a uuid';
   if (body.crop_type_slug != null && normalizeText(body.crop_type_slug) == null) return 'crop_type_slug cannot be blank';
+  const amt = amountOf(body);
+  if (amt.error) return amt.error;
+  const src = sourceOf(body, body.plant_id ?? null);
+  if (src.error) return src.error;
   return useByError(body.use_by_target) ?? notesError(body.notes);
 }
 
@@ -125,11 +200,35 @@ export function validateItemPatch(body) {
   if (has(body, 'used_up_at') && body.used_up_at !== 'now' && body.used_up_at !== null) {
     return 'used_up_at must be "now" or null';
   }
+  if (has(body, 'quantity_value') !== has(body, 'quantity_unit')) return 'quantity_value and quantity_unit are edited together';
+  if (has(body, 'quantity_value')) {
+    const amt = amountOf(body);
+    if (amt.error) return amt.error;
+  }
+  if (has(body, 'source_kind') !== has(body, 'source_label')) return 'source_kind and source_label are edited together';
+  if (has(body, 'source_kind')) {
+    const src = sourceOf(body);
+    if (src.error) return src.error;
+  }
   if (has(body, 'use_by_target')) {
     const e = useByError(body.use_by_target);
     if (e) return e;
   }
   return has(body, 'notes') ? notesError(body.notes) : null;
+}
+
+// A numeric column arrives from the driver as a string ('2.00'); the contract sends a JSON number or null.
+const numberOrNull = (v) => (v == null ? null : Number(v));
+
+// The amount and the source AS STORED, the same four keys on the item, the item's list row and a put-up's
+// list row. No words are built here: the client prints the amount, and never follows it with "left".
+function storedFour(r) {
+  return {
+    quantity_value: numberOrNull(r.quantity_value),
+    quantity_unit: r.quantity_unit ?? null,
+    source_kind: r.source_kind ?? null,
+    source_label: r.source_label ?? null,
+  };
 }
 
 // The item as every item route returns it (idempotency_key is the client's own and never echoed back).
@@ -145,6 +244,7 @@ export function projectItem(r) {
     use_by_target: ymd(r.use_by_target),
     plant_id: r.plant_id ?? null,
     crop_type_slug: r.crop_type_slug ?? null,
+    ...storedFour(r),
     used_up_at: r.used_up_at ?? null,
     notes: r.notes ?? null,
     created_at: r.created_at,
@@ -207,9 +307,32 @@ export function jarName(r) {
 
 // Where it came from (the contract's where_from). A put-up: the vendor or farm stand it was bought from
 // (source_label, set only when the source is not our garden), else the planting it came from. A pantry
-// item: the planting a "Fresh, as picked" item keeps. Notes are free text and are never read as a source.
+// item: the planting a "Fresh, as picked" item keeps, else its stored source (itemWhereFrom below). Notes
+// are free text and are never read as a source.
 function whereFrom(r) {
   return normalizeText(r.source_label) ?? (r.plant_id ? plantingLabel(r) : null);
+}
+
+// A source kind's own word, printed when no name was typed. THE DOOR'S CHIP WORDS, to the letter
+// (src/lib/dropdownRegistry.js PUTUP_SOURCE_LABELS; pantryRoutes.test.js binds the two). 'other' has no
+// word of its own: chk_pantry_item_source_other gives it a name, always.
+export const ITEM_SOURCE_WORDS = Object.freeze({
+  own_garden: 'My garden',
+  u_pick: 'U-pick / picked it myself',
+  farm_stand: 'Farm stand',
+  csa: 'CSA share',
+  store: 'Store',
+  gift: 'Gift',
+  foraged: 'Foraged',
+});
+
+// An item's where_from: its planting first; else the stored source — the typed name, else the kind's word.
+// Our garden is always its own word: a name left beside it is never printed as a vendor.
+function itemWhereFrom(r) {
+  if (r.plant_id) return plantingLabel(r);
+  if (r.source_kind == null) return null;
+  if (r.source_kind === 'own_garden') return ITEM_SOURCE_WORDS.own_garden;
+  return normalizeText(r.source_label) ?? ITEM_SOURCE_WORDS[r.source_kind] ?? null;
 }
 
 export function jarRow(r, group, now) {
@@ -232,6 +355,7 @@ export function jarRow(r, group, now) {
     count_left: weighed ? null : Number(r.remaining_count ?? r.package_count),
     count_made: weighed ? null : Number(r.package_count),
     grams_left: weighed && grams != null && Number.isFinite(grams) ? grams : null,
+    ...storedFour(r),
     method: r.method ?? null,
     discard: discardOf(r.use_by_target, r.use_by_basis, r.preserved_at, now),
     acquired_at: ymd(r.preserved_at),
@@ -250,15 +374,19 @@ export function itemRow(r, group, now) {
     name: r.name,
     ...groupOf(group, r),
     place: placeOf(r),
-    where_from: r.plant_id ? plantingLabel(r) : null,
-    from_garden: r.plant_id != null,
+    where_from: itemWhereFrom(r),
+    // From the garden: a planting, OR our garden named as the source (a put-up's rule, pantryRoutes.js).
+    from_garden: r.plant_id != null || r.source_kind === 'own_garden',
     plant_id: r.plant_id ?? null,
     crop_type_slug: r.crop_type_slug ?? null,
     batch_id: null,
+    // THE AMOUNT IS AS LOGGED: an item stays stock_mode 'item' with no count and no grams, whatever its
+    // unit. Nothing decrements quantity_value, so it is never reported as what is left.
     stock_mode: 'item',
     count_left: null,
     count_made: null,
     grams_left: null,
+    ...storedFour(r),
     method: null,
     // Typed only (V4 §4.3): a date is his, so its basis is 'typed'; no date is no basis and no status.
     discard: date == null ? { date: null, basis: null, status: null } : discardOf(date, 'typed', r.acquired_at, now),
