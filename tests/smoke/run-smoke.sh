@@ -38,7 +38,8 @@
 #     P) Put-Up 1b + Ferment (06-ferment-path §5.6): P1 put-up date/basis + legacy-PUT refusal, P1b clearing a typed
 #        discard date (the engine's date, then the recipe's on a batch that follows one), P2 salt line,
 #        P3 draw → Mark used → RowEditor, P4 weighed draw to 0 g, P5 take out/restore, P6 check-in edit,
-#        P7 SHU save, P8 Undo put-up restores grams, P9 batch removal restores the count, P10 Raw at create;
+#        P7 SHU save, P8 Undo put-up restores grams, P9 batch removal restores the count, P10 Raw at create,
+#        P11 a batch made from a jar that already exists (from-jars) and its replay;
 #        REQUIRED (a FAIL, never a WARN) whenever the checked-out tree carries migrations/v5-fermentpath-001; its own
 #        FK-ordered hard-delete
 #     Q) (after Put-Up's N, independent of the project) one fixed-name source (V5-SOURCECONTACT-001):
@@ -48,10 +49,16 @@
 #        in page order, block D's planting counted, 400 on an unknown section
 #     S) Pantry (B′ release 2; 05-release-train §5): a keyed pantry item → its replay → listed by place →
 #        Used it up → unlisted → DELETE → 404 on a second DELETE; a Used one on a jar → Undo; a part of that jar gone
-#        bad (a count, fate discarded) → still listed with what is left → Undo; REQUIRED whenever the
-#        tree carries migrations/v5-pantry-001; its own FK-ordered hard-delete
+#        bad (a count, fate discarded) → still listed with what is left → Undo; then Put-Up R2a's S10 to S19: the
+#        door's create (a size total, where it's from, Raw, In oil; a dried row's texture) → its replay; a dated,
+#        weighed jar; the shipped form's rename → a re-kind refused (409, nothing written) → the date set by hand →
+#        the same re-kind 200; /move clears a worked-out date; a re-kind over undated put-ups; Went bad, all that is
+#        left → Undo; the jar PATCH's where-from pair; an as-is item's amount and where-from; the place's DELETE
+#        refused while in use, then clean; REQUIRED whenever the tree carries migrations/v5-pantry-001; its own
+#        FK-ordered hard-delete
 #     T) Recipes (B′ release 4): 16 built-in types incl. "Sambal & chili relish" → a keyed recipe → GET (its line,
-#        no pH field) → DELETE → 404; REQUIRED whenever the tree carries migrations/v5-recipes-001; own hard-delete
+#        no pH field) → PATCH its lines (T3b) → DELETE → 404; REQUIRED whenever the tree carries
+#        migrations/v5-recipes-001; own hard-delete
 #   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
 #   CLERK_TEST_USER_ID are unset.
 #   Per L-108 (ratified 2026-05-25): every write-path surface gets a write→read-back assert.
@@ -2024,6 +2031,9 @@ SQL
 #   P1b) PATCH /api/preservation/:id {"discard_by": "clear"} on P1's typed jar (no recipe) → basis table, the engine's
 #        date; then on a typed fridge row of a batch that follows a "Fridge · 7 days" recipe → basis recipe, day + 7.
 #   P10) POST /api/preservation with is_raw true at a fridge place → is_raw stored, basis none (the Walk sends it).
+# One more, from Put-Up R2a:
+#   P11) POST /api/kitchen-batches/from-jars on a jar that already exists → the jar's batch is closed as put_up; the
+#        same body again → 200 replayed, one batch on the key.
 # Stock is read back through SQL (NEON_STAGING_URL + psql, as block D does): remaining_amount and consumed_at are
 # not on every API projection, and the ledger (pantry_use) has no read route in F.
 # GATED ON F BEING DEPLOYED: F's DDL and Lambda reach staging only at F's sitting. The probe is GET
@@ -2307,6 +2317,25 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
         fe_fail "p10-raw-create" "POST /api/preservation → HTTP $FE_CODE: $(head -c 200 "$FE_OUT")"
       fi
 
+      # ── P11) How it was made: a batch made FROM a jar that already exists, and its replay ──
+      # Put-Up R2a (V5-PUTUPLOGRETIRE-001). POST /api/kitchen-batches/from-jars had no smoke: one statement makes a
+      # batch that is already closed as put_up and links the jar to it by batch_id. Read back through the JAR (its
+      # batch is closed, its outcome put_up, its label the one sent), so the check does not rest on the answer's
+      # shape. The same body again → 200 replayed, and still one batch on the key. Three requests on P10's token: no
+      # mint of its own. The batch's label and the jar's notes carry $FE_TAG, so ferm_sweep takes both (jars before
+      # batches, as kitchen_batch's NO ACTION link from preservation_log.batch_id needs).
+      FE_J11=$(fe_newjar 2 "jar" 3)
+      if fe_id_ok "$FE_J11"; then
+        FE_FJ_KEY=$(fe_uuid)
+        FE_FJ_BODY="{\"idempotency_key\": \"$FE_FJ_KEY\", \"label\": \"$FE_TAG from-jars\", \"started\": {\"date\": \"$FE_DAY\", \"precision\": \"day\"}, \"kind\": \"ferment\", \"jar_ids\": [\"$FE_J11\"]}"
+        fe_req POST "$FE_BASE/api/kitchen-batches/from-jars" "$FE_FJ_BODY"
+        fe_check "p11-from-jars" "$FE_CODE $(fe_row "SELECT (b.closed_at IS NOT NULL)::text||'|'||b.outcome||'|'||b.label FROM preservation_log p JOIN kitchen_batch b ON b.id = p.batch_id WHERE p.id = '$FE_J11'")" "201 true|put_up|$FE_TAG from-jars" "POST /api/kitchen-batches/from-jars; the jar's batch: closed|outcome|label"
+        fe_req POST "$FE_BASE/api/kitchen-batches/from-jars" "$FE_FJ_BODY"
+        fe_check "p11-replay" "$FE_CODE $(fe_jq '.replayed') $(fe_row "SELECT count(*) FROM kitchen_batch WHERE idempotency_key = '$FE_FJ_KEY'")" "200 true 1" "the same POST, same key; replayed, batches on the key"
+      else
+        fe_fail "p11-from-jars" "no jar id from POST /api/preservation (HTTP $FE_CODE)"
+      fi
+
       CLERK_JWT=$(mint_session_token)
     fi
     if ferm_sweep; then
@@ -2450,7 +2479,9 @@ fi
 #       fate 'discarded' → 201; the jar reads 2 left and not consumed, the use row 1|discarded. S9b GET
 #       /api/pantry?place_id= still lists the jar, with count_left 2. S9c its Undo → 200, 3 left, delta_at moved past
 #       the use, and the reversing row −1|discarded|<the use>.
-#   then the place is soft-deleted through DELETE /api/storage-locations/:id (API cleanup) and pantry_sweep runs.
+#   S10 to S19) Put-Up R2a: listed where they run, below S9 ("The place, through its own route"). They end with
+#       the place's own DELETE: refused while it holds stock (S17), then answered 200 once it is empty, which is this
+#       block's API cleanup. Then pantry_sweep runs.
 # Stock is read back through SQL (NEON_STAGING_URL + psql), as block P does: used_up_at, deleted_at, delta_at and
 # the reversing pantry_use row are on no list projection.
 # GATED ON B′ BEING DEPLOYED, the way block P is gated on F: the probe is GET /api/pantry (200 with a rows array only
@@ -2604,10 +2635,197 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
         pn_fail "s8-used-one" "POST /api/preservation → HTTP $PN_CODE (no jar id)"
       fi
 
-      # The place, through its own route (the API cleanup); pantry_sweep hard-deletes it either way.
-      CLERK_JWT=$(mint_session_token)
-      pn_req DELETE "${STAGING_API_STORAGE_LOCATIONS%/}/api/storage-locations/$PN_PLACE"
-      [[ "$PN_CODE" == "200" ]] || echo "⚠️  WARN [pantry:place-delete] DELETE /api/storage-locations/:id → HTTP $PN_CODE (pantry_sweep removes it)"
+      # The place, through its own route — and Put-Up R2a (V5-PUTUPLOGRETIRE-001), S10 to S19: what the door, the
+      # Places sheet and Edit send, on the deployed stack. Eight steps, each a function, run in order by the ONE loop
+      # at the end of this section. Every row they write carries $PN_TAG (a jar's notes, an item's name, a place's
+      # label), so pantry_sweep takes them with no change; no jar here carries a photo_id (a photo needs an upload).
+      # The place is a pantry shelf when they start, and S8's jar (whole_freeze, 3 of 3, no date on a shelf) is in it.
+      #   S10) the door's create: a size as a TOTAL (3 containers of 1.5 qt → 4.5 qt), where it is from (a kind and a
+      #        name), Raw and In oil → every column read back, and no date (Raw or In oil off a freezer); its replay
+      #        under the same key → 200 replayed, one row; a dried row's texture (dehydrate, bends → no date).
+      #   S11) a hot sauce logged as ONE container in a mass unit: the engine's date (basis table, 12 months on a
+      #        shelf), remaining_amount seeded in grams, and the Pantry lists it weighed with no count.
+      #   S12) the shipped "Edit locations" form's rename: BOTH keys, the kind unchanged, at a place holding that
+      #        dated jar → 200, the name read back. S13) a re-kind (with a new name beside it) → 409
+      #        place_has_dated_jars, n 1, one sentence in message and error; the kind AND the name read back
+      #        unchanged, and the jar's date too. A Lambda from before R2a answers 200, which is the signal wanted.
+      #        Then the way out the sentence names: the same date set by hand (PATCH discard_by) → basis typed → the
+      #        SAME re-kind answers 200.
+      #   S14) that jar's date worked out again (clear → table, 6 months in what is now a fridge), then /move to a
+      #        shelf: the place changes, the worked-out date is cleared, the move is stamped. S15) the first place,
+      #        left holding only undated put-ups, takes a re-kind: the refusal counts worked-out dates, not jars.
+      #   S16) Went bad, ALL that is left of S8's jar: 0 left, consumed, unlisted; its Undo: 3 left, listed again.
+      #   S18) where it's from, corrected in Edit: PATCH the pair on S10's jar → read back; our garden clears the
+      #        name; one of the pair alone → 400 and the row is as it was.
+      #   S19) an as-is item with an amount and where it's from (the migration v5-pantryitemamount-001's four
+      #        columns): created, replayed, listed (the amount is as logged: no count, no grams left), PATCHed pair
+      #        by pair, cleared with null, null.
+      #   S17) last: DELETE of the place while it holds stock → 409 place_in_use with n, deleted_at still null; then
+      #        everything in it is removed through its own route and the same DELETE answers 200 (the API cleanup).
+      # WHY ONE LOOP. Each step needs a fresh ~60 s token. scripts/test_smoke_mint_log.py holds the number of
+      # mint_session_token call sites in this script, so the steps share ONE plain capture, the one that used to sit
+      # in front of this block's closing place DELETE. Its `[mint]` line carries the same caller line for every step;
+      # the step is named on the line printed just before it.
+      PN_DOOR=""; PN_DRIED=""; PN_DATED=""; PN_DATED_BY=""; PN_AS_IS=""
+      PN_PLACE_URL="${STAGING_API_STORAGE_LOCATIONS%/}/api/storage-locations/$PN_PLACE"
+      PN_USE_BY_SQL="SELECT coalesce(use_by_basis,'null')||'|'||coalesce(use_by_target::text,'null') FROM preservation_log WHERE id ="
+      # pn_place → the smoke place's 'label|kind'; pn_place_gone → 'true' once it is soft-deleted
+      pn_place() { pn_row "SELECT label||'|'||kind FROM storage_location WHERE id = '$PN_PLACE'"; }
+      pn_place_gone() { pn_row "SELECT (deleted_at IS NOT NULL)::text FROM storage_location WHERE id = '$PN_PLACE'"; }
+      # pn_refusal → a coded refusal's 'code|n|one sentence in both text fields'
+      pn_refusal() { pn_jq '"\(.code)|\(.n)|\(.message == .error and (.message | type) == "string")"'; }
+
+      # ── S10) the door's create, its replay, and a dried row ──
+      pn_s10_door() {
+        local key; key=$(pn_uuid)
+        PN_DOOR_BODY="{\"idempotency_key\": \"$key\", \"label\": \"$PN_TAG door sauce\", \"method\": \"hot_sauce\", \"preserved_at\": \"$PN_DAY\", \"preserved_at_precision\": \"day\", \"preserved_at_approx\": false, \"package_count\": 3, \"storage_location_id\": \"$PN_PLACE\", \"crop_type_slug\": \"tomato\", \"quantity_value\": 4.5, \"quantity_unit\": \"qt\", \"source_kind\": \"farm_stand\", \"source_label\": \"$PN_TAG stand\", \"is_raw\": true, \"in_oil\": true, \"notes\": \"$PN_TAG\"}"
+        pn_req POST "$PN_BASE/api/preservation" "$PN_DOOR_BODY"
+        PN_DOOR=$(pn_jq '.id // empty')
+        if [[ "$PN_CODE" == "201" ]] && pn_id_ok "$PN_DOOR"; then
+          pn_check "s10-door-create" "$(pn_row "SELECT label||'|'||method||'|'||quantity_value::numeric(12,2)::text||'|'||quantity_unit||'|'||package_count::text||'|'||remaining_count::text||'|'||source_kind||'|'||source_label||'|'||is_raw::text||'|'||in_oil::text||'|'||preserved_at_precision||'|'||preserved_at_approx::text||'|'||use_by_basis||'|'||coalesce(use_by_target::text,'null')||'|'||crop_type_slug FROM preservation_log WHERE id = '$PN_DOOR'")" "$PN_TAG door sauce|hot_sauce|4.50|qt|3|3|farm_stand|$PN_TAG stand|true|true|day|false|none|null|tomato" "POST /api/preservation as the door sends it → HTTP 201; name|method|size total|unit|count|left|from kind|from name|raw|in oil|precision|approx|basis|discard-by|crop"
+          pn_req POST "$PN_BASE/api/preservation" "$PN_DOOR_BODY"
+          pn_check "s10-door-replay" "$PN_CODE $(pn_jq '.replayed') $(pn_jq '.id') $(pn_row "SELECT count(*) FROM preservation_log WHERE idempotency_key = '$key'")" "200 true $PN_DOOR 1" "the same POST, same key; replayed, id, rows on the key"
+        else
+          PN_DOOR=""
+          pn_fail "s10-door-create" "POST /api/preservation → HTTP $PN_CODE: $(head -c 200 "$PN_OUT")"
+        fi
+        pn_req POST "$PN_BASE/api/preservation" "{\"idempotency_key\": \"$(pn_uuid)\", \"label\": \"$PN_TAG door dried\", \"method\": \"dehydrate\", \"texture\": \"bends\", \"preserved_at\": \"$PN_DAY\", \"preserved_at_precision\": \"day\", \"preserved_at_approx\": false, \"package_count\": 2, \"storage_location_id\": \"$PN_PLACE\", \"quantity_value\": 1, \"quantity_unit\": \"cup\", \"source_kind\": \"u_pick\", \"source_label\": \"$PN_TAG farm\", \"notes\": \"$PN_TAG\"}"
+        PN_DRIED=$(pn_jq '.id // empty')
+        if [[ "$PN_CODE" == "201" ]] && pn_id_ok "$PN_DRIED"; then
+          pn_check "s10-door-dried" "$(pn_row "SELECT method||'|'||texture||'|'||quantity_value::numeric(12,2)::text||'|'||quantity_unit||'|'||package_count::text||'|'||source_kind||'|'||source_label||'|'||use_by_basis||'|'||coalesce(use_by_target::text,'null') FROM preservation_log WHERE id = '$PN_DRIED'")" "dehydrate|bends|1.00|cup|2|u_pick|$PN_TAG farm|none|null" "a dried row with How dry? answered → HTTP 201; method|texture|size total|unit|count|from kind|from name|basis|discard-by"
+        else
+          PN_DRIED=""
+          pn_fail "s10-door-dried" "POST /api/preservation → HTTP $PN_CODE: $(head -c 200 "$PN_OUT")"
+        fi
+      }
+
+      # ── S11) one container in a mass unit: the engine's date, grams seeded, listed weighed ──
+      pn_s11_dated() {
+        pn_req POST "$PN_BASE/api/preservation" "{\"idempotency_key\": \"$(pn_uuid)\", \"label\": \"$PN_TAG dated sauce\", \"method\": \"hot_sauce\", \"preserved_at\": \"$PN_DAY\", \"preserved_at_precision\": \"day\", \"preserved_at_approx\": false, \"package_count\": 1, \"quantity_value\": 1, \"quantity_unit\": \"lb\", \"storage_location_id\": \"$PN_PLACE\", \"notes\": \"$PN_TAG\"}"
+        PN_DATED=$(pn_jq '.id // empty')
+        if [[ "$PN_CODE" == "201" ]] && pn_id_ok "$PN_DATED"; then
+          PN_DATED_BY=$(pn_row "SELECT (DATE '$PN_DAY' + INTERVAL '12 months')::date::text")
+          pn_check "s11-dated-weighed" "$(pn_row "SELECT use_by_basis||'|'||coalesce(use_by_target::text,'null')||'|'||coalesce(remaining_amount::numeric(12,2)::text,'null') FROM preservation_log WHERE id = '$PN_DATED'")" "table|$PN_DATED_BY|453.59" "a hot sauce on a shelf, 1 container of 1 lb → HTTP 201; basis|discard-by (the day + 12 months)|grams left"
+          pn_req GET "$PN_BASE/api/pantry?place_id=$PN_PLACE"
+          pn_check "s11-listed-weighed" "$PN_CODE $(pn_jqx "$PN_DATED" '[.rows[] | select(.stock_id == $x)] | if length == 0 then "absent" else (.[0] | "\(.stock_kind)|\(.stock_mode)|\(.count_left)") end')" "200 put_up|weighed|null" "GET /api/pantry?place_id=; the jar's kind|mode|count_left"
+        else
+          PN_DATED=""
+          pn_fail "s11-dated-weighed" "POST /api/preservation → HTTP $PN_CODE: $(head -c 200 "$PN_OUT")"
+        fi
+      }
+
+      # ── S12) the shipped form's rename → S13) a re-kind refused, nothing written → the date by hand → the same re-kind ──
+      pn_s12_rekind() {
+        if ! pn_id_ok "$PN_DATED"; then
+          pn_fail "s13-rekind-refused" "no dated jar from S11: the rename and the refusal need one in the place"
+          return 0
+        fi
+        pn_req PUT "$PN_PLACE_URL" "{\"label\": \"$PN_TAG place-b\", \"kind\": \"pantry\"}"
+        pn_check "s12-place-rename" "$PN_CODE $(pn_place)" "200 $PN_TAG place-b|pantry" "PUT { label, kind unchanged } at a place holding a dated jar (the shipped editor's body); the place's name|kind"
+        pn_req PUT "$PN_PLACE_URL" "{\"label\": \"$PN_TAG place-c\", \"kind\": \"fridge\"}"
+        pn_check "s13-rekind-refused" "$PN_CODE $(pn_refusal) $(pn_place) $(pn_row "$PN_USE_BY_SQL '$PN_DATED'")" "409 place_has_dated_jars|1|true $PN_TAG place-b|pantry table|$PN_DATED_BY" "PUT { label, kind: fridge } at that place; code|n|one sentence, then the place's name|kind and the jar's basis|discard-by, all unchanged"
+        pn_req PATCH "$PN_BASE/api/preservation/$PN_DATED" "{\"discard_by\": \"$PN_DATED_BY\"}"
+        pn_check "s13-date-by-hand" "$PN_CODE $(pn_row "$PN_USE_BY_SQL '$PN_DATED'")" "200 typed|$PN_DATED_BY" "the same date set by hand (PATCH discard_by); basis|discard-by"
+        pn_req PUT "$PN_PLACE_URL" '{"kind": "fridge"}'
+        pn_check "s13-rekind-after" "$PN_CODE $(pn_place)" "200 $PN_TAG place-b|fridge" "the same re-kind once the date is his own; the place's name|kind"
+      }
+
+      # ── S14) the date worked out again, then /move clears it → S15) a re-kind over undated put-ups ──
+      pn_s14_move() {
+        if ! pn_id_ok "$PN_DATED"; then
+          pn_fail "s14-move" "no dated jar from S11 to move"
+          return 0
+        fi
+        pn_req PATCH "$PN_BASE/api/preservation/$PN_DATED" '{"discard_by": "clear"}'
+        pn_check "s14-work-it-out" "$PN_CODE $(pn_row "$PN_USE_BY_SQL '$PN_DATED'")" "200 table|$(pn_row "SELECT (DATE '$PN_DAY' + INTERVAL '6 months')::date::text")" "clear the typed date in what is now a fridge; basis|discard-by (the day + 6 months)"
+        pn_req POST "$PN_BASE/api/preservation/$PN_DATED/move" "{\"place\": {\"kind\": \"pantry\", \"label\": \"$PN_TAG shelf\"}, \"when\": {\"date\": \"$PN_DAY\", \"precision\": \"day\"}}"
+        pn_check "s14-move" "$PN_CODE $(pn_row "SELECT (p.storage_location_id <> '$PN_PLACE')::text||'|'||coalesce(p.use_by_basis,'null')||'|'||coalesce(p.use_by_target::text,'null')||'|'||(p.storage_moved_at IS NOT NULL)::text||'|'||s.kind||'|'||s.label FROM preservation_log p JOIN storage_location s ON s.id = p.storage_location_id WHERE p.id = '$PN_DATED'")" "200 true|none|null|true|pantry|$PN_TAG shelf" "POST /api/preservation/:id/move to a new shelf; left the place|basis|discard-by|move stamped|the new place's kind|name"
+        pn_req PUT "$PN_PLACE_URL" '{"kind": "cold_storage"}'
+        pn_check "s15-rekind-allowed" "$PN_CODE $(pn_place)" "200 $PN_TAG place-b|cold_storage" "a re-kind of a place that holds only undated put-ups; the place's name|kind"
+      }
+
+      # ── S16) Went bad, all that is left → unlisted → Undo → listed again ──
+      pn_s16_all_remaining() {
+        if ! pn_id_ok "${PN_JAR:-}"; then
+          pn_fail "s16-all-remaining" "no jar from S8 to discard"
+          return 0
+        fi
+        local use undone left_sql="SELECT coalesce(remaining_count::text,'null')||'|'||(consumed_at IS NOT NULL)::text FROM preservation_log WHERE id = '$PN_JAR'"
+        pn_req POST "$PN_BASE/api/pantry/uses" "{\"idempotency_key\": \"$(pn_uuid)\", \"preservation_log_id\": \"$PN_JAR\", \"all_remaining\": true, \"fate\": \"discarded\"}"
+        use=$(pn_jq '.use.id // empty')
+        pn_check "s16-all-remaining" "$PN_CODE $(pn_row "$left_sql") $(pn_use "$use") $(pn_listed "$PN_JAR")" "201 0|true 3|discarded absent" "all 3 went bad (POST /api/pantry/uses, all_remaining, fate discarded); remaining|consumed, the use row's count|fate, then the list"
+        if pn_id_ok "$use"; then
+          pn_req POST "$PN_BASE/api/pantry/uses/$use/undo" "{\"idempotency_key\": \"$(pn_uuid)\"}"
+          undone="$PN_CODE $(pn_row "$left_sql") $(pn_row "SELECT count_used||'|'||coalesce(fate,'null')||'|'||reverses_use_id FROM pantry_use WHERE reverses_use_id = '$use'")"
+          pn_req GET "$PN_BASE/api/pantry?place_id=$PN_PLACE"
+          pn_check "s16-undo" "$undone $(pn_jqx "$PN_JAR" '[.rows[] | select(.stock_id == $x)] | if length == 0 then "absent" else (.[0] | "\(.stock_kind)|\(.stock_mode)|\(.count_left)") end')" "200 3|false -3|discarded|$use put_up|counted|3" "Undo it (POST /api/pantry/uses/:id/undo); remaining|consumed, the reversing row's count|fate|reverses, then the list's kind|mode|count_left"
+        else
+          pn_fail "s16-undo" "no use id from the all-remaining POST (HTTP $PN_CODE)"
+        fi
+      }
+
+      # ── S18) where it's from, corrected in Edit: the pair on the jar PATCH ──
+      pn_s18_source() {
+        if ! pn_id_ok "$PN_DOOR"; then
+          pn_fail "s18-jar-source" "no jar from S10 to correct"
+          return 0
+        fi
+        local from_sql="SELECT coalesce(source_kind,'null')||'|'||coalesce(source_label,'null') FROM preservation_log WHERE id = '$PN_DOOR'"
+        pn_req PATCH "$PN_BASE/api/preservation/$PN_DOOR" "{\"source_kind\": \"store\", \"source_label\": \"$PN_TAG market\"}"
+        pn_check "s18-jar-source" "$PN_CODE $(pn_jq '"\(.source_kind)|\(.source_label)"') $(pn_row "$from_sql")" "200 store|$PN_TAG market store|$PN_TAG market" "PATCH /api/preservation/:id { source_kind, source_label }; the reply's pair, then the row's"
+        pn_req PATCH "$PN_BASE/api/preservation/$PN_DOOR" '{"source_kind": "own_garden", "source_label": null}'
+        pn_check "s18-jar-source-garden" "$PN_CODE $(pn_row "$from_sql")" "200 own_garden|null" "our garden: the kind stored, the name cleared"
+        pn_req PATCH "$PN_BASE/api/preservation/$PN_DOOR" '{"source_kind": "store"}'
+        pn_check "s18-jar-source-pair" "$PN_CODE $(pn_row "$from_sql")" "400 own_garden|null" "one of the pair alone is refused; the row is as it was"
+      }
+
+      # ── S19) an as-is item with an amount and where it's from: created, replayed, listed, PATCHed, cleared ──
+      pn_s19_as_is() {
+        local key; key=$(pn_uuid)
+        local four='"\(.quantity_value)|\(.quantity_unit)|\(.source_kind)|\(.source_label)"'
+        PN_AS_IS_BODY="{\"idempotency_key\": \"$key\", \"name\": \"$PN_TAG flour\", \"storage_location_id\": \"$PN_PLACE\", \"acquired_at\": \"$PN_DAY\", \"quantity_value\": 2.5, \"quantity_unit\": \"lb\", \"source_kind\": \"store\", \"source_label\": \"$PN_TAG market\"}"
+        pn_req POST "$PN_BASE/api/pantry/items" "$PN_AS_IS_BODY"
+        PN_AS_IS=$(pn_jq '.item.id // empty')
+        if ! { [[ "$PN_CODE" == "201" ]] && pn_id_ok "$PN_AS_IS"; }; then
+          PN_AS_IS=""
+          pn_fail "s19-item-create" "POST /api/pantry/items with an amount and where it's from → HTTP $PN_CODE: $(head -c 200 "$PN_OUT")"
+          return 0
+        fi
+        local four_sql="SELECT coalesce(quantity_value::numeric(12,2)::text,'null')||'|'||coalesce(quantity_unit,'null')||'|'||coalesce(source_kind,'null')||'|'||coalesce(source_label,'null') FROM pantry_item WHERE id = '$PN_AS_IS'"
+        pn_check "s19-item-create" "$(pn_jq ".item | $four") $(pn_row "$four_sql")" "2.5|lb|store|$PN_TAG market 2.50|lb|store|$PN_TAG market" "POST /api/pantry/items → HTTP 201; amount|unit|from kind|from name in the reply, then the row"
+        pn_req POST "$PN_BASE/api/pantry/items" "$PN_AS_IS_BODY"
+        pn_check "s19-item-replay" "$PN_CODE $(pn_jq '.replayed') $(pn_jq '.item.id') $(pn_jq ".item | $four") $(pn_row "SELECT count(*) FROM pantry_item WHERE idempotency_key = '$key'")" "200 true $PN_AS_IS 2.5|lb|store|$PN_TAG market 1" "the same POST, same key; replayed, id, the four in the reply, rows on the key"
+        pn_req GET "$PN_BASE/api/pantry?place_id=$PN_PLACE"
+        pn_check "s19-item-listed" "$PN_CODE $(pn_jqx "$PN_AS_IS" '[.rows[] | select(.stock_id == $x)] | if length == 0 then "absent" else (.[0] | "\(.stock_kind)|\(.stock_mode)|\(.quantity_value)|\(.quantity_unit)|\(.source_kind)|\(.source_label)|\(.where_from)|\(.from_garden)|\(.count_left)|\(.grams_left)") end')" "200 pantry_item|item|2.5|lb|store|$PN_TAG market|$PN_TAG market|false|null|null" "GET /api/pantry?place_id=; kind|mode|amount|unit|from kind|from name|where_from|from_garden|count_left|grams_left (the amount is as logged)"
+        pn_req PATCH "$PN_BASE/api/pantry/items/$PN_AS_IS" '{"quantity_value": 1, "quantity_unit": "bag", "source_kind": "own_garden", "source_label": null}'
+        pn_check "s19-item-patch" "$PN_CODE $(pn_jq ".item | $four") $(pn_row "$four_sql")" "200 1|bag|own_garden|null 1.00|bag|own_garden|null" "PATCH both pairs; our garden stores no name; the reply, then the row"
+        pn_req PATCH "$PN_BASE/api/pantry/items/$PN_AS_IS" '{"quantity_value": null, "quantity_unit": null, "source_kind": null, "source_label": null}'
+        pn_check "s19-item-clear" "$PN_CODE $(pn_row "$four_sql")" "200 null|null|null|null" "PATCH null, null on each pair clears it"
+      }
+
+      # ── S17) the place while it holds stock → refused; emptied through each row's own route → deleted ──
+      pn_s17_place_delete() {
+        local id held
+        held=$(pn_row "SELECT (SELECT count(*) FROM preservation_log WHERE storage_location_id = '$PN_PLACE' AND deleted_at IS NULL AND consumed_at IS NULL AND COALESCE(remaining_count, package_count) > 0) + (SELECT count(*) FROM pantry_item WHERE storage_location_id = '$PN_PLACE' AND deleted_at IS NULL AND used_up_at IS NULL)")
+        pn_req DELETE "$PN_PLACE_URL"
+        if [[ "$held" =~ ^[1-9][0-9]*$ ]]; then
+          pn_check "s17-delete-refused" "$PN_CODE $(pn_refusal) $(pn_place_gone)" "409 place_in_use|$held|true false" "DELETE /api/storage-locations/:id while $held things are stored there; code|n|one sentence, then deleted"
+        else
+          pn_fail "s17-delete-refused" "nothing is stored in the smoke place (counted '$held'), so the refusal was not exercised; DELETE → HTTP $PN_CODE"
+        fi
+        for id in "${PN_JAR:-}" "$PN_DOOR" "$PN_DRIED" "$PN_DATED"; do
+          if pn_id_ok "$id"; then pn_req DELETE "$PN_BASE/api/preservation/$id"; fi
+        done
+        if pn_id_ok "$PN_AS_IS"; then pn_req DELETE "$PN_BASE/api/pantry/items/$PN_AS_IS"; fi
+        pn_req DELETE "$PN_PLACE_URL"
+        pn_check "s17-delete-clean" "$PN_CODE $(pn_jq '.ok') $(pn_place_gone)" "200 true true" "the same DELETE once nothing is stored there (the API cleanup); ok, then deleted"
+      }
+
+      for PN_STEP in pn_s10_door pn_s11_dated pn_s12_rekind pn_s14_move pn_s16_all_remaining pn_s18_source pn_s19_as_is pn_s17_place_delete; do
+        echo "── pantry (R2a) step ${PN_STEP#pn_} ──"
+        CLERK_JWT=$(mint_session_token)
+        "$PN_STEP"
+      done
     fi
     if pantry_sweep; then
       PANTRY_DIRTY=false
@@ -2633,6 +2851,8 @@ fi
 #   T2) POST /api/recipes (keyed; one line, a keeps line, that built-in type) → 201 with an id.
 #   T3) GET /api/recipes/:id → the line (name|qty|unit), the keeps line, the type; and NO key anywhere in the body
 #       names a pH (V4 "pH": his target pH lives in the notes, never in a field; the batch list has no pH column).
+#   T3b) Put-Up R2a: PATCH /api/recipes/:id {lines} → the line comes back with at_the_end and a brand; one live line
+#       and one soft-deleted (SQL).
 #   T4) DELETE /api/recipes/:id → 200 {ok:true}; the recipe and its line are soft-deleted in the one statement (SQL).
 #   T5) GET /api/recipes/:id → 404.
 # The smoke has one user, so there is no STRANGER leg here; tests/integration covers household scope.
@@ -2701,6 +2921,15 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       rc_req GET "$RC_BASE/api/recipes/$RC_ID"
       rc_check "t3-readback" "$RC_CODE $(rc_jq '.recipe | "\(.name)|\(.type_label)|\(.keeps_n)|\(.keeps_unit)|\(.keeps_storage_kind)|\(.lines | length)|\(.lines[0].name)|\((.lines[0].qty | tonumber) + 0)|\(.lines[0].qty_unit)"')" "200 $RC_NAME|$RC_SAMBAL|2|month|fridge|1|$RC_TAG fresno|500|g" "GET /api/recipes/:id; name|type|keeps n|unit|where|lines|line name|qty|unit"
       rc_check "t3-no-ph-field" "$(rc_jq '[.. | objects | keys[] | select(test("(^|_)ph(_|$)"; "i"))] | unique')" "[]" "keys naming a pH anywhere in the recipe detail"
+
+      # ── T3b) PATCH the lines: `lines` present replaces the live set, in the one statement ──
+      # Put-Up R2a (V5-PUTUPLOGRETIRE-001). The recipe sheet's Save sends the whole line list; the PATCH had no smoke.
+      # The same line comes back with what the sheet adds to it (added at the end, a brand), read through GET; and in
+      # SQL the recipe now has one live line and one soft-deleted (the line T2 wrote). Two requests on T2's token.
+      rc_req PATCH "$RC_BASE/api/recipes/$RC_ID" "{\"lines\": [{\"name\": \"$RC_TAG fresno\", \"qty\": 500, \"qty_unit\": \"g\", \"at_the_end\": true, \"brand\": \"smoke-brand\"}]}"
+      RC_PATCH_HTTP="$RC_CODE"
+      rc_req GET "$RC_BASE/api/recipes/$RC_ID"
+      rc_check "t3b-patch-lines" "$RC_PATCH_HTTP $(rc_jq '.recipe | "\(.lines | length)|\(.lines[0].name)|\(.lines[0].at_the_end)|\(.lines[0].brand)"') $(rc_row "SELECT (SELECT count(*) FROM recipe_ingredient i WHERE i.recipe_id = '$RC_ID' AND i.deleted_at IS NULL)||'|'||(SELECT count(*) FROM recipe_ingredient i WHERE i.recipe_id = '$RC_ID' AND i.deleted_at IS NOT NULL)")" "200 1|$RC_TAG fresno|true|smoke-brand 1|1" "PATCH /api/recipes/:id { lines }; lines|name|at the end|brand on the GET, then live|soft-deleted lines"
 
       # ── T4) Remove (soft): the recipe and its line ──
       CLERK_JWT=$(mint_session_token)

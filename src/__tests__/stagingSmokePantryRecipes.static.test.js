@@ -43,7 +43,14 @@ const BLOCKS = [
     asserts: ['s1-create-readback', 's2-replay', 's3-listed', 's4-used-up', 's5-unlisted', 's6-delete', 's7-delete-again',
       's8-used-one', 's8-undo', 'l058-sweep',
       // Put-Up UX pass R1: Went bad as a count
-      's9-went-bad-part', 's9-listed', 's9-undo'],
+      's9-went-bad-part', 's9-listed', 's9-undo',
+      // Put-Up R2a (lane S): the door's create, the place refusals, /move, the where-from pair, the as-is amount.
+      // What each one sends and reads back is pinned in PutUpR2S.smoke.static.test.js.
+      's10-door-create', 's10-door-replay', 's10-door-dried', 's11-dated-weighed', 's11-listed-weighed',
+      's12-place-rename', 's13-rekind-refused', 's13-date-by-hand', 's13-rekind-after', 's14-work-it-out', 's14-move',
+      's15-rekind-allowed', 's16-all-remaining', 's16-undo', 's17-delete-refused', 's17-delete-clean',
+      's18-jar-source', 's18-jar-source-garden', 's18-jar-source-pair',
+      's19-item-create', 's19-item-replay', 's19-item-listed', 's19-item-patch', 's19-item-clear'],
     order: [
       'DELETE FROM pantry_use WHERE reverses_use_id IS NOT NULL',
       'DELETE FROM pantry_use WHERE preservation_log_id',
@@ -58,7 +65,9 @@ const BLOCKS = [
     tagVar: 'RC_TAG="smoke-test-recipe-$TEST_RUN_ID"', req: 'SMOKE_REQUIRE_RECIPES', mig: 'v5-recipes-001', treeVar: 'RC_TREE',
     probe: 'rc_req GET "$RC_BASE/api/recipes/types"', fail: 'rc_fail', uuid: 'RC_UUID_RE',
     outerIf: 'if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERVATION:-}" ]]; then',
-    asserts: ['t1-builtin-types', 't2-create', 't3-readback', 't3-no-ph-field', 't4-delete', 't5-gone', 'l058-sweep'],
+    asserts: ['t1-builtin-types', 't2-create', 't3-readback', 't3-no-ph-field', 't4-delete', 't5-gone', 'l058-sweep',
+      // Put-Up R2a (lane S): the recipe sheet's Save, PATCH { lines }
+      't3b-patch-lines'],
     order: ['DELETE FROM recipe_ingredient', 'DELETE FROM recipe WHERE'],
   },
 ]
