@@ -415,4 +415,47 @@ describe('a Walk group, its options open', () => {
 })
 
 // R2 lane Df additions go directly under this line
+// Put-Up R2a: every word the door's new fields and the Walk's exit can say, from the helpers and constants that
+// say them (the rendered states are swept in PutUpR2Df.door.test.jsx and PutUpR2Df.walk.test.jsx). Imported
+// here, inside the lane's own block: the import lines at the top of this file are the train's.
+describe('R2a — the door\'s new fields and the Walk\'s exit, in words', () => {
+  it('the labels, the canning line, every refusal, every echo, and the preview with a texture', async () => {
+    const pure = await import('../components/pantry/putSomethingUp.js')
+    const amount = await import('../components/pantry/AmountField.jsx')
+    const from = await import('../components/pantry/WhereFromField.jsx')
+    const walk = await import('../components/pantry/WalkPlace.jsx')
+    const { TEXTURE_CHIPS } = await import('../components/putup/putItUp.js')
+    const { PLACE_KINDS } = await import('../components/putup/placeKinds.js')
+    const { PUTUP_SOURCE_LABELS } = await import('../lib/dropdownRegistry.js')
+    const said = [
+      pure.DOOR_OPTIONS_LABEL, pure.DOOR_OPTIONS_LABEL_PUT_UP, pure.DOOR_FROM_LABEL, pure.DOOR_FROM_LABEL_PLANTING,
+      pure.DOOR_NOTES_PLACEHOLDER, pure.DOOR_NOTES_PLACEHOLDER_PUT_UP, pure.WHERE_FROM_HEADING, pure.MADE_WITH_HEADING,
+      pure.SIZE_LINK_LABEL, pure.AMOUNT_LINK_LABEL, pure.HOW_DRY_LABEL, pure.RAW_OR_IN_OIL_LABEL, pure.RAW_OIL_NO_DATE_WORDS,
+      pure.SIZE_TOTAL_TOO_BIG_TEXT, ...pure.CANNING_LINE.lines, pure.CANNING_LINE.linkText, pure.CANNING_LINE.linkName,
+      ...Object.values(amount.SIZE_WORDS), ...Object.values(amount.AMOUNT_WORDS), amount.MORE_UNITS_LABEL, amount.UNIT_GROUP_LABEL,
+      ...[...amount.SIZE_UNITS, ...amount.MORE_SIZE_UNITS, ...amount.ITEM_AMOUNT_UNITS, ...amount.MORE_ITEM_AMOUNT_UNITS].map(u => u.label),
+      from.MORE_SOURCES_LABEL, from.WHICH_ONE_LABEL, from.WHICH_ONE_PLACEHOLDER, from.WHERE_EXACTLY_LABEL, from.WHERE_EXACTLY_ERROR,
+      ...Object.values(PUTUP_SOURCE_LABELS), ...TEXTURE_CHIPS.map(c => c.label), ...PLACE_KINDS.map(k => k.label),
+      walk.walkUnsavedText('Megatron reaper'), walk.WALK_SAVE_IT_LABEL, walk.WALK_END_WITHOUT_LABEL,
+    ]
+    for (const words of [amount.SIZE_WORDS, amount.AMOUNT_WORDS]) {
+      for (const pair of [{ value: '2', unit: null }, { value: '', unit: 'qt' }, { value: '0', unit: 'qt' }]) said.push(amount.amountError(pair, words))
+    }
+    for (const n of [2, 3, 12]) for (const u of [...amount.SIZE_UNITS, ...amount.MORE_SIZE_UNITS]) said.push(pure.sizeEcho({ value: '0,5', unit: u.value }, n))
+    const whens = [{ date: '2026-10-01', precision: 'day' }, { date: '2026-09-01', precision: 'month' }, { date: '2026-10-01', precision: 'unknown' }]
+    for (const method of ALL_PUT_UP_METHODS) {
+      for (const place of PLACE_KINDS.map(k => ({ kind: k.kind, label: k.label }))) {
+        for (const when of whens) {
+          for (const texture of [null, ...TEXTURE_CHIPS.map(c => c.value)]) {
+            for (const flags of [{}, { isRaw: true }, { inOil: true }, { isRaw: true, inOil: true }]) said.push(previewLine({ method, place, when, texture, now: NOW, ...flags }))
+          }
+        }
+      }
+    }
+    const lines = [...new Set(said.filter(Boolean))]
+    expect(lines.length).toBeGreaterThan(200)
+    expect(lines).toContain('put up Oct 1 · no date — no general figure for raw or in-oil food. Set your own under Discard by.')
+    expectClean(lines, 'R2a door and Walk words')
+  })
+})
 // R2 lane P additions go directly under this line
