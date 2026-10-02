@@ -2338,13 +2338,13 @@ const EDIT_BOUGHT_METHOD = 'purchased_preserved'
 // the same unit, so each screen says the other number: "3 containers · 1 qt each", or "about 0.83 qt
 // each" when the amount does not divide evenly at the column's two places. From the TYPED amount, unit
 // and count as they stand (it moves as any of them changes), never from the stored row, and it changes
-// no field: the person is shown the mismatch, not corrected. Null — nothing to say — with no amount, no
-// unit, one container (the amount IS that container), or a share that rounds to nothing.
+// no field: the person is shown the mismatch, not corrected. Null — nothing to say — with no unit, one
+// container or none (the amount IS that container), or a share that comes to nothing (no amount is one).
 // Decimal arithmetic on the typed digits, as jarWords.totalOfEach does it: 2.5 / 3 in floats is not 0.83.
 const jarEachWords = (amountText, unit, countText) => {
   const m = /^\s*(\d*)(?:\.(\d*))?\s*$/.exec(String(amountText ?? ''))
   const n = Number(countText)
-  if (!m || (!m[1] && !m[2]) || !unit || String(countText ?? '').trim() === '' || !Number.isInteger(n) || n < 2) return null
+  if (!m || !unit || !Number.isInteger(n) || n < 2) return null
   const frac = m[2] ?? ''
   const places = Math.max(frac.length, 2)
   // The amount as a whole number of 10^-places, and what ONE hundredth of a share is in that scale.
@@ -2482,11 +2482,12 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
     // The one thing the date can be refused for here: "From the label" with no date picked.
     const dateMissing = discardTouched && discardMode === 'date' && !useByTarget
     setDateRefused(dateMissing)
-    // Where it's from travels as a PAIR, always both (the route refuses one alone): the garden and
-    // "un-chosen" carry no name, so their name goes as null; untouched, neither key is sent.
+    // Where it's from travels as a PAIR, always both (the route refuses one alone); untouched, neither
+    // key is sent. The garden and "un-chosen" carry no name: the control empties it on either choice
+    // (WhereFromField), and an empty name goes as null, never as a missing key.
     if (sourceTouched) {
       patch.source_kind = sourceKind
-      patch.source_label = sourceKind == null || sourceKind === 'own_garden' ? null : (sourceLabel.trim() || null)
+      patch.source_label = sourceLabel.trim() || null
     }
     const sourceMissing = sourceTouched ? whereFromError({ kind: sourceKind, label: sourceLabel }) : null
     setSourceRefused(sourceMissing)
