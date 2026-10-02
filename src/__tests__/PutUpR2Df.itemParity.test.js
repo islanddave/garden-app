@@ -283,6 +283,18 @@ describe('row 7 — As is with every put-up option set', () => {
   })
 })
 
+describe('a call passing none of the new arguments returns the body it always did, byte for byte', () => {
+  it('a typed name at a place, a day, a discard date and notes', () => {
+    expect(JSON.stringify(itemBody({ key: KEY, what: { source: 'typed', name: ' Rice ' }, place: { id: PLACE }, when: { date: '2026-10-01', precision: 'day' }, discard: { mode: 'date', date: '2026-11-15' }, notes: ' n ' })))
+      .toBe(`{"idempotency_key":"${KEY}","name":"Rice","storage_location_id":"${PLACE}","acquired_at":"2026-10-01","acquired_precision":"day","use_by_target":"2026-11-15","notes":"n"}`)
+  })
+
+  it('a planting at a place not made yet, the day not known', () => {
+    expect(JSON.stringify(itemBody({ key: KEY, what: planting, place: { key: 'new:fridge:fridge', id: null, label: 'Fridge', kind: 'fridge' }, when: { date: '2026-10-01', precision: 'unknown' }, discard: { mode: 'auto' } })))
+      .toBe(`{"idempotency_key":"${KEY}","name":"Sungold cherry","place":{"kind":"fridge","label":"Fridge"},"acquired_precision":"unknown","plant_id":"${PLANT}","crop_type_slug":"tomato"}`)
+  })
+})
+
 describe('row 9 — a planting What sends no source', () => {
   it('whatever the where-from state held before the hit: plant_id, and neither source key', () => {
     for (const source of [null, { kind: 'own_garden', label: '' }, { kind: 'farm_stand', label: 'Warner Farms' }, { kind: 'other', label: 'a neighbour' }]) {
