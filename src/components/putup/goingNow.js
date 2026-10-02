@@ -821,11 +821,38 @@ export const POP_LANDS_WITHIN_MS = 1500
 //   push — everything else, including a pop that was started from this entry and never landed: the Back
 //          is never a press that does nothing for good.
 // `entryKey` is the router's key for the entry being left; `started` is `{ key, at }`, the entry the last
-// pop was started from and when (the page clears it whenever the location changes).
+// pop was started from and when (the page clears it when a traversal lands — see popLanding — and whenever
+// the location changes).
 export function leavePlan({ state, historyIndex, entryKey, started = null, nowMs }) {
   if (!leavesByPop(state, historyIndex)) return 'push'
   if (!started || started.key !== entryKey) return 'pop'
   return nowMs - started.at < POP_LANDS_WITHIN_MS ? 'wait' : 'push'
+}
+
+// WHEN A TRAVERSAL LANDS (a popstate), with a pop of the page's own under way: 'hop' | 'clear' | 'keep'.
+// The page's latch (`started`, see leavePlan) used to be dropped only when the router's location key
+// changed. A sheet's Back marker is pushed as a COPY of the entry under it — the same router key and index
+// (context/DismissRegistry.jsx `arm`). Reload with a sheet open and boot reconciliation strips the marker
+// off that copy, leaving two identical entries: the Back's pop landed on the twin, nothing on screen moved,
+// the key had not changed so the latch stood, every press for the next 1.5 s was swallowed, and a later
+// one PUSHED while the label still named the origin. So the landing itself settles the latch:
+//   clear — the pop landed on another entry (the sender: the press worked), or there was no pop of the
+//           page's to settle, or the one hop below has been spent. The next press is a fresh one.
+//   hop   — it landed on an entry with the key it STARTED from: the twin. Go one entry further, ONCE; the
+//           page marks the latch `hopped`, so a third identical entry (two restores) costs a second press,
+//           never a walk of unknown length.
+//   keep  — it landed on its own key, but it was started while a sheet's marker WAS the current entry
+//           (`started.overMarker`): that is the entry under the marker, where such a pop lands by design,
+//           and the closing sheet's own disarm may have a second traversal queued behind it — a hop would
+//           walk past the sender, and a cleared latch would let a second press do the same. The latch
+//           stands, as it did before, until the location changes or it runs out.
+// `started` is `{ key, at, hopped?, overMarker? }`; `landedKey` is history.state.key as the popstate
+// finds it. The same key means the same URL, so the page is still in the mode it pressed Back in.
+export function popLanding({ started, landedKey }) {
+  if (!started) return 'clear'
+  if (typeof landedKey !== 'string' || landedKey === '' || landedKey !== started.key) return 'clear'
+  if (started.overMarker) return 'keep'
+  return started.hopped ? 'clear' : 'hop'
 }
 
 // The words after the Back's arrow, in two parts so the name can shorten on one line while the kind

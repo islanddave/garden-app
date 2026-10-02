@@ -7,11 +7,13 @@
 // Lane A2:
 //   · segmentOrigin ignores `onScreen`          -> "is null when no segment is on screen" reds
 //   · originSegment ignores the origin's kind   -> "a recipe or a batch that is CALLED a segment's name" reds
+//   · popLanding hops over a live marker        -> "a pop started over a sheet's live marker keeps its latch" reds
 // CI lane: `npm test` plus the TZ re-run. Nothing here reads a clock.
 import { describe, it, expect } from 'vitest'
 import {
   START_BATCH_CTA, TRY_AGAIN_CTA, PUT_UP_SEGMENTS, RECIPES_SEGMENT, leaveSegment, segmentLabel, leavesByPop,
   backWords, recipeSearchItems, leavePlan, POP_LANDS_WITHIN_MS, segmentOrigin, originSegment,
+  popLanding,
 } from '../components/putup/goingNow.js'
 import { backLabel, withFrom } from '../components/putup/origin.js'
 
@@ -163,6 +165,35 @@ describe('leavePlan — what ONE press of the Back does', () => {
 
   it('a wait is only ever about a pop: with nothing to pop to, a recent "started" still pushes', () => {
     expect(press({ historyIndex: 0, started: { key: 'k-batch', at: 10_000 } })).toBe('push')
+  })
+})
+
+// Lane A2: the landing settles the latch, because the router's key does not always change.
+describe('popLanding — what the page does when a traversal lands', () => {
+  const started = { key: 'k-batch', at: 10_000 }
+
+  it('a landing on another entry is the press having worked: the latch is cleared', () => {
+    expect(popLanding({ started, landedKey: 'k-list' })).toBe('clear')
+    expect(popLanding({ started: { ...started, hopped: true }, landedKey: 'k-list' })).toBe('clear')
+    expect(popLanding({ started: { ...started, overMarker: true }, landedKey: 'k-list' })).toBe('clear')
+  })
+
+  it('a landing on the key the pop STARTED from is the twin a restore leaves: hop, once', () => {
+    expect(popLanding({ started, landedKey: 'k-batch' })).toBe('hop')
+    expect(popLanding({ started: { ...started, overMarker: false, hopped: false }, landedKey: 'k-batch' })).toBe('hop')
+    // Bounded: the hop is spent, so a third identical entry clears the latch and waits for a press.
+    expect(popLanding({ started: { ...started, hopped: true }, landedKey: 'k-batch' })).toBe('clear')
+  })
+
+  it('a pop started over a sheet\'s live marker keeps its latch: that landing is by design, and it is never hopped', () => {
+    expect(popLanding({ started: { ...started, overMarker: true }, landedKey: 'k-batch' })).toBe('keep')
+    expect(popLanding({ started: { ...started, overMarker: true, hopped: true }, landedKey: 'k-batch' })).toBe('keep')
+  })
+
+  it('with no pop of the page\'s under way there is nothing to settle, and an entry with no key is nobody\'s twin', () => {
+    for (const landedKey of ['k-batch', 'k-list', undefined, null]) expect(popLanding({ started: null, landedKey })).toBe('clear')
+    for (const landedKey of [undefined, null, '', 7]) expect(popLanding({ started, landedKey })).toBe('clear')
+    expect(popLanding({ started: { key: undefined, at: 1 }, landedKey: undefined })).toBe('clear')
   })
 })
 

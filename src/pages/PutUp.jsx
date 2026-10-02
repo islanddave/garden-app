@@ -77,8 +77,8 @@ import { FIND_PARAM } from '../lib/putUpClientState.js'
 // URL) and the foot of goingNow.js (pop or push, the Back's words, the segments).
 import { withFrom, modeSearch } from '../components/putup/origin.js'
 import {
-  START_BATCH_CTA, PUT_UP_SEGMENTS, leaveSegment, segmentLabel, segmentOrigin, originSegment, leavePlan, backWords,
-  recipeSearchItems,
+  START_BATCH_CTA, PUT_UP_SEGMENTS, leaveSegment, segmentLabel, segmentOrigin, originSegment, leavePlan, popLanding,
+  backWords, recipeSearchItems,
 } from '../components/putup/goingNow.js'
 import { readMarker } from '../lib/backNav.js'
 
@@ -525,6 +525,24 @@ export default function PutUp({
   // entry re-entered later (the system's Forward) can be left again.
   const popStartedRef = useRef(null)
   useEffect(() => { popStartedRef.current = null }, [location.key])
+  // …and settled by the LANDING itself (goingNow.js popLanding), because a location key does not always
+  // change: after a reload with a sheet open, the entry under this one is its twin — same key, same URL —
+  // and a pop onto it moves nothing on screen. The landing clears the latch, and a pop that landed on the
+  // key it started from goes ONE entry further, so one press still reaches the sender.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const onPop = () => {
+      const started = popStartedRef.current
+      const landing = popLanding({ started, landedKey: window.history.state?.key })
+      if (landing === 'keep') return
+      popStartedRef.current = null
+      if (landing !== 'hop') return
+      popStartedRef.current = { key: started.key, at: Date.now(), hopped: true }
+      navigate(-1)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [navigate])
   const leaveMode = useCallback(() => {
     const plan = leavePlan({ state: location.state, historyIndex: routerIndex(), entryKey: location.key,
       started: popStartedRef.current, nowMs: Date.now() })
@@ -536,7 +554,7 @@ export default function PutUp({
       // finds no pop under way, and would pop a second time: one entry past the sender, possibly out of
       // Put-Up. The entry this call was made for must still be the current one, or it does nothing.
       if (standingOnKey() !== location.key) return
-      popStartedRef.current = { key: location.key, at: Date.now() }
+      popStartedRef.current = { key: location.key, at: Date.now(), overMarker: !!readMarker(window.history.state) }
       navigate(-1)
       return
     }

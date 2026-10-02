@@ -29,6 +29,11 @@
 //   A2-1d   a fresh page ignores the segment its entry names       -> "a recipe opened from Recipes, restored …"
 //   A2-3    leaveMode pops without asking which entry is current   -> "a remove that answers after the Back was
 //                                                                    pressed …"
+//   A2-2a   a pop that lands on its own key is not hopped          -> "as a reload finds it … ONE press lands on
+//                                                                    the list"
+//   A2-2b   the landing does not clear the latch                   -> "three identical entries …"
+//   A2-2c   the hop is not bounded (`hopped` is never set)         -> "three identical entries …"
+//   A2-2d   the latch never records a live marker                  -> "a pop started over a LIVE marker …"
 // CI lane: `npm test` plus the TZ re-run. No jest-dom (L-182). Nothing here reads a clock.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -169,7 +174,7 @@ vi.mock('../components/pantry/PutSomethingUpSheet.jsx', () => ({
 
 import PutUp from '../pages/PutUp.jsx'
 import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
-import { readAnyMarker } from '../lib/backNav.js'
+import { readAnyMarker, MARKER_KEY, MARKER_VERSION } from '../lib/backNav.js'
 import { withFrom } from '../components/putup/origin.js'
 
 // The Start sheet is handed in as a stand-in (the page's own test seam): it records what it was opened with.
@@ -873,6 +878,120 @@ describe('a stale Back never pops past the sender', () => {
     } finally { go.mockRestore() }
     await waitFor(() => expect(loc()).toBe('/put-up?state=closed'))
     expect(window.history.state.idx).toBe(1)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// Lane A2 (the seat's "dead in-page Back after a restore"). A sheet's Back marker is pushed as a COPY of the
+// entry under it: the same router key and index (context/DismissRegistry.jsx `arm`). Reload with a sheet
+// open on a mode entry and the boot reconciliation strips the marker off that copy, which leaves two
+// identical entries. A pop from the upper one lands on its twin and nothing on screen moves.
+describe('a restore with a sheet open leaves two identical entries: the Back still takes ONE press', () => {
+  const MODE = '/put-up?view=pantry&batch=kb-1'
+  const LIST = { url: '/put-up?view=pantry', idx: 0 }
+  const twin = { state: { from: { label: 'Pantry' } }, idx: 1, key: 'k-twin' }
+  const afterAPopCouldHaveLanded = () => act(async () => { await new Promise((r) => setTimeout(r, 80)) })
+
+  // Built the way it really happens: the top entry carries a live-looking marker, and the REAL boot
+  // reconciliation (DismissRegistryProvider, mounted with nothing registered) strips it.
+  it('as a reload finds it — [list, mode, mode + a sheet\'s marker]: the marker is stripped, the twin remains, and ONE press lands on the list', async () => {
+    window.history.pushState({ __floor: 1 }, '', '/floor')
+    window.history.pushState({ usr: null, key: 'k-list', idx: 0 }, '', LIST.url)
+    window.history.pushState({ usr: twin.state, key: twin.key, idx: 1 }, '', MODE)
+    // DismissRegistry.arm, to the letter: the current state, spread, plus the marker; no URL.
+    window.history.pushState({ ...window.history.state, [MARKER_KEY]: { v: MARKER_VERSION, seq: 1 } }, '')
+    const length = window.history.length
+    render(
+      <BrowserRouter>
+        <DismissRegistryProvider>
+          <Probe />
+          <Routes>
+            <Route path="/put-up" element={<PutUp StartBatchSheet={StubStartSheet} extraSearchItems={RECIPE_HITS} />} />
+            <Route path="/floor" element={<div data-testid="floor">the entry under the app</div>} />
+          </Routes>
+        </DismissRegistryProvider>
+      </BrowserRouter>,
+    )
+    await screen.findByTestId('putup-batch-mode')
+    await flush()
+    // Instrument: this IS the twin — the marker is gone, the entry stayed, and it has its neighbour's key and index.
+    expect(readAnyMarker(window.history.state)).toBeNull()
+    expect(window.history.length).toBe(length)
+    expect([window.history.state.key, window.history.state.idx]).toEqual(['k-twin', 1])
+    expect(backBtn().textContent).toBe('← Pantry')
+    const from = pops
+    const go = vi.spyOn(window.history, 'go')
+    try {
+      tap('putup-mode-back')
+      await waitFor(() => expect(loc()).toBe(LIST.url))
+      expect(go.mock.calls).toEqual([[-1], [-1]])               // the press, and ONE hop off the twin
+    } finally { go.mockRestore() }
+    expect(pops).toBe(from + 2)
+    expect(window.history.state.key).toBe('k-list')
+    expect(screen.getByTestId('pantry-view')).toBeTruthy()
+    expect(screen.queryByTestId('putup-batch-mode')).toBeNull()
+    await afterAPopCouldHaveLanded()
+    expect(loc()).toBe(LIST.url)                                // …and it stops there
+    expect(screen.queryByTestId('floor')).toBeNull()
+  })
+
+  it('the same stack, seeded plainly — [list, mode, mode (same key)]: ONE press lands on the list', async () => {
+    renderAt(MODE, { ...twin, under: [LIST, { url: MODE, ...twin }] })
+    await screen.findByTestId('putup-batch-mode')
+    const go = vi.spyOn(window.history, 'go')
+    try {
+      tap('putup-mode-back')
+      await waitFor(() => expect(loc()).toBe(LIST.url))
+      expect(go.mock.calls).toEqual([[-1], [-1]])
+    } finally { go.mockRestore() }
+    expect(window.history.state.idx).toBe(0)
+    expect(screen.getByTestId('pantry-view')).toBeTruthy()
+  })
+
+  // Two restores. The hop is ONE, so the first press stops on the last twin — and because the LANDING settles
+  // the latch (the location key never changed), the very next press is a fresh one: it is not swallowed for
+  // 1.5 s and it does not push.
+  it('three identical entries: the hop is bounded to one, and the next press lands on the list at once', async () => {
+    renderAt(MODE, { ...twin, under: [LIST, { url: MODE, ...twin }, { url: MODE, ...twin }] })
+    await screen.findByTestId('putup-batch-mode')
+    const from = pops
+    const go = vi.spyOn(window.history, 'go')
+    try {
+      tap('putup-mode-back')
+      await waitFor(() => expect(pops).toBe(from + 2))
+      await afterAPopCouldHaveLanded()
+      expect(go.mock.calls).toEqual([[-1], [-1]])               // never a third traversal
+      expect(pops).toBe(from + 2)
+      expect(loc()).toBe(MODE)                                  // on the last twin, still in the batch
+      expect(screen.getByTestId('putup-batch-mode')).toBeTruthy()
+      tap('putup-mode-back')                                    // at once — well inside the old 1.5 s latch
+      await waitFor(() => expect(loc()).toBe(LIST.url))
+      expect(go.mock.calls).toEqual([[-1], [-1], [-1]])         // a pop: the press was neither swallowed nor a push
+    } finally { go.mockRestore() }
+    expect(window.history.state.idx).toBe(0)
+    expect(screen.getByTestId('pantry-view')).toBeTruthy()
+  })
+
+  // The other way a pop lands on its own key: it was started while a sheet's marker WAS the current entry.
+  // That landing is by design, and the closing sheet may have its own traversal queued behind it — a hop
+  // there would walk past the sender.
+  it('a pop started over a LIVE marker lands on the entry under it and is not hopped', async () => {
+    renderAt('/put-up?view=pantry')
+    await screen.findByTestId('pantry-view')
+    tap('stub-pantry-batch')
+    await screen.findByTestId('putup-batch-mode')
+    act(() => { window.history.pushState({ ...window.history.state, [MARKER_KEY]: { v: MARKER_VERSION, seq: 7 } }, '') })
+    const from = pops
+    const go = vi.spyOn(window.history, 'go')
+    try {
+      act(() => { seen.detail.at(-1).onRemoved() })
+      await waitFor(() => expect(pops).toBe(from + 1))
+      await afterAPopCouldHaveLanded()
+      expect(go.mock.calls).toEqual([[-1]])
+    } finally { go.mockRestore() }
+    expect(pops).toBe(from + 1)
+    expect(readAnyMarker(window.history.state)).toBeNull()      // the marker entry was the one consumed
+    expect(loc()).toBe('/put-up?view=pantry&batch=kb-1')
   })
 })
 
