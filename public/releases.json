@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.169.1",
+    "date": "2026-10-02",
+    "highlights": [
+      "Log Many: after you change the zone, type or date, the Log button now waits for the new count (it reads Counting…) so it always logs exactly what it says"
+    ]
+  },
+  {
     "version": "4.169.0",
     "date": "2026-10-01",
     "highlights": [
