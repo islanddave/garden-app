@@ -111,7 +111,7 @@ export function DismissRegistryProvider({ children }) {
   //
   // PROVIDER-OWNED, not consumer-owned, for three reasons that are not style: only the arbiter can
   // see the whole stack (the confirm must outrank surfaces the consumer cannot know about); the
-  // re-arm and resolve-once bookkeeping has to sit next to armedRef/blockedRef/selfPopRef; and a
+  // return and resolve-once bookkeeping has to sit next to armedRef/blockedRef/selfPopRef; and a
   // consumer-rendered confirm is just the per-surface window.confirm patch again, once per host.
   //
   // pendingConfirm is BOTH state (to render) and a ref (readable from the popstate listener, which
@@ -213,7 +213,7 @@ export function DismissRegistryProvider({ children }) {
 
   // Scalar, NOT the entries array. Keying the arm effect on the array would push/pop history on
   // every keystroke that flips `dirty` — far worse than a render loop. Depth is handled by the
-  // re-arm inside the popstate handler, not by this effect.
+  // return to the marker inside the popstate handler (stepBackOn), not by this effect.
   const armable = hasArmable(entries)
 
   const arm = useCallback(() => {
