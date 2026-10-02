@@ -421,7 +421,8 @@ function sourceLabelOf({ kind, label }) {
 function ItemEditPanel({ row, fetch, onCancel, onSaved, onRemoved }) {
   const [seed] = useState(() => ({
     name: String(row.name ?? ''),
-    amount: { value: row.quantity_value != null && row.quantity_unit ? qtyText(row.quantity_value) : '', unit: row.quantity_value != null ? (row.quantity_unit ?? null) : null },
+    amount: row.quantity_value != null && row.quantity_unit
+      ? { value: qtyText(row.quantity_value), unit: row.quantity_unit } : { value: '', unit: null },
     source: { kind: row.source_kind ?? null, label: typeof row.source_label === 'string' ? row.source_label : '' },
     acquired: row.acquired_at ? toYmd(parseYmd(row.acquired_at)) : '',
     useBy: row.discard?.basis === 'typed' && row.discard?.date ? toYmd(parseYmd(row.discard.date)) : '',

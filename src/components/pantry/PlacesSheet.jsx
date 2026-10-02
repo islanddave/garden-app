@@ -301,7 +301,7 @@ function PlacesOpen({ onClose, fetch, rows, onChanged, onPlaces }) {
                   )}
 
                   {isEditing && (
-                    <div ref={editorRef} data-testid="pu-location-editor" style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 8 }}
+                    <div ref={editorRef} data-testid="pu-location-edit" style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 8 }}
                       onKeyDown={e => { if (e.key === 'Escape' && !busy) { e.preventDefault(); e.stopPropagation(); cancelEdit(place) } }}>
                       <div>
                         <label htmlFor={`${base}-name`} style={labelChrome}>Name</label>
