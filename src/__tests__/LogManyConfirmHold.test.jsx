@@ -341,6 +341,28 @@ describe('a preview that FAILS', () => {
     expect(wire()).toEqual([{ scope: BAG_SCOPE, exclude_plant_ids: [], written: ['Pepper Row'] }])
   })
 
+  // Two failures in a row is the dead-zone case. After the first, `preview` is already null, so the
+  // second changes NOTHING the lift effect watched before `previewFor` joined its deps — without that
+  // dep the page keeps the first failure's tag and the button reads "Counting…" beside an error until
+  // some later dry-run succeeds. The effect is under an exhaustive-deps disable, so only this test
+  // would notice the dep going missing.
+  it('two failures in a row: the second also ends the hold', async () => {
+    await renderReady()
+    await liveConfirm('Log watered on 3')
+    deferDryRuns = true
+    fireEvent.click(screen.getByText('By zone'))
+    await fail('bag', 'Request timed out')
+    expect(confirmButton().textContent).toBe('Log watered on 0')
+
+    fireEvent.click(screen.getByText('Trough'))
+    expectHeld()
+    await fail('trough', 'Failed to fetch')
+    expect((await screen.findByRole('alert')).textContent).toBe('Failed to fetch')
+    expect(screen.queryByText('Counting…')).toBeNull()
+    expect(confirmButton().textContent).toBe('Log watered on 0')
+    expect(confirmButton().disabled).toBe(true)
+  })
+
   it('on first load behaves as it did: error on the card, "on 0" disabled, and a chip tap recovers', async () => {
     deferDryRuns = true
     render(<LogMany />)
