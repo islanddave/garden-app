@@ -72,9 +72,9 @@ name: promote-gate
 #
 # PREFLIGHT — DUAL EVALUATION (promote-path plan A2.1, push 1, 2026-10-02). "CI green on dev_sha" is decided twice
 # and the promote needs BOTH, so a defect in the new check can refuse a promote but cannot admit one on any gate
-# the dispatcher has not opted out of. (One input passes now that used to end the step: require_integration=false
-# with an unreadable integration check-runs reply. It died on a bare errexit; it is now printed as advisory, which
-# is what that opt-out asks for.)
+# the dispatcher has not opted out of. (Two inputs pass now that the old step refused, both deliberate:
+# require_integration=false with an unreadable integration check-runs reply, which died on a bare errexit and is now
+# printed as advisory, as that opt-out asks; and a commit with more than a page of check-runs, next bullet.)
 #   * name-based (the check this workflow has always had): the first check-run named `build-and-test` on the
 #     commit must conclude success. The read is now filtered by check_name, because the unfiltered listing is one
 #     page of 100 and a commit that has already been through a promote carries more (v4.162.0's has 182), which
@@ -246,14 +246,14 @@ jobs:
       lambda_changed: ${{ steps.lam.outputs.changed }}
     # 60 (30 until 2026-07-23, then 50). Widened 2026-07-23 after two promotes fail-closed when a runner-queue backlog pushed the ~16min
     # staging pipeline past the old window (staging was green both times). Worst case for a promote that reaches
-    # the FF: ~3.4 min before the smoke gate (token, checkout, a preflight that still PASSES at its slowest: ~2.4
-    # min = three curl reads at up to 15 s each + four script reads that each ride out two 10 s timeouts and two
-    # 2 s pauses; the rest ~1 min as before 2026-10-02: skew, psycopg2 install, and a schema gate that PASSES in
-    # seconds) + up to 34.5 min in the staging smoke gate (5 locate + 27.5 poll + 2 jobs read) + ~10 min FF and
-    # snap = ~48 min. The schema gate's hang bounds (install <=190 s, self-tests <=105 s, audit
+    # the FF: ~4 min before the smoke gate (token, checkout, a preflight that still PASSES at its slowest: ~3 min
+    # = three curl reads at up to 15 s each + four script reads that each ride out two 10 s timeouts and two 2 s
+    # pauses and then take up to 10 s themselves; its step limit is 5; the rest ~1 min as before 2026-10-02: skew,
+    # psycopg2 install, and a schema gate that PASSES in seconds) + up to 34.5 min in the staging smoke gate
+    # (5 locate + 27.5 poll + 2 jobs read) + ~10 min FF and snap = ~48.5 min. The schema gate's hang bounds (install <=190 s, self-tests <=105 s, audit
     # <=250 s, about 9 min together) end in a refusal BEFORE the FF, so they stack with snap only on a
-    # require_schema_audit=false dispatch. There, all of them at once on top of a maximal smoke wait come to ~57
-    # min (54.5 before the preflight's retries; the bot token minted in the first step lives 60, so do not raise
+    # require_schema_audit=false dispatch. There, all of them at once on top of a maximal smoke wait come to ~57.5
+    # min, and 59.5 with the preflight at its 5-minute step limit (54.5 before the preflight's retries; the bot token minted in the first step lives 60, so do not raise
     # this job's limit past it), which passed the old 50 and would have ended the job inside snap, after the FF (review MINOR 2) — main
     # moved, nothing deployed. 60 (was 50, raised 2026-09-24 with the schema gate) covers that worst case.
     timeout-minutes: 60
@@ -282,8 +282,8 @@ jobs:
       # and without the other check's verdict. scripts/test_workflow_steps.py runs this body the runner's way.
       - name: Preflight — dev unmoved + CI green on dev_sha (name-based and run-based, both required)
         # Backstop only: every read inside is bounded (curl --max-time; the script's retries), and a reply that
-        # trickles past those bounds ends here, before the fast-forward.
-        timeout-minutes: 6
+        # trickles past those bounds ends here, before the fast-forward. 5, not more: see the job's time budget.
+        timeout-minutes: 5
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           ACTIONS_TOKEN: ${{ github.token }}

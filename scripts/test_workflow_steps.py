@@ -711,7 +711,7 @@ def test_preflight_runs_under_the_shell_the_harness_models_and_cannot_be_skipped
     assert _declared_shell(wf, "promote", step) is None
     assert "if" not in step and "continue-on-error" not in step
     # the backstop for a reply that trickles past every inner bound; it ends the step before the fast-forward
-    assert step["timeout-minutes"] == 6 and "--max-time 15" in step["run"]
+    assert step["timeout-minutes"] == 5 and re.search(r"curl -sS --connect-timeout 10 --max-time 15 -H", step["run"])
 
 
 def test_preflight_env_gives_the_run_based_check_the_workflow_token_and_the_rest_the_bot_token():
@@ -739,13 +739,16 @@ def test_preflight_passes_when_both_checks_are_green_and_records_both(tmp_path, 
     proc = _run_preflight(tmp_path, api, shell)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert _errors(proc) == []
-    assert [ln for ln, _ in _dual(proc)] == [
-        f"::notice::preflight-dual build-and-test on {DEV_SHA}: name-based=success run-based-exit=0 agree=yes | "
-        f"pass: run {CI_ID} is the newest of 1 and its job build-and-test succeeded | "
-        f"runs={CI_ID}:push@dev:a1:completed/success",
-        f"::notice::preflight-dual integration-tests on {DEV_SHA}: name-based=success run-based-exit=0 agree=yes "
-        f"require_integration=true | pass: run {INT_ID} is the newest of 1 and its job integration-tests succeeded | "
-        f"runs={INT_ID}:push@dev:a1:completed/success"]
+    (ci_line, ci), (int_line, integ) = _dual(proc)
+    # The record format push 2 is decided from: the prefix, the fields, then ` | <the script's line>`.
+    assert ci_line.startswith(f"::notice::preflight-dual build-and-test on {DEV_SHA}: name-based=success "
+                              f"run-based-exit=0 agree=yes | pass: ")
+    assert ci_line.endswith(f" | runs={CI_ID}:push@dev:a1:completed/success")
+    assert int_line.startswith(f"::notice::preflight-dual integration-tests on {DEV_SHA}: name-based=success "
+                               f"run-based-exit=0 agree=yes require_integration=true | pass: ")
+    assert int_line.endswith(f" | runs={INT_ID}:push@dev:a1:completed/success")
+    assert ci == {"name-based": "success", "run-based-exit": "0", "agree": "yes"}
+    assert integ == {"name-based": "success", "run-based-exit": "0", "agree": "yes", "require_integration": "true"}
     assert f"preflight ok: dev=={DEV_SHA}, build-and-test=success, integration-tests=success (enforced" in proc.stdout
     # one read of dev, one filtered check-runs read per name, one runs listing and one jobs listing per workflow
     assert sorted(api.log) == sorted([
@@ -1080,6 +1083,11 @@ def test_deploy_staging_job_graph_is_what_the_promote_staging_gate_reads():
         "smoke-tests": ["db-schema-check", "deploy-frontend"]}
     for job, body in jobs.items():  # a skipped or advisory job would let the run conclude without the smoke
         assert "if" not in body and "continue-on-error" not in body and "name" not in body, job
+    # ...and so would an advisory STEP: `smoke-tests = success` must mean every step of the chain passed. The Lambda
+    # legs carry the only advisory steps (five config steps the staging role may lack the permission for).
+    advisory = {job: [s.get("name") for s in body["steps"] if "continue-on-error" in s] for job, body in jobs.items()}
+    assert {job: len(names) for job, names in advisory.items()} == {
+        "deploy-lambdas": 5, "deploy-frontend": 0, "db-schema-check": 0, "smoke-tests": 0}, advisory
     assert "inputs.dev_sha" in wf["run-name"] and wf["run-name"].startswith("staging ")
     legs = len(jobs["deploy-lambdas"]["strategy"]["matrix"]["function"])
     assert jobs["deploy-lambdas"]["strategy"]["fail-fast"] is False

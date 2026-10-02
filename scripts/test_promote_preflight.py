@@ -15,6 +15,7 @@ import io
 import json
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -257,7 +258,7 @@ def test_values_from_a_reply_are_reduced_before_they_are_printed():
 
 class _Api:
     def __init__(self, replies):
-        self.replies, self.seen = list(replies), []
+        self.replies, self.seen, self.release = list(replies), [], threading.Event()
         api = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -270,6 +271,9 @@ class _Api:
                 api.seen.append((self.path, self.headers.get("Authorization"), self.headers.get("Accept")))
                 reply = api.replies.pop(0) if len(api.replies) > 1 else api.replies[0]
                 self.close_connection = True
+                if reply == "stall":  # accept, say nothing, hold the connection open
+                    api.release.wait(5)
+                    return
                 if reply is None:
                     return
                 status, body = reply[0], reply[1].encode()
@@ -300,6 +304,7 @@ def serve(monkeypatch):
 
     yield start
     for api in apis:
+        api.release.set()
         api.server.shutdown()
         api.server.server_close()
 
@@ -360,6 +365,17 @@ def test_an_unreadable_reply_is_asked_again_and_then_given_up_on(serve, monkeypa
     code, out, pauses = main(monkeypatch=monkeypatch)
     assert (code, pauses, len(api.seen)) == (2, [pp.PAUSE_S] * (pp.ATTEMPTS - 1), pp.ATTEMPTS)
     assert out.startswith("unreadable: no usable answer from workflows/ci.yml/runs (") and out.endswith(" | runs=none\n")
+
+
+def test_a_server_that_accepts_and_never_answers_is_given_up_on_by_the_socket_timeout(serve, monkeypatch):
+    """TIMEOUT_S is what ends such a read. Without it handed to the opener this test waits the stand-in out."""
+    monkeypatch.setattr(pp, "TIMEOUT_S", 0.2)
+    api = serve("stall")
+    began = time.monotonic()
+    code, out, pauses = main(monkeypatch=monkeypatch)
+    assert time.monotonic() - began < 3, "the reads were not ended by TIMEOUT_S (the stand-in holds each for 5 s)"
+    assert (code, pauses, len(api.seen)) == (2, [pp.PAUSE_S] * (pp.ATTEMPTS - 1), pp.ATTEMPTS)
+    assert out.startswith("unreadable: no usable answer from workflows/ci.yml/runs (")
 
 
 @pytest.mark.parametrize("status", [304, 401, 403, 404, 422])
