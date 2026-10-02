@@ -65,6 +65,47 @@ function placeExists(existingId) {
   return { error: PLACE_EXISTS_WORDS, code: 'place_exists', message: PLACE_EXISTS_WORDS, existing_id: existingId };
 }
 
+// Put-Up R2a — the two refusals a place answers, and the words of each.
+//
+// RE-KIND. A put-up's discard-by date can be WORKED OUT from the kind of place it sits in (a general
+// figure, the house figure for candy, a recipe's "how long, and where"). Changing the kind under such
+// a date leaves it standing on a kind of place the food is no longer recorded at, so a PUT that
+// CHANGES the kind is refused while the place holds one. What counts is one put-up that is live by
+// the Pantry's own predicate (lambda/preservation/pantryRoutes.js listPantry: not removed,
+// COALESCE(remaining_count, package_count) > 0, not consumed), has a stored date, and whose basis is
+// table, house, recipe or unrecorded (NULL: its origin is unknown, and here unknown is not read as
+// "his own date"). A typed date, "no date", a used-up or a removed put-up never count.
+//   * A PUT is a re-kind only when `kind` is sent AND differs from the stored kind. The shipped
+//     "Edit locations" form sends { label, kind } on every Save, a plain rename included, so a rule
+//     keyed on the key's presence would refuse every rename of a place that holds dated put-ups.
+//   * A refused PUT writes nothing, the name included: the check and the write are ONE statement.
+//
+// DELETE. Refused while the place holds anything: a live put-up (the same liveness, whatever its date)
+// or a pantry item that is not removed and not used up. A deleted place keeps its Pantry heading but
+// can no longer be listed, renamed or picked, so an empty place is the only one that can go. A going
+// batch's stage that names the place does not block (as before R2a).
+//
+// Each answer is a coded 409 carrying `n` and one plain sentence, the same in `message` and `error`:
+// a cached older bundle prints `message`, then `error`, exactly as sent, so these are user copy.
+export function placeHasDatedJars(n) {
+  const words = n === 1
+    ? '1 put-up in this place has a date worked out from the kind of place it is now. Set its date by hand, or move it somewhere else, then change the kind.'
+    : `${n} put-ups in this place have dates worked out from the kind of place it is now. Set those dates by hand, or move them somewhere else, then change the kind.`;
+  return { error: words, code: 'place_has_dated_jars', message: words, n };
+}
+export function placeInUse(n) {
+  const words = n === 1
+    ? '1 thing is stored in this place. Move it first, then delete it.'
+    : `${n} things are stored in this place. Move them first, then delete it.`;
+  return { error: words, code: 'place_in_use', message: words, n };
+}
+
+// One line per place write and per refusal. storage_location has no updated_at, no trigger and no
+// audit row, so without this a rename, a re-kind, a delete or an "it won't let me" leaves no trace.
+function logPlace(event, fields) {
+  console.log(JSON.stringify({ event, ...fields }));
+}
+
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return { statusCode: 204, headers: CORS, body: '' };
@@ -115,15 +156,52 @@ export const handler = async (event) => {
         const label = body.label == null ? null : String(body.label).trim();
         let rows;
         try {
+          // Put-Up R2a: the re-kind refusal (see placeHasDatedJars above), decided IN the write. `target`
+          // is the place as this statement's snapshot sees it; `dated` counts what would be stranded;
+          // the UPDATE runs only for a save that sends no kind, sends the stored kind (a rename), or
+          // finds nothing dated. One row comes back whenever the place exists: written, or refused
+          // with `n`. No row is the same 404 as ever.
           rows = await sql`
-            UPDATE storage_location
-            SET
-              label = COALESCE(${label}, label),
-              kind  = COALESCE(${body.kind ?? null}, kind)
-            WHERE id = ${locId}
-              AND deleted_at IS NULL
-              AND user_id = ANY(${householdIds})
-            RETURNING *
+            WITH target AS (
+              SELECT id, user_id, label, kind, created_at, deleted_at
+              FROM storage_location
+              WHERE id = ${locId}
+                AND deleted_at IS NULL
+                AND user_id = ANY(${householdIds})
+            ),
+            dated AS (
+              SELECT count(*)::int AS n
+              FROM preservation_log p
+              WHERE p.storage_location_id = ${locId}
+                AND p.user_id = ANY(${householdIds})
+                AND p.deleted_at IS NULL
+                AND COALESCE(p.remaining_count, p.package_count) > 0
+                AND p.consumed_at IS NULL
+                AND p.use_by_target IS NOT NULL
+                AND (p.use_by_basis IS NULL OR p.use_by_basis IN ('table', 'house', 'recipe'))
+            ),
+            written AS (
+              UPDATE storage_location
+              SET
+                label = COALESCE(${label}, label),
+                kind  = COALESCE(${body.kind ?? null}, kind)
+              WHERE id = ${locId}
+                AND deleted_at IS NULL
+                AND user_id = ANY(${householdIds})
+                AND (${body.kind ?? null}::text IS NULL
+                     OR kind = ${body.kind ?? null}::text
+                     OR (SELECT n FROM dated) = 0)
+              RETURNING id, user_id, label, kind, created_at, deleted_at
+            )
+            SELECT target.id, target.user_id,
+                   COALESCE(written.label, target.label) AS label,
+                   COALESCE(written.kind, target.kind) AS kind,
+                   target.created_at, target.deleted_at,
+                   target.kind AS old_kind,
+                   (written.id IS NULL) AS refused,
+                   (SELECT n FROM dated) AS n
+            FROM target
+            LEFT JOIN written ON written.id = target.id
           `;
         } catch (err) {
           if (err.code !== '23505') throw err;
@@ -148,7 +226,20 @@ export const handler = async (event) => {
           return resp(409, placeExists(clash[0]?.id ?? null));
         }
         if (!rows.length) return resp(404, { error: 'Not found' });
-        return resp(200, rows[0]);
+        // The answer is the place alone, the six columns it has always been.
+        const { old_kind: oldKind = null, refused, n, ...place } = rows[0];
+        const dated = Number(n ?? 0);
+        if (refused) {
+          // Refused with nothing dated: the place itself changed under the statement (removed on another
+          // phone between the snapshot and the row lock). The same answer as a place that is not there.
+          if (dated < 1) return resp(404, { error: 'Not found' });
+          logPlace('storage_location_refused', {
+            op: 'rekind', code: 'place_has_dated_jars', place_id: locId, old_kind: oldKind, new_kind: body.kind ?? null, n: dated,
+          });
+          return resp(409, placeHasDatedJars(dated));
+        }
+        logPlace('storage_location_write', { op: 'update', place_id: locId, old_kind: oldKind, new_kind: place.kind ?? null, n: dated });
+        return resp(200, place);
       }
 
       if (method === 'DELETE') {
@@ -156,15 +247,59 @@ export const handler = async (event) => {
         // already-deleted / not-owned DELETE reported success; now 404, matching the PUT at :102.
         // No slug arm here (unlike locations) — storage_location has no slug column and this
         // route has only ever resolved by uuid on every verb.
+        // Put-Up R2a: the in-use refusal (see placeInUse above), decided IN the write, as the re-kind
+        // is. `held` counts what is stored here; the soft-delete runs only when that is nothing. One
+        // row comes back whenever the place exists: gone, or refused with `n`.
         const rows = await sql`
-          UPDATE storage_location
-          SET deleted_at = NOW()
-          WHERE id = ${locId}
-            AND deleted_at IS NULL
-            AND user_id = ANY(${householdIds})
-          RETURNING id
+          WITH target AS (
+            SELECT id, kind
+            FROM storage_location
+            WHERE id = ${locId}
+              AND deleted_at IS NULL
+              AND user_id = ANY(${householdIds})
+          ),
+          held AS (
+            SELECT ((SELECT count(*)
+                     FROM preservation_log p
+                     WHERE p.storage_location_id = ${locId}
+                       AND p.user_id = ANY(${householdIds})
+                       AND p.deleted_at IS NULL
+                       AND COALESCE(p.remaining_count, p.package_count) > 0
+                       AND p.consumed_at IS NULL)
+                  + (SELECT count(*)
+                     FROM pantry_item pit
+                     WHERE pit.storage_location_id = ${locId}
+                       AND pit.user_id = ANY(${householdIds})
+                       AND pit.deleted_at IS NULL
+                       AND pit.used_up_at IS NULL))::int AS n
+          ),
+          gone AS (
+            UPDATE storage_location
+            SET deleted_at = NOW()
+            WHERE id = ${locId}
+              AND deleted_at IS NULL
+              AND user_id = ANY(${householdIds})
+              AND (SELECT n FROM held) = 0
+            RETURNING id
+          )
+          SELECT target.id, target.kind AS old_kind,
+                 (gone.id IS NULL) AS refused,
+                 (SELECT n FROM held) AS n
+          FROM target
+          LEFT JOIN gone ON gone.id = target.id
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
+        const { old_kind: oldKind = null, refused, n } = rows[0];
+        const held = Number(n ?? 0);
+        if (refused) {
+          // Refused with nothing stored: removed on another phone under this statement. Not there.
+          if (held < 1) return resp(404, { error: 'Not found' });
+          logPlace('storage_location_refused', {
+            op: 'delete', code: 'place_in_use', place_id: locId, old_kind: oldKind, new_kind: null, n: held,
+          });
+          return resp(409, placeInUse(held));
+        }
+        logPlace('storage_location_write', { op: 'delete', place_id: locId, old_kind: oldKind, new_kind: null, n: held });
         return resp(200, { ok: true });
       }
 
@@ -192,6 +327,7 @@ export const handler = async (event) => {
           VALUES (${userId}, ${label}, ${body.kind})
           RETURNING *
         `;
+        logPlace('storage_location_write', { op: 'create', place_id: rows[0]?.id ?? null, old_kind: null, new_kind: rows[0]?.kind ?? body.kind, n: 0 });
         return resp(201, rows[0]);
       } catch (err) {
         if (err.code !== '23505') throw err;
