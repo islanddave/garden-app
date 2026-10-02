@@ -173,6 +173,15 @@ const CASES = [
   { name: 'putup-sitting', viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, sheet: true, band: false, minControls: 20, scope: 'going-now-view', primary: 'putup-finish', panel: { footer: 'putup-footer', focus: 'putup-nexttime' } } },
   // R2 lane F additions go directly under this line
   // R2 lane Df additions go directly under this line
+  // Put-Up R2a: the Put something up door with everything open — Raw and its line under the method row, How many
+  // 3, the size with all sixteen units and its echo, both disclosures, all eight where-from chips and "Which
+  // one?" — at both heights. Two cases, because a case focuses one field: the notes (the last field, nearest
+  // the pinned Save) and the size (mid-sheet). The door is mounted beside the batch-detail page (`detail` and
+  // `door` below are that page's, behind the sheet); `scope` keeps the census on the door. minControls is a
+  // floor a door that never reached this state cannot meet, and the focused field exists only when its
+  // disclosure (or the size link) was really opened.
+  { name: 'door-options',      viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, detail: true, door: true, sheet: true, band: false, minControls: 55, scope: 'door-sheet', primary: 'door-save', panel: { footer: 'door-footer', focus: 'door-notes' } } },
+  { name: 'door-options-size', viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, detail: true, door: true, sheet: true, band: false, minControls: 55, scope: 'door-sheet', primary: 'door-save', panel: { footer: 'door-footer', focus: 'door-size-value' } } },
   // R2 lane P additions go directly under this line
 ]
 
