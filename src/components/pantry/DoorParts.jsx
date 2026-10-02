@@ -10,6 +10,7 @@ import { T } from '../../lib/tokens.js'
 import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, requiredMarkChrome, inputChrome } from '../forms/formStyles.js'
 import { DISCARD_LABELS } from '../putup/putItUp.js'
+import { NEW_PLACE_KINDS } from '../putup/placeKinds.js'
 import { AS_IS, methodLabel, OTHER_WAYS_LABEL } from './putSomethingUp.js'
 
 const row = { display: 'flex', flexWrap: 'wrap', gap: 8 }
@@ -17,11 +18,7 @@ const row = { display: 'flex', flexWrap: 'wrap', gap: 8 }
 // Appendix B's "＋ Somewhere else" (a name + a kind), and Cellar among its kinds. The new place is a chip
 // with no id; the write that uses it finds or creates it (pantryApi.ensurePlaceId, or the route's own
 // find-or-create for a jar move).
-export const NEW_PLACE_KINDS = [
-  { kind: 'fridge', label: 'Fridge' }, { kind: 'deep_freezer', label: 'Freezer' },
-  { kind: 'pantry', label: 'Pantry shelf' }, { kind: 'cold_storage', label: 'Cellar' },
-  { kind: 'other', label: 'Counter or other' },
-]
+export { NEW_PLACE_KINDS } from '../putup/placeKinds.js'
 const quietLink = {
   minHeight: T.buttonMinHeight, background: 'none', border: 'none', padding: '0 4px', color: P.green, fontWeight: 600,
   fontFamily: 'inherit', fontSize: T.type.sm, textDecoration: 'underline', cursor: 'pointer',

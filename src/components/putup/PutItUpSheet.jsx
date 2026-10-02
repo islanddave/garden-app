@@ -49,13 +49,9 @@ import {
   PH_METHODS, TEXTURE_CHIPS, RAW_LABEL, RAW_HINT, IN_OIL_LABEL, DISCARD_LABELS, containerChoices, placeChips, newRow,
   rowSummary, rowCount, previewDiscard, groupPreviews, putUpBody, completionStub, effectiveRows, drawnJarIds,
 } from './putItUp.js'
+import { NEW_PLACE_KINDS } from './placeKinds.js'
 
 const FOOTER_PX = 132
-const NEW_PLACE_KINDS = [
-  { kind: 'fridge', label: 'Fridge' }, { kind: 'deep_freezer', label: 'Freezer' },
-  { kind: 'pantry', label: 'Pantry shelf' }, { kind: 'cold_storage', label: 'Cellar' },
-  { kind: 'other', label: 'Counter or other' },
-]
 
 export { mintKey }
 
