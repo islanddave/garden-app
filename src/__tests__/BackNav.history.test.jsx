@@ -126,6 +126,21 @@ describe('SELF-TEST — the harness itself, before any behaviour is asserted', (
       .toBe(before + 1)
     expect(window.history.state?.__base, 'back() from the floor did not land on the base entry').toBe(1)
   })
+
+  it('SELF-TEST-4/forward-traverses: history.go(1) lands on the entry a Back just left, and fires popstate', async () => {
+    // BUG-BACKTWICECLOSESAPP-001. The registry no longer PUSHES a marker after a Back it refuses or
+    // steps; it RETURNS to the one the Back left, with history.go(1). Every "no pushState across a
+    // Back" test below stands on jsdom doing that traversal. If it did not (no event, or no move),
+    // those tests would read a registry that never got back onto its marker and blame the fix.
+    window.history.pushState({ __fwd: 1 }, '')
+    await back()
+    expect(atFloor()).toBe(true)
+    const before = pops
+    act(() => { window.history.go(1) })
+    await settle(before)
+    expect(pops, 'history.go(1) fired no popstate — jsdom did not traverse forward').toBe(before + 1)
+    expect(window.history.state?.__fwd, 'history.go(1) did not land on the entry the Back left').toBe(1)
+  })
 })
 
 describe('Back is arbitrated by the registry', () => {
