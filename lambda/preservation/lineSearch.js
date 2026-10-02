@@ -15,6 +15,12 @@
 // only, on the same strict dialect every planting loader in this Lambda uses. Varieties are the
 // household's own (created by a member) or ones a household planting grows; crops are the shared list.
 //
+// Put-Up R2a (contract 6): a planting also carries `succession_order` (integer or null) and `sown_at`,
+// the two bare columns GET /api/plants?view=picker sends, so a reader can tell same-named plantings
+// apart with the function the planting chooser already uses (plantingWaveLabel). Additive and last in
+// the row: every earlier key and its order are as they were. rankHits spreads the row, so a planting
+// hit carries them too.
+//
 // Matched as a LITERAL path before any `:id` capture (kitchenBatch.js parseKitchenRoute), so
 // 'line-search' can never be read as a batch id.
 //
@@ -130,7 +136,8 @@ export async function lineSearch(sql, query, householdIds) {
                       AND h.created_by = ANY(${householdIds})
                     ORDER BY e.event_date DESC, h.id DESC
                     LIMIT ${RECENT_PICKS}) r
-           ), '[]'::json) AS recent_picks
+           ), '[]'::json) AS recent_picks,
+           gn.succession_order, gn.sown_at
     FROM garden_node gn
     LEFT JOIN container pp ON pp.id = gn.container_id
     LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
