@@ -154,6 +154,11 @@ export default function PantryView({
     return () => cancelAnimationFrame(frame)
   }, [moved, yieldScroll])
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
+  // Each save is its own line (Put-Up R2a): a second save gets a fresh line, with its own Undo and its own
+  // reload hold, never the last one's "Undone". The host hands in a new `completion` for every save, so the
+  // line is keyed by which one it shows (the planting page's host keys its line per save the same way).
+  const [line, setLine] = useState({ of: completion, seq: 0 })
+  if (line.of !== completion) setLine({ of: completion, seq: line.seq + 1 })
   const ownNames = useBatchNames({ fetch, rows, enabled: batchNames === undefined })
   const batches = batchNames ?? ownNames
   // The household's places, for the Edit places door: null until the read answers (and after one that
@@ -193,7 +198,7 @@ export default function PantryView({
       )}
 
       {completion && (
-        <CompletionLine completion={completion} fetch={fetch} onDone={onCompletionDone} onChanged={onReload}
+        <CompletionLine key={line.seq} completion={completion} fetch={fetch} onDone={onCompletionDone} onChanged={onReload}
           onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} />
       )}
 
