@@ -21,6 +21,7 @@ import {
 import { KITCHEN_UNITS } from '../../../lambda/preservation/kitchenBatch.js'
 import { shortDay, basisWords, ESTIMATED_PRECISIONS } from '../putup/jarWords.js'
 import { newRow } from '../putup/putItUp.js'
+import { PLACE_KINDS } from '../putup/placeKinds.js'
 import { describeOutcome } from '../putup/batchClose.js'
 import { KIND_CHIPS } from '../kitchen/KindChips.jsx'
 import { mintKey } from '../kitchen/idempotencyKey.js'
@@ -62,10 +63,9 @@ export const KEEPS_N_LABEL = 'How many'
 export const MORE_PLACES_CTA = 'More…'
 export const COOKED_LABEL = 'Cooked after blending'
 
-export const STORAGE_KIND_WORDS = Object.freeze({
-  deep_freezer: 'Deep freezer', fridge_freezer: 'Fridge freezer', fridge: 'Fridge', pantry: 'Pantry shelf',
-  cold_storage: 'Cellar', other: 'Counter',
-})
+// The word for each kind of place is the ONE list's (putup/placeKinds.js, contract 10): the recipe sheet's
+// chips and its keeps line name a kind exactly as the door does ("Counter or other", never a word of its own).
+export const STORAGE_KIND_WORDS = Object.freeze(Object.fromEntries(PLACE_KINDS.map(k => [k.kind, k.label])))
 export const KEEPS_UNIT_WORDS = Object.freeze({ day: ['day', 'days'], week: ['week', 'weeks'], month: ['month', 'months'] })
 
 // "Fridge · 7 days". null when the recipe has no such line.

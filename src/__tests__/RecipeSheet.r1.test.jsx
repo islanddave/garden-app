@@ -349,12 +349,12 @@ describe('"How long, and where" — a number, three units, and the six kinds of 
   it('More… brings the other three kinds, each with its own words, and focus goes to the first of them', async () => {
     await openNew()
     tap('recipe-keeps-kind-more')
-    expect(placeChips()).toEqual(['Fridge', 'Deep freezer', 'Pantry shelf', 'Fridge freezer', 'Cellar', 'Counter'])
+    expect(placeChips()).toEqual(['Fridge', 'Deep freezer', 'Pantry shelf', 'Fridge freezer', 'Cellar', 'Counter or other'])
     expect(placeChips()).toEqual(['fridge', 'deep_freezer', 'pantry', 'fridge_freezer', 'cold_storage', 'other'].map(k => STORAGE_KIND_WORDS[k]))
     expect(screen.queryByTestId('recipe-keeps-kind-more')).toBeNull()
     expect(document.activeElement.textContent).toBe('Fridge freezer')
     tap('recipe-keeps-kind-other')
-    expect(pressed('recipe-keeps-kind-other')).toEqual(['Counter'])
+    expect(pressed('recipe-keeps-kind-other')).toEqual(['Counter or other'])
     tap('recipe-keeps-kind-other')                                        // the chosen chip, tapped again, clears it
     expect(placeChips().length).toBe(6)
     expect([...screen.getByTestId('recipe-keeps-kind').querySelectorAll('[aria-pressed="true"]')]).toHaveLength(0)
