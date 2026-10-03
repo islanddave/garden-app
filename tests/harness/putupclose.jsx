@@ -400,6 +400,56 @@ async function run() {
   // lane E additions go directly under this line
   // R2 lane F additions go directly under this line
   // R2 lane Df additions go directly under this line
+  // Put-Up R2a — the Put something up door with everything it can hold on screen (cases door-options*). The door
+  // is mounted beside the page, as the Start sheet is: it is a fixed-position sheet, so where it sits in the tree
+  // does not move a pixel of it, and mounting it here keeps this entry independent of the page lane's file (the
+  // page behind it is the batch detail, which these cases do not measure). It is filled through its real
+  // controls: a fridge, Hot sauce (so the slot under the method row holds Raw and its line), How many 3, the size
+  // opened with every unit showing and "1 qt" in it (so the echo line is drawn), both disclosures open, and
+  // every where-from chip showing with one that asks "Which one?". What is focused is the field a cook types in
+  // with the keyboard up: `door-options` the notes, the LAST field, nearest the pinned Save; `door-options-size`
+  // the size, mid-sheet, where a sticky band over a focused field was first measured on another sheet.
+  if (CASE.startsWith('door-options')) {
+    const { default: PutSomethingUpSheet } = await import('../../src/components/pantry/PutSomethingUpSheet.jsx')
+    const host = document.body.appendChild(document.createElement('div'))
+    createRoot(host).render(
+      <AuthProvider>
+        <MemoryRouter><PutSomethingUpSheet open onClose={() => {}} onSaved={() => {}} /></MemoryRouter>
+      </AuthProvider>,
+    )
+    await settle(); await settle()
+    // React reads a typed value from the native setter and an input event, not from a bare assignment.
+    const typeIn = (t, v) => {
+      const el = byTid(t)
+      if (!el) return
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v)
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    click('door-place-id:loc-fridge'); await settle()
+    click('door-method-hot_sauce'); await settle()
+    // One tap, then a breath: two taps in one tick both read the state the first has not yet changed.
+    click('door-count-plus'); await settle()
+    click('door-count-plus'); await settle()
+    click('door-size-open'); await settle()
+    click('door-size-unit-more'); await settle()
+    click('door-size-unit-qt'); await settle()
+    typeIn('door-size-value', '1'); await settle()
+    click('door-more'); await settle()
+    click('door-from'); await settle()
+    click('door-source-more'); await settle()
+    click('door-source-csa'); await settle()
+    // THE FOCUS, as the keyboard leaves it. Chrome centres a field that is off screen when it takes focus, so
+    // a bare .focus() here would park the field mid-panel and no footer could ever be over it. On the phone
+    // the field is tapped where it is and the keyboard then brings it just into view — to the scroller's
+    // bottom edge, which is exactly where the pinned Save sits. So the field is put at that edge first and
+    // focused there (blurred first: the size took focus when its link was tapped, and a field that already
+    // has focus fires no focus event).
+    const target = byTid(CASE === 'door-options-size' ? 'door-size-value' : 'door-notes')
+    document.activeElement?.blur?.()
+    target?.scrollIntoView({ block: 'end' })
+    target?.focus({ preventScroll: true })
+    await settle()
+  }
   // R2 lane P additions go directly under this line
   // Put-Up R2a (lane P) — `places-edit`: the Pantry's Places sheet with ONE editor open under its row and the
   // name focused (the field the keyboard is up for). Reached through the real controls: this entry opens on

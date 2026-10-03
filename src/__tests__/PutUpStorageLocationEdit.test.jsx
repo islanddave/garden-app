@@ -397,7 +397,7 @@ describe('a place that already exists — the walk lists it once', () => {
     const chips = within(await screen.findByRole('radiogroup', { name: 'Which place are you at?' })).getAllByRole('radio')
     expect(chips.filter(c => c.textContent === 'Chest Freezer 2')).toHaveLength(1)
     expect(chips.find(c => c.getAttribute('aria-checked') === 'true')?.textContent).toBe('Chest Freezer 2')
-    expect(chips.map(c => c.textContent)).toEqual(['Chest Freezer 1', 'Chest Freezer 2', 'Garage freezr', 'Fridge', 'Pantry shelf', 'Counter'])
+    expect(chips.map(c => c.textContent)).toEqual(['Chest Freezer 1', 'Chest Freezer 2', 'Garage freezr', 'Fridge', 'Fridge freezer', 'Pantry shelf', 'Counter'])
   })
 })
 

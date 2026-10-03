@@ -5,7 +5,8 @@
 //     moved: the save line, the "pick one" sentence and a planting's "Fresh, as picked" are as they were;
 //   • before a place is picked the method row offers the general four; a place puts its own four there, and
 //     a method chosen earlier stays as ONE more chip — the row never grows to every method because of it;
-//   • the two disclosures say what they hold: "Other ways…" and "▸ Date, discard by, notes";
+//   • the disclosures say what they hold: "Other ways…", "▸ Date, discard by" and "▸ Where from, notes" (R2a:
+//     the options were one disclosure that also held Notes; Notes moved beside where-from);
 //   • a bought item's preview says both things a save stores ("got it today · no discard date"), and the
 //     preview carries Change — a sibling of the status line, never inside it — which opens the When chips;
 //   • the discard choice takes its words from putItUp.DISCARD_LABELS, with its test ids and its control
@@ -13,6 +14,8 @@
 //   • the way out to Start a batch: only when the page hands it in, directly under the name and above the
 //     matches, carrying the typed name, with the door's own draft cleared BEFORE the page is called;
 //   • a draft stored by yesterday's client still restores (no draft field was added or renamed).
+// R2a (lane Df) amended five pins here, each with the change it pins: the two words, the options disclosure,
+// the Raw / In oil keys, the draft's keys, and the ONE tap line in each of the two tests that reach Notes.
 // The required-input census of the door (three, by label, nothing preselected) is pinned UNEDITED in
 // Pantry.test.jsx and is re-read here with the general four on screen.
 // MUTATIONS (run, see the lane report): show every method when the chosen one is not among the place's four
@@ -73,9 +76,9 @@ describe('the words (putSomethingUp.js)', () => {
     expect(AS_IS_LABEL).toBe('As is')
     expect(FRESH_LABEL).toBe('Fresh, as picked')
     expect(OTHER_WAYS_LABEL).toBe('Other ways…')
-    expect(DOOR_OPTIONS_LABEL).toBe('Date, discard by, notes')
+    expect(DOOR_OPTIONS_LABEL).toBe('Date, discard by')
     expect(WALK_OPTIONS_LABEL).toBe('Raw or in oil, discard by, another date')
-    expect(DOOR_NOTES_PLACEHOLDER).toBe("Where it's from, or anything to remember")
+    expect(DOOR_NOTES_PLACEHOLDER).toBe('Anything to remember')
     expect(START_BATCH_INSTEAD_TEXT).toBe('Still going (a ferment)? Start a batch instead →')
     expect(METHOD_REQUIRED_TEXT).toBe('How was it put up? Pick one — or As is.')
     expect(DISCARD_LABELS).toEqual({ auto: 'Work it out', date: 'From the label', none: 'No date' })
@@ -167,19 +170,26 @@ describe('the method row', () => {
 })
 
 describe('the two disclosures say what they hold', () => {
-  it('the options: "▸ Date, discard by, notes", closed at open, and it holds exactly those', async () => {
+  it('the options: "▸ Date, discard by", closed at open, and it holds exactly those', async () => {
     await openDoor()
     const more = screen.getByTestId('door-more')
-    expect(more.textContent).toBe('▸ Date, discard by, notes')
+    expect(more.textContent).toBe('▸ Date, discard by')
     expect(more.getAttribute('aria-expanded')).toBe('false')
     expect(parseInt(more.style.minHeight, 10)).toBe(48)
     fireEvent.click(more)
-    expect(more.textContent).toBe('▾ Date, discard by, notes')
+    expect(more.textContent).toBe('▾ Date, discard by')
     const panel = screen.getByTestId('door-more-panel')
     expect(within(panel).getByRole('radiogroup', { name: 'When?' })).toBeTruthy()
     expect(within(panel).getByRole('radiogroup', { name: 'Discard by' })).toBeTruthy()
-    expect(within(panel).getByRole('textbox', { name: 'Notes' }).getAttribute('placeholder')).toBe("Where it's from, or anything to remember")
-    // Nothing the plan left for a later release has crept in.
+    // Notes is not here any more: it sits with where-from, under its own disclosure.
+    expect(within(panel).queryByRole('textbox')).toBeNull()
+    const from = screen.getByTestId('door-from')
+    expect(from.textContent).toBe('▸ Where from, notes')
+    expect(from.getAttribute('aria-expanded')).toBe('false')
+    expect(parseInt(from.style.minHeight, 10)).toBe(48)
+    fireEvent.click(from)
+    expect(within(screen.getByTestId('door-from-panel')).getByRole('textbox', { name: 'Notes' }).getAttribute('placeholder')).toBe('Anything to remember')
+    // With no method chosen, nothing a method brings has crept in.
     expect(within(panel).queryByText(/Raw|In oil|Where from|Variety|Photo|Size/)).toBeNull()
   })
 })
@@ -263,7 +273,7 @@ describe('the preview and its Change', () => {
     typeWhat('Garlic')
     fireEvent.click(screen.getByTestId('door-place-id:loc-3'))
     fireEvent.click(screen.getByTestId('door-method-as_is'))
-    fireEvent.click(screen.getByTestId('door-more'))
+    fireEvent.click(screen.getByTestId('door-from'))
     fireEvent.change(screen.getByTestId('door-notes'), { target: { value: 'farmers market' } })
     fireEvent.click(screen.getByTestId('door-save'))
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
@@ -272,15 +282,43 @@ describe('the preview and its Change', () => {
     })
   })
 
-  it('a put-up saved from the door sends no Raw or In oil key (those wait for a later release)', async () => {
-    const { onSaved } = await openDoor()
-    typeWhat('Hot sauce')
-    fireEvent.click(screen.getByTestId('door-place-id:loc-3'))
-    fireEvent.click(screen.getByTestId('door-method-hot_sauce'))
-    fireEvent.click(screen.getByTestId('door-save'))
-    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
-    expect(Object.keys(posts('/api/preservation')[0].body).sort()).toEqual([
-      'idempotency_key', 'label', 'method', 'package_count', 'preserved_at', 'preserved_at_approx', 'preserved_at_precision', 'storage_location_id'])
+  it('a put-up saved from the door sends is_raw / in_oil only when its chip was tapped — never false — and Raw only on a method that allows it', async () => {
+    const EIGHT = ['idempotency_key', 'label', 'method', 'package_count', 'preserved_at', 'preserved_at_approx', 'preserved_at_precision', 'storage_location_id']
+    const saveHotSauce = async (taps) => {
+      const { onSaved, unmount } = await openDoor()
+      typeWhat('Hot sauce')
+      fireEvent.click(screen.getByTestId('door-place-id:loc-3'))
+      fireEvent.click(screen.getByTestId('door-method-hot_sauce'))
+      fireEvent.click(screen.getByTestId('door-more'))
+      for (const t of taps) fireEvent.click(screen.getByTestId(t))
+      fireEvent.click(screen.getByTestId('door-save'))
+      await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+      unmount()
+      return posts('/api/preservation').at(-1).body
+    }
+    // Untouched: exactly the eight keys it always sent.
+    expect(Object.keys(await saveHotSauce([])).sort()).toEqual(EIGHT)
+    const raw = await saveHotSauce(['door-raw'])
+    expect(Object.keys(raw).sort()).toEqual([...EIGHT, 'is_raw'].sort())
+    expect(raw.is_raw).toBe(true)
+    const both = await saveHotSauce(['door-raw', 'door-inoil'])
+    expect(Object.keys(both).sort()).toEqual([...EIGHT, 'in_oil', 'is_raw'].sort())
+    expect([both.is_raw, both.in_oil]).toEqual([true, true])
+    // Tapped and tapped again is untouched.
+    expect(Object.keys(await saveHotSauce(['door-raw', 'door-raw', 'door-inoil', 'door-inoil'])).sort()).toEqual(EIGHT)
+
+    // Raw is offered on the three methods that allow it, and on no other; In oil on every put-up method.
+    await openDoor()
+    fireEvent.click(screen.getByTestId('door-more'))
+    fireEvent.click(screen.getByTestId('door-method-more'))
+    expect([screen.queryByTestId('door-raw'), screen.queryByTestId('door-inoil')]).toEqual([null, null])     // no method yet
+    for (const m of ALL_PUT_UP_METHODS) {
+      fireEvent.click(screen.getByTestId(`door-method-${m}`))
+      expect(`${m} offers Raw: ${!!screen.queryByTestId('door-raw')}`).toBe(`${m} offers Raw: ${['hot_sauce', 'pesto', 'other'].includes(m)}`)
+      expect(`${m} offers In oil: ${!!screen.queryByTestId('door-inoil')}`).toBe(`${m} offers In oil: true`)
+    }
+    fireEvent.click(screen.getByTestId('door-method-as_is'))
+    expect([screen.queryByTestId('door-raw'), screen.queryByTestId('door-inoil')]).toEqual([null, null])     // a bought item has neither
   })
 })
 
@@ -357,7 +395,7 @@ describe('a draft stored by the client before this pass still restores', () => {
     expect(screen.getByTestId('door-place-id:loc-3').getAttribute('aria-checked')).toBe('true')
     expect(screen.getByTestId('door-method-as_is').getAttribute('aria-checked')).toBe('true')
     expect(screen.getByTestId('door-preview').textContent).toBe('got it Sep 30 · discard by Oct 9 · set by hand')
-    fireEvent.click(screen.getByTestId('door-more'))
+    for (const disclosure of ['door-more', 'door-from']) fireEvent.click(screen.getByTestId(disclosure))
     expect(screen.getByTestId('door-when-yesterday').getAttribute('aria-checked')).toBe('true')
     expect(screen.getByTestId('door-notes').value).toBe('from Jen')
     fireEvent.click(screen.getByTestId('door-save'))
@@ -368,12 +406,15 @@ describe('a draft stored by the client before this pass still restores', () => {
     })
   })
 
-  it('and the draft the door writes today has the same keys it had', async () => {
+  it('and the draft the door writes today still has every key it had, plus the nine R2a added', async () => {
     await openDoor()
     typeWhat('Kale')
     await waitFor(() => expect(localStorage.getItem(DRAFT_KEY)).not.toBeNull())
     const written = readSheetDraft(DRAFT_KEY, DOOR_SHEET, isDoorDraft)
-    expect(Object.keys(written).sort()).toEqual(Object.keys(STORED).sort())
+    expect(Object.keys(written).sort()).toEqual([
+      ...Object.keys(STORED),
+      'sizeValue', 'sizeUnit', 'amountValue', 'amountUnit', 'sourceKind', 'sourceLabel', 'isRaw', 'inOil', 'texture',
+    ].sort())
   })
 })
 

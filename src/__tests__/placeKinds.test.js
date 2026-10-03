@@ -44,12 +44,14 @@ describe('placeKinds — the kinds of place, in one list', () => {
     for (const k of PLACE_KINDS) expect(k.label.trim()).not.toBe('')
   })
 
-  it('"＋ Somewhere else" offers the five it offered before this file, in the same order, by the same words', () => {
+  it('"＋ Somewhere else" offers all six kinds, in this order, by these words — and no chip reads a bare "Freezer"', () => {
     expect(NEW_PLACE_KINDS).toEqual([
-      { kind: 'fridge', label: 'Fridge' }, { kind: 'deep_freezer', label: 'Freezer' },
-      { kind: 'pantry', label: 'Pantry shelf' }, { kind: 'cold_storage', label: 'Cellar' },
-      { kind: 'other', label: 'Counter or other' },
+      { kind: 'fridge', label: 'Fridge' }, { kind: 'fridge_freezer', label: 'Fridge freezer' },
+      { kind: 'deep_freezer', label: 'Deep freezer' }, { kind: 'pantry', label: 'Pantry shelf' },
+      { kind: 'cold_storage', label: 'Cellar' }, { kind: 'other', label: 'Counter or other' },
     ])
+    expect(NEW_PLACE_KINDS).toBe(PLACE_KINDS)
+    expect(PLACE_KINDS.map(k => k.label)).not.toContain('Freezer')
   })
 
   it('DoorParts hands on the same list, not a copy of it', () => {

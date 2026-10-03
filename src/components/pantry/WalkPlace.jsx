@@ -19,6 +19,14 @@
 // left, no count, no buttons beyond opening the row); the name search marks a match at this place
 // "already here" (opens it) and one at another place "That's this one → move it here".
 // No worklist, no ticks, no running count ("Picked up where you left off", with no "— N logged so far").
+//
+// Put-Up R2a: Raw · In oil are DoorParts.RawInOilChips (the one part both doors draw; nothing here looks
+// different), the canning reference line sits under the method row for the two canning methods (the door's
+// part and constant), and THE EXIT ASKS when a name is typed: the band shows a tick for the item before, so
+// he believes the one on screen is in. The first tap on "End the walk" turns the band's row into
+// `"<name>" isn't saved.` · Save it · End without it — in place, never a modal; with nothing typed it ends at
+// once. The group's typed item is HELD by this component (WalkGroup reports it up), so "Change" — which
+// unmounts the group for the two setup questions — hides it and never clears it.
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { P } from '../../lib/constants.js'
@@ -32,19 +40,23 @@ import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, requiredMarkChrome } from '../forms/formStyles.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
-import { placeChips, RAW_METHODS, RAW_LABEL, IN_OIL_LABEL } from '../putup/putItUp.js'
+import { placeChips } from '../putup/putItUp.js'
 import NameSearchField from './NameSearchField.jsx'
 import Stepper, { stepperCount } from './Stepper.jsx'
-import { PlaceChipRow, MethodRow, DiscardChoice, focusFirstRadio } from './DoorParts.jsx'
+import { PlaceChipRow, MethodRow, DiscardChoice, focusFirstRadio, RawInOilChips, CanningLine } from './DoorParts.jsx'
 import PantryRowSheet from './PantryRowSheet.jsx'
 import RefusalLine, { refusalOf, refusalText } from './RefusalLine.jsx'
 import { leftWords, rowKey } from './pantryRows.js'
 import {
   AS_IS, METHOD_REQUIRED_TEXT, methodChoices, routeFor, walkWhen, walkWhenChips, previewLine, jarBody, itemBody,
-  methodLabel, doorError, WALK_OPTIONS_LABEL,
+  methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS,
 } from './putSomethingUp.js'
 
 export const WALK_TITLE = 'Walk a place'
+// The exit's question, when a name is typed and not saved (R2a).
+export const walkUnsavedText = (name) => `"${name}" isn't saved.`
+export const WALK_SAVE_IT_LABEL = 'Save it'
+export const WALK_END_WITHOUT_LABEL = 'End without it'
 export const PLACE_PARAM = 'place'
 const WALK_BAND_FALLBACK_PX = 96
 
@@ -75,6 +87,18 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
   const [bandH, setBandH] = useState(WALK_BAND_FALLBACK_PX)
   const [hereSeq, setHereSeq] = useState(0)
   const bandRef = useRef(null)
+  // The group's typed item, held HERE so it outlives the group's own unmount ("Change"): what WalkGroup last
+  // reported, the name in it (what the exit asks about), and the group's Save for the band's "Save it".
+  const heldRef = useRef(null)
+  const saveRef = useRef(null)
+  const [pendingName, setPendingName] = useState('')
+  const [asking, setAsking] = useState(false)
+  const onHeld = useCallback((snap) => {
+    heldRef.current = snap
+    setPendingName(String(snap?.what?.name ?? '').trim())
+  }, [])
+  // The question is about the name on screen: once that changes, it is not the question any more.
+  useEffect(() => { setAsking(false) }, [pendingName])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -110,12 +134,25 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [editingSetup, lastSaved])
+  }, [editingSetup, lastSaved, asking])
 
   const exitWalk = useCallback(() => {
     clearWalk()
     navigate('/put-up', { replace: true })
   }, [navigate])
+  // With a name typed the first tap asks, in place; with nothing typed it ends at once.
+  const requestExit = useCallback(() => {
+    if (pendingName) setAsking(true)
+    else exitWalk()
+  }, [exitWalk, pendingName])
+  // While the two setup questions are up the group is unmounted and holds nothing: the item it was holding
+  // is kept from a deploy's reload here instead.
+  const heldGateKey = `walk-held:${useId()}`
+  const holdHeld = editingSetup && !!pendingName
+  useEffect(() => {
+    setReloadBlocked(heldGateKey, holdHeld)
+    return () => setReloadBlocked(heldGateKey, false)
+  }, [heldGateKey, holdHeld])
 
   const startWalk = useCallback((answers) => {
     writeWalk(answers)
@@ -171,7 +208,7 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
             {editingSetup || !walk ? WALK_TITLE : `Walk: ${placeLabel}`}
           </h1>
           {editingSetup && (
-            <button type="button" onClick={exitWalk} data-testid="putup-walk-setup-exit"
+            <button type="button" onClick={walk && pendingName ? () => setEditingSetup(false) : exitWalk} data-testid="putup-walk-setup-exit"
               style={{ background: 'none', border: 'none', color: P.mid, fontSize: T.type.sm, fontWeight: 600, fontFamily: 'inherit',
                 textDecoration: 'underline', padding: '4px 0', minHeight: 48, cursor: 'pointer' }}>
               Not now
@@ -196,6 +233,7 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
             <AlreadyHere fetch={fetch} placeId={walk.place.id} seq={hereSeq} onOpen={setOpenRow} />
             <UnrecordedLine fetch={fetch} />
             <WalkGroup walk={walk} fetch={fetch} online={online} stock={stock} now={nowDate} bandH={bandH}
+              held={heldRef.current} onHeld={onHeld} saveRef={saveRef}
               onSaved={onSaved} onOpenExisting={setOpenRow} onMoveHere={moveHere} />
           </>
         )}
@@ -222,6 +260,23 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
             </div>
           )}
           {lastSaved?.error && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 6 }}>{lastSaved.error}</div>}
+          {asking ? (
+            <div data-testid="putup-walk-unsaved" style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, flexWrap: 'wrap' }}>
+              <span role="status" data-testid="putup-walk-unsaved-text" style={{ flex: '1 1 140px', minWidth: 0, fontSize: T.type.sm, color: P.dark }}>
+                {walkUnsavedText(pendingName)}
+              </span>
+              <button type="button" onClick={() => { setAsking(false); saveRef.current?.() }} data-testid="putup-walk-exit-save"
+                style={{ background: 'none', border: `1px solid ${P.green}`, borderRadius: T.radiusButton, color: P.green, fontSize: '0.78rem',
+                  fontWeight: 700, fontFamily: 'inherit', padding: '6px 12px', minHeight: 48, cursor: 'pointer', flexShrink: 0 }}>
+                {WALK_SAVE_IT_LABEL}
+              </button>
+              <button type="button" onClick={exitWalk} data-testid="putup-walk-exit-anyway"
+                style={{ background: 'none', border: `1px solid ${P.border}`, borderRadius: T.radiusButton, color: P.mid, fontSize: '0.78rem',
+                  fontWeight: 700, fontFamily: 'inherit', padding: '6px 12px', minHeight: 48, cursor: 'pointer', flexShrink: 0 }}>
+                {WALK_END_WITHOUT_LABEL}
+              </button>
+            </div>
+          ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm }}>
             <span data-testid="putup-walk-where" style={{ flex: 1, minWidth: 0, fontSize: '0.78rem', color: P.light,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -232,12 +287,13 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
                 textDecoration: 'underline', padding: '4px 2px', minHeight: 48, cursor: 'pointer', flexShrink: 0 }}>
               Change
             </button>
-            <button type="button" onClick={exitWalk} data-testid="putup-walk-exit"
+            <button type="button" onClick={requestExit} data-testid="putup-walk-exit"
               style={{ background: 'none', border: `1px solid ${P.border}`, borderRadius: T.radiusButton, color: P.mid, fontSize: '0.78rem',
                 fontWeight: 700, fontFamily: 'inherit', padding: '6px 12px', minHeight: 48, cursor: 'pointer', flexShrink: 0 }}>
               End the walk
             </button>
           </div>
+          )}
         </div>
       )}
 
@@ -367,17 +423,22 @@ function AlreadyHere({ fetch, placeId, seq, onOpen }) {
 }
 
 // One group: what · method-or-As is · how many · Save → next.
-function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK_PX, onSaved, onOpenExisting, onMoveHere }) {
-  const [what, setWhat] = useState(null)
-  const [method, setMethod] = useState(null)
-  const [count, setCount] = useState('1')
-  const [moreOpen, setMoreOpen] = useState(false)
-  const [discard, setDiscard] = useState({ mode: 'auto', date: '' })
-  const [isRaw, setIsRaw] = useState(false)
-  const [inOil, setInOil] = useState(false)
-  const [ownChoice, setOwnChoice] = useState(null)   // a different date for this group
-  const [ownPicked, setOwnPicked] = useState('')
-  const [key, setKey] = useState(null)
+// `held` / `onHeld` / `saveRef` (R2a): the group starts from what the walk was holding for it (the item typed
+// before "Change" unmounted it), reports what it holds after every change, and hands the walk its Save.
+function WalkGroup({
+  walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK_PX, onSaved, onOpenExisting, onMoveHere,
+  held = null, onHeld = null, saveRef = null,
+}) {
+  const [what, setWhat] = useState(held?.what ?? null)
+  const [method, setMethod] = useState(held?.method ?? null)
+  const [count, setCount] = useState(held?.count ?? '1')
+  const [moreOpen, setMoreOpen] = useState(held?.moreOpen ?? false)
+  const [discard, setDiscard] = useState(held?.discard ?? { mode: 'auto', date: '' })
+  const [isRaw, setIsRaw] = useState(held?.isRaw ?? false)
+  const [inOil, setInOil] = useState(held?.inOil ?? false)
+  const [ownChoice, setOwnChoice] = useState(held?.ownChoice ?? null)   // a different date for this group
+  const [ownPicked, setOwnPicked] = useState(held?.ownPicked ?? '')
+  const [key, setKey] = useState(held?.key ?? null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
   const [field, setField] = useState(null)
@@ -400,6 +461,9 @@ function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK
     setReloadBlocked(gateKey, hold)
     return () => setReloadBlocked(gateKey, false)
   }, [gateKey, hold])
+  useEffect(() => {
+    onHeld?.({ what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key })
+  }, [onHeld, what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key])
 
   function reset() {
     setWhat(null); setMethod(null); setCount('1'); setDiscard({ mode: 'auto', date: '' }); setOwnChoice(null); setOwnPicked('')
@@ -441,6 +505,9 @@ function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK
     }
   }
 
+  // The walk's band saves this group through the same function its own button calls.
+  useEffect(() => { if (saveRef) saveRef.current = save })
+
   const name = String(what?.name ?? '').trim() || 'this'
   return (
     <div data-testid="putup-walk-group" style={{ display: 'flex', flexDirection: 'column', gap: T.space.md, background: P.white,
@@ -451,6 +518,7 @@ function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK
       <MethodRow choices={choices} value={method} what={what} idPrefix="walk" disabled={saving} invalid={field === 'method'}
         groupRef={methodRef} onChange={m => { setMethod(m); if (field === 'method') { setErr(null); setField(null) } }}
         label="How was it put up?" />
+      {CANNING_METHODS.has(method) && <CanningLine idPrefix="walk" />}
       {method && method !== AS_IS && (
         <div>
           <span style={labelChrome} aria-hidden="true">How many?</span>
@@ -467,12 +535,8 @@ function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK
           {/* Raw · In oil are a put-up's (the engine reads both; a bought item's date is only ever typed).
               Raw is offered only where the engine allows it; a chip that is not shown is never sent. */}
           {method !== AS_IS && (
-            <div role="group" aria-label="Raw or in oil" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {RAW_METHODS.has(method) && (
-                <SelectChip touch active={isRaw} disabled={saving} data-testid="walk-raw" onClick={() => setIsRaw(v => !v)}>{RAW_LABEL}</SelectChip>
-              )}
-              <SelectChip touch active={inOil} disabled={saving} data-testid="walk-inoil" onClick={() => setInOil(v => !v)}>{IN_OIL_LABEL}</SelectChip>
-            </div>
+            <RawInOilChips method={method} isRaw={isRaw} inOil={inOil} idPrefix="walk" disabled={saving}
+              onRaw={() => setIsRaw(v => !v)} onOil={() => setInOil(v => !v)} />
           )}
           <DiscardChoice value={discard} onChange={setDiscard} idPrefix="walk" itemMode={method === AS_IS} disabled={saving} />
           <div>

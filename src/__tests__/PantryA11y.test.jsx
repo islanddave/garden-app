@@ -169,6 +169,86 @@ describe('Put-Up B′ — the Pantry components are clean (with nested-interacti
 })
 
 // R2 lane Df additions go directly under this line
+// Put-Up R2a: the door's new fields, each in its fullest state, and the Walk's two additions.
+describe('Put-Up R2a — the door\'s new fields and the Walk\'s exit question are clean (with nested-interactive)', () => {
+  const tap = (id) => fireEvent.click(screen.getByTestId(id))
+  async function door(props = {}) {
+    wire()
+    const r = render(<PutSomethingUpSheet open onClose={() => {}} onSaved={() => {}} stockRows={ROWS} {...props} />)
+    fireEvent.change(screen.getByTestId('door-what-name'), { target: { value: 'Reaper sauce' } })
+    fireEvent.click(await screen.findByTestId('door-place-id:loc-3'))
+    return r
+  }
+
+  it('Put something up — Raw and its line, the size with every unit and its echo, both disclosures, every where-from chip, "Which one?"', async () => {
+    const r = await door()
+    tap('door-method-hot_sauce'); tap('door-raw')
+    tap('door-count-plus')
+    tap('door-size-open'); tap('door-size-unit-more'); tap('door-size-unit-qt')
+    fireEvent.change(screen.getByTestId('door-size-value'), { target: { value: '1' } })
+    tap('door-more'); tap('door-inoil')
+    tap('door-from'); tap('door-source-more'); tap('door-source-csa')
+    expect(screen.getByTestId('door-size-echo').textContent).toBe('2 × 1 qt = 2 qt in all')
+    expect(screen.getByRole('radiogroup', { name: 'Made with produce from' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: /^Which one\?/ })).toBeTruthy()
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PutSomethingUpSheet R2a put-up', rules: NEW_RULES })
+  })
+
+  it('Put something up — the canning line and its link; How dry?; a half-filled size refused', async () => {
+    const r = await door()
+    tap('door-method-more'); tap('door-method-can_water_bath')
+    expect(screen.getByRole('note')).toBe(screen.getByTestId('door-canning-line'))
+    expect(screen.getByRole('link', { name: 'National Center for Home Food Preservation — opens in a new tab' })).toBeTruthy()
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PutSomethingUpSheet R2a canning line', rules: NEW_RULES })
+    tap('door-method-dehydrate'); tap('door-texture-bends')
+    expect(screen.getByRole('group', { name: 'How dry?' })).toBeTruthy()
+    tap('door-size-open')
+    fireEvent.change(screen.getByTestId('door-size-value'), { target: { value: '2' } })
+    tap('door-save')
+    expect(screen.getByTestId('door-error').textContent).toBe('Pick a unit for the size — or clear the size.')
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PutSomethingUpSheet R2a how dry, a size refused', rules: NEW_RULES })
+  })
+
+  it('Put something up — As is with How much and every unit, where-from as "Where it\'s from", Other with no name refused', async () => {
+    const r = await door()
+    tap('door-method-as_is')
+    tap('door-amount-open'); tap('door-amount-unit-more'); tap('door-amount-unit-bag')
+    fireEvent.change(screen.getByTestId('door-amount-value'), { target: { value: '2' } })
+    tap('door-from'); tap('door-source-more'); tap('door-source-other')
+    tap('door-save')
+    expect(screen.getByRole('radiogroup', { name: "Where it's from" })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: /^Where exactly\?/ }).getAttribute('aria-invalid')).toBe('true')
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PutSomethingUpSheet R2a as is', rules: NEW_RULES })
+  })
+
+  it('Put something up — opened from a planting: no where-from row, the second disclosure reads Notes', async () => {
+    wire()
+    const r = render(<PutSomethingUpSheet open onClose={() => {}} onSaved={() => {}}
+      initialWhat={{ source: 'planting', name: 'Megatron jalapeño', plant_id: 'p1', crop_type_slug: 'pepper' }} />)
+    fireEvent.click(await screen.findByTestId('door-place-id:loc-3'))
+    tap('door-method-as_is'); tap('door-from')
+    expect(screen.getByTestId('door-from').textContent).toBe('▾ Notes')
+    expect(screen.queryByTestId('door-source')).toBeNull()
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PutSomethingUpSheet R2a planting', rules: NEW_RULES })
+  })
+
+  it('Walk a place — the canning line under the method row, and the exit asking about a typed name', async () => {
+    wire()
+    localStorage.clear()
+    const r = render(<MemoryRouter initialEntries={['/put-up?session=putup']}><WalkPlace /></MemoryRouter>)
+    fireEvent.click(await screen.findByTestId('putup-walk-place-id:loc-3'))
+    tap('putup-walk-when-unsure'); tap('putup-walk-start')
+    await screen.findByTestId('putup-walk-group')
+    fireEvent.change(screen.getByTestId('walk-what-name'), { target: { value: 'Tomatoes' } })
+    tap('walk-method-more'); tap('walk-method-can_pressure')
+    expect(screen.getByRole('note')).toBe(screen.getByTestId('walk-canning-line'))
+    tap('putup-walk-exit')
+    expect(screen.getByTestId('putup-walk-unsaved-text').textContent).toBe('"Tomatoes" isn\'t saved.')
+    expect(screen.getByRole('button', { name: 'Save it' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'End without it' })).toBeTruthy()
+    await expectNoA11yViolations(r.container, { label: 'WalkPlace R2a canning line and exit question', rules: NEW_RULES })
+  })
+})
 // R2 lane P additions go directly under this line
 // Put-Up R2a, lane P — the Places sheet and the item's Edit with its two new controls join the set, each in
 // its fullest states; and the 48 px rule on every new target (the inline min-height, the only geometry jsdom has).
