@@ -258,6 +258,15 @@ describe('at rest, and the button', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(told.mock.calls).toEqual([[true], [false]]))
   })
+
+  it('X closes the door onto the button it was opened from, with focus back on it', async () => {
+    mountPage()
+    const b = await openDoor()
+    expect(document.activeElement).not.toBe(b)                  // INSTRUMENT: focus really went into the door
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByTestId('door-sheet')).toBeNull())
+    expect([doorButton(), document.activeElement, line()]).toEqual([b, b, null])
+  })
 })
 
 describe('Save: the host closes the door, says what the server answered, and re-reads both reads', () => {
