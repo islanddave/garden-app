@@ -247,6 +247,6 @@ describe('PutUpFromPlanting — a jar with no size, and a size that is a total',
     renderSection(() => Promise.resolve(rows({ ...base, id: 'z1', label: null, container_label: null,
       quantity_value: '2.50', quantity_unit: 'qt', package_count: 3, remaining_count: 3, method: 'whole_freeze' })))
     await rowsLoaded()
-    expect(heads()).toEqual(['2.5 qt in all · Freeze'])
+    expect(heads()).toEqual(['2.5 qt in all · Freeze whole'])
   })
 })

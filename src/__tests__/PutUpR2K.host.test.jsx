@@ -28,6 +28,7 @@
 //   seed a blank name for a variety-named planting                    -> "a planting named only by its variety seeds that name"
 //   a re-read that sets Loading…                                      -> "a re-read blanks nothing: …"
 //   the line keyed on the reload count                                -> "Undo on a put-up sends DELETE …" (Undone is lost)
+//   a planting row's method label not the door's (UX 3.4 row 4)       -> "every method on a planting row reads as putItUp.METHOD_LABELS says it"
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -63,6 +64,7 @@ import { doorWhatOf } from '../components/planting/plantingKitchen.js'
 import PutSomethingUpSheet, { isDoorDraft } from '../components/pantry/PutSomethingUpSheet.jsx'
 import { DOOR_SHEET, completionWords, START_BATCH_INSTEAD_TEXT } from '../components/pantry/putSomethingUp.js'
 import { sheetDraftKey, readSheetDraft, writeSheetDraft } from '../components/kitchen/sheetDraft.js'
+import { METHOD_LABELS } from '../components/putup/putItUp.js'
 import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
 import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
 import { readMarker } from '../lib/backNav.js'
@@ -648,5 +650,22 @@ describe('words — the section in every state, with the line showing', () => {
     expect(texts.map(t => [t.includes(EMPTY_TEXT), /— put up ·/.test(t), t.includes('Undone —'), t.includes('in the pantry')]))
       .toEqual([[true, false, false, false], [false, true, false, false], [true, true, true, false], [true, false, false, true]])
     expect('How long it keeps').toMatch(BANNED)
+  })
+})
+
+// UX 3.4 row 4 (ruling K-2): a planting row names its method in the door's words, value for value.
+// putUpMethodParity.test.js binds the map's KEYS; this binds what each one SAYS on the row.
+describe('a planting row\'s method, in the door\'s words', () => {
+  it('every method on a planting row reads as putItUp.METHOD_LABELS says it', async () => {
+    const methods = Object.keys(METHOD_LABELS)
+    const records = methods.map((m, i) => ({ id: `r-${m}`, plant_id: 'pl-1', label: m, method: m, package_count: 1, remaining_count: 1,
+      preserved_at: `2026-0${1 + (i % 9)}-1${i % 10}` }))
+    const fetch = (path) => Promise.resolve(String(path).startsWith('/api/preservation/whats-put-up')
+      ? { groups: [{ group_key: 'loc-1', label: 'Chest Freezer 1', records }] } : null)
+    render(<PutUpFromPlanting planting={PLANTING} fetch={fetch} now={NOW} />)
+    const heads = await screen.findAllByTestId('putup-from-planting-head')
+    const said = Object.fromEntries(heads.map(h => [h.firstChild.textContent, h.querySelector('span').textContent.replace(/^ · /, '')]))
+    expect(said).toEqual({ ...METHOD_LABELS })
+    expect([said.whole_freeze, said.candy]).toEqual(['Freeze whole', 'Candied (pieces or sweets)'])
   })
 })

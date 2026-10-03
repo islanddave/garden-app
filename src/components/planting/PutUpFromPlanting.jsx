@@ -70,8 +70,10 @@ import { isUsedUp, leftWords, plantingDiscardWords, isSoonOrPast, doorWhatOf } f
 // rows are own_garden or NULL — both of which render nothing anyway. Adding the line here would be
 // dead code that manufactures confidence provenance is visible in three places when it is visible
 // in two (PutUp RecordRow and PutUpUseSoonBand). The D6 method label below IS needed.
+// Put-Up R2a (UX 3.4 row 4): every VALUE is the one putup/putItUp.js METHOD_LABELS says — the door's and
+// the Pantry's words — so a row here reads as the chip it was put up with (PutUpR2K.host.test.jsx binds them).
 const METHOD_LABELS = {
-  roast_freeze: 'Roast & freeze', whole_freeze: 'Freeze', blanch_freeze: 'Blanch & freeze',
+  roast_freeze: 'Roast & freeze', whole_freeze: 'Freeze whole', blanch_freeze: 'Blanch & freeze',
   dehydrate: 'Dehydrate', powder: 'Powder', passata: 'Passata / sauce',
   can_water_bath: 'Water-bath can', can_pressure: 'Pressure can', jam_preserve: 'Jam / preserve',
   ferment: 'Ferment', cure_store: 'Cure & store', cold_store: 'Cold store',
@@ -81,7 +83,7 @@ const METHOD_LABELS = {
   // is still a defect, and the parity test binds all three regardless.
   quick_pickle: 'Quick / vinegar pickle', pesto: 'Pesto', hot_sauce: 'Hot sauce',
   ferment_mash: 'Fermenting mash (unfinished)',
-  candy: 'Candied',   // V5-PUTUPCANDY-001 — matches PutUp.jsx's picker label
+  candy: 'Candied (pieces or sweets)',   // V5-PUTUPCANDY-001; R2a: the door's chip, not PutUp.jsx's picker
   other: 'Other',
 }
 
