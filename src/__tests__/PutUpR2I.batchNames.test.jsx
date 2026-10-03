@@ -3,8 +3,11 @@
 // children that name a jar's batch (the Pantry list and the page search's results), so neither reads its own.
 //
 // BEFORE: each child read the names when it mounted, so a Pantry open, a search, and the Pantry again was three
-// reads of GET /api/kitchen-batches?state=all for one visit. NOW: one, for as long as the page is mounted —
-// and one more only when a batch id turns up that no read was sent for (useBatchNames' own rule).
+// reads of GET /api/kitchen-batches?state=all for one visit. NOW: one per SHOWING — the Pantry and its search,
+// back and forth, are one showing — and one more only when a batch id turns up that no read was sent for
+// (useBatchNames' own rule). Another segment in between ends the showing: back on the Pantry (or a search) the
+// names are read once more, so a batch renamed on Going now is named as it is now, as it was before the page
+// read them (pre-promote review P-I3).
 // The read is the Pantry's and the search's, nobody else's: Going now (even with the door open, which reads
 // the Pantry list for its name search) and Walk a place send none. PutUpUxC.jarBatch.test.jsx's page pin
 // ("four reads, never more — and three when no jar has a batch") holds unedited.
@@ -12,6 +15,7 @@
 //   PantrySearchResults not handed batchNames         -> "a search … asks nothing more"
 //   PantryView not handed batchNames                  -> "back on the Pantry … asks nothing more"
 //   the page's read enabled everywhere                -> "Going now with the door open reads no names"
+//   the reader never forgets what it asked            -> "a batch renamed on Going now …"
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -125,5 +129,55 @@ describe('the page reads the batch names once, for both children', () => {
     await screen.findByTestId('pantry-row-open-put_up:jar-new')
     await settle()
     expect(namesGets()).toHaveLength(2)
+  })
+
+  it('a batch renamed on Going now is named as it is now back on the Pantry, and under a search: one read per showing', async () => {
+    // The household's batches as the route answers them NOW: renaming one changes what the next read answers.
+    let label = 'Petri Dish'
+    fake = pantryFetch({ rows: [PLAIN, REAPER, KRAUT, MILK], overrides: {
+      'GET /api/kitchen-batches': ({ path }) => (/state=all/.test(path)
+        ? { state: 'all', batches: [{ ...BATCHES[0], label }, BATCHES[1]] } : { state: 'going', batches: [] }),
+    } })
+    stableFetch.fn = fake
+    page()
+    await waitFor(() => expect(rowText('jar-reaper')).toContain('from Petri Dish · 4 left'))
+    await settle()
+    expect(namesGets()).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Going now' }))
+    await settle()
+    label = 'Petri Dish II'                                                // renamed while he is on Going now
+    expect(namesGets()).toHaveLength(1)                                    // Going now reads no names
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Pantry' }))
+    await waitFor(() => expect(rowText('jar-reaper')).toContain('from Petri Dish II · 4 left'))
+    expect(rowText('jar-kraut')).toContain('from Winter kraut')
+    await settle()
+    expect(namesGets()).toHaveLength(2)                                    // once for this showing, not once per child
+
+    // A search and back is the same showing: nothing more is read.
+    search('reaper')
+    await screen.findByTestId('pantry-search-results')
+    fireEvent.click(screen.getByTestId('pantry-search-clear'))
+    await screen.findByTestId('pantry-view')
+    await settle()
+    expect(namesGets()).toHaveLength(2)
+
+    // Going now again, and a SEARCH typed there: the results are a showing of their own, read once.
+    fireEvent.click(screen.getByRole('radio', { name: 'Going now' }))
+    await settle()
+    search('reaper')
+    await screen.findByTestId('pantry-search-hit-put_up:jar-reaper')
+    await settle()
+    expect(namesGets()).toHaveLength(3)
+    // Cleared, the search leaves him on Going now (no read); renamed again, the Pantry is a new showing.
+    fireEvent.click(screen.getByTestId('pantry-search-clear'))
+    await settle()
+    expect(namesGets()).toHaveLength(3)
+    label = 'Petri Dish III'
+    fireEvent.click(screen.getByRole('radio', { name: 'Pantry' }))
+    await waitFor(() => expect(rowText('jar-reaper')).toContain('from Petri Dish III · 4 left'))
+    await settle()
+    expect(namesGets()).toHaveLength(4)
   })
 })

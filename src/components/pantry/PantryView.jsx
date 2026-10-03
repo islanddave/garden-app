@@ -83,10 +83,15 @@ export function usePantryList({ fetch, group = 'place', enabled = true }) {
 // A FAILED READ IS ASKED AGAIN (Put-Up R2a): the ids it was sent for are forgotten, so the next re-read of
 // the list (every write on the Pantry makes one) sends the read once more. A read that ANSWERED and did
 // not list a batch is still never repeated for it.
+// A NEW SHOWING ASKS AGAIN (Put-Up R2a, pre-promote P-I3): `enabled` turned off and on again — the page's
+// Pantry or search shown again after another segment — forgets every id asked, so the names are read once
+// for that showing and a batch renamed meanwhile is named as it is now. The names already read stay on screen
+// until that answer lands over them.
 const NO_NAMES = Object.freeze({})
 export function useBatchNames({ fetch, rows, enabled = true }) {
   const [names, setNames] = useState(NO_NAMES)
   const askedRef = useRef(new Set())
+  const showingRef = useRef(false)
   const mountedRef = useRef(true)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
   const ids = useMemo(
@@ -95,13 +100,16 @@ export function useBatchNames({ fetch, rows, enabled = true }) {
   )
   // Runs at every re-read (`rows`), and sends nothing unless some batch id has no read standing for it.
   useEffect(() => {
-    if (!enabled || !ids) return
-    const fresh = ids.split('\n').filter(id => !askedRef.current.has(id))
+    if (!enabled) { showingRef.current = false; return }
+    if (!showingRef.current) { showingRef.current = true; askedRef.current = new Set() }
+    if (!ids) return
+    const asked = askedRef.current
+    const fresh = ids.split('\n').filter(id => !asked.has(id))
     if (!fresh.length) return
-    for (const id of fresh) askedRef.current.add(id)
+    for (const id of fresh) asked.add(id)
     Promise.resolve().then(() => listBatchNames(fetch))
       .then(m => { if (mountedRef.current) setNames(prev => ({ ...prev, ...m })) })
-      .catch(() => { for (const id of fresh) askedRef.current.delete(id) })
+      .catch(() => { for (const id of fresh) asked.delete(id) })
   }, [enabled, fetch, ids, rows])
   return names
 }
