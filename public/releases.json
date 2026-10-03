@@ -1,5 +1,18 @@
 [
   {
+    "version": "4.170.0",
+    "date": "2026-10-03",
+    "highlights": [
+      "Put something up: say the size of each container, where the produce came from, Raw or In oil, and How dry for dried food; canning methods show a short note from published home-canning advice",
+      "As is and Fresh, as picked items can record how much and where they're from, and both can be changed later in Edit",
+      "Places: Edit places on the Pantry renames a place, changes its kind, or deletes an empty one; a new Fridge freezer kind",
+      "The name search lists crops and varieties too, best matches first, and tells plantings with the same name apart by wave and sown date",
+      "A planting's page opens Put something up right there, with Undo",
+      "A jar's Edit asks the door's questions, shows Discard by on every method, and can correct where it's from",
+      "Fixes: a retry no longer uses up two; a recipe edit keeps a line's details; a batch started in the evening shows the right day; Put it up keeps a typed name when you close its details"
+    ]
+  },
+  {
     "version": "4.169.2",
     "date": "2026-10-02",
     "highlights": [
