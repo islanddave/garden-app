@@ -64,7 +64,7 @@ import { useAppUpdate } from '../hooks/useAppUpdate.js'
 import { sizeWords, qtyText, totalOfEach } from '../components/putup/jarWords.js'
 // Put-Up B′ release 2 (V4 §2.2, §2.5, §6.1) — the Pantry, its page search, the Put something up door,
 // the generalised walk and the rename bridge live in components/pantry/, each its own module.
-import PantryView, { usePantryList } from '../components/pantry/PantryView.jsx'
+import PantryView, { usePantryList, useBatchNames } from '../components/pantry/PantryView.jsx'
 import PantrySearchResults, { PantrySearchBox } from '../components/pantry/PantrySearch.jsx'
 import PutSomethingUpSheet from '../components/pantry/PutSomethingUpSheet.jsx'
 import WalkPlace, { WALK_TITLE } from '../components/pantry/WalkPlace.jsx'
@@ -669,6 +669,11 @@ export default function PutUp({
   const [doorName, setDoorName] = useState('')
   const pantry = usePantryList({ fetch: pageFetch, group: pantryGroup,
     enabled: !inWalk && ((!modeActive && view === 'pantry') || searching || doorOpen) })
+  // The names of the batches the listed jars came from, read ONCE for the page and handed to both lists that
+  // name them (the Pantry, the search's results), so neither reads its own on every mount. Read only while
+  // one of them is showing: never for the door's name search alone, never on the walk.
+  const batchNames = useBatchNames({ fetch: pageFetch, rows: pantry.rows,
+    enabled: !inWalk && ((!modeActive && view === 'pantry') || searching) })
   // What the person did on a row this visit — "3 left · used one · Undo" until their next visit (V4 §2.5).
   const [pantryRecent, setPantryRecent] = useState({})
   // The door's completion, shown in place on the Pantry with Undo (V4 §2.2).
@@ -843,7 +848,7 @@ export default function PutUp({
 
         {searching && (
           <PantrySearchResults query={findText} rows={pantry.rows} loading={pantry.loading} extraSearchItems={extraSearchItems}
-            onOpenExtra={openSearchItem} onOpenBatch={openBatch}
+            onOpenExtra={openSearchItem} onOpenBatch={openBatch} batchNames={batchNames}
             fetch={pageFetch} onPutUp={(text) => openDoor(text)} JarEditor={RowEditor}
             onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
             onUsed={(entry) => { setPantryRecent(prev => ({ ...prev, [`${entry.row.stock_kind}:${entry.row.stock_id}`]: { ...entry, undone: false, err: null, undoKey: null } })); pantry.reload() }}
@@ -885,7 +890,7 @@ export default function PutUp({
             onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
             completion={completion} onCompletionDone={() => setCompletion(null)}
             showBridge={bridgeShown} onDismissBridge={onDismissBridge}
-            onOpenBatch={openBatch} onPutSomethingUp={openDoor} onWalkPlace={openWalk} />
+            onOpenBatch={openBatch} onPutSomethingUp={openDoor} onWalkPlace={openWalk} batchNames={batchNames} />
         )}
         {/* ONE element for the Recipes list and for recipe detail (R1, PLAN-V3 D11): the same instance stays
             mounted across opening and closing a recipe, so its two list reads and its type filter are not
