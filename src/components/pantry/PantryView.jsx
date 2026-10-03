@@ -20,10 +20,19 @@
 // tint (putup/soonTint.js — the sentence is unchanged, the tint and the weight are two more channels
 // beside its words); and an EMPTY Pantry offers the two ways to fill it, as secondary buttons, when the
 // page hands them in (`onPutSomethingUp`, `onWalkPlace`) — neither handed in, it is the one line it was.
+//
+// Put-Up R2a: "Edit places", a quiet door at the right end of the Group-by row, opens the Places sheet
+// (PlacesSheet.jsx). It is drawn once a read of the household's PLACES has answered with at least one —
+// read when the Pantry mounts — and never from the list's own groups: a place with nothing stored has no
+// group, and a mistyped place is usually exactly that. Until that read answers, and if it fails, there is
+// no door. The sheet is handed the UNFILTERED rows, so what it counts as stored in a place is not narrowed
+// by Use soon.
+// `batchNames` (optional): the batch names a host has ALREADY read, { [batch id]: name }. Handed in (an
+// object, an empty one included), the Pantry reads none of its own; left out, it reads them as before.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
-import { listPantry, listBatchNames, undoUse, patchPantryItem, useJar } from '../../lib/pantryApi.js'
+import { listPantry, listBatchNames, listPlaces, undoUse, patchPantryItem, useJar } from '../../lib/pantryApi.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import { usePageScrollYield } from '../../hooks/usePageScrollManager.js'
 import SegmentedControl from '../forms/SegmentedControl.jsx'
@@ -34,6 +43,7 @@ import { DOOR_CTA } from './putSomethingUp.js'
 import { WALK_TITLE } from './WalkPlace.jsx'
 import PantryRowSheet from './PantryRowSheet.jsx'
 import CompletionLine from './CompletionLine.jsx'
+import PlacesSheet, { EDIT_PLACES_LABEL } from './PlacesSheet.jsx'
 import RefusalLine, { refusalOf } from './RefusalLine.jsx'
 import {
   groupRows, rowKey, isItem, detailWords, discardChip, inlineAction, ACTION_LABELS, USED_ONE, USED_UP,
@@ -70,26 +80,29 @@ export function usePantryList({ fetch, group = 'place', enabled = true }) {
 // no earlier read was sent for (a jar given a batch by "How it was made" in this same visit). FAILURE IS
 // ISOLATED: a read that fails, or a batch it does not list, leaves that jar exactly as it reads without a
 // name — no words about its batch, no door to it. `enabled` false sends nothing.
+// A FAILED READ IS ASKED AGAIN (Put-Up R2a): the ids it was sent for are forgotten, so the next re-read of
+// the list (every write on the Pantry makes one) sends the read once more. A read that ANSWERED and did
+// not list a batch is still never repeated for it.
 const NO_NAMES = Object.freeze({})
 export function useBatchNames({ fetch, rows, enabled = true }) {
   const [names, setNames] = useState(NO_NAMES)
   const askedRef = useRef(new Set())
   const mountedRef = useRef(true)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
-  // A string, so the effect below runs when the SET of batch ids changes and not on every re-read.
   const ids = useMemo(
     () => [...new Set((rows ?? []).map(r => r?.batch_id).filter(v => v != null && v !== '').map(String))].sort().join('\n'),
     [rows],
   )
+  // Runs at every re-read (`rows`), and sends nothing unless some batch id has no read standing for it.
   useEffect(() => {
     if (!enabled || !ids) return
-    const wanted = ids.split('\n')
-    if (wanted.every(id => askedRef.current.has(id))) return
-    for (const id of wanted) askedRef.current.add(id)
+    const fresh = ids.split('\n').filter(id => !askedRef.current.has(id))
+    if (!fresh.length) return
+    for (const id of fresh) askedRef.current.add(id)
     Promise.resolve().then(() => listBatchNames(fetch))
       .then(m => { if (mountedRef.current) setNames(prev => ({ ...prev, ...m })) })
-      .catch(() => { /* the rows read as they do without a name */ })
-  }, [enabled, fetch, ids])
+      .catch(() => { for (const id of fresh) askedRef.current.delete(id) })
+  }, [enabled, fetch, ids, rows])
   return names
 }
 export function batchNameOf(names, row) {
@@ -116,7 +129,7 @@ export function mergeRecent(rows, recent) {
 export default function PantryView({
   fetch, group, onGroupChange, rows, loading, error, onReload, recent, onRecent,
   useSoonOnly = false, onClearUseSoon, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null, completion = null, onCompletionDone,
-  showBridge = false, onDismissBridge, onOpenBatch = null, onPutSomethingUp = null, onWalkPlace = null, now,
+  showBridge = false, onDismissBridge, onOpenBatch = null, onPutSomethingUp = null, onWalkPlace = null, now, batchNames,
 }) {
   const [openRow, setOpenRow] = useState(null)
   // The last move made from this list, said in place at the top (the place it went and what the server
@@ -141,7 +154,19 @@ export default function PantryView({
     return () => cancelAnimationFrame(frame)
   }, [moved, yieldScroll])
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
-  const batches = useBatchNames({ fetch, rows })
+  const ownNames = useBatchNames({ fetch, rows, enabled: batchNames === undefined })
+  const batches = batchNames ?? ownNames
+  // The household's places, for the Edit places door: null until the read answers (and after one that
+  // failed). The open sheet reads them again for itself and hands back what it knows.
+  const [places, setPlaces] = useState(null)
+  const [placesOpen, setPlacesOpen] = useState(false)
+  useEffect(() => {
+    let alive = true
+    Promise.resolve().then(() => listPlaces(fetch))
+      .then(r => { if (alive) setPlaces(r) })
+      .catch(() => { /* no door this visit; the Pantry is whole without it */ })
+    return () => { alive = false }
+  }, [fetch])
 
   const shown = useMemo(() => {
     const merged = mergeRecent(rows ?? [], recent)
@@ -183,8 +208,16 @@ export default function PantryView({
         </div>
       )}
 
-      <div style={{ marginBottom: T.space.md }}>
-        <SegmentedControl ariaLabel="Group by" small value={group} onChange={onGroupChange} options={GROUP_OPTIONS} />
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: T.space.md,
+        marginBottom: T.space.md }}>
+        <SegmentedControl ariaLabel="Group by" small touch value={group} onChange={onGroupChange} options={GROUP_OPTIONS} />
+        {places != null && places.length > 0 && (
+          <button type="button" data-testid="pantry-edit-places" onClick={() => setPlacesOpen(true)}
+            style={{ minHeight: T.buttonMinHeight, background: 'none', border: 'none', padding: '0 2px', color: P.green, fontSize: T.type.sm,
+              fontWeight: 600, fontFamily: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}>
+            {EDIT_PLACES_LABEL}
+          </button>
+        )}
       </div>
 
       {useSoonOnly && (
@@ -249,6 +282,9 @@ export default function PantryView({
         JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
         onOpenBatch={onOpenBatch} canOpenBatch={(r) => batchNameOf(batches, r) != null}
         onUsed={record} onChanged={() => onReload?.()} onMoved={(m) => setMoved(movedWords({ ...m, now: nowDate }))} />
+      {placesOpen && (
+        <PlacesSheet open fetch={fetch} rows={rows} onClose={() => setPlacesOpen(false)} onChanged={() => onReload?.()} onPlaces={setPlaces} />
+      )}
     </div>
   )
 }
@@ -259,12 +295,20 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
   // A synchronous guard: two taps inside one frame both read `busy` false, and each use carries its own
   // key, so both would land (the shipped RecordRow's usingRef, kept).
   const writingRef = useRef(false)
+  // The key of the use this row is trying to make: minted at the first tap, kept while that use has not
+  // landed (a tap after a lost answer is then the server's replay, not a second use), dropped when it lands
+  // so the next use carries its own. It belongs to ONE action: the server answers a key it has seen with
+  // the use it wrote, so "Used it up" sent under a Used one's key would be answered with the Used one.
+  const useKeyRef = useRef(null)
   const [err, setErr] = useState(null)
   const key = rowKey(row)
   const action = inlineAction(row)
   const chip = discardChip(row, now)
   const soon = isUseSoon(row)
-  const detail = detailWords(row, { now, batchName })
+  // A row that is still live after a use (Used one, some given away, some gone bad) keeps its action; one
+  // the use finished (used up, all of it gone bad, nothing left) shows only its Undo, and no "N left".
+  const finished = finishedByUse(recent)
+  const detail = detailWords(row, { now, batchName, finished })
 
   async function act() {
     if (writingRef.current) return
@@ -275,9 +319,11 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
         await patchPantryItem(fetch, row.stock_id, { used_up_at: 'now' })
         onRecord({ row, action: USED_UP, use: null, jar: null })
       } else {
+        if (useKeyRef.current?.action !== action) useKeyRef.current = { action, key: mintKey() }
         const r = await useJar(fetch, action === USED_ONE
-          ? { preservation_log_id: row.stock_id, count_used: 1 }
-          : { preservation_log_id: row.stock_id, all_remaining: true })
+          ? { preservation_log_id: row.stock_id, count_used: 1, idempotency_key: useKeyRef.current.key }
+          : { preservation_log_id: row.stock_id, all_remaining: true, idempotency_key: useKeyRef.current.key })
+        useKeyRef.current = null
         onRecord({ row, action, use: r?.use ?? null, jar: r?.jar ?? null })
       }
     } catch (e) {
@@ -310,9 +356,6 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
 
   const canUndo = !!recent && (isItem(row) || !!recent.use?.id)
   const label = ACTION_LABELS[action]
-  // A row that is still live after a use (Used one, some given away, some gone bad) keeps its action; one
-  // the use finished (used up, all of it gone bad, nothing left) shows only its Undo.
-  const finished = finishedByUse(recent)
   return (
     <li data-testid={`pantry-row-${key}`} style={{ borderTop: `1px solid ${P.cream}`, padding: '4px 8px' }}>
       <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>

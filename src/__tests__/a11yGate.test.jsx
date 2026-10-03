@@ -71,6 +71,7 @@ import ShuSheet from '../components/putup/ShuSheet.jsx'
 import NameSearchField from '../components/pantry/NameSearchField.jsx'
 // R2 lane Df additions go directly under this line
 // R2 lane P additions go directly under this line
+import PlacesSheet from '../components/pantry/PlacesSheet.jsx'
 // R2 lane E additions go directly under this line
 // R2 lane K additions go directly under this line
 // R2 lane F additions go directly under this line
@@ -324,6 +325,21 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
     })
     // R2 lane Df additions go directly under this line
     // R2 lane P additions go directly under this line
+    // Put-Up R2a (lane P): the Pantry's Places sheet joins the set, in its fullest state — a place that holds
+    // something, an empty one, and an editor open under a row with its six kinds.
+    it('the Places sheet (PlacesSheet), an editor open under its row, is clean (with nested-interactive)', async () => {
+      fetchSpy.mockImplementation((path) => Promise.resolve(path === '/api/storage-locations' ? PLACES : null))
+      const stored = [{ stock_kind: 'put_up', stock_id: 'j1', name: 'Megatron reaper', place: PLACES[1] }]
+      const { container } = render(<PlacesSheet open fetch={fetchSpy} rows={stored} onClose={() => {}} />)
+      const edits = await screen.findAllByTestId('pu-location-rename')
+      expect(screen.getByTestId('pu-location-delete')).toBeTruthy()
+      expect(screen.getByTestId('pu-location-in-use')).toBeTruthy()
+      fireEvent.click(edits[1])
+      await screen.findByTestId('pu-location-name')
+      expect(screen.getByRole('dialog', { name: 'Places' })).toBeTruthy()
+      expect(screen.getByRole('radiogroup', { name: 'What kind of place?' }).querySelectorAll('[role="radio"]')).toHaveLength(6)
+      await expectNoA11yViolations(container, { label: 'PlacesSheet', rules: NEW_RULES })
+    })
     // R2 lane E additions go directly under this line
     // R2 lane K additions go directly under this line
     // R2 lane F additions go directly under this line

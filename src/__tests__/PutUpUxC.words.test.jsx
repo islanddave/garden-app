@@ -416,3 +416,179 @@ describe('a Walk group, its options open', () => {
 
 // R2 lane Df additions go directly under this line
 // R2 lane P additions go directly under this line
+// Put-Up R2a, lane P — the copy this lane added: the Edit places door, the Places sheet in every state it has
+// (the list with its counts, an open editor, both refusals, the delete question, "Saved.", "Deleted", no
+// places, a failed read), and a bought item's amount and where-from on the row, in the sheet and in Item
+// Edit. The row sheet's action list (Move it…, Gave it away…, Edit…, Remove…) is swept by the tests above,
+// which open every panel. The two server sentences for a place refusal are swept beside the Lambda that
+// writes them; the kind words are read from putup/placeKinds.js, whatever they are.
+import PlacesSheet, {
+  storedWords, storedBlocksDeleteWords, rekindRefusedLines, deleteQuestion, deletedWords,
+  EDIT_PLACES_LABEL, PLACES_TITLE, PLACE_KIND_QUESTION, PLACE_NAME_REQUIRED_TEXT, PLACE_NAME_TAKEN_TEXT, PLACE_SAVED_TEXT, NO_PLACES_TEXT,
+  PLACES_LOAD_FAILED_TEXT, PLACE_SAVE_FAILED_TEXT, PLACE_DELETE_FAILED_TEXT,
+} from '../components/pantry/PlacesSheet.jsx'
+import { amountWords as lanePAmountWords, detailWords as lanePDetailWords } from '../components/pantry/pantryRows.js'
+import { PLACE_KINDS as LANE_P_KINDS } from '../components/putup/placeKinds.js'
+import { AMOUNT_WORDS as LANE_P_AMOUNT_WORDS, amountError as lanePAmountError, ITEM_AMOUNT_UNITS as LANE_P_UNITS, MORE_ITEM_AMOUNT_UNITS as LANE_P_MORE_UNITS } from '../components/pantry/AmountField.jsx'
+import { KITCHEN_UNITS as LANE_P_KITCHEN_UNITS } from '../../lambda/preservation/kitchenBatch.js'
+
+describe('R2a lane P — the Places sheet and its door', () => {
+  const SHELF = { id: 'loc-9', label: 'Garage shelf', kind: 'pantry' }
+  const places = [...PLACES, SHELF]
+  const sheet = () => screen.getByRole('dialog', { name: 'Places' })
+  const rowFor = (id) => screen.getAllByTestId('pu-location-row').find(r => r.getAttribute('data-loc-id') === id)
+  const openSheet = async () => {
+    const view = render(<PlacesSheet open fetch={stableFetch.fn} rows={ROWS} onClose={() => {}} />)
+    await screen.findAllByTestId('pu-location-row')
+    return view
+  }
+  const refusal = (status, body) => () => { throw apiError(status, body) }
+
+  it('the door on the Pantry, then the list: every place, what is stored there, Edit… and Delete…, the in-use line', async () => {
+    wire({ places })
+    function Host() {
+      const [recent, setRecent] = useState({})
+      return (
+        <PantryView fetch={stableFetch.fn} group="place" onGroupChange={() => {}} rows={ROWS} loading={false} error={false}
+          onReload={() => {}} recent={recent} onRecent={setRecent} now={NOW.getTime()} />
+      )
+    }
+    render(<Host />)
+    const door = await screen.findByTestId('pantry-edit-places')
+    expect(door.textContent).toBe(EDIT_PLACES_LABEL)
+    expectClean(wordsOf(screen.getByTestId('pantry-view')), 'Pantry list with the Edit places door')
+    fireEvent.click(door)
+    await screen.findAllByTestId('pu-location-row')
+    // The states are really on screen, so the sweep below is of them.
+    for (const there of ['nothing stored here', '3 stored here', '2 stored here — move them to delete this place.', 'Edit…', 'Delete…']) {
+      expect(sheet().textContent).toContain(there)
+    }
+    expect(PLACES_TITLE).toBe('Places')
+    expectClean(wordsOf(sheet()), 'Places sheet, the list')
+  })
+
+  it('an open editor: its fields and six kinds, a blank name, a name already used, both forms of the re-kind refusal, a save that failed', async () => {
+    const answers = [
+      refusal(409, { error: 'x', message: 'x', code: 'place_exists', existing_id: 'loc-2' }),
+      refusal(409, { error: 'x', message: 'x', code: 'place_has_dated_jars', n: 4 }),
+      refusal(409, { error: 'x', message: 'x', code: 'place_has_dated_jars', n: 1 }),
+      refusal(500, { error: 'boom' }),
+    ]
+    wire({ places, overrides: { 'PUT /api/storage-locations/*': (...a) => answers.shift()(...a) } })
+    await openSheet()
+    fireEvent.click(within(rowFor('loc-1')).getByTestId('pu-location-rename'))
+    expect(within(sheet()).getAllByRole('radio')).toHaveLength(6)
+    expect(sheet().textContent).toContain(PLACE_KIND_QUESTION)
+    expectClean(wordsOf(sheet()), 'Places sheet, an editor open')
+
+    const name = screen.getByTestId('pu-location-name')
+    fireEvent.change(name, { target: { value: '  ' } })
+    fireEvent.click(screen.getByTestId('pu-location-save'))
+    expect(screen.getByRole('alert').textContent).toBe(PLACE_NAME_REQUIRED_TEXT)
+    expectClean(wordsOf(sheet()), 'Places sheet, a blank name')
+
+    const said = []
+    fireEvent.change(name, { target: { value: 'Chest Freezer 2' } })
+    for (const then of [PLACE_NAME_TAKEN_TEXT, rekindRefusedLines(4, 'deep_freezer')[0], rekindRefusedLines(1, 'deep_freezer')[0], PLACE_SAVE_FAILED_TEXT]) {
+      fireEvent.click(screen.getByTestId('pu-location-kind-fridge'))
+      fireEvent.click(screen.getByTestId('pu-location-save'))
+      await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(then))
+      said.push(sheet().textContent)
+      expectClean(wordsOf(sheet()), `Places sheet, refused: ${then}`)
+    }
+    expect(said.filter(t => t.includes('then change the kind.'))).toHaveLength(2)   // the second line was on screen both times
+  })
+
+  it('"Saved.", the delete question, a delete that failed, a delete the server refused, and "Deleted"', async () => {
+    const deletes = [
+      refusal(500, { error: 'boom' }),
+      refusal(409, { error: '1 thing is stored in this place. Move it first, then delete it.', message: '1 thing is stored in this place. Move it first, then delete it.', code: 'place_in_use', n: 1 }),
+      () => ({ ok: true }),
+    ]
+    wire({ places, overrides: { 'DELETE /api/storage-locations/*': (...a) => deletes.shift()(...a) } })
+    await openSheet()
+    fireEvent.click(within(rowFor('loc-9')).getByTestId('pu-location-rename'))
+    fireEvent.change(screen.getByTestId('pu-location-name'), { target: { value: 'Garage shelves' } })
+    fireEvent.click(screen.getByTestId('pu-location-save'))
+    expect((await screen.findByTestId('pu-location-saved')).textContent).toBe(PLACE_SAVED_TEXT)
+    expectClean(wordsOf(sheet()), 'Places sheet, after a save')
+
+    for (const then of [PLACE_DELETE_FAILED_TEXT, '1 thing is stored in this place. Move it first, then delete it.']) {
+      fireEvent.click(within(rowFor('loc-9')).getByTestId('pu-location-delete'))
+      expect(screen.getByTestId('pu-location-delete-consequence').textContent).toBe(deleteQuestion('Garage shelves'))
+      expectClean(wordsOf(sheet()), 'Places sheet, the delete question')
+      fireEvent.click(screen.getByTestId('pu-location-delete-confirm'))
+      await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(then))
+      expectClean(wordsOf(sheet()), `Places sheet, delete refused: ${then}`)
+    }
+    fireEvent.click(within(rowFor('loc-9')).getByTestId('pu-location-delete'))
+    fireEvent.click(screen.getByTestId('pu-location-delete-confirm'))
+    expect((await screen.findByTestId('pu-location-deleted')).textContent).toBe(deletedWords('Garage shelves'))
+    expectClean(wordsOf(sheet()), 'Places sheet, after a delete')
+  })
+
+  it('no places, and a read that failed', async () => {
+    wire({ places: [] })
+    const none = render(<PlacesSheet open fetch={stableFetch.fn} rows={[]} onClose={() => {}} />)
+    expect((await screen.findByTestId('places-empty')).textContent).toBe(NO_PLACES_TEXT)
+    expectClean(wordsOf(sheet()), 'Places sheet, no places')
+    none.unmount()
+
+    wire({ overrides: { 'GET /api/storage-locations': () => { throw new Error('Failed to fetch') } } })
+    render(<PlacesSheet open fetch={stableFetch.fn} rows={[]} onClose={() => {}} />)
+    expect((await screen.findByTestId('places-load-failed')).textContent).toContain(PLACES_LOAD_FAILED_TEXT)
+    expectClean(wordsOf(sheet()), 'Places sheet, the read failed')
+  })
+
+  it('every line the sheet can build, from the helpers that build them', () => {
+    const lines = []
+    for (let n = 0; n <= 12; n += 1) lines.push(storedWords(n))
+    for (let n = 1; n <= 12; n += 1) lines.push(storedBlocksDeleteWords(n))
+    for (const k of [...LANE_P_KINDS.map(x => x.kind), 'root_cellar_v0']) for (const n of [1, 2, 11]) lines.push(...rekindRefusedLines(n, k))
+    lines.push(deleteQuestion('Garage shelf'), deletedWords('Garage shelf'), ...LANE_P_KINDS.map(k => k.label))
+    expect(lines.length).toBeGreaterThan(70)
+    expectClean(lines, 'Places sheet lines')
+  })
+})
+
+describe('R2a lane P — a bought item\'s amount and where it is from', () => {
+  const SHELF = { id: 'loc-9', label: 'Pantry shelf', kind: 'pantry' }
+  const OATS = itemRow({ stock_id: 'item-oats', name: 'Rolled oats', place: SHELF, group_key: 'oat', group_label: 'Oats', acquired_at: '2026-09-28',
+    acquired_precision: 'day', quantity_value: 2, quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco', where_from: 'Costco' })
+
+  it('every amount the row can say, and the detail line that holds it', () => {
+    const lines = []
+    for (const unit of LANE_P_KITCHEN_UNITS) for (const v of [1, 2, 0.5]) lines.push(lanePAmountWords({ ...OATS, quantity_value: v, quantity_unit: unit }))
+    lines.push(lanePDetailWords(OATS, { now: NOW }))
+    expect(lanePDetailWords(OATS, { now: NOW })).toBe('Pantry shelf · Costco · 2 lb · had it 3 days')
+    expect(lines).toHaveLength(LANE_P_KITCHEN_UNITS.length * 3 + 1)
+    expectClean(lines, 'item amounts')
+  })
+
+  it('Item Edit: How much with every unit shown, Where it\'s from with every source shown and its name asked, and the refusals', async () => {
+    render(<PantryRowSheet row={OATS} fetch={stableFetch.fn} onClose={() => {}} onUsed={() => {}} onChanged={() => {}} now={NOW.getTime()} />)
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.textContent).toContain('Pantry shelf · Costco · 2 lb · had it 3 days')
+    fireEvent.click(screen.getByTestId('row-edit'))
+    fireEvent.click(screen.getByTestId('item-edit-amount-unit-more'))
+    fireEvent.click(screen.getByTestId('item-edit-source-more'))
+    expect(within(screen.getByTestId('item-edit-amount-units')).getAllByRole('radio')).toHaveLength(LANE_P_UNITS.length + LANE_P_MORE_UNITS.length)
+    expect(within(screen.getByTestId('item-edit-source')).getAllByRole('radio')).toHaveLength(8)
+    expect(dialog.textContent).toContain(LANE_P_AMOUNT_WORDS.label)
+    expect(dialog.textContent).toContain("Where it's from")
+    expectClean(wordsOf(dialog), 'Item Edit, everything shown')
+
+    fireEvent.click(screen.getByTestId('item-edit-source-other'))
+    fireEvent.change(screen.getByTestId('item-edit-source-label'), { target: { value: '' } })
+    fireEvent.click(screen.getByTestId('item-edit-save'))
+    await screen.findByTestId('item-edit-error')
+    expectClean(wordsOf(dialog), 'Item Edit, Other with no name')
+
+    fireEvent.click(screen.getByTestId('item-edit-source-own_garden'))
+    fireEvent.change(screen.getByTestId('item-edit-amount-value'), { target: { value: '' } })
+    fireEvent.click(screen.getByTestId('item-edit-save'))
+    expect(screen.getByTestId('item-edit-error').textContent).toBe(lanePAmountError({ value: '', unit: 'lb' }, LANE_P_AMOUNT_WORDS))
+    expectClean(wordsOf(dialog), 'Item Edit, a unit with no number')
+    expectClean([lanePAmountError({ value: '2', unit: null }, LANE_P_AMOUNT_WORDS), lanePAmountError({ value: '', unit: 'lb' }, LANE_P_AMOUNT_WORDS)], 'the amount refusals')
+  })
+})

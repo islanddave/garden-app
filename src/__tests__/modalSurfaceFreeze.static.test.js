@@ -241,6 +241,13 @@ const SHEET_SITES = [
   'components/pantry/PutSomethingUpSheet.jsx',
   'components/pantry/PantryRowSheet.jsx',
   // R2 lane P additions go directly under this line
+  // Put-Up R2a (C1) — a DELIBERATE addition: the Pantry's Places sheet (rename a place, change its kind,
+  // delete one that holds nothing). A list with an editor that opens under its row: a form, not a confirm.
+  // The shared <Sheet armsBack>, so no DIALOG_SURFACES entry is owed. FLAT on purpose — no backIntercept, no
+  // sub-state for Back to step out of, nothing pushed to history: Back closes it from any state. `busy`
+  // refuses Back and the backdrop while the PUT or DELETE is in flight; `dirty` (a name or kind that
+  // differs) makes a stray backdrop tap do nothing.
+  'components/pantry/PlacesSheet.jsx',
   // V5-SEEDSTAB-001 slice 2a — a MOVE, not an addition: the Sow sheet that pages/SowNow.jsx rendered
   // inline was extracted here so the seed's detail page opens the same sheet ("Sow this"). Same
   // <Sheet>, same props (armsBack, confirmOnDirty, dirty = the editor's signal, busy = the editor's

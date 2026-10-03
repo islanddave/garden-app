@@ -1,14 +1,20 @@
 // src/components/pantry/PantryRowSheet.jsx
 // Put-Up B′ release 2 (V4 §2.5 "Row sheet", §3.2, §6.3) — what opens when a Pantry row is tapped.
 //
-// A PUT-UP (jar), in this order: Move it (the shipped move route) · Next time… (a batch jar writes the
-// batch's `noted` stage row; a batchless jar appends a dated line to its notes) · Gave it away (a use of a
-// count, default 1, fate given_away) · Went bad (fate discarded) · Edit (the shipped jar editor, with
-// Remove inside, two-step, refused with the server's reason) · then How it was made → (a put-up with no
+// A PUT-UP (jar), in this order: Move it… (the shipped move route) · Next time… (a batch jar writes the
+// batch's `noted` stage row; a batchless jar appends a dated line to its notes) · Gave it away… (a use of a
+// count, default 1, fate given_away) · Went bad (fate discarded) · Edit… (the shipped jar editor, with
+// Remove… inside, two-step, refused with the server's reason) · then How it was made → (a put-up with no
 // batch, only when the host hands in `onHowItWasMade` — the batch-builder lane wires it) or What went in →
 // (a put-up that came from a batch the host can name, only when the host hands in `onOpenBatch`).
-// A BOUGHT ITEM: Move it (PATCH storage_location_id) · Edit (name, when you got it, a discard date from
-// the label, notes; Remove inside, two-step). Used it up is the row's own inline action.
+// A BOUGHT ITEM: Move it… (PATCH storage_location_id) · Edit… (name, how much, where it's from, when you
+// got it, a discard date from the label, notes; Remove… inside, two-step). Used it up is the row's own
+// inline action.
+//
+// WHAT A LABEL'S ENDING SAYS (Put-Up R2a, the ellipsis rule): "…" opens a step that asks before anything is
+// written; "→" leaves the sheet; a bare label acts at the tap. So Went bad reads bare only where it acts at
+// once, and the button INSIDE a panel (the Move panel's "Move it", the count panel's "Gave it away") is
+// bare: it is the tap that writes.
 //
 // WENT BAD (Put-Up UX pass R1). With several of a counted put-up left (pantryRows.severalLeft — the test
 // the row's own Used one hangs on) it reads "Went bad…" and opens the count panel at ALL that is left;
@@ -39,10 +45,12 @@ import { mintKey } from '../kitchen/idempotencyKey.js'
 import { landAfterClose } from '../kitchen/sheetLanding.js'
 import MoveJarSheet from '../putup/MoveJarSheet.jsx'
 import { nextTimeWords } from '../putup/howItWasMade.js'
-import { toYmd, parseYmd, putUpDateWords, sizeWords } from '../putup/jarWords.js'
+import { toYmd, parseYmd, putUpDateWords, sizeWords, qtyText } from '../putup/jarWords.js'
 import { PUTUP_SOURCE_LABELS } from '../../lib/dropdownRegistry.js'
 import Stepper, { stepperCount } from './Stepper.jsx'
-import { isJar, discardChip, leftWords, ageWords, effectiveBasis, severalLeft } from './pantryRows.js'
+import AmountField, { AMOUNT_WORDS, ITEM_AMOUNT_UNITS, MORE_ITEM_AMOUNT_UNITS, parseAmount, amountError } from './AmountField.jsx'
+import WhereFromField, { whereFromError } from './WhereFromField.jsx'
+import { isJar, discardChip, leftWords, amountWords, ageWords, effectiveBasis, severalLeft } from './pantryRows.js'
 
 export const HOUSE_DETAIL_TEXT =
   'No published figure exists for candied fruit. This date is a house estimate, not a tested one. Set your own.'
@@ -65,8 +73,10 @@ const actionBtn = {
   fontSize: T.type.base, fontWeight: 600, color: P.dark,
 }
 
-// "2 × 8 oz woozy · put up sometime in August · from Warner Farms · from Dark Green Zucchini" — the
-// shipped jar row's words, said once in the sheet from the jar's own record.
+// "2 × 8 oz woozy · put up sometime in August · produce from Warner Farms" — the shipped jar row's words,
+// said once in the sheet from the jar's own record. A put-up's source is where what WENT IN came from, not
+// where the jar came from, so a source that is not the garden reads "produce from <name>" (Put-Up R2a); a
+// planting reads "from <its name>", as it did.
 export function jarRecordWords(rec, now = new Date()) {
   const parts = []
   const size = sizeWords(rec)
@@ -75,7 +85,7 @@ export function jarRecordWords(rec, now = new Date()) {
     ? putUpDateWords(rec.preserved_at, rec.preserved_at_precision, { now })
     : putUpDateWords(rec.preserved_at, null, { approx: rec.preserved_at_approx === true, now })
   if (date) parts.push(date === 'not sure' ? 'put up: not sure' : `put up ${date}`)
-  if (rec.source_kind && rec.source_kind !== 'own_garden') parts.push(`from ${rec.source_label || PUTUP_SOURCE_LABELS[rec.source_kind] || rec.source_kind}`)
+  if (rec.source_kind && rec.source_kind !== 'own_garden') parts.push(`produce from ${rec.source_label || PUTUP_SOURCE_LABELS[rec.source_kind] || rec.source_kind}`)
   if (rec.planting_name) parts.push(`from ${rec.planting_name}${rec.planting_succession_order != null ? ` · wave ${rec.planting_succession_order}` : ''}`)
   return parts.join(' · ')
 }
@@ -169,7 +179,7 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
     return () => { alive = false }
   }, [fetch, jar, row.stock_id])
 
-  const detail = [row.place?.label, row.where_from, leftWords(row), ageWords(row, nowDate)].filter(Boolean).join(' · ')
+  const detail = [row.place?.label, row.where_from, leftWords(row), amountWords(row), ageWords(row, nowDate)].filter(Boolean).join(' · ')
   const chip = discardChip(row, nowDate)
   const recWords = rec ? jarRecordWords(rec, nowDate) : null
 
@@ -191,12 +201,12 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
         {/* The order is the thumb's: what is done most and undone easily first, the discard below it. */}
         {panel === null && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <button type="button" style={actionBtn} disabled={busy} data-testid="row-move" onClick={() => openPanel('move')}>Move it</button>
+            <button type="button" style={actionBtn} disabled={busy} data-testid="row-move" onClick={() => openPanel('move')}>Move it…</button>
             {jar && (
               <button type="button" style={actionBtn} disabled={busy} data-testid="row-next" onClick={() => openPanel('next')}>Next time…</button>
             )}
             {jar && (
-              <button type="button" style={actionBtn} disabled={busy} data-testid="row-give" onClick={() => openPanel('give')}>Gave it away</button>
+              <button type="button" style={actionBtn} disabled={busy} data-testid="row-give" onClick={() => openPanel('give')}>Gave it away…</button>
             )}
             {jar && (
               <button type="button" style={actionBtn} disabled={busy} data-testid="row-went-bad"
@@ -204,7 +214,7 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
                 {asksHowMany ? WENT_BAD_ASKS_LABEL : WENT_BAD_LABEL}
               </button>
             )}
-            <button type="button" style={actionBtn} disabled={busy} data-testid="row-edit" onClick={() => openPanel('edit')}>Edit</button>
+            <button type="button" style={actionBtn} disabled={busy} data-testid="row-edit" onClick={() => openPanel('edit')}>Edit…</button>
             {jar && typeof onHowItWasMade === 'function' && (typeof canHowItWasMade !== 'function' || canHowItWasMade(row)) && (
               <button type="button" style={actionBtn} disabled={busy} data-testid="row-how"
                 onClick={() => { onHowItWasMade(row); onClose?.() }}>How it was made →</button>
@@ -241,7 +251,7 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
         {panel === 'give' && (
           <CountPanel row={row} busy={busy} idPrefix="give" start="one" question="How many did you give away?"
             label="How many given away" cta="Gave it away" onCancel={closePanel}
-            onConfirm={(n) => use('gave_away', { count_used: n, fate: 'given_away' })} />
+            onConfirm={(n, _all, key) => use('gave_away', { count_used: n, fate: 'given_away' }, { key })} />
         )}
         {panel === 'went-bad' && (
           <CountPanel row={row} busy={busy} idPrefix="went-bad" start="all" question={WENT_BAD_QUESTION}
@@ -339,7 +349,7 @@ function NextTimePanel({ row, fetch, onCancel, onSaved }) {
 function RemoveTwoStep({ onRemove, busy, testId }) {
   const [confirm, setConfirm] = useState(false)
   if (!confirm) {
-    return <Button variant="secondary" data-testid={`${testId}-remove`} disabled={busy} onClick={() => setConfirm(true)}>Remove</Button>
+    return <Button variant="secondary" data-testid={`${testId}-remove`} disabled={busy} onClick={() => setConfirm(true)}>Remove…</Button>
   }
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -393,28 +403,76 @@ function JarEditPanel({ row, rec, recFailed, fetch, JarEditor, onCancel, onSaved
   )
 }
 
-// A bought item's Edit: name, when you got it, a discard date from the label, notes. ONE PATCH of what
-// changed (presence-sentinel); an untouched field is an absent key.
+// A bought item's Edit, in this order: name, how much, where it's from, when you got it, a discard date
+// from the label, notes. ONE PATCH of what changed (presence-sentinel); an untouched field is an absent key.
+//
+// HOW MUCH and WHERE IT'S FROM (Put-Up R2a) are the door's own controls, and each is a PAIR on the wire:
+// quantity_value + quantity_unit, source_kind + source_label. A pair travels WHOLE or not at all — the
+// server refuses one key without the other — and clearing a pair sends `null, null`. The amount goes as a
+// JSON number. Both open on what the LIST ROW carries (there is no read of one item). Where it's from is
+// not drawn on an item that came from a planting: its origin is the planting, and the server refuses any
+// other source for it.
+export const ITEM_WHERE_FROM_HEADING = "Where it's from"
+// The typed name as it is stored: the garden has none, and a blank one is none.
+function sourceLabelOf({ kind, label }) {
+  if (kind == null || kind === 'own_garden') return null
+  return String(label ?? '').trim() || null
+}
 function ItemEditPanel({ row, fetch, onCancel, onSaved, onRemoved }) {
   const [seed] = useState(() => ({
     name: String(row.name ?? ''),
+    amount: row.quantity_value != null && row.quantity_unit
+      ? { value: qtyText(row.quantity_value), unit: row.quantity_unit } : { value: '', unit: null },
+    source: { kind: row.source_kind ?? null, label: typeof row.source_label === 'string' ? row.source_label : '' },
     acquired: row.acquired_at ? toYmd(parseYmd(row.acquired_at)) : '',
     useBy: row.discard?.basis === 'typed' && row.discard?.date ? toYmd(parseYmd(row.discard.date)) : '',
     notes: typeof row.notes === 'string' ? row.notes : '',
   }))
   const [name, setName] = useState(seed.name)
+  const [amount, setAmount] = useState(seed.amount)
+  const [source, setSource] = useState(seed.source)
   const [acquired, setAcquired] = useState(seed.acquired)
   const [useBy, setUseBy] = useState(seed.useBy)
   const [notes, setNotes] = useState(seed.notes)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  // Which control the refusal on screen is about ('amount' | 'source'), so it is the one marked.
+  const [errOn, setErrOn] = useState(null)
   const base = useId()
+  // An item that came from a planting has no where-from to correct.
+  const fromPlanting = row.plant_id != null && row.plant_id !== ''
+  // A stored unit outside the two lists stays on the row as its own chosen chip (it is never dropped).
+  const listed = [...ITEM_AMOUNT_UNITS, ...MORE_ITEM_AMOUNT_UNITS].some(o => o.value === seed.amount.unit)
+  const moreUnits = seed.amount.unit == null || listed ? MORE_ITEM_AMOUNT_UNITS
+    : [...MORE_ITEM_AMOUNT_UNITS, { label: seed.amount.unit, value: seed.amount.unit }]
+
+  function refuse(text, on) {
+    setErr(text); setErrOn(on)
+    // The two controls' own field ids (AmountField: `${idPrefix}-value`; WhereFromField: `${idPrefix}-source-label`).
+    document.getElementById(on === 'amount' ? 'item-edit-amount-value' : 'item-edit-source-label')?.focus()
+  }
 
   async function save() {
     const patch = {}
     if (name.trim() !== seed.name.trim()) {
-      if (!name.trim()) { setErr('Give it a name.'); return }
+      if (!name.trim()) { setErr('Give it a name.'); setErrOn(null); return }
       patch.name = name.trim()
+    }
+    const amountRefused = amountError(amount, AMOUNT_WORDS)
+    if (amountRefused) { refuse(amountRefused, 'amount'); return }
+    const was = seed.amount.unit == null ? null : parseAmount(seed.amount.value)
+    const now = amount.unit == null ? null : parseAmount(amount.value)
+    if (now !== was || amount.unit !== seed.amount.unit) {
+      patch.quantity_value = now
+      patch.quantity_unit = now == null ? null : amount.unit
+    }
+    if (!fromPlanting) {
+      const sourceRefused = whereFromError(source)
+      if (sourceRefused) { refuse(sourceRefused, 'source'); return }
+      if (source.kind !== seed.source.kind || sourceLabelOf(source) !== sourceLabelOf(seed.source)) {
+        patch.source_kind = source.kind
+        patch.source_label = sourceLabelOf(source)
+      }
     }
     if (acquired !== seed.acquired) {
       patch.acquired_at = acquired || null
@@ -423,7 +481,7 @@ function ItemEditPanel({ row, fetch, onCancel, onSaved, onRemoved }) {
     if (useBy !== seed.useBy) patch.use_by_target = useBy || null
     if (notes !== seed.notes) patch.notes = notes.trim() || null
     if (!Object.keys(patch).length) { onCancel(); return }
-    setBusy(true); setErr(null)
+    setBusy(true); setErr(null); setErrOn(null)
     try {
       await patchPantryItem(fetch, row.stock_id, patch)
       setBusy(false)
@@ -452,6 +510,13 @@ function ItemEditPanel({ row, fetch, onCancel, onSaved, onRemoved }) {
         <input id={`${base}-name`} data-testid="item-edit-name" type="text" value={name} disabled={busy} maxLength={120}
           onChange={e => setName(e.target.value)} style={field} />
       </div>
+      <AmountField value={amount.value} unit={amount.unit} onChange={setAmount} label={AMOUNT_WORDS.label} placeholder={AMOUNT_WORDS.placeholder}
+        clearLabel={AMOUNT_WORDS.clearLabel} units={ITEM_AMOUNT_UNITS} moreUnits={moreUnits} idPrefix="item-edit-amount" disabled={busy}
+        invalid={errOn === 'amount'} />
+      {!fromPlanting && (
+        <WhereFromField kind={source.kind} label={source.label} onChange={setSource} heading={ITEM_WHERE_FROM_HEADING} idPrefix="item-edit"
+          disabled={busy} invalid={errOn === 'source'} />
+      )}
       <div>
         <label htmlFor={`${base}-got`} style={labelChrome}>When you got it</label>
         <input id={`${base}-got`} data-testid="item-edit-acquired" type="date" value={acquired} disabled={busy}

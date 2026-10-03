@@ -104,6 +104,31 @@ export async function listBatchNames(fetch) {
 }
 
 // ── Places ───────────────────────────────────────────────────────────────────────────────────────
+// The storage Lambda's routes (Put-Up R2a: the Pantry's Places sheet reads, renames, re-kinds and deletes).
+// GET /api/storage-locations → the household's live places, [{ id, user_id, label, kind }], an EMPTY place
+// included: it is the only list that names a place nothing is stored in. An answer that is not a list
+// THROWS — read as "no places" it would quietly hide the door to the sheet (the BUG-GOINGNOWENVELOPE-001
+// lesson above: an unrecognised payload coerced to [] is how a whole feature went missing once).
+export const PLACES_PATH = '/api/storage-locations'
+
+export async function listPlaces(fetch) {
+  const r = await fetch(PLACES_PATH)
+  if (!Array.isArray(r)) throw new Error('places: not a list')
+  return r
+}
+
+// PUT /api/storage-locations/:id → the place. `patch` is { label?, kind? } and ONLY what changed: the
+// server refuses a change of KIND while the place holds put-ups whose dates were worked out for its kind
+// (409 place_has_dated_jars, with `n`), and a body with no `kind` can never meet that refusal.
+export async function updatePlace(fetch, id, patch = {}) {
+  return fetch(`${PLACES_PATH}/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(patch) })
+}
+
+// DELETE /api/storage-locations/:id — refused while anything is stored there (409 place_in_use, with `n`).
+export async function deletePlace(fetch, id) {
+  return fetch(`${PLACES_PATH}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
 // A pantry item's Move is a PATCH of storage_location_id, which takes an id. A template chip ("Fridge"
 // with no place of that kind yet, putItUp.js placeChips) has none, so it is made first through the
 // storage Lambda's find-or-create (200 `existing: true` for a place already there; a 409 place_exists

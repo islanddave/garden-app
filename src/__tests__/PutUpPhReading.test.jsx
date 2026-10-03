@@ -634,6 +634,9 @@ const LANE_SOURCES = [
   ['src/components/pantry/NameSearchField.jsx', 'export default function NameSearchField'],
   // R2 lane Df additions go directly under this line
   // R2 lane P additions go directly under this line
+  // Put-Up R2a, lane P: the Pantry's Places sheet. It says how many put-ups hold a worked-out date and prints
+  // the kinds of place; it reads no pH and decides no date.
+  ['src/components/pantry/PlacesSheet.jsx', 'export function rekindRefusedLines'],
   // R2 lane E additions go directly under this line
   // R2 lane K additions go directly under this line
   // R2 lane F additions go directly under this line

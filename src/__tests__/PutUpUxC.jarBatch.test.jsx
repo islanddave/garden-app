@@ -143,7 +143,8 @@ describe('on the Pantry list', () => {
     render(<PantryHost rows={[PLAIN, MILK]} />)
     await settle()
     expect(namesGets()).toHaveLength(0)
-    expect(fake.calls('GET')).toEqual([])
+    // The one read a bare Pantry makes is the places read behind "Edit places" (Put-Up R2a).
+    expect(fake.calls('GET').map(c => c.path)).toEqual(['/api/storage-locations'])
   })
 
   it('a re-read of the same rows asks nothing more; a batch id that was never asked for asks ONCE more', async () => {
@@ -203,19 +204,21 @@ describe('on the Pantry list', () => {
     expect(screen.queryByTestId('row-what-went-in')).toBeNull()
   })
 
-  it('through the page: a Pantry open is three reads, never more — and two when no jar has a batch', async () => {
+  // AMENDED for Put-Up R2a: the Pantry reads the household's places once at mount (the "Edit places" door is
+  // drawn from that read, never from the list's groups), so each count is one more than it was.
+  it('through the page: a Pantry open is four reads, never more — and three when no jar has a batch', async () => {
     const view = render(<MemoryRouter initialEntries={['/put-up?view=pantry']}><PutUp /></MemoryRouter>)
     await waitFor(() => expect(rowText('jar-reaper')).toContain('from Petri Dish · 4 left'))
     await settle()
     expect(fake.calls('GET').map(c => c.path).sort()).toEqual([
-      '/api/kitchen-batches?state=all', '/api/kitchen-batches?state=going', '/api/pantry?group=place'])
+      '/api/kitchen-batches?state=all', '/api/kitchen-batches?state=going', '/api/pantry?group=place', '/api/storage-locations'])
     view.unmount()
 
     wire({ rows: [PLAIN, MILK] })
     render(<MemoryRouter initialEntries={['/put-up?view=pantry']}><PutUp /></MemoryRouter>)
     await screen.findByTestId('pantry-row-open-put_up:jar-plain')
     await settle()
-    expect(fake.calls('GET').map(c => c.path).sort()).toEqual(['/api/kitchen-batches?state=going', '/api/pantry?group=place'])
+    expect(fake.calls('GET').map(c => c.path).sort()).toEqual(['/api/kitchen-batches?state=going', '/api/pantry?group=place', '/api/storage-locations'])
   })
 })
 
