@@ -19,7 +19,7 @@
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 import { pantryFetch, apiError } from './helpers/pantryFake.js'
 
@@ -375,5 +375,36 @@ describe('candy at the moment of logging', () => {
     expect(screen.getByTestId('door-preview').textContent).toBe(previewLine({ method: 'candy', place: { kind: 'pantry' }, when: { date: '2026-10-01', precision: 'day' }, now: NOW }))
     tap('door-method-whole_freeze')
     expect(screen.getByTestId('door-preview').textContent).not.toContain('house estimate')
+  })
+})
+
+// Put-Up R2a, the integrator (pre-promote QA I-4): the Dn × Df seam COMPOSED. The door half is pinned with a
+// stubbed field (PutUpR2Df.seedResolve.test.jsx) and the field half in Dn's tests; here the REAL door holds the
+// REAL name field, opened with a typed seed, and the line search resolves the seed's crop with no tap. That is
+// an onChange the person never made: the door must stay untouched (no draft, no key, no hold) and still send
+// the crop it was told when he saves.
+// MUTATIONS (each run, each red here): the door counts every onChange of the What as a touch (`what !== seed`
+// in place of seedUntouched) -> the untouched half; the field never puts the resolved crop on the What -> the POST.
+describe('the composed seam: a typed seed, the real name field, a resolved crop', () => {
+  it('the search resolves Garlic\'s crop: still no draft, no key, no hold; a place and Save send crop_type_slug garlic', async () => {
+    wire({ lineSearch: { plantings: [], put_ups: [], pantry_items: [], crops: [], varieties: [], hits: [], resolved_crop: 'garlic' } })
+    const { seen } = await openDoor({ initialName: 'Garlic' })
+    expect(screen.getByTestId('door-what-name').value).toBe('Garlic')
+    // The field searches the seed at mount (after its debounce) and the answer's crop goes onto the What.
+    await waitFor(() => expect(fake.calls('GET', '/api/kitchen-batches/line-search')).toHaveLength(1))
+    expect(fake.calls('GET', '/api/kitchen-batches/line-search')[0].path).toMatch(/[?&]q=Garlic(&|$)/)
+    await act(async () => { await flush(); await flush() })
+    expect(stored()).toBeNull()
+    expect(minted.n).toBe(0)
+    expect(isReloadBlocked()).toBe(false)
+    expect(screen.getByTestId('door-what-name').value).toBe('Garlic')
+
+    tap('door-place-id:loc-1'); tap('door-method-whole_freeze')
+    await waitFor(() => expect(stored()).not.toBeNull())
+    expect(minted.n).toBe(1)
+    tap('door-save')
+    await waitFor(() => expect(seen.saved).toBeTruthy())
+    expect(posts('/api/preservation')).toHaveLength(1)
+    expect(posts('/api/preservation')[0].body).toMatchObject({ label: 'Garlic', crop_type_slug: 'garlic', storage_location_id: 'loc-1', method: 'whole_freeze' })
   })
 })
