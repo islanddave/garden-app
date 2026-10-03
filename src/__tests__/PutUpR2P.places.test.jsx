@@ -250,9 +250,9 @@ describe('the list', () => {
       expect(within(rowFor(id)).queryByTestId('pu-location-in-use')).toBeNull()
     }
     expect(within(rowFor('loc-1')).queryByTestId('pu-location-delete')).toBeNull()
-    expect(within(rowFor('loc-1')).getByTestId('pu-location-in-use').textContent).toBe('4 stored here — move them to delete this place.')
+    expect(within(rowFor('loc-1')).getByTestId('pu-location-in-use').textContent).toBe('Move them to delete this place.')
     expect(within(rowFor('loc-2')).queryByTestId('pu-location-delete')).toBeNull()
-    expect(within(rowFor('loc-2')).getByTestId('pu-location-in-use').textContent).toBe('1 stored here — move it to delete this place.')
+    expect(within(rowFor('loc-2')).getByTestId('pu-location-in-use').textContent).toBe('Move it to delete this place.')
     for (const id of ['loc-1', 'loc-2', 'loc-3', 'loc-4', 'loc-5']) {
       expect(within(rowFor(id)).getByTestId('pu-location-rename').textContent).toBe('Edit…')
     }
@@ -276,7 +276,7 @@ describe('the list', () => {
     expect(storedIn([], 'loc-1')).toBe(0)
     expect([0, 1, 4].map(storedWords)).toEqual(['nothing stored here', '1 stored here', '4 stored here'])
     expect([1, 4].map(storedBlocksDeleteWords)).toEqual([
-      '1 stored here — move it to delete this place.', '4 stored here — move them to delete this place.'])
+      'Move it to delete this place.', 'Move them to delete this place.'])
   })
 
   it('no places: it says so', async () => {
@@ -731,7 +731,7 @@ describe('delete — two taps, and the second one says what it does', () => {
     await waitFor(() => expect(pantryReads()).toHaveLength(before + 1))
     await waitFor(() => expect(detailOf('loc-4')).toBe(`${word('pantry')} · 1 stored here`))
     expect(within(rowFor('loc-4')).queryByTestId('pu-location-delete')).toBeNull()
-    expect(within(rowFor('loc-4')).getByTestId('pu-location-in-use').textContent).toBe('1 stored here — move it to delete this place.')
+    expect(within(rowFor('loc-4')).getByTestId('pu-location-in-use').textContent).toBe('Move it to delete this place.')
     expect(screen.queryByTestId('pu-location-confirm-delete')).toBeNull()
   })
 

@@ -59,9 +59,10 @@ export function storedIn(rows, placeId) {
 export function storedWords(n) {
   return n === 0 ? 'nothing stored here' : `${n} stored here`
 }
-// In Delete's position on a place that holds something.
+// In Delete's position on a place that holds something. The count is said ONCE, on the kind line above it
+// ("Deep freezer · 3 stored here"); this line says only what to do.
 export function storedBlocksDeleteWords(n) {
-  return `${storedWords(n)} — move ${n === 1 ? 'it' : 'them'} to delete this place.`
+  return `Move ${n === 1 ? 'it' : 'them'} to delete this place.`
 }
 // The kind's word as it is said inside a sentence, from the ONE list of kinds; a stored kind outside the
 // list is said as it is stored.

@@ -503,7 +503,7 @@ describe('R2a lane P — the Places sheet and its door', () => {
     fireEvent.click(door)
     await screen.findAllByTestId('pu-location-row')
     // The states are really on screen, so the sweep below is of them.
-    for (const there of ['nothing stored here', '3 stored here', '2 stored here — move them to delete this place.', 'Edit…', 'Delete…']) {
+    for (const there of ['nothing stored here', '3 stored here', '2 stored here', 'Move them to delete this place.', 'Edit…', 'Delete…']) {
       expect(sheet().textContent).toContain(there)
     }
     expect(PLACES_TITLE).toBe('Places')
