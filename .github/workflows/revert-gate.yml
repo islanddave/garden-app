@@ -33,7 +33,7 @@ name: revert-gate
 #   - Environment restricted to the main branch, 2026-09-11: Dave's decision; he applies the deployment branch
 #     policy himself. Until it is applied the environment admits any ref — check with
 #     `gh api repos/islanddave/garden-app/environments/production-destructive` (deployment_branch_policy).
-# Do NOT point this at `environment: production`: that environment carries a branch/tag ref policy ONLY and has
+# Do NOT point this at `environment: production`: that environment carries a branch ref policy ONLY (dev, main) and has
 # had ZERO required reviewers since 2026-06-22, so it is not an approval stop of any kind. Prior versions of this
 # header claimed a "Dave-approved" gate that did not exist in infrastructure; the `confirm_data_loss` dropdown
 # was the only guard and it is selected by whoever is already dispatching.

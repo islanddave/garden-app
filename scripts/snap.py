@@ -293,9 +293,16 @@ def ensure_tag(cfg):
     )
     if rr.status_code == 422:
         # Race: ref created between our GET and POST. Re-verify idempotently.
-        target = _resolve_ref_commit(
-            cfg, _get_ref_sha(cfg, ref)
-        )
+        # A 422 can also be a REFUSAL: since 2026-10-02 the release-tag-integrity ruleset lets only
+        # garden-bot create a v* tag. Only the re-read tells the two apart, so when the ref is not
+        # there, report GitHub's own body, which names the rule, not the bare lookup error.
+        try:
+            ref_sha = _get_ref_sha(cfg, ref)
+        except SnapError as e:
+            raise SnapError(
+                f"create tag ref refused 422: {rr.text} (and the tag is not there: {e})"
+            ) from e
+        target = _resolve_ref_commit(cfg, ref_sha)
         if target != cfg.main_sha:
             raise SnapError(
                 f"tag {tag} raced to {target} != {cfg.main_sha}"

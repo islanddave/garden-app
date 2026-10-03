@@ -102,7 +102,9 @@ jobs:
         # declared empty above), xp-reconcile + daily-plan (EventBridge-driven writers — whether
         # staging gets its own cron, and at what DRY_RUN, is an open decision, not an omission).
         function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, storage-location, preservation, harvests, facebook-share, photocdn-derivative]
-      max-parallel: 4
+      # 8 since 2026-10-02 (was 4): 22 legs took six waves. Prod's matrix (deploy-lambda.yml) runs all 26 in one
+      # wave with no cap and has met no Lambda control-plane limit, so the cap here is only pacing.
+      max-parallel: 8
       fail-fast: false
 
     steps:
@@ -873,29 +875,3 @@ jobs:
             exit 1
           fi
           echo "✅ L-058 cleanup complete — 0 smoke residue rows (plant_projects + plant_varieties + plants + locations + inventory_items + care_profile)"
-
-  # ── E2E advisory (non-blocking) ───────────────────────────────────────────
-  # Playwright rejected as merge gate: 250MB browser binaries per cold runner,
-  # trace triage requires human. This job is the future hook for optional nightly
-  # browser tests. continue-on-error: true = never blocks the gate.
-  e2e-advisory:
-    runs-on: ubuntu-24.04
-    # OPS-STAGINGSMOKESHA-001: deploy-frontend added for its outputs only — transitive ancestor
-    # via smoke-tests -> db-schema-check, so ordering and skip semantics are unchanged.
-    needs: [smoke-tests, deploy-frontend]
-    continue-on-error: true
-
-    steps:
-      - name: Advisory placeholder
-        run: |
-          echo "E2E advisory layer — no browser tests in current gate config"
-          # OPS-STAGINGSMOKESHA-001: the fallback was `|| github.sha`, which is NOT this run's built
-          # SHA — on a promote-gate dispatch github.sha is dev's HEAD at dispatch time while the code
-          # under test is inputs.dev_sha (see the run-name comment at the top of this file, and the
-          # 2026-08-03 incident it records). With the needs edge above the first operand is always
-          # set, so this fallback is unreachable; it says "unknown" rather than a confidently wrong
-          # SHA if the edge is ever dropped again. Same convention as run-smoke.sh's own banner.
-          echo "Smoke tests green for commit: ${{ needs.deploy-frontend.outputs.commit-sha || 'unknown' }}"
-          echo "Staging regression suite: PASSED ✅"
-          echo "To add Playwright: create tests/e2e/ and invoke from this job with continue-on-error: true"
-

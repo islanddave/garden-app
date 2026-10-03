@@ -49,8 +49,8 @@ name: Verify Lambda invariants
 # environment:production is REQUIRED — the OIDC trust for AWS_DEPLOY_ROLE_ARN is scoped to the
 # env:production subject. It does NOT pause. VERIFIED against the environments API 2026-09-17: the
 # `production` environment's protection_rules carry a `branch_policy` entry ONLY, and NO
-# required_reviewers (the reviewer was removed 2026-06-22). That branch policy admits `dev`, `main` and
-# `promote-v*` — every ref promote-gate and deploy-lambda actually run on. The older claims in
+# required_reviewers (the reviewer was removed 2026-06-22). That branch policy admits `dev` and `main`
+# (its `promote-v*` tag rule was removed 2026-10-02 with the tag trigger). The older claims in
 # deploy-lambda.yml that each such job adds "a second/third approval prompt" are STALE; do not reinstate
 # them. For contrast, `production-destructive` (revert-gate.yml) DOES carry required_reviewers=[islanddave]
 # — do not generalize from it to here.

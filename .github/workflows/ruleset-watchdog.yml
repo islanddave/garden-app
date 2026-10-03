@@ -99,7 +99,10 @@ jobs:
           # the ruleset was last verified intact by an admin-capable read. ANY edit to the ruleset
           # -- including a bypass_actors change an App token cannot see -- bumps this. Update this
           # pin ONLY together with a deliberate, reviewed ruleset change.
-          EXPECT_UPDATED_AT = "2026-06-03T11:51:33.864-04:00"
+          # Re-pinned 2026-10-02: the `update` (restrict updates) rule was added on Dave's decision
+          # (promote-path review D-G) so a pull-request merge can no longer move main; the ruleset was
+          # re-read with an admin token straight after (bypass = garden-bot 3951762 only, scope main).
+          EXPECT_UPDATED_AT = "2026-10-02T12:20:11.554-04:00"
 
           def parse_ts(s):
               # Compare INSTANTS, not strings: the same moment may render as '...-04:00' to one
@@ -149,7 +152,7 @@ jobs:
               if d.get("enforcement") != "active":
                   fail.append("enforcement=%s != active" % d.get("enforcement"))
               rules = set(r["type"] for r in d.get("rules", []))
-              for need in ("pull_request", "non_fast_forward", "deletion"):
+              for need in ("pull_request", "non_fast_forward", "deletion", "update"):
                   if need not in rules:
                       fail.append("missing rule: %s" % need)
               inc = d.get("conditions", {}).get("ref_name", {}).get("include", [])

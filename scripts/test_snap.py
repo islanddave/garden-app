@@ -143,6 +143,59 @@ def test_ensure_tag_creates_when_absent(monkeypatch):
     assert any(u.endswith("/git/refs") for u in posts)
 
 
+def _post_ref_422(body):
+    def fake_post(url, **kw):
+        if url.endswith("/git/tags"):
+            return _resp(201, {"sha": "newtagobj"})
+        if url.endswith("/git/refs"):
+            return _resp(422, text=body)
+        raise AssertionError(url)
+    return fake_post
+
+
+def test_ensure_tag_422_with_no_tag_reports_the_refusal_body(monkeypatch):
+    """A ruleset refusal (v* creation is bot-only) is a 422 with the tag still absent: the error must carry
+    GitHub's body, not only 'ref re-lookup failed 404'."""
+    cfg = make_cfg()
+    monkeypatch.setattr(snap.requests, "get", lambda url, **kw: _resp(404, text="Not Found"))
+    monkeypatch.setattr(snap.requests, "post", _post_ref_422("Repository rule violations found: Cannot create ref"))
+    with pytest.raises(snap.SnapError) as exc:
+        snap.ensure_tag(cfg)
+    msg = str(exc.value)
+    assert "refused 422" in msg and "Repository rule violations found" in msg and "404" in msg
+
+
+def test_ensure_tag_422_race_to_the_same_commit_is_still_a_clean_skip(monkeypatch):
+    cfg = make_cfg()
+    gets = []
+    def fake_get(url, **kw):
+        gets.append(url)
+        if "/git/ref/tags/" in url:
+            return _resp(404) if len(gets) == 1 else _resp(200, {"object": {"sha": "tagobj"}})
+        if "/git/tags/tagobj" in url:
+            return _resp(200, {"object": {"sha": cfg.main_sha}})
+        raise AssertionError(url)
+    monkeypatch.setattr(snap.requests, "get", fake_get)
+    monkeypatch.setattr(snap.requests, "post", _post_ref_422("Reference already exists"))
+    assert snap.ensure_tag(cfg) == "v1.2.3"
+
+
+def test_ensure_tag_422_race_to_another_commit_still_refuses(monkeypatch):
+    cfg = make_cfg()
+    gets = []
+    def fake_get(url, **kw):
+        gets.append(url)
+        if "/git/ref/tags/" in url:
+            return _resp(404) if len(gets) == 1 else _resp(200, {"object": {"sha": "tagobj"}})
+        if "/git/tags/tagobj" in url:
+            return _resp(200, {"object": {"sha": "b" * 40}})
+        raise AssertionError(url)
+    monkeypatch.setattr(snap.requests, "get", fake_get)
+    monkeypatch.setattr(snap.requests, "post", _post_ref_422("Reference already exists"))
+    with pytest.raises(snap.SnapError, match="raced to"):
+        snap.ensure_tag(cfg)
+
+
 # --- idempotent Neon branch skip ---------------------------------------------
 
 def test_ensure_neon_branch_idempotent(monkeypatch):

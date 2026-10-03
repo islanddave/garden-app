@@ -1,0 +1,595 @@
+name: CI Next — parallel shadow of build-and-test (non-gating)
+
+# The SHADOW of ci.yml's serial `build-and-test` job: the same steps, split into parallel legs behind one strict
+# aggregator, `build-and-test-next`. It gates nothing. promote-gate.yml reads ci.yml's `build-and-test` and nothing
+# in this file; no leg here is named build-and-test, integration-tests or smoke-tests. It runs beside ci.yml on
+# every dev push so the two verdicts can be compared SHA for SHA before the legs replace the serial job (plan:
+# gardening-docs project-state/_promotepath-20261002/PLAN-V003.md §4 A2.2 shadow, A2.3 switch).
+#
+# READING A RED HERE. This workflow gates nothing and promote-gate.yml reads ci.yml only, so a red leg here turns the
+# commit's rollup red while the gate is green. Do not push to `ci-next-soak` while a promote is running: its 8 legs
+# compete with the promote's 26-leg Lambda matrix for runners. A canary dispatch is read as "red expected", and a
+# typo in `canary_red_leg` gives a normal green run.
+#
+# THE STEPS ARE ci.yml's. Every step of `build-and-test` is in exactly one leg below with the same name, run, env,
+# uses and with. Each leg repeats the setup it needs (checkout, setup-node, npm ci, Chrome, the origin/main fetch).
+# Each step's reasoning is the comment beside the same-named step in ci.yml and is not copied here.
+# scripts/test_ci_next.py compares the two files step for step and runs in ci.yml's own pytest step, so until the
+# switch a step added to, edited in or removed from one file and not the other reds the GATING job. A lane that
+# changes a CI step changes it in both files (and regenerates scripts/ci-step-manifest.json) in the same commit.
+#
+# What this file adds to those steps, each pinned by the same test:
+#   - one canary step at the top of every leg, which only a workflow_dispatch naming that leg can run;
+#   - `Install PyYAML ...` in `static` (ci.yml's migration gate validation gets PyYAML from the pytest step);
+#   - the TZ sentinel in `unit-ny`;
+#   - the aggregator's one step.
+#
+# What the serial job handed from step to step, and where each hand-off lives now:
+#   dist/ (Build -> Verify build output -> Harvest-window chunk split)   all three in `static`, in that order
+#   coverage/coverage-summary.json (npm test -> the measured floor)      both in `unit-utc-cov`, in that order
+#   CHROME_PATH in GITHUB_ENV (Resolve Chrome -> every real-Chrome gate) repeated in each gate leg
+#   node 20.19.0 and node_modules (setup-node, npm ci)                   repeated in each leg that runs node
+#   PyYAML (the pytest step -> gate_runner.py)                           installed in `static`
+#   Pillow (inside the Photo-tier step's own body -> itself)             moves with that step
+#   refs/remotes/origin/main (the fetch -> the release-version guard)    both in `static`
+# Nothing else was found to cross a step boundary: each gate boots its own Vite harness (and Vite pre-bundles the
+# same dependency set whichever gate boots first), no gate reads another's output, and no unit test reads dist/,
+# coverage/ or artifacts/.
+# A NEW hand-off through the runner (an action, a GITHUB_ENV or GITHUB_PATH write, an apt-get, pip or npm -g
+# install) is red in scripts/test_ci_next.py until it is repeated in every leg that consumes it and listed there.
+# Hand-offs of other kinds (a file written by one step and read by another) are caught only by the two verdicts
+# disagreeing during the shadow.
+#
+# NO continue-on-error, no job-level `if:` on a leg, no matrix. A leg that fails under continue-on-error reads
+# `success` in `needs` (measured on the scratch repository, scratch-actions/RESULTS.md E4), so the aggregator would
+# pass over a red gate. A leg that an `if:` skipped reads `skipped`, and the aggregator deliberately has no arm
+# that accepts it: a leg that did not run is not a pass.
+
+on:
+  push:
+    # dev: beside ci.yml on every push. ci-next-soak: a branch pointed at an unchanged SHA to collect repeated
+    # runs of it (re-run the completed run there) without holding dev still.
+    branches: [dev, ci-next-soak]
+  workflow_dispatch:
+    # Exactly one input, and all it can do is make a run MORE red. Dispatch it on a ref that is not dev HEAD. A
+    # workflow is dispatchable only once its file is on the default branch, so this waits for the first promote
+    # that carries the file to main; the copy on the dispatched ref is the one that runs.
+    inputs:
+      canary_red_leg:
+        description: 'Canary only: the id of ONE leg to force red (static, pytest, unit-utc-cov, unit-ny, gates-a, gates-b, gates-c, gate-probes). Empty = a normal run.'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+# Its OWN group. Concurrency groups are repository-wide across workflow files (scratch-actions/RESULTS.md E3), so
+# sharing ci.yml's `ci-${{ github.ref }}` would make the two runs cancel each other on every push and leave no SHA
+# with a gating verdict. scripts/test_ci_next.py asserts no two workflow files share a group expression.
+concurrency:
+  group: ci-next-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Everything that needs no browser and no test runner, in ci.yml's order. ~1 min.
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
+        if: inputs.canary_red_leg == 'static'
+        run: |
+          echo "::error title=ci-next canary::canary_red_leg=static: this leg is forced red on request, and build-and-test-next must go red with it."
+          exit 1
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Fetch origin/main for the release-version guard
+        run: git fetch --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Release-version guard
+        run: python3 scripts/check-release-version.py
+
+      - name: Workflow lint (actionlint + shellcheck, pinned and checksum-verified)
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          SHELLCHECK_VERSION: v0.11.0
+          SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
+          SHELLCHECK_OPTS: --severity=warning
+        run: |
+          set -euo pipefail
+          T="$RUNNER_TEMP/wflint"
+          mkdir -p "$T"
+          curl -sSfL --retry 3 --retry-connrefused -o "$T/actionlint.tgz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL --retry 3 --retry-connrefused -o "$T/shellcheck.tgz" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  $T/actionlint.tgz" | sha256sum -c -
+          echo "${SHELLCHECK_SHA256}  $T/shellcheck.tgz" | sha256sum -c -
+          tar -xzf "$T/actionlint.tgz" -C "$T" actionlint
+          tar -xzf "$T/shellcheck.tgz" -C "$T" "shellcheck-${SHELLCHECK_VERSION}/shellcheck"
+          "$T/actionlint" -version
+          SC="$T/shellcheck-${SHELLCHECK_VERSION}/shellcheck"
+          # Canary: rejected by actionlint AND by shellcheck, under this repo's own config, or nothing below counts.
+          mkdir -p "$T/canary/.github/workflows"
+          [ ! -f .github/actionlint.yaml ] || cp .github/actionlint.yaml "$T/canary/.github/"
+          git -C "$T/canary" init -q
+          cat > "$T/canary/.github/workflows/canary.yml" <<'CANARY'
+          on: push
+          jobs:
+            canary:
+              needs: no-such-job
+              runs-on: ubuntu-latest
+              steps:
+                - run: unused=1
+          CANARY
+          RC=0
+          (cd "$T/canary" && "$T/actionlint" -oneline -shellcheck="$SC" -pyflakes=) > "$T/canary.out" 2>&1 || RC=$?
+          if [ "$RC" -ne 1 ] || ! grep -q '\[job-needs\]' "$T/canary.out" || ! grep -q 'SC2034:warning' "$T/canary.out"; then
+            cat "$T/canary.out"
+            echo "::error title=Workflow lint canary::the lint did not reject its known-bad fixture (exit $RC; want 1 with a [job-needs] and an SC2034 warning). A clean run would verify nothing."
+            exit 1
+          fi
+          RC=0
+          "$T/actionlint" -color -verbose -shellcheck="$SC" -pyflakes= 2> "$T/lint.err" || RC=$?
+          if [ "$RC" -ne 0 ]; then
+            [ "$RC" -eq 1 ] || cat "$T/lint.err"  # 1 = findings, printed above; anything else is fatal
+            exit "$RC"
+          fi
+          LINTED=$(awk '/Linting [0-9]+ files/ { for (i = 1; i < NF; i++) if ($i == "Linting") { print $(i + 1); exit } }' "$T/lint.err")
+          ONDISK=$(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | wc -l | tr -d ' ')
+          if [ "${LINTED:-0}" -ne "$ONDISK" ] || grep -q 'Rule "shellcheck" was disabled' "$T/lint.err"; then
+            cat "$T/lint.err"
+            echo "::error title=Workflow lint vacuous::linted ${LINTED:-0} of $ONDISK workflow files, or shellcheck was disabled (verbose log above)."
+            exit 1
+          fi
+          echo "Workflow lint: $LINTED of $ONDISK workflow files clean under actionlint + shellcheck; the canary was rejected as required."
+
+      - name: Install PyYAML for the migration gate validation
+        # In ci.yml the pytest step, which runs just before the migration gate validation, installs PyYAML;
+        # scripts/gate_runner.py refuses to validate without it. This leg has no pytest step, so it installs the
+        # one package, in the same two forms (plain, then --break-system-packages for a PEP-668 image).
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pyyaml \
+            || python3 -m pip install --quiet --break-system-packages pyyaml
+
+      - name: Migration gate schema validation (OPS-GATERUNNER-001)
+        run: python3 scripts/gate_runner.py --all --env prod --validate-only
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Dependency manifest re-resolves (strict peers)
+        run: npm install --dry-run --package-lock-only
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Lint (frozen primitives)
+        run: npm run lint
+
+      - name: Today-gate fixture privacy preflight (V5-TODAYSHAPE-001)
+        run: npm run gate:today-shape:preflight:self-test && npm run gate:today-shape:preflight
+
+      - name: Garden-render golden (V4-GARDENIA-001 / DESIGNSYS §7)
+        run: npm run parity:garden-render
+
+      - name: Daily-plan parity goldens (G-PARITY)
+        run: npm run parity:golden
+
+      - name: Service-worker cache-key mirror
+        run: npm run gate:sw-mirror
+
+      - name: Icon optical-weight golden (V4-ICON-001)
+        run: npm run icon:golden
+
+      - name: Icon region-seam (V4-ICON-001)
+        run: npm run icon:seam
+
+      - name: Icon pair distinctness (V4-GERMVSTRANSPLANT-001)
+        run: npm run icon:distinct
+
+      - name: Build (CI — placeholder env vars)
+        run: npm run build
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: pk_test_ci_placeholder
+          VITE_API_PROJECTS:          https://ci-placeholder.lambda-url.us-east-1.on.aws/
+          VITE_API_PLANTS:            https://ci-placeholder.lambda-url.us-east-1.on.aws/
+          VITE_API_LOCATIONS:         https://ci-placeholder.lambda-url.us-east-1.on.aws/
+          VITE_API_EVENTS:            https://ci-placeholder.lambda-url.us-east-1.on.aws/
+          VITE_API_FAVORITES:         https://ci-placeholder.lambda-url.us-east-1.on.aws/
+          VITE_API_PHOTOS:            https://ci-placeholder.lambda-url.us-east-1.on.aws/
+          VITE_API_DASHBOARD:         https://ci-placeholder.lambda-url.us-east-1.on.aws/
+
+      - name: Verify build output
+        run: |
+          test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+
+      - name: Harvest-window chunk split (V4-RIPENESSCUES-001)
+        env:
+          SKIP_BUILD: '1'
+        run: bash scripts/verify-window-chunk.sh
+
+      - name: Event-types drift guard
+        run: npm run check:event-types
+
+      - name: Dependency audit (blocking on moderate, WS-B M6)
+        run: python3 scripts/audit-gate.py
+
+  # As in ci.yml, where pytest runs before setup-node and npm ci: the image's own node, no node_modules. ~80 s.
+  pytest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
+        if: inputs.canary_red_leg == 'pytest'
+        run: |
+          echo "::error title=ci-next canary::canary_red_leg=pytest: this leg is forced red on request, and build-and-test-next must go red with it."
+          exit 1
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Python script tests (pytest)
+        run: |
+          set -euo pipefail
+          # Plain form is proven on these runners (promote-gate.yml "Install python
+          # deps"); the fallback covers a PEP-668 externally-managed image.
+          python3 -m pip install --quiet pytest requests boto3 pyyaml \
+            || python3 -m pip install --quiet --break-system-packages pytest requests boto3 pyyaml
+          python3 -m pytest -q scripts/test_*.py
+
+  # The UTC pass with coverage, between the two halves of the coverage ratchet: the measured floor reads the
+  # coverage/coverage-summary.json this leg's own `npm test` writes. ~14 min median, 17 min on a slow runner.
+  unit-utc-cov:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
+        if: inputs.canary_red_leg == 'unit-utc-cov'
+        run: |
+          echo "::error title=ci-next canary::canary_red_leg=unit-utc-cov: this leg is forced red on request, and build-and-test-next must go red with it."
+          exit 1
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Coverage ratchet enforcement
+        run: python3 scripts/check-coverage-ratchet.py
+
+      - name: Run unit tests with coverage
+        run: npm test
+
+      - name: Coverage ratchet — measured floor (WS-B M4)
+        run: python3 scripts/check-coverage-ratchet.py --measured
+
+  # The same suite under the app's own timezone, behind a sentinel that the zone resolved. No coverage, so this
+  # is also the only pass whose time is free of instrumentation. ~12 min median, 14.5 min on a slow runner.
+  unit-ny:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
+        if: inputs.canary_red_leg == 'unit-ny'
+        run: |
+          echo "::error title=ci-next canary::canary_red_leg=unit-ny: this leg is forced red on request, and build-and-test-next must go red with it."
+          exit 1
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: TZ sentinel — America/New_York resolves on this runner
+        # The step below is only a date-fragility guard if TZ takes effect. An unknown or unreadable zone does not
+        # fail: node falls back to UTC and the whole suite passes as a second UTC run. This asks node (the runtime
+        # the tests use) what the zone resolved to and for its January and July offsets, EST 300 and EDT 240.
+        env:
+          TZ: America/New_York
+        run: |
+          set -euo pipefail
+          node -e '
+          const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+          const jan = new Date(2026, 0, 15, 12).getTimezoneOffset()
+          const jul = new Date(2026, 6, 15, 12).getTimezoneOffset()
+          console.log(`TZ=${process.env.TZ} resolved as ${zone}; minutes behind UTC: January ${jan}, July ${jul}`)
+          if (process.env.TZ !== "America/New_York" || zone !== "America/New_York" || jan !== 300 || jul !== 240) {
+            console.log("::error title=TZ sentinel::America/New_York did not resolve (want zone America/New_York, January 300, July 240). The suite below would run in another zone and prove nothing about date fragility.")
+            process.exit(1)
+          }
+          '
+
+      - name: Unit tests under America/New_York TZ (date-fragility guard)
+        run: npx vitest run --no-coverage
+        env:
+          TZ: America/New_York
+
+  # Real-Chrome gates, first group (~246 s of work measured after the idle-timer fix, run 37040756148).
+  gates-a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
+        if: inputs.canary_red_leg == 'gates-a'
+        run: |
+          echo "::error title=ci-next canary::canary_red_leg=gates-a: this leg is forced red on request, and build-and-test-next must go red with it."
+          exit 1
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Resolve Chrome for the layout gates
+        run: |
+          BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)"
+          if [ -z "$BIN" ]; then
+            echo "::error::No Chrome on this runner - the layout gates cannot run and must not be skipped."
+            exit 1
+          fi
+          echo "CHROME_PATH=$BIN" >> "$GITHUB_ENV"
+          echo "layout gates will drive $BIN"
+          "$BIN" --version
+
+      - name: Weigh-in Save-band clearance (BUG-FRAMEPADOCCLUDE-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:save-band
+
+      - name: Log-chooser clearance and tap floor (BUG-LOGBANDOCCLUDE-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:log-chooser
+
+      - name: Photo-tier payload budget (BUG-TIERLESSPHOTOS-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pillow \
+            || python3 -m pip install --quiet --break-system-packages pillow
+          npm run gate:phototier-bytes
+
+      - name: Inventory list tap floor and row integrity (HG-4.2)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:inventory-list
+
+      - name: Saved-seeds layout and action clearance (V4-SEEDSAVEFLOW-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:seeds-saved
+
+      - name: Seeds page layout, all three views (V5-SEEDSTAB-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:seeds-page
+
+      - name: Seed detail page layout — packet, after a sow, F2 lot (V5-SEEDSTAB-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:seed-detail
+
+      - name: Seeds Back and lot-page arrival (BUG-SAVEDSEEDSBACKTOP-001, BUG-SEEDLOTOPENSATFORM-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:seeds-scroll
+
+  # Real-Chrome gates, second group (~181 s of work, same run).
+  gates-b:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
+        if: inputs.canary_red_leg == 'gates-b'
+        run: |
+          echo "::error title=ci-next canary::canary_red_leg=gates-b: this leg is forced red on request, and build-and-test-next must go red with it."
+          exit 1
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Resolve Chrome for the layout gates
+        run: |
+          BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)"
+          if [ -z "$BIN" ]; then
+            echo "::error::No Chrome on this runner - the layout gates cannot run and must not be skipped."
+            exit 1
+          fi
+          echo "CHROME_PATH=$BIN" >> "$GITHUB_ENV"
+          echo "layout gates will drive $BIN"
+          "$BIN" --version
+
+      - name: Kitchen-batch close-out layout and band clearance (V5-KBCLOSE-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:putup
+
+      - name: Put-Up ferment walks, Start to finish and after (release F, 06-ferment-path §5 L3)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:putup-ferment
+
+      - name: Icon wiring slice 4 — five rewired surfaces (V4-ICON-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:iconwire4
+
+      - name: Today page shape at 426x836 (V5-TODAYSHAPE-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:today-shape
+
+      - name: Undo toast tap targets, glyph and stack (BUG-UNDOTOASTTAPTARGET-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:undo-toast
+
+      - name: Weigh-in Save-band stability (V4-HARVESTFRAME-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:save-band-stability
+
+  # Page scroll alone: at ~539 s it is longer than either group above, and it is the gate that grows.
+  gates-c:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
+        if: inputs.canary_red_leg == 'gates-c'
+        run: |
+          echo "::error title=ci-next canary::canary_red_leg=gates-c: this leg is forced red on request, and build-and-test-next must go red with it."
+          exit 1
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Resolve Chrome for the layout gates
+        run: |
+          BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)"
+          if [ -z "$BIN" ]; then
+            echo "::error::No Chrome on this runner - the layout gates cannot run and must not be skipped."
+            exit 1
+          fi
+          echo "CHROME_PATH=$BIN" >> "$GITHUB_ENV"
+          echo "layout gates will drive $BIN"
+          "$BIN" --version
+
+      - name: Page scroll — a page opens at its top, Back returns to the place (BUG-DETAILPAGESCARRYSCROLL-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:page-scroll
+
+  # The two Today V2 steps, which run their gate and then its probe-nothing and self-test proofs (~251 s).
+  gate-probes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
+        if: inputs.canary_red_leg == 'gate-probes'
+        run: |
+          echo "::error title=ci-next canary::canary_red_leg=gate-probes: this leg is forced red on request, and build-and-test-next must go red with it."
+          exit 1
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Resolve Chrome for the layout gates
+        run: |
+          BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)"
+          if [ -z "$BIN" ]; then
+            echo "::error::No Chrome on this runner - the layout gates cannot run and must not be skipped."
+            exit 1
+          fi
+          echo "CHROME_PATH=$BIN" >> "$GITHUB_ENV"
+          echo "layout gates will drive $BIN"
+          "$BIN" --version
+
+      - name: Today V2 contract, instrument and self-test (V5-TODAYREDESIGN-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: |
+          npm run gate:today-shape:v2
+          if npm run gate:today-shape:v2:probe-nothing; then
+            echo "::error::gate:today-shape:v2:probe-nothing exited 0 - every v2 anchor pointed at nothing and the gate did not notice"
+            exit 1
+          fi
+          npm run gate:today-shape:v2:self-test
+
+      - name: Today V2 in the app shell (V5-TODAYREDESIGN-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: |
+          npm run gate:today-shell:v2
+          if npm run gate:today-shell:v2:probe-nothing; then
+            echo "::error::gate:today-shell:v2:probe-nothing exited 0 - the shell anchors pointed at nothing and the gate did not notice"
+            exit 1
+          fi
+
+  # The verdict. It has no check-run and no job record until every leg has finished (RESULTS.md E5). `always()`
+  # because without it a failed leg makes this job `skipped`, which reads as "no verdict" rather than red. The
+  # step uses no action and no network: it reads the legs' results from `needs` and nothing else. A leg that
+  # timed out reads `cancelled` here, not `failure` (RESULTS.md E4, E9), so the test is "every result is
+  # success", never "no result is failure". The pinned list is what makes a leg dropped from `needs` (or a new
+  # leg nobody listed) a red rather than a quieter green. No `name:` on this job: its id is the check-run name.
+  build-and-test-next:
+    needs: [static, pytest, unit-utc-cov, unit-ny, gates-a, gates-b, gates-c, gate-probes]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every pinned leg reported, and every one succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          EXPECTED_LEGS="static pytest unit-utc-cov unit-ny gates-a gates-b gates-c gate-probes"
+          export EXPECTED_LEGS
+          python3 - <<'PY'
+          import json, os, sys
+
+
+          def fail(why):
+              print("::error title=build-and-test-next::" + why)
+              sys.exit(1)
+
+
+          expected = sorted(os.environ["EXPECTED_LEGS"].split())
+          try:
+              needs = json.loads(os.environ.get("NEEDS") or "")
+          except ValueError as exc:
+              fail("the needs context is not JSON (%s); no leg result could be read" % exc)
+          if not isinstance(needs, dict):
+              fail("the needs context is not a JSON object; no leg result could be read")
+          if sorted(needs) != expected:
+              fail("legs reported %s, expected exactly %s" % (sorted(needs), expected))
+          results = {leg: needs[leg].get("result") if isinstance(needs[leg], dict) else None for leg in expected}
+          for leg in expected:
+              print("%-13s %s" % (leg, results[leg]))
+          bad = ["%s=%s" % (leg, results[leg]) for leg in expected if results[leg] != "success"]
+          if bad:
+              fail("not every leg succeeded: " + ", ".join(bad))
+          print("build-and-test-next: all %d legs succeeded" % len(expected))
+          PY

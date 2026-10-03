@@ -6,9 +6,9 @@ name: promote-gate
 # "pauses the promote job for Dave's approval BEFORE main is touched", was STALE and load-bearingly wrong). VERIFIED
 # LIVE against the environments API (also verified 2026-08-04, OPS-PROMOTEAPPROVAL-001): the `production` environment's
 # protection_rules contain a `branch_policy` entry ONLY — there is NO `required_reviewers` rule, because the required
-# reviewer was REMOVED 2026-06-22 at Dave's direction. That policy gates WHICH refs may deploy (2 branches + the
-# promote-v* tag rule) = MECHANISM, not AUTHORIZATION. Nothing in this workflow waits for a human tap: once it starts,
-# main is fast-forwarded and prod ships. The behavioral dev->main HARD GATE (promote ONLY on an explicit Dave
+# reviewer was REMOVED 2026-06-22 at Dave's direction. That policy gates WHICH refs may deploy (branches dev and
+# main; its promote-v* tag rule was removed 2026-10-02) = MECHANISM, not AUTHORIZATION. Nothing in this workflow
+# waits for a human tap: once it starts, main is fast-forwarded and prod ships. The behavioral dev->main HARD GATE (promote ONLY on an explicit Dave
 # "ship it"/"promote to prod") is therefore the SOLE authorization control. For contrast, the `production-destructive`
 # environment used by revert-gate.yml DOES carry required_reviewers=[islanddave] — do not generalize from it to here.
 # Promote = fast-forward main -> the exact dev SHA (no squash). CI is enforced here (required-checks on main only gate PRs).
@@ -22,8 +22,10 @@ name: promote-gate
 #
 # PRE-FF CHECKS, in job order. Each fails the promote job before "Fast-forward main", so a red one leaves main,
 # the tags and prod untouched:
-#   1. Preflight — dev unmoved since dispatch; build-and-test = success; integration-tests = success
-#      (require_integration, default true).
+#   0. resolve — the run's own commit (github.sha) must equal dev_sha, so the workflow file, the checkout and the
+#      promoted commit are one SHA. A dispatch on ref main, or on dev with an older dev_sha, is refused by name.
+#   1. Preflight — dev unmoved since dispatch; CI green on dev_sha by TWO checks that must both pass (PREFLIGHT —
+#      DUAL EVALUATION below); the same pair for integration-test.yml (require_integration, default true).
 #   2. Version/tag skew gate — snap_version == v<package.json at dev_sha>, and that tag not already consumed.
 #   3. Prod schema gate — the L-081 audit of the promoted tree against PROD (require_schema_audit, default true).
 #   4. Write-path staging smoke gate — deploy-staging on the exact dev SHA, smoke-tests = success.
@@ -46,10 +48,9 @@ name: promote-gate
 # prod already has the column). The refusal ::error:: names the cause and remedy from the audit's own FAIL/ERROR
 # line, never from the exit code alone:
 #   - column or relation MISSING in prod  -> apply its DDL to prod, then re-run the failed jobs or re-dispatch the
-#                                            SAME SHA (on the tag path, re-run the failed run: the tag can't move);
+#                                            SAME SHA;
 #   - coverage REGRESSED, a contract that cannot be parsed, a failed self-test
-#                                          -> fix it on dev and promote the NEW SHA (on the tag path that
-#                                            promote-v* tag is spent: dispatch the new SHA, or tag a new version);
+#                                          -> fix it on dev and promote the NEW SHA;
 #   - traceback, connection error, hang   -> a crash, not a verdict: re-run the failed jobs.
 # Coverage is the audit's, no more: Phase 1 = columns declared in lambda/**/*columns.test.js contracts, Phase 2 =
 # INSERT column lists, Phase 3 = soft-delete deleted_at targets, Phase 4 = that every relation a handler queries
@@ -69,11 +70,38 @@ name: promote-gate
 # garden-bot (App tokens reliably trigger workflows; GITHUB_TOKEN does not). Fail-closed: a missing/non-success
 # staging-smoke conclusion blocks the promotion.
 #
+# PREFLIGHT — DUAL EVALUATION (promote-path plan A2.1, push 1, 2026-10-02). "CI green on dev_sha" is decided twice
+# and the promote needs BOTH, so a defect in the new check can refuse a promote but cannot admit one on any gate
+# the dispatcher has not opted out of. (Two inputs pass now that the old step refused, both deliberate:
+# require_integration=false with an unreadable integration check-runs reply, which died on a bare errexit and is now
+# printed as advisory, as that opt-out asks; and a commit with more than a page of check-runs, next bullet.)
+#   * name-based (the check this workflow has always had): the first check-run named `build-and-test` on the
+#     commit must conclude success. The read is now filtered by check_name, because the unfiltered listing is one
+#     page of 100 and a commit that has already been through a promote carries more (v4.162.0's has 182), which
+#     made a re-dispatch of that commit read MISSING. Its remaining weakness: that listing is latest per RUN, not
+#     per name, and a job that `needs` other jobs has no check-run until they finish — so once ci.yml is split into
+#     parallel legs behind an aggregator, "first by name" can be an OLDER run's green while the current run is
+#     still going.
+#   * run-based (scripts/promote-preflight.py, run from the promoted checkout): every push / workflow_dispatch run
+#     of ci.yml on dev_sha must be completed and successful, none in flight, at least one present, ordered by
+#     run_started_at (a re-run keeps created_at), and the newest one's `build-and-test` job must be success.
+#     pull_request runs never count. The rules and exit codes are in that script's header.
+# Each pair is printed as one `::notice::preflight-dual ...` line carrying both verdicts, `agree=yes|no` and the run
+# ids, on every promote, refused or not: those lines are the record push 2 needs. Push 2 removes the name-based
+# check before ci.yml is split, once >= 5 promotes are on record AND, over EVERY dispatched run since this landed
+# (refused ones above all: a green promote agrees by construction), no line reads name-based != success with
+# run-based-exit=0 unexplained. That is the direction push 2 would make unsafe. The two Actions reads use
+# github.token (this workflow's `actions` permission), not the bot token. Same pair for integration-test.yml /
+# `integration-tests`; with require_integration=false BOTH of its checks are advisory and printed, never refusing.
+# A run-based pass is exit 0 AND the script's own `pass: ` line; an exit 0 that says anything else is not a verdict.
+# NOT LIVE FOR A `ref: main` DISPATCH until a promote has carried this file to main: such a dispatch runs main's
+# copy of this workflow. Once main has this copy, `resolve` refuses it (step 0 above).
+#
 # INTEGRATION-TESTS GATE — SOAK CLOSED, DEFAULT FLIPPED TO true 2026-08-06. integration-tests (M5, 2026-07-24) rode
 # advisory (require_integration default false) through its soak window; the dispatch default is now `true`, so the
 # check is fail-closed exactly like build-and-test unless a dispatcher explicitly opts out. Evidence for the flip:
 #   * integration-test.yml triggers on `push: branches: [dev]`, and its job id `integration-tests` IS the check-run
-#     name the preflight looks up — so the check exists on every dev HEAD a promote can target.
+#     name the name-based check looks up — so the check exists on every dev HEAD a promote can target.
 #   * 845 historical runs: 702 success / 31 failure / 112 cancelled. EVERY sampled failure was in the `Run integration
 #     tests` step — i.e. real test signal. The Neon-branch-create step (the only plausible infra flake, and it carries
 #     its own FATAL guard) has never been the failing step. This is not a flaky check.
@@ -87,17 +115,22 @@ name: promote-gate
 #     MISSING/cancelled on exactly the same SHAs where build-and-test is MISSING/cancelled, and build-and-test is
 #     ALREADY fail-closed — so those promotes are blocked with or without this flag.
 # Known cost (accepted): integration-tests runs longer than build-and-test, so a promote dispatched immediately after
-# a dev push can find build-and-test=success while integration is still in_progress (conclusion null -> prints "None")
-# and fail-closed. Remedy is to wait for the check and re-dispatch. Escape hatch is preserved: dispatch with
+# a dev push can find build-and-test=success while integration is still in_progress (name-based prints "None",
+# run-based "run <id> is in_progress") and fail-closed. Remedy is to wait for the run and re-dispatch. Escape hatch is preserved: dispatch with
 # require_integration=false to deliberately promote past a red/absent integration run.
-# NOTE: the promote-v* TAG trigger still hardcodes require_integration=false in `resolve` below — a tag push carries
-# no inputs, so it has no way to opt out if it were forced true, and that path (ship-garden.sh) is the break-glass
-# remote ship route. That asymmetry is deliberate and flagged for Dave, not an oversight.
-# require_schema_audit deliberately does NOT follow it: the tag path resolves it to TRUE. The schema gate reads prod
-# directly, so it has no in-flight check to race, and shipping a column prod lacks is exactly the outage it exists
-# for. Recovery per cause is in PROD SCHEMA GATE above.
-# Tag-path consequence: from the moment a handler on dev SELECTs/JOINs a new table or view, or a contract names one,
-# every promote-v* tag refuses until that relation's DDL is on prod (no waiver, no opt-out on that path).
+#
+# TAG TRIGGER RETIRED 2026-10-02 (Dave decision, promote-path review D-G). Until then a pushed `promote-v*` tag also
+# started this workflow (OPS-SHIPTRIGGER-001, 2026-07-09, the route claude-ops/ship-garden.sh used), and that path
+# hardcoded require_integration=false: one tag push by any writer shipped prod past the integration gate. It is
+# closed in three places, and this file is only one of them: (1) the `release-tag-integrity` ruleset (20140435)
+# carries a `creation` rule, so only garden-bot can create a `promote-v*` or `v*` tag (snap.py still tags, as the
+# bot); (2) the `production` environment no longer admits the `promote-v*` tag ref; (3) the `push: tags` trigger and
+# the tag branch of `resolve` are gone, and `resolve` refuses any event but workflow_dispatch. Do not re-add a
+# trigger here without re-deciding all three with Dave. Last tag-path run: promote-v4.91.0, 2026-09-01.
+
+# Names the version and commit in the run list, so a promote is findable without opening it. Nothing reads this
+# title (the staging smoke gate matches deploy-staging's display_title, not this one).
+run-name: promote ${{ inputs.snap_version }} @ ${{ inputs.dev_sha }}
 
 on:
   workflow_dispatch:
@@ -125,17 +158,6 @@ on:
         required: false
         default: false
         type: boolean
-  # OPS-SHIPTRIGGER-001 (2026-07-09): git-channel promote trigger so a Cowork/remote session
-  # can ship WITHOUT api.github.com (which the session egress proxy 403-gates for repos it isn't
-  # bound to). Push an annotated/lightweight tag `promote-vX.Y.Z` pointing AT the exact dev SHA to
-  # promote: the tagged commit becomes dev_sha (== github.sha, so the coupled deploy checks out the
-  # promoted code by construction), and the tag name minus `promote-` becomes snap_version. The
-  # `resolve` job normalises both trigger paths into a single (dev_sha, snap_version) pair that every
-  # downstream job consumes — the workflow_dispatch path is behaviourally unchanged. The
-  # environment:production gate and the garden-bot capability-gate FF still apply identically.
-  push:
-    tags:
-      - 'promote-v*'
 
 permissions:
   contents: write
@@ -143,17 +165,15 @@ permissions:
   actions: write
   checks: read
 
-# OPS-SHIPTRIGGER-001: serialize promotes now that two triggers exist (a promote-v* tag push
-# AND a manual workflow_dispatch could otherwise both fast-forward main concurrently). Queue,
+# Serialize promotes: two dispatches could otherwise both fast-forward main concurrently. Queue,
 # never cancel — a promote mid-FF/snap must run to completion, so cancel-in-progress is false.
 concurrency:
   group: promote-gate
   cancel-in-progress: false
 
 jobs:
-  # OPS-SHIPTRIGGER-001: normalise (dev_sha, snap_version) from EITHER trigger so every downstream
-  # job is trigger-agnostic. workflow_dispatch -> the two inputs verbatim. push (promote-v* tag) ->
-  # dev_sha = github.sha (the commit the tag points to), snap_version = tag name minus the promote- prefix.
+  # Validate and normalise the dispatch inputs once, so every downstream job reads one (dev_sha, snap_version)
+  # pair. workflow_dispatch is the only trigger (header, TAG TRIGGER RETIRED); any other event is refused.
   # Fail-closed: dev_sha must be a 40-hex commit SHA and snap_version must match the snap regex.
   resolve:
     runs-on: ubuntu-latest
@@ -163,7 +183,7 @@ jobs:
       require_integration: ${{ steps.r.outputs.require_integration }}
       require_schema_audit: ${{ steps.r.outputs.require_schema_audit }}
     steps:
-      - name: Resolve promote inputs (dispatch OR promote-v* tag)
+      - name: Resolve promote inputs (workflow_dispatch only)
         id: r
         env:
           EVENT: ${{ github.event_name }}
@@ -171,33 +191,33 @@ jobs:
           IN_SNAP: ${{ github.event.inputs.snap_version }}
           IN_REQINT: ${{ github.event.inputs.require_integration }}
           IN_REQSCHEMA: ${{ github.event.inputs.require_schema_audit }}
-          GH_SHA: ${{ github.sha }}
           GH_REF_NAME: ${{ github.ref_name }}
+          GH_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            DEV_SHA="$IN_DEV_SHA"
-            SNAP="$IN_SNAP"
-            # Fallback MUST mirror the declared input default (true) so an API dispatch that omits the
-            # key entirely cannot silently downgrade the gate to advisory. Fail-closed on absence.
-            REQINT="${IN_REQINT:-true}"
-            # Same rule for the prod schema gate (OPS-PROMOTESCHEMAGATE-001).
-            REQSCHEMA="${IN_REQSCHEMA:-true}"
-          else
-            DEV_SHA="$GH_SHA"
-            REQINT="false"
-            # NOT copied from REQINT: the tag path ENFORCES the prod schema gate (header, PROD SCHEMA GATE).
-            REQSCHEMA="true"
-            case "$GH_REF_NAME" in
-              promote-*) SNAP="${GH_REF_NAME#promote-}" ;;
-              *) echo "::error::unexpected trigger ref '$GH_REF_NAME' (expected promote-v*)"; exit 1 ;;
-            esac
+          # One trigger. A run started any other way is refused here, before any gate reads an input, so a
+          # trigger added later cannot inherit dispatch semantics with empty inputs.
+          if [ "$EVENT" != "workflow_dispatch" ]; then
+            echo "::error::promote-gate runs on workflow_dispatch only; refusing event '$EVENT' on ref '$GH_REF_NAME'"; exit 1
           fi
+          DEV_SHA="$IN_DEV_SHA"
+          SNAP="$IN_SNAP"
+          # Fallback MUST mirror the declared input default (true) so an API dispatch that omits the
+          # key entirely cannot silently downgrade the gate to advisory. Fail-closed on absence.
+          REQINT="${IN_REQINT:-true}"
+          # Same rule for the prod schema gate (OPS-PROMOTESCHEMAGATE-001).
+          REQSCHEMA="${IN_REQSCHEMA:-true}"
           if ! printf '%s' "$DEV_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "::error::dev_sha not a 40-hex commit SHA: '$DEV_SHA'"; exit 1
           fi
           if ! printf '%s' "$SNAP" | grep -Eq '^v[0-9]+(\.[0-9]+){0,2}$'; then
             echo "::error::snap_version '$SNAP' fails ^v[0-9]+(\.[0-9]+){0,2}\$"; exit 1
+          fi
+          # The run's own commit must be the promoted one. This file and every gate script it runs are then read
+          # from dev_sha itself, and a dispatch on any ref that is not at dev_sha (ref main, which would run main's
+          # older copy of these gates; or ref dev with a dev_sha that is no longer HEAD) stops here by name.
+          if [ "$GH_SHA" != "$DEV_SHA" ]; then
+            echo "::error::promote-gate must be dispatched on the commit it promotes: this run is on ref '$GH_REF_NAME' at '$GH_SHA', dev_sha is $DEV_SHA. Dispatch with ref=dev and dev_sha = the current dev HEAD. main has NOT been touched."; exit 1
           fi
           # The preflight enforces integration-tests only on the exact string `true`, so any other value that
           # got through here would make that gate advisory. Refuse it, the same as the schema gate below.
@@ -226,12 +246,15 @@ jobs:
       lambda_changed: ${{ steps.lam.outputs.changed }}
     # 60 (30 until 2026-07-23, then 50). Widened 2026-07-23 after two promotes fail-closed when a runner-queue backlog pushed the ~16min
     # staging pipeline past the old window (staging was green both times). Worst case for a promote that reaches
-    # the FF: ~1 min before the smoke gate (token, preflight, skew, checkout, psycopg2 install, and a schema gate
-    # that PASSES in seconds) + up to 34.5 min in the staging smoke gate (5 locate + 27.5 poll + 2 jobs read) +
-    # ~10 min FF and snap = ~45.5 min. The schema gate's hang bounds (install <=190 s, self-tests <=105 s, audit
+    # the FF: ~4 min before the smoke gate (token, checkout, a preflight that still PASSES at its slowest: ~3 min
+    # = three curl reads at up to 15 s each + four script reads that each ride out two 10 s timeouts and two 2 s
+    # pauses and then take up to 10 s themselves; its step limit is 5; the rest ~1 min as before 2026-10-02: skew,
+    # psycopg2 install, and a schema gate that PASSES in seconds) + up to 34.5 min in the staging smoke gate
+    # (5 locate + 27.5 poll + 2 jobs read) + ~10 min FF and snap = ~48.5 min. The schema gate's hang bounds (install <=190 s, self-tests <=105 s, audit
     # <=250 s, about 9 min together) end in a refusal BEFORE the FF, so they stack with snap only on a
-    # require_schema_audit=false dispatch. There, all of them at once on top of a maximal smoke wait come to ~54.5
-    # min, which passed the old 50 and would have ended the job inside snap, after the FF (review MINOR 2) — main
+    # require_schema_audit=false dispatch. There, all of them at once on top of a maximal smoke wait come to ~57.5
+    # min, and 59.5 with the preflight at its 5-minute step limit (54.5 before the preflight's retries; the bot token minted in the first step lives 60, so do not raise
+    # this job's limit past it), which passed the old 50 and would have ended the job inside snap, after the FF (review MINOR 2) — main
     # moved, nothing deployed. 60 (was 50, raised 2026-09-24 with the schema gate) covers that worst case.
     timeout-minutes: 60
     steps:
@@ -242,36 +265,95 @@ jobs:
           app-id: ${{ secrets.GARDEN_BOT_APP_ID }}
           private-key: ${{ secrets.GARDEN_BOT_PRIVATE_KEY }}
 
-      - name: Preflight — dev unmoved + build-and-test green
+      # The promoted commit. First step after the token since 2026-10-02: the preflight below runs
+      # scripts/promote-preflight.py from it. `resolve` has already refused unless dev_sha is this run's own commit,
+      # so this checkout cannot fail on an unknown SHA. The prod schema gate audits THIS tree, and the Lambda decision
+      # script and snap.py still come from it.
+      - name: Checkout dev_sha (preflight + schema audit + scripts/check-lambda-current.py + scripts/snap.py)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.resolve.outputs.dev_sha }}
+
+      # See PREFLIGHT — DUAL EVALUATION in the header. Both checks are read to the end and printed before anything
+      # is refused, so a refused promote still records how each one judged the commit.
+      #
+      # ERREXIT — keep every `|| X=` and `|| RC=$?`. GitHub runs this step as `bash -e {0}`: read bare, an API reply
+      # that cannot be parsed, or the script's exit 1 or 2, would end the step on the assignment with no annotation
+      # and without the other check's verdict. scripts/test_workflow_steps.py runs this body the runner's way.
+      - name: Preflight — dev unmoved + CI green on dev_sha (name-based and run-based, both required)
+        # Backstop only: every read inside is bounded (curl --max-time; the script's retries), and a reply that
+        # trickles past those bounds ends here, before the fast-forward. 5, not more: see the job's time budget.
+        timeout-minutes: 5
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           DEV_SHA: ${{ needs.resolve.outputs.dev_sha }}
           REQ_INT: ${{ needs.resolve.outputs.require_integration }}
         run: |
           set -euo pipefail
-          api() { curl -sS -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
-          DEV_HEAD=$(api "https://api.github.com/repos/$REPO/git/refs/heads/dev" | python3 -c "import sys,json;print(json.load(sys.stdin)['object']['sha'])")
+          api() { curl -sS --connect-timeout 10 --max-time 15 -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
+          # A value read from a reply is echoed into annotations, so it is used only when it is one plain word.
+          # Anything else (empty, a space, a colon, a line break) is UNREADABLE and cannot start a workflow command.
+          plain() { case "$1" in ''|*[!A-Za-z0-9_]*) echo UNREADABLE ;; *) echo "$1" ;; esac; }
+          DEV_HEAD=$(api "https://api.github.com/repos/$REPO/git/refs/heads/dev" | python3 -c "import sys,json;print(json.load(sys.stdin)['object']['sha'])") || DEV_HEAD="UNREADABLE"
+          DEV_HEAD=$(plain "$DEV_HEAD")
+          if [ "$DEV_HEAD" = "UNREADABLE" ]; then
+            echo "::error::could not read dev's HEAD (the API reply was unreadable), so cannot tell whether dev moved. Dispatch again; main has NOT been touched."; exit 1
+          fi
           if [ "$DEV_HEAD" != "$DEV_SHA" ]; then
             echo "::error::dev moved since dispatch ($DEV_HEAD != $DEV_SHA)"; exit 1
           fi
-          CONC=$(api "https://api.github.com/repos/$REPO/commits/$DEV_SHA/check-runs?filter=latest&per_page=100" | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((c['conclusion'] for c in d['check_runs'] if c['name']=='build-and-test'),'MISSING'))")
+          # name-based: the first check-run with this name on the commit. check_name keeps the listing to that name
+          # (a promoted commit carries more than one page of check-runs); the python still matches the name itself.
+          by_name() { api "https://api.github.com/repos/$REPO/commits/$DEV_SHA/check-runs?check_name=$1&filter=latest&per_page=100" | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((c['conclusion'] for c in d['check_runs'] if c['name']==sys.argv[1]),'MISSING'))" "$1"; }
+          # run-based: scripts/promote-preflight.py over the workflow's runs on this commit (exit 0 pass, 1 refuse,
+          # 2 unreadable; one line on stdout). Its two reads are Actions reads, made with github.token.
+          by_runs() { GH_TOKEN="$ACTIONS_TOKEN" python3 scripts/promote-preflight.py --repo "$REPO" --sha "$DEV_SHA" --workflow "$1" --job "$2"; }
+          agree() { if { [ "$1" = "success" ] && [ "$2" -eq 0 ]; } || { [ "$1" != "success" ] && [ "$2" -ne 0 ]; }; then echo yes; else echo no; fi; }
+          CONC=$(by_name build-and-test) || CONC="UNREADABLE"
+          INT=$(by_name integration-tests) || INT="UNREADABLE"
+          CONC=$(plain "$CONC"); INT=$(plain "$INT")
+          CI_RC=0; CI_RUNS=$(by_runs ci.yml build-and-test) || CI_RC=$?
+          INT_RC=0; INT_RUNS=$(by_runs integration-test.yml integration-tests) || INT_RC=$?
+          # One line each, whatever the script printed: a second line (the runner ends a line on a lone CR too)
+          # could otherwise start a workflow command.
+          CI_RUNS=${CI_RUNS//[$'\r\n']/ }; INT_RUNS=${INT_RUNS//[$'\r\n']/ }
+          # Exit 0 passes only with the script's own `pass: ` line. An exit 0 that says anything else, or nothing,
+          # is not a verdict (97), and is recorded as one.
+          if [ "$CI_RC" -eq 0 ] && [ "${CI_RUNS#pass: }" = "$CI_RUNS" ]; then CI_RC=97; fi
+          if [ "$INT_RC" -eq 0 ] && [ "${INT_RUNS#pass: }" = "$INT_RUNS" ]; then INT_RC=97; fi
+          echo "::notice::preflight-dual build-and-test on $DEV_SHA: name-based=$CONC run-based-exit=$CI_RC agree=$(agree "$CONC" "$CI_RC") | ${CI_RUNS:-no output}"
+          echo "::notice::preflight-dual integration-tests on $DEV_SHA: name-based=$INT run-based-exit=$INT_RC agree=$(agree "$INT" "$INT_RC") require_integration=$REQ_INT | ${INT_RUNS:-no output}"
+          REFUSED=0
           if [ "$CONC" != "success" ]; then
-            echo "::error::build-and-test on $DEV_SHA = $CONC (need success)"; exit 1
+            echo "::error::build-and-test on $DEV_SHA = $CONC (need success)"; REFUSED=1
+          fi
+          if [ "$CI_RC" -ne 0 ]; then
+            echo "::error::run-based check of ci.yml on $DEV_SHA did not pass (exit $CI_RC): ${CI_RUNS:-no output}"; REFUSED=1
           fi
           # M5: integration-tests gate. FAIL-CLOSED BY DEFAULT since 2026-08-06 (require_integration
           # defaults to true) — a non-success integration-tests check blocks the promote exactly like
           # build-and-test above. Soak evidence for the flip is in the header. Dispatch with
-          # require_integration=false to deliberately promote past a red/absent integration run.
-          # The advisory branch below is now the explicit opt-out path, not the normal path.
-          INT=$(api "https://api.github.com/repos/$REPO/commits/$DEV_SHA/check-runs?filter=latest&per_page=100" | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((c['conclusion'] for c in d['check_runs'] if c['name']=='integration-tests'),'MISSING'))")
-          if [ "$REQ_INT" = "true" ]; then
+          # require_integration=false to deliberately promote past a red/absent integration run: BOTH
+          # integration checks are then advisory (their verdicts are in the preflight-dual notice above).
+          # Enforced unless the value is exactly `false` (`resolve` only lets true or false through).
+          if [ "$REQ_INT" != "false" ]; then
             if [ "$INT" != "success" ]; then
-              echo "::error::integration-tests on $DEV_SHA = $INT (need success; require_integration=true)"; exit 1
+              echo "::error::integration-tests on $DEV_SHA = $INT (need success; require_integration=true)"; REFUSED=1
             fi
-            echo "preflight ok: dev==$DEV_SHA, build-and-test=success, integration-tests=success (enforced)"
+            if [ "$INT_RC" -ne 0 ]; then
+              echo "::error::run-based check of integration-test.yml on $DEV_SHA did not pass (exit $INT_RC; require_integration=true): ${INT_RUNS:-no output}"; REFUSED=1
+            fi
           else
-            echo "::notice::integration-tests on $DEV_SHA = $INT (advisory during soak; not blocking promote)"
+            echo "::notice::integration-tests on $DEV_SHA = $INT, run-based exit $INT_RC (advisory: require_integration=false; not blocking promote)"
+          fi
+          if [ "$REFUSED" -ne 0 ]; then
+            echo "preflight refused: main has NOT been touched"; exit 1
+          fi
+          if [ "$REQ_INT" != "false" ]; then
+            echo "preflight ok: dev==$DEV_SHA, build-and-test=success, integration-tests=success (enforced; name-based and run-based agree)"
+          else
             echo "preflight ok: dev==$DEV_SHA, build-and-test=success (integration advisory=$INT)"
           fi
 
@@ -343,14 +425,6 @@ jobs:
             echo "tag $SNAP is free"
           fi
           echo "version/tag skew gate ok: $SNAP == v$PKG, tag not previously consumed"
-
-      # The promoted commit. Moved up again 2026-09-24 (OPS-PROMOTESCHEMAGATE-001) from just before the Lambda
-      # decision: the prod schema gate below audits THIS tree and runs before the staging smoke. The decision
-      # script and snap.py still come from it.
-      - name: Checkout dev_sha (schema audit + scripts/check-lambda-current.py + scripts/snap.py)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ needs.resolve.outputs.dev_sha }}
 
       # Never fails the step. A failed install makes the audit below exit 2 (no psycopg2), which the gate refuses
       # like any inconclusive run; keeping the refusal in that ONE step is what lets require_schema_audit=false
@@ -629,7 +703,7 @@ jobs:
           role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      # (The dev_sha checkout the decision script and snap.py read moved above the prod schema gate, 2026-09-24.)
+      # (The dev_sha checkout the decision script and snap.py read is the job's first step after the token.)
 
       # OPS-LAMSKIPVSMAIN-001 (2026-09-18) — decide whether the Lambdas need deploying by asking THE
       # RUNNING FUNCTIONS, not `main`.
