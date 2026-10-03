@@ -81,6 +81,15 @@ import {
   backWords, recipeSearchItems,
 } from '../components/putup/goingNow.js'
 import { readMarker } from '../lib/backNav.js'
+// Put-Up R2a — the jar's Edit (RowEditor) says what the door says: the door's own method words, under an
+// alias because this file's METHOD_LABELS is the log form's and is frozen with it.
+import { METHOD_LABELS as JAR_METHOD_LABELS, DISCARD_LABELS } from '../components/putup/putItUp.js'
+import { USE_BY_METHODS } from '../components/putup/jarWords.js'
+import { DISCARD_DATE_TEXT } from '../components/pantry/putSomethingUp.js'
+import { HOUSE_DETAIL_TEXT } from '../components/pantry/PantryRowSheet.jsx'
+import SelectChip from '../components/forms/SelectChip.jsx'
+import { labelChrome } from '../components/forms/formStyles.js'
+import WhereFromField, { whereFromError } from '../components/pantry/WhereFromField.jsx'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -2316,6 +2325,61 @@ function RefreshNowButton() {
   )
 }
 
+// Put-Up R2a — the jar's Edit panel's own words. NEW constants, each read by RowEditor only: the log form
+// above is frozen in R2a and reads METHOD_GROUPS, UNIT_GROUPS and HOUSE_ESTIMATE_CLAIM as they are, so
+// none of those is edited to change what Edit says. Each of these is BOTH the label a person sees and
+// the name a screen reader says, so the two cannot drift apart.
+const EDIT_COUNT_LABEL = 'How many were put up?'
+const EDIT_METHOD_LABEL = 'How was it put up?'
+// "Bought already preserved" is not something a put-up becomes: Edit offers it only on a row that is one.
+const EDIT_BOUGHT_METHOD = 'purchased_preserved'
+
+// THE ECHO UNDER THE AMOUNT. The door asks the size of EACH container and Edit asks how much IN ALL, in
+// the same unit, so each screen says the other number: "3 containers · 1 qt each", or "about 0.83 qt
+// each" when the amount does not divide evenly at the column's two places. From the TYPED amount, unit
+// and count as they stand (it moves as any of them changes), never from the stored row, and it changes
+// no field: the person is shown the mismatch, not corrected. Null — nothing to say — with no unit, one
+// container or none (the amount IS that container), or a share that comes to nothing (no amount is one).
+// Decimal arithmetic on the typed digits, as jarWords.totalOfEach does it: 2.5 / 3 in floats is not 0.83.
+const jarEachWords = (amountText, unit, countText) => {
+  const m = /^\s*(\d*)(?:\.(\d*))?\s*$/.exec(String(amountText ?? ''))
+  const n = Number(countText)
+  if (!m || !unit || !Number.isInteger(n) || n < 2) return null
+  const frac = m[2] ?? ''
+  const places = Math.max(frac.length, 2)
+  // The amount as a whole number of 10^-places, and what ONE hundredth of a share is in that scale.
+  const total = BigInt(`${m[1] || '0'}${frac}`) * 10n ** BigInt(places - frac.length)
+  const perHundredth = BigInt(n) * 10n ** BigInt(places - 2)
+  const each = (2n * total + perHundredth) / (2n * perHundredth)          // hundredths, rounded half-up
+  if (each <= 0n) return null
+  const about = total % perHundredth === 0n ? '' : 'about '
+  return `${n} containers · ${about}${qtyText(`${each / 100n}.${String(each % 100n).padStart(2, '0')}`)} ${unit} each`
+}
+
+// DISCARD BY, ON EVERY METHOD, SET BY HAND (amendment D12). The door's three chips in the door's words
+// (putItUp.DISCARD_LABELS), each mapped to what the jar PATCH's `discard_by` takes
+// (lambda/preservation/jarRoutes.js patchJar): Work it out -> 'clear' (the date is worked out again by the
+// whole ladder), From the label -> the date (stored as set by hand), No date -> 'none' (no date, set by hand).
+// Cured and cellared produce reads "Use by" here as it does everywhere else (jarWords.USE_BY_METHODS:
+// theirs is a quality span); every other method reads "Discard by".
+const EDIT_DISCARD_LABEL = 'Discard by'
+const EDIT_USE_BY_LABEL = 'Use by'
+const EDIT_DISCARD_DATE_LABEL = 'Discard date from the label'
+const EDIT_USE_BY_DATE_LABEL = 'Use-by date from the label'
+const EDIT_DISCARD_MODES = Object.freeze(['auto', 'date', 'none'])
+const EDIT_DISCARD_SENDS = Object.freeze({ auto: 'clear', none: 'none' })
+// Which chip a stored row opens on, by the server's own rule for what it stores (a date or 'none' from a
+// person stores basis `typed`): typed with a date is his date, typed with none is his "no date", and
+// anything else (a general figure, the recipe, the house estimate, nothing, an older row) was worked out.
+const jarDiscardSeed = (rec) => (rec.use_by_basis === 'typed' ? (rec.use_by_target ? 'date' : 'none') : 'auto')
+
+// WHERE IT'S FROM, corrected in Edit (contract 4): the door's own control under the door's heading for a
+// put-up — what went INTO it, not where the jar came from.
+const EDIT_SOURCE_HEADING = 'Made with produce from'
+
+// Put-Up surfaces take 48 px targets; the shared Input and Select stop at the app-wide 44 px floor.
+const EDIT_FIELD_STYLE = Object.freeze({ minHeight: T.buttonMinHeight })
+
 // Minimal per-row editor — the fields worth changing after the fact. Sends ONE PATCH of what changed.
 function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // What the editor OPENED with, taken once. Every field below seeds from it and `dirty` compares
@@ -2330,6 +2394,9 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
     method: rec.method || 'whole_freeze',
     methodOther: rec.method_other_text || '',
     useByTarget: rec.use_by_target ? ymd(rec.use_by_target) : '',
+    discardMode: jarDiscardSeed(rec),
+    sourceKind: rec.source_kind ?? null,
+    sourceLabel: rec.source_label || '',
     notes: rec.notes || '',
   }))
   const [qtyValue, setQtyValue] = useState(seed.qtyValue)
@@ -2352,6 +2419,24 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // been a dead instruction on an existing row. Seeded through ymd(), so an untouched field is
   // byte-for-byte the stored day and is never sent (release F: only what changed is).
   const [useByTarget, setUseByTarget] = useState(seed.useByTarget)
+  // Put-Up R2a (amendment D12): the date is set by one of three chips on EVERY method. The date field
+  // above is what "From the label" shows, still seeded with the stored day. What counts as a change is
+  // the CHIP, or the date while "From the label" is the chip: tapping "From the label" over a worked-out
+  // date and saving it as it stands IS a change (the date is equal; whose date it is becomes his), and a
+  // date typed and then abandoned for another chip is not one.
+  const [discardMode, setDiscardMode] = useState(seed.discardMode)
+  const discardTouched = discardMode !== seed.discardMode || (discardMode === 'date' && useByTarget !== seed.useByTarget)
+  // "From the label" saved with no date picked: said in place, in the door's sentence, and nothing is sent.
+  const [dateRefused, setDateRefused] = useState(false)
+  // Put-Up R2a (contract 4): where the produce came from, corrected here. A put-up tied to a planting
+  // or to a pick is from the garden and says so by that tie: the server refuses any other source for it
+  // (provenance.js, judged against the STORED planting and harvest link), so such a row has no control.
+  const [sourceKind, setSourceKind] = useState(seed.sourceKind)
+  const [sourceLabel, setSourceLabel] = useState(seed.sourceLabel)
+  const sourceTouched = sourceKind !== seed.sourceKind || sourceLabel !== seed.sourceLabel
+  const sourceOffered = !rec.plant_id && !rec.harvest_log_id
+  // Other with no name: whereFromError's sentence, in place, and nothing is sent.
+  const [sourceRefused, setSourceRefused] = useState(null)
   const [notes, setNotes] = useState(seed.notes)
 
   // Put-Up release 1a (V4 §6.5 "Reload gate"). A deploy's SW reload landing mid-Edit took the typed
@@ -2365,7 +2450,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // deferred reload at the exact moment of the save. The key is per instance (useId) so two open
   // editors can never release each other's hold.
   const dirty = qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit || packageCount !== seed.packageCount || name !== seed.name ||
-    method !== seed.method || methodOther !== seed.methodOther || useByTarget !== seed.useByTarget || notes !== seed.notes
+    method !== seed.method || methodOther !== seed.methodOther || discardTouched || sourceTouched || notes !== seed.notes
   const holdReload = dirty || !!busy
   const reloadGateKey = `put-up-row:${useId()}`
   useEffect(() => {
@@ -2393,9 +2478,27 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
       if (method === 'other') patch.method_other_text = methodOther.trim() || null
     }
     if (notes !== seed.notes) patch.notes = notes.trim() || null
-    if (useByTarget !== seed.useByTarget) patch.discard_by = useByTarget || 'clear'
-    onSave(Object.keys(patch).length ? patch : null)
+    if (discardTouched) patch.discard_by = discardMode === 'date' ? useByTarget : EDIT_DISCARD_SENDS[discardMode]
+    // The one thing the date can be refused for here: "From the label" with no date picked.
+    const dateMissing = discardTouched && discardMode === 'date' && !useByTarget
+    setDateRefused(dateMissing)
+    // Where it's from travels as a PAIR, always both (the route refuses one alone); untouched, neither
+    // key is sent. The garden and "un-chosen" carry no name: the control empties it on either choice
+    // (WhereFromField), and an empty name goes as null, never as a missing key.
+    if (sourceTouched) {
+      patch.source_kind = sourceKind
+      patch.source_label = sourceLabel.trim() || null
+    }
+    const sourceMissing = sourceTouched ? whereFromError({ kind: sourceKind, label: sourceLabel }) : null
+    setSourceRefused(sourceMissing)
+    if (!dateMissing && !sourceMissing) onSave(Object.keys(patch).length ? patch : null)
   }
+
+  const useBy = USE_BY_METHODS.has(method)
+  const discardLabel = useBy ? EDIT_USE_BY_LABEL : EDIT_DISCARD_LABEL
+
+  // The echo under the amount: live, from what is typed (jarEachWords).
+  const eachWords = jarEachWords(qtyValue, qtyUnit, packageCount)
 
   return (
     <div style={{ padding: '14px 16px', borderTop: `1px solid ${P.cream}`, backgroundColor: P.cream }}>
@@ -2403,19 +2506,28 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
       <div style={{ marginBottom: T.space.sm }}>
         <Field label="Name" htmlFor={`ed-name-${rec.id}`} optional>
           <Input id={`ed-name-${rec.id}`} type="text" value={name} maxLength={120}
-            onChange={e => setName(e.target.value)} aria-label="Name" />
+            onChange={e => setName(e.target.value)} aria-label="Name" style={EDIT_FIELD_STYLE} />
+        </Field>
+      </div>
+      {/* The count sits ABOVE the amount (R2a): "How many" alone, beside a row that says "2 left", reads
+          as how many are left — the label says what it is, and the amount under it is the total of them. */}
+      <div style={{ marginBottom: T.space.sm }}>
+        <Field label={EDIT_COUNT_LABEL} htmlFor={`ed-pkg-${rec.id}`}>
+          <Input id={`ed-pkg-${rec.id}`} type="number" min={1} value={packageCount}
+            onChange={e => setPackageCount(e.target.value)} aria-label={EDIT_COUNT_LABEL} style={EDIT_FIELD_STYLE} />
         </Field>
       </div>
       <div style={{ display: 'flex', gap: T.space.sm }}>
         <div style={{ flex: 2 }}>
           <Field label="How much in all" htmlFor={`ed-qty-${rec.id}`}>
             <Input id={`ed-qty-${rec.id}`} type="text" inputMode="decimal" value={qtyValue}
-              onChange={e => setQtyValue(e.target.value)} aria-label="Quantity" />
+              onChange={e => setQtyValue(e.target.value)} aria-label="Quantity" style={EDIT_FIELD_STYLE} />
           </Field>
         </div>
         <div style={{ flex: 1 }}>
           <Field label="Unit" htmlFor={`ed-unit-${rec.id}`}>
-            <Select id={`ed-unit-${rec.id}`} value={qtyUnit} onChange={e => setQtyUnit(e.target.value)} aria-label="Unit">
+            <Select id={`ed-unit-${rec.id}`} value={qtyUnit} onChange={e => setQtyUnit(e.target.value)} aria-label="Unit"
+              style={EDIT_FIELD_STYLE}>
               {/* A no-size jar opens on the blank; a stored unit outside the list (1b's "fl oz", "cup")
                   is offered as itself rather than displayed as the first option. */}
               {!seed.qtyUnit && <option value="">—</option>}
@@ -2431,18 +2543,19 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
           </Field>
         </div>
       </div>
+      {/* Always mounted, so a screen reader hears it change; empty when there is nothing to say. */}
+      <p role="status" data-testid={`ed-each-${rec.id}`}
+        style={{ margin: eachWords ? `${T.space.xs}px 0 0` : 0, color: P.mid, fontSize: T.type.sm }}>{eachWords}</p>
       <div style={{ marginTop: T.space.sm }}>
-        <Field label="Containers" htmlFor={`ed-pkg-${rec.id}`}>
-          <Input id={`ed-pkg-${rec.id}`} type="number" min={1} value={packageCount}
-            onChange={e => setPackageCount(e.target.value)} aria-label="Number of containers" />
-        </Field>
-      </div>
-      <div style={{ marginTop: T.space.sm }}>
-        <Field label="Method" htmlFor={`ed-method-${rec.id}`}>
-          <Select id={`ed-method-${rec.id}`} value={method} onChange={e => setMethod(e.target.value)} aria-label="Method">
+        <Field label={EDIT_METHOD_LABEL} htmlFor={`ed-method-${rec.id}`}>
+          <Select id={`ed-method-${rec.id}`} value={method} onChange={e => setMethod(e.target.value)} aria-label={EDIT_METHOD_LABEL}
+            style={EDIT_FIELD_STYLE}>
+            {/* The form's groups, the door's words for each method (one method reads one way). */}
             {METHOD_GROUPS.map(g => (
               <optgroup key={g.group} label={g.group}>
-                {g.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {g.options.filter(o => o.value !== EDIT_BOUGHT_METHOD || seed.method === EDIT_BOUGHT_METHOD).map(o => (
+                  <option key={o.value} value={o.value}>{JAR_METHOD_LABELS[o.value] ?? o.label}</option>
+                ))}
               </optgroup>
             ))}
           </Select>
@@ -2455,20 +2568,51 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
           <Field label="What method?" htmlFor={`ed-method-other-${rec.id}`}>
             <Input id={`ed-method-other-${rec.id}`} type="text" value={methodOther}
               onChange={e => setMethodOther(e.target.value)} aria-label="Method description"
-              placeholder="Describe how you put it up" />
+              placeholder="Describe how you put it up" style={EDIT_FIELD_STYLE} />
           </Field>
         </div>
       )}
-      {/* Keyed on the LOCAL method state, exactly as the block above is, so switching a row to a
-          house-sourced method reveals the control in the same edit rather than after a save. Shown
-          only for those methods: every other use-by here rests on a tested figure, and offering a
-          hand-override everywhere would be a UX change to all nineteen that nothing asked for. */}
-      {HOUSE_SOURCED_SHELF_LIFE.has(method) && (
+      {/* The date, on EVERY method (R2a, amendment D12): a place cannot be re-kinded while its put-ups
+          carry dates worked out for the kind it is now, and "set those dates by hand from Edit" has to be
+          a thing a person can do for any of them. The label and the note are keyed on the LOCAL method
+          state, as the block above is, so a method changed in this edit reads right before the save. */}
+      <div style={{ marginTop: T.space.sm }}>
+        <span style={labelChrome} aria-hidden="true">{discardLabel}</span>
+        <div role="radiogroup" aria-label={discardLabel} data-testid={`ed-discard-${rec.id}`}
+          style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {EDIT_DISCARD_MODES.map(m => (
+            <SelectChip key={m} touch active={discardMode === m} role="radio" aria-checked={discardMode === m}
+              aria-pressed={undefined} data-testid={`ed-discard-${m}-${rec.id}`}
+              onClick={() => { setDiscardMode(m); setDateRefused(false) }}>{DISCARD_LABELS[m]}</SelectChip>
+          ))}
+        </div>
+        {discardMode === 'date' && (
+          <Input id={`ed-useby-${rec.id}`} type="date" value={useByTarget} aria-invalid={dateRefused || undefined}
+            onChange={e => { setUseByTarget(e.target.value); setDateRefused(false) }}
+            aria-label={useBy ? EDIT_USE_BY_DATE_LABEL : EDIT_DISCARD_DATE_LABEL}
+            style={{ ...EDIT_FIELD_STYLE, maxWidth: 220, marginTop: 8 }} />
+        )}
+        {dateRefused && (
+          <div role="alert" data-testid={`ed-discard-error-${rec.id}`}
+            style={{ marginTop: T.space.xs, color: P.terra, fontSize: T.type.sm }}>{DISCARD_DATE_TEXT}</div>
+        )}
+        {/* The row sheet's sentence, under the same condition the sheet says it: while the date is the
+            house's. It says "This date is a house estimate", which stops being true of a date he sets
+            himself and of no date at all, so it is said under "Work it out" only. */}
+        {HOUSE_SOURCED_SHELF_LIFE.has(method) && discardMode === 'auto' && (
+          <p role="note" data-testid={`ed-house-${rec.id}`}
+            style={{ margin: `${T.space.xs}px 0 0`, color: P.mid, fontSize: T.type.sm }}>{HOUSE_DETAIL_TEXT}</p>
+        )}
+      </div>
+      {sourceOffered && (
         <div style={{ marginTop: T.space.sm }}>
-          <Field label="Use-by date" htmlFor={`ed-useby-${rec.id}`} optional help={HOUSE_ESTIMATE_CLAIM}>
-            <Input id={`ed-useby-${rec.id}`} type="date" value={useByTarget}
-              onChange={e => setUseByTarget(e.target.value)} aria-label="Use-by date" />
-          </Field>
+          <WhereFromField kind={sourceKind} label={sourceLabel} heading={EDIT_SOURCE_HEADING} idPrefix={`ed-${rec.id}`}
+            invalid={!!sourceRefused}
+            onChange={({ kind, label }) => { setSourceKind(kind); setSourceLabel(label); setSourceRefused(null) }} />
+          {sourceRefused && (
+            <div role="alert" data-testid={`ed-source-error-${rec.id}`}
+              style={{ marginTop: T.space.xs, color: P.terra, fontSize: T.type.sm }}>{sourceRefused}</div>
+          )}
         </div>
       )}
       <div style={{ marginTop: T.space.sm }}>
