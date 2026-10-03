@@ -34,9 +34,14 @@ function NextTime({ lines, testid, now }) {
 }
 
 // `now` (optional): the clock dates are read against; a test pins it.
-export default function PlantingKitchen({ planting, fetch, now }) {
+// Put-Up R2a, lane K: the put-up section hosts the "Put something up" door. A save or an Undo there bumps
+// `reload`, so this read runs again too — a "Fresh, as picked" save is a pantry item and shows only under
+// Kept fresh, which is THIS read, not the put-up list's. A re-read keeps what is shown until it answers.
+// `onSheetOpenChange(open)` (optional, the page's) is handed down to the door's host as it is.
+export default function PlantingKitchen({ planting, fetch, now, onSheetOpenChange }) {
   const [data, setData] = useState(null)
   const [shown, setShown] = useState([])
+  const [reload, setReload] = useState(0)
   const nowDate = useMemo(() => (now != null ? new Date(now) : new Date()), [now])
 
   useEffect(() => {
@@ -46,7 +51,7 @@ export default function PlantingKitchen({ planting, fetch, now }) {
       .then(r => { if (alive) setData(r && Array.isArray(r.batches) ? r : null) })
       .catch(() => { if (alive) setData(null) })
     return () => { alive = false }
-  }, [planting, fetch])
+  }, [planting, fetch, reload])
 
   const batches = data?.batches ?? []
   const fresh = data?.kept_fresh ?? []
@@ -57,6 +62,7 @@ export default function PlantingKitchen({ planting, fetch, now }) {
   return (
     <div data-testid="planting-kitchen">
       <PutUpFromPlanting planting={planting} fetch={fetch} now={now} onRows={rows => setShown(rows.map(r => r.id))}
+        onStockChanged={() => setReload(n => n + 1)} onSheetOpenChange={onSheetOpenChange}
         renderExtra={r => {
           const b = byJar.get(r.id)
           return (

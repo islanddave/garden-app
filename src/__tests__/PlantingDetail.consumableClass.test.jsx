@@ -73,7 +73,7 @@ describe('PlantingDetail — harvest sections are gated on the eaten/looked-at a
     renderWith(planting('pepper', 'Megatron Jalapeno'))
     expect(await screen.findByText('Harvested')).toBeTruthy()
     expect(screen.getByText('Put up')).toBeTruthy()
-    expect(await screen.findByText(/log a put-up from this planting/i)).toBeTruthy()
+    expect(await screen.findByText(/put something up from this planting/i)).toBeTruthy()
     expect(putUpFetched()).toBe(true)
   })
 
@@ -86,7 +86,7 @@ describe('PlantingDetail — harvest sections are gated on the eaten/looked-at a
     expect(screen.queryByText('Put up')).toBeNull()
   })
 
-  it('hides the "log a put-up from this planting" affordance on an ornamental', async () => {
+  it('hides the "put something up from this planting" affordance on an ornamental', async () => {
     // The sharper half of the complaint: Harvested merely said nothing, Put up ASKED.
     renderWith(planting('geranium', 'Scented Geranium'))
     expect((await screen.findAllByText('Scented Geranium')).length).toBeGreaterThan(0)
@@ -95,7 +95,7 @@ describe('PlantingDetail — harvest sections are gated on the eaten/looked-at a
     // proved that version of this test could not fail. The section's effect fires on mount, so an
     // absent whats-put-up call is positive evidence the section was never rendered at all.
     expect(putUpFetched()).toBe(false)
-    await waitFor(() => expect(screen.queryByText(/log a put-up from this planting/i)).toBeNull())
+    await waitFor(() => expect(screen.queryByText(/put something up from this planting/i)).toBeNull())
   })
 
   it('DEFAULTS TO SHOWN when the crop type is unknown', async () => {

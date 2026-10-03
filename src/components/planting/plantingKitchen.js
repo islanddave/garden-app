@@ -1,5 +1,6 @@
 // src/components/planting/plantingKitchen.js
-// B′ release 3 — the planting page's kitchen lists (V4 §2.5 "Planting page"), the PURE half.
+// B′ release 3 — the planting page's kitchen lists (V4 §2.5 "Planting page"), the PURE half; and (Put-Up R2a)
+// the What its "Put something up" door opens with.
 // Reads GET /api/kitchen-batches?plant_id= → { batches, kept_fresh }. Everything here is a LIST — never a
 // sum, a count headline or a percentage (V4 §2.5; the reward-UX rule: ambient recognition only).
 //
@@ -26,6 +27,23 @@ export const batchHref = (id) => `/put-up?batch=${encodeURIComponent(id)}`
 // Back can say "← <planting name>" and go back there (putup/origin.js). Built from nothing — this page
 // never spreads its own route state into /put-up. null when the planting has no name to say.
 export const batchLinkState = (planting) => withFrom(null, { label: planting?.name })
+
+// Put-Up R2a, lane K — the What the planting page's "Put something up" door opens with: THIS planting, so a
+// save records its plant_id, crop and variety exactly as the old Log form's prefill did. The name is the
+// planting's own, else its variety's (plantingWaveLabel's fallback, forms/PlantingSelect.jsx, without its
+// "Planting" word, which would be saved as the put-up's name). A blank name is never seeded: the door would
+// refuse it at Save. null when there is no id or no name to say — then the page offers no door at all.
+export function doorWhatOf(planting) {
+  if (planting?.id == null) return null
+  const name = String(planting.name ?? '').trim() || String(planting.variety_ref?.name ?? '').trim()
+  if (!name) return null
+  const what = { source: 'planting', name, plant_id: planting.id }
+  const crop = planting.variety_ref?.crop_type_slug
+  const variety = planting.variety_id ?? planting.variety_ref?.id
+  if (crop) what.crop_type_slug = crop
+  if (variety) what.variety_id = variety
+  return what
+}
 
 // jar id → the single-planting batch it came from.
 export function batchByJar(batches) {

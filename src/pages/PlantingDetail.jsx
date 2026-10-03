@@ -215,6 +215,7 @@ export default function PlantingDetail() {
   const [tab, setTab] = useState('basics')
   const [lightboxIndex, setLightboxIndex] = useState(null)  // null = closed
   const [lbFrozen, setLbFrozen] = useState(null)            // slide snapshot at open (regression I4)
+  const [kitchenSheetOpen, setKitchenSheetOpen] = useState(false)  // Put-Up R2a: the Put up section's door is open
 
   // V4-BACKNAV-001 Slice P — the system Back closes the Details fly-up instead of walking off this
   // page. Scoped to Details only: the Lightbox on this same page is deliberately NOT wired yet (it
@@ -475,7 +476,7 @@ export default function PlantingDetail() {
   const pager = resolvePager(plantingId)
   const prevHref = pager?.prevHref
   const nextHref = pager?.nextHref
-  const pagerActive = !!pager && lightboxIndex == null && !detailsOpen && !notFound && !error
+  const pagerActive = !!pager && lightboxIndex == null && !detailsOpen && !notFound && !error && !kitchenSheetOpen
 
   // Keyboard fallback: ArrowLeft/ArrowRight page prev/next. Suppressed while a modal (Lightbox /
   // Details sheet) is open, or focus is in an editable / radiogroup control, so it never hijacks
@@ -1155,7 +1156,7 @@ export default function PlantingDetail() {
       <SectionHeader>Put up</SectionHeader>
       <div style={cardStyle}>
         {/* B′ release 3: the shipped put-up list, plus kept fresh and the batches that used it. */}
-        <PlantingKitchen planting={pl} fetch={fetch} />
+        <PlantingKitchen planting={pl} fetch={fetch} onSheetOpenChange={setKitchenSheetOpen} />
       </div>
       </>)}
 

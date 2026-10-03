@@ -1,7 +1,8 @@
 // V4-PUTUPLINK-001 — the read end of the spine on the planting-detail page.
 // Covers: the plant_id-scoped fetch, group flattening (storage label rides down onto each row),
-// the never-sum rule (L5), the use-soon row, and the empty state's prefilled deep-link — which is the
-// only action this read-only section offers.
+// the never-sum rule (L5), the use-soon row, and the empty state's door — which is the only action this
+// read-only section offers (Put-Up R2a, lane K: a button that opens the door on this page, seeded with the
+// planting; it used to be a deep-link to the Log form with the planting as prefill).
 //
 // Put-Up UX pass R1 (lane D, F21 / D13). The section is A LIST AND ONLY A LIST: the headline that counted
 // containers, listed units and totalled put-ups is gone, and with it the "N use soon" pill. Each row says
@@ -19,6 +20,7 @@ vi.mock('../components/PutUpPhotoThumb.jsx', () => ({
   default: ({ photoId, alt }) => (photoId ? <img alt={alt} data-testid="putup-thumb" /> : null),
 }))
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
+import { doorWhatOf } from '../components/planting/plantingKitchen.js'
 
 const PLANTING = {
   id: 'pl-w2',
@@ -109,12 +111,14 @@ describe('PutUpFromPlanting', () => {
     expect(details()).toEqual(['Pantry · 3 left · put up Jul 18, 2026', 'Chest Freezer 1 · 3 left · put up Jul 10, 2026'])
   })
 
-  it('empty state offers a deep-link prefilled with the planting, crop and variety', async () => {
+  it('empty state offers the door seeded with the planting, crop and variety — a button, never a link', async () => {
     renderSection(() => Promise.resolve({ group_by: 'storage', groups: [] }))
-    const link = await screen.findByRole('link', { name: /Log a put-up from this planting/i })
-    expect(link.getAttribute('href')).toBe('/put-up')
-    // The prefill travels in router state, not the href — assert the rendered intent is present.
-    expect(screen.getByText(/Nothing from this planting is in the Pantry yet/)).toBeTruthy()
+    const button = await screen.findByRole('button', { name: /Put something up from this planting/i })
+    expect([button.tagName, button.getAttribute('href'), button.getAttribute('type')]).toEqual(['BUTTON', null, 'button'])
+    expect(screen.queryByRole('link')).toBeNull()
+    // The planting rides into the door as its What (the door is opened in place; nothing travels in router state).
+    expect(doorWhatOf(PLANTING)).toEqual({ source: 'planting', name: 'Dark Green Zucchini', plant_id: 'pl-w2', crop_type_slug: 'squash', variety_id: 'var-dgz' })
+    expect(screen.getByText(/Nothing put up from this planting yet\./)).toBeTruthy()
   })
 
   it('degrades to a quiet message when the read fails — never blanks the page', async () => {
@@ -125,7 +129,7 @@ describe('PutUpFromPlanting', () => {
 
   it('handles a group payload with no records array', async () => {
     renderSection(() => Promise.resolve({ groups: [{ group_key: 'x', label: 'X' }] }))
-    expect(await screen.findByText(/Nothing from this planting is in the Pantry yet/)).toBeTruthy()
+    expect(await screen.findByText(/Nothing put up from this planting yet\./)).toBeTruthy()
   })
 })
 
@@ -188,10 +192,10 @@ describe('PutUpFromPlanting — consumed put-ups are fate, not stock', () => {
     renderSection(() => Promise.resolve(allGone))
     // NOT the "nothing put up yet" empty state — that would erase a real record.
     expect(await rowsLoaded()).toHaveLength(1)
-    expect(screen.queryByText(/Nothing from this planting is in the Pantry yet/)).toBeNull()
+    expect(screen.queryByText(/Nothing put up from this planting yet\./)).toBeNull()
     expect(screen.getByText(/all used/)).toBeTruthy()
     // …and it still offers the one action the section has.
-    expect(screen.getByRole('link', { name: 'Log another from this planting' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Put up more from this planting' })).toBeTruthy()
   })
 
   // NULL means the count was never tracked, not that the jar is gone. The endpoint's own default

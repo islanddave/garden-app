@@ -7,7 +7,8 @@
 //   • a soon or past row's sentence is tinted (soonTint.js) and no other row's is; the words do not change;
 //   • every row still there says how many are left — grams for a weighed bag, as the Pantry does;
 //   • THE SECTION'S OWN READ IS KEPT: it asks for the consumed rows, and a finished jar is listed;
-//   • the two links to the Log form: 48 px, their words, their destination and their prefill unchanged;
+//   • the two buttons that open the door HERE (Put-Up R2a, lane K): 48 px, their words, no navigation, and
+//     the planting, its crop and its variety as the door's What;
 //   • a link to a batch is 48 px and carries where it came from — withFrom(null, { label: <planting name> }) —
 //     and nothing of this page's own route state; stored "Next time (…)" lines are read through nextTimeWords;
 //   • no banned word, no total, nothing that counts.
@@ -19,7 +20,7 @@
 //   "N left" only where it differs from the package count   -> "every row still there says how many are left"
 //   the origin dropped from a batch link                    -> "a batch link carries the planting as where it came from"
 //   a stored Next-time line printed raw                     -> "a stored Next time line is read, not printed raw"
-//   the links back at 44 px                                 -> "the two links … 48 px"
+//   the buttons back at 44 px, or the old words             -> "the two buttons are 48 px tall and say their words"
 // CI lane: `npm test` plus the TZ re-run. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, afterEach } from 'vitest'
@@ -28,6 +29,13 @@ import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
 
 vi.mock('../components/PutUpPhotoThumb.jsx', () => ({
   default: ({ photoId, alt }) => (photoId ? <img alt={alt} data-testid="putup-thumb" /> : null),
+}))
+// Put-Up R2a, lane K: the section's buttons open the Pantry's door on this page. A stand-in here, showing what
+// it was opened with; the REAL door on this host is PutUpR2K.host.test.jsx.
+vi.mock('../components/pantry/PutSomethingUpSheet.jsx', () => ({
+  default: ({ open, initialWhat, stockRows, onStartBatchInstead }) => (open
+    ? <div role="dialog" data-testid="door-stub">{JSON.stringify({ initialWhat, stockRows, startBatch: typeof onStartBatchInstead })}</div>
+    : null),
 }))
 
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
@@ -226,7 +234,7 @@ describe('the put-up rows on the planting page', () => {
   it('a planting whose only put-up is finished shows it — not the "nothing yet" line', async () => {
     mountSection([GONE])
     expect(await rows()).toHaveLength(1)
-    expect(screen.queryByText(/Nothing from this planting is in the Pantry yet/)).toBeNull()
+    expect(screen.queryByText(/Nothing put up from this planting yet\./)).toBeNull()
     expect(within(GONE.label, 'putup-from-planting-detail').textContent).toBe('Chest Freezer 2 · all used · put up Jun 1, 2026')
   })
 
@@ -250,32 +258,36 @@ describe('the put-up rows on the planting page', () => {
   })
 })
 
-describe('the two links to the Log form — 48 px, their words and where they go unchanged', () => {
-  const PREFILL = { prefill: { plant_id: 'pl-1', crop_type_slug: 'pepper', variety_id: 'var-rc' } }
+describe('the two buttons that open the door here — 48 px, their words, and no navigation', () => {
+  const WHAT = { source: 'planting', name: 'Ristra Cayenne', plant_id: 'pl-1', crop_type_slug: 'pepper', variety_id: 'var-rc' }
+  const door = () => JSON.parse(screen.getByTestId('door-stub').textContent)
 
-  it('the two links are 48 px tall and keep their words', async () => {
+  it('the two buttons are 48 px tall and say their words', async () => {
     mountSection([])
-    const empty = await screen.findByRole('link', { name: 'Log a put-up from this planting' })
-    expect([empty.style.minHeight, empty.style.display, empty.getAttribute('href')]).toEqual(['48px', 'inline-flex', '/put-up'])
+    const empty = await screen.findByRole('button', { name: 'Put something up from this planting' })
+    expect([empty.style.minHeight, empty.style.display, empty.tagName, empty.getAttribute('href')]).toEqual(['48px', 'inline-flex', 'BUTTON', null])
     cleanup()
     mountSection()
     await rows()
-    const more = screen.getByRole('link', { name: 'Log another from this planting' })
-    expect([more.style.minHeight, more.style.display, more.getAttribute('href')]).toEqual(['48px', 'inline-flex', '/put-up'])
+    const more = screen.getByRole('button', { name: 'Put up more from this planting' })
+    expect([more.style.minHeight, more.style.display, more.tagName, more.getAttribute('href')]).toEqual(['48px', 'inline-flex', 'BUTTON', null])
     expect(more.style.minHeight).toBe(`${T.buttonMinHeight}px`)
+    expect(screen.queryAllByRole('link')).toHaveLength(0)
   })
 
-  it('"Log a put-up from this planting" opens Put-Up with this planting, its crop and its variety as prefill', async () => {
+  it('"Put something up from this planting" opens the door here, with this planting, its crop and its variety as its What', async () => {
     mountSection([])
-    fireEvent.click(await screen.findByRole('link', { name: 'Log a put-up from this planting' }))
-    expect(landed()).toEqual({ path: '/put-up', state: PREFILL })
+    fireEvent.click(await screen.findByRole('button', { name: 'Put something up from this planting' }))
+    expect(door()).toEqual({ initialWhat: WHAT, stockRows: null, startBatch: 'undefined' })
+    expect(screen.queryByTestId('landed')).toBeNull()                   // nothing navigated
   })
 
-  it('"Log another from this planting" carries the same prefill', async () => {
+  it('"Put up more from this planting" opens the same door with the same What', async () => {
     mountSection()
     await rows()
-    fireEvent.click(screen.getByRole('link', { name: 'Log another from this planting' }))
-    expect(landed()).toEqual({ path: '/put-up', state: PREFILL })
+    fireEvent.click(screen.getByRole('button', { name: 'Put up more from this planting' }))
+    expect(door()).toEqual({ initialWhat: WHAT, stockRows: null, startBatch: 'undefined' })
+    expect(screen.queryByTestId('landed')).toBeNull()
   })
 })
 
@@ -376,7 +388,7 @@ describe('words — the planting section counts nothing and says nothing banned'
 
   it('the empty section', async () => {
     mountSection([])
-    await screen.findByRole('link', { name: 'Log a put-up from this planting' })
+    await screen.findByRole('button', { name: 'Put something up from this planting' })
     expect(document.body.textContent).not.toMatch(BANNED)
   })
 })
