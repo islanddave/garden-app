@@ -410,7 +410,7 @@ describe('a Walk group, its options open', () => {
     expect(screen.getByTestId('putup-walk-group').contains(screen.getByTestId('putup-walk-exit'))).toBe(false)
     expect(screen.getByTestId('putup-walk-band').contains(screen.getByTestId('putup-walk-exit'))).toBe(true)
     expect(screen.getByTestId('putup-walk-exit').textContent.trim()).toBe('End the walk')
-    expectClean(screen.getByTestId('putup-walk-band').textContent, 'Walk band')
+    expectClean(wordsOf(screen.getByTestId('putup-walk-band')), 'Walk band')
   })
 })
 
