@@ -11,7 +11,11 @@
 // Undo lands (nothing is left to lose), and whenever the page is hidden — a line has no timer, so a phone
 // put down with it showing must not park an update for good; back on screen, it holds again. Made HERE,
 // not in a host, so every host that draws the line has it.
-import React, { useEffect, useId, useState } from 'react'
+// TAKEN IN THE COMMIT (a layout effect, not a passive one): the host unmounts the door and mounts this line
+// in ONE commit, and React runs every passive cleanup before any passive mount — the door let go first, the
+// gate was empty for a moment, and a reload deferred behind the door fired before the line held anything.
+// A layout effect runs before the door's passive cleanup, so the hold passes from one to the other with no gap.
+import React, { useLayoutEffect, useId, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import { deletePantryItem } from '../../lib/pantryApi.js'
@@ -25,7 +29,7 @@ export default function CompletionLine({ completion, fetch, onDone, onChanged, o
   const [err, setErr] = useState(null)
   const [undone, setUndone] = useState(false)
   const gateKey = `pantry-completion:${useId()}`
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (undone) return undefined
     // Set from the event itself, not through a render: a hidden page may not paint for a long time.
     const sync = () => setReloadBlocked(gateKey, document.visibilityState !== 'hidden')
