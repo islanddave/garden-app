@@ -2370,7 +2370,7 @@ const jarEachWords = (amountText, unit, countText) => {
 const EDIT_DISCARD_LABEL = 'Discard by'
 const EDIT_USE_BY_LABEL = 'Use by'
 const EDIT_DISCARD_DATE_LABEL = 'Discard date from the label'
-const EDIT_USE_BY_DATE_LABEL = 'Use-by date from the label'
+const EDIT_USE_BY_DATE_LABEL = 'Use by date from the label'
 const EDIT_DISCARD_MODES = Object.freeze(['auto', 'date', 'none'])
 const EDIT_DISCARD_SENDS = Object.freeze({ auto: 'clear', none: 'none' })
 // Which chip a stored row opens on, by the server's own rule for what it stores (a date or 'none' from a

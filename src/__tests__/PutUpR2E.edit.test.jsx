@@ -275,7 +275,7 @@ describe('Discard by, on every method, set by hand', () => {
       fireEvent.change(screen.getByRole('combobox', { name: 'How was it put up?' }), { target: { value: m } })
       read[m] = [...groupSeenAndSaid(), dateField().getAttribute('aria-label')]
     }
-    const USE_BY = ['Use by', 'Use by', 'Use-by date from the label']
+    const USE_BY = ['Use by', 'Use by', 'Use by date from the label']
     const DISCARD = ['Discard by', 'Discard by', 'Discard date from the label']
     expect(read).toEqual(Object.fromEntries(METHODS.map(m => [m, m === 'cure_store' || m === 'cold_store' ? USE_BY : DISCARD])))
     cleanup()
