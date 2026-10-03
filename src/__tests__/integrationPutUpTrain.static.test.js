@@ -29,7 +29,8 @@ const TRAIN = [
   // R2a: pantry_item gains an amount and where-from. Its 0a names v5-pantry-001's stamp, so it lists after it.
   'v5-pantryitemamount-001',
 ]
-// Directories that must already exist on this branch (the later three are skipped until they land).
+// Directories that must exist on this branch, named so the checks below cannot pass on an empty read. The four
+// later train directories have landed too, and every check below reads each listed directory that exists.
 const LANDED = ['v5-putupmake-001', 'v5-fermentpath-001']
 
 const WORKFLOW = read('.github/workflows/integration-test.yml')
