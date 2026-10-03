@@ -24,7 +24,7 @@
 //
 // ⚠ Record, never assess: pH is taken as typed through the shared PhReadingField and nothing reads it
 // back into a decision; no readiness, no countdown, no verdict beside a date.
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import { setReloadBlocked } from '../../lib/reloadGate.js'
@@ -56,6 +56,26 @@ const FOOTER_PX = 132
 export { mintKey }
 
 const EMPTY_SITTING = { lines: [], madeG: '', mashG: '', nextTime: '' }
+
+// What the preview says when Raw or In oil is what took the date away (Put-Up R2a, amendment D7; ruling
+// Df-3 = F-3). THE ONE COPY on this surface: the door (pantry/) holds its own and a test binds the two, so
+// nothing here imports across the putup → pantry line. The stored row keeps jarWords' own sentence.
+export const RAW_OIL_NO_DATE_WORDS = 'no date — no general figure for raw or in-oil food. Set your own under Discard by.'
+
+// "Raw or In oil removed the date": the row's worked-out preview has no date, the row is marked Raw or In
+// oil, and the same row with neither marked WOULD have one. Decided from the row's own state and from what
+// previewDiscard answers, nothing else — so every other reason for no date (no general figure for that food
+// in that place, cured produce with an estimated date, a dried food that still bends) keeps its own words,
+// with or without the marks.
+function rawOrOilRemovedDate({ row, preview, method, when, now }) {
+  if (!preview || preview.basis !== 'none' || !(row?.isRaw || row?.inOil)) return false
+  const unmarked = previewDiscard({ row: { ...row, isRaw: false, inOil: false }, method, when, now })
+  return !!unmarked && unmarked.date != null
+}
+
+// The embedded adders, by name: one per row ("Added at the end") and the sitting's ("…to every jar").
+const rowAdder = (i) => `putup-row-${i}-added`
+const SITTING_ADDER = 'putup-sitting-added'
 
 function isPlace(p) {
   return p === null || (!!p && typeof p === 'object' && typeof p.label === 'string' && typeof p.key === 'string')
@@ -139,15 +159,23 @@ function ToggleChips({ label, options, value, onChange, disabled, idPrefix, hint
 // typed into the adder and not added is not a line, and neither commit would send it. The adder reports
 // that name (`onPending`); a commit that stopped for it bumps `stop`, which puts the cursor back in the
 // adder's name field under one line saying why.
+// THE NAME OUTLIVES THE ADDER (Put-Up R2a, ruling h): this block unmounts with its disclosure ("Less about
+// this row", the sitting's "Less"), and the name typed and not added stays in the sheet's state (`pending`).
+// Mounted again over a held name, the adder is open at once with that name in its field — hidden while the
+// disclosure was closed, never dropped. Nothing is kept mounted and hidden: a closed disclosure adds no
+// control, no required input and no testid.
 // Room kept above the guard's line when it is scrolled into view: an open row has a sticky one-line header
 // at the top of the sheet's scroller, and a line brought to the very top sat under it (seen on the 426 px
 // render at both heights: the one sentence saying why nothing saved was covered).
 const STOP_LINE_CLEAR_PX = 40
 function AddedLines({ lines, onChange, disabled, idPrefix, label, batchLines, excludeJarIds, guard }) {
-  const [open, setOpen] = useState(false)
+  const { pending = null, stop = 0, onPending, footerRef } = guard ?? {}
+  // A held name is an open adder: the name is what was on screen when the disclosure closed.
+  const [open, setOpen] = useState(() => !!pending)
+  // The name the adder opens holding, as it stood when this block mounted (the adder reads it once).
+  const [heldName] = useState(() => pending ?? '')
   const boxRef = useRef(null)
   const stopLineRef = useRef(null)
-  const { pending = null, stop = 0, onPending, footerRef } = guard ?? {}
   // The stop, made visible. It runs once the line above the adder is on the page: the cursor goes to the
   // adder's name field (the first input here), the line is brought into view when the field landed at the
   // very top, and the field is kept clear of the pinned footer when it landed at the bottom.
@@ -159,6 +187,8 @@ function AddedLines({ lines, onChange, disabled, idPrefix, label, batchLines, ex
     stopLineRef.current?.scrollIntoView?.({ block: 'nearest' })
     scrollClearOfFooter(name, footerRef?.current)
   }, [stop, footerRef])
+  // The line landed: nothing is held any more — said here, not left to the adder's going away.
+  const add = async (body) => { onChange([...lines, body]); onPending?.(null); setOpen(false); return true }
   return (
     <div ref={boxRef} data-testid={`${idPrefix}-lines`} style={{ marginBottom: T.space.sm }}>
       <span style={labelChrome} aria-hidden="true">{label}<span style={optionalMarkChrome}>optional</span></span>
@@ -188,8 +218,7 @@ function AddedLines({ lines, onChange, disabled, idPrefix, label, batchLines, ex
           )}
           <LineAdder lines={batchLines} idPrefix={`${idPrefix}-add`} disabled={disabled} forms={['fresh', 'cooked']}
             label="What was added?" addLabel="Add it" pinnable={false} excludeJarIds={excludeJarIds} pantryHits={false}
-            onPendingChange={onPending}
-            onAdd={async (body) => { onChange([...lines, body]); setOpen(false); return true }} />
+            onPendingChange={onPending} initialName={heldName} onAdd={add} />
         </>
       ) : (
         <button type="button" disabled={disabled} data-testid={`${idPrefix}-open`} onClick={() => setOpen(true)}
@@ -347,10 +376,14 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
               style={{ ...inputChrome(false), width: 180, scrollMarginBottom: FOOTER_PX }} />
             <div style={{ marginTop: 4, color: P.light, fontSize: '0.74rem' }}>Or work it out from the put-up once it is saved.</div>
           </div>
-          {/* The chips' words are the one set every surface that asks this uses (putItUp DISCARD_LABELS). */}
+          {/* The chips' words are the one set every surface that asks this uses (putItUp DISCARD_LABELS).
+              THREE chips, as the door and the Walk show (Put-Up R2a, I3): "Work it out" is the answer an
+              untouched row already gives, so it is on screen and pressed at open instead of being the
+              absence of the other two. A pressed chip tapped again lets go, back to "Work it out". The body
+              is unchanged: `auto` sends no date key. */}
           <ToggleChips label="Discard by" disabled={disabled} idPrefix={`putup-row-${index}-discard`}
-            options={[{ value: 'date', label: DISCARD_LABELS.date }, { value: 'none', label: DISCARD_LABELS.none }]}
-            value={row.discard.mode === 'auto' ? null : row.discard.mode}
+            options={['auto', 'date', 'none'].map(mode => ({ value: mode, label: DISCARD_LABELS[mode] }))}
+            value={row.discard.mode}
             onChange={v => set({ discard: { mode: v ?? 'auto', date: v === 'date' ? row.discard.date : '' } })} />
           {row.discard.mode === 'date' && (
             // `-discard-day`, not `-discard-date`: that id is already the "From the label" chip's (ToggleChips
@@ -466,8 +499,13 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
   // The preview counts from the day the server will store (Not sure's anchor), never from the wire value.
   const when = whenRes?.anchor ?? whenRes?.when ?? null
   const shownRows = effectiveRows(rows)
-  const previews = shownRows.map(r => (method ? recipePreview({ row: r, when, recipe: batch.recipe, now: nowDate }) : null)
-    ?? previewDiscard({ row: r, method, when, now: nowDate }))
+  const previews = shownRows.map(r => {
+    const fromRecipe = method ? recipePreview({ row: r, when, recipe: batch.recipe, now: nowDate }) : null
+    if (fromRecipe) return fromRecipe
+    const worked = previewDiscard({ row: r, method, when, now: nowDate })
+    // The row's own preview and the grouped one both read `words`, so the sentence is said in both.
+    return rawOrOilRemovedDate({ row: r, preview: worked, method, when, now: nowDate }) ? { ...worked, words: RAW_OIL_NO_DATE_WORDS } : worked
+  })
   const previewGroups = groupPreviews(previews)
   const { chips: methodChips, more: hasMore } = methodChipsForKind(batch.kind)
   const shownMethods = moreMethods ? ALL_PUT_UP_METHODS : methodChips
@@ -476,28 +514,60 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
 
   const updateRow = (i, next) => setRows(rs => rs.map((r, j) => (j === i ? next : r)))
 
-  // An adder reports null when its name is cleared, when its Add landed, and when it goes away (Put it
-  // up's adder unmounts after each Add, and with its row's disclosure): the stop it caused ends with it.
+  // Which adders are on screen, as of the last commit: a row's while its details are open, the sitting's
+  // while its More is. Set in the layout phase, so it is already true when an adder that just went away
+  // makes its last report (a passive cleanup, which runs after it).
+  const shownRef = useRef({ row: null, sitting: false })
+  useLayoutEffect(() => { shownRef.current = { row: openRow, sitting: sittingOpen } })
+  // An adder reports null when its name is cleared, when its Add landed, and when it goes away. The first
+  // two end the name. The third does only while the adder's disclosure is still open (Put it up's adder
+  // unmounts after each Add): an adder that went away WITH its disclosure — "Less about this row", the
+  // sitting's "Less", another row opened — leaves its name held here (ruling h: hidden, never dropped), so
+  // a commit still stops for it and the adder opens holding it again. The stop it caused ends either way.
   const reportPending = useCallback((id, text) => {
-    setPendings(p => {
-      if ((p[id] ?? null) === (text ?? null)) return p
-      const next = { ...p }
-      if (text) next[id] = text; else delete next[id]
-      return next
-    })
+    const shown = id === SITTING_ADDER ? shownRef.current.sitting : id === rowAdder(shownRef.current.row)
+    if (text || shown) {
+      setPendings(p => {
+        if ((p[id] ?? null) === (text ?? null)) return p
+        const next = { ...p }
+        if (text) next[id] = text; else delete next[id]
+        return next
+      })
+    }
     if (!text) setStop(s => (s?.id === id ? null : s))
   }, [])
   const adderGuard = (id) => ({
     pending: pendings[id] ?? null, stop: stop?.id === id ? stop.n : 0, onPending: (text) => reportPending(id, text), footerRef,
   })
+  // A removed row takes the name its adder held with it, and the rows below it keep theirs: the adders are
+  // named by row number, so each held name moves up with its row.
+  const dropRowAdder = (i) => {
+    setPendings(p => {
+      const next = {}
+      for (const [id, text] of Object.entries(p)) {
+        const m = /^putup-row-(\d+)-added$/.exec(id)
+        if (!m) next[id] = text
+        else if (Number(m[1]) !== i) next[rowAdder(Number(m[1]) > i ? Number(m[1]) - 1 : Number(m[1]))] = text
+      }
+      return next
+    })
+    setStop(null)
+  }
   // The first adder, top to bottom, still holding a name: the rows in order, then the sitting's.
-  const heldAdder = [...rows.map((_, i) => `putup-row-${i}-added`), 'putup-sitting-added'].find(id => pendings[id]) ?? null
+  const heldRow = rows.findIndex((_, i) => pendings[rowAdder(i)])
+  const heldAdder = heldRow >= 0 ? rowAdder(heldRow) : (pendings[SITTING_ADDER] ? SITTING_ADDER : null)
 
   const save = useCallback(async (finish) => {
     if (writingRef.current) return
     // A name still sitting in an adder is not a line yet, and this body would leave it out. Both commits
-    // stop before anything is sent; the adder takes the cursor back, under the line that says why.
-    if (heldAdder) { setStop(s => ({ id: heldAdder, n: (s?.n ?? 0) + 1 })); setErr(null); return }
+    // stop before anything is sent; the adder takes the cursor back, under the line that says why. The name
+    // may be behind a closed disclosure (ruling h): that disclosure is opened, so the line and the field
+    // are on screen.
+    if (heldAdder) {
+      setStop(s => ({ id: heldAdder, n: (s?.n ?? 0) + 1 })); setErr(null)
+      if (heldRow >= 0) setOpenRow(heldRow); else setSittingOpen(true)
+      return
+    }
     const w = chip ? resolveWhen({ chip, estimate, pickedDate, batch, now: nowDate }) : null
     if (!w || w.error) { setErr(w?.error ?? 'When was it put up? Pick one — or Not sure.'); return }
     const useKey = key || mintKey()
@@ -532,7 +602,7 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
       const r = describeRefusal(e)
       setErr(r ? r.text : "Couldn't put it up — try again. Everything you entered is still here.")
     }
-  }, [batch, chip, draftKey, estimate, fetch, heldAdder, key, method, nowDate, onClose, onDone, openRow, pickedDate, rows, sitting])
+  }, [batch, chip, draftKey, estimate, fetch, heldAdder, heldRow, key, method, nowDate, onClose, onDone, openRow, pickedDate, rows, sitting])
 
   const estimates = estimateChips(nowDate)
 
@@ -599,10 +669,10 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
         {rows.map((r, i) => (
           <RowEditorBlock key={i} row={r} shown={shownRows[i]} index={i} rows={rows} method={method} batch={batch} places={chips}
             containers={containers} open={openRow === i} disabled={saving} previews={previews}
-            batchLines={batchLines} excludeJarIds={drawnJarIds(rows, sitting.lines)} guard={adderGuard(`putup-row-${i}-added`)}
+            batchLines={batchLines} excludeJarIds={drawnJarIds(rows, sitting.lines)} guard={adderGuard(rowAdder(i))}
             onToggle={() => setOpenRow(o => (o === i ? null : i))}
             onChange={next => { updateRow(i, next); setErr(null) }}
-            onRemove={() => { setRows(rs => rs.filter((_, j) => j !== i)); setOpenRow(null) }}
+            onRemove={() => { setRows(rs => rs.filter((_, j) => j !== i)); setOpenRow(null); dropRowAdder(i) }}
             onKeepDrying={onClose} />
         ))}
         <button type="button" style={quietLink} disabled={saving} data-testid="putup-row-add"
@@ -617,8 +687,8 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
           </button>
           {sittingOpen && (
             <div data-testid="putup-sitting" style={{ marginTop: 6 }}>
-              <AddedLines label="Added at the end to every jar" lines={sitting.lines} disabled={saving} idPrefix="putup-sitting-added"
-                batchLines={batchLines} excludeJarIds={drawnJarIds(rows, sitting.lines)} guard={adderGuard('putup-sitting-added')}
+              <AddedLines label="Added at the end to every jar" lines={sitting.lines} disabled={saving} idPrefix={SITTING_ADDER}
+                batchLines={batchLines} excludeJarIds={drawnJarIds(rows, sitting.lines)} guard={adderGuard(SITTING_ADDER)}
                 onChange={lines => setSitting(s => ({ ...s, lines }))} />
               {/* "Mash in ___ g" beside "Made ___ g in all" (Ferment; 06 §4 item 7). */}
               <div style={{ display: 'flex', gap: T.space.md, flexWrap: 'wrap' }}>

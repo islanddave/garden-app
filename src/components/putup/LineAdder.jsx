@@ -23,6 +23,12 @@
 // sheet with its own Save (How it was made, Put it up) reads it so a typed line is never dropped by that
 // Save without a word. Reported on every change, and null again when the adder goes away.
 //
+// `initialName` (optional; Put-Up R2a, ruling h): the text the name field opens holding. A host that
+// unmounts this adder over a name not added yet (Put it up, when a row's details close) hands that name
+// back when it mounts the adder again, so the name is hidden and never dropped. Read ONCE, at mount;
+// absent, the field opens empty as it always did. It moves no focus and picks no match: the name is typed
+// text again, reported at once and searched as typed.
+//
 // B′ release 3 (V4 §2.5a): the search answers ONE ranked list (`hits`) over plantings (live, then
 // ended), what we have (put-ups and pantry items) and crops/varieties; a pantry item becomes a 'pantry'
 // line, a crop or variety a named line carrying its crop, and a typed name carries the resolved crop.
@@ -87,12 +93,12 @@ function Stepper({ value, onChange, disabled, name, idPrefix }) {
 export default function LineAdder({
   lines = [], onAdd, idPrefix = 'line-add', disabled = false, forms = KITCHEN_FORMS, preset = null,
   presetSeq = 0, label = 'What went in?', addLabel = 'Add', onStarted, pinnable = true, excludeJarIds = [],
-  pantryHits = true, onPendingChange,
+  pantryHits = true, onPendingChange, initialName = '',
 }) {
   const { fetch } = useApiFetch()
   const unit0 = useMemo(() => defaultUnit(lines), [lines])
   const [draft, setDraft] = useState(() => emptyDraft(mintKey(), { unit: unit0 }))
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(() => String(initialName ?? ''))
   const [hits, setHits] = useState(null)
   const [searchErr, setSearchErr] = useState(null)
   const [moreOpen, setMoreOpen] = useState(false)

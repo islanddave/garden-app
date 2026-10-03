@@ -30,12 +30,13 @@ import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
+import { useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import TypePicker from './TypePicker.jsx'
 import {
   emptyDraft, draftFromRecipe, recipeBody, exactAmountOpens, keepsKindChips, RECIPE_KIND_OPTIONS, STORAGE_KIND_WORDS,
   KEEPS_UNIT_WORDS, KITCHEN_UNITS, EMPTY_LINE, TYPE_LABEL, TYPE_HELP, KIND_LABEL, KIND_HELP, LINE_NAME_LABEL,
-  LINE_AMOUNT_LABEL, AT_THE_END_LABEL, EXACT_AMOUNT_CTA, KEEPS_LABEL, KEEPS_N_LABEL, MORE_PLACES_CTA, COOKED_LABEL,
+  LINE_AMOUNT_LABEL, AT_THE_END_LABEL, EXACT_AMOUNT_CTA, KEEPS_LABEL, KEEPS_HELP, KEEPS_N_LABEL, MORE_PLACES_CTA, COOKED_LABEL,
 } from './recipes.js'
 
 export const RECIPE_SHEET = 'recipe'
@@ -77,10 +78,17 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   const linesRef = useRef(null)
   const placesRef = useRef(null)
   const focusNext = useRef(null)                       // { qty: line index } | { place: true } — after a part opens
+  // The pinned Save covers the bottom of the sheet: a field that takes the cursor under it is scrolled clear,
+  // and again when the keyboard resizes the viewport (kitchen/sheetScroll.js, as Put it up uses it).
+  const footerRef = useRef(null)
+  const keepClear = useFieldsClearOfFooter(footerRef)
   const ids = { name: `recipe-name-${useId()}`, link: `recipe-link-${useId()}`, notes: `recipe-notes-${useId()}`, keepsN: `recipe-keeps-n-${useId()}` }
 
   const set = (patch) => { setD(x => ({ ...x, ...patch })); setErr(null) }
-  const setLine = (i, patch) => set({ lines: d.lines.map((l, j) => (j === i ? { ...l, ...patch, _keep: undefined } : l)) })
+  // A line edit keeps the line's stored copy (`_keep`): recipes.js lineBody decides from it whether the facts
+  // this sheet does not edit (form, brand, role, note, heat, salt) still belong to the line — they do unless
+  // its name, number or unit changed. Clearing it here dropped them on any edit, "at the end" included.
+  const setLine = (i, patch) => set({ lines: d.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) })
   const dirty = JSON.stringify({ ...d, key: '' }) !== JSON.stringify({ ...JSON.parse(base.current), key: '' })
 
   useEffect(() => {
@@ -143,7 +151,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
 
   return (
     <Sheet open onClose={onClose} title={editing ? 'Edit recipe' : 'New recipe'} size="full" busy={saving} armsBack>
-      <div data-testid="recipe-sheet" style={{ padding: '0 18px 12px' }}>
+      <div data-testid="recipe-sheet" onFocus={keepClear} style={{ padding: '0 18px 12px' }}>
         <Field label="Name" htmlFor={ids.name} required style={{ marginBottom: T.space.md }}>
           <Input id={ids.name} data-testid="recipe-name" value={d.name} maxLength={120} disabled={saving}
             onChange={e => set({ name: e.target.value })} />
@@ -205,7 +213,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
         </fieldset>
 
         <fieldset data-testid="recipe-keeps" style={{ border: 'none', padding: 0, margin: `0 0 ${T.space.md}px` }}>
-          <legend style={{ ...heading, marginBottom: 6 }}>{KEEPS_LABEL} <span style={optional}>optional</span></legend>
+          <legend style={{ ...heading, marginBottom: 6 }}>{KEEPS_LABEL} <span style={optional}>optional — {KEEPS_HELP}</span></legend>
           <div style={{ ...chipRow, marginBottom: 8 }}>
             <label htmlFor={ids.keepsN} style={{ fontSize: T.type.sm, color: P.mid }}>{KEEPS_N_LABEL}</label>
             <input id={ids.keepsN} data-testid="recipe-keeps-n" inputMode="numeric" value={d.keepsN} disabled={saving}
@@ -259,7 +267,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
 
         {err && <div role="alert" data-alarm-ink-exempt="error" data-testid="recipe-sheet-error" style={{ color: P.terra, fontSize: T.type.sm, fontWeight: 600, marginBottom: 8 }}>{err}</div>}
       </div>
-      <div data-testid="recipe-sheet-footer" style={{ position: 'sticky', bottom: 0, background: P.white, padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>
+      <div ref={footerRef} data-testid="recipe-sheet-footer" style={{ position: 'sticky', bottom: 0, background: P.white, padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>
         <Button data-testid="recipe-save" variant="primary" loading={saving} loadingLabel="Saving…" onClick={save} style={{ width: '100%' }}>
           {editing ? 'Save changes' : 'Save recipe'}
         </Button>

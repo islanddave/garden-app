@@ -1,7 +1,8 @@
 // Put-Up UX pass R1, lane E (D12; ARCH F-12) — Put it up's discard chips take their WORDS from
-// putItUp.DISCARD_LABELS, the one set the Pantry door and the Walk read too. The control itself is
-// unchanged: an optional toggle group of two chips (`-discard-date`, `-discard-none`) and the date field
-// `-discard-day`; that half is pinned in PutUpPutItUp.test.jsx and holds unedited.
+// putItUp.DISCARD_LABELS, the one set the Pantry door and the Walk read too. The control is an optional
+// toggle group of THREE chips since Put-Up R2a (I3): `-discard-auto`, pressed at open, then `-discard-date`
+// and `-discard-none`, which keep their ids, and the date field `-discard-day`; that last half is pinned
+// in PutUpPutItUp.test.jsx and holds unedited.
 // The constant is stood in for here, so the test cannot pass on words typed into the sheet.
 // CI LANE: `npm test` plus the TZ re-run. No jest-dom (L-182).
 import React from 'react'
@@ -33,19 +34,23 @@ beforeEach(() => {
 })
 
 describe('Put it up — the discard chips read their words from DISCARD_LABELS', () => {
-  // MUTATION: type the two labels into the sheet again -> the chips read "From the label" / "No date".
-  it('the two chips say DISCARD_LABELS.date and .none; ids, roles and the date field are as they were', async () => {
+  // Put-Up R2a (I3) amended this pin: it read two chips, DATE and NONE, both aria-pressed "false".
+  // MUTATION: type the three labels into the sheet again -> the chips read "Work it out" / "From the label"
+  // / "No date". MUTATION (F-M4): build two chips -> the list is one short and nothing is pressed.
+  it('the three chips say DISCARD_LABELS.auto, .date and .none, auto pressed at open; ids, roles and the date field are as they were', async () => {
     render(<PutItUpSheet open batch={BATCH} lines={[]} now={NOW} onClose={() => {}} onDone={() => {}} />)
     await waitFor(() => expect(screen.getByTestId('putup-row-0-place-id:loc-fridge')).toBeTruthy())
     await tap('putup-row-0-more')
     const group = screen.getByRole('group', { name: 'Discard by' })
     const chips = within(group).getAllByRole('button')
     expect(chips.map(c => [c.getAttribute('data-testid'), c.textContent, c.getAttribute('aria-pressed')])).toEqual([
+      ['putup-row-0-discard-auto', 'AUTO WORDS', 'true'],
       ['putup-row-0-discard-date', 'DATE WORDS', 'false'],
       ['putup-row-0-discard-none', 'NONE WORDS', 'false'],
     ])
     await tap('putup-row-0-discard-date')
     expect(screen.getByTestId('putup-row-0-discard-date').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('putup-row-0-discard-auto').getAttribute('aria-pressed')).toBe('false')
     expect(screen.getByTestId('putup-row-0-discard-day').getAttribute('type')).toBe('date')
   })
 })

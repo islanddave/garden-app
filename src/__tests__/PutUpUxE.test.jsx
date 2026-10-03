@@ -249,9 +249,12 @@ describe('Put it up — the unadded-line guard (D2)', () => {
     expect(document.activeElement).toBe(screen.getByTestId(SIT_NAME))
   })
 
-  // Closing the row's disclosure takes its adder (and the typed name) away, as it did before this pass:
-  // the guard then has nothing to stop for.
-  it('an adder that has gone away holds nothing: the commit saves', async () => {
+  // Put-Up R2a (ruling h) REVERSED this pin: it read "an adder that has gone away holds nothing: the commit
+  // saves". Closing the row's disclosure takes its adder off the screen, not the name out of the sheet: the
+  // name is held, so the guard still stops for it — and opens the row again with the name in its field, the
+  // cursor on it and the line above it. MUTATION (F-M2): forget the name when the adder goes away with its
+  // disclosure (what the sheet did before R2a) -> the commit saves without the line.
+  it('Less over a typed name: the commit stops at the guard; reopened, the name is there', async () => {
     await openPutUp()
     await fillMinimum()
     await openRowAdder()
@@ -259,7 +262,16 @@ describe('Put it up — the unadded-line guard (D2)', () => {
     await tap('putup-row-0-more')
     expect(screen.queryByTestId(ROW_NAME)).toBeNull()
     await tap('putup-finish')
+    expect(putUps()).toHaveLength(0)
+    expect(sheet()).toBeTruthy()
+    expect(screen.getByTestId(ROW_NAME).value).toBe('garlic')
+    expect(screen.getByTestId(ROW_LINE).textContent).toBe(addFirstWords('garlic'))
+    expect(document.activeElement).toBe(screen.getByTestId(ROW_NAME))
+    // Added from there it is a line like any other, and the commit then saves WITH it.
+    await tap('putup-row-0-added-add-submit')
+    await tap('putup-finish')
     await waitFor(() => expect(putUps()).toHaveLength(1))
+    expect(bodyOf(putUps()[0]).rows[0].added_lines.map(l => l.label)).toEqual(['garlic'])
   })
 
   it('with nothing typed in an open adder, both commits save as before', async () => {

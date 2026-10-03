@@ -320,7 +320,8 @@ describe('"How long, and where" — a number, three units, and the six kinds of 
     const pos = (el) => [...row.querySelectorAll('*')].indexOf(el)
     expect(pos(n)).toBeLessThan(pos(screen.getByTestId('recipe-keeps-unit')))
     expect(pos(screen.getByTestId('recipe-keeps-unit'))).toBeLessThan(pos(screen.getByTestId('recipe-keeps-kind')))
-    expect(row.querySelector('legend').textContent).toBe('How long, and where optional')
+    // Put-Up R2a (M4): the legend's bare "optional" gained the helper saying what the length is counted from.
+    expect(row.querySelector('legend').textContent).toBe('How long, and where optional — from put-up day to its discard date')
   })
 
   it('the unit lights with the first thing the line is given — days unless another is tapped — and is sent as shown', async () => {

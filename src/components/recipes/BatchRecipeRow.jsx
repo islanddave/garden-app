@@ -17,9 +17,11 @@
 //   · SaveAsRecipe — the Save as recipe door and its one-field form, which batch detail mounts down beside
 //     Pause and the ending. BatchRecipeRow still renders it inside itself unless told `saveAsRecipe={false}`,
 //     so a host that mounts the row alone gets exactly what it got before.
-// "Made it as written" has two doors on batch detail (the row's quiet link, and a button in the empty What
-// went in block), so its write lives in ONE hook, useMadeAsWritten: one key set per recipe, reused on a retry
-// from EITHER door — a second key set would add every line twice.
+// "Made it as written" has two doors (the row's quiet link, and a button for the empty What went in block),
+// so its write lives in ONE hook, useMadeAsWritten: one key set per recipe, reused on a retry from EITHER
+// door — a second key set would add every line twice. A page shows ONE of them (Put-Up R2a, M2): batch
+// detail hands the row its hook (`asWritten`) and draws the button, so the hosted row draws no link; a row
+// mounted alone has no button below it and keeps the link.
 import React, { useId, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
@@ -178,7 +180,10 @@ export default function BatchRecipeRow({ batch, inputs = [], onChanged, onOpenRe
           )}
         </div>
       )}
-      {asWritten.can && (
+      {/* The quiet link is this row's door when it stands alone. A HOSTED row sits above the host's own
+          "Made it as written" button (the empty What went in block), so the link is not drawn there: one
+          door, said once (Put-Up R2a, M2). */}
+      {asWritten.can && !hosted && (
         <button type="button" style={link} data-testid="batch-recipe-as-written" disabled={asWritten.busy} onClick={() => asWritten.run('row')}>
           {asWritten.busy ? 'Adding…' : `${MADE_AS_WRITTEN_CTA} →`}
         </button>
