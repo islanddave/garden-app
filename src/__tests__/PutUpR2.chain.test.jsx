@@ -154,7 +154,7 @@ describe('D12 — a re-kind refused for one worked-out date, the date set by han
     expect(screen.getByRole('alert').textContent)
       .toBe("Can't change the kind: 1 put-up here has a date worked out for this kind of place (deep freezer).")
     expect(screen.getByTestId('pu-location-refusal-next').textContent)
-      .toBe('Set its date by hand from Edit, or move it somewhere else, then change the kind.')
+      .toBe('Set its date by hand from its Edit… on the Pantry, or move it somewhere else, then change the kind.')
     expect(screen.queryByTestId('pu-location-saved')).toBeNull()
     await closeSheet('places-sheet')
 

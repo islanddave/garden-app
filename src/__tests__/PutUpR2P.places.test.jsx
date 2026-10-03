@@ -592,7 +592,7 @@ describe('re-kind refused — the sheet\'s own two lines, from the answer\'s n',
     save()
     const line1 = await screen.findByRole('alert')
     expect(line1.textContent).toBe(`Can't change the kind: 3 put-ups here have dates worked out for this kind of place (${word('deep_freezer').toLowerCase()}).`)
-    expect(screen.getByTestId('pu-location-refusal-next').textContent).toBe('Set those dates by hand from Edit, or move them somewhere else, then change the kind.')
+    expect(screen.getByTestId('pu-location-refusal-next').textContent).toBe("Set those dates by hand from each one's Edit… on the Pantry, or move them somewhere else, then change the kind.")
     expect(screen.getByTestId('pu-location-refusal').textContent).not.toContain('in this place')   // not the server's sentence
     expect(calls('PUT')[0].body).toEqual({ kind: 'fridge' })
     // Nothing was written: the editor is still open on what was chosen, the row still says its kind.
@@ -609,7 +609,7 @@ describe('re-kind refused — the sheet\'s own two lines, from the answer\'s n',
     fireEvent.click(screen.getByTestId('pu-location-kind-pantry'))
     save()
     expect((await screen.findByRole('alert')).textContent).toBe(`Can't change the kind: 1 put-up here has a date worked out for this kind of place (${word('deep_freezer').toLowerCase()}).`)
-    expect(screen.getByTestId('pu-location-refusal-next').textContent).toBe('Set its date by hand from Edit, or move it somewhere else, then change the kind.')
+    expect(screen.getByTestId('pu-location-refusal-next').textContent).toBe('Set its date by hand from its Edit… on the Pantry, or move it somewhere else, then change the kind.')
   })
 
   it('the kind word is the kind the place IS, read from placeKinds, lower case in the sentence', () => {

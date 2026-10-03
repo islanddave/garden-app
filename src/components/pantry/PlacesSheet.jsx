@@ -76,13 +76,15 @@ export function deletedWords(label) {
 }
 // The re-kind refusal, from the ANSWER's count — never a count made here, and never the server's sentence
 // (which is written for a bundle that has no words of its own). `kind` is the kind the place IS.
+// Line 2 names WHICH Edit: the put-up's own "Edit…" in its Pantry row sheet. The only Edit… on this sheet is a
+// place's, which has no date, and a bare "from Edit" was read as that one.
 export function rekindRefusedLines(n, kind) {
   const word = kindWords(kind).toLowerCase()
   return n === 1
     ? [`Can't change the kind: 1 put-up here has a date worked out for this kind of place (${word}).`,
-      'Set its date by hand from Edit, or move it somewhere else, then change the kind.']
+      'Set its date by hand from its Edit… on the Pantry, or move it somewhere else, then change the kind.']
     : [`Can't change the kind: ${n} put-ups here have dates worked out for this kind of place (${word}).`,
-      'Set those dates by hand from Edit, or move them somewhere else, then change the kind.']
+      "Set those dates by hand from each one's Edit… on the Pantry, or move them somewhere else, then change the kind."]
 }
 // The `n` of a place refusal, or null when the answer carried none it can count with.
 function refusalCount(e) {
