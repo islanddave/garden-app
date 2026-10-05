@@ -154,7 +154,7 @@ describe('plantingKitchen.js — the words of a put-up row', () => {
     expect(leftWords(rec({ package_count: '4', remaining_count: '1' }))).toBe('1 left')
     expect(leftWords(BAG)).toBe('about 412 g left')
     expect(leftWords({ ...BAG, remaining_amount: '92.40' })).toBe('about 92 g left')
-    expect(leftWords({ ...BAG, quantity_value: '1', quantity_unit: 'lb' })).toBe('about 454 g left')
+    expect(leftWords({ ...BAG, quantity_value: '1', quantity_unit: 'lb' })).toBe('about 1 lb left')
     // A weighed row whose grams cannot be said falls back to its count; a row with neither says nothing.
     expect(leftWords({ ...BAG, quantity_value: null })).toBe('1 left')
     expect(leftWords(rec({ package_count: null, remaining_count: null }))).toBeNull()

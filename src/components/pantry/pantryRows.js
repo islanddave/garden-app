@@ -92,6 +92,8 @@ export function searchHits(rows, extraItems, q) {
 // row multiplies the same way), so a fresh 1 lb divides back to 1. At most two decimals, no trailing zeros
 // (qtyText). Less than 0.01 of the unit would print as 0 for something that is still there, so it is said
 // in grams. null when the grams are not a number.
+// THE ONE PLACE these words are built: the planting page's put-up row (planting/plantingKitchen.js) says
+// them through here too, so the two surfaces cannot disagree about one bag.
 export function weighedLeftWords(grams, unit) {
   if (grams == null) return null
   const g = Number(grams)

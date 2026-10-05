@@ -17,6 +17,7 @@
 import { discardWords } from '../putup/jarWords.js'
 import { gramsOf } from '../putup/fermentMath.js'
 import { withFrom } from '../putup/origin.js'
+import { weighedLeftWords } from '../pantry/pantryRows.js'
 // The engine's own list, imported (as pantry/pantryRows.js imports it), so there is no copy to drift.
 import { HOUSE_SOURCED_SHELF_LIFE } from '../../../lambda/preservation/shelfLife.js'
 
@@ -77,14 +78,17 @@ export function usedWords(b) {
 // un-flagged call would have returned.
 export const isUsedUp = (r) => r?.remaining_count != null && Number(r.remaining_count) <= 0
 
-// How many are left, on EVERY row still in the Pantry: "3 left" for counted stock, "about 412 g left" for a
-// weighed bag (one container in a mass unit; its grams are what was last weighed, else what it held). The
-// Pantry row's words. null when nothing can be said.
+// How many are left, on EVERY row still in the Pantry: "3 left" for counted stock; for a weighed bag (one
+// container in a mass unit; its grams are what was last weighed, else what it held) what is left IN THE UNIT
+// IT WAS TYPED IN — "about 1 lb left", and "about 412 g left" for one typed in grams. The Pantry row's words,
+// from the Pantry row's own function (Put-Up R2a, UX I-2), so the two surfaces cannot disagree about one
+// bag. null when nothing can be said.
 export function leftWords(r) {
   if (!r) return null
   if (r.stock_mode === 'weighed') {
     const g = r.remaining_amount != null ? Number(r.remaining_amount) : gramsOf(r.quantity_value, r.quantity_unit)
-    if (g != null && Number.isFinite(g)) return `about ${Math.round(g)} g left`
+    const words = weighedLeftWords(g, r.quantity_unit)
+    if (words) return words
   }
   const n = r.remaining_count ?? r.package_count
   if (n == null || !Number.isFinite(Number(n))) return null
