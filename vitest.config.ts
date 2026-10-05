@@ -1,5 +1,6 @@
 import { defineConfig, configDefaults } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import TestIdsReporter from './scripts/ci-telemetry/vitest-test-ids-reporter.mjs';
 
 export default defineConfig({
   plugins: [react()],
@@ -56,6 +57,16 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/__tests__/setup.ts'],
+    // Test-ID evidence for the CI shadow comparison (scripts/ci-telemetry/vitest-test-ids-reporter.mjs): on a
+    // GitHub Actions runner each run ends with one ::notice carrying the sha256 of its sorted test-ID list, which
+    // scripts/ci-telemetry/shadow-agree.py compares between ci.yml and ci-next.yml. Nothing is added off the
+    // runner. Setting `reporters` replaces vitest's own default, so the first two entries restate it: with none
+    // configured vitest 4.1.11 uses 'default' plus 'github-actions' under GITHUB_ACTIONS (its resolveConfig).
+    // Re-read that on a vitest upgrade. The reporter is imported above unconditionally so a broken one fails a
+    // local run too, not only CI.
+    ...(process.env.GITHUB_ACTIONS === 'true'
+      ? { reporters: ['default', 'github-actions', new TestIdsReporter()] }
+      : {}),
     // OPS-FLAKEFAMILYWIDER-001. Must stay ABOVE the asyncUtilTimeout set in setup.ts (5000): if the
     // per-test budget is not larger, vitest kills the test before waitFor can report WHICH element
     // it could not find, and a diagnosable failure degrades into a bare "Test timed out in 5000ms".
