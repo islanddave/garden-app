@@ -3,11 +3,9 @@
 //
 // THE HEADLINE is WeatherWidget's headlineFor, printed VERBATIM from the same two lane verdicts the card computes
 // (computeWateringScale → pillState) and the same count V1 hands it (the plan's water_due length), so the glance
-// and the card it opens into cannot disagree — with ONE display-only guard in front (§13 SF9 update): a KNOWN
-// empty water list never gets a watering imperative. That guard is the one parked on lane-waterautumn-20260928
-// (BUG-WATERAUTUMNDEMAND-001), word for word and on the same condition; it lives here because that lane has not
-// shipped and WeatherWidget.jsx stays untouched. Once it ships, headlineFor returns the same sentence itself and
-// the first line of glanceHeadline is a no-op — drop it then.
+// and the card it opens into cannot disagree. A KNOWN empty water list never gets a watering imperative (§13 SF9
+// update): that guard is headlineFor's own first line (BUG-WATERAUTUMNDEMAND-001), and NOTHING_DUE below names
+// the sentence it returns.
 //
 // THE URGENT PHRASE, one at most, by precedence freeze > frost > hot:
 //   freeze  tonight's low under FREEZE_BELOW_F (40°F), the engine cue's own "Freeze tonight" bar, read off the one
@@ -40,7 +38,6 @@ export function glanceHeadline(plan) {
   const containersDo = pillState(scale.containers) === 'do'
   const bedsDo = pillState(scale.beds) === 'do'
   const waterDueCount = Array.isArray(plan?.water_due) ? plan.water_due.length : 0
-  if (waterDueCount === 0 && (containersDo || bedsDo)) return NOTHING_DUE
   return headlineFor(containersDo, bedsDo, waterDueCount)
 }
 

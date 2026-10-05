@@ -212,6 +212,14 @@ describe('BUG-WATERAUTUMNDEMAND-001 — no watering imperative over an empty lis
     const b = render(<WeatherWidget weather={weather} hydrology={DRY} />)
     expect(headlineText(b.container)).toMatch(/Water both — containers and beds today\./)
   })
+  it('beds waiting for tomorrow\'s rain, list empty: still nothing due, not "Water containers"', () => {
+    const WAIT = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 5, tomorrow_precip_in: 0.74, tomorrow_pop: 63 }
+    const a = render(<WeatherWidget weather={{ ...weather, hot: false }} hydrology={WAIT} waterDueCount={0} />)
+    expect(headlineText(a.container)).toMatch(/Nothing due for watering today\./)
+    a.unmount()
+    const b = render(<WeatherWidget weather={{ ...weather, hot: false }} hydrology={WAIT} waterDueCount={2} />)
+    expect(headlineText(b.container)).toMatch(/Water containers, skip the beds today\./)
+  })
   it('through the real Today page: an empty list under dry weather reads "Nothing due"', () => {
     planState.current = {
       data: { has_plan: true, plan_date: '2026-09-26', generated_at: '2026-09-26T10:00:00.000Z',
