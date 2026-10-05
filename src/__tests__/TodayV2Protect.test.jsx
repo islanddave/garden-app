@@ -352,6 +352,23 @@ describe('§6.3 in Protect: a covered plant never comes back live on the Back re
     for (let i = 0; i < 20 && wire.held.length; i++) { wire.held.splice(0).forEach((r) => r()); await settle() }
     expect(perPlant(ids)).toEqual(Array(n).fill(1))
   })
+
+  // The claim's other half: a write that failed must leave the store, or the plant would drop off the list uncovered.
+  it('a claim is released on failure: a Covered that fails, unmount, then a Back and a new visit — the row is still offered, and lands once', async () => {
+    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    wire.failPlant = ID.Lantana
+    fireEvent.click(within(rowOf('Lantana')).getByRole('button', { name: 'Covered: Lantana' })); await settle()
+    expect(rowOf('Lantana').textContent).toContain('Not logged')
+    wire.failPlant = null
+    first.unmount()
+    await back()
+    expect(rowOf('Lantana')).toBeTruthy()
+    cleanup()
+    await mount() // a new visit: no record restored, so only the store could hide the row
+    fireEvent.click(within(rowOf('Lantana')).getByRole('button', { name: 'Covered: Lantana' })); await settle()
+    expect(perPlant([ID.Lantana])).toEqual([1])
+    expect(doneOf('Lantana').textContent).toContain('covered')
+  })
 })
 
 describe('cold rows have ONE owner', () => {
