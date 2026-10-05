@@ -462,6 +462,26 @@ describe('a cover that fails after the Back comes back on the page that is on sc
     expect(perPlant([lost])).toEqual([2])
   })
 
+  it('a failed cover logged again on this page before the old run ends: undoing that log puts the row back as due — not as the old run\'s "Not logged"', async () => {
+    const { first, name } = await startCoverAll()
+    const [a, b] = wire.posts.slice(0, 2).map((x) => x.plant_id)
+    first.unmount()
+    await back()
+    // Two fail (a second keeps the spot a cover row when the run lands, so the first one's own done line stays in view).
+    for (const id of [a, b]) { wire.held.splice(wire.held.findIndex((r) => r.plant === id), 1)[0](true); await settle() }
+    wire.hold = false // from here a POST answers at once: the cover below lands while the old run still goes
+    const live = (id) => coverSpot(name).querySelector(`[data-testid="protect-row"][data-key="${id}:cold"]`)
+    const done = (id) => coverSpot(name).querySelector(`[data-testid="protect-row-done"][data-key="${id}:cold"]`)
+    fireEvent.click(within(live(a)).getByRole('button', { name: /^Covered: / })); await settle()
+    expect(done(a).textContent).toContain('covered')
+    await release() // the old run's held POSTs land; what it sends after that answers at once: it ends
+    expect(live(b).textContent).toContain('Not logged')
+    fireEvent.click(within(done(a)).getByRole('button', { name: /^Undo: / })); await settle()
+    expect(wire.deletes.length).toBe(1)
+    expect(live(a).textContent).not.toContain('Not logged')
+    expect(within(live(a)).getByRole('button', { name: /^Covered: / })).toBeTruthy()
+  })
+
   it('the section closed and reopened mid Cover all, on the same page: the run lands on the reopened body, said once', async () => {
     const { name, n, ids } = await startCoverAll()
     fireEvent.click(band('protect')); await settle()

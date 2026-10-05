@@ -963,23 +963,31 @@ describe('filter × action cells, as stated in the contract (review 4160.2 IMPOR
 })
 
 // Pre-promote MINOR-1: no run throws today (a failed POST is caught; the store's writes catch their own). If one ever
-// did, nothing of it may be left behind — not a batch that reads "watering 5…" for ever, not a busy button.
+// did, nothing of it may be left behind — not a batch that reads "watering 5…" for ever, not a busy button, not a row
+// stuck pending.
 describe('a run that throws leaves nothing behind (pre-promote MINOR-1)', () => {
-  it('the first landing\'s bookkeeping throws: the other four still post once each, the run ends, and neither the record nor a Back keeps a batch going', async () => {
-    const five = waterIn('Drive-Shade').map((r) => r.plantingId)
+  it('one POST fails and its bookkeeping throws: the other four still post once each, the run ends, the button is free, and neither the record nor a Back keeps a batch going', async () => {
+    const ds = waterIn('Drive-Shade')
+    const five = ds.map((r) => r.plantingId)
+    const lost = five[2]
     // The click handler does not await its run, so the throw surfaces as an unhandled rejection: taken here, for this case.
     const outer = process.listeners('unhandledRejection')
     const thrown = []
     process.removeAllListeners('unhandledRejection')
     process.on('unhandledRejection', (e) => thrown.push(e))
-    const boom = vi.spyOn(store, 'confirmKeys').mockImplementationOnce(() => { throw new Error('boom') })
+    const boom = vi.spyOn(store, 'releaseKeys').mockImplementationOnce(() => { throw new Error('boom') })
     try {
+      wire.failPlant = lost
       const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
       await waterAll5()
+      wire.failPlant = null
       expect(thrown.map((e) => e.message)).toEqual(['boom'])
-      expect(perPlant(five)).toEqual([1, 1, 1, 1, 1])
+      expect(perPlant(five.filter((x) => x !== lost))).toEqual([1, 1, 1, 1])
       expect(JSON.parse(sessionStorage.getItem(`today-visit:u:${TODAY}:v2`)).care.batches).toEqual({})
-      expect([...document.querySelectorAll('button')].filter((b) => /^Watering /.test(b.textContent))).toEqual([])
+      // The plant that did not land is on the list, its button free and the row not pending: one tap logs it.
+      expect(labels(liveFor('Drive-Shade'))).toEqual(['Water 1 in Drive-Shade'])
+      fireEvent.click(liveFor('Drive-Shade')[0]); await settle()
+      expect(perPlant(five)).toEqual([1, 1, 1, 1, 1])
       first.unmount()
       await backTo()
       expect(document.querySelector('[data-testid="today-care"]').textContent).not.toContain('watering')
