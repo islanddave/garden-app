@@ -20,8 +20,19 @@ NOW = dt.datetime(2026, 8, 3, 12, 0, tzinfo=dt.timezone.utc)
 PROD = "br-prod"
 
 
-def B(name, bid=None, parent=None, created="2026-06-01T00:00:00Z"):
-    return {"name": name, "id": bid or f"br-{name}", "parent_id": parent, "created_at": created}
+def B(name, bid=None, parent=None, created="2026-06-01T00:00:00Z", expires=None):
+    b = {"name": name, "id": bid or f"br-{name}", "parent_id": parent, "created_at": created}
+    if expires is not None:
+        b["expires_at"] = expires
+    return b
+
+
+def ago(**kw):
+    return (NOW - dt.timedelta(**kw)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def ahead(**kw):
+    return (NOW + dt.timedelta(**kw)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def snapfleet(n, start_day=1):
@@ -113,7 +124,7 @@ def test_hygiene_aged_stray_alert_young_stray_quiet():
     young = (NOW - dt.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
     branches = _legal_fleet(2) + [
         B("pre-old-thing", parent=PROD, created="2026-05-01T00:00:00Z"),
-        B("prerestore-recent", parent=PROD, created=young),
+        B("prerestore-recent", parent=PROD, created=young, expires=ahead(days=5)),
     ]
     alerts, state = nbs.hygiene_alerts(branches, keep=2, max_branches=20,
                                        stray_max_age_days=7, prev_over_k_ids=set(),
@@ -141,6 +152,109 @@ def test_hygiene_over_k_persistence_across_two_runs():
     assert not any("persists across 2 runs" in a for a in alerts1)  # first sighting: no alert
     alerts2, _ = nbs.hygiene_alerts(branches, prev_over_k_ids=set(state1["over_k_ids"]), **kw)
     assert any("snap-vOLD" in a and "persists across 2 runs" in a for a in alerts2)
+
+
+# --- expiry: self-cleaning strays (2026-10-05) --------------------------------
+# The fleet that reached 13 against a cap of 10: production, staging, 6 release
+# snapshots, four pre-migration copies with no expiry, one rehearsal leftover.
+
+def _sittings(n, expires=None, created=None):
+    return [B(f"sitting-s{i}-prod-preapply", parent=PROD, created=created or ago(days=2),
+              expires=expires) for i in range(n)]
+
+
+def _hy(branches, **over):
+    kw = dict(keep=6, max_branches=10, stray_max_age_days=7, prev_over_k_ids=set(),
+              prod_branch_id=PROD, now=NOW)
+    kw.update(over)
+    return nbs.hygiene_alerts(branches, **kw)
+
+
+def test_expiring_copies_do_not_count_against_cap():
+    alerts, state = _hy(_legal_fleet(6) + _sittings(5, expires=ahead(days=5)))
+    assert alerts == []
+    assert state["branch_count"] == 13 and len(state["expiring_ids"]) == 5
+
+
+def test_copies_without_expiry_count_and_are_named():
+    alerts, state = _hy(_legal_fleet(6) + _sittings(5))
+    assert any("count 13 > max 10" in a for a in alerts)
+    assert sum("has no expiry" in a for a in alerts) == 5
+    assert state["expiring_ids"] == []
+
+
+def test_cap_message_says_how_many_were_left_out():
+    alerts, _ = _hy(_legal_fleet(6) + _sittings(2, expires=ahead(days=5)), max_branches=7)
+    assert any("count 8 > max 7 (2 more carry an expiry and are not counted)" in a for a in alerts)
+
+
+def test_no_expiry_stray_inside_grace_is_quiet():
+    # A running integration test's ci-* branch has no expiry and is minutes old.
+    branches = _legal_fleet(6) + [B("ci-123", parent="br-staging", created=ago(minutes=20))]
+    alerts, state = _hy(branches)
+    assert alerts == [] and state["stray_ids"] == ["br-ci-123"]
+
+
+def test_no_expiry_stray_past_grace_alerts():
+    alerts, _ = _hy(_legal_fleet(6) + [B("ci-123", parent="br-staging", created=ago(hours=30))])
+    assert len(alerts) == 1 and "ci-123" in alerts[0] and "has no expiry" in alerts[0]
+
+
+def test_grace_boundary_is_exclusive():
+    at = _legal_fleet(6) + [B("x", parent=PROD, created=ago(hours=24))]
+    over = _legal_fleet(6) + [B("x", parent=PROD, created=ago(hours=24, minutes=1))]
+    assert _hy(at)[0] == [] and len(_hy(over)[0]) == 1
+
+
+def test_expiry_already_past_is_not_an_expiry():
+    b = B("stale", parent=PROD, created=ago(days=3), expires=ago(hours=2))
+    alerts, state = _hy(_legal_fleet(6) + [b])
+    assert state["expiring_ids"] == []
+    assert any("expiry that already passed" in a for a in alerts)
+
+
+def test_expiry_parked_far_out_is_not_an_expiry():
+    b = B("parked", parent=PROD, created=ago(days=3), expires=ahead(days=15))
+    alerts, state = _hy(_legal_fleet(6) + [b])
+    assert state["expiring_ids"] == []
+    assert any("expires more than 14d from now" in a for a in alerts)
+    ok = B("parked", parent=PROD, created=ago(days=3), expires=ahead(days=14))
+    assert _hy(_legal_fleet(6) + [ok])[0] == []
+
+
+def test_unreadable_expiry_is_not_an_expiry():
+    b = B("garbled", parent=PROD, created=ago(days=3), expires="soon")
+    alerts, state = _hy(_legal_fleet(6) + [b])
+    assert state["expiring_ids"] == [] and any("has no expiry" in a for a in alerts)
+
+
+def test_too_many_expiring_copies_alerts():
+    alerts, _ = _hy(_legal_fleet(6) + _sittings(7, expires=ahead(days=5)))
+    assert len(alerts) == 1 and "7 branches carry an expiry (> max 6)" in alerts[0]
+    assert _hy(_legal_fleet(6) + _sittings(6, expires=ahead(days=5)))[0] == []
+
+
+def test_old_stray_alerts_even_with_an_expiry():
+    # An expiry that keeps being pushed out: the age rule still applies.
+    b = B("extended", parent=PROD, created=ago(days=9), expires=ahead(days=5))
+    alerts, _ = _hy(_legal_fleet(6) + [b])
+    assert len(alerts) == 1 and "extended" in alerts[0] and "9d old" in alerts[0]
+
+
+def test_expiry_on_a_permanent_or_kept_branch_changes_nothing():
+    fleet = _legal_fleet(6)
+    for b in fleet:
+        b["expires_at"] = ahead(days=5)
+    alerts, state = _hy(fleet, max_branches=7)
+    assert state["expiring_ids"] == []
+    assert any("count 8 > max 7" in a and "not counted" not in a for a in alerts)
+
+
+def test_over_k_snap_with_expiry_still_counts():
+    fleet = _legal_fleet(6) + [B("snap-vOLD", parent=PROD, created="2026-05-01T00:00:00Z",
+                                 expires=ahead(days=5))]
+    alerts, state = _hy(fleet, max_branches=8)
+    assert state["expiring_ids"] == [] and any("count 9 > max 8" in a for a in alerts)
 
 
 # --- CLI ---------------------------------------------------------------------
@@ -202,6 +316,24 @@ def test_cli_hygiene_prev_state_dir_persistence(monkeypatch, tmp_path):
     rc = nbs.main(["hygiene"], env=cli_env(SNAP_KEEP="1", NEON_MAX_BRANCHES="20",
                                            STRAY_MAX_AGE_DAYS="9999"))
     assert rc == 1  # only possible alert left is the 2-run persistence one
+
+
+def test_cli_hygiene_expiry_knobs_and_state(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(nbs, "_utcnow", lambda: NOW)
+    fleet = _legal_fleet(6) + _sittings(3, expires=ahead(days=5))
+    monkeypatch.setattr(nbs, "fetch_branches", lambda *a, **k: fleet)
+    assert nbs.main(["hygiene"], env=cli_env(SNAP_KEEP="6")) == 0
+    assert len(json.load(open("neon-branch-state.json"))["expiring_ids"]) == 3
+    assert nbs.main(["hygiene"], env=cli_env(SNAP_KEEP="6", NEON_MAX_EXPIRING="2")) == 1
+    assert nbs.main(["hygiene"], env=cli_env(SNAP_KEEP="6", NEON_MAX_TTL_DAYS="3")) == 1
+    bare = _legal_fleet(6) + _sittings(1)
+    monkeypatch.setattr(nbs, "fetch_branches", lambda *a, **k: bare)
+    assert nbs.main(["hygiene"], env=cli_env(SNAP_KEEP="6")) == 1
+    assert nbs.main(["hygiene"], env=cli_env(SNAP_KEEP="6", STRAY_NO_EXPIRY_GRACE_HOURS="72")) == 0
+    # An empty value (an unset repo variable arrives as "") falls back to the default.
+    assert nbs.main(["hygiene"], env=cli_env(SNAP_KEEP="6", STRAY_NO_EXPIRY_GRACE_HOURS="",
+                                           NEON_MAX_TTL_DAYS="", NEON_MAX_EXPIRING="")) == 1
 
 
 def test_cli_usage():

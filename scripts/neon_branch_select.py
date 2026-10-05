@@ -27,9 +27,14 @@ ENV CONTRACT (CLI modes; read-only Neon API GET only):
             SNAP_PRUNE_DENYLIST, SNAP_PRUNE_MIN_AGE_HOURS (default 24)
   hygiene:  SNAP_KEEP (K), NEON_MAX_BRANCHES (OPTIONAL override — when unset
             the cap is DERIVED as SNAP_KEEP + 4: production + staging + K snaps
-            + 2 headroom for in-flight TTL'd prerestore-*/revert-stage-*; the
-            derivation auto-adapts when retention changes — RIA-1),
-            STRAY_MAX_AGE_DAYS (default 7), STATE_FILE, PREV_STATE_DIR,
+            + 2 headroom for in-flight branches with no expiry, e.g. a running
+            integration test's ci-*; the derivation auto-adapts when retention
+            changes — RIA-1). A stray carrying a usable expires_at (future, at
+            most NEON_MAX_TTL_DAYS away, default 14) is SELF-CLEANING: it does
+            not count against the cap, and NEON_MAX_EXPIRING (default 6) caps
+            how many of those may exist at once. A stray with no usable expiry
+            alerts once older than STRAY_NO_EXPIRY_GRACE_HOURS (default 24).
+            STRAY_MAX_AGE_DAYS (default 7, any stray), STATE_FILE, PREV_STATE_DIR,
             INTEGRITY_REPORT (default integrity-report.json — alerts merge in
             so the morning-brief hookup surfaces them)
 
@@ -73,6 +78,29 @@ def _age_days(b, now):
     return int(h // 24) if h >= 0 else -1
 
 
+def _expiry_hours(b, now):
+    """Hours until the branch's expires_at; None when it has none or it does
+    not parse (an unreadable expiry is treated as no expiry, never as one)."""
+    raw = b.get("expires_at")
+    if not raw:
+        return None
+    try:
+        exp = datetime.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=datetime.timezone.utc)
+        return (exp - now).total_seconds() / 3600.0
+    except ValueError:
+        return None
+
+
+def self_cleaning(b, now, max_ttl_days):
+    """True when Neon will delete this branch by itself soon enough to matter:
+    expires_at is in the future and at most max_ttl_days away. An expiry already
+    past (Neon did not delete it) or parked far in the future is not one."""
+    h = _expiry_hours(b, now)
+    return h is not None and 0 < h <= max_ttl_days * 24
+
+
 def snap_candidates(branches, prefix, prod_branch_id):
     """Shipped-pruner candidate semantics: name prefix AND prod-parented."""
     return sorted(
@@ -110,12 +138,19 @@ def prune_selection(branches, keep, prefix="snap-", prod_branch_id=DEFAULT_PROD_
 
 
 def hygiene_alerts(branches, keep, max_branches, stray_max_age_days, prev_over_k_ids,
-                   prefix="snap-", prod_branch_id=DEFAULT_PROD_BRANCH, now=None):
+                   prefix="snap-", prod_branch_id=DEFAULT_PROD_BRANCH, now=None,
+                   no_expiry_grace_hours=24, max_ttl_days=14, max_expiring=6):
     """Out-of-band assertions (Gate 2 §7). Returns (alerts, state).
     Allowed set = {production, staging, newest-K prod-parented snaps}. A snap-*
     branch NOT parented to prod (rehearsal leftovers) is a STRAY — the pruner
     cannot touch it, so only this check ever surfaces it. min_age_hours=0 here:
-    the age floor is a delete-execution guard, not a classification."""
+    the age floor is a delete-execution guard, not a classification.
+
+    Strays split in two (2026-10-05, after four pre-migration safety copies with
+    no expiry took the fleet to 13 against a cap of 10): one that carries a
+    usable expires_at is self-cleaning and is not counted against the cap; one
+    that does not is counted, and alerts once it has outlived the grace window
+    (which exists so a running integration test's ci-* branch is not flagged)."""
     now = now or _utcnow()
     sel = prune_selection(branches, keep, prefix=prefix, prod_branch_id=prod_branch_id,
                           denylist=(), min_age_hours=0, now=now)
@@ -123,16 +158,34 @@ def hygiene_alerts(branches, keep, max_branches, stray_max_age_days, prev_over_k
     over_k_ids = {b["id"] for b in sel["over_k"]}
     allowed = {b["id"] for b in branches if b.get("name") in ALLOWED_PERSISTENT} | kept_ids
     strays = [b for b in branches if b["id"] not in allowed and b["id"] not in over_k_ids]
+    expiring = [b for b in strays if self_cleaning(b, now, max_ttl_days)]
+    expiring_ids = {b["id"] for b in expiring}
+    counted = len(branches) - len(expiring)
 
     alerts = []
-    if len(branches) > max_branches:
-        alerts.append(f"neon-branches: count {len(branches)} > max {max_branches}")
+    if counted > max_branches:
+        alerts.append(
+            f"neon-branches: count {counted} > max {max_branches}"
+            + (f" ({len(expiring)} more carry an expiry and are not counted)" if expiring else ""))
+    if len(expiring) > max_expiring:
+        alerts.append(
+            f"neon-branches: {len(expiring)} branches carry an expiry (> max {max_expiring}) — "
+            f"temporary copies are being made faster than they expire")
     for b in strays:
         if _age_days(b, now) > stray_max_age_days:
             alerts.append(
                 f"neon-branches: stray branch {b.get('name')} ({b['id']}) is "
                 f"{_age_days(b, now)}d old (> {stray_max_age_days}d; not "
                 f"production/staging/newest-{keep} prod-parented {prefix}*)")
+        elif b["id"] not in expiring_ids and _age_hours(b, now) > no_expiry_grace_hours:
+            h = _expiry_hours(b, now)
+            why = ("has no expiry" if h is None
+                   else "has an expiry that already passed" if h <= 0
+                   else f"expires more than {max_ttl_days}d from now")
+            alerts.append(
+                f"neon-branches: stray branch {b.get('name')} ({b['id']}) {why} and is "
+                f"{int(_age_hours(b, now))}h old (> {no_expiry_grace_hours}h) — nothing will "
+                f"remove it; set one with scripts/neon_safety_branch.py expire, or delete it")
     for b in sel["over_k"]:
         if b["id"] in prev_over_k_ids:
             alerts.append(
@@ -144,6 +197,7 @@ def hygiene_alerts(branches, keep, max_branches, stray_max_age_days, prev_over_k
         "branch_count": len(branches),
         "over_k_ids": sorted(over_k_ids),
         "stray_ids": [b["id"] for b in strays],
+        "expiring_ids": sorted(expiring_ids),
     }
     return alerts, state
 
@@ -204,6 +258,9 @@ def _cli_hygiene(env):
     # production + staging + K snaps + 2 headroom (in-flight TTL'd branches).
     max_branches = int(env.get("NEON_MAX_BRANCHES") or 0) or keep + 4
     stray_age = int(env.get("STRAY_MAX_AGE_DAYS", "7"))
+    grace_h = int(env.get("STRAY_NO_EXPIRY_GRACE_HOURS") or "24")
+    max_ttl = int(env.get("NEON_MAX_TTL_DAYS") or "14")
+    max_expiring = int(env.get("NEON_MAX_EXPIRING") or "6")
     state_file = env.get("STATE_FILE", "neon-branch-state.json")
     prev_path = os.path.join(env.get("PREV_STATE_DIR", "prev-neon-state"), state_file)
     report_path = env.get("INTEGRITY_REPORT", "integrity-report.json")
@@ -217,7 +274,9 @@ def _cli_hygiene(env):
 
     branches, prefix, prod = _common(env)
     alerts, state = hygiene_alerts(branches, keep, max_branches, stray_age, prev_over_k,
-                                   prefix=prefix, prod_branch_id=prod)
+                                   prefix=prefix, prod_branch_id=prod,
+                                   no_expiry_grace_hours=grace_h, max_ttl_days=max_ttl,
+                                   max_expiring=max_expiring)
     json.dump(state, open(state_file, "w"), indent=2)
 
     if os.path.exists(report_path):
@@ -233,7 +292,8 @@ def _cli_hygiene(env):
 
     lines = [f"## neon branch hygiene: {'ALERT' if alerts else 'ok'} "
              f"({state['branch_count']} branches, cap {max_branches}, "
-             f"{len(state['over_k_ids'])} over-K, {len(state['stray_ids'])} strays)"]
+             f"{len(state['over_k_ids'])} over-K, {len(state['stray_ids'])} strays, "
+             f"{len(state['expiring_ids'])} of them with an expiry and not counted)"]
     lines += [f"- ALERT: {a}" for a in alerts]
     _summary(env, "\n".join(lines))
     for a in alerts:

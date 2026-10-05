@@ -35,7 +35,11 @@ name: integrity-weekly (P0)
 # SNAP_RETENTION+4 unless NEON_MAX_BRANCHES overrides — auto-adapts to retention changes);
 # any branch outside {production, staging, newest-K prod-parented snap-*} is older than
 # STRAY_MAX_AGE_DAYS; or an over-K snap-* branch persists across 2 consecutive runs
-# (prune skipped twice). Selection logic is scripts/neon_branch_select.py, shared with
+# (prune skipped twice). EXPIRY (2026-10-05): a temporary branch that carries a Neon
+# expires_at at most 14 days out removes itself, so it is NOT counted against the cap
+# (more than 6 of those at once reds instead); one with no expiry is counted, and reds
+# once it is a day old. Pre-migration copies of prod are made WITH an expiry by
+# scripts/neon_safety_branch.py. Selection logic is scripts/neon_branch_select.py, shared with
 # prune-branches.yml and covered by scripts/test_neon_branch_select.py.
 # Prior-run state persists as the neon-branch-state artifact (90d). Alerts merge into
 # integrity-report.json so the morning brief surfaces them through the existing hookup.
@@ -85,8 +89,9 @@ jobs:
         # prune-branches.yml so the dry-run report and this check cannot
         # diverge; tested by scripts/test_neon_branch_select.py). Cap is
         # DERIVED as SNAP_KEEP+4 (production + staging + K snaps + 2 headroom
-        # for in-flight TTL'd prerestore-*/revert-stage-*) — set
-        # NEON_MAX_BRANCHES to override explicitly (RIA-1).
+        # for in-flight branches with no expiry, e.g. a running integration
+        # test's ci-*) — set NEON_MAX_BRANCHES to override explicitly (RIA-1).
+        # Branches carrying an expiry are not counted (see the header).
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
