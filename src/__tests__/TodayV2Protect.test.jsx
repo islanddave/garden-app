@@ -415,6 +415,7 @@ describe('a cover that fails after the Back comes back on the page that is on sc
     expect(s.querySelector('[aria-expanded]').textContent).toContain(`Covered ${n - 1} · 1 not logged`)
     expect(s.querySelector('[data-testid="protect-row"]').textContent).toContain('Not logged')
     expect(within(s).getByRole('button', { name: `Undo: ${name} covered ${n - 1}` })).toBeTruthy()
+    expect(screen.getByTestId('today-status').textContent).toBe(`Covered ${n - 1} in ${name}. 1 not logged — Retry is on the spot.`)
     wire.hold = false
     fireEvent.click(within(s).getByRole('button', { name: `Retry: cover 1 in ${name}` })); await settle()
     expect(wire.posts.filter((b) => b.plant_id === lost).length).toBe(2) // its failure, then its one landing
@@ -437,6 +438,47 @@ describe('a cover that fails after the Back comes back on the page that is on sc
     wire.hold = false
     fireEvent.click(within(s).getByRole('button', { name: `Retry: cover ${n} in ${name}` })); await settle()
     expect(perPlant(ids)).toEqual(Array(n).fill(2)) // each: its failure, then its one landing
+  })
+
+  it('a failed cover taken again on this page before the old run ends is being written, not "Not logged", when that run lands', async () => {
+    const { first, name, ids } = await startCoverAll()
+    const lost = wire.posts[0].plant_id
+    first.unmount()
+    await back()
+    const one = wire.held.findIndex((r) => r.plant === lost)
+    wire.held.splice(one, 1)[0](true); await settle() // it failed: back on this page, while the old run goes on
+    // The Back restored the visit: the spot is open, as it was left.
+    const row = () => coverSpot(name).querySelector('[data-testid="protect-row"]')
+    fireEvent.click(within(row()).getByRole('button', { name: /^Covered: / })); await settle() // its new POST is on the wire
+    expect(wire.posts.filter((b) => b.plant_id === lost).length).toBe(2)
+    for (let i = 0; i < 40 && wire.held.some((r) => r.plant !== lost); i++) {
+      for (const r of wire.held.filter((x) => x.plant !== lost)) { wire.held.splice(wire.held.indexOf(r), 1); r(false) }
+      await settle()
+    }
+    expect(perPlant(ids.filter((x) => x !== lost))).toEqual(Array(ids.length - 1).fill(1))
+    expect(row().textContent).not.toContain('Not logged')
+    wire.held.splice(0).forEach((r) => r(false)); await settle()
+    expect(coverSpot(name)?.querySelector('[data-testid="protect-row"]') ?? null).toBeNull()
+    expect(perPlant([lost])).toEqual([2])
+  })
+
+  it('the section closed and reopened mid Cover all, on the same page: the run lands on the reopened body, said once', async () => {
+    const { name, n, ids } = await startCoverAll()
+    fireEvent.click(band('protect')); await settle()
+    expect(document.querySelector('[data-testid="protect-body"]')).toBeNull()
+    fireEvent.click(band('protect')); await settle()
+    let writes = 0
+    const seen = new MutationObserver((ms) => { writes += ms.length })
+    seen.observe(screen.getByTestId('today-status'), { childList: true })
+    await release()
+    writes += seen.takeRecords().length
+    seen.disconnect()
+    expect(perPlant(ids)).toEqual(Array(n).fill(1))
+    const line = [...document.querySelectorAll('[data-testid="protect-done-line"]')].find((l) => l.getAttribute('data-spot') === name)
+    expect(line.textContent).toContain(`${name} · covered ${n}`)
+    expect(within(line).getByRole('button', { name: `Undo: ${name} covered ${n}` })).toBeTruthy()
+    expect(screen.getByTestId('today-status').textContent).toBe(`Covered ${n} in ${name}.`)
+    expect(writes).toBe(1)
   })
 
   it('one row: Covered, Back, then the POST fails — the row is offered again on the mounted page, and lands once', async () => {

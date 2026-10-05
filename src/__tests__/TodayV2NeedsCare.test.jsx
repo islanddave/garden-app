@@ -766,6 +766,27 @@ describe('a run that ends after the Back lands on the page that is on screen (pr
     expect(perPlant(five).reduce((a, b) => a + b, 0)).toBe(6) // five landings and the one failure
   })
 
+  it('a failed plant logged again on this page before the old run ends: undoing that log puts it back as due — not as the old run\'s "Not logged"', async () => {
+    const five = waterIn('Drive-Shade').map((r) => r.plantingId)
+    wire.hold = true
+    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    await waterAll5()
+    const lost = wire.posts[0].plant_id
+    first.unmount()
+    await backTo()
+    await answer(lost, true)
+    fireEvent.click(liveFor('Drive-Shade')[0]); await settle()
+    await answer(lost) // its new POST lands, while the old run still goes
+    for (const id of five.filter((x) => x !== lost)) await answer(id)
+    expect(doneLine('Drive-Shade').textContent).toContain('Drive-Shade · watered 5')
+    wire.hold = false
+    fireEvent.click(within(doneLine('Drive-Shade')).getByRole('button', { name: /^Undo/ })); await settle() // the last run: the one plant
+    expect(wire.deletes.length).toBe(1)
+    expect(spot('Drive-Shade').querySelector('[data-testid="care-spot-failed"]')).toBeNull()
+    expect(labels(liveFor('Drive-Shade'))).toEqual(['Water 1 in Drive-Shade'])
+    expect(spotHead('Drive-Shade').textContent).toContain('Watered 4')
+  })
+
   it('mid group run, a spot whose every write failed and whose rows the plan has since dropped says nothing — no "Drive-Shade · " line', async () => {
     const five = waterIn('Drive-Shade').map((r) => r.plantingId)
     wire.hold = true
