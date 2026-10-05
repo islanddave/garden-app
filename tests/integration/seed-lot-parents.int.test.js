@@ -43,9 +43,14 @@
 // neonConfig.fetchFunction hook. That gives each such request its own backend, which is what two Lambda
 // instances have in production. The file passes on both Node versions.
 //
-// ONE KNOWN DEFECT IS PINNED WITH it.fails (search "KNOWN DEFECT"): a parents edit that waited behind a
-// merge links the lot to the planting the merge soft-deleted. That test turns red when the handler is
-// fixed; remove `.fails` then.
+// THREE RACES THIS FILE FOUND ON REAL POSTGRES, and what it now holds the handlers to (search "D-1",
+// "D-2", "D-3", "F1.4"): a merge and a parents edit on one lot no longer deadlock (both lock the lot
+// first); a parents write re-tests "may this lot use these plantings" INSIDE its transaction, behind a
+// share lock on them, and answers 409 when one changed on the way; and a deadlock that still can happen
+// (the merge against a photo delete) answers a 409 that says "run it again", not a 500. Where a case
+// needs one particular transaction to be the deadlock victim it says how that is arranged — Postgres
+// checks once per wait, deadlock_timeout after the wait began, so the victim is the one whose wait
+// closes the cycle once the other's check has already run.
 //
 // THE CASES THAT ARE OFF BY DEFAULT: 0b-reconcile.sql against a parents edit and against a merge (the
 // last describe). The reconcile takes a table lock and rewrites EVERY drifted lot in the database, so
@@ -57,7 +62,7 @@
 // FIXTURES are this file's own. Both users carry the `int-test-` run id, so tests/integration/_cleanup.js
 // sweeps whatever the afterAll below does not reach.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -69,7 +74,11 @@ import { directSql, callHandler, testRunId, setTestUserId, insertProject } from 
 import { assertFixtureId, settle } from './_cleanup.js'
 import { handler as invHandler } from '../../lambda/inventory-items/index.js'
 import { handler as plantsHandler } from '../../lambda/plants/index.js'
-import { insertSeedParentLinks, readSourcePlants } from '../../lambda/inventory-items/seed-lot-parents.js'
+import { handler as eventsHandler } from '../../lambda/events/index.js'
+import {
+  insertSeedParentLinks, readSourcePlants, lockPlantings, assertEveryParentLinked,
+} from '../../lambda/inventory-items/seed-lot-parents.js'
+import { softDeletePhoto } from '../../lambda/photos/photoDelete.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const RECONCILE_SQL = join(ROOT, 'migrations', 'v5-seedmultiparent-001', '0b-reconcile.sql')
@@ -82,6 +91,10 @@ const UUID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/
 const UNUSABLE = 'source_plant_ids does not match plantings you can use'
 const MULTI_PARENT = 'This seed came from more than one plant. Reload the app to change which.'
 const CHANGED_AT_ONCE = 'This seed lot was changed at the same moment. Reload and try again.'
+// A planting passed the route's gate and stopped being usable before the write ran. Nothing written.
+const PLANTS_CHANGED = 'One of those plants changed just now. Reload and try again.'
+// A merge that Postgres chose as a deadlock victim. Nothing merged; the same op_id can be sent again.
+const MERGE_RETRY = 'Merge was stopped by a concurrent change to the same rows — nothing was merged, run it again'
 // What chk_inventory_seed_source_plant has always been answered with (SEED_CONSTRAINT_MESSAGES in the
 // handler). The parents routes now refuse in their own guards, and must use the same words.
 const SHOP_AND_PLANT = 'This lot names the plant it was saved from, so it cannot also say it came from a shop, a gift or a farm stand. Clear one of the two.'
@@ -115,6 +128,15 @@ async function planting(tag, { by = USER, variety = varietyId, projectId = null,
   return p.id
 }
 const softDeletePlanting = (id) => directSql`UPDATE plants SET deleted_at = NOW() WHERE id = ${id}`
+// A planting whose id is CHOSEN. The handlers lock the plantings a request names in id order, so a case
+// that must know which of two is locked first needs to know how their ids sort.
+const idStarting = (hex) => `${hex}${randomUUID().slice(hex.length)}`
+async function plantingWithId(id, tag) {
+  await directSql`
+    INSERT INTO plants (id, project_id, name, created_by, variety_id)
+    VALUES (${id}::uuid, NULL, ${`${tag}-slp-${RUN}`}, ${USER}, ${varietyId})`
+  return id
+}
 
 function postLot(extra = {}, as = USER) {
   setTestUserId(as)
@@ -161,10 +183,10 @@ const seedLotsOf = (plantId, as = USER) => {
   setTestUserId(as)
   return callHandler(plantsHandler, { method: 'GET', path: `/api/plants/${plantId}/seed-lots` })
 }
-const merge = (winner, losers) => {
+const merge = (winner, losers, opId = randomUUID()) => {
   setTestUserId(USER)
   return callHandler(plantsHandler, {
-    method: 'POST', path: `/api/plants/${winner}/merge`, body: { loser_ids: losers, op_id: randomUUID() },
+    method: 'POST', path: `/api/plants/${winner}/merge`, body: { loser_ids: losers, op_id: opId },
   })
 }
 
@@ -295,6 +317,8 @@ afterAll(async () => {
           OR inventory_item_id IN (SELECT id FROM inventory_items WHERE created_by = ANY(${ids}))
           OR plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM photos WHERE created_by = ANY(${ids})`,
+    // One D-3 case seeds two ready_impression rows; their plant_id key is NO ACTION.
+    () => directSql`DELETE FROM ready_impression WHERE user_id = ANY(${ids}) OR plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
     // plants.source_inventory_item_id is RESTRICT the other way round: a planting sown from a lot goes
     // before the lot (one concurrency case sows one).
     () => directSql`DELETE FROM entity WHERE planting_ref_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}) AND source_inventory_item_id IS NOT NULL)`,
@@ -309,6 +333,7 @@ afterAll(async () => {
     () => directSql`DELETE FROM plant_varieties WHERE created_by = ANY(${ids})`,
     () => directSql`DELETE FROM plant_projects WHERE created_by = ANY(${ids})`,
     () => directSql`DELETE FROM audit_events WHERE actor_clerk_sub = ANY(${ids})`,
+    () => directSql`DELETE FROM event_batches WHERE created_by = ANY(${ids})`,
   ])
 })
 
@@ -449,24 +474,63 @@ describe.skipIf(!HAS_TABLE)('POST — a lot created with its parent plantings', 
     expect(await everything()).toBe(before)
   })
 
-  it('THE CREATE IS ONE TRANSACTION: a link insert that fails leaves no lot row behind', async () => {
-    // The handler cannot be made to fail here from outside (its ownership gate refuses a planting that
-    // does not exist before the transaction starts), so the same three statements the POST arm issues
-    // are run through the driver's transaction with a planting id no row has: the lot INSERT, the
-    // module's own link INSERT, the module's own read. 23503 on the second must undo the first.
-    const lotId = randomUUID()
+  it('THE CREATE IS ONE TRANSACTION: when the links are not all written, the batch fails and no lot row is left behind', async () => {
+    // The route cannot be made to fail here without a second session (its gate refuses an unusable
+    // planting before the transaction starts; the cases that get past the gate are in the concurrency
+    // blocks below). So the FIVE statements the POST arm issues are run through the driver's transaction
+    // with a planting id no row has: the lot INSERT, then the module's own share lock, link INSERT,
+    // assertion and read.
+    // The link INSERT is all-or-none: one id that is not usable and it inserts NOTHING, and raises
+    // nothing. So it is assertEveryParentLinked that has to fail the batch — a division by zero, 22012,
+    // which the route answers 409 — and that failure must take the lot INSERT back with it.
     const ghost = randomUUID()
-    await expect(directSql.transaction([
-      directSql`
-        INSERT INTO inventory_items (id, user_id, created_by, type, name, category, unit,
-                                     quantity_on_hand, variety_id, status, source_plant_id)
-        VALUES (${lotId}::uuid, ${USER}, ${USER}, 'consumable', ${`slp-atomic-${RUN}`}, 'seeds', 'packet',
-                1, ${varietyId}, 'active', ${P.A})`,
+    const lotInsert = (lotId) => directSql`
+      INSERT INTO inventory_items (id, user_id, created_by, type, name, category, unit,
+                                   quantity_on_hand, variety_id, status, source_plant_id)
+      VALUES (${lotId}::uuid, ${USER}, ${USER}, 'consumable', ${`slp-atomic-${RUN}`}, 'seeds', 'packet',
+              1, ${varietyId}, 'active', ${P.A})`
+    const before = await everything()
+
+    const lotId = randomUUID()
+    const failed = directSql.transaction([
+      lotInsert(lotId),
+      lockPlantings(directSql, [P.A, ghost]),
       insertSeedParentLinks(directSql, { lotId, ids: [P.A, ghost], householdIds: [USER], userId: USER }),
+      assertEveryParentLinked(directSql, { lotId, ids: [P.A, ghost], householdIds: [USER] }),
       readSourcePlants(directSql, [USER], lotId),
-    ])).rejects.toMatchObject({ code: '23503' })
+    ])
+    await expect(failed).rejects.toMatchObject({ code: '22012' })
+    await expect(failed).rejects.toThrow(/division by zero/)
     expect(await directSql`SELECT id FROM inventory_items WHERE id = ${lotId}`).toEqual([])
     expect(await directSql`SELECT id FROM seed_lot_parent_planting WHERE inventory_item_id = ${lotId}`).toEqual([])
+    expect(await everything()).toBe(before)
+
+    // WHY THE ASSERTION IS THERE, shown rather than argued: the same batch WITHOUT it commits — a lot
+    // whose column names a parent and which has no link row at all, the cache rule broken at birth.
+    const orphan = randomUUID()
+    await directSql.transaction([
+      lotInsert(orphan),
+      lockPlantings(directSql, [P.A, ghost]),
+      insertSeedParentLinks(directSql, { lotId: orphan, ids: [P.A, ghost], householdIds: [USER], userId: USER }),
+    ])
+    try {
+      expect((await cacheRuleViolations([orphan])).cacheIsNotALiveParent).toEqual([orphan])
+      expect(await links(orphan)).toEqual([])
+    } finally {
+      await dropLot(orphan)
+    }
+
+    // And when every planting IS usable the assertion lets the create through, answering one row.
+    const good = randomUUID()
+    const [, , , asserted] = await directSql.transaction([
+      lotInsert(good),
+      lockPlantings(directSql, [P.A, P.B]),
+      insertSeedParentLinks(directSql, { lotId: good, ids: [P.A, P.B], householdIds: [USER], userId: USER }),
+      assertEveryParentLinked(directSql, { lotId: good, ids: [P.A, P.B], householdIds: [USER] }),
+    ])
+    expect(asserted).toEqual([{ every_parent_linked: 1 }])
+    expect(await livePlants(good)).toEqual([P.A, P.B].sort())
+    await expectCacheRule(good)
   })
 })
 
@@ -655,25 +719,77 @@ describe.skipIf(!HAS_TABLE)('PUT /:id/source-plants — replace the set, keep th
     expect((await lotRow(lot)).source_kind).toBe('gift')
   })
 
-  it('a parent whose planting was soft-deleted afterwards is still listed, and cannot be re-sent in a new set', async () => {
-    // Contract section 4: the set is gated by today's ownership predicate, which refuses a deleted
-    // planting. So a lot that keeps such a parent can be edited only by leaving that parent out.
+  it('MEMBER EXEMPTION: a parent whose planting was soft-deleted afterwards can be re-sent unchanged, and the lot stays editable', async () => {
+    // The set is gated by "a live planting the household owns OR already a live parent of THIS lot".
+    // Without the second arm a lot that keeps such a parent could only ever be edited by dropping it.
     const gone = await planting('Z')
     const lot = await newLot({ source_plant_ids: [P.A, gone] })
     await softDeletePlanting(gone)
-    const detail = await getLot(lot)
-    expect(detail.body.source_plants).toEqual([
-      sourcePlant(P.A, `A-slp-${RUN}`), sourcePlant(gone, `Z-slp-${RUN}`, { deleted: true }),
-    ])
-    const before = await everything()
-    const keep = await put(lot, [P.A, gone, P.B])
-    expect(keep.status).toBe(400)
-    expect(keep.body.error).toBe(UNUSABLE)
-    expect(await everything()).toBe(before)
-    const without = await put(lot, [P.A, P.B])
-    expect(without.status, JSON.stringify(without.body)).toBe(200)
-    expect(await livePlants(lot)).toEqual([P.A, P.B].sort())
+    const rowGone = (await links(lot)).find((r) => r.plant_id === gone)
+    const goneAs = sourcePlant(gone, `Z-slp-${RUN}`, { deleted: true })
+    expect((await getLot(lot)).body.source_plants).toEqual([sourcePlant(P.A, `A-slp-${RUN}`), goneAs])
+
+    // The unchanged id beside a NEW parent: accepted, and the old link is not touched.
+    const add = await put(lot, [P.A, gone, P.B])
+    expect(add.status, JSON.stringify(add.body)).toBe(200)
+    expect(add.body.source_plants).toEqual([sourcePlant(P.A, `A-slp-${RUN}`), sourcePlant(P.B, `B-slp-${RUN}`), goneAs])
+    expect(await livePlants(lot)).toEqual([P.A, P.B, gone].sort())
+    expect((await links(lot)).find((r) => r.id === rowGone.id)).toEqual(rowGone)
+
+    // The deleted planting as the ONLY parent: accepted, and the cache moves onto it.
+    const only = await put(lot, [gone])
+    expect(only.status, JSON.stringify(only.body)).toBe(200)
+    expect(only.body).toEqual({ id: lot, source_plant_id: gone, source_plants: [goneAs] })
+    expect((await links(lot)).find((r) => r.id === rowGone.id)).toEqual(rowGone)
     await expectCacheRule(lot)
+
+    // It can still be dropped ...
+    expect((await put(lot, [P.A, gone])).status).toBe(200)
+    const dropped = await put(lot, [P.A])
+    expect(dropped.status, JSON.stringify(dropped.body)).toBe(200)
+    expect(await livePlants(lot)).toEqual([P.A])
+    expect((await links(lot)).find((r) => r.id === rowGone.id).deleted_at).not.toBeNull()
+
+    // ... and once it is no longer a member it is a NEW id again, and a deleted planting is refused.
+    const before = await everything()
+    const back = await put(lot, [P.A, gone])
+    expect(back.status, JSON.stringify(back.body)).toBe(400)
+    expect(back.body.error).toBe(UNUSABLE)
+    expect(await everything()).toBe(before)
+    await expectCacheRule(lot)
+  })
+
+  it('a NEW id naming a soft-deleted planting is still 400 — also when it is a live parent of ANOTHER lot, and on POST', async () => {
+    const gone = await planting('ZZ')
+    const other = await newLot({ source_plant_ids: [gone] }) // `gone` is a member of THIS lot only
+    await softDeletePlanting(gone)
+    const lot = await newLot({ source_plant_ids: [P.A] })
+    // And another household's lot, with ITS deleted parent: the member arm is scoped through the caller's
+    // own lot, so that lot's members admit nothing to this caller.
+    const theirs = await planting('ZF', { by: FOREIGN })
+    const theirLot = await newLot({ source_plant_ids: [theirs] }, FOREIGN)
+    await softDeletePlanting(theirs)
+    const before = await everything()
+
+    const viaPut = await put(lot, [P.A, gone])
+    expect(viaPut.status, JSON.stringify(viaPut.body)).toBe(400)
+    expect(viaPut.body.error).toBe(UNUSABLE)
+    const viaTheirLot = await put(theirLot, [theirs])
+    expect(viaTheirLot.status, JSON.stringify(viaTheirLot.body)).toBe(400)
+    expect(viaTheirLot.body.error).toBe(UNUSABLE)
+    const viaPost = await postLot({ source_plant_ids: [gone] }) // a lot that does not exist yet has no members
+    expect(viaPost.status, JSON.stringify(viaPost.body)).toBe(400)
+    expect(viaPost.body.error).toBe(UNUSABLE)
+    // The legacy single-parent route's own gate was not widened: re-sending its one parent is the 400 it
+    // always was. (Clearing works, as it always did.)
+    const viaLegacy = await patchParent(other, gone)
+    expect(viaLegacy.status, JSON.stringify(viaLegacy.body)).toBe(400)
+    expect(viaLegacy.body.error).toBe('source_plant_id does not match a planting you can use')
+    expect(await everything()).toBe(before)
+
+    const cleared = await patchParent(other, null)
+    expect(cleared.status, JSON.stringify(cleared.body)).toBe(200)
+    expect(await livePlants(other)).toEqual([])
   })
 })
 
@@ -1390,11 +1506,11 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — two parents writes on 
     const blocker = openSession('holds planting K2')
     try {
       const blockerPid = await blocker.pid()
-      // The PUT's link INSERT must take FOR KEY SHARE on planting K2 (its foreign key). Held here, the
-      // PUT stops inside its transaction with the lot row locked.
+      // After the lot, the PUT share-locks the plantings it names (lockPlantings). With K2 held here it
+      // stops there: inside its transaction, the lot row locked.
       await blocker.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(b)} FOR UPDATE;`)
       const putting = onOwnConnection(() => put(lot, [a, b]))
-      const putPid = await waitBlockedBy(blockerPid, 'the PUT, at its link insert')
+      const putPid = await waitBlockedBy(blockerPid, 'the PUT, at its planting locks')
       const patching = onOwnConnection(() => patchParent(lot, c))
       await waitBlockedBy(putPid, 'the legacy PATCH, at the lot lock')
       await blocker.end('COMMIT;')
@@ -1421,8 +1537,8 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — two parents writes on 
     try {
       const blockerPid = await blocker.pid()
       await blocker.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(b)} FOR UPDATE;`)
-      const patching = onOwnConnection(() => patchParent(lot, b)) // A -> B: retires A's row, then stops at B's insert
-      const patchPid = await waitBlockedBy(blockerPid, 'the legacy PATCH, at its link insert')
+      const patching = onOwnConnection(() => patchParent(lot, b)) // A -> B: takes the lot, then stops at B's share lock
+      const patchPid = await waitBlockedBy(blockerPid, 'the legacy PATCH, at its planting lock')
       const putting = onOwnConnection(() => put(lot, [a, c]))
       await waitBlockedBy(patchPid, 'the PUT, at the lot lock')
       await blocker.end('COMMIT;')
@@ -1534,29 +1650,81 @@ async function pair(tag) {
   return { W: await mk('W'), L: await mk('L') }
 }
 
-describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a planting merge against a parents edit on the same lot', () => {
-  // The merge is stopped part-way by a row lock on a photo of the loser, which its photos repoint needs.
-  // That statement comes after the merge's lot lock and after its parent-link prune, so a stopped merge
-  // holds the lot and the pruned link row, and has not yet reached the cache repoint.
-  async function stoppedMerge(g) {
-    const [photo] = await directSql`
-      INSERT INTO photos (plant_id, storage_path, created_by)
-      VALUES (${g.L}, ${`plants/${g.L}/slp-race-${RUN}.jpg`}, ${USER}) RETURNING id`
-    const blocker = openSession('holds the loser\'s photo')
-    const blockerPid = await blocker.pid()
-    await blocker.run(`BEGIN; SELECT id FROM photos WHERE id = ${lit(photo.id)} FOR UPDATE;`)
-    const merging = onOwnConnection(() => merge(g.W, [g.L]))
-    const mergePid = await waitBlockedBy(blockerPid, 'the merge, at its photos repoint')
-    return { blocker, merging, mergePid, release: () => blocker.end('COMMIT;') }
-  }
-  const onLoser = async (g) => (await directSql`
-    SELECT count(*)::int AS n FROM seed_lot_parent_planting WHERE plant_id = ${g.L}`)[0].n
+// THE MERGE'S CUTOVER, AS IT IS ORDERED NOW (lambda/plants/merge.js): set_config; the LOT locks (FOR NO
+// KEY UPDATE, by id); six hard prunes of other surfaces; the repoints of other surfaces, photos among
+// the first; then the PLANTING locks (FOR NO KEY UPDATE on the winner and every loser, by id) and,
+// directly behind them, the parent-link prune, the source_plant_id repoint and the link repoint; then
+// the winner, the losers' soft-delete, the merge_event. Two places to stop it:
+//
+// EARLY — at its photos repoint, by a row lock on a photo of the loser. A merge stopped there holds its
+// lots and has touched neither a planting nor the link table.
+async function stoppedMerge(g, opId) {
+  const [photo] = await directSql`
+    INSERT INTO photos (plant_id, storage_path, created_by)
+    VALUES (${g.L}, ${`plants/${g.L}/slp-race-${RUN}.jpg`}, ${USER}) RETURNING id`
+  const blocker = openSession('holds the loser\'s photo')
+  const blockerPid = await blocker.pid()
+  await blocker.run(`BEGIN; SELECT id FROM photos WHERE id = ${lit(photo.id)} FOR UPDATE;`)
+  const merging = onOwnConnection(() => merge(g.W, [g.L], opId))
+  const mergePid = await waitBlockedBy(blockerPid, 'the merge, at its photos repoint')
+  return { blocker, merging, mergePid, release: () => blocker.end('COMMIT;') }
+}
+// LATE — at a parent link the loser has on `lot`, by a row lock on that link. A merge stopped there
+// holds its lots AND its plantings, and has already taken the link table for writing.
+async function mergeStoppedAtItsLinks(g, lot) {
+  const row = (await links(lot)).find((r) => r.plant_id === g.L && r.deleted_at == null)
+  const blocker = openSession('holds a link the merge will write')
+  const blockerPid = await blocker.pid()
+  await blocker.run(`BEGIN; SELECT id FROM seed_lot_parent_planting WHERE id = ${lit(row.id)} FOR UPDATE;`)
+  const merging = onOwnConnection(() => merge(g.W, [g.L]))
+  const mergePid = await waitBlockedBy(blockerPid, 'the merge, at a parent link, its plantings held')
+  return { blocker, merging, mergePid, release: () => blocker.end('COMMIT;') }
+}
+// EARLIEST — at a hard prune, before its photos repoint and before any repoint at all: a ready_impression
+// row of the loser on the winner's key, which the merge's fourth hard prune deletes, held by a session.
+// A merge stopped there holds its lots and nothing else.
+async function mergeStoppedAtAHardPrune(g, opId) {
+  const impression = async (plant) => String((await directSql`
+    INSERT INTO ready_impression (user_id, plant_id, shown_on, slot, region, source, model_version)
+    VALUES (${USER}, ${plant}, '2026-09-01'::date, 0, 'tray', 'recent', 'int-test') RETURNING id`)[0].id)
+  await impression(g.W)
+  const losers = await impression(g.L)
+  if (!/^\d+$/.test(losers)) throw new Error(`ready_impression id is not a number: ${losers}`)
+  const blocker = openSession('holds the loser\'s impression row')
+  const blockerPid = await blocker.pid()
+  await blocker.run(`BEGIN; SELECT id FROM ready_impression WHERE id = ${losers} FOR UPDATE;`)
+  const merging = onOwnConnection(() => merge(g.W, [g.L], opId))
+  const mergePid = await waitBlockedBy(blockerPid, 'the merge, lots held, at a hard prune')
+  return { blocker, merging, mergePid, release: () => blocker.end('COMMIT;') }
+}
+const onLoser = async (g) => (await directSql`
+  SELECT count(*)::int AS n FROM seed_lot_parent_planting WHERE plant_id = ${g.L}`)[0].n
+// softDeletePhoto is the photos Lambda's delete, taken whole: what it answered, or the code it threw.
+const deletePhoto = (photoId) => onOwnConnection(() => softDeletePhoto(directSql, { photoId, householdIds: [USER], userId: USER }))
+  .then((r) => ({ answered: r.status }), (e) => ({ threw: e.code ?? e.message }))
+// The handler's "this was a retry" log lines, parsed, from a console.warn spy.
+const retryLines = (spy) => spy.mock.calls
+  .map((c) => String(c[0]))
+  .filter((line) => line.includes('inv-source-plants-retry'))
+  .map((line) => JSON.parse(line))
+// Postgres checks for a deadlock ONCE per lock wait, deadlock_timeout after that wait began. So of two
+// transactions in a cycle, the victim is the one whose check runs while the cycle exists: hold the first
+// waiter past its own check (it finds nothing and goes on waiting), and the transaction that then closes
+// the cycle is the one that is aborted. Every "X is the victim" case below arranges exactly that.
+let deadlockCheckMs = 1000
+const pastItsDeadlockCheck = () => sleep(deadlockCheckMs + 700)
 
-  // Both shapes of lot. With the cache on the LOSER the merge retires L's row (the prune) and later
-  // rewrites the lot row (the cache repoint), while a PUT wants the lot row first and then L's row: taken
-  // in opposite orders that is a deadlock, and Postgres aborts one of the two with 40P01 (it did, on the
-  // merge as first committed: the PUT answered 500). With the cache on the WINNER the cache repoint never
-  // touches the lot at all, so only the merge's explicit lot lock makes the two wait for each other.
+describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a planting merge against a parents edit on the same lot (D-1, D-2)', () => {
+  beforeAll(async () => {
+    deadlockCheckMs = (await directSql`
+      SELECT (extract(epoch FROM current_setting('deadlock_timeout')::interval) * 1000)::int AS ms`)[0].ms
+  })
+
+  // D-1. Both shapes of lot. As first committed the merge pruned L's link, and only much later rewrote
+  // the lot row, while a PUT takes the lot row first and then L's link: opposite orders, a deadlock, and
+  // Postgres aborted the PUT with 40P01 (it answered 500). The merge now locks every lot it can touch
+  // before anything else, so the two simply wait for each other. With the cache on the WINNER the
+  // source_plant_id repoint never touches the lot at all; only that explicit lock covers it.
   const SHAPES = [
     ['the cache names the LOSER', 'l', (g) => g.L],
     ['the cache names the WINNER', 'w', (g) => g.W],
@@ -1591,8 +1759,8 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a planting merge again
     try {
       const blockerPid = await blocker.pid()
       await blocker.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(c)} FOR UPDATE;`)
-      const putting = onOwnConnection(() => put(lot, [g.W, c])) // takes L off and adds KD: stops at KD's insert, lot row held
-      const putPid = await waitBlockedBy(blockerPid, 'the PUT, at its link insert')
+      const putting = onOwnConnection(() => put(lot, [g.W, c])) // takes L off and adds KD: stops at KD's share lock, lot row held
+      const putPid = await waitBlockedBy(blockerPid, 'the PUT, at its planting locks')
       const merging = onOwnConnection(() => merge(g.W, [g.L]))
       await waitBlockedBy(putPid, 'the merge, behind the PUT')
       await blocker.end('COMMIT;')
@@ -1703,22 +1871,22 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a planting merge again
     }
   })
 
-  // ── A KNOWN DEFECT, PINNED (lane T1 report, defect D-2) ────────────────────────────────────────────
-  // The parents routes check that the caller may use every planting BEFORE their transaction (one read,
-  // ownsEveryPlanting), and nothing inside the transaction asks again. A request that then waits for the
-  // lot behind a merge runs against merged state with a pre-merge answer: here the person re-saves the
-  // lot's unchanged set {A, L} while L is being merged into W. The merge finishes first and leaves
-  // {A, W}; the PUT then retires W's row (W is not in its set) and inserts a row for L — a planting the
-  // merge has just soft-deleted. The lot ends up pointing at the merged-away planting, and is gone from
-  // the winner's page.
-  // The orchestration and what must hold either way are ordinary assertions in beforeAll and the first
-  // test, so a broken harness cannot hide behind the expected failure. The second test states what should
-  // be true and is marked it.fails: it goes RED the day the handler stops doing this — remove `.fails`
-  // then. To make the defect block CI today instead, change `it.fails` to `it`.
+  // ── D-2, CLOSED ────────────────────────────────────────────────────────────────────────────────────
+  // The parents routes used to ask "may the caller use every one of these plantings" once, BEFORE their
+  // transaction, and never again. A request that then waited for its lot behind a merge acted on the
+  // pre-merge answer: re-saving the lot's unchanged set {A, L} while L was being merged into W answered
+  // 200, retired W's row and linked the planting the merge had just soft-deleted; the lot vanished from
+  // the winner's page. (This file held that as a known, expected failure until the handler changed.)
+  // The write now asks again INSIDE the transaction, under the lot lock and a share lock on the plantings,
+  // and an id passes when it is a live planting of the household OR already a live parent of this lot.
+  // After the merge L is neither. Nothing is written and the answer is a 409 that says to reload.
   describe('a PUT that names the loser and waited behind the merge', () => {
     let g
     let a
     let lot
+    let lotBefore
+    let rowA
+    let rowL
     let mergeR
     let putR
 
@@ -1726,9 +1894,13 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a planting merge again
       g = await pair('stale')
       a = await planting('KE')
       lot = await newLot({ source_plant_ids: [a, g.L] })
+      lotBefore = await lotRow(lot)
+      const rows = await links(lot)
+      rowA = rows.find((r) => r.plant_id === a)
+      rowL = rows.find((r) => r.plant_id === g.L)
       const stopped = await stoppedMerge(g)
       try {
-        const putting = onOwnConnection(() => put(lot, [a, g.L])) // its ownership read passes: L is still live
+        const putting = onOwnConnection(() => put(lot, [a, g.L])) // its gate passes: L is still live
         await waitBlockedBy(stopped.mergePid, 'the PUT, behind the merge')
         await stopped.release()
         ;[mergeR, putR] = await Promise.all([stopped.merging, putting])
@@ -1737,16 +1909,670 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a planting merge again
       }
     }, 90000)
 
-    it('both requests are answered, the merge with 200, and the member-cache rule still holds', async () => {
+    it('the merge answers 200 and the PUT 409 "one of those plants changed", with no ids in it', async () => {
       expect(mergeR.status, `merge -> ${JSON.stringify(mergeR.body)}`).toBe(200)
-      expect([200, 400, 409]).toContain(putR.status)
+      expect(putR.status, `PUT -> ${JSON.stringify(putR.body)}`).toBe(409)
+      expect(putR.body).toEqual({ error: PLANTS_CHANGED })
       const [loser] = await directSql`SELECT deleted_at IS NOT NULL AS gone FROM plants WHERE id = ${g.L}`
       expect(loser.gone).toBe(true)
-      await expectCacheRule(lot)
     })
 
-    it.fails('the lot is not left with a live parent link to the planting the merge soft-deleted', async () => {
-      expect(await livePlants(lot)).not.toContain(g.L)
+    it('the lot is exactly as the merge left it: parents {A, W}, still on the winner\'s page, nothing naming the loser', async () => {
+      const rows = await links(lot)
+      expect(rows).toHaveLength(2) // the PUT inserted nothing and retired nothing
+      expect(rows.find((r) => r.id === rowA.id)).toEqual(rowA)
+      expect(rows.find((r) => r.id === rowL.id)).toMatchObject({ plant_id: g.W, deleted_at: null })
+      expect(await livePlants(lot)).toEqual([a, g.W].sort())
+      expect(await onLoser(g)).toBe(0)
+      // The cache was on A, so neither the merge nor the refused PUT had any reason to write the lot row.
+      expect(await lotRow(lot)).toEqual(lotBefore)
+      const page = await seedLotsOf(g.W)
+      expect(page.body.seed_lots.map((l) => l.id)).toEqual([lot])
+      await expectCacheRule(lot)
+    })
+  })
+
+  it('the planting lock\'s strength: FOR SHARE on a loser (a parents write\'s lock) makes the merge wait; FOR KEY SHARE (a foreign-key check) does not', { timeout: 90000 }, async () => {
+    const waits = await pair('ps')
+    const lotW = await newLot({ source_plant_ids: [waits.L] })
+    const holder = openSession('holds the loser FOR SHARE')
+    try {
+      const holderPid = await holder.pid()
+      await holder.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(waits.L)} FOR SHARE;`)
+      const merging = onOwnConnection(() => merge(waits.W, [waits.L]))
+      await waitBlockedBy(holderPid, 'the merge, at its planting locks')
+      await holder.end('COMMIT;')
+      const r = await merging
+      expect(r.status, `merge -> ${JSON.stringify(r.body)}`).toBe(200)
+      expect(await livePlants(lotW)).toEqual([waits.W])
+    } finally {
+      await holder.end()
+    }
+
+    const passes = await pair('pk')
+    const lotK = await newLot({ source_plant_ids: [passes.L] })
+    const keyHolder = openSession('holds the loser FOR KEY SHARE')
+    try {
+      await keyHolder.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(passes.L)} FOR KEY SHARE;`)
+      const r = await Promise.race([
+        onOwnConnection(() => merge(passes.W, [passes.L])),
+        sleep(20000).then(() => ({ status: 'still waiting after 20 s', body: null })),
+      ])
+      expect(r.status, `merge -> ${JSON.stringify(r.body)}`).toBe(200)
+      expect(await keyHolder.run('SELECT 1;')).toEqual(['1'])
+      expect(await livePlants(lotK)).toEqual([passes.W])
+      await expectCacheRule(lotW, lotK)
+    } finally {
+      await keyHolder.end()
+    }
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+// A planting that changes while a parents write is on its way (the write's share lock, and its in-
+// transaction re-test)
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a planting changes under a parents write', () => {
+  it('PUT, the delete first: the planting is being soft-deleted when the PUT arrives; the PUT waits, then 409, and the lot is untouched', { timeout: 90000 }, async () => {
+    const a = await planting('C1')
+    const b = await planting('C2')
+    const c = await planting('C3')
+    const lot = await newLot({ source_plant_ids: [c] })
+    const before = await everything()
+    const deleter = openSession('soft-deletes planting C2')
+    try {
+      const deleterPid = await deleter.pid()
+      await deleter.run(`BEGIN; UPDATE plants SET deleted_at = now() WHERE id = ${lit(b)};`)
+      const putting = onOwnConnection(() => put(lot, [a, b])) // its gate passes: C2 is live to every reader
+      await waitBlockedBy(deleterPid, 'the PUT, at its planting locks')
+      await deleter.end('COMMIT;')
+      const r = await putting
+      expect(r.status, JSON.stringify(r.body)).toBe(409)
+      expect(r.body).toEqual({ error: PLANTS_CHANGED })
+      // All or nothing: C's link not retired, A's not inserted, the cache and updated_at as they were.
+      expect(await everything()).toBe(before)
+    } finally {
+      await deleter.end()
+    }
+  })
+
+  it('POST, the delete first: 409, and no lot row and no link row exists afterwards', { timeout: 90000 }, async () => {
+    const a = await planting('C4')
+    const b = await planting('C5')
+    const before = await everything()
+    const deleter = openSession('soft-deletes planting C5')
+    try {
+      const deleterPid = await deleter.pid()
+      await deleter.run(`BEGIN; UPDATE plants SET deleted_at = now() WHERE id = ${lit(b)};`)
+      const posting = onOwnConnection(() => postLot({ source_plant_ids: [a, b] }))
+      await waitBlockedBy(deleterPid, 'the POST, at its planting locks')
+      await deleter.end('COMMIT;')
+      const r = await posting
+      expect(r.status, JSON.stringify(r.body)).toBe(409)
+      expect(r.body).toEqual({ error: PLANTS_CHANGED })
+      expect(await everything()).toBe(before)
+    } finally {
+      await deleter.end()
+    }
+  })
+
+  it('PUT, the PUT first: it holds its share lock, a soft-delete of that planting waits behind it, the PUT answers 200 and the planting then reads deleted', { timeout: 90000 }, async () => {
+    const b = await planting('C6')
+    const high = await plantingWithId(idStarting('ffffffff'), 'C7')
+    expect(high > b).toBe(true) // so the PUT locks C6 first and is stopped at C7
+    const lot = await newLot()
+    const blocker = openSession('holds planting C7')
+    const deleter = openSession('soft-deletes planting C6')
+    try {
+      const blockerPid = await blocker.pid()
+      await blocker.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(high)} FOR UPDATE;`)
+      const putting = onOwnConnection(() => put(lot, [b, high]))
+      const putPid = await waitBlockedBy(blockerPid, 'the PUT, holding C6, at C7')
+      const deleting = deleter.run(`UPDATE plants SET deleted_at = now() WHERE id = ${lit(b)};`, { timeoutMs: 60000 })
+        .then(() => 'deleted', (e) => `failed: ${e.message}`)
+      await waitBlockedBy(putPid, 'the soft-delete, behind the PUT\'s share lock')
+      await blocker.end('COMMIT;')
+      const r = await putting
+      expect(r.status, JSON.stringify(r.body)).toBe(200)
+      expect(r.body.source_plants.map((x) => [x.id, x.deleted])).toEqual([[b, false], [high, false]])
+      expect(await deleting).toBe('deleted')
+      expect(await livePlants(lot)).toEqual([b, high].sort())
+      const after = (await getLot(lot)).body.source_plants
+      expect(after.map((x) => [x.id, x.deleted])).toEqual([[b, true], [high, false]])
+      await expectCacheRule(lot)
+    } finally {
+      await blocker.end()
+      await deleter.end()
+    }
+  })
+
+  it('another session\'s FOR SHARE on the same planting does not hold a parents write up', { timeout: 90000 }, async () => {
+    const b = await planting('C8')
+    const lot = await newLot()
+    const holder = openSession('holds planting C8 FOR SHARE')
+    try {
+      await holder.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(b)} FOR SHARE;`)
+      const r = await Promise.race([
+        onOwnConnection(() => put(lot, [b])),
+        sleep(20000).then(() => ({ status: 'still waiting after 20 s', body: null })),
+      ])
+      expect(r.status, JSON.stringify(r.body)).toBe(200)
+      expect(await holder.run('SELECT 1;')).toEqual(['1'])
+      expect(await livePlants(lot)).toEqual([b])
+    } finally {
+      await holder.end()
+    }
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+// A parents write as the deadlock victim — 40P01 answers 409, not 500
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a parents write that Postgres aborts as a deadlock victim answers 409', () => {
+  beforeAll(async () => {
+    deadlockCheckMs = (await directSql`
+      SELECT (extract(epoch FROM current_setting('deadlock_timeout')::interval) * 1000)::int AS ms`)[0].ms
+  })
+
+  it('PUT: 409 "changed at the same moment", nothing written, and the other session carries on', { timeout: 120000 }, async () => {
+    // The other session holds planting DC and then asks for the LOT. The PUT holds the lot and is kept
+    // at its first planting lock (DA, the lower id) until the other session's own deadlock check has run
+    // and found nothing; released, it locks DA and asks for DC. That request closes the cycle, so the
+    // PUT is the one aborted.
+    const low = await plantingWithId(idStarting('00000000'), 'DA')
+    const c = await planting('DC')
+    expect(low < c).toBe(true)
+    const lot = await newLot({ source_plant_ids: [P.A] })
+    const before = await everything()
+    const holdLow = openSession('holds planting DA')
+    const rival = openSession('holds planting DC, then wants the lot')
+    const warn = vi.spyOn(console, 'warn')
+    try {
+      const holdLowPid = await holdLow.pid()
+      await holdLow.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(low)} FOR UPDATE;`)
+      await rival.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(c)} FOR UPDATE;`)
+      const putting = onOwnConnection(() => put(lot, [low, c]))
+      const putPid = await waitBlockedBy(holdLowPid, 'the PUT, lot held, at its first planting lock')
+      const wanting = rival.run(`SELECT id FROM inventory_items WHERE id = ${lit(lot)} FOR UPDATE;`, { timeoutMs: 60000 })
+        .then((rows) => ({ got: rows }), (e) => ({ failed: e.message }))
+      await waitBlockedBy(putPid, 'the other session, at the lot row')
+      await pastItsDeadlockCheck()
+      await holdLow.end('COMMIT;')
+
+      const r = await putting
+      expect(r.status, JSON.stringify(r.body)).toBe(409)
+      expect(r.body).toEqual({ error: CHANGED_AT_ONCE })
+      // A 409 that used to be a 500 is logged, once, with the code: a lock-order regression must not hide.
+      expect(retryLines(warn)).toEqual([{ tag: 'inv-source-plants-retry', item: lot, code: '40P01' }])
+      // The other session was NOT the one aborted: it got the lot and its transaction is still usable.
+      expect(await wanting).toEqual({ got: [lot] })
+      expect(await rival.run('SELECT 1;')).toEqual(['1'])
+      await rival.end()
+      expect(await everything()).toBe(before)
+    } finally {
+      warn.mockRestore()
+      await holdLow.end()
+      await rival.end()
+    }
+  })
+
+  it('POST: 409 "one of those plants changed", and no lot row is left', { timeout: 120000 }, async () => {
+    // Three plantings by id: DL < DM < DH. The other session holds DH and then asks for DL. The POST has
+    // share-locked DL and is kept at DM until the other session's check has run; released, it locks DM
+    // and asks for DH, closing the cycle.
+    const low = await plantingWithId(idStarting('00000000'), 'DL')
+    const mid = await plantingWithId(idStarting('88888888'), 'DM')
+    const high = await plantingWithId(idStarting('ffffffff'), 'DH')
+    const before = await everything()
+    const holdMid = openSession('holds planting DM')
+    const rival = openSession('holds planting DH, then wants DL')
+    const warn = vi.spyOn(console, 'warn')
+    try {
+      const holdMidPid = await holdMid.pid()
+      await holdMid.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(mid)} FOR UPDATE;`)
+      await rival.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(high)} FOR UPDATE;`)
+      const posting = onOwnConnection(() => postLot({ source_plant_ids: [low, mid, high] }))
+      const postPid = await waitBlockedBy(holdMidPid, 'the POST, DL share-locked, at DM')
+      const wanting = rival.run(`SELECT id FROM plants WHERE id = ${lit(low)} FOR UPDATE;`, { timeoutMs: 60000 })
+        .then((rows) => ({ got: rows }), (e) => ({ failed: e.message }))
+      await waitBlockedBy(postPid, 'the other session, at planting DL')
+      await pastItsDeadlockCheck()
+      await holdMid.end('COMMIT;')
+
+      const r = await posting
+      expect(r.status, JSON.stringify(r.body)).toBe(409)
+      expect(r.body).toEqual({ error: PLANTS_CHANGED })
+      expect(retryLines(warn)).toEqual([expect.objectContaining({ tag: 'inv-source-plants-retry', code: '40P01', create: true })])
+      expect(await wanting).toEqual({ got: [low] })
+      await rival.end()
+      expect(await everything()).toBe(before) // the lot INSERT went back with the rest
+    } finally {
+      warn.mockRestore()
+      await holdMid.end()
+      await rival.end()
+    }
+  })
+
+  // The legacy PATCH runs the same replaceSourcePlants and so the same catch as the PUT above. It is not
+  // provoked on its own: it names ONE planting, so there is no point between its lot lock and its single
+  // planting lock at which it can be held while the other session's deadlock check runs. Without that,
+  // which of the two Postgres aborts depends on which began waiting first inside the same second.
+  it.skip('legacy PATCH as the deadlock victim — not provoked: with one planting there is nowhere to hold it between its two locks', () => {})
+})
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+// F1.4 — a parents write that adds a merge's LOSER to a lot the merge did not lock
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — F1.4: a NEW parent that is a merge\'s loser, on a lot outside the merge\'s lot locks', () => {
+  // The merge locks the lots that ALREADY link to its plantings. A lot that is only now gaining the loser
+  // is not one of them, so the lot lock cannot order the two. What does: the write's FOR SHARE on the
+  // plantings it names, against the merge's FOR NO KEY UPDATE on its own plantings — and the merge's three
+  // seed-lot statements running BEHIND that lock, so that whichever is second sees what the first
+  // committed. Before the merge locked its plantings a write that committed after the merge's link
+  // repoint had run was never seen by it: a live link to a soft-deleted loser, the lot missing from the
+  // winner's page, and no error anywhere.
+  //
+  // HANDLER FIRST is arranged by naming a second planting with a HIGHER id that a session holds: the
+  // write share-locks the loser, then stops at that one. The merge reaches its planting locks and waits.
+  async function handlerFirst(g, send) {
+    const high = await plantingWithId(idStarting('ffffffff'), `F1-${seq++}`)
+    expect(high > g.L && high > g.W).toBe(true)
+    const blocker = openSession('holds the higher planting')
+    try {
+      const blockerPid = await blocker.pid()
+      await blocker.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(high)} FOR UPDATE;`)
+      const writing = onOwnConnection(() => send(high))
+      const writePid = await waitBlockedBy(blockerPid, 'the parents write, loser share-locked, at the higher planting')
+      const merging = onOwnConnection(() => merge(g.W, [g.L]))
+      await waitBlockedBy(writePid, 'the merge, at its planting locks')
+      await blocker.end('COMMIT;')
+      const [writeR, mergeR] = await Promise.all([writing, merging])
+      return { high, writeR, mergeR }
+    } finally {
+      await blocker.end()
+    }
+  }
+  const onWinnersPage = async (g) => (await seedLotsOf(g.W)).body.seed_lots.map((l) => l.id)
+
+  // KNOWN LIMIT, ASSERTED AS IT IS TODAY (lane L2 report, section 15(d)) — flip these when it is fixed.
+  // The merge reads its snapshot's seed-lot entries BEFORE its transaction: every link row on a loser,
+  // every lot whose cache names a loser, and the links its prune will retire. In the handler-first order
+  // the parents write commits AFTER those reads and BEFORE the merge's seed-lot statements run, so the
+  // merge moves (or retires) a link, and may rewrite a lot's source_plant_id, that its own snapshot
+  // never saw. Seen on Neon 2026-10-05 in all three handler-first cases below: no seed_lot_parent_planting
+  // entry and no inventory_items entry in `repoints`, and `seed_lot_parents_pruned` empty. A restore
+  // built from that snapshot would bring the loser back and leave this lot's link and cache on the
+  // winner. The day the reads move inside the transaction this expectation fails; change it then.
+  const whatTheSnapshotHoldsOfSeedLots = async (mergeR) => {
+    const [m] = await directSql`SELECT snapshot FROM merge_event WHERE id = ${mergeR.body.merge_event_id}`
+    const snap = typeof m.snapshot === 'string' ? JSON.parse(m.snapshot) : m.snapshot
+    return {
+      linksMoved: snap.repoints.filter((r) => r.table === 'seed_lot_parent_planting'),
+      cachesMoved: snap.repoints.filter((r) => r.table === 'inventory_items'),
+      linksRetired: snap.seed_lot_parents_pruned,
+    }
+  }
+  const NOTHING_OF_WHAT_THE_MERGE_DID = { linksMoved: [], cachesMoved: [], linksRetired: [] }
+
+  it('HANDLER FIRST, PUT: both complete, the link the PUT wrote is moved to the winner, and the lot is on the WINNER\'s page', { timeout: 90000 }, async () => {
+    const g = await pair('f14a')
+    const lot = await newLot() // no parents: nothing ties it to the group, so the merge does not lock it
+    const { high, writeR, mergeR } = await handlerFirst(g, (h) => put(lot, [g.L, h]))
+    expect(writeR.status, `PUT -> ${JSON.stringify(writeR.body)}`).toBe(200)
+    expect(mergeR.status, `merge -> ${JSON.stringify(mergeR.body)}`).toBe(200)
+    expect(await livePlants(lot)).toEqual([g.W, high].sort())
+    expect([g.W, high]).toContain((await lotRow(lot)).source_plant_id)
+    expect(await onLoser(g)).toBe(0)
+    expect(await onWinnersPage(g)).toEqual([lot])
+    await expectCacheRule(lot)
+
+    // The merge moved the PUT's link (and its cache, when the PUT put it on the loser). Its snapshot
+    // records none of it: the known limit described above the helper.
+    expect(await whatTheSnapshotHoldsOfSeedLots(mergeR)).toEqual(NOTHING_OF_WHAT_THE_MERGE_DID)
+  })
+
+  it('HANDLER FIRST, POST with the cache on the loser: the new lot ends up with the cache on the winner', { timeout: 90000 }, async () => {
+    const g = await pair('f14b')
+    const { high, writeR, mergeR } = await handlerFirst(g, (h) => postLot({ source_plant_ids: [g.L, h], source_plant_id: g.L }))
+    expect(writeR.status, `POST -> ${JSON.stringify(writeR.body)}`).toBe(201)
+    expect(writeR.body.source_plant_id).toBe(g.L) // what the create wrote, before the merge moved it
+    expect(mergeR.status, `merge -> ${JSON.stringify(mergeR.body)}`).toBe(200)
+    const lot = writeR.body.id
+    expect(await livePlants(lot)).toEqual([g.W, high].sort())
+    // This is the case the source_plant_id repoint had to move behind the planting lock for.
+    expect((await lotRow(lot)).source_plant_id).toBe(g.W)
+    expect(await onLoser(g)).toBe(0)
+    expect(await onWinnersPage(g)).toEqual([lot])
+    await expectCacheRule(lot)
+    // Known limit: the merge moved a link AND rewrote this lot's cache; its snapshot has neither.
+    expect(await whatTheSnapshotHoldsOfSeedLots(mergeR)).toEqual(NOTHING_OF_WHAT_THE_MERGE_DID)
+  })
+
+  it('HANDLER FIRST, PUT adding BOTH the loser and the winner: the loser\'s new link is retired, the winner\'s stays, no collision', { timeout: 90000 }, async () => {
+    const g = await pair('f14c')
+    const lot = await newLot()
+    const { high, writeR, mergeR } = await handlerFirst(g, (h) => put(lot, [g.L, g.W, h]))
+    expect(writeR.status, `PUT -> ${JSON.stringify(writeR.body)}`).toBe(200)
+    // This is the case the prune had to move behind the planting lock for: run earlier, it would not
+    // have seen the loser's link, and the repoint would have met the winner's on the unique key.
+    expect(mergeR.status, `merge -> ${JSON.stringify(mergeR.body)}`).toBe(200)
+    const rows = await links(lot)
+    expect(rows).toHaveLength(3)
+    expect(rows.every((r) => r.plant_id === g.W || r.plant_id === high)).toBe(true)
+    expect(liveSeed(rows).map((r) => r.plant_id).sort()).toEqual([g.W, high].sort())
+    expect(rows.filter((r) => r.plant_id === g.W && r.deleted_at != null)).toHaveLength(1)
+    expect(await onWinnersPage(g)).toEqual([lot])
+    await expectCacheRule(lot)
+    // Known limit: the merge RETIRED a link here; `seed_lot_parents_pruned` does not name it.
+    expect(await whatTheSnapshotHoldsOfSeedLots(mergeR)).toEqual(NOTHING_OF_WHAT_THE_MERGE_DID)
+  })
+
+  it('MERGE FIRST, PUT: the write waits at its share lock, then answers 409, and its lot is untouched', { timeout: 90000 }, async () => {
+    const g = await pair('f14d')
+    const inSet = await newLot({ source_plant_ids: [g.L] }) // a lot the merge does lock; the merge is stopped on its link
+    const lot = await newLot({ source_plant_ids: [P.A] }) // outside the merge's lot locks
+    const before = { row: await lotRow(lot), links: await links(lot) }
+    const stopped = await mergeStoppedAtItsLinks(g, inSet)
+    try {
+      const putting = onOwnConnection(() => put(lot, [P.A, g.L])) // its gate passes: the loser is live to every reader
+      await waitBlockedBy(stopped.mergePid, 'the PUT, at its planting locks')
+      await stopped.release()
+      const [mergeR, putR] = await Promise.all([stopped.merging, putting])
+      expect(mergeR.status, `merge -> ${JSON.stringify(mergeR.body)}`).toBe(200)
+      expect(putR.status, `PUT -> ${JSON.stringify(putR.body)}`).toBe(409)
+      expect(putR.body).toEqual({ error: PLANTS_CHANGED })
+      expect({ row: await lotRow(lot), links: await links(lot) }).toEqual(before)
+      expect(await livePlants(inSet)).toEqual([g.W])
+      expect(await onLoser(g)).toBe(0)
+      await expectCacheRule(lot, inSet)
+    } finally {
+      await stopped.blocker.end()
+    }
+  })
+
+  it('MERGE FIRST, POST: 409, and no lot is created', { timeout: 90000 }, async () => {
+    const g = await pair('f14e')
+    const inSet = await newLot({ source_plant_ids: [g.L] })
+    const countLots = async () => (await directSql`
+      SELECT count(*)::int AS n FROM inventory_items WHERE created_by IN (${USER}, ${FOREIGN})`)[0].n
+    const lotsBefore = await countLots()
+    const stopped = await mergeStoppedAtItsLinks(g, inSet)
+    try {
+      const posting = onOwnConnection(() => postLot({ source_plant_ids: [g.L] }))
+      await waitBlockedBy(stopped.mergePid, 'the POST, at its planting locks')
+      await stopped.release()
+      const [mergeR, postR] = await Promise.all([stopped.merging, posting])
+      expect(mergeR.status, `merge -> ${JSON.stringify(mergeR.body)}`).toBe(200)
+      expect(postR.status, `POST -> ${JSON.stringify(postR.body)}`).toBe(409)
+      expect(postR.body).toEqual({ error: PLANTS_CHANGED })
+      expect(await countLots()).toBe(lotsBefore)
+      expect(await onLoser(g)).toBe(0)
+      await expectCacheRule(inSet)
+    } finally {
+      await stopped.blocker.end()
+    }
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+// D-3 — the merge against a photo delete: still a deadlock, now answered
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — D-3: the merge against a photo delete (opposite orders on a photo row and a lot row)', () => {
+  // softDeletePhoto takes the PHOTO row and later the rows that feature it, seed lots among them. The
+  // merge takes its LOTS first and the losers' photos later. A photo of the loser that is also the
+  // featured photo of a lot in the merge's set is therefore held from both ends. Taking lots first is
+  // what closed D-1, and the order was kept; a deadlocked merge now answers 409 and says it can be run
+  // again. Both outcomes are driven here, one victim each.
+  beforeAll(async () => {
+    deadlockCheckMs = (await directSql`
+      SELECT (extract(epoch FROM current_setting('deadlock_timeout')::interval) * 1000)::int AS ms`)[0].ms
+  })
+
+  async function jarWithTheLosersPhoto(g) {
+    const lot = await newLot({ source_plant_ids: [g.W, g.L], source_plant_id: g.L })
+    const [photo] = await directSql`
+      INSERT INTO photos (plant_id, inventory_item_id, storage_path, created_by)
+      VALUES (${g.L}, ${lot}, ${`plants/${g.L}/slp-d3-${RUN}.jpg`}, ${USER}) RETURNING id`
+    await directSql`UPDATE inventory_items SET featured_photo_id = ${photo.id} WHERE id = ${lot}`
+    return { lot, photo: photo.id }
+  }
+  // Everything of the group a merge writes: both plantings, the lot's cache, every link row.
+  const groupState = async (g, lot) => ({
+    plantings: await directSql`
+      SELECT id, name, status, quantity, version, updated_at::text AS updated_at, deleted_at::text AS deleted_at
+        FROM plants WHERE id IN (${g.W}, ${g.L}) ORDER BY id`,
+    cache: (await lotRow(lot)).source_plant_id,
+    links: await links(lot),
+  })
+
+  it('the MERGE is the victim: 409 "nothing was merged, run it again", nothing of the group changed, and the same op_id then merges', { timeout: 120000 }, async () => {
+    const g = await pair('d3a')
+    const { lot, photo } = await jarWithTheLosersPhoto(g)
+    const before = await groupState(g, lot)
+    const opId = randomUUID()
+    // Held at a hard prune: BEFORE its photos repoint, with its lots already locked.
+    const stopped = await mergeStoppedAtAHardPrune(g, opId)
+    const { blocker, merging, mergePid } = stopped
+    try {
+      const deleting = deletePhoto(photo) // takes the photo row, then waits for the lot the merge holds
+      await waitBlockedBy(mergePid, 'the photo delete, at the lot row')
+      await pastItsDeadlockCheck() // the photo delete's own check runs and finds nothing
+      await blocker.end('COMMIT;') // the merge goes on to its photos repoint: that wait closes the cycle
+
+      const [mergeR, del] = await Promise.all([merging, deleting])
+      expect(mergeR.status, `merge -> ${JSON.stringify(mergeR.body)}`).toBe(409)
+      expect(mergeR.body.error).toBe(MERGE_RETRY)
+      expect(JSON.stringify(mergeR.body)).not.toMatch(/Process \d+|ShareLock|transaction \d+/) // Postgres's detail stays out
+      expect(del).toEqual({ answered: 200 })
+
+      // Rolled back WHOLE: both plantings, the lot's cache and every link row are byte for byte as they
+      // were before the merge was sent, and it left no merge_event.
+      expect(await groupState(g, lot)).toEqual(before)
+      expect((await directSql`SELECT count(*)::int AS n FROM merge_event WHERE op_id = ${opId}`)[0].n).toBe(0)
+      await expectCacheRule(lot)
+
+      // "Run it again": the same op_id is a first attempt, not a replay, and it merges.
+      const again = await merge(g.W, [g.L], opId)
+      expect(again.status, `merge again -> ${JSON.stringify(again.body)}`).toBe(200)
+      expect(again.body.replayed).toBeUndefined()
+      expect(await livePlants(lot)).toEqual([g.W])
+      expect((await lotRow(lot)).source_plant_id).toBe(g.W)
+      await expectCacheRule(lot)
+    } finally {
+      await blocker.end()
+    }
+  })
+
+  it('the PHOTO DELETE is the victim: the merge completes with 200', { timeout: 120000 }, async () => {
+    const g = await pair('d3b')
+    const { lot, photo } = await jarWithTheLosersPhoto(g)
+    // A third planting features the same photo: photo delete clears planting pointers before lot
+    // pointers, so a lock on that planting holds it between the photo row and the lot row.
+    const featuring = await planting('KQ')
+    await directSql`UPDATE plants SET featured_photo_id = ${photo} WHERE id = ${featuring}`
+    const blocker = openSession('holds the planting that features the photo')
+    try {
+      const blockerPid = await blocker.pid()
+      await blocker.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(featuring)} FOR UPDATE;`)
+      const deleting = deletePhoto(photo)
+      const deletePid = await waitBlockedBy(blockerPid, 'the photo delete, photo held, at a planting pointer')
+      const merging = onOwnConnection(() => merge(g.W, [g.L]))
+      await waitBlockedBy(deletePid, 'the merge, lots held, at its photos repoint')
+      await pastItsDeadlockCheck() // the merge's own check runs and finds nothing
+      await blocker.end('COMMIT;') // the photo delete goes on to the lot row: that wait closes the cycle
+
+      const [del, mergeR] = await Promise.all([deleting, merging])
+      expect(mergeR.status, `merge -> ${JSON.stringify(mergeR.body)}`).toBe(200)
+      expect(await livePlants(lot)).toEqual([g.W])
+      expect((await lotRow(lot)).source_plant_id).toBe(g.W)
+      expect(await onLoser(g)).toBe(0)
+      await expectCacheRule(lot)
+      // What the photo delete itself answers is lambda/photos' business and is NOT held still here.
+      // OBSERVED on Neon 2026-10-05: softDeletePhoto rejects with 40P01, which lambda/photos/index.js
+      // does not map — its route answers 500, with the photo not deleted. Open, and outside this file's
+      // two Lambdas; the assertion only says it was one of the two things it can be.
+      expect([{ answered: 200 }, { threw: '40P01' }]).toContainEqual(del)
+    } finally {
+      await blocker.end()
+    }
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+// Why the merge takes its plantings LATE — the writers that take another row first and a planting second
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — the merge holds no planting until late in its cutover', () => {
+  // A photo delete takes the photo row and THEN the planting that features it. A batch event takes the
+  // planting's entity_memory row and THEN the planting. An event delete takes the event row and THEN
+  // (for a loss event) the planting whose count it restores. The merge takes photos, event rows and
+  // entity_memory first and its plantings after them — the same order — so each of these queues behind
+  // it or goes ahead of it, and none can cross it. Had the merge's planting lock been placed straight
+  // behind its lot lock (the first proposal), each would be an opposite-order pair and a 40P01; a run of
+  // this block against that placement leaves the "goes straight through" cases waiting.
+  //
+  // Each writer is driven both ways:
+  //   · the merge stopped EARLY (lots held, no repoint run): it holds no planting, so the writer must go
+  //     STRAIGHT THROUGH, writing the loser's planting row under the stopped merge;
+  //   · the merge stopped LATE (plantings held, the other surfaces already repointed): the writer WAITS
+  //     behind it, and when the merge commits both complete. No 40P01 either way.
+  const withoutWaiting = (promise) => Promise.race([promise, sleep(20000).then(() => 'STILL WAITING after 20 s')])
+  const eventsCall = (method, path, body = null) => {
+    setTestUserId(USER)
+    return callHandler(eventsHandler, { method, path, body })
+  }
+  async function heroPhotoOf(g) {
+    const [photo] = await directSql`
+      INSERT INTO photos (plant_id, storage_path, created_by)
+      VALUES (${g.L}, ${`plants/${g.L}/slp-hero-${RUN}.jpg`}, ${USER}) RETURNING id`
+    await directSql`UPDATE plants SET featured_photo_id = ${photo.id} WHERE id = ${g.L}`
+    return photo.id
+  }
+  const germinate = (g, key) => eventsCall('POST', '/api/events/batch', {
+    idempotency_key: `slp-${key}-${RUN}`, event_type: 'germination', event_date: '2026-08-15',
+    scope: { type: 'ids', plant_ids: [g.L] },
+  })
+  // One plant of five lost to a pest, logged through the events route: quantity 5 -> 4, qty_lost 0 -> 1.
+  async function lossEventOn(g) {
+    await directSql`UPDATE plants SET quantity = 5 WHERE id = ${g.L}`
+    const r = await eventsCall('POST', '/api/events', {
+      plant_id: g.L, event_type: 'reduction_lost', event_date: '2026-08-10T16:00:00.000Z',
+      metadata: { qty_reduced: 1, loss_reason: 'pest' },
+    })
+    expect(r.status, `loss event -> ${JSON.stringify(r.body)}`).toBe(201)
+    const [after] = await directSql`SELECT quantity::int AS quantity, qty_lost::int AS qty_lost FROM plants WHERE id = ${g.L}`
+    expect(after).toEqual({ quantity: 4, qty_lost: 1 })
+    return r.body.id ?? r.body.eventId
+  }
+  const mergedCleanly = async (stopped, g, lot) => {
+    const r = await stopped.merging
+    expect(r.status, `merge -> ${JSON.stringify(r.body)}`).toBe(200)
+    expect(await livePlants(lot)).toEqual([g.W])
+    await expectCacheRule(lot)
+  }
+
+  describe('the merge stopped EARLY: each writer goes straight through', () => {
+    it('a photo delete of the loser\'s hero photo', { timeout: 120000 }, async () => {
+      const g = await pair('early1')
+      const lot = await newLot({ source_plant_ids: [g.L] })
+      const photo = await heroPhotoOf(g)
+      const stopped = await mergeStoppedAtAHardPrune(g)
+      try {
+        expect(await withoutWaiting(deletePhoto(photo))).toEqual({ answered: 200 })
+        const [hero] = await directSql`SELECT featured_photo_id FROM plants WHERE id = ${g.L}`
+        expect(hero.featured_photo_id).toBeNull() // it wrote the loser's planting row under the stopped merge
+        await stopped.release()
+        await mergedCleanly(stopped, g, lot)
+      } finally {
+        await stopped.blocker.end()
+      }
+    })
+
+    it('a batch event that stamps the loser (germination)', { timeout: 120000 }, async () => {
+      const g = await pair('early2')
+      const lot = await newLot({ source_plant_ids: [g.L] })
+      const stopped = await mergeStoppedAtAHardPrune(g)
+      try {
+        const batch = await withoutWaiting(onOwnConnection(() => germinate(g, 'early2')))
+        expect(batch.status, `batch -> ${JSON.stringify(batch.body)}`).toBeLessThan(300)
+        const [stamped] = await directSql`SELECT germinated_at IS NOT NULL AS done FROM plants WHERE id = ${g.L}`
+        expect(stamped.done).toBe(true) // it wrote the loser's planting row under the stopped merge
+        await stopped.release()
+        await mergedCleanly(stopped, g, lot)
+      } finally {
+        await stopped.blocker.end()
+      }
+    })
+
+    it('a delete of a loss event on the loser, which gives the planting its plant back', { timeout: 120000 }, async () => {
+      const g = await pair('early3')
+      const lot = await newLot({ source_plant_ids: [g.L] })
+      const eventId = await lossEventOn(g)
+      const stopped = await mergeStoppedAtAHardPrune(g)
+      try {
+        const del = await withoutWaiting(onOwnConnection(() => eventsCall('DELETE', `/api/events/${eventId}`)))
+        expect(del.status, `event delete -> ${JSON.stringify(del.body)}`).toBeLessThan(300)
+        const [restored] = await directSql`SELECT quantity::int AS quantity, qty_lost::int AS qty_lost FROM plants WHERE id = ${g.L}`
+        expect(restored).toEqual({ quantity: 5, qty_lost: 0 }) // it wrote the loser's planting row under the stopped merge
+        await stopped.release()
+        await mergedCleanly(stopped, g, lot)
+      } finally {
+        await stopped.blocker.end()
+      }
+    })
+  })
+
+  describe('the merge stopped LATE: each writer waits behind it, then both complete', () => {
+    it('a photo delete of the loser\'s hero photo', { timeout: 120000 }, async () => {
+      const g = await pair('late1')
+      const lot = await newLot({ source_plant_ids: [g.L] })
+      const photo = await heroPhotoOf(g)
+      const stopped = await mergeStoppedAtItsLinks(g, lot)
+      try {
+        const deleting = deletePhoto(photo)
+        await waitBlockedBy(stopped.mergePid, 'the photo delete, at the photo row the merge has moved')
+        await stopped.release()
+        await mergedCleanly(stopped, g, lot)
+        expect(await deleting).toEqual({ answered: 200 })
+        const [ph] = await directSql`SELECT deleted_at IS NOT NULL AS deleted FROM photos WHERE id = ${photo}`
+        expect(ph.deleted).toBe(true)
+      } finally {
+        await stopped.blocker.end()
+      }
+    })
+
+    it('a batch event that stamps the loser (germination)', { timeout: 120000 }, async () => {
+      const g = await pair('late2')
+      const lot = await newLot({ source_plant_ids: [g.L] })
+      const stopped = await mergeStoppedAtItsLinks(g, lot)
+      try {
+        const batching = onOwnConnection(() => germinate(g, 'late2'))
+        await waitBlockedBy(stopped.mergePid, 'the batch event, at the loser\'s planting row')
+        await stopped.release()
+        await mergedCleanly(stopped, g, lot)
+        const batch = await batching
+        expect(batch.status, `batch -> ${JSON.stringify(batch.body)}`).toBeLessThan(300)
+      } finally {
+        await stopped.blocker.end()
+      }
+    })
+
+    it('a delete of a loss event on the loser', { timeout: 120000 }, async () => {
+      const g = await pair('late3')
+      const lot = await newLot({ source_plant_ids: [g.L] })
+      const eventId = await lossEventOn(g)
+      const stopped = await mergeStoppedAtItsLinks(g, lot)
+      try {
+        const deleting = onOwnConnection(() => eventsCall('DELETE', `/api/events/${eventId}`))
+        await waitBlockedBy(stopped.mergePid, 'the event delete, at the event row the merge has moved')
+        await stopped.release()
+        await mergedCleanly(stopped, g, lot)
+        const del = await deleting
+        expect(del.status, `event delete -> ${JSON.stringify(del.body)}`).toBeLessThan(300)
+        const [ev] = await directSql`SELECT deleted_at IS NOT NULL AS deleted FROM event_log WHERE id = ${eventId}`
+        expect(ev.deleted).toBe(true)
+      } finally {
+        await stopped.blocker.end()
+      }
     })
   })
 })
@@ -1796,9 +2622,10 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL || !RUN_RECONCILE)('0b-reconcile.sql aga
     let rec
     try {
       const blockerPid = await blocker.pid()
-      // The PUT locks the lot (statement 0) and then reads the link table (statement 1). An ACCESS
-      // EXCLUSIVE lock on that table stops it exactly there: lot row held, no table lock of its own yet.
-      // With the reconcile's locks the other way round, this is the interleaving that deadlocks.
+      // The PUT locks the lot (statement 0), share-locks its plantings (1) and then reads the link table
+      // (2). An ACCESS EXCLUSIVE lock on that table stops it exactly there: lot row held, no table lock
+      // of its own yet. With the reconcile's locks the other way round, this is the interleaving that
+      // deadlocks.
       await blocker.run('BEGIN; LOCK TABLE seed_lot_parent_planting IN ACCESS EXCLUSIVE MODE;')
       const putting = onOwnConnection(() => put(lot, [a, b]))
       const putPid = await waitBlockedBy(blockerPid, 'the PUT, at its first read of the link table')
@@ -1885,22 +2712,17 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL || !RUN_RECONCILE)('0b-reconcile.sql aga
   })
 
   it('a MERGE is in flight when the reconcile starts: the reconcile takes its lot locks, waits at the table, then both commit', { timeout: 120000 }, async () => {
+    // The merge is stopped LATE, at a parent link: only from its planting locks on has it taken the link
+    // table for writing, which is the lock the reconcile's table lock has to wait for.
     const g = await pair('rm2')
     const lot = await newLot({ source_plant_ids: [g.W, g.L], source_plant_id: g.L })
-    const [photo] = await directSql`
-      INSERT INTO photos (plant_id, storage_path, created_by)
-      VALUES (${g.L}, ${`plants/${g.L}/slp-rec-${RUN}.jpg`}, ${USER}) RETURNING id`
-    const blocker = openSession('holds the loser\'s photo')
+    const stopped = await mergeStoppedAtItsLinks(g, lot)
     let rec
     try {
-      const blockerPid = await blocker.pid()
-      await blocker.run(`BEGIN; SELECT id FROM photos WHERE id = ${lit(photo.id)} FOR UPDATE;`)
-      const merging = onOwnConnection(() => merge(g.W, [g.L]))
-      const mergePid = await waitBlockedBy(blockerPid, 'the merge, at its photos repoint')
       rec = reconcile()
-      await waitBlockedBy(mergePid, 'the reconcile, at its table lock')
-      await blocker.end('COMMIT;')
-      const [mergeR, recR] = await Promise.all([merging, rec.done])
+      await waitBlockedBy(stopped.mergePid, 'the reconcile, at its table lock')
+      await stopped.release()
+      const [mergeR, recR] = await Promise.all([stopped.merging, rec.done])
       expect(mergeR.status, `merge -> ${JSON.stringify(mergeR.body)}`).toBe(200)
       expect(recR.code, `0b-reconcile.sql -> ${recR.err}`).toBe(0)
       expect(recR.err).not.toMatch(/deadlock|lock timeout/i)
@@ -1908,7 +2730,7 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL || !RUN_RECONCILE)('0b-reconcile.sql aga
       expect((await lotRow(lot)).source_plant_id).toBe(g.W)
       await expectCacheRule(lot)
     } finally {
-      await blocker.end()
+      await stopped.blocker.end()
       rec?.kill()
     }
   })
