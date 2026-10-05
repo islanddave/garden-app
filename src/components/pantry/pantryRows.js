@@ -15,6 +15,8 @@
 import { discardWords, parseYmd, qtyText } from '../putup/jarWords.js'
 // The engine's own list, imported (as putItUp.js imports the engine), so there is no copy to drift.
 import { HOUSE_SOURCED_SHELF_LIFE } from '../../../lambda/preservation/shelfLife.js'
+// The server's own mass table, imported for the same reason: the factors a typed weight was turned into grams with.
+import { MASS_G, isMassUnit } from '../../../lambda/preservation/kitchenBatch.js'
 
 export const PUT_UP = 'put_up'
 export const PANTRY_ITEM = 'pantry_item'
@@ -82,14 +84,30 @@ export function searchHits(rows, extraItems, q) {
 }
 
 // ── What a row says ────────────────────────────────────────────────────────────────────────────────
-// How many left: "3 left" for counted stock, "about 412 g left" for weighed (V4 §2.5, 06 §1.4), nothing
-// for a bought item (no counts on bought items, §10.3).
+// What is left of a WEIGHED bag (one container sized in a weight), IN THE UNIT IT WAS TYPED IN (Put-Up R2a,
+// UX I-2): "about 1 lb left" · "about 12 oz left" · "about 1.5 kg left". A bag typed in grams, and one whose
+// unit was never stored or is not a weight, says whole grams ("about 412 g left", V4 §2.5, 06 §1.4).
+// `grams` is the server's count of what is left and `unit` the row's quantity_unit AS STORED. The factors
+// are the ones the server made those grams with (MASS_G: its create seeds quantity_value × the factor, its
+// row multiplies the same way), so a fresh 1 lb divides back to 1. At most two decimals, no trailing zeros
+// (qtyText). Less than 0.01 of the unit would print as 0 for something that is still there, so it is said
+// in grams. null when the grams are not a number.
+export function weighedLeftWords(grams, unit) {
+  if (grams == null) return null
+  const g = Number(grams)
+  if (!Number.isFinite(g)) return null
+  if (unit !== 'g' && isMassUnit(unit)) {
+    const n = g / MASS_G[unit]
+    if (n >= 0.01) return `about ${qtyText(n.toFixed(2))} ${unit} left`
+  }
+  return `about ${Math.round(g)} g left`
+}
+
+// How many left: "3 left" for counted stock, what is left of a weighed bag in its own unit
+// (weighedLeftWords), nothing for a bought item (no counts on bought items, §10.3).
 export function leftWords(row) {
   if (!row || isItem(row)) return null
-  if (row.stock_mode === 'weighed') {
-    const g = Number(row.grams_left)
-    return row.grams_left != null && Number.isFinite(g) ? `about ${Math.round(g)} g left` : null
-  }
+  if (row.stock_mode === 'weighed') return weighedLeftWords(row.grams_left, row.quantity_unit)
   const n = row.count_left
   if (n == null || !Number.isFinite(Number(n))) return null
   return `${Number(n)} left`
