@@ -42,3 +42,28 @@ dual preflight landed (2026-10-03) and answers the one question push 2 of the pr
 READY (at least 5 promotes on record, no line where the name-based check refused and the run-based check passed,
 every record readable); 1 = NOT READY, with the reason; 2 = GitHub unreadable. Read-only. The rules are in its
 docstring; `scripts/test_preflight_dual.py` holds them, and takes the notice text from the real step.
+
+## The shadow's acceptance instruments
+
+`ci-next.yml` runs `ci.yml`'s serial job as parallel legs and replaces it only after agreeing with it over at least
+10 dev pushes. Two files here measure that; neither changes what CI gates on.
+
+```sh
+python3 scripts/ci-telemetry/shadow-agree.py          # one row per dev push since ci-next.yml landed
+python3 scripts/ci-telemetry/shadow-agree.py --json
+```
+
+`shadow-agree.py` needs an authenticated `gh` and makes `gh api -X GET` calls only (two listings, then up to five
+calls per SHA). Per SHA it sets `ci.yml`'s `build-and-test` verdict against `ci-next.yml`'s `build-and-test-next`:
+AGREE-GREEN, AGREE-RED, DISAGREE or NOT-COUNTED. It also compares the test-ID digest of each unit pass and lists
+each `ci-next.yml` job's wait for a runner against the plan's threshold (a job over 120 s in 3 of 10 runs). It says
+how many SHAs count toward the 10. Exit 0 = nothing disagrees, 1 = a DISAGREE or a TEST-IDS-DIFFER among the counted
+SHAs, 2 = a reply could not be read and nothing is concluded. How a cancelled run is read, and why that cannot hide a
+disagreement, is in the docstring at the top of the script. Tested in `scripts/test_shadow_agree.py` against the
+replies recorded under `scripts/fixtures/shadow-agree/`.
+
+`vitest-test-ids-reporter.mjs` is where the test-ID digests come from. On a GitHub Actions runner (and nowhere
+else: `vitest.config.ts` adds it under `GITHUB_ACTIONS`) every vitest run ends with one notice,
+`test-ids <zone>: sha256=... tests=... passed=... failed=... skipped=...`, the sha256 being that of the sorted
+`file :: full test name :: state` list. It cannot fail a run. The list itself is not stored anywhere: two runs can
+be told apart, but not yet diffed. Tested in `vitest-test-ids-reporter.test.js`.

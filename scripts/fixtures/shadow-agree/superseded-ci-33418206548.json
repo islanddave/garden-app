@@ -1,0 +1,64 @@
+{
+ "_source": "A real superseded ci.yml dev push run, read on 2026-10-05: run 33418206548 (cancelled 3 s after it was created, before its job had a runner) and run 33418210059, pushed 2 s after it, whose arrival cancelled it. GET .../actions/runs/<id> for both (trimmed), .../runs/33418206548/jobs?filter=latest and .../check-runs/<job id>/annotations (whole).",
+ "annotations": [
+  {
+   "annotation_level": "failure",
+   "blob_href": "https://github.com/islanddave/garden-app/blob/7421c4a1c09acf94aa3d3e413f1b0a5d624da8bc/.github",
+   "end_column": null,
+   "end_line": 1,
+   "message": "Canceling since a higher priority waiting request for ci-refs/heads/dev exists",
+   "path": ".github",
+   "raw_details": "",
+   "start_column": null,
+   "start_line": 1,
+   "title": ""
+  }
+ ],
+ "cancelled": {
+  "conclusion": "cancelled",
+  "created_at": "2026-08-31T17:11:23Z",
+  "event": "push",
+  "head_branch": "dev",
+  "head_sha": "7421c4a1c09acf94aa3d3e413f1b0a5d624da8bc",
+  "id": 33418206548,
+  "name": "CI \u2014 Build and Unit Tests",
+  "path": ".github/workflows/ci.yml",
+  "run_attempt": 1,
+  "run_started_at": "2026-08-31T17:11:23Z",
+  "status": "completed",
+  "updated_at": "2026-08-31T17:11:28Z"
+ },
+ "jobs": {
+  "jobs": [
+   {
+    "completed_at": "2026-08-31T17:11:27Z",
+    "conclusion": "cancelled",
+    "created_at": "2026-08-31T17:11:24Z",
+    "head_sha": "7421c4a1c09acf94aa3d3e413f1b0a5d624da8bc",
+    "id": 99573862530,
+    "name": "build-and-test",
+    "run_attempt": 1,
+    "run_id": 33418206548,
+    "runner_id": 0,
+    "runner_name": "",
+    "started_at": "2026-08-31T17:11:24Z",
+    "status": "completed"
+   }
+  ],
+  "total_count": 1
+ },
+ "newer": {
+  "conclusion": "failure",
+  "created_at": "2026-08-31T17:11:25Z",
+  "event": "push",
+  "head_branch": "dev",
+  "head_sha": "7421c4a1c09acf94aa3d3e413f1b0a5d624da8bc",
+  "id": 33418210059,
+  "name": "CI \u2014 Build and Unit Tests",
+  "path": ".github/workflows/ci.yml",
+  "run_attempt": 1,
+  "run_started_at": "2026-08-31T17:11:25Z",
+  "status": "completed",
+  "updated_at": "2026-08-31T17:32:53Z"
+ }
+}
