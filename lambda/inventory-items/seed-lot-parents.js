@@ -61,7 +61,7 @@ export function normalizeSourcePlantIds(value) {
 
 // AUTHZ (BUG-AUTHZFKENUM-001 class) — may this household use EVERY one of these plantings?
 //
-// ONE query, and the answer is a COUNT, not a presence. The single-id gates in index.js test
+// ONE query for every id, and the answer is a COUNT, not a presence. The single-id gates in index.js test
 // `!owned.length`; generalised to `= ANY(ids)` that test passes when ONE of N ids is owned, and the
 // other N-1 — another household's plantings — are then written as link rows and read back by name on
 // every surface that lists a lot's parents. So: the number of asked-for ids that came back owned must
@@ -74,7 +74,26 @@ export function normalizeSourcePlantIds(value) {
 // soft-deleted plantings refused.
 //
 // An empty set owns nothing and asks nothing: clearing needs no planting, and costs no round trip.
-export async function ownsEveryPlanting(sql, ids, householdIds) {
+//
+// THE SECOND ARM (contract amendment, Follow-up 1) — `lotId`, on the set route only. An id is also
+// acceptable when it is ALREADY a live seed_parent of THIS lot. Without it a lot that keeps a parent
+// whose planting was later soft-deleted could never be edited again: re-sending the unchanged id
+// would fail the first arm, so the only edit the route would accept is one that drops that parent.
+// It admits nothing new — a member was gated when it was added — and it is scoped through the lot
+// the household owns, so a foreign lot's members prove nothing. POST passes no lotId: a lot that
+// does not exist yet has no members.
+//
+// A SECOND STATEMENT, AND ONLY WHEN THE FIRST LEFT SOMETHING OVER. The common request — every
+// planting owned and live — is still the one garden_node read it always was and never touches the
+// link table before the transaction. Only ids the first arm did not admit are asked about again.
+//
+// THIS IS THE FAST PATH, NOT THE GUARANTEE. It runs before any lock is taken, so what it reads can
+// be stale by the time the write runs: a request that then waits for its lot behind a planting
+// merge would act on a pre-merge answer (T1 defect D-2). The same two-arm rule is therefore
+// re-tested INSIDE the transaction, under the lot lock, by every write statement — see
+// replaceSourcePlants. This check exists to answer the ordinary bad request with a 400 and a
+// warnRejectedFk before anything is locked.
+export async function ownsEveryPlanting(sql, ids, householdIds, lotId = null) {
   if (!ids.length) return true;
   if (!ids.every((id) => typeof id === 'string' && UUID_RE.test(id))) return false;
   const rows = await sql`
@@ -85,7 +104,55 @@ export async function ownsEveryPlanting(sql, ids, householdIds) {
        AND p.deleted_at IS NULL
   `;
   const owned = rows.map((r) => String(r.id).toLowerCase());
-  return ids.filter((id) => owned.includes(id)).length === ids.length;
+  const rest = ids.filter((id) => !owned.includes(id));
+  if (!rest.length) return true;
+  // No lot (POST), or a lot id that is not one: nothing can be a member of it. A malformed id is
+  // never sent to Postgres — the route answers it 404 after this gate.
+  if (lotId == null || !UUID_RE.test(String(lotId))) return false;
+  const kept = await sql`
+    SELECT k.plant_id AS id
+      FROM public.seed_lot_parent_planting k
+      JOIN public.inventory_items i ON i.id = k.inventory_item_id
+     WHERE i.id = ${lotId}
+       AND i.created_by = ANY(${householdIds})
+       AND i.deleted_at IS NULL
+       AND i.category = 'seeds'
+       AND k.plant_id = ANY(${rest}::uuid[])
+       AND k.role = 'seed_parent'
+       AND k.deleted_at IS NULL
+  `;
+  const members = kept.map((r) => String(r.id).toLowerCase());
+  return rest.filter((id) => members.includes(id)).length === rest.length;
+}
+
+// Row locks on the plantings a parents write names — FOR SHARE, taken INSIDE the transaction, after
+// the lot lock (set route) and before any statement decides anything about them.
+//
+// WHY THE WRITE NEEDS IT. Each write statement re-tests "may this lot use every one of these
+// plantings" on its own snapshot. The lot lock keeps a lot's link rows still, but whether a planting
+// is live is a fact about public.plants, which the lot lock does not cover. Unlocked, a planting
+// soft-deleted between two statements of one batch would pass the test in the first and fail it in
+// the next: links retired, their replacements never inserted, the cache left pointing at a retired
+// row — a half-applied edit behind a 409. With the rows share-locked their state cannot change until
+// this transaction ends, so all three writes reach the same verdict.
+//
+// It is also what lets a parents write and a planting merge queue instead of crossing: a merge that
+// has already soft-deleted a planting (uncommitted) makes this statement WAIT, and the statements
+// after it then read the merged state.
+//
+// FOR SHARE, not FOR KEY SHARE: a soft-delete is an UPDATE of a non-key column, which FOR KEY SHARE
+// does not hold off. Through the garden_node view on purpose — a locking clause on a view locks the
+// rows of the table under it, and the view is this directory's contracted planting relation.
+// No household predicate: every row the request names is frozen, whichever arm it will be judged by.
+// ORDER BY id so two writes naming the same plantings take them in one order.
+export function lockPlantings(sql, ids) {
+  return sql`
+    SELECT p.id
+      FROM public.garden_node p
+     WHERE p.id = ANY(${ids}::uuid[])
+     ORDER BY p.id
+       FOR SHARE
+  `;
 }
 
 // THE READ — one row per live lot that has at least one live seed_parent link, carrying
@@ -177,8 +244,14 @@ export async function settleSourcePlants(read, scope) {
 // but a row that appears between this statement's snapshot and its insert (a planting merge
 // repointing onto the same lot) must surface as 23505 for the route to answer 409, not be swallowed.
 //
-// `legacy` and the source_kind conjunct are the set-replace guards, explained on replaceSourcePlants.
-// The POST path passes legacy = false on a lot the same transaction just created.
+// `legacy`, the source_kind conjunct and the every-planting-usable count are the set-replace guards,
+// explained on replaceSourcePlants. The POST path passes legacy = false on a lot the same
+// transaction just created — where the usable count's second arm ("already a member of this lot")
+// cannot hold for anything, so on a create it is the ownership rule alone.
+//
+// ALL OR NONE. The usable count is over the WHOLE array, so one planting that is no longer the
+// caller's to use inserts no link at all — never the other N-1. On the set route that is "nothing
+// written"; on a create it leaves a lot with no links, which assertEveryParentLinked then refuses.
 export function insertSeedParentLinks(sql, { lotId, ids, householdIds, userId, legacy = false }) {
   return sql`
     INSERT INTO public.seed_lot_parent_planting (inventory_item_id, plant_id, role, created_by)
@@ -195,12 +268,56 @@ export function insertSeedParentLinks(sql, { lotId, ids, householdIds, userId, l
                WHERE n.inventory_item_id = i.id
                  AND n.role = 'seed_parent'
                  AND n.deleted_at IS NULL) <= 1)
+       AND (SELECT count(*)
+              FROM unnest(${ids}::uuid[]) AS q(plant_id)
+             WHERE EXISTS (
+                     SELECT 1 FROM public.garden_node p
+                      WHERE p.id = q.plant_id
+                        AND p.created_by = ANY(${householdIds})
+                        AND p.deleted_at IS NULL)
+                OR EXISTS (
+                     SELECT 1 FROM public.seed_lot_parent_planting k
+                      WHERE k.inventory_item_id = i.id
+                        AND k.plant_id = q.plant_id
+                        AND k.role = 'seed_parent'
+                        AND k.deleted_at IS NULL)) = cardinality(${ids}::uuid[])
        AND NOT EXISTS (
              SELECT 1 FROM public.seed_lot_parent_planting x
               WHERE x.inventory_item_id = i.id
                 AND x.plant_id = u.plant_id
                 AND x.role = 'seed_parent'
                 AND x.deleted_at IS NULL)
+  `;
+}
+
+// POST only — the create's last word before its read-back: every planting in `ids` has a live link
+// on the new lot, or the WHOLE transaction fails.
+//
+// WHY A STATEMENT THAT RAISES. On the set route a refused write is "nothing changed, answer from the
+// read-back". A create cannot do that: its lot INSERT has already run by the time the link INSERT
+// declines (a planting soft-deleted, or merged away, in the instant since the pre-transaction gate
+// passed), and the batch would commit a lot whose column names a parent and which has no link rows —
+// the cache rule broken at birth. The driver's transaction is a fixed list, so JS cannot stop it
+// part-way; the only way to undo the lot is for a later statement to fail. An error in any statement
+// of the batch rolls back all of it (the lane's integration suite proves that for this very
+// transaction with a 23503).
+//
+// The divisor is 1 when the live links number what was asked for and 0 otherwise: division_by_zero,
+// SQLSTATE 22012, which nothing else in this transaction can raise and which the POST arm answers
+// 409. Not a constant expression — the count is a subquery — so the planner cannot fold it and
+// raise at plan time.
+export function assertEveryParentLinked(sql, { lotId, ids, householdIds }) {
+  return sql`
+    SELECT 1 / (CASE WHEN (
+             SELECT count(*)
+               FROM public.seed_lot_parent_planting l
+               JOIN public.inventory_items i ON i.id = l.inventory_item_id
+              WHERE i.id = ${lotId}
+                AND i.created_by = ANY(${householdIds})
+                AND i.deleted_at IS NULL
+                AND l.role = 'seed_parent'
+                AND l.deleted_at IS NULL) = cardinality(${ids}::uuid[])
+           THEN 1 ELSE 0 END) AS every_parent_linked
   `;
 }
 
@@ -213,32 +330,49 @@ export function insertSeedParentLinks(sql, { lotId, ids, householdIds, userId, l
 //   'not_found'    -> the lot is absent, foreign, deleted or not seeds. Nothing written.
 //   'multi_parent' -> legacy only: the lot has two or more parents. Nothing written. { source_plant_ids }
 //   'source_kind'  -> the lot says it came from a shop / gift / farm stand, and `ids` is not empty.
-//   'conflict'     -> 23505 from a concurrent writer; the transaction rolled back.
+//   'plants_changed' -> a planting in `ids` stopped being usable between the route's gate and this
+//                     write (soft-deleted, or merged into another). Nothing written.
+//   'conflict'     -> 23505 or 40P01 from a concurrent writer; the transaction rolled back.
 //
-// THE SIX STATEMENTS, in order, and why each is where it is:
+// THE SEVEN STATEMENTS, in order, and why each is where it is:
 //   0 lock    SELECT .. FOR UPDATE on the lot. Two requests on one lot now run one after the other,
-//             and a concurrent /source-kind write waits too.
-//   1 facts   the lot's source_kind and its live-parent count, read by a statement that STARTS after
-//             the lock is held. Not folded into statement 0 on purpose: a subquery in the locking
-//             statement is evaluated on that statement's snapshot, taken BEFORE it waited, so it
-//             would report the count as it stood before the other request committed.
-//   2 retire  soft-delete the live rows not in `ids` (deleted_at and updated_at; no trigger does it).
-//   3 add     insertSeedParentLinks — the ones the lot does not have.
-//   4 cache   source_plant_id: kept if it is still a member, else the earliest live row
+//             and a concurrent /source-kind write waits too. FIRST, before anything touches a link
+//             row: the migration's reconcile and the planting merge take their lots first as well,
+//             and a writer that took a link row before its lot deadlocked against them.
+//   1 hold    lockPlantings — FOR SHARE on the plantings named, so whether each is live cannot
+//             change under the statements below. After the lot, never before it.
+//   2 facts   the lot's source_kind, its live-parent count and whether every planting is usable,
+//             read by a statement that STARTS after both locks are held. Not folded into statement 0
+//             on purpose: a subquery in the locking statement is evaluated on that statement's
+//             snapshot, taken BEFORE it waited, so it would report things as they stood before the
+//             other request committed.
+//   3 retire  soft-delete the live rows not in `ids` (deleted_at and updated_at; no trigger does it).
+//   4 add     insertSeedParentLinks — the ones the lot does not have.
+//   5 cache   source_plant_id: kept if it is still a member, else the earliest live row
 //             (created_at, then id), else NULL. RETURNING is how a completed write is recognised.
-//   5 read    readSourcePlants, inside the transaction, so the answer is the set this write left.
+//   6 read    readSourcePlants, inside the transaction, so the answer is the set this write left.
 //
-// EVERY WRITE CARRIES THE LOT PREDICATE AND BOTH GUARDS IN ITS OWN WHERE. The driver's transaction
-// is not interactive — no statement can see another's result and nothing in JS can stop the batch
-// part-way — so a refusal cannot be an earlier read followed by a decision. Each of 2, 3 and 4
-// re-tests the same conditions on its own snapshot, under the lock, and writes nothing when one
-// fails; statement 1 only tells JS, afterwards, WHICH one it was.
+// EVERY WRITE CARRIES THE LOT PREDICATE AND ALL THREE GUARDS IN ITS OWN WHERE. The driver's
+// transaction is not interactive — no statement can see another's result and nothing in JS can stop
+// the batch part-way — so a refusal cannot be an earlier read followed by a decision. Each of 3, 4
+// and 5 re-tests the same conditions on its own snapshot, under the locks, and writes nothing when
+// one fails; statement 2 only tells JS, afterwards, WHICH one it was.
 //   • source_kind: a non-own_garden kind refuses a non-empty set (the mutual-exclusion rule the
 //     /source-kind route and chk_inventory_seed_source_plant enforce from the other side). An EMPTY
 //     set is always allowed — clearing is how a lot gets out of that state.
 //   • legacy (PATCH /:id/source-plant): the write goes through only while the lot has at most one
-//     live parent. The count is re-read by each statement, and stays <= 1 across 2 and 3 exactly
+//     live parent. The count is re-read by each statement, and stays <= 1 across 3 and 4 exactly
 //     when it started <= 1, because a legacy set is one id or none.
+//   • every planting usable (Follow-up 1, T1 defect D-2): each id in `ids` is EITHER a live planting
+//     the household owns OR already a live seed_parent of this lot — ownsEveryPlanting's two arms,
+//     counted over the whole array, so one failure refuses all of it. The route's gate asked the
+//     same question BEFORE the lot lock, and a request that then waited for its lot behind a planting
+//     merge would otherwise act on the answer from before the merge: re-saving {A, L} after L was
+//     merged into W retired W's row and linked the soft-deleted L, on a 200. Asked again here, L is
+//     neither live nor a member, and nothing is written.
+//     The three writes cannot disagree about it: the first arm reads rows statement 1 holds, the
+//     second reads link rows the lot lock holds, and of the writes themselves the retire touches
+//     only rows NOT in `ids` and the add only makes more of `ids` members.
 export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userId, legacy = false }) {
   let results;
   try {
@@ -252,12 +386,26 @@ export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userI
            AND i.category = 'seeds'
            FOR UPDATE
       `,
+      lockPlantings(sql, ids),
       sql`
         SELECT i.id, i.source_kind,
                (SELECT count(*) FROM public.seed_lot_parent_planting n
                  WHERE n.inventory_item_id = i.id
                    AND n.role = 'seed_parent'
-                   AND n.deleted_at IS NULL)::int AS live_parents
+                   AND n.deleted_at IS NULL)::int AS live_parents,
+               ((SELECT count(*)
+                   FROM unnest(${ids}::uuid[]) AS q(plant_id)
+                  WHERE EXISTS (
+                          SELECT 1 FROM public.garden_node p
+                           WHERE p.id = q.plant_id
+                             AND p.created_by = ANY(${householdIds})
+                             AND p.deleted_at IS NULL)
+                     OR EXISTS (
+                          SELECT 1 FROM public.seed_lot_parent_planting k
+                           WHERE k.inventory_item_id = i.id
+                             AND k.plant_id = q.plant_id
+                             AND k.role = 'seed_parent'
+                             AND k.deleted_at IS NULL)) = cardinality(${ids}::uuid[])) AS ids_usable
           FROM public.inventory_items i
          WHERE i.id = ${lotId}
            AND i.created_by = ANY(${householdIds})
@@ -279,6 +427,19 @@ export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userI
                    WHERE n.inventory_item_id = i.id
                      AND n.role = 'seed_parent'
                      AND n.deleted_at IS NULL) <= 1)
+           AND (SELECT count(*)
+                  FROM unnest(${ids}::uuid[]) AS q(plant_id)
+                 WHERE EXISTS (
+                         SELECT 1 FROM public.garden_node p
+                          WHERE p.id = q.plant_id
+                            AND p.created_by = ANY(${householdIds})
+                            AND p.deleted_at IS NULL)
+                    OR EXISTS (
+                         SELECT 1 FROM public.seed_lot_parent_planting k
+                          WHERE k.inventory_item_id = i.id
+                            AND k.plant_id = q.plant_id
+                            AND k.role = 'seed_parent'
+                            AND k.deleted_at IS NULL)) = cardinality(${ids}::uuid[])
            AND l.inventory_item_id = i.id
            AND l.role = 'seed_parent'
            AND l.deleted_at IS NULL
@@ -313,24 +474,46 @@ export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userI
                    WHERE n.inventory_item_id = i.id
                      AND n.role = 'seed_parent'
                      AND n.deleted_at IS NULL) <= 1)
+           AND (SELECT count(*)
+                  FROM unnest(${ids}::uuid[]) AS q(plant_id)
+                 WHERE EXISTS (
+                         SELECT 1 FROM public.garden_node p
+                          WHERE p.id = q.plant_id
+                            AND p.created_by = ANY(${householdIds})
+                            AND p.deleted_at IS NULL)
+                    OR EXISTS (
+                         SELECT 1 FROM public.seed_lot_parent_planting k
+                          WHERE k.inventory_item_id = i.id
+                            AND k.plant_id = q.plant_id
+                            AND k.role = 'seed_parent'
+                            AND k.deleted_at IS NULL)) = cardinality(${ids}::uuid[])
         RETURNING i.id, i.source_plant_id
       `,
       readSourcePlants(sql, householdIds, lotId),
     ]);
   } catch (err) {
-    // uq_slpp_item_plant_role_live. The lock rules out two of these requests colliding on one lot, so
-    // this is a writer that does not take it — a planting merge repointing a link onto the same lot.
-    // The whole transaction rolled back; the caller reloads and tries again.
-    if (err?.code === '23505') return { outcome: 'conflict' };
+    // Both mean a concurrent writer and a transaction that rolled back WHOLE — nothing of this write
+    // exists, so "reload and try again" is true of either.
+    //   23505  uq_slpp_item_plant_role_live. The lot lock rules out two of these requests colliding
+    //          on one lot, so this is a writer that does not take it: a link moved onto the same lot.
+    //   40P01  Postgres chose this transaction as a deadlock victim. Reproduced on real Postgres
+    //          against a planting merge (T1 D-1). The lock order above is what prevents the pairs
+    //          that are known; this is the answer for one that is not, instead of a 500.
+    // Logged, because a 409 that used to be a 500 is otherwise invisible: a lock-order regression
+    // would show up only as people being asked to retry.
+    if (err?.code === '23505' || err?.code === '40P01') {
+      console.warn(JSON.stringify({ tag: 'inv-source-plants-retry', item: lotId, code: err.code }));
+      return { outcome: 'conflict' };
+    }
     throw err;
   }
 
-  const [, factRows, , , cacheRows, parentRows] = results;
+  const [, , factRows, , , cacheRows, parentRows] = results;
   const fact = factRows?.[0];
   if (!fact) return { outcome: 'not_found' };
   const source_plants = sourcePlantsOf(parentRows);
 
-  // The lot exists and is the caller's, and statement 4 changed nothing: a guard refused inside the
+  // The lot exists and is the caller's, and statement 5 changed nothing: a guard refused inside the
   // write statements. Nothing was written, so `source_plants` is the set as it stood.
   if (!cacheRows?.length) {
     const shopKind = fact.source_kind != null && fact.source_kind !== 'own_garden';
@@ -338,7 +521,10 @@ export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userI
     if (legacy && Number(fact.live_parents) >= 2) {
       return { outcome: 'multi_parent', source_plant_ids: source_plants.map((p) => p.id) };
     }
-    // Neither guard explains it: the lot moved under a writer that does not take the lock.
+    // Strictly FALSE, as the driver parses a Postgres boolean: the route's gate passed these ids a
+    // moment ago, so one of them changed while this request was on its way to the lot.
+    if (fact.ids_usable === false) return { outcome: 'plants_changed' };
+    // No guard explains it: the lot moved under a writer that does not take the lock.
     return { outcome: 'conflict' };
   }
   return { outcome: 'ok', id: cacheRows[0].id, source_plant_id: cacheRows[0].source_plant_id ?? null, source_plants };

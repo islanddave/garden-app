@@ -31,8 +31,9 @@ import { deletePreflight, blockingMessage } from './delete-guard.js';
 // source_plant_id member cache). The id-array rule, the ownership gate, the one read and the one
 // set-replace write are in their own module so every route below shares a single copy of each.
 import {
-  MULTI_PARENT_ERROR, normalizeSourcePlantIds, ownsEveryPlanting, insertSeedParentLinks,
-  replaceSourcePlants, readSourcePlants, settleSourcePlants, sourcePlantsOf, sourcePlantsByLot,
+  MULTI_PARENT_ERROR, normalizeSourcePlantIds, ownsEveryPlanting, lockPlantings, insertSeedParentLinks,
+  assertEveryParentLinked, replaceSourcePlants, readSourcePlants, settleSourcePlants, sourcePlantsOf,
+  sourcePlantsByLot,
 } from './seed-lot-parents.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -240,6 +241,12 @@ const deadSourceRefError = (field) => `${field} does not match a source you can 
 // gates are. Those keep their own singular wording (old clients render it).
 const SOURCE_PLANT_IDS_UNUSABLE = 'source_plant_ids does not match plantings you can use';
 
+// Follow-up 1 — a planting passed the route's gate and then stopped being usable before the write
+// ran: soft-deleted, or merged into another planting, while this request was on its way. Nothing was
+// written. A 409 and not the gate's 400, because the request was right when it was sent; what the
+// person needs is the current list, not a correction. Worded for them: no ids, no field names.
+const PLANTS_CHANGED = 'One of those plants changed just now. Reload and try again.';
+
 // What replaceSourcePlants decided, as HTTP. Shared by PUT /:id/source-plants and the legacy PATCH
 // /:id/source-plant, which are one write with two front doors — so the two cannot answer the same
 // outcome differently.
@@ -259,6 +266,8 @@ function sourcePlantsReply(resp, out) {
   if (out.outcome === 'source_kind') {
     return resp(400, { error: SEED_CONSTRAINT_MESSAGES.chk_inventory_seed_source_plant });
   }
+  if (out.outcome === 'plants_changed') return resp(409, { error: PLANTS_CHANGED });
+  // A unique violation or a deadlock: a concurrent writer, and a transaction that rolled back whole.
   if (out.outcome === 'conflict') {
     return resp(409, { error: 'This seed lot was changed at the same moment. Reload and try again.' });
   }
@@ -666,7 +675,14 @@ export const handler = async (event) => {
       // Before the write and before the lot is even looked at, like the single-id gate below: a
       // planting the caller cannot use is refused the same way whatever lot it was aimed at.
       // The whole array is logged, not the offending id — the gate does not learn which one it was.
-      if (!await ownsEveryPlanting(sql, set.ids, householdIds)) {
+      //
+      // The lot id is handed over for the gate's second arm: an id that is ALREADY a live parent of
+      // this lot is acceptable even when its planting has since been soft-deleted, or a lot keeping
+      // such a parent could never be edited. That arm is scoped through the caller's own lot, so it
+      // says nothing about anyone else's; and a NEW id naming a deleted planting is still this 400.
+      // This is the fast path only — the write re-tests the same rule under the lot lock and answers
+      // 409 if a planting changed in between (replaceSourcePlants).
+      if (!await ownsEveryPlanting(sql, set.ids, householdIds, itemId)) {
         warnRejectedFk(userId, 'seed_lot_parent_planting', 'plant_id', set.ids.join(','));
         return resp(400, { error: SOURCE_PLANT_IDS_UNUSABLE });
       }
@@ -1876,11 +1892,39 @@ export const handler = async (event) => {
       // created with its column set and its rows missing (or the reverse). The link INSERT is the
       // set route's own statement, lot predicate included — it selects the row statement 0 just
       // wrote. This is also the legacy `source_plant_id`-only create: a set of one, one link row.
-      const [lotRows, , parentRows] = await sql.transaction([
-        insertLot,
-        insertSeedParentLinks(sql, { lotId, ids: parentIds, householdIds, userId }),
-        readSourcePlants(sql, householdIds, lotId),
-      ]);
+      //
+      // Follow-up 1 — THE GATE ABOVE IS NOT THE LAST WORD HERE EITHER. It ran before this
+      // transaction, and a planting can be soft-deleted, or merged into another, in between. So,
+      // after the lot INSERT and in this order:
+      //   • the plantings are share-locked (their state holds still, and a merge that has already
+      //     deleted one makes this wait and then see it);
+      //   • the link INSERT re-tests ownership for the whole array and inserts all of it or none;
+      //   • assertEveryParentLinked FAILS the transaction when none went in — the only way a fixed
+      //     statement list can take the lot INSERT back.
+      // No lot lock: the lot does not exist until this commits, so nothing else can be holding it.
+      let lotRows;
+      let parentRows;
+      try {
+        [lotRows, , , , parentRows] = await sql.transaction([
+          insertLot,
+          lockPlantings(sql, parentIds),
+          insertSeedParentLinks(sql, { lotId, ids: parentIds, householdIds, userId }),
+          assertEveryParentLinked(sql, { lotId, ids: parentIds, householdIds }),
+          readSourcePlants(sql, householdIds, lotId),
+        ]);
+      } catch (err) {
+        // Both rolled the whole create back — no lot, no links — so "try again" is true of either.
+        //   22012  assertEveryParentLinked's division by zero: a planting stopped being usable after
+        //          the gate. Raised on purpose, and nothing else in this transaction divides.
+        //   40P01  a deadlock victim. The rows this create shares with anyone are the plantings it
+        //          locks, so it is the same news for the person: those plants are changing.
+        // Everything else (23503, 23514, …) is still the handler-wide catch block's to answer.
+        if (err?.code === '22012' || err?.code === '40P01') {
+          console.warn(JSON.stringify({ tag: 'inv-source-plants-retry', item: lotId, code: err.code, create: true }));
+          return resp(409, { error: PLANTS_CHANGED });
+        }
+        throw err;
+      }
       return resp(201, { ...lotRows[0], source_plants: sourcePlantsOf(parentRows) });
     }
 

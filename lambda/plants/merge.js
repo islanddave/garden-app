@@ -662,25 +662,8 @@ export async function mergeCore(sql, {
                        WHERE w.garden_node_id = ${winnerId} AND w.deleted_at IS NULL
                          AND w.entity_id IS NOT DISTINCT FROM l.entity_id
                          AND w.finding_type = l.finding_type)`,
-    // seed_lot_parent_planting — uq_slpp_item_plant_role_live, UNIQUE (inventory_item_id, plant_id,
-    // role) WHERE deleted_at IS NULL. The two arms ready_impression has above: a loser's live row
-    // collides with the winner's (w), or with another loser's of a lower id (o), on one lot in one
-    // role. SOFT-deleted, the one prune in this list that is: a parent link is provenance a person
-    // recorded, and a retired row is what "this plant was taken off the lot" already looks like on
-    // this table. deleted_at IS NULL on all three aliases because the index is partial — a retired
-    // row is not a collision and must not be the reason a live one is retired. Every arm reads the
-    // rows as they stood before the statement, so of two colliding losers the lower id survives,
-    // never neither; which loser that is does not matter, the survivor is repointed to the winner
-    // below either way. No role is named: the key carries it, so each role is pruned against itself.
-    sql`UPDATE seed_lot_parent_planting l
-           SET deleted_at = now(), updated_at = now()
-         WHERE l.plant_id = ANY(${loserIds}) AND l.deleted_at IS NULL
-           AND (EXISTS (SELECT 1 FROM seed_lot_parent_planting w
-                        WHERE w.plant_id = ${winnerId} AND w.deleted_at IS NULL
-                          AND w.inventory_item_id = l.inventory_item_id AND w.role = l.role)
-                OR EXISTS (SELECT 1 FROM seed_lot_parent_planting o
-                           WHERE o.plant_id = ANY(${loserIds}) AND o.deleted_at IS NULL AND o.id < l.id
-                             AND o.inventory_item_id = l.inventory_item_id AND o.role = l.role))`,
+    // NOT HERE: seed_lot_parent_planting's prune. It is the one conflict prune that waits for a lock
+    // first, and runs with the two seed-lot repoints behind the planting locks, below the drop set.
 
     memory.repoint,
     sql`UPDATE photos           SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
@@ -701,15 +684,8 @@ export async function mergeCore(sql, {
     // Put-Up release 2 (B′). pantry_item is unaudited (V4 §5.5); it rides the same transaction.
     sql`UPDATE pantry_item SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
     sql`UPDATE preservation_source SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
-    sql`UPDATE inventory_items SET source_plant_id = ${winnerId} WHERE source_plant_id = ANY(${loserIds})`,
-    // The parent links behind that cache. EVERY row on a loser moves, live or retired; the prune
-    // above left at most one live row per (lot, role) across the losers and none where the winner
-    // already had one, so this cannot trip the index. With the line above it keeps the member cache
-    // true: a lot whose source_plant_id named a loser had that loser as a live parent, the winner is
-    // a live parent of it once this has run, and the cache now names the winner. No trigger keeps
-    // updated_at on this table, so the statement does.
-    sql`UPDATE seed_lot_parent_planting SET plant_id = ${winnerId}, updated_at = now()
-         WHERE plant_id = ANY(${loserIds})`,
+    // NOT HERE: inventory_items.source_plant_id and seed_lot_parent_planting.plant_id. Both repoints
+    // run behind the planting locks, below the drop set, and the reason is there.
     sql`UPDATE ready_impression SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
     sql`UPDATE watch_exclusion SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
 
@@ -735,6 +711,70 @@ export async function mergeCore(sql, {
                                    'planting merge — batch-duplicate collapse', ${userId})
     `)
   }
+
+  // PLANTING LOCKS, THEN THE THREE SEED-LOT STATEMENTS — in that order, and here rather than earlier.
+  //
+  // WHAT IT CLOSES. A parents write (lambda/inventory-items: replaceSourcePlants, and the POST) can
+  // name a LOSER as a new parent of a lot this merge never locked, because that lot had no link to
+  // the group when the lot lock ran. Nothing in this transaction touched a loser's plants row until
+  // the soft-delete below, so that write could commit its link after the link repoint had already
+  // run: a live link to a planting about to be soft-deleted, never repointed, and the lot gone from
+  // the winner's seed page with no error anywhere. The parents write share-locks the plantings it
+  // names; this is the other half. FOR NO KEY UPDATE conflicts with that FOR SHARE, so one of the
+  // two waits. If the write holds its lock first, the three statements below start after its commit
+  // and — READ COMMITTED, a snapshot per statement — see its link and its cache value, and move
+  // both. If this is first, the write waits, then finds the loser soft-deleted and answers 409
+  // having written nothing.
+  //
+  // WHY ALL THREE SIT BEHIND IT, the cache repoint included. In the first case the write may also
+  // have set the lot's source_plant_id to the loser, and a cache repoint that had already run would
+  // leave the cache on a soft-deleted planting beside a correctly moved link — the same silent
+  // wrong answer in the other column. And the prune has to see a winner link the write added too.
+  //
+  // WHY HERE, immediately ahead of the winner UPDATE, which is where this transaction has always
+  // first locked a planting. Taken any earlier, the planting rows come before rows that three other
+  // writers take first: a photo delete (the photo row, then the planting that features it), an event
+  // create (entity_memory, then the planting's status) and a loss-event delete (the event row, then
+  // the planting's count). Each queues behind this cutover today because the order matches. Ahead
+  // of them it is a deadlock, and theirs is the request that answers 500. So nothing above this
+  // line moved, and the only statements that did are this file's own three, whose link rows no
+  // other writer takes together with any of those tables.
+  //
+  // Lots (element 1), then plantings, then links — the parents write's own order. ORDER BY id
+  // because a write naming two of these plantings takes them by id, and the two UPDATEs below take
+  // them winner first. FOR NO KEY UPDATE is what those UPDATEs take anyway; unlike FOR UPDATE it
+  // lets through the key-share lock a link INSERT's foreign-key check takes on its planting, which
+  // the reconcile relies on while it holds the link table.
+  stmts.push(sql`SELECT id FROM plants WHERE id = ANY(${groupIds}) ORDER BY id FOR NO KEY UPDATE`)
+
+  // seed_lot_parent_planting — uq_slpp_item_plant_role_live, UNIQUE (inventory_item_id, plant_id,
+  // role) WHERE deleted_at IS NULL. The two arms ready_impression has above: a loser's live row
+  // collides with the winner's (w), or with another loser's of a lower id (o), on one lot in one
+  // role. SOFT-deleted, the one prune in this cutover that is: a parent link is provenance a person
+  // recorded, and a retired row is what "this plant was taken off the lot" already looks like on
+  // this table. deleted_at IS NULL on all three aliases because the index is partial — a retired
+  // row is not a collision and must not be the reason a live one is retired. Every arm reads the
+  // rows as they stood before the statement, so of two colliding losers the lower id survives,
+  // never neither; which loser that is does not matter, the survivor is repointed to the winner
+  // below either way. No role is named: the key carries it, so each role is pruned against itself.
+  stmts.push(sql`UPDATE seed_lot_parent_planting l
+           SET deleted_at = now(), updated_at = now()
+         WHERE l.plant_id = ANY(${loserIds}) AND l.deleted_at IS NULL
+           AND (EXISTS (SELECT 1 FROM seed_lot_parent_planting w
+                        WHERE w.plant_id = ${winnerId} AND w.deleted_at IS NULL
+                          AND w.inventory_item_id = l.inventory_item_id AND w.role = l.role)
+                OR EXISTS (SELECT 1 FROM seed_lot_parent_planting o
+                           WHERE o.plant_id = ANY(${loserIds}) AND o.deleted_at IS NULL AND o.id < l.id
+                             AND o.inventory_item_id = l.inventory_item_id AND o.role = l.role))`)
+  // The member cache, then the parent links behind it. EVERY link row on a loser moves, live or
+  // retired; the prune above left at most one live row per (lot, role) across the losers and none
+  // where the winner already had one, so the move cannot trip the index. Together they keep the
+  // cache true: a lot whose source_plant_id named a loser had that loser as a live parent, the
+  // winner is a live parent of it once both have run, and the cache now names the winner. No
+  // trigger keeps updated_at on the link table, so the statement does.
+  stmts.push(sql`UPDATE inventory_items SET source_plant_id = ${winnerId} WHERE source_plant_id = ANY(${loserIds})`)
+  stmts.push(sql`UPDATE seed_lot_parent_planting SET plant_id = ${winnerId}, updated_at = now()
+         WHERE plant_id = ANY(${loserIds})`)
 
   stmts.push(sql`
     UPDATE plants SET
@@ -832,6 +872,20 @@ export async function mergeCore(sql, {
     }
     if (/unique constraint/i.test(msg)) {
       return { status: 409, body: { error: 'Merge collided with existing rows', detail: msg } }
+    }
+    // 40P01 — Postgres picked this transaction as a deadlock victim and rolled it back WHOLE. Nothing
+    // above was written: the losers are still live and no merge_event row exists, so the same op_id
+    // runs again as a first attempt. Reproduced on real Postgres against a photo delete, which takes
+    // the photo row and then the seed lot that features it, where this takes its lots first and the
+    // losers' photos later; a loser's photo on a seed jar is in both. The lot lock stays where it is
+    // (without it the victim was a gardener's own parents edit), so the pair that remains is answered
+    // rather than chased: a 409 beside the other "try again", not a 500 that reads as a broken merge.
+    // Keyed on the SQLSTATE and not the wording — the message is only "deadlock detected".
+    if (err?.code === '40P01') {
+      return { status: 409, body: {
+        error: 'Merge was stopped by a concurrent change to the same rows — nothing was merged, run it again',
+        detail: msg,
+      } }
     }
     throw err
   }

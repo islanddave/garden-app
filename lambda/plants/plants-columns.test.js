@@ -107,6 +107,14 @@ const UNALIASED_ARMS = [
     pin: /SELECT count\(\*\)::int AS rows, max\(updated_at\) AS max_updated_at\s+FROM plants WHERE id = ANY\(\$\{groupIds\}\) AND deleted_at IS NULL/,
     columns: ['updated_at', 'id', 'deleted_at'],
   },
+  {
+    file: 'merge.js',
+    // The merge's planting locks: the winner and every loser, by id, taken in the cutover directly
+    // ahead of the seed-lot statements and the winner UPDATE. It names `id` and nothing else, so it
+    // adds no column — only a statement, which is why it is pinned here and counted below.
+    pin: /SELECT id FROM plants WHERE id = ANY\(\$\{groupIds\}\) ORDER BY id FOR NO KEY UPDATE/,
+    columns: ['id'],
+  },
 ];
 
 describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants plants column contract', () => {
@@ -114,7 +122,9 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants plants column contract', () 
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(6);
+    // 6 -> 7: merge.js's planting locks (`SELECT id FROM plants ... FOR NO KEY UPDATE`), unaliased
+    // and pinned above.
+    expect(STATEMENTS).toHaveLength(7);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['gn', 'gn2', 'p', 'pl', 'wp']);
   });

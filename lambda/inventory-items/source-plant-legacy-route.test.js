@@ -43,6 +43,7 @@ const parse = (res) => ({ status: res.statusCode, body: JSON.parse(res.body || '
 const IS = {
   probe: (t) => /FROM public\.garden_node p\s+WHERE p\.id = \?/.test(t),
   lock: (t) => /FOR UPDATE/.test(t),
+  hold: (t) => /FOR SHARE/.test(t),
   facts: (t) => /AS live_parents/.test(t),
   retire: (t) => /UPDATE public\.seed_lot_parent_planting l/.test(t),
   add: (t) => /INSERT INTO public\.seed_lot_parent_planting/.test(t),
@@ -73,7 +74,8 @@ const world = (over = {}) => (text, values) => {
   return {
     probe: () => [{ id: values[0] }],
     lock: () => [{ id: LOT }],
-    facts: () => [{ id: LOT, source_kind: null, live_parents: 1 }],
+    hold: () => values[0].map((id) => ({ id })),
+    facts: () => [{ id: LOT, source_kind: null, live_parents: 1, ids_usable: true }],
     retire: () => [],
     add: () => [],
     cache: () => [{ id: LOT, source_plant_id: B }],
@@ -94,8 +96,8 @@ describe('legacy PATCH /:id/source-plant — a lot with no parent or one: column
   it('setting a parent is the set-replace write with a set of exactly that one id', async () => {
     const res = parse(await handler(patch({ source_plant_id: B })));
     expect(res.status).toBe(200);
-    // The single-id gate first (unchanged), then the same six statements the set route issues.
-    expect(kinds()).toEqual(['probe', 'lock', 'facts', 'retire', 'add', 'cache', 'read']);
+    // The single-id gate first (unchanged), then the same seven statements the set route issues.
+    expect(kinds()).toEqual(['probe', 'lock', 'hold', 'facts', 'retire', 'add', 'cache', 'read']);
     // The row: the lot's other live parents are retired and this one is added…
     expect(boundAfter(find('retire'), /NOT \(l\.plant_id = ANY\(/)).toEqual([B]);
     expect(boundAfter(find('add'), /CROSS JOIN unnest\(/)).toEqual([B]);
@@ -118,7 +120,7 @@ describe('legacy PATCH /:id/source-plant — a lot with no parent or one: column
     const res = parse(await handler(patch({ source_plant_id: null })));
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ id: LOT, source_plant_id: null, source_plants: [] });
-    expect(kinds()).toEqual(['lock', 'facts', 'retire', 'add', 'cache', 'read']);
+    expect(kinds()).toEqual(['lock', 'hold', 'facts', 'retire', 'add', 'cache', 'read']);
     // Empty set: every live row is "not in it", so the one parent the lot had is retired with the column.
     expect(boundAfter(find('retire'), /NOT \(l\.plant_id = ANY\(/)).toEqual([]);
     expect(boundAfter(find('add'), /CROSS JOIN unnest\(/)).toEqual([]);
@@ -244,5 +246,61 @@ describe('legacy PATCH /:id/source-plant — everything else it answered before,
     const res = await handler({ ...patch({ source_plant_id: B }), requestContext: { http: { method: 'PUT' } } });
     expect(res.statusCode).toBe(405);
     expect(stubState.sqlCalls).toHaveLength(0);
+  });
+});
+
+describe('legacy PATCH /:id/source-plant — it is the same write, so it inherits Follow-up 1', () => {
+  // The route's own gate is unchanged (one id, the household's live planting, read before the
+  // transaction). What it gains is what the set route gained: the rule is asked AGAIN under the lot
+  // lock by every write statement, and a deadlock victim is told to retry rather than shown a 500.
+  it('409s when the planting it named stopped being usable before the write ran', async () => {
+    // The gate passed B; by the time the request held the lot, B had been soft-deleted or merged away.
+    stubState.sqlHandler = world({
+      facts: [{ id: LOT, source_kind: null, live_parents: 1, ids_usable: false }],
+      cache: [],
+      read: [{ inventory_item_id: LOT, source_plants: [parent(A, 'Alaska Mix')] }],
+    });
+    const res = parse(await handler(patch({ source_plant_id: B })));
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'One of those plants changed just now. Reload and try again.' });
+    // Not the multi-parent refusal: an old client keys its "reload" prompt on that code.
+    expect(res.body.code).toBeUndefined();
+    expect(res.body.source_plant_ids).toBeUndefined();
+  });
+
+  it('carries the every-planting-usable count in all three writes, over its one id', async () => {
+    await handler(patch({ source_plant_id: B }));
+    for (const k of WRITES) {
+      expect(boundAfter(find(k), /AND \(SELECT count\(\*\)\s+FROM unnest\(/), k).toEqual([B]);
+      expect(boundAfter(find(k), /\)\) = cardinality\(/), k).toEqual([B]);
+      expect(boundAfter(find(k), /p\.created_by = ANY\(/), k).toEqual([USER]);
+    }
+    // …and share-locks that planting after the lot and before anything is decided.
+    expect(find('hold').values).toEqual([[B]]);
+  });
+
+  it('409s a deadlock victim (40P01) instead of a 500', async () => {
+    const dead = () => { throw Object.assign(new Error('deadlock detected'), { code: '40P01' }); };
+    for (const at of ['lock', 'hold', 'add']) {
+      resetStubs();
+      stubState.verifyTokenResult = { sub: USER };
+      stubState.sqlHandler = (text, values) => (IS[at](text) ? dead() : world()(text, values));
+      // eslint-disable-next-line no-await-in-loop
+      const res = parse(await handler(patch({ source_plant_id: B })));
+      expect(res.status, at).toBe(409);
+      expect(res.body, at).toEqual({ error: 'This seed lot was changed at the same moment. Reload and try again.' });
+    }
+  });
+
+  it('its own gate is NOT widened: one id, the household\'s live planting, before any lock', async () => {
+    // The member exemption belongs to the set route, where it lets the REST of a set be edited.
+    // Here there is no rest: re-sending a parent whose planting was deleted changes nothing, and the
+    // gate's refusal keeps the wording old clients render.
+    stubState.sqlHandler = world({ probe: [] });
+    const res = parse(await handler(patch({ source_plant_id: B })));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('source_plant_id does not match a planting you can use');
+    expect(kinds()).toEqual(['probe']);
+    expect(stubState.sqlCalls.filter((c) => /seed_lot_parent_planting/.test(c.text))).toHaveLength(0);
   });
 });

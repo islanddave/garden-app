@@ -150,10 +150,12 @@ describe('BUG-SEEDPOSTDROPSPARENT-001 — creating a seed lot with a parent plan
     // Ordering is the whole guarantee. A gate that fires after the write refuses a row that already
     // exists, and the 400 then lies about what happened.
     await handler(post(seedPacket({ source_plant_id: OWNED_PLANT })));
-    // Four statements since V5-SEEDMULTIPARENT-001 (two before it): the probe, then the lot, its
-    // one link row and the read-back, which are a single transaction. The gate is still first.
-    expect(stubState.sqlCalls).toHaveLength(4);
+    // Six statements since V5-SEEDMULTIPARENT-001 (two before it): the probe, then one transaction —
+    // the lot, a share lock on the planting, its one link row, the all-linked assertion and the
+    // read-back (the lock and the assertion are Follow-up 1). The gate is still first.
+    expect(stubState.sqlCalls).toHaveLength(6);
     expect(stubState.sqlCalls[0].text).toContain('FROM public.garden_node');
+    expect(stubState.sqlCalls[0].text).not.toContain('FOR SHARE');
     expect(stubState.sqlCalls[1].text).toContain('INSERT INTO inventory_items');
   });
 
@@ -163,7 +165,11 @@ describe('BUG-SEEDPOSTDROPSPARENT-001 — creating a seed lot with a parent plan
     // every reader that has moved to the set (source_plants) would show this lot with no parent.
     const { status, body } = parse(await handler(post(seedPacket({ source_plant_id: OWNED_PLANT }))));
     expect(status).toBe(201);
-    const [, insertLot, insertLink, readBack] = stubState.sqlCalls;
+    // Found by what each says, not by position: the transaction also carries a share lock and an
+    // assertion (post-source-plant-ids.test.js pins those and the order).
+    const insertLot = stubState.sqlCalls.find((c) => c.text.includes('INSERT INTO inventory_items ('));
+    const insertLink = stubState.sqlCalls.find((c) => c.text.includes('INSERT INTO public.seed_lot_parent_planting'));
+    const readBack = stubState.sqlCalls.find((c) => c.text.includes('jsonb_agg'));
     expect(insertLink.text).toContain('INSERT INTO public.seed_lot_parent_planting (inventory_item_id, plant_id, role, created_by)');
     expect(insertLink.text).toMatch(/SELECT i\.id, u\.plant_id, 'seed_parent', \?::text/);
     // The link names the lot by the id the lot INSERT was given — minted in the handler, because

@@ -590,6 +590,85 @@ describe('mergeCore', () => {
   })
 })
 
+// ── a deadlock is "run it again", not a broken merge ─────────────────────────────────────────
+// The cutover takes its seed lots first and the losers' photos later; a photo delete takes the photo
+// first and the lot that features it later. A loser's photo on a seed jar is in both, and on real
+// Postgres the merge was the victim: `NeonDbError: deadlock detected`, code 40P01, and a 500. The
+// lock order stays (it is what stops a gardener's parents edit being the victim instead), so the
+// answer is what gets fixed.
+describe('mergeCore — a deadlocked cutover', () => {
+  const ok = { opId: 'op1', userId: 'user_a', householdIds: ['user_a'] }
+  const failing = (err) => {
+    const sql = mockSql(baseResponses([plantRow(WINNER), plantRow(LOSER1)]))
+    sql.transaction = async () => { throw err }
+    return sql
+  }
+  // As the driver threw it on real Postgres, detail and all.
+  const deadlock = (message = 'deadlock detected') => Object.assign(new Error(message), {
+    code: '40P01',
+    detail: 'Process 6256 waits for ShareLock on transaction 1866057; blocked by process 5086.',
+    where: 'while locking tuple (0,37) in relation "photos"',
+  })
+
+  it('answers 409 and says nothing was merged and it can be run again', async () => {
+    const sql = failing(deadlock())
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    // The status the other "try again" outcomes use (fingerprint drift, a unique collision), so a
+    // caller that already treats a merge 409 as retryable needs nothing new.
+    expect(r.status).toBe(409)
+    // Both halves, because each is what the operator needs to hear: a deadlock victim's transaction
+    // wrote nothing, and the same request is safe to send again.
+    expect(r.body.error).toMatch(/nothing was merged/)
+    expect(r.body.error).toMatch(/run it again/)
+    expect(r.body.detail).toBe('deadlock detected')
+    // Postgres's detail names backend pids and transaction ids. Not the caller's business.
+    expect(JSON.stringify(r.body)).not.toMatch(/Process \d+|ShareLock/)
+  })
+
+  it('is keyed on the SQLSTATE, not on the wording', async () => {
+    // The message is locale text and the code is not: a server answering in another language is
+    // deadlocked all the same.
+    const r = await mergeCore(failing(deadlock('Verklemmung entdeckt')),
+      { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(409)
+    expect(r.body.error).toMatch(/nothing was merged/)
+  })
+
+  it('goes looking for nothing afterwards — there is no outcome to replay', async () => {
+    // The duplicate-op arm re-reads merge_event because a concurrent identical op may have LANDED.
+    // A deadlock victim's own transaction rolled back whole; the one read of merge_event is the
+    // idempotency check at the top, and nothing is issued after the cutover fails.
+    const sql = failing(deadlock())
+    await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(sql.calls.filter((c) => c.text?.includes('FROM merge_event WHERE op_id'))).toHaveLength(1)
+    const last = sql.calls.at(-1)
+    expect(last.text ?? '').toMatch(/INSERT INTO merge_event/)   // the last statement BUILT for the batch
+  })
+
+  it('still throws every other failure — a different SQLSTATE is not "run it again"', async () => {
+    // 40001 is a serialization failure, 57014 a cancelled statement, and an error with no code at all
+    // is anything. None is known to have written nothing for a reason a blind retry fixes, so each
+    // reaches the handler's generic arm exactly as before, as the same error object.
+    for (const err of [
+      Object.assign(new Error('could not serialize access due to concurrent update'), { code: '40001' }),
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }),
+      new Error('socket hang up'),
+    ]) {
+      await expect(mergeCore(failing(err), { winnerId: WINNER, loserIds: [LOSER1], ...ok })).rejects.toBe(err)
+    }
+  })
+
+  it('leaves the unique-collision answer as it was', async () => {
+    // Same status, different sentence, and the difference matters: a collision means rows are in the
+    // way and a retry may meet them again; a deadlock means nothing is.
+    const r = await mergeCore(
+      failing(Object.assign(new Error('duplicate key value violates unique constraint "uq_x"'), { code: '23505' })),
+      { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(409)
+    expect(r.body.error).toBe('Merge collided with existing rows')
+  })
+})
+
 // ── seed_lot_parent_planting — the parent links of a saved-seed lot ──────────────────────────
 // Mock SQL, so these pin WHAT is sent, with which ids, and in what order. Whether the statements do
 // what merge.js says of them — which row survives a collision, that no 23505 can follow, that
@@ -677,8 +756,10 @@ describe('mergeCore — seed_lot_parent_planting', () => {
     // for, and it is what the source_plant_id repoint further down takes on the same rows anyway.
     const { tx } = await run()
     expect(tx.find(isLotLock).match(LOCK_CLAUSE)[1]).toBe('NO KEY UPDATE')
-    // And no other row-lock strength is spelled anywhere in the file's SQL.
-    expect(SRC.match(/\bFOR\s+(?:NO KEY UPDATE|KEY SHARE|UPDATE|SHARE)\b/g)).toEqual(['FOR NO KEY UPDATE'])
+    // And no other row-lock strength is spelled anywhere in the file's SQL: two locks, the lots and
+    // the plantings, one strength.
+    expect(SRC.match(/\bFOR\s+(?:NO KEY UPDATE|KEY SHARE|UPDATE|SHARE)\b/g))
+      .toEqual(['FOR NO KEY UPDATE', 'FOR NO KEY UPDATE'])
   })
 
   it('takes the lock INSIDE the cutover, once, so it is held until the commit', async () => {
@@ -686,8 +767,128 @@ describe('mergeCore — seed_lot_parent_planting', () => {
     // released before the batch starts, and reads in source as though it were protecting it.
     const { sql, tx } = await run()
     expect(tx.filter(isLotLock)).toHaveLength(1)
-    expect(sql.calls.filter((c) => c.text && /\bFOR (UPDATE|SHARE|NO KEY UPDATE|KEY SHARE)\b/.test(c.text)))
-      .toHaveLength(1)
+    expect(sql.calls.filter((c) => c.text && isLotLock(c.text))).toHaveLength(1)
+    // Every row lock the merge asks for anywhere is in the batch: the lots and the plantings.
+    const asked = sql.calls.filter((c) => c.text && /\bFOR (UPDATE|SHARE|NO KEY UPDATE|KEY SHARE)\b/.test(c.text))
+    expect(asked).toHaveLength(2)
+    for (const c of asked) expect(tx).toContain(c.text)
+  })
+
+  // ── planting locks ─────────────────────────────────────────────────────────────────────────
+  // A parents write can name a LOSER as a new parent of a lot the merge never locked (the lot had no
+  // link to the group when the lot lock ran). It share-locks the plantings it names. Until the merge
+  // locked its own plantings too, that write could commit its link after the link repoint had run:
+  // a live link to a planting about to be soft-deleted, the lot gone from the winner's seed page,
+  // and no error anywhere. The lock and the three seed-lot statements behind it are one unit.
+  const isPlantingLock = (t) => /^\s*SELECT id FROM plants WHERE id = ANY\(\$\d+\)/.test(t) && LOCK_CLAUSE.test(t)
+  const isCacheRepoint = (t) => /^\s*UPDATE inventory_items SET source_plant_id =/.test(t)
+  const isWinnerUpdate = (t) => /^\s*UPDATE plants SET\s+name = /.test(t)
+  // Two events sharing a batch id: a drop set, so the batch carries archive_events_subset as well.
+  const DUPES = [
+    { id: 'e1', event_type: 'watering', event_date: '2026-08-01T08:00:00Z',
+      created_at: '2026-08-01T08:00:00Z', metadata: { batch_id: 'B1' } },
+    { id: 'e2', event_type: 'watering', event_date: '2026-08-01T08:00:00Z',
+      created_at: '2026-08-01T08:00:01Z', metadata: { batch_id: 'B1' } },
+  ]
+  const runBatch = async ({ losers = [LOSER1], events = [] } = {}) => {
+    const plants = [plantRow(WINNER), ...losers.map((id) => plantRow(id))]
+    const sql = mockSql(baseResponses(plants, events))
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: losers, ...ok })
+    return { sql, r, tx: sql.lastTransaction() }
+  }
+  const label = (t) => {
+    if (isLotLock(t)) return 'LOCK lots'
+    if (isPlantingLock(t)) return 'LOCK plantings'
+    const s = t.trim().replace(/\s+/g, ' ')
+    if (s.startsWith('SELECT set_config')) return 'set_config'
+    if (s.startsWith('SELECT archive_events_subset')) return 'archive_events_subset'
+    const m = s.match(/^(UPDATE|DELETE FROM|INSERT INTO) (\w+)/)
+    return m ? `${m[1].split(' ')[0]} ${m[2]}` : s.slice(0, 40)
+  }
+
+  it('locks the winner and every loser, by id, FOR NO KEY UPDATE', async () => {
+    const { sql, tx } = await runBatch({ losers: [LOSER1, LOSER2] })
+    expect(tx.filter(isPlantingLock)).toHaveLength(1)
+    // Whole, clause by clause:
+    //   · every id in the group — a loser left out is the row a parents write can still share-lock
+    //     and link behind the merge's back, and the winner left out lets one add the winner to a lot
+    //     between the prune and the repoint;
+    //   · ORDER BY id — a parents write naming two of these plantings locks them by id;
+    //   · FOR NO KEY UPDATE — conflicts with that write's FOR SHARE, is what the winner UPDATE and
+    //     the losers' soft-delete take anyway, and lets through the key-share lock a link INSERT's
+    //     foreign-key check takes (FOR UPDATE would not, and the reconcile inserts under it).
+    expect(tx.find(isPlantingLock).replace(/\s+/g, ' ').trim())
+      .toBe('SELECT id FROM plants WHERE id = ANY($0) ORDER BY id FOR NO KEY UPDATE')
+    expect(tx.find(isPlantingLock).match(LOCK_CLAUSE)[1]).toBe('NO KEY UPDATE')
+    const issued = sql.calls.filter((c) => c.text && isPlantingLock(c.text))
+    expect(issued).toHaveLength(1)          // in the batch, and not also awaited on its own
+    expect(issued[0].values).toHaveLength(1)
+    expect([...issued[0].values[0]].sort()).toEqual([WINNER, LOSER1, LOSER2].sort())
+  })
+
+  for (const [name, events] of [['no drop set', []], ['a drop set', DUPES]]) {
+    it(`takes them directly ahead of the three seed-lot statements and the winner UPDATE (${name})`, async () => {
+      // Five consecutive statements, in this order. The prune, the cache repoint and the link
+      // repoint each have to START after the lock is held: handler-first, they then run after the
+      // parents write has committed and see its link and its cache value; one left above the lock
+      // has already run by then, and that row or that column is the one left on a deleted planting.
+      // And nothing else sits between the lock and the winner UPDATE, which is where the cutover
+      // has always first locked a planting — so no other relation is locked any later than it was.
+      const { tx } = await runBatch({ events })
+      const k = tx.findIndex(isPlantingLock)
+      expect(k).toBeGreaterThan(0)
+      expect(tx.slice(k, k + 5).map((t) => (
+        isPlantingLock(t) ? 'planting locks'
+          : isPrune(t) ? 'link prune'
+            : isCacheRepoint(t) ? 'cache repoint'
+              : isRepoint(t) ? 'link repoint'
+                : isWinnerUpdate(t) ? 'winner UPDATE' : label(t)
+      ))).toEqual(['planting locks', 'link prune', 'cache repoint', 'link repoint', 'winner UPDATE'])
+    })
+  }
+
+  it('writes no parent link, no lot and no planting between the lot lock and the planting locks', async () => {
+    const { tx } = await runBatch({ losers: [LOSER1, LOSER2], events: DUPES })
+    const lots = tx.findIndex(isLotLock)
+    const plantings = tx.findIndex(isPlantingLock)
+    expect(plantings).toBeGreaterThan(lots)        // lots, then plantings: the parents write's order
+    const between = tx.slice(lots + 1, plantings)
+    expect(between.length).toBeGreaterThan(20)     // not vacuous: the whole body of the cutover
+    expect(between.filter(writesLinkOrLot)).toEqual([])
+    expect(between.filter((t) => /\b(UPDATE|DELETE FROM|INSERT INTO)\s+(public\.)?plants\b/.test(t))).toEqual([])
+  })
+
+  it('leaves every other statement in the order the cutover has always had', async () => {
+    // WHY THE LOCK IS NOT TAKEN EARLIER, pinned as an order. Three other writers take a row of one
+    // of these relations and THEN a planting row: a photo delete (photos, then the planting that
+    // features the photo), an event create (entity_memory, then the planting's status) and a
+    // loss-event delete (event_log, then the planting's count). They queue behind a merge because
+    // the merge takes those rows in the same order. Plantings locked above any of them is a
+    // deadlock in which the gardener's request can be the one Postgres aborts.
+    // This is the batch with the planting lock and the three seed-lot statements taken out: the
+    // sequence the cutover had before either existed. A new surface goes ABOVE the planting lock;
+    // only a statement that writes a seed lot or a parent link belongs under it.
+    const { tx } = await runBatch({ losers: [LOSER1, LOSER2], events: DUPES })
+    const seq = tx.map(label)
+    const k = seq.indexOf('LOCK plantings')
+    expect(seq.slice(0, k)).toEqual([
+      'set_config', 'LOCK lots',
+      'DELETE favorites', 'DELETE watch_impression', 'DELETE harvest_watch_dismissal',
+      'DELETE ready_impression', 'DELETE watch_exclusion', 'DELETE findings',
+      'UPDATE event_log', 'UPDATE photos', 'UPDATE preservation_log',
+      'UPDATE critter_state', 'UPDATE critter_state', 'UPDATE evidence', 'UPDATE findings',
+      'UPDATE treatment_association', 'UPDATE seen_event', 'UPDATE favorites',
+      'UPDATE watch_impression', 'UPDATE harvest_watch_dismissal', 'UPDATE kitchen_batch_input',
+      'UPDATE pantry_item', 'UPDATE preservation_source', 'UPDATE ready_impression',
+      'UPDATE watch_exclusion', 'UPDATE plant_anchor_derivation', 'DELETE entity_memory',
+      'archive_events_subset',
+    ])
+    expect(seq.slice(k)).toEqual([
+      'LOCK plantings', 'UPDATE seed_lot_parent_planting', 'UPDATE inventory_items',
+      'UPDATE seed_lot_parent_planting',
+      'UPDATE plants', 'UPDATE plant_anchor_derivation', 'UPDATE plants',
+      'INSERT entity_memory', 'INSERT merge_event',
+    ])
   })
 
   it('declares the surface as a repoint whose collisions are soft-deleted', () => {

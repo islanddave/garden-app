@@ -129,15 +129,22 @@ describe('BUG-SEEDDETAIL500-001 — garden_node column contract', () => {
     expect(GERMINATION_SQL, 'the germination summary must still be findable').toBeTruthy();
   });
 
-  it('sweeps seed-lot-parents.js too — its two garden_node statements are among those checked', () => {
+  it('sweeps seed-lot-parents.js too — its seven garden_node statements are among those checked', () => {
     // Without this the widened sweep could silently go back to index.js alone and every assertion
     // in this file would stay green over a p.name in the parents read.
     const helper = [...HELPER_SRC.matchAll(/sql`[^`]*garden_node[^`]*`/g)].map((m) => m[0]);
-    expect(helper).toHaveLength(2);
+    // 2 -> 7 with Follow-up 1 (T1 defect D-2): the share lock on the plantings a write names, and
+    // the ownership rule re-tested inside the facts read and each of the three writes. All of them
+    // name only p.id, p.created_by and p.deleted_at — already in the contract above.
+    expect(helper).toHaveLength(7);
     for (const q of helper) expect(GARDEN_NODE_SQLS).toContain(q);
-    // The ownership gate selects from the view; the parents read joins it, aliased p in both.
-    expect(helper.filter((q) => /FROM public\.garden_node p\b/.test(q))).toHaveLength(1);
+    // Six select FROM the view (the gate, the lock, and the four that carry the re-test); the
+    // parents read joins it. Aliased p in every one.
+    expect(helper.filter((q) => /FROM public\.garden_node p\b/.test(q))).toHaveLength(6);
     expect(helper.filter((q) => /LEFT JOIN public\.garden_node p ON p\.id = l\.plant_id/.test(q))).toHaveLength(1);
+    // Exactly one takes a lock through the view, and it is a share lock.
+    expect(helper.filter((q) => /\bFOR (UPDATE|SHARE|KEY SHARE|NO KEY UPDATE)\b/.test(q))).toHaveLength(1);
+    expect(helper.filter((q) => /ORDER BY p\.id\s+FOR SHARE/.test(q))).toHaveLength(1);
   });
 
   it('selects display_name (aliased to name), never a bare p.name', () => {

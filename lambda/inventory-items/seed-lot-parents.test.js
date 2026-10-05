@@ -6,10 +6,11 @@
 //
 // WHAT THIS CANNOT PROVE, said once here rather than implied by a green run: the driver is a fake
 // that records SQL text and bound values and returns canned rows. Nothing below shows that a
-// statement RUNS, that a guard written in SQL refuses what it should, or that the six statements
-// are atomic — those need a real Postgres (the lane report lists each statement and the case an
-// integration test must prove). What is pinned here is which statements are built, in what order,
-// with which values bound where, and what the module concludes from each shape of result.
+// statement RUNS, that a guard written in SQL refuses what it should, that a lock is granted or
+// waited for, or that the seven statements are atomic — those need a real Postgres (the lane report
+// lists each statement and the case an integration test must prove). What is pinned here is which
+// statements are built, in what order, with which values bound where, and what the module concludes
+// from each shape of result.
 //
 // The ownership gate (ownsEveryPlanting) is executed in lambda/authz-write-fk.test.js, beside the
 // fleet's other gates; the routes are executed through the handler in source-plants-route.test.js,
@@ -17,7 +18,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   MAX_SOURCE_PLANTS, MULTI_PARENT_ERROR, normalizeSourcePlantIds, readSourcePlants, sourcePlantsOf,
-  sourcePlantsByLot, settleSourcePlants, insertSeedParentLinks, replaceSourcePlants,
+  sourcePlantsByLot, settleSourcePlants, lockPlantings, insertSeedParentLinks, assertEveryParentLinked,
+  replaceSourcePlants,
 } from './seed-lot-parents.js';
 
 const HOUSE = ['user_a', 'user_b'];
@@ -46,9 +48,10 @@ const fakeSql = (answer = () => []) => {
   return fn;
 };
 
-// The six statements of the set-replace transaction, each recognised by something only it says.
+// The seven statements of the set-replace transaction, each recognised by something only it says.
 const IS = {
   lock: (t) => /FOR UPDATE/.test(t),
+  hold: (t) => /FOR SHARE/.test(t),
   facts: (t) => /AS live_parents/.test(t),
   retire: (t) => /UPDATE public\.seed_lot_parent_planting l/.test(t),
   add: (t) => /INSERT INTO public\.seed_lot_parent_planting/.test(t),
@@ -68,6 +71,9 @@ const boundAfter = (call, re) => {
 };
 
 const flat = (t) => t.replace(/\s+/g, ' ');
+// The every-planting-usable count, as each statement that carries it spells it (flattened): an id
+// counts when it is a live planting the household owns OR already a live seed_parent of this lot.
+const USABLE = "(SELECT count(*) FROM unnest(?::uuid[]) AS q(plant_id) WHERE EXISTS ( SELECT 1 FROM public.garden_node p WHERE p.id = q.plant_id AND p.created_by = ANY(?) AND p.deleted_at IS NULL) OR EXISTS ( SELECT 1 FROM public.seed_lot_parent_planting k WHERE k.inventory_item_id = i.id AND k.plant_id = q.plant_id AND k.role = 'seed_parent' AND k.deleted_at IS NULL)) = cardinality(?::uuid[])";
 const parent = (id, name, extra = {}) => ({
   id, name, variety_id: uuid(90), variety_name: 'Jewel Mix', breeding_system: 'open_pollinated',
   archived: false, deleted: false, ...extra,
@@ -236,6 +242,67 @@ describe('insertSeedParentLinks — the link INSERT', () => {
     // POST's use: legacy off.
     expect(boundAfter(call, /AND \(NOT /)).toBe(false);
   });
+
+  it('re-tests that EVERY planting is usable, in the statement that writes — all of the array or none', () => {
+    // Follow-up 1 (T1 defect D-2). The route's gate ran before the transaction; this is the same
+    // rule asked again at the moment of the write. It is a count over the WHOLE array compared with
+    // the array's length, so one planting that stopped being usable inserts nothing — not the rest.
+    const sql = fakeSql();
+    insertSeedParentLinks(sql, { lotId: LOT, ids: [A, B], householdIds: HOUSE, userId: 'user_a' });
+    const call = sql.calls[0];
+    const t = flat(call.text);
+    expect(t).toContain(`AND ${USABLE} AND NOT EXISTS (`);
+    // The array on both sides of the comparison, and the household in the ownership arm: bound.
+    expect(boundAfter(call, /AND \(SELECT count\(\*\)\s+FROM unnest\(/)).toEqual([A, B]);
+    expect(boundAfter(call, /p\.created_by = ANY\(/)).toEqual(HOUSE);
+    expect(boundAfter(call, /\)\) = cardinality\(/)).toEqual([A, B]);
+    // Arm 1: a LIVE planting the household OWNS — the gate's own predicate, through the view.
+    expect(t).toContain('FROM public.garden_node p WHERE p.id = q.plant_id AND p.created_by = ANY(?) AND p.deleted_at IS NULL');
+    // Arm 2: already a live seed_parent of THIS lot (correlated on the lot row, never a bound id).
+    expect(t).toContain("FROM public.seed_lot_parent_planting k WHERE k.inventory_item_id = i.id AND k.plant_id = q.plant_id AND k.role = 'seed_parent' AND k.deleted_at IS NULL");
+  });
+});
+
+describe('lockPlantings — the plantings a parents write names, held still for its transaction', () => {
+  it('share-locks exactly the rows named, in id order, through the view', () => {
+    const sql = fakeSql();
+    lockPlantings(sql, [B, A]);
+    expect(sql.calls).toHaveLength(1);
+    expect(flat(sql.calls[0].text).trim()).toBe(
+      'SELECT p.id FROM public.garden_node p WHERE p.id = ANY(?::uuid[]) ORDER BY p.id FOR SHARE');
+    expect(sql.calls[0].values).toEqual([[B, A]]);
+  });
+
+  it('is FOR SHARE — the strength that holds off a soft-delete — and nothing stronger', () => {
+    // A soft-delete is an UPDATE of a non-key column: FOR KEY SHARE would let it through, which is
+    // the one change this lock exists to stop. FOR UPDATE would make two edits that name the same
+    // planting queue behind each other for no reason.
+    const sql = fakeSql();
+    lockPlantings(sql, [A]);
+    const t = flat(sql.calls[0].text);
+    expect(t).toMatch(/FOR SHARE\s*$/);
+    expect(t).not.toMatch(/FOR KEY SHARE|FOR UPDATE|FOR NO KEY UPDATE|NOWAIT|SKIP LOCKED/);
+    // Every row named is frozen, whichever arm it will be judged by: no household predicate here.
+    expect(t).not.toMatch(/created_by|deleted_at/);
+  });
+});
+
+describe('assertEveryParentLinked — the create fails whole when its links did not go in', () => {
+  it('divides by zero unless the new lot has a live link for every planting asked for', () => {
+    const sql = fakeSql();
+    assertEveryParentLinked(sql, { lotId: LOT, ids: [A, B], householdIds: HOUSE });
+    expect(sql.calls).toHaveLength(1);
+    const call = sql.calls[0];
+    expect(flat(call.text).trim()).toBe(
+      "SELECT 1 / (CASE WHEN ( SELECT count(*) FROM public.seed_lot_parent_planting l JOIN public.inventory_items i ON i.id = l.inventory_item_id WHERE i.id = ? AND i.created_by = ANY(?) AND i.deleted_at IS NULL AND l.role = 'seed_parent' AND l.deleted_at IS NULL) = cardinality(?::uuid[]) THEN 1 ELSE 0 END) AS every_parent_linked");
+    expect(call.values).toEqual([LOT, HOUSE, [A, B]]);
+  });
+
+  it('writes nothing itself', () => {
+    const sql = fakeSql();
+    assertEveryParentLinked(sql, { lotId: LOT, ids: [A], householdIds: HOUSE });
+    expect(sql.calls[0].text).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/);
+  });
 });
 
 describe('replaceSourcePlants — the set-replace transaction', () => {
@@ -245,7 +312,8 @@ describe('replaceSourcePlants — the set-replace transaction', () => {
     if (k in over) return over[k];
     return {
       lock: [{ id: LOT }],
-      facts: [{ id: LOT, source_kind: null, live_parents: 1 }],
+      hold: [{ id: A }],
+      facts: [{ id: LOT, source_kind: null, live_parents: 1, ids_usable: true }],
       retire: [],
       add: [],
       cache: [{ id: LOT, source_plant_id: A }],
@@ -258,25 +326,43 @@ describe('replaceSourcePlants — the set-replace transaction', () => {
       .then((out) => ({ out, sql }));
   };
 
-  it('is ONE transaction of six statements, in the order the cache rule depends on', async () => {
+  it('is ONE transaction of seven statements, in the order the locks and the cache rule depend on', async () => {
     const { sql } = await run();
     // One batch: column and rows can never be written by separate transactions.
-    expect(sql.batches).toEqual([6]);
-    expect(sql.calls.map((c) => kindOf(c.text))).toEqual(['lock', 'facts', 'retire', 'add', 'cache', 'read']);
+    expect(sql.batches).toEqual([7]);
+    expect(sql.calls.map((c) => kindOf(c.text))).toEqual(['lock', 'hold', 'facts', 'retire', 'add', 'cache', 'read']);
     // Nothing was issued outside the batch.
-    expect(sql.calls).toHaveLength(6);
+    expect(sql.calls).toHaveLength(7);
   });
 
-  it('locks the lot first, and reads the facts in a LATER statement', async () => {
-    const { sql } = await run();
-    const [lock, facts] = sql.calls;
+  it('locks the LOT first, then the plantings, and only then reads or writes a link row', async () => {
+    // Lot before links is binding (the reconcile and the merge take their lots first; a writer that
+    // took a link row first deadlocked against them). Plantings after the lot, never before it.
+    const { sql } = await run({ ids: [A, B] });
+    const [lock, hold, ...rest] = sql.calls;
     expect(flat(lock.text)).toMatch(/SELECT i\.id FROM public\.inventory_items i WHERE i\.id = \? AND i\.created_by = ANY\(\?\) AND i\.deleted_at IS NULL AND i\.category = 'seeds' FOR UPDATE/);
     expect(lock.values).toEqual([LOT, HOUSE]);
-    // The count is NOT a subquery of the locking statement: that one's snapshot predates its wait.
-    expect(lock.text).not.toMatch(/count\(/);
-    expect(facts.text).not.toMatch(/FOR UPDATE/);
-    expect(flat(facts.text)).toContain("(SELECT count(*) FROM public.seed_lot_parent_planting n WHERE n.inventory_item_id = i.id AND n.role = 'seed_parent' AND n.deleted_at IS NULL)::int AS live_parents");
-    expect(facts.values).toEqual([LOT, HOUSE]);
+    // Neither locking statement reads the link table or counts anything: a subquery there would be
+    // evaluated on a snapshot taken BEFORE the statement waited.
+    for (const c of [lock, hold]) {
+      expect(c.text).not.toMatch(/seed_lot_parent_planting/);
+      expect(c.text).not.toMatch(/count\(/);
+    }
+    expect(flat(hold.text).trim()).toBe('SELECT p.id FROM public.garden_node p WHERE p.id = ANY(?::uuid[]) ORDER BY p.id FOR SHARE');
+    expect(hold.values).toEqual([[A, B]]);
+    // Everything after the two locks takes no lock clause of its own.
+    for (const c of rest) expect(c.text).not.toMatch(/FOR (UPDATE|SHARE|KEY SHARE|NO KEY UPDATE)/);
+  });
+
+  it('reads the facts in a statement that starts AFTER both locks: kind, live parents, every planting usable', async () => {
+    const { sql } = await run({ ids: [A, B] });
+    const facts = sql.calls[2];
+    expect(IS.facts(facts.text)).toBe(true);
+    const t = flat(facts.text);
+    expect(t).toContain("(SELECT count(*) FROM public.seed_lot_parent_planting n WHERE n.inventory_item_id = i.id AND n.role = 'seed_parent' AND n.deleted_at IS NULL)::int AS live_parents");
+    // The SAME count the three writes are guarded by, reported so JS can say which guard refused.
+    expect(t).toContain(`(${USABLE}) AS ids_usable`);
+    expect(facts.values).toEqual([[A, B], HOUSE, [A, B], LOT, HOUSE]);
   });
 
   it('soft-deletes the live rows that left the set — and only those', async () => {
@@ -303,7 +389,27 @@ describe('replaceSourcePlants — the set-replace transaction', () => {
     expect(cache.values).not.toContain(A);
   });
 
-  it('carries the lot predicate and BOTH guards in every write statement', async () => {
+  it('carries the every-planting-usable rule in all three writes, with the same bindings in each', async () => {
+    // Follow-up 1 (T1 defect D-2): ownership used to be read once, before the transaction. A PUT that
+    // then waited for its lot behind a merge of L into W acted on the pre-merge answer — it retired
+    // W's row and linked the soft-deleted L, on a 200. The rule is now a conjunct of EVERY write, so
+    // when a planting has changed, none of the three does anything.
+    const { sql } = await run({ ids: [A, B] });
+    const writes = sql.calls.filter((c) => IS.retire(c.text) || IS.add(c.text) || IS.cache(c.text));
+    expect(writes).toHaveLength(3);
+    for (const w of writes) {
+      const k = kindOf(w.text);
+      expect(flat(w.text), k).toContain(`AND ${USABLE}`);
+      expect(boundAfter(w, /AND \(SELECT count\(\*\)\s+FROM unnest\(/), k).toEqual([A, B]);
+      expect(boundAfter(w, /p\.created_by = ANY\(/), k).toEqual(HOUSE);
+      expect(boundAfter(w, /\)\) = cardinality\(/), k).toEqual([A, B]);
+      // Exactly one copy per statement: a second, differently-scoped copy is how two statements
+      // come to disagree.
+      expect(flat(w.text).split(USABLE), k).toHaveLength(2);
+    }
+  });
+
+  it('carries the lot predicate and the two older guards in every write statement', async () => {
     // The transaction is not interactive: a refusal cannot be an earlier read plus a decision in
     // JS, so each write re-tests the same conditions in its own WHERE.
     const { sql } = await run({ ids: [A, B], legacy: true });
@@ -404,14 +510,98 @@ describe('replaceSourcePlants — the set-replace transaction', () => {
     }
   });
 
+  it('plants_changed: the write changed nothing because a planting stopped being usable under the lock', async () => {
+    // THE D-2 CASE, as the statements report it. The lot had {A, L}; the request re-sends {A, L};
+    // by the time it holds the lot, L has been merged into W. Statement 2 says the ids are no longer
+    // all usable, the three guarded writes did nothing (the cache statement returned no row), and
+    // the read-back shows the set the merge left — which this request did not touch.
+    const merged = [parent(A, 'Alaska Mix'), parent(C, 'the winner')];
+    const { out } = await run({ ids: [A, B] }, {
+      facts: [{ id: LOT, source_kind: null, live_parents: 2, ids_usable: false }],
+      cache: [],
+      read: [{ inventory_item_id: LOT, source_plants: merged }],
+    });
+    expect(out).toEqual({ outcome: 'plants_changed' });
+    // Not a success in any part: no id, no cache, no set.
+    expect(Object.keys(out)).toEqual(['outcome']);
+  });
+
+  it('plants_changed is the LEGACY route\'s answer too — it is the same write', async () => {
+    const { out } = await run({ ids: [B], legacy: true }, {
+      facts: [{ id: LOT, source_kind: null, live_parents: 1, ids_usable: false }], cache: [], read: [],
+    });
+    expect(out).toEqual({ outcome: 'plants_changed' });
+  });
+
+  it('only a strict FALSE says so: a write that DID happen is ok whatever the facts row carries', async () => {
+    // The outcome is read off what was written, never off the flag alone. (The flag is computed
+    // before the writes; after them every id is a member, so a re-read would say true anyway.)
+    const { out } = await run({ ids: [A] }, { facts: [{ id: LOT, source_kind: null, live_parents: 1, ids_usable: false }] });
+    expect(out.outcome).toBe('ok');
+    // …and a missing flag is not a changed planting: it falls through to the plain conflict.
+    const older = await run({ ids: [A] }, { facts: [{ id: LOT, source_kind: null, live_parents: 1 }], cache: [] });
+    expect(older.out).toEqual({ outcome: 'conflict' });
+  });
+
+  it('the older refusals keep their precedence over plants_changed', async () => {
+    // A shop-kind lot and a multi-parent legacy write are facts about the LOT, true before and after
+    // any planting changed; they are what the person has to deal with first.
+    const kind = await run({ ids: [A] }, {
+      facts: [{ id: LOT, source_kind: 'gift', live_parents: 0, ids_usable: false }], cache: [], read: [],
+    });
+    expect(kind.out).toEqual({ outcome: 'source_kind' });
+    const jar = [parent(A, 'Alaska Mix'), parent(B, 'Jewel Mix')];
+    const multi = await run({ ids: [C], legacy: true }, {
+      facts: [{ id: LOT, source_kind: null, live_parents: 2, ids_usable: false }], cache: [],
+      read: [{ inventory_item_id: LOT, source_plants: jar }],
+    });
+    expect(multi.out).toEqual({ outcome: 'multi_parent', source_plant_ids: [A, B] });
+  });
+
   it('conflict: a 23505 from a concurrent writer rolls the batch back and is reported, not thrown', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const dup = Object.assign(new Error('duplicate key value violates unique constraint'), {
       code: '23505', constraint: 'uq_slpp_item_plant_role_live',
     });
     const { out } = await run({ ids: [A, B] }, {});
     expect(out.outcome).toBe('ok');
+    expect(warn).not.toHaveBeenCalled();
     const sql = fakeSql((text) => { if (IS.add(text)) throw dup; return answers()(text); });
     expect(await replaceSourcePlants(sql, { lotId: LOT, ids: [A, B], householdIds: HOUSE, userId: 'user_a' }))
+      .toEqual({ outcome: 'conflict' });
+    expect(JSON.parse(warn.mock.calls[0][0])).toEqual({ tag: 'inv-source-plants-retry', item: LOT, code: '23505' });
+  });
+
+  it('conflict: a 40P01 deadlock victim is reported the same way — nothing was written, try again', async () => {
+    // Reproduced on real Postgres against a planting merge (T1 D-1): the PUT was the victim and the
+    // route answered 500. A victim's transaction is rolled back whole, so "reload and try again" is
+    // true. Whichever statement the deadlock is detected at.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const dead = () => Object.assign(new Error('deadlock detected'), {
+      code: '40P01', detail: 'Process 3657 waits for ShareLock on transaction 1864282; blocked by process 3314.',
+    });
+    for (const at of ['lock', 'hold', 'retire', 'add', 'cache']) {
+      const sql = fakeSql((text) => { if (IS[at](text)) throw dead(); return answers()(text); });
+      // eslint-disable-next-line no-await-in-loop
+      const out = await replaceSourcePlants(sql, { lotId: LOT, ids: [A, B], householdIds: HOUSE, userId: 'user_a' });
+      expect(out, at).toEqual({ outcome: 'conflict' });
+    }
+    // Logged every time, by code: a 409 that used to be a 500 is otherwise invisible in CloudWatch.
+    expect(warn).toHaveBeenCalledTimes(5);
+    expect(JSON.parse(warn.mock.calls[0][0])).toEqual({ tag: 'inv-source-plants-retry', item: LOT, code: '40P01' });
+  });
+
+  it('keys the deadlock on the SQLSTATE, not on the wording', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // The same message with another code is not a deadlock and must not be swallowed…
+    const lookalike = Object.assign(new Error('deadlock detected'), { code: 'XX000' });
+    const sql = fakeSql((text) => { if (IS.add(text)) throw lookalike; return answers()(text); });
+    await expect(replaceSourcePlants(sql, { lotId: LOT, ids: [A], householdIds: HOUSE, userId: 'user_a' }))
+      .rejects.toBe(lookalike);
+    // …and the code with any wording is.
+    const reworded = Object.assign(new Error('interblocage détecté'), { code: '40P01' });
+    const sql2 = fakeSql((text) => { if (IS.add(text)) throw reworded; return answers()(text); });
+    expect(await replaceSourcePlants(sql2, { lotId: LOT, ids: [A], householdIds: HOUSE, userId: 'user_a' }))
       .toEqual({ outcome: 'conflict' });
   });
 
@@ -422,12 +612,13 @@ describe('replaceSourcePlants — the set-replace transaction', () => {
       .rejects.toBe(boom);
   });
 
-  it('conflict: nothing written and neither guard explains it', async () => {
-    // Unreachable under the lock except through a writer that does not take it. The honest answer
+  it('conflict: nothing written and no guard explains it', async () => {
+    // Unreachable under the locks except through a writer that takes neither. The honest answer
     // is "try again", never a 200 for a write that did not happen.
-    const { out } = await run({ ids: [A] }, { facts: [{ id: LOT, source_kind: null, live_parents: 1 }], cache: [] });
+    const fine = { id: LOT, source_kind: null, live_parents: 1, ids_usable: true };
+    const { out } = await run({ ids: [A] }, { facts: [fine], cache: [] });
     expect(out).toEqual({ outcome: 'conflict' });
-    const legacy = await run({ ids: [A], legacy: true }, { facts: [{ id: LOT, source_kind: null, live_parents: 1 }], cache: [] });
+    const legacy = await run({ ids: [A], legacy: true }, { facts: [fine], cache: [] });
     expect(legacy.out).toEqual({ outcome: 'conflict' });
   });
 });

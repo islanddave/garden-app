@@ -436,6 +436,18 @@ const NOT_IN_SITES = [
   // Pinned by RUNNING assertions below, not pre-absolved here: 'ownsEveryPlanting refuses an id
   // array with ONE foreign planting', 'a source_plant_ids array with one foreign planting writes
   // ZERO rows' (the handler, executed, POST and PUT), and the static call-site count beside them.
+  //
+  // FOLLOW-UP 1 (T1 defect D-2) — TWO AMENDMENTS, both pinned below.
+  //   • The gate has a second arm on the set route: an id that is ALREADY a live seed_parent of the
+  //     route's own lot is acceptable (so a lot keeping a parent whose planting was later deleted can
+  //     still be edited). It widens nothing across households: the arm reads link rows through the
+  //     lot the caller owns, and a member was gated when it was added. POST has no such arm.
+  //   • The gate is no longer the only check. It runs before the transaction, and a request that
+  //     then waited for its lot behind a planting merge acted on a pre-merge answer — it linked the
+  //     planting the merge had just deleted. The same two-arm rule is now a conjunct of every WRITE
+  //     statement, evaluated under the lot lock with the plantings share-locked, and POST's link
+  //     INSERT carries it with an assertion that rolls the lot back. A gate that is right when it is
+  //     asked and stale when it is used is the same hole as no gate, one request later.
   'inventory-items::plant_id',
   // V4-PLANTMERGE-001 — mergeCore (plants/merge.js). NONE of these is body-settable. The four
   // id-shaped ones are all written as the WINNER id, which is the ROUTE's path segment, and
@@ -799,8 +811,11 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     const src = decomment(readFileSync(join(here, 'inventory-items/index.js'), 'utf8')).replace(/\s+/g, ' ');
     // The gate, negated, followed at once by the reject — at exactly TWO sites (POST and PUT
     // /:id/source-plants), and there is no call to it that is not one of those two gates.
-    const gate = /if \(!await ownsEveryPlanting\(sql, (\w+)\.ids, householdIds\)\) \{ warnRejectedFk\(userId, 'seed_lot_parent_planting', 'plant_id', \1\.ids\.join\(','\)\); return resp\(400, \{ error: SOURCE_PLANT_IDS_UNUSABLE \}\); \}/g;
-    expect([...src.matchAll(gate)].map((m) => m[1]).sort()).toEqual(['parentSet', 'set']);
+    // The optional last argument is the lot whose existing parents the second arm admits: the PUT
+    // passes its own route id and nothing else can stand there; POST passes none, because a lot that
+    // does not exist yet has no members (Follow-up 1).
+    const gate = /if \(!await ownsEveryPlanting\(sql, (\w+)\.ids, householdIds(, itemId)?\)\) \{ warnRejectedFk\(userId, 'seed_lot_parent_planting', 'plant_id', \1\.ids\.join\(','\)\); return resp\(400, \{ error: SOURCE_PLANT_IDS_UNUSABLE \}\); \}/g;
+    expect([...src.matchAll(gate)].map((m) => `${m[1]}${m[2] ?? ''}`).sort()).toEqual(['parentSet', 'set, itemId']);
     expect(src.match(/ownsEveryPlanting\(/g)).toHaveLength(2);
     expect(src).toMatch(/const SOURCE_PLANT_IDS_UNUSABLE = 'source_plant_ids does not match plantings you can use';/);
 
@@ -819,7 +834,7 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     expect(src).toMatch(/\} else if \(sourcePlantId != null\) \{ const owned = UUID_RE\.test\(String\(sourcePlantId\)\)/);
 
     // Ordering, per site: the reject precedes the write.
-    const putGate = src.indexOf('if (!await ownsEveryPlanting(sql, set.ids, householdIds))');
+    const putGate = src.indexOf('if (!await ownsEveryPlanting(sql, set.ids, householdIds, itemId))');
     const putWrite = src.indexOf('replaceSourcePlants(sql, { lotId: itemId, ids: set.ids,');
     const postGate = src.indexOf('if (!await ownsEveryPlanting(sql, parentSet.ids, householdIds))');
     const postWrite = src.indexOf('insertSeedParentLinks(sql, { lotId, ids: parentIds,');
@@ -832,6 +847,50 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     expect(helper).toMatch(
       /INSERT INTO public\.seed_lot_parent_planting \(inventory_item_id, plant_id, role, created_by\) SELECT i\.id, u\.plant_id, 'seed_parent', \$\{userId\}::text FROM public\.inventory_items i CROSS JOIN unnest\(\$\{ids\}::uuid\[\]\) AS u\(plant_id\) WHERE i\.id = \$\{lotId\} AND i\.created_by = ANY\(\$\{householdIds\}\) AND i\.deleted_at IS NULL AND i\.category = 'seeds'/);
     expect(helper.match(/INSERT INTO public\.seed_lot_parent_planting/g)).toHaveLength(1);
+  });
+
+  it('inventory-items re-tests the array gate INSIDE every statement that writes a link row or its cache', () => {
+    // FOLLOW-UP 1 (T1 defect D-2). The gate above is read before the transaction; a request that
+    // then waits for its lot acts on a stale answer. Observed on real Postgres: a PUT re-sending
+    // {A, L} waited behind a merge of L into W, then retired W's row and linked the soft-deleted L,
+    // on a 200. So the rule is ALSO a conjunct of each write — the same two arms, counted over the
+    // whole array — and when it fails none of them does anything.
+    const helper = decomment(readFileSync(join(here, 'inventory-items/seed-lot-parents.js'), 'utf8')).replace(/\s+/g, ' ');
+    const USABLE = "(SELECT count(*) FROM unnest(${ids}::uuid[]) AS q(plant_id) WHERE EXISTS ( SELECT 1 FROM public.garden_node p WHERE p.id = q.plant_id AND p.created_by = ANY(${householdIds}) AND p.deleted_at IS NULL) OR EXISTS ( SELECT 1 FROM public.seed_lot_parent_planting k WHERE k.inventory_item_id = i.id AND k.plant_id = q.plant_id AND k.role = 'seed_parent' AND k.deleted_at IS NULL)) = cardinality(${ids}::uuid[])";
+    const statements = [...helper.matchAll(/sql`([^`]*)`/g)].map((m) => m[1].trim());
+    // Every statement in the module that writes: the soft-delete, the link INSERT, the cache UPDATE.
+    const writes = statements.filter((s) => /^(UPDATE|INSERT)\b/.test(s));
+    expect(writes).toHaveLength(3);
+    for (const w of writes) {
+      expect(w, 'a write statement without the in-transaction ownership re-test').toContain(`AND ${USABLE}`);
+    }
+    // The first arm is the gate's own predicate — the household's LIVE planting, through the view —
+    // and the second is membership of THIS lot (correlated on the locked lot row), never a bound id
+    // a request could choose.
+    expect(USABLE).toContain('p.created_by = ANY(${householdIds}) AND p.deleted_at IS NULL');
+    expect(USABLE).toContain('k.inventory_item_id = i.id');
+    // The same count is reported by the read that follows the locks, so the route can say WHICH
+    // guard refused; and it is nowhere else (a differently-scoped copy is how statements disagree).
+    expect(helper).toContain(`(${USABLE}) AS ids_usable`);
+    expect(helper.split(USABLE)).toHaveLength(5);
+
+    // The plantings are held still for the transaction: a share lock, after the lot lock and before
+    // the first statement that tests them — in the set-replace…
+    const replace = helper.slice(helper.indexOf('export async function replaceSourcePlants'));
+    const lotLock = replace.indexOf('FOR UPDATE `');
+    const hold = replace.indexOf('lockPlantings(sql, ids),');
+    const firstTest = replace.indexOf(USABLE);
+    for (const i of [lotLock, hold, firstTest]) expect(i).toBeGreaterThan(-1);
+    expect(lotLock, 'the lot is locked before the plantings').toBeLessThan(hold);
+    expect(hold, 'the plantings are locked before anything tests them').toBeLessThan(firstTest);
+    expect(helper).toMatch(/export function lockPlantings\(sql, ids\) \{ return sql` SELECT p\.id FROM public\.garden_node p WHERE p\.id = ANY\(\$\{ids\}::uuid\[\]\) ORDER BY p\.id FOR SHARE `; \}/);
+
+    // …and in the create, where a refused INSERT must also take the lot back: a statement that
+    // raises unless every planting was linked, placed after the INSERT and before the read-back.
+    const src = decomment(readFileSync(join(here, 'inventory-items/index.js'), 'utf8')).replace(/\s+/g, ' ');
+    expect(src).toMatch(
+      /await sql\.transaction\(\[ insertLot, lockPlantings\(sql, parentIds\), insertSeedParentLinks\(sql, \{ lotId, ids: parentIds, householdIds, userId \}\), assertEveryParentLinked\(sql, \{ lotId, ids: parentIds, householdIds \}\), readSourcePlants\(sql, householdIds, lotId\), \]\)/);
+    expect(helper).toMatch(/SELECT 1 \/ \(CASE WHEN \( SELECT count\(\*\) FROM public\.seed_lot_parent_planting l JOIN public\.inventory_items i ON i\.id = l\.inventory_item_id WHERE i\.id = \$\{lotId\} AND i\.created_by = ANY\(\$\{householdIds\}\) AND i\.deleted_at IS NULL AND l\.role = 'seed_parent' AND l\.deleted_at IS NULL\) = cardinality\(\$\{ids\}::uuid\[\]\) THEN 1 ELSE 0 END\)/);
   });
 
   it('ownsEveryPlanting refuses an id array with ONE foreign planting (a count, not a presence test)', async () => {
@@ -865,6 +924,58 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     expect(bad.calls, 'must short-circuit before issuing SQL').toHaveLength(0);
   });
 
+  it('ownsEveryPlanting\'s second arm admits an id only as an EXISTING parent of the caller\'s own lot', async () => {
+    // FOLLOW-UP 1. The arm that must not become a way round the first: it is asked only about the
+    // ids the first arm did not admit, only for the lot the route named, and only through a lot the
+    // household owns. A fake that answers each of the two statements separately.
+    const LOT = '2d6df841-b507-4e65-8db0-97c8659df37c';
+    const GONE = '00000000-0000-4000-8000-0000000000dd';   // a planting since soft-deleted
+    const twoArm = (ownedRows, memberRows) => {
+      const calls = [];
+      const fn = (strings, ...values) => {
+        const text = strings.join('?');
+        calls.push({ text, values });
+        return Promise.resolve(/FROM public\.seed_lot_parent_planting k/.test(text) ? memberRows : ownedRows);
+      };
+      fn.calls = calls;
+      return fn;
+    };
+
+    // Kept member: the first arm returns only A; the second finds GONE among the lot's live parents.
+    const kept = twoArm([{ id: OWNED_A }], [{ id: GONE }]);
+    expect(await ownsEveryPlanting(kept, [OWNED_A, GONE], HOUSE, LOT)).toBe(true);
+    expect(kept.calls).toHaveLength(2);
+    expect(kept.calls[1].text.replace(/\s+/g, ' ')).toMatch(
+      /SELECT k\.plant_id AS id FROM public\.seed_lot_parent_planting k JOIN public\.inventory_items i ON i\.id = k\.inventory_item_id WHERE i\.id = \? AND i\.created_by = ANY\(\?\) AND i\.deleted_at IS NULL AND i\.category = 'seeds' AND k\.plant_id = ANY\(\?::uuid\[\]\) AND k\.role = 'seed_parent' AND k\.deleted_at IS NULL/);
+    // The lot, the household, and ONLY the id the first arm left over — bound, in that order.
+    expect(kept.calls[1].values).toEqual([LOT, HOUSE, [GONE]]);
+
+    // A foreign planting that is NOT a member is still refused — and both arms were asked.
+    const foreign = twoArm([{ id: OWNED_A }], []);
+    expect(await ownsEveryPlanting(foreign, [OWNED_A, FOREIGN], HOUSE, LOT)).toBe(false);
+    expect(foreign.calls).toHaveLength(2);
+
+    // It COUNTS, like the first arm: two left over and one of them a member is a refusal; so is the
+    // right number of rows naming something that was not asked about.
+    expect(await ownsEveryPlanting(twoArm([{ id: OWNED_A }], [{ id: GONE }]), [OWNED_A, GONE, FOREIGN], HOUSE, LOT)).toBe(false);
+    expect(await ownsEveryPlanting(twoArm([], [{ id: OWNED_B }]), [FOREIGN], HOUSE, LOT)).toBe(false);
+
+    // Nothing left over -> the second statement is never issued: the ordinary edit is one read.
+    const ordinary = twoArm([{ id: OWNED_A }, { id: OWNED_B }], [{ id: 'should-never-be-reached' }]);
+    expect(await ownsEveryPlanting(ordinary, [OWNED_A, OWNED_B], HOUSE, LOT)).toBe(true);
+    expect(ordinary.calls).toHaveLength(1);
+
+    // No lot (a create) -> no second arm, whatever a second statement would have said.
+    const create = twoArm([{ id: OWNED_A }], [{ id: GONE }]);
+    expect(await ownsEveryPlanting(create, [OWNED_A, GONE], HOUSE)).toBe(false);
+    expect(create.calls).toHaveLength(1);
+
+    // A lot id that is not one is never sent to Postgres, and admits nothing.
+    const badLot = twoArm([{ id: OWNED_A }], [{ id: GONE }]);
+    expect(await ownsEveryPlanting(badLot, [OWNED_A, GONE], HOUSE, 'not-a-uuid')).toBe(false);
+    expect(badLot.calls).toHaveLength(1);
+  });
+
   it('a source_plant_ids array with one foreign planting writes ZERO rows — POST and PUT, executed', async () => {
     // Through the real handler, against the runtime stubs. The stub answers the ownership query
     // with ONE of the two plantings and would answer any write with a row, so a handler that went
@@ -882,10 +993,18 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
       ['POST', event('POST', '/api/inventory-items', { ...lot, source_plant_ids: [OWNED_A, FOREIGN] })],
       ['PUT', event('PUT', `/api/inventory-items/${LOT}/source-plants`, { source_plant_ids: [OWNED_A, FOREIGN] })],
     ];
+    // The gate's two statements, told apart from everything the write issues (which also names
+    // garden_node, in its share lock and in each statement's own re-test of the rule).
+    const isOwns = (t) => /FROM public\.garden_node p\s+WHERE p\.id = ANY\(\?::uuid\[\]\)\s+AND p\.created_by = ANY/.test(t);
+    const isMembers = (t) => /SELECT k\.plant_id AS id/.test(t);
     const run = async (ev, ownedRows) => {
       resetStubs();
       stubState.verifyTokenResult = { sub: USER };
-      stubState.sqlHandler = (text) => (/FROM public\.garden_node p/.test(text) ? ownedRows : [{ id: LOT, source_plants: [] }]);
+      stubState.sqlHandler = (text) => {
+        if (isOwns(text)) return ownedRows;
+        if (isMembers(text)) return [];           // the foreign planting is not a parent of this lot either
+        return [{ id: LOT, source_plants: [], ids_usable: true }];
+      };
       const warned = [];
       const orig = console.warn;
       console.warn = (m) => warned.push(m);
@@ -901,11 +1020,14 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
       // No existence oracle: the caller must not learn which id it was, or whether it exists.
       expect(refused.body.error).not.toMatch(/not found|exists/i);
       expect(JSON.stringify(refused.body)).not.toContain(FOREIGN);
-      // Exactly one statement ran — the ownership query. No lot, no link row, no cache update.
-      expect(refused.calls, `${verb}: a refused array reached the database again`).toHaveLength(1);
-      expect(refused.calls[0].text).toMatch(/FROM public\.garden_node p/);
+      // Only the gate ran — the ownership query and, on the set route, its second arm asking whether
+      // the leftover id is already a parent of this lot (a create has no such arm). No lot, no lock,
+      // no link row, no cache update.
+      expect(refused.calls.map((c) => (isOwns(c.text) ? 'owns' : isMembers(c.text) ? 'members' : 'OTHER')),
+        `${verb}: a refused array reached the database again`).toEqual(verb === 'PUT' ? ['owns', 'members'] : ['owns']);
       expect(refused.calls[0].values).toEqual([[OWNED_A, FOREIGN], [USER]]);
-      expect(refused.calls.filter((c) => /\b(INSERT|UPDATE)\b/.test(c.text))).toHaveLength(0);
+      if (verb === 'PUT') expect(refused.calls[1].values).toEqual([LOT, [USER], [FOREIGN]]);
+      expect(refused.calls.filter((c) => /\b(INSERT|UPDATE)\b|FOR (UPDATE|SHARE)/.test(c.text))).toHaveLength(0);
       // Server-side observability for the refusal.
       expect(refused.warned).toHaveLength(1);
       expect(JSON.parse(refused.warned[0])).toMatchObject({

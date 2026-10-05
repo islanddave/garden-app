@@ -98,12 +98,15 @@ describe('V5-SEEDMULTIPARENT-001 — lambda/inventory-items seed_lot_parent_plan
   it('finds the statements, so the assertions below are not vacuous', () => {
     expect(HANDLERS).toContain('seed-lot-parents.js');
     // Exact, not a floor: a new statement against this table should be reviewed against the contract
-    // rather than inherit it. Six today — in seed-lot-parents.js the parents read, the link INSERT
-    // and three of the set-replace statements (facts, soft-delete, cache); in index.js the
-    // /source-kind route's "does this lot have any" test. Update the number in the commit that adds one.
+    // rather than inherit it. Eight today — in seed-lot-parents.js the parents read, the link INSERT,
+    // three of the set-replace statements (facts, soft-delete, cache) and, since Follow-up 1, the
+    // gate's "already a parent of this lot" arm and the create's all-linked assertion; in index.js
+    // the /source-kind route's "does this lot have any" test. Update the number in the commit that
+    // adds one.
     expect(STATEMENTS.map((s) => s.file).sort()).toEqual([
       'index.js',
-      'seed-lot-parents.js', 'seed-lot-parents.js', 'seed-lot-parents.js', 'seed-lot-parents.js', 'seed-lot-parents.js',
+      'seed-lot-parents.js', 'seed-lot-parents.js', 'seed-lot-parents.js', 'seed-lot-parents.js',
+      'seed-lot-parents.js', 'seed-lot-parents.js', 'seed-lot-parents.js',
     ]);
   });
 
@@ -152,9 +155,10 @@ describe('V5-SEEDMULTIPARENT-001 — lambda/inventory-items seed_lot_parent_plan
         checked++;
       }
     }
-    // Ten bindings today — the read, the INSERT's two subqueries, the facts count, the soft-delete's
-    // target and its count, the cache's three, and index.js's one. Not a vacuous loop.
-    expect(checked).toBeGreaterThanOrEqual(10);
+    // Sixteen bindings today — the read, the INSERT's three subqueries, the facts' two, the
+    // soft-delete's target and its two, the cache's four, the gate's member arm, the create's
+    // assertion, and index.js's one. Not a vacuous loop.
+    expect(checked).toBeGreaterThanOrEqual(16);
     for (const { file, sql } of STATEMENTS) expect(sql, file).not.toMatch(/pollen_parent/);
   });
 

@@ -8,7 +8,10 @@
 //   • a non-empty set needs category = 'seeds' and refuses a non-own_garden source_kind;
 //   • ownership is ONE counted query — every id, or none of the write;
 //   • the lot (id minted here), its link rows and the read-back are ONE transaction;
-//   • 201 = the row as before + source_plants.
+//   • 201 = the row as before + source_plants;
+//   • (Follow-up 1) that gate is not the last word: inside the transaction the plantings are
+//     share-locked, the link INSERT re-tests ownership for the whole array, and a statement that
+//     RAISES undoes the lot when the links did not go in. 409 for that, and for a deadlock victim.
 // The legacy single key on its own is post-source-plant.test.js, which this release changed in one
 // way only: that create now also writes its one link row.
 //
@@ -16,7 +19,7 @@
 // `bindingFor` reads the INSERT's column list and its bound values as two halves of one contract.
 //
 // WHAT THE STUB CANNOT SHOW: that lot and links commit or roll back together. Its sql.transaction is
-// Promise.all and it executes no SQL. The handler's source is pinned to pass all three statements to
+// Promise.all and it executes no SQL. The handler's source is pinned to pass all five statements to
 // ONE sql.transaction([...]) call (the last describe), and the lane report lists the real-database
 // test: a two-parent create whose link INSERT fails must leave no lot behind.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -49,10 +52,13 @@ const seedLot = (extra = {}) => ({
 });
 
 const IS = {
-  owns: (t) => /FROM public\.garden_node p\s+WHERE p\.id = ANY/.test(t),
+  owns: (t) => /FROM public\.garden_node p\s+WHERE p\.id = ANY\(\?::uuid\[\]\)\s+AND p\.created_by = ANY/.test(t),
+  members: (t) => /SELECT k\.plant_id AS id/.test(t),
   probe: (t) => /FROM public\.garden_node p\s+WHERE p\.id = \?/.test(t),
   lot: (t) => /INSERT INTO inventory_items \(/.test(t),
+  hold: (t) => /FOR SHARE/.test(t),
   link: (t) => /INSERT INTO public\.seed_lot_parent_planting/.test(t),
+  assert: (t) => /AS every_parent_linked/.test(t),
   read: (t) => /jsonb_agg/.test(t),
 };
 const kindOf = (t) => Object.keys(IS).find((k) => IS[k](t)) ?? 'other';
@@ -92,9 +98,12 @@ const world = (over = {}) => (text, values) => {
   if (k in over) return typeof over[k] === 'function' ? over[k](values) : over[k];
   return {
     owns: () => values[0].map((id) => ({ id })),
+    members: () => [],
     probe: () => [{ id: values[0] }],
     lot: () => [{ id: values[0], name: 'Mixed nasturtium', category: 'seeds', source_plant_id: null }],
+    hold: () => values[0].map((id) => ({ id })),
     link: () => [],
+    assert: () => [{ every_parent_linked: 1 }],
     read: () => [{ inventory_item_id: values[1], source_plants: JAR }],
     other: () => [],
   }[k]();
@@ -113,8 +122,9 @@ describe('POST with source_plant_ids — a lot born with several parents', () =>
   it('writes the lot, one link row per planting, and reads the set back', async () => {
     const res = parse(await handler(post(seedLot({ source_plant_ids: [A, B] }))));
     expect(res.status).toBe(201);
-    // One counted gate, then lot + links + read-back.
-    expect(kinds()).toEqual(['owns', 'lot', 'link', 'read']);
+    // One counted gate, then the transaction: lot, share lock on the plantings, links, the
+    // all-linked assertion, read-back.
+    expect(kinds()).toEqual(['owns', 'lot', 'hold', 'link', 'assert', 'read']);
     expect(find('owns').values).toEqual([[A, B], [USER]]);
 
     // The link INSERT: these plantings, as seed parents, added by the caller…
@@ -159,7 +169,7 @@ describe('POST with source_plant_ids — a lot born with several parents', () =>
     // The set is still the array's: the single key adds nothing to it and removes nothing from it.
     expect(boundAfter(find('link'), /CROSS JOIN unnest\(/)).toEqual([A, B]);
     // Only the counted gate ran — the single-id probe is the legacy path's.
-    expect(kinds()).toEqual(['owns', 'lot', 'link', 'read']);
+    expect(kinds()).toEqual(['owns', 'lot', 'hold', 'link', 'assert', 'read']);
   });
 
   it('400s a source_plant_id that is not in the set — including against an EMPTY set', async () => {
@@ -199,7 +209,7 @@ describe('POST with source_plant_ids — the empty set, and absence', () => {
   it('…so null beside a source_plant_id leaves the legacy single-key path in charge', async () => {
     const res = parse(await handler(post(seedLot({ source_plant_ids: null, source_plant_id: A }))));
     expect(res.status).toBe(201);
-    expect(kinds()).toEqual(['probe', 'lot', 'link', 'read']);
+    expect(kinds()).toEqual(['probe', 'lot', 'hold', 'link', 'assert', 'read']);
     expect(boundAfter(find('link'), /CROSS JOIN unnest\(/)).toEqual([A]);
   });
 
@@ -245,6 +255,8 @@ describe('POST with source_plant_ids — what is refused, and what it leaves unw
     const res = parse(await handler(post(seedLot({ source_plant_ids: [A, B] }))));
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('source_plant_ids does not match plantings you can use');
+    // The first arm only. A create has no second: a lot that does not exist yet has no members, so
+    // there is nothing an unowned planting could already be a parent OF.
     expect(kinds()).toEqual(['owns']);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toContain('authz-fk-reject');
@@ -276,6 +288,113 @@ describe('POST with source_plant_ids — what is refused, and what it leaves unw
   });
 });
 
+describe('POST with source_plant_ids — a planting that changed AFTER the gate (Follow-up 1)', () => {
+  // The gate reads before the transaction. A planting soft-deleted, or merged into another, in the
+  // instant between would otherwise be linked anyway — and for a merge that loses the lot from the
+  // surviving planting's page. On a create there is no "write nothing and answer from the
+  // read-back": the lot INSERT has already run. So the link INSERT inserts all of the array or none
+  // of it, and a statement that RAISES when none went in rolls the lot back with it.
+  const boundAll = (c, re) => {
+    const out = [];
+    for (const m of c.text.matchAll(re)) {
+      const end = m.index + m[0].length;
+      out.push(c.values[(c.text.slice(0, end).match(/\?/g) ?? []).length]);
+    }
+    return out;
+  };
+
+  it('share-locks the plantings, then re-tests ownership in the link INSERT itself', async () => {
+    await handler(post(seedLot({ source_plant_ids: [B, A] })));
+    expect(find('hold').text.replace(/\s+/g, ' ').trim()).toBe(
+      'SELECT p.id FROM public.garden_node p WHERE p.id = ANY(?::uuid[]) ORDER BY p.id FOR SHARE');
+    expect(find('hold').values).toEqual([[B, A]]);
+    const link = find('link');
+    expect(link.text.replace(/\s+/g, ' ')).toContain(
+      'AND (SELECT count(*) FROM unnest(?::uuid[]) AS q(plant_id) WHERE EXISTS ( SELECT 1 FROM public.garden_node p WHERE p.id = q.plant_id AND p.created_by = ANY(?) AND p.deleted_at IS NULL)');
+    // The whole array on both sides of the count: one unusable planting inserts NO link.
+    expect(boundAfter(link, /AND \(SELECT count\(\*\)\s+FROM unnest\(/)).toEqual([B, A]);
+    expect(boundAfter(link, /\)\) = cardinality\(/)).toEqual([B, A]);
+    expect(boundAfter(link, /p\.created_by = ANY\(/)).toEqual([USER]);
+  });
+
+  it('asserts every planting was linked, for THIS lot and THIS array, before the read-back', async () => {
+    await handler(post(seedLot({ source_plant_ids: [A, B] })));
+    const lotId = bindingFor(find('lot'), 'id');
+    const a = find('assert');
+    expect(a.text.replace(/\s+/g, ' ')).toContain('SELECT 1 / (CASE WHEN ( SELECT count(*) FROM public.seed_lot_parent_planting l');
+    expect(a.values).toEqual([lotId, [USER], [A, B]]);
+    // Nothing in the batch disagrees about which lot or which plantings.
+    expect(boundAll(find('link'), /unnest\(|cardinality\(/g).every((v) => JSON.stringify(v) === JSON.stringify([A, B]))).toBe(true);
+  });
+
+  it('409s, with a plain sentence and no lot, when that assertion raises (22012)', async () => {
+    // What Postgres does when the guarded INSERT wrote nothing: the divisor is 0.
+    stubState.sqlHandler = world({
+      assert: () => { throw Object.assign(new Error('division by zero'), { code: '22012' }); },
+    });
+    const res = parse(await handler(post(seedLot({ source_plant_ids: [A, B] }))));
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'One of those plants changed just now. Reload and try again.' });
+    // Not a created lot in any part — an old client must not prepend this to its list.
+    expect(res.body.id).toBeUndefined();
+    expect(res.body.source_plants).toBeUndefined();
+    // The gate passed, so nobody is logged as having tried a foreign planting; the retry is logged.
+    const lines = warn.mock.calls.map((c) => JSON.parse(c[0]));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ tag: 'inv-source-plants-retry', code: '22012', create: true });
+  });
+
+  it('…and the legacy single-key create is the same transaction, so it answers the same way', async () => {
+    stubState.sqlHandler = world({
+      assert: () => { throw Object.assign(new Error('division by zero'), { code: '22012' }); },
+    });
+    const res = parse(await handler(post(seedLot({ source_plant_id: A }))));
+    expect(kinds()).toEqual(['probe', 'lot', 'hold', 'link', 'assert', 'read']);
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'One of those plants changed just now. Reload and try again.' });
+  });
+
+  it('409s a deadlock victim (40P01) instead of a 500 — the create rolled back whole', async () => {
+    for (const at of ['hold', 'link']) {
+      resetStubs();
+      stubState.verifyTokenResult = { sub: USER };
+      stubState.sqlHandler = world({
+        [at]: () => { throw Object.assign(new Error('deadlock detected'), { code: '40P01' }); },
+      });
+      // eslint-disable-next-line no-await-in-loop
+      const res = parse(await handler(post(seedLot({ source_plant_ids: [A, B] }))));
+      expect(res.status, at).toBe(409);
+      expect(res.body, at).toEqual({ error: 'One of those plants changed just now. Reload and try again.' });
+    }
+  });
+
+  it('maps ONLY those two codes: every other failure still reaches the handler-wide catch', async () => {
+    // A division by zero is this transaction's own signal; a CHECK or a foreign key is not, and
+    // turning those into "try again" would send the person round in a circle.
+    const cases = [
+      ['23503', 'seed_lot_parent_planting_plant_id_fkey', 400, 'Foreign key violation: seed_lot_parent_planting_plant_id_fkey'],
+      ['23514', 'chk_inventory_metadata_size', 400, 'Constraint violation: chk_inventory_metadata_size'],
+      ['42P01', undefined, 500, 'Internal server error'],
+    ];
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const [code, constraint, status, error] of cases) {
+      resetStubs();
+      stubState.verifyTokenResult = { sub: USER };
+      stubState.sqlHandler = world({ link: () => { throw Object.assign(new Error('boom'), { code, constraint }); } });
+      // eslint-disable-next-line no-await-in-loop
+      const res = parse(await handler(post(seedLot({ source_plant_ids: [A, B] }))));
+      expect(res.status, code).toBe(status);
+      expect(res.body.error, code).toBe(error);
+    }
+  });
+
+  it('a create with NO parents takes none of this: one INSERT, no lock, no assertion', async () => {
+    const res = parse(await handler(post(seedLot())));
+    expect(res.status).toBe(201);
+    expect(kinds()).toEqual(['lot']);
+  });
+});
+
 describe('POST with source_plant_ids — one transaction (source shape; the stub has no transactions)', () => {
   const decomment = (s) => s.split('\n')
     .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
@@ -283,9 +402,15 @@ describe('POST with source_plant_ids — one transaction (source shape; the stub
   const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8')).replace(/\s+/g, ' ');
   const POST_ARM = SRC.slice(SRC.lastIndexOf("if (method === 'POST') {"));
 
-  it('passes the lot INSERT, the link INSERT and the read-back to ONE sql.transaction([...])', () => {
+  it('passes the lot INSERT, the share lock, the link INSERT, the assertion and the read-back to ONE sql.transaction([...])', () => {
+    // In this order. The lock comes before the link INSERT because that statement's ownership test
+    // must read plantings that can no longer change; the assertion comes after it because it is
+    // what undoes the lot when the INSERT declined; the read-back is last and is what the 201 carries.
     expect(POST_ARM).toMatch(
-      /await sql\.transaction\(\[ insertLot, insertSeedParentLinks\(sql, \{ lotId, ids: parentIds, householdIds, userId \}\), readSourcePlants\(sql, householdIds, lotId\), \]\);/);
+      /\[lotRows, , , , parentRows\] = await sql\.transaction\(\[ insertLot, lockPlantings\(sql, parentIds\), insertSeedParentLinks\(sql, \{ lotId, ids: parentIds, householdIds, userId \}\), assertEveryParentLinked\(sql, \{ lotId, ids: parentIds, householdIds \}\), readSourcePlants\(sql, householdIds, lotId\), \]\);/);
+    // Only the two codes that mean "rolled back whole, try again" are answered here; the rest rethrow.
+    expect(POST_ARM).toMatch(
+      /catch \(err\) \{ if \(err\?\.code === '22012' \|\| err\?\.code === '40P01'\) \{ console\.warn\([^;]*\); return resp\(409, \{ error: PLANTS_CHANGED \}\); \} throw err; \}/);
     // The lot statement is BUILT, not awaited, where it is written — an awaited statement has
     // already committed by the time the link INSERT runs.
     expect(POST_ARM).toMatch(/const insertLot = sql` INSERT INTO inventory_items \(/);

@@ -3,7 +3,8 @@
 // THE ROUTE. Body { "source_plant_ids": [uuid, ...] }; replaces the lot's set of parent plantings,
 // `[]` clears it. 200 { id, source_plant_id, source_plants }. 400 for a missing key, a malformed or
 // over-long array, a planting the caller cannot use, or a lot that says it came from a shop. 404 for
-// a lot that is absent, foreign, deleted or not seeds. 409 when a concurrent writer collided.
+// a lot that is absent, foreign, deleted or not seeds. 409 when a concurrent writer collided, or when
+// a planting the gate passed stopped being usable before the write ran (Follow-up 1).
 //
 // WHY THROUGH THE HANDLER. What matters here is ORDER and REACH: which statements are issued for
 // which body, what is refused before any SQL, and what each refusal leaves un-issued. A scan of the
@@ -11,8 +12,8 @@
 //
 // WHAT THE STUB CANNOT SHOW. It records SQL text and bound values and returns canned rows; it does
 // not execute SQL and has no notion of a transaction (its sql.transaction is Promise.all). So "the
-// six statements commit or roll back together" and "a guard written in SQL writes nothing" are NOT
-// proven here — seed-lot-parents.test.js pins that the module passes all six to ONE transaction
+// seven statements commit or roll back together" and "a guard written in SQL writes nothing" are NOT
+// proven here — seed-lot-parents.test.js pins that the module passes all seven to ONE transaction
 // call, and the lane report lists what a real-database test must prove.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -38,10 +39,13 @@ const call = (method, body, id = LOT, suffix = 'source-plants') => ({
 const put = (body, id) => call('PUT', body, id);
 const parse = (res) => ({ status: res.statusCode, body: JSON.parse(res.body || '{}') });
 
-// Each statement, recognised by something only it says.
+// Each statement, recognised by something only it says. `owns` and `members` are the gate's two
+// arms (before the transaction); `hold` is the share lock on the plantings, inside it.
 const IS = {
-  owns: (t) => /FROM public\.garden_node p\s+WHERE p\.id = ANY/.test(t),
+  owns: (t) => /FROM public\.garden_node p\s+WHERE p\.id = ANY\(\?::uuid\[\]\)\s+AND p\.created_by = ANY/.test(t),
+  members: (t) => /SELECT k\.plant_id AS id/.test(t),
   lock: (t) => /FOR UPDATE/.test(t),
+  hold: (t) => /FOR SHARE/.test(t),
   facts: (t) => /AS live_parents/.test(t),
   retire: (t) => /UPDATE public\.seed_lot_parent_planting l/.test(t),
   add: (t) => /INSERT INTO public\.seed_lot_parent_planting/.test(t),
@@ -71,8 +75,10 @@ const world = (over = {}) => (text, values) => {
   if (k in over) return typeof over[k] === 'function' ? over[k](values) : over[k];
   return {
     owns: () => values[0].map((id) => ({ id })),
+    members: () => [],
     lock: () => [{ id: LOT }],
-    facts: () => [{ id: LOT, source_kind: null, live_parents: 0 }],
+    hold: () => values[0].map((id) => ({ id })),
+    facts: () => [{ id: LOT, source_kind: null, live_parents: 0, ids_usable: true }],
     retire: () => [],
     add: () => [],
     cache: () => [{ id: LOT, source_plant_id: A }],
@@ -94,9 +100,9 @@ describe('PUT /:id/source-plants — reaching the route', () => {
   it('is matched ABOVE the generic arms, and is not the legacy /source-plant route', async () => {
     const { status, body } = parse(await handler(put({ source_plant_ids: [A, B] })));
     expect(status).toBe(200);
-    // The set route's signature: the counted array gate, then the six-statement write. The generic
+    // The set route's signature: the counted array gate, then the seven-statement write. The generic
     // /:id PUT would have issued `UPDATE inventory_items SET name = …`; the legacy route a single-id probe.
-    expect(kinds()).toEqual(['owns', 'lock', 'facts', 'retire', 'add', 'cache', 'read']);
+    expect(kinds()).toEqual(['owns', 'lock', 'hold', 'facts', 'retire', 'add', 'cache', 'read']);
     expect(Object.keys(body).sort()).toEqual(['id', 'source_plant_id', 'source_plants']);
   });
 
@@ -165,7 +171,9 @@ describe('PUT /:id/source-plants — what is refused before anything is written'
     const res = parse(await handler(put({ source_plant_ids: [A, B] })));
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('source_plant_ids does not match plantings you can use');
-    expect(kinds()).toEqual(['owns']);
+    // Both arms of the gate were asked — B is not the household's (owns), and not already a parent
+    // of this lot (members) — and nothing after them.
+    expect(kinds()).toEqual(['owns', 'members']);
     expect(find('owns').values).toEqual([[A, B], [USER]]);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(JSON.parse(warn.mock.calls[0][0])).toMatchObject({
@@ -173,13 +181,128 @@ describe('PUT /:id/source-plants — what is refused before anything is written'
     });
   });
 
-  it('gates the plantings BEFORE it looks at the lot — the same answer whatever lot was aimed at', async () => {
+  it('gates the plantings BEFORE it locks or writes anything — the same answer whatever lot was aimed at', async () => {
     // A foreign planting on a lot that does not exist is still the planting's 400, never a 404 that
     // would tell the caller the planting half was fine.
     stubState.sqlHandler = world({ owns: [], lock: [], facts: [] });
     const res = parse(await handler(put({ source_plant_ids: [A] })));
     expect(res.status).toBe(400);
+    expect(kinds()).toEqual(['owns', 'members']);
+  });
+});
+
+describe('PUT /:id/source-plants — the gate\'s second arm: a planting that is ALREADY a parent of this lot', () => {
+  // Follow-up 1 (contract amendment). An id is acceptable when it is a live planting the household
+  // owns, OR already a live seed_parent of THIS lot. The second arm is what lets a lot that keeps a
+  // parent whose planting was later soft-deleted still be edited: without it the unchanged id fails
+  // the first arm and the only edit the route accepts is one that drops that parent.
+  const D = uuid(4);   // a planting that has since been soft-deleted — the first arm does not return it
+
+  it('accepts an unchanged id whose planting was deleted, so the rest of the set stays editable', async () => {
+    // The lot has {A, D}; the edit adds B and keeps D.
+    stubState.sqlHandler = world({ owns: [{ id: A }, { id: B }], members: [{ id: D }] });
+    const res = parse(await handler(put({ source_plant_ids: [A, D, B] })));
+    expect(res.status).toBe(200);
+    expect(kinds()).toEqual(['owns', 'members', 'lock', 'hold', 'facts', 'retire', 'add', 'cache', 'read']);
+    expect(warn).not.toHaveBeenCalled();
+    // The whole set reaches the write — D included.
+    expect(boundAfter(find('add'), /CROSS JOIN unnest\(/)).toEqual([A, D, B]);
+  });
+
+  it('asks the second arm ONLY about the ids the first did not admit, through the caller\'s own lot', async () => {
+    stubState.sqlHandler = world({ owns: [{ id: A }, { id: B }], members: [{ id: D }] });
+    await handler(put({ source_plant_ids: [A, D, B] }));
+    const m = find('members');
+    expect(m.text.replace(/\s+/g, ' ')).toContain(
+      "SELECT k.plant_id AS id FROM public.seed_lot_parent_planting k JOIN public.inventory_items i ON i.id = k.inventory_item_id WHERE i.id = ? AND i.created_by = ANY(?) AND i.deleted_at IS NULL AND i.category = 'seeds' AND k.plant_id = ANY(?::uuid[]) AND k.role = 'seed_parent' AND k.deleted_at IS NULL");
+    // The route's lot, the household, and only the leftover id — all bound.
+    expect(m.values).toEqual([LOT, [USER], [D]]);
+  });
+
+  it('never asks it at all when every planting is the household\'s and live — the ordinary edit', async () => {
+    await handler(put({ source_plant_ids: [A, B] }));
+    expect(kinds()).not.toContain('members');
+    // …so the ordinary edit reads no link row before its transaction has the lot.
+    const before = stubState.sqlCalls.slice(0, kinds().indexOf('lock'));
+    expect(before.filter((c) => /seed_lot_parent_planting/.test(c.text))).toHaveLength(0);
+  });
+
+  it('still 400s a NEW id that names a deleted planting — the arm admits members, not the deleted', async () => {
+    // D is not the household's live planting (owns) and not a parent of this lot (members).
+    stubState.sqlHandler = world({ owns: [{ id: A }], members: [] });
+    const res = parse(await handler(put({ source_plant_ids: [A, D] })));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('source_plant_ids does not match plantings you can use');
+    expect(kinds()).toEqual(['owns', 'members']);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts here too: two left over and only one of them a member is a refusal', async () => {
+    const E = uuid(5);
+    stubState.sqlHandler = world({ owns: [{ id: A }], members: [{ id: D }] });
+    const res = parse(await handler(put({ source_plant_ids: [A, D, E] })));
+    expect(res.status).toBe(400);
+    expect(find('members').values[2]).toEqual([D, E]);
+    expect(kinds()).toEqual(['owns', 'members']);
+  });
+
+  it('has no members to ask about on a lot id that is not one: the first arm decides alone', async () => {
+    stubState.sqlHandler = world({ owns: [] });
+    const res = parse(await handler(put({ source_plant_ids: [A] }, 'not-a-uuid')));
+    expect(res.status).toBe(400);
     expect(kinds()).toEqual(['owns']);
+    for (const c of stubState.sqlCalls) expect(JSON.stringify(c.values)).not.toContain('not-a-uuid');
+  });
+});
+
+describe('PUT /:id/source-plants — a planting that changed AFTER the gate (T1 defect D-2)', () => {
+  // The gate runs before the lot lock. A request that then waits for its lot — behind a planting
+  // merge, say — would otherwise act on what the gate saw before the wait. Observed on real Postgres:
+  // the lot had {A, L}; a PUT re-sending {A, L} waited behind a merge of L into W, then answered 200
+  // having retired W's row and linked the soft-deleted L. The rule is now re-tested by every write
+  // statement under the lock; this is what the route answers when that re-test is what failed.
+  const W = uuid(7);
+  const afterMerge = () => world({
+    // Statement 2, read under the locks: L is neither live nor a member any more.
+    facts: [{ id: LOT, source_kind: null, live_parents: 2, ids_usable: false }],
+    cache: [],                                   // the three guarded writes changed nothing
+    read: [{ inventory_item_id: LOT, source_plants: [parent(A, 'Alaska Mix'), parent(W, 'the winner')] }],
+  });
+
+  it('answers 409 with a plain sentence, and nothing that could be read as the new state', async () => {
+    stubState.sqlHandler = afterMerge();
+    const res = parse(await handler(put({ source_plant_ids: [A, B] })));
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'One of those plants changed just now. Reload and try again.' });
+    expect(res.body.error).not.toMatch(/source_plant|_id\b|constraint|merge/i);
+  });
+
+  it('is not the gate\'s 400: the gate PASSED, and nobody is logged as having tried a foreign planting', async () => {
+    stubState.sqlHandler = afterMerge();
+    await handler(put({ source_plant_ids: [A, B] }));
+    // The gate ran and admitted both ids; the refusal came from inside the transaction.
+    expect(kinds()).toEqual(['owns', 'lock', 'hold', 'facts', 'retire', 'add', 'cache', 'read']);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('holds the plantings still before deciding: the share lock sits between the lot lock and the facts', async () => {
+    await handler(put({ source_plant_ids: [B, A] }));
+    const order = kinds();
+    expect(order.indexOf('lock')).toBeLessThan(order.indexOf('hold'));
+    expect(order.indexOf('hold')).toBeLessThan(order.indexOf('facts'));
+    expect(find('hold').values).toEqual([[B, A]]);
+  });
+
+  it('409s a deadlock victim (40P01) instead of a 500 — its transaction wrote nothing', async () => {
+    stubState.sqlHandler = world({
+      retire: () => { throw Object.assign(new Error('deadlock detected'), { code: '40P01' }); },
+    });
+    const res = parse(await handler(put({ source_plant_ids: [A, B] })));
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'This seed lot was changed at the same moment. Reload and try again.' });
+    // Logged by code, so a lock-order regression does not hide behind the 409.
+    const lines = warn.mock.calls.map((c) => JSON.parse(c[0]));
+    expect(lines).toEqual([{ tag: 'inv-source-plants-retry', item: LOT, code: '40P01' }]);
   });
 });
 
@@ -208,13 +331,14 @@ describe('PUT /:id/source-plants — the write', () => {
     expect(find('read').values).toEqual([[USER], LOT, LOT]);
   });
 
-  it('[] CLEARS: no ownership query, the same six statements, a NULL cache and an empty set', async () => {
+  it('[] CLEARS: no ownership query, the same seven statements, a NULL cache and an empty set', async () => {
     stubState.sqlHandler = world({ cache: [{ id: LOT, source_plant_id: null }], read: [] });
     const res = parse(await handler(put({ source_plant_ids: [] })));
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ id: LOT, source_plant_id: null, source_plants: [] });
-    // Clearing needs no planting, so it asks about none.
-    expect(kinds()).toEqual(['lock', 'facts', 'retire', 'add', 'cache', 'read']);
+    // Clearing needs no planting, so it asks about none — and its share lock names none.
+    expect(kinds()).toEqual(['lock', 'hold', 'facts', 'retire', 'add', 'cache', 'read']);
+    expect(find('hold').values).toEqual([[]]);
     expect(boundAfter(find('retire'), /NOT \(l\.plant_id = ANY\(/)).toEqual([]);
   });
 
@@ -260,7 +384,9 @@ describe('PUT /:id/source-plants — the write', () => {
     const res = parse(await handler(put({ source_plant_ids: [A, B] })));
     expect(res.status).toBe(409);
     expect(res.body.code).toBeUndefined();
-    expect(res.body.error).toMatch(/Reload and try again/);
+    // The LOT's sentence, not the plantings': a unique violation says a link row moved, not that a
+    // planting became unusable.
+    expect(res.body.error).toBe('This seed lot was changed at the same moment. Reload and try again.');
   });
 
   it('a foreign-key failure inside the write is a 400, not a 200', async () => {
