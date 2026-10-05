@@ -87,6 +87,46 @@ const world = (over = {}) => (text, values) => {
   }[k]();
 };
 
+// The five statements of the write that name the lot ROW (its lock, the facts read, the three
+// writes), and a stub that answers each of them by that statement's OWN lot predicate.
+//
+// `world()` above hands a statement its rows whatever the statement says, so it cannot tell a write
+// that would refuse a lot from one that would not. This one models a single inventory row and reads
+// the four conditions of the lot predicate off each statement as it is issued — the two bound ones
+// (`i.id = ?`, `i.created_by = ANY(?)`) by the value bound, the two literal ones by their presence in
+// the text. A condition a statement does not carry cannot exclude the row, which is the point: delete
+// one from any statement and that statement admits a row it should have turned away.
+// Still not Postgres — it evaluates those four conditions and nothing else.
+const LOT_STATEMENTS = ['lock', 'facts', 'retire', 'add', 'cache'];
+const admits = (c, row) => {
+  const t = c.text.replace(/\s+/g, ' ');
+  const bound = (re) => (re.test(c.text) ? boundAfter(c, re) : undefined);
+  const id = bound(/i\.id = /);
+  const owners = bound(/i\.created_by = ANY\(/);
+  return (id === undefined || id === row.id)
+    && (owners === undefined || owners.includes(row.created_by))
+    && (!t.includes('i.deleted_at IS NULL') || row.deleted_at == null)
+    && (!t.includes("i.category = 'seeds'") || row.category === 'seeds');
+};
+const lotWorld = (row) => {
+  const admitted = [];
+  const answer = {
+    lock: () => [{ id: row.id }],
+    facts: () => [{ id: row.id, source_kind: null, live_parents: 0, ids_usable: true }],
+    retire: () => [],
+    add: () => [],
+    cache: () => [{ id: row.id, source_plant_id: A }],
+  };
+  const sqlHandler = (text, values) => {
+    const k = kindOf(text);
+    if (!LOT_STATEMENTS.includes(k)) return world()(text, values);
+    if (!admits({ text, values }, row)) return [];
+    admitted.push(k);
+    return answer[k]();
+  };
+  return { sqlHandler, admitted };
+};
+
 let warn;
 beforeEach(() => {
   resetStubs();
@@ -348,6 +388,41 @@ describe('PUT /:id/source-plants — the write', () => {
     const res = parse(await handler(put({ source_plant_ids: [A] })));
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'Not found' });
+  });
+
+  it('"not seeds" is refused by the statements themselves: aimed at a tool row, none of them admits it', async () => {
+    // The test above HANDS the route an empty facts read, so it cannot say why the read was empty —
+    // and it stayed green with `i.category = 'seeds'` deleted from that read (pre-promote review I8).
+    // Without the condition there, a tool row is found; the three writes still refuse it, so nothing
+    // is written; and the route reads "found, nothing written, no guard explains it" as a concurrent
+    // writer and answers 409 "changed at the same moment" for a row that was never a seed lot.
+    //
+    // Here the stub answers by each statement's own predicate (lotWorld), against a row that is the
+    // caller's, live, and has the route's id — everything a seed lot is except its category.
+    const tool = { id: LOT, created_by: USER, deleted_at: null, category: 'tools' };
+    for (const ids of [[A], []]) {   // setting a parent, and clearing: both are aimed at the row
+      resetStubs();
+      stubState.verifyTokenResult = { sub: USER };
+      const model = lotWorld(tool);
+      stubState.sqlHandler = model.sqlHandler;
+      // eslint-disable-next-line no-await-in-loop
+      const res = parse(await handler(put({ source_plant_ids: ids })));
+      expect(res.status, JSON.stringify(ids)).toBe(404);
+      expect(res.body).toEqual({ error: 'Not found' });
+      // Not locked, not read, not written: every statement that names the lot row turned it away.
+      expect(model.admitted, JSON.stringify(ids)).toEqual([]);
+      // …and all five were issued, so the refusal is theirs and not a short-circuit ahead of them.
+      expect(kinds().filter((k) => LOT_STATEMENTS.includes(k))).toEqual(LOT_STATEMENTS);
+    }
+
+    // The control: the SAME row as a seed lot is admitted by all five and the write goes through.
+    // Without it the block above would pass against a model, or a predicate, that admits nothing.
+    resetStubs();
+    stubState.verifyTokenResult = { sub: USER };
+    const seeds = lotWorld({ ...tool, category: 'seeds' });
+    stubState.sqlHandler = seeds.sqlHandler;
+    expect(parse(await handler(put({ source_plant_ids: [A] }))).status).toBe(200);
+    expect(seeds.admitted).toEqual(LOT_STATEMENTS);
   });
 
   it('404s a malformed lot id without sending it to Postgres', async () => {

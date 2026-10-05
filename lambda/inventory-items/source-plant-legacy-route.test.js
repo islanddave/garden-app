@@ -84,6 +84,39 @@ const world = (over = {}) => (text, values) => {
   }[k]();
 };
 
+// A stub that answers the five statements naming the lot ROW by each statement's OWN lot predicate,
+// against one modelled row — source-plants-route.test.js has the same helper and says why. A
+// condition a statement does not carry cannot exclude the row.
+const LOT_STATEMENTS = ['lock', 'facts', 'retire', 'add', 'cache'];
+const admits = (c, row) => {
+  const t = c.text.replace(/\s+/g, ' ');
+  const bound = (re) => (re.test(c.text) ? boundAfter(c, re) : undefined);
+  const id = bound(/i\.id = /);
+  const owners = bound(/i\.created_by = ANY\(/);
+  return (id === undefined || id === row.id)
+    && (owners === undefined || owners.includes(row.created_by))
+    && (!t.includes('i.deleted_at IS NULL') || row.deleted_at == null)
+    && (!t.includes("i.category = 'seeds'") || row.category === 'seeds');
+};
+const lotWorld = (row) => {
+  const admitted = [];
+  const answer = {
+    lock: () => [{ id: row.id }],
+    facts: () => [{ id: row.id, source_kind: null, live_parents: 0, ids_usable: true }],
+    retire: () => [],
+    add: () => [],
+    cache: () => [{ id: row.id, source_plant_id: B }],
+  };
+  const sqlHandler = (text, values) => {
+    const k = kindOf(text);
+    if (!LOT_STATEMENTS.includes(k)) return world()(text, values);
+    if (!admits({ text, values }, row)) return [];
+    admitted.push(k);
+    return answer[k]();
+  };
+  return { sqlHandler, admitted };
+};
+
 beforeEach(() => {
   resetStubs();
   stubState.verifyTokenResult = { sub: USER };
@@ -223,6 +256,36 @@ describe('legacy PATCH /:id/source-plant — everything else it answered before,
     const res = parse(await handler(patch({ source_plant_id: B })));
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'Not found' });
+  });
+
+  it('"not seeds" is refused by the statements themselves: aimed at a tool row, none of them admits it', async () => {
+    // The test above hands the route an empty facts read and cannot say why it was empty; it stayed
+    // green with `i.category = 'seeds'` deleted from that read, where this route then answered 409
+    // "changed at the same moment" for a shovel (pre-promote review I8). Here the stub answers by each
+    // statement's own predicate, against a row that is the caller's, live, has the route's id — and
+    // is a tool.
+    const tool = { id: LOT, created_by: USER, deleted_at: null, category: 'tools' };
+    for (const body of [{ source_plant_id: B }, { source_plant_id: null }]) {
+      resetStubs();
+      stubState.verifyTokenResult = { sub: USER };
+      const model = lotWorld(tool);
+      stubState.sqlHandler = model.sqlHandler;
+      // eslint-disable-next-line no-await-in-loop
+      const res = parse(await handler(patch(body)));
+      expect(res.status, JSON.stringify(body)).toBe(404);
+      expect(res.body).toEqual({ error: 'Not found' });
+      // Not locked, not read, not written.
+      expect(model.admitted, JSON.stringify(body)).toEqual([]);
+      expect(kinds().filter((k) => LOT_STATEMENTS.includes(k))).toEqual(LOT_STATEMENTS);
+    }
+
+    // The control: the same row as a seed lot is admitted by all five, and the write goes through.
+    resetStubs();
+    stubState.verifyTokenResult = { sub: USER };
+    const seeds = lotWorld({ ...tool, category: 'seeds' });
+    stubState.sqlHandler = seeds.sqlHandler;
+    expect(parse(await handler(patch({ source_plant_id: B }))).status).toBe(200);
+    expect(seeds.admitted).toEqual(LOT_STATEMENTS);
   });
 
   it('404s a malformed lot id instead of sending it to Postgres', async () => {

@@ -84,10 +84,23 @@ python3 scripts/gate_runner.py --migration migrations/v5-seedmultiparent-001 --e
 python3 scripts/gate_runner.py --migration migrations/v5-seedmultiparent-001 --env prod --phase pre
 python3 scripts/gate_runner.py --migration migrations/v5-seedmultiparent-001 --env prod --phase sweep
 psql "$NEON_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f migrations/v5-seedmultiparent-001/0a-additive-ddl.sql
-psql "$NEON_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f migrations/v5-seedmultiparent-001/0b-reconcile.sql
+# NO 0b on prod here — see "Prod gets 0a only before the promote" below.
 python3 scripts/gate_runner.py --migration migrations/v5-seedmultiparent-001 --env prod --phase post
 python3 scripts/gate_runner.py --migration migrations/v5-invrefstrand-001   --env prod --phase post
+python3 scripts/merge-surface-inventory.py   # must exit 0: the live schema and merge.js SURFACES agree
 ```
+
+**Prod gets `0a` only before the promote; `0b` runs once, after the release is live** (pre-promote review,
+2026-10-05, finding I2). Backfilling rows while the old Lambda is still the writer is what makes the harmful
+drift possible: a parent changed or cleared in that window leaves a live row the column no longer agrees
+with, and the new reverse read would list that lot under a plant it no longer came from until the second
+`0b`. With no rows before the promote there is nothing to drift: the old Lambda writes the column, the new
+reverse read has a column arm, the legacy PATCH handles a column-only lot, and no client reads
+`source_plants` yet. Every `post` gate here is catalog-only, so prod reads 14/14 with the table empty.
+Staging keeps `0a` + `0b` (its `0b` writes nothing; it holds no lot with a parent).
+
+Do not apply prod DDL between 07:00 and 08:00 UTC: the nightly dump runs at 07:00 and `restore-verify` at
+08:00 compares table sets, so a table added between them reds that one run.
 
 Any `pre` or `sweep` failure is a stop. After `0a`, the `pre` phase reads 2 of 4 by design
 (`pre_table_absent`, `pre_not_already_applied`) and the `sweep` name-collision gates find the migration's
@@ -109,13 +122,32 @@ lot deadlock, and Postgres may abort the edit instead of `0b`.
 
 | | R1 (retired) | R2 (inserted) | R3 (listed) |
 |---|---|---|---|
-| **prod, first run** | 0 | **24** — 22 live lots + 2 soft-deleted | none |
+| **prod, first run** | 0 | **the count the query below returns, run immediately before** | none |
 | prod, an immediate second run | 0 | 0 | none |
 | **staging, first run** | 0 | **0** | none |
 | either, the post-deploy run | one per lot whose parent was changed or cleared in the window | one per lot whose parent was saved or changed in the window | none |
 
-Measured read-only on 2026-10-05: prod has 24 `inventory_items` rows with a `source_plant_id` (2 of them
-soft-deleted lots), all with the same owner as their parent planting; staging has none. So `0b` on staging
+The prod number is not a constant: seed is being saved every week (24 lots with a parent on the morning of
+2026-10-05, 26 by that afternoon). Read it immediately before `0b` and expect R2 to equal
+`with_parent_and_no_live_row`:
+
+```sql
+SELECT count(*) AS with_parent,
+       count(*) FILTER (WHERE NOT EXISTS (
+         SELECT 1 FROM public.seed_lot_parent_planting l
+          WHERE l.inventory_item_id = i.id AND l.role = 'seed_parent' AND l.deleted_at IS NULL
+       )) AS with_parent_and_no_live_row
+  FROM public.inventory_items i
+ WHERE i.source_plant_id IS NOT NULL;
+```
+
+The two figures are equal on a database the new Lambda has not written to. On prod `0b` runs after the
+release is live, so a lot saved or edited through the new Lambda in between already has its row and is not
+in the second figure; that difference is expected and is not drift. R1 is 0 unless a parent was changed or
+cleared by the old Lambda after a row existed, which the prod order (no rows before the promote) rules out.
+
+Measured read-only on 2026-10-05: every prod lot with a `source_plant_id` (2 of them soft-deleted) has the
+same owner as its parent planting; staging has none. So `0b` on staging
 exercises no row, and R1, R2 and R3 were proven on a local Postgres instead (below). The "after" row must
 read `0 | 0` before `0c` will stamp.
 
@@ -161,6 +193,12 @@ psql "$NEON_STAGING_URL" -X -v ON_ERROR_STOP=1 -f migrations/v5-seedmultiparent-
 
 Neither filters on the lot's `deleted_at`. A refusal is answered by running `0b`; if `0b` lists lots under
 R3, a person decides those. Do not arm around them.
+
+Nothing but this runbook notices if the step is skipped (the row-level gates are not loaded until push 2),
+so it closes on three receipts, per environment: `scripts/verify-deploy.py` shows `inventory-items` and
+`plants` at the promoted build; `0b`'s "after" row reads `0 | 0`; and
+`SELECT version FROM public.schema_version WHERE version LIKE '5.0.0-seedmultiparent-001%'` returns two rows.
+No planting merge (`scripts/merge-run.mjs`) on prod between the prod `0a` and that second stamp.
 
 ## Push 2 — the row-level gates
 

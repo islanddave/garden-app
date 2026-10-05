@@ -1,5 +1,6 @@
-// V5-SEEDMULTIPARENT-001 — static guards on the staging smoke's block U (a seed lot with two parent plantings)
-// and on the three statements the L-058 sweep gained for it.
+// V5-SEEDMULTIPARENT-001 — static guards on the staging smoke's block U (seed lots and their parent plantings:
+// the one-parent path every shipped client uses, then a lot with two parents) and on the three statements the
+// L-058 sweep gained for it.
 //
 // WHY A FILE-READING TEST (stagingSmokeCareProfile.static.test.js's reason). Both halves run only inside
 // deploy-staging.yml, against the staging Neon branch, when a promote dispatches it. Nothing in the unit or
@@ -17,9 +18,13 @@
 //   * the residue term "simplified" into a join on the smoke name (reads 0 with every link row orphaned), or the
 //     residue check no longer failing the step;
 //   * the lot id spliced into SQL text instead of bound as a psql variable;
-//   * block U skipped, rather than failed, under the ship gate; an assert deleted from it; a helper that no
-//     longer compares or no longer counts; a failed create or a failed parent-planting delete downgraded to a
-//     warning; a failed SQL read-back mapped to the string it is compared with;
+//   * block U skipped, rather than failed, under the ship gate; an assert deleted from it or turned into a line
+//     that compares nothing; a write judged without the read-back that follows it; a helper that no longer
+//     compares, counts or reads; a failed create or a failed parent-planting delete downgraded to a warning; a
+//     failed SQL read-back mapped to the string it is compared with;
+//   * the one-parent create sent the new way (source_plant_ids) instead of the way a shipped client sends it, or
+//     its lot renamed so the sweep no longer collects it;
+//   * the block grown past the number of requests its own comment reasons about: it rides one session token;
 //   * a request that needs the session token placed after the block's SQL read, or a mint call added to it:
 //     the block mints no token (scripts/test_smoke_mint_log.py holds the call-site count, and its failure
 //     message does not say where to look), so its database round trip has to come last.
@@ -174,8 +179,8 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
   })
 
   it('sends both parents on the create and names its rows so the sweep finds them', () => {
-    // the create's own line: U4's PUT carries the same array, so a search of the whole block would not do
-    const create = code.split('\n').find((l) => l.includes('sp_req POST "$STAGING_API_INVENTORY" ')) ?? ''
+    // the create's own line: U4's PUT carries the same array, and U0's create is a POST to the same URL
+    const create = code.split('\n').find((l) => l.includes('sp_req POST "$STAGING_API_INVENTORY" ') && l.includes('smoke-test-seedlot-$TEST_RUN_ID')) ?? ''
     expect(create).toContain('\\"source_plant_ids\\": [\\"$SP_P1\\", \\"$SP_P2\\"]}"')
     expect(create).toContain('\\"name\\": \\"smoke-test-seedlot-$TEST_RUN_ID\\"')
     expect(code).toContain('SP_P2_NAME="smoke-test-seedparent-$TEST_RUN_ID"')
@@ -211,6 +216,10 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
   it('keeps the uncached parent as the one U2 asks about', () => {
     expect(code).toContain('"$SP_P1") SP_ON="$SP_P1"; SP_OFF="$SP_P2"; SP_MEMBER="one-of-them" ;;')
     expect(code).toContain('"$SP_P2") SP_ON="$SP_P2"; SP_OFF="$SP_P1"; SP_MEMBER="one-of-them" ;;')
+  })
+
+  it('reads a cache that is neither parent as a failure, never as "one of them"', () => {
+    expect(code).toMatch(/\*\)\s+SP_ON="\$SP_P1"; SP_OFF="\$SP_P2"; SP_MEMBER="neither:\$SP_CACHE" ;;/)
   })
 
   it('reads the lot from the planting\'s side under the parent the column does not hold', () => {
@@ -255,6 +264,131 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     // only for a lot the block made: the flag is lowered before the create is judged and raised with the id
     expect(code).toMatch(/SP_LOT_MADE=false\n\s*if \[\[ "\$SP_CODE" == "201" \]\] && sp_id_ok "\$SP_LOT"; then\n\s*CREATED_SEEDLOT_ID="\$SP_LOT"\n\s*SP_LOT_MADE=true\n/)
     expect(code).toMatch(/if \[\[ "\$SP_LOT_MADE" == "true" \]\]; then\n\s*if \[\[ -n "\$\{NEON_STAGING_URL:-\}" \]\] && command -v psql >\/dev\/null 2>&1; then\n\s*SP_ROWS=\$\(psql /)
+  })
+
+  // ── every assert, U0 included ───────────────────────────────────────────────────────────────────────────────
+  // trimmed lines, so a sequence of statements can be pinned as a sequence whatever its indentation
+  const flat = code.split('\n').map((l) => l.trim()).join('\n')
+  const LABELS = [
+    'u0a-legacy-create-readback', 'u0b-legacy-move-readback', 'u0c-legacy-clear-readback',
+    'u0d-source-kind-readback', 'u0d-parent-refused-on-a-gift-lot', 'u0e-legacy-lot-delete',
+    'u1-create-readback', 'u2-seed-lots-of-the-uncached-parent', 'u3-replace-readback', 'u4-readd-readback',
+    'u4-legacy-set-refused', 'u4-legacy-clear-refused', 'u6-delete-with-parents', 'u5-link-rows-readback',
+  ]
+
+  it('still compares at every assert: each label is an sp_check call, in this order, and there are no others', () => {
+    for (const label of LABELS) {
+      expect(code).toMatch(new RegExp('^\\s*sp_check "' + label + '" ', 'm'))
+    }
+    const calls = (code.match(/^\s*sp_check "[^"]+"/gm) ?? []).map((l) => l.trim().slice('sp_check "'.length, -1))
+    expect(calls).toEqual(LABELS)
+  })
+
+  it('keeps sp_state a real read of the lot, and tells an unreadable parent list from an empty one', () => {
+    expect(flat).toContain(
+      [
+        'sp_state() {',
+        'sp_req GET "$SP_INV/${1:-$SP_LOT}"',
+        `SP_STATE="$SP_CODE $(sp_jq "$SP_IDS_JQ")|$(sp_jq '.source_plant_id // "null"')"`,
+        '}',
+      ].join('\n'),
+    )
+    expect(code).toContain(
+      `SP_IDS_JQ='if (.source_plants | type) == "array" then ([.source_plants[].id] | sort | join(",")) else "no-source_plants:" + (.source_plants | type) end'`,
+    )
+  })
+
+  it('U0: makes the one-parent create the way a shipped client does, on a lot the sweep collects', () => {
+    const create = code.split('\n').find((l) => l.includes('smoke-test-seedlot-legacy-')) ?? ''
+    expect(create.trim().startsWith('sp_req POST "$STAGING_API_INVENTORY" "{\\"name\\": \\"smoke-test-seedlot-legacy-$TEST_RUN_ID\\", ')).toBe(true)
+    expect(create).toContain('\\"category\\": \\"seeds\\"')
+    expect(create).toContain('\\"variety_id\\": \\"$CREATED_VARIETY_ID\\", \\"source_plant_id\\": \\"$SP_P1\\"}"')
+    // the legacy shape: one id under the old key, and neither the new array nor a source_kind beside it
+    expect(create).not.toContain('source_plant_ids')
+    expect(create).not.toContain('source_kind')
+  })
+
+  it('U0: fails, never warns, when the one-parent create does not answer 201 with an id', () => {
+    expect(flat).toContain(
+      [
+        `SP_OLD=$(sp_jq '.id // empty')`,
+        'if [[ "$SP_CODE" == "201" ]] && sp_id_ok "$SP_OLD"; then',
+        'CREATED_SEEDLOT_LEGACY_ID="$SP_OLD"',
+        'sp_state "$SP_OLD"',
+        'sp_check "u0a-legacy-create-readback" "$SP_STATE" "200 $SP_P1|$SP_P1" ',
+      ].join('\n'),
+    )
+    expect(code).toContain('sp_fail "u0a-legacy-create" "POST /api/inventory-items with source_plant_id P1 → HTTP $SP_CODE (expected 201 and an id)')
+  })
+
+  it('U0: moves the parent with the legacy PATCH and reads it back, in the PATCH body and on the lot', () => {
+    expect(flat).toContain(
+      [
+        'sp_req PATCH "$SP_INV/$SP_OLD/source-plant" "{\\"source_plant_id\\": \\"$SP_P2\\"}"',
+        `SP_WRITE="$SP_CODE $(sp_jq '.source_plant_id // "null"')"; sp_state "$SP_OLD"`,
+        'sp_check "u0b-legacy-move-readback" "$SP_WRITE $SP_STATE" "200 $SP_P2 200 $SP_P2|$SP_P2" ',
+      ].join('\n'),
+    )
+  })
+
+  it('U0: clears the parent with the legacy PATCH and reads back no parent and a null column', () => {
+    expect(flat).toContain(
+      [
+        `sp_req PATCH "$SP_INV/$SP_OLD/source-plant" '{"source_plant_id": null}'`,
+        'SP_WRITE="$SP_CODE"; sp_state "$SP_OLD"',
+        'sp_check "u0c-legacy-clear-readback" "$SP_WRITE $SP_STATE" "200 200 |null" ',
+      ].join('\n'),
+    )
+  })
+
+  it('U0: sets source_kind on the parentless lot and reads it back, then expects a parent refused with 400 and nothing changed', () => {
+    expect(flat).toContain(
+      [
+        `sp_req PATCH "$SP_INV/$SP_OLD/source-kind" '{"source_kind": "gift"}'`,
+        'SP_WRITE="$SP_CODE"; sp_req GET "$SP_INV/$SP_OLD"',
+        `sp_check "u0d-source-kind-readback" "$SP_WRITE $SP_CODE $(sp_jq '.source_kind // "null"')" "200 200 gift" `,
+      ].join('\n'),
+    )
+    expect(flat).toContain(
+      [
+        'sp_req PATCH "$SP_INV/$SP_OLD/source-plant" "{\\"source_plant_id\\": \\"$SP_P1\\"}"',
+        'SP_WRITE="$SP_CODE"; sp_state "$SP_OLD"',
+        `sp_check "u0d-parent-refused-on-a-gift-lot" "$SP_WRITE $SP_STATE|$(sp_jq '.source_kind // "null"')" "400 200 |null|gift" `,
+      ].join('\n'),
+    )
+  })
+
+  it('U0: deletes its lot, tracks it for the trap until then, and comes before the two-parent lot is made', () => {
+    expect(flat).toContain(
+      [
+        'sp_req DELETE "$SP_INV/$SP_OLD"',
+        `SP_WRITE="$SP_CODE $(sp_jq '. == {"ok": true}')"`,
+        'if [[ "$SP_CODE" == "200" ]]; then CREATED_SEEDLOT_LEGACY_ID=""; fi',
+        'sp_check "u0e-legacy-lot-delete" "$SP_WRITE" "200 true" ',
+      ].join('\n'),
+    )
+    const second = code.indexOf('sp_pass "second-parent"')
+    const legacy = code.indexOf('smoke-test-seedlot-legacy-$TEST_RUN_ID')
+    const legacyDelete = code.indexOf('sp_check "u0e-legacy-lot-delete"')
+    const twoParent = code.indexOf('smoke-test-seedlot-$TEST_RUN_ID')
+    // after P2 exists (u0b needs it), and wholly before the two-parent create
+    expect(legacy).toBeGreaterThan(second)
+    expect(legacyDelete).toBeGreaterThan(legacy)
+    expect(twoParent).toBeGreaterThan(legacyDelete)
+    const cleanup = SMOKE.slice(SMOKE.indexOf('cleanup() {'), SMOKE.indexOf('trap cleanup'))
+    expect(cleanup).toContain('"${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_SEEDLOT_LEGACY_ID}"')
+    expect(SMOKE.slice(0, SMOKE.indexOf('cleanup() {'))).toMatch(/^CREATED_SEEDLOT_LEGACY_ID=""$/m)
+  })
+
+  it('makes 26 requests on the one token it rides, the number its own comment reasons from', () => {
+    // every request is an sp_req call or an sp_state call (one GET each); the definitions are not calls
+    const direct = (code.match(/^\s*(?:SP_WRITE="\$SP_CODE"; )?sp_req (?:GET|POST|PUT|PATCH|DELETE) /gm) ?? []).length
+    const inState = (flat.match(/^sp_req GET "\$SP_INV\/\$\{1:-\$SP_LOT\}"$/gm) ?? []).length
+    const states = (code.match(/(?:^\s*|; )sp_state(?: "\$SP_OLD")?$/gm) ?? []).length
+    expect(inState).toBe(1)
+    expect(direct - inState + states).toBe(26)
+    // a larger block needs its token paragraph re-read (and, past the window, a mint between U0 and U1)
+    expect(block).toContain('This block adds 26 requests (11 of')
   })
 
   it('fails the ship gate, rather than skipping, when it cannot run or cannot read the rows', () => {

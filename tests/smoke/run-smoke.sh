@@ -28,9 +28,13 @@
 #        deleted → the packet's DELETE answers 200 {"ok":true} and the packet reads back 404
 #        (F3d, the allowed half of the same DELETE)
 #     G) favorites toggle → assert favorited on, then off
-#     U) (right after G; needs block D's variety and planting) a saved-seed lot with TWO parent plantings
-#        (V5-SEEDMULTIPARENT-001): POST with source_plant_ids → the detail GET lists both and source_plant_id is one
-#        of them → GET /api/plants/:id/seed-lots lists the lot under the parent the column does NOT hold → PUT
+#     U) (right after G; needs block D's variety and planting) seed lots and their parent plantings
+#        (V5-SEEDMULTIPARENT-001). First what every shipped client already sends, on a lot of its own: a create
+#        with source_plant_id alone → one parent read back → the legacy PATCH /source-plant moving it, then
+#        clearing it, each read back → PATCH /source-kind read back → a parent refused (400) on that gift lot →
+#        its DELETE. Then a lot with TWO parents: POST with source_plant_ids → the detail GET lists both and
+#        source_plant_id is one of them → GET /api/plants/:id/seed-lots lists the lot under the parent the column
+#        does NOT hold → PUT
 #        /source-plants to one parent, read back → both again, then the legacy PATCH /source-plant with an id and
 #        with null, each 409 multi_parent_lot with the lot read back unchanged → DELETE on the lot → 200 (parents
 #        never block it) and it reads back 404 → the second parent planting's DELETE → 200 → last, the link rows
@@ -97,6 +101,7 @@ CREATED_INV_ID=""
 CREATED_SEEDPKT_ID=""
 CREATED_SOWN_PLANT_ID=""
 CREATED_SEEDLOT_ID=""
+CREATED_SEEDLOT_LEGACY_ID=""
 CREATED_SEEDPARENT_PLANT_ID=""
 CREATED_FAVORITE_DONE=false
 NAVP_DIRTY=false
@@ -165,6 +170,14 @@ cleanup() {
         "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_SEEDLOT_ID}" -o /dev/null 2>&1 \
         && echo "✅ Cleanup: test seed lot deleted" \
         || echo "WARNING: seed lot cleanup failed (id: $CREATED_SEEDLOT_ID)"
+    fi
+    # Block U's other lot, the one-parent lot of its section U0, when the run died before that lot's own DELETE.
+    if [[ -n "$CREATED_SEEDLOT_LEGACY_ID" ]]; then
+      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_SEEDLOT_LEGACY_ID}" -o /dev/null 2>&1 \
+        && echo "✅ Cleanup: test one-parent seed lot deleted" \
+        || echo "WARNING: one-parent seed lot cleanup failed (id: $CREATED_SEEDLOT_LEGACY_ID)"
     fi
     if [[ -n "$CREATED_SEEDPARENT_PLANT_ID" ]]; then
       curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
@@ -1285,6 +1298,18 @@ else
       # MEMBER CACHE: NULL exactly when the lot has no live parent row, otherwise the planting of one of them. Until
       # this block nothing on the deployed stack wrote or read a parent at all, not even the single one the column
       # has carried since V4-SEEDLINK-001. Each step is a write followed by a read-back:
+      #   U0) FIRST, on a lot of its own ('smoke-test-seedlot-legacy-<run>'), the three writes every SHIPPED client
+      #       makes from the day this deploys, all of which now run through the rewritten set-replace write. The
+      #       two-parent steps below prove routes no client calls yet; without U0 these would first run on a phone.
+      #       u0a) POST with source_plant_id P1 and NO source_plant_ids (SaveSeedSheet's body) → 201; the GET reads
+      #            source_plant_id P1 AND source_plants [P1]: the create wrote the link row as well as the column.
+      #       u0b) legacy PATCH /source-plant {P2} (InventoryDetail's "Saved from") → 200 with source_plant_id P2 in
+      #            its body; the GET reads [P2] and P2: P1's row retired, P2's written, the cache moved.
+      #       u0c) the same PATCH with null → 200; the GET reads no parent and a null source_plant_id.
+      #       u0d) PATCH /source-kind {gift} on the now parentless lot → 200; the GET reads gift. Then the legacy
+      #            PATCH {P1} → 400, and the GET still reads no parent and gift: a lot that says it came from
+      #            somewhere else refuses a garden parent. Only the status is compared, not the sentence.
+      #       u0e) that lot's DELETE → 200 {"ok":true}.
       #   U1) POST /api/inventory-items with source_plant_ids [P1, P2] → 201; GET /api/inventory-items/:id →
       #       source_plants lists exactly both, source_plant_id is one of them, and P2 carries the name written.
       #       source_plants is null when the Lambda's parents read failed: that reads "no-source_plants:null" here
@@ -1313,18 +1338,21 @@ else
       # NO MINT OF ITS OWN, like P11 and T3b. scripts/test_smoke_mint_log.py holds the number of
       # mint_session_token call sites in this file, so the block rides the token in hand. That is F3's: F3 runs
       # whenever this block does (this block's preconditions are F3's plus block D's planting), and every path
-      # through F3 ends at most three requests after a mint; G's four follow. This block adds 15 requests, and its
-      # one psql comes after the last of them, so no request that needs the token waits behind a database round
-      # trip. Measured on the staging run of dev 1564c564 (2026-10-05): 0.2 to 0.5 s a request, so under 10 s of
+      # through F3 ends at most three requests after a mint; G's four follow. This block adds 26 requests (11 of
+      # them U0's), and its one psql comes after the last of them, so no request that needs the token waits behind
+      # a database round trip. That is at most 33 requests on one token. Measured on the staging run of dev
+      # 1564c564 (2026-10-05): 0.2 to 0.5 s a request, so about 11 s, and under 16 s at the slowest rate seen, of
       # the token's 60 are gone at this block's last request. H mints its own. A token that did run out would
-      # show as 401s and FAIL lines, never as a pass.
+      # show as 401s and FAIL lines, never as a pass. If this block grows again, the place for a mint is between
+      # U0 and U1, and scripts/test_smoke_mint_log.py's count goes up by one with it.
       # NEEDS migrations/v5-seedmultiparent-001 applied on staging. Without the table the POST answers 500 and this
       # block FAILS, as it should: the Lambda this tree deploys cannot save a lot with parents there.
-      # CLEANUP: the lot and P2 are soft-deleted here through their own routes, and cleanup() repeats whichever did
-      # not answer 200. Their names are 'smoke-test-seedlot-<run>' and 'smoke-test-seedparent-<run>', which the
-      # workflow's L-058 sweep matches. It hard-deletes the link rows first, then clears source_plant_id, then deletes
-      # plantings, then lots: all three foreign keys are RESTRICT, and a lot points at its plantings while a sown
-      # planting points at its packet. That sweep edit landed with this block, and neither is safe without the other.
+      # CLEANUP: both lots and P2 are soft-deleted here through their own routes, and cleanup() repeats whichever did
+      # not answer 200. Their names are 'smoke-test-seedlot-<run>', 'smoke-test-seedlot-legacy-<run>' and
+      # 'smoke-test-seedparent-<run>', which the workflow's L-058 sweep matches. It hard-deletes the link rows
+      # first (live or retired), then clears source_plant_id, then deletes plantings, then lots: all three foreign
+      # keys are RESTRICT, and a lot points at its plantings while a sown planting points at its packet. That sweep
+      # edit landed with this block, and neither is safe without the other.
       if [[ -n "${STAGING_API_INVENTORY:-}" && -n "${CREATED_VARIETY_ID:-}" && -n "${CREATED_PLANT_ID:-}" ]]; then
         SP_INV="${STAGING_API_INVENTORY%/}/api/inventory-items"
         SP_UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -1352,10 +1380,11 @@ else
         sp_fail() { echo "❌ FAIL [seed-parents:$1] $2"; FAIL=$((FAIL+1)); }
         sp_check() { if [[ "$2" == "$3" ]]; then sp_pass "$1" "$4 → '$2'"; else sp_fail "$1" "$4 → '$2' (expected '$3')"; fi; }
         sp_id_ok() { [[ "${1:-}" =~ $SP_UUID_RE ]]; }
-        # sp_state → SP_STATE, "<HTTP> <parent ids>|<source_plant_id>" from the lot's detail GET. It sets a variable
-        # rather than printing: called inside $(...), sp_req would run in a subshell and lose track of its temp file.
+        # sp_state [LOT] → SP_STATE, "<HTTP> <parent ids>|<source_plant_id>" from a lot's detail GET: the two-parent
+        # lot's, or the lot named. It sets a variable rather than printing: called inside $(...), sp_req would run
+        # in a subshell and lose track of its temp file.
         sp_state() {
-          sp_req GET "$SP_INV/$SP_LOT"
+          sp_req GET "$SP_INV/${1:-$SP_LOT}"
           SP_STATE="$SP_CODE $(sp_jq "$SP_IDS_JQ")|$(sp_jq '.source_plant_id // "null"')"
         }
 
@@ -1366,6 +1395,39 @@ else
         if [[ "${SP_CODE:0:1}" == "2" ]] && sp_id_ok "$SP_P2" && sp_id_ok "$SP_P1"; then
           sp_pass "second-parent" "POST /api/plants → HTTP $SP_CODE (id: $SP_P2); the first parent is block D's planting $SP_P1"
           SP_BOTH=$(jq -rn --arg a "$SP_P1" --arg b "$SP_P2" '[$a, $b] | sort | join(",")' 2>/dev/null || echo "unsortable")
+
+          # ── U0) the one-parent path every shipped client uses: create, move, clear, source-kind, on its own lot ──
+          # The create's body is SaveSeedSheet's: F3's packet keys plus source_plant_id, and no source_kind key.
+          sp_req POST "$STAGING_API_INVENTORY" "{\"name\": \"smoke-test-seedlot-legacy-$TEST_RUN_ID\", \"type\": \"consumable\", \"category\": \"seeds\", \"unit\": \"packet\", \"quantity_on_hand\": 1, \"variety_id\": \"$CREATED_VARIETY_ID\", \"source_plant_id\": \"$SP_P1\"}"
+          SP_OLD=$(sp_jq '.id // empty')
+          if [[ "$SP_CODE" == "201" ]] && sp_id_ok "$SP_OLD"; then
+            CREATED_SEEDLOT_LEGACY_ID="$SP_OLD"
+            sp_state "$SP_OLD"
+            sp_check "u0a-legacy-create-readback" "$SP_STATE" "200 $SP_P1|$SP_P1" "POST with source_plant_id P1 and no source_plant_ids → HTTP 201; GET /api/inventory-items/:id: parent ids|source_plant_id"
+
+            sp_req PATCH "$SP_INV/$SP_OLD/source-plant" "{\"source_plant_id\": \"$SP_P2\"}"
+            SP_WRITE="$SP_CODE $(sp_jq '.source_plant_id // "null"')"; sp_state "$SP_OLD"
+            sp_check "u0b-legacy-move-readback" "$SP_WRITE $SP_STATE" "200 $SP_P2 200 $SP_P2|$SP_P2" "legacy PATCH /source-plant {P2} on a one-parent lot; its status and its body's source_plant_id, then the GET: parent ids|source_plant_id"
+
+            sp_req PATCH "$SP_INV/$SP_OLD/source-plant" '{"source_plant_id": null}'
+            SP_WRITE="$SP_CODE"; sp_state "$SP_OLD"
+            sp_check "u0c-legacy-clear-readback" "$SP_WRITE $SP_STATE" "200 200 |null" "legacy PATCH /source-plant {null}; then the GET: no parent ids|source_plant_id null"
+
+            sp_req PATCH "$SP_INV/$SP_OLD/source-kind" '{"source_kind": "gift"}'
+            SP_WRITE="$SP_CODE"; sp_req GET "$SP_INV/$SP_OLD"
+            sp_check "u0d-source-kind-readback" "$SP_WRITE $SP_CODE $(sp_jq '.source_kind // "null"')" "200 200 gift" "PATCH /source-kind {gift} on the lot with no parent; then the GET's source_kind"
+            sp_req PATCH "$SP_INV/$SP_OLD/source-plant" "{\"source_plant_id\": \"$SP_P1\"}"
+            SP_WRITE="$SP_CODE"; sp_state "$SP_OLD"
+            sp_check "u0d-parent-refused-on-a-gift-lot" "$SP_WRITE $SP_STATE|$(sp_jq '.source_kind // "null"')" "400 200 |null|gift" "legacy PATCH /source-plant {P1} on a lot whose source_kind is gift; its status, then the GET: no parent ids|source_plant_id null|source_kind"
+
+            sp_req DELETE "$SP_INV/$SP_OLD"
+            SP_WRITE="$SP_CODE $(sp_jq '. == {"ok": true}')"
+            if [[ "$SP_CODE" == "200" ]]; then CREATED_SEEDLOT_LEGACY_ID=""; fi
+            sp_check "u0e-legacy-lot-delete" "$SP_WRITE" "200 true" "DELETE /api/inventory-items/:id on the one-parent lot, now parentless; ok"
+          else
+            sp_fail "u0a-legacy-create" "POST /api/inventory-items with source_plant_id P1 → HTTP $SP_CODE (expected 201 and an id): $(head -c 200 "$SP_OUT" 2>/dev/null || true)"
+          fi
+
           sp_req POST "$STAGING_API_INVENTORY" "{\"name\": \"smoke-test-seedlot-$TEST_RUN_ID\", \"type\": \"consumable\", \"category\": \"seeds\", \"unit\": \"packet\", \"quantity_on_hand\": 1, \"variety_id\": \"$CREATED_VARIETY_ID\", \"source_plant_ids\": [\"$SP_P1\", \"$SP_P2\"]}"
           SP_LOT=$(sp_jq '.id // empty')
           SP_LOT_MADE=false

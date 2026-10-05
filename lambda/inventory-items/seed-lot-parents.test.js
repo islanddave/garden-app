@@ -363,6 +363,11 @@ describe('replaceSourcePlants — the set-replace transaction', () => {
     // The SAME count the three writes are guarded by, reported so JS can say which guard refused.
     expect(t).toContain(`(${USABLE}) AS ids_usable`);
     expect(facts.values).toEqual([[A, B], HOUSE, [A, B], LOT, HOUSE]);
+    // The WHOLE lot predicate, as the lock and the three writes carry it — this read is what the 404
+    // is decided from, so a condition missing here is a lot answered as found. `category = 'seeds'`
+    // was the one nothing pinned: without it a tool row has facts, the guarded writes still refuse
+    // it, and the outcome is 'conflict' (a 409) where it should be 'not_found' (review I8).
+    expect(t).toMatch(/FROM public\.inventory_items i WHERE i\.id = \? AND i\.created_by = ANY\(\?\) AND i\.deleted_at IS NULL AND i\.category = 'seeds'\s*$/);
   });
 
   it('soft-deletes the live rows that left the set — and only those', async () => {
