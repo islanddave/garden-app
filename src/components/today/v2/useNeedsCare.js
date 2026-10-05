@@ -6,6 +6,7 @@ import { useCareActions } from '../useCareActions.js'
 import { locationIndex, enrichRows, takeOrder, exceptionKeys, careSummary, loggedTodayCount, caughtUpSummary, CAUGHT_UP_TITLE, OUTSIDE } from '../../../lib/todayV2/spots.js'
 import { careReasons, careTrigger } from '../../../lib/todayV2/triggers.js'
 import { loggedKey, readLogged } from './needsCareStore.js'
+import { useTodayLogged } from './useTodayLogged.js'
 
 // useNeedsCare — the redesigned Today's Needs care STATE, owned by the page (V5-TODAYREDESIGN-001 S4). The
 // page needs it above the section: the header count and summary, the auto-open trigger and the visit's held
@@ -13,7 +14,8 @@ import { loggedKey, readLogged } from './needsCareStore.js'
 // unmounted while the section is closed, so the care state cannot live there.
 //
 // Rows: buildCareNeeded(plan) (careNeeded.js decides WHICH plantings need WHAT), minus cold rows (Protect
-// tonight's alone, §2.4) and minus the keys this tab logged today (needsCareStore: a Back remount can paint
+// tonight's alone, §2.4) and minus the keys held elsewhere in this tab — logged today before this mount, or
+// claimed by a run an earlier mount started (useTodayLogged over needsCareStore: a Back remount can paint
 // the last good plan before the refetch — §6.3). The write paths and the optimistic fades are
 // useCareActions', with the V2 options (S4). /api/plants + /api/locations join the rows to spots and groups
 // (spots.js); both are read through useCachedFetch, so Protect and Heads-up (S5) share the one request.
@@ -27,12 +29,10 @@ export function useNeedsCare({ plan, planDate, userId, stale }) {
   const locations = useCachedFetch('/api/locations')
   const settled = !plants.loading && !locations.loading
   const logKey = loggedKey(userId, planDate)
-  // Read once per plan day (and user); writes made while mounted land in the hook's own fades.
-  const loggedAtMount = useMemo(() => readLogged(logKey), [logKey])
-  const allRows = useMemo(
-    () => buildCareNeeded(plan).filter((r) => CARE_NEEDS.has(r.need) && !loggedAtMount.has(r.key)),
-    [plan, loggedAtMount],
-  )
+  // Writes this mount makes land in the hook's own fades; `held` is what other mounts logged or still hold.
+  const { held, claim } = useTodayLogged(logKey)
+  const due = useMemo(() => buildCareNeeded(plan).filter((r) => CARE_NEEDS.has(r.need)), [plan])
+  const allRows = useMemo(() => due.filter((r) => !held.has(r.key)), [due, held])
   const bedWait = useMemo(() => bedWaitActive(plan), [plan])
   const actions = useCareActions({ allRows, bedWait, planDate, fetch, getToken, toast: SILENT, announce: NOOP })
 
@@ -71,7 +71,7 @@ export function useNeedsCare({ plan, planDate, userId, stale }) {
   const loggedToday = loggedTodayCount(plan, readLogged(logKey))
 
   return {
-    plan, settled, rows, allEnriched, count: rows.length, reasons, trigger, summary, spotCount, bedWait, actions, getToken, logKey,
+    plan, settled, rows, allEnriched, count: rows.length, reasons, trigger, summary, spotCount, bedWait, actions, getToken, logKey, claim,
     rainCovered, loggedToday,
     caughtUp: { title: CAUGHT_UP_TITLE, summary: caughtUpSummary({ logged: loggedToday, rain: rainCovered }) },
     // Spots are LOCATIONS only when both reads answered (enrichRows); otherwise they are projects, with no group
