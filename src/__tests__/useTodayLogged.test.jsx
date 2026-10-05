@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { useTodayLogged } from '../components/today/v2/useTodayLogged.js'
-import { loggedKey, readLogged, removeLogged, claimedKeys, __resetTodayLogged } from '../components/today/v2/needsCareStore.js'
+import { loggedKey, readLogged, removeLogged, claimedKeys, claimKeys, confirmKeys, releaseKeys, runStart, runEnd, runGoing, runTake, subscribeLogged, __resetTodayLogged } from '../components/today/v2/needsCareStore.js'
 
 const KEY = loggedKey('u', '2026-09-24')
 const K = ['p1:water_due', 'p2:water_due', 'p3:water_due']
@@ -80,3 +80,24 @@ describe('useTodayLogged', () => {
     expect(a.result.current.held).toBe(before)
   })
 })
+
+describe('needsCareStore: what raises the signal a mounted list redraws on', () => {
+  it('a claim, a release, an un-write, a run starting and a run ending each do; a landing does not (its own list already redraws on it)', () => {
+    let n = 0
+    const off = subscribeLogged(() => { n++ })
+    claimKeys(KEY, K); expect(n).toBe(1)
+    confirmKeys(KEY, [K[0]]); expect(n).toBe(1)
+    releaseKeys(KEY, [K[1]]); expect(n).toBe(2)
+    removeLogged(KEY, [K[0]]); expect(n).toBe(3)
+    runStart('r1'); expect(n).toBe(4)
+    expect(runGoing('r1')).toBe(true)
+    expect(runTake('r1')).toBeNull() // a going run has no result to take
+    runEnd('r1', { res: 'landed' }); expect(n).toBe(5)
+    expect(runGoing('r1')).toBe(false)
+    expect(runTake('r1').res).toBe('landed')
+    expect(runTake('r1')).toBeNull() // taken once
+    off()
+    claimKeys(KEY, [K[1]]); expect(n).toBe(5)
+  })
+})
+
