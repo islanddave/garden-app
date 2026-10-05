@@ -886,11 +886,20 @@ jobs:
         # RESTRICT, the table's link to inventory_items too). Run as it stood against such a lot, "DELETE FROM
         # plants" raised 23503 and stopped the sweep with fifteen statements already committed (rehearsed on a local
         # PG 17 before this landed; record: gardening-docs project-state/_seedmultiparent-20261005/lane-T2-report.md).
-        # Two additions, both ahead of the plants delete:
+        # Three additions, all ahead of the plants delete:
         #   * the link rows of a smoke lot OR of a smoke planting are deleted first, in their own psql call;
-        #   * source_plant_id is cleared on every row that is a smoke lot or points at a planting the next statement
-        #     deletes. The second arm matches nothing the smoke writes; it is there so a lot that is not named
-        #     smoke but was saved from a planting that is cannot red this step.
+        #   * straight after it, a lot that is NOT named smoke but whose source_plant_id is a planting about to be
+        #     deleted has that pointer moved to the earliest of its remaining live seed_parent rows (created_at, then
+        #     id: the handler's own rule), or to NULL when none is left. RETURNING prints each lot touched: this is
+        #     the one statement here that changes a row it does not delete. Without it the next addition left such a
+        #     lot with a live link row beside a NULL pointer, which is a row of the standing gate
+        #     post_nonempty_set_has_a_cache (gate-file review, finding M1; rehearsed, both row-level gates then read 0);
+        #   * in the main chain, source_plant_id is cleared on every row that is a smoke lot or still points at a
+        #     planting the next statement deletes. Where the table exists the second arm now finds nothing. It stays
+        #     because it is all a database WITHOUT the table gets.
+        # The second addition and that second arm match nothing the smoke writes. They are there so a lot a person
+        # saved on staging from a planting named like smoke, or sitting in a smoke project, can neither red this step
+        # nor be left inconsistent by it.
         # THE TABLE MAY NOT EXIST. This file is read from dev, and staging gets migrations/v5-seedmultiparent-001 by
         # hand (and loses the table again when its rollback is rehearsed). So the table's presence is read once with
         # to_regclass, which answers NULL for a missing relation where a cast would raise 42P01 (the reason
@@ -915,6 +924,7 @@ jobs:
           SEED_PARENT_LEFT="0"
           if [[ "$SEED_PARENT_TABLE" == "t" ]]; then
             psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -c "DELETE FROM seed_lot_parent_planting WHERE inventory_item_id IN (SELECT id FROM inventory_items WHERE name ILIKE '%smoke%') OR plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%'));"
+            psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -c "UPDATE inventory_items i SET source_plant_id = (SELECT l.plant_id FROM seed_lot_parent_planting l WHERE l.inventory_item_id = i.id AND l.role = 'seed_parent' AND l.deleted_at IS NULL ORDER BY l.created_at, l.id LIMIT 1) WHERE i.name NOT ILIKE '%smoke%' AND i.source_plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')) RETURNING i.id, i.name, i.source_plant_id;"
             SEED_PARENT_LEFT="(SELECT COUNT(*) FROM seed_lot_parent_planting WHERE inventory_item_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]) OR plant_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]))"
           else
             echo "  seed_lot_parent_planting is not on this database (to_regclass: '$SEED_PARENT_TABLE') — no link rows to sweep"

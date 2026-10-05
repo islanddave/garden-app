@@ -32,8 +32,9 @@
 #        (V5-SEEDMULTIPARENT-001): POST with source_plant_ids → the detail GET lists both and source_plant_id is one
 #        of them → GET /api/plants/:id/seed-lots lists the lot under the parent the column does NOT hold → PUT
 #        /source-plants to one parent, read back → both again, then the legacy PATCH /source-plant with an id and
-#        with null, each 409 multi_parent_lot with the lot read back unchanged → the link rows read back through SQL
-#        (needs NEON_STAGING_URL + psql) → DELETE on the lot → 200 (parents never block it) and it reads back 404
+#        with null, each 409 multi_parent_lot with the lot read back unchanged → DELETE on the lot → 200 (parents
+#        never block it) and it reads back 404 → the second parent planting's DELETE → 200 → last, the link rows
+#        read back through SQL (needs NEON_STAGING_URL + psql), still live on the deleted lot
 #     L) a taught name (voice alias) for block D's variety → one use through PATCH /api/varieties/voice-aliases
 #        → the GET reads its hit_count exactly one higher, with a last_used_at (BUG-VOICEALIASHITCOUNT-001)
 #     M) (after the project blocks, independent of them) the smoke account's own nav prefs
@@ -1298,11 +1299,13 @@ else
       #       PATCH /api/inventory-items/:id/source-plant, as a phone that has not reloaded sends it, with P1 and
       #       then with null: each 409 with code multi_parent_lot, and the GET after each still reads both parents and
       #       the cache P2. (P1 is the id sent because it is NOT the cache: a PATCH that wrote would move it.)
-      #   U5) the rows, through SQL on the staging DSN (block D's precedent; no route shows a retired row): 2 live
-      #       seed_parent rows, 1 retired (P1's first row, soft-deleted by U3; U4 wrote a new one), and
-      #       source_plant_id is the planting of a LIVE row. Under SMOKE_REQUIRE_AUTH a missing DSN or psql is a FAIL.
       #   U6) DELETE /api/inventory-items/:id → 200 {"ok":true} with both parents still linked (the links follow
       #       the lot, they never block its delete), and the lot then reads back 404.
+      #   then P2's own DELETE → 200. P2 is a seed parent by now, so under SMOKE_REQUIRE_AUTH anything else is a FAIL.
+      #   U5) LAST, the rows, through SQL on the staging DSN (block D's precedent; no route shows a retired row): 2
+      #       live seed_parent rows, 1 retired (P1's first row, soft-deleted by U3; U4 wrote a new one), and
+      #       source_plant_id is the planting of a LIVE row. Read after the lot's delete and P2's, it also shows the
+      #       links still live on a deleted lot. Under SMOKE_REQUIRE_AUTH a missing DSN or psql is a FAIL.
       # Later steps read what earlier ones wrote, so one fault can show as several FAIL lines; the first is the cause.
       # P1 is block D's planting. P2 is this block's own, made here and soft-deleted here, so blocks H to L find the
       # project as they did before this block existed. The lot is a seeds row on block D's variety: F3's packet body
@@ -1310,8 +1313,9 @@ else
       # NO MINT OF ITS OWN, like P11 and T3b. scripts/test_smoke_mint_log.py holds the number of
       # mint_session_token call sites in this file, so the block rides the token in hand. That is F3's: F3 runs
       # whenever this block does (this block's preconditions are F3's plus block D's planting), and every path
-      # through F3 ends at most three requests after a mint; G's four follow. This block adds 15 requests and one
-      # psql. Measured on the staging run of dev 1564c564 (2026-10-05): 0.2 to 0.5 s a request, so roughly 10 s of
+      # through F3 ends at most three requests after a mint; G's four follow. This block adds 15 requests, and its
+      # one psql comes after the last of them, so no request that needs the token waits behind a database round
+      # trip. Measured on the staging run of dev 1564c564 (2026-10-05): 0.2 to 0.5 s a request, so under 10 s of
       # the token's 60 are gone at this block's last request. H mints its own. A token that did run out would
       # show as 401s and FAIL lines, never as a pass.
       # NEEDS migrations/v5-seedmultiparent-001 applied on staging. Without the table the POST answers 500 and this
@@ -1357,14 +1361,17 @@ else
 
         sp_req POST "$STAGING_API_PLANTS" "{\"project_id\": \"$CREATED_PROJECT_ID\", \"name\": \"$SP_P2_NAME\"}"
         SP_P2=$(sp_jq '.id // empty')
+        # Handed to cleanup() as soon as P2 itself exists, whatever the test below makes of block D's id.
+        if sp_id_ok "$SP_P2"; then CREATED_SEEDPARENT_PLANT_ID="$SP_P2"; fi
         if [[ "${SP_CODE:0:1}" == "2" ]] && sp_id_ok "$SP_P2" && sp_id_ok "$SP_P1"; then
-          CREATED_SEEDPARENT_PLANT_ID="$SP_P2"
           sp_pass "second-parent" "POST /api/plants → HTTP $SP_CODE (id: $SP_P2); the first parent is block D's planting $SP_P1"
           SP_BOTH=$(jq -rn --arg a "$SP_P1" --arg b "$SP_P2" '[$a, $b] | sort | join(",")' 2>/dev/null || echo "unsortable")
           sp_req POST "$STAGING_API_INVENTORY" "{\"name\": \"smoke-test-seedlot-$TEST_RUN_ID\", \"type\": \"consumable\", \"category\": \"seeds\", \"unit\": \"packet\", \"quantity_on_hand\": 1, \"variety_id\": \"$CREATED_VARIETY_ID\", \"source_plant_ids\": [\"$SP_P1\", \"$SP_P2\"]}"
           SP_LOT=$(sp_jq '.id // empty')
+          SP_LOT_MADE=false
           if [[ "$SP_CODE" == "201" ]] && sp_id_ok "$SP_LOT"; then
             CREATED_SEEDLOT_ID="$SP_LOT"
+            SP_LOT_MADE=true
 
             # ── U1) the set and its cache, read back ──
             sp_req GET "$SP_INV/$SP_LOT"
@@ -1398,19 +1405,6 @@ else
             SP_WRITE="$SP_CODE $(sp_jq '.code // "-"')"; sp_state
             sp_check "u4-legacy-clear-refused" "$SP_WRITE $SP_STATE" "409 multi_parent_lot $SP_TWO" "legacy PATCH /source-plant {null} on a two-parent lot; its code, then the GET: both parents|source_plant_id, as before it"
 
-            # ── U5) the link rows, through SQL: live | retired | the cache is the planting of a live row ──
-            # The lot id goes in as a psql variable (stdin + :'lot'), never spliced into the text (block D's reason).
-            if [[ -n "${NEON_STAGING_URL:-}" ]] && command -v psql >/dev/null 2>&1; then
-              SP_ROWS=$(psql "$NEON_STAGING_URL" -X -At -v ON_ERROR_STOP=1 -v lot="$SP_LOT" \
-                <<< "SELECT COUNT(*) FILTER (WHERE l.deleted_at IS NULL) || '|' || COUNT(*) FILTER (WHERE l.deleted_at IS NOT NULL) || '|' || COALESCE(bool_or(l.deleted_at IS NULL AND l.plant_id = i.source_plant_id), false) FROM inventory_items i LEFT JOIN seed_lot_parent_planting l ON l.inventory_item_id = i.id AND l.role = 'seed_parent' WHERE i.id = :'lot'::uuid;") \
-                || SP_ROWS="psql-exit-$?"
-              sp_check "u5-link-rows-readback" "$SP_ROWS" "2|1|true" "seed_lot_parent_planting for the lot, on the staging DSN: live rows|retired rows|source_plant_id is a live row's planting"
-            elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
-              sp_fail "u5-link-rows-readback" "NEON_STAGING_URL unset or psql missing — the ship gate may not skip this assert"
-            else
-              echo "⚠️  WARN [seed-parents:u5-link-rows-readback] NEON_STAGING_URL unset or psql missing — the link rows were NOT read back"
-            fi
-
             # ── U6) the lot's delete goes through with both parents still linked ──
             sp_req DELETE "$SP_INV/$SP_LOT"
             SP_WRITE="$SP_CODE $(sp_jq '. == {"ok": true}')"
@@ -1420,12 +1414,36 @@ else
           else
             sp_fail "u1-create" "POST /api/inventory-items with source_plant_ids [P1, P2] → HTTP $SP_CODE (expected 201 and an id): $(head -c 200 "$SP_OUT" 2>/dev/null || true)"
           fi
-          # P2 goes back out, so blocks H to L find the project as they did before this block existed.
+          # P2 goes back out, so blocks H to L find the project as they did before this block existed. By now P2 is a
+          # seed parent of the lot (a live link row, and the lot's source_plant_id), so under the ship gate a DELETE
+          # that does not answer 200 is a FAIL: the migration's claim that RESTRICT blocks nothing the app does is
+          # asserted for the lot by U6 and for the planting here.
           sp_req DELETE "${STAGING_API_PLANTS%/}/api/plants/$SP_P2"
           if [[ "$SP_CODE" == "200" ]]; then
             CREATED_SEEDPARENT_PLANT_ID=""
+          elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+            sp_fail "second-parent-delete" "DELETE /api/plants/$SP_P2 → HTTP $SP_CODE (expected 200: a planting that is a lot's seed parent must still soft-delete; cleanup() retries, the L-058 sweep removes the row either way)"
           else
             echo "⚠️  WARN [seed-parents:second-parent-delete] DELETE /api/plants/$SP_P2 → HTTP $SP_CODE (cleanup() retries; the L-058 sweep removes the row either way)"
+          fi
+
+          # ── U5) the link rows, through SQL: live | retired | the cache is the planting of a live row ──
+          # LAST, after every authed request of this block (block D's rule for its own SQL read): the block mints
+          # no token, so nothing that needs one may wait behind a database round trip. By now the lot is
+          # soft-deleted and so is P2, and the SQL filters on neither, so the same three numbers also show that the
+          # links FOLLOW the lot (still live on a deleted lot) and outlast the soft-delete of a parent planting.
+          # The lot id goes in as a psql variable (stdin + :'lot'), never spliced into the text (block D's reason).
+          if [[ "$SP_LOT_MADE" == "true" ]]; then
+            if [[ -n "${NEON_STAGING_URL:-}" ]] && command -v psql >/dev/null 2>&1; then
+              SP_ROWS=$(psql "$NEON_STAGING_URL" -X -At -v ON_ERROR_STOP=1 -v lot="$SP_LOT" \
+                <<< "SELECT COUNT(*) FILTER (WHERE l.deleted_at IS NULL) || '|' || COUNT(*) FILTER (WHERE l.deleted_at IS NOT NULL) || '|' || COALESCE(bool_or(l.deleted_at IS NULL AND l.plant_id = i.source_plant_id), false) FROM inventory_items i LEFT JOIN seed_lot_parent_planting l ON l.inventory_item_id = i.id AND l.role = 'seed_parent' WHERE i.id = :'lot'::uuid;") \
+                || SP_ROWS="psql-exit-$?"
+              sp_check "u5-link-rows-readback" "$SP_ROWS" "2|1|true" "seed_lot_parent_planting for the lot, on the staging DSN, after the lot's delete: live rows|retired rows|source_plant_id is a live row's planting"
+            elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+              sp_fail "u5-link-rows-readback" "NEON_STAGING_URL unset or psql missing — the ship gate may not skip this assert"
+            else
+              echo "⚠️  WARN [seed-parents:u5-link-rows-readback] NEON_STAGING_URL unset or psql missing — the link rows were NOT read back"
+            fi
           fi
         else
           sp_fail "second-parent" "POST /api/plants → HTTP $SP_CODE, id '$SP_P2' (block D's planting: '$SP_P1')"
