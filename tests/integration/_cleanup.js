@@ -172,6 +172,14 @@ const STEPS = [
   ['proj_rescope_events',         `DELETE FROM proj_rescope_events WHERE plant_id IN (${NS_PLANTS}) OR project_id IN (${NS_PROJECTS})`],
   ['event_log',                   `DELETE FROM event_log WHERE created_by LIKE ${NS} OR logged_by LIKE ${NS} OR project_id IN (${NS_PROJECTS}) OR plant_id IN (${NS_PLANTS})`],
   ['entity',                      `DELETE FROM entity WHERE display_name LIKE ${NS} OR planting_ref_id IN (${NS_PLANTS}) OR cultivar_ref_id IN (${NS_VARIETIES})`],
+  // v5-seedmultiparent-001: seed_lot_parent_planting names its lot and its planting, both ON DELETE
+  // RESTRICT (it carries deleted_at, so cascade-sweep's class guard forbids a CASCADE into it). A link
+  // row must therefore go before BOTH parents — inventory_items on the next line, plants further down —
+  // or each of those DELETEs 23503s. Same shape, same reason, as the preservation_source step above.
+  // The two parent arms are exactly what those two steps delete: NS_INVENTORY is the next line's own
+  // predicate, and NS_PLANTS plus the name arm is the plants step's (NS_PLANTS alone has no name arm).
+  // Skipped on a fork without the table.
+  ['seed_lot_parent_planting',    `DELETE FROM seed_lot_parent_planting WHERE created_by LIKE ${NS} OR inventory_item_id IN (${NS_INVENTORY}) OR plant_id IN (${NS_PLANTS}) OR plant_id IN (SELECT id FROM plants WHERE name LIKE ${NS})`],
   ['inventory_items',             `DELETE FROM inventory_items WHERE created_by LIKE ${NS} OR user_id LIKE ${NS} OR name LIKE ${NS} OR variety_id IN (${NS_VARIETIES})`],
   // BUG-ENTITYTAGORPHAN-001. entity_tag was never swept at all — the polymorphic edge had no FK, no
   // working cleanup trigger, and no line here. It MUST precede all four of its parents (plants,

@@ -1,0 +1,86 @@
+# gates-rowlevel.yml.pending
+# V5-SEEDMULTIPARENT-001 — the two ROW-LEVEL gates. NOT LOADED BY THE RUNNER UNDER THIS FILENAME, on
+# purpose: scripts/gate_runner.py --all globs migrations/*/gates.yml and nothing else, CI's
+# --validate-only step uses the same glob, and scripts/test_gate_runner.py asks git for the same
+# pattern. This file is the parking place for two gates that are correct and cannot be pushed live yet.
+#
+# ── WHY THEY ARE NOT IN gates.yml ─────────────────────────────────────────────────────────────────
+#   Both SELECT FROM public.seed_lot_parent_planting. Postgres resolves that name at PARSE time, so on
+#   a database where the table does not exist the gate does not go vacuous under its stamp guard — it
+#   ERRORS (42P01), and gate-invariants.yml runs the whole corpus against prod AND staging on every
+#   migrations/** push and on a Tuesday cron. A gate that names a new table can only be pushed once the
+#   table exists everywhere the corpus is run. v5-putupmultisource-001/gates.yml records the mechanism
+#   and, for that reason, ships no row-level gate at all. This migration ships them, late.
+#
+# ── WHEN THEY MOVE (push 2, README.md) ────────────────────────────────────────────────────────────
+#   Only when BOTH are true on BOTH environments:
+#     1. 0a is applied (the table exists, so the SQL parses);
+#     2. 0c-arm.sql has written stamp 5.0.0-seedmultiparent-001b (so the dual-writing Lambda is live
+#        there, 0b has reconciled behind it, and both queries below returned zero rows).
+#   Check it, do not assume it:
+#     SELECT version FROM public.schema_version WHERE version LIKE '5.0.0-seedmultiparent-001%';
+#     -- two rows on prod, two rows on staging
+#   Then append the two items under `post:` below to the `post:` list of gates.yml, verbatim, delete
+#   this file, and push. Validate before pushing:
+#     python3 scripts/gate_runner.py --migration migrations/v5-seedmultiparent-001 --env prod --validate-only
+#
+#   ⚠ AND THEY MOVE BACK before any rollback: 0r-rollback.sql drops the table, after which these two
+#   error rather than pass. 0r's header says so first.
+#
+# ── WHY THE SECOND STAMP ──────────────────────────────────────────────────────────────────────────
+#   Armed on the DDL stamp (001) they would be red from the first save: until the new Lambda is live,
+#   the deployed one writes inventory_items.source_plant_id and no row here. 001b is written by
+#   0c-arm.sql, post-deploy, and only when both of these return nothing. Same violation-count shape as
+#   every other standing gate: no stamp -> green; stamp + invariant holds -> green; stamp + a writer
+#   has broken it -> RED, with the lot ids as the rows.
+#
+# ── WHAT THEY ASSERT ──────────────────────────────────────────────────────────────────────────────
+#   Together, exactly the member-cache rule (0a header D1): source_plant_id IS NULL exactly when the
+#   lot has no live seed_parent row; otherwise it equals the plant_id of one of them.
+#   NEITHER FILTERS ON THE LOT'S deleted_at. A link row follows its lot into soft-deletion and stays
+#   live, and a lot restored later must come back consistent. role = 'seed_parent' on both: the cache is
+#   a member of the SEED parents; a pollen_parent row is never the cache and never demands one.
+#   These are the same two predicates 0c-arm.sql evaluates before it stamps and 0b-reconcile.sql prints
+#   under "after". Change one, change all three.
+#
+# This file is in gates.yml's own format and validates as one:
+#   python3 scripts/gate_runner.py --migration migrations/v5-seedmultiparent-001/gates-rowlevel.yml.pending --env prod --validate-only
+
+post:
+  - name: post_cache_is_a_live_member
+    note: >
+      (i) Every inventory_items row with a non-NULL source_plant_id has a LIVE seed_parent row for
+      that plant. A row here is a lot whose cached parent is not one of its recorded parents: a writer
+      set the column without the row (a reverted Lambda does exactly this — run 0b-reconcile.sql
+      before reading this gate after any revert), or removed the row and left the column.
+    continuous: true
+    sql: |
+      SELECT i.id FROM public.inventory_items i
+       WHERE i.source_plant_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.seed_lot_parent_planting l
+                          WHERE l.inventory_item_id = i.id
+                            AND l.plant_id = i.source_plant_id
+                            AND l.role = 'seed_parent'
+                            AND l.deleted_at IS NULL)
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001b')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_nonempty_set_has_a_cache
+    note: >
+      (ii) Every lot with a live seed_parent row has a non-NULL source_plant_id. A row here is a lot
+      with recorded parents and an empty cache — which is also a lot chk_inventory_seed_source_plant
+      and chk_inventory_source_plant_seeds_only have stopped protecting, since both pass on a NULL
+      column.
+    continuous: true
+    sql: |
+      SELECT DISTINCT l.inventory_item_id FROM public.seed_lot_parent_planting l
+        JOIN public.inventory_items i ON i.id = l.inventory_item_id
+       WHERE l.role = 'seed_parent'
+         AND l.deleted_at IS NULL
+         AND i.source_plant_id IS NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001b')
+    expect: rowcount_eq
+    value: 0

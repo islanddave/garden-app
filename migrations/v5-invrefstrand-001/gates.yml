@@ -29,6 +29,19 @@
 # delete of a photographed item or a saved lot — measured on prod 2026-09-24, 291 of 525 live items
 # carry only those. README §What counts.
 #
+# A FIFTH FOREIGN KEY, SINCE v5-seedmultiparent-001: seed_lot_parent_planting.inventory_item_id
+# (RESTRICT) — the plantings a saved-seed lot came from. It is the lot's OWN, like its stage rows: it is
+# classified FOLLOWING in delete-guard.js, it never blocks a delete, a link row stays live when its lot
+# is soft-deleted, and it is NOT an arm of the guard below. Its (conname, confdeltype) pair is in the
+# census allowlist below, and that line is correct on a database where the table does not exist yet —
+# a name in a NOT IN list that matches no constraint excludes nothing — so the allowlist was widened
+# BEFORE the table was applied anywhere. Its FEED half is NOT in this file: the four-name feed gate
+# keeps its `<> 4`, because that gate is armed on a stamp both environments already carry and a `<> 5`
+# would red on whichever one had not applied the table yet. The fifth is fed by
+# post_inventory_fk_census_finds_the_parent_link in migrations/v5-seedmultiparent-001/gates.yml,
+# self-armed on that migration's own stamp. delete-gate-coverage.test.js holds the union of the two
+# feed gates to the classified list.
+#
 # THE PREDICATE IS PARENT-SIDE (`i.deleted_at IS NOT NULL`), NOT AN ANTI-JOIN. gate_runner connects
 # with NEON_DATABASE_URL / NEON_STAGING_URL, the OWNER, which is RLS-exempt: for that connection a
 # soft-deleted parent IS visible, the FK guarantees it exists, and `LEFT JOIN ... WHERE i.id IS NULL`
@@ -100,6 +113,9 @@ post:
       about data loss and must not pass unremarked. Widening is the correct response when it reds;
       editing the list to make the red go away without classifying the relation is the failure mode.
       README §If the census gate reds.
+      WIDENED 2026-10-05 for v5-seedmultiparent-001: the fifth pair is that migration's foreign key from
+      seed_lot_parent_planting, classified FOLLOWING in delete-guard.js. The line is valid before and
+      after that table exists (see the header); the feed gate below was deliberately NOT widened.
     sql: |
       SELECT con.conname, con.confdeltype
         FROM pg_constraint con
@@ -110,7 +126,8 @@ post:
                ('plants_source_inventory_item_id_fkey',      'r'),
                ('event_log_treatment_product_id_fkey',       'a'),
                ('photos_inventory_item_id_fkey',             'r'),
-               ('seed_lot_stage_log_inventory_item_id_fkey', 'a'))
+               ('seed_lot_stage_log_inventory_item_id_fkey', 'a'),
+               ('seed_lot_parent_planting_inventory_item_id_fkey', 'r'))
          AND EXISTS (SELECT 1 FROM public.schema_version
                       WHERE version = '5.0.0-invrefstrand-20260924')
     expect: rowcount_eq
@@ -124,6 +141,11 @@ post:
       the feed instead of the output: the four known constraints must still be present. Written as a
       violation count so it survives self-arming; a presence count with rowcount_eq 4 would fail before
       the apply and red the migrations/** push.
+      STILL FOUR, ON PURPOSE. The allowlist above names five; the fifth
+      (seed_lot_parent_planting_inventory_item_id_fkey) exists only where v5-seedmultiparent-001 has been
+      applied, and this gate is armed everywhere already. Its presence is asserted by that migration's
+      own post_inventory_fk_census_finds_the_parent_link, keyed on that migration's stamp. Do not raise
+      this count to 5.
     sql: |
       SELECT 1
        WHERE (SELECT count(*) FROM pg_constraint con

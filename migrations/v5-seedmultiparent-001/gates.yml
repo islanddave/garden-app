@@ -1,0 +1,429 @@
+# gates.yml
+# V5-SEEDMULTIPARENT-001 — one new table, seed_lot_parent_planting. No change to inventory_items.
+#
+# ── SEQUENCING: THE REPO FIRST, THEN THE DATABASES, THEN THE CODE ─────────────────────────────────
+#   0. PUSH 1, to dev, BEFORE any database is touched: this directory, the widened census allowlist
+#      in migrations/v5-invrefstrand-001/gates.yml, the FOLLOWING_RELATIONS entry in
+#      lambda/inventory-items/delete-guard.js, the tests/integration/_cleanup.js step.
+#   1. STAGING: pre -> sweep -> 0a -> 0b -> post -> rehearse 0r -> 0a -> 0b -> post.
+#   2. PROD (Dave's approval): pre -> sweep -> 0a -> 0b -> post.
+#   3. The Lambda release that names the table. After it is live on an environment: 0b again, then 0c.
+#   4. PUSH 2, only when BOTH environments carry stamp 001b: the two gates in
+#      gates-rowlevel.yml.pending are appended to `post:` below.
+#   README.md has the commands and the reason for each step.
+#
+#   WHY STEP 0 COMES FIRST. This table's foreign key to inventory_items is a FIFTH one, and
+#   v5-invrefstrand-001's post_inventory_fk_census_is_unchanged is armed on prod and staging and reds
+#   on any foreign key outside its allowlist. With the allowlist widened first the census is green
+#   before the table exists (an extra name in a NOT IN list excludes nothing) and green after. Applied
+#   the other way round, step 1 turns a standing prod invariant red with nothing left to clear it.
+#
+# ANY pre/sweep/post assertion failing is a HARD ABORT.
+#
+# ── WHY EVERY post GATE BELOW IS SELF-ARMING AND CATALOG-ONLY ─────────────────────────────────────
+#   `continuous:` DEFAULTS TO TRUE (scripts/gate_runner.py) and .github/workflows/gate-invariants.yml
+#   runs `gate_runner.py --all --phase post --continuous-only` against LIVE PROD AND LIVE STAGING on
+#   every migrations/** push, with no skip-if-unapplied logic. Step 0 above pushes this file to a tree
+#   whose databases have NOT been applied, on purpose. So each gate returns rows only when the
+#   migration IS applied (its schema_version row exists) AND the invariant is violated: vacuous before
+#   the apply, asserting permanently after, with no follow-up edit to forget. 0a writes the stamp in
+#   the same transaction as the DDL, so "applied" and "armed" are one event, and
+#   post_schema_version_recorded (armed on the TABLE, not on itself) proves the stamp landed.
+#
+#   ⚠ NO `::regclass` ANYWHERE BELOW, AND NO SQL THAT NAMES THE TABLE AS A RELATION. Postgres resolves
+#   a relation name — and evaluates a regclass cast — at PARSE time, before any WHERE or EXISTS runs.
+#   `SELECT ... FROM public.seed_lot_parent_planting` under a false guard still raises 42P01 on an
+#   unapplied database, and an erroring gate reds the run for every migration in the tree
+#   (v5-putupmultisource-001/gates.yml measured it on PG 17). Every reference below is a string compared
+#   against pg_class.relname. The catalog joins are longer and they are the reason this works.
+#
+# ── WHAT THESE GATES DO NOT COVER, stated so the coverage is not overread ────────────────────────
+#   * THE MEMBER-CACHE INVARIANT ITSELF — "source_plant_id is NULL exactly when the lot has no live
+#     seed_parent row, otherwise it is one of them". That is a statement about ROWS of the new table,
+#     which by the rule above cannot be gated from a file pushed before the table exists everywhere.
+#     It lives in gates-rowlevel.yml.pending (two gates, armed on the SECOND stamp, 001b) and joins
+#     this file in push 2. Until then it is held by the handler's tests, repaired by 0b-reconcile.sql
+#     and checked once by 0c-arm.sql, which refuses to write 001b while either gate would return a row.
+#   * There is NO gate "no live link row on a soft-deleted lot", and there must never be one. A link
+#     row follows its lot into soft-deletion and is not soft-deleted with it (0a header D4); such a
+#     gate would red on every ordinary delete of a saved lot — the mistake v5-invrefstrand-001's header
+#     records for photos and stage rows.
+#   * role = 'pollen_parent' is admitted by chk_slpp_role and written by nothing in release 1. No gate
+#     here asserts its absence; the row-level gates count seed_parent rows only.
+#   * No frozen row count anywhere. A parent planting that is itself archived or soft-deleted is an
+#     accepted state, not a finding.
+
+pre:
+  - name: pre_table_absent
+    note: >
+      The starting state. Reads pg_class for ANY relation of this name in public — a view or a
+      leftover table would make CREATE TABLE IF NOT EXISTS a silent no-op. continuous false: false by
+      design once 0a runs.
+    sql: |
+      SELECT c.relname FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'seed_lot_parent_planting'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_not_already_applied
+    note: >
+      Neither stamp is on this database. A 001b row with no table would arm the row-level gates the
+      moment they are pushed, against a table that is empty. continuous false, as above.
+    sql: |
+      SELECT version FROM public.schema_version
+       WHERE version IN ('5.0.0-seedmultiparent-001', '5.0.0-seedmultiparent-001b')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # 0a header D1's premise, checked rather than assumed. Keeping inventory_items.source_plant_id as a
+  # member cache is only worth anything while the three constraints on that column are in force: they
+  # are what protects a pooled lot against the deployed writer. If a prior session dropped or weakened
+  # one, the decision no longer describes reality and the design is re-read before applying.
+  - name: pre_cache_column_fk_is_restrict_and_validated
+    note: >
+      inventory_items_source_plant_id_fkey: on inventory_items.source_plant_id, to the plants TABLE
+      (not the garden_node view), ON DELETE RESTRICT, validated. Read from the catalog columns, not
+      from pg_get_constraintdef, so it does not depend on search_path.
+    sql: |
+      SELECT 1 FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_class tgt   ON tgt.oid = c.confrelid
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+       WHERE t.relname = 'inventory_items' AND c.contype = 'f'
+         AND c.conname = 'inventory_items_source_plant_id_fkey'
+         AND a.attname = 'source_plant_id'
+         AND tgt.relname = 'plants' AND tgt.relkind = 'r'
+         AND c.confdeltype = 'r' AND c.convalidated
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_cache_column_checks_validated
+    note: >
+      chk_inventory_seed_source_plant (a non-garden source_kind cannot sit beside a parent) and
+      chk_inventory_source_plant_seeds_only (a lot with a parent stays in Seeds), both on
+      inventory_items and both VALIDATED. A bare name match passes on a permanently NOT VALID
+      constraint. Their text is pinned by v4-seedorigin-001's own gates; this asserts they are armed.
+    sql: |
+      SELECT c.conname FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'inventory_items' AND c.contype = 'c' AND c.convalidated
+         AND c.conname IN ('chk_inventory_seed_source_plant',
+                           'chk_inventory_source_plant_seeds_only')
+    expect: rowcount_eq
+    value: 2
+
+sweep:
+  # No name collision on any object this DDL creates. A pre-existing relation of the same name would
+  # make CREATE INDEX IF NOT EXISTS a silent no-op and leave a RESTRICT probe unindexed, or the lot
+  # without its unique key, with the apply reporting success.
+  - name: sweep_no_index_name_collisions
+    sql: |
+      SELECT c.relname FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public'
+         AND c.relname IN ('seed_lot_parent_planting_pkey', 'uq_slpp_item_plant_role_live',
+                           'idx_slpp_item', 'idx_slpp_plant')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a's ADD CONSTRAINT guards are scoped to this table, so a same-named constraint elsewhere would
+  # not make it skip one. The census and feed gates are NOT scoped that way — they find a foreign key
+  # by name and target — so a constraint of this name on another table would be counted as this one.
+  - name: sweep_no_constraint_name_collisions
+    sql: |
+      SELECT conname FROM pg_constraint
+       WHERE conname IN ('seed_lot_parent_planting_pkey',
+                         'seed_lot_parent_planting_inventory_item_id_fkey',
+                         'seed_lot_parent_planting_plant_id_fkey',
+                         'chk_slpp_role')
+    expect: rowcount_eq
+    value: 0
+
+  # READS EXISTING TABLES ONLY. 0b-reconcile.sql writes each backfilled row with the LOT's created_by
+  # and no reader ever scopes on the link's own. That is only sound if no lot today points at a
+  # planting that belongs to somebody else. NOT filtered by deleted_at on either side: 0b backfills
+  # soft-deleted lots too. Measured on prod 2026-10-05: 0 of 24.
+  - name: sweep_no_lot_whose_parent_planting_has_another_owner
+    sql: |
+      SELECT i.id FROM public.inventory_items i
+        JOIN public.plants p ON p.id = i.source_plant_id
+       WHERE p.created_by IS DISTINCT FROM i.created_by
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # SELF-ARMING AND CATALOG-ONLY, EVERY ONE. See the header for why that is forced.
+
+  # ARMED ON THE DDL, NOT ON ITSELF. Guarding "the version row exists" with "the version row exists"
+  # is circular and cannot self-arm; guarding it with "the TABLE exists" is not (the fix
+  # v5-inflightbatch-001 and v5-putupmultisource-001 both reached). 0a writes the table and the row in
+  # one transaction, so a row here means someone hand-applied the DDL or deleted the stamp — exactly
+  # the state that would silence every EXISTS-guarded gate below.
+  - name: post_schema_version_recorded
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM pg_class c
+                       JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'public' AND c.relname = 'seed_lot_parent_planting')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-seedmultiparent-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_table_exists
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_class c
+                           JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE n.nspname = 'public' AND c.relname = 'seed_lot_parent_planting'
+                            AND c.relkind = 'r')
+    expect: rowcount_eq
+    value: 0
+
+  # D4. One row per foreign key that is missing or wrong: its name, its one column, its target TABLE
+  # and target column, ON DELETE RESTRICT ('r'), validated. If either were weakened to CASCADE or SET
+  # NULL, an operator hard-delete would take recorded provenance with it instead of stopping; if the
+  # plants one pointed at anything but the plants table the merge repoint would have nothing to bind.
+  - name: post_both_fks_restrict_validated_right_targets
+    continuous: true
+    sql: |
+      SELECT want.conname
+        FROM (VALUES ('seed_lot_parent_planting_inventory_item_id_fkey', 'inventory_item_id', 'inventory_items'),
+                     ('seed_lot_parent_planting_plant_id_fkey',          'plant_id',          'plants'))
+             AS want(conname, col, target)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t      ON t.oid = c.conrelid
+                           JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+                           JOIN pg_class tgt    ON tgt.oid = c.confrelid
+                           JOIN pg_namespace tn ON tn.oid = tgt.relnamespace AND tn.nspname = 'public'
+                           JOIN pg_attribute a  ON a.attrelid = c.conrelid  AND a.attnum = c.conkey[1]
+                           JOIN pg_attribute ta ON ta.attrelid = c.confrelid AND ta.attnum = c.confkey[1]
+                          WHERE t.relname = 'seed_lot_parent_planting' AND c.contype = 'f'
+                            AND c.conname = want.conname
+                            AND cardinality(c.conkey) = 1 AND a.attname = want.col
+                            AND tgt.relname = want.target AND tgt.relkind = 'r' AND ta.attname = 'id'
+                            AND c.confdeltype = 'r' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # The table has exactly those two. A third foreign key — to plant_varieties for a "filed under"
+  # pointer, say — is a design decision with its own delete action to argue, not a drive-by.
+  - name: post_no_other_fk_on_the_table
+    continuous: true
+    sql: |
+      SELECT c.conname FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'seed_lot_parent_planting' AND c.contype = 'f'
+         AND c.conname NOT IN ('seed_lot_parent_planting_inventory_item_id_fkey',
+                               'seed_lot_parent_planting_plant_id_fkey')
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+    expect: rowcount_eq
+    value: 0
+
+  # One row per column that is missing or has become nullable. A nullable plant_id is a parent link
+  # that names no parent; a nullable role is a row no read can classify.
+  - name: post_not_null_columns
+    continuous: true
+    sql: |
+      SELECT want.column_name
+        FROM unnest(ARRAY['id','inventory_item_id','plant_id','role','created_by',
+                          'created_at','updated_at']::text[]) AS want(column_name)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public'
+                            AND c.table_name = 'seed_lot_parent_planting'
+                            AND c.column_name = want.column_name AND c.is_nullable = 'NO')
+    expect: rowcount_eq
+    value: 0
+
+  # deleted_at is how a plant is removed from a lot, and the unique index and every read are written
+  # against `deleted_at IS NULL`. It must exist and must stay nullable: NOT NULL would mean no live row.
+  - name: post_deleted_at_present_and_nullable
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public'
+                            AND c.table_name = 'seed_lot_parent_planting'
+                            AND c.column_name = 'deleted_at' AND c.is_nullable = 'YES')
+    expect: rowcount_eq
+    value: 0
+
+  # D3, THE VOCABULARY, pinned by its whole definition: present on this table, validated, and exactly
+  # the two values in this order with nothing before or after. A third role cannot be appended, a
+  # second arm cannot be OR-ed on, and the constraint cannot be re-added NOT VALID, without this going
+  # red. To add a role on purpose, widen the CHECK and this literal in the same change.
+  - name: post_role_check_is_exactly_the_two_values
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'seed_lot_parent_planting' AND c.contype = 'c'
+                            AND c.conname = 'chk_slpp_role' AND c.convalidated
+                            AND pg_get_constraintdef(c.oid) =
+                                'CHECK ((role = ANY (ARRAY[''seed_parent''::text, ''pollen_parent''::text])))')
+    expect: rowcount_eq
+    value: 0
+
+  # D3, the other half. role has NO default: every writer names it. A default would let an INSERT that
+  # forgot the role record a value nobody chose (the grown_as DEFAULT 'annual' defect).
+  - name: post_role_has_no_default
+    continuous: true
+    sql: |
+      SELECT c.column_default FROM information_schema.columns c
+       WHERE c.table_schema = 'public' AND c.table_name = 'seed_lot_parent_planting'
+         AND c.column_name = 'role' AND c.column_default IS NOT NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+    expect: rowcount_eq
+    value: 0
+
+  # D5. One LIVE row per (lot, planting, role). All four properties, from pg_index rather than from
+  # the index's printed definition: on this table, UNIQUE, partial with exactly the predicate
+  # `deleted_at IS NULL`, and exactly the three key columns in this order. Not partial = a removed
+  # plant can never be added back; not unique, or missing role = duplicate parents.
+  - name: post_live_unique_index_is_unique_partial_three_columns
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_index ix
+                           JOIN pg_class ic    ON ic.oid = ix.indexrelid
+                           JOIN pg_class t     ON t.oid = ix.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'seed_lot_parent_planting'
+                            AND ic.relname = 'uq_slpp_item_plant_role_live'
+                            AND ix.indisunique AND ix.indisvalid
+                            AND ix.indnatts = 3 AND ix.indexprs IS NULL
+                            AND pg_get_expr(ix.indpred, ix.indrelid) = '(deleted_at IS NULL)'
+                            AND (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                                   FROM unnest(ix.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+                                   JOIN pg_attribute a
+                                     ON a.attrelid = ix.indrelid AND a.attnum = k.attnum)
+                                = ARRAY['inventory_item_id','plant_id','role']::text[])
+    expect: rowcount_eq
+    value: 0
+
+  # D5. One row per foreign key index that is missing or wrong: on this table, exactly its one column,
+  # NOT partial, not unique, valid. PARTIAL IS THE DEFECT THIS EXISTS FOR — a RESTRICT probe has no
+  # deleted_at term, so an index `WHERE deleted_at IS NULL` cannot serve it and every delete on plants
+  # or inventory_items scans this table. Unique would be worse: one parent per lot, by accident.
+  - name: post_fk_indexes_present_and_not_partial
+    continuous: true
+    sql: |
+      SELECT want.indexname
+        FROM (VALUES ('idx_slpp_item', 'inventory_item_id'),
+                     ('idx_slpp_plant', 'plant_id')) AS want(indexname, col)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_index ix
+                           JOIN pg_class ic    ON ic.oid = ix.indexrelid
+                           JOIN pg_class t     ON t.oid = ix.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                           JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = ix.indkey[0]
+                          WHERE t.relname = 'seed_lot_parent_planting'
+                            AND ic.relname = want.indexname
+                            AND ix.indnatts = 1 AND a.attname = want.col
+                            AND ix.indpred IS NULL AND ix.indexprs IS NULL
+                            AND NOT ix.indisunique AND ix.indisvalid)
+    expect: rowcount_eq
+    value: 0
+
+  # D6. NO TRIGGER. updated_at is written by the handler and the cache is kept by the handler; a
+  # trigger doing either would be invisible to the mock-sql unit suites (BUG-KBOWNERTRIGGER-001).
+  - name: post_no_trigger_on_the_table
+    continuous: true
+    sql: |
+      SELECT g.tgname FROM pg_trigger g
+        JOIN pg_class t     ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'seed_lot_parent_planting' AND NOT g.tgisinternal
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+    expect: rowcount_eq
+    value: 0
+
+  # D2. No parent is "the" parent. Either column arriving means someone has started ranking them, and
+  # the cache rule (a member, any member) would then have a second, competing definition.
+  - name: post_no_ordinal_or_is_primary_column
+    continuous: true
+    sql: |
+      SELECT c.column_name FROM information_schema.columns c
+       WHERE c.table_schema = 'public' AND c.table_name = 'seed_lot_parent_planting'
+         AND c.column_name IN ('ordinal', 'is_primary')
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+    expect: rowcount_eq
+    value: 0
+
+  # D1 from the other side: the three constraints the member cache leans on are still on
+  # inventory_items and still validated (the foreign key still RESTRICT). One row per casualty. They
+  # belong to v4-seedlink-001 and v4-seedorigin-001, whose gates pin their text; re-asserted HERE so
+  # the dependency is visible from the change that took it on.
+  - name: post_cache_column_constraints_survive
+    continuous: true
+    sql: |
+      SELECT want.conname
+        FROM unnest(ARRAY['inventory_items_source_plant_id_fkey',
+                          'chk_inventory_seed_source_plant',
+                          'chk_inventory_source_plant_seeds_only']::text[]) AS want(conname)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'inventory_items'
+                            AND c.conname = want.conname AND c.convalidated
+                            AND (c.contype = 'c' OR (c.contype = 'f' AND c.confdeltype = 'r')))
+    expect: rowcount_eq
+    value: 0
+
+  # ── THE FEED GATE FOR THE FIFTH FOREIGN KEY TO inventory_items ────────────────────────────────
+  # v5-invrefstrand-001 holds the census of every foreign key to inventory_items in two halves: a
+  # NOT IN allowlist (post_inventory_fk_census_is_unchanged) and a FEED gate that asserts the four
+  # constraints the allowlist names are still there (post_inventory_fk_census_still_finds_all_four),
+  # because a NOT IN violation count also reads zero when pg_constraint returns nothing.
+  # This table's foreign key is the fifth. Its allowlist line went into that file (valid with or
+  # without the table). Its FEED half lives HERE and not there, and the reason is mechanical: that
+  # gate is armed on a stamp both environments already carry, so raising its count to `<> 5` would red
+  # on whichever environment has not applied THIS migration yet — and on push 1 that is both of them.
+  # Keyed on this migration's own stamp instead, the assertion is vacuous until the table exists and
+  # standing afterwards. Same violation-count shape as the four-name gate, so
+  # lambda/inventory-items/delete-gate-coverage.test.js reads both the same way and holds the union
+  # of the two to the constraints classified in delete-guard.js (this one is FOLLOWING: it never
+  # blocks a lot delete).
+  - name: post_inventory_fk_census_finds_the_parent_link
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM pg_constraint con
+                JOIN pg_class tgt ON tgt.oid = con.confrelid
+                JOIN pg_namespace n ON n.oid = tgt.relnamespace
+               WHERE con.contype = 'f' AND n.nspname = 'public'
+                 AND tgt.relname = 'inventory_items'
+                 AND con.conname IN ('seed_lot_parent_planting_inventory_item_id_fkey')) <> 1
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+    expect: rowcount_eq
+    value: 0

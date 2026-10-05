@@ -11,6 +11,16 @@
 // The gate file carries its own pg_constraint census, which catches a fifth FK appearing in the
 // DATABASE. This catches the other direction and the one that happens first: a relation appearing in
 // the CODE — and it makes every FK the census names be classified here, as blocking or following.
+//
+// THE CENSUS HAS TWO FEED GATES SINCE v5-seedmultiparent-001, and this file reads both. The allowlist
+// (one NOT IN list, here) names every classified FK. The FEED half — "the constraints the allowlist
+// names are still present" — cannot live in one gate any more: the fifth FK, from
+// seed_lot_parent_planting, exists only where that migration has been applied, while the four-name gate
+// is armed on a stamp every environment already carries. So the four stay in this bundle's gate with
+// their `<> 4`, and the fifth is fed by a gate in the migration that creates its table, armed on that
+// migration's own stamp. What is held here is unchanged in strength: every classified FK is fed by
+// EXACTLY ONE of the two gates, each gate's count equals the names it lists, and which gate feeds an FK
+// is decided by which migration's DDL creates it — not by where it was convenient to put the name.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -32,6 +42,20 @@ const GUARD = byName('post', 'post_nothing_grown_or_applied_from_a_deleted_inven
 const PRE = byName('pre', 'pre_nothing_to_resolve_before_arming');
 const CENSUS = byName('post', 'post_inventory_fk_census_is_unchanged');
 const FEED = byName('post', 'post_inventory_fk_census_still_finds_all_four');
+
+// v5-seedmultiparent-001: the migration that creates the fifth FK, and the feed gate it carries for it.
+const PARENT_DIR = resolve(__dirname, '../../migrations/v5-seedmultiparent-001');
+const PARENT_STAMP = '5.0.0-seedmultiparent-001';
+const PARENT_DDL = readFileSync(resolve(PARENT_DIR, '0a-additive-ddl.sql'), 'utf8');
+const PARENT_FEED = yaml.load(readFileSync(resolve(PARENT_DIR, 'gates.yml'), 'utf8')).post
+  .find((g) => g.name === 'post_inventory_fk_census_finds_the_parent_link');
+// Every FK to inventory_items that migration's DDL creates, as written: its table, its name, its column
+// and its delete action. Read from the statement, so the gate, the allowlist and the classification are
+// each compared with the DDL rather than only with one another.
+const CONFDELTYPE = { RESTRICT: 'r', CASCADE: 'c', 'SET NULL': 'n', 'SET DEFAULT': 'd', 'NO ACTION': 'a' };
+const PARENT_FKS = [...PARENT_DDL.matchAll(
+  /ALTER TABLE public\.(\w+)\s+ADD CONSTRAINT (\w+)\s+FOREIGN KEY \((\w+)\) REFERENCES public\.inventory_items\(id\) ON DELETE ([A-Z ]+?);/g,
+)].map((m) => ({ table: m[1], constraint: m[2], column: m[3], confdeltype: CONFDELTYPE[m[4]] }));
 
 // The self-arming clause, stripped so the two predicates can be compared as predicates.
 const RECEIPT = /\s*AND EXISTS \(SELECT 1 FROM public\.schema_version\s*WHERE version = '5\.0\.0-invrefstrand-20260924'\)/g;
@@ -109,17 +133,82 @@ describe('BUG-INVREFSTRAND-001 — the gate spans exactly what the DELETE arm re
 });
 
 describe('BUG-INVREFSTRAND-001 — every FK the census names is classified in code', () => {
-  const pairs = [...CENSUS.sql.matchAll(/\('(\w+)',\s*'(\w)'\)/g)].map((m) => m[1]);
-  const fed = [...FEED.sql.matchAll(/'(\w+_fkey)'/g)].map((m) => m[1]);
-  const classified = [...BLOCKING_RELATIONS, ...FOLLOWING_RELATIONS].map((r) => r.constraint);
+  const censusPairs = [...CENSUS.sql.matchAll(/\('(\w+)',\s*'(\w)'\)/g)].map((m) => ({ constraint: m[1], confdeltype: m[2] }));
+  const pairs = censusPairs.map((p) => p.constraint);
+  const fedBy = (gate) => [...gate.sql.matchAll(/'(\w+_fkey)'/g)].map((m) => m[1]);
+  const relations = [...BLOCKING_RELATIONS, ...FOLLOWING_RELATIONS];
+  const classified = relations.map((r) => r.constraint);
+  // Which feed gate owns a constraint is a fact about the DDL: the ones v5-seedmultiparent-001 creates
+  // are fed by that migration's gate, every other one by this bundle's standing four-name gate.
+  const createdLater = PARENT_FKS.map((fk) => fk.constraint);
+  const standing = classified.filter((c) => !createdLater.includes(c));
 
   it('the census allowlist is exactly the blocking + following constraints, in both directions', () => {
     expect([...pairs].sort()).toEqual([...classified].sort());
   });
 
-  it('the feed gate asserts the same set, and its count matches', () => {
-    expect([...fed].sort()).toEqual([...classified].sort());
-    expect(FEED.sql).toMatch(new RegExp(`\\)\\) <> ${classified.length}\\b`));
+  it('the two feed gates between them assert the same set, each constraint in exactly one, and each count matches its own list', () => {
+    expect(PARENT_FEED, 'feed gate missing from v5-seedmultiparent-001/gates.yml').toBeDefined();
+    const fed = fedBy(FEED);
+    const fedLater = fedBy(PARENT_FEED);
+    // The whole feed, across both gates, is the classified list — and no name is fed twice.
+    expect([...fed, ...fedLater].sort()).toEqual([...classified].sort());
+    expect(fed.length + fedLater.length).toBe(classified.length);
+    // Each gate feeds its own side of the split and nothing from the other.
+    expect([...fed].sort()).toEqual([...standing].sort());
+    expect([...fedLater].sort()).toEqual([...createdLater].sort());
+    // A count that disagrees with its own list is a gate that can never be green, or never red.
+    expect(FEED.sql).toMatch(new RegExp(`\\)\\) <> ${fed.length}\\b`));
+    expect(PARENT_FEED.sql).toMatch(new RegExp(`\\)\\) <> ${fedLater.length}\\b`));
+  });
+
+  it('the standing feed gate still names four: raising it would red wherever the later table is not applied', () => {
+    // The trap: the allowlist grows to five, so `<> 5` here looks like the matching edit. This gate is
+    // armed on a stamp both environments carry, and the fifth FK exists only after v5-seedmultiparent-001.
+    expect(fedBy(FEED)).toHaveLength(4);
+    expect(FEED.sql).not.toContain(PARENT_STAMP);
+    expect(FEED.sql).not.toMatch(/seed_lot_parent_planting/);
+  });
+
+  it('the later feed gate arms on its own migration\'s stamp and reads the catalog only', () => {
+    expect(PARENT_FEED.continuous).not.toBe(false);
+    expect(PARENT_FEED.expect).toBe('rowcount_eq');
+    expect(PARENT_FEED.value).toBe(0);
+    expect(PARENT_FEED.env).toBeUndefined();
+    // Self-armed on the stamp 0a writes with the table — never on this bundle's, which is already live.
+    expect(PARENT_FEED.sql).toContain(`WHERE version = '${PARENT_STAMP}'`);
+    expect(PARENT_FEED.sql).not.toContain(STAMP);
+    // Pushed before the table exists anywhere: naming it as a relation, or casting to regclass, errors
+    // at parse time under any WHERE and reds the whole run.
+    expect(PARENT_FEED.sql).not.toMatch(/::regclass/);
+    expect(PARENT_FEED.sql).not.toMatch(/\b(FROM|JOIN)\s+(public\.)?seed_lot_parent_planting\b/i);
+  });
+
+  it('what the later migration\'s DDL creates is what is classified, allowlisted and fed', () => {
+    expect(PARENT_FKS.length, 'no FK to inventory_items found in v5-seedmultiparent-001/0a').toBeGreaterThan(0);
+    for (const fk of PARENT_FKS) {
+      expect(fk.confdeltype, `${fk.constraint}: unreadable ON DELETE action`).toBeDefined();
+      // Classified once, on the table and column the DDL gives it.
+      const rel = relations.filter((r) => r.constraint === fk.constraint);
+      expect(rel, `${fk.constraint} is not classified in delete-guard.js`).toHaveLength(1);
+      expect({ table: rel[0].table, column: rel[0].column }).toEqual({ table: fk.table, column: fk.column });
+      // Allowlisted with the delete action the DDL declares, not one typed from memory.
+      expect(censusPairs.filter((p) => p.constraint === fk.constraint)).toEqual([{ constraint: fk.constraint, confdeltype: fk.confdeltype }]);
+    }
+    // The stamp the feed gate keys on is written by the same file that creates the constraint, and the
+    // rollback removes it — so "applied" and "armed" cannot come apart in either direction.
+    const rollback = readFileSync(resolve(PARENT_DIR, '0r-rollback.sql'), 'utf8');
+    expect(PARENT_DDL).toMatch(new RegExp(`VALUES \\('${PARENT_STAMP.replace(/\./g, '\\.')}',`));
+    expect(rollback).toMatch(new RegExp(`DELETE FROM public\\.schema_version WHERE version = '${PARENT_STAMP.replace(/\./g, '\\.')}';`));
+  });
+
+  it('the parent link follows the lot: it is never a blocking relation', () => {
+    // A parent link describes the lot. Blocking on it would make every saved lot with a parent
+    // undeletable, and an arm for it in the guard would red on every ordinary delete of one.
+    for (const fk of PARENT_FKS) {
+      expect(FOLLOWING_RELATIONS.map((r) => r.constraint)).toContain(fk.constraint);
+      expect(BLOCKING_RELATIONS.map((r) => r.constraint)).not.toContain(fk.constraint);
+    }
   });
 
   it('no relation is both blocking and following', () => {

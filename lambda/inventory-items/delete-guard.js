@@ -55,14 +55,21 @@ export const BLOCKING_RELATIONS = Object.freeze([
     constraint: 'event_log_treatment_product_id_fkey' },
 ]);
 
-// The other two foreign keys to inventory_items: they belong to the item and follow it. Listed so every
-// FK the census names is classified here one way or the other — a fifth FK reds the census gate, and
+// The other foreign keys to inventory_items: they belong to the item and follow it. Listed so every
+// FK the census names is classified here one way or the other — a new FK reds the census gate, and
 // the coverage test then reds until it is added to exactly one of these two lists.
+//
+// seed_lot_parent_planting (v5-seedmultiparent-001) is the fifth FK and it FOLLOWS: the plantings a
+// saved-seed lot came from describe the lot, as its stage rows do. A parent link never blocks a lot
+// delete, and it is NOT soft-deleted with the lot — the row stays live and comes back with the lot, so
+// every reader of that table joins a live lot. The preflight below does not read it, on purpose.
 export const FOLLOWING_RELATIONS = Object.freeze([
   { table: 'photos', column: 'inventory_item_id',
     constraint: 'photos_inventory_item_id_fkey' },
   { table: 'seed_lot_stage_log', column: 'inventory_item_id',
     constraint: 'seed_lot_stage_log_inventory_item_id_fkey' },
+  { table: 'seed_lot_parent_planting', column: 'inventory_item_id',
+    constraint: 'seed_lot_parent_planting_inventory_item_id_fkey' },
 ]);
 
 // The label the item's Status control shows for `depleted`. InventoryDetail renders
