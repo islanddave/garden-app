@@ -17,7 +17,7 @@
 // EVERY ASSERTION ABOUT STATE IS A directSql READ-BACK, never the handler's echo (L-108). Timestamps are
 // read `::text` so "unchanged" compares microseconds, not a JS Date rounded to the millisecond.
 //
-// THE TWO ROW-LEVEL INVARIANTS (migrations/v5-seedmultiparent-001/gates-rowlevel.yml.pending) are checked
+// THE TWO ROW-LEVEL INVARIANTS (the last two `post` gates in migrations/v5-seedmultiparent-001/gates.yml) are checked
 // here as cacheRuleViolations(): the same two predicates without their stamp guard, over the lots a test
 // touched, and once more at the end of the file over every lot this file created. A test that builds
 // the drifted state ON PURPOSE (a column with no row, rows with no column) says so and removes or repairs
@@ -242,7 +242,7 @@ async function everything() {
   return JSON.stringify({ lots, rows })
 }
 
-// gates-rowlevel.yml.pending, both queries, without the 001b stamp guard and narrowed to `lotIds`.
+// The two row-level gates in gates.yml, both queries, without the 001b stamp guard and narrowed to `lotIds`.
 async function cacheRuleViolations(lotIds) {
   const notMember = await directSql`
     SELECT i.id FROM public.inventory_items i

@@ -14,8 +14,7 @@ lot has no live `seed_parent` row, otherwise the `plant_id` of one of them. Noth
 | `0b-reconcile.sql` | Makes the table agree with the column on every lot that has at most one live row; lists, without writing, any lot with two or more whose cache is not one of them. **Run twice by design** (below). Writes no stamp. Idempotent. |
 | `0c-arm.sql` | Post-deploy. Refuses unless both row-level invariants return zero rows, then writes stamp `5.0.0-seedmultiparent-001b`. Idempotent. |
 | `0r-rollback.sql` | Drops the table and both stamps. Guarded: refuses while any live row exists that the column could not rebuild. Has a window — read its header. |
-| `gates.yml` | 4 `pre`, 3 `sweep`, 14 standing `post`. Every `post` gate is catalog-only and self-armed on stamp 001, including the feed gate for the fifth foreign key to `inventory_items`. |
-| `gates-rowlevel.yml.pending` | The two row-level gates, armed on stamp 001b. **Not loaded by the runner under this name.** They join `gates.yml` in push 2. |
+| `gates.yml` | 4 `pre`, 3 `sweep`, 16 standing `post`. Fourteen are catalog-only and self-armed on stamp 001, including the feed gate for the fifth foreign key to `inventory_items`. The last two are the row-level gates, armed on stamp 001b; they name the table, were parked in `gates-rowlevel.yml.pending` until push 2 (2026-10-05), and go back there before any rollback. |
 
 Stamps are fixed at first apply and never edited: every standing gate arms on one.
 
@@ -58,8 +57,8 @@ staging before that code reaches dev CI and on prod before its promote.
 
 **Then, on each environment, once that release is live there:** `0b-reconcile.sql` again, then `0c-arm.sql`.
 
-**Push 2 — only when BOTH environments carry stamp `001b`.** Append the two gates in
-`gates-rowlevel.yml.pending` to the `post:` list of `gates.yml`, delete the pending file, push.
+**Push 2 — only when BOTH environments carry stamp `001b`.** The two row-level gates join the `post:` list
+of `gates.yml`. Done 2026-10-05 ("Push 2" below).
 
 ## Applying
 
@@ -194,7 +193,7 @@ psql "$NEON_STAGING_URL" -X -v ON_ERROR_STOP=1 -f migrations/v5-seedmultiparent-
 Neither filters on the lot's `deleted_at`. A refusal is answered by running `0b`; if `0b` lists lots under
 R3, a person decides those. Do not arm around them.
 
-Nothing but this runbook notices if the step is skipped (the row-level gates are not loaded until push 2),
+Until push 2 nothing but this runbook noticed if the step was skipped (the row-level gates were not loaded),
 so it closes on three receipts, per environment: `scripts/verify-deploy.py` shows `inventory-items` and
 `plants` at the promoted build; `0b`'s "after" row reads `0 | 0`; and
 `SELECT version FROM public.schema_version WHERE version LIKE '5.0.0-seedmultiparent-001%'` returns two rows.
@@ -208,8 +207,9 @@ Only when this returns two rows on prod **and** two rows on staging:
 SELECT version FROM public.schema_version WHERE version LIKE '5.0.0-seedmultiparent-001%';
 ```
 
-Then append the two items under `post:` in `gates-rowlevel.yml.pending` to the `post:` list of `gates.yml`,
-delete the pending file, validate, push:
+**Done 2026-10-05:** both environments carried `001b`, so the two gates (`post_cache_is_a_live_member`,
+`post_nonempty_set_has_a_cache`) moved from `gates-rowlevel.yml.pending` to the end of the `post:` list of
+`gates.yml` and the pending file was deleted. The steps were: append, delete, validate, push:
 
 ```bash
 python3 scripts/gate_runner.py --migration migrations/v5-seedmultiparent-001 --env prod --validate-only
@@ -226,8 +226,8 @@ parse time. On a database without the table they do not go vacuous under their s
 
 `0r-rollback.sql` drops the table and removes both stamps. Three things to know before using it:
 
-1. **If push 2 has happened, undo it first.** Move the two row-level gates out of `gates.yml` (back to the
-   pending file), push, and let that reach the branch whose corpus runs against the database — dev for the
+1. **Push 2 has happened (2026-10-05), so undo it first.** Move the two row-level gates out of `gates.yml`
+   (back to a `gates-rowlevel.yml.pending` file, which the runner does not load), push, and let that reach the branch whose corpus runs against the database — dev for the
    push-triggered run, `main` for the cron. With the table gone they error rather than pass.
 2. **It is a clean undo only while no deployed code names the table.** Once the Lambda release is live, or
    on dev, dropping the table turns every seed read into a 42P01. After that the holding state is "leave

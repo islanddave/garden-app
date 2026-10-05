@@ -8,8 +8,8 @@
 #   1. STAGING: pre -> sweep -> 0a -> 0b -> post -> rehearse 0r -> 0a -> 0b -> post.
 #   2. PROD (Dave's approval): pre -> sweep -> 0a -> 0b -> post.
 #   3. The Lambda release that names the table. After it is live on an environment: 0b again, then 0c.
-#   4. PUSH 2, only when BOTH environments carry stamp 001b: the two gates in
-#      gates-rowlevel.yml.pending are appended to `post:` below.
+#   4. PUSH 2, only when BOTH environments carry stamp 001b: the two row-level gates join `post:`
+#      below. DONE 2026-10-05 (they were parked in gates-rowlevel.yml.pending until then).
 #   README.md has the commands and the reason for each step.
 #
 #   WHY STEP 0 COMES FIRST. This table's foreign key to inventory_items is a FIFTH one, and
@@ -20,7 +20,8 @@
 #
 # ANY pre/sweep/post assertion failing is a HARD ABORT.
 #
-# ── WHY EVERY post GATE BELOW IS SELF-ARMING AND CATALOG-ONLY ─────────────────────────────────────
+# ── WHY EVERY post GATE BELOW IS SELF-ARMING, AND ALL BUT THE LAST TWO CATALOG-ONLY ───────────────
+#   (The last two, the row-level gates, name the table and joined in push 2: see their own header.)
 #   `continuous:` DEFAULTS TO TRUE (scripts/gate_runner.py) and .github/workflows/gate-invariants.yml
 #   runs `gate_runner.py --all --phase post --continuous-only` against LIVE PROD AND LIVE STAGING on
 #   every migrations/** push, with no skip-if-unapplied logic. Step 0 above pushes this file to a tree
@@ -34,16 +35,14 @@
 #   a relation name — and evaluates a regclass cast — at PARSE time, before any WHERE or EXISTS runs.
 #   `SELECT ... FROM public.seed_lot_parent_planting` under a false guard still raises 42P01 on an
 #   unapplied database, and an erroring gate reds the run for every migration in the tree
-#   (v5-putupmultisource-001/gates.yml measured it on PG 17). Every reference below is a string compared
-#   against pg_class.relname. The catalog joins are longer and they are the reason this works.
+#   (v5-putupmultisource-001/gates.yml measured it on PG 17). Every reference in the catalog gates is a
+#   string compared against pg_class.relname. The catalog joins are longer and they are the reason this
+#   works. THE ONE EXCEPTION is the pair of row-level gates at the end of `post:`: THE MEMBER-CACHE
+#   INVARIANT — "source_plant_id is NULL exactly when the lot has no live seed_parent row, otherwise it
+#   is one of them" — is a statement about ROWS of the new table, so those two could not be pushed
+#   before the table existed everywhere the corpus runs. They are armed on the SECOND stamp (001b).
 #
 # ── WHAT THESE GATES DO NOT COVER, stated so the coverage is not overread ────────────────────────
-#   * THE MEMBER-CACHE INVARIANT ITSELF — "source_plant_id is NULL exactly when the lot has no live
-#     seed_parent row, otherwise it is one of them". That is a statement about ROWS of the new table,
-#     which by the rule above cannot be gated from a file pushed before the table exists everywhere.
-#     It lives in gates-rowlevel.yml.pending (two gates, armed on the SECOND stamp, 001b) and joins
-#     this file in push 2. Until then it is held by the handler's tests, repaired by 0b-reconcile.sql
-#     and checked once by 0c-arm.sql, which refuses to write 001b while either gate would return a row.
 #   * There is NO gate "no live link row on a soft-deleted lot", and there must never be one. A link
 #     row follows its lot into soft-deletion and is not soft-deleted with it (0a header D4); such a
 #     gate would red on every ordinary delete of a saved lot — the mistake v5-invrefstrand-001's header
@@ -425,5 +424,50 @@ post:
                  AND con.conname IN ('seed_lot_parent_planting_inventory_item_id_fkey')) <> 1
          AND EXISTS (SELECT 1 FROM public.schema_version
                       WHERE version = '5.0.0-seedmultiparent-001')
+    expect: rowcount_eq
+    value: 0
+
+  # ── THE TWO ROW-LEVEL GATES — joined in push 2, once prod AND staging carried stamp 001b ─────────
+  # Unlike every gate above, these NAME THE TABLE AS A RELATION, so they parse only where 0a is
+  # applied; armed on the SECOND stamp (001b, written by 0c-arm.sql). Together they are exactly the
+  # member-cache rule (0a header D1), the same two predicates 0c-arm.sql evaluates before it stamps and
+  # 0b-reconcile.sql prints under "after": change one, change all three. Neither filters on the lot's
+  # deleted_at; role = 'seed_parent' on both.
+  # ⚠ THEY MOVE BACK OUT of this file before any rollback (0r-rollback.sql header, README "Rollback").
+  - name: post_cache_is_a_live_member
+    note: >
+      (i) Every inventory_items row with a non-NULL source_plant_id has a LIVE seed_parent row for
+      that plant. A row here is a lot whose cached parent is not one of its recorded parents: a writer
+      set the column without the row (a reverted Lambda does exactly this — run 0b-reconcile.sql
+      before reading this gate after any revert), or removed the row and left the column.
+    continuous: true
+    sql: |
+      SELECT i.id FROM public.inventory_items i
+       WHERE i.source_plant_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.seed_lot_parent_planting l
+                          WHERE l.inventory_item_id = i.id
+                            AND l.plant_id = i.source_plant_id
+                            AND l.role = 'seed_parent'
+                            AND l.deleted_at IS NULL)
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001b')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_nonempty_set_has_a_cache
+    note: >
+      (ii) Every lot with a live seed_parent row has a non-NULL source_plant_id. A row here is a lot
+      with recorded parents and an empty cache — which is also a lot chk_inventory_seed_source_plant
+      and chk_inventory_source_plant_seeds_only have stopped protecting, since both pass on a NULL
+      column.
+    continuous: true
+    sql: |
+      SELECT DISTINCT l.inventory_item_id FROM public.seed_lot_parent_planting l
+        JOIN public.inventory_items i ON i.id = l.inventory_item_id
+       WHERE l.role = 'seed_parent'
+         AND l.deleted_at IS NULL
+         AND i.source_plant_id IS NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001b')
     expect: rowcount_eq
     value: 0
