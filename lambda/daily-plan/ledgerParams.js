@@ -120,19 +120,36 @@ const SIZE_BUCKETS = {
 // month's rain included). Physics puts a late-September 5-gal bag at 4-6 dry days, so this sits on the
 // watering side of it. The Jul 22-Aug 10 control is UNCHANGED (72.3/day, bags every 2.41 days): its 7-day
 // mean lows never went below 56.4F, so tminHiF 56 keeps summer at exactly 1.0. (tminHiF 58 / tminLoF 52
-// reached 31/day but moved summer -3%; factorMin 0.3 changed nothing, because this September's lows never
-// sat at 50F long enough for the floor to bind.) Re-score after a full season (OPS-RAINFCSTRESCORE-001).
+// reached 31/day but moved summer -3%; factorMin 0.3 changed nothing in that replay, because rain on
+// 09-26..09-28 reset every planting.) The figures in this paragraph were replayed at factorMin 0.4.
+// Re-score after a full season (OPS-RAINFCSTRESCORE-001).
+//
+// factorMin 0.5 (was 0.4) is the physics seat's as-built ruling, 2026-10-05, on prod data through the real
+// fold (_waterdemand-20260928/seat-physics-asbuilt-20261005.md sections 1, 2 and 6). The floor does bind:
+// the factor sat at 0.400 on six settled days, 09-24..09-29 (7-day mean lows 45.2-48.4F). At 0.4 the
+// eighteen 2-day bags (14 peppers in 5 gal, an eggplant, 3 tomatillos) were listed at 8.1-9.1 dry days,
+// against a physical worst case of 3.8 and a central value of 8.7 for a 5-gal pepper, and past the 6-7 day
+// dry-downs this garden showed in September: no margin until mid-October. At 0.5 they list at 6.5-7.3 dry
+// days and 1-day bags at 3.2-3.6, for about two more plantings listed a day.
 //
 // ELIGIBILITY (lateSeasonEligible in ledger.js): flowering / fruiting / harvested plantings, outdoor or
-// covered-outdoor (indoor demand is flat 1.0 already), in the in-ground class or a vessel over minGal.
+// covered-outdoor (indoor demand is flat 1.0 already), in the in-ground class or a vessel over minGal,
+// whose crop_type_slug has a KNOWN frost band in `bands` (frostClass.BAND_BY_SLUG).
 // Kept at full demand, because a small buffer is the plant-death pathway: tray cells, hanging baskets,
 // vessels of 1 gal or less or of unknown size, and anything transplanted in the last transplantDays.
+// Kept at full demand, because the slowdown is not theirs: hardy and light-frost-tolerant crops, and any
+// unknown or missing slug. Both grounds for the factor are warm-season physiology; a cool-season crop is
+// at its optimum at 45-65F and ET0 already carries all of its autumn decline. Status cannot stand in for
+// the crop, because one logged harvest sets `harvested` for good (events/statusTransitions.js): there it
+// means "picked from once", not "finishing". frostClass counts an unknown slug as tender so that a frost
+// alert errs toward alerting; for water that default points the wrong way, so it is not used here.
 const LATE_SEASON = {
-  factorMin: 0.4,
+  factorMin: 0.5,
   tminHiF: 56, tminLoF: 50,       // trailing 7-day mean low: >= 56F -> no slowdown, <= 50F -> factorMin
   liftLoF: 75, liftHiF: 85,       // that day's high lifts the factor back to 1.0 across 75-85F
   minRows: 4,                     // of the 7 trailing days; fewer -> factor 1.0 (fail toward watering)
   statuses: ['flowering', 'fruiting', 'harvested'],
+  bands: ['tropical', 'chill_sensitive', 'tender'],
   minGal: 1,
   exemptTypes: ['hanging_basket'],
   transplantDays: 21,

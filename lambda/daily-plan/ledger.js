@@ -19,6 +19,7 @@
 // (ET civil days only bucket demand attribution); date-only backdated events sit at 12:00 ET.
 
 const P = require('./ledgerParams');
+const fc = require('./frostClass');   // BAND_BY_SLUG only (a frozen table; frostClass requires nothing)
 
 const DAY = 86400000;
 const ET_TZ = 'America/New_York';
@@ -143,13 +144,16 @@ function exposureClass(p) {
 
 // ── Late-season crop factor (BUG-WATERAUTUMNDEMAND-001; the reasoning is on LATE_SEASON in ledgerParams) ─
 // Which plantings the factor may slow. Everything it excludes keeps FULL demand — the direction that errs
-// toward watering — because each exclusion is a small or unproven buffer. Per-day transplant timing is
-// checked in the fold (a planting can age into eligibility inside the 30-day window).
-function lateSeasonEligible({ status, vessel, exposure }) {
+// toward watering — because each exclusion is a small or unproven buffer, or a crop the slowdown is not
+// for (`slug` is the planting's crop_type_slug; a hardy, unbanded or missing one is out). Per-day transplant
+// timing is checked in the fold (a planting can age into eligibility inside the 30-day window).
+function lateSeasonEligible({ status, vessel, exposure, slug }) {
   const L = P.LATE_SEASON;
   if (exposure === 'indoor' || !vessel || vessel.tray) return false;
   if (L.exemptTypes.includes(vessel.ct)) return false;
   if (!L.statuses.includes(String(status || '').toLowerCase())) return false;
+  const s = typeof slug === 'string' ? slug.trim().toLowerCase() : '';
+  if (!Object.hasOwn(fc.BAND_BY_SLUG, s) || !L.bands.includes(fc.BAND_BY_SLUG[s])) return false;
   return vessel.inGroundClass || (vessel.sizeGal != null && vessel.sizeGal > L.minGal);
 }
 // Day of year (1-366) for a 'YYYY-MM-DD' label, UTC date math like calDays.

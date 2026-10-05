@@ -1,7 +1,8 @@
 // BUG-WATERAUTUMNDEMAND-001 — the Water Ledger's late-season crop factor (ledgerParams LATE_SEASON,
 // ledger.lateSeasonFactor / lateSeasonEligible, applied in foldLedger's demandFor after the ET0 clamp).
 // Dave, 2026-09-28: the app over-asked for water once autumn cooled; the replay and the physics that set these
-// numbers live in gardening-docs project-state/_waterdemand-20260928/.
+// numbers live in gardening-docs project-state/_waterdemand-20260928/. The floor (0.50) and the frost-band test in
+// eligibility are the physics seat's as-built ruling, seat-physics-asbuilt-20261005.md sections 1 and 6.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +10,7 @@ import ledger from './ledger.js';
 import P from './ledgerParams.js';
 import engine from './engine.js';
 import cf from './_coverFlags.js';
+import frostClass from './frostClass.js';
 
 const { lateSeasonFactor, lateSeasonEligible, foldLedger, vesselProfile, etMidnightMs, addDays } = ledger;
 const L = P.LATE_SEASON;
@@ -23,25 +25,30 @@ function lows(day, tmin, { n = 8, et0 = 0.12, tmax = 62 } = {}) {
 
 describe('lateSeasonFactor — the week\'s lows set it, a warm day lifts it, spring never sees it', () => {
   const D = '2026-09-26';
+  it('the floor is 0.50', () => {
+    expect(L.factorMin).toBe(0.5);
+    expect(lateSeasonFactor(lows(D, 50), D, false, 60)).toBe(0.5);
+    expect(lateSeasonFactor(lows(D, 42), D, false, 60)).toBe(0.5);
+  });
   it('ramps linearly from 1.0 at a 56F weekly mean low to factorMin at 50F, and holds below', () => {
     expect(lateSeasonFactor(lows(D, 60), D, false, 60)).toBe(1);
     expect(lateSeasonFactor(lows(D, 56), D, false, 60)).toBe(1);
-    expect(lateSeasonFactor(lows(D, 53), D, false, 60)).toBeCloseTo(1 - (1 - L.factorMin) * 0.5, 10);   // 0.7
+    expect(lateSeasonFactor(lows(D, 53), D, false, 60)).toBeCloseTo(1 - (1 - L.factorMin) * 0.5, 10);   // 0.75
     expect(lateSeasonFactor(lows(D, 50), D, false, 60)).toBeCloseTo(L.factorMin, 10);
     expect(lateSeasonFactor(lows(D, 42), D, false, 60)).toBeCloseTo(L.factorMin, 10);
   });
 
   it('a warm day restores demand: halfway across 75-85F is halfway back, 85F is all the way', () => {
-    expect(lateSeasonFactor(lows(D, 50), D, false, 70)).toBeCloseTo(0.4, 10);
-    expect(lateSeasonFactor(lows(D, 50), D, false, 80)).toBeCloseTo(0.4 + 0.6 * 0.5, 10);
+    expect(lateSeasonFactor(lows(D, 50), D, false, 70)).toBeCloseTo(0.5, 10);
+    expect(lateSeasonFactor(lows(D, 50), D, false, 80)).toBeCloseTo(0.5 + 0.5 * 0.5, 10);
     expect(lateSeasonFactor(lows(D, 50), D, false, 85)).toBe(1);
-    expect(lateSeasonFactor(lows(D, 50), D, false, null)).toBeCloseTo(0.4, 10);   // unknown high: no lift
+    expect(lateSeasonFactor(lows(D, 50), D, false, null)).toBeCloseTo(0.5, 10);   // unknown high: no lift
   });
 
   it('cold nights before the June solstice do not trigger it (spring growth, not season\'s end)', () => {
     expect(lateSeasonFactor(lows('2026-06-10', 42), '2026-06-10', false, 60)).toBe(1);
     expect(lateSeasonFactor(lows('2026-06-20', 42), '2026-06-20', false, 60)).toBe(1);   // day 171
-    expect(lateSeasonFactor(lows('2026-06-21', 42), '2026-06-21', false, 60)).toBeCloseTo(0.4, 10);   // day 172
+    expect(lateSeasonFactor(lows('2026-06-21', 42), '2026-06-21', false, 60)).toBeCloseTo(0.5, 10);   // day 172
   });
 
   it('needs at least minRows known lows in the trailing week, else 1.0 (fail toward watering)', () => {
@@ -50,22 +57,22 @@ describe('lateSeasonFactor — the week\'s lows set it, a warm day lifts it, spr
     const holes = lows(D, 45);
     for (const k of Object.keys(holes).slice(0, 5)) holes[k].tmin_f = null;
     expect(lateSeasonFactor(holes, D, false, 60)).toBe(1);   // only 3 known of the trailing 7
-    expect(lateSeasonFactor(lows(D, 45, { n: 4 }), D, false, 60)).toBeCloseTo(0.4, 10);
+    expect(lateSeasonFactor(lows(D, 45, { n: 4 }), D, false, 60)).toBeCloseTo(0.5, 10);
   });
 
   it('a settled day includes its own low; today, which has no row yet, uses the seven days before it', () => {
     const w = lows('2026-09-25', 50, { n: 7 });           // Sep 19..25
     w['2026-09-26'] = { et0_in: 0.12, tmax_f: 60, tmin_f: 62, precip_in: 0 };
     // as TODAY (Sep 26): reads Sep 19..25 only -> mean 50 -> floor
-    expect(lateSeasonFactor(w, '2026-09-26', true, 60)).toBeCloseTo(0.4, 10);
-    // as a SETTLED day: Sep 20..26 -> (6*50 + 62)/7 = 51.71 -> 1 - 0.6*(56-51.71)/6
-    expect(lateSeasonFactor(w, '2026-09-26', false, 60)).toBeCloseTo(1 - 0.6 * ((56 - (6 * 50 + 62) / 7) / 6), 10);
+    expect(lateSeasonFactor(w, '2026-09-26', true, 60)).toBeCloseTo(0.5, 10);
+    // as a SETTLED day: Sep 20..26 -> (6*50 + 62)/7 = 51.71 -> 1 - 0.5*(56-51.71)/6
+    expect(lateSeasonFactor(w, '2026-09-26', false, 60)).toBeCloseTo(1 - 0.5 * ((56 - (6 * 50 + 62) / 7) / 6), 10);
   });
 });
 
 describe('lateSeasonEligible — full demand stays wherever the buffer is small or unproven', () => {
   const v = (ct, size) => vesselProfile(ct, size);
-  const ok = (o) => lateSeasonEligible({ status: 'fruiting', vessel: v('fabric_bag', '5 gal'), exposure: 'outdoor', ...o });
+  const ok = (o) => lateSeasonEligible({ status: 'fruiting', vessel: v('fabric_bag', '5 gal'), exposure: 'outdoor', slug: 'pepper', ...o });
   it('fruiting, flowering and harvested plantings in bags, beds and larger vessels qualify, outdoors or covered', () => {
     expect(ok({})).toBe(true);
     expect(ok({ status: 'Flowering' })).toBe(true);
@@ -87,6 +94,34 @@ describe('lateSeasonEligible — full demand stays wherever the buffer is small 
     expect(ok({ vessel: v('plastic_pot', '6 in') })).toBe(false);
     expect(ok({ vessel: v('plastic_pot', null) })).toBe(false);
     expect(ok({ vessel: v('plastic_pot', '3 gal') })).toBe(true);
+  });
+  // The slowdown is warm-season physiology. A hardy green in October is still growing, and one logged harvest
+  // marks it `harvested` for good (events/statusTransitions.js), so status alone cannot mean "finishing".
+  it.each([
+    ['pepper', 'fruiting', true],          // tender
+    ['tomato', 'harvested', true],         // tender
+    ['basil', 'harvested', true],          // chill_sensitive
+    ['okra', 'flowering', true],           // chill_sensitive
+    ['lemon_verbena', 'harvested', true],  // tropical
+    [' Pepper ', 'fruiting', true],        // normalised like frostClass does
+    ['lettuce', 'harvested', false],       // hardy
+    ['collard', 'harvested', false],
+    ['dill', 'flowering', false],
+    ['shallot', 'fruiting', false],
+    ['not_a_crop', 'fruiting', false],     // unknown slug: full demand, NOT frostClass's unknown-means-tender
+    ['', 'fruiting', false],
+    [null, 'fruiting', false],
+    [undefined, 'harvested', false],
+  ])('crop %s, status %s -> eligible %s', (slug, status, want) => {
+    expect(ok({ slug, status })).toBe(want);
+  });
+  it('covers each eligible band, and no band outside the three', () => {
+    expect(L.bands).toEqual(['tropical', 'chill_sensitive', 'tender']);
+    for (const [slug, band] of Object.entries(frostClass.BAND_BY_SLUG)) {
+      expect(ok({ slug, status: 'harvested' }), slug).toBe(L.bands.includes(band));
+    }
+    const seen = new Set(Object.values(frostClass.BAND_BY_SLUG));
+    for (const b of [...L.bands, 'light_frost_tolerant', 'hardy']) expect(seen.has(b), b).toBe(true);
   });
 });
 
@@ -140,7 +175,7 @@ describe('engine — the flag-ON water list reads eligibility off the planting',
   const TODAY = '2026-09-26';
   const SEED = { _seeded: true, crop: 'tomato', water_interval_days_container: 1, water_interval_days_inground: 1,
     water_method: 'soak', soil_moisture_target: 'moist', drought_tolerance: 'medium' };
-  const P0 = (o) => cf.withCoverFlags({ id: 'p', name: 'Bag', variety: 'v', genus: 'Solanum', project: 'P', project_id: 'pp',
+  const P0 = (o) => cf.withCoverFlags({ id: 'p', name: 'Bag', variety: 'v', genus: 'Solanum', project: 'P', project_id: 'pp', crop_type_slug: 'tomato',
     container_type: 'fabric_bag', container_size: '5 gal', covered: false, rain_exposed: true, last_water: addDays(TODAY, -2),
     substrate_start: addDays(TODAY, -120), transplant_at: addDays(TODAY, -100), db_cadence: SEED, ...o });
   const weatherDaily = [];
@@ -160,5 +195,26 @@ describe('engine — the flag-ON water list reads eligibility off the planting',
   it('a growing (vegetative) bag stays on the list; the same bag in fruit is slowed off it', () => {
     expect(dueIds).toContain('vg');
     expect(dueIds).not.toContain('fr');
+  });
+
+  // Same watering history, same cool week. Both are dry enough to be listed, so both rows carry their drivers.
+  it('a fruiting pepper bag carries the late_season driver; a harvested lettuce row in the bed does not', () => {
+    const t = etMidnightMs(addDays(TODAY, -10)) + 9 * H;
+    const p2 = engine.generatePlan({
+      today: TODAY, nowMs: etMidnightMs(TODAY) + 6 * H, weather: { tonightLow: 45, highToday: 62 },
+      hydrology: { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, today_et0_in: 0.12, today_tmax_f: 62 },
+      ownerFallback: 'dave', cadence, fertModel, rainCreditEnabled: true, rainMaxDaysEnabled: false, todayAwareEnabled: true,
+      waterLedgerEnabled: true, weatherDaily,
+      eventsByPlant: { pep: [{ id: 'a', t, type: 'watering' }], let: [{ id: 'b', t, type: 'watering' }] },
+      plantings: [
+        P0({ id: 'pep', status: 'fruiting', crop_type_slug: 'pepper', genus: 'Capsicum', last_water: addDays(TODAY, -10) }),
+        P0({ id: 'let', status: 'harvested', crop_type_slug: 'lettuce', genus: 'Lactuca', container_type: 'raised_bed', container_size: null,
+          last_water: addDays(TODAY, -10) }),
+      ],
+    });
+    const rows = Object.fromEntries(Object.values(p2.users).flatMap((u) => u.tasks.water_due).map((x) => [x.id, x]));
+    expect(Object.keys(rows).sort()).toEqual(['let', 'pep']);
+    expect(rows.pep.ledger.drivers).toContainEqual({ factor: 'late_season', value: L.factorMin });
+    expect(rows.let.ledger.drivers.some((x) => x.factor === 'late_season')).toBe(false);
   });
 });

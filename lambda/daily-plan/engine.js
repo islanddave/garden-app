@@ -1019,7 +1019,7 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
     exposure, vessel: vp, rainTier: rainDepthTierFor(p.container_type, vp.sizeGal),
     transplantAt: p.transplant_at || null,
     // BUG-WATERAUTUMNDEMAND-001: finishing warm-season crops slow down as nights cool (ledgerParams LATE_SEASON).
-    lateSeason: ledger.lateSeasonEligible({ status: p.status, vessel: vp, exposure }),
+    lateSeason: ledger.lateSeasonEligible({ status: p.status, vessel: vp, exposure, slug: p.crop_type_slug }),
   });
   const via = c._via || 'default';
   const confidence = ledger.computeConfidence({
