@@ -97,15 +97,15 @@ function unclaim(key, keys) {
 export function releaseKeys(key, keys) { if (unclaim(key, keys)) changed() }
 
 // The POST answered: the claim becomes a log, stored before the claim goes — no reader sees the key in neither.
-// No signal per landing: a list that left the key out as a claim leaves it out as a log, so nothing it draws moves.
-// One when the key's last claim is answered, for what counts the store ("N logged today").
+// No signal: a list that left the key out as a claim leaves it out as a log, so nothing it draws moves (a run is
+// one landing after another, and its own list already redraws on each).
 export function confirmKeys(key, keys) {
   if (!key || !keys.length) return
   const s = readLogged(key)
   let added = false
   for (const k of keys) if (!s.has(k)) { s.add(k); added = true }
   if (added) writeLogged(key, s)
-  if (unclaim(key, keys) ? !claims.has(key) : added) changed()
+  unclaim(key, keys)
 }
 
 // ── runs: going, or ended and waiting for a mounted list ──────────────────────────────────────────────────

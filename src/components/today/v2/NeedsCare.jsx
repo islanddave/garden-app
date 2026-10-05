@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../../../lib/constants.js'
 import { T } from '../../forms/formStyles.js'
 import FilterChipRow from '../../forms/FilterChipRow.jsx'
@@ -10,7 +10,7 @@ import { MOISTURE_CHECK_EVENT } from '../../../lib/careNeeded.js'
 import SpotRow, { SpotDoneLine, tinted } from './SpotRow.jsx'
 import SpotBody from './SpotBody.jsx'
 import PlantCareRow, { outlineBtn } from './PlantCareRow.jsx'
-import { removeLogged, readLogged, claimedKeys, subscribeLogged, loggedVersion, runStart, runEnd, runGoing, runTake, filtersKey, readFilters, writeFilters } from './needsCareStore.js'
+import { removeLogged, readLogged, claimedKeys, runStart, runEnd, runGoing, runTake, filtersKey, readFilters, writeFilters } from './needsCareStore.js'
 
 // NeedsCare — the body of the redesigned Today's Needs care section (V5-TODAYREDESIGN-001 S4). Dave's
 // D3 (a spot is logged whole, then its exceptions), D6 (spot Not today), D7 (Outside, Stable and House are
@@ -113,8 +113,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
 
   // Every write claims its keys before it posts, and each is logged or released as its own POST answers (IMPORTANT-A;
   // useTodayLogged — the claim is the page's, in memory, the log the tab's, in the store); an Undo un-writes what it
-  // deleted, as before. Subscribed here too: a run's end, or a claim let go, redraws the lines below by itself.
-  useSyncExternalStore(subscribeLogged, loggedVersion)
+  // deleted, as before. The page's hook is subscribed to all of it, so a run's end or a claim let go redraws this body.
   const claim = care.claim
   const alive = useRef(false)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
@@ -162,10 +161,10 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   // and come Back to — parked its result (run, below). This body takes it and lands it as the run would have: the
   // created ids, so the line has its Undo, and each failure as "Not logged" with its Retry, unless that row has been
   // logged or taken again since. Said through this page's status region when the run's own page is gone; never focused.
-  // A running batch with NO run behind it is one a full reload cut off: the page that could have finished it is gone,
-  // and its ids with it. The batch is dropped — what landed is in the store (and the plan), what did not is due again,
-  // and no line is left to claim a count for it.
-  useEffect(() => {
+  // A running batch with NO run behind it is one a full reload cut off (or one that threw): the page that could have
+  // finished it is gone, and its ids with it. The batch is dropped — what landed is in the store (and the plan), what
+  // did not is due again, and no line is left to claim a count for it. Before paint, so neither state is ever drawn.
+  useLayoutEffect(() => {
     for (const [bid, b] of Object.entries(c?.batches || {})) {
       if (!b.running || mine.current.has(bid) || runGoing(bid)) continue
       const r = runTake(bid)
@@ -190,7 +189,6 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     setBusy({ scope, key, done: 0, total })
     announce(`${etype === 'watering' ? 'Watering' : 'Logging'} ${total} in ${name}…`)
     let lastSpoken = Date.now()
-    let started = false
     let res = null
     try {
       res = await actions.runBulk(etype, keys, {
@@ -199,7 +197,6 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
         // spot names) — a remount's rows no longer hold those keys, so the record is where its done lines read them.
         onClaim: (ks) => {
           claim.onClaim(ks)
-          started = true
           mine.current.add(bid); runStart(bid)
           const spotOf = Object.fromEntries(ks.map((k) => [k, spotOfKey.get(k) || null]))
           const spots = scope === 'spot' ? [key] : scope === 'group' ? [...new Set(Object.values(spotOf).filter(Boolean))] : []
@@ -212,14 +209,11 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
         },
       })
     } finally {
-      // However the run ended, its button is free. One that threw has no result to land: the run is forgotten and its
-      // batch leaves the record (its claims were logged or released by the hook, each as it answered).
+      // However the run ended, its button is free. One that threw has no result to land: the run is forgotten and no
+      // longer this body's, which leaves its batch one with no run behind it — dropped, above. (Its claims were logged
+      // or released by the hook, each as it answered.)
       setBusy(null)
-      if (!res && started) {
-        runEnd(bid)
-        mine.current.delete(bid)
-        setCare((cc) => { const n = { ...(cc.batches || {}) }; delete n[bid]; return { ...cc, batches: n } })
-      }
+      if (!res) { runEnd(bid); mine.current.delete(bid) }
     }
     const fails = res.failed.length
     const said = `${kind === 'watered' ? 'Watered' : 'Logged'} ${res.created.length} in ${name}.` + (fails ? ' ' + notLoggedText(res.failed, name) : '')
@@ -227,10 +221,10 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     if (!alive.current) {
       // This body is gone (its section closed, or the page left): its setCare may reach no record at all. The result
       // is parked for the body then on screen — this page's, reopened, or the Back remount's — to take (above).
-      if (started) runEnd(bid, { res, what, said, by: claim })
+      runEnd(bid, { res, what, said, by: claim })
       return res
     }
-    if (started) runEnd(bid)
+    runEnd(bid)
     settle(bid, fresh, res, what)
     mine.current.delete(bid)
     // §5.5: a partial failure puts focus on the first Retry (the spot's own, or the group's first failed spot's).
@@ -452,8 +446,8 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     const stuck = last && last[1].undoFailed
     const text = doneText(bs, key)
     const note = [rowNotes(key), stuck ? `${stuck} could not be undone` : null].filter(Boolean).join(' · ')
-    // Nothing landed here and nothing is still going: there is nothing to say, so no line — never a bare
-    // "Drive-Shade · " beside a check.
+    // A cut-off run that holds nothing here any more (its writes for this spot failed, and the plan has since dropped
+    // their rows): nothing to say, so no line — never a bare "Drive-Shade · " beside a check.
     if (!text && !note) return null
     return (
       <SpotDoneLine key={key} spotKey={key} name={name} text={text} note={note}
@@ -463,17 +457,17 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   }
 
   const groupLine = (g) => {
-    // A cut-off group run holds the line only while it is still going ("watering 154…", no Undo yet).
-    const gb = Object.entries(batches).filter(([bid, b]) => b.scope === 'group' && b.target === g.key && !(b.running && !going(bid, b, null)))
+    const gb = Object.entries(batches).filter(([, b]) => b.scope === 'group' && b.target === g.key)
     if (!gb.length) return null
     const [bid, b] = gb[gb.length - 1]
-    const cut = b.running ? going(bid, b, null) : 0
+    // A cut-off group run, still going: what it holds, and no Undo until its result is taken.
+    const cut = !!b.running
     return (
       <div data-testid="care-group-done" data-group={g.key} style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 48 }}>
         <Icon name="action.check" size={16} decorative style={{ color: P.green }} />
         <span tabIndex={-1} data-focus-id={'group:' + g.key} style={{ flex: 1, fontSize: T.type.sm, outline: 'none' }}>
           <span style={{ fontWeight: 600, color: P.dark }}>{g.key}</span>
-          <span style={{ color: P.mid }}>{cut ? ` · watering ${cut}…` : ` · watered ${b.created.length}`}{b.undoFailed ? ` · ${b.undoFailed} could not be undone` : ''}</span>
+          <span style={{ color: P.mid }}>{cut ? ` · watering ${going(bid, b, null)}…` : ` · watered ${b.created.length}`}{b.undoFailed ? ` · ${b.undoFailed} could not be undone` : ''}</span>
         </span>
         {!cut && <button type="button" onClick={() => undoBatch(bid)} disabled={undoing === bid} aria-label={`Undo: ${g.key} watered ${b.created.length}`} style={outlineBtn}>Undo</button>}
       </div>

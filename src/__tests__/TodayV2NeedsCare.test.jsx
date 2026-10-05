@@ -544,6 +544,13 @@ const waterAll5 = async () => {
   fireEvent.click(within(spot('Drive-Shade')).getByRole('button', { name: 'Water all 5 in Drive-Shade' }))
   await settle()
 }
+const servePlan = (payload) => { planState.current = { data: payload, loading: false, error: null, reload: vi.fn() } }
+// The plan as the server reads it once `ids` have a watering logged: the engine marks them done.
+const planWithDone = (ids) => {
+  const p = JSON.parse(JSON.stringify(PAYLOAD))
+  for (const need of ['water_due', 'no_history']) for (const it of p.plan[need] || []) if (ids.includes(it.id)) it.done = true
+  return p
+}
 
 describe('a run still in flight at unmount is never offered again on the Back remount (review 4162.1 IMPORTANT-A)', () => {
   it('QA-T1: hold the POSTs, Water all 5, unmount mid-run, Back, tap again, release — each plant POSTed exactly once, and the spot is not live on the remount', async () => {
@@ -726,11 +733,61 @@ describe('a run that ends after the Back lands on the page that is on screen (pr
     expect(document.querySelector('[data-testid="today-care"]')).toBeNull()
     fireEvent.click(careBand()); await settle()
     expect(spotHead('Drive-Shade').textContent).toContain('Watering 5…')
+    // Every write to the page's status region from here on (a second identical sentence is still a second write).
+    let writes = 0
+    const seen = new MutationObserver((ms) => { writes += ms.length })
+    seen.observe(screen.getByTestId('today-status'), { childList: true })
     await release()
+    writes += seen.takeRecords().length
+    seen.disconnect()
     expect(perPlant(five)).toEqual([1, 1, 1, 1, 1])
     expect(doneLine('Drive-Shade').textContent).toContain('Drive-Shade · watered 5')
     expect(within(doneLine('Drive-Shade')).getByRole('button', { name: 'Undo: Drive-Shade watered 5' })).toBeTruthy()
     expect(screen.getByTestId('today-status').textContent).toBe('Watered 5 in Drive-Shade.')
+    expect(writes).toBe(1) // the run said it, on its own page; the body that took the result does not say it again
+  })
+
+  it('a failed plant taken again on this page before the old run ends is being written, not "Not logged", when that run lands', async () => {
+    const five = waterIn('Drive-Shade').map((r) => r.plantingId)
+    wire.hold = true
+    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    await waterAll5()
+    const lost = wire.posts[0].plant_id
+    first.unmount()
+    await backTo()
+    await answer(lost, true) // it failed: back on this page's list, while the old run goes on
+    fireEvent.click(liveFor('Drive-Shade')[0]); await settle() // "Water 1 in Drive-Shade": its new POST is on the wire
+    expect(wire.posts.filter((b) => b.plant_id === lost).length).toBe(2)
+    for (const id of five.filter((x) => x !== lost)) await answer(id) // the old run's other four land: it ends
+    expect(spotHead('Drive-Shade').textContent).toContain('Watered 4')
+    expect(spot('Drive-Shade').querySelector('[data-testid="care-spot-failed"]')).toBeNull()
+    await answer(lost)
+    expect(doneLine('Drive-Shade').textContent).toContain('Drive-Shade · watered 5')
+    expect(perPlant(five).reduce((a, b) => a + b, 0)).toBe(6) // five landings and the one failure
+  })
+
+  it('mid group run, a spot whose every write failed and whose rows the plan has since dropped says nothing — no "Drive-Shade · " line', async () => {
+    const five = waterIn('Drive-Shade').map((r) => r.plantingId)
+    wire.hold = true
+    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    fireEvent.click(outsideAll()); await settle()
+    first.unmount()
+    servePlan(planWithDone(five)) // watered some other way meanwhile: the plan the remount paints no longer lists them
+    await backTo()
+    expect(doneLine('Drive-Shade').textContent).toContain('Drive-Shade · watering 5…')
+    // Every POST is answered — Drive-Shade's five fail, the rest land — except ONE of the rest, held: the run goes on.
+    let stuck = null
+    for (let i = 0; i < 60 && wire.held.length; i++) {
+      for (const r of wire.held.splice(0)) { if (!stuck && !five.includes(r.plant)) stuck = r; else r(five.includes(r.plant)) }
+      await settle()
+    }
+    expect(wire.posts.length).toBe(154)
+    expect(perPlant(five)).toEqual([1, 1, 1, 1, 1])
+    expect(document.querySelector('[data-testid="care-group-done"][data-group="Outside"]').textContent).toContain('Outside · watering 149…')
+    expect(doneLine('Drive-Shade')).toBeNull()
+    expect(spot('Drive-Shade')).toBeNull()
+    expect(document.querySelector('[data-testid="today-care"]').textContent).not.toContain('Drive-Shade')
+    stuck(false); await settle()
   })
 })
 
@@ -932,14 +989,6 @@ describe('a full reload mid-run hides nothing that was not logged (pre-promote I
     render(<MemoryRouter><Provider value={{ api: null, isReturn: true }}><Fresh /></Provider></MemoryRouter>)
     await settle()
   }
-  const servePlan = (payload) => { planState.current = { data: payload, loading: false, error: null, reload: vi.fn() } }
-  // The plan as the server reads it once `ids` have landed: the engine marks them done.
-  const planWithDone = (ids) => {
-    const p = JSON.parse(JSON.stringify(PAYLOAD))
-    for (const need of ['water_due', 'no_history']) for (const it of p.plan[need] || []) if (ids.includes(it.id)) it.done = true
-    return p
-  }
-
   it('E1: four POSTs on the wire and one never sent when the page dies — nothing was confirmed, so nothing is hidden, the unsent plant is offered again and no line says watered', async () => {
     const five = waterIn('Drive-Shade').map((r) => r.plantingId)
     wire.hold = true

@@ -15,10 +15,8 @@ import { subscribeLogged, loggedVersion, readLogged, claimedKeys, claimKeys, con
 // first POST, then exactly one of onLogged / onRelease per key.
 export function useTodayLogged(logKey) {
   useSyncExternalStore(subscribeLogged, loggedVersion)
-  const own = useRef(null)
-  if (!own.current || own.current.key !== logKey) own.current = { key: logKey, keys: new Set() }
-  const mine = own.current.keys
-  const sig = [...new Set([...readLogged(logKey), ...claimedKeys(logKey)])].filter((k) => !mine.has(k)).sort().join('\n')
+  const mine = useRef(new Set()).current
+  const sig =[...new Set([...readLogged(logKey), ...claimedKeys(logKey)])].filter((k) => !mine.has(k)).sort().join('\n')
   const held = useMemo(() => new Set(sig ? sig.split('\n') : []), [sig])
   const claim = useMemo(() => ({
     onClaim: (ks) => { for (const k of ks) mine.add(k); claimKeys(logKey, ks) },
