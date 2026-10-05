@@ -2,7 +2,7 @@
 //
 // seed_lot_parent_planting holds the parent plantings of a saved-seed lot, one live row per
 // (lot, planting, role), beside inventory_items.source_plant_id, which survives as a member cache
-// naming one of them (schema_version 5.0.0-seedmultiparent-001). Five statements in this directory
+// naming one of them (schema_version 5.0.0-seedmultiparent-001). Six statements in this directory
 // name it, and they are not the same shape:
 //   1. index.js GET /api/plants/:id/seed-lots — the reverse read. Binds the table twice: `sl` in the
 //      EXISTS that is one of the two arms deciding which lots are listed (the other is the cache
@@ -11,6 +11,8 @@
 //   3. merge.js snapshot read of the rows the collision prune will retire — `l`, `w`, `o`.
 //   4. merge.js collision prune — an UPDATE aliased `l`, with the same `w` and `o` arms.
 //   5. merge.js repoint — an UNALIASED UPDATE.
+//   6. merge.js lot lock — a SELECT ... FOR UPDATE on inventory_items that reaches this table in an
+//      EXISTS, aliased `sl`, to find the lots whose links statements 4 and 5 are about to write.
 //
 // WITHOUT THIS FILE the Phase 4 ratchet (scripts/schema-audit-join-baseline.json, uncovered_relations
 // = 47, may fall and never rise) counts 48: both handlers query a relation nothing in lambda/plants
@@ -144,12 +146,17 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants seed_lot_parent_planting col
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    // 1 in index.js (the seed-lots read) + 4 in merge.js (two snapshot reads, the prune, the repoint).
-    expect(STATEMENTS).toHaveLength(5);
+    // 1 in index.js (the seed-lots read) + 5 in merge.js (two snapshot reads, the lot lock, the prune,
+    // the repoint).
+    // 5 -> 6: the lot lock. It reaches this table inside an EXISTS, to find the lots whose links the
+    // merge will write, and names `sl.inventory_item_id` and `sl.plant_id` only — both already in the
+    // contract. No role and no deleted_at there, on purpose: every role, live or retired.
+    expect(STATEMENTS).toHaveLength(6);
     expect(STATEMENTS.map((s) => s.file).sort())
-      .toEqual(['index.js', 'merge.js', 'merge.js', 'merge.js', 'merge.js']);
-    // ol / sl are the reverse read's two bindings; l / o / w are the merge's loser row, a lower-id
-    // loser's and the winner's, the aliases every prune in merge.js uses.
+      .toEqual(['index.js', 'merge.js', 'merge.js', 'merge.js', 'merge.js', 'merge.js']);
+    // ol / sl are the reverse read's two bindings, and sl is the lot lock's as well; l / o / w are
+    // the merge's loser row, a lower-id loser's and the winner's, the aliases every prune in merge.js
+    // uses.
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['l', 'o', 'ol', 'sl', 'w']);
   });

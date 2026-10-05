@@ -152,6 +152,11 @@ afterAll(async () => {
     // (plants.source_inventory_item_id) must go before the item, and the planting a lot was SAVED OFF
     // (inventory_items.source_plant_id) after it. So: sown plantings, then items, then the rest.
     () => directSql`DELETE FROM plants WHERE created_by = ${USER} AND source_inventory_item_id IS NOT NULL`,
+    // V5-SEEDMULTIPARENT-001: the fact-parent lot is created through POST with a source_plant_id, which
+    // now writes a seed_lot_parent_planting row. Both of its foreign keys are RESTRICT, so it goes
+    // before the items here and before the plantings on the line after.
+    () => directSql`DELETE FROM seed_lot_parent_planting WHERE inventory_item_id IN (
+                      SELECT id FROM inventory_items WHERE created_by = ${USER})`,
     () => directSql`DELETE FROM inventory_items WHERE created_by = ${USER}`,
     () => directSql`DELETE FROM plants WHERE created_by = ${USER}`,
     () => directSql`DELETE FROM entity WHERE entity_type = 'cultivar' AND cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ${USER})`,

@@ -139,6 +139,12 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
       VALUES (${USER_A}, ${USER_A}, 'consumable', ${`int-stats-lot-${RUN}`}, 'seeds', 'packet', 1,
               ${ids.cv}, 'active', ${ids.plantA}, 'drying', '2026-09-02T16:00:00Z')
       RETURNING id`)[0].id;
+    // V5-SEEDMULTIPARENT-001: a lot's parent is a seed_lot_parent_planting row with source_plant_id as
+    // its member cache. This fixture is hand-written, so it writes the row beside the column, as every
+    // route does; a column with no row is the drifted state the migration's reconcile repairs.
+    await directSql`
+      INSERT INTO seed_lot_parent_planting (inventory_item_id, plant_id, role, created_by)
+      VALUES (${ids.lot}, ${ids.plantA}, 'seed_parent', ${USER_A})`;
   });
 
   beforeEach(() => { delete process.env[ENV_KEY]; });
@@ -147,6 +153,8 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
     if (savedEnv === undefined) delete process.env[ENV_KEY]; else process.env[ENV_KEY] = savedEnv;
     const users = [USER_A, USER_B, USER_C];
     await settle('season-stats.int', [
+      // Both foreign keys on a parent link are ON DELETE RESTRICT: it goes before its lot and its planting.
+      () => directSql`DELETE FROM seed_lot_parent_planting WHERE created_by = ANY(${users}::text[])`,
       () => directSql`DELETE FROM inventory_items WHERE created_by = ANY(${users}::text[])`,
       () => directSql`DELETE FROM harvest_log WHERE created_by = ANY(${users}::text[])`,
       () => directSql`DELETE FROM event_log WHERE created_by = ANY(${users}::text[])`,

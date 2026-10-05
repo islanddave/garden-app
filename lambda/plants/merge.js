@@ -590,6 +590,38 @@ export async function mergeCore(sql, {
     // transaction-local GUC set outside is discarded before this array runs. Index-safe against the
     // prepend: the result is read as res[res.length - 1], from the END.
     sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    // LOT LOCKS FIRST — before any statement below writes a seed_lot_parent_planting row, or writes
+    // anything at all. A parents edit on a lot (lambda/inventory-items replaceSourcePlants) locks the
+    // LOT with FOR UPDATE and only then writes its link rows; the migration's reconcile takes its lot
+    // locks first as well. This cutover used to take the two the other way round: the prune locked a
+    // link row, and the lot was not locked until the source_plant_id repoint far below. Two requests
+    // on one lot, each holding what the other wants, is a 40P01 — a 500 for the gardener and a failed
+    // merge. Lots first here too, so the later one waits. A statement of its own for the reason
+    // replaceSourcePlants gives: the prune must start AFTER the lock is held, or it decides on rows
+    // as they stood before the wait.
+    // Every lot this merge can touch, through EITHER representation: one with a link row on a loser
+    // or on the winner — any role, live or retired, since the repoint moves retired rows too — and
+    // one whose cache names a loser. The source_plant_id repoint would not have covered the first
+    // kind even run first: where a loser is a parent and the cache names another parent, that UPDATE
+    // matches nothing, and the prune and the repoint still write the lot's rows. ORDER BY id so two
+    // merges lock in one order. Must stay in this array (a bare statement commits, and drops its
+    // locks, on its own), behind set_config, which is element 0, and ahead of every prune: while it
+    // waits for a lot the merge must be holding nothing but lower-id lots.
+    // FOR NO KEY UPDATE, AND THE STRENGTH IS THE DECISION. It conflicts with the FOR UPDATE a parents
+    // edit opens with, so the two still serialise on a shared lot. It does NOT conflict with the FOR
+    // KEY SHARE the reconcile takes on its lots, in scan order: FOR UPDATE here would, and then the
+    // reconcile holding lot B and wanting A meets this holding A and wanting B. Those two meet at
+    // the link table's lock instead, where neither is waiting on a lot. And it is the strength the
+    // source_plant_id repoint below takes anyway — this adds an order, not a stronger lock. What it
+    // does not do is hold off a foreign-key check on the lot; nothing that inserts a link today
+    // relies on one (the parents edit locks the lot first, the reconcile locks the table).
+    sql`SELECT i.id FROM inventory_items i
+         WHERE i.source_plant_id = ANY(${loserIds})
+            OR EXISTS (SELECT 1 FROM seed_lot_parent_planting sl
+                       WHERE sl.inventory_item_id = i.id
+                         AND (sl.plant_id = ANY(${loserIds}) OR sl.plant_id = ${winnerId}))
+         ORDER BY i.id
+           FOR NO KEY UPDATE`,
     sql`DELETE FROM favorites l
          WHERE l.entity_id = ANY(${loserIds})
            AND EXISTS (SELECT 1 FROM favorites w

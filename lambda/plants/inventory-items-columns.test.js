@@ -143,7 +143,10 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants inventory_items column contr
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
     // + merge.js's snapshot read (Put-Up train §6a, inventory_items.source_plant_id repointed).
-    expect(STATEMENTS).toHaveLength(3);
+    // 3 -> 4: merge.js's lot lock, the cutover's `SELECT i.id FROM inventory_items i ... FOR UPDATE`
+    // over every lot the merge can touch. Aliased `i`, and it names `i.id` and `i.source_plant_id`
+    // only — both already in the contract — so this count is the whole of the edit.
+    expect(STATEMENTS).toHaveLength(4);
     expect([...new Set(STATEMENTS.map((s) => s.file))].sort())
       .toEqual(['household.js', 'index.js', 'merge.js']);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())

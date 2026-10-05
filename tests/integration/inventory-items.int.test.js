@@ -395,6 +395,12 @@ describe('V5-SEEDQTY-001 — PUT /:id/seed-measure (seed count + weight)', () =>
   })
 
   afterAll(async () => {
+    // V5-SEEDMULTIPARENT-001: the /seed-lots case below creates its lot through POST with a
+    // source_plant_id, which now writes a seed_lot_parent_planting row (ON DELETE RESTRICT to the lot),
+    // so the link rows go first.
+    await directSql`
+      DELETE FROM seed_lot_parent_planting
+       WHERE inventory_item_id IN (SELECT id FROM inventory_items WHERE created_by = ${QTY_USER})`
     await directSql`DELETE FROM inventory_items WHERE created_by = ${QTY_USER}`
     // entity carries a cultivar_ref_id FK ON DELETE RESTRICT into plant_varieties — the auto-created
     // registry row goes first or the variety delete reds the suite in teardown.

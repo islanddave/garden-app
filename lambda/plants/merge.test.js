@@ -610,6 +610,86 @@ describe('mergeCore — seed_lot_parent_planting', () => {
     return { insert, snap: JSON.parse(insert.values.find((v) => typeof v === 'string' && v.startsWith('{'))) }
   }
 
+  // ── lot locks ──────────────────────────────────────────────────────────────────────────────
+  // A parents edit on a lot (lambda/inventory-items replaceSourcePlants) locks the LOT with FOR
+  // UPDATE, then writes its link rows. A merge that writes a link row first and reaches the lot later
+  // holds the two in the opposite order, and the pair deadlocks (40P01). The order is the whole
+  // property, so it is read off the batch as issued, the way every other ordering rule here is.
+  // Recognised by its head and by ANY row-lock clause at its end, so a lock of the wrong strength is
+  // still found as "the lot lock" and fails the strength test below by name, not as a missing one.
+  const LOCK_CLAUSE = /\bFOR\s+(NO KEY UPDATE|KEY SHARE|UPDATE|SHARE)\s*$/
+  const isLotLock = (t) => /^\s*SELECT i\.id FROM inventory_items i\b/.test(t) && LOCK_CLAUSE.test(t)
+  const writesLinkOrLot = (t) =>
+    /\b(UPDATE|INSERT INTO|DELETE FROM)\s+(public\.)?(seed_lot_parent_planting|inventory_items)\b/.test(t)
+
+  it('locks the lots BEFORE any statement that writes a parent link or a lot', async () => {
+    const { tx } = await run({}, [LOSER1, LOSER2])
+    const locks = tx.map((t, i) => (isLotLock(t) ? i : -1)).filter((i) => i >= 0)
+    expect(locks, 'the cutover issues exactly one lot lock').toHaveLength(1)
+    const [lock] = locks
+    // Behind the actor GUC, which keeps element 0 (BUG-EVENTAUDITACTOR-001) — and behind nothing that
+    // writes. When the merge has to WAIT for a lot it must be holding no row lock but lower-id lots,
+    // or the "one order" argument stops being about lots: a prune moved ahead of this is a lock the
+    // merge holds while it waits.
+    expect(tx[0]).toMatch(/set_config\('app\.actor_clerk_sub'/)
+    expect(lock).toBeGreaterThan(0)
+    expect(tx.slice(0, lock).filter((t) => /^\s*(UPDATE|DELETE|INSERT)\b/.test(t))).toEqual([])
+    // Not vacuous: the prune, the cache repoint and the link repoint, and nothing else.
+    const writes = tx.map((t, i) => (writesLinkOrLot(t) ? i : -1)).filter((i) => i >= 0)
+    expect(writes).toHaveLength(3)
+    for (const w of writes) {
+      expect(w, `issued before the lot lock: ${tx[w].trim().slice(0, 70)}`).toBeGreaterThan(lock)
+    }
+    // By name, the first link-row write: locking after it is the deadlock, however early that is.
+    expect(tx.findIndex(isPrune)).toBeGreaterThan(lock)
+    expect(tx.findIndex(isRepoint)).toBeGreaterThan(lock)
+  })
+
+  it('locks every lot the merge can touch, through EITHER representation, in id order', async () => {
+    const { sql, tx } = await run({}, [LOSER1, LOSER2])
+    // Whole, because each clause is one way to leave a lot unlocked or the locks in the wrong order:
+    //   · the cache arm — a lot whose source_plant_id names a loser (the cache repoint writes it);
+    //   · the link arm — a lot with a link row on a loser OR on the winner. The cache repoint alone
+    //     never covered this: where a loser is a parent and the cache names another parent, that
+    //     UPDATE matches nothing, and the prune and the repoint still write the lot's rows;
+    //   · no role and no deleted_at in the link arm — the repoint moves every role, retired rows too;
+    //   · ORDER BY i.id — two merges take their locks in one order;
+    //   · FOR NO KEY UPDATE — the strength, which has a test of its own below.
+    expect(tx.find(isLotLock).replace(/\s+/g, ' ').trim()).toBe(
+      'SELECT i.id FROM inventory_items i WHERE i.source_plant_id = ANY($0) '
+      + 'OR EXISTS (SELECT 1 FROM seed_lot_parent_planting sl WHERE sl.inventory_item_id = i.id '
+      + 'AND (sl.plant_id = ANY($1) OR sl.plant_id = $2)) ORDER BY i.id FOR NO KEY UPDATE')
+    // The placeholders do not say which id went where: losers, losers, then the winner.
+    expect(sql.calls.find((c) => c.text && isLotLock(c.text)).values)
+      .toEqual([[LOSER1, LOSER2], [LOSER1, LOSER2], WINNER])
+  })
+
+  it('takes the lots FOR NO KEY UPDATE — neither stronger nor weaker', async () => {
+    // Every other spelling is a different bug, and each one still "locks the lots first":
+    //   · FOR UPDATE also conflicts with the FOR KEY SHARE the reconcile holds on its lots, which it
+    //     takes in scan order. Two lots, two orders: the reconcile holds B and wants A, the merge
+    //     holds A and wants B, and Postgres kills one (40P01). With NO KEY UPDATE the two never wait
+    //     on each other's lots and meet at the link table's lock instead.
+    //   · FOR SHARE and FOR KEY SHARE do not conflict with themselves. Two merges, or a merge and
+    //     anything else sharing the lot, both get it, and the deadlock moves to the first UPDATE.
+    //     FOR KEY SHARE does not even conflict with an ordinary UPDATE of the lot.
+    // NO KEY UPDATE conflicts with the FOR UPDATE a parents edit opens with, which is all the lock is
+    // for, and it is what the source_plant_id repoint further down takes on the same rows anyway.
+    const { tx } = await run()
+    expect(tx.find(isLotLock).match(LOCK_CLAUSE)[1]).toBe('NO KEY UPDATE')
+    // And no other row-lock strength is spelled anywhere in the file's SQL.
+    expect(SRC.match(/\bFOR\s+(?:NO KEY UPDATE|KEY SHARE|UPDATE|SHARE)\b/g)).toEqual(['FOR NO KEY UPDATE'])
+  })
+
+  it('takes the lock INSIDE the cutover, once, so it is held until the commit', async () => {
+    // The driver auto-commits a bare statement: a lock awaited on its own ahead of the batch is
+    // released before the batch starts, and reads in source as though it were protecting it.
+    const { sql, tx } = await run()
+    expect(tx.filter(isLotLock)).toHaveLength(1)
+    expect(sql.calls.filter((c) => c.text && /\bFOR (UPDATE|SHARE|NO KEY UPDATE|KEY SHARE)\b/.test(c.text)))
+      .toHaveLength(1)
+  })
+
   it('declares the surface as a repoint whose collisions are soft-deleted', () => {
     expect(SURFACES.filter((s) => s.table === 'seed_lot_parent_planting')).toEqual([
       { table: 'seed_lot_parent_planting', column: 'plant_id', action: 'repoint', conflict: 'soft_delete' },

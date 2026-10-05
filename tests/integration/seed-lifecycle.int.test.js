@@ -52,6 +52,19 @@ async function createSeedLot(extra = {}) {
   })
 }
 
+// Clear a lot's parent THROUGH THE ROUTE. Four tests below used to null the column by hand
+// (`UPDATE inventory_items SET source_plant_id = NULL`). Since V5-SEEDMULTIPARENT-001 a parent is a
+// seed_lot_parent_planting row with the column as its member cache, and both routes that set one write
+// the row: nulling the column alone leaves a live link row beside a NULL column, which is the drifted
+// state migrations/v5-seedmultiparent-001/0b-reconcile.sql exists to repair. A test must not make it
+// by accident.
+async function clearParent(lotId) {
+  const { status, body } = await callHandler(handler, {
+    method: 'PATCH', path: `/api/inventory-items/${lotId}/source-plant`, body: { source_plant_id: null },
+  })
+  expect(status, `clear parent -> ${JSON.stringify(body)}`).toBe(200)
+}
+
 beforeAll(async () => {
   setTestUserId(USER)
 
@@ -80,8 +93,8 @@ beforeAll(async () => {
 afterAll(async () => {
   // Only the rows this file's OWN FKs make undeletable-in-place are unwound by hand:
   // seed_lot_stage_log.inventory_item_id has no ON DELETE clause (NO ACTION), and
-  // source_plant_id is ON DELETE RESTRICT, so the log rows and the items must go before
-  // anything tries to remove a parent plant.
+  // source_plant_id is ON DELETE RESTRICT, so the log rows, the parent links and the items must go
+  // before anything tries to remove a parent plant.
   //
   // plants and plant_varieties are DELIBERATELY left to the namespaced sweep in _cleanup.js.
   // Deleting them here fails: `entity` carries planting_ref_id/cultivar_ref_id FKs into both,
@@ -89,6 +102,12 @@ afterAll(async () => {
   // in teardown while the sweep quietly succeeds a moment later.
   await directSql`
     DELETE FROM seed_lot_stage_log
+     WHERE inventory_item_id IN (SELECT id FROM inventory_items WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
+  // V5-SEEDMULTIPARENT-001: every lot this file gave a parent now has a seed_lot_parent_planting row,
+  // and its foreign key to inventory_items is ON DELETE RESTRICT (as is the one to plants), so the link
+  // rows go first. Retired rows too: a foreign key does not know what a soft delete is.
+  await directSql`
+    DELETE FROM seed_lot_parent_planting
      WHERE inventory_item_id IN (SELECT id FROM inventory_items WHERE created_by IN (${USER}, ${FOREIGN_USER}))`
   await directSql`DELETE FROM inventory_items WHERE created_by IN (${USER}, ${FOREIGN_USER})`
 })
@@ -222,7 +241,7 @@ describe('constraints that have never executed', () => {
     ).rejects.toThrow(/violates foreign key|source_plant_id/i)
 
     // leave the fixture linkable for later tests
-    await directSql`UPDATE inventory_items SET source_plant_id = NULL WHERE id = ${lot.id}`
+    await clearParent(lot.id)
   })
 
   it('seed_stage CHECK rejects a value the route would have let through only by accident', async () => {
@@ -426,7 +445,7 @@ describe('source_kind — origin for seed that came from no planting of ours', (
     expect(String(body.error)).toMatch(/own_garden/i)
     const [row] = await directSql`SELECT source_kind FROM inventory_items WHERE id = ${lot.id}`
     expect(row.source_kind).toBeNull()
-    await directSql`UPDATE inventory_items SET source_plant_id = NULL WHERE id = ${lot.id}`
+    await clearParent(lot.id)
   })
 
   it('own_garden IS allowed alongside a parent plant', async () => {
@@ -441,7 +460,7 @@ describe('source_kind — origin for seed that came from no planting of ours', (
       body: { source_kind: 'own_garden' },
     })
     expect(status).toBe(200)
-    await directSql`UPDATE inventory_items SET source_plant_id = NULL WHERE id = ${lot.id}`
+    await clearParent(lot.id)
   })
 
   it('chk_inventory_seed_source_plant is ARMED in the database, not merely declared', async () => {
@@ -545,7 +564,7 @@ describe('POST must not silently drop source_plant_id', () => {
     expect(body.source_plant_id).toBe(parentPlantId)
     const [row] = await directSql`SELECT source_plant_id FROM inventory_items WHERE id = ${body.id}`
     expect(row.source_plant_id).toBe(parentPlantId)
-    await directSql`UPDATE inventory_items SET source_plant_id = NULL WHERE id = ${body.id}`
+    await clearParent(body.id)
   })
 
   it('POST with a FOREIGN source_plant_id must not create the row silently linked', async () => {

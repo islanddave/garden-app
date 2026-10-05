@@ -28,6 +28,13 @@ let lotB
 
 // qty defaults to 0, not null: consumable_requires_quantity_on_hand refuses null on a seeds row.
 // See the beforeAll comment — this is the constraint, not a style choice.
+//
+// V5-SEEDMULTIPARENT-001: a lot's parent is a seed_lot_parent_planting row with source_plant_id as its
+// member cache, and every route that sets one writes both. This fixture is hand-written SQL, so it
+// writes both too — a column with no row is the drifted state the migration's reconcile repairs, and
+// a fixture must not stand a test on it by accident. (The read under test lists a lot on EITHER
+// representation; the column-only and row-only cases are built on purpose in
+// seed-lot-parents.int.test.js.) The link's created_by is the lot's.
 async function makeLot({ name, createdBy, sourcePlant, stage = null, qty = 0 }) {
   const [row] = await directSql`
     INSERT INTO inventory_items (user_id, created_by, type, name, category, unit,
@@ -35,7 +42,18 @@ async function makeLot({ name, createdBy, sourcePlant, stage = null, qty = 0 }) 
     VALUES (${createdBy}, ${createdBy}, 'consumable', ${name}, 'seeds', 'packet',
             ${qty}, ${varietyId}, 'active', ${sourcePlant}, ${stage})
     RETURNING id`
+  if (sourcePlant != null) {
+    await directSql`
+      INSERT INTO seed_lot_parent_planting (inventory_item_id, plant_id, role, created_by)
+      VALUES (${row.id}, ${sourcePlant}, 'seed_parent', ${createdBy})`
+  }
   return row.id
+}
+
+// Both foreign keys on a link row are ON DELETE RESTRICT, so it goes before its lot.
+async function dropLots(lotIds) {
+  await directSql`DELETE FROM seed_lot_parent_planting WHERE inventory_item_id = ANY(${lotIds}::uuid[])`
+  await directSql`DELETE FROM inventory_items WHERE id = ANY(${lotIds}::uuid[])`
 }
 
 beforeAll(async () => {
@@ -70,7 +88,8 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await directSql`DELETE FROM inventory_items WHERE created_by IN (${USER}, ${FOREIGN_USER})`
+  const lots = await directSql`SELECT id FROM inventory_items WHERE created_by IN (${USER}, ${FOREIGN_USER})`
+  await dropLots(lots.map((l) => l.id))
 })
 
 describe('GET /api/plants/:id/seed-lots — the reverse provenance read', () => {
@@ -157,7 +176,7 @@ describe('GET /api/plants/:id/seed-lots — the reverse provenance read', () => 
     })
     expect(status).toBe(200)
     expect(body.seed_lots.map((l) => l.id)).not.toContain(foreignLot)
-    await directSql`DELETE FROM inventory_items WHERE id = ${foreignLot}`
+    await dropLots([foreignLot])
   })
 
   it('excludes a soft-deleted lot', async () => {

@@ -11,7 +11,9 @@ Snap's inventory Undo every time (`project-state/invrefstrand-reverify-20260923.
 
 ## The defect
 
-Four foreign keys point at `inventory_items`, and two of them are `ON DELETE RESTRICT`:
+Five foreign keys point at `inventory_items`, and three of them are `ON DELETE RESTRICT`. There were
+four when this bundle was written (2026-09-24); the fifth arrived with `v5-seedmultiparent-001`
+(2026-10-05) and exists only on a database where that migration has been applied:
 
 | referencing table | column | `ON DELETE` | what it is |
 |---|---|---|---|
@@ -19,6 +21,7 @@ Four foreign keys point at `inventory_items`, and two of them are `ON DELETE RES
 | `event_log` | `treatment_product_id` | NO ACTION | the product a treatment was logged with |
 | `photos` | `inventory_item_id` | **RESTRICT** | the item's own photos |
 | `seed_lot_stage_log` | `inventory_item_id` | NO ACTION | the lot's own processing history |
+| `seed_lot_parent_planting` | `inventory_item_id` | **RESTRICT** | the lot's own parent links (since `v5-seedmultiparent-001`) |
 
 **None of them can ever fire.** `lambda/inventory-items/index.js` implements `DELETE` as
 `UPDATE inventory_items SET deleted_at = NOW()`, and a foreign key guards `DELETE`s, not `UPDATE`s.
@@ -53,15 +56,19 @@ app today, so that is a data fix):
 - **its own photos** (`photos.inventory_item_id`) — a packet photo is part of the packet record;
 - **its own seed-processing history** (`seed_lot_stage_log`) — every saved-seed lot is born with a stage
   row, the column is `NOT NULL`, and nothing in the app can remove one;
+- **its own parent links** (`seed_lot_parent_planting.inventory_item_id`, since
+  `v5-seedmultiparent-001`) — the plantings a saved-seed lot came from describe the lot, as its stage
+  rows do. A link row is not soft-deleted with its lot: it stays live and comes back with the lot, so
+  every reader of that table joins a live lot (`FOLLOWING_RELATIONS` in `delete-guard.js`);
 - **the `seed_saved` event's `metadata->>'seed_lot_id'`** — not a foreign key at all, and it describes
   the lot.
 
-Measured on prod 2026-09-24 (owner DSN, read-only): of 525 live items, counting all four relations
-would refuse 330 (63%) — 291 of them held only by their own photos and/or stage rows. Counting the two
+Measured on prod 2026-09-24 (owner DSN, read-only, when there were four relations): of 525 live items,
+counting all four would refuse 330 (63%) — 291 of them held only by their own photos and/or stage rows. Counting the two
 that count refuses **39**: every one of them a seed packet with exactly one planting sown from it, 10
 of those plantings archived.
 
-`garden_node` is a **view** over `plants`, not a fifth referrer — it carries the same
+`garden_node` is a **view** over `plants`, not another referrer — it carries the same
 `source_inventory_item_id` and cannot carry a foreign key. Counting it would double-count every
 planting.
 
@@ -87,7 +94,7 @@ that the census reds.
 | 2 | `--phase pre` | 0 rows — nothing to resolve before arming | `rowcount=0` PASS | `rowcount=0` PASS |
 | 3 | receipt clause stripped (= armed) | GREEN **executed** — 0 strands today | guard `rowcount=0` PASS | guard `rowcount=0` PASS |
 | 4 | armed, predicate inverted to `i.deleted_at IS NULL` (references to LIVE items) | RED with rows — the joins execute | `rowcount=39` FAIL (the 39 plantings on live packets) | `rowcount=0` (staging has no planting pointing at any item) |
-| 5 | armed, photos FK dropped from the census allowlist (what a fifth FK looks like) | RED | `rowcount=1` FAIL | `rowcount=1` FAIL |
+| 5 | armed, photos FK dropped from the census allowlist (what an unlisted FK looks like) | RED | `rowcount=1` FAIL | `rowcount=1` FAIL |
 | 6 | armed, plants FK `confdeltype` r → c in the allowlist | RED | `rowcount=1` FAIL | `rowcount=1` FAIL |
 | 7 | armed, feed gate sees 3 of the 4 names | RED (feed gate) | `rowcount=1` FAIL | `rowcount=1` FAIL |
 
@@ -105,21 +112,30 @@ check and the UPDATE, a planting or event restored after its item was deleted, a
 
 ## If the census gate reds
 
-`post_inventory_fk_census_is_unchanged` compares `pg_constraint` against a hand-written list of four
+`post_inventory_fk_census_is_unchanged` compares `pg_constraint` against a hand-written list of five
 `(conname, confdeltype)` pairs — every one of them classified in `delete-guard.js` as blocking
-(`BLOCKING_RELATIONS`) or following (`FOLLOWING_RELATIONS`). It reds for two different reasons and they
-want opposite responses:
+(`BLOCKING_RELATIONS`) or following (`FOLLOWING_RELATIONS`). The fifth pair,
+`seed_lot_parent_planting_inventory_item_id_fkey`, was added on 2026-10-05 ahead of the table it
+belongs to: a name in a `NOT IN` list that matches no constraint excludes nothing, so the list is right
+both before and after `v5-seedmultiparent-001` is applied. The gate reds for two different reasons and
+they want opposite responses:
 
-- **A fifth foreign key now points at `inventory_items`.** Decide which kind it is — a reference from
-  outside (something grown or applied from the item: it blocks, and it becomes an arm of the guard and
-  of the preflight) or part of the item (it follows). Then add it to the census allowlist, the feed
-  gate, and exactly one of the two lists. `delete-gate-coverage.test.js` fails until all of them agree.
+- **A foreign key that is not on the list now points at `inventory_items`.** Decide which kind it is —
+  a reference from outside (something grown or applied from the item: it blocks, and it becomes an arm
+  of the guard and of the preflight) or part of the item (it follows). Then add it to the census
+  allowlist, to a feed gate (this file's, if the foreign key already exists on every database the
+  corpus runs against; otherwise a self-armed one in the migration that creates it), and to exactly
+  one of the two lists. `delete-gate-coverage.test.js` fails until all of them agree.
 - **A `confdeltype` changed.** Weakening a RESTRICT to CASCADE or SET NULL is a real decision about
   data loss. Update the pair only alongside that decision.
 
 **Editing the list to make the red go away without classifying the relation is the failure mode.** The
 second census gate (`post_inventory_fk_census_still_finds_all_four`) exists because the first is a
-`NOT IN` violation count and therefore also reports zero when `pg_constraint` returns nothing.
+`NOT IN` violation count and therefore also reports zero when `pg_constraint` returns nothing. It
+still counts the original four names, with `<> 4`, on purpose: it is armed on a receipt both
+environments already carry, and a `<> 5` would red on whichever one had not yet applied the table. The
+fifth name has its own feed gate, `post_inventory_fk_census_finds_the_parent_link` in
+`migrations/v5-seedmultiparent-001/gates.yml`, armed on that migration's stamp. Do not raise the `4`.
 
 ## Applying
 
