@@ -110,9 +110,11 @@ def test_plants_memory_bump_is_declared():
 def test_daily_plan_water_ledger_flags_are_declared_explicitly():
     """Every water-model flag is declared present-or-absent, so a flip is a reviewable repo change.
 
-    CARE_WATER_LEDGER_ENABLED went null -> "true" on 2026-09-28 on Dave's explicit go
+    The manifest expects CARE_WATER_LEDGER_ENABLED "true", on Dave's explicit go
     (BUG-WATERAUTUMNDEMAND-001; the flip gate's bounds A and D waived, replay evidence in gardening-docs
-    project-state/_waterdemand-20260928/). MAXDAYS stays deliberately absent: the ledger retires it."""
+    project-state/_waterdemand-20260928/). MAXDAYS stays deliberately absent: the ledger retires it.
+    Undoing the flag in the manifest ("false", or null with the live key unset) means editing this test
+    in the same commit."""
     m = clc.load_manifest()["garden-daily-plan"]
     env = m["env"]
     assert env["CARE_WATER_LEDGER_ENABLED"] == "true"
