@@ -15,9 +15,17 @@ THE VERDICT OF ONE SIDE, from the newest push run of that workflow for the SHA:
   RED         the run completed and is not GREEN, for a reason of its own: a job concluded failure; or the run was
               cancelled with NO newer push behind it (a job that hits its timeout reads `cancelled`, and so does a
               hand cancel: the promote gate would refuse either); or the verdict job is absent or anything else.
-  SUPERSEDED  cancelled, no job failed, and a newer dev push run of the same workflow was created before this run
-              ended. Both workflows cancel in progress, so this is the concurrency group, not a verdict.
+  SUPERSEDED  cancelled, no job failed, no job ran to its timeout, and a newer dev push run of the same workflow
+              was created before the first of this run's cancelled jobs ended. Both workflows cancel in progress,
+              so this is the concurrency group, not a verdict.
   IN-FLIGHT   not completed.       MISSING   no push run for the SHA.
+A job's timeout is not in the API, so TIMEOUT_MIN restates the two workflow files' `timeout-minutes` (a test holds
+it equal to them): a cancelled job that ran at least that long timed out, whatever was pushed meanwhile.
+
+A RE-RUN REWRITES THE RECORD: a run object carries only its latest attempt. A serial job red on attempt 1 reads
+DISAGREE against a green shadow, AGREE-GREEN after a re-run to green, NOT-COUNTED after a cancelled one. So for a
+run with run_attempt > 1 it is ATTEMPT 1 that is judged (GET .../runs/<id>/attempts/1 and its jobs), and the row
+says what the latest attempt concluded.
 
 THE CLASS OF ONE SHA:
   AGREE-GREEN / AGREE-RED   both sides have a verdict and it is the same.
@@ -34,9 +42,23 @@ titled `test-ids <zone>` (scripts/ci-telemetry/vitest-test-ids-reporter.mjs) wit
 `file :: full test name :: state` list. ci.yml's two are on `build-and-test`; ci-next.yml's are on `unit-utc-cov`
 and `unit-ny`.
   TEST-IDS-EQUAL   both sides carry one usable digest and they are equal.
-  TEST-IDS-DIFFER  both carry one and they differ.
-  TEST-IDS-ABSENT  either side has none, or more than one, or an unusable one (an interrupted run, a pending test).
-                   When ci.yml stops at a red step before a pass, that pass never ran there: ABSENT, not a finding.
+  TEST-IDS-DIFFER  both carry one and they differ. A v2 notice also carries a digest of the file list and one of
+                   the names without their states, so the row says which differ: the file set, the test names, or
+                   states only.
+  TEST-IDS-ABSENT  either side has none, or more than one, or an unusable one (an interrupted run, a pending test,
+                   no test at all), or the two notices are of different format versions. When ci.yml stops at a
+                   red step before a pass, that pass never ran there: ABSENT, not a finding.
+
+RUNNER LABELS, per side: the `runs-on` labels of the jobs judged. The API does not give the image a label resolved
+to. ci.yml's job is on `ubuntu-latest`, which GitHub moves to another image on a date of its choosing, while the
+legs are pinned; a DISAGREE or TEST-IDS-DIFFER row whose two sides ran on different labels says so.
+
+ACCEPTANCE, one line, separate from the exit code. MET only when at least 10 SHAs are counted, none is DISAGREE,
+no pass is TEST-IDS-DIFFER, every counted SHA is TEST-IDS-EQUAL in BOTH passes, and the queue threshold is not
+tripped. Otherwise NOT MET, naming each thing missing. It says how many of the counted SHAs were red on both sides.
+
+EACH LISTING IS READ TWICE. The run listings have been seen to change between two consecutive calls (total_count
+and the newest row). If the second read's total or newest run id differs from the first, nothing is concluded.
 
 QUEUE TIMES, per ci-next.yml run: each job's wait for a runner (`started_at` minus `created_at`) and its duration.
 The plan's threshold is "any leg queued over 2 min in 3 of 10 runs": over the 10 newest runs with a started job,
@@ -69,11 +91,21 @@ WINDOW = 10                     # the plan's ">= 10 dev pushes"
 QUEUE_THRESHOLD_S = 120         # "any leg queued over 2 min ..."
 QUEUE_RUNS_OVER = 3             # "... in 3 of 10 runs"
 LANDING_SLACK_S = 60            # one push creates both runs within a second or two of each other
+# timeout-minutes of every job, as .github/workflows/ci.yml and ci-next.yml have them. The jobs API does not report
+# a job's timeout, so this is the bound a cancelled job's duration is held against; scripts/test_shadow_agree.py
+# keeps it equal to the two files.
+TIMEOUT_MIN = {
+    "ci.yml": {"build-and-test": 90},
+    "ci-next.yml": {"static": 15, "pytest": 15, "unit-utc-cov": 30, "unit-ny": 30, "gates-a": 15, "gates-b": 15,
+                    "gates-c": 25, "gate-probes": 15, "build-and-test-next": 5},
+}
 SERIAL = {"workflow": "ci.yml", "verdict_job": "build-and-test", "aggregates": False}
 SHADOW = {"workflow": "ci-next.yml", "verdict_job": "build-and-test-next", "aggregates": True}
 # zone -> (the ci.yml job that ran that pass, the ci-next.yml job that ran it)
 PASSES = {"UTC": ("build-and-test", "unit-utc-cov"), "America/New_York": ("build-and-test", "unit-ny")}
 NOTICE_PREFIX = "test-ids "
+# What a usable notice of each format version must carry besides sha256 (vitest-test-ids-reporter.mjs FORMAT_VERSION).
+NOTICE_DIGESTS = {"1": (), "2": ("files_sha256", "names_sha256")}
 GREEN, RED, SUPERSEDED, IN_FLIGHT, MISSING = "GREEN", "RED", "SUPERSEDED", "IN-FLIGHT", "MISSING"
 UTC = datetime.timezone.utc
 
@@ -129,7 +161,7 @@ def paged(path, key, timeout):
     total is unreadable, never complete."""
     found, page = [], 1
     while True:
-        body = gh_api("%s&per_page=%d&page=%d" % (path, PER_PAGE, page), timeout)
+        body = gh_api("%s%sper_page=%d&page=%d" % (path, "&" if "?" in path else "?", PER_PAGE, page), timeout)
         batch = body.get(key) if isinstance(body, dict) else None
         total = body.get("total_count") if isinstance(body, dict) else None
         if not isinstance(batch, list) or not isinstance(total, int) or isinstance(total, bool):
@@ -153,6 +185,15 @@ def push_runs(repo, workflow, since, timeout):
     if since is not None:
         path += "&created=" + urllib.parse.quote(">=" + stamp(since), safe="")
     runs = paged(path, "workflow_runs", timeout)
+    again = gh_api("%s&per_page=%d&page=1" % (path, PER_PAGE), timeout)
+    rows = again.get("workflow_runs") if isinstance(again, dict) else None
+    newest_then = [row.get("id") if isinstance(row, dict) else None for row in (rows or [])[:1]]
+    if not isinstance(rows, list) or again.get("total_count") != len(runs) \
+            or newest_then != [r.get("id") for r in runs[:1]]:
+        raise Unreadable("the %s listing changed between two reads (%d run(s) then %s; newest %s then %s): read again"
+                         % (workflow, len(runs), again.get("total_count") if isinstance(again, dict) else "?",
+                            runs[0].get("id") if runs else None,
+                            rows[0].get("id") if rows and isinstance(rows[0], dict) else None))
     for run in runs:
         if not isinstance(run.get("id"), int) or not re.fullmatch(r"[0-9a-f]{40}", str(run.get("head_sha") or "")) \
                 or not run.get("status"):
@@ -162,8 +203,20 @@ def push_runs(repo, workflow, since, timeout):
     return [run for run in runs if run.get("event", "push") == "push" and run.get("head_branch", "dev") == "dev"]
 
 
-def run_jobs(repo, run_id, timeout):
-    jobs = paged("repos/%s/actions/runs/%s/jobs?filter=latest" % (repo, run_id), "jobs", timeout)
+def attempt_one(repo, run, timeout):
+    """The run as its FIRST attempt left it: status, conclusion and updated_at of attempt 1, not of the re-run."""
+    first = gh_api("repos/%s/actions/runs/%s/attempts/1" % (repo, run["id"]), timeout)
+    if not isinstance(first, dict) or first.get("id") != run["id"] or first.get("run_attempt") != 1 \
+            or not first.get("status") or first.get("head_sha") != run["head_sha"]:
+        raise Unreadable("attempt 1 of run %s is not that run's first attempt" % run["id"])
+    for field in ("created_at", "updated_at"):
+        parse_time(first.get(field), "%s of attempt 1 of run %s" % (field, run["id"]))
+    return first
+
+
+def run_jobs(repo, run_id, timeout, attempt=None):
+    path = "repos/%s/actions/runs/%s/" % (repo, run_id)
+    jobs = paged(path + ("attempts/%d/jobs" % attempt if attempt else "jobs?filter=latest"), "jobs", timeout)
     for job in jobs:
         if not job.get("name") or not job.get("status") or not isinstance(job.get("id"), int):
             raise Unreadable("the job listing of run %s holds an entry with no id/name/status" % run_id)
@@ -183,9 +236,28 @@ def newest(runs):
     return max(runs, key=lambda run: (str(run.get("run_started_at") or run["created_at"]), run["id"]))
 
 
-def superseded_by(run, siblings):
-    """The id of a newer push run of the same workflow that was created before `run` ended, or None."""
-    created, ended = parse_time(run["created_at"], "created_at"), parse_time(run["updated_at"], "updated_at")
+def duration_s(job):
+    if not (started(job) and job.get("started_at") and job.get("completed_at")):
+        return None
+    return int((parse_time(job["completed_at"], "completed_at of job %r" % job["name"])
+                - parse_time(job["started_at"], "started_at of job %r" % job["name"])).total_seconds())
+
+
+def timed_out(spec, jobs):
+    """Names of the cancelled jobs that ran for at least their timeout-minutes (TIMEOUT_MIN)."""
+    limits = TIMEOUT_MIN.get(spec["workflow"], {})
+    return sorted(job["name"] for job in jobs if job.get("conclusion") == "cancelled" and job["name"] in limits
+                  and duration_s(job) is not None and duration_s(job) >= limits[job["name"]] * 60)
+
+
+def superseded_by(run, jobs, siblings):
+    """The id of a newer push run of the same workflow created before the first of `run`'s cancelled jobs ended
+    (before the run itself ended, when no job of it was cancelled), or None. A cancel cannot come from a push that
+    did not exist yet."""
+    created = parse_time(run["created_at"], "created_at")
+    ends = [parse_time(job["completed_at"], "completed_at of job %r" % job["name"]) for job in jobs
+            if job.get("conclusion") == "cancelled" and job.get("completed_at")]
+    ended = min(ends) if ends else parse_time(run["updated_at"], "updated_at")
     for other in siblings:
         if other["id"] == run["id"]:
             continue
@@ -199,8 +271,9 @@ def side(spec, run, jobs, siblings):
     """{"state", "why", "run_id", "conclusion", "run_attempt"} for one workflow's run on one SHA."""
     if run is None:
         return {"state": MISSING, "why": "no push run of %s for this SHA" % spec["workflow"], "run_id": None,
-                "conclusion": None, "run_attempt": None}
-    out = {"run_id": run["id"], "conclusion": run.get("conclusion"), "run_attempt": run.get("run_attempt")}
+                "conclusion": None, "run_attempt": None, "runs_on": []}
+    out = {"run_id": run["id"], "conclusion": run.get("conclusion"), "run_attempt": run.get("run_attempt"),
+           "runs_on": sorted({str(label) for job in jobs for label in (job.get("labels") or [])})}
     if run["status"] != "completed":
         return dict(out, state=IN_FLIGHT, why="run is %s" % run["status"])
     by_name = {job["name"]: job for job in jobs}
@@ -213,9 +286,12 @@ def side(spec, run, jobs, siblings):
                     and not (spec["aggregates"] and job["name"] == spec["verdict_job"]))
     if failed:
         return dict(out, state=RED, why="failed: " + ", ".join(failed))
+    slow = timed_out(spec, jobs)
+    if slow:
+        return dict(out, state=RED, why="timed out (cancelled at its timeout-minutes): " + ", ".join(slow))
     cancelled = run.get("conclusion") == "cancelled" or any(job.get("conclusion") == "cancelled" for job in jobs)
     if cancelled:
-        newer = superseded_by(run, siblings)
+        newer = superseded_by(run, jobs, siblings)
         if newer is not None:
             return dict(out, state=SUPERSEDED, why="cancelled; run %s was pushed before it ended" % newer)
         return dict(out, state=RED, why="cancelled with no newer push behind it (a job timeout or a hand cancel)")
@@ -234,24 +310,34 @@ def classify(serial, shadow):
 # ── test IDs ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def digests(annotations):
-    """{zone: the one usable sha256 its notices carry, or None} for one job's annotations."""
+    """{zone: the one usable notice its job carries, as {"v", "sha256", "files", "names"}, or None}."""
     seen = {}
     for entry in annotations:
         title = str(entry.get("title") or "")
         if entry.get("annotation_level") != "notice" or not title.startswith(NOTICE_PREFIX):
             continue
         fields = dict(token.split("=", 1) for token in str(entry.get("message") or "").split() if "=" in token)
-        usable = (re.fullmatch(r"[0-9a-f]{64}", fields.get("sha256", "")) and fields.get("v") == "1"
-                  and fields.get("reason") in ("passed", "failed") and fields.get("pending") == "0")
-        seen.setdefault(title[len(NOTICE_PREFIX):], set()).add(fields["sha256"] if usable else None)
-    return {zone: (next(iter(found)) if len(found) == 1 else None) for zone, found in seen.items()}
+        hexes = ("sha256",) + NOTICE_DIGESTS.get(fields.get("v"), ("an unknown version carries nothing usable",))
+        usable = (all(re.fullmatch(r"[0-9a-f]{64}", fields.get(name, "")) for name in hexes)
+                  and fields.get("reason") in ("passed", "failed") and fields.get("pending") == "0"
+                  and fields.get("tests", "").isdigit() and int(fields["tests"]) > 0)
+        seen.setdefault(title[len(NOTICE_PREFIX):], set()).add(
+            (fields["v"], fields["sha256"], fields.get("files_sha256"), fields.get("names_sha256")) if usable else None)
+    return {zone: (dict(zip(("v", "sha256", "files", "names"), next(iter(found))))
+                   if len(found) == 1 and None not in found else None) for zone, found in seen.items()}
 
 
 def compare_ids(serial, shadow):
-    """serial and shadow: one pass's digest on each side, or None."""
-    if not serial or not shadow:
-        return "ABSENT"
-    return "EQUAL" if serial == shadow else "DIFFER"
+    """serial and shadow: one pass's notice on each side (digests()), or None. Returns (class, what differs)."""
+    if not serial or not shadow or serial["v"] != shadow["v"]:
+        return "ABSENT", None
+    if serial["sha256"] == shadow["sha256"]:
+        return "EQUAL", None
+    if serial["v"] not in ("2",):
+        return "DIFFER", "unknown (v%s notices carry one digest)" % serial["v"]
+    if serial["files"] != shadow["files"]:
+        return "DIFFER", "the file set"
+    return "DIFFER", "test names" if serial["names"] != shadow["names"] else "states only"
 
 
 # ── queue times ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -263,12 +349,11 @@ def started(job):
 def timings(run, jobs):
     rows = []
     for job in jobs:
-        queue = duration = None
+        queue, duration = None, duration_s(job)
         if started(job) and job.get("started_at"):
             begun = parse_time(job["started_at"], "started_at of job %r" % job["name"])
-            queue = int((begun - parse_time(job.get("created_at"), "created_at of job %r" % job["name"])).total_seconds())
-            if job.get("completed_at"):
-                duration = int((parse_time(job["completed_at"], "completed_at") - begun).total_seconds())
+            queue = int((begun - parse_time(job.get("created_at"),
+                                            "created_at of job %r" % job["name"])).total_seconds())
         rows.append({"name": job["name"], "conclusion": job.get("conclusion"), "queue_s": queue,
                      "duration_s": duration})
     waits = [row for row in rows if row["queue_s"] is not None]
@@ -300,14 +385,18 @@ def read(repo, limit, timeout):
         when = (run["created_at"], run["id"])
         first_seen[run["head_sha"]] = min(first_seen.get(run["head_sha"], when), when)
     order = sorted(first_seen, key=lambda sha: first_seen[sha], reverse=True)[:limit]
-    jobs_of = {}
+    read_once = {}
 
-    def jobs_for(run):
-        if run is None or run["status"] != "completed":
-            return []
-        if run["id"] not in jobs_of:
-            jobs_of[run["id"]] = run_jobs(repo, run["id"], timeout)
-        return jobs_of[run["id"]]
+    def judged(run):
+        """(the run as it is judged, its jobs): attempt 1 of a run that was re-run, otherwise the run itself."""
+        if run is None:
+            return None, []
+        if run["id"] not in read_once:
+            rerun = isinstance(run.get("run_attempt"), int) and run["run_attempt"] > 1
+            first = attempt_one(repo, run, timeout) if rerun else run
+            jobs = run_jobs(repo, run["id"], timeout, 1 if rerun else None) if first["status"] == "completed" else []
+            read_once[run["id"]] = (first, jobs)
+        return read_once[run["id"]]
 
     rows = []
     for sha in order:
@@ -315,8 +404,12 @@ def read(repo, limit, timeout):
         for name, spec, runs in (("ci", SERIAL, serial_runs), ("next", SHADOW, shadow_runs)):
             mine = [run for run in runs if run["head_sha"] == sha]
             picked[name] = newest(mine) if mine else None
-            sides[name] = side(spec, picked[name], jobs_for(picked[name]), runs)
+            first, jobs = judged(picked[name])
+            sides[name] = side(spec, first, jobs, runs)
             sides[name]["push_runs"] = len(mine)
+            sides[name]["latest_attempt"] = None if first is picked[name] else {
+                "run_attempt": picked[name]["run_attempt"], "status": picked[name]["status"],
+                "conclusion": picked[name].get("conclusion")}
         row = {"sha": sha, "class": classify(sides["ci"], sides["next"]), "ci": sides["ci"], "next": sides["next"],
                "test_ids": {}}
         row["counted"] = row["class"] != "NOT-COUNTED"
@@ -325,15 +418,39 @@ def read(repo, limit, timeout):
             for zone, (serial_job, shadow_job) in PASSES.items():
                 pair = []
                 for name, job_name in (("ci", serial_job), ("next", shadow_job)):
-                    job = next((j for j in jobs_for(picked[name]) if j["name"] == job_name), None)
+                    job = next((j for j in judged(picked[name])[1] if j["name"] == job_name), None)
                     if job is not None and job["id"] not in found:
                         found[job["id"]] = digests(job_annotations(repo, job["id"], timeout))
                     pair.append(found[job["id"]].get(zone) if job is not None else None)
-                row["test_ids"][zone] = {"class": compare_ids(*pair), "ci": pair[0], "next": pair[1]}
+                verdict, differs = compare_ids(*pair)
+                row["test_ids"][zone] = {"class": verdict, "differs": differs,
+                                         "ci": pair[0]["sha256"] if pair[0] else None,
+                                         "next": pair[1]["sha256"] if pair[1] else None}
         rows.append(row)
     newest_first = sorted(shadow_runs, key=lambda run: (run["created_at"], run["id"]), reverse=True)
     return {"landed_at": stamp(landed), "shas": rows,
-            "queue_runs": [timings(run, jobs_for(run)) for run in newest_first if run["status"] == "completed"]}
+            "queue_runs": [timings(*judged(run)) for run in newest_first if judged(run)[0]["status"] == "completed"]}
+
+
+def acceptance(counted, classes, ids, queue):
+    """The plan's exit test for the shadow, as one verdict and the list of what is still missing."""
+    absent = sum(1 for row in counted if any(one["class"] == "ABSENT" for one in row["test_ids"].values()))
+    differ = sum(1 for row in counted if any(one["class"] == "DIFFER" for one in row["test_ids"].values()))
+    missing = []
+    if len(counted) < WINDOW:
+        missing.append("%d of %d counted" % (len(counted), WINDOW))
+    if classes["DISAGREE"]:
+        missing.append("%d DISAGREE" % classes["DISAGREE"])
+    if differ:
+        missing.append("TEST-IDS-DIFFER on %d row(s)" % differ)
+    if absent:
+        missing.append("test IDs absent on %d row(s)" % absent)
+    if queue["tripped"]:
+        missing.append("queue threshold tripped (%d of the newest %d run(s) had a job wait over %d s)"
+                       % (queue["runs_over"], queue["runs_in_window"], queue["threshold_s"]))
+    elif queue["tripped"] is None and len(counted) >= WINDOW:
+        missing.append("queue times on only %d of %d run(s)" % (queue["runs_in_window"], queue["window"]))
+    return {"met": not missing, "missing": missing, "counted": len(counted), "counted_red": classes["AGREE-RED"]}
 
 
 def report(repo, reading):
@@ -346,6 +463,7 @@ def report(repo, reading):
     both_equal = sum(1 for row in counted if row["test_ids"]
                      and all(one["class"] == "EQUAL" for one in row["test_ids"].values()))
     bad = classes["DISAGREE"] > 0 or ids["DIFFER"] > 0
+    queue = dict(queue_summary(reading["queue_runs"]), runs=reading["queue_runs"])
     return {
         "schema_version": SCHEMA_VERSION, "repo": repo, "landed_at": reading["landed_at"],
         "serial": "%s %s" % (SERIAL["workflow"], SERIAL["verdict_job"]),
@@ -354,7 +472,8 @@ def report(repo, reading):
         "summary": {"shas": len(rows), "counted": len(counted), "window": WINDOW,
                     "window_met": len(counted) >= WINDOW, "classes": classes, "test_ids": ids,
                     "counted_with_test_ids_equal_in_both_passes": both_equal},
-        "queue": dict(queue_summary(reading["queue_runs"]), runs=reading["queue_runs"]),
+        "queue": queue,
+        "acceptance": acceptance(counted, classes, ids, queue),
         "verdict": "disagree" if bad else "agree", "error": None,
     }
 
@@ -366,15 +485,32 @@ def human(doc):
     out = ["shadow-agree: %s against %s, dev pushes since %s (%s)" % (doc["serial"], doc["shadow"],
                                                                      doc["landed_at"] or "never", doc["repo"])]
     zones = list(PASSES)
-    out.append("%-10s %-12s %-24s %-24s %-16s %s" % ("sha", "class", "ci.yml", "ci-next.yml", "ids " + zones[0],
-                                                     "ids " + zones[1]))
+    layout = "%-10s %-12s %-24s %-24s %-16s %-16s %s"
+    out.append(layout % ("sha", "class", "ci.yml", "ci-next.yml", "ids " + zones[0], "ids " + zones[1],
+                         "runs-on ci.yml / ci-next.yml"))
+    names = (("ci", "ci.yml"), ("next", "ci-next.yml"))
     for row in doc["shas"]:
-        cells = ["%s %s" % (row[name]["state"], row[name]["run_id"] or "-") for name in ("ci", "next")]
+        cells = ["%s %s" % (row[name]["state"], row[name]["run_id"] or "-") for name, _ in names]
         ids = [("TEST-IDS-" + row["test_ids"][zone]["class"]) if zone in row["test_ids"] else "-" for zone in zones]
-        out.append("%-10s %-12s %-24s %-24s %-16s %s" % (row["sha"][:10], row["class"], cells[0], cells[1], ids[0],
-                                                         ids[1]))
+        labels = [", ".join(row[name]["runs_on"]) or "-" for name, _ in names]
+        out.append(layout % (row["sha"][:10], row["class"], cells[0], cells[1], ids[0], ids[1], " / ".join(labels)))
+        differs = [(zone, row["test_ids"][zone]["differs"]) for zone in zones
+                   if zone in row["test_ids"] and row["test_ids"][zone]["class"] == "DIFFER"]
         if row["class"] in ("DISAGREE", "NOT-COUNTED", "AGREE-RED"):
             out.append("           ci.yml: %s | ci-next.yml: %s" % (row["ci"]["why"], row["next"]["why"]))
+        for zone, what in differs:
+            out.append("           test IDs of the %s pass differ in: %s" % (zone, what))
+        for name, workflow in names:
+            latest = row[name]["latest_attempt"]
+            if latest:
+                out.append("           %s was re-run: attempt 1 is the one judged; its latest attempt, %s, %s" % (
+                    workflow, latest["run_attempt"],
+                    "concluded %s" % latest["conclusion"] if latest["status"] == "completed"
+                    else "is %s" % latest["status"]))
+        if (row["class"] == "DISAGREE" or differs) and row["ci"]["runs_on"] != row["next"]["runs_on"]:
+            out.append("           the two sides ran on different runner labels (%s, %s): a label such as "
+                       "ubuntu-latest is whatever image GitHub points it at that day, so compare the `Image:` lines "
+                       "of the two job logs before reading this row as a difference in the code" % tuple(labels))
     s = doc["summary"]
     out.append("%d SHA(s): %s" % (s["shas"], ", ".join("%s %d" % pair for pair in s["classes"].items())))
     out.append("counted toward the %d-push window: %d (%s). With TEST-IDS-EQUAL in both passes: %d. "
@@ -398,6 +534,14 @@ def human(doc):
     out.append("verdict: %s" % ("DISAGREE or TEST-IDS-DIFFER among the counted SHAs: look at the rows above"
                                if doc["verdict"] == "disagree" else
                                "no DISAGREE and no TEST-IDS-DIFFER among the counted SHAs"))
+    a = doc["acceptance"]
+    red = " (%d of them red on both sides)" % a["counted_red"] if a["counted_red"] else ""
+    out.append("ACCEPTANCE: %s" % (
+        "MET: %d SHAs counted%s, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, queue threshold not "
+        "tripped" % (a["counted"], red) if a["met"] else
+        "NOT MET: %s%s" % ("; ".join(a["missing"]),
+                           ". Of the %d counted, %d red on both sides" % (a["counted"], a["counted_red"])
+                           if a["counted_red"] else "")))
     return "\n".join(out) + "\n"
 
 

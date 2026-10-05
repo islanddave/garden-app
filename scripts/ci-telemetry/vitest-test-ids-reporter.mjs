@@ -7,7 +7,9 @@
 //
 //     file :: full test name :: state
 //
-// and the counts behind it. The annotation lands on the job's check-run, where scripts/ci-telemetry/shadow-agree.py
+// and the counts behind it, plus two coarser digests (of the file list alone, and of the names without their states)
+// so that two runs whose lists differ can be told apart by HOW: other files, other test names, or the same tests in
+// other states. The annotation lands on the job's check-run, where scripts/ci-telemetry/shadow-agree.py
 // reads it back (GET /check-runs/<job id>/annotations). Its title names the zone the pass ran under ("test-ids UTC",
 // "test-ids America/New_York"), so the two passes of the serial job cannot overwrite each other: nothing is stored
 // on disk, and each pass has its own title.
@@ -24,7 +26,8 @@
 import { createHash } from 'node:crypto'
 
 export const TITLE_PREFIX = 'test-ids '
-export const FORMAT_VERSION = 1
+// 2: files_sha256 and names_sha256 added. shadow-agree.py compares two notices only when their versions match.
+export const FORMAT_VERSION = 2
 const STATES = ['passed', 'failed', 'skipped', 'pending']
 
 const oneLine = (text) => String(text).replace(/\\/g, '\\\\').replace(/\r/g, '\\r').replace(/\n/g, '\\n')
@@ -53,9 +56,19 @@ export function testIdLines(testModules) {
   return lines.sort()
 }
 
-/** sha256 of the list as UTF-8, one line per test, each ended by a newline. */
+/** sha256 of a list as UTF-8, one line per entry, each ended by a newline. */
 export function digest(lines) {
   return createHash('sha256').update(lines.map((line) => `${line}\n`).join(''), 'utf8').digest('hex')
+}
+
+/** The files alone, each once, sorted. */
+export function fileLines(testModules) {
+  return [...new Set(testModules.map((mod) => oneLine(mod.relativeModuleId)))].sort()
+}
+
+/** The list without its states: `file :: full test name`, sorted. Equal on two runs whose tests differ only in state. */
+export function nameLines(testModules) {
+  return testIdLines(testModules).map((line) => line.slice(0, line.lastIndexOf(' :: '))).sort()
 }
 
 /** The annotation's message: `key=value` tokens, so shadow-agree parses it without a format of its own. */
@@ -70,8 +83,10 @@ export function summary(testModules, reason) {
       if (state in counts) counts[state] += 1
     }
   }
-  return [`sha256=${digest(lines)}`, `tests=${tests}`, ...STATES.map((state) => `${state}=${counts[state]}`),
-    `files=${testModules.length}`, `reason=${reason}`, `v=${FORMAT_VERSION}`].join(' ')
+  return [`sha256=${digest(lines)}`, `files_sha256=${digest(fileLines(testModules))}`,
+    `names_sha256=${digest(nameLines(testModules))}`, `tests=${tests}`,
+    ...STATES.map((state) => `${state}=${counts[state]}`), `files=${testModules.length}`, `reason=${reason}`,
+    `v=${FORMAT_VERSION}`].join(' ')
 }
 
 export default class TestIdsReporter {

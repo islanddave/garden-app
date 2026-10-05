@@ -8,7 +8,10 @@ import { describe, it, expect } from 'vitest'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import TestIdsReporter, { testIdLines, digest, summary, zoneLabel, TITLE_PREFIX } from './vitest-test-ids-reporter.mjs'
+import { execFileSync } from 'node:child_process'
+import TestIdsReporter, {
+  testIdLines, fileLines, nameLines, digest, summary, zoneLabel, TITLE_PREFIX, FORMAT_VERSION,
+} from './vitest-test-ids-reporter.mjs'
 
 const mod = (file, tests, state = 'passed') => ({
   relativeModuleId: file,
@@ -86,13 +89,63 @@ describe('the digest', () => {
   })
 })
 
+describe('the two coarser digests, which say HOW two lists differ', () => {
+  const sums = (testModules) => Object.fromEntries(summary(testModules, 'passed').split(' ').map((t) => t.split('=')))
+  const base = sums(SUITE)
+  const moved = (testModules) => {
+    const now = sums(testModules)
+    return ['sha256', 'files_sha256', 'names_sha256'].filter((key) => now[key] !== base[key])
+  }
+
+  it('are the sha256 of the sorted files, each once, and of the sorted `file :: full test name` lines', () => {
+    expect(fileLines(SUITE)).toEqual(['lambda/a.test.js', 'src/b.test.js'])
+    expect(fileLines([...SUITE, mod('src/b.test.js', [['again', 'passed']])])).toEqual(fileLines(SUITE))
+    expect(nameLines(SUITE)).toEqual(['lambda/a.test.js :: a > only', 'src/b.test.js :: b > first',
+      'src/b.test.js :: b > second'])
+    expect(base.files_sha256).toBe(digest(fileLines(SUITE)))
+    expect(base.names_sha256).toBe(digest(nameLines(SUITE)))
+    expect(new Set([base.sha256, base.files_sha256, base.names_sha256]).size).toBe(3)
+  })
+
+  it('a test that only changes state moves the full digest and neither of the others', () => {
+    expect(moved([mod('src/b.test.js', [['b > second', 'passed'], ['b > first', 'passed']]), SUITE[1]]))
+      .toEqual(['sha256'])
+  })
+
+  it('a renamed or missing test moves the names digest too, and not the files digest', () => {
+    expect(moved([mod('src/b.test.js', [['b > second', 'passed'], ['b > 1st', 'failed']]), SUITE[1]]))
+      .toEqual(['sha256', 'names_sha256'])
+    expect(moved([mod('src/b.test.js', [['b > second', 'passed']]), SUITE[1]])).toEqual(['sha256', 'names_sha256'])
+  })
+
+  it('a file that is gone, added or renamed moves all three', () => {
+    expect(moved([SUITE[0]])).toEqual(['sha256', 'files_sha256', 'names_sha256'])
+    expect(moved([...SUITE, mod('src/c.test.js', [['c', 'passed']])])).toEqual(['sha256', 'files_sha256', 'names_sha256'])
+    expect(moved([mod('src/c.test.js', [['b > second', 'passed'], ['b > first', 'failed']]), SUITE[1]]))
+      .toEqual(['sha256', 'files_sha256', 'names_sha256'])
+  })
+
+  it('a file that stops collecting tests keeps the files digest: it is still a file of the run', () => {
+    expect(moved([SUITE[0], mod('lambda/a.test.js', [], 'failed')])).toEqual(['sha256', 'names_sha256'])
+  })
+
+  it('the names are sorted again once their states are gone (a name that is a prefix of another changes place)', () => {
+    // With its state, "a !" sorts before "a" ("!" is below ":"); without it, "a" is the shorter and comes first.
+    const suite = [mod('x.test.js', [['a', 'skipped'], ['a !', 'failed']])]
+    expect(testIdLines(suite)).toEqual(['x.test.js :: a ! :: failed', 'x.test.js :: a :: skipped'])
+    expect(nameLines(suite)).toEqual(['x.test.js :: a', 'x.test.js :: a !'])
+  })
+})
+
 describe('the line it prints', () => {
-  it('is one notice titled with the zone, carrying the digest and the counts behind it', () => {
+  it('is one notice titled with the zone, carrying the three digests and the counts behind them', () => {
     const { written } = run(SUITE, 'failed')
     expect(written).toHaveLength(1)
-    expect(written[0]).toBe(`\n::notice title=${TITLE_PREFIX}UTC::sha256=${digest(testIdLines(SUITE))} tests=3 ` +
-      'passed=1 failed=1 skipped=1 pending=0 files=2 reason=failed v=1\n')
+    expect(written[0]).toBe(`\n::notice title=${TITLE_PREFIX}UTC::sha256=${digest(testIdLines(SUITE))} ` +
+      `files_sha256=${digest(fileLines(SUITE))} names_sha256=${digest(nameLines(SUITE))} tests=3 ` +
+      'passed=1 failed=1 skipped=1 pending=0 files=2 reason=failed v=2\n')
     expect(summary(SUITE, 'failed')).toBe(written[0].trim().split('::')[2])
+    expect(FORMAT_VERSION).toBe(2)
   })
 
   it('names the zone the pass ran under, so the two passes of the serial job never share a title', () => {
@@ -150,4 +203,24 @@ describe('where it is switched on (vitest.config.ts)', () => {
     expect(block[1]).toBe("'default', 'github-actions', new TestIdsReporter()")
     expect(config.match(/reporters:/g)).toHaveLength(1)
   })
+
+  it('restates exactly the reporters vitest itself defaults to on a runner', () => {
+    // Setting `reporters` replaces vitest's default, so the config has to list it. This asks the installed vitest
+    // what that default is (resolveConfig, no config file) in a child with a runner's environment and nothing
+    // else: under an agent's environment vitest substitutes its `agent` reporter for `default`. A vitest upgrade
+    // that changes the default reds here, and the fix is to restate the new one in vitest.config.ts.
+    const ask = "import { resolveConfig } from 'vitest/node'\n" +
+      'const { vitestConfig } = await resolveConfig({ config: false, watch: false })\n' +
+      'process.stdout.write(JSON.stringify(vitestConfig.reporters.map((r) => (Array.isArray(r) ? r[0] : r))))\n'
+    const defaults = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', ask], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      timeout: 60000,
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, GITHUB_ACTIONS: 'true' },
+    }))
+    const restated = config.match(/reporters: \[([^\]]*)\]/)[1].split(',').map((entry) => entry.trim())
+    expect(restated.pop()).toBe('new TestIdsReporter()')
+    expect(restated.map((entry) => entry.replace(/^'|'$/g, ''))).toEqual(defaults)
+    expect(defaults.length).toBeGreaterThan(0)
+  }, 60000)
 })

@@ -15,7 +15,8 @@ Nothing red, cancelled or in flight exists on the real repository yet, so every 
 recorded push: push() copies its two runs and their jobs to a later moment under a new SHA, and the test edits the
 copy. superseded-ci-33418206548.json is a real superseded ci.yml run and the run that superseded it; no superseded
 ci-next.yml run exists yet, so both shapes one could take (the aggregator never created; the aggregator run by
-`always()` and red over cancelled legs) are built and both must read SUPERSEDED.
+`always()` and red over cancelled legs) are built and both must read SUPERSEDED. reruns-ci.json is two real ci.yml
+runs that were re-run, each as its listing row (the latest attempt) and as attempt 1.
 """
 import copy
 import datetime
@@ -28,6 +29,7 @@ import stat
 import sys
 
 import pytest
+import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "ci-telemetry", "shadow-agree.py")
@@ -40,7 +42,7 @@ UTC = datetime.timezone.utc
 OLD, NEW = "8b13e4382fa65d66e0d2bdd6f4dc83ad23a742e4", "dd5c08873fb96601ccbae57185bac09de57da012"
 LEGS = ("static", "pytest", "unit-utc-cov", "unit-ny", "gates-a", "gates-b", "gates-c", "gate-probes")
 NY = "America/New_York"
-A, B = "a" * 64, "b" * 64
+A, B, C, D = "a" * 64, "b" * 64, "c" * 64, "d" * 64
 
 GH_STAND_IN = r'''#!{python}
 # `gh` for one test: logs argv, then prints the reply recorded for exactly this request path, or a 404.
@@ -91,6 +93,14 @@ def annotations_path(job_id):
     return "repos/islanddave/garden-app/check-runs/%d/annotations?per_page=100" % job_id
 
 
+def attempt_path(run_id):
+    return "repos/islanddave/garden-app/actions/runs/%d/attempts/1" % run_id
+
+
+def attempt_jobs_path(run_id):
+    return attempt_path(run_id) + "/jobs?per_page=100&page=1"
+
+
 class Push:
     """One dev push in a set of replies: its two runs, their jobs and the annotations of the unit-suite jobs."""
 
@@ -112,9 +122,10 @@ class Push:
         """A test-ids notice in the shape of the real notices recorded on build-and-test."""
         shape = copy.deepcopy(next(a for a in Push(recorded(), NEW).annotations("ci", "build-and-test")
                                    if a["annotation_level"] == "notice"))
-        values = dict(sha256=sha256, tests=23260, passed=23257, failed=0, skipped=3, pending=0, files=1417,
-                      reason="passed", v=1)
+        values = dict(sha256=sha256, files_sha256=C, names_sha256=D, tests=23260, passed=23257, failed=0,
+                      skipped=3, pending=0, files=1417, reason="passed", v=2)
         values.update(fields)
+        values = {key: value for key, value in values.items() if value is not None}
         shape.update(title="test-ids " + zone, message=" ".join("%s=%s" % pair for pair in values.items()))
         self.annotations(side, job).append(shape)
 
@@ -125,6 +136,25 @@ class Push:
                 self.notice("ci", "build-and-test", zone, serial)
             if shadow:
                 self.notice("next", shadow_job, zone, shadow)
+
+    def rerun(self, side, to="success"):
+        """This side's run was re-run. What it looks like NOW is served as attempt 1 (.../attempts/1 and its jobs);
+        the listing row and the latest job listing become attempt 2, which ended (or stands) as `to`."""
+        run = getattr(self, side)
+        first_jobs = copy.deepcopy(self.jobs(side))
+        self.replies[attempt_path(run["id"])] = dict(copy.deepcopy(run), run_attempt=1)
+        self.replies[attempt_jobs_path(run["id"])] = {"total_count": len(first_jobs), "jobs": first_jobs}
+        done = to in ("success", "failure", "cancelled")
+        run.update(run_attempt=2, status="completed" if done else to, conclusion=to if done else None)
+        _shift(run, datetime.timedelta(hours=2))
+        run["created_at"] = self.replies[attempt_path(run["id"])]["created_at"]  # a re-run keeps created_at
+        for job in self.jobs(side):
+            job.update(id=job["id"] + 500000, run_attempt=2, conclusion=to if done else None,
+                       status="completed" if done else to)
+            _shift(job, datetime.timedelta(hours=2))
+            if job["name"] in ("build-and-test", "unit-utc-cov", "unit-ny"):
+                self.replies[annotations_path(job["id"])] = []
+        return first_jobs
 
     def cancel(self, side, ended_after_s=300, started=True, hung=False):
         """The run cancelled `ended_after_s` after it was created: every unfinished job cancelled with it. `hung`:
@@ -174,6 +204,9 @@ def routes(replies, per_page=100):
         if isinstance(body, dict) and body.get("_raw"):
             out[path] = body["_raw"]
             continue
+        if isinstance(body, dict) and "_then" in body:  # the first read, then every later one
+            out[path] = {"http": 200, "body": json.dumps(body["_first"]), "then": json.dumps(body["_then"])}
+            continue
         key = next((k for k in ("workflow_runs", "jobs") if isinstance(body, dict) and k in body), None)
         if key is None or per_page == 100:
             out[path] = {"http": 200, "body": json.dumps(body)}
@@ -199,8 +232,9 @@ def gh(monkeypatch):
             reply = table.get(path, {"http": 404})
             if reply.get("http") != 200:
                 raise sa.Unreadable("GET %s: HTTP %s" % (path, reply.get("http")))
+            again = sum(1 for call in calls if call[4] == path) > 1
             try:
-                return json.loads(reply["body"])
+                return json.loads(reply["then"] if again and "then" in reply else reply["body"])
             except ValueError:
                 raise sa.Unreadable("GET %s: HTTP 200 but the body is not JSON" % path)
 
@@ -257,8 +291,11 @@ def test_the_two_real_pushes_agree_green_and_carry_no_test_ids_yet(gh):
         (NEW, "AGREE-GREEN", "GREEN", "GREEN"), (OLD, "AGREE-GREEN", "GREEN", "GREEN")]
     assert [r["ci"]["run_id"] for r in doc["shas"]] == [37164983222, 37098612753]
     assert [r["next"]["run_id"] for r in doc["shas"]] == [37164983196, 37098612816]
-    assert all(r["test_ids"] == {"UTC": {"class": "ABSENT", "ci": None, "next": None},
-                                 NY: {"class": "ABSENT", "ci": None, "next": None}} for r in doc["shas"])
+    assert all(r["test_ids"] == {"UTC": {"class": "ABSENT", "differs": None, "ci": None, "next": None},
+                                 NY: {"class": "ABSENT", "differs": None, "ci": None, "next": None}}
+               for r in doc["shas"])
+    assert all((r["ci"]["runs_on"], r["next"]["runs_on"]) == (["ubuntu-latest"], ["ubuntu-24.04"])
+               and r["ci"]["latest_attempt"] is None and r["next"]["latest_attempt"] is None for r in doc["shas"])
     assert doc["landed_at"] == "2026-10-03T05:04:03Z"
     assert doc["summary"] == {
         "shas": 2, "counted": 2, "window": 10, "window_met": False,
@@ -266,12 +303,15 @@ def test_the_two_real_pushes_agree_green_and_carry_no_test_ids_yet(gh):
         "test_ids": {"EQUAL": 0, "DIFFER": 0, "ABSENT": 4}, "counted_with_test_ids_equal_in_both_passes": 0}
 
 
-def test_every_call_is_a_get_and_they_are_the_twelve_recorded(gh_on_path):
+def test_every_call_is_a_get_and_they_are_the_twelve_recorded_with_each_listing_read_twice(gh_on_path):
     replies = recorded()
     code, out, calls = gh_on_path(replies)
     assert code == 0 and "AGREE-GREEN" in out
     assert all(call[:4] == ["api", "-i", "-X", "GET"] and len(call) == 5 for call in calls)
-    assert sorted(call[4] for call in calls) == sorted(replies) and len(calls) == 12
+    asked = [call[4] for call in calls]
+    assert sorted(set(asked)) == sorted(replies) and len(asked) == 14
+    assert sorted(path for path in set(asked) if asked.count(path) == 2) == sorted(
+        path for path in replies if "/workflows/" in path)
 
 
 def test_the_table_names_the_classes_the_window_and_the_queue_threshold(gh):
@@ -279,9 +319,11 @@ def test_the_table_names_the_classes_the_window_and_the_queue_threshold(gh):
     assert code == 0
     assert "dd5c08873f AGREE-GREEN  GREEN 37164983222" in out and "TEST-IDS-ABSENT" in out
     assert "counted toward the 10-push window: 2 (not met yet)" in out
+    assert "TEST-IDS-ABSENT  ubuntu-latest / ubuntu-24.04" in out and "runs-on ci.yml / ci-next.yml" in out
+    assert out.rstrip().endswith("ACCEPTANCE: NOT MET: 2 of 10 counted; test IDs absent on 2 row(s)")
     assert "longest wait 3 s (gates-b)" in out and "unit-utc-cov 973 s" in out
     assert "0 of the newest 2 run(s) had a job wait over 120 s" in out and "fewer than 10 runs" in out
-    assert out.rstrip().endswith("verdict: no DISAGREE and no TEST-IDS-DIFFER among the counted SHAs")
+    assert "\nverdict: no DISAGREE and no TEST-IDS-DIFFER among the counted SHAs\n" in out
 
 
 # ── verdicts ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -317,7 +359,8 @@ def test_a_red_serial_job_against_a_green_shadow_is_a_disagreement_too(gh):
     code, doc = doc_of(gh, replies)
     assert code == 1 and row(doc, sha(1))["class"] == "DISAGREE"
     assert row(doc, sha(1))["ci"] == {"state": "RED", "why": "failed: build-and-test", "run_id": p.ci["id"],
-                                      "conclusion": "failure", "run_attempt": 1, "push_runs": 1}
+                                      "conclusion": "failure", "run_attempt": 1, "push_runs": 1,
+                                      "runs_on": ["ubuntu-latest"], "latest_attempt": None}
 
 
 def test_both_red_agree_and_count(gh):
@@ -381,14 +424,20 @@ def test_the_real_superseded_run_reads_superseded_only_because_of_the_run_behind
     cancelled, newer, jobs = real["cancelled"], real["newer"], real["jobs"]["jobs"]
     assert (cancelled["conclusion"], jobs[0]["conclusion"], jobs[0]["runner_id"]) == ("cancelled", "cancelled", 0)
     assert "higher priority waiting request" in real["annotations"][0]["message"]
-    assert sa.superseded_by(cancelled, [newer, cancelled]) == newer["id"]
+    assert sa.superseded_by(cancelled, jobs, [newer, cancelled]) == newer["id"]
     assert sa.side(sa.SERIAL, cancelled, jobs, [newer, cancelled])["state"] == "SUPERSEDED"
     assert sa.side(sa.SERIAL, cancelled, jobs, [cancelled])["state"] == "RED"  # nothing behind it
-    late = dict(newer, created_at="2026-08-31T17:11:29Z")                      # pushed 1 s after it had ended
-    assert sa.superseded_by(cancelled, [late, cancelled]) is None
+    # The job was cancelled at 17:11:27 and the run closed at 17:11:28. A push that arrives in between did not
+    # cancel that job; one that arrives as the job ends may have.
+    assert (jobs[0]["completed_at"], cancelled["updated_at"]) == ("2026-08-31T17:11:27Z", "2026-08-31T17:11:28Z")
+    at_the_end = dict(newer, created_at="2026-08-31T17:11:27Z")
+    assert sa.superseded_by(cancelled, jobs, [at_the_end, cancelled]) == newer["id"]
+    late = dict(newer, created_at="2026-08-31T17:11:28Z")
+    assert sa.superseded_by(cancelled, jobs, [late, cancelled]) is None
     assert sa.side(sa.SERIAL, cancelled, jobs, [late, cancelled])["state"] == "RED"
+    assert sa.superseded_by(cancelled, [], [late, cancelled]) == newer["id"]   # no job at all: the run's own end
     older = dict(newer, id=cancelled["id"] - 1, created_at="2026-08-31T17:11:20Z")
-    assert sa.superseded_by(cancelled, [older, cancelled]) is None             # an OLDER run explains nothing
+    assert sa.superseded_by(cancelled, jobs, [older, cancelled]) is None       # an OLDER run explains nothing
 
 
 def test_the_serial_run_superseded_by_the_next_push_is_not_counted(gh):
@@ -484,8 +533,9 @@ def test_equal_digests_in_both_passes(gh):
     replies = recorded()
     push(replies, sha(1)).ids()
     code, doc = doc_of(gh, replies)
-    assert code == 0 and row(doc, sha(1))["test_ids"] == {"UTC": {"class": "EQUAL", "ci": A, "next": A},
-                                                          NY: {"class": "EQUAL", "ci": B, "next": B}}
+    assert code == 0 and row(doc, sha(1))["test_ids"] == {
+        "UTC": {"class": "EQUAL", "differs": None, "ci": A, "next": A},
+        NY: {"class": "EQUAL", "differs": None, "ci": B, "next": B}}
     assert doc["summary"]["test_ids"] == {"EQUAL": 2, "DIFFER": 0, "ABSENT": 4}
     assert doc["summary"]["counted_with_test_ids_equal_in_both_passes"] == 1
     assert "TEST-IDS-EQUAL" in gh(replies)[1]
@@ -516,7 +566,13 @@ def test_a_pass_with_a_digest_on_one_side_only_is_absent_never_equal(gh, utc):
 @pytest.mark.parametrize("fields", [
     {"reason": "interrupted"},          # the run was stopped: the list is partial
     {"pending": 4},                     # tests that never finished
-    {"v": 2},                           # a format this script does not know
+    {"tests": 0},                       # an empty pass: two of them would be "equal"
+    {"tests": "many"},
+    {"tests": None},
+    {"v": 3},                           # a format this script does not know
+    {"v": None},
+    {"files_sha256": None},             # a v2 notice without one of its digests
+    {"names_sha256": "x" * 64},
     {"sha256": "A" * 64},               # not lowercase hex
     {"sha256": "a" * 63},
     {"sha256": ""},
@@ -536,7 +592,8 @@ def test_two_different_digests_for_one_pass_on_one_job_are_absent(gh):
     p.ids()
     p.notice("ci", "build-and-test", "UTC", B)
     code, doc = doc_of(gh, replies)
-    assert code == 0 and row(doc, sha(1))["test_ids"]["UTC"] == {"class": "ABSENT", "ci": None, "next": A}
+    assert code == 0 and row(doc, sha(1))["test_ids"]["UTC"] == {"class": "ABSENT", "differs": None, "ci": None,
+                                                                 "next": A}
 
 
 def test_only_notices_titled_test_ids_count_and_only_on_the_job_that_ran_the_pass(gh):
@@ -549,7 +606,7 @@ def test_only_notices_titled_test_ids_count_and_only_on_the_job_that_ran_the_pas
     p.notice("next", "unit-utc-cov", "UTC", A)
     p.annotations("next", "unit-utc-cov")[-1]["annotation_level"] = "warning"  # the reporter's "no evidence" line
     code, doc = doc_of(gh, replies)
-    assert row(doc, sha(1))["test_ids"]["UTC"] == {"class": "ABSENT", "ci": A, "next": None}
+    assert row(doc, sha(1))["test_ids"]["UTC"] == {"class": "ABSENT", "differs": None, "ci": A, "next": None}
 
 
 def test_test_ids_are_read_only_for_shas_with_a_verdict_on_both_sides(gh):
@@ -791,6 +848,402 @@ def test_gh_missing_or_hung_is_unreadable(monkeypatch, tmp_path):
     monkeypatch.setenv("PATH", "%s%s%s" % (tmp_path, os.pathsep, "/bin:/usr/bin"))
     with pytest.raises(sa.Unreadable, match="no reply in 1 s"):
         sa.gh_api("repos/x/y", 1)
+
+
+# ── re-runs ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_the_two_real_reruns_show_why_attempt_1_is_the_one_judged():
+    """A listing row is the LATEST attempt: its conclusion, run_started_at and updated_at are the re-run's."""
+    runs = _fixture("reruns-ci.json")["runs"]
+    red_twice, cancelled_then_green = runs["36940870791"], runs["36907973182"]
+    for real in (red_twice, cancelled_then_green):
+        assert (real["latest"]["run_attempt"], real["attempt_1"]["run_attempt"]) == (2, 1)
+        assert real["latest"]["created_at"] == real["attempt_1"]["created_at"]
+        assert real["latest"]["updated_at"] > real["attempt_1"]["updated_at"]
+        assert real["latest_jobs"]["jobs"][0]["id"] != real["attempt_1_jobs"]["jobs"][0]["id"]
+    first = sa.side(sa.SERIAL, red_twice["attempt_1"], red_twice["attempt_1_jobs"]["jobs"], [red_twice["latest"]])
+    assert (first["state"], first["why"], first["runs_on"]) == ("RED", "failed: build-and-test", ["ubuntu-latest"])
+    # The second: cancelled 3 s in with nothing pushed behind it (a hand cancel), re-run to success nine minutes on.
+    row_says = sa.side(sa.SERIAL, cancelled_then_green["latest"], cancelled_then_green["latest_jobs"]["jobs"],
+                       [cancelled_then_green["latest"]])
+    first = sa.side(sa.SERIAL, cancelled_then_green["attempt_1"], cancelled_then_green["attempt_1_jobs"]["jobs"],
+                    [cancelled_then_green["latest"]])
+    assert row_says["state"] == "GREEN"
+    assert first["state"] == "RED" and "no newer push behind it" in first["why"]
+
+
+def test_attempt_1_of_a_real_rerun_is_read_from_its_own_endpoint(gh):
+    real = _fixture("reruns-ci.json")["runs"]["36940870791"]
+    gh({attempt_path(36940870791): real["attempt_1"]}, "--limit", "0")  # a usage error: only installs the replies
+    assert sa.attempt_one("islanddave/garden-app", real["latest"], 5) == real["attempt_1"]
+    for wrong in (dict(real["attempt_1"], run_attempt=2), dict(real["attempt_1"], id=1), real["latest"],
+                  dict(real["attempt_1"], head_sha=sha(1)), dict(real["attempt_1"], status=None),
+                  dict(real["attempt_1"], updated_at=None), [real["attempt_1"]]):
+        gh({attempt_path(36940870791): wrong}, "--limit", "0")
+        with pytest.raises(sa.Unreadable):
+            sa.attempt_one("islanddave/garden-app", real["latest"], 5)
+
+
+def test_a_serial_job_red_on_attempt_1_is_still_a_disagreement_after_a_rerun_to_green(gh):
+    replies = recorded()
+    p = push(replies, sha(1))
+    red_serial(p)
+    p.rerun("ci", to="success")
+    assert (p.ci["conclusion"], p.ci["run_attempt"], p.job("ci", "build-and-test")["conclusion"]) == (
+        "success", 2, "success")  # what the listing and the latest jobs say now
+    code, doc = doc_of(gh, replies)
+    ci = row(doc, sha(1))["ci"]
+    assert code == 1 and row(doc, sha(1))["class"] == "DISAGREE"
+    assert (ci["state"], ci["why"], ci["run_attempt"], ci["conclusion"]) == ("RED", "failed: build-and-test", 1,
+                                                                            "failure")
+    assert ci["latest_attempt"] == {"run_attempt": 2, "status": "completed", "conclusion": "success"}
+    assert row(doc, sha(1))["next"]["latest_attempt"] is None
+    code, out, calls = gh(replies)
+    assert "ci.yml was re-run: attempt 1 is the one judged; its latest attempt, 2, concluded success" in out
+    asked = [call[4] for call in calls]
+    assert attempt_path(p.ci["id"]) in asked and attempt_jobs_path(p.ci["id"]) in asked
+    assert jobs_path(p.ci["id"]) not in asked  # the latest attempt's jobs are not what is judged
+
+
+@pytest.mark.parametrize("to,note", [("cancelled", "concluded cancelled"), ("failure", "concluded failure"),
+                                     ("in_progress", "is in_progress"), ("queued", "is queued")])
+def test_a_green_first_attempt_stays_green_whatever_a_rerun_did_to_the_row(gh, to, note):
+    replies = recorded()
+    p = push(replies, sha(1))
+    p.rerun("ci", to=to)
+    code, doc = doc_of(gh, replies)
+    assert code == 0 and row(doc, sha(1))["class"] == "AGREE-GREEN" and row(doc, sha(1))["counted"]
+    assert "its latest attempt, 2, " + note in gh(replies)[1]
+
+
+def test_a_rerun_shadow_is_judged_and_timed_on_attempt_1_too(gh):
+    replies = recorded()
+    p = push(replies, sha(1))
+    red_leg(p, "gates-c")
+    _waits(p.job("next", "unit-ny"), 200)
+    p.rerun("next", to="success")
+    code, doc = doc_of(gh, replies)
+    assert code == 1 and row(doc, sha(1))["class"] == "DISAGREE"
+    assert row(doc, sha(1))["next"]["why"] == "failed: gates-c"
+    timed = doc["queue"]["runs"][0]
+    assert (timed["run_id"], timed["over"], timed["max_queue_s"]) == (p.next["id"], ["unit-ny"], 200)
+    assert {j["name"]: j["conclusion"] for j in timed["jobs"]}["gates-c"] == "failure"
+
+
+def test_the_test_ids_of_a_rerun_row_are_attempt_1s(gh):
+    replies = recorded()
+    p = push(replies, sha(1))
+    p.ids(utc=(A, A), ny=(B, B))
+    first = p.rerun("ci", to="success")
+    p.notice("ci", "build-and-test", "UTC", D)  # what the re-run printed, on the latest attempt's job
+    code, doc = doc_of(gh, replies)
+    assert code == 0 and {z: one["class"] for z, one in row(doc, sha(1))["test_ids"].items()} == {
+        "UTC": "EQUAL", NY: "EQUAL"}
+    asked = [call[4] for call in gh(replies)[2]]
+    assert annotations_path(first[0]["id"]) in asked
+    assert annotations_path(p.job("ci", "build-and-test")["id"]) not in asked
+
+
+@pytest.mark.parametrize("gone", [attempt_path, attempt_jobs_path])
+def test_a_rerun_whose_first_attempt_cannot_be_read_is_unreadable(gh, gone):
+    replies = recorded()
+    p = push(replies, sha(1))
+    p.rerun("ci", to="success")
+    del replies[gone(p.ci["id"])]
+    code, out, _ = gh(replies, "--json")
+    assert code == 2 and "/attempts/1" in json.loads(out)["error"]
+
+
+# ── the acceptance line ─────────────────────────────────────────────────────────────────────────────────────────
+
+def ten(replies, ids=True):
+    """Ten counted pushes (the two real ones and eight after them), each with equal test IDs in both passes."""
+    pushes = [Push(replies, OLD), Push(replies, NEW)] + [push(replies, sha(n)) for n in range(1, 9)]
+    for p in pushes if ids else []:
+        p.ids()
+    return pushes
+
+
+def acceptance(gh, replies):
+    code, doc = doc_of(gh, replies)
+    return code, doc["acceptance"], gh(replies)[1].rstrip().split("\n")[-1]
+
+
+def test_acceptance_is_not_met_on_the_real_repository_and_says_what_is_missing(gh):
+    code, verdict, line = acceptance(gh, recorded())
+    assert code == 0  # the exit code is another matter: nothing disagrees
+    assert verdict == {"met": False, "missing": ["2 of 10 counted", "test IDs absent on 2 row(s)"], "counted": 2,
+                       "counted_red": 0}
+    assert line == "ACCEPTANCE: NOT MET: 2 of 10 counted; test IDs absent on 2 row(s)"
+
+
+def test_acceptance_is_met_at_ten_counted_with_equal_test_ids_and_quiet_queues(gh):
+    replies = recorded()
+    ten(replies)
+    code, verdict, line = acceptance(gh, replies)
+    assert code == 0 and verdict == {"met": True, "missing": [], "counted": 10, "counted_red": 0}
+    assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, "
+                    "queue threshold not tripped")
+
+
+def test_acceptance_says_how_many_of_the_counted_were_red_on_both_sides(gh):
+    replies = recorded()
+    pushes = ten(replies)
+    for p in pushes[2:4]:
+        red_leg(p)
+        red_serial(p)
+    code, verdict, line = acceptance(gh, replies)
+    assert code == 0 and verdict["met"] and verdict["counted_red"] == 2
+    assert line.startswith("ACCEPTANCE: MET: 10 SHAs counted (2 of them red on both sides), none DISAGREE")
+
+
+def _nine(pushes):
+    pushes[5].ci.update(status="in_progress", conclusion=None)
+
+
+def _disagree(pushes):
+    red_leg(pushes[5])
+
+
+def _differ(pushes):
+    pushes[5].notice("next", "unit-ny", NY, A)       # a second, different digest would be ABSENT: replace instead
+    notes = pushes[5].annotations("next", "unit-ny")
+    notes[:] = [n for n in notes if "sha256=%s" % B not in n["message"]]
+
+
+def _absent(pushes):
+    for p in pushes[4:7]:
+        notes = p.annotations("ci", "build-and-test")
+        notes[:] = [n for n in notes if n["title"] != "test-ids UTC"]
+
+
+def _queued(pushes):
+    for p in pushes[2:5]:
+        _waits(p.job("next", "gates-a"), 300)
+
+
+def _red_and_absent(pushes):
+    red_leg(pushes[5])
+    red_serial(pushes[5])
+    _absent(pushes)
+
+
+@pytest.mark.parametrize("spoil,missing,code", [
+    (_nine, ["9 of 10 counted"], 0),
+    (_disagree, ["1 DISAGREE"], 1),
+    (_differ, ["TEST-IDS-DIFFER on 1 row(s)"], 1),
+    (_absent, ["test IDs absent on 3 row(s)"], 0),
+    (_queued, ["queue threshold tripped (3 of the newest 10 run(s) had a job wait over 120 s)"], 0),
+    (lambda pushes: (_disagree(pushes), _absent(pushes), _queued(pushes)),
+     ["1 DISAGREE", "test IDs absent on 3 row(s)",
+      "queue threshold tripped (3 of the newest 10 run(s) had a job wait over 120 s)"], 1),
+])
+def test_acceptance_names_each_thing_that_is_missing(gh, spoil, missing, code):
+    replies = recorded()
+    spoil(ten(replies))
+    got, verdict, line = acceptance(gh, replies)
+    assert got == code and verdict["met"] is False and verdict["missing"] == missing
+    assert line == "ACCEPTANCE: NOT MET: " + "; ".join(missing)
+
+
+def test_a_not_met_line_still_says_how_many_counted_rows_were_red(gh):
+    replies = recorded()
+    _red_and_absent(ten(replies))
+    _, verdict, line = acceptance(gh, replies)
+    assert verdict["missing"] == ["test IDs absent on 3 row(s)"] and verdict["counted_red"] == 1
+    assert line == "ACCEPTANCE: NOT MET: test IDs absent on 3 row(s). Of the 10 counted, 1 red on both sides"
+
+
+def test_ten_counted_with_queue_times_on_fewer_than_ten_runs_is_not_met(gh):
+    """A counted row whose shadow run never got a runner (cancelled with nothing behind it: RED) has no queue time."""
+    replies = recorded()
+    last = ten(replies)[-1]
+    red_serial(last)
+    last.cancel("next", ended_after_s=3600, started=False)
+    code, verdict, line = acceptance(gh, replies)
+    assert code == 0 and verdict["counted"] == 10 and verdict["counted_red"] == 1
+    assert verdict["missing"] == ["queue times on only 9 of 10 run(s)"] and "NOT MET" in line
+
+
+def test_ten_counted_rows_without_test_ids_are_not_acceptance(gh):
+    replies = recorded()
+    ten(replies, ids=False)
+    code, verdict, _ = acceptance(gh, replies)
+    assert code == 0 and verdict["missing"] == ["test IDs absent on 10 row(s)"]
+
+
+# ── the supersede bound and timeouts ────────────────────────────────────────────────────────────────────────────
+
+def test_the_timeout_table_is_the_two_workflow_files():
+    for workflow, table in sa.TIMEOUT_MIN.items():
+        with open(os.path.join(HERE, "..", ".github", "workflows", workflow), encoding="utf-8") as fh:
+            jobs = yaml.safe_load(fh)["jobs"]
+        assert table == {name: job.get("timeout-minutes") for name, job in jobs.items()}, workflow
+    assert set(sa.TIMEOUT_MIN) == {sa.SERIAL["workflow"], sa.SHADOW["workflow"]}
+
+
+def _leg_cancelled_after(p, leg, seconds):
+    job = p.job("next", leg)
+    end = _time(job["started_at"]) + datetime.timedelta(seconds=seconds)
+    job.update(conclusion="cancelled", completed_at=end.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    p.job("next", "build-and-test-next").update(conclusion="failure")
+    p.next.update(conclusion="failure")
+
+
+@pytest.mark.parametrize("ran_s,state", [(25 * 60, "RED"), (25 * 60 + 40, "RED"), (25 * 60 - 1, "SUPERSEDED")])
+def test_a_leg_that_ran_to_its_timeout_is_red_whatever_was_pushed_meanwhile(gh, ran_s, state):
+    """gates-c has timeout-minutes 25. A push 20 minutes in would explain a cancel; it does not explain a timeout."""
+    replies = recorded()
+    first = push(replies, sha(1), minutes_after=60)
+    push(replies, sha(2), minutes_after=20)
+    _leg_cancelled_after(first, "gates-c", ran_s)
+    code, doc = doc_of(gh, replies)
+    shadow = row(doc, sha(1))["next"]
+    assert shadow["state"] == state
+    if state == "RED":
+        assert shadow["why"] == "timed out (cancelled at its timeout-minutes): gates-c"
+        assert code == 1 and row(doc, sha(1))["class"] == "DISAGREE"
+    else:
+        assert code == 0 and row(doc, sha(1))["class"] == "NOT-COUNTED"
+
+
+@pytest.mark.parametrize("pushed_min,state", [(8, "SUPERSEDED"), (9, "RED")])
+def test_a_push_after_the_cancelled_job_ended_but_before_the_run_closed_does_not_explain_it(gh, pushed_min, state):
+    """The job was cancelled 500 s in and the run closed at 600 s. A push at 480 s can have done it; one at 540 s
+    cannot, though it was created before the run's updated_at."""
+    replies = recorded()
+    first = push(replies, sha(1), minutes_after=60)
+    push(replies, sha(2), minutes_after=pushed_min)
+    first.cancel("ci", ended_after_s=600)
+    job = first.job("ci", "build-and-test")
+    job["completed_at"] = (_time(first.ci["created_at"]) + datetime.timedelta(seconds=500)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+    code, doc = doc_of(gh, replies)
+    assert row(doc, sha(1))["ci"]["state"] == state
+    assert (code, row(doc, sha(1))["class"]) == ((0, "NOT-COUNTED") if state == "SUPERSEDED" else (1, "DISAGREE"))
+
+
+# ── a listing that moves under the reader ───────────────────────────────────────────────────────────────────────
+
+def _more(then):
+    then["total_count"] += 1
+
+
+def _other_newest(then):
+    then["workflow_runs"][0] = dict(then["workflow_runs"][0], id=then["workflow_runs"][0]["id"] + 7)
+
+
+def _new_push(then):
+    then["total_count"] += 1
+    then["workflow_runs"].insert(0, dict(then["workflow_runs"][0], id=then["workflow_runs"][0]["id"] + 7,
+                                         head_sha=sha(9)))
+
+
+def _emptied(then):
+    then.update(total_count=0, workflow_runs=[])
+
+
+def _not_a_listing(then):
+    then.clear()
+    then["message"] = "Server Error"
+
+
+@pytest.mark.parametrize("change", [_more, _other_newest, _new_push, _emptied, _not_a_listing])
+@pytest.mark.parametrize("workflow", ["ci.yml", "ci-next.yml"])
+def test_a_listing_that_differs_on_its_second_read_is_unreadable(gh, workflow, change):
+    replies = recorded()
+    path = next(p for p in replies if "/workflows/%s/runs?" % workflow in p)
+    then = copy.deepcopy(replies[path])
+    change(then)
+    replies[path] = {"_first": replies[path], "_then": then}
+    code, out, _ = gh(replies, "--json")
+    assert code == 2 and "listing changed between two reads" in json.loads(out)["error"]
+    assert workflow in json.loads(out)["error"]
+
+
+def test_a_listing_that_reads_the_same_twice_is_read(gh):
+    replies = recorded()
+    for path in [p for p in replies if "/workflows/" in p]:
+        replies[path] = {"_first": replies[path], "_then": copy.deepcopy(replies[path])}
+    code, doc = doc_of(gh, replies)
+    assert code == 0 and doc["summary"]["counted"] == 2
+
+
+# ── runner labels ───────────────────────────────────────────────────────────────────────────────────────────────
+
+LABEL_NOTE = "the two sides ran on different runner labels (ubuntu-latest, ubuntu-24.04)"
+
+
+def test_each_side_carries_the_labels_its_jobs_ran_on(gh):
+    replies = recorded()
+    p = push(replies, sha(1))
+    p.job("next", "gates-c")["labels"] = ["ubuntu-26.04"]
+    p.job("ci", "build-and-test")["labels"] = ["self-hosted", "linux"]
+    _, doc = doc_of(gh, replies)
+    assert row(doc, sha(1))["ci"]["runs_on"] == ["linux", "self-hosted"]
+    assert row(doc, sha(1))["next"]["runs_on"] == ["ubuntu-24.04", "ubuntu-26.04"]
+    assert "linux, self-hosted / ubuntu-24.04, ubuntu-26.04" in gh(replies)[1]
+    assert LABEL_NOTE not in gh(replies)[1]  # nothing disagrees: the labels are in the row and that is all
+
+
+@pytest.mark.parametrize("spoil", [lambda p: red_leg(p), lambda p: p.ids(utc=(A, B))])
+def test_a_disagree_or_differ_row_on_different_labels_says_the_images_may_have_differed(gh, spoil):
+    replies = recorded()
+    p = push(replies, sha(1))
+    spoil(p)
+    code, out, _ = gh(replies)
+    assert code == 1 and LABEL_NOTE in out and "compare the `Image:` lines of the two job logs" in out
+    for job in p.jobs("next"):
+        job["labels"] = ["ubuntu-latest"]
+    code, out, _ = gh(replies)
+    assert code == 1 and "different runner labels" not in out
+
+
+# ── what differs ────────────────────────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("serial,shadow,what", [
+    ({"files_sha256": A}, {"files_sha256": B}, "the file set"),
+    ({"files_sha256": A, "names_sha256": A}, {"files_sha256": B, "names_sha256": B}, "the file set"),
+    ({"names_sha256": A}, {"names_sha256": B}, "test names"),
+    ({}, {}, "states only"),
+])
+def test_a_differ_says_whether_it_is_the_files_the_names_or_only_the_states(gh, serial, shadow, what):
+    replies = recorded()
+    p = push(replies, sha(1))
+    p.notice("ci", "build-and-test", "UTC", A, **serial)
+    p.notice("next", "unit-utc-cov", "UTC", B, **shadow)
+    code, doc = doc_of(gh, replies)
+    assert code == 1 and row(doc, sha(1))["test_ids"]["UTC"] == {"class": "DIFFER", "differs": what, "ci": A,
+                                                                 "next": B}
+    assert "test IDs of the UTC pass differ in: %s" % what in gh(replies)[1]
+
+
+V1 = {"v": 1, "files_sha256": None, "names_sha256": None}
+
+
+@pytest.mark.parametrize("serial,shadow", [((A, V1), (A, {})), ((A, {}), (A, V1)), ((A, V1), (B, {})),
+                                           ((A, {}), (B, V1))])
+def test_notices_of_two_format_versions_are_absent_never_equal_and_never_differ(gh, serial, shadow):
+    replies = recorded()
+    p = push(replies, sha(1))
+    p.notice("ci", "build-and-test", "UTC", serial[0], **serial[1])
+    p.notice("next", "unit-utc-cov", "UTC", shadow[0], **shadow[1])
+    code, doc = doc_of(gh, replies)
+    assert code == 0 and row(doc, sha(1))["test_ids"]["UTC"]["class"] == "ABSENT"
+    assert row(doc, sha(1))["test_ids"]["UTC"]["differs"] is None
+
+
+def test_two_v1_notices_are_still_compared_but_cannot_say_what_differs(gh):
+    replies = recorded()
+    p = push(replies, sha(1))
+    p.notice("ci", "build-and-test", "UTC", A, **V1)
+    p.notice("next", "unit-utc-cov", "UTC", A, **V1)
+    p.notice("ci", "build-and-test", NY, A, **V1)
+    p.notice("next", "unit-ny", NY, B, **V1)
+    code, doc = doc_of(gh, replies)
+    ids = row(doc, sha(1))["test_ids"]
+    assert code == 1 and (ids["UTC"]["class"], ids[NY]["class"]) == ("EQUAL", "DIFFER")
+    assert ids[NY]["differs"] == "unknown (v1 notices carry one digest)"
 
 
 # ── usage ───────────────────────────────────────────────────────────────────────────────────────────────────────

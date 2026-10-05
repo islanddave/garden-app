@@ -1,5 +1,5 @@
 {
- "_source": "Every GET scripts/ci-telemetry/shadow-agree.py made against islanddave/garden-app on 2026-10-05, when dev had two pushes since ci-next.yml landed (8b13e438, dd5c0887), both green in both workflows and neither yet carrying a test-ids notice. Keys are the request paths as the script sends them. Run and job objects are trimmed to the fields the script reads; annotation replies are whole.",
+ "_source": "Every GET scripts/ci-telemetry/shadow-agree.py made against islanddave/garden-app on 2026-10-05, when dev had two pushes since ci-next.yml landed (8b13e438, dd5c0887), both green in both workflows and neither yet carrying a test-ids notice. Keys are the request paths as the script sends them. Run and job objects are trimmed to the fields the script reads; annotation replies are whole. `labels` on each job was added from a second read of the same job listings on the same day.",
  "replies": {
   "repos/islanddave/garden-app/actions/runs/37098612753/jobs?filter=latest&per_page=100&page=1": {
    "jobs": [
@@ -9,6 +9,9 @@
      "created_at": "2026-10-03T05:04:03Z",
      "head_sha": "8b13e4382fa65d66e0d2bdd6f4dc83ad23a742e4",
      "id": 111133534938,
+     "labels": [
+      "ubuntu-latest"
+     ],
      "name": "build-and-test",
      "run_attempt": 1,
      "run_id": 37098612753,
@@ -28,6 +31,9 @@
      "created_at": "2026-10-03T05:04:03Z",
      "head_sha": "8b13e4382fa65d66e0d2bdd6f4dc83ad23a742e4",
      "id": 111133535111,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "static",
      "run_attempt": 1,
      "run_id": 37098612816,
@@ -42,6 +48,9 @@
      "created_at": "2026-10-03T05:04:03Z",
      "head_sha": "8b13e4382fa65d66e0d2bdd6f4dc83ad23a742e4",
      "id": 111133535174,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "gates-a",
      "run_attempt": 1,
      "run_id": 37098612816,
@@ -56,6 +65,9 @@
      "created_at": "2026-10-03T05:04:03Z",
      "head_sha": "8b13e4382fa65d66e0d2bdd6f4dc83ad23a742e4",
      "id": 111133535182,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "gate-probes",
      "run_attempt": 1,
      "run_id": 37098612816,
@@ -70,6 +82,9 @@
      "created_at": "2026-10-03T05:04:03Z",
      "head_sha": "8b13e4382fa65d66e0d2bdd6f4dc83ad23a742e4",
      "id": 111133535183,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "unit-utc-cov",
      "run_attempt": 1,
      "run_id": 37098612816,
@@ -84,6 +99,9 @@
      "created_at": "2026-10-03T05:04:03Z",
      "head_sha": "8b13e4382fa65d66e0d2bdd6f4dc83ad23a742e4",
      "id": 111133535199,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "unit-ny",
      "run_attempt": 1,
      "run_id": 37098612816,
@@ -98,6 +116,9 @@
      "created_at": "2026-10-03T05:04:03Z",
      "head_sha": "8b13e4382fa65d66e0d2bdd6f4dc83ad23a742e4",
      "id": 111133535210,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "pytest",
      "run_attempt": 1,
      "run_id": 37098612816,
@@ -112,6 +133,9 @@
      "created_at": "2026-10-03T05:04:03Z",
      "head_sha": "8b13e4382fa65d66e0d2bdd6f4dc83ad23a742e4",
      "id": 111133535250,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "gates-c",
      "run_attempt": 1,
      "run_id": 37098612816,
@@ -126,6 +150,9 @@
      "created_at": "2026-10-03T05:04:03Z",
      "head_sha": "8b13e4382fa65d66e0d2bdd6f4dc83ad23a742e4",
      "id": 111133535259,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "gates-b",
      "run_attempt": 1,
      "run_id": 37098612816,
@@ -140,6 +167,9 @@
      "created_at": "2026-10-03T05:20:47Z",
      "head_sha": "8b13e4382fa65d66e0d2bdd6f4dc83ad23a742e4",
      "id": 111136166687,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "build-and-test-next",
      "run_attempt": 1,
      "run_id": 37098612816,
@@ -159,6 +189,9 @@
      "created_at": "2026-10-04T00:27:04Z",
      "head_sha": "dd5c08873fb96601ccbae57185bac09de57da012",
      "id": 111325957016,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "pytest",
      "run_attempt": 1,
      "run_id": 37164983196,
@@ -173,6 +206,9 @@
      "created_at": "2026-10-04T00:27:04Z",
      "head_sha": "dd5c08873fb96601ccbae57185bac09de57da012",
      "id": 111325957135,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "gates-b",
      "run_attempt": 1,
      "run_id": 37164983196,
@@ -187,6 +223,9 @@
      "created_at": "2026-10-04T00:27:04Z",
      "head_sha": "dd5c08873fb96601ccbae57185bac09de57da012",
      "id": 111325957166,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "unit-utc-cov",
      "run_attempt": 1,
      "run_id": 37164983196,
@@ -201,6 +240,9 @@
      "created_at": "2026-10-04T00:27:04Z",
      "head_sha": "dd5c08873fb96601ccbae57185bac09de57da012",
      "id": 111325957167,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "gates-c",
      "run_attempt": 1,
      "run_id": 37164983196,
@@ -215,6 +257,9 @@
      "created_at": "2026-10-04T00:27:04Z",
      "head_sha": "dd5c08873fb96601ccbae57185bac09de57da012",
      "id": 111325957168,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "unit-ny",
      "run_attempt": 1,
      "run_id": 37164983196,
@@ -229,6 +274,9 @@
      "created_at": "2026-10-04T00:27:04Z",
      "head_sha": "dd5c08873fb96601ccbae57185bac09de57da012",
      "id": 111325957175,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "gate-probes",
      "run_attempt": 1,
      "run_id": 37164983196,
@@ -243,6 +291,9 @@
      "created_at": "2026-10-04T00:27:04Z",
      "head_sha": "dd5c08873fb96601ccbae57185bac09de57da012",
      "id": 111325957177,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "static",
      "run_attempt": 1,
      "run_id": 37164983196,
@@ -257,6 +308,9 @@
      "created_at": "2026-10-04T00:27:04Z",
      "head_sha": "dd5c08873fb96601ccbae57185bac09de57da012",
      "id": 111325957195,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "gates-a",
      "run_attempt": 1,
      "run_id": 37164983196,
@@ -271,6 +325,9 @@
      "created_at": "2026-10-04T00:43:21Z",
      "head_sha": "dd5c08873fb96601ccbae57185bac09de57da012",
      "id": 111328339404,
+     "labels": [
+      "ubuntu-24.04"
+     ],
      "name": "build-and-test-next",
      "run_attempt": 1,
      "run_id": 37164983196,
@@ -290,6 +347,9 @@
      "created_at": "2026-10-04T00:27:04Z",
      "head_sha": "dd5c08873fb96601ccbae57185bac09de57da012",
      "id": 111325956733,
+     "labels": [
+      "ubuntu-latest"
+     ],
      "name": "build-and-test",
      "run_attempt": 1,
      "run_id": 37164983222,

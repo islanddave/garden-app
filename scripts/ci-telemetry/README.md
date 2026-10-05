@@ -53,17 +53,25 @@ python3 scripts/ci-telemetry/shadow-agree.py          # one row per dev push sin
 python3 scripts/ci-telemetry/shadow-agree.py --json
 ```
 
-`shadow-agree.py` needs an authenticated `gh` and makes `gh api -X GET` calls only (two listings, then up to five
-calls per SHA). Per SHA it sets `ci.yml`'s `build-and-test` verdict against `ci-next.yml`'s `build-and-test-next`:
-AGREE-GREEN, AGREE-RED, DISAGREE or NOT-COUNTED. It also compares the test-ID digest of each unit pass and lists
-each `ci-next.yml` job's wait for a runner against the plan's threshold (a job over 120 s in 3 of 10 runs). It says
-how many SHAs count toward the 10. Exit 0 = nothing disagrees, 1 = a DISAGREE or a TEST-IDS-DIFFER among the counted
-SHAs, 2 = a reply could not be read and nothing is concluded. How a cancelled run is read, and why that cannot hide a
-disagreement, is in the docstring at the top of the script. Tested in `scripts/test_shadow_agree.py` against the
-replies recorded under `scripts/fixtures/shadow-agree/`.
+`shadow-agree.py` needs an authenticated `gh` and makes `gh api -X GET` calls only (each of two listings read
+twice, then up to five calls per SHA, two more for a run that was re-run). Per SHA it sets `ci.yml`'s
+`build-and-test` verdict against `ci-next.yml`'s `build-and-test-next`: AGREE-GREEN, AGREE-RED, DISAGREE or
+NOT-COUNTED. A run that was re-run is judged on its FIRST attempt, and the row says what the latest one did. It
+compares the test-ID digest of each unit pass and, when two differ, says whether it is the file set, the test names
+or only the states. It prints the `runs-on` labels of each side, and lists each `ci-next.yml` job's wait for a
+runner against the plan's threshold (a job over 120 s in 3 of 10 runs).
+
+The last line is `ACCEPTANCE: MET` or `NOT MET` with each thing still missing: at least 10 SHAs counted, no
+DISAGREE, no TEST-IDS-DIFFER, TEST-IDS-EQUAL in both passes on every counted SHA, queue threshold not tripped. That
+line is separate from the exit code: exit 0 = nothing disagrees, 1 = a DISAGREE or a TEST-IDS-DIFFER among the
+counted SHAs, 2 = a reply could not be read (or a listing changed between its two reads) and nothing is concluded.
+How a cancelled run is read, and why that cannot hide a disagreement, is in the docstring at the top of the script.
+Tested in `scripts/test_shadow_agree.py` against the replies recorded under `scripts/fixtures/shadow-agree/`.
 
 `vitest-test-ids-reporter.mjs` is where the test-ID digests come from. On a GitHub Actions runner (and nowhere
 else: `vitest.config.ts` adds it under `GITHUB_ACTIONS`) every vitest run ends with one notice,
-`test-ids <zone>: sha256=... tests=... passed=... failed=... skipped=...`, the sha256 being that of the sorted
-`file :: full test name :: state` list. It cannot fail a run. The list itself is not stored anywhere: two runs can
-be told apart, but not yet diffed. Tested in `vitest-test-ids-reporter.test.js`.
+`test-ids <zone>: sha256=... files_sha256=... names_sha256=... tests=... passed=... failed=... skipped=... v=2`.
+`sha256` is that of the sorted `file :: full test name :: state` list; the other two are of the file list alone and
+of the names without their states. It cannot fail a run. The list itself is not stored anywhere: two runs can be
+told apart, and how they differ, but not which test. Tested in `vitest-test-ids-reporter.test.js`, which also asks
+the installed vitest for its default reporters and holds `vitest.config.ts` to restating exactly those.

@@ -1,0 +1,153 @@
+{
+ "_source": "Two real ci.yml dev push runs that were re-run, read on 2026-10-05. For each: the run as a listing shows it (GET .../actions/runs/<id>: the LATEST attempt only), attempt 1 (GET .../runs/<id>/attempts/1), the jobs of attempt 1 (.../attempts/1/jobs) and of the latest attempt (.../jobs?filter=latest). Trimmed to the fields the script reads. 36940870791 failed on attempt 1 and again on attempt 2. 36907973182 was cancelled 3 s after it was created, before its job had a runner, with NO newer dev push behind it (no ci.yml dev push run was created in the five minutes after it: a hand cancel), and was re-run to success nine minutes later, so its listing row reads success.",
+ "runs": {
+  "36907973182": {
+   "attempt_1": {
+    "conclusion": "cancelled",
+    "created_at": "2026-10-01T18:35:33Z",
+    "event": "push",
+    "head_branch": "dev",
+    "head_sha": "eee5d600d8ddc845a725d3f9ef6a0af3f1302345",
+    "id": 36907973182,
+    "name": "CI \u2014 Build and Unit Tests",
+    "path": ".github/workflows/ci.yml",
+    "run_attempt": 1,
+    "run_started_at": "2026-10-01T18:35:33Z",
+    "status": "completed",
+    "updated_at": "2026-10-01T18:35:36Z"
+   },
+   "attempt_1_jobs": {
+    "jobs": [
+     {
+      "completed_at": "2026-10-01T18:35:35Z",
+      "conclusion": "cancelled",
+      "created_at": "2026-10-01T18:35:34Z",
+      "head_sha": "eee5d600d8ddc845a725d3f9ef6a0af3f1302345",
+      "id": 110523213770,
+      "labels": [
+       "ubuntu-latest"
+      ],
+      "name": "build-and-test",
+      "run_attempt": 1,
+      "run_id": 36907973182,
+      "runner_id": 0,
+      "runner_name": "",
+      "started_at": "2026-10-01T18:35:34Z",
+      "status": "completed"
+     }
+    ],
+    "total_count": 1
+   },
+   "latest": {
+    "conclusion": "success",
+    "created_at": "2026-10-01T18:35:33Z",
+    "event": "push",
+    "head_branch": "dev",
+    "head_sha": "eee5d600d8ddc845a725d3f9ef6a0af3f1302345",
+    "id": 36907973182,
+    "name": "CI \u2014 Build and Unit Tests",
+    "path": ".github/workflows/ci.yml",
+    "run_attempt": 2,
+    "run_started_at": "2026-10-01T18:44:17Z",
+    "status": "completed",
+    "updated_at": "2026-10-01T19:49:35Z"
+   },
+   "latest_jobs": {
+    "jobs": [
+     {
+      "completed_at": "2026-10-01T19:49:33Z",
+      "conclusion": "success",
+      "created_at": "2026-10-01T18:44:41Z",
+      "head_sha": "eee5d600d8ddc845a725d3f9ef6a0af3f1302345",
+      "id": 110527010968,
+      "labels": [
+       "ubuntu-latest"
+      ],
+      "name": "build-and-test",
+      "run_attempt": 2,
+      "run_id": 36907973182,
+      "runner_id": 1000029493,
+      "runner_name": "GitHub Actions 1000029493",
+      "started_at": "2026-10-01T18:44:43Z",
+      "status": "completed"
+     }
+    ],
+    "total_count": 1
+   }
+  },
+  "36940870791": {
+   "attempt_1": {
+    "conclusion": "failure",
+    "created_at": "2026-10-01T23:27:05Z",
+    "event": "push",
+    "head_branch": "dev",
+    "head_sha": "734b8f518d4d2d00de8406886d5bb5e5b110462d",
+    "id": 36940870791,
+    "name": "CI \u2014 Build and Unit Tests",
+    "path": ".github/workflows/ci.yml",
+    "run_attempt": 1,
+    "run_started_at": "2026-10-01T23:27:05Z",
+    "status": "completed",
+    "updated_at": "2026-10-02T00:31:34Z"
+   },
+   "attempt_1_jobs": {
+    "jobs": [
+     {
+      "completed_at": "2026-10-02T00:31:34Z",
+      "conclusion": "failure",
+      "created_at": "2026-10-01T23:27:05Z",
+      "head_sha": "734b8f518d4d2d00de8406886d5bb5e5b110462d",
+      "id": 110631796919,
+      "labels": [
+       "ubuntu-latest"
+      ],
+      "name": "build-and-test",
+      "run_attempt": 1,
+      "run_id": 36940870791,
+      "runner_id": 1000029587,
+      "runner_name": "GitHub Actions 1000029587",
+      "started_at": "2026-10-01T23:27:07Z",
+      "status": "completed"
+     }
+    ],
+    "total_count": 1
+   },
+   "latest": {
+    "conclusion": "failure",
+    "created_at": "2026-10-01T23:27:05Z",
+    "event": "push",
+    "head_branch": "dev",
+    "head_sha": "734b8f518d4d2d00de8406886d5bb5e5b110462d",
+    "id": 36940870791,
+    "name": "CI \u2014 Build and Unit Tests",
+    "path": ".github/workflows/ci.yml",
+    "run_attempt": 2,
+    "run_started_at": "2026-10-02T00:32:50Z",
+    "status": "completed",
+    "updated_at": "2026-10-02T01:29:33Z"
+   },
+   "latest_jobs": {
+    "jobs": [
+     {
+      "completed_at": "2026-10-02T01:29:32Z",
+      "conclusion": "failure",
+      "created_at": "2026-10-02T00:32:52Z",
+      "head_sha": "734b8f518d4d2d00de8406886d5bb5e5b110462d",
+      "id": 110649839270,
+      "labels": [
+       "ubuntu-latest"
+      ],
+      "name": "build-and-test",
+      "run_attempt": 2,
+      "run_id": 36940870791,
+      "runner_id": 1000029595,
+      "runner_name": "GitHub Actions 1000029595",
+      "started_at": "2026-10-02T00:32:54Z",
+      "status": "completed"
+     }
+    ],
+    "total_count": 1
+   }
+  }
+ }
+}
