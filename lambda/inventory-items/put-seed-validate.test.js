@@ -101,13 +101,18 @@ describe('BUG-INVSEEDPUT400-001 — editing a seed packet through the wide PUT',
   it('reaches the UPDATE — a rejection short-circuits before any SQL runs', async () => {
     await handler(put(buildChangesPayload()));
     // Count first: a `for`/`find` over an empty array asserts nothing at all.
-    expect(stubState.sqlCalls).toHaveLength(1);
+    // TWO statements since V5-SEEDMULTIPARENT-001, and still ONE write: a seeds row's 200 carries
+    // source_plants, read by a statement issued BESIDE the UPDATE (source-plants-read.test.js pins
+    // that it is concurrent and read-only). The UPDATE is still the first one built.
+    expect(stubState.sqlCalls).toHaveLength(2);
     expect(stubState.sqlCalls[0].text).toMatch(/UPDATE inventory_items/);
+    expect(stubState.sqlCalls[1].text).toMatch(/FROM public\.seed_lot_parent_planting/);
+    expect(stubState.sqlCalls[1].text).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/);
   });
 
   it('leaves variety_id UNTOUCHED when the client does not mention it', async () => {
     await handler(put(buildChangesPayload()));
-    expect(stubState.sqlCalls).toHaveLength(1);
+    expect(stubState.sqlCalls).toHaveLength(2);
     const call = stubState.sqlCalls[0];
     // The presence guard, structurally: an ELSE arm that re-reads the stored column. A bare
     // `variety_id = ${...}` writes null here and destroys the cultivar link on every edit.
@@ -130,7 +135,7 @@ describe('BUG-INVSEEDPUT400-001 — editing a seed packet through the wide PUT',
   it('writes the variety through when the client DOES send one', async () => {
     const { status } = parse(await handler(put({ ...buildChangesPayload(), variety_id: VARIETY })));
     expect(status).toBe(200);
-    expect(stubState.sqlCalls).toHaveLength(1);
+    expect(stubState.sqlCalls).toHaveLength(2);
     const call = stubState.sqlCalls[0];
     expect(boundAfter(call, /variety_id\s*=\s*CASE\s*WHEN /)).toBe(true);
     expect(boundAfter(call, /variety_id\s*=\s*CASE\s*WHEN \?\s*THEN /)).toBe(VARIETY);

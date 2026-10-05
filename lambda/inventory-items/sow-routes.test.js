@@ -154,16 +154,51 @@ describe('inventory-items Lambda — SEEDLINK route shape (static-source guard)'
     expect(linkBranch).toMatch(/return resp\(400, \{ error: 'source_plant_id is required/);
   });
 
-  it('scopes the UPDATE to the household, to live rows, and to seed packets only', () => {
-    expect(linkBranch).toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
-    expect(linkBranch).toContain('deleted_at IS NULL');
-    expect(linkBranch).toContain("category = 'seeds'");
-    expect(linkBranch).toContain('updated_at = NOW()');
-    expect(linkBranch).toMatch(/RETURNING id, source_plant_id/);
+  // V5-SEEDMULTIPARENT-001 — the route no longer assigns the column itself. A lot's parents are link
+  // rows with source_plant_id as their member cache, so "set the parent" is the set route's write
+  // with one id or none (seed-lot-parents.js replaceSourcePlants). The two tests below used to read
+  // an inline UPDATE out of this branch; they now pin the hand-off, and the statements it hands off
+  // to. Sliced to THIS route alone — `linkBranch` above runs on to idMatch and so also contains
+  // /source-kind and /seed-measure, whose own UPDATEs would satisfy every predicate check here.
+  const ownBranch = SRC.slice(linkIdx, SRC.indexOf('const sourceKindMatch = rawPath.match'));
+  const HELPER = decomment(readFileSync(resolve(__dirname, 'seed-lot-parents.js'), 'utf8'));
+
+  it('writes through the set-replace transaction, as a LEGACY set of one id or none', () => {
+    expect(ownBranch.length).toBeGreaterThan(200);
+    // No statement of its own writes the column: column-without-row is the drift the cache rule forbids.
+    expect(ownBranch).not.toMatch(/UPDATE public\.inventory_items/);
+    expect(ownBranch).not.toMatch(/SET source_plant_id/);
+    // `legacy: true` is the 409 on a lot with two or more parents; without it this route would
+    // replace a set its caller cannot see.
+    expect(ownBranch.replace(/\s+/g, ' ')).toMatch(
+      /replaceSourcePlants\(sql, \{ lotId: itemId, ids: sourcePlantId != null \? \[String\(sourcePlantId\)\.toLowerCase\(\)\] : \[\], householdIds, userId, legacy: true, \}\)/);
   });
 
-  it('404s when the UPDATE matches nothing (wrong household, or not a seed packet)', () => {
-    expect(linkBranch).toMatch(/if \(!rows\.length\) return resp\(404/);
+  it('scopes every statement of that write to the household, to live rows, and to seed packets only', () => {
+    // The three WRITES of the transaction (soft-delete the links that left, insert the ones that
+    // arrived, set the cache), each found by its verb. Every one carries the whole lot predicate in
+    // its own WHERE — the transaction is not interactive, so a predicate only on an earlier
+    // statement would protect nothing that follows it.
+    const writes = [...HELPER.matchAll(/sql`([^`]*)`/g)].map((m) => m[1])
+      .filter((s) => /^\s*(UPDATE|INSERT)\b/.test(s));
+    expect(writes).toHaveLength(3);
+    for (const w of writes) {
+      expect(w).toContain('i.id = ${lotId}');
+      expect(w).toMatch(/i\.created_by = ANY\(\$\{householdIds\}\)/);
+      expect(w).toContain('i.deleted_at IS NULL');
+      expect(w).toContain("i.category = 'seeds'");
+    }
+    const cache = writes.find((w) => /UPDATE public\.inventory_items/.test(w));
+    expect(cache).toContain('updated_at = NOW()');
+    expect(cache).toMatch(/RETURNING i\.id, i\.source_plant_id/);
+  });
+
+  it('404s when the lot matches nothing (wrong household, or not a seed packet)', () => {
+    // The helper reports the outcome; the handler maps it — one mapping for this route and the set
+    // route, so the two cannot answer a foreign lot differently.
+    expect(HELPER).toMatch(/if \(!fact\) return \{ outcome: 'not_found' \};/);
+    expect(SRC).toMatch(/if \(out\.outcome === 'not_found'\) return resp\(404/);
+    expect(ownBranch).toMatch(/return sourcePlantsReply\(resp, await replaceSourcePlants\(/);
   });
 
   it('keeps source_plant_id OUT of the wide PUT — the headline data-loss risk', () => {

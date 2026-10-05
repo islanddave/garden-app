@@ -83,10 +83,17 @@ const INVENTORY_ITEMS_COLUMNS = [
   // relation has its own contract in seed-stage-columns.test.js.
   'seed_process',
   'seed_stage',
-  // V4-SEEDLINK-001 — seed-lot provenance. Genuinely referenced: written and returned by the
-  // PATCH /:id/source-plant route. Deliberately NOT in the PUT's SET list (a bare assignment there
-  // nulls it on every unrelated edit), and NOT in seed-stage-columns.test.js — this column belongs
-  // to inventory_items, and that file pins seed_lot_stage_log's own relation on purpose.
+  // V4-SEEDLINK-001 — seed-lot provenance. Deliberately NOT in the PUT's SET list (a bare assignment
+  // there nulls it on every unrelated edit), and NOT in seed-stage-columns.test.js — this column
+  // belongs to inventory_items, and that file pins seed_lot_stage_log's own relation on purpose.
+  //
+  // V5-SEEDMULTIPARENT-001 moved WHERE it is referenced. It is now the member cache of the lot's
+  // seed_lot_parent_planting rows: in THIS file's scope (index.js) it is named by the POST INSERT
+  // and read by the /source-kind route; the statement that used to assign it from PATCH
+  // /:id/source-plant is gone, and the one that writes it for both parents routes lives in
+  // seed-lot-parents.js. That module's inventory_items columns are held to this list by
+  // seed-lot-parent-planting-columns.test.js, the way delete-guard-columns.test.js holds
+  // delete-guard.js's — so the column is still audited wherever it is written.
   'source_plant_id',
   'source_kind',
   // V5-SEEDQTY-001 — the seed quantity axis. All THREE are genuinely referenced: PUT

@@ -123,7 +123,12 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(3);
+    // 3 -> 4 with V5-SEEDMULTIPARENT-001: seed-lot-parents.js readSourcePlants LEFT JOINs the
+    // cultivar of each parent PLANTING (pv.id, pv.display_name, pv.breeding_system — all three
+    // already in the contract above, so the list did not move). The other three are index.js's
+    // seed reads, which the two per-statement tests below still pin at exactly three.
+    expect(STATEMENTS).toHaveLength(4);
+    expect(STATEMENTS.filter((s) => s.file === 'seed-lot-parents.js')).toHaveLength(1);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['pv']);
   });

@@ -23,6 +23,13 @@
 // own source text — which is why it lives here rather than beside lambda/preservation's contract, which
 // already declares kitchen_batch_input for that directory and credits nothing to this one.
 //
+// NOT HERE, though merge.js repoints them as well: inventory_items.source_plant_id and
+// seed_lot_parent_planting.plant_id (a saved-seed lot's member cache and the parent links behind it).
+// index.js reads both relations too, and this file holds every relation it declares to merge.js alone
+// (the statement-file assertion in the first test), so a second reader cannot be declared here. Each
+// has its own directory-wide contract, which carries merge.js's statements as pinned arms:
+// inventory-items-columns.test.js and seed-lot-parent-planting-columns.test.js.
+//
 // Static source inspection rather than import: these handlers load @neondatabase/serverless and
 // @clerk/backend at module scope and cannot be imported in the unit suite.
 import { describe, it, expect } from 'vitest';

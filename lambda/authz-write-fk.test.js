@@ -21,6 +21,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadOwnedLocation, loadOwnedInventoryItem, loadOwnedSpace, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
+// V5-SEEDMULTIPARENT-001 — the one ARRAY gate in the fleet. Dependency-free by design, so it is
+// imported and executed here like the loaders above; the stubs are for the one assertion that runs
+// the inventory-items handler itself to prove a refused array writes nothing.
+import { ownsEveryPlanting } from './inventory-items/seed-lot-parents.js';
+import { stubState, resetStubs } from './_test-stubs/state.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const HOUSE = ['user_a', 'user_b'];
@@ -353,6 +358,16 @@ const NOT_IN_SITES = [
   // the statement's own shape. Same class as the daily-plan entries above (value read off a
   // relation the handler has already scoped), with the difference that this one DOES parse a body;
   // it just never reads an FK out of it.
+  //
+  // V5-SEEDMULTIPARENT-001 adds a SECOND table behind this same pair: seed_lot_parent_planting's
+  // inventory_item_id, written by seed-lot-parents.js insertSeedParentLinks. The argument is the
+  // same one and holds for the same structural reason: the column is never bound from a request.
+  // The INSERT selects `i.id` out of public.inventory_items under the full lot predicate
+  // (`i.id = <lot> AND i.created_by = ANY(householdIds) AND i.deleted_at IS NULL AND i.category =
+  // 'seeds'`), where <lot> is the ROUTE's path id on PUT /:id/source-plants and PATCH
+  // /:id/source-plant, and on POST the id the handler minted for the lot the same transaction
+  // inserts. A foreign lot id selects nothing and writes nothing. The OTHER FK of that INSERT,
+  // plant_id, IS body-settable and has its own entry and its own executed assertions below.
   'inventory-items::inventory_item_id',
   'daily-plan::assignee_user_id', 'daily-plan::user_id', 'dashboard::user_id',
   'events::user_id', 'events::workspace_id', 'favorites::user_id', 'inventory-items::user_id',
@@ -400,6 +415,28 @@ const NOT_IN_SITES = [
   // Pinned by its own running assertion below ('inventory-items gates source_plant_id inline
   // against garden_node'), NOT pre-absolved here — the locations::parent_id lesson.
   'inventory-items::source_plant_id',
+  // V5-SEEDMULTIPARENT-001 — seed_lot_parent_planting.plant_id, written by seed-lot-parents.js
+  // insertSeedParentLinks for POST /api/inventory-items, PUT /:id/source-plants and PATCH
+  // /:id/source-plant. BODY-SETTABLE AND GATED. This is the pair source-kinds.js's header predicted
+  // ("if inventory-items ever did start writing a plant_id from a request body, nothing would say
+  // so") — it does now, and this entry plus the three assertions named below are what say so.
+  //
+  // Not a SITES row for two reasons the regex cannot get past: the value is an ARRAY
+  // (`body.source_plant_ids`, which the body arm of the scan cannot even see — it does not end in
+  // `_id`), and the gate is not `!await loader(sql, <field>,` on one id but a COUNTED query over all
+  // of them. The count is the whole point: the single-id gates test `!owned.length`, and that test
+  // generalised to `= ANY(ids)` admits an array in which ONE planting is the caller's and the rest
+  // are another household's. ownsEveryPlanting requires the number of asked-for ids that came back
+  // owned to equal the number asked for.
+  //
+  // Same predicate as inventory-items::source_plant_id above (garden_node, own-created_by arm, live
+  // rows), same generic 400 with no existence oracle, same warnRejectedFk. The third write site, the
+  // legacy PATCH, hands the set route ONE id that the single-id gate above has already cleared.
+  //
+  // Pinned by RUNNING assertions below, not pre-absolved here: 'ownsEveryPlanting refuses an id
+  // array with ONE foreign planting', 'a source_plant_ids array with one foreign planting writes
+  // ZERO rows' (the handler, executed, POST and PUT), and the static call-site count beside them.
+  'inventory-items::plant_id',
   // V4-PLANTMERGE-001 — mergeCore (plants/merge.js). NONE of these is body-settable. The four
   // id-shaped ones are all written as the WINNER id, which is the ROUTE's path segment, and
   // mergeCore's step 2 loads the ENTIRE group (winner + every loser) with
@@ -734,11 +771,155 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     expect(src).toMatch(/UUID_RE\.test\(String\(sourcePlantId\)\)/);
     expect(raw).toMatch(/const UUID_RE = /);
     // Ordering: the reject must precede the write, not merely coexist with it in the file.
+    // V5-SEEDMULTIPARENT-001 moved the write: the route no longer runs its own
+    // `UPDATE … SET source_plant_id = ${sourcePlantId}` but hands the gated id to the set-replace
+    // transaction (seed-lot-parents.js), flagged legacy. So the marker is that hand-off, and it is
+    // pinned to carry exactly the gated value and nothing else from the body.
     const gateIdx = src.indexOf("warnRejectedFk(userId, 'inventory_items', 'source_plant_id'");
-    const writeIdx = src.indexOf('SET source_plant_id = ${sourcePlantId}');
+    const write = 'ids: sourcePlantId != null ? [String(sourcePlantId).toLowerCase()] : [], householdIds, userId, legacy: true,';
+    const writeIdx = src.indexOf(write);
     expect(gateIdx).toBeGreaterThan(-1);
     expect(writeIdx).toBeGreaterThan(-1);
-    expect(gateIdx, 'the ownership gate must precede the UPDATE').toBeLessThan(writeIdx);
+    expect(gateIdx, 'the ownership gate must precede the write').toBeLessThan(writeIdx);
+    // …and it is the PATCH route's own write that follows its own gate: no other statement sits
+    // between them that could have assigned the column first.
+    expect(src.slice(gateIdx, writeIdx)).not.toMatch(/\bsql`/);
+    expect(src.slice(writeIdx - 120, writeIdx)).toMatch(/replaceSourcePlants\(sql, \{ lotId: itemId, $/);
+  });
+
+  // ── V5-SEEDMULTIPARENT-001 — inventory-items::plant_id, the ARRAY gate ──────────────────────────
+  // Three assertions, because no one of them is enough: the static one proves each write site calls
+  // the gate (a perfect gate nobody invokes protects nothing); the unit one proves the gate COUNTS;
+  // the executed one proves that when it refuses, the handler has written nothing.
+  const OWNED_A = '00000000-0000-4000-8000-0000000000a1';
+  const OWNED_B = '00000000-0000-4000-8000-0000000000a2';
+  const FOREIGN = '00000000-0000-4000-8000-0000000000bb';
+
+  it('inventory-items gates a source_plant_ids array at every site that can write a link row', () => {
+    const src = decomment(readFileSync(join(here, 'inventory-items/index.js'), 'utf8')).replace(/\s+/g, ' ');
+    // The gate, negated, followed at once by the reject — at exactly TWO sites (POST and PUT
+    // /:id/source-plants), and there is no call to it that is not one of those two gates.
+    const gate = /if \(!await ownsEveryPlanting\(sql, (\w+)\.ids, householdIds\)\) \{ warnRejectedFk\(userId, 'seed_lot_parent_planting', 'plant_id', \1\.ids\.join\(','\)\); return resp\(400, \{ error: SOURCE_PLANT_IDS_UNUSABLE \}\); \}/g;
+    expect([...src.matchAll(gate)].map((m) => m[1]).sort()).toEqual(['parentSet', 'set']);
+    expect(src.match(/ownsEveryPlanting\(/g)).toHaveLength(2);
+    expect(src).toMatch(/const SOURCE_PLANT_IDS_UNUSABLE = 'source_plant_ids does not match plantings you can use';/);
+
+    // Every id that reaches a link INSERT is one a gate has cleared. Three producers, no others:
+    //   PUT   — the gated array itself;
+    //   PATCH — the single id the garden_node gate above cleared (asserted in the previous test);
+    //   POST  — the gated array, or else the single id its own garden_node gate cleared.
+    expect(src.match(/replaceSourcePlants\(/g)).toHaveLength(2);
+    expect(src.match(/insertSeedParentLinks\(/g)).toHaveLength(1);
+    expect(src).toMatch(/replaceSourcePlants\(sql, \{ lotId: itemId, ids: set\.ids, householdIds, userId, \}\)/);
+    expect(src).toMatch(
+      /const parentIds = parentSet \? parentSet\.ids : \(sourcePlantId != null \? \[String\(sourcePlantId\)\.toLowerCase\(\)\] : \[\]\);/);
+    expect(src).toMatch(/insertSeedParentLinks\(sql, \{ lotId, ids: parentIds, householdIds, userId \}\)/);
+    // On POST the array REPLACES the single-id gate rather than running beside it, so the else-arm
+    // is load-bearing: without it a body carrying only source_plant_id would reach the write ungated.
+    expect(src).toMatch(/\} else if \(sourcePlantId != null\) \{ const owned = UUID_RE\.test\(String\(sourcePlantId\)\)/);
+
+    // Ordering, per site: the reject precedes the write.
+    const putGate = src.indexOf('if (!await ownsEveryPlanting(sql, set.ids, householdIds))');
+    const putWrite = src.indexOf('replaceSourcePlants(sql, { lotId: itemId, ids: set.ids,');
+    const postGate = src.indexOf('if (!await ownsEveryPlanting(sql, parentSet.ids, householdIds))');
+    const postWrite = src.indexOf('insertSeedParentLinks(sql, { lotId, ids: parentIds,');
+    for (const i of [putGate, putWrite, postGate, postWrite]) expect(i).toBeGreaterThan(-1);
+    expect(putGate, 'PUT: the gate must precede the write').toBeLessThan(putWrite);
+    expect(postGate, 'POST: the gate must precede the write').toBeLessThan(postWrite);
+
+    // And the statement itself takes its plantings from that array and from nowhere else.
+    const helper = decomment(readFileSync(join(here, 'inventory-items/seed-lot-parents.js'), 'utf8')).replace(/\s+/g, ' ');
+    expect(helper).toMatch(
+      /INSERT INTO public\.seed_lot_parent_planting \(inventory_item_id, plant_id, role, created_by\) SELECT i\.id, u\.plant_id, 'seed_parent', \$\{userId\}::text FROM public\.inventory_items i CROSS JOIN unnest\(\$\{ids\}::uuid\[\]\) AS u\(plant_id\) WHERE i\.id = \$\{lotId\} AND i\.created_by = ANY\(\$\{householdIds\}\) AND i\.deleted_at IS NULL AND i\.category = 'seeds'/);
+    expect(helper.match(/INSERT INTO public\.seed_lot_parent_planting/g)).toHaveLength(1);
+  });
+
+  it('ownsEveryPlanting refuses an id array with ONE foreign planting (a count, not a presence test)', async () => {
+    // THE ARM THAT MATTERS. Two ids asked for, one row back: `!owned.length` is false here, so a
+    // presence test lets the foreign planting through to the INSERT.
+    const one = fakeSql([{ id: OWNED_A }]);
+    expect(await ownsEveryPlanting(one, [OWNED_A, FOREIGN], HOUSE)).toBe(false);
+    // The refusal came from the ownership query, not from a short-circuit that never asked.
+    expect(one.calls).toHaveLength(1);
+    const t = textOf(one);
+    expect(t).toMatch(/SELECT p\.id FROM public\.garden_node p WHERE p\.id = ANY\(\?::uuid\[\]\) AND p\.created_by = ANY\(\?\) AND p\.deleted_at IS NULL/);
+    // The id array and the household array are BOUND parameters, in that order, never interpolated.
+    expect(one.calls[0].values).toEqual([[OWNED_A, FOREIGN], HOUSE]);
+
+    // All owned -> through. None owned -> refused. An empty set asks nothing and is allowed.
+    expect(await ownsEveryPlanting(fakeSql([{ id: OWNED_A }, { id: OWNED_B }]), [OWNED_A, OWNED_B], HOUSE)).toBe(true);
+    expect(await ownsEveryPlanting(fakeSql([]), [OWNED_A, OWNED_B], HOUSE)).toBe(false);
+    const empty = fakeSql([{ id: 'should-never-be-reached' }]);
+    expect(await ownsEveryPlanting(empty, [], HOUSE)).toBe(true);
+    expect(empty.calls).toHaveLength(0);
+
+    // The count is of the ASKED-FOR ids that came back, so rows cannot be padded into a pass: the
+    // right number of rows naming the wrong plantings is still a refusal, and so is one owned
+    // planting returned twice.
+    expect(await ownsEveryPlanting(fakeSql([{ id: OWNED_A }, { id: OWNED_B }]), [OWNED_A, FOREIGN], HOUSE)).toBe(false);
+    expect(await ownsEveryPlanting(fakeSql([{ id: OWNED_A }, { id: OWNED_A }]), [OWNED_A, FOREIGN], HOUSE)).toBe(false);
+
+    // A malformed id never reaches Postgres (22P02 -> an opaque 500, the V4-AUTHZRESIDUE-001 contract).
+    const bad = fakeSql([{ id: 'should-never-be-reached' }]);
+    expect(await ownsEveryPlanting(bad, [OWNED_A, 'not-a-uuid'], HOUSE)).toBe(false);
+    expect(bad.calls, 'must short-circuit before issuing SQL').toHaveLength(0);
+  });
+
+  it('a source_plant_ids array with one foreign planting writes ZERO rows — POST and PUT, executed', async () => {
+    // Through the real handler, against the runtime stubs. The stub answers the ownership query
+    // with ONE of the two plantings and would answer any write with a row, so a handler that went
+    // on to write would both issue the statement and report success — the two things asserted absent.
+    const { handler } = await import('./inventory-items/index.js');
+    const USER = 'user_stub_owner';
+    const LOT = '2d6df841-b507-4e65-8db0-97c8659df37c';
+    const event = (method, rawPath, body) => ({
+      requestContext: { http: { method } }, rawPath,
+      headers: { authorization: 'Bearer stub-token' }, body: JSON.stringify(body),
+    });
+    const lot = { name: 'Mixed nasturtium', type: 'consumable', category: 'seeds', unit: 'packet',
+      quantity_on_hand: 1, variety_id: 'd58b5155-0c23-4365-bfad-30549b8ca069' };
+    const requests = [
+      ['POST', event('POST', '/api/inventory-items', { ...lot, source_plant_ids: [OWNED_A, FOREIGN] })],
+      ['PUT', event('PUT', `/api/inventory-items/${LOT}/source-plants`, { source_plant_ids: [OWNED_A, FOREIGN] })],
+    ];
+    const run = async (ev, ownedRows) => {
+      resetStubs();
+      stubState.verifyTokenResult = { sub: USER };
+      stubState.sqlHandler = (text) => (/FROM public\.garden_node p/.test(text) ? ownedRows : [{ id: LOT, source_plants: [] }]);
+      const warned = [];
+      const orig = console.warn;
+      console.warn = (m) => warned.push(m);
+      let res;
+      try { res = await handler(ev); } finally { console.warn = orig; }
+      return { status: res.statusCode, body: JSON.parse(res.body || '{}'), warned, calls: stubState.sqlCalls };
+    };
+
+    for (const [verb, ev] of requests) {
+      const refused = await run(ev, [{ id: OWNED_A }]);
+      expect(refused.status, verb).toBe(400);
+      expect(refused.body.error, verb).toBe('source_plant_ids does not match plantings you can use');
+      // No existence oracle: the caller must not learn which id it was, or whether it exists.
+      expect(refused.body.error).not.toMatch(/not found|exists/i);
+      expect(JSON.stringify(refused.body)).not.toContain(FOREIGN);
+      // Exactly one statement ran — the ownership query. No lot, no link row, no cache update.
+      expect(refused.calls, `${verb}: a refused array reached the database again`).toHaveLength(1);
+      expect(refused.calls[0].text).toMatch(/FROM public\.garden_node p/);
+      expect(refused.calls[0].values).toEqual([[OWNED_A, FOREIGN], [USER]]);
+      expect(refused.calls.filter((c) => /\b(INSERT|UPDATE)\b/.test(c.text))).toHaveLength(0);
+      // Server-side observability for the refusal.
+      expect(refused.warned).toHaveLength(1);
+      expect(JSON.parse(refused.warned[0])).toMatchObject({
+        msg: 'authz-fk-reject', userId: USER, table: 'seed_lot_parent_planting', column: 'plant_id',
+      });
+
+      // The control: the SAME request, with both plantings owned, does reach the link INSERT. Without
+      // this the block above would pass against a handler that refuses every array.
+      const allowed = await run(ev, [{ id: OWNED_A }, { id: FOREIGN }]);
+      expect(allowed.status, `${verb} control`).toBeLessThan(300);
+      expect(allowed.calls.filter((c) => /INSERT INTO public\.seed_lot_parent_planting/.test(c.text)),
+        `${verb} control`).toHaveLength(1);
+      expect(allowed.warned).toHaveLength(0);
+    }
   });
 
   it('evidence-ingest gates a planting-typed entity_id through its planting_ref_id', () => {

@@ -119,7 +119,12 @@ describe('BUG-SEEDELAPSEDUPDATED-001 — the list reports when the stage was ent
       stubState.sqlHandler = () => [];
       const { status } = parse(await handler(listGet(qs)));
       expect(status).toBe(200);
-      expect(stubState.sqlCalls).toHaveLength(1);
+      // Two statements since V5-SEEDMULTIPARENT-001: the list, then the parents read issued beside
+      // it (source_plants; its own contract is source-plants-read.test.js). The list is the first
+      // one built, and it is still the ONLY statement that names the stage log.
+      expect(stubState.sqlCalls).toHaveLength(2);
+      expect(stubState.sqlCalls[1].text).toMatch(/FROM public\.seed_lot_parent_planting/);
+      expect(stubState.sqlCalls[1].text).not.toMatch(/seed_lot_stage_log/);
       const { text } = stubState.sqlCalls[0];
       expect(text).toMatch(/se\.entered_at AS stage_entered_at/);
       expect(text).toMatch(/FROM public\.seed_lot_stage_log sl/);
@@ -186,7 +191,8 @@ describe('Newest entry wins (Dave 2026-09-17) — one order key for the history,
       stubState.verifyTokenResult = { sub: USER };
       stubState.sqlHandler = () => [];
       await handler(listGet(qs));
-      expect(stubState.sqlCalls).toHaveLength(1);
+      // The list, and the parents read beside it (see the list describe above).
+      expect(stubState.sqlCalls).toHaveLength(2);
       const { text } = stubState.sqlCalls[0];
       expect(text).toMatch(/se\.entered_at AS stage_entered_at/);
       expect(orderOn(text, 'sl')).toEqual(history);

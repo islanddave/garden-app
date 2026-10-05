@@ -692,12 +692,31 @@ export const handler = async (event) => {
 
     // ── V4-SEEDREVERSE-001 — "did I already save seed from this one?" ────────────────────────────
     //
-    // inventory_items.source_plant_id has been written since V4-SEEDLINK-001 and read by nothing:
-    // the packet knows its parent planting, the planting knew nothing about its packets. The index
-    // for this direction was built with the column and says so —
-    // migrations/v4-seedlink-001/0a-additive-ddl.sql:48, "It is also the index for 'which lots came
-    // from this plant?'" — and had no query behind it until now. A Save-seed control on planting
-    // detail makes this the immediately-obvious next question.
+    // The reverse of seed provenance: the packet knows its parent plantings, and this is the
+    // planting asking which packets came from it. A Save-seed control on planting detail makes this
+    // the immediately-obvious next question.
+    //
+    // TWO ARMS: a live seed_parent link to this planting in seed_lot_parent_planting, OR
+    // inventory_items.source_plant_id naming it (schema_version 5.0.0-seedmultiparent-001). A lot
+    // can record several parent plantings, one live role = 'seed_parent' link row each, and the
+    // column survives as a member cache naming ONE of them. Read through the column alone —
+    // `WHERE i.source_plant_id = ${plantId}`, which is what this was — a mixed lot is listed under
+    // that one parent and under nobody else: "no seed saved" on every other parent's page, and no
+    // lot behind a seed_saved event logged on one of them (EventDetail and PlantingDetail resolve an
+    // event's lot THROUGH this read). The link arm is what fixes that; idx_slpp_plant is its index.
+    //
+    // WHY THE COLUMN ARM STAYS. The cache names a member of the set by invariant, so while that
+    // holds this arm can only repeat a lot the link arm already found — and where it does not hold
+    // yet (a lot written by a still-deployed older inventory-items Lambda before the reconcile, the
+    // per-function deploy matrix, a Lambda revert) the column is the ONLY record of the parent, and
+    // without this arm the lot drops off the planting's page until somebody reconciles. The two sit
+    // in ONE parenthesised OR beneath the household and live-lot filters: outside the parentheses
+    // the column arm escapes both, and as a UNION a lot matching both is listed twice.
+    //
+    // TWO deleted_at COLUMNS, AND THEY MEAN DIFFERENT THINGS. The link's says "this plant was taken
+    // off the lot". The lot's says the lot itself is gone — and a link row is NOT retired with its
+    // lot, it follows it and comes back with it, so `i.deleted_at IS NULL` is the only thing keeping
+    // a deleted lot out of this list. Both filters are load-bearing; neither implies the other.
     //
     // OWNERSHIP IS THE IMPORTED CANONICAL PREDICATE, NOT A RESTATEMENT. loadOwnedPlantingRef is the
     // by-id ownership form for this Lambda (authz-parents.js:117-146) — container-owned arm, plus
@@ -711,11 +730,29 @@ export const handler = async (event) => {
     // live one — you save seed at the end of a plant's life and then retire it. A liveness filter
     // here would answer "no seed saved" for exactly the plantings most likely to have some.
     //
-    // NO `category = 'seeds'` FILTER either, and that is not an oversight. source_plant_id is
-    // itself the seed-provenance column and is only settable on a seeds row (the /source-plant
-    // UPDATE carries `AND category = 'seeds'`), so the category test adds no precision — while
-    // category IS editable afterwards through the wide PUT, so filtering on it could silently drop
-    // a lot the user really did link. This surface's wrong answer must never be "nothing".
+    // NO `category = 'seeds'` FILTER either, and that is not an oversight. A parent link is only
+    // ever written against a seeds row (every statement that writes one in lambda/inventory-items
+    // carries the lot predicate `AND category = 'seeds'`), and a lot with a live seed parent has a
+    // non-NULL source_plant_id, which chk_inventory_source_plant_seeds_only holds to
+    // category = 'seeds' against the wide PUT. So where the two agree the category test adds no
+    // precision — and where they do not (live link rows beside a NULL column) that CHECK no longer
+    // pins the category, the wide PUT can move the lot out of Seeds, and filtering on it would
+    // silently drop a lot the user really did link. This surface's wrong answer must never be
+    // "nothing".
+    //
+    // other_parents — the lot's OTHER live seed parents, so a mixed lot does not read on this page
+    // as though it came from this planting alone. ONE correlated aggregate, never a join in the
+    // outer FROM: a join there returns the lot once per other parent and the list double-counts it.
+    // Built from the link rows ALONE, never the column: where the two disagree, each planting's page
+    // lists what the links say. `[]` for a lot with one parent, and for one listed here by its
+    // column with no link written yet. Named as inventory's source_plants names a planting — name is
+    // garden_node.display_name, variety_name is cultivar.display_name — and ordered name then id.
+    // The element's id is the LINK's plant_id and both joins are LEFT, so nothing about the other
+    // planting decides whether it is listed: no archived filter and no deleted filter, for the
+    // reason given above, and a planting whose variety was cleared still appears, with a null
+    // variety_name. Its cultivar is aliased `opv` — inside the aggregate a second `pv` would be
+    // legal and would shadow the lot's, so that deleting the inner join left the lot's own variety
+    // printed under every parent instead of an error.
     if (seedLotsMatch) {
       const plantId = seedLotsMatch[1];
       if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
@@ -738,12 +775,30 @@ export const handler = async (event) => {
       const rows = await sql`
         SELECT i.id, i.name, i.seed_stage, i.quantity_on_hand, i.created_at,
                i.seed_count, i.seed_count_estimated, i.seed_weight_g,
-               pv.display_name AS variety_name
+               pv.display_name AS variety_name,
+               COALESCE((
+                 SELECT jsonb_agg(
+                          jsonb_build_object('id', ol.plant_id, 'name', gn.display_name,
+                                             'variety_name', opv.display_name)
+                          ORDER BY gn.display_name, ol.plant_id)
+                   FROM public.seed_lot_parent_planting ol
+                   LEFT JOIN public.garden_node gn ON gn.id = ol.plant_id
+                   LEFT JOIN public.cultivar opv ON opv.id = gn.cultivar_id
+                  WHERE ol.inventory_item_id = i.id
+                    AND ol.role = 'seed_parent'
+                    AND ol.deleted_at IS NULL
+                    AND ol.plant_id <> ${plantId}
+               ), '[]'::jsonb) AS other_parents
           FROM public.inventory_items i
           LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
-         WHERE i.source_plant_id = ${plantId}
-           AND i.created_by = ANY(${householdIds})
+         WHERE i.created_by = ANY(${householdIds})
            AND i.deleted_at IS NULL
+           AND (EXISTS (SELECT 1 FROM public.seed_lot_parent_planting sl
+                         WHERE sl.inventory_item_id = i.id
+                           AND sl.plant_id = ${plantId}
+                           AND sl.role = 'seed_parent'
+                           AND sl.deleted_at IS NULL)
+                OR i.source_plant_id = ${plantId})
          ORDER BY i.created_at DESC, i.id DESC
       `;
       return resp(200, { plant_id: plantId, seed_lots: rows });

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
@@ -26,6 +27,13 @@ import { jsonResponder } from './http-response.js';
 // BUG-INVREFSTRAND-001 — the pre-delete reference check. Its own module because the DELETE arm is the
 // only caller and the relation list is shared vocabulary with migrations/v5-invrefstrand-001.
 import { deletePreflight, blockingMessage } from './delete-guard.js';
+// V5-SEEDMULTIPARENT-001 — a seed lot's parent plantings (public.seed_lot_parent_planting beside the
+// source_plant_id member cache). The id-array rule, the ownership gate, the one read and the one
+// set-replace write are in their own module so every route below shares a single copy of each.
+import {
+  MULTI_PARENT_ERROR, normalizeSourcePlantIds, ownsEveryPlanting, insertSeedParentLinks,
+  replaceSourcePlants, readSourcePlants, settleSourcePlants, sourcePlantsOf, sourcePlantsByLot,
+} from './seed-lot-parents.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -227,6 +235,36 @@ const SOURCE_DISTINCT_ERROR =
   'source_id and acquired_from_source_id must name different sources';
 const deadSourceRefError = (field) => `${field} does not match a source you can use`;
 
+// V5-SEEDMULTIPARENT-001 — the array gate's refusal. One generic string for "not yours", "deleted"
+// and "no such planting", so the set route is no more of an existence oracle than the single-id
+// gates are. Those keep their own singular wording (old clients render it).
+const SOURCE_PLANT_IDS_UNUSABLE = 'source_plant_ids does not match plantings you can use';
+
+// What replaceSourcePlants decided, as HTTP. Shared by PUT /:id/source-plants and the legacy PATCH
+// /:id/source-plant, which are one write with two front doors — so the two cannot answer the same
+// outcome differently.
+//
+// 404 covers absent, foreign, deleted and non-seeds alike (no existence oracle). The 409 for a
+// multi-parent lot carries a `code` so a client that knows about sets can tell it from the plain
+// concurrent-writer 409, and `source_plant_ids` so it can show what is there without a second fetch.
+function sourcePlantsReply(resp, out) {
+  if (out.outcome === 'not_found') return resp(404, { error: 'Not found' });
+  if (out.outcome === 'multi_parent') {
+    return resp(409, { error: MULTI_PARENT_ERROR, code: 'multi_parent_lot', source_plant_ids: out.source_plant_ids });
+  }
+  // The SAME sentence chk_inventory_seed_source_plant has always produced for this refusal, on
+  // purpose. Before the set-replace write, naming a plant on a shop-kind lot through the legacy route
+  // reached that CHECK and the catch block answered with this string; the refusal now happens in the
+  // write's own guards instead, and an old client must not see different words for the same thing.
+  if (out.outcome === 'source_kind') {
+    return resp(400, { error: SEED_CONSTRAINT_MESSAGES.chk_inventory_seed_source_plant });
+  }
+  if (out.outcome === 'conflict') {
+    return resp(409, { error: 'This seed lot was changed at the same moment. Reload and try again.' });
+  }
+  return resp(200, { id: out.id, source_plant_id: out.source_plant_id, source_plants: out.source_plants });
+}
+
 export function validateCreate(body) {
   if (!body || typeof body !== 'object') return 'body required';
   if (!body.name || typeof body.name !== 'string' || !body.name.trim()) return 'name is required';
@@ -249,6 +287,12 @@ export function validateCreate(body) {
   // create path would be the one hole the edit path closes: a shovel could be born with a parent
   // plant that no route could ever have attached to it afterwards.
   if (body.source_plant_id != null && body.category !== 'seeds') return 'source_plant_id is only allowed when category is seeds';
+  // V5-SEEDMULTIPARENT-001 — the same rule for the set. Only a NON-EMPTY array: `[]` names no
+  // planting, so it is as legal on a shovel as leaving the key out. Whether the value is an array of
+  // uuids at all is the POST arm's question (normalizeSourcePlantIds), not this body-shape pass's.
+  if (Array.isArray(body.source_plant_ids) && body.source_plant_ids.length > 0 && body.category !== 'seeds') {
+    return 'source_plant_ids is only allowed when category is seeds';
+  }
   if (body.source_kind != null && body.category !== 'seeds') return 'source_kind is only allowed when category is seeds';
   const merr = validateMetadata(body.metadata);
   if (merr) return merr;
@@ -591,6 +635,51 @@ export const handler = async (event) => {
       return resp(201, rows[0]);
     }
 
+    // ── V5-SEEDMULTIPARENT-001 — which PLANTINGS did this lot come from? The SET route. ────────────
+    // PUT /api/inventory-items/:id/source-plants  { "source_plant_ids": [uuid, ...] }
+    //
+    // REPLACES the lot's parent set: `[]` clears it. A whole-set verb rather than add / remove calls
+    // because the caller always holds the whole set (it is what the lot page draws), and a replace
+    // cannot leave a half-applied edit behind the way two calls can.
+    //
+    // ABOVE THE GENERIC ARMS, and beside /source-plant on purpose. That route's regex ends in
+    // `/source-plant$`, so it cannot catch this path, and idMatch's /([^/]+)$/ cannot either — the
+    // ordering is kept explicit for the reason /sow-archive gives. A DEDICATED SUB-ROUTE for the
+    // reason /source-plant gives at length just below: nothing about a lot's parents may ride the
+    // wide PUT, whose every caller round-trips a stale list row.
+    const sourcePlantsMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)\/source-plants$/);
+    if (sourcePlantsMatch) {
+      const itemId = sourcePlantsMatch[1];
+      if (method !== 'PUT') return resp(405, { error: 'Method not allowed' });
+      const body = JSON.parse(event.body ?? '{}');
+
+      // PRESENCE, the idiom every seed sub-route here uses. An absent key is a malformed request,
+      // not "clear": clearing is the explicit empty array, so a client that forgot the key cannot
+      // wipe a lot's parents with a 200.
+      if (!Object.prototype.hasOwnProperty.call(body, 'source_plant_ids')) {
+        return resp(400, { error: 'source_plant_ids is required (send [] to clear)' });
+      }
+      const set = normalizeSourcePlantIds(body.source_plant_ids);
+      if (set.error) return resp(400, { error: set.error });
+
+      // AUTHZ — every id, counted (see ownsEveryPlanting for why a presence test is not enough).
+      // Before the write and before the lot is even looked at, like the single-id gate below: a
+      // planting the caller cannot use is refused the same way whatever lot it was aimed at.
+      // The whole array is logged, not the offending id — the gate does not learn which one it was.
+      if (!await ownsEveryPlanting(sql, set.ids, householdIds)) {
+        warnRejectedFk(userId, 'seed_lot_parent_planting', 'plant_id', set.ids.join(','));
+        return resp(400, { error: SOURCE_PLANT_IDS_UNUSABLE });
+      }
+
+      // A malformed lot id is an absent lot. Without this it reaches Postgres as 22P02, which nothing
+      // maps, and answers 500.
+      if (!UUID_RE.test(itemId)) return resp(404, { error: 'Not found' });
+
+      return sourcePlantsReply(resp, await replaceSourcePlants(sql, {
+        lotId: itemId, ids: set.ids, householdIds, userId,
+      }));
+    }
+
     // ── V4-SEEDLINK-001 — seed-lot provenance: which PLANT did this lot come from? ───────────────
     // A DEDICATED SUB-ROUTE, NOT A COLUMN ON THE WIDE PUT, and that is structural rather than
     // stylistic. Every assignment in the PUT's SET list is unconditional (`= ${body.x ?? null}`) and
@@ -660,21 +749,28 @@ export const handler = async (event) => {
         }
       }
 
-      // Same predicate set as /sow-archive: household-scoped, live rows only, and category='seeds'
-      // asserted so this route cannot stamp a seed-only field onto a shovel. 404 on no match, so a
-      // foreign or non-seed item answers exactly as a missing one does.
-      const rows = await sql`
-        UPDATE public.inventory_items
-           SET source_plant_id = ${sourcePlantId},
-               updated_at = NOW()
-         WHERE id = ${itemId}
-           AND created_by = ANY(${householdIds})
-           AND deleted_at IS NULL
-           AND category = 'seeds'
-        RETURNING id, source_plant_id
-      `;
-      if (!rows.length) return resp(404, { error: 'Not found' });
-      return resp(200, rows[0]);
+      // V5-SEEDMULTIPARENT-001 — THE WRITE IS NOW THE SET ROUTE'S, with one id or none. This route
+      // used to assign the column alone; a lot's parents are now link rows with the column as their
+      // member cache, and a column written by itself is exactly the drift the cache rule forbids. So
+      // "set the parent to X" is "make the set [X]" and "clear" is "make it []" — row and column in
+      // one transaction, the lot predicate (household, live, category = 'seeds') in every statement,
+      // 404 on no match so a foreign or non-seed item answers exactly as a missing one does.
+      //
+      // `legacy: true` IS THE REFUSAL ON A LOT WITH TWO OR MORE PARENTS, for an id AND for null.
+      // Whoever calls this route cannot see the set — a stale bundle, or a second household device
+      // that has not reloaded — so "replace the set" would erase recorded parents on a 200, and
+      // "clear" would too. It answers 409 `multi_parent_lot` and writes nothing. The count is tested
+      // INSIDE the write statements under the lot's row lock, not by a read made beforehand that a
+      // concurrent PUT /source-plants could invalidate (see replaceSourcePlants).
+      //
+      // The 200 is a superset of what this route returned before: { id, source_plant_id } plus
+      // source_plants. A malformed lot id answers 404 here rather than reaching Postgres as 22P02.
+      if (!UUID_RE.test(itemId)) return resp(404, { error: 'Not found' });
+      return sourcePlantsReply(resp, await replaceSourcePlants(sql, {
+        lotId: itemId,
+        ids: sourcePlantId != null ? [String(sourcePlantId).toLowerCase()] : [],
+        householdIds, userId, legacy: true,
+      }));
     }
 
     // ── V4-SEEDORIGIN-001 — the OTHER half of provenance: where did this lot come from when it did
@@ -707,14 +803,31 @@ export const handler = async (event) => {
       // an opaque 23514 mapped to "Constraint violation: chk_…", which tells a user nothing about
       // what they did. provenance.js:92-95 makes exactly the same choice for preservation_log.
       // A lot cannot claim it came from a shop AND from one of my plants.
+      //
+      // V5-SEEDMULTIPARENT-001 — "a source plant is set" now means EITHER representation: the column,
+      // or any live seed_parent link row. Under the member-cache rule the two always agree, so the
+      // second test looks redundant; it is what keeps this route right in the one state where they
+      // do not — link rows with a NULL column, which a write that reached only one of the two leaves
+      // behind and which chk_inventory_seed_source_plant cannot see (a CHECK reads one row of one
+      // table). Without it that lot would accept "gift" and claim a shop origin AND garden parents.
+      //
+      // Still a read BEFORE the write, as it always was, and that is sound here where it would not be
+      // for the parents routes: the race is closed by the CHECK. A parents write that commits between
+      // this read and the UPDATE below leaves the column non-NULL, and the UPDATE then fails 23514,
+      // which the catch block answers with its sentence — nothing is written either way.
       if (sourceKind != null && sourceKind !== 'own_garden') {
         const [existing] = await sql`
-          SELECT source_plant_id FROM public.inventory_items
-           WHERE id = ${itemId} AND created_by = ANY(${householdIds}) AND deleted_at IS NULL
+          SELECT i.source_plant_id,
+                 EXISTS (SELECT 1 FROM public.seed_lot_parent_planting l
+                          WHERE l.inventory_item_id = i.id
+                            AND l.role = 'seed_parent'
+                            AND l.deleted_at IS NULL) AS has_seed_parents
+            FROM public.inventory_items i
+           WHERE i.id = ${itemId} AND i.created_by = ANY(${householdIds}) AND i.deleted_at IS NULL
         `;
         // Absent row -> fall through to the UPDATE, which 404s. Do not answer differently here, or
         // this branch becomes an existence oracle the sibling route deliberately avoids.
-        if (existing && existing.source_plant_id != null) {
+        if (existing && (existing.source_plant_id != null || existing.has_seed_parents === true)) {
           return resp(400, {
             error: 'source_kind must be own_garden while a source plant is set (clear the source plant first)',
           });
@@ -1014,10 +1127,18 @@ export const handler = async (event) => {
         // says so in CloudWatch by item and error class, instead of 500ing the whole packet page for the
         // sake of its links. A failed germination read still fails the request, exactly as it did before
         // sown_from existed.
+        //
+        // ── V5-SEEDMULTIPARENT-001 — source_plants: the plantings this lot's seed came FROM ─────────────
+        // The third read of the same round trip, and settled the same way sown_from is: a failed
+        // parents read answers source_plants: null and logs (settleSourcePlants), it never fails the
+        // page. Unlike sown_from it is [] and not null off the seeds branch — "this row has no parent
+        // plantings" is simply true of a shovel, and only a seeds row can carry any (the parents
+        // routes assert category = 'seeds'), so a non-seed item costs no query.
         let germination = null;
         let sown_from = null;
+        let source_plants = [];
         if (row.category === 'seeds') {
-          const [germRead, sownFromRead] = await Promise.allSettled([
+          const [germRead, sownFromRead, parentsRead] = await Promise.allSettled([
             sql`
               SELECT p.id, p.display_name AS name, p.sown_at, p.seeds_sown, p.seeds_germinated
                 FROM public.garden_node p
@@ -1038,9 +1159,13 @@ export const handler = async (event) => {
                  AND pp.archived_at IS NULL
                ORDER BY p.sown_at DESC NULLS LAST, p.id
             `,
+            settleSourcePlants(readSourcePlants(sql, householdIds, itemId), { item: itemId }),
           ]);
           if (germRead.status === 'rejected') throw germRead.reason;
           const g = germRead.value;
+          // settleSourcePlants never rejects: its value is the rows, or null when the read failed.
+          const parentRows = parentsRead.status === 'fulfilled' ? parentsRead.value : null;
+          source_plants = parentRows == null ? null : sourcePlantsOf(parentRows);
           if (sownFromRead.status === 'fulfilled') {
             sown_from = sownFromRead.value;
           } else {
@@ -1066,9 +1191,10 @@ export const handler = async (event) => {
         // so the one client adapter (src/components/seed/lotPhoto.js) reads one name on both surfaces.
         // sown_from is null off the seeds branch, like germination: not "none sown", not applicable. On a
         // seed row it is null only when its read failed (unknown) — never [], which would say none sown.
+        // source_plants is an array on every row and null ONLY when its read failed.
         return resp(200, {
           ...rest, featured_photo_id: row.effective_featured_photo_id, hero_photo_id: row.effective_featured_photo_id,
-          featured_photo_view_url, germination, sown_from,
+          featured_photo_view_url, germination, sown_from, source_plants,
         });
       }
 
@@ -1180,7 +1306,10 @@ export const handler = async (event) => {
         // HOUSEHOLD-MODE TODO: concurrent quantity edits have a lost-update window — PUT writes an
         // absolute quantity (client read-modify-write; no optimistic updated_at/expected guard).
         // Backend-safe today; revisit as a fast-follow if both members adjust counts concurrently.
-        const rows = await sql`
+        //
+        // Built here and awaited below, beside the parents echo (V5-SEEDMULTIPARENT-001) — see the
+        // note under the statement.
+        const update = sql`
           UPDATE inventory_items SET
             name              = ${body.name ?? null},
             type              = ${body.type ?? null},
@@ -1282,8 +1411,33 @@ export const handler = async (event) => {
             AND deleted_at IS NULL
           RETURNING *
         `;
+        // V5-SEEDMULTIPARENT-001 — the 200 carries source_plants, and this verb still cannot WRITE
+        // them. Read-only here on purpose: `source_plants` / `source_plant_ids` in the body are
+        // ignored exactly as `source_plant_id` is (none is in the SET list above, and
+        // source-plants-read.test.js pins it), because every caller of this verb round-trips a list
+        // row that may be minutes stale.
+        //
+        // It has to be IN the response because the client replaces its cached list row with this one
+        // (useInventory.updateItem): a field only the list carried would vanish from the cache after
+        // any unrelated edit.
+        //
+        // BESIDE the write, not after it and not inside it. Not a subquery in RETURNING: a failed
+        // parents read must cost the echo (null, logged) and never the save. Not a second await:
+        // this is the +/- tap on /inventory, and put-source-refs.test.js exists to keep it one round
+        // trip long. Issuing the read concurrently is sound because this statement cannot change the
+        // set it reads — only the two parents routes can.
+        //
+        // Seeds rows only, judged on the body: `category` is assigned unconditionally above, so the
+        // body's category IS the row's after this write, and nothing but a seeds row can have a
+        // parent. A malformed id is not sent to the read at all — the UPDATE answers for it.
+        const [rows, parentRows] = await Promise.all([
+          update,
+          body.category === 'seeds' && UUID_RE.test(itemId)
+            ? settleSourcePlants(readSourcePlants(sql, householdIds, itemId), { item: itemId })
+            : [],
+        ]);
         if (!rows.length) return resp(404, { error: 'Not found' });
-        return resp(200, rows[0]);
+        return resp(200, { ...rows[0], source_plants: parentRows == null ? null : sourcePlantsOf(parentRows) });
       }
 
       if (method === 'DELETE') {
@@ -1382,8 +1536,17 @@ export const handler = async (event) => {
       //     so a best guess never reaches a card looking like a supplier figure.
       // The list is still ~330 wide rows, which is why this handler answers through the negotiated-gzip
       // responder (api-gzip-wiring.test.js).
-      const rows = cats && cats.length
-        ? await sql`
+      //
+      // V5-SEEDMULTIPARENT-001 — every row also carries `source_plants`, and it is NOT a fourth
+      // LATERAL in the statements below, for two reasons. A join that returned a lot once per parent
+      // would multiply rows; and a parents aggregate INSIDE this statement would make the whole seed
+      // list fail whenever that one subquery did. So the parents are their own statement
+      // (readSourcePlants: one aggregate per lot, only lots that have any), issued beside the list —
+      // which is why neither template is awaited where it is built — and merged by id below.
+      // SETTLED: a failed parents read gives every row source_plants: null and a log line; a failed
+      // LIST read still fails the request, exactly as before.
+      const listRead = cats && cats.length
+        ? sql`
             SELECT i.*, pv.display_name AS variety_name, pv.crop_type_slug AS crop_slug,
                    se.entered_at AS stage_entered_at,
                    pv.scoville_min, pv.scoville_max, pv.scoville_source,
@@ -1424,7 +1587,7 @@ export const handler = async (event) => {
               AND i.category = ANY(${cats})
             ORDER BY i.created_at DESC
           `
-        : await sql`
+        : sql`
             SELECT i.*, pv.display_name AS variety_name, pv.crop_type_slug AS crop_slug,
                    se.entered_at AS stage_entered_at,
                    pv.scoville_min, pv.scoville_max, pv.scoville_source,
@@ -1464,6 +1627,15 @@ export const handler = async (event) => {
               AND i.deleted_at IS NULL
             ORDER BY i.created_at DESC
           `;
+      // Only a seeds row can have parents, so a list filtered to other categories (the treatment
+      // log's product picker) asks nothing and every row gets []. Unfiltered, or filtered to include
+      // seeds, it is one extra statement returning one row per saved lot.
+      const wantsParents = !(cats && cats.length) || cats.includes('seeds');
+      const [rows, parentRows] = await Promise.all([
+        listRead,
+        wantsParents ? settleSourcePlants(readSourcePlants(sql, householdIds), { list: cats ? cats.join(',') : 'all' }) : [],
+      ]);
+      const parentsByLot = parentRows == null ? null : sourcePlantsByLot(parentRows);
       // The effective hero leaves as `hero_photo_id`, NOT as an override of `featured_photo_id` the
       // way the single-item GET does it. A LIST row is what the client merges back into the wide PUT
       // (useInventory.updateItem's {...current, ...payload}; SavedSeeds' listRowPutBody), and a
@@ -1495,6 +1667,10 @@ export const handler = async (event) => {
           ...rest,
           hero_photo_id: heroId ?? null,
           hero_thumb_key: heroId && storagePath ? `thumbs/${storagePath}` : null,
+          // [] = this row has no parent plantings; null = the parents read failed (unknown), on
+          // every row of that response. A list row is merged back into the wide PUT's body by the
+          // client, and that verb ignores this key.
+          source_plants: parentsByLot == null ? null : (parentsByLot.get(String(row.id)) ?? []),
         };
       });
       console.log(JSON.stringify({
@@ -1543,7 +1719,30 @@ export const handler = async (event) => {
       // inventory and almost no row has a parent plant to name. Absent and explicit-null are the
       // same write on a create — there is no prior value to distinguish them.
       const sourcePlantId = body.source_plant_id ?? null;
-      if (sourcePlantId != null) {
+
+      // V5-SEEDMULTIPARENT-001 — `source_plant_ids`, the SET of parent plantings. Optional.
+      //
+      // PRESENT (even `[]`) = IT IS THE SET, and then `source_plant_id` beside it is no longer a
+      // second way to name a parent: it may only pick which member the column caches, so it must BE
+      // a member (400 otherwise — a body naming a parent outside its own set is contradicting
+      // itself, and guessing which half was meant writes provenance nobody stated). Absent (or
+      // null, which on a create is the same thing — see the note above), the old single key still
+      // works alone and means a set of one.
+      //
+      // The array is gated by ONE counted ownership query (ownsEveryPlanting) and not by the
+      // single-id gate below: that gate's `!owned.length` is right for one id and wrong for N. The
+      // single-key path keeps its own gate, byte for byte, and its own message text.
+      const parentSet = body.source_plant_ids != null ? normalizeSourcePlantIds(body.source_plant_ids) : null;
+      if (parentSet?.error) return resp(400, { error: parentSet.error });
+      if (parentSet) {
+        if (sourcePlantId != null && !parentSet.ids.includes(String(sourcePlantId).toLowerCase())) {
+          return resp(400, { error: 'source_plant_id must be one of source_plant_ids' });
+        }
+        if (!await ownsEveryPlanting(sql, parentSet.ids, householdIds)) {
+          warnRejectedFk(userId, 'seed_lot_parent_planting', 'plant_id', parentSet.ids.join(','));
+          return resp(400, { error: SOURCE_PLANT_IDS_UNUSABLE });
+        }
+      } else if (sourcePlantId != null) {
         const owned = UUID_RE.test(String(sourcePlantId))
           ? await sql`
               SELECT p.id
@@ -1571,7 +1770,16 @@ export const handler = async (event) => {
       if (sourceKind != null && !VALID_SOURCE_KINDS.includes(sourceKind)) {
         return resp(400, { error: `source_kind must be one of ${VALID_SOURCE_KINDS.join(', ')}` });
       }
-      if (sourceKind != null && sourceKind !== 'own_garden' && sourcePlantId != null) {
+      // V5-SEEDMULTIPARENT-001 — the set that will be written as link rows, and its member cache.
+      // The cache is the single key when the body sent one (checked a member above), else the first
+      // id the body named; NULL exactly when the set is empty, which is the member-cache rule.
+      const parentIds = parentSet
+        ? parentSet.ids
+        : (sourcePlantId != null ? [String(sourcePlantId).toLowerCase()] : []);
+      const cachePlantId = sourcePlantId ?? parentIds[0] ?? null;
+      // Judged on the SET, not on the single key: `source_plant_ids` alone names garden parents just
+      // as surely. Same sentence either way — the rule is the same rule.
+      if (sourceKind != null && sourceKind !== 'own_garden' && parentIds.length > 0) {
         return resp(400, { error: 'source_kind must be own_garden when a source plant is set' });
       }
 
@@ -1619,9 +1827,19 @@ export const handler = async (event) => {
       // create that dropped them would return 201 with the provenance gone. The two free-text
       // `source` / `source_url` columns beside them stay exactly as they are — this pair is the
       // structured registry reference, not a replacement for the string a caller already sends.
-      const rows = await sql`
+      //
+      // V5-SEEDMULTIPARENT-001 — THE ID IS MINTED HERE, not by the column default, and the statement
+      // is BUILT here and awaited further down. Both for one reason: a lot with parents is the lot
+      // row AND its link rows in one sql.transaction([...]), and that array is non-interactive — no
+      // statement can read another's RETURNING — so the link INSERT can only name the new lot by an
+      // id known before either runs (the lambda/varieties POST precedent, BUG-CULTIVARNOPROFILE-001).
+      // Minted for every create rather than only for the ones with parents, so there is ONE INSERT
+      // statement: a second copy of this column list is how a column gets added to one and not the
+      // other. `source_plant_id` is bound to the CACHE (see above), never to the body key directly.
+      const lotId = randomUUID();
+      const insertLot = sql`
         INSERT INTO inventory_items (
-          user_id, created_by, type, name, category,
+          id, user_id, created_by, type, name, category,
           location_id, location_text, source, source_url, purchase_date,
           unit_cost, unit, quantity_purchased, notes, tags, status,
           quantity_on_hand, reorder_threshold, reorder_quantity,
@@ -1630,7 +1848,7 @@ export const handler = async (event) => {
           seed_process, seed_stage, source_plant_id, source_kind,
           source_id, acquired_from_source_id
         ) VALUES (
-          ${userId}, ${userId}, ${body.type}, ${body.name.trim()}, ${body.category},
+          ${lotId}::uuid, ${userId}, ${userId}, ${body.type}, ${body.name.trim()}, ${body.category},
           ${body.location_id ?? null}, ${body.location_text ?? null}, ${body.source ?? null}, ${body.source_url ?? null}, ${body.purchase_date ?? null},
           ${body.unit_cost ?? null},
           ${isConsumable ? body.unit : null},
@@ -1643,11 +1861,27 @@ export const handler = async (event) => {
           ${body.brand ?? null}, ${body.model ?? null},
           ${body.image_url ?? null}, ${body.featured_image_id ?? null}, ${body.variety_id ?? null},
           ${metadataJson}::jsonb,
-          ${body.seed_process ?? null}, ${body.seed_stage ?? null}, ${sourcePlantId}, ${sourceKind},
+          ${body.seed_process ?? null}, ${body.seed_stage ?? null}, ${cachePlantId}, ${sourceKind},
           ${body.source_id ?? null}, ${body.acquired_from_source_id ?? null}
         ) RETURNING *
       `;
-      return resp(201, rows[0]);
+      // No parents — every non-seed create and nearly every seed packet. One statement, exactly as
+      // before, and it never names seed_lot_parent_planting: the commonest write in this handler
+      // does not depend on that table.
+      if (!parentIds.length) {
+        const rows = await insertLot;
+        return resp(201, { ...rows[0], source_plants: [] });
+      }
+      // With parents: lot, link rows and the read-back are ONE transaction, so a lot can never be
+      // created with its column set and its rows missing (or the reverse). The link INSERT is the
+      // set route's own statement, lot predicate included — it selects the row statement 0 just
+      // wrote. This is also the legacy `source_plant_id`-only create: a set of one, one link row.
+      const [lotRows, , parentRows] = await sql.transaction([
+        insertLot,
+        insertSeedParentLinks(sql, { lotId, ids: parentIds, householdIds, userId }),
+        readSourcePlants(sql, householdIds, lotId),
+      ]);
+      return resp(201, { ...lotRows[0], source_plants: sourcePlantsOf(parentRows) });
     }
 
     return resp(405, { error: 'Method not allowed' });

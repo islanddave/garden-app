@@ -147,7 +147,14 @@ describe('V4-SOURCEREG-001 PUT — an omitted key must not erase provenance', ()
     // existing PUT a single round trip.
     await handler(put(buildChangesPayload()));
     expect(stubState.sqlCalls.filter((c) => /FROM public\.source\b/.test(c.text))).toHaveLength(0);
-    expect(stubState.sqlCalls).toHaveLength(1);
+    // V5-SEEDMULTIPARENT-001: a seeds row's PUT now issues a SECOND statement, the read-only parents
+    // echo — and it is still one round trip LONG, because that read is issued beside the UPDATE and
+    // not after it (source-plants-read.test.js proves the concurrency by holding the UPDATE open).
+    // So the property this line guards is restated rather than loosened: one write, and nothing
+    // awaited ahead of it.
+    expect(stubState.sqlCalls).toHaveLength(2);
+    expect(stubState.sqlCalls[0].text).toMatch(/UPDATE inventory_items/);
+    expect(stubState.sqlCalls[1].text).toMatch(/FROM public\.seed_lot_parent_planting/);
   });
 });
 

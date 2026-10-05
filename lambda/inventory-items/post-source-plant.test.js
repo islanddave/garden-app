@@ -150,9 +150,42 @@ describe('BUG-SEEDPOSTDROPSPARENT-001 — creating a seed lot with a parent plan
     // Ordering is the whole guarantee. A gate that fires after the write refuses a row that already
     // exists, and the 400 then lies about what happened.
     await handler(post(seedPacket({ source_plant_id: OWNED_PLANT })));
-    expect(stubState.sqlCalls).toHaveLength(2);
+    // Four statements since V5-SEEDMULTIPARENT-001 (two before it): the probe, then the lot, its
+    // one link row and the read-back, which are a single transaction. The gate is still first.
+    expect(stubState.sqlCalls).toHaveLength(4);
     expect(stubState.sqlCalls[0].text).toContain('FROM public.garden_node');
     expect(stubState.sqlCalls[1].text).toContain('INSERT INTO inventory_items');
+  });
+
+  it('a single parent is now a set of one: the same create also writes ONE link row for it', async () => {
+    // V5-SEEDMULTIPARENT-001. The column is the member cache of the lot's seed_parent link rows, so
+    // a create that set the column and wrote no row would be born violating the cache rule — and
+    // every reader that has moved to the set (source_plants) would show this lot with no parent.
+    const { status, body } = parse(await handler(post(seedPacket({ source_plant_id: OWNED_PLANT }))));
+    expect(status).toBe(201);
+    const [, insertLot, insertLink, readBack] = stubState.sqlCalls;
+    expect(insertLink.text).toContain('INSERT INTO public.seed_lot_parent_planting (inventory_item_id, plant_id, role, created_by)');
+    expect(insertLink.text).toMatch(/SELECT i\.id, u\.plant_id, 'seed_parent', \?::text/);
+    // The link names the lot by the id the lot INSERT was given — minted in the handler, because
+    // no statement of a transaction can read another's RETURNING.
+    const lotId = bindingFor(insertLot, 'id');
+    expect(lotId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(insertLink.values).toContain(lotId);
+    // …with exactly this planting as its set, added by the caller.
+    expect(insertLink.values.filter((v) => Array.isArray(v) && v.length === 1 && v[0] === OWNED_PLANT).length)
+      .toBeGreaterThan(0);
+    expect(insertLink.values).toContain(USER);
+    // The read-back is the parents read for that lot, and the 201 carries what it returned.
+    expect(readBack.text).toContain('FROM public.seed_lot_parent_planting l');
+    expect(readBack.values).toContain(lotId);
+    expect(body.source_plants).toEqual([]); // the stub's row carries none; the key is what is pinned here
+  });
+
+  it('a create with no parent names no link table at all, and still answers source_plants: []', async () => {
+    const { status, body } = parse(await handler(post(seedPacket())));
+    expect(status).toBe(201);
+    expect(stubState.sqlCalls.filter((c) => /seed_lot_parent_planting/.test(c.text))).toHaveLength(0);
+    expect(body.source_plants).toEqual([]);
   });
 
   it('rejects a parent plant on a non-seed row before any SQL runs', async () => {

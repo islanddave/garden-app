@@ -31,7 +31,13 @@ const decomment = (s) => s.split('\n')
   .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
   .join('\n');
 
-const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+// V5-SEEDMULTIPARENT-001 — TWO modules read garden_node now. seed-lot-parents.js carries the counted
+// ownership gate and the parents read (the `source_plants` projection), and that read is the one new
+// place in this directory where reaching for p.name or p.variety_id would be easy to do and would
+// 500 exactly as BUG-SEEDDETAIL500-001 did. Swept together with index.js, so every assertion below
+// that says "every garden_node query" means every one in either file.
+const HELPER_SRC = decomment(readFileSync(resolve(__dirname, 'seed-lot-parents.js'), 'utf8'));
+const SRC = `${decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'))}\n${HELPER_SRC}`;
 
 // EVERY sql`` template that touches garden_node — `matchAll`, not the non-global `.match` this
 // file shipped with. That returned only the FIRST such template, which was fine while there was
@@ -82,6 +88,14 @@ const AUDIT_COLUMNS = {
     'status',
     'container_id',
     'archived_at',
+    // V5-SEEDMULTIPARENT-001 — the parents read joins each parent planting's cultivar through it,
+    // and returns it as `variety_id`. It is `cultivar_id` on the VIEW (variety_id AS cultivar_id in
+    // its definition, migrations/v5-sourcenodeview-001/0a-additive-ddl.sql). NOT re-read from
+    // information_schema for this entry: six other Lambda directories (dashboard, events,
+    // facebook-share, harvests, preservation, tags) already contract garden_node.cultivar_id, so
+    // the prod audit has been asserting it on every promote. The same read also names
+    // display_name, archived_at and deleted_at, already listed above.
+    'cultivar_id',
   ],
   // V5-SEEDSTAB-001 slice 3 — the first container read in this directory: sown_from LEFT JOINs it for
   // the plants Lambda's ownership arm, container-deleted gate and archived-container clause. Declared
@@ -109,8 +123,21 @@ describe('BUG-SEEDDETAIL500-001 — garden_node column contract', () => {
     // gate. A floor rather than an equality — a third garden_node query should be covered by the
     // sweeps below on the day it lands, not fail this file until someone bumps a number.
     expect(GARDEN_NODE_SQLS.length).toBeGreaterThanOrEqual(2);
-    for (const q of GARDEN_NODE_SQLS) expect(q).toMatch(/FROM public\.garden_node/);
+    // FROM or JOIN: the parents read (V5-SEEDMULTIPARENT-001) is the first statement here that
+    // reaches the view through a join rather than selecting from it.
+    for (const q of GARDEN_NODE_SQLS) expect(q).toMatch(/(?:FROM|JOIN) public\.garden_node/);
     expect(GERMINATION_SQL, 'the germination summary must still be findable').toBeTruthy();
+  });
+
+  it('sweeps seed-lot-parents.js too — its two garden_node statements are among those checked', () => {
+    // Without this the widened sweep could silently go back to index.js alone and every assertion
+    // in this file would stay green over a p.name in the parents read.
+    const helper = [...HELPER_SRC.matchAll(/sql`[^`]*garden_node[^`]*`/g)].map((m) => m[0]);
+    expect(helper).toHaveLength(2);
+    for (const q of helper) expect(GARDEN_NODE_SQLS).toContain(q);
+    // The ownership gate selects from the view; the parents read joins it, aliased p in both.
+    expect(helper.filter((q) => /FROM public\.garden_node p\b/.test(q))).toHaveLength(1);
+    expect(helper.filter((q) => /LEFT JOIN public\.garden_node p ON p\.id = l\.plant_id/.test(q))).toHaveLength(1);
   });
 
   it('selects display_name (aliased to name), never a bare p.name', () => {

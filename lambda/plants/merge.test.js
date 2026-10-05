@@ -565,10 +565,198 @@ describe('mergeCore', () => {
     const sql = mockSql(baseResponses(plants))
     await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1, LOSER2], ...ok })
     for (const stmt of sql.lastTransaction()) {
-      if (/^\s*UPDATE (event_log|photos|preservation_log|critter_state|evidence|findings|seen_event|favorites|watch_impression|harvest_watch_dismissal)/.test(stmt)) {
+      if (/^\s*UPDATE (event_log|photos|preservation_log|critter_state|evidence|findings|seen_event|favorites|watch_impression|harvest_watch_dismissal|seed_lot_parent_planting)/.test(stmt)) {
         expect(stmt).toMatch(/WHERE .*= ANY\(\$\d+\)|WHERE .*= ANY/)
       }
     }
+  })
+
+  it('issues every conflict prune ahead of the repoint it clears the way for', async () => {
+    // "Conflict-prune before repoint" is the ordering rule the cutover states and nothing held it:
+    // a prune moved below its repoint still passes every source guard, and the repoint then trips
+    // the unique index the prune exists to clear. Read off the batch as issued, per surface.
+    const plants = [plantRow(WINNER), plantRow(LOSER1)]
+    const sql = mockSql(baseResponses(plants))
+    await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    const tx = sql.lastTransaction()
+    const pruned = REPOINT_SURFACES.filter((s) => s.conflict)
+    expect(pruned.length).toBeGreaterThan(0)
+    for (const s of pruned) {
+      const prune = tx.findIndex((t) => new RegExp(`^\\s*(DELETE FROM|UPDATE) ${s.table} l\\b`).test(t))
+      const repoint = tx.findIndex((t) => new RegExp(`^\\s*UPDATE ${s.table}\\s+SET ${s.column} =`).test(t))
+      expect(prune, `no conflict prune issued for ${s.table}.${s.column}`).toBeGreaterThanOrEqual(0)
+      expect(repoint, `${s.table}.${s.column} is repointed before its prune`).toBeGreaterThan(prune)
+    }
+  })
+})
+
+// ── seed_lot_parent_planting — the parent links of a saved-seed lot ──────────────────────────
+// Mock SQL, so these pin WHAT is sent, with which ids, and in what order. Whether the statements do
+// what merge.js says of them — which row survives a collision, that no 23505 can follow, that
+// inventory_items.source_plant_id still names a live parent afterwards — is a question only a real
+// engine answers (tests/integration/plant-merge-surfaces.int.test.js).
+describe('mergeCore — seed_lot_parent_planting', () => {
+  const ok = { opId: 'op1', userId: 'user_a', householdIds: ['user_a'] }
+  const run = async (responses = {}, losers = [LOSER1]) => {
+    const plants = [plantRow(WINNER), ...losers.map((id) => plantRow(id))]
+    const sql = mockSql({ ...responses, ...baseResponses(plants) })
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: losers, ...ok })
+    return { sql, r, tx: sql.lastTransaction() }
+  }
+  const isPrune = (t) => /^\s*UPDATE seed_lot_parent_planting l\b/.test(t)
+  const isRepoint = (t) => /^\s*UPDATE seed_lot_parent_planting SET plant_id =/.test(t)
+  const snapshotOf = (sql) => {
+    const insert = sql.calls.find((c) => c.text?.includes('INSERT INTO merge_event'))
+    return { insert, snap: JSON.parse(insert.values.find((v) => typeof v === 'string' && v.startsWith('{'))) }
+  }
+
+  it('declares the surface as a repoint whose collisions are soft-deleted', () => {
+    expect(SURFACES.filter((s) => s.table === 'seed_lot_parent_planting')).toEqual([
+      { table: 'seed_lot_parent_planting', column: 'plant_id', action: 'repoint', conflict: 'soft_delete' },
+    ])
+    // The cache it has to stay in step with is still a plain repoint, and still declared.
+    expect(SURFACES).toContainEqual({ table: 'inventory_items', column: 'source_plant_id', action: 'repoint' })
+  })
+
+  it('retires the colliding links, then moves the links, then retires the losers — one transaction', async () => {
+    const { sql, r, tx } = await run()
+    expect(r.status).toBe(200)
+    const prune = tx.findIndex(isPrune)
+    const repoint = tx.findIndex(isRepoint)
+    const cache = tx.findIndex((t) => /^\s*UPDATE inventory_items SET source_plant_id =/.test(t))
+    const losersGone = tx.findIndex((t) => t.includes('UPDATE plants SET deleted_at = now()'))
+    expect(prune).toBeGreaterThanOrEqual(0)
+    expect(repoint).toBeGreaterThan(prune)
+    // The member cache and the rows it summarises commit together or not at all.
+    expect(cache).toBeGreaterThanOrEqual(0)
+    expect(losersGone).toBeGreaterThan(repoint)
+    expect(losersGone).toBeGreaterThan(cache)
+    expect(sql.calls.filter((c) => c.transaction)).toHaveLength(1)
+  })
+
+  it('prunes with both arms, over live rows only, on lot AND role — and binds each arm to the right ids', async () => {
+    const { sql, tx } = await run({}, [LOSER1, LOSER2])
+    const prune = tx.find(isPrune)
+    expect(prune).toMatch(/SET deleted_at = now\(\), updated_at = now\(\)/)
+    expect(prune).toMatch(/WHERE l\.plant_id = ANY\(\$\d+\) AND l\.deleted_at IS NULL/)
+    // w: the winner already has a live row for this lot in this role.
+    expect(prune).toMatch(/FROM seed_lot_parent_planting w\s+WHERE w\.plant_id = \$\d+ AND w\.deleted_at IS NULL\s+AND w\.inventory_item_id = l\.inventory_item_id AND w\.role = l\.role/)
+    // o: another loser's row of a lower id does. Without `o.id < l.id` two colliding losers retire
+    // each other and the lot is left with no parent at all.
+    expect(prune).toMatch(/FROM seed_lot_parent_planting o\s+WHERE o\.plant_id = ANY\(\$\d+\) AND o\.deleted_at IS NULL AND o\.id < l\.id\s+AND o\.inventory_item_id = l\.inventory_item_id AND o\.role = l\.role/)
+    // The placeholders above say nothing about WHICH id went where, and a winner id bound to the
+    // loser arm reads identically. In template order: l = the losers, w = the winner, o = the losers.
+    const issued = sql.calls.find((c) => c.text && isPrune(c.text))
+    expect(issued.values).toEqual([[LOSER1, LOSER2], WINNER, [LOSER1, LOSER2]])
+  })
+
+  it('never hard-deletes a parent link', async () => {
+    // The other five prunes in the cutover are DELETEs over derived state. This one is provenance a
+    // person recorded; a copy of ready_impression's statement with the table name changed would
+    // destroy it and still satisfy an "is there a prune" check.
+    const { tx } = await run({}, [LOSER1, LOSER2])
+    expect(tx.some((t) => /DELETE FROM seed_lot_parent_planting/.test(t))).toBe(false)
+    expect(SRC).not.toMatch(/DELETE FROM seed_lot_parent_planting/)
+  })
+
+  it('moves EVERY link row on a loser, retired ones included, and leaves the cache repoint as it was', async () => {
+    const { sql, tx } = await run({}, [LOSER1, LOSER2])
+    const repoint = tx.find(isRepoint)
+    expect(repoint.replace(/\s+/g, ' ').trim())
+      .toBe('UPDATE seed_lot_parent_planting SET plant_id = $0, updated_at = now() WHERE plant_id = ANY($1)')
+    // A deleted_at filter here would strand the retired rows on a soft-deleted planting.
+    expect(repoint).not.toMatch(/deleted_at/)
+    expect(sql.calls.find((c) => c.text && isRepoint(c.text)).values).toEqual([WINNER, [LOSER1, LOSER2]])
+    expect(tx).toContain('UPDATE inventory_items SET source_plant_id = $0 WHERE source_plant_id = ANY($1)')
+  })
+
+  it('reads the rows it is about to retire with the prune\'s own predicate', () => {
+    // Two copies of one predicate, because the snapshot is serialised before the transaction it
+    // describes and the driver takes no shared fragment. If they drift the snapshot names rows the
+    // cutover did not retire, or misses ones it did, and a restore follows the snapshot.
+    const norm = (s) => s.replace(/\s+/g, ' ').trim()
+    const templates = [...SRC.matchAll(/sql`([\s\S]*?)`/g)].map((m) => norm(m[1]))
+    const read = templates.filter((t) => t.startsWith('SELECT l.id FROM seed_lot_parent_planting l'))
+    const prune = templates.filter((t) => t.startsWith('UPDATE seed_lot_parent_planting l'))
+    expect(read).toHaveLength(1)
+    expect(prune).toHaveLength(1)
+    const predicate = (t) => t.slice(t.indexOf(' WHERE l.plant_id'))
+    expect(predicate(read[0])).toMatch(/^ WHERE l\.plant_id = ANY\(\$\{loserIds\}\) AND l\.deleted_at IS NULL AND \(EXISTS/)
+    expect(predicate(read[0])).toBe(predicate(prune[0]))
+  })
+
+  it('snapshots every link row on a loser in repoints, and the retired ones by id', async () => {
+    const { sql, r } = await run({
+      'AS old_value FROM seed_lot_parent_planting': [
+        { id: 'link-moved', old_value: LOSER1 }, { id: 'link-retired', old_value: LOSER1 },
+      ],
+      'SELECT l.id FROM seed_lot_parent_planting l': [{ id: 'link-retired' }],
+    })
+    expect(r.status).toBe(200)
+    const { insert, snap } = snapshotOf(sql)
+    // The house shape, a retired row included: where each row pointed before the cutover.
+    expect(snap.repoints.filter((x) => x.table === 'seed_lot_parent_planting')).toEqual([
+      { table: 'seed_lot_parent_planting', column: 'plant_id', row_id: 'link-moved', old_value: LOSER1 },
+      { table: 'seed_lot_parent_planting', column: 'plant_id', row_id: 'link-retired', old_value: LOSER1 },
+    ])
+    // …and which of them the merge soft-deleted, which repoints alone cannot say.
+    expect(snap.seed_lot_parents_pruned).toEqual(['link-retired'])
+    expect(snap.schema_version).toBe(SNAPSHOT_VERSION)
+    expect(insert.values).toContain(SNAPSHOT_VERSION)
+    // Both rows count as repointed, the retired one too: it moves with the rest. Measured against a
+    // run with no link rows, because this mock answers by substring and the two fingerprint needles
+    // also answer the event_log and photos snapshot reads.
+    const { r: bare } = await run()
+    expect(r.body.rows_repointed).toBe(bare.body.rows_repointed + 2)
+  })
+
+  it('writes the retired list as an empty array, never an absent key, when nothing collided', async () => {
+    // Absent would read the same as a version 1 snapshot, which never looked at this table.
+    const { sql } = await run()
+    expect(snapshotOf(sql).snap.seed_lot_parents_pruned).toEqual([])
+  })
+
+  it('takes both snapshot reads on their own, before any cutover statement is built', async () => {
+    // A pre-state read issued inside the batch would run after the prune and record nothing.
+    const { sql, tx } = await run()
+    const at = (needle) => sql.calls.findIndex((c) => c.text?.includes(needle))
+    const firstOfCutover = at("set_config('app.actor_clerk_sub'")
+    expect(firstOfCutover).toBeGreaterThanOrEqual(0)
+    for (const read of ['AS old_value FROM seed_lot_parent_planting', 'SELECT l.id FROM seed_lot_parent_planting l']) {
+      expect(at(read), read).toBeGreaterThanOrEqual(0)
+      expect(at(read), read).toBeLessThan(firstOfCutover)
+      expect(tx.some((t) => t.includes(read)), read).toBe(false)
+    }
+  })
+
+  it('names no role — each role is pruned against itself and moved as it stands', () => {
+    // Release 1 writes and reads 'seed_parent' only, and the merge does neither: it compares
+    // w.role = l.role and never supplies a value, so it is already right for a second role and can
+    // never write one.
+    expect(SRC).not.toMatch(/'seed_parent'|'pollen_parent'/)
+  })
+
+  it('does nothing to the table on a dry run', async () => {
+    const plants = [plantRow(WINNER), plantRow(LOSER1)]
+    const sql = mockSql(baseResponses(plants))
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok, dryRun: true })
+    expect(r.body.dry_run).toBe(true)
+    expect(sql.calls.some((c) => c.text?.includes('seed_lot_parent_planting'))).toBe(false)
+  })
+
+  it('answers 409, not 500, if the link index is tripped after all', async () => {
+    // It cannot be on a quiet database: the prune leaves nothing to collide. A parent added to the
+    // winner by another request between the prune and the repoint still can, the whole cutover rolls
+    // back, and the caller is told so instead of being handed a 500.
+    const plants = [plantRow(WINNER), plantRow(LOSER1)]
+    const sql = mockSql(baseResponses(plants))
+    sql.transaction = async () => {
+      throw new Error('duplicate key value violates unique constraint "uq_slpp_item_plant_role_live"')
+    }
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(409)
+    expect(r.body.error).toMatch(/collided/)
+    expect(r.body.detail).toMatch(/uq_slpp_item_plant_role_live/)
   })
 })
 
@@ -619,13 +807,37 @@ describe('source guards', () => {
   })
 
   it('pins the snapshot version so a shape change is detectable', () => {
-    expect(SNAPSHOT_VERSION).toBe(1)
+    // 1 -> 2: the snapshot gained a top-level key, seed_lot_parents_pruned (the parent links the
+    // merge soft-deleted). The six repoint surfaces added before it only put new `table` values
+    // inside `repoints`, which is not a shape change and did not move this.
+    expect(SNAPSHOT_VERSION).toBe(2)
     expect(SRC).toMatch(/snapshot_version/)
   })
 
   it('declares a disposition for every surface (no unclassified entries)', () => {
     for (const s of SURFACES) {
       expect(['repoint', 'supersede', 'delete', 'leave']).toContain(s.action)
+    }
+  })
+
+  it('gives every declared conflict the prune it names, and no other surface a prune', () => {
+    // `conflict` was prose: six surfaces said 'skip' and nothing checked that a statement stood
+    // behind any of them, or that one did not stand behind a surface that says nothing. Bound both
+    // ways and by KIND, because the kind is the decision — 'skip' drops the loser's colliding row
+    // (derived state), 'soft_delete' retires it (seed_lot_parent_planting: recorded provenance).
+    // A surface that declared one and shipped the other would otherwise pass every guard here.
+    const declared = REPOINT_SURFACES.filter((s) => s.conflict)
+    expect(declared.map((s) => s.conflict).sort()).toEqual(
+      ['skip', 'skip', 'skip', 'skip', 'skip', 'skip', 'soft_delete'])
+    for (const s of REPOINT_SURFACES) {
+      expect([undefined, 'skip', 'soft_delete'], `${s.table}.${s.column}`).toContain(s.conflict)
+      const drops = new RegExp(
+        `DELETE FROM ${s.table} l\\s+WHERE l\\.${s.column} = ANY\\(\\$\\{loserIds\\}\\)`).test(SRC)
+      const retires = new RegExp(
+        `UPDATE ${s.table} l\\s+SET deleted_at = now\\(\\), updated_at = now\\(\\)\\s+`
+        + `WHERE l\\.${s.column} = ANY\\(\\$\\{loserIds\\}\\) AND l\\.deleted_at IS NULL`).test(SRC)
+      expect(drops, `${s.table}.${s.column}: a DELETE prune`).toBe(s.conflict === 'skip')
+      expect(retires, `${s.table}.${s.column}: a soft-delete prune`).toBe(s.conflict === 'soft_delete')
     }
   })
 })

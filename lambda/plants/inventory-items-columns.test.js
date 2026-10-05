@@ -153,11 +153,24 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants inventory_items column contr
   it('still issues the seed-lots read this contract exists for', () => {
     // The direction the exactly-2 count above cannot catch: delete the seed-lots SELECT and the
     // count drops, but a REPLACEMENT read that stops answering the reverse question would keep it
-    // at 2. The predicate is the feature — source_plant_id is what makes this the reverse of
-    // V4-SEEDLINK-001 rather than just another inventory list.
+    // at 2. The predicate is the feature — a parent link to THIS planting is what makes this the
+    // reverse of V4-SEEDLINK-001 rather than just another inventory list.
+    //
+    // TWO ARMS since 5.0.0-seedmultiparent-001, and BOTH must be there. A lot can record several
+    // parent plantings as link rows in seed_lot_parent_planting, and the column is a member cache
+    // naming ONE of them. Without the link arm a mixed lot is listed under that one parent alone,
+    // which is all `i.source_plant_id = ${plantId}` on its own ever did. Without the column arm a
+    // lot whose links are not written yet (an older inventory-items Lambda still deployed, a revert,
+    // anything before the reconcile) drops off its parent's page, the column being the only record.
+    // That the two sit in one parenthesised OR under the household and live-lot filters, and so
+    // return a lot matching both once, is held in seed-lot-parent-planting-columns.test.js beside
+    // the link's own columns.
     const stmt = STATEMENTS.find((s) => s.file === 'index.js');
     expect(stmt, 'lambda/plants/index.js no longer reads inventory_items').toBeDefined();
-    expect(stmt.sql).toMatch(/\bi\.source_plant_id\s*=\s*\$\{plantId\}/);
+    expect(stmt.sql).toMatch(
+      /EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+public\.seed_lot_parent_planting\s+sl\s+WHERE\s+sl\.inventory_item_id\s*=\s*i\.id\s+AND\s+sl\.plant_id\s*=\s*\$\{plantId\}/,
+    );
+    expect(stmt.sql).toMatch(/\bOR\s+i\.source_plant_id\s*=\s*\$\{plantId\}/);
     // Household scope on the lots themselves, not only on the parent planting. Two households can
     // hold plantings under one container; dropping this would return another member's packets
     // through a planting the caller can legitimately see.

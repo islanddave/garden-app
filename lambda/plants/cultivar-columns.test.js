@@ -3,8 +3,9 @@
 // Twenty columns across five statements — the widest cultivar contract, because this is where
 // the seed-packet detail panel is assembled: the full growing card (care_notes, soil_notes,
 // sun_requirements, common_diseases, expected_yield_notes, growth_habit, the scoville range,
-// the DTM window) hangs off a planting's variety_id. The alias is `pv`, and no statement here
-// joins plant_varieties as well, so the binding is unambiguous.
+// the DTM window) hangs off a planting's variety_id. The alias is `pv` (plus `opv` in the one
+// statement that binds the view twice, the seed-lots read), and no statement here joins
+// plant_varieties as well, so the binding is unambiguous.
 //
 // This is the exact surface of BUG-SEEDDETAIL500-001: cultivar is a VIEW over
 // plant_varieties, a column dropped from the view 500s every seed packet detail page, and
@@ -122,8 +123,12 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants cultivar column contract', (
     // contract below — so the column set is unchanged and this count is the whole of the edit.
     // 6 -> 7: GET /api/plants/season-end joins cultivar for the name and crop slug, like the grid.
     expect(STATEMENTS).toHaveLength(7);
+    // + `opv`: the seed-lots read binds the view a SECOND time, inside its other_parents aggregate,
+    // for the variety of each other parent planting of a mixed lot. Same statement, so the count
+    // above stays 7, and it reads `opv.display_name` and `opv.id` only, both already in the
+    // contract. A separate alias because a second `pv` in there would shadow the lot's own.
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
-      .toEqual(['pv']);
+      .toEqual(['opv', 'pv']);
   });
 
   it('accounts for every unaliased cultivar read', () => {

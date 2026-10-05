@@ -40,7 +40,13 @@
 
 import { buildPlantEventRepoint } from './plantMemoryRepoint.js'
 
-export const SNAPSHOT_VERSION = 1
+// Pinned so a shape change is detectable (merge_event DDL, migrations/v4-plantmerge-001/0a). A new
+// `table` value inside `repoints` is not one: six repoint surfaces were added at 1.
+// 2 — the snapshot gained a top-level key, seed_lot_parents_pruned. Replayed by something that only
+// knows version 1, a version 2 snapshot puts a pruned parent link back on its loser and leaves it
+// soft-deleted: the loser restored, no longer a parent of its lot, and that lot's source_plant_id
+// restored to point at it. The number is what lets a restore refuse instead.
+export const SNAPSHOT_VERSION = 2
 
 // Every surface holding a reference to a planting, with its disposition.
 // DERIVED, NOT REMEMBERED: scripts/merge-surface-inventory.py regenerates this from pg_constraint
@@ -80,6 +86,17 @@ export const SURFACES = Object.freeze([
   //   inventory_items.source_plant_id — seeds saved from a planting (FK RESTRICT). The saved seed's
   //     parent is the merged planting.
   { table: 'inventory_items',         column: 'source_plant_id', action: 'repoint' },
+  //   seed_lot_parent_planting.plant_id — one parent planting of a saved-seed lot (FK RESTRICT). A lot
+  //     can record several, and source_plant_id on the line above is a member cache naming one of
+  //     them, so the two move in the same transaction or the cache names a planting that is no longer
+  //     a parent. Keyed UNIQUE (inventory_item_id, plant_id, role) WHERE deleted_at IS NULL: a loser's
+  //     live row collides when the winner, or another loser, is already a parent of the same lot in
+  //     the same role. `conflict: 'soft_delete'`, not 'skip' — the colliding row is retired rather
+  //     than dropped, because a parent link is provenance somebody recorded, not derived telemetry.
+  //     NO deleted_at filter on the repoint: a retired link is still a record of the planting and
+  //     moves with it (the pantry_item reasoning), and it sits outside the partial index, so it
+  //     cannot collide.
+  { table: 'seed_lot_parent_planting', column: 'plant_id',      action: 'repoint', conflict: 'soft_delete' },
   //   ready_impression / watch_exclusion — per-day telemetry rows keyed UNIQUE (user, plant, day,
   //     region|reason), the watch_impression precedent: a loser row that would collide on the winner's
   //     key (or on another loser's) is dropped, the rest repoint.
@@ -499,6 +516,8 @@ export async function mergeCore(sql, {
     await sql`SELECT id, plant_id AS old_value FROM preservation_source WHERE plant_id = ANY(${loserIds})`)
   push('inventory_items', 'source_plant_id',
     await sql`SELECT id, source_plant_id AS old_value FROM inventory_items WHERE source_plant_id = ANY(${loserIds})`)
+  push('seed_lot_parent_planting', 'plant_id',
+    await sql`SELECT id, plant_id AS old_value FROM seed_lot_parent_planting WHERE plant_id = ANY(${loserIds})`)
   push('ready_impression', 'plant_id',
     await sql`SELECT id, plant_id AS old_value FROM ready_impression WHERE plant_id = ANY(${loserIds})`)
   push('watch_exclusion', 'plant_id',
@@ -517,6 +536,22 @@ export async function mergeCore(sql, {
   const liveAnchors = await sql`
     SELECT id FROM plant_anchor_derivation WHERE plant_id = ANY(${anchorTargets}) AND superseded_at IS NULL
   `
+  // The parent links the collision prune in step 7 is about to soft-delete, read with that
+  // statement's own predicate (merge.test.js holds the two to the same text). `repoints` already
+  // records every link row on a loser with the planting it came from, these among them. What it
+  // cannot say is WHICH of them the merge retired — and unlike a dropped telemetry row, a retired
+  // link is still there afterwards, looking exactly like a parent somebody took off the lot by hand.
+  // A restore needs these ids to bring back the ones the merge retired and none of the others.
+  const prunedParentLinks = await sql`
+    SELECT l.id FROM seed_lot_parent_planting l
+     WHERE l.plant_id = ANY(${loserIds}) AND l.deleted_at IS NULL
+       AND (EXISTS (SELECT 1 FROM seed_lot_parent_planting w
+                    WHERE w.plant_id = ${winnerId} AND w.deleted_at IS NULL
+                      AND w.inventory_item_id = l.inventory_item_id AND w.role = l.role)
+            OR EXISTS (SELECT 1 FROM seed_lot_parent_planting o
+                       WHERE o.plant_id = ANY(${loserIds}) AND o.deleted_at IS NULL AND o.id < l.id
+                         AND o.inventory_item_id = l.inventory_item_id AND o.role = l.role))
+  `
 
   const snapshot = {
     schema_version: SNAPSHOT_VERSION,
@@ -526,6 +561,7 @@ export async function mergeCore(sql, {
     dropped: dedup.dropped,
     dropped_batch: dedup.droppedBatch,
     anchors_superseded: liveAnchors.map((a) => a.id),
+    seed_lot_parents_pruned: prunedParentLinks.map((r) => r.id),
     entity_memory_deleted: memoryRows,
     fingerprint: liveFp,
     resolved,
@@ -594,6 +630,25 @@ export async function mergeCore(sql, {
                        WHERE w.garden_node_id = ${winnerId} AND w.deleted_at IS NULL
                          AND w.entity_id IS NOT DISTINCT FROM l.entity_id
                          AND w.finding_type = l.finding_type)`,
+    // seed_lot_parent_planting — uq_slpp_item_plant_role_live, UNIQUE (inventory_item_id, plant_id,
+    // role) WHERE deleted_at IS NULL. The two arms ready_impression has above: a loser's live row
+    // collides with the winner's (w), or with another loser's of a lower id (o), on one lot in one
+    // role. SOFT-deleted, the one prune in this list that is: a parent link is provenance a person
+    // recorded, and a retired row is what "this plant was taken off the lot" already looks like on
+    // this table. deleted_at IS NULL on all three aliases because the index is partial — a retired
+    // row is not a collision and must not be the reason a live one is retired. Every arm reads the
+    // rows as they stood before the statement, so of two colliding losers the lower id survives,
+    // never neither; which loser that is does not matter, the survivor is repointed to the winner
+    // below either way. No role is named: the key carries it, so each role is pruned against itself.
+    sql`UPDATE seed_lot_parent_planting l
+           SET deleted_at = now(), updated_at = now()
+         WHERE l.plant_id = ANY(${loserIds}) AND l.deleted_at IS NULL
+           AND (EXISTS (SELECT 1 FROM seed_lot_parent_planting w
+                        WHERE w.plant_id = ${winnerId} AND w.deleted_at IS NULL
+                          AND w.inventory_item_id = l.inventory_item_id AND w.role = l.role)
+                OR EXISTS (SELECT 1 FROM seed_lot_parent_planting o
+                           WHERE o.plant_id = ANY(${loserIds}) AND o.deleted_at IS NULL AND o.id < l.id
+                             AND o.inventory_item_id = l.inventory_item_id AND o.role = l.role))`,
 
     memory.repoint,
     sql`UPDATE photos           SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
@@ -615,6 +670,14 @@ export async function mergeCore(sql, {
     sql`UPDATE pantry_item SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
     sql`UPDATE preservation_source SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
     sql`UPDATE inventory_items SET source_plant_id = ${winnerId} WHERE source_plant_id = ANY(${loserIds})`,
+    // The parent links behind that cache. EVERY row on a loser moves, live or retired; the prune
+    // above left at most one live row per (lot, role) across the losers and none where the winner
+    // already had one, so this cannot trip the index. With the line above it keeps the member cache
+    // true: a lot whose source_plant_id named a loser had that loser as a live parent, the winner is
+    // a live parent of it once this has run, and the cache now names the winner. No trigger keeps
+    // updated_at on this table, so the statement does.
+    sql`UPDATE seed_lot_parent_planting SET plant_id = ${winnerId}, updated_at = now()
+         WHERE plant_id = ANY(${loserIds})`,
     sql`UPDATE ready_impression SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
     sql`UPDATE watch_exclusion SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
 
