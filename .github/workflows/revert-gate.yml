@@ -129,7 +129,7 @@ permissions:
 
 jobs:
   revert:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production-destructive
     timeout-minutes: 180  # = REVERT_JOB_BUDGET_MIN below; forward redeploys + a full rollback (JOB BUDGET above)
     steps:

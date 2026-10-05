@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   rehearse:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production
     env:
       GITHUB_REPOSITORY: ${{ github.repository }}

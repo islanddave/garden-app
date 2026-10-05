@@ -77,7 +77,7 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production  # claim env:production OIDC subject for garden-app-github-deploy trust (scoped 2026-05-05)
     strategy:
       matrix:

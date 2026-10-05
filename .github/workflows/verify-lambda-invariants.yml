@@ -72,7 +72,7 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production
     steps:
       # Needed by the config-manifest step below. Pinned to the ref being deployed, NOT the branch

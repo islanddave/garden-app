@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   backup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Make /usr/lib/postgresql/17 writable (cache + docker cp target)
         # OPS-SCHEMACHECKAPT-001. See the fetch step below for why this file no longer

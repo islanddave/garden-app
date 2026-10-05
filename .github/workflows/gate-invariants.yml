@@ -72,7 +72,7 @@ concurrency:
 
 jobs:
   invariants:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # JOB BUDGET (raised 10 -> 25 on 2026-09-30). The two legs run back to back in this one job, so the
     # budget has to cover BOTH plus setup. At v4.164.0 (1054 gates) the PROD leg alone takes ~6.5-7 min,
     # and the old 10-minute cap cancelled STAGING mid-run with no result — run 36737462039 (attempts 1

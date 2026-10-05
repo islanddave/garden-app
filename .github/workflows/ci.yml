@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A backstop only: a step that hangs ends the job here rather than at GitHub's 360-minute
     # default. The job ran 55-64 min when this was set (2026-10-02).
     timeout-minutes: 90

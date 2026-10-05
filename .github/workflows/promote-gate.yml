@@ -176,7 +176,7 @@ jobs:
   # pair. workflow_dispatch is the only trigger (header, TAG TRIGGER RETIRED); any other event is refused.
   # Fail-closed: dev_sha must be a 40-hex commit SHA and snap_version must match the snap regex.
   resolve:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       dev_sha: ${{ steps.r.outputs.dev_sha }}
       snap_version: ${{ steps.r.outputs.snap_version }}
@@ -239,7 +239,7 @@ jobs:
 
   promote:
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production
     # OPS-PROMOTERACE-001: consumed by the deploy-lambdas job below to decide whether to run at all.
     outputs:
@@ -879,7 +879,7 @@ jobs:
     # verify-daily-plan (which does not withhold the SPA) does not produce a misleading
     # "SPA withheld" report alongside a successfully-shipped frontend.
     if: ${{ always() && needs.promote.result == 'success' && needs.deploy-lambdas.result != 'skipped' && needs.deploy-lambdas.outputs.deploy_result != 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Report withheld SPA deploy
         run: |
@@ -948,7 +948,7 @@ jobs:
   verify:
     needs: [resolve, deploy]
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read
