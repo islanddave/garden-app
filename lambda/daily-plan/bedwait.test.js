@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import h from './handler.js';
 import engine from './engine.js';
+import ledger from './ledger.js';
 import _cf from './_coverFlags.js';
 import THRESHOLDS from './wateringThresholds.json';
 
@@ -130,5 +131,41 @@ describe('generatePlan without deferDryBedsEnabled is inert (the parity goldens 
     expect(due(on)).toEqual(['bag', 'newbed']);
     // Only the separate all-outdoor flag (CARE_RAIN_DEFER_DRY_ENABLED, OFF in prod) defers the bag.
     expect(due(gen({ deferDryEnabled: true }))).not.toContain('bag');
+  });
+
+  // The pair prod runs: the Water Ledger decides who is due, and beds-wait still moves a due bed off the list.
+  // Each row carries the additive `ledger` key only on the ledger path, so its presence proves which path spoke.
+  describe('with the Water Ledger on', () => {
+    const { etMidnightMs, addDays } = ledger;
+    const H = 3600000;
+    const weatherDaily = [];
+    for (let d = addDays(DATE, -30); d < DATE; d = addDays(d, 1)) weatherDaily.push({ date: d, et0_in: 0.12, tmax_f: 75, tmin_f: 60, precip_in: 0 });
+    const watered = (daysAgo) => [{ id: `w${daysAgo}`, t: etMidnightMs(addDays(DATE, -daysAgo)) + 9 * H, type: 'watering' }];
+    const two = rows.filter((p) => p.id !== 'newbed');
+    const genL = (hy, eventsByPlant = { bed: watered(10), bag: watered(10) }) => engine.generatePlan({
+      plantings: two, cadence, fertModel, today: DATE, nowMs: etMidnightMs(DATE) + 6 * H,
+      weather: { tonightLow: 52, highToday: 66 }, hydrology: { ...hydrology, today_et0_in: 0.12, today_tmax_f: 66, ...hy },
+      ownerFallback: USER, rainCreditEnabled: true, todayAwareEnabled: true,
+      waterLedgerEnabled: true, weatherDaily, eventsByPlant, deferDryBedsEnabled: true });
+    const tasks = (plan) => Object.values(plan.users)[0].tasks;
+
+    it('a ledger-due bed with real rain tomorrow waits (incoming_dry); the ledger-due bag stays on the list', () => {
+      const t = tasks(genL({}));
+      expect(ids(t.water_due)).toEqual(['bag']);
+      expect(t.water_due[0].ledger).toBeTruthy();
+      const bed = t.rain_skipped.find((r) => r.id === 'bed');
+      expect(bed).toMatchObject({ sat_kind: 'incoming_dry', in_ground: true, saturated: true });
+      expect(bed.ledger).toBeTruthy();
+      expect(bed.reason).toMatch(/rain expected tomorrow/);
+    });
+
+    it('anti-vacuity: under the 60% bar the same bed is due; watered yesterday, it is on neither list', () => {
+      const under = tasks(genL({ tomorrow_pop: 55 }));
+      expect(ids(under.water_due)).toEqual(['bag', 'bed']);
+      expect((under.rain_skipped || []).find((r) => r.id === 'bed')).toBeUndefined();
+      const fresh = tasks(genL({}, { bed: watered(1), bag: watered(10) }));
+      expect(ids(fresh.water_due)).toEqual(['bag']);
+      expect((fresh.rain_skipped || []).find((r) => r.id === 'bed')).toBeUndefined();
+    });
   });
 });
