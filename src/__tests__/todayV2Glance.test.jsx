@@ -30,6 +30,15 @@ describe('glanceHeadline — headlineFor verbatim behind the empty-list guard (�
     expect(glanceHeadline({ weather: WX, hydrology: DRY, water_due: [] })).toBe(NOTHING_DUE)
     expect(glanceHeadline({ weather: WX, hydrology: BEDS_WAIT, water_due: [] })).toBe(NOTHING_DUE)
     expect(NOTHING_DUE).toBe('Nothing due for watering today.')
+    expect(glanceHeadline({ weather: WX, hydrology: DRY, water_due: [], no_history: [] })).toBe(NOTHING_DUE)
+  })
+  it('a never-watered row is a Water row, and a missing list is unknown: neither reads as nothing due', () => {
+    expect(glanceHeadline({ weather: WX, hydrology: DRY, water_due: [], no_history: rows(1) })).toBe('Water both — containers and beds today.')
+    expect(glanceHeadline({ weather: WX, hydrology: BEDS_WAIT, water_due: [], no_history: rows(1) })).toBe('Water containers, skip the beds today.')
+    expect(glanceHeadline({ weather: WX, hydrology: DRY })).toBe('Water both — containers and beds today.')
+    expect(glanceHeadline({ weather: WX, hydrology: DRY, no_history: [] })).toBe('Water both — containers and beds today.')
+    expect(glanceHeadline({ weather: WX, hydrology: SOAK, water_due: [], no_history: rows(1) })).toBe("Rain may cover today's list — 1 still due.")
+    expect(glanceHeadline({ weather: WX, hydrology: SOAK })).toBe('All set — no watering needed today.')
   })
   it('both lanes hold: the both-hold branch is headlineFor\'s, list or none (the guard only speaks over "water")', () => {
     expect(glanceHeadline({ weather: WX, hydrology: SOAK, water_due: [] })).toBe('All set — no watering needed today.')

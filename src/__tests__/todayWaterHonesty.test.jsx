@@ -231,4 +231,37 @@ describe('BUG-WATERAUTUMNDEMAND-001 — no watering imperative over an empty lis
     expect(container.textContent).toMatch(/Nothing due for watering today\./)
     expect(container.textContent).not.toMatch(/Water both — containers and beds today\./)
   })
+
+  // The list labels a never-watered planting "Water" too (careNeeded.js NEED_LABEL), and the engine
+  // files it under no_history, not water_due. So "nothing due" is a claim about BOTH lists, and a
+  // plan with no water_due list at all is unknown, never an all-clear.
+  const todayPlan = (lists) => ({
+    data: { has_plan: true, plan_date: '2026-09-26', generated_at: '2026-09-26T10:00:00.000Z',
+      plan: { weather, hydrology: DRY, substrate: { msg: '', on_hold: false },
+        no_history: [], fertilize: [], pest: [], cold: [], dormant: [], ...lists } },
+    loading: false, error: null,
+  })
+  const NEVER = { id: 'nh1', name: 'New Basil', project: 'Shelf 4', project_id: 'pr1', in_ground: false }
+  it('through the real Today page: a never-watered row is on the list, so the headline does not say nothing is due', () => {
+    planState.current = todayPlan({ water_due: [], no_history: [NEVER] })
+    const { container } = render(<Today />)
+    expect(screen.getByText('New Basil')).toBeTruthy()
+    expect(container.textContent).toMatch(/Never watered/)
+    expect(container.textContent).not.toMatch(/Nothing due for watering today\./)
+    expect(container.textContent).toMatch(/Water both — containers and beds today\./)
+  })
+  it('through the real Today page: a plan with no water_due list is unknown, not an all-clear', () => {
+    planState.current = todayPlan({})
+    const { container } = render(<Today />)
+    expect(container.textContent).not.toMatch(/Nothing due for watering today\./)
+    expect(container.textContent).toMatch(/Water both — containers and beds today\./)
+  })
+  it('through the real Today page: a soak over a never-watered row counts it rather than saying "All set"', () => {
+    const p = todayPlan({ water_due: [], no_history: [NEVER] })
+    p.data.plan.hydrology = MEASURED_SOAK
+    planState.current = p
+    const { container } = render(<Today />)
+    expect(container.textContent).not.toMatch(/All set/i)
+    expect(container.textContent).toMatch(/Rain may cover today's list — 1 still due\./)
+  })
 })

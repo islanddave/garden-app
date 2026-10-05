@@ -106,6 +106,23 @@ describe('closed — the first screen (D1)', () => {
     expect(screen.getByTestId('today-verdict').textContent).toBe('Nothing due for watering today.')
     expect(screen.queryByTestId('weather-cue-line')).toBeNull()
   })
+  // A never-watered planting is a "Water" row (no_history), and a plan with no water_due list is unknown:
+  // neither may read as "nothing due", closed (the verdict) or open (the weather card's own headline).
+  it('a never-watered row: the verdict does not say nothing is due, closed or open', () => {
+    render(<Harness plan={{ ...QUIET, no_history: [{ id: 'nh1', name: 'New Basil' }] }} />)
+    expect(screen.getByTestId('today-verdict').textContent).not.toBe('Nothing due for watering today.')
+    expect(screen.getByTestId('today-verdict').textContent).toMatch(/^Water /)
+    fireEvent.click(toggle())
+    expect(screen.getByTestId('today-weather').textContent).not.toContain('Nothing due for watering today.')
+  })
+  it('a plan with no water_due list: unknown is not an all-clear, closed or open', () => {
+    const { water_due: _gone, ...NO_LIST } = QUIET
+    render(<Harness plan={NO_LIST} />)
+    expect(screen.getByTestId('today-verdict').textContent).not.toBe('Nothing due for watering today.')
+    expect(screen.getByTestId('today-verdict').textContent).toMatch(/^Water /)
+    fireEvent.click(toggle())
+    expect(screen.getByTestId('today-weather').textContent).not.toContain('Nothing due for watering today.')
+  })
   it('the stale marker only when the page says the plan is not today\'s', () => {
     render(<Harness stale="Yesterday’s plan · as of Sep 23 · 10:00 AM" />)
     const m = glance().querySelector('[data-stale="true"]')

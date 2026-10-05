@@ -277,7 +277,8 @@ function liveTimeLabel(refreshedAt) {
 // weather-aware Water Ledger decides the list, a cool autumn morning can leave it EMPTY under lanes that
 // still say "water", and "Water both — containers and beds today." above an empty list is as false as
 // "All set" above a full one. So a KNOWN empty list (a number, 0) never gets an imperative. A caller that
-// passes no count (null) keeps the lane sentences, exactly as before.
+// passes no count (null) keeps the lane sentences, exactly as before. Every page caller takes the count
+// from careNeeded.js waterListCount: water_due plus never-watered rows, null when the list is missing.
 function headlineFor(containersDo, bedsDo, waterDueCount = null) {
   if (waterDueCount === 0 && (containersDo || bedsDo)) return 'Nothing due for watering today.'
   if (containersDo && bedsDo) return 'Water both — containers and beds today.'

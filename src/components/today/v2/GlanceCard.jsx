@@ -7,6 +7,7 @@ import DroughtLine from '../DroughtLine.jsx'
 import LeafWetnessLine from '../LeafWetnessLine.jsx'
 import { DroughtList, RainNote } from '../CareNeeded.jsx'
 import { glanceHeadline, urgentPhrase, glanceRain } from '../../../lib/todayV2/verdict.js'
+import { waterListCount } from '../../../lib/careNeeded.js'
 import { P } from '../../../lib/constants.js'
 import { ICON_COLORS } from '../../../lib/tokens.js'
 import { T } from '../../forms/formStyles.js'
@@ -102,7 +103,7 @@ export default function GlanceCard({
       </h2>
       {open && (
         <div id={widgetId}>
-          <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={generatedAt} planDate={planDate} liveHydrology={liveHydrology} refreshedAt={refreshedAt} waterDueCount={Array.isArray(plan.water_due) ? plan.water_due.length : 0} lowShown={agreed?.lowF} />
+          <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={generatedAt} planDate={planDate} liveHydrology={liveHydrology} refreshedAt={refreshedAt} waterDueCount={waterListCount(plan)} lowShown={agreed?.lowF} />
         </div>
       )}
       {stale ? (

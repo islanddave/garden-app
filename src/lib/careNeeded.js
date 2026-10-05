@@ -223,6 +223,16 @@ export function buildCareNeeded(plan) {
 // differently by the staleness cap below, which only ever withholds inferences.
 const WATER_NEEDS = new Set(['water_due', 'no_history'])
 
+// How many rows the list will label "Water" for this plan: the ONE count every watering headline is
+// handed (classic Today, the V2 glance verdict, the V2 open card). Both buckets, because a
+// never-watered row reads "Water: Never watered" and "nothing due" above it is false. null, not 0,
+// when the plan carries no water_due list: a missing list is unknown, and headlineFor only says
+// "Nothing due" on a known 0.
+export function waterListCount(plan) {
+  if (!Array.isArray(plan?.water_due)) return null
+  return plan.water_due.length + (Array.isArray(plan.no_history) ? plan.no_history.length : 0)
+}
+
 // Per-row severity. A water row is worth its presence (1) plus its overdue days; anything else is
 // present but not on an overdue clock, so it scores a fraction of one row. A daily-cadence water row
 // therefore scores exactly its presence — buildCareNeeded nulls its overdueBy — which is the point:

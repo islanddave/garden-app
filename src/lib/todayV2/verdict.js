@@ -2,7 +2,7 @@
 // "Glance card", §8 S3, §13 SF9 update). PURE: a plan in, sentences out — no React state, no clock, no network.
 //
 // THE HEADLINE is WeatherWidget's headlineFor, printed VERBATIM from the same two lane verdicts the card computes
-// (computeWateringScale → pillState) and the same count V1 hands it (the plan's water_due length), so the glance
+// (computeWateringScale → pillState) and the same count V1 hands it (careNeeded.js waterListCount), so the glance
 // and the card it opens into cannot disagree. A KNOWN empty water list never gets a watering imperative (§13 SF9
 // update): that guard is headlineFor's own first line (BUG-WATERAUTUMNDEMAND-001), and NOTHING_DUE below names
 // the sentence it returns.
@@ -23,6 +23,7 @@ import { headlineFor, forecastMissing, isStaleSnapshot, asOfLabel } from '../../
 import { rainSentences } from '../rainSentences.js'
 import { pickFrostLines, currentLows, FREEZE_BELOW_F } from '../frostAlertLine.js'
 import { agreedTonightLow } from '../tonightLow.js'
+import { waterListCount } from '../careNeeded.js'
 
 export const NOTHING_DUE = 'Nothing due for watering today.'
 
@@ -32,13 +33,13 @@ function num(v) {
   return Number.isFinite(n) ? n : null
 }
 
-// -> the verdict sentence. `plan` is the stored daily plan (plan.weather, plan.hydrology, plan.water_due).
+// -> the verdict sentence. `plan` is the stored daily plan (plan.weather, plan.hydrology, plan.water_due,
+// plan.no_history).
 export function glanceHeadline(plan) {
   const scale = computeWateringScale(plan?.hydrology || {}, plan?.weather || {})
   const containersDo = pillState(scale.containers) === 'do'
   const bedsDo = pillState(scale.beds) === 'do'
-  const waterDueCount = Array.isArray(plan?.water_due) ? plan.water_due.length : 0
-  return headlineFor(containersDo, bedsDo, waterDueCount)
+  return headlineFor(containersDo, bedsDo, waterListCount(plan))
 }
 
 // -> { kind: 'freeze'|'frost'|'hot', text } | null. `agreed` is agreedTonightLow(plan) when the page already has it.
