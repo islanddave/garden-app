@@ -120,6 +120,8 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   // A run of THIS body's, still going, speaks through its button ("Watering 2 of 5…"): its batch — on the record since
   // it started — stays out of view until it settles. A running batch this body did not start is a run cut off by an
   // unmount: while it goes it shows as its done line (doneText), with no Undo; its result is taken when it ends (below).
+  // The mark is not given back when a run lands (a settled batch is no longer running, so it is no longer read): the
+  // settle is a QUEUED state update, and a render of a higher priority comes before it (run, below).
   const mine = useRef(new Set())
   const batches = Object.fromEntries(Object.entries(c?.batches || {}).filter(([bid, b]) => !(b.running && mine.current.has(bid))))
   const stored = Object.values(batches).some((b) => b.running) ? readLogged(care.logKey) : null
@@ -164,11 +166,14 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   // A running batch with NO run behind it is one a full reload cut off (or one that threw): the page that could have
   // finished it is gone, and its ids with it. The batch is dropped — what landed is in the store (and the plan), what
   // did not is due again, and no line is left to claim a count for it. Before paint, so neither state is ever drawn.
+  // The drop reads the record as it is when the drop is APPLIED, not as this render saw it: a batch a landing settled
+  // in between is no longer running, and is kept. (StrictMode runs this effect twice on a mount — src/main.jsx, the
+  // development build: the first pass takes the result and settles, the second finds nothing left to take.)
   useLayoutEffect(() => {
     for (const [bid, b] of Object.entries(c?.batches || {})) {
       if (!b.running || mine.current.has(bid) || runGoing(bid)) continue
       const r = runTake(bid)
-      if (!r) { setCare((cc) => { const n = { ...(cc.batches || {}) }; delete n[bid]; return { ...cc, batches: n } }); continue }
+      if (!r) { setCare((cc) => { if (!cc.batches?.[bid]?.running) return cc; const n = { ...cc.batches }; delete n[bid]; return { ...cc, batches: n } }); continue }
       const now = readLogged(care.logKey)
       const taken = claimedKeys(care.logKey)
       settle(bid, b, { created: r.res.created, failed: r.res.failed.filter((k) => !now.has(k) && !taken.has(k)) }, r.what)
@@ -224,9 +229,14 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
       runEnd(bid, { res, what, said, by: claim })
       return res
     }
+    // Its own body is on screen: the result lands on the record here, in the one render the same answers' fades and the
+    // freed button reach. That render is not the next one. What a POST's answer sets is default priority; runEnd's
+    // signal re-renders this body at sync priority FIRST, with the batch still running on the record and its run
+    // already forgotten. The batch therefore stays this body's (mine): running, no run behind it and nobody's is
+    // exactly what the landing effect drops, and the settle queued here would then land on a batch about to be deleted
+    // (gate:today-shape:v2, 2026-10-06: every run lost its done line and its Undo that way, in a browser only).
     runEnd(bid)
     settle(bid, fresh, res, what)
-    mine.current.delete(bid)
     // §5.5: a partial failure puts focus on the first Retry (the spot's own, or the group's first failed spot's).
     setFocusId(fails ? (scope === 'group' ? 'first-retry:' + key : scope === 'spot' ? 'retry:' + key : null) : (scope === 'group' ? 'group:' + key : 'spot:' + key))
     return res

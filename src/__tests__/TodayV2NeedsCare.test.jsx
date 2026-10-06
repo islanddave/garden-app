@@ -63,6 +63,7 @@ import { enrichRows } from '../lib/todayV2/spots.js'
 import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
 import * as store from '../components/today/v2/needsCareStore.js'
 import { FILTER_ACTION_CELLS } from '../../tests/harness/_todaymeasure/today-v2-contract.mjs'
+import { browserEvent } from './helpers/browserEvent.js'
 
 const PAYLOAD = F('dailyplan.dave.json')
 const PLANTS = (() => { const p = F('plants.json'); return Array.isArray(p) ? p : p.plants })()
@@ -76,7 +77,11 @@ const spot = (name) => document.querySelector(`[data-testid="care-spot"][data-sp
 const doneLine = (name) => document.querySelector(`[data-testid="care-done-line"][data-spot="${name}"]`)
 const settle = () => act(async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)) })
 
+// Every case here runs with window.event as a browser keeps it (helpers/browserEvent.js): what a POST's answer sets
+// is default priority, and the store's signal re-renders first, at sync priority — the order Chrome renders in.
+let restoreEvent = null
 beforeEach(() => {
+  restoreEvent = browserEvent()
   localStorage.clear(); sessionStorage.clear()
   // The claims and the runs are the module's, not the tab's: a case that leaves a POST unanswered leaves them behind.
   store.__resetTodayLogged()
@@ -85,7 +90,7 @@ beforeEach(() => {
   planState.current = { data: PAYLOAD, loading: false, error: null, reload: vi.fn() }
   wire.posts = []; wire.deletes = []; wire.failPlant = null; wire.failPlants = new Set(); wire.seq = 0; wire.plants = PLANTS; wire.locations = LOCS; wire.cf = {}; wire.hold = false; wire.held = []
 })
-afterEach(() => { cleanup(); vi.useRealTimers() })
+afterEach(() => { cleanup(); vi.useRealTimers(); restoreEvent() })
 
 const mount = async () => { render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle() }
 
@@ -1081,5 +1086,115 @@ describe('a full reload mid-run hides nothing that was not logged (pre-promote I
     expect(within(spot('Drive-Shade')).queryByRole('button', { name: /^Undo/ })).toBeNull()
     // Logged as each POST answered — not when the run ended, which this one never did.
     expect(atDeath.sort()).toEqual(ds.filter((r) => landed.includes(r.plantingId)).map((r) => r.key).sort())
+  })
+})
+
+// gate:today-shape:v2, 2026-10-06 — the Chrome gate went red on every run that ended on its own page (a spot's or a
+// group's Water all: no done line, no Undo) with every case in this file green. At the end of a run its body forgot
+// the run, queued the settle on the visit record and gave the batch up, in one turn. The store's signal then
+// re-rendered at sync priority, AHEAD of the queued settle (a POST answer's update is default priority): that render
+// found the batch still running, nobody's, with no run behind it — a dead batch — and dropped it; the settle landed
+// next, and the drop, applied again after it, deleted what it had landed. This file could not see it until its
+// window.event was the browser's (helpers/browserEvent.js, installed above for every case): the POSTs here are HELD
+// and answered after the tap, as a network answers.
+const groupLine = () => document.querySelector('[data-testid="care-group-done"][data-group="Outside"]')
+
+describe('a run that ends on its own page keeps its done line and its Undo (gate:today-shape:v2)', () => {
+  it('the instrument: once a tap has been handled no event is in progress, so a POST\'s answer is default priority', async () => {
+    await mount()
+    fireEvent.click(spotHead('Drive-Shade')); await settle()
+    expect(window.event).toBeUndefined()
+  })
+
+  it('a spot\'s Water all whose POSTs answer after the tap: "watered 5" with ONE Undo, focus on the line, and the Undo brings its button back', async () => {
+    const five = waterIn('Drive-Shade').map((r) => r.plantingId)
+    wire.hold = true
+    await mount()
+    await waterAll5()
+    await release()
+    expect(perPlant(five)).toEqual([1, 1, 1, 1, 1])
+    expect(doneLine('Drive-Shade').textContent).toContain('Drive-Shade · watered 5')
+    expect(within(doneLine('Drive-Shade')).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Undo: Drive-Shade watered 5'])
+    expect(doneLine('Drive-Shade').contains(document.activeElement)).toBe(true)
+    wire.hold = false
+    fireEvent.click(within(doneLine('Drive-Shade')).getByRole('button', { name: /^Undo/ })); await settle()
+    expect(wire.deletes.length).toBe(5)
+    expect(doneLine('Drive-Shade')).toBeNull()
+    expect(labels(liveFor('Drive-Shade'))).toEqual(['Water all 5 in Drive-Shade'])
+  })
+
+  it('the group Water all: ONE line "Outside · watered 154" with ONE Undo, every spot shrunk; the Undo brings "Water all 154 outside" back', async () => {
+    wire.hold = true
+    await mount()
+    fireEvent.click(outsideAll()); await settle()
+    for (let i = 0; i < 60 && wire.held.length; i++) { wire.held.splice(0).forEach((r) => r(false)); await settle() }
+    expect(wire.posts.length).toBe(154)
+    expect(groupLine().textContent).toContain('Outside · watered 154')
+    expect(within(groupLine()).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Undo: Outside watered 154'])
+    expect(doneLine('Drive-Shade').textContent).toContain('Drive-Shade · watered 5')
+    expect(document.querySelectorAll('[data-testid="care-group"][data-group="Outside"] [data-testid="care-spot-bulk"]').length).toBe(0)
+    wire.hold = false
+    fireEvent.click(within(groupLine()).getByRole('button', { name: /^Undo/ })); await settle()
+    expect(wire.deletes.length).toBe(154)
+    expect(groupLine()).toBeNull()
+    expect(outsideAll().getAttribute('aria-label')).toBe('Water all 154 outside')
+  })
+
+  it('with two writes failing: the run still lands — "Watered 3", "2 not logged" with its Retry — and the Retry completes it under its ONE Undo', async () => {
+    const ds = waterIn('Drive-Shade')
+    wire.hold = true
+    await mount()
+    await waterAll5()
+    const lost = new Set(wire.posts.slice(0, 2).map((b) => b.plant_id))
+    await release(lost)
+    expect(spot('Drive-Shade').querySelector('[data-testid="care-spot-failed"]').textContent).toContain('2 not logged')
+    expect(spotHead('Drive-Shade').textContent).toContain('Watered 3')
+    wire.hold = false
+    fireEvent.click(within(spot('Drive-Shade')).getByRole('button', { name: 'Retry: 2 not logged in Drive-Shade' })); await settle()
+    expect(doneLine('Drive-Shade').textContent).toContain('Drive-Shade · watered 5')
+    expect(within(doneLine('Drive-Shade')).getAllByRole('button').length).toBe(1)
+    expect(stored().sort()).toEqual(ds.map((r) => r.key).sort())
+  })
+})
+
+// The app is wrapped in StrictMode (src/main.jsx): React's development build runs a mounting component's effects twice.
+// The second pass of the landing found the batch still marked running, its result already taken, and dropped it — the
+// line and its Undo were gone on `npm run dev` (delta review MINOR-1). The same drop, by the same road: decided from
+// what a render saw, applied after a settle. A drop now reads the record as it is when it is applied.
+describe('under StrictMode a cut-off run still lands with its Undo (delta review MINOR-1)', () => {
+  const strict = (ui) => <React.StrictMode>{ui}</React.StrictMode>
+
+  it('the run ends while Today is away, then Back: "watered 5" with its Undo, each plant posted once', async () => {
+    const five = waterIn('Drive-Shade').map((r) => r.plantingId)
+    wire.hold = true
+    const first = render(strict(<MemoryRouter><TodayV2 /></MemoryRouter>)); await settle()
+    await waterAll5()
+    first.unmount()
+    await release()
+    expect(perPlant(five)).toEqual([1, 1, 1, 1, 1])
+    render(strict(<MemoryRouter><PageScrollProvider value={{ api: null, isReturn: true }}><TodayV2 /></PageScrollProvider></MemoryRouter>)); await settle()
+    expect(doneLine('Drive-Shade').textContent).toContain('Drive-Shade · watered 5')
+    expect(within(doneLine('Drive-Shade')).getByRole('button', { name: 'Undo: Drive-Shade watered 5' })).toBeTruthy()
+    expect(screen.getByTestId('today-status').textContent).toBe('Watered 5 in Drive-Shade.')
+  })
+
+  it('the section closed mid-run, the run ends, the section reopened: the same line and Undo', async () => {
+    wire.hold = true
+    render(strict(<MemoryRouter><TodayV2 /></MemoryRouter>)); await settle()
+    await waterAll5()
+    fireEvent.click(careBand()); await settle()
+    await release()
+    fireEvent.click(careBand()); await settle()
+    expect(doneLine('Drive-Shade').textContent).toContain('Drive-Shade · watered 5')
+    expect(within(doneLine('Drive-Shade')).getByRole('button', { name: 'Undo: Drive-Shade watered 5' })).toBeTruthy()
+  })
+
+  it('and a run that ends on its own page', async () => {
+    wire.hold = true
+    render(strict(<MemoryRouter><TodayV2 /></MemoryRouter>)); await settle()
+    await waterAll5()
+    await release()
+    expect(doneLine('Drive-Shade').textContent).toContain('Drive-Shade · watered 5')
+    expect(within(doneLine('Drive-Shade')).getByRole('button', { name: 'Undo: Drive-Shade watered 5' })).toBeTruthy()
   })
 })
