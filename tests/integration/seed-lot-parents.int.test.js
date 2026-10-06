@@ -72,12 +72,14 @@ import { fileURLToPath } from 'node:url'
 import { neonConfig } from '@neondatabase/serverless'
 import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
 import { assertFixtureId, settle } from './_cleanup.js'
+import { seedVarietyFixture, varietyName } from './_seedLotKit.js'
 import { handler as invHandler } from '../../lambda/inventory-items/index.js'
 import { handler as plantsHandler } from '../../lambda/plants/index.js'
 import { handler as eventsHandler } from '../../lambda/events/index.js'
 import {
   insertSeedParentLinks, readSourcePlants, lockPlantings, assertEveryParentLinked,
 } from '../../lambda/inventory-items/seed-lot-parents.js'
+import { judgeParentRules } from '../../lambda/inventory-items/seed-lot-rules.js'
 import { softDeletePhoto } from '../../lambda/photos/photoDelete.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -114,9 +116,16 @@ describe('seed lot parents — the table is on this branch', () => {
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 // Fixtures and readers
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
+// RELEASE 2a — the fixture is no longer one bare variety. The parent rules and the two keys the read
+// gained (variety_rank, crop_slug) are facts about a planting's VARIETY, so the file's catalogue is
+// _seedLotKit.js's: two crops, three cultivars of the first, one of the second, two with no crop, one
+// soft-deleted. `varietyId` — what planting() gives a planting, and what every lot here is filed
+// under — is the first cultivar of the first crop, so every source_plants element below asserts a real
+// rank and a real crop, not two nulls.
 let varietyId
+let fx
 let seq = 0
-const VARIETY_NAME = `slp-variety-${RUN}`
+const VARIETY_NAME = varietyName('slp', 'a1', RUN)
 
 async function planting(tag, { by = USER, variety = varietyId, projectId = null, archived = false, deleted = false, name } = {}) {
   const [p] = await directSql`
@@ -266,12 +275,13 @@ async function expectCacheRule(...lotIds) {
   expect(await cacheRuleViolations(lotIds)).toEqual({ cacheIsNotALiveParent: [], parentsButNoCache: [] })
 }
 
-// What the contract says one element of source_plants is, for a planting made by planting() above.
+// What the contract says one element of source_plants is, for a planting made by planting() above:
+// exactly nine keys (R2A-CONTRACT section 3). `variety` is true for the file's base cultivar, false for
+// a planting with none, or a fixture key ('b', 'n1', 'gone', ...) for a planting of that variety. The
+// five variety keys are the PLANTING's variety's, never the lot's.
 const sourcePlant = (id, name, { archived = false, deleted = false, variety = true } = {}) => ({
   id, name,
-  variety_id: variety ? varietyId : null,
-  variety_name: variety ? VARIETY_NAME : null,
-  breeding_system: variety ? 'landrace' : null,
+  ...fx.facts(variety === true ? 'a1' : (variety || null)),
   archived, deleted,
 })
 const byNameThenId = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
@@ -283,10 +293,8 @@ const P = {}
 beforeAll(async () => {
   if (!HAS_TABLE) return
   setTestUserId(USER)
-  const [v] = await directSql`
-    INSERT INTO plant_varieties (name, created_by, breeding_system, breeding_source)
-    VALUES (${VARIETY_NAME}, ${USER}, 'landrace', 'grower_record') RETURNING id`
-  varietyId = v.id
+  fx = await seedVarietyFixture({ run: RUN, user: USER, tag: 'slp' })
+  varietyId = fx.v.a1
 
   for (const tag of ['A', 'B', 'C', 'D']) {
     // eslint-disable-next-line no-await-in-loop
@@ -331,6 +339,8 @@ afterAll(async () => {
     () => directSql`DELETE FROM plants WHERE created_by = ANY(${ids})`,
     () => directSql`DELETE FROM entity WHERE cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM plant_varieties WHERE created_by = ANY(${ids})`,
+    // The fixture's two crops; a variety names its crop, so they go after the varieties.
+    () => (fx ? directSql`DELETE FROM crop_types WHERE slug = ANY(${Object.values(fx.crops)})` : null),
     () => directSql`DELETE FROM plant_projects WHERE created_by = ANY(${ids})`,
     () => directSql`DELETE FROM audit_events WHERE actor_clerk_sub = ANY(${ids})`,
     () => directSql`DELETE FROM event_batches WHERE created_by = ANY(${ids})`,
@@ -477,9 +487,10 @@ describe.skipIf(!HAS_TABLE)('POST — a lot created with its parent plantings', 
   it('THE CREATE IS ONE TRANSACTION: when the links are not all written, the batch fails and no lot row is left behind', async () => {
     // The route cannot be made to fail here without a second session (its gate refuses an unusable
     // planting before the transaction starts; the cases that get past the gate are in the concurrency
-    // blocks below). So the FIVE statements the POST arm issues are run through the driver's transaction
-    // with a planting id no row has: the lot INSERT, then the module's own share lock, link INSERT,
-    // assertion and read.
+    // blocks below). So the SIX statements the POST arm issues are run through the driver's transaction
+    // with a planting id no row has: the lot INSERT, then the module's own share lock, the parent-rules
+    // judge (release 2a: it opens the held verdict the link INSERT reads, and without it that INSERT
+    // writes nothing at all — seed-lot-rules.int.test.js, case A1), link INSERT, assertion and read.
     // The link INSERT is all-or-none: one id that is not usable and it inserts NOTHING, and raises
     // nothing. So it is assertEveryParentLinked that has to fail the batch — a division by zero, 22012,
     // which the route answers 409 — and that failure must take the lot INSERT back with it.
@@ -495,6 +506,7 @@ describe.skipIf(!HAS_TABLE)('POST — a lot created with its parent plantings', 
     const failed = directSql.transaction([
       lotInsert(lotId),
       lockPlantings(directSql, [P.A, ghost]),
+      judgeParentRules(directSql, { lotId, ids: [P.A, ghost], householdIds: [USER], alone: true }),
       insertSeedParentLinks(directSql, { lotId, ids: [P.A, ghost], householdIds: [USER], userId: USER }),
       assertEveryParentLinked(directSql, { lotId, ids: [P.A, ghost], householdIds: [USER] }),
       readSourcePlants(directSql, [USER], lotId),
@@ -511,6 +523,7 @@ describe.skipIf(!HAS_TABLE)('POST — a lot created with its parent plantings', 
     await directSql.transaction([
       lotInsert(orphan),
       lockPlantings(directSql, [P.A, ghost]),
+      judgeParentRules(directSql, { lotId: orphan, ids: [P.A, ghost], householdIds: [USER], alone: true }),
       insertSeedParentLinks(directSql, { lotId: orphan, ids: [P.A, ghost], householdIds: [USER], userId: USER }),
     ])
     try {
@@ -522,9 +535,10 @@ describe.skipIf(!HAS_TABLE)('POST — a lot created with its parent plantings', 
 
     // And when every planting IS usable the assertion lets the create through, answering one row.
     const good = randomUUID()
-    const [, , , asserted] = await directSql.transaction([
+    const [, , , , asserted] = await directSql.transaction([
       lotInsert(good),
       lockPlantings(directSql, [P.A, P.B]),
+      judgeParentRules(directSql, { lotId: good, ids: [P.A, P.B], householdIds: [USER], alone: true }),
       insertSeedParentLinks(directSql, { lotId: good, ids: [P.A, P.B], householdIds: [USER], userId: USER }),
       assertEveryParentLinked(directSql, { lotId: good, ids: [P.A, P.B], householdIds: [USER] }),
     ])
@@ -912,7 +926,13 @@ describe.skipIf(!HAS_TABLE)('source_plants — one element per live seed_parent 
     const removed = await planting('O')
     const pollen = await planting('Q')
 
+    // Release 2a: a set of two or more refuses to ADD a planting with no variety, so the variety-less
+    // parent this read must still report is made the way it comes about in a garden — linked while it
+    // had a variety, which is then cleared. Clearing a planting's variety is not a lot write, no rule
+    // runs on it, and the PUT below only removes, which the rules never refuse.
+    await directSql`UPDATE plants SET variety_id = ${varietyId} WHERE id = ${P.noVariety}`
     lot = await newLot({ source_plant_ids: [P.C, P.archived, P.noVariety, t2, t1, later, removed] })
+    await directSql`UPDATE plants SET variety_id = NULL WHERE id = ${P.noVariety}`
     expect((await put(lot, [P.C, P.archived, P.noVariety, t2, t1, later])).status).toBe(200) // retires `removed`
     await sqlLink(lot, pollen, { role: 'pollen_parent' })
     await softDeletePlanting(later)
@@ -934,8 +954,31 @@ describe.skipIf(!HAS_TABLE)('source_plants — one element per live seed_parent 
     expect(Array.isArray(body.source_plants)).toBe(true)
     expect(body.source_plants).toEqual(expected)
     expect(Object.keys(body.source_plants[0]).sort()).toEqual(
-      ['archived', 'breeding_system', 'deleted', 'id', 'name', 'variety_id', 'variety_name'])
+      ['archived', 'breeding_system', 'crop_slug', 'deleted', 'id', 'name', 'variety_id', 'variety_name', 'variety_rank'])
     expect(body.source_plant_id).toBe(P.C)
+  })
+
+  it('variety_rank and crop_slug are the PLANTING\'s variety\'s, not the lot\'s: another crop, no crop, a soft-deleted variety, none at all', async () => {
+    // One parent each, so no rule applies (the rules need two) and each lot stays filed under the base
+    // cultivar of crop A while its parent is something else. A soft-deleted variety is still the
+    // planting's variety: the read's cultivar join carries no deleted_at predicate.
+    for (const key of ['b', 'n1', 'gone', null]) {
+      // eslint-disable-next-line no-await-in-loop
+      const parent = await planting(`RK-${key ?? 'none'}`, { variety: key ? fx.v[key] : null })
+      // eslint-disable-next-line no-await-in-loop
+      const one = await newLot({ source_plant_ids: [parent] })
+      // eslint-disable-next-line no-await-in-loop
+      const { status, body } = await getLot(one)
+      expect(status, JSON.stringify(body)).toBe(200)
+      expect(body.variety_id).toBe(varietyId)
+      expect(body.source_plants, `a parent of variety ${key}`).toEqual([
+        sourcePlant(parent, `RK-${key ?? 'none'}-slp-${RUN}`, { variety: key ?? false }),
+      ])
+    }
+    // Stated once in plain values, so the helper cannot be wrong in step with the read.
+    expect(sourcePlant('x', 'y', { variety: 'b' })).toMatchObject({ variety_rank: 'cultivar', crop_slug: fx.crops.b })
+    expect(sourcePlant('x', 'y', { variety: 'n1' })).toMatchObject({ variety_rank: null, crop_slug: null, variety_id: fx.v.n1 })
+    expect(sourcePlant('x', 'y')).toMatchObject({ variety_rank: 'cultivar', crop_slug: fx.crops.a, breeding_system: 'landrace' })
   })
 
   it('list: the lot appears ONCE with all six, a lot with no parents carries [], and so does a non-seed row', async () => {
@@ -1028,9 +1071,12 @@ describe.skipIf(!HAS_TABLE)('GET /api/plants/:id/seed-lots — lots by link row 
     const t2 = await planting('twin', { name: `S5-twin-slp-${RUN}` })
     const [low, high] = [t1, t2].sort()
     const arch = await planting('S1', { archived: true })
-    const noVar = await planting('S2', { variety: null })
+    // Linked while it had a variety, cleared afterwards (release 2a: a set of two or more refuses to
+    // ADD a planting with none).
+    const noVar = await planting('S2')
     const gone = await planting('S3')
     const lot = await newLot({ source_plant_ids: [me, t2, gone, noVar, arch, t1], source_plant_id: me })
+    await directSql`UPDATE plants SET variety_id = NULL WHERE id = ${noVar}`
     await softDeletePlanting(gone)
 
     const { status, body } = await seedLotsOf(me)
@@ -1155,15 +1201,18 @@ describe.skipIf(!HAS_TABLE)('GET /api/plants/:id/seed-lots — lots by link row 
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 describe.skipIf(!HAS_TABLE)('planting merge — parent links are pruned, then moved, and the cache stays a member', () => {
   // A container with a winner and three sibling losers, alike on every guarded column (the shape
-  // plant-merge-surfaces.int.test.js merges).
+  // plant-merge-surfaces.int.test.js merges). Release 2a: they carry the fixture variety, all four the
+  // same one. Most cases here put two or more of them on one lot, and a set of two or more now refuses
+  // a planting with no variety (parent_without_variety); one shared variety also keeps every such lot
+  // clear of the mix rule, so these stay tests of the MERGE.
   async function group(tag) {
     const proj = await insertProject({ name: `slp-mrg-${tag}-${RUN}`, createdBy: USER })
     const out = {}
     for (const who of ['W', 'L1', 'L2', 'L3']) {
       // eslint-disable-next-line no-await-in-loop
       const [p] = await directSql`
-        INSERT INTO plants (project_id, name, created_by)
-        VALUES (${proj.id}, ${`slp-mrg-${tag}-${who}-${RUN}`}, ${USER}) RETURNING id`
+        INSERT INTO plants (project_id, name, created_by, variety_id)
+        VALUES (${proj.id}, ${`slp-mrg-${tag}-${who}-${RUN}`}, ${USER}, ${varietyId}) RETURNING id`
       out[who] = p.id
     }
     return out
@@ -1578,7 +1627,7 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — two parents writes on 
       const r = await putting
       expect(r.status, JSON.stringify(r.body)).toBe(409)
       expect(r.body.error).toBe(CHANGED_AT_ONCE)
-      expect(r.body.code).toBeUndefined()
+      expect(r.body.code).toBe('lot_changed')
       // The PUT wrote nothing: the lot is exactly what the rival left.
       const rows = await links(lot)
       expect(rows).toHaveLength(2)
@@ -1641,12 +1690,13 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — two parents writes on 
   })
 })
 
-// A winner and one sibling loser in a container of their own.
+// A winner and one sibling loser in a container of their own. Both carry the fixture variety, for the
+// reason group() gives: these cases put the pair (and often a third planting) on one lot.
 async function pair(tag) {
   const proj = await insertProject({ name: `slp-race-${tag}-${RUN}`, createdBy: USER })
   const mk = async (who) => (await directSql`
-    INSERT INTO plants (project_id, name, created_by)
-    VALUES (${proj.id}, ${`slp-race-${tag}-${who}-${RUN}`}, ${USER}) RETURNING id`)[0].id
+    INSERT INTO plants (project_id, name, created_by, variety_id)
+    VALUES (${proj.id}, ${`slp-race-${tag}-${who}-${RUN}`}, ${USER}, ${varietyId}) RETURNING id`)[0].id
   return { W: await mk('W'), L: await mk('L') }
 }
 
@@ -1912,7 +1962,7 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a planting merge again
     it('the merge answers 200 and the PUT 409 "one of those plants changed", with no ids in it', async () => {
       expect(mergeR.status, `merge -> ${JSON.stringify(mergeR.body)}`).toBe(200)
       expect(putR.status, `PUT -> ${JSON.stringify(putR.body)}`).toBe(409)
-      expect(putR.body).toEqual({ error: PLANTS_CHANGED })
+      expect(putR.body).toEqual({ error: PLANTS_CHANGED, code: 'parents_changed' })
       const [loser] = await directSql`SELECT deleted_at IS NOT NULL AS gone FROM plants WHERE id = ${g.L}`
       expect(loser.gone).toBe(true)
     })
@@ -1988,7 +2038,7 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a planting changes und
       await deleter.end('COMMIT;')
       const r = await putting
       expect(r.status, JSON.stringify(r.body)).toBe(409)
-      expect(r.body).toEqual({ error: PLANTS_CHANGED })
+      expect(r.body).toEqual({ error: PLANTS_CHANGED, code: 'parents_changed' })
       // All or nothing: C's link not retired, A's not inserted, the cache and updated_at as they were.
       expect(await everything()).toBe(before)
     } finally {
@@ -2009,7 +2059,7 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a planting changes und
       await deleter.end('COMMIT;')
       const r = await posting
       expect(r.status, JSON.stringify(r.body)).toBe(409)
-      expect(r.body).toEqual({ error: PLANTS_CHANGED })
+      expect(r.body).toEqual({ error: PLANTS_CHANGED, code: 'parents_changed' })
       expect(await everything()).toBe(before)
     } finally {
       await deleter.end()
@@ -2101,7 +2151,7 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a parents write that P
 
       const r = await putting
       expect(r.status, JSON.stringify(r.body)).toBe(409)
-      expect(r.body).toEqual({ error: CHANGED_AT_ONCE })
+      expect(r.body).toEqual({ error: CHANGED_AT_ONCE, code: 'lot_changed' })
       // A 409 that used to be a 500 is logged, once, with the code: a lock-order regression must not hide.
       expect(retryLines(warn)).toEqual([{ tag: 'inv-source-plants-retry', item: lot, code: '40P01' }])
       // The other session was NOT the one aborted: it got the lot and its transaction is still usable.
@@ -2141,7 +2191,7 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — a parents write that P
 
       const r = await posting
       expect(r.status, JSON.stringify(r.body)).toBe(409)
-      expect(r.body).toEqual({ error: PLANTS_CHANGED })
+      expect(r.body).toEqual({ error: PLANTS_CHANGED, code: 'parents_changed' })
       expect(retryLines(warn)).toEqual([expect.objectContaining({ tag: 'inv-source-plants-retry', code: '40P01', create: true })])
       expect(await wanting).toEqual({ got: [low] })
       await rival.end()
@@ -2280,7 +2330,7 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — F1.4: a NEW parent tha
       const [mergeR, putR] = await Promise.all([stopped.merging, putting])
       expect(mergeR.status, `merge -> ${JSON.stringify(mergeR.body)}`).toBe(200)
       expect(putR.status, `PUT -> ${JSON.stringify(putR.body)}`).toBe(409)
-      expect(putR.body).toEqual({ error: PLANTS_CHANGED })
+      expect(putR.body).toEqual({ error: PLANTS_CHANGED, code: 'parents_changed' })
       expect({ row: await lotRow(lot), links: await links(lot) }).toEqual(before)
       expect(await livePlants(inSet)).toEqual([g.W])
       expect(await onLoser(g)).toBe(0)
@@ -2304,7 +2354,7 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — F1.4: a NEW parent tha
       const [mergeR, postR] = await Promise.all([stopped.merging, posting])
       expect(mergeR.status, `merge -> ${JSON.stringify(mergeR.body)}`).toBe(200)
       expect(postR.status, `POST -> ${JSON.stringify(postR.body)}`).toBe(409)
-      expect(postR.body).toEqual({ error: PLANTS_CHANGED })
+      expect(postR.body).toEqual({ error: PLANTS_CHANGED, code: 'parents_changed' })
       expect(await countLots()).toBe(lotsBefore)
       expect(await onLoser(g)).toBe(0)
       await expectCacheRule(inSet)
@@ -2618,17 +2668,23 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL || !RUN_RECONCILE)('0b-reconcile.sql aga
     const a = await planting('RA')
     const b = await planting('RB')
     const lot = await driftedLot(a)
-    const blocker = openSession('holds the link table')
+    const blocker = openSession('holds planting RB')
     let rec
     try {
       const blockerPid = await blocker.pid()
       // The PUT locks the lot (statement 0), share-locks its plantings (1) and then reads the link table
-      // (2). An ACCESS EXCLUSIVE lock on that table stops it exactly there: lot row held, no table lock
-      // of its own yet. With the reconcile's locks the other way round, this is the interleaving that
-      // deadlocks.
-      await blocker.run('BEGIN; LOCK TABLE seed_lot_parent_planting IN ACCESS EXCLUSIVE MODE;')
+      // (2). It has to be stopped with the lot row held and no lock on that table yet: with the
+      // reconcile's locks the other way round, this is the interleaving that deadlocks.
+      // RELEASE 2a — how it is stopped there. Release 1 held the link TABLE, which stopped the PUT at
+      // statement 2. A set of two is now also read against that table BEFORE the transaction (the parent
+      // rules' fast path, seed-lot-rules.js readParentFacts), so the same table lock stops the request
+      // before it holds anything, and the reconcile then waits behind this session, not behind the PUT
+      // (measured 2026-10-06: "nothing became blocked behind backend N (the reconcile, at its lot
+      // locks)"). So the PUT is held one statement earlier, at its planting share lock: the lot row is
+      // held, the link table is not, which is the state this case was written for.
+      await blocker.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(b)} FOR UPDATE;`)
       const putting = onOwnConnection(() => put(lot, [a, b]))
-      const putPid = await waitBlockedBy(blockerPid, 'the PUT, at its first read of the link table')
+      const putPid = await waitBlockedBy(blockerPid, 'the PUT, at its planting locks (lot row held)')
       rec = reconcile()
       await waitBlockedBy(putPid, 'the reconcile, at its lot locks')
       await blocker.end('COMMIT;')
@@ -2663,7 +2719,9 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL || !RUN_RECONCILE)('0b-reconcile.sql aga
       rec = reconcile()
       const recPid = await waitBlockedBy(blockerPid, 'the reconcile, at R1')
       const putting = onOwnConnection(() => put(lot, [a, b]))
-      await waitBlockedBy(recPid, 'the PUT, at the lot lock')
+      // Release 2a: a set of two reads the link table before its transaction, so the PUT now meets the
+      // reconcile's TABLE lock first, ahead of the lot row. Either way it waits behind the reconcile.
+      await waitBlockedBy(recPid, 'the PUT, behind the reconcile')
       await blocker.end('COMMIT;')
 
       const [recR, putR] = await Promise.all([rec.done, putting])

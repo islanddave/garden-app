@@ -15,6 +15,10 @@
 //     without this day removing either clamp survived every test in the repo (QA 2026-09-29).
 //   * Grow-year boundary on the ET calendar: a pick on Oct 31 ET is season 2026, Nov 1 ET is 2027.
 //   * A saved-seed lot inherits its parent planting's source, contact links included.
+//   * V5-SEEDSTATSPARENTS-001 (release 2a): a lot with SEVERAL parent plantings is still ONE row of
+//     stat_saved_lot, with parent_count = its live seed_parent links; a parent that is linked but is not
+//     the cached one counts the lot on ITS source's card too; and that second road to a planting
+//     (UNION, never UNION ALL) does not double the planting's plantings, plants or pounds.
 //
 // Skips on a branch that lacks the views (the migration is applied to staging before the dev push
 // per the rollout, and this suite forks staging) — but FAILS, not skips, on a branch whose
@@ -37,9 +41,20 @@ const HAS_RECEIPT = (await directSql`
   SELECT (to_regclass('public.schema_version') IS NOT NULL
     AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')) AS ok`)[0].ok;
 
+// The handler's seed-lots read names stat_saved_lot.parent_count (migrations/v5-seedstatsparents-001).
+// On a branch with the views and without that column every season-stats call is a 42703, so the rest
+// of this file would fail for a reason none of its assertions names. One case says it instead.
+const HAS_PARENT_COUNT = (await directSql`
+  SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = 'stat_saved_lot'
+                    AND column_name = 'parent_count') AS ok`)[0].ok;
+
 describe('season-stats schema presence', () => {
   it.runIf(HAS_RECEIPT)('the 5.0.0-seasonstats-001 receipt means the stat_* views are there', () => {
     expect(HAS_STATS).toBe(true);
+  });
+  it.runIf(HAS_STATS)('stat_saved_lot carries parent_count (apply migrations/v5-seedstatsparents-001/0a-replace-views.sql before the code that names it)', () => {
+    expect(HAS_PARENT_COUNT, 'public.stat_saved_lot has no parent_count column on the database this suite forks').toBe(true);
   });
 });
 
@@ -47,6 +62,7 @@ const RUN = testRunId();
 const USER_A = `user_int_stats_a_${RUN}`;       // household member 1 (owns the weather space)
 const USER_B = `user_int_stats_b_${RUN}`;       // household member 2
 const USER_C = `user_int_stats_foreign_${RUN}`; // foreign owner — must never be visible to A/B
+const USER_D = `user_int_stats_d_${RUN}`;       // a household of its own: the several-parent lot
 const ENV_KEY = 'GARDEN_HOUSEHOLD_IDS';
 const PATH = '/api/harvests/season-stats';
 
@@ -151,7 +167,7 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
 
   afterAll(async () => {
     if (savedEnv === undefined) delete process.env[ENV_KEY]; else process.env[ENV_KEY] = savedEnv;
-    const users = [USER_A, USER_B, USER_C];
+    const users = [USER_A, USER_B, USER_C, USER_D];
     await settle('season-stats.int', [
       // Both foreign keys on a parent link are ON DELETE RESTRICT: it goes before its lot and its planting.
       () => directSql`DELETE FROM seed_lot_parent_planting WHERE created_by = ANY(${users}::text[])`,
@@ -261,5 +277,94 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
     expect((await stats(USER_A, 'sections=nope')).status).toBe(400);
     setTestUserId(USER_A);
     expect((await callHandler(handler, { method: 'POST', path: PATH })).status).toBe(405);
+  });
+
+  // ── V5-SEEDSTATSPARENTS-001 ─────────────────────────────────────────────────────────────────────
+  // One lot, saved by USER_D, from three of D's plantings bought from three different places:
+  //   parentA  the CACHE (inventory_items.source_plant_id) and a live link     from source dA
+  //   parentB  a live link ONLY                                                from source dB
+  //   parentR  a RETIRED link (a parent that was taken off the lot)            from source dR
+  // plus a pollen_parent row on parentR, which is not a seed parent at all. Hand-written rows, as the
+  // fixture above: the stat views read tables, and the states are exactly the ones the routes leave.
+  describe.skipIf(!HAS_PARENT_COUNT)('a lot with several parent plantings (V5-SEEDSTATSPARENTS-001)', () => {
+    const d = {};
+
+    beforeAll(async () => {
+      d.proj = (await insertProject({ name: `int-stats-d-${RUN}`, createdBy: USER_D })).id;
+      for (const k of ['A', 'B', 'R']) {
+        // eslint-disable-next-line no-await-in-loop
+        d[`src${k}`] = await mkSource(USER_D, `int-stats-src-d${k}-${RUN}`);
+        // eslint-disable-next-line no-await-in-loop
+        d[`parent${k}`] = await mkPlanting(USER_D, d.proj, {
+          name: `int-stats-pd${k}-${RUN}`, sourceId: d[`src${k}`], varietyId: ids.cv,
+        });
+      }
+      await mkPick(USER_D, d.proj, d.parentA, '2026-07-10T16:00:00Z', 400);
+      await mkPick(USER_D, d.proj, d.parentB, '2026-07-11T16:00:00Z', 100);
+      d.lot = (await directSql`
+        INSERT INTO inventory_items (user_id, created_by, type, name, category, unit, quantity_on_hand,
+                                     variety_id, status, source_plant_id, seed_stage, created_at)
+        VALUES (${USER_D}, ${USER_D}, 'consumable', ${`int-stats-lot-d-${RUN}`}, 'seeds', 'packet', 1,
+                ${ids.cv}, 'active', ${d.parentA}, 'drying', '2026-09-03T16:00:00Z')
+        RETURNING id`)[0].id;
+      await directSql`
+        INSERT INTO seed_lot_parent_planting (inventory_item_id, plant_id, role, created_by, deleted_at)
+        VALUES (${d.lot}, ${d.parentA}, 'seed_parent', ${USER_D}, NULL),
+               (${d.lot}, ${d.parentB}, 'seed_parent', ${USER_D}, NULL),
+               (${d.lot}, ${d.parentR}, 'seed_parent', ${USER_D}, now()),
+               (${d.lot}, ${d.parentR}, 'pollen_parent', ${USER_D}, NULL)`;
+    });
+
+    it('the lot is ONE row of stat_saved_lot and of the seed-lots section, with parent_count 2 (the retired link and the pollen row do not count)', async () => {
+      const view = await directSql`
+        SELECT lot_id, parent_count FROM public.stat_saved_lot WHERE lot_id = ${d.lot}`;
+      expect(view).toEqual([{ lot_id: d.lot, parent_count: 2 }]);
+
+      const { status, body } = await stats(USER_D, 'season=2026&sections=seed_lots');
+      expect(status, JSON.stringify(body).slice(0, 300)).toBe(200);
+      const rows = body.sections.seed_lots.series.rows.filter((r) => r.lot_id === d.lot);
+      expect(rows, 'a lot must not be returned once per parent').toHaveLength(1);
+      expect(rows[0].parent_count).toBe(2);
+      // The row's own parent and source are still the CACHED planting's.
+      expect(rows[0].parent).toMatchObject({ planting_id: d.parentA });
+      expect(rows[0].source).toMatchObject({ id: d.srcA });
+      // The one-parent lot above reads 1, through the same column.
+      const a = await stats(USER_A, 'season=2026&sections=seed_lots');
+      expect(a.body.sections.seed_lots.series.rows.find((r) => r.lot_id === ids.lot).parent_count).toBe(1);
+    });
+
+    it('the linked-only parent\'s source card counts the lot too; the retired parent\'s does not', async () => {
+      const { body } = await stats(USER_D);
+      expect(cardFor(body, d.srcA).saved_lots).toBe(1);
+      expect(cardFor(body, d.srcB).saved_lots).toBe(1);
+      expect(cardFor(body, d.srcR).saved_lots).toBe(0);
+    });
+
+    it('and nothing doubles: the cached parent is reached by BOTH roads (the column and its link row) and its card still reads one planting, one plant, its own pounds', async () => {
+      const { body } = await stats(USER_D);
+      const a = cardFor(body, d.srcA);
+      expect(a).toMatchObject({ plantings: 1, plants: 1, picked: 1, lost: 0, saved_lots: 1 });
+      expect(a.lb).toBeCloseTo(400 / 453.592, 1);
+      const b = cardFor(body, d.srcB);
+      expect(b).toMatchObject({ plantings: 1, plants: 1, picked: 1, lost: 0, saved_lots: 1 });
+      expect(b.lb).toBeCloseTo(100 / 453.592, 1);
+      expect(cardFor(body, d.srcR)).toMatchObject({ plantings: 1, plants: 1, picked: 0, saved_lots: 0 });
+      expect(body.sections.sources.meta.total_lb).toBeCloseTo(500 / 453.592, 1);
+      // Read off the view too, so a shaper that summed twice could not hide a doubled row.
+      const cards = await directSql`
+        SELECT source_id, plantings::int AS plantings, plants::int AS plants, saved_lots::int AS saved_lots
+          FROM public.stat_source_card
+         WHERE source_id = ANY(${[d.srcA, d.srcB, d.srcR]}::uuid[]) ORDER BY source_id`;
+      expect(cards).toHaveLength(3);
+      expect(cards.reduce((s, c) => s + c.plantings, 0)).toBe(3);
+      expect(cards.reduce((s, c) => s + c.plants, 0)).toBe(3);
+      expect(cards.reduce((s, c) => s + c.saved_lots, 0)).toBe(2);
+    });
+
+    it('another household sees none of it', async () => {
+      const { body } = await stats(USER_A);
+      expect(cardFor(body, d.srcB)).toBeUndefined();
+      expect(body.sections.seed_lots?.series.rows.find((r) => r.lot_id === d.lot)).toBeUndefined();
+    });
   });
 });

@@ -191,7 +191,14 @@ const STEPS = [
   // harmless to the guards since entity_tag.tag_id points the other way.
   ['entity_tag',                  `DELETE FROM entity_tag WHERE created_by LIKE ${NS} OR entity_id IN (${NS_PLANTS}) OR entity_id IN (${NS_VARIETIES}) OR entity_id IN (${NS_PROJECTS}) OR entity_id IN (${NS_LOCATIONS})`],
   ['plants',                      `DELETE FROM plants WHERE created_by LIKE ${NS} OR name LIKE ${NS} OR project_id IN (${NS_PROJECTS})`],
-  ['plant_varieties',             `DELETE FROM plant_varieties WHERE created_by LIKE ${NS} OR name LIKE ${NS} OR crop_type_slug LIKE ${NS}`],
+  // v5-varietyblend-001: variety_blend_component names its mix and its component variety, both ON DELETE
+  // RESTRICT (it carries deleted_at, so cascade-sweep's class guard forbids a CASCADE into it). A component
+  // row must therefore go before plant_varieties on the next line or that DELETE 23503s and leaks every
+  // variety behind it. EITHER key column: a namespaced mix of two varieties, and a namespaced variety that
+  // someone else's mix names, both hold the next line's rows. NS_VARIETIES is that line's own predicate.
+  // Skipped on a fork without the table.
+  ['variety_blend_component',     `DELETE FROM variety_blend_component WHERE created_by LIKE ${NS} OR blend_variety_id IN (${NS_VARIETIES}) OR component_variety_id IN (${NS_VARIETIES})`],
+  ['plant_varieties',            `DELETE FROM plant_varieties WHERE created_by LIKE ${NS} OR name LIKE ${NS} OR crop_type_slug LIKE ${NS}`],
   ['crop_types',                  `DELETE FROM crop_types WHERE slug LIKE ${NS} OR created_by LIKE ${NS}`],
   ['container_closure',           `DELETE FROM container_closure WHERE ancestor_id IN (${NS_PROJECTS}) OR descendant_id IN (${NS_PROJECTS})`],
   ['inactive_project_dismissals', `DELETE FROM inactive_project_dismissals WHERE user_id LIKE ${NS} OR project_id IN (${NS_PROJECTS})`],
@@ -312,6 +319,9 @@ export async function countFixtureResidue(sql) {
     ['plant_projects', `created_by LIKE ${NS} OR name LIKE ${NS} OR slug LIKE ${NS}`],
     ['plants', `created_by LIKE ${NS}`],
     ['plant_varieties', `created_by LIKE ${NS}`],
+    // Its two parents are probed on the line above, but a component row is what STOPS them being swept
+    // (both keys RESTRICT), so a leak here is named for what it is rather than read off a variety count.
+    ['variety_blend_component', `created_by LIKE ${NS}`],
     ['crop_types', `slug LIKE ${NS}`],
     ['event_log', `created_by LIKE ${NS}`],
     ['cultivar_weight_sample', `created_by LIKE ${NS}`],

@@ -1,0 +1,62 @@
+{
+  "name": "seed-mix",
+  "release": "V5-SEEDMULTIPARENT-001 release 2a / V5-VARIETYBLEND-001",
+  "source": "R2A-CONTRACT.md sections 2 and 3",
+  "verified_by": "tests/integration/seed-mix-seam.int.test.js",
+  "varieties_blend": {
+    "route": "POST /api/varieties/blend",
+    "request_required": ["component_variety_ids", "create"],
+    "statuses": [200, 201],
+    "required": ["id", "name", "variety_rank", "crop_type_slug", "blend_key", "exists", "created", "components"],
+    "component_required": ["id", "name", "variety_rank", "deleted"],
+    "variety_rank": "blend",
+    "refusals": {
+      "component_unknown": 400,
+      "blend_needs_two": 400,
+      "blend_too_many": 400,
+      "mixed_crop_components": 400
+    }
+  },
+  "seed_lot": {
+    "routes": ["POST /api/inventory-items", "GET /api/inventory-items/:id"],
+    "statuses": [201, 200],
+    "required": ["id", "name", "variety_id", "variety_rank", "source_plant_id", "source_plants"],
+    "source_plant_required": [
+      "id", "name", "variety_id", "variety_name", "breeding_system", "variety_rank", "crop_slug", "archived", "deleted"
+    ]
+  },
+  "source_plants_put": {
+    "route": "PUT /api/inventory-items/:id/source-plants",
+    "request_required": ["source_plant_ids"],
+    "request_optional": ["expected_source_plant_ids", "source_plant_id", "filing"],
+    "statuses": [200],
+    "required": ["id", "source_plant_id", "source_plants"],
+    "required_when_filing_sent": ["filing"],
+    "filing_required": ["variety_id", "variety_name", "variety_rank", "name", "changed", "previous"],
+    "previous_required": ["variety_id", "name"]
+  },
+  "filing_put": {
+    "route": "PUT /api/inventory-items/:id/filing",
+    "request_required": ["variety_id", "expect_variety_id"],
+    "request_optional": ["name"],
+    "statuses": [200],
+    "required": ["id", "variety_id", "variety_name", "variety_rank", "name", "changed", "previous"],
+    "previous_required": ["variety_id", "name"]
+  },
+  "seed_measure_put": {
+    "route": "PUT /api/inventory-items/:id/seed-measure",
+    "request_optional": ["seed_count", "seed_weight_g", "seed_count_estimated", "seed_parent_plant_count"],
+    "statuses": [200],
+    "required": ["seed_parent_plant_count"]
+  },
+  "refusals": {
+    "parent_without_variety": { "status": 400, "routes": ["POST /api/inventory-items", "PUT /api/inventory-items/:id/source-plants"], "required": ["error", "code", "plant_id"] },
+    "mixed_crop_parents": { "status": 400, "routes": ["POST /api/inventory-items", "PUT /api/inventory-items/:id/source-plants"], "required": ["error", "code"] },
+    "blend_required": { "status": 400, "routes": ["POST /api/inventory-items", "PUT /api/inventory-items/:id/source-plants"], "required": ["error", "code", "component_variety_ids"] },
+    "variety_unusable": { "status": 400, "routes": ["PUT /api/inventory-items/:id/filing", "PUT /api/inventory-items/:id/source-plants"], "required": ["error", "code"] },
+    "filing_crop_mismatch": { "status": 400, "routes": ["PUT /api/inventory-items/:id/filing", "PUT /api/inventory-items/:id/source-plants"], "required": ["error", "code"] },
+    "parents_changed": { "status": 409, "routes": ["POST /api/inventory-items", "PUT /api/inventory-items/:id/source-plants", "PATCH /api/inventory-items/:id/source-plant"], "required": ["error", "code"], "error": "One of those plants changed just now. Reload and try again." },
+    "lot_changed": { "status": 409, "routes": ["PUT /api/inventory-items/:id/source-plants", "PATCH /api/inventory-items/:id/source-plant", "PUT /api/inventory-items/:id/filing"], "required": ["error", "code"], "error": "This seed lot was changed at the same moment. Reload and try again.", "optional": ["source_plant_id", "source_plants", "variety_id", "name"] },
+    "multi_parent_lot": { "status": 409, "routes": ["PATCH /api/inventory-items/:id/source-plant"], "required": ["error", "code", "source_plant_ids"] }
+  }
+}
