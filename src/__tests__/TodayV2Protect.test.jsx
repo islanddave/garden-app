@@ -14,7 +14,7 @@ import { resolve } from 'node:path'
 
 const F = (f) => JSON.parse(readFileSync(resolve(process.cwd(), 'tests/harness/_todaymeasure', f), 'utf8'))
 const { planState, prefsState, auth, wire, api } = vi.hoisted(() => {
-  const wire = { posts: [], deletes: [], failPlant: null, seq: 0, plants: null, locations: null, members: null, hold: false, held: [] }
+  const wire = { posts: [], deletes: [], failPlant: null, seq: 0, plants: null, locations: null, members: null }
   return {
     planState: { current: null },
     prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
@@ -28,13 +28,6 @@ const { planState, prefsState, auth, wire, api } = vi.hoisted(() => {
         if (init.method === 'DELETE') { wire.deletes.push(path); return {} }
         if (init.method === 'POST') {
           const body = JSON.parse(init.body)
-          // wire.hold: the POST is SENT (counted) but answers only when the test releases it — weak signal.
-          if (wire.hold) {
-            wire.posts.push(body)
-            const fail = await new Promise((r) => { r.plant = body.plant_id; wire.held.push(r) })
-            if (fail) throw new Error('offline')
-            return { id: 'ev' + (++wire.seq) }
-          }
           if (body.plant_id === wire.failPlant) throw new Error('offline')
           wire.posts.push(body)
           return { id: 'ev' + (++wire.seq) }
@@ -60,9 +53,7 @@ vi.mock('../components/today/v2/useTodayBands.js', () => ({
 }))
 
 import TodayV2 from '../pages/TodayV2.jsx'
-import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
 import { readSkipped } from '../components/today/careStore.js'
-import { __resetTodayLogged } from '../components/today/v2/needsCareStore.js'
 import { applyGrafts } from '../../tests/harness/_todaymeasure/v2wire.js'
 
 const PAYLOAD = F('dailyplan.dave.json')
@@ -82,12 +73,11 @@ const serve = (payload) => { planState.current = { data: payload, loading: false
 
 beforeEach(() => {
   localStorage.clear(); sessionStorage.clear()
-  __resetTodayLogged() // the claims are the module's, not the tab's
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(TODAY + 'T14:30:00.000Z'))
   serve(PAYLOAD)
   prefsState.current = { prefs: null, prefsLoaded: true, refreshPrefs: async () => null }
-  wire.posts = []; wire.deletes = []; wire.failPlant = null; wire.seq = 0; wire.hold = false; wire.held = []
+  wire.posts = []; wire.deletes = []; wire.failPlant = null; wire.seq = 0
   wire.plants = PLANTS; wire.locations = LOCS; wire.members = { members: [{ id: 'u', display_name: 'Dave' }, { id: 'member_jen', display_name: 'Jen' }] }
 })
 afterEach(() => { cleanup(); vi.useRealTimers() })
@@ -261,261 +251,6 @@ describe('frost and freeze nights', () => {
     expect(spots.length).toBeGreaterThan(1)
     expect(spots.reduce((n, s) => n + Number(s.getAttribute('data-count')), 0)).toBe(79)
     expect(spots.every((s) => Number(s.getAttribute('data-count')) < 79)).toBe(true)
-  })
-})
-
-// Review 4162.1 IMPORTANT-B (QA-T4): Protect's copy of the §6.3 double-log guard — useProtect's `loggedAtMount` over the
-// today-logged store — pinned. Remounted as a Back (a page-scroll return: the visit record is restored) on the SAME plan,
-// as useDailyPlan's seed would paint it before the refetch: what was covered or brought in stays off the list, and the
-// page's every live cover control re-posts none of it. The in-flight variant is IMPORTANT-A's twin for Cover all.
-describe('§6.3 in Protect: a covered plant never comes back live on the Back remount (review 4162.1 IMPORTANT-B)', () => {
-  const back = async () => {
-    render(<MemoryRouter><PageScrollProvider value={{ api: null, isReturn: true }}><TodayV2 /></PageScrollProvider></MemoryRouter>)
-    await settle()
-  }
-  const coverSpot = (name) => document.querySelector(`[data-testid="protect-spot"][data-spot="${name}"]`)
-  const spotNames = () => [...document.querySelectorAll('[data-testid="protect-spot"]')].map((s) => s.getAttribute('data-spot'))
-  const perPlant = (ids) => ids.map((id) => wire.posts.filter((b) => b.plant_id === id).length)
-  // Every live write control Protect offers after the Back, tapped once: whatever came back would be re-posted.
-  const tapEverything = async () => {
-    for (const b of [...document.querySelectorAll('[data-testid="protect-cover-all"]')]) { fireEvent.click(b); await settle() }
-    for (const b of within(screen.getByTestId('protect-body')).queryAllByRole('button', { name: /^(Covered|Brought in): / })) { fireEvent.click(b); await settle() }
-  }
-  const freezeSpot = () => {
-    const s = document.querySelectorAll('[data-testid="protect-spot"]')[0]
-    return { name: s.getAttribute('data-spot'), n: Number(s.getAttribute('data-count')), el: s }
-  }
-  const plantsOf = (name) => {
-    const s = coverSpot(name)
-    if (s.querySelector('[aria-expanded]').getAttribute('aria-expanded') !== 'true') fireEvent.click(s.querySelector('[aria-expanded]'))
-    return [...s.querySelectorAll('[data-testid="protect-row"] a')].map((a) => a.getAttribute('href').split('/').pop())
-  }
-
-  it('QA-T4: freeze graft, Cover all, unmount, Back on the same plan — the spot is not live and nothing is re-posted', async () => {
-    serve(applyGrafts(PAYLOAD, PLANTS, ['freeze'], G).payload)
-    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
-    const { name, n, el } = freezeSpot()
-    const others = spotNames().filter((x) => x !== name)
-    const ids = plantsOf(name); await settle()
-    expect(ids.length).toBe(n)
-    fireEvent.click(within(el).getByRole('button', { name: `Cover all ${n} in ${name}` }))
-    await settle()
-    expect(perPlant(ids)).toEqual(Array(n).fill(1))
-    first.unmount()
-    await back()
-    expect(band('protect').getAttribute('aria-expanded')).toBe('true')
-    expect(spotNames()).toEqual(others) // the other cover rows are there, live — only the covered spot is gone
-    expect(coverSpot(name)).toBeNull()
-    expect(within(screen.getByTestId('protect-body')).queryByRole('button', { name: `Cover all ${n} in ${name}` })).toBeNull()
-    await tapEverything()
-    expect(perPlant(ids)).toEqual(Array(n).fill(1))
-  })
-
-  // On a Back the restored visit record's rowsDone also draws these two as done lines, so the guard is what holds them
-  // on a NEW visit of the same plan day in this tab — Today's tab tapped from another page, the plan not yet refetched.
-  it('one row each: Covered and Brought in, unmount, then a Back and a new visit on the same plan — neither row is live, neither is re-posted', async () => {
-    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
-    fireEvent.click(within(rowOf('Lantana')).getByRole('button', { name: 'Covered: Lantana' })); await settle()
-    fireEvent.click(within(rowOf('Spider Plant')).getByRole('button', { name: 'Brought in: Spider Plant' })); await settle()
-    expect(wire.posts.map((b) => [b.event_type, b.plant_id])).toEqual([['cover', ID.Lantana], ['brought_inside', ID['Spider Plant']]])
-    first.unmount()
-    await back()
-    expect(band('protect').getAttribute('aria-expanded')).toBe('true')
-    expect(rowOf('Lemon Verbena')).toBeTruthy() // the section's other rows are there, live
-    expect(rowOf('Lantana')).toBeUndefined()
-    expect(rowOf('Spider Plant')).toBeUndefined()
-    cleanup()
-    await mount() // a new visit: no record restored
-    expect(band('protect').getAttribute('aria-expanded')).toBe('true')
-    expect(rowOf('Lemon Verbena')).toBeTruthy()
-    expect(rowOf('Lantana')).toBeUndefined()
-    expect(rowOf('Spider Plant')).toBeUndefined()
-    expect(doneOf('Lantana')).toBeUndefined()
-    expect(band('protect').textContent).toContain('3')
-    await tapEverything()
-    expect(perPlant([ID.Lantana, ID['Spider Plant']])).toEqual([1, 1])
-  })
-
-  it('IMPORTANT-A\'s twin: a Cover all still in flight at unmount — Back, tap everything, release — each plant POSTed exactly once', async () => {
-    serve(applyGrafts(PAYLOAD, PLANTS, ['freeze'], G).payload)
-    wire.hold = true
-    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
-    const { name, n, el } = freezeSpot()
-    const others = spotNames().filter((x) => x !== name)
-    const ids = plantsOf(name); await settle()
-    fireEvent.click(within(el).getByRole('button', { name: `Cover all ${n} in ${name}` }))
-    await settle()
-    expect(wire.posts.length).toBe(4) // concurrency 4: four sent, none answered
-    first.unmount()
-    await back()
-    wire.hold = false
-    expect(spotNames()).toEqual(others)
-    expect(coverSpot(name)).toBeNull()
-    await tapEverything()
-    for (let i = 0; i < 20 && wire.held.length; i++) { wire.held.splice(0).forEach((r) => r()); await settle() }
-    expect(perPlant(ids)).toEqual(Array(n).fill(1))
-  })
-
-  // The claim's other half: a write that failed must leave the store, or the plant would drop off the list uncovered.
-  it('a claim is released on failure: a Covered that fails, unmount, then a Back and a new visit — the row is still offered, and lands once', async () => {
-    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
-    wire.failPlant = ID.Lantana
-    fireEvent.click(within(rowOf('Lantana')).getByRole('button', { name: 'Covered: Lantana' })); await settle()
-    expect(rowOf('Lantana').textContent).toContain('Not logged')
-    wire.failPlant = null
-    first.unmount()
-    await back()
-    expect(rowOf('Lantana')).toBeTruthy()
-    cleanup()
-    await mount() // a new visit: no record restored, so only the store could hide the row
-    fireEvent.click(within(rowOf('Lantana')).getByRole('button', { name: 'Covered: Lantana' })); await settle()
-    expect(perPlant([ID.Lantana])).toEqual([1])
-    expect(doneOf('Lantana').textContent).toContain('covered')
-  })
-})
-
-// Pre-promote IMPORTANT-2 in Protect (review-dbl-recut-prepromote-regression.md): the Back FIRST, the failure SECOND.
-// The claim is the page's, in memory, and the list on screen is subscribed to it, so a cover that fails after the Back
-// comes back on THAT page — no further remount — and a Cover all's failures carry "Not logged" and the spot's Retry.
-describe('a cover that fails after the Back comes back on the page that is on screen (pre-promote IMPORTANT-2)', () => {
-  const back = async () => {
-    render(<MemoryRouter><PageScrollProvider value={{ api: null, isReturn: true }}><TodayV2 /></PageScrollProvider></MemoryRouter>)
-    await settle()
-  }
-  const coverSpot = (name) => document.querySelector(`[data-testid="protect-spot"][data-spot="${name}"]`)
-  const perPlant = (ids) => ids.map((id) => wire.posts.filter((b) => b.plant_id === id).length)
-  const release = async (failIds = new Set()) => {
-    for (let i = 0; i < 40 && wire.held.length; i++) { wire.held.splice(0).forEach((r) => r(failIds.has(r.plant))); await settle() }
-  }
-  const stored = () => JSON.parse(sessionStorage.getItem('today-logged:u:' + TODAY) || '[]')
-  const startCoverAll = async () => {
-    serve(applyGrafts(PAYLOAD, PLANTS, ['freeze'], G).payload)
-    wire.hold = true
-    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
-    const s = document.querySelectorAll('[data-testid="protect-spot"]')[0]
-    const name = s.getAttribute('data-spot'), n = Number(s.getAttribute('data-count'))
-    fireEvent.click(s.querySelector('[aria-expanded]')); await settle()
-    const ids = [...coverSpot(name).querySelectorAll('[data-testid="protect-row"] a')].map((a) => a.getAttribute('href').split('/').pop())
-    const header = band('protect').textContent
-    fireEvent.click(within(coverSpot(name)).getByRole('button', { name: `Cover all ${n} in ${name}` })); await settle()
-    expect(wire.posts.length).toBe(4)
-    return { first, name, n, ids, header, atTap: stored() }
-  }
-
-  it('Cover all, Back, then one POST fails: the spot is back on the mounted page with that plant "Not logged", "Covered N−1", its Retry and its Undo', async () => {
-    const { first, name, n, ids, atTap } = await startCoverAll()
-    const lost = wire.posts[0].plant_id
-    first.unmount()
-    await back()
-    expect(coverSpot(name)).toBeNull() // still going: none of it is offered
-    await release(new Set([lost]))
-    expect(perPlant(ids)).toEqual(Array(n).fill(1))
-    const s = coverSpot(name)
-    expect(s.getAttribute('data-count')).toBe('1')
-    expect(s.querySelector('[aria-expanded]').textContent).toContain(`Covered ${n - 1} · 1 not logged`)
-    expect(s.querySelector('[data-testid="protect-row"]').textContent).toContain('Not logged')
-    expect(within(s).getByRole('button', { name: `Undo: ${name} covered ${n - 1}` })).toBeTruthy()
-    expect(screen.getByTestId('today-status').textContent).toBe(`Covered ${n - 1} in ${name}. 1 not logged — Retry is on the spot.`)
-    wire.hold = false
-    fireEvent.click(within(s).getByRole('button', { name: `Retry: cover 1 in ${name}` })); await settle()
-    expect(wire.posts.filter((b) => b.plant_id === lost).length).toBe(2) // its failure, then its one landing
-    expect(perPlant(ids).reduce((a, b) => a + b, 0)).toBe(n + 1)
-    expect(atTap).toEqual([]) // a claim is not a log: nothing was in the tab's store before a POST answered
-  })
-
-  it('Cover all, Back, then every POST fails (offline): every plant is offered again on the mounted page, none is called covered', async () => {
-    const { first, name, n, ids, header } = await startCoverAll()
-    first.unmount()
-    await back()
-    expect(band('protect').textContent).not.toBe(header) // on the wire: none of the spot is counted
-    await release(new Set(ids))
-    expect(stored()).toEqual([])
-    const s = coverSpot(name)
-    expect(s.getAttribute('data-count')).toBe(String(n))
-    expect(s.querySelector('[aria-expanded]').textContent).not.toMatch(/overed/)
-    expect(s.querySelector('[aria-expanded] svg')).toBeNull()
-    expect(band('protect').textContent).toBe(header) // the count and the summary, as before the tap
-    wire.hold = false
-    fireEvent.click(within(s).getByRole('button', { name: `Retry: cover ${n} in ${name}` })); await settle()
-    expect(perPlant(ids)).toEqual(Array(n).fill(2)) // each: its failure, then its one landing
-  })
-
-  it('a failed cover taken again on this page before the old run ends is being written, not "Not logged", when that run lands', async () => {
-    const { first, name, ids } = await startCoverAll()
-    const lost = wire.posts[0].plant_id
-    first.unmount()
-    await back()
-    const one = wire.held.findIndex((r) => r.plant === lost)
-    wire.held.splice(one, 1)[0](true); await settle() // it failed: back on this page, while the old run goes on
-    // The Back restored the visit: the spot is open, as it was left.
-    const row = () => coverSpot(name).querySelector('[data-testid="protect-row"]')
-    fireEvent.click(within(row()).getByRole('button', { name: /^Covered: / })); await settle() // its new POST is on the wire
-    expect(wire.posts.filter((b) => b.plant_id === lost).length).toBe(2)
-    for (let i = 0; i < 40 && wire.held.some((r) => r.plant !== lost); i++) {
-      for (const r of wire.held.filter((x) => x.plant !== lost)) { wire.held.splice(wire.held.indexOf(r), 1); r(false) }
-      await settle()
-    }
-    expect(perPlant(ids.filter((x) => x !== lost))).toEqual(Array(ids.length - 1).fill(1))
-    expect(row().textContent).not.toContain('Not logged')
-    wire.held.splice(0).forEach((r) => r(false)); await settle()
-    expect(coverSpot(name)?.querySelector('[data-testid="protect-row"]') ?? null).toBeNull()
-    expect(perPlant([lost])).toEqual([2])
-  })
-
-  it('a failed cover logged again on this page before the old run ends: undoing that log puts the row back as due — not as the old run\'s "Not logged"', async () => {
-    const { first, name } = await startCoverAll()
-    const [a, b] = wire.posts.slice(0, 2).map((x) => x.plant_id)
-    first.unmount()
-    await back()
-    // Two fail (a second keeps the spot a cover row when the run lands, so the first one's own done line stays in view).
-    for (const id of [a, b]) { wire.held.splice(wire.held.findIndex((r) => r.plant === id), 1)[0](true); await settle() }
-    wire.hold = false // from here a POST answers at once: the cover below lands while the old run still goes
-    const live = (id) => coverSpot(name).querySelector(`[data-testid="protect-row"][data-key="${id}:cold"]`)
-    const done = (id) => coverSpot(name).querySelector(`[data-testid="protect-row-done"][data-key="${id}:cold"]`)
-    fireEvent.click(within(live(a)).getByRole('button', { name: /^Covered: / })); await settle()
-    expect(done(a).textContent).toContain('covered')
-    await release() // the old run's held POSTs land; what it sends after that answers at once: it ends
-    expect(live(b).textContent).toContain('Not logged')
-    fireEvent.click(within(done(a)).getByRole('button', { name: /^Undo: / })); await settle()
-    expect(wire.deletes.length).toBe(1)
-    expect(live(a).textContent).not.toContain('Not logged')
-    expect(within(live(a)).getByRole('button', { name: /^Covered: / })).toBeTruthy()
-  })
-
-  it('the section closed and reopened mid Cover all, on the same page: the run lands on the reopened body, said once', async () => {
-    const { name, n, ids } = await startCoverAll()
-    fireEvent.click(band('protect')); await settle()
-    expect(document.querySelector('[data-testid="protect-body"]')).toBeNull()
-    fireEvent.click(band('protect')); await settle()
-    let writes = 0
-    const seen = new MutationObserver((ms) => { writes += ms.length })
-    seen.observe(screen.getByTestId('today-status'), { childList: true })
-    await release()
-    writes += seen.takeRecords().length
-    seen.disconnect()
-    expect(perPlant(ids)).toEqual(Array(n).fill(1))
-    const line = [...document.querySelectorAll('[data-testid="protect-done-line"]')].find((l) => l.getAttribute('data-spot') === name)
-    expect(line.textContent).toContain(`${name} · covered ${n}`)
-    expect(within(line).getByRole('button', { name: `Undo: ${name} covered ${n}` })).toBeTruthy()
-    expect(screen.getByTestId('today-status').textContent).toBe(`Covered ${n} in ${name}.`)
-    expect(writes).toBe(1)
-  })
-
-  it('one row: Covered, Back, then the POST fails — the row is offered again on the mounted page, and lands once', async () => {
-    wire.hold = true
-    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
-    fireEvent.click(within(rowOf('Lantana')).getByRole('button', { name: 'Covered: Lantana' })); await settle()
-    first.unmount()
-    await back()
-    expect(rowOf('Lantana')).toBeUndefined() // on the wire: not offered
-    expect(band('protect').textContent).toContain('4')
-    await release(new Set([ID.Lantana]))
-    expect(rowOf('Lantana')).toBeTruthy()
-    expect(band('protect').textContent).toContain('5')
-    wire.hold = false
-    fireEvent.click(within(rowOf('Lantana')).getByRole('button', { name: 'Covered: Lantana' })); await settle()
-    expect(perPlant([ID.Lantana])).toEqual([2])
-    expect(doneOf('Lantana').textContent).toContain('covered')
   })
 })
 

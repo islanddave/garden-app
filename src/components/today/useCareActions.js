@@ -317,12 +317,6 @@ export function useCareActions({ allRows, bedWait, planDate, fetch, getToken, to
   //     region (§11.1 C2). The result is returned — created {id,key,on}, failed keys, excluded keys.
   //   · each row fades as its own post lands, dated by its write (the new-day rule above), so a run cut
   //     short leaves exactly the landed rows faded. Nothing is persisted: the plan read re-derives done-ness.
-  //   · `onClaim(keys)` runs once, with the run's targets, before the first POST; then every claimed key gets
-  //     exactly one of `onLogged([key])` (its POST answered) or `onRelease([key])` (it failed, or was never sent)
-  //     (review 4162.1 IMPORTANT-A). writeInFlightRef is this mounted list's own, so a run that outlives it
-  //     (keepalive, the page left) is invisible to the next mount — the caller holds the claim. The callbacks
-  //     run OUTSIDE the POST's try: one that throws is never read as a failed POST (a landed row would be offered
-  //     again). It ends its worker instead; the others finish, what nobody sent is released, and the run rejects.
   const runBulkV2 = useCallback(async (etype, keys, opts) => {
     const conc = Math.max(1, Math.floor(Number(opts.concurrency) || 1))
     const want = keys instanceof Set ? keys : new Set(keys)
@@ -336,36 +330,24 @@ export function useCareActions({ allRows, bedWait, planDate, fetch, getToken, to
     if (!targets.length) return { created, failed, excluded, total: 0 }
     for (const r of targets) writeInFlightRef.current.add(r.key)
     setPendingKeys(prev => { const n = new Set(prev); for (const r of targets) n.add(r.key); return n })
-    if (typeof opts.onClaim === 'function') opts.onClaim(targets.map(r => r.key))
-    const onLogged = typeof opts.onLogged === 'function' ? opts.onLogged : NOOP
-    const onRelease = typeof opts.onRelease === 'function' ? opts.onRelease : NOOP
     const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : NOOP
     let next = 0, settled = 0
     const worker = async () => {
       while (next < targets.length) {
         const row = targets[next++]
         const body = eventBody(row, opts.bodyEventType)
-        let made = null
         try {
           const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body), keepalive: true })
-          made = { id: (res && res.id) || null, key: row.key, on: body.event_date }
+          const made = { id: (res && res.id) || null, key: row.key, on: body.event_date }
+          created.push(made)
+          fade([[made.key, made.on]])
         } catch { failed.push(row.key) }
-        if (made) { created.push(made); fade([[made.key, made.on]]); onLogged([made.key]) }
-        else onRelease([row.key])
         writeInFlightRef.current.delete(row.key)
         setPending(row.key, false)
         onProgress({ done: ++settled, total: targets.length })
       }
     }
-    const ends = await Promise.allSettled(Array.from({ length: Math.min(conc, targets.length) }, worker))
-    const threw = ends.find(e => e.status === 'rejected')
-    if (threw) {
-      const answered = new Set([...created.map(c => c.key), ...failed])
-      for (const r of targets) writeInFlightRef.current.delete(r.key)
-      setPendingKeys(prev => { const n = new Set(prev); for (const r of targets) n.delete(r.key); return n })
-      try { onRelease(targets.filter(r => !answered.has(r.key)).map(r => r.key)) } catch { /* the first throw is the one reported */ }
-      throw threw.reason
-    }
+    await Promise.all(Array.from({ length: Math.min(conc, targets.length) }, worker))
     return { created, failed, excluded, total: targets.length }
   }, [rows, pendingKeys, fetch, fade, setPending])
 

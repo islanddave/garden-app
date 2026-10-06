@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../../../lib/constants.js'
 import { T } from '../../forms/formStyles.js'
@@ -7,7 +7,7 @@ import { skipMany, unskipMany } from '../careStore.js'
 import { COVER_LEVELS } from '../../../lib/todayV2/protect.js'
 import { tinted } from './SpotRow.jsx'
 import { outlineBtn } from './PlantCareRow.jsx'
-import { removeLogged, readLogged, claimedKeys, runEnd, runTake, runsEnded } from './needsCareStore.js'
+import { addLogged, removeLogged } from './needsCareStore.js'
 
 // ProtectTonight — the body of the redesigned Today's Protect tonight (V5-TODAYREDESIGN-001 S5; plan-v2 §1.1 /
 // §1.2, §2.3, §2.5, §4, §5.5–5.7; §13 SF1; Dave's D6: Protect keeps its existing Skip, no "Leave it out").
@@ -73,38 +73,11 @@ export default function ProtectTonight({ protect, record, update, announce, writ
   // ── writes ───────────────────────────────────────────────────────────────────────────────────────────────
   // Review 4160.2 IMPORTANT-2: while the page holds its writes (a seeded Back remount still revalidating, TodayV2
   // writesHeld), Covered, Brought in, Cover all, Retry and Skip post and skip nothing, and their controls are inert.
-  // Review 4162.1 IMPORTANT-A (Cover all's twin): every write claims its keys before it posts, and each is logged or
-  // released as its own POST answers (protect.claim, useTodayLogged), so a run still going when V2 unmounts (keepalive)
-  // is left out of the Back remount instead of offered again, and a cover that then fails comes back on the list that
-  // is on screen. Undo un-writes, as before. No batch goes on the record at the start: the remount builds no cover row
-  // for a spot whose keys are all claimed, so there is no line to draw it on.
-  const claim = protect.claim
-  const alive = useRef(false)
-  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
-  // A Cover all's result on the record: its batch (the spot's "covered N" and its one Undo) and each failure's Retry.
-  const land = (r) => setSlice((s) => ({
-    ...s,
-    batches: { ...(s.batches || {}), [newId()]: { spot: r.spot, name: r.name, kind: 'covered', created: r.created } },
-    failed: { ...(s.failed || {}), ...Object.fromEntries(r.failed.map((k) => [k, 'covered'])) },
-  }))
-  // One that ended with this body gone (the section closed, or the page left mid-run and come Back to) parked its
-  // result (coverSpot, below); the body then on screen lands it — a failure not logged or taken again since — and
-  // says it through this page's status region when the run's own page is gone. (The page's hook is subscribed to the
-  // store, so a run's end redraws this body; before paint, so the spot never shows without its result.)
-  useLayoutEffect(() => {
-    for (const [id] of runsEnded(protect.logKey)) {
-      const r = runTake(id)
-      if (!r) continue
-      const now = readLogged(protect.logKey)
-      const taken = claimedKeys(protect.logKey)
-      land({ ...r, failed: r.failed.filter((k) => !now.has(k) && !taken.has(k)) })
-      if (r.by !== claim) announce(r.said)
-    }
-  })
   const plantRun = async (row, kind) => {
     if (writesHeld) return
-    const res = await actions.runBulk('brought_inside', new Set([row.key]), kind === 'covered' ? { ...ONE, ...claim, bodyEventType: COVER } : { ...ONE, ...claim })
+    const res = await actions.runBulk('brought_inside', new Set([row.key]), kind === 'covered' ? { ...ONE, bodyEventType: COVER } : ONE)
     if (res.created.length) {
+      addLogged(protect.logKey, [row.key])
       setSlice((s) => {
         const f = { ...(s.failed || {}) }; delete f[row.key]
         return { ...s, failed: f, rowsDone: { ...(s.rowsDone || {}), [row.key]: { kind, created: res.created[0] } } }
@@ -146,19 +119,22 @@ export default function ProtectTonight({ protect, record, update, announce, writ
     announce(`Covering ${want.size} in ${spot.name}…`)
     let spoke = Date.now()
     const res = await actions.runBulk('brought_inside', want, {
-      ...RUN, ...claim, bodyEventType: COVER,
+      ...RUN, bodyEventType: COVER,
       onProgress: (p) => {
         setBusy({ spot: spot.key, done: p.done, total: p.total })
         if (Date.now() - spoke >= 5000) { spoke = Date.now(); announce(`${p.done} of ${p.total} covered in ${spot.name}.`) }
       },
     })
     setBusy(null)
-    const landed = { spot: spot.key, name: spot.name, created: res.created, failed: res.failed }
+    addLogged(protect.logKey, res.created.map((x) => x.key))
+    const bid = newId()
+    setSlice((s) => ({
+      ...s,
+      batches: { ...(s.batches || {}), [bid]: { spot: spot.key, name: spot.name, kind: 'covered', created: res.created } },
+      failed: { ...(s.failed || {}), ...Object.fromEntries(res.failed.map((k) => [k, 'covered'])) },
+    }))
     const fails = res.failed.length
-    const said = `Covered ${res.created.length} in ${spot.name}.` + (fails ? ` ${fails} not logged — Retry is on the spot.` : '')
-    announce(said)
-    if (!alive.current) { runEnd(newId(), { list: protect.logKey, ...landed, said, by: claim }); return }
-    land(landed)
+    announce(`Covered ${res.created.length} in ${spot.name}.` + (fails ? ` ${fails} not logged — Retry is on the spot.` : ''))
     setFocusId(fails ? 'protect-retry:' + spot.key : 'protect-spot:' + spot.key)
   }
   const undoBatch = async (bid) => {
