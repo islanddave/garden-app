@@ -7,6 +7,7 @@ import { vi } from 'vitest';
 import { configure } from '@testing-library/dom';
 import { __resetScrollRestoreStore } from '../hooks/useScrollRestore.js';
 import { __resetPageScrollStore } from '../lib/pageScroll.js';
+import { browserEvent } from './helpers/browserEvent.js';
 
 // Tell React we're in a test environment (suppresses act() warnings)
 // @ts-expect-error — global not typed by default
@@ -128,6 +129,29 @@ beforeEach(() => {
 });
 afterEach(() => {
   console.error = originalConsoleError;
+});
+
+// OPS-RTLEVENTPRIORITY-001 — window.event AS A BROWSER KEEPS IT, IN EVERY jsdom FILE.
+//
+// React reads the priority of an update made outside its own handlers from window.event: none in
+// progress means DEFAULT, a click in progress means SYNC. Under vitest the jsdom global REMEMBERS the
+// 'click' React's development build writes back around a handler, so from the first tap on, every
+// update in the file is a click's and lands in ONE render. A browser renders a sync store signal
+// first and a POST answer's update after it — and a defect in that order broke every "Water all" on
+// the Today preview in Chrome with 691 tests green (2026-10-06, BUG-TODAYV2DOUBLELOG-001).
+// helpers/browserEvent.js restores the browser's behaviour; its header carries the mechanism and
+// the one thing it does not model (microtasks a tap's own handler queued).
+//
+// Installed per TEST and restored after it, so a file that swaps globals mid-test gets its own back.
+// The helper throws without vitest's JSDOM window, so files that run in a node environment are left
+// alone. Pinned by testBrowserEventDefault.test.jsx, which goes red if this pair is removed.
+let restoreBrowserEvent: (() => void) | null = null;
+beforeEach(() => {
+  if ((globalThis as unknown as { jsdom?: { window?: Window } }).jsdom?.window) restoreBrowserEvent = browserEvent();
+});
+afterEach(() => {
+  restoreBrowserEvent?.();
+  restoreBrowserEvent = null;
 });
 
 // V4-BACKNAV-001 Slice 3a — GLOBAL SCROLL-LOCK LEAK DETECTOR.

@@ -63,7 +63,6 @@ import TodayV2 from '../pages/TodayV2.jsx'
 import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
 import { readSkipped } from '../components/today/careStore.js'
 import { __resetTodayLogged } from '../components/today/v2/needsCareStore.js'
-import { browserEvent } from './helpers/browserEvent.js'
 import { applyGrafts } from '../../tests/harness/_todaymeasure/v2wire.js'
 
 const PAYLOAD = F('dailyplan.dave.json')
@@ -81,11 +80,9 @@ const rowOf = (name) => [...document.querySelectorAll('[data-testid="protect-row
 const doneOf = (name) => [...document.querySelectorAll('[data-testid="protect-row-done"]')].find((r) => r.textContent.includes(name))
 const serve = (payload) => { planState.current = { data: payload, loading: false, error: null, reload: vi.fn() } }
 
-// window.event as a browser keeps it (helpers/browserEvent.js): what a POST's answer sets is default priority here too,
-// so a Cover all's landing is rendered in the order Chrome renders it.
-let restoreEvent = null
+// window.event as a browser keeps it (helpers/browserEvent.js, installed for every jsdom file by setup.ts): what a
+// POST's answer sets is default priority here too, so a Cover all's landing is rendered in the order Chrome renders it.
 beforeEach(() => {
-  restoreEvent = browserEvent()
   localStorage.clear(); sessionStorage.clear()
   __resetTodayLogged() // the claims are the module's, not the tab's
   vi.useFakeTimers({ toFake: ['Date'] })
@@ -95,7 +92,7 @@ beforeEach(() => {
   wire.posts = []; wire.deletes = []; wire.failPlant = null; wire.seq = 0; wire.hold = false; wire.held = []
   wire.plants = PLANTS; wire.locations = LOCS; wire.members = { members: [{ id: 'u', display_name: 'Dave' }, { id: 'member_jen', display_name: 'Jen' }] }
 })
-afterEach(() => { cleanup(); vi.useRealTimers(); restoreEvent() })
+afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('Protect tonight on the 09-24 plan (47°F, five protect cards, no alert)', () => {
   it('opens by itself on the chill plantings\' first night here: first section, count 5, "Tonight · low 47°F · …" with the urgency cue', async () => {
