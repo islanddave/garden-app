@@ -6,7 +6,7 @@ rows of `seed_lot_parent_planting`) nor their summed quantity. The decisions are
 `0a-additive-ddl.sql`; the release contract is
 `project-state/_seedmultiparent-20261005/r2/R2A-CONTRACT.md` sections 1 and 3 in gardening-docs.
 
-**Applied to STAGING on 2026-10-06 by the orchestrator** (pre, sweep, `0a`, post; all three rollbacks rehearsed newest first, pre green again, re-applied; the stats receipts clean; the whole standing corpus green). **Not applied to prod: that is a prod write and needs Dave's approval.**
+**Applied to STAGING on 2026-10-06 by the orchestrator** (pre, sweep, `0a`, post; all three rollbacks rehearsed newest first, pre green again, re-applied; the stats receipts clean; the whole standing corpus green). **Applied to PROD on 2026-10-06 at 16:25Z on Dave's approval** (AskUserQuestion, first-hand: "Yes, apply them"): pre gates green, `0a`, post gates green, the stats receipts clean on real rows (29 lots, 274 plantings, every difference 0), pre-apply copy `sitting-seedr2a-prod-preapply-20261006` (expires 2026-10-13).
 
 | file | what it does |
 |---|---|
