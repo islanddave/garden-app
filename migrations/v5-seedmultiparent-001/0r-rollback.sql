@@ -29,7 +29,14 @@
 --   the holding state is "leave the table": it is inert to code that does not name it, and the lever is
 --   a code rollback followed by 0b-reconcile.sql when the new code returns.
 --
--- THE REFUSAL GUARD (first statement after BEGIN). The column can rebuild exactly one link per lot: the
+-- ⚠ NEWEST FIRST — v5-seedstatsparents-001 (release 2a) made stat_saved_lot and stat_source_card read
+--   this table. The DROP TABLE below has no CASCADE, so with those views in place it would abort the
+--   transaction with "other objects depend on it". The first block refuses up front instead, naming the
+--   views and the order: roll back migrations/v5-seedstatsparents-001/0r-rollback.sql first (it puts
+--   both views back to the definitions that read inventory_items.source_plant_id only), then this
+--   file. It reads pg_depend, so it also names a view nobody told this file about.
+--
+-- THE REFUSAL GUARD (section 0, straight after the dependency refusal). The column can rebuild exactly one link per lot: the
 --   one 0b-reconcile.sql would write (role seed_parent, plant_id = the lot's source_plant_id). Every
 --   OTHER live row exists only in this table — the second and later parents of a pooled lot, a
 --   pollen_parent, or a row that disagrees with its lot's column — and dropping the table destroys it.
@@ -57,6 +64,31 @@
 BEGIN;
 
 SET LOCAL lock_timeout = '5s';
+
+-- ── Newest first (runs before section 0): refuse while any view reads the table. ─────────────────
+DO $$
+DECLARE
+  v_views text;
+BEGIN
+  -- Catalog-only, so a database where the table is already gone finds nothing and falls through.
+  -- The two casts name system catalogs, which always exist.
+  SELECT string_agg(DISTINCT vw.relname::text, ', ' ORDER BY vw.relname::text)
+    INTO v_views
+    FROM pg_depend d
+    JOIN pg_rewrite r   ON r.oid = d.objid
+    JOIN pg_class vw    ON vw.oid = r.ev_class
+    JOIN pg_class src   ON src.oid = d.refobjid
+    JOIN pg_namespace n ON n.oid = src.relnamespace
+   WHERE d.classid = 'pg_catalog.pg_rewrite'::regclass
+     AND d.refclassid = 'pg_catalog.pg_class'::regclass
+     AND n.nspname = 'public' AND src.relname = 'seed_lot_parent_planting' AND src.relkind = 'r'
+     AND vw.oid <> src.oid;
+
+  IF v_views IS NOT NULL THEN
+    RAISE EXCEPTION 'v5-seedmultiparent-001 0r refused, nothing dropped: public.seed_lot_parent_planting is still read by: %.', v_views
+      USING HINT = 'Roll back v5-seedstatsparents-001 first (migrations/v5-seedstatsparents-001/0r-rollback.sql), then re-run this rollback. Newest first.';
+  END IF;
+END $$;
 
 -- ── 0. The refusal guard. ────────────────────────────────────────────────────────────────────────
 DO $$

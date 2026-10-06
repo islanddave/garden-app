@@ -1,0 +1,253 @@
+# gates.yml
+# V5-SEEDSTATSPARENTS-001 — stat_saved_lot gains parent_count; stat_source_card's lot_parent CTE reads
+# seed_lot_parent_planting as well as inventory_items.source_plant_id. Two view replacements, nothing
+# else.
+#
+# HARD DEPENDENCY: v5-seedmultiparent-001 (public.seed_lot_parent_planting). A view cannot name a
+# table that does not exist, so the apply fails outright if this migration goes first; 0a refuses
+# with the order before it gets that far.
+#
+# ── SEQUENCING: THE DATABASES FIRST, THEN THE PUSH ───────────────────────────────────────────────
+#   1. STAGING: pre -> 0a -> post -> receipts -> rehearse 0r -> 0a -> post.
+#   2. PROD (Dave's approval, outside 07:00-08:00 UTC, after a pre-apply copy): pre -> 0a -> post -> receipts.
+#   3. ONLY THEN the dev push that carries this directory and the reader that selects parent_count.
+#   README.md has the commands. There is no `sweep:` phase: nothing is created by name, so there is
+#   no name to collide with.
+#
+#   WHY THAT ORDER IS FREE. migrations/v5-seasonstats-001/gates.yml post_stat_saved_lot_columns counts
+#   22 NAMED columns (`column_name IN (...) <> 22`), not the width of the view, so a 23rd column
+#   leaves it green on either database in either order. THAT FILE IS NOT EDITED — adding the 23rd name
+#   there would red on whichever database has not had this file applied yet. parent_count is asserted
+#   HERE, on this migration's own stamp. lambda/harvests/stat-views-columns.test.js reads both files.
+#
+# ANY pre/post assertion failing is a HARD ABORT.
+#
+# ── HOW THE post GATES ARM ───────────────────────────────────────────────────────────────────────
+#   `continuous:` DEFAULTS TO TRUE (scripts/gate_runner.py) and .github/workflows/gate-invariants.yml
+#   runs `gate_runner.py --all --phase post --continuous-only` against LIVE PROD AND LIVE STAGING on
+#   every migrations/** push and on a Tuesday cron, with no skip-if-unapplied logic. Each standing gate
+#   returns rows only when the migration IS applied (stamp 5.0.0-seedstatsparents-001 exists) AND the
+#   invariant is violated. 0a writes the stamp in the same transaction as the views.
+#
+#   NO GATE NAMES parent_count AS A COLUMN. Postgres resolves a column name at PARSE time, before any
+#   WHERE or EXISTS runs, so `SELECT parent_count FROM public.stat_saved_lot` would ERROR (42703) on a
+#   database where this is not applied and red the run for every migration in the tree. Every
+#   reference to the new column is a string compared against information_schema.
+#   THE ONE ROW-LEVEL GATE (post_stat_saved_lot_one_row_per_lot) names only public.stat_saved_lot and
+#   its lot_id column, which v5-seasonstats-001 created and which both databases already have. So,
+#   unlike v5-varietyblend-001, NOTHING HERE MOVES TO A .pending FILE BEFORE THIS MIGRATION'S ROLLBACK.
+#   (It would have to move before a rollback of v5-seasonstats-001, which drops the view.)
+#
+# ── WHAT THESE GATES DO NOT COVER ────────────────────────────────────────────────────────────────
+#   * The VALUES of parent_count and saved_lots. No gate reads them, for the parse-time reason above
+#     and because a frozen number would red on the feature working. They are checked at apply time by
+#     0v-verify-receipts.sql (README.md "Receipts"); a pooled-lot fixture in the season-stats
+#     integration test is the place for a standing check (QA seat I7).
+#   * "With no pooled lot both views return what they returned before" is a statement about one
+#     moment; it is a receipt, not a standing gate.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.0.0-seedstatsparents-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_link_table_applied
+    note: >
+      The hard dependency: v5-seedmultiparent-001's table, as a TABLE, with its stamp.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM pg_class c
+                       JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'public' AND c.relname = 'seed_lot_parent_planting'
+                        AND c.relkind = 'r')
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedmultiparent-001')
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_link_table_columns_the_views_read
+    note: >
+      The four columns of seed_lot_parent_planting the new definitions name. Each row returned is a
+      column the views need and the database lacks.
+    sql: |
+      SELECT want.column_name
+        FROM unnest(ARRAY['inventory_item_id','plant_id','role','deleted_at']::text[]) AS want(column_name)
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public'
+                            AND c.table_name = 'seed_lot_parent_planting'
+                            AND c.column_name = want.column_name)
+    expect: rowcount_eq
+    value: 0
+
+  # stat_saved_lot must be at exactly the 22 columns 0a re-states, so that "appended last" means
+  # position 23 and no existing column moves. Apply-window only, never bumped.
+  - name: pre_stat_saved_lot_column_count_22
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'stat_saved_lot'
+    expect: scalar_eq
+    value: 22
+    continuous: false
+
+  - name: pre_parent_count_absent
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'stat_saved_lot'
+         AND column_name = 'parent_count'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # The two definitions being replaced, by md5 of pg_get_viewdef(oid, true), read on STAGING
+  # 2026-10-06 (PostgreSQL 17.11). A column count cannot see an in-place change, which CREATE OR
+  # REPLACE would silently revert. PROD WAS NOT READ when this was written: these two gates, run
+  # against prod before the apply, are that read, and 0a carries the same test inside its transaction.
+  # If one fails, diff the live definition against migrations/v5-seasonstats-001/0a-additive-ddl.sql
+  # before anything else: a server upgrade that only re-formats the text is the benign cause.
+  - name: pre_stat_saved_lot_is_the_captured_definition
+    sql: |
+      SELECT md5(pg_get_viewdef(c.oid, true))
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'stat_saved_lot' AND c.relkind = 'v'
+    expect: scalar_eq
+    value: "84bb54726a6f72a67374bb163167664e"
+    continuous: false
+
+  - name: pre_stat_source_card_is_the_captured_definition
+    sql: |
+      SELECT md5(pg_get_viewdef(c.oid, true))
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'stat_source_card' AND c.relkind = 'v'
+    expect: scalar_eq
+    value: "fff2cb4c63b310668ca186902948e48b"
+    continuous: false
+
+post:
+  # ── APPLY-WINDOW RECEIPT (continuous: false) ─────────────────────────────────────────────────────
+  # Appended LAST, so no existing column moved — the property CREATE OR REPLACE requires. A later
+  # migration is entitled to append another column, so this is not a standing count.
+  - name: post_parent_count_is_the_last_column_23
+    sql: |
+      SELECT ordinal_position FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'stat_saved_lot' AND column_name = 'parent_count'
+    expect: scalar_eq
+    value: 23
+    continuous: false
+
+  # ── STANDING INVARIANTS, SELF-ARMING ─────────────────────────────────────────────────────────────
+
+  # ARMED ON THE DDL, NOT ON ITSELF: the view carries the new column and the stamp is missing. 0a
+  # writes both in one transaction, so a row here means someone hand-applied the view or deleted the
+  # stamp — exactly the state that would silence every EXISTS-guarded gate below.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = 'public' AND table_name = 'stat_saved_lot'
+                        AND column_name = 'parent_count')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-seedstatsparents-001')
+    expect: rowcount_eq
+    value: 0
+
+  # The column the reader selects, by name and as an integer. THE FORM OF THE NEXT-TO-LAST LINE IS
+  # LOAD-BEARING: lambda/harvests/stat-views-columns.test.js gateColumns() finds a view's gated
+  # columns with the pattern  table_name = '<view>' AND column_name IN (...)  across this file and
+  # migrations/v5-seasonstats-001/gates.yml, and requires every column the handler reads to appear in
+  # one of them. Keep it on one line, in that spelling.
+  - name: post_stat_saved_lot_parent_count_column
+    note: >
+      stat_saved_lot projects parent_count as an integer (1 named, not a count of the whole view).
+      Armed on the receipt, so vacuously green before the apply. The other 22 columns stay with
+      v5-seasonstats-001's post_stat_saved_lot_columns.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seedstatsparents-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public'
+                 AND table_name = 'stat_saved_lot' AND column_name IN ('parent_count')
+                 AND data_type = 'integer') <> 1
+    expect: rowcount_eq
+    value: 0
+
+  # What each view reads, from pg_depend rather than from its printed text: one row per (view, table,
+  # column) dependency that is missing. stat_source_card must read BOTH arms of lot_parent — the link
+  # table (a pooled lot's second parent gets its credit) AND the cache column (a lot whose link row is
+  # missing keeps the credit it has today; regression seat R2-05). stat_saved_lot must read both terms
+  # of parent_count's GREATEST for the same two reasons.
+  # The two casts name system catalogs, which exist on every database; nothing here names a relation
+  # this migration or its dependency created.
+  - name: post_views_read_the_link_table_and_the_cache_column
+    sql: |
+      SELECT want.view_name, want.reads, want.col
+        FROM (VALUES ('stat_source_card', 'seed_lot_parent_planting', 'plant_id'),
+                     ('stat_source_card', 'inventory_items',          'source_plant_id'),
+                     ('stat_saved_lot',   'seed_lot_parent_planting', 'inventory_item_id'),
+                     ('stat_saved_lot',   'inventory_items',          'source_plant_id'))
+             AS want(view_name, reads, col)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seedstatsparents-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                           JOIN pg_rewrite r    ON r.oid = d.objid
+                           JOIN pg_class vw     ON vw.oid = r.ev_class
+                           JOIN pg_namespace vn ON vn.oid = vw.relnamespace AND vn.nspname = 'public'
+                           JOIN pg_class src    ON src.oid = d.refobjid
+                           JOIN pg_namespace sn ON sn.oid = src.relnamespace AND sn.nspname = 'public'
+                           JOIN pg_attribute a  ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+                          WHERE d.classid = 'pg_catalog.pg_rewrite'::regclass
+                            AND d.refclassid = 'pg_catalog.pg_class'::regclass
+                            AND vw.relname = want.view_name AND vw.relkind = 'v'
+                            AND src.relname = want.reads AND src.relkind = 'r'
+                            AND a.attname = want.col)
+    expect: rowcount_eq
+    value: 0
+
+  # UNION, NEVER UNION ALL (0a header). count(*) and sum(quantity) ride the LEFT JOIN to lot_parent,
+  # so a planting listed twice — a parent of two lots, or both a link parent and the cache parent —
+  # would double that card's plantings, plants and lb. pg_depend cannot tell the two set operators
+  # apart, so this one reads the view's printed definition, found by name in pg_class. A later
+  # migration that legitimately puts a UNION ALL somewhere else in this view changes this gate too.
+  - name: post_stat_source_card_lot_parent_is_union_not_union_all
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seedstatsparents-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_class c
+                           JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+                          WHERE c.relname = 'stat_source_card' AND c.relkind = 'v'
+                            AND pg_get_viewdef(c.oid, true) LIKE '%UNION%'
+                            AND pg_get_viewdef(c.oid, true) NOT LIKE '%UNION ALL%')
+    expect: rowcount_eq
+    value: 0
+
+  # CREATE OR REPLACE VIEW replaces a view's options with whatever the statement gives. Neither view
+  # had any and 0a gives none; a security_barrier or security_invoker option arriving here would
+  # change how the handler's owner filter is planned, or whose privileges the view reads with.
+  - name: post_both_views_have_no_reloptions
+    sql: |
+      SELECT c.relname FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+       WHERE c.relname IN ('stat_saved_lot', 'stat_source_card') AND c.relkind = 'v'
+         AND c.reloptions IS NOT NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seedstatsparents-001')
+    expect: rowcount_eq
+    value: 0
+
+  # ── THE ONE ROW-LEVEL GATE ───────────────────────────────────────────────────────────────────────
+  # Names public.stat_saved_lot and lot_id only — both exist wherever v5-seasonstats-001 is applied,
+  # which is both databases — and never parent_count (see the header).
+  - name: post_stat_saved_lot_one_row_per_lot
+    note: >
+      stat_saved_lot returns each lot once. parent_count is a scalar subquery and cannot add rows; a
+      row here means someone turned it into a JOIN to seed_lot_parent_planting, which repeats a pooled
+      lot once per parent and multiplies every per-lot figure the season page shows.
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM public.stat_saved_lot)
+             <> (SELECT count(DISTINCT lot_id) FROM public.stat_saved_lot)
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seedstatsparents-001')
+    expect: rowcount_eq
+    value: 0

@@ -1,0 +1,155 @@
+# gates.yml
+# V5-SEEDPLANTCOUNT-001 — inventory_items.seed_parent_plant_count and its two CHECKs.
+#
+# ── SEQUENCING: THE DATABASES FIRST, THEN THE PUSH ───────────────────────────────────────────────
+#   1. STAGING: pre -> sweep -> 0a -> post -> rehearse 0r -> 0a -> post.
+#   2. PROD (Dave's approval, outside 07:00-08:00 UTC, after a pre-apply copy): pre -> sweep -> 0a -> post.
+#   3. ONLY THEN the dev push that carries this directory and the Lambda code that names the column.
+#   README.md has the commands. The order is the one the two sibling directories of this release need
+#   (v5-varietyblend-001, v5-seedstatsparents-001); this directory would also be safe pushed first,
+#   because of the next paragraph.
+#
+# ANY pre/sweep/post assertion failing is a HARD ABORT.
+#
+# ── EVERY post GATE IS SELF-ARMING AND CATALOG-ONLY ──────────────────────────────────────────────
+#   `continuous:` DEFAULTS TO TRUE (scripts/gate_runner.py) and .github/workflows/gate-invariants.yml
+#   runs `gate_runner.py --all --phase post --continuous-only` against LIVE PROD AND LIVE STAGING on
+#   every migrations/** push and on a Tuesday cron, with no skip-if-unapplied logic. Each gate returns
+#   rows only when the migration IS applied (stamp 5.0.0-seedplantcount-001 exists) AND the invariant
+#   is violated: vacuous before the apply, asserting permanently after. 0a writes the stamp in the same
+#   transaction as the DDL, and post_schema_version_recorded (armed on the COLUMN, not on itself)
+#   proves the stamp landed.
+#   No gate names seed_parent_plant_count as a column: Postgres resolves a column name at PARSE time,
+#   before any WHERE or EXISTS runs, so such a gate would ERROR (42703) on an unapplied database and
+#   red the run for every migration in the tree. Each reference is a string compared against
+#   pg_attribute.attname or information_schema. So nothing here has to move before a rollback.
+#
+# ── WHAT THESE GATES DO NOT COVER ────────────────────────────────────────────────────────────────
+#   * NO ROW-LEVEL GATE, deliberately. The two CHECKs ARE the row rules and Postgres enforces them on
+#     every write; a gate re-reading the rows would only restate them.
+#   * Nothing relates the count to the lot's parent plantings. A lot may carry a count and no parent
+#     row, or six parent plantings and a count of 3: the count is plants, the rows are plantings, and
+#     neither bounds the other. post_no_other_check_names_the_column keeps a "tidy" pairing out.
+#   * The handler's upper bound (9999) is not in the database and is not gated.
+
+pre:
+  - name: pre_inventory_items_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'inventory_items' AND table_type = 'BASE TABLE'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_column_absent
+    note: >
+      Greenfield. 0a is ADD COLUMN IF NOT EXISTS, so a column that arrived by another route would be
+      kept silently in whatever shape it has. continuous false: false by design once 0a runs.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name = 'seed_parent_plant_count'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.0.0-seedplantcount-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # The seeds-only CHECK reads `category = 'seeds'`. Against a NULL category that comparison is NULL
+  # and a CHECK passes on NULL, so the rule only means something while category cannot be NULL.
+  - name: pre_category_is_not_null
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name = 'category' AND data_type = 'text' AND is_nullable = 'NO'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  # 0a creates each CHECK only when no constraint of that name exists on inventory_items; the gates
+  # below find them by name. Assert both names are free everywhere.
+  - name: sweep_no_constraint_name_collisions
+    sql: |
+      SELECT conname FROM pg_constraint
+       WHERE conname IN ('chk_inventory_seed_parent_plant_count_seeds_only',
+                         'chk_inventory_seed_parent_plant_count_positive')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  # ARMED ON THE DDL, NOT ON ITSELF. Guarding "the version row exists" with "the version row exists"
+  # is circular; guarding it with "the column exists" is not. 0a writes both in one transaction, so a
+  # row here means someone hand-applied the DDL or deleted the stamp — exactly the state that would
+  # silence every EXISTS-guarded gate below.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = 'public' AND table_name = 'inventory_items'
+                        AND column_name = 'seed_parent_plant_count')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-seedplantcount-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_column_is_nullable_integer_without_default
+    note: >
+      Nullable: NULL is "nobody said", and NOT NULL would 23502 every deployed writer, none of which
+      names the column. No DEFAULT: a default is a count nobody made. integer, not numeric: plants are
+      counted whole, and the handler's type guard assumes it.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seedplantcount-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema = 'public' AND table_name = 'inventory_items'
+                            AND column_name = 'seed_parent_plant_count' AND data_type = 'integer'
+                            AND is_nullable = 'YES' AND column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # 0a header P3. One row per CHECK that is missing, not validated, or no longer exactly this. A bare
+  # name match passes on a permanently NOT VALID constraint and on a body someone widened; both names
+  # are keys in the handler's constraint-message map, so a renamed CHECK would also answer a raw 23514.
+  - name: post_both_checks_validated_and_exactly_these
+    sql: |
+      SELECT want.conname
+        FROM (VALUES ('chk_inventory_seed_parent_plant_count_seeds_only',
+                      'CHECK (((seed_parent_plant_count IS NULL) OR (category = ''seeds''::text)))'),
+                     ('chk_inventory_seed_parent_plant_count_positive',
+                      'CHECK (((seed_parent_plant_count IS NULL) OR (seed_parent_plant_count >= 1)))'))
+             AS want(conname, def)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seedplantcount-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'inventory_items' AND c.contype = 'c'
+                            AND c.conname = want.conname AND c.convalidated
+                            AND pg_get_constraintdef(c.oid) = want.def)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_other_check_names_the_column
+    note: >
+      The only CHECKs allowed to mention seed_parent_plant_count are the two above. A CHECK pairing it
+      with source_plant_id ("a count needs a parent") would be writer-coupled: the legacy
+      PATCH /source-plant and the set route clear a lot's parents without naming this column, and
+      would start answering 23514. A CHECK pairing it with seed_count would refuse the same way from
+      seed-measure. Returns one row per offending constraint, naming it.
+    sql: |
+      SELECT DISTINCT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seedplantcount-001')
+         AND t.relname = 'inventory_items' AND c.contype = 'c'
+         AND a.attname = 'seed_parent_plant_count'
+         AND c.conname NOT IN ('chk_inventory_seed_parent_plant_count_seeds_only',
+                               'chk_inventory_seed_parent_plant_count_positive')
+    expect: rowcount_eq
+    value: 0

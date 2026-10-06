@@ -226,6 +226,10 @@ parse time. On a database without the table they do not go vacuous under their s
 
 `0r-rollback.sql` drops the table and removes both stamps. Three things to know before using it:
 
+**Newest first (since `v5-seedstatsparents-001`, release 2a).** `stat_saved_lot` and `stat_source_card` now
+read this table, so `0r-rollback.sql` refuses up front, naming them, until
+`migrations/v5-seedstatsparents-001/0r-rollback.sql` has put both views back. Then the three points below apply.
+
 1. **Push 2 has happened (2026-10-05), so undo it first.** Move the two row-level gates out of `gates.yml`
    (back to a `gates-rowlevel.yml.pending` file, which the runner does not load), push, and let that reach the branch whose corpus runs against the database — dev for the
    push-triggered run, `main` for the cron. With the table gone they error rather than pass.

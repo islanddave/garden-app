@@ -1,0 +1,561 @@
+# gates.yml
+# V5-VARIETYBLEND-001 — plant_varieties.blend_key, the public.cultivar widen 47 -> 48, and one new
+# table, variety_blend_component.
+#
+# ── SEQUENCING: THE DATABASES FIRST, THEN THE PUSH ───────────────────────────────────────────────
+#   1. STAGING: pre -> sweep -> 0a -> post -> rehearse 0r -> 0a -> post.
+#   2. PROD (Dave's approval, outside 07:00-08:00 UTC, after a pre-apply copy): pre -> sweep -> 0a -> post.
+#   3. ONLY THEN the dev push that carries this directory and the Lambda code that names the column.
+#   README.md has the commands and the reason for each step.
+#
+#   This is the opposite order from v5-seedmultiparent-001, and the reason is in the last four gates.
+#   That migration pushed first because its table added a fifth foreign key to inventory_items under
+#   a census that was already armed. Nothing here is censused: no gate counts the foreign keys into
+#   plant_varieties, and every frozen count of public.cultivar's columns is `continuous: false`. With
+#   nothing to red, the DDL lands first — and that is what lets the row-level gates live in this file
+#   from the first push instead of waiting in a .pending file for a second one.
+#
+# ANY pre/sweep/post assertion failing is a HARD ABORT.
+#
+# ── HOW THE post GATES ARM ───────────────────────────────────────────────────────────────────────
+#   `continuous:` DEFAULTS TO TRUE (scripts/gate_runner.py) and .github/workflows/gate-invariants.yml
+#   runs `gate_runner.py --all --phase post --continuous-only` against LIVE PROD AND LIVE STAGING on
+#   every migrations/** push and on a Tuesday cron, with no skip-if-unapplied logic. Every standing
+#   gate returns rows only when the migration IS applied (stamp 5.0.0-varietyblend-001 exists) AND
+#   the invariant is violated. 0a writes the stamp in the same transaction as the DDL, so "applied"
+#   and "armed" are one event, and post_schema_version_recorded (armed on the DDL, not on itself)
+#   proves the stamp landed. One stamp; there is no second, arming stamp, because no deployed or
+#   reverted writer can produce a row that breaks a gate here (every one of them leaves blend_key NULL
+#   and writes no component row).
+#
+#   CATALOG-ONLY, ALL BUT THE LAST FOUR. No `::regclass`, and no SQL that names blend_key as a column
+#   or the new table as a relation: each reference is a string compared against pg_class.relname,
+#   pg_attribute.attname or information_schema. Postgres resolves a column or relation name — and
+#   evaluates a regclass cast — at PARSE time, before any WHERE or EXISTS runs, so a gate that named
+#   them would ERROR (42703 / 42P01) on a database without them, stamp guard or no stamp guard, and an
+#   erroring gate reds the run for every migration in the tree.
+#
+#   ⚠ THE LAST FOUR GATES ARE ROW-LEVEL AND DO NAME THEM. They are statements about rows of the new
+#   column and the new table, which a catalog cannot answer. They are safe in this file ONLY because
+#   of the sequencing above: the DDL is on both databases before any corpus that contains them runs.
+#   They MOVE OUT, to gates-rowlevel.yml.pending, BEFORE ANY ROLLBACK (0r-rollback.sql header).
+#
+# ── WHAT THESE GATES DO NOT COVER, stated so the coverage is not overread ────────────────────────
+#   * HOUSEHOLD uniqueness of a mix. The unique index is per creator; two members of one household
+#     can each hold a live row for the same key if the handler's find-before-create is bypassed. That
+#     is kept by lambda/varieties, not by the database (0a header B3), and no gate asserts it.
+#   * That a lot filed under a mix has the parents the mix names, or that a pooled lot IS filed under
+#     its mix. Both are write-time rules of lambda/inventory-items; a parent's variety and a variety's
+#     crop are editable afterwards, so a standing row gate on either would red on ordinary use.
+#   * A component that is a soft-deleted variety is an accepted state, not a finding.
+#   * No frozen row count anywhere.
+
+pre:
+  - name: pre_plant_varieties_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'plant_varieties' AND table_type = 'BASE TABLE'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_blend_key_absent
+    note: >
+      Greenfield. 0a is ADD COLUMN IF NOT EXISTS, so a column that arrived by another route would be
+      kept silently in whatever shape it has. continuous false: false by design once 0a runs.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'plant_varieties' AND column_name = 'blend_key'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_table_absent
+    note: >
+      Reads pg_class for ANY relation of this name in public — a view or a leftover table would make
+      CREATE TABLE IF NOT EXISTS a silent no-op. continuous false, as above.
+    sql: |
+      SELECT c.relname FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'variety_blend_component'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.0.0-varietyblend-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # The view must be at exactly the 47 columns 0a lists, or the CREATE OR REPLACE is being applied
+  # against a definition this migration did not capture. Apply-window only, never bumped (memory
+  # `frozen-count-gates-break-on-widening`).
+  - name: pre_cultivar_view_column_count_47
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'cultivar'
+    expect: scalar_eq
+    value: 47
+    continuous: false
+
+  # Stronger than the count: a count cannot see an in-place change (an expression swapped under an
+  # existing name), which 0a's CREATE OR REPLACE would silently revert. md5 of
+  # pg_get_viewdef(oid, true) read on STAGING 2026-10-06 (PostgreSQL 17.11); the text is byte-equal to
+  # migrations/v5-scovillesource-001/0a-additive-ddl.sql:102-149. PROD WAS NOT READ when this was
+  # written: this gate, run against prod before the apply, is that read. 0a carries the same test
+  # inside its transaction, so a skipped pre phase still cannot replace an unknown definition. If it
+  # fails, diff the live definition against 0a's list before anything else: a server upgrade that only
+  # re-formats the text is the benign cause, a peer's widen of the view is the real one.
+  - name: pre_cultivar_view_is_the_captured_definition
+    sql: |
+      SELECT md5(pg_get_viewdef(c.oid, true))
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'cultivar' AND c.relkind = 'v'
+    expect: scalar_eq
+    value: "4f70e4aac68cc4945bb70d7cae54f2b5"
+    continuous: false
+
+  - name: pre_cultivar_view_is_updatable_and_insertable
+    note: >
+      The starting state the widen must preserve: lambda/varieties runs UPDATE public.cultivar and
+      INSERT INTO public.cultivar. If this is already false, the widen is not what broke it.
+    sql: |
+      SELECT 1 FROM information_schema.views
+       WHERE table_schema = 'public' AND table_name = 'cultivar'
+         AND is_updatable = 'YES' AND is_insertable_into = 'YES'
+    expect: rowcount_eq
+    value: 1
+
+  # 0a header B3's premise, checked rather than assumed. A unique index treats two NULLs as distinct,
+  # so a nullable created_by would let the same key be created twice by "nobody".
+  - name: pre_created_by_is_not_null
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'plant_varieties'
+         AND column_name = 'created_by' AND data_type = 'text' AND is_nullable = 'NO'
+    expect: rowcount_eq
+    value: 1
+
+  # The mix is written with variety_rank = 'blend', and post_keyed_row_has_rank_blend holds it there.
+  # That value must already be in the rank vocabulary; this migration does not widen it.
+  - name: pre_variety_rank_vocabulary_admits_blend
+    sql: |
+      SELECT 1 FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'plant_varieties' AND c.contype = 'c' AND c.convalidated
+         AND c.conname = 'chk_plant_varieties_variety_rank'
+         AND pg_get_constraintdef(c.oid) LIKE '%''blend''::text%'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  # No name collision on any object this DDL creates. A pre-existing relation of the same name would
+  # make CREATE INDEX IF NOT EXISTS a silent no-op and leave the key without its unique index, or a
+  # RESTRICT probe unindexed, with the apply reporting success.
+  - name: sweep_no_relation_name_collisions
+    sql: |
+      SELECT c.relname FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public'
+         AND c.relname IN ('uq_plant_varieties_creator_blend_key_live',
+                           'variety_blend_component_pkey', 'uq_vbc_blend_component_live',
+                           'idx_vbc_blend', 'idx_vbc_component')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # 0a's ADD CONSTRAINT guards are scoped to their own table, so a same-named constraint elsewhere
+  # would not make it skip one — but the gates below find a constraint by name, so it would be counted.
+  - name: sweep_no_constraint_name_collisions
+    sql: |
+      SELECT conname FROM pg_constraint
+       WHERE conname IN ('chk_plant_varieties_blend_key_format',
+                         'variety_blend_component_pkey',
+                         'variety_blend_component_blend_variety_id_fkey',
+                         'variety_blend_component_component_variety_id_fkey',
+                         'chk_vbc_not_self')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  # ── APPLY-WINDOW RECEIPTS (continuous: false) ────────────────────────────────────────────────────
+  # A later migration is entitled to widen the view again; a standing count would red on that.
+
+  - name: post_cultivar_view_column_count_48
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'cultivar'
+    expect: scalar_eq
+    value: 48
+    continuous: false
+
+  # Appended LAST, so no existing view column moved — the property CREATE OR REPLACE requires.
+  - name: post_blend_key_is_the_last_view_column
+    sql: |
+      SELECT ordinal_position FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'cultivar' AND column_name = 'blend_key'
+    expect: scalar_eq
+    value: 48
+    continuous: false
+
+  # ── STANDING INVARIANTS, SELF-ARMING, CATALOG-ONLY ───────────────────────────────────────────────
+
+  # ARMED ON THE DDL, NOT ON ITSELF. Guarding "the version row exists" with "the version row exists"
+  # is circular; guarding it with "the column or the table exists" is not. 0a writes all three in one
+  # transaction, so a row here means someone hand-applied the DDL or deleted the stamp — exactly the
+  # state that would silence every EXISTS-guarded gate below.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE (EXISTS (SELECT 1 FROM pg_class c
+                        JOIN pg_namespace n ON n.oid = c.relnamespace
+                       WHERE n.nspname = 'public' AND c.relname = 'variety_blend_component')
+              OR EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema = 'public' AND table_name = 'plant_varieties'
+                            AND column_name = 'blend_key'))
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-varietyblend-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_blend_key_is_nullable_text_without_default
+    note: >
+      Nullable: NULL is every ordinary variety, and NOT NULL would 23502 every deployed writer, none of
+      which names the column. No DEFAULT: a default is a key nobody computed. Also catches a column
+      that arrived by another route in a different shape, which 0a's IF NOT EXISTS would skip.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema = 'public' AND table_name = 'plant_varieties'
+                            AND column_name = 'blend_key' AND data_type = 'text'
+                            AND is_nullable = 'YES' AND column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # B2, pinned by its whole definition: present on plant_varieties, validated, and exactly this
+  # pattern, anchored at both ends. Loosening the anchors turns "is a key" into "contains a key";
+  # changing {1,11} changes how many leaves a mix may have. To change either on purpose, change the
+  # CHECK and this literal in the same migration.
+  - name: post_blend_key_format_check_is_exactly_this
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'plant_varieties' AND c.contype = 'c'
+                            AND c.conname = 'chk_plant_varieties_blend_key_format' AND c.convalidated
+                            AND pg_get_constraintdef(c.oid) =
+                                'CHECK (((blend_key IS NULL) OR (blend_key ~ ''^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}(,[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}){1,11}$''::text)))')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_other_check_names_blend_key
+    note: >
+      THE DECISION 0a DOCUMENTS (B2), pinned so a later session cannot "tidy" the rank rule into a
+      CHECK. The only CHECK allowed to mention blend_key is its own single-column format CHECK. A
+      CHECK pairing it with variety_rank would be writer-coupled: it would refuse a write from any
+      code path that sets one column without the other, including a reverted Lambda. The rule lives
+      in post_keyed_row_has_rank_blend. Returns one row per offending constraint, naming it.
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND t.relname = 'plant_varieties' AND c.contype = 'c' AND a.attname = 'blend_key'
+         AND (c.conname <> 'chk_plant_varieties_blend_key_format' OR cardinality(c.conkey) <> 1)
+    expect: rowcount_eq
+    value: 0
+
+  # B3. One LIVE mix per (creator, key). It is a bare unique INDEX with no pg_constraint row, so this
+  # reads pg_index: on plant_varieties, UNIQUE, valid, exactly the two key columns in this order, and
+  # partial with exactly this predicate. Without `deleted_at IS NULL` a deleted mix would hold its key
+  # forever; without `blend_key IS NOT NULL` nothing changes in Postgres (NULLs are distinct) but the
+  # index would carry every ordinary variety, and lambda/varieties' ON CONFLICT names this predicate.
+  - name: post_creator_blend_key_unique_index_is_unique_partial_two_columns
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_index ix
+                           JOIN pg_class ic    ON ic.oid = ix.indexrelid
+                           JOIN pg_class t     ON t.oid = ix.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'plant_varieties'
+                            AND ic.relname = 'uq_plant_varieties_creator_blend_key_live'
+                            AND ix.indisunique AND ix.indisvalid
+                            AND ix.indnatts = 2 AND ix.indexprs IS NULL
+                            AND pg_get_expr(ix.indpred, ix.indrelid) =
+                                '((blend_key IS NOT NULL) AND (deleted_at IS NULL))'
+                            AND (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                                   FROM unnest(ix.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+                                   JOIN pg_attribute a
+                                     ON a.attrelid = ix.indrelid AND a.attnum = k.attnum)
+                                = ARRAY['created_by','blend_key']::text[])
+    expect: rowcount_eq
+    value: 0
+
+  # THE GATE THAT WOULD CATCH THE OUTAGE. An explicit-column-list view does not inherit a base
+  # column, so without 0a's widen lambda/varieties selects a column the view does not have. Column
+  # level is_updatable, not only the view's: a COMPUTED blend_key would leave the view auto-updatable
+  # overall while the key could no longer be written through it.
+  - name: post_cultivar_view_carries_blend_key_as_updatable_passthrough
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema = 'public' AND table_name = 'cultivar'
+                            AND column_name = 'blend_key' AND is_updatable = 'YES')
+    expect: rowcount_eq
+    value: 0
+
+  # The view must stay AUTO-UPDATABLE AND INSERTABLE, or lambda/varieties' `UPDATE public.cultivar`
+  # and `INSERT INTO public.cultivar` both break. v5-scovillesource-001 holds the same assertion on
+  # its own stamp; re-asserted here because this migration is now the last one to replace the view.
+  - name: post_cultivar_view_still_auto_updatable
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.views
+                          WHERE table_schema = 'public' AND table_name = 'cultivar'
+                            AND is_updatable = 'YES' AND is_insertable_into = 'YES')
+    expect: rowcount_eq
+    value: 0
+
+  # Prod-only: staging has no garden_ro role at all (re-read 2026-10-06), so this cannot run there.
+  # 0r's DROP VIEW is the path that does not preserve grants, and staging is structurally blind to it.
+  - name: post_garden_ro_can_still_read_cultivar
+    env: prod
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.role_table_grants
+                          WHERE table_schema = 'public' AND table_name = 'cultivar'
+                            AND grantee = 'garden_ro' AND privilege_type = 'SELECT')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_table_exists
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_class c
+                           JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE n.nspname = 'public' AND c.relname = 'variety_blend_component'
+                            AND c.relkind = 'r')
+    expect: rowcount_eq
+    value: 0
+
+  # B5. One row per foreign key that is missing or wrong: its name, its one column, the
+  # plant_varieties TABLE (relkind 'r' — never the cultivar view) and its id column, ON DELETE RESTRICT
+  # ('r'), validated. Weakened to CASCADE, an operator hard-delete of one variety would take every mix
+  # it is part of out of the record instead of stopping.
+  - name: post_both_fks_restrict_validated_right_targets
+    sql: |
+      SELECT want.conname
+        FROM (VALUES ('variety_blend_component_blend_variety_id_fkey',     'blend_variety_id'),
+                     ('variety_blend_component_component_variety_id_fkey', 'component_variety_id'))
+             AS want(conname, col)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t      ON t.oid = c.conrelid
+                           JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+                           JOIN pg_class tgt    ON tgt.oid = c.confrelid
+                           JOIN pg_namespace tn ON tn.oid = tgt.relnamespace AND tn.nspname = 'public'
+                           JOIN pg_attribute a  ON a.attrelid = c.conrelid  AND a.attnum = c.conkey[1]
+                           JOIN pg_attribute ta ON ta.attrelid = c.confrelid AND ta.attnum = c.confkey[1]
+                          WHERE t.relname = 'variety_blend_component' AND c.contype = 'f'
+                            AND c.conname = want.conname
+                            AND cardinality(c.conkey) = 1 AND a.attname = want.col
+                            AND tgt.relname = 'plant_varieties' AND tgt.relkind = 'r'
+                            AND ta.attname = 'id'
+                            AND c.confdeltype = 'r' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # The table has exactly those two. A third foreign key is a design decision with its own delete
+  # action to argue, not a drive-by.
+  - name: post_no_other_fk_on_the_table
+    sql: |
+      SELECT c.conname FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'variety_blend_component' AND c.contype = 'f'
+         AND c.conname NOT IN ('variety_blend_component_blend_variety_id_fkey',
+                               'variety_blend_component_component_variety_id_fkey')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+    expect: rowcount_eq
+    value: 0
+
+  # One row per column that is missing or has become nullable.
+  - name: post_not_null_columns
+    sql: |
+      SELECT want.column_name
+        FROM unnest(ARRAY['id','blend_variety_id','component_variety_id','created_by',
+                          'created_at']::text[]) AS want(column_name)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public'
+                            AND c.table_name = 'variety_blend_component'
+                            AND c.column_name = want.column_name AND c.is_nullable = 'NO')
+    expect: rowcount_eq
+    value: 0
+
+  # The unique index and every read are written against `deleted_at IS NULL`. It must exist and must
+  # stay nullable: NOT NULL would mean no live row.
+  - name: post_deleted_at_present_and_nullable
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public'
+                            AND c.table_name = 'variety_blend_component'
+                            AND c.column_name = 'deleted_at' AND c.is_nullable = 'YES')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_not_self_check_is_exactly_this
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'variety_blend_component' AND c.contype = 'c'
+                            AND c.conname = 'chk_vbc_not_self' AND c.convalidated
+                            AND pg_get_constraintdef(c.oid) =
+                                'CHECK ((blend_variety_id <> component_variety_id))')
+    expect: rowcount_eq
+    value: 0
+
+  # One LIVE row per (mix, leaf): on this table, UNIQUE, valid, partial with exactly the predicate
+  # `deleted_at IS NULL`, and exactly the two key columns in this order.
+  - name: post_live_unique_index_is_unique_partial_two_columns
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_index ix
+                           JOIN pg_class ic    ON ic.oid = ix.indexrelid
+                           JOIN pg_class t     ON t.oid = ix.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'variety_blend_component'
+                            AND ic.relname = 'uq_vbc_blend_component_live'
+                            AND ix.indisunique AND ix.indisvalid
+                            AND ix.indnatts = 2 AND ix.indexprs IS NULL
+                            AND pg_get_expr(ix.indpred, ix.indrelid) = '(deleted_at IS NULL)'
+                            AND (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                                   FROM unnest(ix.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+                                   JOIN pg_attribute a
+                                     ON a.attrelid = ix.indrelid AND a.attnum = k.attnum)
+                                = ARRAY['blend_variety_id','component_variety_id']::text[])
+    expect: rowcount_eq
+    value: 0
+
+  # One row per foreign key index that is missing or wrong: on this table, exactly its one column,
+  # NOT partial, not unique, valid. PARTIAL IS THE DEFECT THIS EXISTS FOR — a RESTRICT probe has no
+  # deleted_at term, so an index `WHERE deleted_at IS NULL` cannot serve it and every hard delete on
+  # plant_varieties scans this table.
+  - name: post_fk_indexes_present_and_not_partial
+    sql: |
+      SELECT want.indexname
+        FROM (VALUES ('idx_vbc_blend',     'blend_variety_id'),
+                     ('idx_vbc_component', 'component_variety_id')) AS want(indexname, col)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_index ix
+                           JOIN pg_class ic    ON ic.oid = ix.indexrelid
+                           JOIN pg_class t     ON t.oid = ix.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                           JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = ix.indkey[0]
+                          WHERE t.relname = 'variety_blend_component'
+                            AND ic.relname = want.indexname
+                            AND ix.indnatts = 1 AND a.attname = want.col
+                            AND ix.indpred IS NULL AND ix.indexprs IS NULL
+                            AND NOT ix.indisunique AND ix.indisvalid)
+    expect: rowcount_eq
+    value: 0
+
+  # NO TRIGGER. Component rows are written by the handler in the transaction that creates the mix; a
+  # trigger keeping them in step with the key would be invisible to the mock-sql unit suites
+  # (BUG-KBOWNERTRIGGER-001).
+  - name: post_no_trigger_on_the_table
+    sql: |
+      SELECT g.tgname FROM pg_trigger g
+        JOIN pg_class t     ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'variety_blend_component' AND NOT g.tgisinternal
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+    expect: rowcount_eq
+    value: 0
+
+  # ── THE FOUR ROW-LEVEL GATES ─────────────────────────────────────────────────────────────────────
+  # Unlike every gate above, these NAME blend_key AS A COLUMN AND THE NEW TABLE AS A RELATION, so they
+  # parse only where 0a is applied (see the header: the DDL is on both databases before this file is
+  # pushed). Together they are the whole relation between a mix row and its component rows. None
+  # filters on the MIX's deleted_at: a soft-deleted mix can be revived, and must come back consistent.
+  # ⚠ THEY MOVE OUT of this file, to gates-rowlevel.yml.pending, before any rollback (0r-rollback.sql
+  # header, README "Rollback").
+  - name: post_keyed_row_has_rank_blend
+    note: >
+      Every variety row that carries a blend_key has variety_rank = 'blend'. A row here is a mix the
+      app will treat as an ordinary cultivar (or an ordinary cultivar that was given a key by hand).
+      A row gate and not a CHECK on purpose: see post_no_other_check_names_blend_key.
+    sql: |
+      SELECT v.id FROM public.plant_varieties v
+       WHERE v.blend_key IS NOT NULL
+         AND v.variety_rank IS DISTINCT FROM 'blend'
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_blend_key_equals_live_components
+    note: >
+      Every keyed row's blend_key is exactly its LIVE component ids, as text, in uuid order, joined by
+      ','. This is also what proves the key is sorted and free of repeats, which the format CHECK does
+      not test. A keyed row with no live component row at all is a row here (NULL is distinct from a
+      key). A row here after a hand-run variety dedup means the dedup repointed components without
+      recomputing the key (0a header).
+    sql: |
+      SELECT v.id FROM public.plant_varieties v
+       WHERE v.blend_key IS NOT NULL
+         AND v.blend_key IS DISTINCT FROM (
+               SELECT string_agg(c.component_variety_id::text, ',' ORDER BY c.component_variety_id)
+                 FROM public.variety_blend_component c
+                WHERE c.blend_variety_id = v.id AND c.deleted_at IS NULL)
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_live_component_under_an_unkeyed_row
+    note: >
+      No live component row hangs under a variety whose blend_key is NULL. A row here is a variety
+      that has ancestry recorded and no key: the find-by-key would never return it, and the next save
+      of the same combination would mint a second mix.
+    sql: |
+      SELECT DISTINCT c.blend_variety_id FROM public.variety_blend_component c
+        JOIN public.plant_varieties v ON v.id = c.blend_variety_id
+       WHERE c.deleted_at IS NULL
+         AND v.blend_key IS NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_every_live_component_is_a_leaf
+    note: >
+      No live component is itself a mix (0a header B1: a mix made from a mix is flattened to leaves
+      before it is keyed). A row here is a nested mix: {mix of A and B, C} keyed differently from
+      {A, B, C}, so the same seed population can be filed under two rows, and reading a key by
+      splitting it no longer yields leaves.
+    sql: |
+      SELECT DISTINCT c.blend_variety_id FROM public.variety_blend_component c
+        JOIN public.plant_varieties leaf ON leaf.id = c.component_variety_id
+       WHERE c.deleted_at IS NULL
+         AND leaf.blend_key IS NOT NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-varietyblend-001')
+    expect: rowcount_eq
+    value: 0
