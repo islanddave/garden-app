@@ -112,7 +112,11 @@ describe('the crop photo on Harvest Totals', () => {
 
   it('collapses silently when the id cannot be resolved at all', async () => {
     const err = new Error('gone'); err.status = 404
-    await renderTotals([crop({ hero_photo_id: 'ph-dead' })], { viewUrl: Promise.reject(err) })
+    // Built already-rejected, so it is claimed here: the page first asks for it a task after the harvest
+    // answers have rendered (default priority — OPS-RTLEVENTPRIORITY-001), and Node reports a rejection
+    // nobody is holding at the end of a task. PhotoImg still receives the same rejected promise.
+    const gone = Promise.reject(err); gone.catch(() => {})
+    await renderTotals([crop({ hero_photo_id: 'ph-dead' })], { viewUrl: gone })
     await waitFor(() => expect(viewUrlCalls().length).toBeGreaterThan(0))
     await act(async () => {})
     expect(screen.queryByTestId('crop-hero')).toBeNull()

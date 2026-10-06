@@ -109,8 +109,11 @@ function routeFetch({ hangPut = false } = {}) {
 async function openModal() {
   render(<DismissRegistryProvider><PhotoLibrary /></DismissRegistryProvider>)
   await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
+  // The call is not the tile: the answer is rendered a task later, at default priority
+  // (OPS-RTLEVENTPRIORITY-001), so the tile is awaited rather than read the moment the fetch went out.
+  const tile = await screen.findByAltText(PHOTO.caption)
   await act(async () => {
-    fireEvent.click(screen.getByAltText(PHOTO.caption).closest('button'))
+    fireEvent.click(tile.closest('button'))
   })
   await waitFor(() => expect(modal()).toBeTruthy())
   // The row prefill has landed — this is the seed every dirty assertion is measured against.
