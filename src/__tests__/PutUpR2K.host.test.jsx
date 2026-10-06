@@ -645,6 +645,7 @@ describe('words — the section in every state, with the line showing', () => {
     texts.push(section())                                                       // a put-up saved, the line showing
     fireEvent.click(screen.getByTestId('pantry-completion-undo'))
     await waitFor(() => expect(lineText()).toMatch(/^Undone — /))
+    await waitFor(() => expect(section()).toContain(EMPTY_TEXT))                // the list is re-read after the line changes
     texts.push(section())                                                       // undone
     await openDoor()
     await save('loc-3', 'as_is')

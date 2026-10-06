@@ -22,6 +22,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor, cleanup } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -195,7 +196,7 @@ async function mountAt(url, { overlaySurface = false, harvestSession = true } = 
     </MemoryRouter>
   )
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
   return utils
 }
 
@@ -335,7 +336,7 @@ describe('BUG-SESSIONDRAFTRESTORE-001 — the save reaches the SHIPPED frame led
       </MemoryRouter>
     )
     await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-    await act(async () => { await Promise.resolve() })
+    await settle()
     return utils
   }
 

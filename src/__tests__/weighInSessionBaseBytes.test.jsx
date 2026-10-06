@@ -47,6 +47,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
 import { render, waitFor, act } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { resolve, dirname } from 'path'
 
@@ -112,7 +113,7 @@ afterAll(() => { vi.useRealTimers() })
 async function renderSession() {
   const view = render(<ToastProvider><EventNew /></ToastProvider>)
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
   await act(async () => { await Promise.resolve() })
   return view
 }

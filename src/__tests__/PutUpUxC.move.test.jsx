@@ -78,7 +78,7 @@ function renderSheet(row, props = {}) {
 async function openMove(row, props) {
   const r = renderSheet(row, props)
   fireEvent.click(screen.getByTestId('row-move'))
-  await screen.findAllByTestId(/^move-place-/)                             // the places have loaded
+  await screen.findAllByTestId(/^move-place-id:/)                          // the places have loaded (the not-made-yet ones are there before)
   return r
 }
 const rule = () => screen.getByTestId('move-rule')

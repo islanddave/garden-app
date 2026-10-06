@@ -77,6 +77,7 @@ async function openPicker(props = {}) {
   const utils = render(<VarietyPicker value={null} onChange={() => {}} {...props} />)
   fireEvent.focus(field())
   await waitFor(() => expect(listbox()).toBeTruthy())
+  await screen.findAllByRole('option')   // the listbox opens first; its rows are the fetch's answer
   // Let the open SETTLE before a case presses a key. The rows arrive with the fetch's answer, at default
   // priority (OPS-RTLEVENTPRIORITY-001: as in a browser), and the picker's reset-highlight-on-new-results
   // effect runs a tick after that render. A key fired inside that tick is overwritten by the reset —
@@ -168,8 +169,8 @@ describe('claim 2 — option identity, the enabler for everything else', () => {
     fireEvent.focus(b)
     await waitFor(() => expect(screen.getAllByRole('listbox').length).toBe(2))
     const [listA, listB] = screen.getAllByRole('listbox')
-    const idsA = within(listA).getAllByRole('option').map(o => o.id)
-    const idsB = within(listB).getAllByRole('option').map(o => o.id)
+    const idsA = (await within(listA).findAllByRole('option')).map(o => o.id)
+    const idsB = (await within(listB).findAllByRole('option')).map(o => o.id)
     // Same varieties, two pickers: duplicate ids would make aria-activedescendant resolve into the
     // WRONG picker's list, which is silent and untraceable from the outside.
     expect(listA.id).not.toBe(listB.id)
@@ -243,7 +244,7 @@ describe('claim 4 — aria-selected means SELECTED, not highlighted', () => {
     // Chip mode: "Change" is the documented way back into the list while a value is held.
     fireEvent.click(screen.getByText('Change'))
     await waitFor(() => expect(listbox()).toBeTruthy())
-    const selected = options().filter(o => o.getAttribute('aria-selected') === 'true')
+    const selected = (await screen.findAllByRole('option')).filter(o => o.getAttribute('aria-selected') === 'true')
     expect(selected.length).toBe(1)
     expect(selected[0].textContent).toContain('Cherokee Purple')
   })
@@ -253,7 +254,7 @@ describe('claim 4 — aria-selected means SELECTED, not highlighted', () => {
     fireEvent.click(screen.getByText('Change'))
     await waitFor(() => expect(listbox()).toBeTruthy())
     // Highlight row 0 (Black Krim) while row 1 (Cherokee Purple) stays the committed value.
-    const ids = options().map(o => o.id)
+    const ids = (await screen.findAllByRole('option')).map(o => o.id)
     expect(activeDescendant()).toBe(ids[0])
     expect(document.getElementById(ids[0]).getAttribute('aria-selected')).toBe('false')
     expect(document.getElementById(ids[1]).getAttribute('aria-selected')).toBe('true')

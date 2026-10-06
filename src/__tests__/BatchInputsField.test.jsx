@@ -34,6 +34,7 @@ vi.mock('../lib/api.js', () => ({
 
 import { P } from '../lib/constants.js'
 import BatchInputsField from '../components/putup/BatchInputsField.jsx'
+import { chooseOption } from './helpers/settle.js'
 import { WHOLE_PICK_NOTICE, ALL_TIME_REFUSAL, INSERT_NONE_NEW } from '../components/putup/batchInputs.js'
 
 const BATCH = '11111111-1111-4111-8111-111111111111'
@@ -119,6 +120,8 @@ const openPicks = async () => {
   fireEvent.click(screen.getByTestId('batch-inputs-open-picks'))
   await screen.findByTestId('batch-inputs-picks')
 }
+// The crop <option>s come from the window's harvest answer, a later render than the select itself.
+const pickCrop = async (slug) => chooseOption(await screen.findByLabelText('Crop'), slug)
 const postsTo = (suffix) => fetchMock.mock.calls.filter(
   ([p, o]) => p === `/api/kitchen-batches/${BATCH}/${suffix}` && (o?.method ?? 'GET') === 'POST',
 )
@@ -334,7 +337,7 @@ describe('BatchInputsField — dry run before commit', () => {
   it('sends preview:true with the exact predicate, and inserts nothing', async () => {
     renderField()
     await openPicks()
-    fireEvent.change(await screen.findByLabelText('Crop'), { target: { value: 'pepper' } })
+    await pickCrop('pepper')
     fireEvent.click(screen.getByTestId('batch-inputs-preview'))
     await screen.findByTestId('batch-inputs-preview-result')
     expect(postsTo('inputs')).toHaveLength(1)
@@ -533,7 +536,7 @@ describe('BatchInputsField — committing', () => {
     renderField()
     await openPicks()
     fireEvent.click(screen.getByRole('button', { name: 'This month' }))
-    fireEvent.change(await screen.findByLabelText('Crop'), { target: { value: 'tomato' } })
+    await pickCrop('tomato')
     fireEvent.click(screen.getByTestId('batch-inputs-preview'))
     await screen.findByTestId('batch-inputs-net-count')
     fireEvent.change(screen.getByLabelText('Total weight'), { target: { value: '11' } })

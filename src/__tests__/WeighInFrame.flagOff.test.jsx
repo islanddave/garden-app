@@ -30,6 +30,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -116,7 +117,7 @@ async function renderFourSaveSession() {
   searchParamsRef.current = new URLSearchParams('session=harvest')
   const { container } = render(<ToastProvider><EventNew /></ToastProvider>)
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
   fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
   await saveHarvest({ qty: '12', weight: '340' })
   await saveHarvest({ qty: '5', weight: '860' })

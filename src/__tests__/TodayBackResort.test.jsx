@@ -326,7 +326,7 @@ describe('BUG-TODAYBACKRESORT-001 — Back from a planting keeps the section ord
       return v
     })()
     expect(screen.getByRole('button', { name: 'By type' }).getAttribute('aria-pressed')).toBe('true')
-    expect(expandedLabels()).toEqual(typeOpen)
+    await waitFor(() => expect(expandedLabels()).toEqual(typeOpen))
 
     // By location, on purpose: re-ranked over the work left (Drive has only 2 rows now) ...
     fireEvent.click(screen.getByRole('button', { name: 'By location' }))

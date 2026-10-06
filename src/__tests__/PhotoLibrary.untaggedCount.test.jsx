@@ -15,6 +15,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 
 const { fetchSpy, toastSpy, deckSpy } = vi.hoisted(() => ({
   fetchSpy: vi.fn(), toastSpy: vi.fn(), deckSpy: vi.fn(),
@@ -84,7 +85,7 @@ async function mountScopedToProject({ global: globalList, scoped }) {
   await waitFor(() => expect(countSeg()).toBeTruthy())
   fireEvent.change(screen.getByDisplayValue('Filter by project…'), { target: { value: 'proj-1' } })
   await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos?project_id=proj-1'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
 }
 
 function mountWith(photos) {
@@ -122,7 +123,7 @@ describe('PhotoLibrary — the Untagged count', () => {
   it('renders NO badge when nothing is waiting — the empty chip is its own answer', async () => {
     mountWith([attachedToProject('d'), attachedToEvent('e')])
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
-    await act(async () => { await Promise.resolve() })
+    await settle()
     // POSITIVE CONTROL, and without it this test cannot fail for the reason it exists.
     // Its expected state — chip reading "Untagged", no count segment — is EXACTLY what the very next
     // test asserts for the case where the list has NOT landed. So the two tests expect an identical
@@ -171,7 +172,7 @@ describe('PhotoLibrary — the Untagged count', () => {
 
     fireEvent.change(screen.getByDisplayValue('Filter by project…'), { target: { value: 'proj-1' } })
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos?project_id=proj-1'))
-    await act(async () => { await Promise.resolve() })
+    await settle()
     expect(countText()).toBe('3')    // held, not recomputed from a subset
   })
 

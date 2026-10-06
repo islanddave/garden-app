@@ -227,8 +227,8 @@ describe('delete — two taps, and the second one says what it does', () => {
     fireEvent.click(screen.getByTestId('pu-location-delete-confirm'))
     await waitFor(() => expect(writeCalls('DELETE')).toHaveLength(1))
     expect(writeCalls('DELETE')[0][0]).toBe('/api/storage-locations/loc-2')
-    const options = [...screen.getByRole('combobox', { name: 'Storage location' }).options].map(o => o.textContent)
-    expect(options).toEqual(['— Unassigned —', 'Chest Freezer 1', 'Garage freezr'])
+    const options = () => [...screen.getByRole('combobox', { name: 'Storage location' }).options].map(o => o.textContent)
+    await waitFor(() => expect(options()).toEqual(['— Unassigned —', 'Chest Freezer 1', 'Garage freezr']))
   })
 
   it('drops the deleted id from the SAVED ROW when it was the one selected', async () => {

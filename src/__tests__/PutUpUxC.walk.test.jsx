@@ -218,7 +218,7 @@ describe('Raw · In oil, beside the discard choice', () => {
     fireEvent.click(screen.getByTestId('walk-inoil'))
     save()
     await waitFor(() => expect(posts('/api/preservation')).toHaveLength(1))
-    expect(screen.queryByTestId('walk-more-panel')).toBeNull()
+    await waitFor(() => expect(screen.queryByTestId('walk-more-panel')).toBeNull())
     typeWhat('Pesto')
     fireEvent.click(screen.getByTestId('walk-method-pesto'))
     openOptions()

@@ -29,6 +29,9 @@ vi.mock('../lib/featureFlags.js', () => ({
 
 import SettingsNotifications, { isPwaInstalled } from '../pages/SettingsNotifications.jsx'
 
+// The disclosure takes no tap while the prefs are loading (aria-disabled, "Loading…"); press it once it does.
+const loaded = (btn) => waitFor(() => expect(btn.getAttribute('aria-disabled')).toBe('false'))
+
 function setupPwa(installed) {
   const matchMedia = vi.fn().mockImplementation((q) => ({
     matches: installed && q === '(display-mode: standalone)',
@@ -73,6 +76,7 @@ describe('SettingsNotifications', () => {
   it('renders OFF and IN_APP_ONLY radios when SYSTEM flag is false (bi-state collapse)', async () => {
     const { findByTestId, queryByTestId } = render(<SettingsNotifications />)
     const btn = await findByTestId('critter-notif-disclosure')
+    await loaded(btn)
     fireEvent.click(btn)
     await waitFor(() => expect(queryByTestId('critter-notif-radiogroup')).toBeTruthy())
     expect(queryByTestId('critter-notif-option-off')).toBeTruthy()
@@ -84,6 +88,7 @@ describe('SettingsNotifications', () => {
   it('radiogroup has role=radiogroup and radios have role=radio', async () => {
     const { findByTestId } = render(<SettingsNotifications />)
     const btn = await findByTestId('critter-notif-disclosure')
+    await loaded(btn)
     fireEvent.click(btn)
     const group = await findByTestId('critter-notif-radiogroup')
     expect(group.getAttribute('role')).toBe('radiogroup')
@@ -94,6 +99,7 @@ describe('SettingsNotifications', () => {
   it('clicking a radio fires patch with the chosen value and updates aria-checked', async () => {
     const { findByTestId } = render(<SettingsNotifications />)
     const btn = await findByTestId('critter-notif-disclosure')
+    await loaded(btn)
     fireEvent.click(btn)
     const off = await findByTestId('critter-notif-option-off')
     fireEvent.click(off)
@@ -105,6 +111,7 @@ describe('SettingsNotifications', () => {
   it('writes a polite live-region announcement after selection', async () => {
     const { findByTestId } = render(<SettingsNotifications />)
     const btn = await findByTestId('critter-notif-disclosure')
+    await loaded(btn)
     fireEvent.click(btn)
     const off = await findByTestId('critter-notif-option-off')
     fireEvent.click(off)
@@ -117,6 +124,7 @@ describe('SettingsNotifications', () => {
     patchPrefsMock.mockResolvedValueOnce(null)
     const { findByTestId } = render(<SettingsNotifications />)
     const btn = await findByTestId('critter-notif-disclosure')
+    await loaded(btn)
     fireEvent.click(btn)
     const off = await findByTestId('critter-notif-option-off')
     fireEvent.click(off)
@@ -128,6 +136,7 @@ describe('SettingsNotifications', () => {
   it('Escape on a radio collapses the group', async () => {
     const { findByTestId, queryByTestId } = render(<SettingsNotifications />)
     const btn = await findByTestId('critter-notif-disclosure')
+    await loaded(btn)
     fireEvent.click(btn)
     const off = await findByTestId('critter-notif-option-off')
     fireEvent.keyDown(off, { key: 'Escape' })
@@ -138,6 +147,7 @@ describe('SettingsNotifications', () => {
   it('ArrowDown on a radio moves focus to the next radio', async () => {
     const { findByTestId } = render(<SettingsNotifications />)
     const btn = await findByTestId('critter-notif-disclosure')
+    await loaded(btn)
     fireEvent.click(btn)
     const off = await findByTestId('critter-notif-option-off')
     const inapp = await findByTestId('critter-notif-option-in_app_only')
@@ -154,6 +164,7 @@ describe('SettingsNotifications', () => {
     })
     const { findByTestId } = render(<SettingsNotifications />)
     const btn = await findByTestId('critter-notif-disclosure')
+    await loaded(btn)
     fireEvent.click(btn)
     const off = await findByTestId('critter-notif-option-off')
     fireEvent.click(off)

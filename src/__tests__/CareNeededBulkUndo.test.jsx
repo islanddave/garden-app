@@ -75,7 +75,7 @@ describe('BUG-RUNBULKPARTIALUNDO-001 — a partial failure keeps the undo', () =
     await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalledTimes(1))
     expect(toastMock.showUndo.mock.calls[0][0].message).toBe('Logged 1 — 1 failed')
     expect(toastMock.show).not.toHaveBeenCalled()
-    expect(screen.queryByText('Bhut Jolokia')).toBeNull()      // landed -> gone
+    await waitFor(() => expect(screen.queryByText('Bhut Jolokia')).toBeNull())   // landed -> gone
     expect(screen.getByText('Habanero')).toBeTruthy()          // failed -> still there to retry
     await act(async () => { await toastMock.showUndo.mock.calls[0][0].onUndo() })
     expect(deletes().map(c => c[0])).toEqual(['/api/events/ev-1'])   // only the one that exists
@@ -121,7 +121,10 @@ describe('BUG-RUNBULKPARTIALUNDO-001 — one fan-out at a time', () => {
     render(<CareNeeded plan={p} />)
     fireEvent.click(screen.getByRole('button', { name: /^Log all watering \(2\)$/i }))
     await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalledTimes(1))
-    fireEvent.click(screen.getByRole('button', { name: /^Log all feeding \(1\)$/i }))
+    // The pills are disabled for the length of a run and a disabled button takes no tap: press once it is back.
+    const feed = screen.getByRole('button', { name: /^Log all feeding \(1\)$/i })
+    await waitFor(() => expect(feed.disabled).toBe(false))
+    fireEvent.click(feed)
     await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalledTimes(2))
     expect(posts().length).toBe(3)
     expect(JSON.parse(posts()[2][1].body).event_type).toBe('fertilizing')

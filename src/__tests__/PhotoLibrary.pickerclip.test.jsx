@@ -132,7 +132,7 @@ describe('BUG-PICKERCLIP-001 — the z150 selection bar must not cover the uploa
   async function selectModeWithUploadForm() {
     vi.stubEnv('VITE_API_FACEBOOK_SHARE', 'https://example.invalid/share')
     await mount({ photos: [PHOTO] })
-    fireEvent.click(screen.getByText('Select'))
+    fireEvent.click(await screen.findByText('Select'))
     // findAllBy, not getAllBy: the photo tiles arrive from an async fetch, so a SYNCHRONOUS query
     // here throws "Unable to find an accessible element" whenever the grid has not painted yet.
     // That is load-dependent, so it passes in isolation (678ms) and fails intermittently under a

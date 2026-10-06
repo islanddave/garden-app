@@ -9,6 +9,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 
 const { apiFetchSpy, navigateSpy, postCalls, deleteCalls, dataRef, searchParamsRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
@@ -69,7 +70,7 @@ async function renderSession(query = 'session=harvest') {
   searchParamsRef.current = new URLSearchParams(query)
   const r = render(<ToastProvider><EventNew /></ToastProvider>)
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
   return r
 }
 
@@ -177,7 +178,7 @@ describe('V4-WEIGHFRAME-001 — the three-track frame', () => {
       searchParamsRef.current = new URLSearchParams('session=harvest')
       render(<FreshToastProvider><EventNewOff /></FreshToastProvider>)
       await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-      await act(async () => { await Promise.resolve() })
+      await settle()
       fireEvent.focus(screen.getByLabelText('Harvest quantity'))
       expect(scrollIntoView).toHaveBeenCalled()
     } finally {

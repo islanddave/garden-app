@@ -81,6 +81,7 @@ vi.mock('../components/PhotoUpload.jsx', () => ({
 }))
 
 import PhotoLibrary from '../pages/PhotoLibrary.jsx'
+import { settle } from './helpers/settle.js'
 
 const SAMPLE_PROJECT  = { id: 'proj-1', name: 'Spring 2026' }
 const SAMPLE_LOCATION = { id: 'loc-1', full_path: 'Garden › Bed A', is_active: true }
@@ -189,6 +190,7 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/photos'))
     fetchSpy.mockResolvedValueOnce([])  // the refetch the filter change triggers
     const spaceFilter = screen.getByDisplayValue('Filter by zone…')
+    await waitFor(() => expect([...spaceFilter.options].map(o => o.value)).toContain('loc-1'))
     await act(async () => {
       fireEvent.change(spaceFilter, { target: { value: 'loc-1' } })
     })
@@ -322,8 +324,9 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     // Opening the modal (openModal) seeds tagForm.project_id from the photo,
     // which fires the modal's plants-for-project effect — prime that fetch.
     fetchSpy.mockResolvedValueOnce([])
+    const tile = await screen.findByAltText('tag me')
     await act(async () => {
-      fireEvent.click(screen.getByAltText('tag me').closest('button'))
+      fireEvent.click(tile.closest('button'))
     })
     expect(screen.getByText('Save tags')).toBeDefined()
 
@@ -350,8 +353,9 @@ describe('PhotoLibrary — V2-PHOTO-F1 S2 refactor', () => {
     render(<PhotoLibrary />)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
     fetchSpy.mockResolvedValueOnce([])
+    const tile = await screen.findByAltText(photo.caption)
     await act(async () => {
-      fireEvent.click(screen.getByAltText(photo.caption).closest('button'))
+      fireEvent.click(tile.closest('button'))
     })
     fetchSpy.mockResolvedValueOnce({ id: photo.id })
     await act(async () => { fireEvent.click(screen.getByText('Save tags')) })
@@ -413,7 +417,7 @@ describe('PhotoLibrary — V3-PHOTODBG-001 visible load-failure state', () => {
     fetchSpy.mockResolvedValueOnce([])
     fireEvent.click(retry)
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
-    expect(screen.getByText(/No photos yet/i)).toBeDefined()
+    expect(await screen.findByText(/No photos yet/i)).toBeDefined()
   })
 
   // V3-PHOTODBG-001 (4/4): a render-time fault in any PhotoCard must be contained by the
@@ -461,6 +465,7 @@ describe('PhotoLibrary — reload gate (V4-DIRTYGUARDSWEEP-001)', () => {
     primeMount({ photos })
     const view = render(<PhotoLibrary />)
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
+    await settle()
     return view
   }
 

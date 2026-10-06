@@ -250,6 +250,7 @@ describe('HarvestWatchBand — the "not yet" dismissal (the first negative-class
     const card = await band()
     await userEvent.click(within(card).getByRole('button', { name: /Not yet — Yellow Brandywine/ }))
     const undo = await within(card).findByRole('button', { name: /Undo — Yellow Brandywine/ })
+    await waitFor(() => expect(undo.disabled).toBe(false))   // Undo is disabled until the dismissal has saved
     await userEvent.click(undo)
 
     expect(await within(card).findByText(/Start checking Yellow Brandywine/)).toBeTruthy()

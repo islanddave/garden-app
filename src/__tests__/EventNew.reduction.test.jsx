@@ -15,6 +15,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { settle as settleLoad } from './helpers/settle.js'
 
 const { apiFetchSpy, postCalls, putCalls, dataRef, searchParamsRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
@@ -119,7 +120,7 @@ afterEach(() => { document.body.style.overflow = ''; document.body.style.overscr
 
 async function flushLoad() {
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => {})
+  await settleLoad()
 }
 const save = async () => { await act(async () => { fireEvent.click(screen.getByText('Save')) }) }
 const settle = () => act(async () => { await new Promise(r => setTimeout(r, 50)) })
