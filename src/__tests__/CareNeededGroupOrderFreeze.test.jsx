@@ -207,7 +207,7 @@ describe('BUG-TODAYGROUPREORDER-001 — nothing Dave does to a row moves a secti
     await waitFor(() => expect(fetchMock.mock.calls.filter(c => c[0] === '/api/events').length).toBe(12))
     await waitFor(() => expect(screen.queryByText('Bag One')).toBeNull())
     // Only the pest rows survive: Drive Rows (0.5) and Pasture (1.0). A re-rank says [Pasture, Drive].
-    expect(headerLabels()).toEqual(['Drive Rows', 'Pasture'])
+    await waitFor(() => expect(headerLabels()).toEqual(['Drive Rows', 'Pasture']))
   })
 
   it('(a)(b) a tap removes only its own row: the rows left keep the plan\'s order, and no section moves', async () => {

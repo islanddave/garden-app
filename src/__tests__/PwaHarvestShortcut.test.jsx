@@ -28,6 +28,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor, cleanup } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -188,14 +189,14 @@ describe('V5-HARVESTONEDOOR-001 reachability — the weigh-in session still enga
   it('?mode=manual locks the type to harvest — the session gate opened', async () => {
     mountShortcut('/log/harvest?mode=manual')
     await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-    await act(async () => { await Promise.resolve() })
+    await settle()
     expect(screen.getByTestId('harvest-session-lock')).toBeTruthy()
   })
 
   it('engages the session quantity loop, a witness the lock strip markup cannot fake', async () => {
     mountShortcut('/log/harvest?mode=manual')
     await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-    await act(async () => { await Promise.resolve() })
+    await settle()
     // enterKeyHint on the quantity field is `inHarvestSession ? 'next' : undefined` — set nowhere
     // else, and it belongs to the session's qty -> grams -> save loop rather than to its chrome. A
     // second, independent witness so this describe does not rest on one testid.

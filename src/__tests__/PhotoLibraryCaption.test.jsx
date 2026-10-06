@@ -51,8 +51,9 @@ async function mountWith(photo) {
   fetchSpy.mockResolvedValueOnce([photo])            // /api/photos
   render(<PhotoLibrary />)
   await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/api/projects'))
+  const tile = await screen.findByAltText(photo.caption ?? 'Garden photo')
   await act(async () => {
-    fireEvent.click(screen.getByAltText(photo.caption ?? 'Garden photo').closest('button'))
+    fireEvent.click(tile.closest('button'))
   })
 }
 

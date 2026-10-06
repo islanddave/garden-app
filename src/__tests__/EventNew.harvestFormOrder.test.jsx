@@ -15,6 +15,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 
 const { apiFetchSpy, navigateSpy, postCalls, dataRef, searchParamsRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
@@ -71,7 +72,7 @@ function renderEventNew(query = '') {
 
 async function flushLoad() {
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
 }
 
 // True when `a` comes strictly BEFORE `b` in document order. Node.DOCUMENT_POSITION_FOLLOWING (4)

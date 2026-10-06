@@ -156,7 +156,7 @@ describe('Harvests page', () => {
     // request now carries crop=tomato; basil entry drops out, tomato remains
     await waitFor(() => expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('crop=tomato'))).toBe(true))
     await waitFor(() => expect(screen.queryByText('Genovese')).toBeNull())
-    expect(screen.getByText('Sungold')).toBeTruthy()
+    expect(await screen.findByText('Sungold')).toBeTruthy()
     // the pill is present and dismissible
     expect(screen.getByRole('button', { name: /clear crop filter/i })).toBeTruthy()
   })
@@ -189,7 +189,7 @@ describe('Harvests page', () => {
     await waitFor(() => expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('project=pr1'))).toBe(true))
     // only the pr1 (tomato) entry survives
     await waitFor(() => expect(screen.queryByText('Genovese')).toBeNull())
-    expect(screen.getByText('Sungold')).toBeTruthy()
+    expect(await screen.findByText('Sungold')).toBeTruthy()
     expect(screen.getByRole('button', { name: /clear project filter/i })).toBeTruthy()
   })
 

@@ -22,6 +22,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 
 const { apiFetchSpy, navigateSpy, postCalls, dataRef, searchParamsRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
@@ -72,7 +73,7 @@ function renderEventNew(query = 'event_type=harvest&project=proj-1') {
 
 async function flushLoad() {
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
 }
 
 async function pickPlanting(id = 'plant-1') {

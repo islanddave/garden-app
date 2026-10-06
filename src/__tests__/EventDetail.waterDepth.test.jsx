@@ -7,6 +7,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor, fireEvent, cleanup } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 const { apiFetchSpy, navigateSpy, dataRef, flagRef } = vi.hoisted(() => ({
@@ -72,7 +73,7 @@ function setup(ev = wateringEvent) {
 
 async function flushLoad() {
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/events/e1'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
 }
 
 beforeEach(() => { putBodies.length = 0; flagRef.current = false })

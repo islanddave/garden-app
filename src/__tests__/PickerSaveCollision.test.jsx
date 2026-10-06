@@ -19,6 +19,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 
 const { apiFetchSpy, navigateSpy, postCalls, dataRef, searchParamsRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
@@ -91,7 +92,7 @@ async function renderForm({ inOverlay = false } = {}) {
     inOverlay ? <OverlaySurfaceProvider>{tree}</OverlaySurfaceProvider> : tree
   )
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
   fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
   await act(async () => { await Promise.resolve() })
   return utils

@@ -13,6 +13,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 
 const { apiFetchSpy, navigateSpy, searchParamsRef, clearSpy } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
@@ -77,7 +78,7 @@ async function renderPanel(query) {
   searchParamsRef.current = new URLSearchParams(query)
   const out = render(<ToastProvider><EventNew /></ToastProvider>)
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
   return out
 }
 
@@ -161,7 +162,7 @@ describe('EventNew — the shipped frame does NOT scroll for a band it does not 
     searchParamsRef.current = new URLSearchParams(query)
     const out = render(<FreshToastProvider><EventNewFrame /></FreshToastProvider>)
     await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-    await act(async () => { await Promise.resolve() })
+    await settle()
     return out
   }
 

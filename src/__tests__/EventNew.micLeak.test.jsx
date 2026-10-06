@@ -18,6 +18,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor, cleanup } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 import { installFakeSpeechRecognition } from './helpers/fakeSpeechRecognition.js'
 
 const { apiFetchSpy, navigateSpy, dataRef, searchParamsRef } = vi.hoisted(() => ({
@@ -72,7 +73,7 @@ afterEach(() => { vi.unstubAllGlobals() })
 async function renderAndListen() {
   render(<ToastProvider><EventNew /></ToastProvider>)
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
   // The mic'd fields sit behind two steps, both of which a real user takes: the form opens on the
   // event-type picker, and the quantity/notes fields live inside the collapsed "Add details"
   // disclosure. "Watered" is the cheapest type to reach — no harvest panel, no severity, no photo.
@@ -114,7 +115,7 @@ describe('useVoiceInput — the mic does not outlive the page', () => {
   it('unmounting without ever starting a recogniser is a no-op, not a throw', async () => {
     render(<ToastProvider><EventNew /></ToastProvider>)
     await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-    await act(async () => { await Promise.resolve() })
+    await settle()
     await act(async () => { fireEvent.click(screen.getByText('Watered')) })
     await act(async () => { fireEvent.click(screen.getByText(/Add details/)) })
 

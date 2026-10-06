@@ -75,6 +75,7 @@ vi.mock('react-router-dom', () => ({
 
 import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
+import { settle } from './helpers/settle.js'
 
 // ── apiFetch behavior: route GETs to fixture data, capture POSTs ────────
 function wireApiFetch() {
@@ -118,7 +119,7 @@ beforeEach(() => {
 // Wait for the mount-time projects/locations load to settle.
 async function flushLoad() {
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
 }
 
 // V4-PLANTPICKER-001: the planting control is the shared PlantingSelect combobox — pick by

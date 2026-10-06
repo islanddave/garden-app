@@ -10,6 +10,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor, fireEvent, cleanup } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 // ── Hoisted mock plumbing ───────────────────────────────────────────────
@@ -93,7 +94,7 @@ function renderEventDetail() {
 // Wait for the mount-time event + project load to settle and the page to render.
 async function flushLoad() {
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/events/e1'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
 }
 
 // An event row that STILL carries the legacy flag columns (server/db untouched by the removal).

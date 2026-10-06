@@ -5,6 +5,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor, fireEvent } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 const { apiFetchSpy, navigateSpy, dataRef } = vi.hoisted(() => ({
@@ -69,7 +70,7 @@ describe('EventDetail — PROJHIDE post-delete nav', () => {
     // Event + project both loaded, so the test proves the flag overrides a PRESENT project.
     await waitFor(() => expect(screen.getByText(/Spider mites/)).toBeTruthy())
     await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects/p1'))
-    await act(async () => { await Promise.resolve() })
+    await settle()
 
     // DD9 / W-EVTDEL: delete now interposes the EventDeleteConfirm sheet — arm it from the
     // header action, then confirm from the sheet ("Delete event"), same as EventDetail.deleteConfirm.

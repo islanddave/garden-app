@@ -7,6 +7,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 
 installStoragePolyfill()
@@ -80,7 +81,7 @@ function renderReporting(query = '') {
 
 async function flushLoad() {
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
 }
 
 beforeEach(() => {

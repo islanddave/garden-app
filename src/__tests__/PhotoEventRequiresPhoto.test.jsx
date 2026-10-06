@@ -18,6 +18,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 
 const { apiFetchSpy, navigateSpy, postCalls, searchParamsRef, pendingRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
@@ -89,7 +90,7 @@ async function renderForm(query) {
   searchParamsRef.current = new URLSearchParams(query)
   const utils = render(<ToastProvider><EventNew /></ToastProvider>)
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/projects'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
   return utils
 }
 

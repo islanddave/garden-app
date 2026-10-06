@@ -103,7 +103,7 @@ describe('SeasonStats', () => {
     // Looked back SEASON_FALLBACK_YEARS for a season with picks, found none, and shows the current one.
     const asked = fetchSpy.mock.calls.map(c => c[0])
     expect(asked).toEqual(expect.arrayContaining([0, 1, 2].map(b => `/api/harvests/season-stats?season=${cur - b}`)))
-    expect(screen.getByText(`${cur} season · Nov 1 to Oct 31`)).toBeTruthy()
+    expect(await screen.findByText(`${cur} season · Nov 1 to Oct 31`)).toBeTruthy()
     expect(screen.queryByTestId('season-stats-earlier')).toBeNull()
   })
 

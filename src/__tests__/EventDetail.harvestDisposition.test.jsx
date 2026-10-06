@@ -14,6 +14,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, waitFor, fireEvent } from '@testing-library/react'
+import { settle } from './helpers/settle.js'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 const { apiFetchSpy, navigateSpy, dataRef } = vi.hoisted(() => ({
@@ -90,7 +91,7 @@ function setup(ev) {
 
 async function flushLoad() {
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/events/e1'))
-  await act(async () => { await Promise.resolve() })
+  await settle()
 }
 
 async function openEditor() {

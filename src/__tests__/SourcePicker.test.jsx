@@ -16,6 +16,7 @@ vi.mock('../lib/api.js', () => ({
 }))
 
 import SourcePicker from '../components/forms/SourcePicker.jsx'
+import { chooseOption } from './helpers/settle.js'
 
 // Server order: WHERE deleted_at IS NULL ORDER BY name ASC.
 const SOURCES = [
@@ -190,7 +191,7 @@ describe('SourcePicker — the mint form', () => {
     const { onChange } = await openMint('Agway')
     expect(screen.getByTestId('sp-mint-name').value).toBe('Agway')
 
-    fireEvent.change(screen.getByTestId('sp-mint-kind'), { target: { value: 'garden_center' } })
+    await chooseOption(screen.getByTestId('sp-mint-kind'), 'garden_center')   // the kinds are fetched when the form opens
     fireEvent.change(screen.getByTestId('sp-mint-locality'), { target: { value: 'Greenfield, MA' } })
     fireEvent.click(screen.getByTestId('sp-mint-submit'))
 
