@@ -40,7 +40,7 @@ describe('the L-058 sweep removes the smoke variety\'s care_profile', () => {
     const deletes = run.match(/DELETE FROM care_profile\b[^"]*/g) ?? []
     expect(deletes).toHaveLength(1)
     expect(deletes[0].replace(/\s+/g, ' ')).toBe(
-      "DELETE FROM care_profile WHERE scope='cultivar' AND scope_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%');",
+      "DELETE FROM care_profile WHERE scope='cultivar' AND (scope_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%') OR scope_id = ANY('{$SMOKE_MIX_IDS}'::uuid[]));",
     )
   })
 

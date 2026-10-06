@@ -2,8 +2,8 @@
 
 Run: python3 -m pytest -q scripts/test_smoke_mint_log.py
 
-run-smoke.sh is the staging smoke gate every promote waits on, and mint_session_token is called from 63 places in
-it. The function now also writes `[mint] http=<code> shape=<ok|empty|malformed> caller=<function>:<line>` to
+run-smoke.sh is the staging smoke gate every promote waits on, and mint_session_token is called from 65 places in
+it (63 until block U gained its two for seed release 2a, 2026-10-06: one between U0 and U1, one before U7). The function now also writes `[mint] http=<code> shape=<ok|empty|malformed> caller=<function>:<line>` to
 stderr (promote-path plan B6a). That is LOG-ONLY, and this file is what holds it to that:
 
 - the function is cut out of the shell file and run under bash, with `set -euo pipefail` as the script sets it,
@@ -177,7 +177,7 @@ SPECIFIED = {
 @EACH_SHELL
 @pytest.mark.parametrize("reply,token,logged", list(SPECIFIED.values()), ids=list(SPECIFIED))
 def test_a_caller_gets_what_it_got_before_and_stderr_gains_one_line(tmp_path, shell, clerk, reply, token, logged):
-    """The call as all 63 call sites make it: X=$(mint_session_token)."""
+    """The call as all 65 call sites make it: X=$(mint_session_token)."""
     script = 'CLERK_JWT=$(mint_session_token)\nprintf "rc=%s token=[%s]\\n" "$?" "$CLERK_JWT"\n'
     if reply == "refused":
         proc, _ = run(tmp_path, shell, current(), refused_port(), script)
@@ -349,5 +349,5 @@ def test_every_call_site_is_still_a_plain_capture():
     uses = [line.strip() for line in text.splitlines()
             if "mint_session_token" in line and not line.lstrip().startswith("#")]
     calls = [line for line in uses if line != "mint_session_token() {"]
-    assert len(uses) == len(calls) + 1 and len(calls) == 63
+    assert len(uses) == len(calls) + 1 and len(calls) == 65
     assert all(re.fullmatch(r"[A-Za-z_]+=\$\(mint_session_token\)", line) for line in calls), calls

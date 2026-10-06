@@ -103,6 +103,12 @@ CREATED_SOWN_PLANT_ID=""
 CREATED_SEEDLOT_ID=""
 CREATED_SEEDLOT_LEGACY_ID=""
 CREATED_SEEDPARENT_PLANT_ID=""
+CREATED_SEEDMIX_LOT_ID=""
+CREATED_SEEDPARENT3_PLANT_ID=""
+CREATED_SEEDPARENT4_PLANT_ID=""
+CREATED_SEEDVARIETY2_ID=""
+CREATED_SEEDVARIETY3_ID=""
+CREATED_SEEDMIX_VARIETY_ID=""
 CREATED_FAVORITE_DONE=false
 NAVP_DIRTY=false
 NAVP_GB_DIRTY=false
@@ -186,6 +192,29 @@ cleanup() {
         && echo "✅ Cleanup: test seed-parent planting deleted" \
         || echo "WARNING: seed-parent planting cleanup failed (id: $CREATED_SEEDPARENT_PLANT_ID)"
     fi
+    # Block U from U7 on (release 2a): the lot filed under a mix, its two parent plantings, then the two varieties
+    # and the mix made of them. Lot and plantings before varieties, as above. The lot's and the plantings' ids are
+    # cleared in the block once their own DELETE answers 200; the three varieties have no DELETE in the block (block
+    # D's has none either), so they are soft-deleted here on every run. The L-058 sweep hard-deletes all six, the
+    # mix's component rows first.
+    local sp_left sp_left_id sp_left_url
+    for sp_left in \
+      "mix seed lot|${STAGING_API_INVENTORY:-}|/api/inventory-items/|$CREATED_SEEDMIX_LOT_ID" \
+      "third seed-parent planting|${STAGING_API_PLANTS:-}|/api/plants/|$CREATED_SEEDPARENT3_PLANT_ID" \
+      "fourth seed-parent planting|${STAGING_API_PLANTS:-}|/api/plants/|$CREATED_SEEDPARENT4_PLANT_ID" \
+      "seed mix variety|${STAGING_API_VARIETIES:-}|/api/varieties/|$CREATED_SEEDMIX_VARIETY_ID" \
+      "second smoke variety|${STAGING_API_VARIETIES:-}|/api/varieties/|$CREATED_SEEDVARIETY2_ID" \
+      "third smoke variety|${STAGING_API_VARIETIES:-}|/api/varieties/|$CREATED_SEEDVARIETY3_ID"; do
+      sp_left_id="${sp_left##*|}"
+      if [[ -z "$sp_left_id" ]]; then continue; fi
+      sp_left_url="${sp_left#*|}"; sp_left_url="${sp_left_url%%|*}"
+      sp_left="${sp_left%|*}"
+      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        "${sp_left_url%/}${sp_left##*|}${sp_left_id}" -o /dev/null 2>&1 \
+        && echo "✅ Cleanup: test ${sp_left%%|*} deleted" \
+        || echo "WARNING: ${sp_left%%|*} cleanup failed (id: $sp_left_id)"
+    done
     if [[ -n "$CREATED_VARIETY_ID" ]]; then
       curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
         -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
@@ -1331,28 +1360,70 @@ else
       #       live seed_parent rows, 1 retired (P1's first row, soft-deleted by U3; U4 wrote a new one), and
       #       source_plant_id is the planting of a LIVE row. Read after the lot's delete and P2's, it also shows the
       #       links still live on a deleted lot. Under SMOKE_REQUIRE_AUTH a missing DSN or psql is a FAIL.
+      #   RELEASE 2a (R2A-CONTRACT sections 2 to 5), U7 to U23, on rows of their own: two varieties of one crop
+      #   (V2, V3: 'smoke-test-variety2/3-<run>', both tomato), two plantings (P3 on V2; P4 with no variety, then on
+      #   V3: 'smoke-test-seedparent3/4-<run>'), the mix of V2 and V3, and one lot filed under it
+      #   ('smoke-test-seedlot-mix-<run>'). Three lot POSTs are refused under one name
+      #   ('smoke-test-seedlot-refused-<run>'), and after each the seeds list is read for a row of that name.
+      #   U7)  POST [P1, P3] → 400 mixed_crop_parents (block D's variety has no crop, V2 is a tomato); list: none.
+      #   U8)  POST [P3, P4], P4 without a variety → 400 parent_without_variety naming P4; list: none.
+      #   U9)  PUT P4's variety to V3, read back.
+      #   U10) POST [P3, P4] under V2, a plain variety → 400 blend_required with both variety ids; list: none.
+      #   U11) POST /api/varieties/blend {[V2, V3], create} → 201, created, rank blend, key and components V2,V3;
+      #        the same with the ids swapped → 200, not created, the same id; GET /api/varieties/:id reads the row.
+      #   U12) POST the lot under the mix with source_plant_ids [P3, P4] AND source_plant_id P4 → 201; its GET reads
+      #        both parents, the cache P4 (the single key picks the member), the mix, rank blend, both crop_slug.
+      #   U13) the lot's row out of the seeds LIST, kept for U16: filed under the mix, rank blend.
+      #   U14) PUT /seed-measure {seed_parent_plant_count: 3} → echoed; the GET reads 3.
+      #   U15) PUT /filing to V2 (a component), expecting the mix → changed, previous the mix; the GET reads V2.
+      #   U16) U13's row, now stale, through the wide PUT, whole, as a client that has not reloaded sends it → 200;
+      #        the GET still reads V2 and the count 3: the wide verb moves neither on a lot with a parent.
+      #   U17) PUT /filing back to what U15's reply called previous, expecting V2 → the GET reads the mix, rank blend.
+      #   U18) PUT /seed-measure {seed_parent_plant_count: null} → the GET reads null.
+      #   U19) PUT /source-plants [P3] with expected_source_plant_ids [P3], which is not what the lot holds → 409
+      #        lot_changed; the GET still reads both parents and the cache P4.
+      #   U20) two seed_saved events naming the lot, P3's then P4's, one after the other and in SaveSeedSheet's
+      #        shape; after each, GET /api/events?plant_id= lists exactly one such event on that planting. Both
+      #        carry metadata._skip_critter_award (the events Lambda's own switch for a smoke caller), so no
+      #        critter is rolled. WHAT IS NOT ASSERTED: that the jar pays XP once. The smoke user can stand at the
+      #        300-a-day cap after a few promotes, and at the cap no xp_events row is written at all; "pays once"
+      #        is the integration suite's, with a fresh user per case. U23 asserts the half the cap cannot hide.
+      #   U21) GET season-stats?sections=seed_lots → 200, every lot row carries a numeric parent_count, this lot's is 2.
+      #   U22) the lot's DELETE → 200 {"ok":true}; then P3's and P4's, a FAIL under SMOKE_REQUIRE_AUTH unless 200.
+      #   U23) LAST, after U5's SQL: one blend row for the mix | two live component rows, V2 and V3 | one
+      #        cultivar care_profile | NO xp_events row of reason event_logged keyed on either EVENT id (a jar-keyed
+      #        grant is keyed on the lot; a Lambda that fell back to event-keyed rewards shows here unless capped).
       # Later steps read what earlier ones wrote, so one fault can show as several FAIL lines; the first is the cause.
-      # P1 is block D's planting. P2 is this block's own, made here and soft-deleted here, so blocks H to L find the
-      # project as they did before this block existed. The lot is a seeds row on block D's variety: F3's packet body
-      # plus the array.
-      # NO MINT OF ITS OWN, like P11 and T3b. scripts/test_smoke_mint_log.py holds the number of
-      # mint_session_token call sites in this file, so the block rides the token in hand. That is F3's: F3 runs
-      # whenever this block does (this block's preconditions are F3's plus block D's planting), and every path
-      # through F3 ends at most three requests after a mint; G's four follow. This block adds 26 requests (11 of
-      # them U0's), and its one psql comes after the last of them, so no request that needs the token waits behind
-      # a database round trip. That is at most 33 requests on one token. Measured on the staging run of dev
-      # 1564c564 (2026-10-05): 0.2 to 0.5 s a request, so about 11 s, and under 16 s at the slowest rate seen, of
-      # the token's 60 are gone at this block's last request. H mints its own. A token that did run out would
-      # show as 401s and FAIL lines, never as a pass. If this block grows again, the place for a mint is between
-      # U0 and U1, and scripts/test_smoke_mint_log.py's count goes up by one with it.
-      # NEEDS migrations/v5-seedmultiparent-001 applied on staging. Without the table the POST answers 500 and this
-      # block FAILS, as it should: the Lambda this tree deploys cannot save a lot with parents there.
-      # CLEANUP: both lots and P2 are soft-deleted here through their own routes, and cleanup() repeats whichever did
-      # not answer 200. Their names are 'smoke-test-seedlot-<run>', 'smoke-test-seedlot-legacy-<run>' and
-      # 'smoke-test-seedparent-<run>', which the workflow's L-058 sweep matches. It hard-deletes the link rows
-      # first (live or retired), then clears source_plant_id, then deletes plantings, then lots: all three foreign
-      # keys are RESTRICT, and a lot points at its plantings while a sown planting points at its packet. That sweep
-      # edit landed with this block, and neither is safe without the other.
+      # P1 is block D's planting. Block D cleared its variety and blocks between D and here read it that way, so
+      # this block gives it block D's variety back (read back, "first-parent-variety") and clears it again at its
+      # end ("first-parent-variety-restored"): since release 2a a planting ADDED to a set of two or more must carry
+      # a variety, or the POST answers 400 parent_without_variety. P2 is this block's own, created on the same
+      # variety, made here and soft-deleted here, as are P3 and P4, so blocks H to L find the project as they did
+      # before this block existed. The first lot is a seeds row on block D's variety: F3's packet body plus the
+      # array. Two parents of ONE variety need no mix, which is why U1 to U6 still file under a plain variety.
+      # TWO MINTS OF ITS OWN (scripts/test_smoke_mint_log.py holds the number of mint_session_token call sites in
+      # this file; both were added to its count with this text). Requests on each token:
+      #   F3's token: every path through F3 ends at most three requests after a mint, G's four follow, then this
+      #     block's first 14 (P2, P1's variety and its read, U0's 11): at most 21;
+      #   the mint between U0 and U1: 14 (U1 to U6, then P2's DELETE);
+      #   the mint before U7: 40 (U7 to U22, then P1's variety cleared and read).
+      # 68 requests in all. Measured on the staging run of dev 1564c564 (2026-10-05): 0.2 to 0.5 s a request, so
+      # the longest stretch, the last, is 8 to 20 s of its token's 60. Both psql reads come after the last
+      # request, so no request that needs a token waits behind a database round trip. H mints its own. A token
+      # that did run out would show as 401s and FAIL lines, never as a pass.
+      # NEEDS migrations/v5-seedmultiparent-001, v5-varietyblend-001, v5-seedplantcount-001 and
+      # v5-seedstatsparents-001 applied on staging. Without them the POSTs answer 500 and this block FAILS, as it
+      # should: the Lambdas this tree deploys cannot save a lot with parents, or make a mix, there.
+      # THE VARIETY RATE LIMIT: a variety create draws on plant_varieties.create (60 an hour for a person). A run
+      # now draws four times (block D, V2, V3, the mix; the swapped call finds the row and draws nothing).
+      # CLEANUP: the three lots and P2, P3, P4 are soft-deleted here through their own routes, and cleanup() repeats
+      # whichever did not answer 200; V2, V3 and the mix are cleanup()'s, like block D's variety. Every name holds
+      # 'smoke-test-', the mix's included (it is made of its two components' names), which the workflow's L-058
+      # sweep matches. It hard-deletes the link rows first (live or retired), then clears source_plant_id, then
+      # deletes plantings, then lots: all three foreign keys are RESTRICT, and a lot points at its plantings while a
+      # sown planting points at its packet. Since release 2a it also deletes the mix's component rows ahead of
+      # everything (both of that table's keys to plant_varieties are RESTRICT) and takes a mix by ID as well as by
+      # name. Those sweep edits landed with this block, and neither is safe without the other.
       if [[ -n "${STAGING_API_INVENTORY:-}" && -n "${CREATED_VARIETY_ID:-}" && -n "${CREATED_PLANT_ID:-}" ]]; then
         SP_INV="${STAGING_API_INVENTORY%/}/api/inventory-items"
         SP_UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -1388,13 +1459,44 @@ else
           SP_STATE="$SP_CODE $(sp_jq "$SP_IDS_JQ")|$(sp_jq '.source_plant_id // "null"')"
         }
 
-        sp_req POST "$STAGING_API_PLANTS" "{\"project_id\": \"$CREATED_PROJECT_ID\", \"name\": \"$SP_P2_NAME\"}"
+        # sp_drop LABEL URL → DELETE; returns 0 when it answered 200. Anything else is a FAIL under the ship gate
+        # and a WARN without it, and returns 1 (always called as an `if` condition).
+        sp_drop() {
+          sp_req DELETE "$2"
+          if [[ "$SP_CODE" == "200" ]]; then return 0; fi
+          if [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+            sp_fail "$1" "DELETE $2 → HTTP $SP_CODE (expected 200; cleanup() retries, the L-058 sweep removes the row either way)"
+          else
+            echo "⚠️  WARN [seed-parents:$1] DELETE $2 → HTTP $SP_CODE (cleanup() retries; the L-058 sweep removes the row either way)"
+          fi
+          return 1
+        }
+        # sp_lot NAME VARIETY PARENT PARENT [CACHE] → a seeds lot's POST body: F3's packet keys, the two parents as
+        # source_plant_ids and, when a fifth argument is given, the single key source_plant_id beside them.
+        sp_lot() {
+          echo "{\"name\": \"$1\", \"type\": \"consumable\", \"category\": \"seeds\", \"unit\": \"packet\", \"quantity_on_hand\": 1, \"variety_id\": \"$2\", \"source_plant_ids\": [\"$3\", \"$4\"]${5:+, \"source_plant_id\": \"$5\"}}"
+        }
+        SP_REFUSED_NAME="smoke-test-seedlot-refused-$TEST_RUN_ID"
+        # sp_refused → SP_NONE, "<HTTP> <n>": the seeds list, and how many of its rows carry the refused lot's name.
+        sp_refused() {
+          sp_req GET "$SP_INV?category=seeds"
+          SP_NONE="$SP_CODE $(sp_jqx "$SP_REFUSED_NAME" 'if type == "array" then ([.[] | select(.name == $x)] | length) else "not-an-array" end')"
+        }
+
+        # P2 is created ON block D's variety (release 2a: a planting added to a set of two or more must carry one).
+        sp_req POST "$STAGING_API_PLANTS" "{\"project_id\": \"$CREATED_PROJECT_ID\", \"name\": \"$SP_P2_NAME\", \"variety_id\": \"$CREATED_VARIETY_ID\"}"
         SP_P2=$(sp_jq '.id // empty')
         # Handed to cleanup() as soon as P2 itself exists, whatever the test below makes of block D's id.
         if sp_id_ok "$SP_P2"; then CREATED_SEEDPARENT_PLANT_ID="$SP_P2"; fi
         if [[ "${SP_CODE:0:1}" == "2" ]] && sp_id_ok "$SP_P2" && sp_id_ok "$SP_P1"; then
           sp_pass "second-parent" "POST /api/plants → HTTP $SP_CODE (id: $SP_P2); the first parent is block D's planting $SP_P1"
           SP_BOTH=$(jq -rn --arg a "$SP_P1" --arg b "$SP_P2" '[$a, $b] | sort | join(",")' 2>/dev/null || echo "unsortable")
+
+          # P1 gets block D's variety back: block D cleared it, and U1, U4 and U7 need it set. Judged on the GET,
+          # so a PUT that did not take shows as the variety it left. Cleared again after U22.
+          sp_req PUT "${STAGING_API_PLANTS%/}/api/plants/$SP_P1" "{\"variety_id\": \"$CREATED_VARIETY_ID\"}"
+          SP_WRITE="$SP_CODE"; sp_req GET "${STAGING_API_PLANTS%/}/api/plants/$SP_P1"
+          sp_check "first-parent-variety" "$SP_CODE $(sp_jq '.variety_id // "null"')" "200 $CREATED_VARIETY_ID" "PUT /api/plants/$SP_P1 {variety_id: block D's} → HTTP $SP_WRITE; then its GET: variety_id"
 
           # ── U0) the one-parent path every shipped client uses: create, move, clear, source-kind, on its own lot ──
           # The create's body is SaveSeedSheet's: F3's packet keys plus source_plant_id, and no source_kind key.
@@ -1428,6 +1530,8 @@ else
             sp_fail "u0a-legacy-create" "POST /api/inventory-items with source_plant_id P1 → HTTP $SP_CODE (expected 201 and an id): $(head -c 200 "$SP_OUT" 2>/dev/null || true)"
           fi
 
+          # The block's first mint: U1 to U6 and P2's DELETE ride this token (14 requests).
+          CLERK_JWT=$(mint_session_token)
           sp_req POST "$STAGING_API_INVENTORY" "{\"name\": \"smoke-test-seedlot-$TEST_RUN_ID\", \"type\": \"consumable\", \"category\": \"seeds\", \"unit\": \"packet\", \"quantity_on_hand\": 1, \"variety_id\": \"$CREATED_VARIETY_ID\", \"source_plant_ids\": [\"$SP_P1\", \"$SP_P2\"]}"
           SP_LOT=$(sp_jq '.id // empty')
           SP_LOT_MADE=false
@@ -1489,9 +1593,172 @@ else
             echo "⚠️  WARN [seed-parents:second-parent-delete] DELETE /api/plants/$SP_P2 → HTTP $SP_CODE (cleanup() retries; the L-058 sweep removes the row either way)"
           fi
 
+          # ── U7 to U22) release 2a: the three refusals, the mix, a lot filed under it, its filing, its plant
+          #      count, a stale set, its two seed_saved events, the stats row ──
+          # The block's second mint: everything from here to P1's variety being cleared rides it (40 requests).
+          CLERK_JWT=$(mint_session_token)
+          SP_VAR="${STAGING_API_VARIETIES%/}/api/varieties"
+          SP_NIL="00000000-0000-0000-0000-000000000000"
+          SP_MIX=""; SP_MIX_MADE=false; SP_MIXLOT=""; SP_E1="$SP_NIL"; SP_E2="$SP_NIL"
+          sp_req POST "$STAGING_API_VARIETIES" "{\"name\": \"smoke-test-variety2-$TEST_RUN_ID\", \"crop_type_slug\": \"tomato\"}"
+          SP_V2=$(sp_jq '.id // empty')
+          if sp_id_ok "$SP_V2"; then CREATED_SEEDVARIETY2_ID="$SP_V2"; fi
+          sp_req POST "$STAGING_API_VARIETIES" "{\"name\": \"smoke-test-variety3-$TEST_RUN_ID\", \"crop_type_slug\": \"tomato\"}"
+          SP_V3=$(sp_jq '.id // empty')
+          if sp_id_ok "$SP_V3"; then CREATED_SEEDVARIETY3_ID="$SP_V3"; fi
+          sp_req POST "$STAGING_API_PLANTS" "{\"project_id\": \"$CREATED_PROJECT_ID\", \"name\": \"smoke-test-seedparent3-$TEST_RUN_ID\", \"variety_id\": \"$SP_V2\"}"
+          SP_P3=$(sp_jq '.id // empty')
+          if sp_id_ok "$SP_P3"; then CREATED_SEEDPARENT3_PLANT_ID="$SP_P3"; fi
+          # P4 has NO variety yet: U8 needs it bare, U9 gives it V3.
+          sp_req POST "$STAGING_API_PLANTS" "{\"project_id\": \"$CREATED_PROJECT_ID\", \"name\": \"smoke-test-seedparent4-$TEST_RUN_ID\"}"
+          SP_P4=$(sp_jq '.id // empty')
+          if sp_id_ok "$SP_P4"; then CREATED_SEEDPARENT4_PLANT_ID="$SP_P4"; fi
+          if sp_id_ok "$SP_V2" && sp_id_ok "$SP_V3" && sp_id_ok "$SP_P3" && sp_id_ok "$SP_P4"; then
+            sp_pass "u7-rows" "two tomato varieties ($SP_V2, $SP_V3) and two plantings ($SP_P3 on the first, $SP_P4 with no variety)"
+            # A mix's key and its component list: the two variety ids, sorted, comma-joined (lowercase uuids sort
+            # as text the way Postgres sorts them as uuid).
+            SP_VKEY=$(jq -rn --arg a "$SP_V2" --arg b "$SP_V3" '[$a, $b] | sort | join(",")' 2>/dev/null || echo "unsortable")
+            SP_MIXBOTH=$(jq -rn --arg a "$SP_P3" --arg b "$SP_P4" '[$a, $b] | sort | join(",")' 2>/dev/null || echo "unsortable")
+
+            # ── U7) two parents of different crops ──
+            sp_req POST "$STAGING_API_INVENTORY" "$(sp_lot "$SP_REFUSED_NAME" "$CREATED_VARIETY_ID" "$SP_P1" "$SP_P3")"
+            SP_WRITE="$SP_CODE $(sp_jq '.code // "-"')"; sp_refused
+            sp_check "u7-mixed-crop-refused" "$SP_WRITE $SP_NONE" "400 mixed_crop_parents 200 0" "POST source_plant_ids [P1 (no crop), P3 (tomato)]; its status and code, then the seeds list: rows named $SP_REFUSED_NAME"
+
+            # ── U8) a parent with no variety ──
+            sp_req POST "$STAGING_API_INVENTORY" "$(sp_lot "$SP_REFUSED_NAME" "$SP_V2" "$SP_P3" "$SP_P4")"
+            SP_WRITE="$SP_CODE $(sp_jq '.code // "-"') $(sp_jq '.plant_id // "-"')"; sp_refused
+            sp_check "u8-parent-without-variety-refused" "$SP_WRITE $SP_NONE" "400 parent_without_variety $SP_P4 200 0" "POST source_plant_ids [P3, P4], P4 with no variety; its status, code and plant_id, then the seeds list: rows named $SP_REFUSED_NAME"
+
+            # ── U9) P4 gets V3 ──
+            sp_req PUT "${STAGING_API_PLANTS%/}/api/plants/$SP_P4" "{\"variety_id\": \"$SP_V3\"}"
+            SP_WRITE="$SP_CODE"; sp_req GET "${STAGING_API_PLANTS%/}/api/plants/$SP_P4"
+            sp_check "u9-fourth-parent-variety" "$SP_CODE $(sp_jq '.variety_id // "null"')" "200 $SP_V3" "PUT /api/plants/$SP_P4 {variety_id: V3} → HTTP $SP_WRITE; then its GET: variety_id"
+
+            # ── U10) two varieties under a plain one ──
+            sp_req POST "$STAGING_API_INVENTORY" "$(sp_lot "$SP_REFUSED_NAME" "$SP_V2" "$SP_P3" "$SP_P4")"
+            SP_WRITE="$SP_CODE $(sp_jq '.code // "-"') $(sp_jq '(.component_variety_ids // []) | sort | join(",")')"; sp_refused
+            sp_check "u10-blend-required-refused" "$SP_WRITE $SP_NONE" "400 blend_required $SP_VKEY 200 0" "POST source_plant_ids [P3 (V2), P4 (V3)] filed under V2; its status, code and component_variety_ids, then the seeds list: rows named $SP_REFUSED_NAME"
+
+            # ── U11) the mix: created, found again with the ids swapped, read back ──
+            sp_req POST "$SP_VAR/blend" "{\"component_variety_ids\": [\"$SP_V2\", \"$SP_V3\"], \"create\": true}"
+            SP_MIX=$(sp_jq '.id // empty')
+            if sp_id_ok "$SP_MIX"; then
+              CREATED_SEEDMIX_VARIETY_ID="$SP_MIX"
+              SP_MIX_MADE=true
+              sp_check "u11-blend-create" "$SP_CODE $(sp_jq '.created')|$(sp_jq '.variety_rank // "null"')|$(sp_jq '.blend_key // "null"')|$(sp_jq '[.components[]?.id] | sort | join(",")')" "201 true|blend|$SP_VKEY|$SP_VKEY" "POST /api/varieties/blend {[V2, V3], create: true}; its status, created|variety_rank|blend_key|component ids"
+              sp_req POST "$SP_VAR/blend" "{\"component_variety_ids\": [\"$SP_V3\", \"$SP_V2\"], \"create\": true}"
+              sp_check "u11-blend-swapped-same-row" "$SP_CODE $(sp_jq '.created')|$(sp_jq '.id // "null"')|$(sp_jq '.variety_rank // "null"')" "200 false|$SP_MIX|blend" "the same POST with the ids swapped; its status, created|id (the first call's)|variety_rank"
+              sp_req GET "$SP_VAR/$SP_MIX"
+              sp_check "u11-blend-readback" "$SP_CODE $(sp_jq '.id // "null"')|$(sp_jq '.variety_rank // "null"')|$(sp_jq '.blend_key // "null"')" "200 $SP_MIX|blend|$SP_VKEY" "GET /api/varieties/$SP_MIX: id|variety_rank|blend_key"
+
+              # ── U12) a lot filed under the mix, both parents, the single key beside the array ──
+              # P4 is the single key because it is NOT the array's first id: a create that ignored it caches P3.
+              sp_req POST "$STAGING_API_INVENTORY" "$(sp_lot "smoke-test-seedlot-mix-$TEST_RUN_ID" "$SP_MIX" "$SP_P3" "$SP_P4" "$SP_P4")"
+              SP_MIXLOT=$(sp_jq '.id // empty')
+              if [[ "$SP_CODE" == "201" ]] && sp_id_ok "$SP_MIXLOT"; then
+                CREATED_SEEDMIX_LOT_ID="$SP_MIXLOT"
+                SP_FILED_MIX="$SP_MIX|blend"   # the lot's GET while it is filed under the mix: variety_id|variety_rank
+                sp_req GET "$SP_INV/$SP_MIXLOT"
+                sp_check "u12-mix-lot-readback" "$SP_CODE $(sp_jq "$SP_IDS_JQ")|$(sp_jq '.source_plant_id // "null"')|$(sp_jq '.variety_id // "null"')|$(sp_jq '.variety_rank // "null"')|$(sp_jq '[.source_plants[]? | .crop_slug // "null"] | join(",")')" "200 $SP_MIXBOTH|$SP_P4|$SP_FILED_MIX|tomato,tomato" "POST under the mix with source_plant_ids [P3, P4] and source_plant_id P4 → HTTP 201; its GET: parent ids|source_plant_id|variety_id|variety_rank|each parent's crop_slug"
+
+                # ── U13) the lot's LIST row, kept whole for U16 ──
+                sp_req GET "$SP_INV?category=seeds"
+                SP_ROW=$(sp_jqx "$SP_MIXLOT" '[.[]? | select(.id == $x)][0] // empty')
+                sp_check "u13-list-row" "$SP_CODE $(jq -rn --argjson r "${SP_ROW:-null}" '($r.variety_id // "null") + "|" + ($r.variety_rank // "null")' 2>/dev/null || echo "unparseable")" "200 $SP_FILED_MIX" "GET /api/inventory-items?category=seeds; the lot's row: variety_id|variety_rank"
+
+                # ── U14) the plant count, through /seed-measure ──
+                sp_req PUT "$SP_INV/$SP_MIXLOT/seed-measure" '{"seed_parent_plant_count": 3}'
+                SP_WRITE="$SP_CODE $(sp_jq '.seed_parent_plant_count // "null"')"; sp_req GET "$SP_INV/$SP_MIXLOT"
+                sp_check "u14-plant-count-readback" "$SP_WRITE $SP_CODE $(sp_jq '.seed_parent_plant_count // "null"')" "200 3 200 3" "PUT /seed-measure {seed_parent_plant_count: 3}; its status and echo, then the GET: seed_parent_plant_count"
+
+                # ── U15) re-file to a component ──
+                sp_req PUT "$SP_INV/$SP_MIXLOT/filing" "{\"variety_id\": \"$SP_V2\", \"expect_variety_id\": \"$SP_MIX\"}"
+                SP_WRITE="$SP_CODE $(sp_jq '.changed')|$(sp_jq '.previous.variety_id // "null"')"
+                SP_PREVIOUS=$(sp_jq '.previous.variety_id // empty')
+                sp_req GET "$SP_INV/$SP_MIXLOT"
+                sp_check "u15-filing-to-component" "$SP_WRITE $SP_CODE $(sp_jq '.variety_id // "null"')" "200 true|$SP_MIX 200 $SP_V2" "PUT /filing {variety_id: V2, expect_variety_id: the mix}; its status, changed|previous.variety_id, then the GET: variety_id"
+
+                # ── U16) U13's row, stale by now, through the wide PUT ──
+                sp_req PUT "$SP_INV/$SP_MIXLOT" "$SP_ROW"
+                SP_WRITE="$SP_CODE"; sp_req GET "$SP_INV/$SP_MIXLOT"
+                sp_check "u16-stale-list-row-put-keeps-filing" "$SP_WRITE $SP_CODE $(sp_jq '.variety_id // "null"')|$(sp_jq '.seed_parent_plant_count // "null"')" "200 200 $SP_V2|3" "PUT /api/inventory-items/:id with the list row read before the re-file (it says the mix, and no plant count); its status, then the GET: variety_id|seed_parent_plant_count"
+
+                # ── U17) and back, from what U15's reply called previous ──
+                sp_req PUT "$SP_INV/$SP_MIXLOT/filing" "{\"variety_id\": \"$SP_PREVIOUS\", \"expect_variety_id\": \"$SP_V2\"}"
+                SP_WRITE="$SP_CODE $(sp_jq '.changed')"; sp_req GET "$SP_INV/$SP_MIXLOT"
+                sp_check "u17-filing-back-from-previous" "$SP_WRITE $SP_CODE $(sp_jq '.variety_id // "null"')|$(sp_jq '.variety_rank // "null"')" "200 true 200 $SP_FILED_MIX" "PUT /filing {variety_id: U15's previous, expect_variety_id: V2}; its status and changed, then the GET: variety_id|variety_rank"
+
+                # ── U18) the plant count cleared ──
+                sp_req PUT "$SP_INV/$SP_MIXLOT/seed-measure" '{"seed_parent_plant_count": null}'
+                SP_WRITE="$SP_CODE"; sp_req GET "$SP_INV/$SP_MIXLOT"
+                sp_check "u18-plant-count-cleared" "$SP_WRITE $SP_CODE $(sp_jq '.seed_parent_plant_count // "null"')" "200 200 null" "PUT /seed-measure {seed_parent_plant_count: null}; its status, then the GET: seed_parent_plant_count"
+
+                # ── U19) a set sent against a stale reading of the lot ──
+                sp_req PUT "$SP_INV/$SP_MIXLOT/source-plants" "{\"source_plant_ids\": [\"$SP_P3\"], \"expected_source_plant_ids\": [\"$SP_P3\"]}"
+                SP_WRITE="$SP_CODE $(sp_jq '.code // "-"')"; sp_state "$SP_MIXLOT"
+                sp_check "u19-stale-set-refused" "$SP_WRITE $SP_STATE" "409 lot_changed 200 $SP_MIXBOTH|$SP_P4" "PUT /source-plants [P3] with expected_source_plant_ids [P3] on a lot that holds P3 and P4; its status and code, then the GET: both parents|source_plant_id, as before it"
+
+                # ── U20) one seed_saved event per parent, in turn, each then listed on its planting ──
+                # SaveSeedSheet's body (plant_id, no project_id) plus the events Lambda's own smoke switch. A day
+                # back, as block C dates its event: a bare date is stored at noon UTC, which today can be ahead of now.
+                SP_DAY=$(utc_days_ago 1)
+                SP_EV_JQ='if type == "array" then ([.[] | select(.event_type == "seed_saved" and .metadata.seed_lot_id == $x)] | length) else "not-an-array:" + type end'
+                sp_req POST "$STAGING_API_EVENTS" "{\"plant_id\": \"$SP_P3\", \"event_type\": \"seed_saved\", \"event_date\": \"$SP_DAY\", \"notes\": \"CI smoke — safe to delete\", \"metadata\": {\"seed_lot_id\": \"$SP_MIXLOT\", \"_skip_critter_award\": true}}"
+                SP_WRITE="$SP_CODE"; SP_EVENT=$(sp_jq '.id // empty')
+                if sp_id_ok "$SP_EVENT"; then SP_E1="$SP_EVENT"; fi
+                sp_req GET "${STAGING_API_EVENTS%/}/api/events?plant_id=$SP_P3&limit=50"
+                sp_check "u20-seed-saved-first-parent" "$SP_WRITE $SP_CODE $(sp_jqx "$SP_MIXLOT" "$SP_EV_JQ")" "201 200 1" "POST /api/events seed_saved on P3 naming the lot; its status, then GET /api/events?plant_id=P3: seed_saved events carrying this seed_lot_id"
+                sp_req POST "$STAGING_API_EVENTS" "{\"plant_id\": \"$SP_P4\", \"event_type\": \"seed_saved\", \"event_date\": \"$SP_DAY\", \"notes\": \"CI smoke — safe to delete\", \"metadata\": {\"seed_lot_id\": \"$SP_MIXLOT\", \"_skip_critter_award\": true}}"
+                SP_WRITE="$SP_CODE"; SP_EVENT=$(sp_jq '.id // empty')
+                if sp_id_ok "$SP_EVENT"; then SP_E2="$SP_EVENT"; fi
+                sp_req GET "${STAGING_API_EVENTS%/}/api/events?plant_id=$SP_P4&limit=50"
+                sp_check "u20-seed-saved-second-parent" "$SP_WRITE $SP_CODE $(sp_jqx "$SP_MIXLOT" "$SP_EV_JQ")" "201 200 1" "POST /api/events seed_saved on P4 naming the lot; its status, then GET /api/events?plant_id=P4: seed_saved events carrying this seed_lot_id"
+
+                # ── U21) the stats read: every lot row counts its parents, and this lot has two ──
+                # While the lot is live (stat_saved_lot drops a deleted one). sections=seed_lots is a cache key no
+                # other call in the run uses (block R reads the whole envelope), so this is not R's answer replayed.
+                # The lot is dated by its created_at in ET, the season by the same clock: block R's own arithmetic.
+                if [[ -n "${STAGING_API_HARVESTS:-}" && "$STAGING_API_HARVESTS" != *placeholder* ]]; then
+                  SP_MONTH=$((10#$(TZ=America/New_York date +%m)))
+                  SP_SEASON=$(( $(TZ=America/New_York date +%Y) + (SP_MONTH >= 11 ? 1 : 0) ))
+                  sp_req GET "${STAGING_API_HARVESTS%/}/api/harvests/season-stats?season=$SP_SEASON&sections=seed_lots"
+                  sp_check "u21-season-stats-parent-count" "$SP_CODE $(sp_jqx "$SP_MIXLOT" '.sections.seed_lots.series.rows as $r | if ($r | type) != "array" then "no-rows:" + ($r | type) else "every-row-counted:" + ([$r[] | (.parent_count | type) == "number"] | all | tostring) + "|this-lot:" + ([$r[] | select(.lot_id == $x) | .parent_count | tostring] | join(",")) end')" "200 every-row-counted:true|this-lot:2" "GET season-stats?season=$SP_SEASON&sections=seed_lots; whether every lot row has a numeric parent_count, then this lot's"
+                elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+                  sp_fail "u21-season-stats-parent-count" "STAGING_API_HARVESTS unset/placeholder — the ship gate may not skip this assert"
+                else
+                  echo "⚠️  WARN [seed-parents:u21-season-stats-parent-count] STAGING_API_HARVESTS unset/placeholder — parent_count NOT read"
+                fi
+
+                # ── U22) the lot goes, its parents still linked ──
+                sp_req DELETE "$SP_INV/$SP_MIXLOT"
+                SP_WRITE="$SP_CODE $(sp_jq '. == {"ok": true}')"
+                if [[ "$SP_CODE" == "200" ]]; then CREATED_SEEDMIX_LOT_ID=""; fi
+                sp_check "u22-mix-lot-delete" "$SP_WRITE" "200 true" "DELETE /api/inventory-items/:id on the lot filed under the mix; ok"
+              else
+                sp_fail "u12-mix-lot" "POST /api/inventory-items under the mix with source_plant_ids [P3, P4] → HTTP $SP_CODE (expected 201 and an id): $(head -c 200 "$SP_OUT" 2>/dev/null || true)"
+              fi
+            else
+              sp_fail "u11-blend-create" "POST /api/varieties/blend → HTTP $SP_CODE (expected 201 and an id): $(head -c 200 "$SP_OUT" 2>/dev/null || true)"
+            fi
+          else
+            sp_fail "u7-rows" "the release 2a rows were not all made (last HTTP $SP_CODE): varieties [$SP_V2] [$SP_V3], plantings [$SP_P3] [$SP_P4]"
+          fi
+          # P3 and P4 go back out, whichever of them exists, for the reason P2 did.
+          if sp_id_ok "$SP_P3"; then
+            if sp_drop "third-parent-delete" "${STAGING_API_PLANTS%/}/api/plants/$SP_P3"; then CREATED_SEEDPARENT3_PLANT_ID=""; fi
+          fi
+          if sp_id_ok "$SP_P4"; then
+            if sp_drop "fourth-parent-delete" "${STAGING_API_PLANTS%/}/api/plants/$SP_P4"; then CREATED_SEEDPARENT4_PLANT_ID=""; fi
+          fi
+          # P1's variety is cleared again: blocks H to L find block D's planting as block D left it.
+          sp_req PUT "${STAGING_API_PLANTS%/}/api/plants/$SP_P1" '{"variety_id": null}'
+          SP_WRITE="$SP_CODE"; sp_req GET "${STAGING_API_PLANTS%/}/api/plants/$SP_P1"
+          sp_check "first-parent-variety-restored" "$SP_CODE $(sp_jq '.variety_id // "null"')" "200 null" "PUT /api/plants/$SP_P1 {variety_id: null} → HTTP $SP_WRITE; then its GET: variety_id"
+
           # ── U5) the link rows, through SQL: live | retired | the cache is the planting of a live row ──
-          # LAST, after every authed request of this block (block D's rule for its own SQL read): the block mints
-          # no token, so nothing that needs one may wait behind a database round trip. By now the lot is
+          # LAST, after every authed request of this block (block D's rule for its own SQL read): nothing that
+          # needs a token may wait behind a database round trip. By now the lot is
           # soft-deleted and so is P2, and the SQL filters on neither, so the same three numbers also show that the
           # links FOLLOW the lot (still live on a deleted lot) and outlast the soft-delete of a parent planting.
           # The lot id goes in as a psql variable (stdin + :'lot'), never spliced into the text (block D's reason).
@@ -1505,6 +1772,25 @@ else
               sp_fail "u5-link-rows-readback" "NEON_STAGING_URL unset or psql missing — the ship gate may not skip this assert"
             else
               echo "⚠️  WARN [seed-parents:u5-link-rows-readback] NEON_STAGING_URL unset or psql missing — the link rows were NOT read back"
+            fi
+          fi
+
+          # ── U23) the mix's rows, and what the two seed_saved events did NOT write, through SQL ──
+          # blend rows for the mix | live component rows naming V2 or V3 | cultivar care_profile rows | xp_events
+          # rows of reason event_logged keyed on either EVENT id. The last is 0 on a correct Lambda whether or not
+          # the smoke user is at the daily cap: a jar-keyed grant is keyed on the lot. Above 0 is the events Lambda
+          # having fallen back to event-keyed rewards. An event that was not made goes in as the nil uuid, which
+          # keys nothing; its own FAIL is U20's. Every id is a psql variable, never spliced (block D's reason).
+          if [[ "$SP_MIX_MADE" == "true" ]]; then
+            if [[ -n "${NEON_STAGING_URL:-}" ]] && command -v psql >/dev/null 2>&1; then
+              SP_MIXROWS=$(psql "$NEON_STAGING_URL" -X -At -v ON_ERROR_STOP=1 -v mix="$SP_MIX" -v va="$SP_V2" -v vb="$SP_V3" -v ea="$SP_E1" -v eb="$SP_E2" \
+                <<< "SELECT (SELECT COUNT(*) FROM plant_varieties WHERE id = :'mix'::uuid AND variety_rank = 'blend' AND blend_key IS NOT NULL) || '|' || (SELECT COUNT(*) FROM variety_blend_component WHERE blend_variety_id = :'mix'::uuid AND deleted_at IS NULL AND component_variety_id IN (:'va'::uuid, :'vb'::uuid)) || '|' || (SELECT COUNT(*) FROM care_profile WHERE scope = 'cultivar' AND scope_id = :'mix'::uuid) || '|' || (SELECT COUNT(*) FROM xp_events WHERE reason = 'event_logged' AND source_id IN (:'ea'::uuid, :'eb'::uuid));") \
+                || SP_MIXROWS="psql-exit-$?"
+              sp_check "u23-mix-rows-readback" "$SP_MIXROWS" "1|2|1|0" "the mix on the staging DSN: blend rows|live component rows (V2, V3)|cultivar care_profile rows|xp_events rows keyed on either seed_saved event"
+            elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+              sp_fail "u23-mix-rows-readback" "NEON_STAGING_URL unset or psql missing — the ship gate may not skip this assert"
+            else
+              echo "⚠️  WARN [seed-parents:u23-mix-rows-readback] NEON_STAGING_URL unset or psql missing — the mix's rows were NOT read back"
             fi
           fi
         else

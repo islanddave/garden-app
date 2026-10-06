@@ -1,6 +1,7 @@
 // V5-SEEDMULTIPARENT-001 — static guards on the staging smoke's block U (seed lots and their parent plantings:
-// the one-parent path every shipped client uses, then a lot with two parents) and on the three statements the
-// L-058 sweep gained for it.
+// the one-parent path every shipped client uses, then a lot with two parents; since release 2a also the parent
+// rules, the named mix, a lot filed under it, its filing, its plant count and its seed_saved events) and on the
+// statements the L-058 sweep gained for it (release 1: the parent links; release 2a: the mix).
 //
 // WHY A FILE-READING TEST (stagingSmokeCareProfile.static.test.js's reason). Both halves run only inside
 // deploy-staging.yml, against the staging Neon branch, when a promote dispatches it. Nothing in the unit or
@@ -24,10 +25,18 @@
 //     failed SQL read-back mapped to the string it is compared with;
 //   * the one-parent create sent the new way (source_plant_ids) instead of the way a shipped client sends it, or
 //     its lot renamed so the sweep no longer collects it;
-//   * the block grown past the number of requests its own comment reasons about: it rides one session token;
-//   * a request that needs the session token placed after the block's SQL read, or a mint call added to it:
-//     the block mints no token (scripts/test_smoke_mint_log.py holds the call-site count, and its failure
-//     message does not say where to look), so its database round trip has to come last.
+//   * the block grown past the number of requests its own comment reasons about, or one of its two mints moved
+//     or dropped, so that a stretch of it outruns a 60-second session token (scripts/test_smoke_mint_log.py holds
+//     the call-site count, and its failure message does not say where to look);
+//   * a request that needs the session token placed after the block's SQL reads;
+//   * RELEASE 2a. A block-U parent created without a variety again: the create then answers 400
+//     parent_without_variety and EVERY promote is refused, whoever dispatches it;
+//   * the mix's component rows deleted after "DELETE FROM plant_varieties", or not at all: 23503 at the next
+//     promote and every one after it (both of the table's keys are RESTRICT; rehearsed on a local PG 17);
+//   * the mix found by its NAME only: a renamed mix keeps its component rows and the same 23503 follows;
+//   * the mix ids captured after a delete has run, or the capture, the delete or the residue term run without
+//     the to_regclass test on a database that has no variety_blend_component;
+//   * a release 2a assert deleted, reordered so it reads before it writes, or its expected string loosened.
 //
 // WHAT IT DOES NOT CATCH: whether the SQL is right for the live schema, or whether the Lambdas answer as block U
 // expects. Every deploy-staging run executes both for real.
@@ -147,12 +156,142 @@ describe('the L-058 sweep takes a smoke lot\'s parent links before the plantings
       `SEED_PARENT_LEFT="(SELECT COUNT(*) FROM seed_lot_parent_planting WHERE inventory_item_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]) OR plant_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]))"`,
     )
     const remaining = run.split('\n').find((l) => l.startsWith('REMAINING='))
-    expect(remaining.endsWith(' + $SEED_PARENT_LEFT;")')).toBe(true)
+    expect(remaining).toContain(" + $SEED_PARENT_LEFT + (SELECT COUNT(*) FROM plant_varieties WHERE id = ANY('{$SMOKE_MIX_IDS}'::uuid[])) + $BLEND_LEFT;\")")
+    expect(remaining.endsWith(' + $BLEND_LEFT;")')).toBe(true)
     expect(remaining).not.toContain('seed_lot_parent_planting')
   })
 
   it('still fails the step when residue remains', () => {
     expect(run).toMatch(/if \[\[ "\$REMAINING" != "0" \]\]; then\n\s*echo "[^\n]*\n\s*exit 1\n\s*fi/)
+  })
+})
+
+// ── release 2a: the named mix (V5-VARIETYBLEND-001) ───────────────────────────────────────────────────────────────
+// "A smoke variety" is whatever the step's own delete-by-name says it is, read from that statement as above.
+const VARIETY_DELETES = SWEEP.run.match(/-c "DELETE FROM plant_varieties WHERE name [^"]+;"/g) ?? []
+const VARIETY_PREDICATE = (VARIETY_DELETES[0] ?? '').replace(/^-c "DELETE FROM plant_varieties WHERE /, '').replace(/;"$/, '')
+const SMOKE_VARIETIES = `SELECT id FROM plant_varieties WHERE ${VARIETY_PREDICATE}`
+const MIX_IDS = "ANY('{$SMOKE_MIX_IDS}'::uuid[])"
+const VARIETY_IDS = "ANY('{$SMOKE_VARIETY_IDS}'::uuid[])"
+
+describe('the L-058 sweep takes a smoke mix\'s component rows before the varieties, and the mix by id', () => {
+  const run = SWEEP.run
+  const lines = run.split('\n')
+  const probe = run.indexOf(
+    `BLEND_TABLE=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT to_regclass('public.variety_blend_component') IS NOT NULL;")`,
+  )
+  const guard = run.indexOf('if [[ "$BLEND_TABLE" == "t" ]]; then')
+  const arm = run.slice(guard, run.indexOf('\nelse\n', guard))
+  const CAPTURE =
+    `SMOKE_MIX_IDS=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT COALESCE(string_agg(DISTINCT blend_variety_id::text, ','), '') FROM variety_blend_component WHERE blend_variety_id IN (${SMOKE_VARIETIES}) OR component_variety_id IN (${SMOKE_VARIETIES});")`
+  const APPEND = 'if [[ -n "$SMOKE_MIX_IDS" ]]; then SMOKE_VARIETY_IDS="${SMOKE_VARIETY_IDS:+$SMOKE_VARIETY_IDS,}$SMOKE_MIX_IDS"; fi'
+  const COMPONENT_DELETE = `DELETE FROM variety_blend_component WHERE blend_variety_id = ${VARIETY_IDS} OR component_variety_id = ${VARIETY_IDS};`
+  const LEFT = `BLEND_LEFT="(SELECT COUNT(*) FROM variety_blend_component WHERE blend_variety_id = ${VARIETY_IDS} OR component_variety_id = ${VARIETY_IDS})"`
+  const chain = run.indexOf('psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 \\\n')
+
+  it('has one delete of varieties by name to take the smoke-variety predicate from', () => {
+    expect(VARIETY_DELETES).toHaveLength(1)
+    expect(VARIETY_PREDICATE).toBe("name ILIKE '%smoke%'")
+  })
+
+  it('reads the table\'s presence with to_regclass and starts from an empty list and a zero residue term', () => {
+    expect(probe).toBeGreaterThan(-1)
+    expect(guard).toBeGreaterThan(probe)
+    const between = run.slice(probe, guard)
+    expect(between).toContain('\nSMOKE_MIX_IDS=""\n')
+    expect(between).toContain('\nBLEND_LEFT="0"\n')
+    // a cast would raise 42P01 on a database without the table
+    expect(run).not.toMatch(/variety_blend_component'::regclass/)
+  })
+
+  it('captures the mix ids, by component rows touching a smoke variety on either side, BEFORE anything is deleted', () => {
+    expect(arm).toContain(CAPTURE)
+    const capture = run.indexOf(CAPTURE)
+    expect(capture).toBeGreaterThan(guard)
+    // the step's first DELETE of any table comes after the capture
+    expect(run.indexOf('DELETE FROM')).toBeGreaterThan(capture)
+    // and after the smoke variety ids themselves were read, which the append below extends
+    expect(capture).toBeGreaterThan(run.indexOf('SMOKE_VARIETY_IDS=$(psql '))
+  })
+
+  it('adds the captured ids to SMOKE_VARIETY_IDS without ever writing an empty array element', () => {
+    expect(arm).toContain(APPEND)
+    expect(arm.indexOf(APPEND)).toBeGreaterThan(arm.indexOf(CAPTURE))
+    // the only two assignments of the list: the capture by name and this append
+    expect(run.match(/SMOKE_VARIETY_IDS=/g) ?? []).toHaveLength(2)
+  })
+
+  it('deletes the component rows of every captured id, once, under ON_ERROR_STOP, inside the guarded arm', () => {
+    const deletes = run.match(/DELETE FROM variety_blend_component\b[^"]*/g) ?? []
+    expect(deletes).toHaveLength(1)
+    expect(deletes[0]).toBe(COMPONENT_DELETE)
+    expect(arm).toContain(`psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -c "${COMPONENT_DELETE}"`)
+    // after the append: before it the list holds the smoke-named varieties only
+    expect(arm.indexOf(COMPONENT_DELETE)).toBeGreaterThan(arm.indexOf(APPEND))
+    expect(arm).toContain(LEFT)
+    expect(arm.indexOf(LEFT)).toBeGreaterThan(arm.indexOf(COMPONENT_DELETE))
+  })
+
+  it('names the table only in the probe and in that arm, never in the main chain', () => {
+    const calls = lines.filter((l) => l.includes('psql ') && l.includes('variety_blend_component'))
+    expect(calls).toHaveLength(3)
+    expect(calls[0]).toContain("to_regclass('public.variety_blend_component')")
+    expect(arm).toContain(calls[1].trim())
+    expect(arm).toContain(calls[2].trim())
+    expect(lines.filter((l) => l.trimStart().startsWith('-c "') && l.includes('variety_blend_component'))).toHaveLength(0)
+    expect(arm).not.toContain('-c "DELETE FROM plants ')
+    expect(lines.find((l) => l.startsWith('REMAINING='))).not.toContain('variety_blend_component')
+  })
+
+  it('runs the component delete ahead of the main chain, and so ahead of both variety deletes', () => {
+    const component = run.indexOf(COMPONENT_DELETE)
+    expect(chain).toBeGreaterThan(component)
+    expect(run.indexOf('-c "DELETE FROM plant_varieties ')).toBeGreaterThan(chain)
+  })
+
+  it('deletes the mix rows by id straight ahead of the delete by name, after the plantings and the lots', () => {
+    const byId = `-c "DELETE FROM plant_varieties WHERE id = ${MIX_IDS};" \\`
+    const at = lines.findIndex((l) => l.trim() === byId)
+    expect(at).toBeGreaterThan(-1)
+    expect(lines[at + 1].trim()).toBe(`${VARIETY_DELETES[0]} \\`)
+    expect(run.match(/-c "DELETE FROM plant_varieties /g) ?? []).toHaveLength(2)
+    // plants.variety_id and inventory_items.variety_id are RESTRICT, and the smoke's lot is filed under its mix
+    expect(run.indexOf(byId)).toBeGreaterThan(run.indexOf('-c "DELETE FROM inventory_items '))
+    expect(run.indexOf('-c "DELETE FROM inventory_items ')).toBeGreaterThan(run.indexOf('-c "DELETE FROM plants '))
+  })
+
+  it('takes the mix by id in the cultivar entity, entity_tag and care_profile deletes, each before the variety deletes', () => {
+    const entity = `-c "DELETE FROM entity         WHERE entity_type='cultivar' AND (cultivar_ref_id IN (${SMOKE_VARIETIES}) OR cultivar_ref_id = ${MIX_IDS});"`
+    const care = `-c "DELETE FROM care_profile   WHERE scope='cultivar' AND (scope_id IN (${SMOKE_VARIETIES}) OR scope_id = ${MIX_IDS});"`
+    const tag = `OR entity_id IN (${SMOKE_VARIETIES}) OR entity_id = ${MIX_IDS} OR entity_id IN (SELECT id FROM locations `
+    const firstVarietyDelete = run.indexOf('-c "DELETE FROM plant_varieties ')
+    for (const statement of [entity, care, tag]) {
+      expect(run).toContain(statement)
+      expect(run.indexOf(statement)).toBeGreaterThan(chain)
+      expect(firstVarietyDelete).toBeGreaterThan(run.indexOf(statement))
+    }
+    expect(run.match(/DELETE FROM care_profile\b/g) ?? []).toHaveLength(1)
+  })
+
+  it('splices the captured mix ids only as a quoted uuid[] literal, which is empty when nothing was captured', () => {
+    // every use but the two assignments, the emptiness test and the append
+    const uses = run.match(/\$SMOKE_MIX_IDS/g) ?? []
+    const asArray = run.split(MIX_IDS).length - 1
+    expect(asArray).toBe(5)
+    expect(uses).toHaveLength(asArray + 2)
+  })
+
+  it('counts leftover component rows and mix rows by the captured ids', () => {
+    expect(run).toContain(LEFT)
+    const remaining = lines.find((l) => l.startsWith('REMAINING='))
+    expect(remaining).toContain(`(SELECT COUNT(*) FROM plant_varieties WHERE id = ${MIX_IDS})`)
+    expect(remaining).toContain(`(SELECT COUNT(*) FROM care_profile WHERE scope='cultivar' AND scope_id = ${VARIETY_IDS})`)
+  })
+
+  it('says why the lot-keyed xp_events rows are left', () => {
+    const text = readFileSync(resolve(process.cwd(), '.github/workflows/deploy-staging.yml'), 'utf8')
+    expect(text).toContain('# NOT SWEPT, on purpose: xp_events.')
+    expect(run).not.toContain('xp_events')
   })
 })
 
@@ -184,7 +323,40 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     expect(create).toContain('\\"source_plant_ids\\": [\\"$SP_P1\\", \\"$SP_P2\\"]}"')
     expect(create).toContain('\\"name\\": \\"smoke-test-seedlot-$TEST_RUN_ID\\"')
     expect(code).toContain('SP_P2_NAME="smoke-test-seedparent-$TEST_RUN_ID"')
-    expect(code).toContain('sp_req POST "$STAGING_API_PLANTS" "{\\"project_id\\": \\"$CREATED_PROJECT_ID\\", \\"name\\": \\"$SP_P2_NAME\\"}"')
+  })
+
+  // RELEASE 2a, the blocking one: a planting ADDED to a set of two or more must carry a variety, or the create
+  // answers 400 parent_without_variety and every promote is refused.
+  it('gives both parents block D\'s variety before the two-parent create: P2 at its own create, P1 by a PUT read back', () => {
+    expect(code).toContain('sp_req POST "$STAGING_API_PLANTS" "{\\"project_id\\": \\"$CREATED_PROJECT_ID\\", \\"name\\": \\"$SP_P2_NAME\\", \\"variety_id\\": \\"$CREATED_VARIETY_ID\\"}"')
+    expect(code).toContain('SP_P1="$CREATED_PLANT_ID"')
+    expect(flat).toContain(
+      [
+        'sp_req PUT "${STAGING_API_PLANTS%/}/api/plants/$SP_P1" "{\\"variety_id\\": \\"$CREATED_VARIETY_ID\\"}"',
+        'SP_WRITE="$SP_CODE"; sp_req GET "${STAGING_API_PLANTS%/}/api/plants/$SP_P1"',
+        `sp_check "first-parent-variety" "$SP_CODE $(sp_jq '.variety_id // "null"')" "200 $CREATED_VARIETY_ID" `,
+      ].join('\n'),
+    )
+    const given = code.indexOf('sp_check "first-parent-variety" ')
+    expect(given).toBeGreaterThan(code.indexOf('sp_pass "second-parent"'))
+    // before every request that names P1 beside another planting: U1's create, U4's re-add, U7's refusal
+    expect(code.indexOf('smoke-test-seedlot-$TEST_RUN_ID')).toBeGreaterThan(given)
+    expect(code.indexOf('sp_check "u4-readd-readback"')).toBeGreaterThan(given)
+    expect(code.indexOf('sp_check "u7-mixed-crop-refused"')).toBeGreaterThan(given)
+  })
+
+  it('clears P1\'s variety again after the last request that needs it, and reads that back', () => {
+    expect(flat).toContain(
+      [
+        `sp_req PUT "\${STAGING_API_PLANTS%/}/api/plants/$SP_P1" '{"variety_id": null}'`,
+        'SP_WRITE="$SP_CODE"; sp_req GET "${STAGING_API_PLANTS%/}/api/plants/$SP_P1"',
+        `sp_check "first-parent-variety-restored" "$SP_CODE $(sp_jq '.variety_id // "null"')" "200 null" `,
+      ].join('\n'),
+    )
+    const restored = code.indexOf('sp_check "first-parent-variety-restored" ')
+    expect(restored).toBeGreaterThan(code.indexOf('sp_check "u22-mix-lot-delete"'))
+    expect(restored).toBeGreaterThan(code.indexOf('sp_check "u7-mixed-crop-refused"'))
+    expect(code.indexOf('SP_ROWS=$(psql "$NEON_STAGING_URL" ')).toBeGreaterThan(restored)
   })
 
   it('fails, never warns, when either create does not answer as expected', () => {
@@ -234,9 +406,21 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     expect(code).toContain(`sp_req PATCH "$SP_INV/$SP_LOT/source-plant" '{"source_plant_id": null}'`)
   })
 
-  it('expects the delete to go through with its parents linked, and mints no token of its own', () => {
+  it('expects the delete to go through with its parents linked', () => {
     expect(code).toContain('sp_check "u6-delete-with-parents" "$SP_WRITE $SP_CODE" "200 true 404"')
-    expect(code).not.toContain('mint_session_token')
+  })
+
+  it('mints twice: between U0 and U1, and before U7', () => {
+    const mints = [...code.matchAll(/^\s*CLERK_JWT=\$\(mint_session_token\)$/gm)].map((m) => m.index)
+    expect(mints).toHaveLength(2)
+    expect(code.match(/mint_session_token/g) ?? []).toHaveLength(2)
+    // the first: after U0's last line, straight ahead of the two-parent create
+    expect(mints[0]).toBeGreaterThan(code.indexOf('sp_fail "u0a-legacy-create"'))
+    expect(flat).toContain('CLERK_JWT=$(mint_session_token)\nsp_req POST "$STAGING_API_INVENTORY" "{\\"name\\": \\"smoke-test-seedlot-$TEST_RUN_ID\\"')
+    // the second: after P2's delete, ahead of the first release 2a request
+    expect(mints[1]).toBeGreaterThan(code.indexOf('sp_fail "second-parent-delete"'))
+    expect(flat).toContain('CLERK_JWT=$(mint_session_token)\nSP_VAR="${STAGING_API_VARIETIES%/}/api/varieties"')
+    expect(code.indexOf('smoke-test-variety2-$TEST_RUN_ID')).toBeGreaterThan(mints[1])
   })
 
   it('fails the ship gate when the parent planting\'s own delete does not answer 200', () => {
@@ -270,10 +454,20 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
   // trimmed lines, so a sequence of statements can be pinned as a sequence whatever its indentation
   const flat = code.split('\n').map((l) => l.trim()).join('\n')
   const LABELS = [
+    'first-parent-variety',
     'u0a-legacy-create-readback', 'u0b-legacy-move-readback', 'u0c-legacy-clear-readback',
     'u0d-source-kind-readback', 'u0d-parent-refused-on-a-gift-lot', 'u0e-legacy-lot-delete',
     'u1-create-readback', 'u2-seed-lots-of-the-uncached-parent', 'u3-replace-readback', 'u4-readd-readback',
-    'u4-legacy-set-refused', 'u4-legacy-clear-refused', 'u6-delete-with-parents', 'u5-link-rows-readback',
+    'u4-legacy-set-refused', 'u4-legacy-clear-refused', 'u6-delete-with-parents',
+    // release 2a
+    'u7-mixed-crop-refused', 'u8-parent-without-variety-refused', 'u9-fourth-parent-variety',
+    'u10-blend-required-refused', 'u11-blend-create', 'u11-blend-swapped-same-row', 'u11-blend-readback',
+    'u12-mix-lot-readback', 'u13-list-row', 'u14-plant-count-readback', 'u15-filing-to-component',
+    'u16-stale-list-row-put-keeps-filing', 'u17-filing-back-from-previous', 'u18-plant-count-cleared',
+    'u19-stale-set-refused', 'u20-seed-saved-first-parent', 'u20-seed-saved-second-parent',
+    'u21-season-stats-parent-count', 'u22-mix-lot-delete', 'first-parent-variety-restored',
+    // the two SQL reads, last
+    'u5-link-rows-readback', 'u23-mix-rows-readback',
   ]
 
   it('still compares at every assert: each label is an sp_check call, in this order, and there are no others', () => {
@@ -380,15 +574,302 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     expect(SMOKE.slice(0, SMOKE.indexOf('cleanup() {'))).toMatch(/^CREATED_SEEDLOT_LEGACY_ID=""$/m)
   })
 
-  it('makes 26 requests on the one token it rides, the number its own comment reasons from', () => {
-    // every request is an sp_req call or an sp_state call (one GET each); the definitions are not calls
-    const direct = (code.match(/^\s*(?:SP_WRITE="\$SP_CODE"; )?sp_req (?:GET|POST|PUT|PATCH|DELETE) /gm) ?? []).length
-    const inState = (flat.match(/^sp_req GET "\$SP_INV\/\$\{1:-\$SP_LOT\}"$/gm) ?? []).length
-    const states = (code.match(/(?:^\s*|; )sp_state(?: "\$SP_OLD")?$/gm) ?? []).length
-    expect(inState).toBe(1)
-    expect(direct - inState + states).toBe(26)
-    // a larger block needs its token paragraph re-read (and, past the window, a mint between U0 and U1)
-    expect(block).toContain('This block adds 26 requests (11 of')
+  // ── release 2a: U7 to U23 ───────────────────────────────────────────────────────────────────────────────────
+  // Each assert is pinned as the sequence it is: the write, what is kept of its reply, the read, and the sp_check
+  // with the string it expects. A read moved ahead of its write, or an expected string loosened, fails here.
+  const seq = (...linesOf) => linesOf.join('\n')
+
+  it('2a: keeps its three helpers honest: the lot body, the refused-lot read, the delete that fails the ship gate', () => {
+    expect(flat).toContain(seq(
+      'sp_lot() {',
+      'echo "{\\"name\\": \\"$1\\", \\"type\\": \\"consumable\\", \\"category\\": \\"seeds\\", \\"unit\\": \\"packet\\", \\"quantity_on_hand\\": 1, \\"variety_id\\": \\"$2\\", \\"source_plant_ids\\": [\\"$3\\", \\"$4\\"]${5:+, \\"source_plant_id\\": \\"$5\\"}}"',
+      '}',
+    ))
+    expect(code).toContain('SP_REFUSED_NAME="smoke-test-seedlot-refused-$TEST_RUN_ID"')
+    expect(flat).toContain(seq(
+      'sp_refused() {',
+      'sp_req GET "$SP_INV?category=seeds"',
+      `SP_NONE="$SP_CODE $(sp_jqx "$SP_REFUSED_NAME" 'if type == "array" then ([.[] | select(.name == $x)] | length) else "not-an-array" end')"`,
+      '}',
+    ))
+    expect(flat).toContain(seq(
+      'sp_drop() {',
+      'sp_req DELETE "$2"',
+      'if [[ "$SP_CODE" == "200" ]]; then return 0; fi',
+      'if [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then',
+      'sp_fail "$1" "DELETE $2 → HTTP $SP_CODE (expected 200; cleanup() retries, the L-058 sweep removes the row either way)"',
+      'else',
+    ))
+  })
+
+  it('2a: makes two varieties of ONE crop and two plantings, P4 with no variety, and tracks all four for cleanup()', () => {
+    expect(flat).toContain(seq(
+      'sp_req POST "$STAGING_API_VARIETIES" "{\\"name\\": \\"smoke-test-variety2-$TEST_RUN_ID\\", \\"crop_type_slug\\": \\"tomato\\"}"',
+      `SP_V2=$(sp_jq '.id // empty')`,
+      'if sp_id_ok "$SP_V2"; then CREATED_SEEDVARIETY2_ID="$SP_V2"; fi',
+      'sp_req POST "$STAGING_API_VARIETIES" "{\\"name\\": \\"smoke-test-variety3-$TEST_RUN_ID\\", \\"crop_type_slug\\": \\"tomato\\"}"',
+      `SP_V3=$(sp_jq '.id // empty')`,
+      'if sp_id_ok "$SP_V3"; then CREATED_SEEDVARIETY3_ID="$SP_V3"; fi',
+      'sp_req POST "$STAGING_API_PLANTS" "{\\"project_id\\": \\"$CREATED_PROJECT_ID\\", \\"name\\": \\"smoke-test-seedparent3-$TEST_RUN_ID\\", \\"variety_id\\": \\"$SP_V2\\"}"',
+      `SP_P3=$(sp_jq '.id // empty')`,
+      'if sp_id_ok "$SP_P3"; then CREATED_SEEDPARENT3_PLANT_ID="$SP_P3"; fi',
+      'sp_req POST "$STAGING_API_PLANTS" "{\\"project_id\\": \\"$CREATED_PROJECT_ID\\", \\"name\\": \\"smoke-test-seedparent4-$TEST_RUN_ID\\"}"',
+      `SP_P4=$(sp_jq '.id // empty')`,
+      'if sp_id_ok "$SP_P4"; then CREATED_SEEDPARENT4_PLANT_ID="$SP_P4"; fi',
+      'if sp_id_ok "$SP_V2" && sp_id_ok "$SP_V3" && sp_id_ok "$SP_P3" && sp_id_ok "$SP_P4"; then',
+    ))
+    expect(code).toContain('sp_fail "u7-rows" "the release 2a rows were not all made')
+    // the key a mix of the two is found by: both ids, sorted, comma-joined
+    expect(code).toContain(`SP_VKEY=$(jq -rn --arg a "$SP_V2" --arg b "$SP_V3" '[$a, $b] | sort | join(",")' 2>/dev/null || echo "unsortable")`)
+    expect(code).toContain(`SP_MIXBOTH=$(jq -rn --arg a "$SP_P3" --arg b "$SP_P4" '[$a, $b] | sort | join(",")' 2>/dev/null || echo "unsortable")`)
+  })
+
+  it('2a: expects the three refusals by code, each followed by a read of the seeds list that finds no such lot', () => {
+    expect(flat).toContain(seq(
+      'sp_req POST "$STAGING_API_INVENTORY" "$(sp_lot "$SP_REFUSED_NAME" "$CREATED_VARIETY_ID" "$SP_P1" "$SP_P3")"',
+      `SP_WRITE="$SP_CODE $(sp_jq '.code // "-"')"; sp_refused`,
+      'sp_check "u7-mixed-crop-refused" "$SP_WRITE $SP_NONE" "400 mixed_crop_parents 200 0" ',
+    ))
+    expect(flat).toContain(seq(
+      'sp_req POST "$STAGING_API_INVENTORY" "$(sp_lot "$SP_REFUSED_NAME" "$SP_V2" "$SP_P3" "$SP_P4")"',
+      `SP_WRITE="$SP_CODE $(sp_jq '.code // "-"') $(sp_jq '.plant_id // "-"')"; sp_refused`,
+      'sp_check "u8-parent-without-variety-refused" "$SP_WRITE $SP_NONE" "400 parent_without_variety $SP_P4 200 0" ',
+    ))
+    expect(flat).toContain(seq(
+      'sp_req POST "$STAGING_API_INVENTORY" "$(sp_lot "$SP_REFUSED_NAME" "$SP_V2" "$SP_P3" "$SP_P4")"',
+      `SP_WRITE="$SP_CODE $(sp_jq '.code // "-"') $(sp_jq '(.component_variety_ids // []) | sort | join(",")')"; sp_refused`,
+      'sp_check "u10-blend-required-refused" "$SP_WRITE $SP_NONE" "400 blend_required $SP_VKEY 200 0" ',
+    ))
+    // between the last two, P4 gets its variety: the same body is refused for a different reason after it
+    expect(flat).toContain(seq(
+      'sp_req PUT "${STAGING_API_PLANTS%/}/api/plants/$SP_P4" "{\\"variety_id\\": \\"$SP_V3\\"}"',
+      'SP_WRITE="$SP_CODE"; sp_req GET "${STAGING_API_PLANTS%/}/api/plants/$SP_P4"',
+      `sp_check "u9-fourth-parent-variety" "$SP_CODE $(sp_jq '.variety_id // "null"')" "200 $SP_V3" `,
+    ))
+  })
+
+  it('2a: makes the mix, finds it again with the ids swapped, and reads it back by id', () => {
+    expect(flat).toContain(seq(
+      'sp_req POST "$SP_VAR/blend" "{\\"component_variety_ids\\": [\\"$SP_V2\\", \\"$SP_V3\\"], \\"create\\": true}"',
+      `SP_MIX=$(sp_jq '.id // empty')`,
+      'if sp_id_ok "$SP_MIX"; then',
+      'CREATED_SEEDMIX_VARIETY_ID="$SP_MIX"',
+      'SP_MIX_MADE=true',
+      `sp_check "u11-blend-create" "$SP_CODE $(sp_jq '.created')|$(sp_jq '.variety_rank // "null"')|$(sp_jq '.blend_key // "null"')|$(sp_jq '[.components[]?.id] | sort | join(",")')" "201 true|blend|$SP_VKEY|$SP_VKEY" `,
+    ))
+    expect(flat).toContain(seq(
+      'sp_req POST "$SP_VAR/blend" "{\\"component_variety_ids\\": [\\"$SP_V3\\", \\"$SP_V2\\"], \\"create\\": true}"',
+      `sp_check "u11-blend-swapped-same-row" "$SP_CODE $(sp_jq '.created')|$(sp_jq '.id // "null"')|$(sp_jq '.variety_rank // "null"')" "200 false|$SP_MIX|blend" `,
+    ))
+    expect(flat).toContain(seq(
+      'sp_req GET "$SP_VAR/$SP_MIX"',
+      `sp_check "u11-blend-readback" "$SP_CODE $(sp_jq '.id // "null"')|$(sp_jq '.variety_rank // "null"')|$(sp_jq '.blend_key // "null"')" "200 $SP_MIX|blend|$SP_VKEY" `,
+    ))
+    expect(code).toContain('SP_VAR="${STAGING_API_VARIETIES%/}/api/varieties"')
+    expect(code).toContain('sp_fail "u11-blend-create" "POST /api/varieties/blend → HTTP $SP_CODE (expected 201 and an id)')
+    // the flag U23 runs on is lowered before the create
+    expect(code.indexOf('SP_MIX_MADE=false')).toBeGreaterThan(-1)
+    expect(code.indexOf('SP_MIX_MADE=true')).toBeGreaterThan(code.indexOf('SP_MIX_MADE=false'))
+  })
+
+  it('2a: files a lot under the mix with both parents and the single key, and reads all of it back', () => {
+    expect(flat).toContain(seq(
+      'sp_req POST "$STAGING_API_INVENTORY" "$(sp_lot "smoke-test-seedlot-mix-$TEST_RUN_ID" "$SP_MIX" "$SP_P3" "$SP_P4" "$SP_P4")"',
+      `SP_MIXLOT=$(sp_jq '.id // empty')`,
+      'if [[ "$SP_CODE" == "201" ]] && sp_id_ok "$SP_MIXLOT"; then',
+      'CREATED_SEEDMIX_LOT_ID="$SP_MIXLOT"',
+    ))
+    // what the lot's GET reads while it is filed under the mix (U12, U13, U17 compare with it): variety_id|variety_rank
+    expect(code).toMatch(/^\s*SP_FILED_MIX="\$SP_MIX\|blend"(?:\s+#[^\n]*)?$/m)
+    expect(flat).toContain(seq(
+      'sp_req GET "$SP_INV/$SP_MIXLOT"',
+      `sp_check "u12-mix-lot-readback" "$SP_CODE $(sp_jq "$SP_IDS_JQ")|$(sp_jq '.source_plant_id // "null"')|$(sp_jq '.variety_id // "null"')|$(sp_jq '.variety_rank // "null"')|$(sp_jq '[.source_plants[]? | .crop_slug // "null"] | join(",")')" "200 $SP_MIXBOTH|$SP_P4|$SP_FILED_MIX|tomato,tomato" `,
+    ))
+    expect(code).toContain('sp_fail "u12-mix-lot" "POST /api/inventory-items under the mix with source_plant_ids [P3, P4] → HTTP $SP_CODE (expected 201 and an id)')
+  })
+
+  it('2a: keeps the lot\'s list row from BEFORE the re-file, and puts it back whole AFTER it', () => {
+    expect(flat).toContain(seq(
+      'sp_req GET "$SP_INV?category=seeds"',
+      `SP_ROW=$(sp_jqx "$SP_MIXLOT" '[.[]? | select(.id == $x)][0] // empty')`,
+      `sp_check "u13-list-row" "$SP_CODE $(jq -rn --argjson r "\${SP_ROW:-null}" '($r.variety_id // "null") + "|" + ($r.variety_rank // "null")' 2>/dev/null || echo "unparseable")" "200 $SP_FILED_MIX" `,
+    ))
+    expect(flat).toContain(seq(
+      'sp_req PUT "$SP_INV/$SP_MIXLOT/filing" "{\\"variety_id\\": \\"$SP_V2\\", \\"expect_variety_id\\": \\"$SP_MIX\\"}"',
+      `SP_WRITE="$SP_CODE $(sp_jq '.changed')|$(sp_jq '.previous.variety_id // "null"')"`,
+      `SP_PREVIOUS=$(sp_jq '.previous.variety_id // empty')`,
+      'sp_req GET "$SP_INV/$SP_MIXLOT"',
+      `sp_check "u15-filing-to-component" "$SP_WRITE $SP_CODE $(sp_jq '.variety_id // "null"')" "200 true|$SP_MIX 200 $SP_V2" `,
+    ))
+    expect(flat).toContain(seq(
+      'sp_req PUT "$SP_INV/$SP_MIXLOT" "$SP_ROW"',
+      'SP_WRITE="$SP_CODE"; sp_req GET "$SP_INV/$SP_MIXLOT"',
+      `sp_check "u16-stale-list-row-put-keeps-filing" "$SP_WRITE $SP_CODE $(sp_jq '.variety_id // "null"')|$(sp_jq '.seed_parent_plant_count // "null"')" "200 200 $SP_V2|3" `,
+    ))
+    expect(flat).toContain(seq(
+      'sp_req PUT "$SP_INV/$SP_MIXLOT/filing" "{\\"variety_id\\": \\"$SP_PREVIOUS\\", \\"expect_variety_id\\": \\"$SP_V2\\"}"',
+      `SP_WRITE="$SP_CODE $(sp_jq '.changed')"; sp_req GET "$SP_INV/$SP_MIXLOT"`,
+      `sp_check "u17-filing-back-from-previous" "$SP_WRITE $SP_CODE $(sp_jq '.variety_id // "null"')|$(sp_jq '.variety_rank // "null"')" "200 true 200 $SP_FILED_MIX" `,
+    ))
+    // the row is read once, before the first /filing call, and written once, between the two
+    expect(code.match(/SP_ROW=/g) ?? []).toHaveLength(1)
+    const rowRead = code.indexOf('SP_ROW=$(')
+    const refile = code.indexOf('sp_check "u15-filing-to-component"')
+    const rowPut = code.indexOf('sp_req PUT "$SP_INV/$SP_MIXLOT" "$SP_ROW"')
+    const back = code.indexOf('sp_check "u17-filing-back-from-previous"')
+    expect(code.indexOf('/filing"')).toBeGreaterThan(rowRead)
+    expect(rowPut).toBeGreaterThan(refile)
+    expect(back).toBeGreaterThan(rowPut)
+  })
+
+  it('2a: sets the plant count through /seed-measure before the stale row is put back, and clears it after', () => {
+    expect(flat).toContain(seq(
+      `sp_req PUT "$SP_INV/$SP_MIXLOT/seed-measure" '{"seed_parent_plant_count": 3}'`,
+      `SP_WRITE="$SP_CODE $(sp_jq '.seed_parent_plant_count // "null"')"; sp_req GET "$SP_INV/$SP_MIXLOT"`,
+      `sp_check "u14-plant-count-readback" "$SP_WRITE $SP_CODE $(sp_jq '.seed_parent_plant_count // "null"')" "200 3 200 3" `,
+    ))
+    expect(flat).toContain(seq(
+      `sp_req PUT "$SP_INV/$SP_MIXLOT/seed-measure" '{"seed_parent_plant_count": null}'`,
+      'SP_WRITE="$SP_CODE"; sp_req GET "$SP_INV/$SP_MIXLOT"',
+      `sp_check "u18-plant-count-cleared" "$SP_WRITE $SP_CODE $(sp_jq '.seed_parent_plant_count // "null"')" "200 200 null" `,
+    ))
+    const set = code.indexOf('sp_check "u14-plant-count-readback"')
+    const rowPut = code.indexOf('sp_check "u16-stale-list-row-put-keeps-filing"')
+    expect(set).toBeGreaterThan(code.indexOf('SP_ROW=$('))
+    expect(rowPut).toBeGreaterThan(set)
+    expect(code.indexOf('sp_check "u18-plant-count-cleared"')).toBeGreaterThan(rowPut)
+  })
+
+  it('2a: expects a set sent against a stale reading refused with 409 lot_changed, and the lot unchanged', () => {
+    expect(flat).toContain(seq(
+      'sp_req PUT "$SP_INV/$SP_MIXLOT/source-plants" "{\\"source_plant_ids\\": [\\"$SP_P3\\"], \\"expected_source_plant_ids\\": [\\"$SP_P3\\"]}"',
+      `SP_WRITE="$SP_CODE $(sp_jq '.code // "-"')"; sp_state "$SP_MIXLOT"`,
+      'sp_check "u19-stale-set-refused" "$SP_WRITE $SP_STATE" "409 lot_changed 200 $SP_MIXBOTH|$SP_P4" ',
+    ))
+  })
+
+  it('2a: posts one seed_saved event per parent, in turn, in the sheet\'s shape, and finds each on its planting', () => {
+    const post = (plant) =>
+      `sp_req POST "$STAGING_API_EVENTS" "{\\"plant_id\\": \\"$SP_${plant}\\", \\"event_type\\": \\"seed_saved\\", \\"event_date\\": \\"$SP_DAY\\", \\"notes\\": \\"CI smoke — safe to delete\\", \\"metadata\\": {\\"seed_lot_id\\": \\"$SP_MIXLOT\\", \\"_skip_critter_award\\": true}}"`
+    expect(flat).toContain(seq(
+      post('P3'),
+      `SP_WRITE="$SP_CODE"; SP_EVENT=$(sp_jq '.id // empty')`,
+      'if sp_id_ok "$SP_EVENT"; then SP_E1="$SP_EVENT"; fi',
+      'sp_req GET "${STAGING_API_EVENTS%/}/api/events?plant_id=$SP_P3&limit=50"',
+      'sp_check "u20-seed-saved-first-parent" "$SP_WRITE $SP_CODE $(sp_jqx "$SP_MIXLOT" "$SP_EV_JQ")" "201 200 1" ',
+    ))
+    expect(flat).toContain(seq(
+      post('P4'),
+      `SP_WRITE="$SP_CODE"; SP_EVENT=$(sp_jq '.id // empty')`,
+      'if sp_id_ok "$SP_EVENT"; then SP_E2="$SP_EVENT"; fi',
+      'sp_req GET "${STAGING_API_EVENTS%/}/api/events?plant_id=$SP_P4&limit=50"',
+      'sp_check "u20-seed-saved-second-parent" "$SP_WRITE $SP_CODE $(sp_jqx "$SP_MIXLOT" "$SP_EV_JQ")" "201 200 1" ',
+    ))
+    expect(code).toContain(
+      `SP_EV_JQ='if type == "array" then ([.[] | select(.event_type == "seed_saved" and .metadata.seed_lot_id == $x)] | length) else "not-an-array:" + type end'`,
+    )
+    // a bare date is stored at noon UTC: today's can be ahead of now, a day back cannot
+    expect(code).toContain('SP_DAY=$(utc_days_ago 1)')
+    // in turn: the second POST comes after the first event's read-back
+    expect(code.indexOf(post('P4'))).toBeGreaterThan(code.indexOf('sp_check "u20-seed-saved-first-parent"'))
+    // the events are never asked what XP they paid: the daily cap can hide it (U23 reads what it cannot)
+    expect(code).not.toMatch(/xp_gained|daily_xp/)
+  })
+
+  it('2a: reads parent_count from season-stats while the lot is live, and fails the ship gate rather than skip', () => {
+    expect(flat).toContain(seq(
+      'sp_req GET "${STAGING_API_HARVESTS%/}/api/harvests/season-stats?season=$SP_SEASON&sections=seed_lots"',
+      `sp_check "u21-season-stats-parent-count" "$SP_CODE $(sp_jqx "$SP_MIXLOT" '.sections.seed_lots.series.rows as $r | if ($r | type) != "array" then "no-rows:" + ($r | type) else "every-row-counted:" + ([$r[] | (.parent_count | type) == "number"] | all | tostring) + "|this-lot:" + ([$r[] | select(.lot_id == $x) | .parent_count | tostring] | join(",")) end')" "200 every-row-counted:true|this-lot:2" `,
+    ))
+    expect(code).toMatch(/elif \[\[ -n "\$\{SMOKE_REQUIRE_AUTH:-\}" \]\]; then\n\s*sp_fail "u21-season-stats-parent-count" "STAGING_API_HARVESTS unset\/placeholder/)
+    expect(code.indexOf('sp_check "u22-mix-lot-delete"')).toBeGreaterThan(code.indexOf('sp_check "u21-season-stats-parent-count"'))
+  })
+
+  it('2a: deletes the lot and its two plantings through their routes, and clears each id for cleanup() only on 200', () => {
+    expect(flat).toContain(seq(
+      'sp_req DELETE "$SP_INV/$SP_MIXLOT"',
+      `SP_WRITE="$SP_CODE $(sp_jq '. == {"ok": true}')"`,
+      'if [[ "$SP_CODE" == "200" ]]; then CREATED_SEEDMIX_LOT_ID=""; fi',
+      'sp_check "u22-mix-lot-delete" "$SP_WRITE" "200 true" ',
+    ))
+    expect(flat).toContain(seq(
+      'if sp_id_ok "$SP_P3"; then',
+      'if sp_drop "third-parent-delete" "${STAGING_API_PLANTS%/}/api/plants/$SP_P3"; then CREATED_SEEDPARENT3_PLANT_ID=""; fi',
+      'fi',
+      'if sp_id_ok "$SP_P4"; then',
+      'if sp_drop "fourth-parent-delete" "${STAGING_API_PLANTS%/}/api/plants/$SP_P4"; then CREATED_SEEDPARENT4_PLANT_ID=""; fi',
+      'fi',
+    ))
+  })
+
+  it('2a: reads the mix\'s rows and the events\' XP keys through SQL, every id bound, after U5 and after every request', () => {
+    expect(code).toContain('-v mix="$SP_MIX" -v va="$SP_V2" -v vb="$SP_V3" -v ea="$SP_E1" -v eb="$SP_E2" \\')
+    const sql = (code.match(/SP_MIXROWS=\$\(psql [^\n]*\n\s*<<< "([^"]*)"\) \\\n\s*\|\| SP_MIXROWS="psql-exit-\$\?"/) ?? [])[1] ?? ''
+    expect(sql).toBe(
+      "SELECT (SELECT COUNT(*) FROM plant_varieties WHERE id = :'mix'::uuid AND variety_rank = 'blend' AND blend_key IS NOT NULL)"
+      + " || '|' || (SELECT COUNT(*) FROM variety_blend_component WHERE blend_variety_id = :'mix'::uuid AND deleted_at IS NULL AND component_variety_id IN (:'va'::uuid, :'vb'::uuid))"
+      + " || '|' || (SELECT COUNT(*) FROM care_profile WHERE scope = 'cultivar' AND scope_id = :'mix'::uuid)"
+      + " || '|' || (SELECT COUNT(*) FROM xp_events WHERE reason = 'event_logged' AND source_id IN (:'ea'::uuid, :'eb'::uuid));",
+    )
+    expect(code).not.toMatch(/'\$SP_(MIX|V2|V3|E1|E2|MIXLOT)'/)
+    expect(code).toContain('sp_check "u23-mix-rows-readback" "$SP_MIXROWS" "1|2|1|0" ')
+    // an event that was never made is the nil uuid, set before either POST: it keys no row and casts cleanly
+    expect(code).toContain('SP_NIL="00000000-0000-0000-0000-000000000000"')
+    expect(code).toContain('SP_E1="$SP_NIL"; SP_E2="$SP_NIL"')
+    const mixRead = code.indexOf('SP_MIXROWS=$(psql "$NEON_STAGING_URL" ')
+    expect(mixRead).toBeGreaterThan(code.indexOf('sp_check "u5-link-rows-readback"'))
+    expect(code.lastIndexOf('sp_req ')).toBeLessThan(code.indexOf('SP_ROWS=$(psql "$NEON_STAGING_URL" '))
+    expect(code).toMatch(/if \[\[ "\$SP_MIX_MADE" == "true" \]\]; then\n\s*if \[\[ -n "\$\{NEON_STAGING_URL:-\}" \]\] && command -v psql >\/dev\/null 2>&1; then\n\s*SP_MIXROWS=\$\(psql /)
+    expect(code).toMatch(/elif \[\[ -n "\$\{SMOKE_REQUIRE_AUTH:-\}" \]\]; then\n\s*sp_fail "u23-mix-rows-readback"/)
+  })
+
+  it('2a: hands its six rows to cleanup(), which deletes the lot and the plantings before the varieties', () => {
+    const head = SMOKE.slice(0, SMOKE.indexOf('cleanup() {'))
+    const cleanup = SMOKE.slice(SMOKE.indexOf('cleanup() {'), SMOKE.indexOf('trap cleanup'))
+    const ENTRIES = [
+      '"mix seed lot|${STAGING_API_INVENTORY:-}|/api/inventory-items/|$CREATED_SEEDMIX_LOT_ID"',
+      '"third seed-parent planting|${STAGING_API_PLANTS:-}|/api/plants/|$CREATED_SEEDPARENT3_PLANT_ID"',
+      '"fourth seed-parent planting|${STAGING_API_PLANTS:-}|/api/plants/|$CREATED_SEEDPARENT4_PLANT_ID"',
+      '"seed mix variety|${STAGING_API_VARIETIES:-}|/api/varieties/|$CREATED_SEEDMIX_VARIETY_ID"',
+      '"second smoke variety|${STAGING_API_VARIETIES:-}|/api/varieties/|$CREATED_SEEDVARIETY2_ID"',
+      '"third smoke variety|${STAGING_API_VARIETIES:-}|/api/varieties/|$CREATED_SEEDVARIETY3_ID"',
+    ]
+    let last = -1
+    for (const entry of ENTRIES) {
+      const at = cleanup.indexOf(entry)
+      expect(at).toBeGreaterThan(last)
+      last = at
+      const name = entry.slice(entry.lastIndexOf('$') + 1, -1)
+      expect(head).toMatch(new RegExp('^' + name + '=""$', 'm'))
+    }
+    expect(cleanup).toContain('"${sp_left_url%/}${sp_left##*|}${sp_left_id}" -o /dev/null 2>&1 \\')
+    expect(cleanup).toContain('if [[ -z "$sp_left_id" ]]; then continue; fi')
+  })
+
+  it('makes 68 requests, 14 then 14 then 40 between its mints, the numbers its own comment reasons from', () => {
+    // A request is an sp_req call, or a call of one of the four helpers that make exactly one each. Counted per
+    // stretch: before the first mint, between the two, after the second.
+    const HELPERS = ['sp_state() {', 'sp_drop() {', 'sp_refused() {']
+    for (const helper of HELPERS) {
+      const body = flat.slice(flat.indexOf(helper), flat.indexOf('\n}', flat.indexOf(helper)))
+      expect(body.match(/\bsp_req (?:GET|POST|PUT|PATCH|DELETE) /g) ?? []).toHaveLength(1)
+    }
+    const requests = (text) =>
+      (text.match(/\bsp_req (?:GET|POST|PUT|PATCH|DELETE) /g) ?? []).length
+      + (text.match(/(?:^|; )sp_state(?: "\$SP_(?:OLD|MIXLOT)")?$/gm) ?? []).length
+      + (text.match(/; sp_refused$/gm) ?? []).length
+      + (text.match(/^if sp_drop "/gm) ?? []).length
+    // the helper definitions sit ahead of the first request, and are not requests
+    const body = flat.slice(flat.indexOf('sp_req POST "$STAGING_API_PLANTS" '))
+    expect(requests(flat.slice(0, flat.indexOf('sp_req POST "$STAGING_API_PLANTS" ')))).toBe(HELPERS.length)
+    const stretches = body.split('CLERK_JWT=$(mint_session_token)\n')
+    expect(stretches).toHaveLength(3)
+    expect(stretches.map(requests)).toEqual([14, 14, 40])
+    // a larger block needs its token paragraph re-read: these are the sentences that carry the numbers
+    expect(block).toContain("block's first 14 (P2, P1's variety and its read, U0's 11): at most 21;")
+    expect(block).toContain('the mint between U0 and U1: 14 (U1 to U6, then P2\'s DELETE);')
+    expect(block).toContain('the mint before U7: 40 (U7 to U22, then P1\'s variety cleared and read).')
+    expect(block).toContain('# 68 requests in all.')
   })
 
   it('fails the ship gate, rather than skipping, when it cannot run or cannot read the rows', () => {

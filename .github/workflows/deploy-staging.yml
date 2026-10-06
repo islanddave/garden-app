@@ -909,6 +909,33 @@ jobs:
         # The residue term counts link rows by the smoke lot and planting ids captured BEFORE the sweep, as
         # care_profile's does: after the sweep no smoke row is left to join through. With both foreign keys
         # RESTRICT it can only read above 0 if one of them is ever dropped or relaxed.
+        #
+        # 2026-10-06 (V5-VARIETYBLEND-001, release 2a; run-smoke.sh block U, U11): the smoke now makes a MIX of two
+        # smoke varieties: one plant_varieties row of rank 'blend' and one variety_blend_component row per component.
+        # Both of that table's keys to plant_varieties are RESTRICT, so "DELETE FROM plant_varieties" as it stood
+        # raised 23503 against such a mix and stopped the sweep with every statement above it already committed
+        # (rehearsed on a local PG 17 before this landed; record: gardening-docs
+        # project-state/_seedmultiparent-20261005/r2/lane-T2-report.log). A mix's NAME is generated from its
+        # components' names and can be renamed, so the name is not what finds it. Four additions:
+        #   * BEFORE anything is deleted, the ids of every mix with a component row touching a smoke-named variety (on
+        #     either side) are captured, and appended to SMOKE_VARIETY_IDS, which the care_profile residue term reads;
+        #   * the component rows of every captured id are deleted next, in their own psql call: the step's first
+        #     delete, ahead of the seed-parent link rows above and of the main chain;
+        #   * in the main chain the cultivar entity, entity_tag and care_profile deletes also take the captured mix ids,
+        #     and one statement deletes the mix rows themselves by id, straight ahead of the delete by name. It sits
+        #     after plants and inventory_items like that one: both point at plant_varieties (RESTRICT), and the smoke's
+        #     own lot is filed under its mix;
+        #   * the residue sum counts component rows and mix rows by the captured ids.
+        # The smoke's own mix carries 'smoke-test-' in its name, so on a normal run the by-id arms repeat what the
+        # by-name ones do. They are for a mix that was renamed, or made by hand on staging over a smoke variety.
+        # THE TABLE MAY NOT EXIST, for the reason given above for seed_lot_parent_planting, and it is handled the same
+        # way: to_regclass once, and the capture, the delete and the residue term only when it is there. Without it
+        # the captured list is empty, and '{}'::uuid[] matches nothing in the main chain.
+        # NOT SWEPT, on purpose: xp_events. A seed_saved event that names a lot is paid once per person per jar, by a
+        # row whose source_id is the LOT id, so one such row can outlive each run's smoke lot. xp_events.source_id has
+        # no foreign key, each run's lot id is new, and this sweep has never deleted the event-keyed rows every other
+        # smoke event leaves either. Deleting only these would also hand the smoke user back part of its daily
+        # allowance, which block U's comment says the smoke must not lean on.
         if: always()
         env:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
@@ -921,6 +948,17 @@ jobs:
           SMOKE_VARIETY_IDS=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT COALESCE(string_agg(id::text, ','), '') FROM plant_varieties WHERE name ILIKE '%smoke%';")
           SEED_PARENT_TABLE=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT to_regclass('public.seed_lot_parent_planting') IS NOT NULL;")
           SMOKE_PARENT_KEYS=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT COALESCE(string_agg(id::text, ','), '') FROM (SELECT id FROM inventory_items WHERE name ILIKE '%smoke%' UNION ALL SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')) k;")
+          BLEND_TABLE=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT to_regclass('public.variety_blend_component') IS NOT NULL;")
+          SMOKE_MIX_IDS=""
+          BLEND_LEFT="0"
+          if [[ "$BLEND_TABLE" == "t" ]]; then
+            SMOKE_MIX_IDS=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT COALESCE(string_agg(DISTINCT blend_variety_id::text, ','), '') FROM variety_blend_component WHERE blend_variety_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%') OR component_variety_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%');")
+            if [[ -n "$SMOKE_MIX_IDS" ]]; then SMOKE_VARIETY_IDS="${SMOKE_VARIETY_IDS:+$SMOKE_VARIETY_IDS,}$SMOKE_MIX_IDS"; fi
+            psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -c "DELETE FROM variety_blend_component WHERE blend_variety_id = ANY('{$SMOKE_VARIETY_IDS}'::uuid[]) OR component_variety_id = ANY('{$SMOKE_VARIETY_IDS}'::uuid[]);"
+            BLEND_LEFT="(SELECT COUNT(*) FROM variety_blend_component WHERE blend_variety_id = ANY('{$SMOKE_VARIETY_IDS}'::uuid[]) OR component_variety_id = ANY('{$SMOKE_VARIETY_IDS}'::uuid[]))"
+          else
+            echo "  variety_blend_component is not on this database (to_regclass: '$BLEND_TABLE') — no mix to sweep"
+          fi
           SEED_PARENT_LEFT="0"
           if [[ "$SEED_PARENT_TABLE" == "t" ]]; then
             psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -c "DELETE FROM seed_lot_parent_planting WHERE inventory_item_id IN (SELECT id FROM inventory_items WHERE name ILIKE '%smoke%') OR plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%'));"
@@ -944,20 +982,21 @@ jobs:
             -c "DELETE FROM event_batches  WHERE scope_json->>'project_id' IN (SELECT id::text FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM critter_state  WHERE species_id = 255 OR created_by IN (SELECT created_by FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM entity         WHERE entity_type='planting' AND planting_ref_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%'));" \
-            -c "DELETE FROM entity_tag     WHERE entity_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')) OR entity_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%') OR entity_id IN (SELECT id FROM locations WHERE name ILIKE '%smoke%') OR entity_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
+            -c "DELETE FROM entity_tag     WHERE entity_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')) OR entity_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%') OR entity_id = ANY('{$SMOKE_MIX_IDS}'::uuid[]) OR entity_id IN (SELECT id FROM locations WHERE name ILIKE '%smoke%') OR entity_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "UPDATE inventory_items SET source_plant_id = NULL WHERE source_plant_id IS NOT NULL AND (name ILIKE '%smoke%' OR source_plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')));" \
             -c "DELETE FROM plants         WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM inventory_items WHERE name ILIKE '%smoke%';" \
-            -c "DELETE FROM entity         WHERE entity_type='cultivar' AND cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%');" \
-            -c "DELETE FROM care_profile   WHERE scope='cultivar' AND scope_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%');" \
+            -c "DELETE FROM entity         WHERE entity_type='cultivar' AND (cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%') OR cultivar_ref_id = ANY('{$SMOKE_MIX_IDS}'::uuid[]));" \
+            -c "DELETE FROM care_profile   WHERE scope='cultivar' AND (scope_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%') OR scope_id = ANY('{$SMOKE_MIX_IDS}'::uuid[]));" \
+            -c "DELETE FROM plant_varieties WHERE id = ANY('{$SMOKE_MIX_IDS}'::uuid[]);" \
             -c "DELETE FROM plant_varieties WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM locations      WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM garden_shared_state WHERE natural_key ILIKE '%smoke%';" \
             -c "DELETE FROM plant_projects  WHERE name ILIKE '%smoke%';"
-          echo "  swept: harvest_log, event_log, entity_memory, favorites, event_batches, plants, inventory_items, care_profile, plant_varieties, locations, plant_projects"
-          REMAINING=$(psql "$NEON_STAGING_URL" -At -c "SELECT (SELECT COUNT(*) FROM plant_projects WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plant_varieties WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plants WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM locations WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM inventory_items WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM care_profile WHERE scope='cultivar' AND scope_id = ANY('{$SMOKE_VARIETY_IDS}'::uuid[])) + $SEED_PARENT_LEFT;")
+          echo "  swept: harvest_log, event_log, entity_memory, favorites, event_batches, plants, inventory_items, care_profile, variety_blend_component, plant_varieties, locations, plant_projects"
+          REMAINING=$(psql "$NEON_STAGING_URL" -At -c "SELECT (SELECT COUNT(*) FROM plant_projects WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plant_varieties WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plants WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM locations WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM inventory_items WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM care_profile WHERE scope='cultivar' AND scope_id = ANY('{$SMOKE_VARIETY_IDS}'::uuid[])) + $SEED_PARENT_LEFT + (SELECT COUNT(*) FROM plant_varieties WHERE id = ANY('{$SMOKE_MIX_IDS}'::uuid[])) + $BLEND_LEFT;")
           if [[ "$REMAINING" != "0" ]]; then
             echo "⚠ WARN: $REMAINING smoke residue row(s) remain after sweep — possible FK constraint preventing delete"
             exit 1
           fi
-          echo "✅ L-058 cleanup complete — 0 smoke residue rows (plant_projects + plant_varieties + plants + locations + inventory_items + care_profile + seed_lot_parent_planting)"
+          echo "✅ L-058 cleanup complete — 0 smoke residue rows (plant_projects + plant_varieties + plants + locations + inventory_items + care_profile + seed_lot_parent_planting + variety_blend_component)"
