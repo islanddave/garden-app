@@ -8,7 +8,8 @@ import { coldRows, protectOrder, protectSummary, pickNight } from '../../../lib/
 import { protectTier, protectTrigger, tonightLowRaw, frostNamesTonight } from '../../../lib/todayV2/triggers.js'
 import { agreedTonightLow } from '../../../lib/tonightLow.js'
 import { readShowOthers, memberFirstName } from '../../../lib/householdView.js'
-import { loggedKey, readLogged } from './needsCareStore.js'
+import { loggedKey } from './needsCareStore.js'
+import { useTodayLogged } from './useTodayLogged.js'
 import { seenKey, readSeen, markSeen } from './todaySeen.js'
 
 // useProtect — Protect tonight's STATE, owned by the page (V5-TODAYREDESIGN-001 S5), as useNeedsCare owns Needs
@@ -16,9 +17,9 @@ import { seenKey, readSeen, markSeen } from './todaySeen.js'
 // the ready point, before the body (ProtectTonight.jsx) mounts — and the body is unmounted while closed.
 //
 // Rows: the viewer's cold rows, plus — only when this person has the household view on (SF6, lib/householdView.js,
-// the one reader) — every other member's, each named ("Jen"); minus the keys this tab logged today
-// (needsCareStore's `today-logged:`, shared with Needs care: a Back remount can paint the last good plan before
-// the refetch, §6.3). The write paths (Covered / Cover all → `cover`, Brought in → `brought_inside`, Skip →
+// the one reader) — every other member's, each named ("Jen"); minus the keys held elsewhere in this tab
+// (useTodayLogged over needsCareStore's `today-logged:`, shared with Needs care: a Back remount can paint the last
+// good plan before the refetch, §6.3). The write paths (Covered / Cover all → `cover`, Brought in → `brought_inside`, Skip →
 // the one shared skip set) are useCareActions', with the V2 options. /api/plants + /api/locations place each row
 // in its spot (spots.js), through the same cached requests Needs care reads.
 //
@@ -36,12 +37,12 @@ export function useProtect({ plan, planDate, userId, stale, householdPlans, care
   const { members, loading: membersLoading } = useMembers()
 
   const logKey = loggedKey(userId, planDate)
-  const loggedAtMount = useMemo(() => readLogged(logKey), [logKey])
+  const { held, claim } = useTodayLogged(logKey)
   const own = useMemo(() => coldRows(plan, null), [plan])
   const others = useMemo(() => (showOthers && Array.isArray(householdPlans)
     ? householdPlans.flatMap((hp) => coldRows(hp && hp.plan, memberFirstName(members, hp && hp.user_id)))
     : []), [showOthers, householdPlans, members])
-  const allRows = useMemo(() => [...own, ...others].filter((r) => !loggedAtMount.has(r.key)), [own, others, loggedAtMount])
+  const allRows = useMemo(() => [...own, ...others].filter((r) => !held.has(r.key)), [own, others, held])
   const actions = useCareActions({ allRows, bedWait: false, planDate, fetch, getToken, toast: SILENT, announce: NOOP })
 
   // As useNeedsCare: an errored /api/plants is no plant list (review 4160.2 IMPORTANT-3), so no Unplaced cover row.
@@ -89,7 +90,7 @@ export function useProtect({ plan, planDate, userId, stale, householdPlans, care
   }, [rows, careRows, groupOrder, tier, lowF])
 
   return {
-    rows, allEnriched, count: rows.length, tier, lowF, trigger, settled, actions, getToken, logKey, snapshot,
+    rows, allEnriched, count: rows.length, tier, lowF, trigger, settled, actions, getToken, logKey, claim, snapshot,
     pick: pickNight(tier), summary,
   }
 }

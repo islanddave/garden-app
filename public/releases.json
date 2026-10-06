@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.170.1",
+    "date": "2026-10-05",
+    "highlights": [
+      "In the Today preview, if you tap Water all or Cover all and leave the page before it finishes, coming back no longer offers those plants again, so a second tap can't log them twice",
+      "If one of them doesn't save after you've left the page, it comes back marked not logged with Retry, and Undo still works on the ones that did"
+    ]
+  },
+  {
     "version": "4.170.0",
     "date": "2026-10-05",
     "highlights": [
