@@ -6,7 +6,7 @@ of a live lot **or** the lot's cached parent. No table, no column on a table, no
 the header of `0a-replace-views.sql`; the release contract is
 `project-state/_seedmultiparent-20261005/r2/R2A-CONTRACT.md` sections 1 and 5 in gardening-docs.
 
-**Not applied anywhere by the lane that wrote it. Applying to prod is a prod write and needs Dave's approval.**
+**Applied to STAGING on 2026-10-06 by the orchestrator** (pre, sweep, `0a`, post; all three rollbacks rehearsed newest first, pre green again, re-applied; the stats receipts clean; the whole standing corpus green). **Not applied to prod: that is a prod write and needs Dave's approval.**
 
 | file | what it does |
 |---|---|

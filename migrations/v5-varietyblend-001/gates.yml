@@ -151,6 +151,19 @@ pre:
     expect: rowcount_eq
     value: 1
 
+  - name: pre_cultivar_view_has_no_options
+    note: >
+      CREATE OR REPLACE VIEW with no WITH (...) clears a view's options, pg_get_viewdef does not print
+      them (so the md5 gate cannot see them), and the standing reloptions gate reads only what 0a
+      leaves. This is the one read that can report an option the replace would silently drop
+      (review-migrations-schema.md S3). continuous false: an apply-window check.
+    sql: |
+      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'cultivar' AND c.reloptions IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
 sweep:
   # No name collision on any object this DDL creates. A pre-existing relation of the same name would
   # make CREATE INDEX IF NOT EXISTS a silent no-op and leave the key without its unique index, or a

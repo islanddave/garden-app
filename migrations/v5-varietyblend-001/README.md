@@ -5,7 +5,7 @@ widened 47 → 48 so the varieties Lambda can see it, and one new table, `variet
 leaves with foreign keys. The decisions are in the header of `0a-additive-ddl.sql`; the release contract is
 `project-state/_seedmultiparent-20261005/r2/R2A-CONTRACT.md` section 1 in gardening-docs.
 
-**Not applied anywhere by the lane that wrote it. Applying to prod is a prod write and needs Dave's approval.**
+**Applied to STAGING on 2026-10-06 by the orchestrator** (pre, sweep, `0a`, post; all three rollbacks rehearsed newest first, pre green again, re-applied; the stats receipts clean; the whole standing corpus green). **Not applied to prod: that is a prod write and needs Dave's approval.**
 
 | file | what it does |
 |---|---|
@@ -53,7 +53,7 @@ psql "$NEON_STAGING_URL" -X -v ON_ERROR_STOP=1 -f migrations/v5-varietyblend-001
 python3 scripts/gate_runner.py --migration migrations/v5-varietyblend-001 --env staging --phase post
 
 # --- prod (Dave's approval; outside 07:00-08:00 UTC; after the pre-apply copy) -------------------
-python3 scripts/neon_safety_branch.py create --slug seedr2a --days 7 --env-file .env.local   # once for the release
+python3 scripts/neon_safety_branch.py --env-file .env.local create --slug seedr2a --days 7   # once for the release
 python3 scripts/gate_runner.py --migration migrations/v5-varietyblend-001 --env prod --phase pre
 python3 scripts/gate_runner.py --migration migrations/v5-varietyblend-001 --env prod --phase sweep
 psql "$NEON_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f migrations/v5-varietyblend-001/0a-additive-ddl.sql
@@ -83,8 +83,11 @@ this. `pre_cultivar_view_is_the_captured_definition` on prod is that check, and 
 transaction and refuses, changing nothing, on a mismatch. If it fails: diff
 `pg_get_viewdef('public.cultivar', true)` against the list in `0a`.
 
-`0a` sets `lock_timeout = '5s'`. It takes brief locks on `plant_varieties` and on the view; behind a
-long-open transaction the file fails fast having changed nothing. Run it again.
+`0a` sets `lock_timeout = '5s'` and locks the view first (which also locks `plant_varieties`), the order every
+reader uses. Behind a long-open transaction the file fails fast having changed nothing. A lock timeout and a
+deadlock report (40P01) mean the same thing here: nothing changed, run it again. Apply in a quiet hour; the
+locks are held from the first statement to COMMIT (well under a second at this table's size), and variety,
+planting and inventory reads wait for that long.
 
 `post` on staging reads 22 of 23 with one `n/a`: `post_garden_ro_can_still_read_cultivar` is prod-only
 (staging has no `garden_ro` role). On prod it reads 23 of 23.

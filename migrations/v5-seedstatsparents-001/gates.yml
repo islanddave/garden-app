@@ -127,6 +127,20 @@ pre:
     value: "fff2cb4c63b310668ca186902948e48b"
     continuous: false
 
+  - name: pre_stats_views_have_no_options
+    note: >
+      CREATE OR REPLACE VIEW with no WITH (...) clears a view's options, pg_get_viewdef does not print
+      them (so the md5 gates cannot see them), and the standing reloptions gate reads only what 0a
+      leaves. This is the one read that can report an option the replace would silently drop
+      (review-migrations-schema.md S3). continuous false: an apply-window check.
+    sql: |
+      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname IN ('stat_saved_lot', 'stat_source_card')
+         AND c.reloptions IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
 post:
   # ── APPLY-WINDOW RECEIPT (continuous: false) ─────────────────────────────────────────────────────
   # Appended LAST, so no existing column moved — the property CREATE OR REPLACE requires. A later

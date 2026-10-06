@@ -110,6 +110,13 @@ SET LOCAL lock_timeout = '5s';
 -- (scripts/gate_runner.py, OPS-GATEINVARIANTSFLAKE-001); pin it for this transaction.
 SET LOCAL search_path = public;
 
+-- Lock the VIEW first. Every reader locks cultivar and then plant_varieties. Without this line the file
+-- takes the table first (the ALTER in section 1) and asks for the view three statements later, the reverse
+-- order, and a request that arrives in that gap deadlocks with it (review-migrations-schema.md S2). Locking a
+-- view also locks the relations it reads, so this one statement takes both, in the readers' order.
+-- A lock timeout or a deadlock report (40P01) here both mean the same thing: nothing changed, run it again.
+LOCK TABLE public.cultivar IN ACCESS EXCLUSIVE MODE;
+
 -- ── 0. The definition guard. Refuses unless the view being replaced is the one this file captured. ─
 DO $$
 DECLARE
