@@ -1,5 +1,7 @@
 {
   "name": "seed-mix",
+  "version": 2,
+  "version_rule": "Raise this number with ANY change to this file. The seam test pins it and pins every list below; a client test that builds mocks from this file asserts the number it was written against.",
   "release": "V5-SEEDMULTIPARENT-001 release 2a / V5-VARIETYBLEND-001",
   "source": "R2A-CONTRACT.md sections 2 and 3",
   "verified_by": "tests/integration/seed-mix-seam.int.test.js",
@@ -7,6 +9,8 @@
     "route": "POST /api/varieties/blend",
     "request_required": ["component_variety_ids", "create"],
     "statuses": [200, 201],
+    "other_statuses": [409, 429],
+    "other_statuses_body": ["error"],
     "required": ["id", "name", "variety_rank", "crop_type_slug", "blend_key", "exists", "created", "components"],
     "component_required": ["id", "name", "variety_rank", "deleted"],
     "variety_rank": "blend",
@@ -58,5 +62,166 @@
     "parents_changed": { "status": 409, "routes": ["POST /api/inventory-items", "PUT /api/inventory-items/:id/source-plants", "PATCH /api/inventory-items/:id/source-plant"], "required": ["error", "code"], "error": "One of those plants changed just now. Reload and try again." },
     "lot_changed": { "status": 409, "routes": ["PUT /api/inventory-items/:id/source-plants", "PATCH /api/inventory-items/:id/source-plant", "PUT /api/inventory-items/:id/filing"], "required": ["error", "code"], "error": "This seed lot was changed at the same moment. Reload and try again.", "optional": ["source_plant_id", "source_plants", "variety_id", "name"] },
     "multi_parent_lot": { "status": 409, "routes": ["PATCH /api/inventory-items/:id/source-plant"], "required": ["error", "code", "source_plant_ids"] }
+  },
+  "examples_rule": "One real reply per route, taken from the seam test's own fixture and cut down to the keys promised above; ids and names are placeholders. The seam test compares every real reply with its example by type, key by key. Build mocks from these.",
+  "examples": {
+    "POST /api/varieties/blend": {
+      "status": 201,
+      "body": {
+        "id": "00000000-0000-4000-8000-000000000006",
+        "name": "sms-variety-a1-example-run + sms-variety-a2-example-run mix",
+        "variety_rank": "blend",
+        "crop_type_slug": "sms-crop-a-example-run",
+        "blend_key": "00000000-0000-4000-8000-000000000003,00000000-0000-4000-8000-000000000008",
+        "exists": true,
+        "created": true,
+        "components": [
+          {"id": "00000000-0000-4000-8000-000000000003", "name": "sms-variety-a1-example-run", "variety_rank": "cultivar", "deleted": false},
+          {"id": "00000000-0000-4000-8000-000000000008", "name": "sms-variety-a2-example-run", "variety_rank": "cultivar", "deleted": false}
+        ]
+      }
+    },
+    "POST /api/inventory-items": {
+      "status": 201,
+      "body": {
+        "id": "00000000-0000-4000-8000-000000000009",
+        "name": "sms-lot-example-run-4",
+        "variety_id": "00000000-0000-4000-8000-000000000006",
+        "variety_rank": "blend",
+        "source_plant_id": "00000000-0000-4000-8000-000000000001",
+        "source_plants": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "name": "p1-sms-example-run-0",
+            "variety_id": "00000000-0000-4000-8000-000000000003",
+            "variety_name": "sms-variety-a1-example-run",
+            "breeding_system": "landrace",
+            "variety_rank": "cultivar",
+            "crop_slug": "sms-crop-a-example-run",
+            "archived": false,
+            "deleted": false
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000005",
+            "name": "p1b-sms-example-run-1",
+            "variety_id": "00000000-0000-4000-8000-000000000003",
+            "variety_name": "sms-variety-a1-example-run",
+            "breeding_system": "landrace",
+            "variety_rank": "cultivar",
+            "crop_slug": "sms-crop-a-example-run",
+            "archived": false,
+            "deleted": false
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000007",
+            "name": "p2-sms-example-run-2",
+            "variety_id": "00000000-0000-4000-8000-000000000008",
+            "variety_name": "sms-variety-a2-example-run",
+            "breeding_system": null,
+            "variety_rank": "cultivar",
+            "crop_slug": "sms-crop-a-example-run",
+            "archived": false,
+            "deleted": false
+          }
+        ]
+      }
+    },
+    "GET /api/inventory-items/:id": {
+      "status": 200,
+      "body": {
+        "id": "00000000-0000-4000-8000-000000000009",
+        "name": "sms-lot-example-run-4",
+        "variety_id": "00000000-0000-4000-8000-000000000006",
+        "variety_rank": "blend",
+        "source_plant_id": "00000000-0000-4000-8000-000000000001",
+        "source_plants": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "name": "p1-sms-example-run-0",
+            "variety_id": "00000000-0000-4000-8000-000000000003",
+            "variety_name": "sms-variety-a1-example-run",
+            "breeding_system": "landrace",
+            "variety_rank": "cultivar",
+            "crop_slug": "sms-crop-a-example-run",
+            "archived": false,
+            "deleted": false
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000005",
+            "name": "p1b-sms-example-run-1",
+            "variety_id": "00000000-0000-4000-8000-000000000003",
+            "variety_name": "sms-variety-a1-example-run",
+            "breeding_system": "landrace",
+            "variety_rank": "cultivar",
+            "crop_slug": "sms-crop-a-example-run",
+            "archived": false,
+            "deleted": false
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000007",
+            "name": "p2-sms-example-run-2",
+            "variety_id": "00000000-0000-4000-8000-000000000008",
+            "variety_name": "sms-variety-a2-example-run",
+            "breeding_system": null,
+            "variety_rank": "cultivar",
+            "crop_slug": "sms-crop-a-example-run",
+            "archived": false,
+            "deleted": false
+          }
+        ]
+      }
+    },
+    "PUT /api/inventory-items/:id/source-plants": {
+      "status": 200,
+      "body": {
+        "id": "00000000-0000-4000-8000-000000000002",
+        "source_plant_id": "00000000-0000-4000-8000-000000000001",
+        "source_plants": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "name": "p1-sms-example-run-0",
+            "variety_id": "00000000-0000-4000-8000-000000000003",
+            "variety_name": "sms-variety-a1-example-run",
+            "breeding_system": "landrace",
+            "variety_rank": "cultivar",
+            "crop_slug": "sms-crop-a-example-run",
+            "archived": false,
+            "deleted": false
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000007",
+            "name": "p2-sms-example-run-2",
+            "variety_id": "00000000-0000-4000-8000-000000000008",
+            "variety_name": "sms-variety-a2-example-run",
+            "breeding_system": null,
+            "variety_rank": "cultivar",
+            "crop_slug": "sms-crop-a-example-run",
+            "archived": false,
+            "deleted": false
+          }
+        ],
+        "filing": {
+          "variety_id": "00000000-0000-4000-8000-000000000006",
+          "variety_name": "sms-variety-a1-example-run + sms-variety-a2-example-run mix",
+          "variety_rank": "blend",
+          "name": "sms-lot-example-run-7",
+          "changed": true,
+          "previous": {"variety_id": "00000000-0000-4000-8000-000000000003", "name": "sms-lot-example-run-7"}
+        }
+      }
+    },
+    "PUT /api/inventory-items/:id/filing": {
+      "status": 200,
+      "body": {
+        "id": "00000000-0000-4000-8000-000000000002",
+        "variety_id": "00000000-0000-4000-8000-000000000004",
+        "variety_name": "sms-variety-a3-example-run",
+        "variety_rank": "cultivar",
+        "name": "sms refiled example-run",
+        "changed": true,
+        "previous": {"variety_id": "00000000-0000-4000-8000-000000000006", "name": "sms-lot-example-run-7"}
+      }
+    },
+    "PUT /api/inventory-items/:id/seed-measure": {"status": 200, "body": {"seed_parent_plant_count": 2}}
   }
 }

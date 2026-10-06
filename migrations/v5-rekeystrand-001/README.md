@@ -11,7 +11,7 @@ row, which is the arming switch, and `gates.yml`, which is the deliverable.
 | `gates.yml` | One `pre` measurement and four `post` gates — the guard, its anti-vacuity check, the marker-quality check, and the apply receipt. |
 | `preview_armed.py` | READ-ONLY. What the gates would say on prod or staging if 0a were applied, with every row the guard would count. Run it before arming (§Arming). |
 | `rehearse_local.py` | The red/green rehearsal on a throwaway local Postgres, re-runnable (§Verification 2026-09-21). Writes only to the cluster it creates. |
-| `placeholder-vocabulary.test.js` | Vitest, runs in CI. Pins the placeholder exclusion to `NEW_CULTIVAR_PROFILE`'s keys and `_basis` label (§Placeholders). |
+| `placeholder-vocabulary.test.js` | Vitest, runs in CI. Pins the placeholder exclusion to the keys and `_basis` labels of `NEW_CULTIVAR_PROFILE` and `BLEND_PROFILE` (§Placeholders, §A mix's birth profile). |
 
 ## The defect
 
@@ -53,7 +53,8 @@ added on 2026-09-21:
 2. **Zero live plantings now.** Excludes Gong Bao, the other half of a 2026-09-02 swap, which still has
    one.
 3. **The `_retained` marker**, below — a deliberate retention is a decision in the data, not a finding.
-4. **Not a bare app placeholder** — §Placeholders. Dave's decision, 2026-09-21.
+4. **Not a bare app placeholder** — §Placeholders. Dave's decision, 2026-09-21. Since 2026-10-06 the same
+   narrowing also covers a named mix's bare birth profile — §A mix's birth profile.
 
 ## The `_retained` marker
 
@@ -114,9 +115,13 @@ relabelled `_basis`. That is the half that matters, because the likeliest way re
 placeholder is a merge (`profile || '{…}'`), which leaves `_basis: 'unresearched'` behind.
 
 ```sql
-AND (cp.profile->>'_basis' IS DISTINCT FROM 'unresearched'
+AND ((cp.profile->>'_basis' IS DISTINCT FROM 'unresearched'
+      AND cp.profile->>'_basis' IS DISTINCT FROM 'blend')
      OR (cp.profile - ARRAY['_source', '_basis', 'notes']) <> '{}'::jsonb)
 ```
+
+(The second label was added 2026-10-06 — §A mix's birth profile. Until then the clause was the first
+label alone, and every result in §Verification 2026-09-21 was measured on that form.)
 
 Written as `IS DISTINCT FROM … OR`, never `NOT (… = … AND …)`: with no `_basis` at all the conjunction is
 NULL, `NOT NULL` is NULL, and the row silently leaves the guard (mutant M5 below). The `pre` gate carries
@@ -139,6 +144,48 @@ the house vocabulary, declared the row still undecided, and it is treated as a p
 **What holds it in place.** `placeholder-vocabulary.test.js` (CI) fails if `NEW_CULTIVAR_PROFILE` gains or
 loses a key, renames its `_basis`, or if the `pre` and guard clauses drift apart — any of which would
 bring the per-correction noise back or hide research. `rehearse_local.py` proves the SQL's behaviour.
+
+## A mix's birth profile is not a strand either — Dave's decision, 2026-10-06
+
+**What changed underneath the guard.** Seed release 2a (V5-VARIETYBLEND-001) added
+`POST /api/varieties/blend`, which makes one variety row for "seed saved from these varieties together"
+and writes a care_profile with it in the same transaction — `BLEND_PROFILE` in
+`lambda/varieties/blend.js`: `{_source: 'blend-create', _basis: 'blend', notes}` and nothing else. It
+cannot use the placeholder's label: `v4-cadencerefill-001`'s
+`post_no_live_planting_rests_on_an_unresearched_placeholder` counts every live planting whose cultivar
+says `_basis = 'unresearched'`, so a mix labelled that way would red that gate the day it is sown. No
+single label satisfied both gates, and this guard counted the mix: re-key a mix's only planting to
+another variety and its birth profile read as stranded research. Predicted by the varieties lane,
+observed on real PostgreSQL 2026-10-06 (a fork of staging, the guard's own SQL with its receipt conjunct
+removed; `tests/integration/variety-blend.int.test.js`), and raised by the pre-push QA review as F8.
+
+**The decision.** Put to Dave as an AskUserQuestion on 2026-10-06. He chose **"Teach the check about
+mixes"**. A mix has no care of its own to research — it is seed from several varieties, and whatever is
+known is known about them — so its birth profile holds nothing, exactly as a placeholder holds nothing.
+
+**The rule — the same exemption, by the same property.** A stranded row is a mix's birth profile, and is
+not counted, only while **both** hold:
+
+- `_basis` is `'blend'` — the blend route's label; and
+- the row carries **no key beyond `_source`, `_basis` and `notes`** — the same list the placeholder is
+  held to, because the two constants have the same keys (the vocabulary test fails if they ever differ).
+
+Anything added makes it count again, as it does for a placeholder: a cadence, a feed flag, any key at
+all, or a relabelled `_basis`. A mix that somebody gives real care content is research, and stranding it
+flags. `_retained` still clears a row either way.
+
+**Why it is safe where the guard is already armed.** The change only widens an exclusion. Every row the
+new predicate counts, the old one counted too; no row can enter the count because of it. A database on
+which the guard was green stays green, the receipt is not touched, and nothing has to be re-applied: the
+runner reads `gates.yml` from the checkout. (Removing the label again would be the opposite case — it
+can add rows — and would need a preview first.)
+
+**What holds it in place.** `placeholder-vocabulary.test.js` now reads `BLEND_PROFILE` beside
+`NEW_CULTIVAR_PROFILE` and fails if the gate's labels are not exactly those two constants' `_basis`
+values, if either constant's keys differ from the stripped list (or from each other), or if `pre` and the
+guard drift apart. `rehearse_local.py` was not changed: its seventeen cases carry no mix and must read as
+they did. The mix cases themselves — a bare birth profile excused, the same profile with one key added
+counted — run on real PostgreSQL against a mix the route made, in the integration file above.
 
 ## Environment — verified, not assumed
 
@@ -292,6 +339,45 @@ the harness with the audit triggers left out exits 2 naming the unaudited re-key
 `_basis` renamed, guard key list drops `notes`, pre clause removed, guard label changed) each red it.
 `pytest scripts/test_gate_runner.py` 52 passed; `gate_runner --all --validate-only` 119 files / 1484
 gates; yamllint relaxed 0 errors.
+
+## Verification performed 2026-10-06 (a mix's birth profile)
+
+**The seventeen cases above read as they did.** `python3 rehearse_local.py`, unchanged, against the
+widened `gates.yml`: exit 0, 17/17 (A, A2, A3 excused; B, C, C2, C3, C4, D, E, J counted; ALL 8 and 8).
+Three mutants of the new clause, each a copy handed to `--gates` and each killed (exit 1):
+
+| mutant | cases that went wrong |
+|---|---|
+| `AND` between the two labels turned into `OR` (the exclusion vanishes) | A, A2, A3, ALL |
+| only the `'blend'` label tested (the placeholder no longer excused) | A, A2, A3, ALL |
+| `NOT (_basis IN (…) AND bare)` in place of `IS DISTINCT FROM … OR` | D, E, ALL |
+
+**The mix cases, on real PostgreSQL 17.11** (a throwaway fork of staging;
+`tests/integration/variety-blend.int.test.js`, "a planting sown under a mix, and the standing care
+gates"). The guard is unarmed on staging, so the test runs its SQL as shipped with the receipt conjunct
+removed, pointed at the rows under test. A mix made by `POST /api/varieties/blend`, an ordinary new
+cultivar on its placeholder, and a cultivar with a researched profile each have their only planting
+re-keyed away by the same statement:
+
+| stranded profile | guard |
+|---|---|
+| the mix's birth profile, as the route wrote it | **0** |
+| the ordinary placeholder | 0 |
+| the researched profile (the control: the re-key was seen) | 1 |
+| the mix's profile + one cadence key (`profile \|\| '{…}'`, `_basis` still 'blend') | 1 |
+| …that key removed again | 0 |
+| the mix's three keys relabelled `_basis: dave_decision` | 1 |
+| the mix's profile with no `_basis` at all | 1 |
+
+Before the change the first row read 1 (the same file, the same day, asserted as the known cost). With
+the label taken back out of a copy of `gates.yml` the first row reds; with `'blend'` excused by label
+alone (no bare-row test) the fourth does.
+
+`placeholder-vocabulary.test.js`: 4 pass; seven in-place mutants each red it (the guard without the mix
+label, the `pre` gate without it, `BLEND_PROFILE` gains a key, `BLEND_PROFILE._basis` renamed, a third
+label in both gates, the key list without `notes`, `NEW_CULTIVAR_PROFILE` gains a key).
+`pytest scripts/test_gate_runner.py` 58 passed; `gate_runner --all --env prod --validate-only` 137 files /
+1817 gates; yamllint relaxed 0 errors.
 
 ## Arming — what it is and how to do it (authored 2026-09-21, NOT applied anywhere)
 

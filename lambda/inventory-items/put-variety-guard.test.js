@@ -185,6 +185,34 @@ describe('wide PUT — a row that names a variety stays in Seeds', () => {
     expect(kinds()).toEqual(['update', 'held']);
   });
 
+  it('a STORED row that is NOT seeds and holds a variety is frozen through this verb: the tool\'s own edit — the +/- tap, no variety_id in the body — is held back and answered with the Seeds sentence', async () => {
+    // The cell no test drove (pre-push QA review F3): every case here that reaches the 400 sends a
+    // body LEAVING Seeds. The guard reads the stored variety_id and never the stored category, so a
+    // tool row that holds a variety refuses EVERY non-seeds body, its own quantity change included,
+    // and the sentence speaks of Seeds about a tool. As built and accepted, because no such row
+    // exists: 0 live non-seeds rows hold a variety on prod and 0 on staging (read 2026-10-06), and no
+    // route can make one. If one ever appears: send a seeds body, or clear its variety_id by hand.
+    given({ update: [], held: [{ '?column?': 1 }] });
+    const tap = parse(await handler(put(toolEdit({ quantity: 2 }))));
+    expect(tap.status).toBe(400);
+    expect(tap.body).toEqual({ error: SENTENCE });
+    expect(kinds()).toEqual(['update', 'held']);
+    // The refusal is the ROW's, not the body's: the body names no variety, passes the validator, and
+    // binds FALSE to the guard — whose other arm, and the read after it, ask only for a stored variety.
+    expect(validateUpdate(toolEdit({ quantity: 2 }))).toBeNull();
+    expect(boundAfter(find('update'), GUARD)).toBe(false);
+    expect(sqlOf(find('update'))).toContain(
+      'WHERE id = ? AND created_by = ANY(?) AND deleted_at IS NULL AND (?::boolean OR variety_id IS NULL) RETURNING *');
+    expect(find('held').text).not.toMatch(/\bcategory\b/);
+
+    // The exit this verb leaves open: a SEEDS body satisfies the guard whatever the row holds.
+    given({ update: [{ id: LOT, name: 'Broadfork', category: 'seeds', variety_id: STALE, source_plant_id: null, variety_rank: 'cultivar' }] });
+    const moved = parse(await handler(put(seedEdit({ name: 'Broadfork' }))));
+    expect(moved.status).toBe(200);
+    expect(boundAfter(find('update'), GUARD)).toBe(true);
+    expect(kinds()).not.toContain('held');
+  });
+
   it('that read is scoped exactly as the UPDATE is — the caller\'s live row — so nothing leaks through the 400', async () => {
     given({ update: [], held: [{ '?column?': 1 }] });
     await handler(put({ ...seedEdit(), category: 'tools' }));

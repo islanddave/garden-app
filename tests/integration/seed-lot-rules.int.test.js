@@ -33,7 +33,7 @@ import { randomUUID } from 'node:crypto'
 import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
 import { assertFixtureId, settle } from './_cleanup.js'
 import {
-  seedVarietyFixture, seedMixTeardown, twoSessions, HAS_PSQL, lit,
+  seedVarietyFixture, seedMixTeardown, twoSessions, HAS_PSQL, PSQL_REQUIRED, announcePsqlSkip, lit,
 } from './_seedLotKit.js'
 import { handler as invHandler } from '../../lambda/inventory-items/index.js'
 import { handler as varietiesHandler } from '../../lambda/varieties/index.js'
@@ -72,7 +72,13 @@ describe('seed lot rules — the schema is on this branch', () => {
   it('the link table, the mix key, the component table and the plant count all exist (apply the three release 2a migrations before the code that names them)', () => {
     expect(MISSING, `missing on the database this suite forks: ${MISSING.join('; ')}`).toEqual([])
   })
+
+  // Blocks B (concurrent) and C (under the locks) are describe.skipIf(!HAS_PSQL). See the kit.
+  it.runIf(PSQL_REQUIRED)('psql is on the runner, so this file\'s concurrency cases did not silently skip', () => {
+    expect(HAS_PSQL).toBe(true)
+  })
 })
+announcePsqlSkip('seed-lot-rules.int.test.js')
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 // Fixtures and readers
@@ -626,7 +632,7 @@ describe.skipIf(!READY)('C — the parent rules, each cell on POST and on PUT /:
     await expectRefused(await throughDoor('POST', { ids: [P.a1, P.b], filedUnder: MIX.pair }), 'mixed_crop_parents')
   })
 
-  it('C9, cell by cell: the SQL judge (the guarantee) and the JavaScript check (the fast path) reach the SAME verdict on every cell, each asked directly', async () => {
+  it('C9, cell by cell: the SQL judge (the guarantee) and the JavaScript check (the fast path) reach the SAME verdict on every cell, each asked directly', { timeout: 90000 }, async () => {
     // Through the routes the fast path answers first, so the SQL judge is only ever reached by a
     // request the JavaScript passed — a wrong conjunct in it would show only in a race. Here both are
     // handed the same lot and the same plantings and asked separately: checkParentRules returns null
@@ -855,6 +861,50 @@ describe.skipIf(!READY || !HAS_PSQL)('C — the rules are judged again under the
       await rival.end()
     }
   })
+
+  it('C8 for PUT: the PUT has its lot and waits at a planting\'s share lock — that planting\'s variety is cleared during the wait -> 409 parents_changed, nothing written (the rules are judged by a statement that starts AFTER the share lock is granted)', { timeout: 90000 }, async () => {
+    // C7 holds the LOT, so the rival has committed before the PUT holds anything: it passes whether or
+    // not the judge comes after the planting locks. Here the lot is free and the PLANTING is held, so
+    // the PUT stops between its two locks — and a judge placed ahead of lockPlantings would read B
+    // while B still had its variety, write the link, and answer 200.
+    const a = await planting('C8pa')
+    const b = await planting('C8pb')
+    const lot = await newLot({ source_plant_ids: [a] })
+    const rival = openSession('holds B, then clears its variety')
+    const third = openSession('asks for the lot the PUT holds')
+    try {
+      const rivalPid = await rival.pid()
+      await rival.run(`BEGIN; SELECT id FROM plants WHERE id = ${lit(b)} FOR UPDATE;`)
+      const before = await everything()
+      // The fast path passes: at this moment A and B are two plantings of one variety.
+      const putting = onOwnConnection(() => put(lot, { source_plant_ids: [a, b] }))
+      const putPid = await waitBlockedBy(rivalPid, 'the PUT, at B\'s share lock')
+      // WHERE it waits: with the lot row already its own. A third session asking for that row queues
+      // behind the PUT's backend — not behind the rival, which holds only the planting.
+      const wanting = third.run(`BEGIN; SELECT id FROM inventory_items WHERE id = ${lit(lot)} FOR UPDATE;`, { timeoutMs: 60000 })
+        .then((rows) => ({ got: rows }), (e) => ({ failed: e.message }))
+      const thirdPid = await waitBlockedBy(putPid, 'a third session, at the lot row the PUT holds')
+      expect(thirdPid).not.toBe(rivalPid)
+      await rival.run(`UPDATE plants SET variety_id = NULL WHERE id = ${lit(b)};`)
+      await rival.end('COMMIT;')
+
+      const r = await putting
+      expect(r.status, JSON.stringify(r.body)).toBe(409)
+      expect(r.body).toEqual({ error: PLANTS_CHANGED, code: 'parents_changed' })
+      // The PUT's transaction is over and took nothing with it: the third session now has the lot.
+      expect(await wanting).toEqual({ got: [lot] })
+      await third.end()
+      expect(await everything()).toBe(before)
+      expect(await livePlants(lot)).toEqual([a])
+      // B really did lose its variety, and with no wait the fast path says so in its own words.
+      const now = await put(lot, { source_plant_ids: [a, b] })
+      expect(now.status).toBe(400)
+      expect(now.body).toEqual({ error: PARENT_WITHOUT_VARIETY, code: 'parent_without_variety', plant_id: b })
+    } finally {
+      await rival.end()
+      await third.end()
+    }
+  })
 })
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -905,6 +955,32 @@ describe.skipIf(!READY)('F — PUT /api/inventory-items/:id keeps a saved lot\'s
     expect(foreign.status).toBe(404)
     const absent = await widePut(randomUUID(), { name: 'x', type: 'durable', category: 'tools', quantity: 1, ...extra })
     expect(absent.status).toBe(404)
+  })
+
+  it('F3, the STORED cell: a row that is not seeds and holds a variety (no route can make one; this one is made by SQL) is frozen through the wide PUT — its own +/- tap is the 400 with the Seeds sentence, the row unchanged — and a seeds body moves it into Seeds', async () => {
+    // Pre-push QA review F3. The two F3 cases above start from a SEEDS row; the guard is judged on
+    // the stored variety_id alone, so the same refusal meets a tool row that holds one.
+    setTestUserId(USER)
+    const tool = await callHandler(invHandler, {
+      method: 'POST', path: '/api/inventory-items',
+      body: { name: `slr-tool-with-variety-${RUN}`, type: 'durable', category: 'tools', quantity: 1 },
+    })
+    expect(tool.status, JSON.stringify(tool.body)).toBe(201)
+    // Nothing in the schema refuses this: there is no CHECK tying variety_id to the seeds category.
+    await directSql`UPDATE inventory_items SET variety_id = ${fx.v.a1} WHERE id = ${tool.body.id}`
+    expect(await lotRow(tool.body.id)).toMatchObject({ category: 'tools', variety_id: fx.v.a1 })
+
+    const before = await everything()
+    const tap = await widePut(tool.body.id, { name: `slr-tool-with-variety-${RUN}`, type: 'durable', category: 'tools', quantity: 2 })
+    expect(tap.status, JSON.stringify(tap.body)).toBe(400)
+    expect(tap.body).toEqual({ error: STAYS_IN_SEEDS })
+    expect(await everything()).toBe(before)
+
+    // The exit the verb leaves: a body that says Seeds satisfies the guard, and the row keeps its variety.
+    const moved = await widePut(tool.body.id, seedBody())
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200)
+    expect(await lotRow(tool.body.id)).toMatchObject({ category: 'seeds', variety_id: fx.v.a1 })
+    expect(moved.body.variety_rank).toBe('cultivar')
   })
 
   it('F4 + F5: the +/- tap on a tool and on a seed packet still answer 200, and RETURNING\'s variety_rank subquery executes on INSERT and on UPDATE — "blend" under a mix, the cultivar\'s under a cultivar, null for a tool', async () => {

@@ -104,6 +104,18 @@ export async function seedVarietyFixture({ run, user, tag }) {
  * 23503 otherwise — a mix is tagged by the varieties Lambda's post-commit derive).
  * care_profile has no key to its variety, so nothing forces it; it is removed so a fork is not left
  * with a profile row for a mix that no longer exists.
+ *
+ * A MIX AND ITS COMPONENT ROWS LEAVE TOGETHER, in one transaction (the step marked below). The files
+ * run side by side, and variety-blend.int.test.js reads the migration's standing gates over the WHOLE
+ * database while the others are finishing. A keyed variety whose component rows are already gone is
+ * exactly what post_blend_key_equals_live_components counts, and the RESTRICT order puts the
+ * component DELETE first — so taken apart one statement at a time, any file's teardown turned that
+ * gate red for the length of the gap between two statements. Seen on real Postgres 2026-10-06 (three
+ * files in one run: "every standing post gate passes" failed with one gate not green), and the state
+ * was then made by hand: components deleted, variety still there -> that gate FAIL, the other 21 PASS.
+ * variety-blend's "the kit's teardown never leaves a state these gates count" reads the row-level
+ * gates between every two steps of this list. The steps after the marked one are unchanged: they take
+ * the leaves, and whatever the transaction left if it was refused.
  */
 export function seedMixTeardown(ids, crops = {}) {
   const slugs = Object.values(crops)
@@ -121,6 +133,23 @@ export function seedMixTeardown(ids, crops = {}) {
     () => directSql`DELETE FROM inventory_items WHERE created_by = ANY(${ids})`,
     () => directSql`DELETE FROM entity WHERE planting_ref_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM plants WHERE created_by = ANY(${ids})`,
+    // The mixes, whole: component rows, profile, tags, entity row and the keyed variety, or none of it.
+    () => directSql.transaction([
+      directSql`
+        DELETE FROM variety_blend_component
+         WHERE blend_variety_id IN (SELECT id FROM plant_varieties WHERE created_by = ANY(${ids}) AND blend_key IS NOT NULL)`,
+      directSql`
+        DELETE FROM care_profile
+         WHERE scope = 'cultivar'
+           AND scope_id IN (SELECT id FROM plant_varieties WHERE created_by = ANY(${ids}) AND blend_key IS NOT NULL)`,
+      directSql`
+        DELETE FROM entity_tag
+         WHERE entity_id IN (SELECT id FROM plant_varieties WHERE created_by = ANY(${ids}) AND blend_key IS NOT NULL)`,
+      directSql`
+        DELETE FROM entity
+         WHERE cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ANY(${ids}) AND blend_key IS NOT NULL)`,
+      directSql`DELETE FROM plant_varieties WHERE created_by = ANY(${ids}) AND blend_key IS NOT NULL`,
+    ]),
     () => directSql`
       DELETE FROM variety_blend_component
        WHERE created_by = ANY(${ids})
@@ -144,6 +173,18 @@ export function seedMixTeardown(ids, crops = {}) {
 // 2. Two real connections
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 export const HAS_PSQL = spawnSync('psql', ['--version'], { encoding: 'utf8' }).status === 0
+
+// Without psql every concurrency block SKIPS (describe.skipIf(!HAS_PSQL)), and a skip reads as green.
+// On the runner that must be a failure, so each file that gates a block on HAS_PSQL carries one case,
+// it.runIf(PSQL_REQUIRED), asserting HAS_PSQL (this module asserts nothing itself) — each file its
+// own, so none is protected only by another file happening to be in the same run. Off the runner a
+// lane or a laptop may really have no psql: announcePsqlSkip says so once per file, instead of nothing.
+export const PSQL_REQUIRED = Boolean(process.env.GITHUB_ACTIONS)
+export function announcePsqlSkip(file) {
+  if (!HAS_PSQL && !PSQL_REQUIRED) {
+    console.warn(`[${file}] psql was not found: this file's concurrency cases are SKIPPED, not passed`)
+  }
+}
 
 // The connection is handed to psql through PG* variables: never on its command line, never printed.
 function pgEnv() {

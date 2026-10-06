@@ -79,9 +79,9 @@ export const restoreConflictMessage = (err) => RESTORE_CONFLICT_MESSAGES[err?.co
 // reasons index.js gives above NEW_CULTIVAR_PROFILE, all of which hold here unchanged. A planting
 // under a mix therefore waters on the bundled fallback exactly as a new cultivar's does.
 //
-// KNOWN COST, not hidden: v5-rekeystrand-001's guard excuses a stranded profile only while _basis is
-// 'unresearched'. A mix whose last live planting is re-keyed to another variety will flag there
-// until its profile is deleted or given a _retained sentence. See the lane report.
+// v5-rekeystrand-001's guard excuses this row too (Dave, 2026-10-06): a stranded profile is not counted
+// while _basis is 'blend' and it carries no key beyond these three. Add a key here and
+// migrations/v5-rekeystrand-001/placeholder-vocabulary.test.js reds until the gate's list agrees.
 export const BLEND_PROFILE = {
   _source: 'blend-create',
   _basis: 'blend',

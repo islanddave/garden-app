@@ -36,7 +36,7 @@ import yaml from 'js-yaml'
 import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
 import { assertFixtureId, settle } from './_cleanup.js'
 import {
-  seedVarietyFixture, seedMixTeardown, twoSessions, HAS_PSQL, lit,
+  seedVarietyFixture, seedMixTeardown, twoSessions, HAS_PSQL, PSQL_REQUIRED, announcePsqlSkip, lit,
 } from './_seedLotKit.js'
 import { handler } from '../../lambda/varieties/index.js'
 import {
@@ -72,7 +72,13 @@ describe('variety blend — the schema is on this branch', () => {
   it('plant_varieties.blend_key, the cultivar view\'s blend_key and variety_blend_component exist (apply migrations/v5-varietyblend-001/0a-additive-ddl.sql before the code that names them)', () => {
     expect(MISSING, `missing on the database this suite forks: ${MISSING.join('; ')}`).toEqual([])
   })
+
+  // The race block ("two requests for one set at once") is describe.skipIf(!HAS_PSQL). See the kit.
+  it.runIf(PSQL_REQUIRED)('psql is on the runner, so this file\'s concurrency cases did not silently skip', () => {
+    expect(HAS_PSQL).toBe(true)
+  })
 })
+announcePsqlSkip('variety-blend.int.test.js')
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 // Fixtures and readers
@@ -281,7 +287,7 @@ describe.skipIf(!READY)('POST /api/varieties/blend — find or create', () => {
     }
   })
 
-  it('the projections: variety_rank and blend_key are on GET /:id, on the list, and on the PUT reply', async () => {
+  it('the projections: variety_rank and blend_key are on GET /:id and on the list, for a mix and for a plain cultivar (the PUT reply is read in "a rename keeps the key")', async () => {
     const detail = await call('GET', `/api/varieties/${pairId}`)
     expect(detail.status, JSON.stringify(detail.body)).toBe(200)
     expect(detail.body).toMatchObject({ id: pairId, variety_rank: 'blend', blend_key: keyOf(fx.v.a1, fx.v.a2) })
@@ -520,8 +526,11 @@ describe.skipIf(!READY)('POST /api/varieties/blend — a mix that already exists
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 // The contract asked lane V for one thing it could only reason about: "the mix's care_profile must not
 // red that standing gate once the mix is sown". Lane V gave the mix its own profile row, _basis
-// 'blend' (blend.js BLEND_PROFILE), and named the cost: a DIFFERENT standing gate excuses a stranded
-// profile only while _basis is 'unresearched'. Both halves are run here against the gates' OWN SQL.
+// 'blend' (blend.js BLEND_PROFILE), and named the cost: a DIFFERENT standing gate,
+// v5-rekeystrand-001's post_no_rekey_stranded_care_profile, excused a stranded profile only while
+// _basis was 'unresearched'. That was observed here on 2026-10-06 and Dave decided it the same day
+// ("Teach the check about mixes"): the guard's exemption now also covers a mix's bare birth profile.
+// Both halves are run here against the gates' OWN SQL.
 //
 // A standing gate counts rows across the whole database, and this branch is full of other files'
 // fixtures (most of their plantings name a variety with no profile at all), so its total says nothing
@@ -535,6 +544,8 @@ describe.skipIf(!READY)('POST /api/varieties/blend — a mix that already exists
 // it is armed, which is prod. If a gate's text stops having either shape the helper throws — re-point
 // it, do not let it read as green.
 const STAMP_GUARD = /\s+AND EXISTS \(SELECT 1 FROM public\.schema_version\s+WHERE version = '[^']+'\)/
+// Care content nobody would call a placeholder: what a researched cultivar's profile carries.
+const RESEARCHED_PROFILE = { _source: 'int-test-research', water_interval_days_container: 3, drought_tolerance: 'low' }
 function gateHits(file, name, head, id) {
   const gate = yaml.load(readFileSync(file, 'utf8')).post.find((g) => g.name === name)
   if (!gate) throw new Error(`no post gate named ${name} in ${file}`)
@@ -576,6 +587,12 @@ describe.skipIf(!READY)('a planting sown under a mix, and the standing care gate
     g.onMix = await sow('mix', g.mix)
     g.onPlain = await sow('plain', g.plain)
     g.onBare = await sow('bare', g.bare)
+    // The re-key guard's control: a variety whose profile holds real care content.
+    g.researched = (await leaf('sown-researched')).id
+    await directSql`
+      INSERT INTO care_profile (scope, scope_id, profile, model_version)
+      VALUES ('cultivar'::care_scope, ${g.researched}::uuid, ${JSON.stringify(RESEARCHED_PROFILE)}::jsonb, 1)`
+    g.onResearched = await sow('researched', g.researched)
   })
 
   it('the two cadence predicates count their controls: a planting of a variety with NO profile, and a planting of an ordinary new cultivar on its "unresearched" placeholder', async () => {
@@ -592,15 +609,42 @@ describe.skipIf(!READY)('a planting sown under a mix, and the standing care gate
     expect(profile.basis).not.toBe('unresearched')
   })
 
-  it('THE KNOWN COST, as it is today: re-key the mix\'s only planting to another variety and the re-key guard counts the mix\'s profile as stranded researched care — while an ordinary placeholder left behind the same way is excused', async () => {
-    expect(await strandedProfile([g.mix, g.plain])).toEqual([])
+  it('re-key the mix\'s only planting to another variety and the re-key guard EXCUSES the mix\'s birth profile, as it excuses an ordinary placeholder left behind the same way — while researched care stranded by the same re-key is counted', async () => {
+    const all = [g.mix, g.plain, g.researched]
+    // Before: each still has its live planting, so the guard has nothing to say about any of them.
+    expect(await strandedProfile(all)).toEqual([])
     await rekey(g.onMix, g.bare)
     await rekey(g.onPlain, g.bare)
-    // Lane V's finding 3b, now observed rather than predicted. No single _basis satisfies both gates:
-    // the cadence gate needs it to differ from 'unresearched', this guard's exemption needs it to equal
-    // it. If the guard's exclusion is widened to a 'blend' placeholder (a decision that is Dave's),
-    // this expectation becomes [] — flip it then.
-    expect(await strandedProfile([g.mix, g.plain])).toEqual([g.mix])
+    await rekey(g.onResearched, g.bare)
+    // The control IS counted, so the guard saw these re-keys (the audit trigger fed it) and is not
+    // merely silent; the mix and the placeholder, stranded by the very same statement, are not.
+    // Until 2026-10-06 this read [g.mix, g.researched]: the exemption knew one label, 'unresearched'.
+    expect(await strandedProfile(all)).toEqual([g.researched])
+    expect((await directSql`
+      SELECT profile FROM care_profile WHERE scope = 'cultivar' AND scope_id = ${g.mix}`)[0].profile).toEqual(BLEND_PROFILE)
+  })
+
+  it('the exemption is for a BARE birth profile only: one key of real content on the mix\'s profile and it counts; taken off again it is excused; relabelled with nothing added it counts', async () => {
+    // `expr` is one of the literals below, never a value: values go in as parameters.
+    const mixProfile = (expr, ...params) => directSql(
+      `UPDATE care_profile SET profile = ${expr} WHERE scope = 'cultivar' AND scope_id = $1::uuid`, [g.mix, ...params])
+    const counted = async () => (await strandedProfile([g.mix, g.plain, g.researched])).sort()
+
+    // The likeliest way care lands on a mix: a merge, which leaves _basis 'blend' behind.
+    await mixProfile(`profile || '{"water_interval_days_container": 3}'::jsonb`)
+    expect(await counted()).toEqual([g.mix, g.researched].sort())
+    await mixProfile(`profile - 'water_interval_days_container'`)
+    expect(await counted()).toEqual([g.researched])
+
+    // The label is half of the property: the same three keys under another _basis is a decision, not a birth row.
+    await mixProfile(`profile || '{"_basis": "dave_decision"}'::jsonb`)
+    expect(await counted()).toEqual([g.mix, g.researched].sort())
+    // And a row with NO _basis at all is distinct from both labels (IS DISTINCT FROM, never <>): counted.
+    await mixProfile(`profile - '_basis'`)
+    expect(await counted()).toEqual([g.mix, g.researched].sort())
+
+    await mixProfile('$2::jsonb', JSON.stringify(BLEND_PROFILE))
+    expect(await counted()).toEqual([g.researched])
   })
 })
 
@@ -685,6 +729,12 @@ describe.skipIf(!READY)('the two unique indexes — err.constraint carries the I
 // The rival is a psql session that has INSERTed the mix (row and components) and not committed. The
 // route's find cannot see it, so the route goes on to its own INSERT, which stops on the unique index
 // behind the rival's transaction — shown in pg_blocking_pids() before the rival is let go.
+//
+// WHICH index. A rival with the route's own name, key and creator stops the INSERT on EITHER unique
+// index, and the outcome is the same with uq_plant_varieties_creator_blend_key_live absent (pre-push
+// QA review F6). So the first case's rival is a RENAMED mix: same creator, same key, another name.
+// Nothing but the key index can hold the route's INSERT there; without that index the route does not
+// wait at all and the case fails at waitBlockedBy.
 async function rivalHolding({ id, name, by, leafIds }) {
   const rival = openSession('a rival creating the same mix')
   const rivalPid = await rival.pid()
@@ -697,19 +747,23 @@ async function rivalHolding({ id, name, by, leafIds }) {
 }
 
 describe.skipIf(!READY || !HAS_PSQL)('POST /api/varieties/blend — two requests for one set at once', () => {
-  it('the first COMMITS: the second is handed that row — 200, created:false, the first one\'s id — and there is one row for the key', { timeout: 90000 }, async () => {
+  it('the first COMMITS, under ANOTHER NAME (so only the per-creator KEY index can hold the second): the second is handed that row — 200, created:false, the first one\'s id and its name — and there is one row for the key', { timeout: 90000 }, async () => {
     const [x, y] = [await leaf('race-x'), await leaf('race-y')]
     const preview = await blend([x.id, y.id], { create: false })
     const firstId = randomUUID()
-    const { rival, rivalPid } = await rivalHolding({ id: firstId, name: preview.body.name, by: USER, leafIds: [x.id, y.id] })
+    const renamed = `vb race renamed ${RUN}`
+    expect(renamed.toLowerCase()).not.toBe(preview.body.name.toLowerCase())
+    const { rival, rivalPid } = await rivalHolding({ id: firstId, name: renamed, by: USER, leafIds: [x.id, y.id] })
     try {
       const second = onOwnConnection(() => blend([x.id, y.id]))
-      await waitBlockedBy(rivalPid, 'the route\'s INSERT, at the unique index')
+      await waitBlockedBy(rivalPid, 'the route\'s INSERT, at the key index (the names differ)')
       await rival.end('COMMIT;')
       const r = await second
       expect(r.status, JSON.stringify(r.body)).toBe(200)
-      expect(r.body).toMatchObject({ id: firstId, created: false, exists: true, blend_key: keyOf(x.id, y.id) })
+      expect(r.body).toMatchObject({ id: firstId, name: renamed, created: false, exists: true, blend_key: keyOf(x.id, y.id) })
       expect(await directSql`SELECT id FROM plant_varieties WHERE blend_key = ${keyOf(x.id, y.id)}`).toEqual([{ id: firstId }])
+      // The automatic name was never the collision, and the loser did not take it on its way out.
+      expect(await directSql`SELECT id FROM plant_varieties WHERE lower(name) = lower(${preview.body.name})`).toEqual([])
       // The loser's batch rolled back whole: no stray component, no stray profile.
       expect(await directSql`
         SELECT DISTINCT blend_variety_id FROM variety_blend_component
@@ -773,11 +827,12 @@ const ROW_LEVEL = [
   'post_keyed_row_has_rank_blend', 'post_blend_key_equals_live_components',
   'post_no_live_component_under_an_unkeyed_row', 'post_every_live_component_is_a_leaf',
 ]
-async function standingPostGates() {
+async function standingPostGates(only = null) {
   const file = yaml.load(readFileSync(GATES_FILE, 'utf8'))
   const out = []
   for (const gate of file.post) {
     if (gate.continuous === false || gate.env) continue
+    if (only && !only.includes(gate.name)) continue
     // eslint-disable-next-line no-await-in-loop
     const rows = await directSql(gate.sql)
     let ok
@@ -803,10 +858,40 @@ describe.skipIf(!READY)('migrations/v5-varietyblend-001/gates.yml — green afte
     const results = await standingPostGates()
     expect(results.map((g) => g.name)).toEqual(expect.arrayContaining(ROW_LEVEL))
     expect(results.length).toBeGreaterThanOrEqual(20)
-    expect(results.filter((g) => !g.ok), 'gates that are not green').toEqual([])
+    // By NAME, so a red run says which gate (an abbreviated object does not).
+    expect(results.filter((g) => !g.ok).map((g) => `${g.name} (${g.rows} row(s))`), 'gates that are not green').toEqual([])
   })
 
-  it('and they can go red: a component hung under an unkeyed variety, a keyed row whose rank is not "blend", a key that is not its components, a component that is itself a mix — each turns exactly its own gate', async () => {
+  it('the kit\'s teardown never leaves a state these gates count: read between every two of its steps, the four row-level gates stay green while a route-made mix is taken apart', { timeout: 90000 }, async () => {
+    // These gates are read over the WHOLE database, and the other files that make mixes finish while
+    // this block runs. Their teardown (seedMixTeardown) used to delete a mix's component rows, then,
+    // statements later, the mix: in between, a keyed variety had no live component and
+    // post_blend_key_equals_live_components counted it — in THIS file's run, for another file's rows.
+    // It is one transaction now. This drives the same list a file's afterAll hands to settle(), one
+    // step at a time, for a user of its own.
+    const GONE = `vb-gone-${RUN}`
+    const [x, y] = [await leaf('td-x', { by: GONE }), await leaf('td-y', { by: GONE })]
+    const made = await blend([x.id, y.id], { as: GONE })
+    expect(made.status, JSON.stringify(made.body)).toBe(201)
+    expect(await components(made.body.id)).toHaveLength(2)
+    const red = async () => (await standingPostGates(ROW_LEVEL)).filter((g) => !g.ok).map((g) => g.name)
+    expect((await standingPostGates(ROW_LEVEL)).map((g) => g.name).sort()).toEqual([...ROW_LEVEL].sort())
+    expect(await red()).toEqual([])
+
+    const steps = seedMixTeardown(assertFixtureId(GONE))
+    for (const [i, step] of steps.entries()) {
+      // eslint-disable-next-line no-await-in-loop
+      await step()
+      // eslint-disable-next-line no-await-in-loop
+      expect(await red(), `after teardown step ${i + 1} of ${steps.length}`).toEqual([])
+    }
+    expect(await directSql`SELECT id FROM plant_varieties WHERE created_by = ${GONE}`).toEqual([])
+    expect(await directSql`SELECT id FROM variety_blend_component WHERE created_by = ${GONE}`).toEqual([])
+    expect(await directSql`
+      SELECT scope_id FROM care_profile WHERE scope = 'cultivar' AND scope_id = ${made.body.id}`).toEqual([])
+  })
+
+  it('and they can go red: a component hung under an unkeyed variety, a keyed row whose rank is not "blend", a key that is not its components, a component that is itself a mix — each turns exactly its own gate', { timeout: 90000 }, async () => {
     const red = async () => (await standingPostGates()).filter((g) => !g.ok).map((g) => g.name)
     const [x, y, z] = [await leaf('gate-x'), await leaf('gate-y'), await leaf('gate-z')]
     const actor = directSql`SELECT set_config('app.actor_clerk_sub', ${USER}, true)`

@@ -23,7 +23,7 @@ import { randomUUID } from 'node:crypto'
 import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
 import { assertFixtureId, settle } from './_cleanup.js'
 import {
-  seedVarietyFixture, seedMixTeardown, twoSessions, HAS_PSQL, lit,
+  seedVarietyFixture, seedMixTeardown, twoSessions, HAS_PSQL, PSQL_REQUIRED, announcePsqlSkip, lit,
 } from './_seedLotKit.js'
 import { handler as invHandler } from '../../lambda/inventory-items/index.js'
 import { handler as varietiesHandler } from '../../lambda/varieties/index.js'
@@ -55,7 +55,13 @@ describe('seed lot filing — the schema is on this branch', () => {
   it('the link table, the mix key and the component table exist (apply v5-seedmultiparent-001 and v5-varietyblend-001 before the code that names them)', () => {
     expect(MISSING, `missing on the database this suite forks: ${MISSING.join('; ')}`).toEqual([])
   })
+
+  // The last block (D8, E — the filing against the other writers) is describe.skipIf(!HAS_PSQL). See the kit.
+  it.runIf(PSQL_REQUIRED)('psql is on the runner, so this file\'s concurrency cases did not silently skip', () => {
+    expect(HAS_PSQL).toBe(true)
+  })
 })
+announcePsqlSkip('seed-lot-filing.int.test.js')
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 // Fixtures and readers
@@ -323,6 +329,44 @@ describe.skipIf(!READY)('D — PUT /:id/filing: a compare-and-set on the variety
     expect(await livePlants(lot)).toEqual(sorted(P.a1, P.a2))
   })
 
+  it('the target need not be the HOUSEHOLD\'s: a lot is re-filed under another household\'s live variety, and under another household\'s mix — while the set route, which needs the household\'s own mix, still refuses that mix', async () => {
+    // R1-CONTRACT 6b: "The target need not be the parents' mix and need not be the household's."
+    const [theirs] = await directSql`
+      INSERT INTO plant_varieties (name, created_by, crop_type_slug, variety_rank)
+      VALUES (${`slf-theirs-${RUN}`}, ${FOREIGN}, ${fx.crops.a}, 'cultivar') RETURNING id, name`
+    const lot = await newLot({ source_plant_ids: [P.a1] })
+    const row = await lotRow(lot)
+    const r = await file(lot, { variety_id: theirs.id, expect_variety_id: fx.v.a1 })
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    expect(r.body).toEqual({
+      id: lot, variety_id: theirs.id, variety_name: theirs.name, variety_rank: 'cultivar', name: row.name,
+      changed: true, previous: { variety_id: fx.v.a1, name: row.name },
+    })
+    expect((await lotRow(lot)).variety_id).toBe(theirs.id)
+
+    // Their MIX of the same two varieties (same key as the household's; the route named it "… (2)").
+    const theirMix = await newMix([fx.v.a1, fx.v.a2], FOREIGN)
+    expect(theirMix.id).not.toBe(MIX.pair.id)
+    expect(theirMix.created_by).toBe(FOREIGN)
+    const toMix = await file(lot, { variety_id: theirMix.id, expect_variety_id: theirs.id })
+    expect(toMix.status, JSON.stringify(toMix.body)).toBe(200)
+    expect(toMix.body).toMatchObject({ variety_id: theirMix.id, variety_rank: 'blend', changed: true })
+    expect((await lotRow(lot)).variety_id).toBe(theirMix.id)
+
+    // The parent rules are stricter than the filing, on purpose: a second variety needs the household's
+    // OWN live mix, so the lot as now filed (their mix, right key) cannot take P.a2 — with or without
+    // a filing that names their mix again.
+    const before = await everything()
+    const refusal = { error: BLEND_REQUIRED, code: 'blend_required', component_variety_ids: sorted(fx.v.a1, fx.v.a2) }
+    const stored = await put(lot, { source_plant_ids: [P.a1, P.a2] })
+    expect(stored.status, JSON.stringify(stored.body)).toBe(400)
+    expect(stored.body).toEqual(refusal)
+    const filed = await put(lot, { source_plant_ids: [P.a1, P.a2], filing: { variety_id: theirMix.id, expect_variety_id: fx.v.a1 } })
+    expect(filed.status, JSON.stringify(filed.body)).toBe(400)
+    expect(filed.body).toEqual(refusal)
+    expect(await everything()).toBe(before)
+  })
+
   it('D7: a row that is not seeds, another household\'s lot, a deleted lot, an absent one and a malformed id are all the same 404', async () => {
     setTestUserId(USER)
     const tool = await callHandler(invHandler, {
@@ -415,18 +459,77 @@ describe.skipIf(!READY)('D — `filing` on PUT /:id/source-plants: one transacti
     expect(await livePlants(lot)).toEqual([P.a1])
   })
 
-  it('D9b: the filing is fine and the expected set is stale -> 409 lot_changed; the FILING is untouched', async () => {
+  it('D9b: the filing is fine and the expected set is stale -> 409 lot_changed carrying the stored set AND, because a filing was sent, the stored variety_id and name; the FILING is untouched', async () => {
     const lot = await newLot({ source_plant_ids: [P.a1, P.a1b] })
+    const row = await lotRow(lot)
     const before = await everything()
     const r = await put(lot, {
       source_plant_ids: [P.a1], expected_source_plant_ids: [P.a1],
-      filing: { variety_id: fx.v.a2, expect_variety_id: fx.v.a1 },
+      filing: { variety_id: fx.v.a2, expect_variety_id: fx.v.a1, name: 'never' },
     })
     expect(r.status, JSON.stringify(r.body)).toBe(409)
+    expect(r.body.error).toBe(LOT_CHANGED)
     expect(r.body.code).toBe('lot_changed')
+    expect(r.body.source_plant_id).toBe(P.a1)
     expect(r.body.source_plants.map((s) => s.id).sort()).toEqual(sorted(P.a1, P.a1b))
+    // R1-CONTRACT 6b, the second lot_changed shape: "(plus variety_id, name when `filing` was sent)".
+    // Both are the lot AS STORED, not what the request asked for.
+    expect(Object.keys(r.body).sort()).toEqual(['code', 'error', 'name', 'source_plant_id', 'source_plants', 'variety_id'])
+    expect(r.body.variety_id).toBe(fx.v.a1)
+    expect(r.body.name).toBe(row.name)
     expect(await everything()).toBe(before)
     expect((await lotRow(lot)).variety_id).toBe(fx.v.a1)
+
+    // The same stale set with NO filing in the body: the same 409 without those two keys.
+    const bare = await put(lot, { source_plant_ids: [P.a1], expected_source_plant_ids: [P.a1] })
+    expect(bare.status, JSON.stringify(bare.body)).toBe(409)
+    expect(Object.keys(bare.body).sort()).toEqual(['code', 'error', 'source_plant_id', 'source_plants'])
+    expect(await everything()).toBe(before)
+  })
+
+  it('null is ABSENT for every optional key: expected_source_plant_ids null is no precondition (where [] is one), filing null re-files nothing and adds no `filing` to the reply, source_plant_id null leaves the cache to the rule', async () => {
+    const lot = await newLot({ source_plant_ids: [P.a1, P.a1b], source_plant_id: P.a1b })
+    const before = await everything()
+    // [] is a real expectation ("the lot has no parents"), and it is false here.
+    const empty = await put(lot, { source_plant_ids: [P.a1b], expected_source_plant_ids: [] })
+    expect(empty.status, JSON.stringify(empty.body)).toBe(409)
+    expect(empty.body.code).toBe('lot_changed')
+    expect(await everything()).toBe(before)
+
+    // null in its place: not compared at all. Were it read as [], this would be the same 409; were
+    // `filing: null` read as a malformed filing, a 400.
+    const r = await put(lot, {
+      source_plant_ids: [P.a1b], expected_source_plant_ids: null, source_plant_id: null, filing: null,
+    })
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    expect(Object.keys(r.body).sort()).toEqual(['id', 'source_plant_id', 'source_plants'])
+    expect(r.body.source_plant_id).toBe(P.a1b)
+    expect(await livePlants(lot)).toEqual([P.a1b])
+    const after = await lotRow(lot)
+    expect(after.variety_id).toBe(fx.v.a1)
+    expect(after.source_plant_id).toBe(P.a1b)
+  })
+
+  it('F16: a STALE expected set and a set that breaks a rule, in one request -> the RULE answers (400 blend_required), not 409 lot_changed: the rules\' fast path runs before the lot is locked. With the rule met, the same stale request is the 409', async () => {
+    // The lot holds {a1}; the client believes it holds {a1b} and asks for two varieties with no mix.
+    const lot = await newLot({ source_plant_ids: [P.a1] })
+    const row = await lotRow(lot)
+    const before = await everything()
+    const stale = [P.a1b]
+    const both = await put(lot, { source_plant_ids: [P.a1, P.a2], expected_source_plant_ids: stale })
+    expect(both.status, JSON.stringify(both.body)).toBe(400)
+    expect(both.body).toEqual({ error: BLEND_REQUIRED, code: 'blend_required', component_variety_ids: sorted(fx.v.a1, fx.v.a2) })
+    expect(await everything()).toBe(before)
+
+    // Meet the rule (file under the mix in the same request) and the stale set is what is left to say.
+    const met = await put(lot, {
+      source_plant_ids: [P.a1, P.a2], expected_source_plant_ids: stale,
+      filing: { variety_id: MIX.pair.id, expect_variety_id: fx.v.a1 },
+    })
+    expect(met.status, JSON.stringify(met.body)).toBe(409)
+    expect(met.body).toMatchObject({ error: LOT_CHANGED, code: 'lot_changed', source_plant_id: P.a1, variety_id: fx.v.a1, name: row.name })
+    expect(met.body.source_plants.map((p) => p.id)).toEqual([P.a1])
+    expect(await everything()).toBe(before)
   })
 
   it('D9c: both fine -> both written; and a filing to the variety the lot already has is changed:false beside a written set', async () => {

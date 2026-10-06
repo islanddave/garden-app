@@ -63,6 +63,7 @@ const USER_A = `user_int_stats_a_${RUN}`;       // household member 1 (owns the 
 const USER_B = `user_int_stats_b_${RUN}`;       // household member 2
 const USER_C = `user_int_stats_foreign_${RUN}`; // foreign owner — must never be visible to A/B
 const USER_D = `user_int_stats_d_${RUN}`;       // a household of its own: the several-parent lot
+const USER_E = `user_int_stats_e_${RUN}`;       // a household of its own: parent_count's two other cells
 const ENV_KEY = 'GARDEN_HOUSEHOLD_IDS';
 const PATH = '/api/harvests/season-stats';
 
@@ -167,7 +168,7 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
 
   afterAll(async () => {
     if (savedEnv === undefined) delete process.env[ENV_KEY]; else process.env[ENV_KEY] = savedEnv;
-    const users = [USER_A, USER_B, USER_C, USER_D];
+    const users = [USER_A, USER_B, USER_C, USER_D, USER_E];
     await settle('season-stats.int', [
       // Both foreign keys on a parent link are ON DELETE RESTRICT: it goes before its lot and its planting.
       () => directSql`DELETE FROM seed_lot_parent_planting WHERE created_by = ANY(${users}::text[])`,
@@ -365,6 +366,69 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
       const { body } = await stats(USER_A);
       expect(cardFor(body, d.srcB)).toBeUndefined();
       expect(body.sections.seed_lots?.series.rows.find((r) => r.lot_id === d.lot)).toBeUndefined();
+    });
+  });
+
+  // parent_count = GREATEST(live seed_parent link rows, (source_plant_id IS NOT NULL)::int). The lot
+  // above reads the first arm with every linked planting live. Two cells it does not reach (pre-push QA
+  // review F14), in a household of their own so no card or count above moves:
+  //   · a LIVE link whose planting was soft-deleted afterwards — it is still a link row, so it counts;
+  //   · the second arm on its own: the column set and no link row at all (what a pre-release-1 Lambda
+  //     left, and what the migration's reconcile repairs) reads 1, not 0.
+  describe.skipIf(!HAS_PARENT_COUNT)('parent_count: a soft-deleted linked planting, and a lot with the cache alone (V5-SEEDSTATSPARENTS-001)', () => {
+    const e = {};
+
+    beforeAll(async () => {
+      e.proj = (await insertProject({ name: `int-stats-e-${RUN}`, createdBy: USER_E })).id;
+      e.src = await mkSource(USER_E, `int-stats-src-e-${RUN}`);
+      for (const k of ['1', '2', 'Gone']) {
+        // eslint-disable-next-line no-await-in-loop
+        e[`parent${k}`] = await mkPlanting(USER_E, e.proj, { name: `int-stats-pe${k}-${RUN}`, sourceId: e.src, varietyId: ids.cv });
+      }
+      const mkLot = async (tag) => (await directSql`
+        INSERT INTO inventory_items (user_id, created_by, type, name, category, unit, quantity_on_hand,
+                                     variety_id, status, source_plant_id, seed_stage, created_at)
+        VALUES (${USER_E}, ${USER_E}, 'consumable', ${`int-stats-lot-e-${tag}-${RUN}`}, 'seeds', 'packet', 1,
+                ${ids.cv}, 'active', ${e.parent1}, 'drying', '2026-09-04T16:00:00Z')
+        RETURNING id`)[0].id;
+      e.lotThree = await mkLot('three');
+      e.lotCacheOnly = await mkLot('cache-only');
+      await directSql`
+        INSERT INTO seed_lot_parent_planting (inventory_item_id, plant_id, role, created_by)
+        VALUES (${e.lotThree}, ${e.parent1}, 'seed_parent', ${USER_E}),
+               (${e.lotThree}, ${e.parent2}, 'seed_parent', ${USER_E}),
+               (${e.lotThree}, ${e.parentGone}, 'seed_parent', ${USER_E})`;
+      // Linked while live, soft-deleted afterwards: the only road to this state the routes leave open.
+      await directSql`UPDATE plants SET deleted_at = now() WHERE id = ${e.parentGone}`;
+    });
+
+    it('a live link whose planting is soft-deleted still counts: parent_count 3, on the view and through the route', async () => {
+      const state = await directSql`
+        SELECT l.plant_id, l.deleted_at IS NULL AS link_live, p.deleted_at IS NULL AS planting_live
+          FROM seed_lot_parent_planting l JOIN plants p ON p.id = l.plant_id
+         WHERE l.inventory_item_id = ${e.lotThree} AND l.plant_id = ${e.parentGone}`;
+      expect(state).toEqual([{ plant_id: e.parentGone, link_live: true, planting_live: false }]);
+      expect(await directSql`SELECT lot_id, parent_count FROM public.stat_saved_lot WHERE lot_id = ${e.lotThree}`)
+        .toEqual([{ lot_id: e.lotThree, parent_count: 3 }]);
+
+      const { status, body } = await stats(USER_E, 'season=2026&sections=seed_lots');
+      expect(status, JSON.stringify(body).slice(0, 300)).toBe(200);
+      const rows = body.sections.seed_lots.series.rows.filter((r) => r.lot_id === e.lotThree);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].parent_count).toBe(3);
+    });
+
+    it('a lot with the cache and NO link row reads parent_count 1 (GREATEST\'s second arm), not 0', async () => {
+      expect(await directSql`
+        SELECT count(*)::int AS n FROM seed_lot_parent_planting WHERE inventory_item_id = ${e.lotCacheOnly}`).toEqual([{ n: 0 }]);
+      expect(await directSql`SELECT lot_id, parent_count FROM public.stat_saved_lot WHERE lot_id = ${e.lotCacheOnly}`)
+        .toEqual([{ lot_id: e.lotCacheOnly, parent_count: 1 }]);
+
+      const { body } = await stats(USER_E, 'season=2026&sections=seed_lots');
+      const rows = body.sections.seed_lots.series.rows.filter((r) => r.lot_id === e.lotCacheOnly);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].parent_count).toBe(1);
+      expect(rows[0].parent).toMatchObject({ planting_id: e.parent1 });
     });
   });
 });

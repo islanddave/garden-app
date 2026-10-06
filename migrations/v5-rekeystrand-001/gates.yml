@@ -56,6 +56,10 @@ pre:
       invariant: applying 0a does not change it, and resolving the two findings drives it to zero.
       Carries the guard's placeholder exclusion (2026-09-21) so it keeps measuring what the guard
       counts. Re-measured 2026-09-21: 3 (Shipka, Palmetto Punch, Sunbright; Snapdragon resolved).
+      Carries the guard's second label too (a mix's birth profile, 2026-10-06) for the same reason;
+      no mix existed when this was measured, so the measurement is unchanged by it. (A wider
+      exclusion can only LOWER this count. That cannot red the standing guard, which wants zero; this
+      gate wants at least one, and is read once, at apply time, on a database with no mix yet.)
     env: prod
     continuous: false
     sql: |
@@ -73,7 +77,8 @@ pre:
                           WHERE p.variety_id = r.old_v
                             AND p.deleted_at IS NULL AND p.archived_at IS NULL)
          AND cp.profile->>'_retained' IS NULL
-         AND (cp.profile->>'_basis' IS DISTINCT FROM 'unresearched'
+         AND ((cp.profile->>'_basis' IS DISTINCT FROM 'unresearched'
+               AND cp.profile->>'_basis' IS DISTINCT FROM 'blend')
               OR (cp.profile - ARRAY['_source', '_basis', 'notes']) <> '{}'::jsonb)
     expect: rowcount_gte
     value: 1
@@ -100,6 +105,21 @@ post:
       NULL and the row would silently leave the guard. Unknown Sweet Long is NOT a placeholder by this
       rule — its row says 'unresearched' but carries the Dave-approved 2d/17d Capsicum fallback — so
       re-identifying it flags. README §Placeholders; rehearsal and mutants in §Verification 2026-09-21.
+
+      A MIX'S BIRTH PROFILE IS NOT A STRAND EITHER — Dave's decision 2026-10-06 (AskUserQuestion,
+      "Teach the check about mixes"). POST /api/varieties/blend writes BLEND_PROFILE
+      (lambda/varieties/blend.js) with every named mix it makes: _source, _basis 'blend', notes, and
+      nothing else. It cannot say 'unresearched' — v4-cadencerefill-001's placeholder gate would then
+      count every planting sown under a mix — so the one label above could never excuse it, and
+      re-keying a mix's only planting reported the mix as stranded research. A mix has no care of its
+      own to research. The SAME exemption, by the same PROPERTY, now covers it: _basis 'blend' AND no
+      key beyond _source, _basis and notes. A mix profile that gains any other key counts again, like
+      a placeholder that does. Each label is its own IS DISTINCT FROM, joined by AND, for the reason
+      above: a row with no _basis is distinct from both and stays counted. SAFE WHERE THIS GUARD IS
+      ALREADY ARMED: the change only widens an exclusion, so it can remove rows from the count and
+      can never add one — a database that was green stays green, and the receipt is untouched.
+      placeholder-vocabulary.test.js pins both labels and the key list to the two handler constants.
+      README §A mix's birth profile.
     sql: |
       WITH rekeyed AS (
         SELECT DISTINCT (a.before_jsonb->>'variety_id')::uuid AS old_v
@@ -115,7 +135,8 @@ post:
                           WHERE p.variety_id = r.old_v
                             AND p.deleted_at IS NULL AND p.archived_at IS NULL)
          AND cp.profile->>'_retained' IS NULL
-         AND (cp.profile->>'_basis' IS DISTINCT FROM 'unresearched'
+         AND ((cp.profile->>'_basis' IS DISTINCT FROM 'unresearched'
+               AND cp.profile->>'_basis' IS DISTINCT FROM 'blend')
               OR (cp.profile - ARRAY['_source', '_basis', 'notes']) <> '{}'::jsonb)
          AND EXISTS (SELECT 1 FROM public.schema_version
                       WHERE version = '5.0.0-rekeystrand-20260908')
