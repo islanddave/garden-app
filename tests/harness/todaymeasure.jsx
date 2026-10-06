@@ -34,10 +34,11 @@
 import './robotoPin.js'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import Today from '../../src/pages/Today.jsx'
 import { AuthProvider } from '../../src/context/AuthContext.jsx'
 import { PrefsProvider } from '../../src/context/PrefsContext.jsx'
+import { PageScrollProvider } from '../../src/hooks/usePageScrollManager.js'
 import { P } from '../../src/lib/constants.js'
 import { T } from '../../src/components/forms/formStyles.js'
 import { stateByName } from './_todaymeasure/today-v2-contract.mjs'
@@ -58,6 +59,9 @@ const STATE = params.get('state') || 'busy'
 //       fixture. It only goes out when VITE_API_CRITTERS is set, which tests/harness/vite.harness.v2.mjs
 //       does; __h.requests() shows the GET and __h.v2().prefs counts it.
 //   (c) __h.act(step) drives a tap or a scroll; a tap that does not flip aria-expanded is VOID.
+//   (d) ?routes=1 (the gate's trusted-taps flows only) mounts the same root under TWO routes, /today and /away,
+//       so a run can leave Today and come Back; __h.go(to) navigates. Without it the tree is the one-route tree
+//       every measured state has always had. __h.wire() counts the event writes and can hold their answers.
 // FIX is the v1 payload a state starts from: STATE itself for v1, the contract row's fixture for v2.
 const V2 = params.get('v2') === '1'
 const V2STATE = V2 ? stateByName(STATE) : null
@@ -271,7 +275,7 @@ const OPEN_METEO_MODELS_STUB = {
   },
 }
 
-window.fetch = async (input, init = {}) => {
+const stubFetch = async (input, init = {}) => {
   const url = typeof input === 'string' ? input : input.url
   if (!WX_LIVE && /open-meteo\.com/.test(url)) {
     const multi = /[?&]models=/.test(url)
@@ -329,6 +333,41 @@ window.fetch = async (input, init = {}) => {
 
 var v2EventSeq = 0
 var v2FailPosts = 0
+
+// V2 only (gate:today-shape:v2 trusted-taps): the event writes, counted at the wire — every POST /api/events by
+// the planting and type it logs (so "each plant posted exactly once" is a count, not an inference from a done
+// line), every DELETE /api/events/:id — and a way to HOLD answers: after __h.wire({ holdAfter: n }) the next n
+// POSTs answer as usual and each one after that waits, unanswered, until __h.wire({ release: true }). A held POST
+// then takes the same path as any other (stubFetch: the 20 ms answer, a real Response). That is how a run is made
+// to end while Today is away or its section is closed. Nothing is held, and no answer changes, unless a gate asks.
+const v2Wire = { posts: 0, deletes: 0, inflight: 0, holdFrom: Infinity, held: [], keys: {} }
+const v2EventWrite = (input, init) => {
+  if (!V2) return null
+  const url = typeof input === 'string' ? input : input.url
+  const m = String(init.method || 'GET').toUpperCase()
+  let path = ''
+  try { path = new URL(url, location.origin).pathname.replace(/^.*(\/api\/)/, '/api/') } catch { return null }
+  if (m === 'POST' && path === '/api/events') return 'POST'
+  if (m === 'DELETE' && path.startsWith('/api/events/')) return 'DELETE'
+  return null
+}
+window.fetch = (input, init = {}) => {
+  const kind = v2EventWrite(input, init)
+  if (kind === 'DELETE') v2Wire.deletes++
+  if (kind !== 'POST') return stubFetch(input, init)
+  const n = ++v2Wire.posts
+  let b = null
+  try { b = JSON.parse(init.body) } catch { /* not JSON: keyed by its text below */ }
+  const who = b && (b.planting_id ?? b.plant_id ?? b.plantingId ?? null)
+  const key = (who ?? String(init.body)) + '|' + ((b && (b.event_type ?? b.type)) || '')
+  v2Wire.keys[key] = (v2Wire.keys[key] || 0) + 1
+  v2Wire.inflight++
+  const go = () => stubFetch(input, init)
+  const p = n >= v2Wire.holdFrom ? new Promise(res => v2Wire.held.push(res)).then(go) : go()
+  const done = () => { v2Wire.inflight-- }
+  p.then(done, done)
+  return p
+}
 let firstError = null
 window.addEventListener('error', e => { firstError ??= e.message })
 window.addEventListener('unhandledrejection', e => { firstError ??= String(e.reason?.message ?? e.reason) })
@@ -347,11 +386,31 @@ if (V2) {
   }
 }
 
+// (d) ?routes=1: the same root under /today, and an empty page at /away. The Back mount gets what App's shell gives
+// a page come back to — PageScrollProvider with isReturn true — the scaffolding the vitest Back cases use
+// (TodayV2 reads it to seed itself from the visit). Only the gate's trusted-taps flows ask for it.
+const ROUTES = V2 && params.get('routes') === '1'
+let todayMounts = 0
+let harnessNav = null
+function HarnessToday() {
+  const [n] = React.useState(() => ++todayMounts)
+  return <PageScrollProvider value={{ api: null, isReturn: n > 1 }}><V2Root /></PageScrollProvider>
+}
+function HarnessRoutes() {
+  harnessNav = useNavigate()
+  return (
+    <Routes>
+      <Route path="/today" element={<HarnessToday />} />
+      <Route path="/away" element={<div data-testid="harness-away">away</div>} />
+    </Routes>
+  )
+}
+
 createRoot(document.getElementById('root')).render(V2 ? (
   <AuthProvider>
     <PrefsProvider>
       <MemoryRouter initialEntries={['/today']}>
-        <V2Root />
+        {ROUTES ? <HarnessRoutes /> : <V2Root />}
       </MemoryRouter>
     </PrefsProvider>
   </AuthProvider>
@@ -614,6 +673,20 @@ window.__h = {
   // S4g: the next `n` POST /api/events answer 503 (0 clears). Returns how many of the LAST request were still
   // unconsumed, so the gate can tell a run that posted fewer writes than it injected failures for.
   failPosts(n) { const left = v2FailPosts; v2FailPosts = Math.max(0, Math.floor(Number(n) || 0)); return left },
+  // trusted-taps: the event writes as the wire saw them (see v2Wire). { reset } zeroes the counts; { holdAfter: n }
+  // lets n more POSTs answer and holds every one after; { release } answers the held ones and holds no more.
+  // `twice` lists every planting|type posted more than once since the last reset.
+  wire(o = {}) {
+    if (o.reset) { v2Wire.posts = 0; v2Wire.deletes = 0; v2Wire.keys = {} }
+    if (o.holdAfter != null) v2Wire.holdFrom = v2Wire.posts + Math.max(0, Math.floor(Number(o.holdAfter) || 0)) + 1
+    let released = 0
+    if (o.release) { const h = v2Wire.held.splice(0); v2Wire.holdFrom = Infinity; released = h.length; for (const f of h) f() }
+    return { posts: v2Wire.posts, deletes: v2Wire.deletes, inflight: v2Wire.inflight, held: v2Wire.held.length, released, plants: Object.keys(v2Wire.keys).length, twice: Object.entries(v2Wire.keys).filter(([, k]) => k > 1).map(([k]) => k) }
+  },
+  // (d) Leave Today or come Back: a router navigation ('/away', or -1), as a tap on the app's own chrome makes.
+  // Returns false when the page was not mounted with ?routes=1.
+  routes: () => ({ on: ROUTES, mounts: todayMounts }),
+  go(to) { if (!harnessNav) return false; harnessNav(to); return true },
   // (c) The interaction driver. A tap is hit-tested at its target's centre first (covered = VOID: a sticky
   // bar over a chip is a defect, not something to click through), then clicked; its `flip` target (the tap
   // target itself by default) must change aria-expanded — aria-pressed for a `task-filter:` chip (v2wire

@@ -187,6 +187,23 @@ describe('today-v2 contract table', () => {
     expect(m.killers).toEqual(['visual-census', 'card-nesting'])
     for (const k of m.killers) expect(KILLER_FAMILIES).toContain(k)
   })
+  // OPS-TODAYV2GATECOVERAGE-001: the flows driven by trusted taps. Pinned so none can quietly drop out of the armed
+  // set, and so a flow known to be open (Feed all's Undo, Protect's leave-then-Back line) is not armed by accident.
+  it('arms the six trusted-taps flows, and each of their mutants names its killers', () => {
+    const flows = (name) => STATES.find((s) => s.name === name).checks.filter((c) => c.family === 'trusted-taps' && isArmed(c)).map((c) => c.flow)
+    expect(flows('v2-busy')).toEqual(['away-back', 'close-reopen', 'row-tap', 'two-spots', 'feed-all'])
+    expect(flows('v2-freeze')).toEqual(['cover-all'])
+    expect(STATES.flatMap((s) => s.checks).filter((c) => c.family === 'trusted-taps')).toHaveLength(6)
+    const taps = Object.entries(MUTANTS_V2).filter(([n]) => n.startsWith('taps'))
+    expect(taps.map(([n]) => n)).toEqual(['tapsParkedRunNotTaken', 'tapsRunNotParked', 'tapsRowDoneNotRecorded', 'tapsSecondRunReplacesFirst', 'tapsBulkResultUnsaid', 'tapsPostsTwice', 'tapsCoverNoDoneLine'])
+    for (const [n, m] of taps) {
+      expect(isArmed(m), n).toBe(true)
+      for (const k of m.killers) expect(KILLER_FAMILIES, n).toContain(k)
+      expect(m.killers.some((k) => k === 'trusted-taps' || k === 'post-once'), n).toBe(true)
+      // One killer is allowed only with its reason written down.
+      if (new Set(m.killers).size < 2) expect(m.oneKiller, n).toBeTruthy()
+    }
+  })
   it('every armed real-Chrome mutant\'s pattern occurs exactly once in its file', () => {
     const root = join(HERE, '..', '..', '..')
     const armed = Object.entries(MUTANTS_V2).filter(([, m]) => m.kind === 'chrome' && isArmed(m))

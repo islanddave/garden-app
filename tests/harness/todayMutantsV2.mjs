@@ -11,6 +11,8 @@
 //             the exact source text in the same commit (patterns are EXACT source text; the plugin THROWS on a
 //             miss — a mutant that silently fails to apply would score SURVIVED, the one result that lies).
 //   killers   the §9.1 families expected to kill it (≥ 2 independent ones once all are armed).
+//   oneKiller (optional) why ONE family is all that can see this mutant, for good — the runner prints it instead of
+//             "under-guarded by schedule", which would promise a second family that no slice is going to arm.
 //   kind      'chrome' (served mutated, the gate must red) or 'unit-table' (§13 Simplify 3: trigger-predicate
 //             mutants became cells of the triggers.js unit table, today-v2-contract.mjs TRIGGER_CELLS).
 //
@@ -252,6 +254,18 @@ export const MUTANTS_V2 = {
   ignoreRemembered: U('S5', 'Layer 1 dropped — a same-day ack no longer holds'),
   rememberedBeatsUrgent: U('S5', 'a remembered close beats a new, higher trigger'),
   staleAutoOpens: U('S5', 'a stale plan triggers auto-open'),
+  // ── OPS-TODAYV2GATECOVERAGE-001: what only the trusted-taps flows drive (review-dbl-recut-gatefix-delta-20261006
+  // IMPORTANT-1) — a run that ends with its body gone, a one-row tap, two runs at once, Feed all's result, Cover all's
+  // line. Exact source text. Each is killed by ONE flow's family and says so (`oneKiller`): no other check in either
+  // gate drives these paths, so a second family would be the same observation filed twice, not an independent one.
+  tapsParkedRunNotTaken: { armedAt: 'S4', kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: '      const r = runTake(bid)\n', replace: '      const r = (runTake(bid), null)\n', killers: ['trusted-taps'], oneKiller: 'only away-back and close-reopen end a run with its body gone', defect: 'the body on screen drops a parked run instead of landing it — a Water all left mid-run (Back) or closed mid-run (reopened) has no done line and no Undo' },
+  tapsRunNotParked: { armedAt: 'S4', kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: '      runEnd(bid, { res, what, said, by: claim })\n', replace: '      runEnd(bid)\n', killers: ['trusted-taps'], oneKiller: 'only away-back and close-reopen end a run with its body gone', defect: 'a run that ends with its body gone parks no result for the body then on screen' },
+  tapsRowDoneNotRecorded: { armedAt: 'S4', kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: '        return { ...cc, failed: f, rowsDone: { ...(cc.rowsDone || {}), [row.key]: { kind, created: res.created[0], spot: row.spotKey } } }\n', replace: '        return { ...cc, failed: f }\n', killers: ['trusted-taps'], oneKiller: 'only row-tap taps a single row', defect: 'D11: a one-row Water posts but leaves no "<plant> · watered" line and no Undo' },
+  tapsSecondRunReplacesFirst: { armedAt: 'S4', kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: '    return { ...cc, batches: { ...(cc.batches || {}), [bid]: b }, failed: f }\n', replace: '    return { ...cc, batches: { [bid]: b }, failed: f }\n', killers: ['trusted-taps'], oneKiller: 'only two-spots has two runs on the record at once', defect: 'a run that lands replaces the visit\'s batches instead of joining them — with two runs at once the first to land loses its line and its Undo' },
+  tapsBulkResultUnsaid: { armedAt: 'S4', kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: '    announce(said)\n    if (!alive.current) {\n', replace: '    if (!alive.current) {\n', killers: ['trusted-taps', 'announce'], defect: 'a bulk run never says its result — Feed all (which draws no line) ends in silence; the status region still reads "Logging N in …"' },
+  tapsPostsTwice: { armedAt: 'S4', kind: 'chrome', file: 'src/components/today/useCareActions.js', find: "          const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body), keepalive: true })\n", replace: "          await fetch('/api/events', { method: 'POST', body: JSON.stringify(body), keepalive: true })\n          const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body), keepalive: true })\n", killers: ['post-once'], oneKiller: 'only the trusted-taps flows count the writes at the wire', defect: 'a bulk run posts every planting twice — the page reads the same; the log holds each event double, one of them out of every Undo\'s reach' },
+  tapsCoverNoDoneLine: { armedAt: 'S5', kind: 'chrome', file: 'src/components/today/v2/ProtectTonight.jsx', find: '    if (!remaining.length && last) {\n', replace: '    if (false) {\n', killers: ['trusted-taps'], oneKiller: 'only cover-all runs a Cover all', defect: 'a spot wholly covered by Cover all draws no "<Spot> · covered N" line and no Undo' },
+
   chillOpensEveryNight: U('S5', 'chill ignores first-seen and opens every night'),
   headsupAlwaysOpen: U('S5', 'Heads-up opens on every day of the window'),
   householdAlwaysOpen: U('S6', 'a household section auto-opens'),

@@ -229,6 +229,15 @@ export const STATES = [
       // S6-scoped: busy has the watch list but no fresh harvest batch — Harvest is the watch band alone.
       { family: 'section-open-set', armedAt: ['S4', 'S6'], orderOf: ['care', 'harvest', 'resting'], closed: ['harvest', 'resting'], why: 'S6-scoped: Harvest between Needs care and Resting, closed by default' },
       { family: 'header-text', armedAt: 'S6', noCount: ['harvest'], summaries: { harvest: 'check Palla Rossa Mavrik Radicchio, Gourmet Blend Beets, Red Acre Cabbage…' }, sowRow: 'All sow windows ›', why: 'S6: names, no count; the Sow link row is exactly its door while the 2027 freeze holds' },
+      // OPS-TODAYV2GATECOVERAGE-001 (review-dbl-recut-gatefix-delta-20261006 IMPORTANT-1): flows driven by TRUSTED taps
+      // (CDP input, event.isTrusted seen on the page), each from a fresh load of this state. Files `trusted-taps` (what
+      // the page shows) and `post-once` (what the wire saw). Not armed, known open: Feed all's missing done line and
+      // Undo (MINOR-4); the `alive` gap under forced timing (Q4).
+      { family: 'trusted-taps', armedAt: 'S4', flow: 'away-back', spot: 'Drive-Shade', why: 'a Water all left mid-run that ends while Today is away: Back shows "<Spot> · watered N" with its Undo, every planting posted once, the Undo deletes N' },
+      { family: 'trusted-taps', armedAt: 'S4', flow: 'close-reopen', spot: 'Drive-Shade', why: 'a Water all whose section is closed mid-run and reopened after it ends: the line and its Undo' },
+      { family: 'trusted-taps', armedAt: 'S4', flow: 'row-tap', spot: 'Drive-Shade', why: 'D11: a one-row Water leaves "<plant> · watered" + Undo, the spot offers "the other N−1"; its Undo deletes the one event' },
+      { family: 'trusted-taps', armedAt: 'S4', flow: 'two-spots', spots: ['Bag Area', 'Drive-Shade'], why: 'two spots\' Water all in flight together: both land with their own line and Undo, no planting posted twice' },
+      { family: 'trusted-taps', armedAt: 'S4', flow: 'feed-all', why: 'Feed all: "Logged N in <product>." in the status region, every planting posted once' },
     ],
   },
   {
@@ -275,6 +284,9 @@ export const STATES = [
       ...common(),
       { family: 'section-open-set', armedAt: 'S5', open: ['protect'] },
       { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['protect-pick'] },
+      // OPS-TODAYV2GATECOVERAGE-001: v2-frost has five single cards and no Cover all; this state has the spot rows.
+      // Not armed, known open: a Cover all left mid-run draws no done line on Back (MINOR-1, same on prod).
+      { family: 'trusted-taps', armedAt: 'S5', flow: 'cover-all', spot: 'Trough', why: 'Cover all round trip by trusted taps: "<Spot> · covered N" with ONE Undo, the Undo, the button back; no cover posted twice' },
     ],
   },
   {
@@ -424,6 +436,8 @@ export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibi
   // S4g: MF3's failure round trip, §5.5's focus after it, §5.6's status region (its words, and once per change),
   // §2.5's emptied header and §5.5's focus when a section empties.
   'spot-retry', 'retry-focus', 'announce', 'announce-once', 'caught-up', 'empty-focus',
+  // OPS-TODAYV2GATECOVERAGE-001: the flows driven by trusted taps — what the page shows, and what the wire saw.
+  'trusted-taps', 'post-once',
   // S6: a section (or the glance) opened from the default render is at least its recorded height.
   'owner-floors',
   // Integration 2: no card inside a card (plan-v2 Visual, D8).

@@ -85,11 +85,12 @@ for (const r of rows) {
   else if (!r.red) problems.push(`${r.name}: SURVIVED. The gate does not see "${r.m.defect}"`)
   else if (r.real.length === 0) problems.push(`${r.name}: red only via ${r.fams.join('/')} — the gate caught the page falling over, not the shape`)
   else if (r.real.length < 2) {
-    if (r.expectArmed.length < 2) underGuarded.push(`${r.name}: ONE killer (${r.real[0]}) — only ${r.expectArmed.length} of its expected families [${r.m.killers.join(', ')}] is armed at ${LANDED.join('+')}; the next arms with its slice. UNDER-GUARDED BY SCHEDULE, not guarded.`)
+    if (r.m.oneKiller && r.m.killers.length === 1) underGuarded.push(`${r.name}: ONE killer (${r.real[0]}), by the catalogue's own account — ${r.m.oneKiller}.`)
+    else if (r.expectArmed.length < 2) underGuarded.push(`${r.name}: ONE killer (${r.real[0]}) — only ${r.expectArmed.length} of its expected families [${r.m.killers.join(', ')}] is armed at ${LANDED.join('+')}; the next arms with its slice. UNDER-GUARDED BY SCHEDULE, not guarded.`)
     else problems.push(`${r.name}: NOT YET GUARDED — one killer only (${r.real[0]}) although ${r.expectArmed.length} expected families are armed`)
   }
 }
 console.log(`\n[mutate-v2] ${rows.length} run · ${pendingM.length} PENDING (not scored) · ${unitCells.length} unit-table cells (not scored here)`)
 for (const u of underGuarded) console.log('  ⚠ ' + u)
 if (problems.length) { console.error(`\n[mutate-v2] ${problems.length} problem(s):`); for (const p of problems) console.error('  · ' + p); process.exit(1) }
-console.log(`[mutate-v2] every armed mutant turned the gate RED${underGuarded.length ? ` (${underGuarded.length} under-guarded by schedule, listed above)` : ', each on >=2 independent killers'}.`)
+console.log(`[mutate-v2] every armed mutant turned the gate RED${underGuarded.length ? ` (${underGuarded.length} on one killer — by schedule or by design — listed above)` : ', each on >=2 independent killers'}.`)

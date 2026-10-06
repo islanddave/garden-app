@@ -454,7 +454,7 @@ const CHECKERS = {
   },
   // Interaction-driven families run in the interaction phase below; here they only have to exist.
   interaction: () => {}, 'region-headcount': () => {}, 'weather-once': () => {}, 'group-water-all': () => {}, 'chip-census': () => {},
-  'spot-retry': () => {}, announce: () => {}, 'caught-up': () => {},
+  'spot-retry': () => {}, announce: () => {}, 'caught-up': () => {}, 'trusted-taps': () => {},
   'owner-floors': () => {},
 }
 // S6: owner-floors runs FIRST, on the page as it first rendered (it opens each owner it measures and closes it again),
@@ -462,7 +462,9 @@ const CHECKERS = {
 // The writes run last (group-water-all, then S4g's spot-retry), each undoing itself before the next; S4g's filter
 // announcements after them (they leave filters pressed); S4g's caught-up LAST of all — it empties Needs care and
 // leaves it empty.
-const INTERACTION_FAMILIES = ['owner-floors', 'interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all', 'spot-retry', 'announce', 'caught-up']
+// trusted-taps (OPS-TODAYV2GATECOVERAGE-001) after everything: each of its flows loads the state afresh, so it reads
+// nothing the families above left behind — and nothing above reads what it leaves.
+const INTERACTION_FAMILIES = ['owner-floors', 'interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all', 'spot-retry', 'announce', 'caught-up', 'trusted-taps']
 // S6: owner heights measured this run, per state — written into the v2 budget by --record, judged against it otherwise.
 const ownerRecord = {}
 
@@ -656,6 +658,8 @@ async function runInteractions(state, checks, at) {
       await announceRun(c, at, F)
     } else if (c.family === 'caught-up') {
       await caughtUpRun(c, at, F)
+    } else if (c.family === 'trusted-taps') {
+      try { await tapsRun(state, c, at, F) } catch (e) { F(`VOID — the '${c.flow}' flow could not complete: ${e.message}`) }
     }
   }
 }
@@ -831,6 +835,276 @@ async function spotRetry(c, at, F) {
   console.log(`[today-shape-v2] ${at}: spot-retry · "${line}" with ${c.fail} failing (${failing.map((s) => `${s} ${mid[s].failed}`).join(', ') || 'none'}) · focus ${foc.on ? 'first Retry' : foc.what} · retried → "${line2}" · Undo → "${back}", header ${after} (was ${before})`)
 }
 
+// ── TRUSTED TAPS (OPS-TODAYV2GATECOVERAGE-001; review-dbl-recut-gatefix-delta-20261006 IMPORTANT-1) ─────────────────
+// Every tap above this line is el.click() from page script. A finger's tap differs in one way that has already let
+// a defect through ("vitest green, browser red", 2026-10-06): its handler's microtasks run inside the dispatch, at
+// sync priority, where a script click's run at default. So the flows below tap through the browser's own input
+// pipeline — CDP Input.dispatchMouseEvent at the target's centre — and each tap must be SEEN on the page as a click
+// with event.isTrusted === true landing on its target, or the flow is VOID. They also drive what no check above
+// can: a run that ends while Today is away (the harness's second route, ?routes=1) or while its section is closed
+// (POST answers held and released through __h.wire), Cover all, a one-row tap, two runs at once, Feed all.
+// Each flow starts from a FRESH load of its state. `trusted-taps` judges what the page shows; `post-once` what the
+// wire saw (every planting posted exactly once, an Undo deleting exactly what was created).
+// NOT asserted, because it is known open and would be a false pass or a standing red: a Cover all left mid-run draws
+// no done line on Back (MINOR-1, same on prod); Feed all leaves no done line and no Undo (MINOR-4); the `alive`
+// gap (Q4) — the away flow releases its held POST 300 ms after the away page is up, well clear of it.
+const stateUrl = (state, extra = '') => `http://localhost:${PORT}/tests/harness/todaymeasure.html?state=${state.name}&v2=1&badge=0&clock=${encodeURIComponent(state.clock)}${SELF_TEST ? '&v2stub=1' : ''}${extra}`
+const TQ = (id, extra = '') => `[data-testid="${id}${SUFFIX}"]${extra}`
+const qs = (q) => `document.querySelector(${JSON.stringify(q)})`
+const attrQ = (v) => String(v).replace(/["\\]/g, '\\$&')
+const pageWait = (cond, ms = 6000) => evalSettled(`(async () => { const t0 = performance.now(); for (;;) { let v = null; try { v = (${cond}) } catch { v = null } if (v) return v; if (performance.now() - t0 > ${ms}) return null; await new Promise(r => setTimeout(r, 25)) } })()`)
+const pagePause = (ms) => evalSettled(`new Promise(r => setTimeout(r, ${ms}))`)
+const wire = (o = {}) => evalSettled(`window.__h.wire(${JSON.stringify(o)})`)
+const wireIdle = (ms = 15000) => pageWait('window.__h.wire().inflight === 0', ms)
+const labelOf = (q) => evalSettled(`(() => { const el = ${qs(q)}; return el ? (el.getAttribute('aria-label') || el.textContent || '').replace(/\\s+/g, ' ').trim() : null })()`)
+let tapLoads = 0
+let tapsSeen = 0
+async function tapsLoad(state, extra = '') {
+  const n = ++tapLoads
+  const nav = await cdp.send('Page.navigate', { url: stateUrl(state, `${extra}&taps=${n}`) }, cdp.sessionId)
+  if (nav.errorText) throw new Error(`navigation failed: ${nav.errorText}`)
+  await sleep(200)
+  await evalSettled(`(async()=>{for(let i=0;i<250;i++){if(location.search.endsWith('&taps=${n}')&&window.__h&&window.__h.v2ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('the page never became ready')})()`)
+  await pagePause(400)
+  // The witness: every click the document sees, by whether the browser made it (isTrusted) and whether it landed
+  // on the element the gate aimed at. Capture phase, so nothing the page does can keep a click from it.
+  await evalSettled(`(() => { const T = window.__taps = { trusted: 0, script: 0, onTarget: 0, want: null }
+    document.addEventListener('click', (e) => { if (!e.isTrusted) { T.script++; return } T.trusted++; if (T.want && (T.want === e.target || T.want.contains(e.target))) T.onTarget++ }, true); return 1 })()`)
+}
+// One trusted tap on the element `expr` evaluates to (waited for, up to 4 s, until it is there and enabled). Scrolled to
+// the middle of the screen, hit-tested at its centre (covered = not tapped: a finger would hit the cover), pressed and
+// released there through the input pipeline. Returns null, or why the tap did not happen.
+async function trustedTap(expr, what) {
+  const pt = await evalSettled(`(async () => {
+    const frames = (n) => new Promise(r => { const f = k => (k <= 0 ? r() : requestAnimationFrame(() => f(k - 1))); f(n) })
+    if (!window.__taps) return { miss: 'the click witness is not installed on this page' }
+    let el = null
+    for (const t0 = performance.now(); performance.now() - t0 < 4000; await new Promise(r => setTimeout(r, 25))) { el = ${expr}; if (el && !el.disabled && el.getAttribute('aria-disabled') !== 'true') break }
+    if (!el) return { miss: 'it is not on the page' }
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return { miss: 'it is disabled' }
+    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }); await frames(2)
+    const r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2
+    const top = document.elementFromPoint(x, y)
+    if (!top || !(top === el || el.contains(top))) return { miss: 'a finger at its centre would hit ' + (top ? top.tagName.toLowerCase() + (top.getAttribute('data-testid') ? '[' + top.getAttribute('data-testid') + ']' : '') : 'nothing') }
+    window.__taps.want = el
+    return { x, y, before: window.__taps.onTarget }
+  })()`)
+  if (pt.miss) return `could not tap ${what}: ${pt.miss}`
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pt.x, y: pt.y, button: 'left', clickCount: 1 }, cdp.sessionId)
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pt.x, y: pt.y, button: 'left', clickCount: 1 }, cdp.sessionId)
+  const seen = await pageWait(`window.__taps.onTarget > ${pt.before}`, 2000)
+  if (!seen) return `the tap on ${what} was dispatched but the page saw no trusted click on it (event.isTrusted)`
+  tapsSeen++
+  return null
+}
+
+async function tapsRun(state, c, at, F) {
+  const W = (msg) => fail(at, 'post-once', `${c.flow}: ${msg}`)
+  const tap = async (expr, what) => { const why = await trustedTap(expr, what); if (why) F(`${c.flow}: VOID — ${why}`); return !why }
+  const careSpot = (s) => TQ('care-spot', `[data-spot="${attrQ(s)}"]`)
+  const bulkQ = (s) => `${careSpot(s)} ${TQ('care-spot-bulk')}`
+  const lineQ = (s) => TQ('care-done-line', `[data-spot="${attrQ(s)}"]`)
+  const careBand = `${TQ('today-sec-care')} [aria-expanded]`
+  const careBody = TQ('today-care')
+  const lineState = (q) => evalSettled(`(() => { const el = ${qs(q)}; if (!el) return null; const t = el.querySelector('[data-focus-id]'); return { text: ((t || el).textContent || '').replace(/\\s+/g, ' ').trim(), buttons: [...el.querySelectorAll('button')].map(b => b.textContent.trim()) } })()`)
+  const wireOnce = async (n, what) => {
+    const w = await wire()
+    if (w.posts !== n) W(`${what}: ${w.posts} POST /api/events went out for ${n} planting(s)`)
+    if (w.twice.length) W(`${what}: ${w.twice.length} planting(s) were posted more than once (${w.twice.slice(0, 3).join(', ')})`)
+    else if (w.plants !== n && w.posts === n) W(`${what}: the ${n} POSTs name ${w.plants} distinct planting(s)`)
+    return w
+  }
+  // A spot's Water all, started by a trusted tap, with the answer to its LAST post held: the run cannot end until released.
+  const waterAllHeld = async (spot) => {
+    const name0 = await labelOf(bulkQ(spot))
+    if (name0 == null) { F(`${c.flow}: no Water all on '${spot}' (care-spot-bulk)`); return null }
+    const N = Number((name0.match(/^Water (?:all |the other )?(\d+) in /) || [])[1])
+    if (!N) { F(`${c.flow}: the '${spot}' button reads "${name0}", expected "Water all <n> in ${spot}"`); return null }
+    await wire({ reset: true, holdAfter: N - 1 })
+    if (!(await tap(qs(bulkQ(spot)), `"${name0}"`))) return null
+    const held = await pageWait(`(() => { const w = window.__h.wire(); return w.posts >= ${N} && w.held >= 1 && w.inflight === w.held })()`, 5000)
+    if (!held) { const w = await wire({ release: true }); F(`${c.flow}: VOID — the run never reached its held last POST (${w.posts} of ${N} posted, ${w.released} held)`); return null }
+    return { N, name0 }
+  }
+  // What a landed spot run must leave: "<Spot> · watered N" with ONE Undo, every planting posted once — and an Undo that
+  // works: the same Water all back, exactly N deleted, nothing posted again.
+  const landedThenUndo = async (spot, h, when) => {
+    await pageWait(`(() => { const el = ${qs(lineQ(spot))}; return !!el && !!el.querySelector('button') })()`, 6000)
+    const line = await lineState(lineQ(spot))
+    if (!line) { F(`${c.flow}: ${when} there is no done line for '${spot}' (care-done-line) — the run's result reached no one`); await wireOnce(h.N, when); return }
+    if (!new RegExp(`^${reEsc(spot)} · watered ${h.N}\\b`).test(line.text)) F(`${c.flow}: ${when} the done line reads "${line.text}", expected "${spot} · watered ${h.N}"`)
+    if (line.buttons.length !== 1 || line.buttons[0] !== 'Undo') F(`${c.flow}: ${when} the '${spot}' done line carries [${line.buttons.join(', ')}], expected ONE Undo`)
+    await wireOnce(h.N, when)
+    if (line.buttons[0] !== 'Undo') return
+    if (!(await tap(qs(lineQ(spot) + ' button'), `the '${spot}' Undo`))) return
+    const back = await pageWait(`(() => { const b = ${qs(bulkQ(spot))}; return b && !${qs(lineQ(spot))} ? b.getAttribute('aria-label') : null })()`, 8000)
+    if (back == null) { F(`${c.flow}: the Undo never brought '${spot}' back to its Water all`); return }
+    if (back !== h.name0) F(`${c.flow}: after the Undo the '${spot}' button reads "${back}", it read "${h.name0}" before the tap`)
+    await wireIdle()
+    const w = await wire()
+    if (w.deletes !== h.N) W(`the Undo sent ${w.deletes} DELETE(s) for the ${h.N} event(s) the run created`)
+    if (w.posts !== h.N) W(`${w.posts} POSTs after the Undo, ${h.N} before it — an Undo must post nothing`)
+  }
+
+  if (c.flow === 'away-back') {
+    // (a) Leave Today mid-run, the last answer arriving while away; Back. The body that started the run is gone, so
+    // its result is parked and the Back mount takes it: the line and its Undo, no planting posted twice.
+    await tapsLoad(state, '&routes=1')
+    if (!(await evalSettled('window.__h.routes().on'))) { F(`${c.flow}: VOID — the harness page has no second route (?routes=1)`); return }
+    const h = await waterAllHeld(c.spot)
+    if (!h) return
+    await evalSettled(`window.__h.go('/away')`)
+    const away = await pageWait(`!!document.querySelector('[data-testid="harness-away"]') && !document.querySelector('[data-today-version]')`, 5000)
+    if (!away) { await wire({ release: true }); F(`${c.flow}: VOID — the page never left Today for the away route`); return }
+    await pagePause(300)
+    const mid = await wire({ release: true })
+    if (mid.released < 1) { F(`${c.flow}: VOID — nothing was still held when Today was away: the run had already ended`); return }
+    await wireIdle(); await pagePause(250)
+    await evalSettled(`window.__h.go(-1)`)
+    const home = await pageWait(`window.__h.v2ready() && !!${qs(careBody)}`, 8000)
+    if (!home) { F(`${c.flow}: Back did not bring Today and its Needs care body back`); return }
+    const mounts = (await evalSettled('window.__h.routes()')).mounts
+    if (mounts !== 2) { F(`${c.flow}: VOID — Today mounted ${mounts}x across leave and Back, expected 2`); return }
+    await landedThenUndo(c.spot, h, 'after leaving mid-run and coming Back')
+  } else if (c.flow === 'close-reopen') {
+    // (b) The section closed mid-run and reopened after the run ended.
+    await tapsLoad(state)
+    const h = await waterAllHeld(c.spot)
+    if (!h) return
+    if (!(await tap(qs(careBand), 'the Needs care header (to close it)'))) { await wire({ release: true }); return }
+    const closed = await pageWait(`!${qs(careBody)}`, 3000)
+    const mid = await wire({ release: true })
+    if (!closed) { F(`${c.flow}: VOID — the Needs care body was still mounted after its header was tapped`); return }
+    if (mid.released < 1) { F(`${c.flow}: VOID — nothing was still held when the section closed: the run had already ended`); return }
+    await wireIdle(); await pagePause(250)
+    if (!(await tap(qs(careBand), 'the Needs care header (to reopen it)'))) return
+    if (!(await pageWait(`!!${qs(careBody)}`, 3000))) { F(`${c.flow}: the Needs care body did not come back when its header was tapped`); return }
+    await landedThenUndo(c.spot, h, 'after the section was closed mid-run and reopened')
+  } else if (c.flow === 'cover-all') {
+    // (c) Cover all, the whole way round: the spot's line and Undo, the Undo, the button back.
+    await tapsLoad(state)
+    const spotQ = TQ('protect-spot', `[data-spot="${attrQ(c.spot)}"]`)
+    const btnQ = `${spotQ} ${TQ('protect-cover-all')}`
+    const dQ = TQ('protect-done-line', `[data-spot="${attrQ(c.spot)}"]`)
+    const name0 = await labelOf(btnQ)
+    if (name0 == null) { F(`${c.flow}: no Cover all on '${c.spot}' (protect-cover-all)`); return }
+    const N = Number((name0.match(/^Cover all (\d+) in /) || [])[1])
+    if (!N) { F(`${c.flow}: the '${c.spot}' button reads "${name0}", expected "Cover all <n> in ${c.spot}"`); return }
+    await wire({ reset: true })
+    if (!(await tap(qs(btnQ), `"${name0}"`))) return
+    await pageWait(`(() => { const el = ${qs(dQ)}; return !!el && !!el.querySelector('button') })()`, 10000)
+    await wireIdle()
+    const line = await lineState(dQ)
+    if (!line) { F(`${c.flow}: after "${name0}" there is no done line for '${c.spot}' (protect-done-line)`); await wireOnce(N, 'Cover all'); return }
+    if (!new RegExp(`^${reEsc(c.spot)} · covered ${N}\\b`).test(line.text)) F(`${c.flow}: the done line reads "${line.text}", expected "${c.spot} · covered ${N}"`)
+    if (line.buttons.length !== 1 || line.buttons[0] !== 'Undo') F(`${c.flow}: the '${c.spot}' done line carries [${line.buttons.join(', ')}], expected ONE Undo`)
+    await wireOnce(N, 'Cover all')
+    if (line.buttons[0] !== 'Undo') return
+    if (!(await tap(qs(dQ + ' button'), `the '${c.spot}' Undo`))) return
+    const back = await pageWait(`(() => { const b = ${qs(btnQ)}; return b && !${qs(dQ)} ? b.getAttribute('aria-label') : null })()`, 10000)
+    if (back == null) { F(`${c.flow}: the Undo never brought '${c.spot}' back to its Cover all`); return }
+    if (back !== name0) F(`${c.flow}: after the Undo the button reads "${back}", it read "${name0}" before the tap`)
+    await wireIdle()
+    const w = await wire()
+    if (w.deletes !== N) W(`the Undo sent ${w.deletes} DELETE(s) for the ${N} cover(s) the run created`)
+    if (w.posts !== N) W(`${w.posts} POSTs after the Undo, ${N} before it — an Undo must post nothing`)
+  } else if (c.flow === 'row-tap') {
+    // (d) One row's Water, and its Undo.
+    await tapsLoad(state)
+    const name0 = await labelOf(bulkQ(c.spot))
+    if (name0 == null) { F(`${c.flow}: no spot '${c.spot}' with a Water all to open`); return }
+    const N = Number((name0.match(/^Water all (\d+) in /) || [])[1])
+    const toggle = `${careSpot(c.spot)} button[aria-expanded]`
+    if ((await evalSettled(`${qs(toggle)}?.getAttribute('aria-expanded')`)) !== 'true' && !(await tap(qs(toggle), `the '${c.spot}' row (to open it)`))) return
+    const rowBtn = `${careSpot(c.spot)} button[aria-label^="Log Water"]`
+    const rowName = await pageWait(`(() => { const b = ${qs(rowBtn)}; return b ? b.getAttribute('aria-label') : null })()`, 3000)
+    if (!rowName) { F(`${c.flow}: '${c.spot}', opened, offers no one-row Water ("Log Water for …")`); return }
+    const plant = rowName.replace(/^Log Water for /, '')
+    await wire({ reset: true })
+    if (!(await tap(qs(rowBtn), `"${rowName}"`))) return
+    const rdQ = `${careSpot(c.spot)} ${TQ('care-row-done')}`
+    await pageWait(`(() => { const el = ${qs(rdQ)}; return !!el && !!el.querySelector('button') })()`, 5000)
+    await wireIdle()
+    const row = await lineState(rdQ)
+    if (!row) F(`${c.flow}: after "${rowName}" no row became its done line (care-row-done)`)
+    else {
+      if (!row.text.includes(plant) || !/· watered\b/.test(row.text)) F(`${c.flow}: the row's done line reads "${row.text}", expected "${plant} · watered"`)
+      if (row.buttons.length !== 1 || row.buttons[0] !== 'Undo') F(`${c.flow}: the row's done line carries [${row.buttons.join(', ')}], expected ONE Undo`)
+    }
+    const rest = await labelOf(bulkQ(c.spot))
+    if (rest !== `Water the other ${N - 1} in ${c.spot}`) F(`${c.flow}: with one row watered the spot button reads "${rest}", expected "Water the other ${N - 1} in ${c.spot}"`)
+    await wireOnce(1, 'the one-row tap')
+    if (!row || row.buttons[0] !== 'Undo') return
+    if (!(await tap(qs(rdQ + ' button'), `the row's Undo`))) return
+    const back = await pageWait(`(() => { const b = ${qs(bulkQ(c.spot))}; return b && !${qs(rdQ)} && b.getAttribute('aria-label') === ${JSON.stringify(name0)} })()`, 5000)
+    if (!back) F(`${c.flow}: after the row's Undo the spot reads "${await labelOf(bulkQ(c.spot))}"${(await lineState(rdQ)) ? ' with the done line still up' : ''}, expected "${name0}" and the row back`)
+    await wireIdle()
+    const w = await wire()
+    if (w.deletes !== 1) W(`the row's Undo sent ${w.deletes} DELETE(s), expected 1`)
+    if (w.posts !== 1) W(`${w.posts} POSTs after the row's Undo, expected the 1 the tap made`)
+  } else if (c.flow === 'two-spots') {
+    // (e) Two spots' Water all in flight together: both land, each with its own line, no planting twice.
+    await tapsLoad(state)
+    const names = [], ns = []
+    for (const s of c.spots) {
+      const nm = await labelOf(bulkQ(s))
+      const k = Number(((nm || '').match(/^Water all (\d+) in /) || [])[1])
+      if (!k) { F(`${c.flow}: no "Water all <n> in ${s}" to tap (reads ${JSON.stringify(nm)})`); return }
+      names.push(nm); ns.push(k)
+    }
+    await wire({ reset: true, holdAfter: 2 })
+    if (!(await tap(qs(bulkQ(c.spots[0])), `"${names[0]}"`))) return
+    const reached = await pageWait(`(() => { const w = window.__h.wire(); return w.held >= 1 && w.inflight === w.held })()`, 5000)
+    if (!reached) { await wire({ release: true }); F(`${c.flow}: VOID — the first run never reached a held POST`); return }
+    // Read once the first run's pool has filled with held posts and stopped: what goes out after this is the second run's.
+    await pagePause(200)
+    const first = await wire()
+    if (!(await tap(qs(bulkQ(c.spots[1])), `"${names[1]}"`))) { await wire({ release: true }); return }
+    const both = await pageWait(`(() => { const w = window.__h.wire(); return w.posts > ${first.posts} && w.inflight === w.held ? w : null })()`, 5000)
+    const early = (await lineState(lineQ(c.spots[0]))) || (await lineState(lineQ(c.spots[1])))
+    await wire({ release: true })
+    if (!both) { F(`${c.flow}: VOID — the second run posted nothing while the first was held (${first.posts} POSTs before its tap, no more after)`); return }
+    if (early) { F(`${c.flow}: VOID — a done line ("${early.text}") was up while both runs were held`); return }
+    // A spot whose every row the run logged shrinks to its done line; one with other tasks' rows left stays a row that
+    // reads "Watered N" (Bag Area: its feeds remain) and keeps the run's Undo inside, on its opened panel. Either way
+    // the run has ONE Undo.
+    const spotAfter = (sp) => evalSettled(`(() => { const t = el => (el ? (el.textContent || '').replace(/\\s+/g, ' ').trim() : null), undos = el => [...el.querySelectorAll('button')].filter(b => b.textContent.trim() === 'Undo').length
+      const d = ${qs(lineQ(sp))}; if (d) return { done: true, text: t(d.querySelector('[data-focus-id]') || d), undos: undos(d) }
+      const li = ${qs(careSpot(sp))}; return li ? { done: false, text: t(li.querySelector('[aria-expanded]')), undos: undos(li) } : null })()`)
+    await wireIdle(30000)
+    for (let i = 0; i < 2; i++) {
+      const sp = c.spots[i]
+      const hasUndo = `(() => { const el = ${qs(lineQ(sp))} || ${qs(careSpot(sp))}; return !!el && [...el.querySelectorAll('button')].some(b => b.textContent.trim() === 'Undo') })()`
+      await pageWait(`${qs(lineQ(sp))} ? ${hasUndo} : (${qs(careSpot(sp) + ' [aria-expanded]')}?.textContent || '').includes('Watered ')`, 8000)
+      const toggle = `${careSpot(sp)} button[aria-expanded]`
+      if ((await evalSettled(`!${qs(lineQ(sp))} && ${qs(toggle)}?.getAttribute('aria-expanded') === 'false'`)) && (await tap(qs(toggle), `the '${sp}' row (to open it)`))) await pageWait(hasUndo, 3000)
+      const v = await spotAfter(sp)
+      if (!v) { F(`${c.flow}: with both runs ended '${sp}' is not on the page`); continue }
+      const ok = v.done ? new RegExp(`^${reEsc(sp)} · watered ${ns[i]}\\b`).test(v.text || '') : (v.text || '').includes(`Watered ${ns[i]}`)
+      if (!ok) F(`${c.flow}: with both runs ended '${sp}' reads "${v.text}", expected its own run — ${v.done ? `"${sp} · watered ${ns[i]}"` : `"Watered ${ns[i]}"`}`)
+      if (v.undos !== 1) F(`${c.flow}: with both runs ended '${sp}' carries ${v.undos} Undo(s), expected ONE for its run`)
+    }
+    await wireOnce(ns[0] + ns[1], 'two runs together')
+  } else if (c.flow === 'feed-all') {
+    // (f) Feed all: what it says when it ends, and each planting posted once. (No done line, no Undo: MINOR-4.)
+    await tapsLoad(state)
+    const chip = `[...document.querySelectorAll(${JSON.stringify(TQ('care-filter-tasks') + ' button[aria-pressed]')})].find(b => b.textContent.trim().startsWith('Feed'))`
+    if (!(await tap(chip, 'the Feed task filter'))) return
+    const btn = `[...document.querySelectorAll(${JSON.stringify(TQ('care-product') + ' button')})].find(b => /^Feed all \\d+ with /.test(b.getAttribute('aria-label') || ''))`
+    const name0 = await pageWait(`(() => { const b = ${btn}; return b ? b.getAttribute('aria-label') : null })()`, 3000)
+    if (!name0) { F(`${c.flow}: under the Feed filter no product offers "Feed all <n> with …" (care-product)`); return }
+    const N = Number(name0.match(/^Feed all (\d+) with /)[1])
+    await wire({ reset: true })
+    if (!(await tap(btn, `"${name0}"`))) return
+    const said = await pageWait(`(() => { const s = ${qs(TQ('today-status'))}; const t = s ? (s.textContent || '').trim() : ''; return /^Logged \\d+ in /.test(t) && window.__h.wire().inflight === 0 ? t : null })()`, 20000)
+    if (!said) F(`${c.flow}: after "${name0}" the status region says "${await evalSettled(STATUS_TEXT)}", expected "Logged ${N} in <product>."`)
+    else if (!new RegExp(`^Logged ${N} in .+\\.$`).test(said)) F(`${c.flow}: the status region says "${said}", expected "Logged ${N} in <product>."`)
+    await wireIdle(20000)
+    await wireOnce(N, 'Feed all')
+  } else F(`the contract names trusted-taps flow '${c.flow}', which this gate does not know how to run`)
+  console.log(`[today-shape-v2] ${at}: trusted-taps · ${c.flow}${c.spot ? ` (${c.spot})` : c.spots ? ` (${c.spots.join(' + ')})` : ''} · ${tapsSeen} trusted click(s) seen so far this run`)
+}
+
 // ── budget ───────────────────────────────────────────────────────────────────────────────────────────────
 let budget = null
 try { budget = JSON.parse(readFileSync(BUDGET_PATH, 'utf8')) } catch { budget = null }
@@ -884,7 +1158,7 @@ try {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: VIEWPORT.w, height: VIEWPORT.h, deviceScaleFactor: VIEWPORT.dpr, mobile: true }, cdp.sessionId)
     await cdp.send('Emulation.setTimezoneOverride', { timezoneId: 'America/New_York' }, cdp.sessionId)
     await cdp.send('Emulation.setLocaleOverride', { locale: 'en-US' }, cdp.sessionId)
-    const url = `http://localhost:${PORT}/tests/harness/todaymeasure.html?state=${state.name}&v2=1&badge=0&clock=${encodeURIComponent(state.clock)}${SELF_TEST ? '&v2stub=1' : ''}`
+    const url = stateUrl(state)
     const nav = await cdp.send('Page.navigate', { url }, cdp.sessionId)
     if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
     await sleep(200)
