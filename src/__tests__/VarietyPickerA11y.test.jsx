@@ -77,6 +77,11 @@ async function openPicker(props = {}) {
   const utils = render(<VarietyPicker value={null} onChange={() => {}} {...props} />)
   fireEvent.focus(field())
   await waitFor(() => expect(listbox()).toBeTruthy())
+  // Let the open SETTLE before a case presses a key. The rows arrive with the fetch's answer, at default
+  // priority (OPS-RTLEVENTPRIORITY-001: as in a browser), and the picker's reset-highlight-on-new-results
+  // effect runs a tick after that render. A key fired inside that tick is overwritten by the reset —
+  // measured: aria-activedescendant 0 -> 1 -> 0 — which is the reset doing its job, not what these cases pin.
+  await act(async () => {})
   return utils
 }
 
