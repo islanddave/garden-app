@@ -63,7 +63,6 @@ import { enrichRows } from '../lib/todayV2/spots.js'
 import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
 import * as store from '../components/today/v2/needsCareStore.js'
 import { FILTER_ACTION_CELLS } from '../../tests/harness/_todaymeasure/today-v2-contract.mjs'
-import { browserEvent } from './helpers/browserEvent.js'
 
 const PAYLOAD = F('dailyplan.dave.json')
 const PLANTS = (() => { const p = F('plants.json'); return Array.isArray(p) ? p : p.plants })()
@@ -77,11 +76,10 @@ const spot = (name) => document.querySelector(`[data-testid="care-spot"][data-sp
 const doneLine = (name) => document.querySelector(`[data-testid="care-done-line"][data-spot="${name}"]`)
 const settle = () => act(async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)) })
 
-// Every case here runs with window.event as a browser keeps it (helpers/browserEvent.js): what a POST's answer sets
-// is default priority, and the store's signal re-renders first, at sync priority — the order Chrome renders in.
-let restoreEvent = null
+// Every case here runs with window.event as a browser keeps it (helpers/browserEvent.js, installed for every jsdom
+// file by setup.ts): what a POST's answer sets is default priority, and the store's signal re-renders first, at sync
+// priority — the order Chrome renders in.
 beforeEach(() => {
-  restoreEvent = browserEvent()
   localStorage.clear(); sessionStorage.clear()
   // The claims and the runs are the module's, not the tab's: a case that leaves a POST unanswered leaves them behind.
   store.__resetTodayLogged()
@@ -90,7 +88,7 @@ beforeEach(() => {
   planState.current = { data: PAYLOAD, loading: false, error: null, reload: vi.fn() }
   wire.posts = []; wire.deletes = []; wire.failPlant = null; wire.failPlants = new Set(); wire.seq = 0; wire.plants = PLANTS; wire.locations = LOCS; wire.cf = {}; wire.hold = false; wire.held = []
 })
-afterEach(() => { cleanup(); vi.useRealTimers(); restoreEvent() })
+afterEach(() => { cleanup(); vi.useRealTimers() })
 
 const mount = async () => { render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle() }
 
@@ -1095,7 +1093,7 @@ describe('a full reload mid-run hides nothing that was not logged (pre-promote I
 // re-rendered at sync priority, AHEAD of the queued settle (a POST answer's update is default priority): that render
 // found the batch still running, nobody's, with no run behind it — a dead batch — and dropped it; the settle landed
 // next, and the drop, applied again after it, deleted what it had landed. This file could not see it until its
-// window.event was the browser's (helpers/browserEvent.js, installed above for every case): the POSTs here are HELD
+// window.event was the browser's (helpers/browserEvent.js, installed by setup.ts for every case): the POSTs here are HELD
 // and answered after the tap, as a network answers.
 const groupLine = () => document.querySelector('[data-testid="care-group-done"][data-group="Outside"]')
 

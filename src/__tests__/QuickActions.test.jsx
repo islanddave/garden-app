@@ -217,8 +217,10 @@ describe('BUG-GERMDATEBATCH-001 — the sprout tap sends its own date', () => {
       project_id: 'proj1', plant_id: 'pl1', event_type: 'germination', event_date: '2026-08-02',
     })
     await vi.waitFor(() => expect(onLogged).toHaveBeenCalled())
-    // A successful dated log closes the affordance rather than leaving a stale open form.
-    expect(screen.queryByLabelText(/Sprouted on/i)).toBeNull()
+    // A successful dated log closes the affordance rather than leaving a stale open form. Awaited: the
+    // close is set after the POST's answer, at default priority, and onLogged is called before React has
+    // rendered it — in a browser and (since OPS-RTLEVENTPRIORITY-001) here.
+    await vi.waitFor(() => expect(screen.queryByLabelText(/Sprouted on/i)).toBeNull())
   })
 
   it('bounds the picker: no future date, and never before the seed went in', () => {
