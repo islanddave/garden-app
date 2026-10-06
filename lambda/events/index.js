@@ -36,6 +36,7 @@ import {
 } from './statusTransitions.js';
 import { awardCritterServer, readUserPrefs as readPrefsForCritter, readSpeciesPrefs as readSpeciesPrefsForCritter } from './critterAward.js';
 import { applyBatchSideEffects } from './batchSideEffects.js';
+import { resolveSeedLotRewards } from './seedLotRewards.js';
 import { randomUUID } from 'node:crypto';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -3667,6 +3668,15 @@ export const handler = async (event) => {
         }
       }
 
+      // V5-SEEDMULTIPARENT-001 release 2a — a seed_saved event whose metadata.seed_lot_id names a live
+      // household lot that this planting is a live seed_parent of has its rewards keyed on the JAR,
+      // not the event: release 2's client writes one event per parent. Null for every other event
+      // and on any failed read, which is exactly the event-keyed behaviour below (seedLotRewards.js).
+      // Read ONCE here, before either reward site, so both judge the same answer.
+      const seedLotRewards = await resolveSeedLotRewards(sql, {
+        eventType, eventId, plantId: newEvent.plant_id, metadata, userId, householdIds,
+      });
+
       // MVP-Critter server-side hook (Phase B++ refactor 2026-05-30) — fire awardCritterServer
       // for the inserted event. Inline (same Lambda, same DB connection); critter_state row
       // exists by the time this POST returns 201 → Dashboard backfill on next navigate finds
@@ -3683,7 +3693,12 @@ export const handler = async (event) => {
         // "I checked the soil" was a farmable reward loop wearing a zero-xp label.
         // Gated HERE as well as inside awardCritterServer: that chokepoint fails open on an absent
         // eventType by design, so the call sites are the primary control. See critterAward.js.
-        if (!skipAward && newEvent.plant_id && isRewardedEventType(newEvent.event_type)) {
+        // seedLotRewards: one roll per jar. Any OTHER seed_saved event carrying this lot id, live or
+        // soft-deleted, means the jar has had its roll (a remove-then-re-add must not roll again).
+        const jarAlreadyRolled = seedLotRewards?.otherEventExists === true;
+        if (jarAlreadyRolled) {
+          // No roll, and nothing else in this hook to do.
+        } else if (!skipAward && newEvent.plant_id && isRewardedEventType(newEvent.event_type)) {
           const tzOffsetHeader = parseInt(event.headers?.['x-client-tz-offset'] ?? event.headers?.['X-Client-Tz-Offset'] ?? '0', 10);
           // Fetch prefs + species prefs once for this event (cheap; one-row lookups).
           let critterPrefs = null;
@@ -3820,6 +3835,13 @@ export const handler = async (event) => {
       // Short-circuiting the query would report a full 300-XP allowance to a capped-out user and
       // make their XP meter jump backwards on a tap that is supposed to change nothing.
       const eventTypeIsRewarded = isRewardedEventType(eventType);
+      // V5-SEEDMULTIPARENT-001 release 2a — a jar-keyed seed_saved grant binds the LOT id as its
+      // source_id, so the 0c unique index pays it once per person per jar however many parents'
+      // events arrive, in turn or at once. flatGrantNotYetPaid is the half the index cannot see: a
+      // jar whose earlier event was paid on its EVENT id (every save before this release). Both
+      // are the event-keyed values, eventId and true, whenever seedLotRewards is null.
+      const flatGrantSourceId = seedLotRewards ? seedLotRewards.lotId : eventId;
+      const flatGrantNotYetPaid = !(seedLotRewards?.xpAlreadyPaid === true);
       try {
         const rows = await sql`
           WITH today_xp AS (
@@ -3831,7 +3853,7 @@ export const handler = async (event) => {
           ),
           flat_grant AS (
             INSERT INTO xp_events (user_id, amount, reason, source_id)
-            SELECT ${userId}, ${FLAT_XP_PER_EVENT}, 'event_logged', ${eventId}::uuid
+            SELECT ${userId}, ${FLAT_XP_PER_EVENT}, 'event_logged', ${flatGrantSourceId}::uuid
             FROM today_xp
             WHERE today_sum < ${DAILY_FLAT_XP_CAP}
               -- V4-WATERMATH-001 F0: false for every NON_REWARD_EVENT_TYPES member, so no
@@ -3840,9 +3862,11 @@ export const handler = async (event) => {
               -- a stray backtick terminates it — a module-load SyntaxError the unit suite cannot
               -- see, because it reads this file as TEXT and never imports it. eslint caught it.)
               AND ${eventTypeIsRewarded}::boolean
-            -- eventId is brand new on every single-event POST, so this cannot conflict today. It is
-            -- here so the single and batch grants carry the SAME retry semantics: at most one
-            -- 'event_logged' grant per logging action, enforced by 0c rather than by convention.
+              AND ${flatGrantNotYetPaid}::boolean
+            -- An eventId is brand new on every single-event POST and cannot conflict. A jar-keyed
+            -- seed_saved grant (flatGrantSourceId is the lot id) DOES conflict, on purpose: that is
+            -- what pays a jar once per person. Single and batch grants carry the SAME retry
+            -- semantics: at most one 'event_logged' grant per logging action, enforced by 0c.
             ON CONFLICT (user_id, reason, source_id) WHERE source_id IS NOT NULL DO NOTHING
             RETURNING amount
           ),
