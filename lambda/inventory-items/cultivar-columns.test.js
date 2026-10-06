@@ -64,11 +64,30 @@ const HANDLERS = readdirSync(__dirname)
 // which appends it to the cultivar VIEW (not only to plant_varieties) and must be applied to staging
 // and prod before this reaches dev. Until then dev-main-schema-audit.py reports exactly this one
 // column missing from prod, and that report is the ordering guard working.
+// V5-SEEDMULTIPARENT-001 (release 2a, 2026-10-06) — four more, and they are not all alike:
+//   • variety_rank — the rank of the variety a lot is FILED under (every lot projection) and of each
+//     parent planting's variety (source_plants). On the view since v5-varietyhybridflag-001; it is
+//     column 46 of the 47 in migrations/v5-scovillesource-001/0a-additive-ddl.sql:147.
+//   • created_by, deleted_at — read ONLY of the variety a lot is filed under (alias fv): a mixed jar
+//     must be filed under a LIVE mix the HOUSEHOLD made, and a re-file needs a live target. Both are
+//     in that same 47-column list (:115, :118). The parent-planting alias (pv) never reads either —
+//     a soft-deleted variety still counts as a planting's variety — and a test below pins that.
+//   • blend_key — NOT YET ON PROD. It arrives with migrations/v5-varietyblend-001, which appends it
+//     to the cultivar VIEW (48th column, last), and that migration must be applied to staging and
+//     prod before this reaches dev. Until then dev-main-schema-audit.py reports exactly this one
+//     column missing from prod, which is the ordering guard working. It is read only by statements
+//     a request with TWO OR MORE parent plantings issues (seed-lot-rules.js); a one-parent save and
+//     every read on this page are free of it — pinned below, because that is what keeps the
+//     commonest writes from depending on the new column.
+// These four were read from the migration TEXT, not from information_schema: this lane opens no
+// database. The first three are in a view definition captured verbatim from prod on 2026-09-19;
+// the fourth is lane S's contract (R2A-CONTRACT section 1). The integration lane runs the audit.
 const AUDIT_COLUMNS = {
   cultivar: [
-    'breeding_system', 'crop_type_slug', 'days_to_maturity_max', 'days_to_maturity_min', 'display_name',
-    'dtm_basis', 'id', 'origin_country', 'origin_region', 'scoville_max', 'scoville_min', 'scoville_source',
-    'source_url', 'species',
+    'blend_key', 'breeding_system', 'created_by', 'crop_type_slug', 'days_to_maturity_max',
+    'days_to_maturity_min', 'deleted_at', 'display_name', 'dtm_basis', 'id', 'origin_country',
+    'origin_region', 'scoville_max', 'scoville_min', 'scoville_source', 'source_url', 'species',
+    'variety_rank',
   ],
 };
 
@@ -127,10 +146,60 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     // cultivar of each parent PLANTING (pv.id, pv.display_name, pv.breeding_system — all three
     // already in the contract above, so the list did not move). The other three are index.js's
     // seed reads, which the two per-statement tests below still pin at exactly three.
-    expect(STATEMENTS).toHaveLength(4);
-    expect(STATEMENTS.filter((s) => s.file === 'seed-lot-parents.js')).toHaveLength(1);
+    //
+    // 4 -> 11 with release 2a, counted by file so a twelfth cannot hide in the total:
+    //   index.js            5  the three seed reads, plus the POST's and the wide PUT's RETURNING,
+    //                          each of which now reads the filed variety's rank in a scalar subquery;
+    //   seed-lot-parents.js 1  readSourcePlants, as before (two more columns of the same join);
+    //   seed-lot-rules.js   3  the rules' read of each planting's variety, the "is the lot filed
+    //                          under their mix" check, and the judge inside the transaction;
+    //   seed-lot-filing.js  2  the filing judge (the target, and the parents' crop) and the read-back.
+    expect(STATEMENTS).toHaveLength(11);
+    const perFile = Object.fromEntries(HANDLERS.map((f) => [f, STATEMENTS.filter((s) => s.file === f).length]));
+    expect(Object.fromEntries(Object.entries(perFile).filter(([, count]) => count > 0))).toEqual({
+      'index.js': 5, 'seed-lot-filing.js': 2, 'seed-lot-parents.js': 1, 'seed-lot-rules.js': 3,
+    });
+    // Two aliases, and they mean two different rows: `pv` is the variety a row resolves through
+    // (the lot's, or a parent planting's); `fv` is the variety a lot is, or is about to be, FILED under.
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
-      .toEqual(['pv']);
+      .toEqual(['fv', 'pv']);
+  });
+
+  it('asks liveness and ownership only of the FILED variety — a soft-deleted variety is still a planting\'s variety', () => {
+    // R2A-CONTRACT section 3: "a soft-deleted cultivar still counts as the planting's variety here,
+    // in the rules below and as a mix component". So no statement may filter the parent-side alias on
+    // deleted_at or created_by; those two columns are in the contract for `fv` alone.
+    for (const { file, sql } of STATEMENTS) {
+      expect(sql, `${file}: pv.deleted_at filters a planting's variety`).not.toMatch(/\bpv\.deleted_at\b/);
+      expect(sql, `${file}: pv.created_by scopes a planting's variety`).not.toMatch(/\bpv\.created_by\b/);
+    }
+    const filed = STATEMENTS.filter(({ sql }) => aliasesOf(sql).includes('fv'));
+    expect(filed.map((s) => s.file).sort()).toEqual(['seed-lot-filing.js', 'seed-lot-rules.js', 'seed-lot-rules.js']);
+    for (const { file, sql } of filed) expect(sql, file).toMatch(/\bfv\.deleted_at IS NULL\b/);
+  });
+
+  it('reads blend_key only in the parent RULES — never in a read, a one-parent write or a re-file', () => {
+    // The column does not exist until migrations/v5-varietyblend-001 is applied. Keeping it out of
+    // every statement the app issues today means a deploy that got ahead of that migration breaks
+    // only requests naming two or more parent plantings, which no shipped client sends.
+    const naming = STATEMENTS.filter(({ sql }) => /\bblend_key\b/.test(sql));
+    expect(naming.map((s) => s.file)).toEqual(['seed-lot-rules.js', 'seed-lot-rules.js', 'seed-lot-rules.js']);
+    for (const f of ['index.js', 'seed-lot-parents.js', 'seed-lot-filing.js']) {
+      const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
+      const templates = [...src.matchAll(SQL_TEMPLATE)].map((m) => m[1]);
+      expect(templates.filter((t) => /\bblend_key\b/.test(t)), f).toEqual([]);
+    }
+  });
+
+  it('projects the filed variety\'s rank on all five lot projections in index.js', () => {
+    // Release 2a: list (both templates), detail, and the POST and wide-PUT replies. The union above
+    // stays green if one of them drops it, so it is pinned per statement.
+    const inIndex = STATEMENTS.filter((s) => s.file === 'index.js');
+    expect(inIndex).toHaveLength(5);
+    for (const { sql } of inIndex) expect(sql).toMatch(/\bpv\.variety_rank\b/);
+    // The two that are writes read it in RETURNING, off the row as the statement left it.
+    const returning = inIndex.filter(({ sql }) => /RETURNING \*, \(SELECT pv\.variety_rank FROM public\.cultivar pv\s+WHERE pv\.id = inventory_items\.variety_id\) AS variety_rank/.test(sql));
+    expect(returning).toHaveLength(2);
   });
 
   it('accounts for every unaliased cultivar read', () => {

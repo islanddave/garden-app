@@ -51,7 +51,15 @@ const seedLot = (extra = {}) => ({
   quantity_on_hand: 1, variety_id: VARIETY, ...extra,
 });
 
+// Release 2a adds three kinds: `pfacts` (the parent rules' read of each planting's variety, before
+// the transaction, for a set of two or more), `mix` (is the body's variety the mix of the set's
+// varieties — only when the set spans two) and `rules` (the judge inside the transaction: it sets
+// the verdict the link INSERT reads, and on a one-parent create only opens it). `rules` is tested
+// before `owns`, which its text also satisfies.
 const IS = {
+  rules: (t) => /AS rules_hold/.test(t),
+  pfacts: (t) => /AS lot_found/.test(t),
+  mix: (t) => /AND fv\.blend_key = \?\s*$/.test(t),
   owns: (t) => /FROM public\.garden_node p\s+WHERE p\.id = ANY\(\?::uuid\[\]\)\s+AND p\.created_by = ANY/.test(t),
   members: (t) => /SELECT k\.plant_id AS id/.test(t),
   probe: (t) => /FROM public\.garden_node p\s+WHERE p\.id = \?/.test(t),
@@ -63,7 +71,7 @@ const IS = {
 };
 const kindOf = (t) => Object.keys(IS).find((k) => IS[k](t)) ?? 'other';
 const kinds = () => stubState.sqlCalls.map((c) => kindOf(c.text));
-const find = (k) => stubState.sqlCalls.find((c) => IS[k](c.text));
+const find = (k) => stubState.sqlCalls.find((c) => kindOf(c.text) === k);
 
 // The value bound to a NAMED column of the lot INSERT, by position (post-source-plant.test.js).
 const bindingFor = (c, column) => {
@@ -88,20 +96,33 @@ const boundAfter = (c, re) => {
 };
 
 const parent = (id, name) => ({
-  id, name, variety_id: uuid(90), variety_name: name, breeding_system: 'open_pollinated', archived: false, deleted: false,
+  id, name, variety_id: uuid(90), variety_name: name, breeding_system: 'open_pollinated',
+  variety_rank: 'cultivar', crop_slug: 'nasturtium', archived: false, deleted: false,
 });
 const JAR = [parent(A, 'Alaska Mix'), parent(B, 'Jewel Mix')];
 
 // Every planting owned; the lot INSERT echoes a row; the read-back returns JAR.
+//
+// `pfacts` ANSWERS the parent rules' read, on purpose (QA seat, Q1). Every planting asked about is
+// a planting of ONE variety, so a two-parent create passes the rules for a stated reason. Left to
+// the `other` arm the read would come back empty; the rules read an id with no row as "added, no
+// variety", and every two-parent test below would stop at a 400. There is no lot yet on a create,
+// so no planting is a member and no lot is found. `rules` is the judge inside the transaction.
+// parent-rules-route.test.js is where those two answers are varied.
 const world = (over = {}) => (text, values) => {
   const k = kindOf(text);
   if (k in over) return typeof over[k] === 'function' ? over[k](values) : over[k];
   return {
     owns: () => values[0].map((id) => ({ id })),
     members: () => [],
+    pfacts: () => values[0].map((id) => ({
+      id, cultivar_id: uuid(90), crop_slug: 'nasturtium', blend_key: null, member: false, lot_found: false, lot_variety_id: null,
+    })),
+    mix: () => [],
     probe: () => [{ id: values[0] }],
     lot: () => [{ id: values[0], name: 'Mixed nasturtium', category: 'seeds', source_plant_id: null }],
     hold: () => values[0].map((id) => ({ id })),
+    rules: () => [{ rules_hold: true, go: 'go' }],
     link: () => [],
     assert: () => [{ every_parent_linked: 1 }],
     read: () => [{ inventory_item_id: values[1], source_plants: JAR }],
@@ -124,7 +145,10 @@ describe('POST with source_plant_ids — a lot born with several parents', () =>
     expect(res.status).toBe(201);
     // One counted gate, then the transaction: lot, share lock on the plantings, links, the
     // all-linked assertion, read-back.
-    expect(kinds()).toEqual(['owns', 'lot', 'hold', 'link', 'assert', 'read']);
+    // RESTATED for release 2a: a set of TWO is also put to the parent rules — read once before the
+    // transaction (pfacts), and judged again inside it (rules), under the share lock and ahead of
+    // the link INSERT, which writes only on that judge's verdict.
+    expect(kinds()).toEqual(['owns', 'pfacts', 'lot', 'hold', 'rules', 'link', 'assert', 'read']);
     expect(find('owns').values).toEqual([[A, B], [USER]]);
 
     // The link INSERT: these plantings, as seed parents, added by the caller…
@@ -169,7 +193,8 @@ describe('POST with source_plant_ids — a lot born with several parents', () =>
     // The set is still the array's: the single key adds nothing to it and removes nothing from it.
     expect(boundAfter(find('link'), /CROSS JOIN unnest\(/)).toEqual([A, B]);
     // Only the counted gate ran — the single-id probe is the legacy path's.
-    expect(kinds()).toEqual(['owns', 'lot', 'hold', 'link', 'assert', 'read']);
+    // (RESTATED for release 2a: two parents, so the rules' read and judge are in the list.)
+    expect(kinds()).toEqual(['owns', 'pfacts', 'lot', 'hold', 'rules', 'link', 'assert', 'read']);
   });
 
   it('400s a source_plant_id that is not in the set — including against an EMPTY set', async () => {
@@ -209,7 +234,9 @@ describe('POST with source_plant_ids — the empty set, and absence', () => {
   it('…so null beside a source_plant_id leaves the legacy single-key path in charge', async () => {
     const res = parse(await handler(post(seedLot({ source_plant_ids: null, source_plant_id: A }))));
     expect(res.status).toBe(201);
-    expect(kinds()).toEqual(['probe', 'lot', 'hold', 'link', 'assert', 'read']);
+    // RESTATED for release 2a: ONE parent, so the rules read nothing before the transaction; the
+    // judge inside it is the statement that opens the verdict the link INSERT reads.
+    expect(kinds()).toEqual(['probe', 'lot', 'hold', 'rules', 'link', 'assert', 'read']);
     expect(boundAfter(find('link'), /CROSS JOIN unnest\(/)).toEqual([A]);
   });
 
@@ -334,7 +361,11 @@ describe('POST with source_plant_ids — a planting that changed AFTER the gate 
     });
     const res = parse(await handler(post(seedLot({ source_plant_ids: [A, B] }))));
     expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: 'One of those plants changed just now. Reload and try again.' });
+    // RESTATED for release 2a (R2-19): the sentence and status are release 1's to the byte — shipped
+    // clients print the sentence — and a `code` stands beside it. Exactly these two keys.
+    expect(res.body).toEqual({
+      error: 'One of those plants changed just now. Reload and try again.', code: 'parents_changed',
+    });
     // Not a created lot in any part — an old client must not prepend this to its list.
     expect(res.body.id).toBeUndefined();
     expect(res.body.source_plants).toBeUndefined();
@@ -349,13 +380,16 @@ describe('POST with source_plant_ids — a planting that changed AFTER the gate 
       assert: () => { throw Object.assign(new Error('division by zero'), { code: '22012' }); },
     });
     const res = parse(await handler(post(seedLot({ source_plant_id: A }))));
-    expect(kinds()).toEqual(['probe', 'lot', 'hold', 'link', 'assert', 'read']);
+    expect(kinds()).toEqual(['probe', 'lot', 'hold', 'rules', 'link', 'assert', 'read']);
     expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: 'One of those plants changed just now. Reload and try again.' });
+    // RESTATED for release 2a (R2-19): same sentence, same status, and its code beside it.
+    expect(res.body).toEqual({
+      error: 'One of those plants changed just now. Reload and try again.', code: 'parents_changed',
+    });
   });
 
   it('409s a deadlock victim (40P01) instead of a 500 — the create rolled back whole', async () => {
-    for (const at of ['hold', 'link']) {
+    for (const at of ['hold', 'rules', 'link']) {
       resetStubs();
       stubState.verifyTokenResult = { sub: USER };
       stubState.sqlHandler = world({
@@ -364,7 +398,10 @@ describe('POST with source_plant_ids — a planting that changed AFTER the gate 
       // eslint-disable-next-line no-await-in-loop
       const res = parse(await handler(post(seedLot({ source_plant_ids: [A, B] }))));
       expect(res.status, at).toBe(409);
-      expect(res.body, at).toEqual({ error: 'One of those plants changed just now. Reload and try again.' });
+      // RESTATED for release 2a (R2-19): the code beside the unchanged sentence.
+      expect(res.body, at).toEqual({
+        error: 'One of those plants changed just now. Reload and try again.', code: 'parents_changed',
+      });
     }
   });
 
@@ -393,6 +430,57 @@ describe('POST with source_plant_ids — a planting that changed AFTER the gate 
     expect(res.status).toBe(201);
     expect(kinds()).toEqual(['lot']);
   });
+
+  it('a ONE-parent create only OPENS the verdict: its judge names no table, and no column this release adds', async () => {
+    // Release 2a. What every shipped client sends when it saves seed from a plant. The link INSERT
+    // now writes only when a statement earlier in its transaction said go, so this create needs
+    // such a statement — and it must not make the commonest saved-seed write depend on the new
+    // blend_key column, or on anything else. The rules cannot apply to one planting.
+    await handler(post(seedLot({ source_plant_id: A })));
+    const judge = find('rules');
+    expect(judge.text.replace(/\s+/g, ' ').trim()).toBe(
+      "SELECT TRUE AS rules_hold, set_config('app.seed_lot_go', CASE WHEN ?::boolean OR current_setting('app.seed_lot_go', true) = 'go' THEN 'go' ELSE 'stop' END, true) AS go");
+    // `alone`: nothing judged before it, so this is the statement allowed to say go.
+    expect(judge.values).toEqual([true]);
+    expect(judge.text).not.toMatch(/\bFROM\b|\bJOIN\b|blend_key/);
+    // …and it is that verdict the link INSERT reads.
+    expect(find('link').text).toContain("current_setting('app.seed_lot_go', true) = 'go'");
+    // Nothing was read for the rules before the transaction either.
+    expect(kinds()).not.toContain('pfacts');
+    expect(kinds()).not.toContain('mix');
+  });
+
+  it('a TWO-parent create judges the rules against the lot row it just wrote', async () => {
+    await handler(post(seedLot({ source_plant_ids: [A, B] })));
+    const lotId = bindingFor(find('lot'), 'id');
+    const judge = find('rules');
+    // The full judge: the lot (created by statement 0 of this same transaction), these plantings.
+    expect(boundAfter(judge, /WHERE i\.id = /)).toBe(lotId);
+    expect(boundAfter(judge, /AND \(/)).toBe(true);                     // alone
+    // No variety is bound: the judge reads the lot row's own variety_id, which is the body's.
+    expect(boundAfter(judge, /fv\.id = COALESCE\(/)).toBeNull();
+    expect(judge.text.replace(/\s+/g, ' ')).toContain('fv.id = COALESCE(?::uuid, i.variety_id)');
+    // After the share lock, before the link INSERT.
+    const order = kinds();
+    expect(order.indexOf('hold')).toBeLessThan(order.indexOf('rules'));
+    expect(order.indexOf('rules')).toBeLessThan(order.indexOf('link'));
+  });
+
+  it('409s when that judge said stop: the link INSERT wrote nothing, so the assertion took the lot back', async () => {
+    // The stub cannot make the INSERT obey the verdict (it executes no SQL). What it can show is
+    // the route's half: a judge that refused is followed by the assertion raising, and that is
+    // answered exactly as a planting that stopped being usable is — one 409, one code.
+    stubState.sqlHandler = world({
+      rules: [{ rules_hold: false, go: 'stop' }],
+      assert: () => { throw Object.assign(new Error('division by zero'), { code: '22012' }); },
+    });
+    const res = parse(await handler(post(seedLot({ source_plant_ids: [A, B] }))));
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      error: 'One of those plants changed just now. Reload and try again.', code: 'parents_changed',
+    });
+    expect(res.body.id).toBeUndefined();
+  });
 });
 
 describe('POST with source_plant_ids — one transaction (source shape; the stub has no transactions)', () => {
@@ -406,11 +494,17 @@ describe('POST with source_plant_ids — one transaction (source shape; the stub
     // In this order. The lock comes before the link INSERT because that statement's ownership test
     // must read plantings that can no longer change; the assertion comes after it because it is
     // what undoes the lot when the INSERT declined; the read-back is last and is what the 201 carries.
+    // RESTATED for release 2a: SIX statements. judgeParentRules sits between the share lock (its
+    // planting reads must not move) and the link INSERT (which reads the verdict it sets). `alone`:
+    // nothing was judged before it in this transaction, so it is the statement that may say go.
     expect(POST_ARM).toMatch(
-      /\[lotRows, , , , parentRows\] = await sql\.transaction\(\[ insertLot, lockPlantings\(sql, parentIds\), insertSeedParentLinks\(sql, \{ lotId, ids: parentIds, householdIds, userId \}\), assertEveryParentLinked\(sql, \{ lotId, ids: parentIds, householdIds \}\), readSourcePlants\(sql, householdIds, lotId\), \]\);/);
+      /\[lotRows, , , , , parentRows\] = await sql\.transaction\(\[ insertLot, lockPlantings\(sql, parentIds\), judgeParentRules\(sql, \{ lotId, ids: parentIds, householdIds, alone: true \}\), insertSeedParentLinks\(sql, \{ lotId, ids: parentIds, householdIds, userId \}\), assertEveryParentLinked\(sql, \{ lotId, ids: parentIds, householdIds \}\), readSourcePlants\(sql, householdIds, lotId\), \]\);/);
     // Only the two codes that mean "rolled back whole, try again" are answered here; the rest rethrow.
+    // (RESTATED: the 409 body is the sentence with its code — built in one place, parentsChangedBody.)
     expect(POST_ARM).toMatch(
-      /catch \(err\) \{ if \(err\?\.code === '22012' \|\| err\?\.code === '40P01'\) \{ console\.warn\([^;]*\); return resp\(409, \{ error: PLANTS_CHANGED \}\); \} throw err; \}/);
+      /catch \(err\) \{ if \(err\?\.code === '22012' \|\| err\?\.code === '40P01'\) \{ console\.warn\([^;]*\); return resp\(409, parentsChangedBody\(\)\); \} throw err; \}/);
+    expect(SRC).toMatch(/const parentsChangedBody = \(\) => \(\{ error: PLANTS_CHANGED, code: 'parents_changed' \}\);/);
+    expect(SRC).toMatch(/const PLANTS_CHANGED = 'One of those plants changed just now\. Reload and try again\.';/);
     // The lot statement is BUILT, not awaited, where it is written — an awaited statement has
     // already committed by the time the link INSERT runs.
     expect(POST_ARM).toMatch(/const insertLot = sql` INSERT INTO inventory_items \(/);
@@ -418,6 +512,17 @@ describe('POST with source_plant_ids — one transaction (source shape; the stub
     // Exactly two ways it is ever run: alone when there are no parents, or as element 0 of the batch.
     expect(POST_ARM.match(/\binsertLot\b/g)).toHaveLength(3);
     expect(POST_ARM).toMatch(/if \(!parentIds\.length\) \{ const rows = await insertLot; return resp\(201, \{ \.\.\.rows\[0\], source_plants: \[\] \}\); \}/);
+  });
+
+  it('never names the plant count: PUT /:id/seed-measure is its only writer (release 2a)', () => {
+    // A second writer here is the one that would drop the value on a Lambda that predates the
+    // column and answer 201 (data-schema seat S8). Pinned the way put-year-harvested.test.js pins
+    // lot_number out of the wide PUT. Comments are stripped, so the note beside the INSERT that
+    // explains the omission does not satisfy or break this.
+    expect(POST_ARM).not.toMatch(/seed_parent_plant_count/);
+    // The 201 does carry the filed variety's rank, read in the INSERT's own RETURNING.
+    expect(POST_ARM).toMatch(
+      /\) RETURNING \*, \(SELECT pv\.variety_rank FROM public\.cultivar pv WHERE pv\.id = inventory_items\.variety_id\) AS variety_rank `;/);
   });
 
   it('mints the id in the handler and binds the cache, not the body key, to the column', () => {

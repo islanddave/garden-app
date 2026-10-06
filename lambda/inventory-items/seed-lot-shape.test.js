@@ -141,6 +141,86 @@ describe('BUG-SEEDELAPSEDUPDATED-001 — the list reports when the stage was ent
   }
 });
 
+describe('V5-SEEDMULTIPARENT-001 (release 2a) — every lot projection carries the FILED variety\'s rank', () => {
+  // `variety_rank` beside variety_name and crop_slug: the rank of the variety the LOT is filed under
+  // ('blend' for a named mix). It is what lets a card or the lot page say "mix" without fetching the
+  // variety. Five projections answer a lot row and all five must carry it, or a surface that reads
+  // one of them shows a mix as a plain variety: the list (both branches), the detail, the POST 201
+  // and the wide PUT 200. (source_plants[].variety_rank is a different fact — each PARENT's
+  // variety's rank — and is pinned in source-plants-read.test.js.)
+  //
+  // SHAPE, NOT BEHAVIOUR, like the rest of this file: the stub hands back the rank it is told to,
+  // so what is proved is that each statement asks for it through the cultivar join on the lot's own
+  // variety_id, and that the handler passes it through untouched.
+  const VARIETY = 'd58b5155-0c23-4365-bfad-30549b8ca069';
+  const call = (method, path, body, qs) => ({
+    requestContext: { http: { method } }, rawPath: path,
+    headers: { authorization: 'Bearer stub-token' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    queryStringParameters: qs,
+  });
+  // The statement as Postgres reads it: SQL comments out, whitespace flat.
+  const sqlOf = (c) => c.text.split('\n').map((l) => l.replace(/(^|\s)--(\s.*)?$/, '$1')).join('\n').replace(/\s+/g, ' ');
+  // A row that is not seeds, so no read rides beside the one under test.
+  const ROW = { id: ITEM, name: 'Nasturtium 2026', category: 'tools', variety_id: VARIETY, variety_rank: 'blend' };
+
+  for (const [name, qs] of [['filtered (?category=tools)', { category: 'tools' }], ['unfiltered', undefined]]) {
+    it(`the list projects it from the lot's own variety — ${name}`, async () => {
+      stubState.sqlHandler = (text) => (/se\.entered_at AS stage_entered_at/.test(text) ? [ROW] : []);
+      const { status, body } = parse(await handler(call('GET', '/api/inventory-items', undefined, qs)));
+      expect(status).toBe(200);
+      const list = stubState.sqlCalls[0];
+      expect(sqlOf(list)).toContain('pv.source_url AS variety_source_url, pv.variety_rank, COALESCE(fp.id, fb.id) AS effective_featured_photo_id');
+      expect(sqlOf(list)).toContain('LEFT JOIN public.cultivar pv ON pv.id = i.variety_id');
+      expect(body[0].variety_rank).toBe('blend');
+    });
+  }
+
+  it('the detail projects it, from the same join', async () => {
+    stubState.sqlHandler = () => [ROW];
+    const { status, body } = parse(await handler(call('GET', `/api/inventory-items/${ITEM}`)));
+    expect(status).toBe(200);
+    const detail = stubState.sqlCalls[0];
+    expect(sqlOf(detail)).toContain('pv.source_url AS variety_source_url, pv.variety_rank FROM inventory_items i');
+    expect(sqlOf(detail)).toContain('LEFT JOIN public.cultivar pv ON pv.id = i.variety_id');
+    expect(body.variety_rank).toBe('blend');
+  });
+
+  it('the POST 201 carries it, read in the INSERT\'s own RETURNING', async () => {
+    stubState.sqlHandler = () => [ROW];
+    const { status, body } = parse(await handler(call('POST', '/api/inventory-items', {
+      name: 'Nasturtium 2026', type: 'consumable', category: 'seeds', unit: 'packet', quantity_on_hand: 1, variety_id: VARIETY,
+    })));
+    expect(status).toBe(201);
+    // One statement — the commonest write in the handler is still a single INSERT.
+    expect(stubState.sqlCalls).toHaveLength(1);
+    expect(sqlOf(stubState.sqlCalls[0])).toMatch(
+      /\) RETURNING \*, \(SELECT pv\.variety_rank FROM public\.cultivar pv WHERE pv\.id = inventory_items\.variety_id\) AS variety_rank\s*$/);
+    expect(body.variety_rank).toBe('blend');
+  });
+
+  it('the wide PUT 200 carries it, read in the UPDATE\'s own RETURNING', async () => {
+    stubState.sqlHandler = () => [ROW];
+    const { status, body } = parse(await handler(call('PUT', `/api/inventory-items/${ITEM}`, {
+      name: 'Broadfork', type: 'durable', category: 'tools', status: 'active', quantity: 1,
+    })));
+    expect(status).toBe(200);
+    expect(stubState.sqlCalls).toHaveLength(1);
+    expect(sqlOf(stubState.sqlCalls[0])).toMatch(
+      /RETURNING \*, \(SELECT pv\.variety_rank FROM public\.cultivar pv WHERE pv\.id = inventory_items\.variety_id\) AS variety_rank\s*$/);
+    expect(body.variety_rank).toBe('blend');
+  });
+
+  it('a row with no variety answers null, not a missing key — the subquery finds no row', async () => {
+    // What the statement returns for a shovel. The handler does not invent a rank or drop the key.
+    stubState.sqlHandler = () => [{ ...ROW, variety_id: null, variety_rank: null }];
+    const { body } = parse(await handler(call('PUT', `/api/inventory-items/${ITEM}`, {
+      name: 'Broadfork', type: 'durable', category: 'tools', status: 'active', quantity: 1,
+    })));
+    expect(body).toHaveProperty('variety_rank', null);
+  });
+});
+
 describe('Newest entry wins (Dave 2026-09-17) — one order key for the history, the badge and the card', () => {
   // THE RULE. A lot's current entry is the one MADE most recently, not the one carrying the latest
   // date: "Stored, Sep 1" entered after "Stored, Sep 7" is the correction, and the Change stage sheet

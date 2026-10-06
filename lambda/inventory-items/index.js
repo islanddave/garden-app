@@ -35,6 +35,12 @@ import {
   assertEveryParentLinked, replaceSourcePlants, readSourcePlants, settleSourcePlants, sourcePlantsOf,
   sourcePlantsByLot,
 } from './seed-lot-parents.js';
+// V5-SEEDMULTIPARENT-001 (release 2a) — the parent RULES (a set of two or more plantings has to be
+// one crop, every planting added to it has to have a variety, and a set spanning two varieties is
+// filed under their mix) and the FILING (which variety a lot is filed under, and the one statement
+// that changes it). Each in its own module beside the one above, for the reason that one gives.
+import { checkParentRules, judgeParentRules } from './seed-lot-rules.js';
+import { normalizeFiling, fileSeedLot, VARIETY_UNUSABLE, FILING_CROP_MISMATCH } from './seed-lot-filing.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -165,6 +171,16 @@ export const SEED_CONSTRAINT_MESSAGES = {
   // sentence, because at this point we no longer know which one it was.
   chk_inventory_seed_count_basis_pairing:
     'A seed count and how it was counted are one fact. Save the number together with where it came from, or clear both together.',
+  // V5-SEEDMULTIPARENT-001 (release 2a) — "about how many plants did this seed come from"
+  // (inventory_items.seed_parent_plant_count, migrations/v5-seedplantcount-001). Same two-mechanism
+  // split as the seed count above. The seeds-only CHECK reads the STORED value, so recategorising a
+  // lot that carries the number fires it from a wide-PUT body that never names the column — that
+  // verb cannot write it at all. The positive CHECK is the backstop behind /seed-measure's own
+  // 1-to-9999 guard, which answers first; this is what a writer that bypassed that route would read.
+  chk_inventory_seed_parent_plant_count_seeds_only:
+    'This lot records how many plants its seed came from, so it has to stay in Seeds. Clear that number first if you want to move it to another category.',
+  chk_inventory_seed_parent_plant_count_positive:
+    'The number of plants a seed lot came from has to be at least 1. Leave it blank if you do not know.',
 };
 
 // A plain JSON object, not an array and not a scalar. jsonb would happily store `"abc"` or `[1]`,
@@ -247,6 +263,27 @@ const SOURCE_PLANT_IDS_UNUSABLE = 'source_plant_ids does not match plantings you
 // person needs is the current list, not a correction. Worded for them: no ids, no field names.
 const PLANTS_CHANGED = 'One of those plants changed just now. Reload and try again.';
 
+// V5-SEEDMULTIPARENT-001 (release 2a) — the wide PUT's answer to a body that moves a row out of
+// Seeds while the stored row names a variety. A sentence, like the constraint sentences above, and
+// for the same reader; it is not IN that map because no CHECK stands behind it — the handler is the
+// only thing that says it.
+const SEED_VARIETY_STAYS_IN_SEEDS =
+  'This item is filed under a seed variety, so it has to stay in Seeds.';
+
+// A concurrent writer got to the lot: a unique violation, a deadlock victim — or (release 2a) a lot
+// that no longer holds what the caller last read, whether that is its parent set or the variety it
+// is filed under. Nothing was written in any of those cases.
+const LOT_CHANGED = 'This seed lot was changed at the same moment. Reload and try again.';
+
+// RELEASE 2a — THE TWO 409 SENTENCES NOW CARRY A `code`, and the sentences did not move by a byte:
+// shipped clients print the string as it is. R1-CONTRACT 6a recorded that a client could not tell
+// these apart except by their words and must not branch on those; now it can branch on
+//   parents_changed — try again with the plants as they are now (PLANTS_CHANGED);
+//   lot_changed     — reload the lot, something else changed it (LOT_CHANGED).
+// A code is ADDED beside the sentence, never instead of it. A client that meets a code it does not
+// know shows the sentence.
+const parentsChangedBody = () => ({ error: PLANTS_CHANGED, code: 'parents_changed' });
+
 // What replaceSourcePlants decided, as HTTP. Shared by PUT /:id/source-plants and the legacy PATCH
 // /:id/source-plant, which are one write with two front doors — so the two cannot answer the same
 // outcome differently.
@@ -266,12 +303,41 @@ function sourcePlantsReply(resp, out) {
   if (out.outcome === 'source_kind') {
     return resp(400, { error: SEED_CONSTRAINT_MESSAGES.chk_inventory_seed_source_plant });
   }
-  if (out.outcome === 'plants_changed') return resp(409, { error: PLANTS_CHANGED });
-  // A unique violation or a deadlock: a concurrent writer, and a transaction that rolled back whole.
-  if (out.outcome === 'conflict') {
-    return resp(409, { error: 'This seed lot was changed at the same moment. Reload and try again.' });
+  // Two re-tests under the lock, one answer: the plants (or their varieties) are not as they were
+  // when the route checked them.
+  if (out.outcome === 'plants_changed' || out.outcome === 'rules_changed') return resp(409, parentsChangedBody());
+  // The lot is not what the caller last read. It is told what the lot holds now, so it can redraw
+  // without a second fetch: the set always, and the filing when the request tried to change that.
+  if (out.outcome === 'lot_changed') {
+    const { outcome: _outcome, ...asStored } = out;
+    return resp(409, { error: LOT_CHANGED, code: 'lot_changed', ...asStored });
   }
-  return resp(200, { id: out.id, source_plant_id: out.source_plant_id, source_plants: out.source_plants });
+  if (out.outcome === 'variety_unusable') return resp(400, { error: VARIETY_UNUSABLE, code: 'variety_unusable' });
+  if (out.outcome === 'filing_crop_mismatch') {
+    return resp(400, { error: FILING_CROP_MISMATCH, code: 'filing_crop_mismatch' });
+  }
+  // A unique violation or a deadlock: a concurrent writer, and a transaction that rolled back whole.
+  // Nothing to report but the code — there is no read-back from a transaction that did not commit.
+  if (out.outcome === 'conflict') return resp(409, { error: LOT_CHANGED, code: 'lot_changed' });
+  return resp(200, {
+    id: out.id, source_plant_id: out.source_plant_id, source_plants: out.source_plants,
+    ...(out.filing ? { filing: out.filing } : {}),
+  });
+}
+
+// What fileSeedLot decided, as HTTP (PUT /:id/filing). The refusals are the set route's own, word
+// for word and code for code — a re-file refused there and here must read the same.
+function filingReply(resp, out) {
+  if (out.outcome === 'not_found') return resp(404, { error: 'Not found' });
+  if (out.outcome === 'lot_changed') {
+    return resp(409, { error: LOT_CHANGED, code: 'lot_changed', variety_id: out.variety_id, name: out.name });
+  }
+  if (out.outcome === 'variety_unusable') return resp(400, { error: VARIETY_UNUSABLE, code: 'variety_unusable' });
+  if (out.outcome === 'filing_crop_mismatch') {
+    return resp(400, { error: FILING_CROP_MISMATCH, code: 'filing_crop_mismatch' });
+  }
+  if (out.outcome === 'conflict') return resp(409, { error: LOT_CHANGED, code: 'lot_changed' });
+  return resp(200, { id: out.id, ...out.filing });
 }
 
 export function validateCreate(body) {
@@ -656,6 +722,16 @@ export const handler = async (event) => {
     // ordering is kept explicit for the reason /sow-archive gives. A DEDICATED SUB-ROUTE for the
     // reason /source-plant gives at length just below: nothing about a lot's parents may ride the
     // wide PUT, whose every caller round-trips a stale list row.
+    //
+    // RELEASE 2a — the body may also carry, all optional:
+    //   expected_source_plant_ids  uuid[]  the set the caller last read. Not the lot's live set ->
+    //                                      409 lot_changed with the set as it stands; nothing written.
+    //   source_plant_id            uuid    which member the column should cache (must be in the set).
+    //   filing                     { variety_id, expect_variety_id, name? }  re-file the lot in the
+    //                                      same transaction; the 200 then also carries `filing`.
+    // and a set of two or more that ADDS a planting is held to the parent rules (400
+    // parent_without_variety / mixed_crop_parents / blend_required). A body with none of the three
+    // keys and one planting is release 1's request, statement for statement.
     const sourcePlantsMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)\/source-plants$/);
     if (sourcePlantsMatch) {
       const itemId = sourcePlantsMatch[1];
@@ -670,6 +746,30 @@ export const handler = async (event) => {
       }
       const set = normalizeSourcePlantIds(body.source_plant_ids);
       if (set.error) return resp(400, { error: set.error });
+
+      // RELEASE 2a — three OPTIONAL keys beside the set. Each is read by VALUE (`!= null`), so an
+      // explicit null is the same as leaving it out: none of them has a "clear" to tell from
+      // "absent". Deliberately not the hasOwnProperty idiom the required key above uses — a client
+      // test reads this file for that idiom and makes every key written that way one the Saved
+      // seeds list must strip (src/__tests__/SavedSeeds.storedCount.test.jsx).
+      // All three are shape-checked here, before any SQL, like the set itself.
+      //
+      // expected_source_plant_ids — the set the caller last read. Shape only: it may name a planting
+      // that has since been deleted (that is exactly the kind of thing it exists to notice), so it
+      // is never put to the ownership gate. Compared with the lot's live set under the lot lock.
+      const expected = body.expected_source_plant_ids != null
+        ? normalizeSourcePlantIds(body.expected_source_plant_ids, 'expected_source_plant_ids')
+        : null;
+      if (expected?.error) return resp(400, { error: expected.error });
+      // source_plant_id — which member the column should cache after the write. The rule POST has
+      // always applied to the same pair of keys, in the same words: it may only pick a member.
+      const cacheHint = body.source_plant_id != null ? String(body.source_plant_id).toLowerCase() : null;
+      if (cacheHint != null && !set.ids.includes(cacheHint)) {
+        return resp(400, { error: 'source_plant_id must be one of source_plant_ids' });
+      }
+      // filing — re-file the lot in the same transaction as the set (seed-lot-filing.js).
+      const filing = body.filing != null ? normalizeFiling(body.filing) : null;
+      if (filing?.error) return resp(400, { error: filing.error });
 
       // AUTHZ — every id, counted (see ownsEveryPlanting for why a presence test is not enough).
       // Before the write and before the lot is even looked at, like the single-id gate below: a
@@ -691,9 +791,46 @@ export const handler = async (event) => {
       // maps, and answers 500.
       if (!UUID_RE.test(itemId)) return resp(404, { error: 'Not found' });
 
+      // RELEASE 2a — THE PARENT RULES, the fast path (seed-lot-rules.js). After the ownership gate,
+      // so a planting the caller cannot use is still that gate's 400 and is never described here;
+      // and after the lot id is known to be one, because "already a parent" is asked of this lot.
+      // Nothing is read for a set of fewer than two, and nothing is refused for a lot that is not
+      // the caller's (the write below answers that 404). Like the gate, this is not the last word:
+      // the write judges the same rules again under its locks and answers 409 if they stopped
+      // holding in between.
+      const refusal = await checkParentRules(sql, {
+        ids: set.ids, householdIds, lotId: itemId, varietyId: filing?.varietyId ?? null,
+      });
+      if (refusal) return resp(400, refusal);
+
       return sourcePlantsReply(resp, await replaceSourcePlants(sql, {
         lotId: itemId, ids: set.ids, householdIds, userId,
+        expected: expected?.ids ?? null, cacheHint, rules: true, filing,
       }));
+    }
+
+    // ── V5-SEEDMULTIPARENT-001 (release 2a) — which VARIETY is this lot filed under? ───────────────
+    // PUT /api/inventory-items/:id/filing  { "variety_id": uuid, "expect_variety_id": uuid, "name"?: string }
+    //
+    // A DEDICATED SUB-ROUTE for the reason every seed sub-route here is one, and this is the column
+    // the argument was first made about: the wide PUT assigns variety_id from a round-tripped row.
+    // That verb now keeps a parented lot's stored variety, which makes this the only way to re-file
+    // a saved lot. It is a compare-and-set — the caller says what it believes the lot is filed
+    // under, and a lot re-filed by someone else in the meantime answers 409 instead of being
+    // re-filed back. The rule, the statements and the outcomes are seed-lot-filing.js's; the set
+    // route above places the same statements when a re-file rides beside a new parent set.
+    //
+    // ABOVE idMatch, with the other sub-routes; idMatch's /([^/]+)$/ cannot match a two-segment
+    // suffix, and the ordering is kept explicit for the reason /sow-archive gives.
+    const filingMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)\/filing$/);
+    if (filingMatch) {
+      const itemId = filingMatch[1];
+      if (method !== 'PUT') return resp(405, { error: 'Method not allowed' });
+      const filing = normalizeFiling(JSON.parse(event.body ?? '{}'));
+      if (filing.error) return resp(400, { error: filing.error });
+      // A malformed lot id is an absent lot (22P02 is unmapped and would answer 500).
+      if (!UUID_RE.test(itemId)) return resp(404, { error: 'Not found' });
+      return filingReply(resp, await fileSeedLot(sql, { lotId: itemId, householdIds, ...filing }));
     }
 
     // ── V4-SEEDLINK-001 — seed-lot provenance: which PLANT did this lot come from? ───────────────
@@ -907,6 +1044,14 @@ export const handler = async (event) => {
       const hasCount     = Object.prototype.hasOwnProperty.call(body, 'seed_count');
       const hasWeight    = Object.prototype.hasOwnProperty.call(body, 'seed_weight_g');
       const hasEstimated = Object.prototype.hasOwnProperty.call(body, 'seed_count_estimated');
+      // V5-SEEDMULTIPARENT-001 (release 2a) — "about how many plants did this seed come from?", the
+      // FOURTH measurement here and written by this route ONLY: not by POST (a key its INSERT does
+      // not name is a 201 with the value dropped) and not by the wide PUT (the reason this route
+      // exists at all — see the note above). It is echoed in the reply below, so a caller holding a
+      // 200 without the key knows it reached a Lambda that predates the column and nothing was saved.
+      // Read by presence like its three siblings, which is what makes it a key the Saved seeds list
+      // row must strip before a wide PUT; that list names it.
+      const hasPlantCount = Object.prototype.hasOwnProperty.call(body, 'seed_parent_plant_count');
 
       // TYPE guards only. The RANGE is left to chk_inventory_seed_count_nonneg /
       // chk_inventory_seed_weight_nonneg, deliberately: a JS `< 0` test here would mean NOTHING in
@@ -930,6 +1075,18 @@ export const handler = async (event) => {
       if (hasEstimated && body.seed_count_estimated != null
           && typeof body.seed_count_estimated !== 'boolean') {
         return resp(400, { error: 'seed_count_estimated must be true, false or null' });
+      }
+      // The plant count's RANGE is answered HERE, unlike the two nonneg rules above, and the reason
+      // is the contract's: 0 is not a measurement of anything ("no plants" is not a seed lot), so
+      // the person gets one sentence for every value that is not a whole number from 1 to 9999 —
+      // 0, -3, 2.5, "3" and 10000 alike — rather than a constraint's sentence for two of them and a
+      // type error for the rest. chk_inventory_seed_parent_plant_count_positive stays as the
+      // backstop and has its own sentence in SEED_CONSTRAINT_MESSAGES. null clears. The upper bound
+      // is a sanity cap with no CHECK behind it: a number past it is a typing slip, not a jar.
+      if (hasPlantCount && body.seed_parent_plant_count != null
+          && !(Number.isInteger(body.seed_parent_plant_count)
+               && body.seed_parent_plant_count >= 1 && body.seed_parent_plant_count <= 9999)) {
+        return resp(400, { error: 'seed_parent_plant_count must be a whole number of plants from 1 to 9999, or null' });
       }
 
       // ── THE PAIRING RULE (chk_inventory_seed_count_basis_pairing, armed NOT VALID -> swept ->
@@ -996,6 +1153,9 @@ export const handler = async (event) => {
       // what lets a bare null through without an explicit cast. Verified by PREPARE against live
       // prod rather than assumed: `CASE WHEN $1 THEN $2 ELSE <int col> END` resolves $2 to integer
       // and the numeric equivalent to numeric (pg_prepared_statements.parameter_types, 2026-09-04).
+      // The fourth arm (seed_parent_plant_count, release 2a) is that same integer shape; it was NOT
+      // separately PREPAREd — the unit suite opens no database — so the integration lane's
+      // null-clears case is what proves it.
       const rows = await sql`
         UPDATE public.inventory_items
            SET seed_count = CASE
@@ -1010,12 +1170,16 @@ export const handler = async (event) => {
                  WHEN ${hasEstimated} THEN ${body.seed_count_estimated ?? null}
                  ELSE seed_count_estimated
                END,
+               seed_parent_plant_count = CASE
+                 WHEN ${hasPlantCount} THEN ${body.seed_parent_plant_count ?? null}
+                 ELSE seed_parent_plant_count
+               END,
                updated_at = NOW()
          WHERE id = ${itemId}
            AND created_by = ANY(${householdIds})
            AND deleted_at IS NULL
            AND category = 'seeds'
-        RETURNING id, seed_count, seed_weight_g, seed_count_estimated
+        RETURNING id, seed_count, seed_weight_g, seed_count_estimated, seed_parent_plant_count
       `;
       if (!rows.length) return resp(404, { error: 'Not found' });
       // seed_weight_g is numeric(10,3), which @neondatabase/serverless returns as a STRING. Left as
@@ -1044,7 +1208,11 @@ export const handler = async (event) => {
                  pv.scoville_min, pv.scoville_max, pv.scoville_source,
                  pv.origin_country, pv.origin_region, pv.species,
                  pv.breeding_system, pv.days_to_maturity_min, pv.days_to_maturity_max, pv.dtm_basis,
-                 pv.source_url AS variety_source_url
+                 pv.source_url AS variety_source_url,
+                 -- V5-SEEDMULTIPARENT-001 (release 2a): the rank of the variety the lot is FILED
+                 -- under, so the page can tell a lot filed under a mix from one filed under a
+                 -- single variety without fetching the variety.
+                 pv.variety_rank
           FROM inventory_items i
           -- BUG-PHOTOHEROMOVE-001 / INV-HERO — the hero is DERIVED here, never trusted from the
           -- stored pointer. Same shape as fetchSpaceHero (lambda/photos/index.js:~314); read its
@@ -1359,8 +1527,18 @@ export const handler = async (event) => {
             -- returns every one of them, and it does not render the variety. A seeds row whose
             -- variety_id is nulled also violates chk_inventory_seed_requires_variety, so the loss
             -- would surface as a constraint 400 on an unrelated edit rather than as a bad value.
+            --
+            -- V5-SEEDMULTIPARENT-001 (release 2a). The presence guard is not enough for a SAVED lot.
+            -- Every caller of this verb round-trips a row it read earlier, so the key IS present
+            -- and carries whatever the lot was filed under when that row was read: a lot re-filed
+            -- under a mix since then would be filed straight back, with a 200. A stripped client
+            -- cannot fix that for a bundle already installed. So a lot that names a parent plant
+            -- keeps its stored variety here whatever the body says, and PUT /:id/filing is the one
+            -- way to move it. The test is the member cache (non-NULL exactly when the lot has a
+            -- live parent), read from the row as it stood before this write. A bought packet has
+            -- no parent and is assigned as before.
             variety_id = CASE
-              WHEN ${hasVariety} THEN ${body.variety_id ?? null}
+              WHEN ${hasVariety}::boolean AND source_plant_id IS NULL THEN ${body.variety_id ?? null}
               ELSE variety_id
             END,
             -- V4-SEEDSAVEFLOW-001. EXPLICIT-PRESENCE GUARDS, NOT BARE ASSIGNMENTS, and this is the
@@ -1425,7 +1603,15 @@ export const handler = async (event) => {
           WHERE id = ${itemId}
             AND created_by = ANY(${householdIds})
             AND deleted_at IS NULL
-          RETURNING *
+            -- V5-SEEDMULTIPARENT-001 (release 2a). A row that names a variety stays in Seeds.
+            -- Nothing in the schema says so, and until now the body-only validator said it by
+            -- accident: every client echoed variety_id, and validateUpdate refuses that key on a
+            -- non-seeds category. A client that stops echoing it (as it must, see the SET list)
+            -- would sail through and leave a tool row holding a variety, which every later edit
+            -- of that row then trips over. Judged on the STORED row, so it holds for any body.
+            AND (${body.category === 'seeds'}::boolean OR variety_id IS NULL)
+          RETURNING *, (SELECT pv.variety_rank FROM public.cultivar pv
+                         WHERE pv.id = inventory_items.variety_id) AS variety_rank
         `;
         // V5-SEEDMULTIPARENT-001 — the 200 carries source_plants, and this verb still cannot WRITE
         // them. Read-only here on purpose: `source_plants` / `source_plant_ids` in the body are
@@ -1452,7 +1638,24 @@ export const handler = async (event) => {
             ? settleSourcePlants(readSourcePlants(sql, householdIds, itemId), { item: itemId })
             : [],
         ]);
-        if (!rows.length) return resp(404, { error: 'Not found' });
+        if (!rows.length) {
+          // Release 2a. Nothing matched, and for a body that leaves Seeds there are now two reasons
+          // it might not have: no such row, or a row the variety guard in the WHERE held back. Told
+          // apart by ONE more read, on this path only — the write that succeeds, which is the +/-
+          // tap, is still a single round trip. Scoped exactly as the UPDATE is, so a foreign or
+          // deleted row is still a 404 and nothing about it is learned from the 400.
+          if (body.category !== 'seeds' && UUID_RE.test(itemId)) {
+            const held = await sql`
+              SELECT 1 FROM inventory_items
+               WHERE id = ${itemId}
+                 AND created_by = ANY(${householdIds})
+                 AND deleted_at IS NULL
+                 AND variety_id IS NOT NULL
+            `;
+            if (held.length) return resp(400, { error: SEED_VARIETY_STAYS_IN_SEEDS });
+          }
+          return resp(404, { error: 'Not found' });
+        }
         return resp(200, { ...rows[0], source_plants: parentRows == null ? null : sourcePlantsOf(parentRows) });
       }
 
@@ -1561,6 +1764,11 @@ export const handler = async (event) => {
       // which is why neither template is awaited where it is built — and merged by id below.
       // SETTLED: a failed parents read gives every row source_plants: null and a log line; a failed
       // LIST read still fails the request, exactly as before.
+      //
+      // V5-SEEDMULTIPARENT-001 (release 2a) — `variety_rank`, the rank of the variety the lot is
+      // FILED under ('blend' for a named mix), from the cultivar join already here. It is what lets a
+      // card say "mix" without a variety fetch. Not a column of inventory_items: a list row echoed
+      // into the wide PUT carries it and that verb ignores it, and the Saved seeds strip list names it.
       const listRead = cats && cats.length
         ? sql`
             SELECT i.*, pv.display_name AS variety_name, pv.crop_type_slug AS crop_slug,
@@ -1568,7 +1776,7 @@ export const handler = async (event) => {
                    pv.scoville_min, pv.scoville_max, pv.scoville_source,
                    pv.origin_country, pv.origin_region, pv.species,
                    pv.breeding_system, pv.days_to_maturity_min, pv.days_to_maturity_max, pv.dtm_basis,
-                   pv.source_url AS variety_source_url,
+                   pv.source_url AS variety_source_url, pv.variety_rank,
                    COALESCE(fp.id, fb.id) AS effective_featured_photo_id,
                    (fp.id IS NOT NULL) AS featured_is_explicit,
                    COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path
@@ -1609,7 +1817,7 @@ export const handler = async (event) => {
                    pv.scoville_min, pv.scoville_max, pv.scoville_source,
                    pv.origin_country, pv.origin_region, pv.species,
                    pv.breeding_system, pv.days_to_maturity_min, pv.days_to_maturity_max, pv.dtm_basis,
-                   pv.source_url AS variety_source_url,
+                   pv.source_url AS variety_source_url, pv.variety_rank,
                    COALESCE(fp.id, fb.id) AS effective_featured_photo_id,
                    (fp.id IS NOT NULL) AS featured_is_explicit,
                    COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path
@@ -1799,6 +2007,16 @@ export const handler = async (event) => {
         return resp(400, { error: 'source_kind must be own_garden when a source plant is set' });
       }
 
+      // RELEASE 2a — THE PARENT RULES on a create (seed-lot-rules.js), after both ownership gates
+      // above for the reason the set route gives. A create has no lot yet, so every planting is
+      // being added and the variety the jar must be filed under is the one this body names. This is
+      // the one place "a mixed jar is always filed under its mix" can be enforced at birth: a set
+      // spanning two varieties whose variety_id is not the household's mix of them is refused here
+      // with the varieties to make that mix from, and nothing is written. One read for a set of two
+      // or more, none for the one-parent create every shipped client sends.
+      const refusal = await checkParentRules(sql, { ids: parentIds, householdIds, varietyId: body.variety_id });
+      if (refusal) return resp(400, refusal);
+
       // V4-SOURCEREG-001 — same two checks as the PUT arm, in the same order, so the two verbs
       // cannot answer the same bad payload differently. No presence sentinel is needed here: on a
       // create there is no prior value for an absent key to preserve, so absent and explicit-null are
@@ -1879,8 +2097,14 @@ export const handler = async (event) => {
           ${metadataJson}::jsonb,
           ${body.seed_process ?? null}, ${body.seed_stage ?? null}, ${cachePlantId}, ${sourceKind},
           ${body.source_id ?? null}, ${body.acquired_from_source_id ?? null}
-        ) RETURNING *
+        ) RETURNING *, (SELECT pv.variety_rank FROM public.cultivar pv
+                         WHERE pv.id = inventory_items.variety_id) AS variety_rank
       `;
+      // `seed_parent_plant_count` is DELIBERATELY ABSENT from the column list above (release 2a) and
+      // must stay absent: PUT /:id/seed-measure is its only writer. A second writer here would be the
+      // one that drops the value on a Lambda predating the column and answers 201.
+      // post-source-plant-ids.test.js pins the omission. `variety_rank` in RETURNING is the rank of
+      // the variety just filed under, so the 201 has the same projection the list and detail carry.
       // No parents — every non-seed create and nearly every seed packet. One statement, exactly as
       // before, and it never names seed_lot_parent_planting: the commonest write in this handler
       // does not depend on that table.
@@ -1902,12 +2126,21 @@ export const handler = async (event) => {
       //   • assertEveryParentLinked FAILS the transaction when none went in — the only way a fixed
       //     statement list can take the lot INSERT back.
       // No lot lock: the lot does not exist until this commits, so nothing else can be holding it.
+      //
+      // Release 2a — ONE MORE STATEMENT, between the share lock and the link INSERT:
+      //   • judgeParentRules asks the parent rules again, of the lot row the first statement just
+      //     wrote and the plantings the second holds still, and sets the transaction's verdict. The
+      //     link INSERT writes only on 'go' (it reads the setting), so a set the rules no longer
+      //     allow links nothing and the assertion takes the lot back — the path a planting that
+      //     stopped being usable already takes, and the same 409. With one planting the rules cannot
+      //     apply and the statement only opens the gate; it names no table.
       let lotRows;
       let parentRows;
       try {
-        [lotRows, , , , parentRows] = await sql.transaction([
+        [lotRows, , , , , parentRows] = await sql.transaction([
           insertLot,
           lockPlantings(sql, parentIds),
+          judgeParentRules(sql, { lotId, ids: parentIds, householdIds, alone: true }),
           insertSeedParentLinks(sql, { lotId, ids: parentIds, householdIds, userId }),
           assertEveryParentLinked(sql, { lotId, ids: parentIds, householdIds }),
           readSourcePlants(sql, householdIds, lotId),
@@ -1915,13 +2148,14 @@ export const handler = async (event) => {
       } catch (err) {
         // Both rolled the whole create back — no lot, no links — so "try again" is true of either.
         //   22012  assertEveryParentLinked's division by zero: a planting stopped being usable after
-        //          the gate. Raised on purpose, and nothing else in this transaction divides.
+        //          the gate, or (release 2a) the set stopped satisfying the parent rules. Raised on
+        //          purpose, and nothing else in this transaction divides.
         //   40P01  a deadlock victim. The rows this create shares with anyone are the plantings it
         //          locks, so it is the same news for the person: those plants are changing.
         // Everything else (23503, 23514, …) is still the handler-wide catch block's to answer.
         if (err?.code === '22012' || err?.code === '40P01') {
           console.warn(JSON.stringify({ tag: 'inv-source-plants-retry', item: lotId, code: err.code, create: true }));
-          return resp(409, { error: PLANTS_CHANGED });
+          return resp(409, parentsChangedBody());
         }
         throw err;
       }

@@ -56,7 +56,7 @@ const find = (k) => stubState.sqlCalls.find((c) => IS[k](c.text));
 
 const parent = (id, name, extra = {}) => ({
   id, name, variety_id: uuid(90), variety_name: name, breeding_system: 'open_pollinated',
-  archived: false, deleted: false, ...extra,
+  variety_rank: 'cultivar', crop_slug: 'nasturtium', archived: false, deleted: false, ...extra,
 });
 // An archived parent and a soft-deleted one: both are still elements of the set.
 const JAR = [parent(A, 'Alaska Mix', { archived: true }), parent(B, 'Jewel Mix', { deleted: true })];
@@ -134,8 +134,13 @@ describe('GET /api/inventory-items — every list row carries source_plants', ()
     const { body } = parse(await handler(get('/api/inventory-items', { category: 'seeds' })));
     const jar = body.find((r) => r.id === LOT).source_plants;
     expect(jar.map((p) => [p.id, p.archived, p.deleted])).toEqual([[A, true, false], [B, false, true]]);
+    // RESTATED for release 2a (R2-19): the element is EXACTLY these nine keys. variety_rank and
+    // crop_slug are new, and they are the PLANTING's variety's — like variety_name beside them —
+    // not the lot's. A tenth key, or one of the nine missing, is a contract change.
     expect(Object.keys(jar[0]).sort()).toEqual(
-      ['archived', 'breeding_system', 'deleted', 'id', 'name', 'variety_id', 'variety_name']);
+      ['archived', 'breeding_system', 'crop_slug', 'deleted', 'id', 'name', 'variety_id', 'variety_name', 'variety_rank']);
+    expect(jar[0].variety_rank).toBe('cultivar');
+    expect(jar[0].crop_slug).toBe('nasturtium');
   });
 
   it('asks for no parents at all when the filter cannot include a seed row', async () => {
@@ -285,7 +290,15 @@ describe('wide PUT /api/inventory-items/:id — returns source_plants, and canno
     const start = src.indexOf('UPDATE inventory_items SET');
     const statement = src.slice(start, src.indexOf('RETURNING *', start));
     expect(statement.length).toBeGreaterThan(500);
-    expect(statement).not.toMatch(/source_plant/);
+    // RESTATED for release 2a, and what it protects is unchanged: this verb cannot WRITE a lot's
+    // parents. Neither set key is named at all. The cache column is named ONCE, and only READ — the
+    // stored value decides whether variety_id may be assigned (a lot with a parent keeps the
+    // variety it is filed under). It is never assigned and nothing from the body is bound to it.
+    expect(statement).not.toMatch(/source_plants|source_plant_ids/);
+    expect(statement.match(/source_plant\w*/g)).toEqual(['source_plant_id']);
+    expect(statement).toMatch(/WHEN \$\{hasVariety\}::boolean AND source_plant_id IS NULL THEN/);
+    expect(statement).not.toMatch(/source_plant_id\s*=(?!=)/);
+    expect(statement).not.toMatch(/body\.source_plant/);
     // Ignored, so never an error either — not even on a category that could not hold a parent.
     expect(validateUpdate({ category: 'tools', source_plant_ids: [A], source_plants: [parent(A, 'x')] })).toBeNull();
     expect(validateUpdate({ category: 'seeds', source_plant_ids: 'nonsense', source_plants: 7 })).toBeNull();

@@ -41,7 +41,16 @@ const parse = (res) => ({ status: res.statusCode, body: JSON.parse(res.body || '
 
 // Each statement, recognised by something only it says. `owns` and `members` are the gate's two
 // arms (before the transaction); `hold` is the share lock on the plantings, inside it.
+//
+// Release 2a adds three, all for a set of two or more plantings: `pfacts` (the parent rules' read of
+// each planting's variety, before the transaction), `mix` (is the lot filed under the mix of those
+// varieties — only when the set spans two) and `rules` (the same rules judged again, inside it).
+// `rules` is tested before `owns`: both read garden_node by an id array, and only one reports
+// rules_hold.
 const IS = {
+  rules: (t) => /AS rules_hold/.test(t),
+  pfacts: (t) => /AS lot_found/.test(t),
+  mix: (t) => /AND fv\.blend_key = \?\s*$/.test(t),
   owns: (t) => /FROM public\.garden_node p\s+WHERE p\.id = ANY\(\?::uuid\[\]\)\s+AND p\.created_by = ANY/.test(t),
   members: (t) => /SELECT k\.plant_id AS id/.test(t),
   lock: (t) => /FOR UPDATE/.test(t),
@@ -54,7 +63,7 @@ const IS = {
 };
 const kindOf = (t) => Object.keys(IS).find((k) => IS[k](t)) ?? 'other';
 const kinds = () => stubState.sqlCalls.map((c) => kindOf(c.text));
-const find = (k) => stubState.sqlCalls.find((c) => IS[k](c.text));
+const find = (k) => stubState.sqlCalls.find((c) => kindOf(c.text) === k);
 
 const boundAfter = (c, re) => {
   const m = c.text.match(re);
@@ -64,21 +73,35 @@ const boundAfter = (c, re) => {
   return c.values[(c.text.slice(0, end).match(/\?/g) ?? []).length];
 };
 
+const VARIETY = uuid(90);
 const parent = (id, name) => ({
-  id, name, variety_id: uuid(90), variety_name: name, breeding_system: 'open_pollinated', archived: false, deleted: false,
+  id, name, variety_id: VARIETY, variety_name: name, breeding_system: 'open_pollinated',
+  variety_rank: 'cultivar', crop_slug: 'nasturtium', archived: false, deleted: false,
 });
 const JAR = [parent(A, 'Alaska Mix'), parent(B, 'Jewel Mix')];
 
 // A lot that exists, with every planting owned, unless `over` says otherwise for one statement.
+//
+// `pfacts` ANSWERS the parent rules' read, and that is deliberate (QA seat, Q1): every planting
+// asked about is a planting of ONE variety, on the caller's lot, not yet a parent of it. Left to the
+// `other` arm the read would come back empty, and the rules read an id with no row as "being added,
+// no variety" — so every two-planting test here would stop at a 400 instead of passing for a reason
+// it never stated. `rules` answers the same question from inside the transaction.
+// parent-rules-route.test.js is where those two answers are varied.
 const world = (over = {}) => (text, values) => {
   const k = kindOf(text);
   if (k in over) return typeof over[k] === 'function' ? over[k](values) : over[k];
   return {
     owns: () => values[0].map((id) => ({ id })),
     members: () => [],
+    pfacts: () => values[0].map((id) => ({
+      id, cultivar_id: VARIETY, crop_slug: 'nasturtium', blend_key: null, member: false, lot_found: true, lot_variety_id: VARIETY,
+    })),
+    mix: () => [],
     lock: () => [{ id: LOT }],
     hold: () => values[0].map((id) => ({ id })),
-    facts: () => [{ id: LOT, source_kind: null, live_parents: 0, ids_usable: true }],
+    facts: () => [{ id: LOT, source_kind: null, source_plant_id: null, live_parents: 0, ids_usable: true, set_as_expected: true, go: 'go' }],
+    rules: () => [{ rules_hold: true, go: 'go' }],
     retire: () => [],
     add: () => [],
     cache: () => [{ id: LOT, source_plant_id: A }],
@@ -140,10 +163,22 @@ describe('PUT /:id/source-plants — reaching the route', () => {
   it('is matched ABOVE the generic arms, and is not the legacy /source-plant route', async () => {
     const { status, body } = parse(await handler(put({ source_plant_ids: [A, B] })));
     expect(status).toBe(200);
-    // The set route's signature: the counted array gate, then the seven-statement write. The generic
-    // /:id PUT would have issued `UPDATE inventory_items SET name = …`; the legacy route a single-id probe.
-    expect(kinds()).toEqual(['owns', 'lock', 'hold', 'facts', 'retire', 'add', 'cache', 'read']);
+    // The set route's signature: the counted array gate, then the write. The generic /:id PUT would
+    // have issued `UPDATE inventory_items SET name = …`; the legacy route a single-id probe.
+    // RESTATED for release 2a: a set of TWO plantings is also put to the parent rules — read once
+    // before the transaction (pfacts) and judged again inside it (rules), after the facts and before
+    // the first write. Seven statements become eight.
+    expect(kinds()).toEqual(['owns', 'pfacts', 'lock', 'hold', 'facts', 'rules', 'retire', 'add', 'cache', 'read']);
+    // Release 1's reply, key for key: no `filing` was sent, so none is answered.
     expect(Object.keys(body).sort()).toEqual(['id', 'source_plant_id', 'source_plants']);
+  });
+
+  it('a set of ONE planting is release 1\'s request exactly: the gate and the seven statements, nothing else', async () => {
+    // What every shipped client sends through this route or the legacy one. The parent rules need
+    // two plantings to have anything to say, so neither their read nor their judge is issued.
+    const { status } = parse(await handler(put({ source_plant_ids: [A] })));
+    expect(status).toBe(200);
+    expect(kinds()).toEqual(['owns', 'lock', 'hold', 'facts', 'retire', 'add', 'cache', 'read']);
   });
 
   it('declares its match before idMatch, and the legacy regex cannot catch its path', () => {
@@ -243,7 +278,8 @@ describe('PUT /:id/source-plants — the gate\'s second arm: a planting that is 
     stubState.sqlHandler = world({ owns: [{ id: A }, { id: B }], members: [{ id: D }] });
     const res = parse(await handler(put({ source_plant_ids: [A, D, B] })));
     expect(res.status).toBe(200);
-    expect(kinds()).toEqual(['owns', 'members', 'lock', 'hold', 'facts', 'retire', 'add', 'cache', 'read']);
+    // RESTATED for release 2a: three plantings, so the rules' read and judge are in the list.
+    expect(kinds()).toEqual(['owns', 'members', 'pfacts', 'lock', 'hold', 'facts', 'rules', 'retire', 'add', 'cache', 'read']);
     expect(warn).not.toHaveBeenCalled();
     // The whole set reaches the write — D included.
     expect(boundAfter(find('add'), /CROSS JOIN unnest\(/)).toEqual([A, D, B]);
@@ -262,9 +298,23 @@ describe('PUT /:id/source-plants — the gate\'s second arm: a planting that is 
   it('never asks it at all when every planting is the household\'s and live — the ordinary edit', async () => {
     await handler(put({ source_plant_ids: [A, B] }));
     expect(kinds()).not.toContain('members');
-    // …so the ordinary edit reads no link row before its transaction has the lot.
+    // RESTATED for release 2a. The ordinary edit of ONE planting still reads no link row before its
+    // transaction has the lot…
+    resetStubs();
+    stubState.verifyTokenResult = { sub: USER };
+    stubState.sqlHandler = world();
+    await handler(put({ source_plant_ids: [A] }));
+    const single = stubState.sqlCalls.slice(0, kinds().indexOf('lock'));
+    expect(single.filter((c) => /seed_lot_parent_planting/.test(c.text))).toHaveLength(0);
+    // …and an edit of two or more reads them ONCE before it: the parent rules have to know which
+    // plantings are already parents, because only a planting being added can be refused. It is
+    // the rules' own read, never the gate's second arm.
+    resetStubs();
+    stubState.verifyTokenResult = { sub: USER };
+    stubState.sqlHandler = world();
+    await handler(put({ source_plant_ids: [A, B] }));
     const before = stubState.sqlCalls.slice(0, kinds().indexOf('lock'));
-    expect(before.filter((c) => /seed_lot_parent_planting/.test(c.text))).toHaveLength(0);
+    expect(before.filter((c) => /seed_lot_parent_planting/.test(c.text)).map((c) => kindOf(c.text))).toEqual(['pfacts']);
   });
 
   it('still 400s a NEW id that names a deleted planting — the arm admits members, not the deleted', async () => {
@@ -313,7 +363,12 @@ describe('PUT /:id/source-plants — a planting that changed AFTER the gate (T1 
     stubState.sqlHandler = afterMerge();
     const res = parse(await handler(put({ source_plant_ids: [A, B] })));
     expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: 'One of those plants changed just now. Reload and try again.' });
+    // RESTATED for release 2a (R2-19): the sentence and the status are byte-for-byte release 1's —
+    // shipped clients print the sentence — and a `code` now stands BESIDE it, so a client can
+    // branch without reading words. Exactly these two keys.
+    expect(res.body).toEqual({
+      error: 'One of those plants changed just now. Reload and try again.', code: 'parents_changed',
+    });
     expect(res.body.error).not.toMatch(/source_plant|_id\b|constraint|merge/i);
   });
 
@@ -321,7 +376,8 @@ describe('PUT /:id/source-plants — a planting that changed AFTER the gate (T1 
     stubState.sqlHandler = afterMerge();
     await handler(put({ source_plant_ids: [A, B] }));
     // The gate ran and admitted both ids; the refusal came from inside the transaction.
-    expect(kinds()).toEqual(['owns', 'lock', 'hold', 'facts', 'retire', 'add', 'cache', 'read']);
+    // (RESTATED for release 2a: two plantings, so the rules' read and judge are in the list.)
+    expect(kinds()).toEqual(['owns', 'pfacts', 'lock', 'hold', 'facts', 'rules', 'retire', 'add', 'cache', 'read']);
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -339,7 +395,11 @@ describe('PUT /:id/source-plants — a planting that changed AFTER the gate (T1 
     });
     const res = parse(await handler(put({ source_plant_ids: [A, B] })));
     expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: 'This seed lot was changed at the same moment. Reload and try again.' });
+    // RESTATED for release 2a (R2-19): the same sentence and status, with its code beside it. No
+    // set is answered — a transaction that rolled back has no read-back to give.
+    expect(res.body).toEqual({
+      error: 'This seed lot was changed at the same moment. Reload and try again.', code: 'lot_changed',
+    });
     // Logged by code, so a lock-order regression does not hide behind the 409.
     const lines = warn.mock.calls.map((c) => JSON.parse(c[0]));
     expect(lines).toEqual([{ tag: 'inv-source-plants-retry', item: LOT, code: '40P01' }]);
@@ -458,10 +518,15 @@ describe('PUT /:id/source-plants — the write', () => {
     });
     const res = parse(await handler(put({ source_plant_ids: [A, B] })));
     expect(res.status).toBe(409);
-    expect(res.body.code).toBeUndefined();
+    // RESTATED for release 2a (R2-19). Release 1 had no code here and this pinned its absence; the
+    // property that mattered — it is not the multi-parent 409 — is now stated as what it IS.
+    expect(res.body.code).toBe('lot_changed');
+    expect(res.body.code).not.toBe('multi_parent_lot');
+    expect(res.body.source_plant_ids).toBeUndefined();
     // The LOT's sentence, not the plantings': a unique violation says a link row moved, not that a
     // planting became unusable.
     expect(res.body.error).toBe('This seed lot was changed at the same moment. Reload and try again.');
+    expect(Object.keys(res.body).sort()).toEqual(['code', 'error']);
   });
 
   it('a foreign-key failure inside the write is a 400, not a 200', async () => {

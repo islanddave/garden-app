@@ -836,7 +836,7 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     //   POST  — the gated array, or else the single id its own garden_node gate cleared.
     expect(src.match(/replaceSourcePlants\(/g)).toHaveLength(2);
     expect(src.match(/insertSeedParentLinks\(/g)).toHaveLength(1);
-    expect(src).toMatch(/replaceSourcePlants\(sql, \{ lotId: itemId, ids: set\.ids, householdIds, userId, \}\)/);
+    expect(src).toMatch(/replaceSourcePlants\(sql, \{ lotId: itemId, ids: set\.ids, householdIds, userId, expected: expected\?\.ids \?\? null, cacheHint, rules: true, filing, \}\)/);
     expect(src).toMatch(
       /const parentIds = parentSet \? parentSet\.ids : \(sourcePlantId != null \? \[String\(sourcePlantId\)\.toLowerCase\(\)\] : \[\]\);/);
     expect(src).toMatch(/insertSeedParentLinks\(sql, \{ lotId, ids: parentIds, householdIds, userId \}\)/);
@@ -900,7 +900,7 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     // raises unless every planting was linked, placed after the INSERT and before the read-back.
     const src = decomment(readFileSync(join(here, 'inventory-items/index.js'), 'utf8')).replace(/\s+/g, ' ');
     expect(src).toMatch(
-      /await sql\.transaction\(\[ insertLot, lockPlantings\(sql, parentIds\), insertSeedParentLinks\(sql, \{ lotId, ids: parentIds, householdIds, userId \}\), assertEveryParentLinked\(sql, \{ lotId, ids: parentIds, householdIds \}\), readSourcePlants\(sql, householdIds, lotId\), \]\)/);
+      /await sql\.transaction\(\[ insertLot, lockPlantings\(sql, parentIds\), judgeParentRules\(sql, \{ lotId, ids: parentIds, householdIds, alone: true \}\), insertSeedParentLinks\(sql, \{ lotId, ids: parentIds, householdIds, userId \}\), assertEveryParentLinked\(sql, \{ lotId, ids: parentIds, householdIds \}\), readSourcePlants\(sql, householdIds, lotId\), \]\)/);
     expect(helper).toMatch(/SELECT 1 \/ \(CASE WHEN \( SELECT count\(\*\) FROM public\.seed_lot_parent_planting l JOIN public\.inventory_items i ON i\.id = l\.inventory_item_id WHERE i\.id = \$\{lotId\} AND i\.created_by = ANY\(\$\{householdIds\}\) AND i\.deleted_at IS NULL AND l\.role = 'seed_parent' AND l\.deleted_at IS NULL\) = cardinality\(\$\{ids\}::uuid\[\]\) THEN 1 ELSE 0 END\)/);
   });
 
@@ -1011,7 +1011,17 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     const run = async (ev, ownedRows) => {
       resetStubs();
       stubState.verifyTokenResult = { sub: USER };
-      stubState.sqlHandler = (text) => {
+      // Release 2a: a set of two is also put to the parent rules, whose read asks each planting's
+      // variety. Answered as two plantings of ONE variety, so the control below passes the rules for
+      // a stated reason. (Unanswered, the rules read an id with no row as "being added, no variety"
+      // and the control is a 400 — the rules failing closed, not the gate.)
+      stubState.sqlHandler = (text, values) => {
+        if (/AS lot_found/.test(text)) {
+          return values[0].map((id) => ({
+            id, cultivar_id: lot.variety_id, crop_slug: null, blend_key: null,
+            member: false, lot_found: true, lot_variety_id: lot.variety_id,
+          }));
+        }
         if (isOwns(text)) return ownedRows;
         if (isMembers(text)) return [];           // the foreign planting is not a parent of this lot either
         return [{ id: LOT, source_plants: [], ids_usable: true }];

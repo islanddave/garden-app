@@ -108,6 +108,17 @@ const INVENTORY_ITEMS_COLUMNS = [
   'seed_count',
   'seed_weight_g',
   'seed_count_estimated',
+  // V5-SEEDMULTIPARENT-001 (release 2a) — "about how many plants did this seed come from". The
+  // FOURTH column PUT /:id/seed-measure writes and returns under its own explicit-presence CASE, and
+  // like the three above it is in neither the wide PUT's SET list nor the POST INSERT (the tests
+  // below pin both absences), so that route is its only writer and this file the only thing that
+  // audits it against prod.
+  //
+  // NOT YET ON PROD: it arrives with migrations/v5-seedplantcount-001, which must be applied to
+  // staging and prod before this reaches dev. Until then dev-main-schema-audit.py reports exactly
+  // this one column missing from prod, and that report is the ordering guard working. Not read from
+  // information_schema by this lane (it opens no database); the name is R2A-CONTRACT section 1's.
+  'seed_parent_plant_count',
 ];
 
 describe('inventory-items SELECT-column contract (L-081 Phase 1)', () => {
@@ -128,7 +139,29 @@ describe('inventory-items SELECT-column contract (L-081 Phase 1)', () => {
     // V5-SEEDQTY-001's seed_count / seed_weight_g / seed_count_estimated. Ratcheting the floor for
     // columns genuinely added to THIS relation is the normal move; what must never happen is folding
     // a DIFFERENT relation's columns in to raise it, which is why seed_lot_stage_log got its own file.
-    expect(INVENTORY_ITEMS_COLUMNS.length).toBeGreaterThanOrEqual(38);
+    // 38 -> 39 with release 2a's seed_parent_plant_count.
+    expect(INVENTORY_ITEMS_COLUMNS.length).toBeGreaterThanOrEqual(39);
+  });
+
+  it('seed_parent_plant_count has ONE writer: named by /seed-measure, and by no other statement here', () => {
+    // Release 2a (data-schema seat S8, regression seat R2-20). The column is safe for clients that
+    // predate it only while it stays out of the two statements every caller round-trips a stale row
+    // into or creates through: a bare assignment in the wide PUT loses the number on every unrelated
+    // edit, and a key the POST INSERT did not name would be a 201 with the value dropped.
+    const statements = SRC.match(/sql`[\s\S]*?`/g) ?? [];
+    const naming = statements.filter((s) => /\bseed_parent_plant_count\b/.test(s));
+    expect(naming).toHaveLength(1);
+    // That one statement is the /seed-measure UPDATE: presence-guarded, and echoed in RETURNING.
+    expect(naming[0]).toMatch(/seed_count_estimated = CASE/);
+    expect(naming[0]).toMatch(/seed_parent_plant_count = CASE\s+WHEN \$\{hasPlantCount\} THEN \$\{body\.seed_parent_plant_count \?\? null\}\s+ELSE seed_parent_plant_count\s+END/);
+    expect(naming[0]).toMatch(/RETURNING id, seed_count, seed_weight_g, seed_count_estimated, seed_parent_plant_count/);
+    // …so neither of these names it.
+    const widePut = statements.find((s) => /UPDATE inventory_items SET\s+name\s+=/.test(s));
+    const insert = statements.find((s) => /INSERT INTO inventory_items \(/.test(s));
+    expect(widePut, 'the wide PUT statement must still be findable').toBeTruthy();
+    expect(insert, 'the POST INSERT must still be findable').toBeTruthy();
+    expect(widePut).not.toMatch(/seed_parent_plant_count/);
+    expect(insert).not.toMatch(/seed_parent_plant_count/);
   });
 
   it('queries inventory_items', () => {

@@ -153,7 +153,12 @@ describe('BUG-SEEDPOSTDROPSPARENT-001 — creating a seed lot with a parent plan
     // Six statements since V5-SEEDMULTIPARENT-001 (two before it): the probe, then one transaction —
     // the lot, a share lock on the planting, its one link row, the all-linked assertion and the
     // read-back (the lock and the assertion are Follow-up 1). The gate is still first.
-    expect(stubState.sqlCalls).toHaveLength(6);
+    // SEVEN since release 2a: the statement that opens the transaction's verdict, which the link
+    // INSERT now reads, sits between the share lock and that INSERT. For one parent it names no
+    // table (post-source-plant-ids.test.js pins its whole text).
+    expect(stubState.sqlCalls).toHaveLength(7);
+    expect(stubState.sqlCalls[3].text).toContain("set_config('app.seed_lot_go'");
+    expect(stubState.sqlCalls[3].text).not.toMatch(/\bFROM\b/);
     expect(stubState.sqlCalls[0].text).toContain('FROM public.garden_node');
     expect(stubState.sqlCalls[0].text).not.toContain('FOR SHARE');
     expect(stubState.sqlCalls[1].text).toContain('INSERT INTO inventory_items');

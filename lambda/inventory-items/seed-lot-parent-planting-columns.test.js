@@ -103,10 +103,18 @@ describe('V5-SEEDMULTIPARENT-001 — lambda/inventory-items seed_lot_parent_plan
     // gate's "already a parent of this lot" arm and the create's all-linked assertion; in index.js
     // the /source-kind route's "does this lot have any" test. Update the number in the commit that
     // adds one.
+    //
+    // ELEVEN with release 2a. seed-lot-parents.js still has its seven (the facts and the cache each
+    // read the table once more, inside the statement they already were). Three are new, each in a
+    // new module: seed-lot-rules.js's read of which plantings are already parents, and its judge of
+    // the same inside the transaction; seed-lot-filing.js's judge, which reads the lot's parents to
+    // know their crop.
     expect(STATEMENTS.map((s) => s.file).sort()).toEqual([
       'index.js',
+      'seed-lot-filing.js',
       'seed-lot-parents.js', 'seed-lot-parents.js', 'seed-lot-parents.js', 'seed-lot-parents.js',
       'seed-lot-parents.js', 'seed-lot-parents.js', 'seed-lot-parents.js',
+      'seed-lot-rules.js', 'seed-lot-rules.js',
     ]);
   });
 
@@ -204,6 +212,36 @@ describe('V5-SEEDMULTIPARENT-001 — lambda/inventory-items seed_lot_parent_plan
     expect(helperSql).toMatch(/UPDATE public\.inventory_items i\s+SET source_plant_id = CASE/);
     expect(helperSql).toMatch(/END,\s+updated_at = NOW\(\)/);
     expect([...read, 'updated_at'].filter((c) => !pinned.has(c))).toEqual([]);
+  });
+
+  it('every inventory_items column the release-2a modules name is pinned by select-columns.test.js too', () => {
+    // seed-lot-rules.js and seed-lot-filing.js are the third and fourth modules here to name
+    // inventory_items outside index.js, and seed-lot-filing.js WRITES it (the re-file). The same
+    // check as the one above, for each: a column either started naming that the directory's contract
+    // does not pin would be audited by nothing.
+    const contract = readFileSync(resolve(__dirname, 'select-columns.test.js'), 'utf8');
+    const list = contract.match(/const INVENTORY_ITEMS_COLUMNS = \[([\s\S]*?)\];/);
+    expect(list, 'select-columns.test.js no longer declares INVENTORY_ITEMS_COLUMNS').not.toBeNull();
+    const pinned = new Set([...decomment(list[1]).matchAll(/'(\w+)'/g)].map((m) => m[1]));
+    const sqlOf = (file) => (decomment(readFileSync(resolve(__dirname, file), 'utf8')).match(/sql`[^`]*`/g) ?? []).join('\n');
+    const lotColumns = (sql) => [...new Set([...sql.matchAll(/\bi\.(\w+)/g)].map((m) => m[1]))].sort();
+
+    const rules = sqlOf('seed-lot-rules.js');
+    expect(lotColumns(rules)).toEqual(['category', 'created_by', 'deleted_at', 'id', 'variety_id']);
+    // It reads; it never writes. (A write here would be a fourth writer of the lot row.)
+    expect(rules).not.toMatch(/\b(UPDATE|INSERT|DELETE)\b/);
+
+    const filing = sqlOf('seed-lot-filing.js');
+    expect(lotColumns(filing)).toEqual(['category', 'created_by', 'deleted_at', 'id', 'name', 'variety_id']);
+    // Exactly one write, and its three SET targets (bare, by SQL's own rule) are these.
+    const sets = [...filing.matchAll(/UPDATE public\.inventory_items i\s+SET\b([\s\S]*?)\bWHERE\b/g)];
+    expect(sets).toHaveLength(1);
+    expect([...sets[0][1].matchAll(/(?:^|,)\s*([a-z_]+)\s*=/g)].map((m) => m[1])).toEqual(['variety_id', 'name', 'updated_at']);
+    expect(filing.match(/\b(UPDATE|INSERT|DELETE)\b/g)).toEqual(['UPDATE', 'UPDATE']);   // the lock's FOR UPDATE, and the write
+
+    for (const col of [...lotColumns(rules), ...lotColumns(filing), 'updated_at']) {
+      expect(pinned.has(col), `${col} is named by a release-2a module and not pinned`).toBe(true);
+    }
   });
 
   it('exposes the contract in the shape scripts/dev-main-schema-audit.py can parse', () => {

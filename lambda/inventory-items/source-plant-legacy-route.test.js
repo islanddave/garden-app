@@ -136,7 +136,12 @@ describe('legacy PATCH /:id/source-plant — a lot with no parent or one: column
     expect(boundAfter(find('add'), /CROSS JOIN unnest\(/)).toEqual([B]);
     expect(boundAfter(find('add'), /'seed_parent', /)).toBe(USER);
     // …and the column: recomputed from the rows by the cache statement, never assigned from the body.
-    expect(find('cache').text).toMatch(/SET source_plant_id = CASE\s+WHEN EXISTS/);
+    // RESTATED for release 2a: the statement gained a first arm for the set route's cache HINT. This
+    // route never gives one — the three bindings of that arm are NULL — so what decides the column
+    // here is still release 1's "kept while a member, else the earliest live row".
+    expect(find('cache').text).toMatch(/SET source_plant_id = CASE\s+WHEN \?::uuid IS NOT NULL AND EXISTS/);
+    expect(find('cache').text).toMatch(/WHEN EXISTS \(\s+SELECT 1 FROM public\.seed_lot_parent_planting m/);
+    expect(find('cache').values.slice(0, 3)).toEqual([null, null, null]);
     expect(find('cache').values).not.toContain(B);
     // No statement writes the column on its own any more.
     expect(stubState.sqlCalls.filter((c) => /SET source_plant_id = \?/.test(c.text))).toHaveLength(0);
@@ -325,9 +330,14 @@ describe('legacy PATCH /:id/source-plant — it is the same write, so it inherit
     });
     const res = parse(await handler(patch({ source_plant_id: B })));
     expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: 'One of those plants changed just now. Reload and try again.' });
-    // Not the multi-parent refusal: an old client keys its "reload" prompt on that code.
-    expect(res.body.code).toBeUndefined();
+    // RESTATED for release 2a (R2-19): the sentence and status are release 1's to the byte, and the
+    // code now stands beside the sentence on this route too — it is the same write.
+    expect(res.body).toEqual({
+      error: 'One of those plants changed just now. Reload and try again.', code: 'parents_changed',
+    });
+    // Not the multi-parent refusal: an old client keys its "reload" prompt on that code. Release 1
+    // pinned that by the code's absence; it is now pinned by which code it is.
+    expect(res.body.code).not.toBe('multi_parent_lot');
     expect(res.body.source_plant_ids).toBeUndefined();
   });
 
@@ -351,7 +361,10 @@ describe('legacy PATCH /:id/source-plant — it is the same write, so it inherit
       // eslint-disable-next-line no-await-in-loop
       const res = parse(await handler(patch({ source_plant_id: B })));
       expect(res.status, at).toBe(409);
-      expect(res.body, at).toEqual({ error: 'This seed lot was changed at the same moment. Reload and try again.' });
+      // RESTATED for release 2a (R2-19): the code beside the unchanged sentence.
+      expect(res.body, at).toEqual({
+        error: 'This seed lot was changed at the same moment. Reload and try again.', code: 'lot_changed',
+      });
     }
   });
 

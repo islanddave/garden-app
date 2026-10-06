@@ -28,6 +28,9 @@ const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const A = uuid(1);
 const B = uuid(2);
 const C = uuid(3);
+// Varieties: what the lot is filed under before a re-file, and the mix it moves to.
+const V_OLD = uuid(90);
+const V_MIX = uuid(91);
 
 // A fake neon client: a tagged template that records text and values, plus .transaction([...]).
 // `answer(text, values)` supplies each statement's rows; like the real driver, a transaction answers
@@ -48,17 +51,26 @@ const fakeSql = (answer = () => []) => {
   return fn;
 };
 
-// The seven statements of the set-replace transaction, each recognised by something only it says.
+// The seven statements of the set-replace transaction, each recognised by something only it says —
+// and the four optional ones release 2a can place among them (`rules`, `judge`, `file`, `filed`).
+// `file` is tested before `cache`: both are UPDATEs of the lot row, and only one sets the variety.
 const IS = {
   lock: (t) => /FOR UPDATE/.test(t),
   hold: (t) => /FOR SHARE/.test(t),
   facts: (t) => /AS live_parents/.test(t),
+  rules: (t) => /AS rules_hold/.test(t),
+  judge: (t) => /AS previous_variety_id/.test(t),
   retire: (t) => /UPDATE public\.seed_lot_parent_planting l/.test(t),
   add: (t) => /INSERT INTO public\.seed_lot_parent_planting/.test(t),
+  file: (t) => /SET variety_id = /.test(t),
   cache: (t) => /UPDATE public\.inventory_items i/.test(t),
   read: (t) => /jsonb_agg/.test(t),
+  filed: (t) => /pv\.variety_rank, i\.name/.test(t),
 };
 const kindOf = (t) => Object.keys(IS).find((k) => IS[k](t));
+
+// The one conjunct every write carries since release 2a: the verdict held for the transaction.
+const GO = "current_setting('app.seed_lot_go', true) = 'go'";
 
 // The value bound to ONE named placeholder (the seed-lot-shape.test.js helper): the stub builds text
 // as strings.join('?'), so a placeholder's value is indexed by the count of '?' before it.
@@ -76,7 +88,7 @@ const flat = (t) => t.replace(/\s+/g, ' ');
 const USABLE = "(SELECT count(*) FROM unnest(?::uuid[]) AS q(plant_id) WHERE EXISTS ( SELECT 1 FROM public.garden_node p WHERE p.id = q.plant_id AND p.created_by = ANY(?) AND p.deleted_at IS NULL) OR EXISTS ( SELECT 1 FROM public.seed_lot_parent_planting k WHERE k.inventory_item_id = i.id AND k.plant_id = q.plant_id AND k.role = 'seed_parent' AND k.deleted_at IS NULL)) = cardinality(?::uuid[])";
 const parent = (id, name, extra = {}) => ({
   id, name, variety_id: uuid(90), variety_name: 'Jewel Mix', breeding_system: 'open_pollinated',
-  archived: false, deleted: false, ...extra,
+  variety_rank: 'cultivar', crop_slug: 'nasturtium', archived: false, deleted: false, ...extra,
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -143,6 +155,9 @@ describe('readSourcePlants — the one parents read', () => {
       ['variety_id', 'p.cultivar_id'],
       ['variety_name', 'pv.display_name'],
       ['breeding_system', 'pv.breeding_system'],
+      // Release 2a: the PLANTING's variety's rank and crop, beside its name — not the lot's.
+      ['variety_rank', 'pv.variety_rank'],
+      ['crop_slug', 'pv.crop_type_slug'],
       ['archived', '(p.archived_at IS NOT NULL)'],
       ['deleted', '(p.deleted_at IS NOT NULL)'],
     ]);
@@ -174,6 +189,9 @@ describe('readSourcePlants — the one parents read', () => {
     // LEFT joins, so neither the planting nor a missing cultivar can drop a link row…
     expect(t).toContain('LEFT JOIN public.garden_node p ON p.id = l.plant_id');
     expect(t).toContain('LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id');
+    // …and no liveness predicate on the variety either (release 2a contract): a soft-deleted variety
+    // is still the planting's variety in this read, in the parent rules and as a mix component.
+    expect(t).not.toMatch(/\bpv\.deleted_at\b/);
     // …and NO predicate on the planting: an archived parent is still the parent
     // (BUG-SAVEDSEEDPROVENANCEARCHIVE-001) and a soft-deleted one is reported, not hidden.
     expect(t).not.toMatch(/p\.archived_at IS NULL/);
@@ -261,6 +279,21 @@ describe('insertSeedParentLinks — the link INSERT', () => {
     // Arm 2: already a live seed_parent of THIS lot (correlated on the lot row, never a bound id).
     expect(t).toContain("FROM public.seed_lot_parent_planting k WHERE k.inventory_item_id = i.id AND k.plant_id = q.plant_id AND k.role = 'seed_parent' AND k.deleted_at IS NULL");
   });
+
+  it('writes only when the transaction\'s held verdict says go — a caller that judged nothing links nothing', () => {
+    // Release 2a. The INSERT is shared by the set route and the create, and it reads the verdict
+    // rather than deciding anything new itself: no judge ahead of it in the same transaction means
+    // the setting is unset, the comparison is NULL, and no row goes in. On a create the assertion
+    // that follows then fails the batch. Part of the lot predicate block, with nothing bound.
+    const sql = fakeSql();
+    insertSeedParentLinks(sql, { lotId: LOT, ids: [A, B], householdIds: HOUSE, userId: 'user_a' });
+    const call = sql.calls[0];
+    expect(flat(call.text)).toContain(
+      `AND i.category = 'seeds' AND ${GO} AND (i.source_kind IS NULL OR i.source_kind = 'own_garden' OR cardinality(?::uuid[]) = 0)`);
+    expect(flat(call.text).split(GO)).toHaveLength(2);
+    // The same nine values as before the conjunct existed: it reads a setting, not a parameter.
+    expect(call.values).toEqual(['user_a', [A, B], LOT, HOUSE, [A, B], false, [A, B], HOUSE, [A, B]]);
+  });
 });
 
 describe('lockPlantings — the plantings a parents write names, held still for its transaction', () => {
@@ -313,11 +346,15 @@ describe('replaceSourcePlants — the set-replace transaction', () => {
     return {
       lock: [{ id: LOT }],
       hold: [{ id: A }],
-      facts: [{ id: LOT, source_kind: null, live_parents: 1, ids_usable: true }],
+      facts: [{ id: LOT, source_kind: null, source_plant_id: A, live_parents: 1, ids_usable: true, set_as_expected: true, go: 'go' }],
+      rules: [{ rules_hold: true, go: 'go' }],
+      judge: [{ verdict: 'write', previous_variety_id: V_OLD, previous_name: 'Nasturtium 2026', go: 'go' }],
       retire: [],
       add: [],
       cache: [{ id: LOT, source_plant_id: A }],
+      file: [{ id: LOT }],
       read: [{ inventory_item_id: LOT, source_plants: [parent(A, 'Alaska Mix')] }],
+      filed: [{ id: LOT, variety_id: V_MIX, variety_name: 'Alaska Mix + Jewel Mix', variety_rank: 'blend', name: 'Nasturtium 2026' }],
     }[k];
   };
   const run = (opts, over) => {
@@ -362,12 +399,66 @@ describe('replaceSourcePlants — the set-replace transaction', () => {
     expect(t).toContain("(SELECT count(*) FROM public.seed_lot_parent_planting n WHERE n.inventory_item_id = i.id AND n.role = 'seed_parent' AND n.deleted_at IS NULL)::int AS live_parents");
     // The SAME count the three writes are guarded by, reported so JS can say which guard refused.
     expect(t).toContain(`(${USABLE}) AS ids_usable`);
-    expect(facts.values).toEqual([[A, B], HOUSE, [A, B], LOT, HOUSE]);
+    // RESTATED for release 2a, not loosened. The read is now an inner SELECT (release 1's, plus the
+    // cache as stored and the caller's-expected-set test) under an outer one that turns the facts
+    // into the held verdict. In binding order: the outer verdict's array and legacy flag; the usable
+    // count's three; the expected-set flag and its array, three times; then the lot predicate.
+    expect(facts.values).toEqual([[A, B], false, [A, B], HOUSE, [A, B], false, [], [], [], LOT, HOUSE]);
     // The WHOLE lot predicate, as the lock and the three writes carry it — this read is what the 404
     // is decided from, so a condition missing here is a lot answered as found. `category = 'seeds'`
     // was the one nothing pinned: without it a tool row has facts, the guarded writes still refuse
     // it, and the outcome is 'conflict' (a 409) where it should be 'not_found' (review I8).
-    expect(t).toMatch(/FROM public\.inventory_items i WHERE i\.id = \? AND i\.created_by = ANY\(\?\) AND i\.deleted_at IS NULL AND i\.category = 'seeds'\s*$/);
+    // The predicate now closes the INNER select; nothing but its alias follows it.
+    expect(t).toMatch(/FROM public\.inventory_items i WHERE i\.id = \? AND i\.created_by = ANY\(\?\) AND i\.deleted_at IS NULL AND i\.category = 'seeds' \) f\s*$/);
+    // One lot predicate in the statement: the outer select reads the inner one and no table.
+    expect(t.match(/FROM public\.inventory_items i\b/g)).toHaveLength(1);
+    expect(t).toMatch(/^\s*SELECT f\.id, f\.source_kind, f\.source_plant_id, f\.live_parents, f\.ids_usable, f\.set_as_expected, set_config\(/);
+  });
+
+  it('turns the facts into ONE verdict and holds it for the transaction (release 2a)', async () => {
+    // S11. A guard repeated in each write's WHERE works only while the writes cannot change what it
+    // reads. "Is the live set the one the caller last read" is changed by the first write, so asked
+    // again by the second it would get a different answer and the batch would half-apply. The
+    // verdict is therefore computed here, once, after both locks and before any write, and stored
+    // where the writes can read it: a transaction-local setting.
+    const { sql } = await run({ ids: [A, B], legacy: true });
+    const t = flat(sql.calls[2].text);
+    expect(t).toContain(
+      "set_config('app.seed_lot_go', CASE WHEN (f.source_kind IS NULL OR f.source_kind = 'own_garden' OR cardinality(?::uuid[]) = 0) AND (NOT ?::boolean OR f.live_parents <= 1) AND f.ids_usable AND f.set_as_expected THEN 'go' ELSE 'stop' END, true) AS go");
+    // is_local = true: the setting dies with the transaction, on commit and on rollback alike.
+    expect(t).toMatch(/THEN 'go' ELSE 'stop' END, true\) AS go/);
+    expect(boundAfter(sql.calls[2], /\(NOT /)).toBe(true);
+    // 'go' needs ALL of release 1's three guards too, so it can never say go where one of the
+    // guards each write still carries would say no.
+    for (const piece of ['f.source_kind IS NULL', 'f.live_parents <= 1', 'f.ids_usable', 'f.set_as_expected']) {
+      expect(t.slice(t.indexOf('set_config('), t.indexOf(') AS go'))).toContain(piece);
+    }
+    // Exactly one statement of the seven sets it; the three writes only read it.
+    expect(sql.calls.filter((c) => /set_config\(/.test(c.text))).toHaveLength(1);
+    expect(sql.calls.filter((c) => c.text.includes(GO)).map((c) => kindOf(c.text))).toEqual(['retire', 'add', 'cache']);
+    for (const c of sql.calls) expect(c.text.match(/'app\.[a-z_.]+'/g) ?? []).toEqual(c.text.match(/'app\.seed_lot_go'/g) ?? []);
+  });
+
+  it('compares the caller\'s expected set with the live set AS A SET, in that one statement only', async () => {
+    const { sql } = await run({ ids: [A, C], expected: [B, A] });
+    const facts = sql.calls[2];
+    const t = flat(facts.text);
+    // Two counts against one cardinality: as many live parents as were expected, and every one of
+    // them among the expected. (One live row per planting is the unique index's, so counts are sets.)
+    expect(t).toContain(
+      "(NOT ?::boolean OR ( (SELECT count(*) FROM public.seed_lot_parent_planting e WHERE e.inventory_item_id = i.id AND e.role = 'seed_parent' AND e.deleted_at IS NULL) = cardinality(?::uuid[]) AND (SELECT count(*) FROM public.seed_lot_parent_planting e WHERE e.inventory_item_id = i.id AND e.role = 'seed_parent' AND e.deleted_at IS NULL AND e.plant_id = ANY(?::uuid[])) = cardinality(?::uuid[]))) AS set_as_expected");
+    expect(facts.values).toEqual([[A, C], false, [A, C], HOUSE, [A, C], true, [B, A], [B, A], [B, A], LOT, HOUSE]);
+    // The test is in NO write statement: asked there it would be asked of a set the retire changed.
+    for (const c of sql.calls.filter((x) => ['retire', 'add', 'cache'].includes(kindOf(x.text)))) {
+      expect(c.text).not.toMatch(/set_as_expected|\be\.plant_id = ANY/);
+      expect(JSON.stringify(c.values)).not.toContain(B);
+    }
+    // Not sent = not asked: the flag is bound false and the comparison never decides anything.
+    const plain = await run({ ids: [A] });
+    expect(plain.sql.calls[2].values).toEqual([[A], false, [A], HOUSE, [A], false, [], [], [], LOT, HOUSE]);
+    // An EMPTY expected set is a real expectation ("I last saw no parents"), not "not sent".
+    const empty = await run({ ids: [A], expected: [] });
+    expect(empty.sql.calls[2].values[5]).toBe(true);
   });
 
   it('soft-deletes the live rows that left the set — and only those', async () => {
@@ -384,14 +475,34 @@ describe('replaceSourcePlants — the set-replace transaction', () => {
 
   it('sets the member cache: kept while still a member, else the earliest live row, else NULL', async () => {
     const { sql } = await run();
-    const cache = sql.calls.find((c) => IS.cache(c.text));
+    const cache = sql.calls.find((c) => kindOf(c.text) === 'cache');
     const t = flat(cache.text);
-    expect(t).toContain("SET source_plant_id = CASE WHEN EXISTS ( SELECT 1 FROM public.seed_lot_parent_planting m WHERE m.inventory_item_id = i.id AND m.plant_id = i.source_plant_id AND m.role = 'seed_parent' AND m.deleted_at IS NULL) THEN i.source_plant_id");
+    // RESTATED for release 2a: release 1's two arms, word for word, now behind a hint arm.
+    expect(t).toContain("WHEN EXISTS ( SELECT 1 FROM public.seed_lot_parent_planting m WHERE m.inventory_item_id = i.id AND m.plant_id = i.source_plant_id AND m.role = 'seed_parent' AND m.deleted_at IS NULL) THEN i.source_plant_id");
     // The ELSE arm is a scalar subquery: no live row -> NULL, which is the empty-set half of the rule.
     expect(t).toContain("ELSE (SELECT e.plant_id FROM public.seed_lot_parent_planting e WHERE e.inventory_item_id = i.id AND e.role = 'seed_parent' AND e.deleted_at IS NULL ORDER BY e.created_at, e.id LIMIT 1) END, updated_at = NOW()");
     expect(t).toContain('RETURNING i.id, i.source_plant_id');
-    // The cache is COMPUTED from the rows. No id from the request is ever assigned to the column.
+    // The cache is COMPUTED from the rows. With no hint, no id from the request reaches the column:
+    // the hint arm is bound NULL three times and so is never true.
     expect(cache.values).not.toContain(A);
+    expect(cache.values.slice(0, 3)).toEqual([null, null, null]);
+  });
+
+  it('takes a cache HINT only while it is a live member of this lot — the one id a request can put in the column', async () => {
+    // Release 2a (R2-22). Remove the plant that is the cache, then Undo: under release 1's rule the
+    // cache has moved to another parent and stays there, because the re-added row is the newest. The
+    // hint lets the caller say which member the column should name. It is taken through the SAME
+    // membership test the kept value passes, so the member-cache rule holds whatever was sent.
+    const { sql } = await run({ ids: [A, B], cacheHint: B });
+    const cache = sql.calls.find((c) => kindOf(c.text) === 'cache');
+    const t = flat(cache.text);
+    expect(t).toContain(
+      "SET source_plant_id = CASE WHEN ?::uuid IS NOT NULL AND EXISTS ( SELECT 1 FROM public.seed_lot_parent_planting h WHERE h.inventory_item_id = i.id AND h.plant_id = ?::uuid AND h.role = 'seed_parent' AND h.deleted_at IS NULL) THEN ?::uuid WHEN EXISTS ( SELECT 1 FROM public.seed_lot_parent_planting m");
+    expect(cache.values.slice(0, 3)).toEqual([B, B, B]);
+    // First arm of three: it outranks "keep what is there", which is the point of an Undo.
+    expect(t.indexOf('h.plant_id = ?::uuid')).toBeLessThan(t.indexOf('m.plant_id = i.source_plant_id'));
+    // The hint is bound nowhere else in the transaction.
+    for (const c of sql.calls.filter((x) => x !== cache)) expect(c.text).not.toMatch(/\bh\.plant_id\b/);
   });
 
   it('carries the every-planting-usable rule in all three writes, with the same bindings in each', async () => {
@@ -431,6 +542,10 @@ describe('replaceSourcePlants — the set-replace transaction', () => {
       // legacy: at most one live parent, counted inside the statement.
       expect(t).toContain("AND (NOT ?::boolean OR ( SELECT count(*) FROM public.seed_lot_parent_planting n WHERE n.inventory_item_id = i.id AND n.role = 'seed_parent' AND n.deleted_at IS NULL) <= 1)");
       expect(boundAfter(w, /AND \(NOT /)).toBe(true);
+      // Release 2a: the held verdict, read once per write, directly behind the lot predicate and
+      // ahead of the three guards release 1 put here (which are unchanged, above).
+      expect(t).toContain(`AND i.category = 'seeds' AND ${GO} AND (i.source_kind IS NULL`);
+      expect(t.split(GO)).toHaveLength(2);
     }
   });
 
@@ -625,5 +740,195 @@ describe('replaceSourcePlants — the set-replace transaction', () => {
     expect(out).toEqual({ outcome: 'conflict' });
     const legacy = await run({ ids: [A], legacy: true }, { facts: [fine], cache: [] });
     expect(legacy.out).toEqual({ outcome: 'conflict' });
+  });
+
+  // ── Release 2a ────────────────────────────────────────────────────────────────────────────────
+  const kindsOf = (sql) => sql.calls.map((c) => kindOf(c.text));
+  const FILING = { varietyId: V_MIX, expectVarietyId: V_OLD, name: null };
+  const fine = { id: LOT, source_kind: null, source_plant_id: A, live_parents: 2, ids_usable: true, set_as_expected: true };
+
+  it('STATEMENT COUNT: seven as before; one more for the rules, three more for a re-file — still ONE transaction', async () => {
+    // Every optional statement is placed in the same batch, so the set, the cache and the filing
+    // commit or roll back together.
+    const plain = await run({ ids: [A, B] });
+    expect(plain.sql.batches).toEqual([7]);
+
+    const judged = await run({ ids: [A, B], rules: true });
+    expect(judged.sql.batches).toEqual([8]);
+    expect(kindsOf(judged.sql)).toEqual(['lock', 'hold', 'facts', 'rules', 'retire', 'add', 'cache', 'read']);
+
+    const refiled = await run({ ids: [A, B], filing: FILING });
+    expect(refiled.sql.batches).toEqual([10]);
+    expect(kindsOf(refiled.sql)).toEqual(['lock', 'hold', 'facts', 'judge', 'retire', 'add', 'cache', 'file', 'read', 'filed']);
+
+    const both = await run({ ids: [A, B], rules: true, filing: FILING, expected: [A], cacheHint: B });
+    expect(both.sql.batches).toEqual([11]);
+    expect(kindsOf(both.sql)).toEqual(['lock', 'hold', 'facts', 'rules', 'judge', 'retire', 'add', 'cache', 'file', 'read', 'filed']);
+    // Nothing was issued outside the batch in any of them.
+    for (const { sql } of [plain, judged, refiled, both]) expect(sql.calls).toHaveLength(sql.batches[0]);
+  });
+
+  it('every JUDGE sits after both locks and before the first write — the verdict exists before anything can use it', async () => {
+    const { sql } = await run({ ids: [A, B], rules: true, filing: FILING });
+    const order = kindsOf(sql);
+    for (const judge of ['facts', 'rules', 'judge']) {
+      expect(order.indexOf('hold'), judge).toBeLessThan(order.indexOf(judge));
+      expect(order.indexOf(judge), judge).toBeLessThan(order.indexOf('retire'));
+    }
+    // The facts set the verdict; the two judges after it can only narrow it, never start it.
+    const narrowing = sql.calls.filter((c) => ['rules', 'judge'].includes(kindOf(c.text)));
+    for (const c of narrowing) {
+      expect(flat(c.text)).toContain("AND (?::boolean OR current_setting('app.seed_lot_go', true) = 'go') THEN 'go' ELSE 'stop' END, true) AS go");
+      // `alone` is bound false: nothing here may give 'go' back once the facts refused it.
+      expect(boundAfter(c, /AND \(/)).toBe(false);
+    }
+    // Four statements read the verdict: the three writes and the re-file.
+    expect(sql.calls.filter((c) => /^\s*(UPDATE|INSERT)\b/.test(c.text)).map((c) => kindOf(c.text)))
+      .toEqual(['retire', 'add', 'cache', 'file']);
+    for (const c of sql.calls.filter((x) => /^\s*(UPDATE|INSERT)\b/.test(x.text))) {
+      expect(c.text, kindOf(c.text)).toContain(GO);
+    }
+  });
+
+  it('judges the rules only for a set of two or more, and never on the legacy route', async () => {
+    expect(kindsOf((await run({ ids: [A], rules: true })).sql)).not.toContain('rules');
+    expect(kindsOf((await run({ ids: [], rules: true })).sql)).not.toContain('rules');
+    expect(kindsOf((await run({ ids: [A, B], rules: true, legacy: true })).sql)).not.toContain('rules');
+    expect(kindsOf((await run({ ids: [A, B] })).sql)).not.toContain('rules');
+    // The rules are judged against the variety the lot will be filed under AFTER this request: the
+    // re-file's target when there is one, else NULL — which the statement reads as the stored one.
+    const refiled = await run({ ids: [A, B], rules: true, filing: FILING });
+    const rules = refiled.sql.calls.find((c) => kindOf(c.text) === 'rules');
+    expect(boundAfter(rules, /fv\.id = COALESCE\(/)).toBe(V_MIX);
+    const stored = await run({ ids: [A, B], rules: true });
+    expect(boundAfter(stored.sql.calls.find((c) => kindOf(c.text) === 'rules'), /fv\.id = COALESCE\(/)).toBeNull();
+  });
+
+  it('hands the re-file the set THIS write is making, so its crop is judged against the jar as it will be', async () => {
+    const { sql } = await run({ ids: [A, B], filing: { ...FILING, name: 'Nasturtium mix 2026' } });
+    const judge = sql.calls.find((c) => kindOf(c.text) === 'judge');
+    // alone = false (the facts already judged); then target, expected, household; "of this write"
+    // true beside the set itself, and true again in the arm it switches off (the lot's stored
+    // parents, which the filing route reads instead); the target once more for its own row; the lot.
+    expect(judge.values).toEqual([false, V_MIX, V_OLD, HOUSE, true, [A, B], true, V_MIX, LOT, HOUSE]);
+    const file = sql.calls.find((c) => kindOf(c.text) === 'file');
+    expect(file.values).toEqual([V_MIX, 'Nasturtium mix 2026', LOT, HOUSE, V_MIX]);
+  });
+
+  it('lot_changed: the caller\'s expected set is not the live one — nothing written, and what the lot holds now', async () => {
+    const stood = [parent(A, 'Alaska Mix'), parent(C, 'Empress of India')];
+    const { out } = await run({ ids: [A, B], expected: [A] }, {
+      facts: [{ ...fine, set_as_expected: false }], cache: [],
+      read: [{ inventory_item_id: LOT, source_plants: stood }],
+    });
+    expect(out).toEqual({ outcome: 'lot_changed', source_plant_id: A, source_plants: stood });
+  });
+
+  it('lot_changed outranks every other refusal: a caller with a stale picture is told that first', async () => {
+    const stale = { ...fine, set_as_expected: false };
+    for (const facts of [
+      { ...stale, source_kind: 'gift' },
+      { ...stale, ids_usable: false },
+    ]) {
+      const { out } = await run({ ids: [A, B], expected: [A] }, { facts: [facts], cache: [], read: [] });
+      expect(out.outcome).toBe('lot_changed');
+    }
+    const ruled = await run({ ids: [A, B], expected: [A], rules: true }, {
+      facts: [stale], rules: [{ rules_hold: false, go: 'stop' }], cache: [], read: [],
+    });
+    expect(ruled.out.outcome).toBe('lot_changed');
+  });
+
+  it('only a strict FALSE is a mismatch, and only when nothing was written', async () => {
+    // A write that happened is ok whatever the flag says (it is read before the writes), and a facts
+    // row without the flag — an older shape — is not a stale caller.
+    expect((await run({ ids: [A], expected: [A] }, { facts: [{ ...fine, set_as_expected: false }] })).out.outcome).toBe('ok');
+    const bare = { id: LOT, source_kind: null, live_parents: 1, ids_usable: true };
+    expect((await run({ ids: [A], expected: [A] }, { facts: [bare], cache: [] })).out).toEqual({ outcome: 'conflict' });
+  });
+
+  it('rules_changed: the parent rules stopped holding under the lock — after the older refusals, before the filing\'s', async () => {
+    const broken = { rules: [{ rules_hold: false, go: 'stop' }], cache: [], read: [] };
+    expect((await run({ ids: [A, B], rules: true }, { facts: [fine], ...broken })).out).toEqual({ outcome: 'rules_changed' });
+    // Ownership first: a planting that is no longer usable is the more basic news.
+    expect((await run({ ids: [A, B], rules: true }, { facts: [{ ...fine, ids_usable: false }], ...broken })).out)
+      .toEqual({ outcome: 'plants_changed' });
+    expect((await run({ ids: [A, B], rules: true }, { facts: [{ ...fine, source_kind: 'gift' }], ...broken })).out)
+      .toEqual({ outcome: 'source_kind' });
+    // …and ahead of a refused re-file.
+    const { out } = await run({ ids: [A, B], rules: true, filing: FILING }, {
+      facts: [fine], ...broken, judge: [{ verdict: 'unusable', previous_variety_id: V_OLD, previous_name: 'n', go: 'stop' }],
+    });
+    expect(out).toEqual({ outcome: 'rules_changed' });
+    // Read off what was written, like every other refusal: a write that happened is ok.
+    expect((await run({ ids: [A, B], rules: true }, { facts: [fine], rules: [{ rules_hold: false, go: 'stop' }] })).out.outcome).toBe('ok');
+  });
+
+  it('a refused re-file refuses the whole edit: lot_changed, variety_unusable, filing_crop_mismatch', async () => {
+    const stood = [parent(A, 'Alaska Mix')];
+    const refused = (verdict) => run({ ids: [A, B], filing: FILING }, {
+      facts: [fine], cache: [], file: [],
+      judge: [{ verdict, previous_variety_id: V_OLD, previous_name: 'Nasturtium 2026', go: 'stop' }],
+      read: [{ inventory_item_id: LOT, source_plants: stood }],
+    });
+    // Someone else re-filed it: the caller gets the set AND the filing as they stand.
+    expect((await refused('changed')).out).toEqual({
+      outcome: 'lot_changed', source_plant_id: A, source_plants: stood, variety_id: V_OLD, name: 'Nasturtium 2026',
+    });
+    expect((await refused('unusable')).out).toEqual({ outcome: 'variety_unusable' });
+    expect((await refused('crop')).out).toEqual({ outcome: 'filing_crop_mismatch' });
+    // 'write' and 'same' are not refusals: with nothing written and nothing to blame, it is a conflict.
+    expect((await refused('write')).out).toEqual({ outcome: 'conflict' });
+    expect((await refused('same')).out).toEqual({ outcome: 'conflict' });
+  });
+
+  it('a stale set reported WITH a re-file carries the filing as stored too', async () => {
+    const { out } = await run({ ids: [A, B], expected: [A], filing: FILING }, {
+      facts: [{ ...fine, set_as_expected: false }], cache: [], file: [], read: [],
+    });
+    expect(out).toEqual({
+      outcome: 'lot_changed', source_plant_id: A, source_plants: [], variety_id: V_OLD, name: 'Nasturtium 2026',
+    });
+  });
+
+  it('ok with a re-file: the set as release 1 answers it, plus the filing — changed, and what it was before', async () => {
+    const jar = [parent(A, 'Alaska Mix'), parent(B, 'Jewel Mix')];
+    const { out } = await run({ ids: [A, B], filing: FILING }, {
+      facts: [fine], read: [{ inventory_item_id: LOT, source_plants: jar }],
+    });
+    expect(out).toEqual({
+      outcome: 'ok', id: LOT, source_plant_id: A, source_plants: jar,
+      filing: {
+        variety_id: V_MIX, variety_name: 'Alaska Mix + Jewel Mix', variety_rank: 'blend', name: 'Nasturtium 2026',
+        changed: true, previous: { variety_id: V_OLD, name: 'Nasturtium 2026' },
+      },
+    });
+    // No `filing` asked for, no `filing` key: release 1's three keys exactly.
+    expect(Object.keys((await run({ ids: [A, B] })).out).sort()).toEqual(['id', 'outcome', 'source_plant_id', 'source_plants']);
+  });
+
+  it('ok with a re-file that was already true: changed is false, previous is what it is', async () => {
+    // Stored variety = target. The set still changes; the filing statement matched nothing.
+    const { out } = await run({ ids: [A, B], filing: FILING }, {
+      facts: [fine], file: [],
+      judge: [{ verdict: 'same', previous_variety_id: V_MIX, previous_name: 'Nasturtium 2026', go: 'go' }],
+    });
+    expect(out.outcome).toBe('ok');
+    expect(out.filing).toMatchObject({ variety_id: V_MIX, changed: false, previous: { variety_id: V_MIX, name: 'Nasturtium 2026' } });
+  });
+
+  it('a 40P01 or 23505 with every option placed is still one rolled-back conflict', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const at of ['rules', 'judge', 'file', 'filed']) {
+      const sql = fakeSql((text) => {
+        if (kindOf(text) === at) throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
+        return answers()(text);
+      });
+      // eslint-disable-next-line no-await-in-loop
+      const out = await replaceSourcePlants(sql, {
+        lotId: LOT, ids: [A, B], householdIds: HOUSE, userId: 'user_a', rules: true, filing: FILING,
+      });
+      expect(out, at).toEqual({ outcome: 'conflict' });
+    }
   });
 });

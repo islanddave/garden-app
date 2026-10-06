@@ -20,9 +20,20 @@
 // LOT's owner — never through the link row's own created_by, which only records who added it.
 //
 // DEPENDENCY-FREE ON PURPOSE, like source-kinds.js and delete-guard.js: the driver is handed in, so
-// the blocking unit suite can import this file and execute it. Do not add imports.
+// the blocking unit suite can import this file and execute it. The ONLY imports are its two
+// siblings, which are dependency-free for the same reason (release 2a): the statements the set
+// write places for the parent rules (seed-lot-rules.js) and for a re-file (seed-lot-filing.js).
+// Neither imports this file. Do not add any other import.
+//
+// RELEASE 2a — WHAT CHANGED HERE, in one place. The set write gained a precondition (the caller's
+// last-read set), a cache hint, the parent rules and an optional re-file, and with them a second way
+// of refusing. Release 1's three guards are repeated in each write's own WHERE and stay exactly as
+// they were. Everything new is judged ONCE, before the first write, and held in the
+// transaction-local setting app.seed_lot_go, which each write reads — see replaceSourcePlants.
+import { judgeParentRules } from './seed-lot-rules.js';
+import { judgeFiling, fileLot, readFiling, filingOf, filingRefusal } from './seed-lot-filing.js';
 
-// Same regex as index.js and household.js; declared again because this module imports nothing.
+// Same regex as index.js and household.js; declared again rather than shared.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // The Function URL is callable directly, so the array needs a bound. Twelve is far past any real jar
@@ -43,17 +54,21 @@ export const MULTI_PARENT_ERROR = 'This seed came from more than one plant. Relo
 // Lower-cased before deduping because Postgres reads a uuid case-insensitively: 'AB..' and 'ab..' are
 // one planting, and the ownership gate below compares what came back against what was asked for.
 // The cap is applied AFTER deduping, so the same id sent thirteen times is a set of one.
-export function normalizeSourcePlantIds(value) {
-  if (!Array.isArray(value)) return { error: 'source_plant_ids must be an array of planting ids' };
+//
+// `field` names the body key in the refusal (release 2a): the set route's
+// `expected_source_plant_ids` is the same kind of array and is held to the same shape, and a caller
+// told that `source_plant_ids` was malformed when it was the other key would fix the wrong one.
+export function normalizeSourcePlantIds(value, field = 'source_plant_ids') {
+  if (!Array.isArray(value)) return { error: `${field} must be an array of planting ids` };
   const ids = [];
   for (const raw of value) {
     if (typeof raw !== 'string' || !UUID_RE.test(raw)) {
-      return { error: 'source_plant_ids must contain only planting ids' };
+      return { error: `${field} must contain only planting ids` };
     }
     const id = raw.toLowerCase();
     if (!ids.includes(id)) ids.push(id);
     if (ids.length > MAX_SOURCE_PLANTS) {
-      return { error: `source_plant_ids can name at most ${MAX_SOURCE_PLANTS} plantings` };
+      return { error: `${field} can name at most ${MAX_SOURCE_PLANTS} plantings` };
     }
   }
   return { ids };
@@ -156,7 +171,14 @@ export function lockPlantings(sql, ids) {
 }
 
 // THE READ — one row per live lot that has at least one live seed_parent link, carrying
-// source_plants: [{ id, name, variety_id, variety_name, breeding_system, archived, deleted }].
+// source_plants: [{ id, name, variety_id, variety_name, breeding_system, variety_rank, crop_slug,
+// archived, deleted }].
+//
+// variety_rank and crop_slug (release 2a) are the PLANTING's variety's, like the three variety keys
+// before them — not the lot's. They are what lets a client see, from the set alone, that a jar spans
+// two varieties or that one parent is itself a mix. The cultivar join carries no deleted_at
+// predicate on purpose: a soft-deleted variety is still the planting's variety here, in the parent
+// rules (seed-lot-rules.js) and as a component of a mix.
 //
 // ONE AGGREGATE PER LOT, in a LATERAL, never a join against the lot list: a join would return a lot
 // once per parent and every count on the page that reads this list would be wrong by that factor.
@@ -185,6 +207,8 @@ export function readSourcePlants(sql, householdIds, lotId = null) {
                      'variety_id', p.cultivar_id,
                      'variety_name', pv.display_name,
                      'breeding_system', pv.breeding_system,
+                     'variety_rank', pv.variety_rank,
+                     'crop_slug', pv.crop_type_slug,
                      'archived', (p.archived_at IS NOT NULL),
                      'deleted', (p.deleted_at IS NOT NULL)
                    ) ORDER BY p.display_name, l.plant_id) AS source_plants
@@ -252,6 +276,13 @@ export async function settleSourcePlants(read, scope) {
 // ALL OR NONE. The usable count is over the WHOLE array, so one planting that is no longer the
 // caller's to use inserts no link at all — never the other N-1. On the set route that is "nothing
 // written"; on a create it leaves a lot with no links, which assertEveryParentLinked then refuses.
+//
+// THE HELD VERDICT (release 2a). The statement also reads app.seed_lot_go, and inserts nothing
+// unless a statement earlier in the SAME transaction set it to 'go'. So no link row is ever written
+// by a transaction that did not first judge the write: on the set route the facts read sets it; on
+// a create, judgeParentRules does (seed-lot-rules.js). A caller that places this INSERT without a
+// judge ahead of it writes nothing, and on a create assertEveryParentLinked then fails the batch —
+// closed, not open.
 export function insertSeedParentLinks(sql, { lotId, ids, householdIds, userId, legacy = false }) {
   return sql`
     INSERT INTO public.seed_lot_parent_planting (inventory_item_id, plant_id, role, created_by)
@@ -262,6 +293,7 @@ export function insertSeedParentLinks(sql, { lotId, ids, householdIds, userId, l
        AND i.created_by = ANY(${householdIds})
        AND i.deleted_at IS NULL
        AND i.category = 'seeds'
+       AND current_setting('app.seed_lot_go', true) = 'go'
        AND (i.source_kind IS NULL OR i.source_kind = 'own_garden' OR cardinality(${ids}::uuid[]) = 0)
        AND (NOT ${legacy}::boolean OR (
               SELECT count(*) FROM public.seed_lot_parent_planting n
@@ -326,31 +358,74 @@ export function assertEveryParentLinked(sql, { lotId, ids, householdIds }) {
 // statement, so anything not in the array is a separate transaction).
 //
 // Returns { outcome } and never a status code — index.js owns the HTTP:
-//   'ok'           -> { id, source_plant_id, source_plants }
+//   'ok'           -> { id, source_plant_id, source_plants } and, when `filing` was given, { filing }
 //   'not_found'    -> the lot is absent, foreign, deleted or not seeds. Nothing written.
+//   'lot_changed'  -> release 2a. Nothing written, and what the lot holds now:
+//                     { source_plant_id, source_plants } — the caller's `expected` set is not the
+//                     lot's live set — plus { variety_id, name } when `filing` was given (and always
+//                     when the mismatch was the filing's own: stored variety neither target nor expected).
 //   'multi_parent' -> legacy only: the lot has two or more parents. Nothing written. { source_plant_ids }
 //   'source_kind'  -> the lot says it came from a shop / gift / farm stand, and `ids` is not empty.
 //   'plants_changed' -> a planting in `ids` stopped being usable between the route's gate and this
 //                     write (soft-deleted, or merged into another). Nothing written.
+//   'rules_changed' -> release 2a. The parent rules held when the route checked them and do not now
+//                     (a parent's variety was cleared or changed, or the lot was re-filed, while this
+//                     request waited for its lot). Nothing written.
+//   'variety_unusable' | 'filing_crop_mismatch' -> release 2a. The `filing` was refused, and so
+//                     the whole edit was. Nothing written.
 //   'conflict'     -> 23505 or 40P01 from a concurrent writer; the transaction rolled back.
 //
-// THE SEVEN STATEMENTS, in order, and why each is where it is:
+// RELEASE 2a — THE FOUR THINGS A CALLER MAY ADD, and where each lands in the list below:
+//   • `expected`  the set the caller last read. Compared, AS A SET, with the lot's live seed_parent
+//                 plantings by statement 2. A whole-set replace from a stale page would otherwise
+//                 retire a parent another device added, on a 200. null = not asked (release 1).
+//   • `cacheHint` which member the column should cache after the write (the route has checked it is
+//                 one of `ids`). Statement 5 takes it only while it IS a live member. null = release
+//                 1's rule. This is what lets Undo put the cache back where it was.
+//   • `rules`     judge the parent rules under the locks: one more statement, judgeParentRules,
+//                 after the facts. Only for a set of two or more, and never legacy (a legacy set is
+//                 one id or none, where the rules cannot apply).
+//   • `filing`    { varietyId, expectVarietyId, name } — re-file the lot in this same transaction:
+//                 judgeFiling after the facts, fileLot after the cache, readFiling after the read.
+//                 All three are seed-lot-filing.js's own statements, the ones PUT /:id/filing places.
+//
+// ONE VERDICT, HELD — and why the new conditions are NOT repeated in each write's WHERE the way
+// release 1's three guards are. Those three read things the writes do not change (see the last
+// bullet below), so asking again in each statement gets the same answer. `expected` does not have
+// that property: the retire changes the lot's live set, so the INSERT after it would compare
+// `expected` with a set this very transaction had already altered, and the batch would half-apply
+// behind a 409. The rules have it only in part (they read "already a parent", which the INSERT
+// changes) and they read variety rows that no lock here holds. So statement 2 computes ONE verdict
+// from everything judged under the locks, and stores it with set_config('app.seed_lot_go', ..., true)
+// — transaction-local, gone at commit or rollback. The judges that follow may only take 'go' away.
+// Every write reads the setting; none of them re-derives it. A write whose transaction never set it
+// reads NULL (or '', on a pooled connection that used the name before) and writes nothing.
+// Release 1's guards stay in each write exactly as real Postgres proved them: 'go' implies all
+// three, so they can only agree with it.
+//
+// THE STATEMENTS, in order, and why each is where it is (seven when nothing optional is asked):
 //   0 lock    SELECT .. FOR UPDATE on the lot. Two requests on one lot now run one after the other,
 //             and a concurrent /source-kind write waits too. FIRST, before anything touches a link
 //             row: the migration's reconcile and the planting merge take their lots first as well,
 //             and a writer that took a link row before its lot deadlocked against them.
 //   1 hold    lockPlantings — FOR SHARE on the plantings named, so whether each is live cannot
 //             change under the statements below. After the lot, never before it.
-//   2 facts   the lot's source_kind, its live-parent count and whether every planting is usable,
-//             read by a statement that STARTS after both locks are held. Not folded into statement 0
-//             on purpose: a subquery in the locking statement is evaluated on that statement's
-//             snapshot, taken BEFORE it waited, so it would report things as they stood before the
-//             other request committed.
+//   2 facts   the lot's source_kind, its live-parent count, whether every planting is usable and
+//             whether the live set is the one the caller expected, read by a statement that STARTS
+//             after both locks are held — and the verdict, set from those four. Not folded into
+//             statement 0 on purpose: a subquery in the locking statement is evaluated on that
+//             statement's snapshot, taken BEFORE it waited, so it would report things as they stood
+//             before the other request committed.
+//   + rules   judgeParentRules (only with `rules`, two or more ids). May take 'go' away.
+//   + judge   judgeFiling (only with `filing`). May take 'go' away.
 //   3 retire  soft-delete the live rows not in `ids` (deleted_at and updated_at; no trigger does it).
 //   4 add     insertSeedParentLinks — the ones the lot does not have.
-//   5 cache   source_plant_id: kept if it is still a member, else the earliest live row
-//             (created_at, then id), else NULL. RETURNING is how a completed write is recognised.
+//   5 cache   source_plant_id: the hint if it is a member, else kept if it is still a member, else
+//             the earliest live row (created_at, then id), else NULL. RETURNING is how a completed
+//             write is recognised.
+//   + file    fileLot (only with `filing`).
 //   6 read    readSourcePlants, inside the transaction, so the answer is the set this write left.
+//   + filed   readFiling (only with `filing`).
 //
 // EVERY WRITE CARRIES THE LOT PREDICATE AND ALL THREE GUARDS IN ITS OWN WHERE. The driver's
 // transaction is not interactive — no statement can see another's result and nothing in JS can stop
@@ -373,7 +448,12 @@ export function assertEveryParentLinked(sql, { lotId, ids, householdIds }) {
 //     The three writes cannot disagree about it: the first arm reads rows statement 1 holds, the
 //     second reads link rows the lot lock holds, and of the writes themselves the retire touches
 //     only rows NOT in `ids` and the add only makes more of `ids` members.
-export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userId, legacy = false }) {
+export async function replaceSourcePlants(sql, {
+  lotId, ids, householdIds, userId, legacy = false,
+  expected = null, cacheHint = null, rules = false, filing = null,
+}) {
+  // The rules need two plantings to have anything to say, and a legacy write never has two.
+  const judgesRules = rules && !legacy && ids.length >= 2;
   let results;
   try {
     results = await sql.transaction([
@@ -387,8 +467,19 @@ export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userI
            FOR UPDATE
       `,
       lockPlantings(sql, ids),
+      // The inner SELECT is release 1's facts read with two columns added; the outer one turns the
+      // four facts into the verdict and stores it. No row (not the caller's live seed lot) means no
+      // set_config call, so the setting stays unset and every write below refuses twice over.
       sql`
-        SELECT i.id, i.source_kind,
+        SELECT f.id, f.source_kind, f.source_plant_id, f.live_parents, f.ids_usable, f.set_as_expected,
+               set_config('app.seed_lot_go',
+                 CASE WHEN (f.source_kind IS NULL OR f.source_kind = 'own_garden' OR cardinality(${ids}::uuid[]) = 0)
+                       AND (NOT ${legacy}::boolean OR f.live_parents <= 1)
+                       AND f.ids_usable
+                       AND f.set_as_expected
+                      THEN 'go' ELSE 'stop' END, true) AS go
+          FROM (
+        SELECT i.id, i.source_kind, i.source_plant_id,
                (SELECT count(*) FROM public.seed_lot_parent_planting n
                  WHERE n.inventory_item_id = i.id
                    AND n.role = 'seed_parent'
@@ -405,13 +496,32 @@ export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userI
                            WHERE k.inventory_item_id = i.id
                              AND k.plant_id = q.plant_id
                              AND k.role = 'seed_parent'
-                             AND k.deleted_at IS NULL)) = cardinality(${ids}::uuid[])) AS ids_usable
+                             AND k.deleted_at IS NULL)) = cardinality(${ids}::uuid[])) AS ids_usable,
+               (NOT ${expected != null}::boolean OR (
+                  (SELECT count(*) FROM public.seed_lot_parent_planting e
+                    WHERE e.inventory_item_id = i.id
+                      AND e.role = 'seed_parent'
+                      AND e.deleted_at IS NULL) = cardinality(${expected ?? []}::uuid[])
+                  AND (SELECT count(*) FROM public.seed_lot_parent_planting e
+                        WHERE e.inventory_item_id = i.id
+                          AND e.role = 'seed_parent'
+                          AND e.deleted_at IS NULL
+                          AND e.plant_id = ANY(${expected ?? []}::uuid[])) = cardinality(${expected ?? []}::uuid[]))) AS set_as_expected
           FROM public.inventory_items i
          WHERE i.id = ${lotId}
            AND i.created_by = ANY(${householdIds})
            AND i.deleted_at IS NULL
            AND i.category = 'seeds'
+          ) f
       `,
+      ...(judgesRules
+        ? [judgeParentRules(sql, { lotId, ids, householdIds, varietyId: filing?.varietyId ?? null })]
+        : []),
+      ...(filing
+        ? [judgeFiling(sql, {
+          lotId, householdIds, varietyId: filing.varietyId, expectVarietyId: filing.expectVarietyId, ids,
+        })]
+        : []),
       sql`
         UPDATE public.seed_lot_parent_planting l
            SET deleted_at = now(),
@@ -421,6 +531,7 @@ export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userI
            AND i.created_by = ANY(${householdIds})
            AND i.deleted_at IS NULL
            AND i.category = 'seeds'
+           AND current_setting('app.seed_lot_go', true) = 'go'
            AND (i.source_kind IS NULL OR i.source_kind = 'own_garden' OR cardinality(${ids}::uuid[]) = 0)
            AND (NOT ${legacy}::boolean OR (
                   SELECT count(*) FROM public.seed_lot_parent_planting n
@@ -446,9 +557,20 @@ export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userI
            AND NOT (l.plant_id = ANY(${ids}::uuid[]))
       `,
       insertSeedParentLinks(sql, { lotId, ids, householdIds, userId, legacy }),
+      // The hint is the ONE id from a request that can reach the column, and only through the same
+      // membership test the kept value passes: it is assigned while it is a live seed_parent of this
+      // lot and ignored otherwise, so the member-cache rule holds whatever was sent. NULL (no hint)
+      // makes the first arm false and leaves release 1's two.
       sql`
         UPDATE public.inventory_items i
            SET source_plant_id = CASE
+                 WHEN ${cacheHint}::uuid IS NOT NULL AND EXISTS (
+                        SELECT 1 FROM public.seed_lot_parent_planting h
+                         WHERE h.inventory_item_id = i.id
+                           AND h.plant_id = ${cacheHint}::uuid
+                           AND h.role = 'seed_parent'
+                           AND h.deleted_at IS NULL)
+                   THEN ${cacheHint}::uuid
                  WHEN EXISTS (
                         SELECT 1 FROM public.seed_lot_parent_planting m
                          WHERE m.inventory_item_id = i.id
@@ -468,6 +590,7 @@ export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userI
            AND i.created_by = ANY(${householdIds})
            AND i.deleted_at IS NULL
            AND i.category = 'seeds'
+           AND current_setting('app.seed_lot_go', true) = 'go'
            AND (i.source_kind IS NULL OR i.source_kind = 'own_garden' OR cardinality(${ids}::uuid[]) = 0)
            AND (NOT ${legacy}::boolean OR (
                   SELECT count(*) FROM public.seed_lot_parent_planting n
@@ -489,7 +612,11 @@ export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userI
                             AND k.deleted_at IS NULL)) = cardinality(${ids}::uuid[])
         RETURNING i.id, i.source_plant_id
       `,
+      ...(filing
+        ? [fileLot(sql, { lotId, householdIds, varietyId: filing.varietyId, name: filing.name })]
+        : []),
       readSourcePlants(sql, householdIds, lotId),
+      ...(filing ? [readFiling(sql, { lotId, householdIds })] : []),
     ]);
   } catch (err) {
     // Both mean a concurrent writer and a transaction that rolled back WHOLE — nothing of this write
@@ -508,14 +635,37 @@ export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userI
     throw err;
   }
 
-  const [, , factRows, , , cacheRows, parentRows] = results;
+  // The list is seven statements plus the optional ones, so results are found by position from the
+  // three counts that decide its shape — the same three the array above was built from.
+  const nRules = judgesRules ? 1 : 0;
+  const nFiling = filing ? 1 : 0;
+  const cacheAt = 3 + nRules + nFiling + 2;
+  const factRows = results[2];
+  const ruleRows = judgesRules ? results[3] : null;
+  const judged = filing ? (results[3 + nRules]?.[0] ?? null) : null;
+  const cacheRows = results[cacheAt];
+  const fileRows = filing ? results[cacheAt + 1] : null;
+  const parentRows = results[cacheAt + 1 + nFiling];
+  const filedRows = filing ? results[cacheAt + 2 + nFiling] : null;
+
   const fact = factRows?.[0];
   if (!fact) return { outcome: 'not_found' };
   const source_plants = sourcePlantsOf(parentRows);
 
-  // The lot exists and is the caller's, and statement 5 changed nothing: a guard refused inside the
-  // write statements. Nothing was written, so `source_plants` is the set as it stood.
+  // The lot exists and is the caller's, and the cache statement changed nothing: the write was
+  // refused. Nothing was written — the held verdict is one value for the whole batch — so
+  // `source_plants` is the set as it stood. The facts say WHICH refusal, in this order.
   if (!cacheRows?.length) {
+    // What the lot holds now, for a caller whose picture of it was stale.
+    const asStored = {
+      source_plant_id: fact.source_plant_id ?? null,
+      source_plants,
+      ...(judged ? { variety_id: judged.previous_variety_id ?? null, name: judged.previous_name ?? null } : {}),
+    };
+    // FIRST, ahead of release 1's refusals: a caller that last read a different set is wrong about
+    // the lot itself, and whatever else is true of its request, the thing it needs is the reload.
+    // Strictly FALSE (as ids_usable below): a facts row without the flag is not a mismatch.
+    if (fact.set_as_expected === false) return { outcome: 'lot_changed', ...asStored };
     const shopKind = fact.source_kind != null && fact.source_kind !== 'own_garden';
     if (shopKind && ids.length) return { outcome: 'source_kind' };
     if (legacy && Number(fact.live_parents) >= 2) {
@@ -524,8 +674,17 @@ export async function replaceSourcePlants(sql, { lotId, ids, householdIds, userI
     // Strictly FALSE, as the driver parses a Postgres boolean: the route's gate passed these ids a
     // moment ago, so one of them changed while this request was on its way to the lot.
     if (fact.ids_usable === false) return { outcome: 'plants_changed' };
+    // The same news about the same plants, one rule further on: usable, but no longer a set the
+    // parent rules allow (the route's check passed it a moment ago).
+    if (ruleRows?.[0]?.rules_hold === false) return { outcome: 'rules_changed' };
+    // The re-file was the part refused, and it took the edit with it.
+    const refusal = filingRefusal(judged);
+    if (refusal === 'lot_changed') return { outcome: 'lot_changed', ...asStored };
+    if (refusal) return { outcome: refusal };
     // No guard explains it: the lot moved under a writer that does not take the lock.
     return { outcome: 'conflict' };
   }
-  return { outcome: 'ok', id: cacheRows[0].id, source_plant_id: cacheRows[0].source_plant_id ?? null, source_plants };
+  const out = { outcome: 'ok', id: cacheRows[0].id, source_plant_id: cacheRows[0].source_plant_id ?? null, source_plants };
+  if (filing) out.filing = filingOf(filedRows, judged, (fileRows?.length ?? 0) > 0);
+  return out;
 }

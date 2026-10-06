@@ -138,7 +138,10 @@ describe('BUG-INVSEEDPUT400-001 — editing a seed packet through the wide PUT',
     expect(stubState.sqlCalls).toHaveLength(2);
     const call = stubState.sqlCalls[0];
     expect(boundAfter(call, /variety_id\s*=\s*CASE\s*WHEN /)).toBe(true);
-    expect(boundAfter(call, /variety_id\s*=\s*CASE\s*WHEN \?\s*THEN /)).toBe(VARIETY);
+    // RESTATED for release 2a: the arm that assigns is now "the key was sent AND the stored row
+    // names no parent plant". The value bound to its THEN is still the body's variety; whether a
+    // given row takes it is the database's to decide (put-variety-guard.test.js).
+    expect(boundAfter(call, /variety_id\s*=\s*CASE\s*WHEN \?::boolean AND source_plant_id IS NULL\s*THEN /)).toBe(VARIETY);
   });
 
   describe('validateUpdate directly — the unit that had no test', () => {

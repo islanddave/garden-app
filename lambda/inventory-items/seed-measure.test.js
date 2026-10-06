@@ -68,7 +68,7 @@ const updateIssued = () => stubState.sqlCalls.some((k) => /UPDATE public\.invent
 // VALUES here, never "unset" — passing them is the point of most of these cases.
 const storedPair = (seed_count, seed_count_estimated, seed_weight_g = '0.500') => {
   stubState.sqlHandler = (text) => (/UPDATE/.test(text)
-    ? [{ id: ITEM, seed_count, seed_weight_g, seed_count_estimated }]
+    ? [{ id: ITEM, seed_count, seed_weight_g, seed_count_estimated, seed_parent_plant_count: null }]
     : [{ seed_count, seed_count_estimated }]);
 };
 
@@ -79,8 +79,10 @@ beforeEach(() => {
   // stub gives — otherwise "not 400" could not be told apart from "rejected somewhere else". The
   // default stored row is a COMPLETE pair (185/false), so bodies that touch only one half are legal
   // against it and the cases that must fail have to set up their own unmeasured lot.
+  // (seed_parent_plant_count rides in the row since release 2a — the UPDATE returns it. Its own
+  // cases are seed-parent-plant-count.test.js.)
   stubState.sqlHandler = () => [{
-    id: ITEM, seed_count: 185, seed_weight_g: '0.500', seed_count_estimated: false,
+    id: ITEM, seed_count: 185, seed_weight_g: '0.500', seed_count_estimated: false, seed_parent_plant_count: null,
   }];
 });
 
@@ -98,8 +100,10 @@ describe('V5-SEEDQTY-001 /seed-measure — route shape', () => {
   it('answers the documented body shape on success', async () => {
     const { status, body } = parse(await handler(measure({ seed_count: 185 })));
     expect(status).toBe(200);
+    // RESTATED for release 2a: the fourth measurement is echoed beside the three, always — a 200
+    // without the key is how a caller knows it reached a Lambda that predates the column.
     expect(Object.keys(body).sort())
-      .toEqual(['id', 'seed_count', 'seed_count_estimated', 'seed_weight_g']);
+      .toEqual(['id', 'seed_count', 'seed_count_estimated', 'seed_parent_plant_count', 'seed_weight_g']);
   });
 
   it('is PUT-only — every other verb 405s before any SQL runs', async () => {
@@ -133,7 +137,7 @@ describe('V5-SEEDQTY-001 /seed-measure — route shape', () => {
     expect(text).toContain('deleted_at IS NULL');
     expect(text).toContain("category = 'seeds'");
     expect(text).toContain('updated_at = NOW()');
-    expect(text).toMatch(/RETURNING id, seed_count, seed_weight_g, seed_count_estimated/);
+    expect(text).toMatch(/RETURNING id, seed_count, seed_weight_g, seed_count_estimated, seed_parent_plant_count\s*$/);
   });
 });
 

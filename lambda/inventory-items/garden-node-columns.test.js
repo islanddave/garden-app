@@ -21,7 +21,7 @@
 // Static source inspection rather than import: index.js loads @neondatabase/serverless and
 // @clerk/backend at module scope and cannot be imported under `npm ci` in CI.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,7 +37,14 @@ const decomment = (s) => s.split('\n')
 // 500 exactly as BUG-SEEDDETAIL500-001 did. Swept together with index.js, so every assertion below
 // that says "every garden_node query" means every one in either file.
 const HELPER_SRC = decomment(readFileSync(resolve(__dirname, 'seed-lot-parents.js'), 'utf8'));
-const SRC = `${decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'))}\n${HELPER_SRC}`;
+// V5-SEEDMULTIPARENT-001 (release 2a) — FOUR modules now. seed-lot-rules.js reads each parent
+// planting's variety (p.cultivar_id) for the parent rules, before the write and again inside it;
+// seed-lot-filing.js reads the parents' varieties to know their crop. Both reach the view through
+// p, both are swept here, and a test below pins that they are — a module left out of this string is
+// a module whose p.name would 500 with every assertion in this file green.
+const RULES_SRC = decomment(readFileSync(resolve(__dirname, 'seed-lot-rules.js'), 'utf8'));
+const FILING_SRC = decomment(readFileSync(resolve(__dirname, 'seed-lot-filing.js'), 'utf8'));
+const SRC = `${decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'))}\n${HELPER_SRC}\n${RULES_SRC}\n${FILING_SRC}`;
 
 // EVERY sql`` template that touches garden_node — `matchAll`, not the non-global `.match` this
 // file shipped with. That returned only the FIRST such template, which was fine while there was
@@ -145,6 +152,36 @@ describe('BUG-SEEDDETAIL500-001 — garden_node column contract', () => {
     // Exactly one takes a lock through the view, and it is a share lock.
     expect(helper.filter((q) => /\bFOR (UPDATE|SHARE|KEY SHARE|NO KEY UPDATE)\b/.test(q))).toHaveLength(1);
     expect(helper.filter((q) => /ORDER BY p\.id\s+FOR SHARE/.test(q))).toHaveLength(1);
+  });
+
+  it('sweeps the release-2a modules too — and no other module here names the view', () => {
+    const inModule = (src) => [...src.matchAll(/sql`[^`]*garden_node[^`]*`/g)].map((m) => m[0]);
+    // seed-lot-rules.js: the read before the transaction, and the judge inside it (its one-parent
+    // form names no table at all). seed-lot-filing.js: the filing judge.
+    const rules = inModule(RULES_SRC);
+    const filing = inModule(FILING_SRC);
+    expect(rules).toHaveLength(2);
+    expect(filing).toHaveLength(1);
+    for (const q of [...rules, ...filing]) expect(GARDEN_NODE_SQLS).toContain(q);
+    // What they read off the view: the planting's id, whose it is, and its variety. Nothing else —
+    // and never deleted_at: a parent whose planting was soft-deleted still has the variety it had.
+    const read = [...new Set([...rules, ...filing].flatMap(
+      (q) => [...q.matchAll(/\bp\.([a-z_][a-z0-9_]*)\b/gi)].map((m) => m[1]),
+    ))].sort();
+    expect(read).toEqual(['created_by', 'cultivar_id', 'id']);
+    // Every planting read in them is through the household.
+    for (const q of [...rules, ...filing]) {
+      const reads = (q.match(/(?:FROM|JOIN) public\.garden_node p\b/g) ?? []).length;
+      const scoped = (q.match(/\bp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? []).length;
+      expect(scoped, 'a planting read without the household').toBe(reads);
+    }
+    // The census, so a FIFTH module cannot join the directory unswept: every non-test module that
+    // names garden_node in SQL is one of the four concatenated above.
+    const naming = readdirSync(__dirname)
+      .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
+      .filter((f) => /sql`[^`]*garden_node[^`]*`/.test(decomment(readFileSync(resolve(__dirname, f), 'utf8'))))
+      .sort();
+    expect(naming).toEqual(['index.js', 'seed-lot-filing.js', 'seed-lot-parents.js', 'seed-lot-rules.js']);
   });
 
   it('selects display_name (aliased to name), never a bare p.name', () => {

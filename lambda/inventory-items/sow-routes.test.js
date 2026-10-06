@@ -212,7 +212,14 @@ describe('inventory-items Lambda — SEEDLINK route shape (static-source guard)'
     const putBranch = SRC.slice(putIdx, SRC.indexOf("if (method === 'DELETE')", putIdx));
     expect(putIdx).toBeGreaterThan(-1);
     expect(putBranch).toContain('UPDATE inventory_items SET');
-    expect(putBranch).not.toMatch(/\bsource_plant_id\b/);
+    // RESTATED for release 2a, and the property is unchanged: the column is never WRITTEN here. It
+    // is now READ here, once — the stored value decides whether this verb may assign variety_id (a
+    // lot that names a parent keeps the variety it is filed under). So: no assignment to it, no
+    // binding near it, and exactly that one mention.
+    expect(putBranch).not.toMatch(/\bsource_plant_id\s*=(?!=)/);
+    expect(putBranch).not.toMatch(/body\.source_plant_id/);
+    expect(putBranch.match(/\bsource_plant_id\b/g)).toHaveLength(1);
+    expect(putBranch).toMatch(/WHEN \$\{hasVariety\}::boolean AND source_plant_id IS NULL THEN \$\{body\.variety_id \?\? null\}\s+ELSE variety_id/);
   });
 });
 
