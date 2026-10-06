@@ -90,17 +90,60 @@ describe('BUG-INVSEEDPUT400-001 — the seed-packet PUT payload', () => {
     // longer broken in two ways at once.
   })
 
-  it('DOES carry variety_id when the list loaded — which is why prod has not been screaming', async () => {
+  it('does NOT carry variety_id when the list loaded either — the merge no longer echoes it', async () => {
     wire({ listRows: [SEED] })
     await renderAndSave()
     const body = putBody()
     expect(body.category).toBe('seeds')
-    // updateItem's `{...current, ...changes}` merge supplies variety_id, which buildChanges still
-    // omits. That masking is the whole reason a handler guard that rejects every seed packet
-    // survived to ship: the ONE caller happens to repair the payload before it is sent.
-    expect(body.variety_id).toBe('var-green-flesh')
+    // PIN INVERTED 2026-10-06 (V5-SEEDMULTIPARENT-001, R2a), deliberately — this case used to read
+    // `expect(body.variety_id).toBe('var-green-flesh')` under the title "DOES carry variety_id when
+    // the list loaded — which is why prod has not been screaming". Both halves of that were true:
+    // updateItem's `{...current, ...changes}` merge supplied the key buildChanges omits, and that
+    // masking is how a handler guard that rejected every seed packet survived to ship. The handler
+    // has since stopped requiring the key (an absent variety_id passes validation), so the echo
+    // repaired nothing any more and did one thing only: re-assert the variety the list held when the
+    // page mounted, over a re-file made since, with a 200. updateItem now removes it from the fetched
+    // row before the merge whenever the outgoing category is seeds.
+    // What this pin no longer guards: a handler that goes back to requiring variety_id on a seeds PUT
+    // would now 400 every Save on this page, list loaded or not. That is the case above, and
+    // lambda/inventory-items/put-seed-validate.test.js is where it is held.
+    expect(body).not.toHaveProperty('variety_id')
+    // The rest of what the fetched row used to send back and no narrow writer wants to hear again:
+    // the parent cache and its kind (SEED carries source_plant_id: null, so absence here is the strip
+    // and not the fixture), the three measure keys, and the projections the list adds.
+    for (const k of ['source_plant_id', 'source_plant_ids', 'source_plants', 'source_kind',
+                     'seed_parent_plant_count', 'variety_rank',
+                     'seed_count', 'seed_weight_g', 'seed_count_estimated']) {
+      expect(body, `${k} was echoed from the list row`).not.toHaveProperty(k)
+    }
     // `type` is no longer merge-dependent (WAVE 2 S2) — buildChanges sends it, so both cases now
     // carry it and this assertion holds for the same reason in both.
     expect(body.type).toBe('consumable')
+    // And the merge is still a merge: keys the form does not name ride through from the list row.
+    expect(body.variety_name).toBe('Green Flesh')
+    expect(body.seed_stage).toBeNull()
+  })
+
+  it('strips them when the list row actually holds values, and keeps what the form set', async () => {
+    wire({ listRows: [{
+      ...SEED, source_plant_id: 'plant-1', source_plant_ids: ['plant-1', 'plant-2'],
+      source_plants: [{ id: 'plant-1' }, { id: 'plant-2' }], source_kind: 'saved',
+      seed_parent_plant_count: 4, variety_rank: 'blend', seed_count: 40, seed_weight_g: 1.2,
+      seed_count_estimated: true, source_id: 'src-stale', acquired_from_source_id: 'src-stale-2',
+      year_harvested: 1986,
+    }] })
+    await renderAndSave()
+    const body = putBody()
+    for (const k of ['variety_id', 'source_plant_id', 'source_plant_ids', 'source_plants', 'source_kind',
+                     'seed_parent_plant_count', 'variety_rank',
+                     'seed_count', 'seed_weight_g', 'seed_count_estimated']) {
+      expect(body, `${k} was echoed from the list row`).not.toHaveProperty(k)
+    }
+    // The three keys this form owns are PRESENT, and carry the form's value (the id GET's row, which
+    // has none of them) rather than the list row's: an over-wide strip would drop them, and a strip
+    // applied after the merge instead of before it could not tell these from an echo.
+    expect(body).toHaveProperty('source_id', null)
+    expect(body).toHaveProperty('acquired_from_source_id', null)
+    expect(body).toHaveProperty('year_harvested', null)
   })
 })

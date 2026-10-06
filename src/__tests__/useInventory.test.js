@@ -243,6 +243,81 @@ describe('useInventory — updateItem', () => {
   })
 })
 
+// V5-SEEDMULTIPARENT-001 (R2a). The merge is `{ ...fetchedRow, ...payload }`, and the fetched row is
+// as old as the list. These are the keys it must not send back, and the three ways an over-wide or
+// mis-placed strip would show: a caller-set key dropped, a payload key dropped, and a packet that can
+// be moved out of Seeds because the body-only handler guard lost the key it reads.
+describe('useInventory — updateItem does not echo a seed lot\'s narrow-route keys', () => {
+  const LOT = {
+    id: 'lot-1', name: 'Carmen + Jimmy Nardello mix', type: 'consumable', category: 'seeds',
+    status: 'active', quantity_on_hand: 1, unit: 'packet',
+    variety_id: 'var-stale', variety_name: 'Carmen', variety_rank: 'cultivar',
+    source_plant_id: 'plant-1', source_plant_ids: ['plant-1', 'plant-2'],
+    source_plants: [{ id: 'plant-1' }, { id: 'plant-2' }], source_kind: 'saved',
+    seed_parent_plant_count: 4, seed_count: 40, seed_weight_g: 1.2, seed_count_estimated: true,
+    source_id: 'src-row', acquired_from_source_id: 'src-row-2', year_harvested: 1986,
+  }
+  const ECHO = ['source_plant_id', 'source_plant_ids', 'source_plants', 'source_kind',
+                'seed_parent_plant_count', 'variety_rank',
+                'seed_count', 'seed_weight_g', 'seed_count_estimated']
+
+  async function put(row, payload) {
+    fetchSpy.mockResolvedValueOnce(row ? [row] : [])
+    const { result } = renderHook(() => useInventory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    fetchSpy.mockResolvedValueOnce({ ...(row ?? {}), ...payload })
+    await act(async () => { await result.current.updateItem('lot-1', payload) })
+    const last = fetchSpy.mock.calls[fetchSpy.mock.calls.length - 1]
+    expect(last[1].method).toBe('PUT')
+    return JSON.parse(last[1].body)
+  }
+
+  it('a seeds row: variety_id and every narrow-route key are absent, the rest of the row rides', async () => {
+    const body = await put(LOT, { name: 'Renamed' })
+    expect(body).not.toHaveProperty('variety_id')
+    for (const k of ECHO) expect(body, `${k} was echoed`).not.toHaveProperty(k)
+    expect(body).toMatchObject({ id: 'lot-1', name: 'Renamed', type: 'consumable', category: 'seeds', unit: 'packet', variety_name: 'Carmen' })
+  })
+
+  it('a non-seeds OUTGOING category keeps variety_id, so the handler still refuses the move', async () => {
+    // The handler's only guard against a variety on a non-seeds row reads the body. Strip the key
+    // here and recategorising a packet stops being a 400 and becomes a 200.
+    const body = await put(LOT, { category: 'supplies' })
+    expect(body.category).toBe('supplies')
+    expect(body.variety_id).toBe('var-stale')
+    for (const k of ECHO) expect(body, `${k} was echoed`).not.toHaveProperty(k)
+  })
+
+  it('a row that is not seeds keeps its variety_id, and loses it only if it is being MOVED to seeds', async () => {
+    const tool = { ...SAMPLE_DURABLE, id: 'lot-1', variety_id: 'var-odd' }
+    expect((await put(tool, { name: 'X' })).variety_id).toBe('var-odd')
+    expect(await put(tool, { category: 'seeds' })).not.toHaveProperty('variety_id')
+  })
+
+  it('keys the caller sets on purpose go through, with the caller\'s value', async () => {
+    const body = await put(LOT, { source_id: 'src-new', acquired_from_source_id: null, year_harvested: 2026 })
+    expect(body).toMatchObject({ source_id: 'src-new', acquired_from_source_id: null, year_harvested: 2026 })
+    expect(body).toHaveProperty('acquired_from_source_id')
+  })
+
+  it('and when the caller sets none of them, the row\'s own three still ride (not in this strip)', async () => {
+    const body = await put(LOT, { name: 'Renamed' })
+    expect(body).toMatchObject({ source_id: 'src-row', acquired_from_source_id: 'src-row-2', year_harvested: 1986 })
+  })
+
+  it('the strip is of the FETCHED ROW, not of the payload', async () => {
+    const body = await put(LOT, { variety_id: 'var-chosen', source_plant_id: 'plant-9', variety_rank: 'blend' })
+    expect(body).toMatchObject({ variety_id: 'var-chosen', source_plant_id: 'plant-9', variety_rank: 'blend' })
+    // The measure keys are the standing exception (V5-SEEDQTY-001): removed after the merge.
+    expect(await put(LOT, { seed_count: 99 })).not.toHaveProperty('seed_count')
+  })
+
+  it('no row in the list: the payload goes through as given', async () => {
+    const body = await put(null, { name: 'X', category: 'seeds', variety_id: 'var-chosen' })
+    expect(body).toEqual({ name: 'X', category: 'seeds', variety_id: 'var-chosen' })
+  })
+})
+
 describe('useInventory — adjustQuantity', () => {
   it('optimistically updates qty then confirms with server response', async () => {
     fetchSpy.mockResolvedValueOnce([SAMPLE_CONSUMABLE])

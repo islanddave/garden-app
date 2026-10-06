@@ -264,15 +264,19 @@ const FERMENT_URGENCY = {
 //
 // What still comes through here is `year_harvested`, which has no narrow route. The wide PUT assigns
 // every column in its SET list unconditionally (`= ${body.x ?? null}`), so a short body is not a
-// partial update, it is a wipe. The complete row is therefore round-tripped, which is the same
-// contract InventoryDetail's putPayloadFrom() keeps for its stage write; the row available here is
-// the LIST row, which is `i.*` plus three derived columns.
+// partial update, it is a wipe. The complete row is therefore round-tripped; the row available here
+// is the LIST row, which is `i.*` plus the list query's projections.
 //
-// MIRRORS PUT_DERIVED_KEYS + PUT_PRESENCE_GUARDED_KEYS in src/pages/InventoryDetail.jsx, where the
-// per-key reasoning is spelled out. Duplicated rather than imported for the reason SaveSeedSheet.jsx
-// gives about PROCESS_ENTRY: a page importing from another page drags that page's whole module —
-// and PlantingSelect, PhotoUpload, useInventory behind it — into this chunk. The two lists are kept
-// in step by src/__tests__/SavedSeeds.storedCount.test.jsx, which reads both files' source text.
+// THIS LIST HAS NO MIRROR ANY MORE. It used to mirror PUT_DERIVED_KEYS + PUT_PRESENCE_GUARDED_KEYS in
+// src/pages/InventoryDetail.jsx; those constants and putPayloadFrom() were deleted with that page's
+// stage control (V5-SEEDSTAGEONEPLACE-001). What holds it now is the handler itself:
+// src/__tests__/SavedSeeds.storedCount.test.jsx scrapes lambda/inventory-items/index.js for every
+// key read as `hasOwnProperty.call(body, 'x')` and requires each one in the array literal below,
+// found IN THIS FILE by regex, so it stays here and stays one literal.
+// The lot page's wide PUT keeps a second, SHORTER list of its own (SEED_ROW_ECHO_KEYS and
+// SEED_MEASURE_KEYS in src/hooks/useInventory.js) and the two are two lists on purpose: that page's
+// form sets `source_id`, `acquired_from_source_id` and `year_harvested` deliberately, and this list
+// strips all three.
 //
 // `seed_stage` is the one that would BITE rather than merely leak. The list row carries the lot's
 // stage as it was BEFORE the advance, so echoing that key back would revert the stage the POST just
@@ -283,8 +287,8 @@ const FERMENT_URGENCY = {
 // projections the LIST query adds (a cultivar join and a LATERAL), not columns. Inert in the SET
 // list either way; stripped so the body is only ever columns.
 //
-// `source_plant_id` / `source_kind` (pre-promote MINOR #1) are the delay-fuse pair — see the note on
-// PUT_PRESENCE_GUARDED_KEYS in InventoryDetail.jsx. Neither is in the handler's PUT SET list today,
+// `source_plant_id` / `source_kind` (pre-promote MINOR #1) are the delay-fuse pair. Neither is in
+// the handler's PUT SET list today,
 // so both ride through harmlessly; the day either is added, a stale round-trip from this page would
 // null the parent plant off the very lot the count belongs to. The subset test below is what
 // forced them in here rather than only there, which is the seam working as intended.
@@ -337,6 +341,10 @@ const FERMENT_URGENCY = {
 // `variety_source_url` because `i.*` already carries the lot's own `source_url`, which the wide PUT
 // assigns bare. None names a column on inventory_items and the SET list mentions none, so each rides
 // inert today — the delay fuse above, stripped before anything can arm it.
+//
+// V5-SEEDMULTIPARENT-001 (R2a) adds `seed_parent_plant_count` and `variety_rank`. The first is a real
+// column whose only writer is PUT /:id/seed-measure, the same case as the three measure keys above;
+// the second is a projection of the filed variety, the same case as `variety_name`.
 const LIST_ROW_PUT_STRIP = [
   'variety_name', 'stage_entered_at', 'crop_slug', 'featured_photo_view_url', 'featured_is_explicit',
   'germination', 'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage', 'source_plant_id',
@@ -346,6 +354,7 @@ const LIST_ROW_PUT_STRIP = [
   'featured_photo_thumb_url', 'hero_photo_id', 'hero_thumb_key', 'scoville_min', 'scoville_max', 'scoville_source',
   'origin_country', 'origin_region', 'species', 'breeding_system', 'days_to_maturity_min',
   'days_to_maturity_max', 'dtm_basis', 'variety_source_url',
+  'seed_parent_plant_count', 'variety_rank',
 ]
 
 /**

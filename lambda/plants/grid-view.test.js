@@ -194,6 +194,11 @@ describe('GET /api/plants — the DEFAULT response shape is unchanged (V4-PLANTS
     for (const [label, q] of [['unscoped', UNSCOPED_SQL], ['scoped', SCOPED_SQL]]) {
       const keys = varietyRefKeys(q);
       expect(keys, `${label} variety_ref subfield count changed`).toHaveLength(22);
+      // Still 22 after V5-SEEDMULTIPARENT-001 (R2a): variety_rank and blend_key went onto the PICKER
+      // projection only, so neither default branch gains them.
+      for (const k of ['variety_rank', 'blend_key']) {
+        expect(keys, `${label} variety_ref gained ${k}; only the picker carries it`).not.toContain(k);
+      }
       for (const k of ['care_notes', 'soil_notes', 'common_diseases', 'expected_yield_notes', 'growth_habit', 'source_url']) {
         expect(keys, `${label} variety_ref lost ${k} from the DEFAULT shape`).toContain(k);
       }
@@ -367,7 +372,13 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
     // out of THIS list and hands it to SaveSeedSheet, whose F1 warning reads
     // variety_ref.breeding_system — so the field is a handoff through EventNew, not a read by it.
     // It is one short enum string and carries no prose, so the projection stays narrow.
-    expect(varietyRefKeys(PICKER_SQL).sort()).toEqual(['breeding_system', 'crop_type_slug', 'default_unit', 'id', 'name', 'species']);
+    // variety_rank and blend_key added 2026-10-06 (V5-SEEDMULTIPARENT-001, R2a), the same kind of
+    // handoff: the save flow tells a named mix from a single variety, and reads the mix's leaf ids,
+    // off plantings resolved out of this list. A short enum and a short id list, still no prose.
+    // 6 -> 8, and an exact set: a ninth key reds here.
+    expect(varietyRefKeys(PICKER_SQL).sort()).toEqual(['blend_key', 'breeding_system', 'crop_type_slug', 'default_unit', 'id', 'name', 'species', 'variety_rank']);
+    expect(varietyRefKeys(PICKER_SQL)).toHaveLength(8);
+    expect(PICKER_SQL).toMatch(/'variety_rank', pv\.variety_rank,\s+'blend_key', pv\.blend_key\)/);
     expect(PICKER_SQL).not.toMatch(/care_notes|soil_notes|common_diseases|expected_yield_notes|source_url/);
   });
 

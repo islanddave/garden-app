@@ -25,6 +25,12 @@ import { createQuantityAdjuster } from '../lib/quantityAdjuster.js'
 const TOAST_MS = 5000
 // Written only through PUT /api/inventory-items/:id/seed-measure; see updateItem.
 const SEED_MEASURE_KEYS = ['seed_count', 'seed_weight_g', 'seed_count_estimated']
+// Never echoed from the fetched list row into the wide PUT; see updateItem. `variety_id` joins them
+// only while the outgoing category is `seeds`.
+const SEED_ROW_ECHO_KEYS = [
+  'source_plant_id', 'source_plant_ids', 'source_plants', 'source_kind', 'seed_parent_plant_count',
+  'variety_rank',
+]
 
 export function useInventory() {
   const { fetch } = useApiFetch()
@@ -122,7 +128,23 @@ export function useInventory() {
     // invokes the current render's instance — but "current item in list" above is only true of the
     // live list, and the two readers of state in this hook should not disagree about which one.
     const current = itemsRef.current.find(i => i.id === id)
-    const fullPayload = current ? { ...current, ...payload } : { ...payload }
+    // V5-SEEDMULTIPARENT-001 (R2a) — the list row is `i.*` plus projections, as it stood when the list
+    // loaded, and this merge used to send all of it back. A lot's variety, its parents and its plant
+    // count each have a narrow writer (PUT /:id/filing, /:id/source-plants, /:id/seed-measure), so a
+    // row fetched before one of those ran would re-assert the old value here, with a 200. They are
+    // removed from the FETCHED ROW, before the merge, and never from `payload`: a key the caller sets
+    // on purpose (source_id, acquired_from_source_id, year_harvested, or a variety_id of its own)
+    // still goes through.
+    // `variety_id` is removed only while the outgoing category is `seeds`. The handler refuses a
+    // variety on a non-seeds row by reading the BODY, so the echoed key is what makes moving a packet
+    // out of Seeds answer 400 from every bundle; strip it there too and that write would succeed.
+    let base = current
+    if (current) {
+      base = { ...current }
+      for (const k of SEED_ROW_ECHO_KEYS) delete base[k]
+      if ({ ...current, ...payload }.category === 'seeds') delete base.variety_id
+    }
+    const fullPayload = base ? { ...base, ...payload } : { ...payload }
     // V5-SEEDQTY-001 — a seed lot's measure never rides this PUT. PUT /:id/seed-measure is the only
     // writer of these three columns, and the list row merged above carries them (`i.*`) as they stood
     // when the list loaded: InventoryDetail writes a new count through that route and then, on its

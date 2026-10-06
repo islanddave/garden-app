@@ -1808,6 +1808,12 @@ export const handler = async (event) => {
             -- page, which is the failure this projection's own comments were written to prevent.
             -- Obeying EventNew.jsx:1271: a new field read on this path is added HERE rather than by
             -- reverting the call site to the wide shape.
+            --
+            -- variety_rank and blend_key are carried from V5-SEEDMULTIPARENT-001 (R2a), again as a
+            -- handoff: the save sheet has to tell a named mix from a single variety, and name the
+            -- mix's leaf varieties, for plantings it resolves out of THIS list. blend_key is the
+            -- cultivar view's last column (migrations/v5-varietyblend-001); NULL for every variety
+            -- that is not a mix.
             SELECT gp.id, gp.display_name AS name, gp.quantity,
                    gp.container_id AS project_id, pp.display_name AS project_name,
                    gp.sown_at, gp.succession_order,
@@ -1823,7 +1829,9 @@ export const handler = async (event) => {
                        'crop_type_slug', pv.crop_type_slug,
                        'default_unit', ct.default_unit,
                        'species', pv.species,
-                       'breeding_system', pv.breeding_system)
+                       'breeding_system', pv.breeding_system,
+                       'variety_rank', pv.variety_rank,
+                       'blend_key', pv.blend_key)
                    ELSE NULL END AS variety_ref
             FROM public.garden_node gp
             LEFT JOIN public.container pp ON pp.id = gp.container_id

@@ -4227,6 +4227,7 @@
        "name": "Sugar Baby",
        "lb": 13.184
       },
+      "parent_count": 1,
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
@@ -4252,6 +4253,7 @@
        "name": "1884",
        "lb": 5.87
       },
+      "parent_count": 1,
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
@@ -4277,6 +4279,7 @@
        "name": "Ukrainian Purple",
        "lb": 9.364
       },
+      "parent_count": 1,
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
@@ -4302,6 +4305,7 @@
        "name": "Black Cherry",
        "lb": 4.245
       },
+      "parent_count": 1,
       "source": {
        "id": "13503c22-8b71-4424-b9a2-d3115cd73d1e",
        "name": "Bonnie Plants",
@@ -4327,6 +4331,7 @@
        "name": "Rosa Sicilian",
        "lb": 5.551
       },
+      "parent_count": 1,
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
@@ -4348,6 +4353,7 @@
       "stage": "stored",
       "saved_on": "2026-09-07",
       "parent": null,
+      "parent_count": 0,
       "source": {
        "id": "a834567e-95ff-4cb9-aaa4-df2b2605f58e",
        "name": "Dave's Natural Garden",
@@ -4369,6 +4375,7 @@
       "stage": "stored",
       "saved_on": "2026-09-07",
       "parent": null,
+      "parent_count": 0,
       "source": {
        "id": "a834567e-95ff-4cb9-aaa4-df2b2605f58e",
        "name": "Dave's Natural Garden",
@@ -4390,6 +4397,7 @@
       "stage": "stored",
       "saved_on": "2026-09-07",
       "parent": null,
+      "parent_count": 0,
       "source": null
      },
      {
@@ -4401,6 +4409,7 @@
       "stage": "stored",
       "saved_on": "2026-09-07",
       "parent": null,
+      "parent_count": 0,
       "source": {
        "id": "aae935fb-66ea-4ecf-a507-5c4a41aba3c6",
        "name": "Whately Plant Swap",
@@ -4426,6 +4435,7 @@
        "name": "Green Flesh",
        "lb": 9.052
       },
+      "parent_count": 1,
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
@@ -4451,6 +4461,7 @@
        "name": "Delicious",
        "lb": 19.187
       },
+      "parent_count": 1,
       "source": null
      },
      {
@@ -4466,6 +4477,7 @@
        "name": "Ristra Cayenne II",
        "lb": 2.396
       },
+      "parent_count": 1,
       "source": {
        "id": "33d65987-fed1-40e9-967a-c3ec604b64c1",
        "name": "Burpee",
@@ -4491,6 +4503,7 @@
        "name": "Cucamelon",
        "lb": 2.985
       },
+      "parent_count": 1,
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
@@ -4516,6 +4529,7 @@
        "name": "Green Flesh",
        "lb": 9.052
       },
+      "parent_count": 1,
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
@@ -4541,6 +4555,7 @@
        "name": "Big Boy",
        "lb": 19.781
       },
+      "parent_count": 1,
       "source": null
      },
      {
@@ -4556,6 +4571,7 @@
        "name": "Cherokee Green",
        "lb": 6.129
       },
+      "parent_count": 1,
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
@@ -4581,6 +4597,7 @@
        "name": "Pineapple Tomatillo",
        "lb": 1.731
       },
+      "parent_count": 1,
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
@@ -4606,6 +4623,7 @@
        "name": "Ghost",
        "lb": 0.271
       },
+      "parent_count": 1,
       "source": {
        "id": "0d50a7d7-9c30-4e27-bef8-80c59770b716",
        "name": "Greenfield Farmers Co-op",
@@ -4631,6 +4649,7 @@
        "name": "Piri Piri",
        "lb": 0.517
       },
+      "parent_count": 1,
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
@@ -4656,6 +4675,7 @@
        "name": "Gong Bao (Kung Pao)",
        "lb": 0.06
       },
+      "parent_count": 1,
       "source": {
        "id": "a593e061-890d-4f2c-b57c-74addab84e0c",
        "name": "Jen",
@@ -4681,6 +4701,7 @@
        "name": "Thai Dragon",
        "lb": 0.057
       },
+      "parent_count": 1,
       "source": null
      },
      {
@@ -4696,6 +4717,7 @@
        "name": "Sunray",
        "lb": 2.765
       },
+      "parent_count": 1,
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
@@ -4721,6 +4743,7 @@
        "name": "Manitoba",
        "lb": 4.993
       },
+      "parent_count": 1,
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
@@ -4746,6 +4769,7 @@
        "name": "Sugar Rush Peach",
        "lb": 0.869
       },
+      "parent_count": 1,
       "source": {
        "id": "34064c67-f25b-4585-8f91-8fd350fad643",
        "name": "Skawski Farms",
@@ -4767,6 +4791,7 @@
       "stage": "drying",
       "saved_on": "2026-09-22",
       "parent": null,
+      "parent_count": 0,
       "source": {
        "id": "a834567e-95ff-4cb9-aaa4-df2b2605f58e",
        "name": "Dave's Natural Garden",
@@ -4792,6 +4817,7 @@
        "name": "Pineapple Tomato",
        "lb": 3.408
       },
+      "parent_count": 1,
       "source": {
        "id": "7d74da59-d1b3-4a6e-8861-cb663f3bc09b",
        "name": "Emma Daley",

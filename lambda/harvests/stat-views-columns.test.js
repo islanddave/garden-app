@@ -21,7 +21,7 @@
 // columns the migration's own post gates assert, so a column the handler reads that the view does not
 // project reds HERE, offline, rather than first in the prod audit.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -52,7 +52,7 @@ const AUDIT_COLUMNS = {
   stat_tomato_keep: ['container_size', 'cultivar', 'fruit', 'g_per_fruit', 'grow_year', 'late_aug', 'lb', 'measured_share', 'median_lb', 'owner', 'planting_id', 'verdict', 'x_median'],
   stat_longest_giving: ['crop_name', 'cultivar', 'first_pick', 'grow_year', 'last_pick', 'lb', 'lb_per_plant_week', 'owner', 'pick_days', 'planting_id', 'plants', 'rank_by_window', 'season_last_pick', 'still_picking', 'window_days'],
   stat_tomato_month_size: ['aug_fruit', 'aug_g', 'aug_grams', 'cultivar', 'fruit_weighted_ratio', 'grow_year', 'owner', 'ratio', 'sep_fruit', 'sep_g', 'sep_grams'],
-  stat_saved_lot: ['count_estimated', 'crop_slug', 'cultivar', 'grow_year', 'lot_id', 'owner', 'parent_lb', 'parent_name', 'parent_planting_id', 'saved_at', 'saved_on', 'seed_count', 'source_address', 'source_facebook_url', 'source_id', 'source_instagram_url', 'source_kind', 'source_locality', 'source_name', 'source_website_url', 'stage', 'via_name'],
+  stat_saved_lot: ['count_estimated', 'crop_slug', 'cultivar', 'grow_year', 'lot_id', 'owner', 'parent_lb', 'parent_name', 'parent_planting_id', 'saved_at', 'saved_on', 'seed_count', 'source_address', 'source_facebook_url', 'source_id', 'source_instagram_url', 'source_kind', 'source_locality', 'source_name', 'source_website_url', 'stage', 'via_name', 'parent_count'],
 };
 
 const RELATIONS = Object.keys(AUDIT_COLUMNS);
@@ -87,11 +87,22 @@ const ALL_STATEMENTS = HANDLERS.flatMap((f) => {
 });
 const statementsFor = (rel) => ALL_STATEMENTS.filter((s) => bindings(rel, s.sql).length > 0);
 
-// The named columns each view's post gate asserts (generated from the views' real output on prod).
-const GATES = readFileSync(resolve(__dirname, '../../migrations/v5-seasonstats-001/gates.yml'), 'utf8');
+// The named columns each view's post gates assert (generated from the views' real output on prod).
+// TWO gate files since V5-SEEDMULTIPARENT-001 (R2a): stat_saved_lot gained parent_count as its last
+// column in migrations/v5-seedstatsparents-001, and that column is asserted in THAT migration's gates,
+// armed on its own stamp. The 22-name gate in v5-seasonstats-001 is deliberately not widened: the same
+// gate text runs against every database, and a 23rd name there reds wherever the view has not been
+// replaced yet. A view's projected set is therefore the union of every gate, in either file, that
+// names it. A gates file that is not on disk contributes nothing, so its column reds below by name
+// rather than this whole file failing to load.
+const GATE_FILES = ['v5-seasonstats-001', 'v5-seedstatsparents-001']
+  .map((m) => resolve(__dirname, '../../migrations', m, 'gates.yml'));
+const GATES = GATE_FILES.filter((f) => existsSync(f)).map((f) => readFileSync(f, 'utf8'));
 function gateColumns(rel) {
-  const m = GATES.match(new RegExp(String.raw`table_name = '${rel}'\s+AND column_name IN \(([^)]*)\)`));
-  return m ? [...m[1].matchAll(/'([a-z_0-9]+)'/g)].map((x) => x[1]) : null;
+  const re = new RegExp(String.raw`table_name = '${rel}'\s+AND column_name IN \(([^)]*)\)`, 'g');
+  const lists = GATES.flatMap((g) => [...g.matchAll(re)].map((m) => m[1]));
+  if (!lists.length) return null;
+  return [...new Set(lists.flatMap((l) => [...l.matchAll(/'([a-z_0-9]+)'/g)].map((x) => x[1])))];
 }
 
 describe('V5-SEASONSTATS-001 — lambda/harvests stat_* view column contract', () => {
@@ -103,6 +114,15 @@ describe('V5-SEASONSTATS-001 — lambda/harvests stat_* view column contract', (
       expect(statementsFor(rel), rel).toHaveLength(1);
       expect(statementsFor(rel)[0].file, rel).toBe('season-stats.js');
     }
+  });
+
+  it('reads the season-stats gates, and both files once the parents migration is on disk', () => {
+    // The first file is not optional: without it every gateColumns() answer is null.
+    expect(existsSync(GATE_FILES[0]), GATE_FILES[0]).toBe(true);
+    expect(gateColumns('stat_saved_lot')).toContain('lot_id');
+    // The 22-name gate stays 22 names. parent_count belongs to the other file.
+    const first = readFileSync(GATE_FILES[0], 'utf8');
+    expect(first).not.toMatch(/'parent_count'/);
   });
 
   it('every stat_* relation any handler here binds has a contract entry', () => {

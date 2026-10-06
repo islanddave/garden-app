@@ -671,5 +671,27 @@ describe('listRowPutBody — the strip list, and its agreement with the handler'
                      'stage_entered_at', 'crop_slug', ...CARD_PROJECTIONS]) {
       expect(ours, `${k} must stay in LIST_ROW_PUT_STRIP`).toContain(k)
     }
+    // V5-SEEDMULTIPARENT-001 (R2a), named for the same reason: neither is reachable by the scrape
+    // above. `seed_parent_plant_count` is a real column whose one writer is PUT /:id/seed-measure,
+    // so it is found only if that route happens to read it by this idiom in index.js;
+    // `variety_rank` is a projection of the filed variety. The parents pair rides with them.
+    for (const k of ['seed_parent_plant_count', 'variety_rank', 'source_plant_ids', 'source_plants']) {
+      expect(ours, `${k} must stay in LIST_ROW_PUT_STRIP`).toContain(k)
+    }
+    // And the scrape stays anchored on ONE array literal in SavedSeeds.jsx: the lot page's own
+    // shorter list lives in useInventory.js and is a second list on purpose, because that page's
+    // form sets three keys this list strips.
+    expect(saved.match(/\bLIST_ROW_PUT_STRIP\s*=\s*\[/g)).toHaveLength(1)
+    for (const k of ['source_id', 'acquired_from_source_id', 'year_harvested']) {
+      expect(ours, `${k} must stay in LIST_ROW_PUT_STRIP`).toContain(k)
+    }
+    const hook = readFileSync(resolve(ROOT, 'src/hooks/useInventory.js'), 'utf8')
+    const hm = hook.match(/\bSEED_ROW_ECHO_KEYS\s*=\s*\[([^\]]*)\]/)
+    expect(hm, 'SEED_ROW_ECHO_KEYS not found in useInventory.js — renamed, moved, or reformatted').toBeTruthy()
+    const theirs = [...hm[1].matchAll(/'([^']*)'/g)].map(x => x[1])
+    expect(theirs.filter(k => !ours.includes(k)), 'stripped on the lot page but not on this one').toEqual([])
+    for (const k of ['source_id', 'acquired_from_source_id', 'year_harvested', 'variety_id']) {
+      expect(theirs, `${k} must not be in the lot page's unconditional list`).not.toContain(k)
+    }
   })
 })

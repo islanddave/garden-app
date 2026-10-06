@@ -131,7 +131,8 @@ const QUERIES = {
     SELECT sl.owner, sl.lot_id, sl.cultivar, sl.crop_slug, sl.seed_count, sl.count_estimated, sl.stage,
            sl.saved_on::text AS saved_on, sl.saved_at::text AS saved_at, sl.parent_planting_id, sl.parent_name, sl.parent_lb,
            sl.source_id, sl.source_name, sl.source_kind, sl.source_locality, sl.source_address,
-           sl.source_website_url, sl.source_instagram_url, sl.source_facebook_url, sl.via_name
+           sl.source_website_url, sl.source_instagram_url, sl.source_facebook_url, sl.via_name,
+           sl.parent_count
       FROM public.stat_saved_lot sl
      WHERE sl.owner = ANY(${ids}::text[]) AND sl.grow_year = ${y}::int`,
 };

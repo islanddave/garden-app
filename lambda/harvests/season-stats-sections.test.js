@@ -76,6 +76,7 @@ const RESULTS = {
     parent_name: 'Sugar Baby', parent_lb: 13.21, source_id: id(9), source_name: 'Starview Gardens', source_kind: 'nursery',
     source_locality: 'Somewhere', source_address: '1 Road', source_website_url: 'https://example.com',
     source_instagram_url: 'https://www.instagram.com/x', source_facebook_url: 'https://www.facebook.com/x', via_name: 'A market',
+    parent_count: 1,
   }],
 };
 
@@ -420,5 +421,20 @@ describe('seed_lots', () => {
     expect(s.series.rows.map((r) => r.lot_id)).toEqual([id(7), id(2)]);
     expect(s.series.rows[0].source).toMatchObject({ instagram_url: 'https://www.instagram.com/x', facebook_url: 'https://www.facebook.com/x', via: 'A market' });
     expect(s.series.rows[0].parent).toEqual({ planting_id: id(8), name: 'Sugar Baby', lb: 13.21 });
+  });
+
+  it('carries parent_count on every item, as a whole number', () => {
+    // stat_saved_lot.parent_count (migrations/v5-seedstatsparents-001): the lot's live seed-parent
+    // links, never less than one when the lot has a parent planting. `parent` stays the one cached
+    // planting; this is how many there are.
+    const rows = [
+      RESULTS.lots[0],
+      { ...RESULTS.lots[0], lot_id: id(2), parent_count: '3' },
+      { ...RESULTS.lots[0], lot_id: id(3), parent_planting_id: null, parent_count: 0 },
+    ];
+    const s = shapeSeedLots({ rows }, GEN);
+    expect(s.series.rows.map((r) => [r.lot_id, r.parent_count])).toEqual([[id(2), 3], [id(3), 0], [id(7), 1]]);
+    expect(s.series.rows.find((r) => r.lot_id === id(3)).parent).toBeNull();
+    for (const r of s.series.rows) expect(Number.isInteger(r.parent_count)).toBe(true);
   });
 });

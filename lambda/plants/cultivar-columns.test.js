@@ -60,11 +60,16 @@ const HANDLERS = readdirSync(__dirname)
 // arrives with migrations/v5-scovillesource-001, which appends it to the cultivar VIEW and must be
 // applied to staging and prod before this reaches dev; until then dev-main-schema-audit.py reports
 // exactly this column missing from prod, which is the ordering guard working.
+// 2026-10-06 (V5-SEEDMULTIPARENT-001, R2a): variety_rank and blend_key added, both read by the
+// ?view=picker variety_ref only. variety_rank has been on the view since v5-varietyhybridflag-001.
+// blend_key is NOT YET ON PROD: migrations/v5-varietyblend-001 appends it as the view's last column
+// and must be applied to staging and prod before this reaches dev, the same ordering guard as
+// scoville_source above.
 // The keyed form binds columns to ONE relation, so this file cannot assert its list onto whatever
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
 const AUDIT_COLUMNS = {
-  cultivar: ['breeding_system', 'care_notes', 'common_diseases', 'crop_type_slug', 'days_to_maturity_max', 'days_to_maturity_min', 'deleted_at', 'display_name', 'dtm_basis', 'expected_yield_notes', 'genus', 'growth_habit', 'id', 'lifecycle', 'photo_id', 'scoville_max', 'scoville_min', 'scoville_source', 'soil_notes', 'source_url', 'species', 'sun_requirements'],
+  cultivar: ['blend_key', 'breeding_system', 'care_notes', 'common_diseases', 'crop_type_slug', 'days_to_maturity_max', 'days_to_maturity_min', 'deleted_at', 'display_name', 'dtm_basis', 'expected_yield_notes', 'genus', 'growth_habit', 'id', 'lifecycle', 'photo_id', 'scoville_max', 'scoville_min', 'scoville_source', 'soil_notes', 'source_url', 'species', 'sun_requirements', 'variety_rank'],
 };
 
 const CULTIVAR_COLUMNS = AUDIT_COLUMNS.cultivar;

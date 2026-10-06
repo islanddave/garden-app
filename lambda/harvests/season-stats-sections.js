@@ -349,6 +349,7 @@ export function shapeSeedLots({ rows = [] }, generatedAt) {
         parent: r.parent_planting_id
           ? { planting_id: r.parent_planting_id, name: r.parent_name ?? null, lb: round(r.parent_lb, LB_DP) }
           : null,
+        parent_count: int(r.parent_count),
         source: r.source_name
           ? {
             id: r.source_id, name: r.source_name, kind: r.source_kind ?? null, locality: r.source_locality ?? null,
