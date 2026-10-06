@@ -33,6 +33,13 @@
 //     parent_without_variety and EVERY promote is refused, whoever dispatches it;
 //   * the mix's component rows deleted after "DELETE FROM plant_varieties", or not at all: 23503 at the next
 //     promote and every one after it (both of the table's keys are RESTRICT; rehearsed on a local PG 17);
+//   * the component delete and the delete of the mix row split into two psql calls again, or either moved back
+//     into a chain: between them, and for good when the chain stops on the way, staging holds a keyed mix with no
+//     component row, which is a row of the standing gate post_blend_key_equals_live_components (review finding S1);
+//   * a helper every block-U line runs through changed under it (review finding S2): sp_req sending no token or
+//     no body, the uuid pattern, sp_id_ok, sp_jq and sp_jqx, sp_drop answering 0 after a failed DELETE, cleanup()'s
+//     loop sending something other than DELETE; or the sweep's own skip test inverted, so that it sweeps nothing
+//     and reports success;
 //   * the mix found by its NAME only: a renamed mix keeps its component rows and the same 23503 follows;
 //   * the mix ids captured after a delete has run, or the capture, the delete or the residue term run without
 //     the to_regclass test on a database that has no variety_blend_component;
@@ -174,7 +181,7 @@ const SMOKE_VARIETIES = `SELECT id FROM plant_varieties WHERE ${VARIETY_PREDICAT
 const MIX_IDS = "ANY('{$SMOKE_MIX_IDS}'::uuid[])"
 const VARIETY_IDS = "ANY('{$SMOKE_VARIETY_IDS}'::uuid[])"
 
-describe('the L-058 sweep takes a smoke mix\'s component rows before the varieties, and the mix by id', () => {
+describe('the L-058 sweep takes a smoke mix apart in one transaction: its component rows, then the mix by id', () => {
   const run = SWEEP.run
   const lines = run.split('\n')
   const probe = run.indexOf(
@@ -188,6 +195,11 @@ describe('the L-058 sweep takes a smoke mix\'s component rows before the varieti
   const COMPONENT_DELETE = `DELETE FROM variety_blend_component WHERE blend_variety_id = ${VARIETY_IDS} OR component_variety_id = ${VARIETY_IDS};`
   const LEFT = `BLEND_LEFT="(SELECT COUNT(*) FROM variety_blend_component WHERE blend_variety_id = ${VARIETY_IDS} OR component_variety_id = ${VARIETY_IDS})"`
   const chain = run.indexOf('psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 \\\n')
+  // ONE -c string, two statements: psql sends it as one query, which the server runs as one transaction
+  const MIX_DELETE = `DELETE FROM plant_varieties WHERE id = ${MIX_IDS} RETURNING id, name;`
+  const TX = `psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -c "${COMPONENT_DELETE} ${MIX_DELETE}"`
+  const tx = lines.findIndex((l) => l.trim() === TX)
+  const CARE = `-c "DELETE FROM care_profile   WHERE scope='cultivar' AND (scope_id IN (${SMOKE_VARIETIES}) OR scope_id = ${MIX_IDS});"`
 
   it('has one delete of varieties by name to take the smoke-variety predicate from', () => {
     expect(VARIETY_DELETES).toHaveLength(1)
@@ -221,50 +233,81 @@ describe('the L-058 sweep takes a smoke mix\'s component rows before the varieti
     expect(run.match(/SMOKE_VARIETY_IDS=/g) ?? []).toHaveLength(2)
   })
 
-  it('deletes the component rows of every captured id, once, under ON_ERROR_STOP, inside the guarded arm', () => {
-    const deletes = run.match(/DELETE FROM variety_blend_component\b[^"]*/g) ?? []
+  it('deletes the component rows of every captured id, once, under ON_ERROR_STOP, and not in the capture arm', () => {
+    const deletes = run.match(/DELETE FROM variety_blend_component\b[^";]*;/g) ?? []
     expect(deletes).toHaveLength(1)
     expect(deletes[0]).toBe(COMPONENT_DELETE)
-    expect(arm).toContain(`psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -c "${COMPONENT_DELETE}"`)
-    // after the append: before it the list holds the smoke-named varieties only
-    expect(arm.indexOf(COMPONENT_DELETE)).toBeGreaterThan(arm.indexOf(APPEND))
+    expect(run).toContain(`psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -c "${COMPONENT_DELETE} `)
+    // the capture arm deletes nothing: it reads the ids, extends the list, says what it found, sets the residue term
+    expect(arm).not.toContain('DELETE FROM')
     expect(arm).toContain(LEFT)
-    expect(arm.indexOf(LEFT)).toBeGreaterThan(arm.indexOf(COMPONENT_DELETE))
+    expect(arm.indexOf(LEFT)).toBeGreaterThan(arm.indexOf(APPEND))
+    // after the append: before it the list holds the smoke-named varieties only
+    expect(run.indexOf(COMPONENT_DELETE)).toBeGreaterThan(run.indexOf(APPEND))
   })
 
-  it('names the table only in the probe and in that arm, never in the main chain', () => {
+  it('prints the captured mix ids before any delete, and each mix row the by-id delete removes', () => {
+    const SAID = 'echo "  mix ids captured, before any delete: ${SMOKE_MIX_IDS:-none}"'
+    expect(arm).toContain(SAID)
+    expect(arm.indexOf(SAID)).toBeGreaterThan(arm.indexOf(APPEND))
+    expect(run.indexOf('DELETE FROM')).toBeGreaterThan(run.indexOf(SAID))
+    // the one delete here that reaches a plant_varieties row not named smoke shows what it took
+    expect(MIX_DELETE.endsWith(' RETURNING id, name;')).toBe(true)
+    expect(run).toContain(MIX_DELETE)
+  })
+
+  it('names the table only in the probe and behind its two to_regclass tests, never in a chain', () => {
     const calls = lines.filter((l) => l.includes('psql ') && l.includes('variety_blend_component'))
     expect(calls).toHaveLength(3)
     expect(calls[0]).toContain("to_regclass('public.variety_blend_component')")
     expect(arm).toContain(calls[1].trim())
-    expect(arm).toContain(calls[2].trim())
+    expect(calls[2].trim()).toBe(TX)
+    expect(run.match(/if \[\[ "\$BLEND_TABLE" == "t" \]\]; then\n/g) ?? []).toHaveLength(2)
     expect(lines.filter((l) => l.trimStart().startsWith('-c "') && l.includes('variety_blend_component'))).toHaveLength(0)
     expect(arm).not.toContain('-c "DELETE FROM plants ')
     expect(lines.find((l) => l.startsWith('REMAINING='))).not.toContain('variety_blend_component')
   })
 
-  it('runs the component delete ahead of the main chain, and so ahead of both variety deletes', () => {
-    const component = run.indexOf(COMPONENT_DELETE)
-    expect(chain).toBeGreaterThan(component)
-    expect(run.indexOf('-c "DELETE FROM plant_varieties ')).toBeGreaterThan(chain)
+  // Review finding S1. Apart, the two deletes leave a keyed mix with no component row between them, and for good
+  // when the chain stops on the way: a row of the standing gate post_blend_key_equals_live_components.
+  it('deletes a mix\'s component rows and the mix row in ONE psql -c string, behind the to_regclass test', () => {
+    expect(tx).toBeGreaterThan(-1)
+    expect(lines.filter((l) => l.trim() === TX)).toHaveLength(1)
+    expect(lines[tx - 1].trim()).toBe('if [[ "$BLEND_TABLE" == "t" ]]; then')
+    expect(lines[tx + 1].trim()).toBe('fi')
+    // each statement appears once in the step, and neither as a call or a chain line of its own
+    expect(run.split(COMPONENT_DELETE)).toHaveLength(2)
+    expect(run.match(/DELETE FROM plant_varieties WHERE id\b/g) ?? []).toHaveLength(1)
+    expect(run).not.toContain('-c "DELETE FROM plant_varieties WHERE id')
+    expect(run).not.toContain(`-c "${COMPONENT_DELETE}"`)
+    // nothing in the step opens or closes a transaction by hand: inside a -c string that would split it
+    expect(run).not.toMatch(/\b(BEGIN|COMMIT|ROLLBACK|START TRANSACTION|END)\s*;/i)
   })
 
-  it('deletes the mix rows by id straight ahead of the delete by name, after the plantings and the lots', () => {
-    const byId = `-c "DELETE FROM plant_varieties WHERE id = ${MIX_IDS};" \\`
-    const at = lines.findIndex((l) => l.trim() === byId)
-    expect(at).toBeGreaterThan(-1)
-    expect(lines[at + 1].trim()).toBe(`${VARIETY_DELETES[0]} \\`)
-    expect(run.match(/-c "DELETE FROM plant_varieties /g) ?? []).toHaveLength(2)
+  it('runs that transaction where the mix delete sat: after the first chain, which ends at care_profile, and straight ahead of the delete by name', () => {
+    // the first chain's last line: the care_profile delete, with no continuation
+    expect(lines[tx - 2].trim()).toBe(CARE)
+    // then a second chain, opening with the delete by name
+    expect(lines[tx + 2].trim()).toBe('psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 \\')
+    expect(lines[tx + 3].trim()).toBe(`${VARIETY_DELETES[0]} \\`)
+    expect(run.match(/psql "\$NEON_STAGING_URL" -v ON_ERROR_STOP=1 \\\n/g) ?? []).toHaveLength(2)
+    expect(run.match(/-c "DELETE FROM plant_varieties /g) ?? []).toHaveLength(1)
     // plants.variety_id and inventory_items.variety_id are RESTRICT, and the smoke's lot is filed under its mix
-    expect(run.indexOf(byId)).toBeGreaterThan(run.indexOf('-c "DELETE FROM inventory_items '))
+    const txAt = run.indexOf(TX)
+    expect(txAt).toBeGreaterThan(chain)
+    expect(txAt).toBeGreaterThan(run.indexOf('-c "DELETE FROM inventory_items '))
     expect(run.indexOf('-c "DELETE FROM inventory_items ')).toBeGreaterThan(run.indexOf('-c "DELETE FROM plants '))
+    // the second chain is as fatal as the first: its last line ends the call, and nothing in the step swallows a failure
+    expect(lines[lines.findIndex((l) => l.trim().startsWith('echo "  swept: ')) - 1].trim()).toBe(`-c "DELETE FROM plant_projects  WHERE name ILIKE '%smoke%';"`)
+    expect(run).not.toMatch(/\|\|\s*(true|:)/)
   })
 
   it('takes the mix by id in the cultivar entity, entity_tag and care_profile deletes, each before the variety deletes', () => {
     const entity = `-c "DELETE FROM entity         WHERE entity_type='cultivar' AND (cultivar_ref_id IN (${SMOKE_VARIETIES}) OR cultivar_ref_id = ${MIX_IDS});"`
     const care = `-c "DELETE FROM care_profile   WHERE scope='cultivar' AND (scope_id IN (${SMOKE_VARIETIES}) OR scope_id = ${MIX_IDS});"`
     const tag = `OR entity_id IN (${SMOKE_VARIETIES}) OR entity_id = ${MIX_IDS} OR entity_id IN (SELECT id FROM locations `
-    const firstVarietyDelete = run.indexOf('-c "DELETE FROM plant_varieties ')
+    const firstVarietyDelete = run.indexOf(TX)
+    expect(care).toBe(CARE)
     for (const statement of [entity, care, tag]) {
       expect(run).toContain(statement)
       expect(run.indexOf(statement)).toBeGreaterThan(chain)
@@ -288,10 +331,26 @@ describe('the L-058 sweep takes a smoke mix\'s component rows before the varieti
     expect(remaining).toContain(`(SELECT COUNT(*) FROM care_profile WHERE scope='cultivar' AND scope_id = ${VARIETY_IDS})`)
   })
 
-  it('says why the lot-keyed xp_events rows are left', () => {
+  it('says why the lot-keyed xp_events rows are left, and why the two deletes are one transaction', () => {
     const text = readFileSync(resolve(process.cwd(), '.github/workflows/deploy-staging.yml'), 'utf8')
     expect(text).toContain('# NOT SWEPT, on purpose: xp_events.')
     expect(run).not.toContain('xp_events')
+    expect(text).toContain('# WHY ONE TRANSACTION (2026-10-06, gate-file review finding S1).')
+  })
+
+  // Review finding S2: inverted, this test makes the step a no-op that reports success on every run.
+  it('skips itself only when the DSN is NOT set, runs after a red smoke, and says so before anything else', () => {
+    expect(SWEEP.if).toBe('always()')
+    expect(run.startsWith(
+      'if [[ -z "$NEON_STAGING_URL" ]]; then\n'
+      + '  echo "⚠ NEON_STAGING_URL secret not set — skipping L-058 cleanup"\n'
+      + '  exit 0\n'
+      + 'fi\n'
+      + 'echo "🧹 L-058 cleanup sweep starting against staging Neon (FK-safe order)..."\n',
+    )).toBe(true)
+    // the only two exits: that skip, and the residue check's failure
+    expect(run.match(/^\s*exit \d+$/gm) ?? []).toEqual(['  exit 0', '  exit 1'])
+    expect(run.match(/\$NEON_STAGING_URL" \]\]/g) ?? []).toHaveLength(1)
   })
 })
 
@@ -315,6 +374,36 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     expect(code).toContain('sp_pass() { echo "✅ PASS [seed-parents:$1] $2"; PASS=$((PASS+1)); }')
     expect(code).toContain('sp_fail() { echo "❌ FAIL [seed-parents:$1] $2"; FAIL=$((FAIL+1)); }')
     expect(code).toContain(`sp_check() { if [[ "$2" == "$3" ]]; then sp_pass "$1" "$4 → '$2'"; else sp_fail "$1" "$4 → '$2' (expected '$3')"; fi; }`)
+  })
+
+  // Review finding S2: every request, every id test and every jq read of the block runs through these five. A
+  // change to any of them is green on every line pinned below and refuses, or quietly weakens, every promote.
+  it('keeps the five helpers under every line: the uuid pattern, sp_req with its token and its body, sp_jq, sp_jqx, sp_id_ok', () => {
+    expect(code).toContain(`SP_UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`)
+    expect(code.match(/SP_UUID_RE=/g) ?? []).toHaveLength(1)
+    expect(flat).toContain(
+      [
+        'sp_req() {',
+        '[[ -n "$SP_OUT" ]] && rm -f "$SP_OUT"',
+        'SP_OUT=$(mktemp)',
+        'if [[ -n "${3:-}" ]]; then',
+        'SP_CODE=$(curl -s --max-time 30 --connect-timeout 10 -X "$1" -H "Authorization: Bearer $CLERK_JWT" \\',
+        '-H "Content-Type: application/json" -o "$SP_OUT" -w "%{http_code}" "$2" -d "$3") || SP_CODE="000"',
+        'else',
+        'SP_CODE=$(curl -s --max-time 30 --connect-timeout 10 -X "$1" -H "Authorization: Bearer $CLERK_JWT" \\',
+        '-H "Content-Type: application/json" -o "$SP_OUT" -w "%{http_code}" "$2") || SP_CODE="000"',
+        'fi',
+        '}',
+      ].join('\n'),
+    )
+    const defined = (name) => code.split('\n').filter((l) => l.trim().startsWith(name + '() {')).map((l) => l.trim())
+    expect(defined('sp_req')).toEqual(['sp_req() {'])
+    expect(defined('sp_jq')).toEqual(['sp_jq() { jq -rc "$1" "$SP_OUT" 2>/dev/null || echo "unparseable"; }'])
+    expect(defined('sp_jqx')).toHaveLength(1)
+    expect(defined('sp_jqx')[0].startsWith('sp_jqx() { jq -rc --arg x "$1" "$2" "$SP_OUT" 2>/dev/null || echo "unparseable"; }   # ')).toBe(true)
+    expect(defined('sp_id_ok')).toEqual(['sp_id_ok() { [[ "${1:-}" =~ $SP_UUID_RE ]]; }'])
+    // defined before the block's first request
+    expect(code.indexOf('sp_req POST ')).toBeGreaterThan(code.indexOf('sp_id_ok() {'))
   })
 
   it('sends both parents on the create and names its rows so the sweep finds them', () => {
@@ -599,6 +688,10 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
       'if [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then',
       'sp_fail "$1" "DELETE $2 → HTTP $SP_CODE (expected 200; cleanup() retries, the L-058 sweep removes the row either way)"',
       'else',
+      'echo "⚠️  WARN [seed-parents:$1] DELETE $2 → HTTP $SP_CODE (cleanup() retries; the L-058 sweep removes the row either way)"',
+      'fi',
+      'return 1',
+      '}',
     ))
   })
 
@@ -606,19 +699,26 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     expect(flat).toContain(seq(
       'sp_req POST "$STAGING_API_VARIETIES" "{\\"name\\": \\"smoke-test-variety2-$TEST_RUN_ID\\", \\"crop_type_slug\\": \\"tomato\\"}"',
       `SP_V2=$(sp_jq '.id // empty')`,
+      'SP_MADE="V2 $SP_CODE"',
       'if sp_id_ok "$SP_V2"; then CREATED_SEEDVARIETY2_ID="$SP_V2"; fi',
       'sp_req POST "$STAGING_API_VARIETIES" "{\\"name\\": \\"smoke-test-variety3-$TEST_RUN_ID\\", \\"crop_type_slug\\": \\"tomato\\"}"',
       `SP_V3=$(sp_jq '.id // empty')`,
+      'SP_MADE="$SP_MADE, V3 $SP_CODE"',
       'if sp_id_ok "$SP_V3"; then CREATED_SEEDVARIETY3_ID="$SP_V3"; fi',
       'sp_req POST "$STAGING_API_PLANTS" "{\\"project_id\\": \\"$CREATED_PROJECT_ID\\", \\"name\\": \\"smoke-test-seedparent3-$TEST_RUN_ID\\", \\"variety_id\\": \\"$SP_V2\\"}"',
       `SP_P3=$(sp_jq '.id // empty')`,
+      'SP_MADE="$SP_MADE, P3 $SP_CODE"',
       'if sp_id_ok "$SP_P3"; then CREATED_SEEDPARENT3_PLANT_ID="$SP_P3"; fi',
       'sp_req POST "$STAGING_API_PLANTS" "{\\"project_id\\": \\"$CREATED_PROJECT_ID\\", \\"name\\": \\"smoke-test-seedparent4-$TEST_RUN_ID\\"}"',
       `SP_P4=$(sp_jq '.id // empty')`,
+      'SP_MADE="$SP_MADE, P4 $SP_CODE"',
       'if sp_id_ok "$SP_P4"; then CREATED_SEEDPARENT4_PLANT_ID="$SP_P4"; fi',
       'if sp_id_ok "$SP_V2" && sp_id_ok "$SP_V3" && sp_id_ok "$SP_P3" && sp_id_ok "$SP_P4"; then',
     ))
-    expect(code).toContain('sp_fail "u7-rows" "the release 2a rows were not all made')
+    // the FAIL line shows the status of EACH create: by then SP_CODE is P4's, and a 429 on V2 would read as 201
+    expect(code).toContain('sp_fail "u7-rows" "the release 2a rows were not all made (HTTP of each create: $SP_MADE;')
+    expect(code.match(/SP_MADE=/g) ?? []).toHaveLength(4)
+    expect(code).not.toContain('(last HTTP $SP_CODE)')
     // the key a mix of the two is found by: both ids, sorted, comma-joined
     expect(code).toContain(`SP_VKEY=$(jq -rn --arg a "$SP_V2" --arg b "$SP_V3" '[$a, $b] | sort | join(",")' 2>/dev/null || echo "unsortable")`)
     expect(code).toContain(`SP_MIXBOTH=$(jq -rn --arg a "$SP_P3" --arg b "$SP_P4" '[$a, $b] | sort | join(",")' 2>/dev/null || echo "unsortable")`)
@@ -842,8 +942,27 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
       const name = entry.slice(entry.lastIndexOf('$') + 1, -1)
       expect(head).toMatch(new RegExp('^' + name + '=""$', 'm'))
     }
-    expect(cleanup).toContain('"${sp_left_url%/}${sp_left##*|}${sp_left_id}" -o /dev/null 2>&1 \\')
     expect(cleanup).toContain('if [[ -z "$sp_left_id" ]]; then continue; fi')
+    // the loop's one request is a DELETE with the token (review finding S2: a GET prints "deleted" for a row it read)
+    expect(cleanup).toContain(
+      [
+        '      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \\',
+        '        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \\',
+        '        "${sp_left_url%/}${sp_left##*|}${sp_left_id}" -o /dev/null 2>&1 \\',
+        '        && echo "✅ Cleanup: test ${sp_left%%|*} deleted" \\',
+        '        || echo "WARNING: ${sp_left%%|*} cleanup failed (id: $sp_left_id)"',
+        '    done',
+      ].join('\n'),
+    )
+  })
+
+  it('says so when cleanup() has rows to delete and no token to delete them with', () => {
+    const cleanup = SMOKE.slice(SMOKE.indexOf('cleanup() {'), SMOKE.indexOf('trap cleanup'))
+    const withToken = cleanup.indexOf('if [[ "$DATA_CREATED" == "true" && -n "$CLERK_JWT" ]]; then')
+    const without = cleanup.indexOf('\n  elif [[ "$DATA_CREATED" == "true" ]]; then\n')
+    expect(withToken).toBeGreaterThan(-1)
+    expect(without).toBeGreaterThan(withToken)
+    expect(cleanup.slice(without)).toMatch(/^\n  elif \[\[ "\$DATA_CREATED" == "true" \]\]; then\n(?:\s*#[^\n]*\n)*\s*echo "Cleanup: no session token in hand, so the API soft-deletes were skipped; the workflow's L-058 sweep removes the rows"\n  fi\n/)
   })
 
   it('makes 68 requests, 14 then 14 then 40 between its mints, the numbers its own comment reasons from', () => {

@@ -39,6 +39,9 @@
 #        with null, each 409 multi_parent_lot with the lot read back unchanged → DELETE on the lot → 200 (parents
 #        never block it) and it reads back 404 → the second parent planting's DELETE → 200 → last, the link rows
 #        read back through SQL (needs NEON_STAGING_URL + psql), still live on the deleted lot
+#        Since release 2a (V5-VARIETYBLEND-001) both parents carry a variety, and U7 to U23 follow on rows of their own:
+#        three lot POSTs refused by the parent rules → a MIX of two varieties made, found again, a lot filed under it →
+#        its filing, plant count, a stale set (409), two seed_saved events, the stats row. Mints two tokens of its own.
 #     L) a taught name (voice alias) for block D's variety → one use through PATCH /api/varieties/voice-aliases
 #        → the GET reads its hit_count exactly one higher, with a last_used_at (BUG-VOICEALIASHITCOUNT-001)
 #     M) (after the project blocks, independent of them) the smoke account's own nav prefs
@@ -253,6 +256,9 @@ cleanup() {
     # workflow's L-058 'if: always()' DB step (deploy-staging.yml). The API deletes above are
     # soft-deletes and the ~60s Clerk token may have expired by now — the workflow DB sweep is
     # the AUTHORITATIVE cleanup; these are best-effort hygiene only.
+  elif [[ "$DATA_CREATED" == "true" ]]; then
+    # A mint that came back empty leaves CLERK_JWT empty until the next one; a run that dies in that stretch gets here.
+    echo "Cleanup: no session token in hand, so the API soft-deletes were skipped; the workflow's L-058 sweep removes the rows"
   fi
   # Block N (Put-Up): the run died before the smoke jar's or place's DELETE answered 200 (each id is cleared once
   # it does). Soft-deletes, jar before place, on a fresh token; the L-058 sweep hard-deletes both either way.
@@ -1421,9 +1427,9 @@ else
       # 'smoke-test-', the mix's included (it is made of its two components' names), which the workflow's L-058
       # sweep matches. It hard-deletes the link rows first (live or retired), then clears source_plant_id, then
       # deletes plantings, then lots: all three foreign keys are RESTRICT, and a lot points at its plantings while a
-      # sown planting points at its packet. Since release 2a it also deletes the mix's component rows ahead of
-      # everything (both of that table's keys to plant_varieties are RESTRICT) and takes a mix by ID as well as by
-      # name. Those sweep edits landed with this block, and neither is safe without the other.
+      # sown planting points at its packet. Since release 2a it also takes a mix by ID as well as by name: after the
+      # lots, in ONE transaction, the mix's component rows and then the mix row (both of that table's keys to
+      # plant_varieties are RESTRICT). Those sweep edits landed with this block, and neither is safe without the other.
       if [[ -n "${STAGING_API_INVENTORY:-}" && -n "${CREATED_VARIETY_ID:-}" && -n "${CREATED_PLANT_ID:-}" ]]; then
         SP_INV="${STAGING_API_INVENTORY%/}/api/inventory-items"
         SP_UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -1602,16 +1608,21 @@ else
           SP_MIX=""; SP_MIX_MADE=false; SP_MIXLOT=""; SP_E1="$SP_NIL"; SP_E2="$SP_NIL"
           sp_req POST "$STAGING_API_VARIETIES" "{\"name\": \"smoke-test-variety2-$TEST_RUN_ID\", \"crop_type_slug\": \"tomato\"}"
           SP_V2=$(sp_jq '.id // empty')
+          # SP_MADE keeps each create's own status for u7-rows: by its FAIL line SP_CODE is P4's.
+          SP_MADE="V2 $SP_CODE"
           if sp_id_ok "$SP_V2"; then CREATED_SEEDVARIETY2_ID="$SP_V2"; fi
           sp_req POST "$STAGING_API_VARIETIES" "{\"name\": \"smoke-test-variety3-$TEST_RUN_ID\", \"crop_type_slug\": \"tomato\"}"
           SP_V3=$(sp_jq '.id // empty')
+          SP_MADE="$SP_MADE, V3 $SP_CODE"
           if sp_id_ok "$SP_V3"; then CREATED_SEEDVARIETY3_ID="$SP_V3"; fi
           sp_req POST "$STAGING_API_PLANTS" "{\"project_id\": \"$CREATED_PROJECT_ID\", \"name\": \"smoke-test-seedparent3-$TEST_RUN_ID\", \"variety_id\": \"$SP_V2\"}"
           SP_P3=$(sp_jq '.id // empty')
+          SP_MADE="$SP_MADE, P3 $SP_CODE"
           if sp_id_ok "$SP_P3"; then CREATED_SEEDPARENT3_PLANT_ID="$SP_P3"; fi
           # P4 has NO variety yet: U8 needs it bare, U9 gives it V3.
           sp_req POST "$STAGING_API_PLANTS" "{\"project_id\": \"$CREATED_PROJECT_ID\", \"name\": \"smoke-test-seedparent4-$TEST_RUN_ID\"}"
           SP_P4=$(sp_jq '.id // empty')
+          SP_MADE="$SP_MADE, P4 $SP_CODE"
           if sp_id_ok "$SP_P4"; then CREATED_SEEDPARENT4_PLANT_ID="$SP_P4"; fi
           if sp_id_ok "$SP_V2" && sp_id_ok "$SP_V3" && sp_id_ok "$SP_P3" && sp_id_ok "$SP_P4"; then
             sp_pass "u7-rows" "two tomato varieties ($SP_V2, $SP_V3) and two plantings ($SP_P3 on the first, $SP_P4 with no variety)"
@@ -1719,6 +1730,8 @@ else
                 # While the lot is live (stat_saved_lot drops a deleted one). sections=seed_lots is a cache key no
                 # other call in the run uses (block R reads the whole envelope), so this is not R's answer replayed.
                 # The lot is dated by its created_at in ET, the season by the same clock: block R's own arithmetic.
+                # Only "this-lot" can fail: the Lambda's shaper sends a number for parent_count whatever it read, so
+                # "every-row-counted" is true of any 200. A missing or cache-only count reads 0 or 1 under this-lot.
                 if [[ -n "${STAGING_API_HARVESTS:-}" && "$STAGING_API_HARVESTS" != *placeholder* ]]; then
                   SP_MONTH=$((10#$(TZ=America/New_York date +%m)))
                   SP_SEASON=$(( $(TZ=America/New_York date +%Y) + (SP_MONTH >= 11 ? 1 : 0) ))
@@ -1742,7 +1755,7 @@ else
               sp_fail "u11-blend-create" "POST /api/varieties/blend → HTTP $SP_CODE (expected 201 and an id): $(head -c 200 "$SP_OUT" 2>/dev/null || true)"
             fi
           else
-            sp_fail "u7-rows" "the release 2a rows were not all made (last HTTP $SP_CODE): varieties [$SP_V2] [$SP_V3], plantings [$SP_P3] [$SP_P4]"
+            sp_fail "u7-rows" "the release 2a rows were not all made (HTTP of each create: $SP_MADE; a 429 on a variety is the hourly create limit): varieties [$SP_V2] [$SP_V3], plantings [$SP_P3] [$SP_P4]"
           fi
           # P3 and P4 go back out, whichever of them exists, for the reason P2 did.
           if sp_id_ok "$SP_P3"; then
