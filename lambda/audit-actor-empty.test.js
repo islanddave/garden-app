@@ -104,8 +104,9 @@ function walkFiles(dir, out = []) {
   return out;
 }
 
-// The two files that may write the audited table, through the auto-updatable view public.cultivar.
-const WRITERS = ['lambda/varieties/index.js', 'lambda/photos/photoDelete.js'];
+// The three files that may write the audited table, through the auto-updatable view public.cultivar.
+// blend.js (V5-VARIETYBLEND-001) creates and revives the named mix; its one bind serves both transactions.
+const WRITERS = ['lambda/varieties/index.js', 'lambda/varieties/blend.js', 'lambda/photos/photoDelete.js'];
 // A bind is `${...}` immediately inside set_config('app.actor_clerk_sub', …). Run on decommented
 // source: photoDelete.js documents the idiom in a JSDoc block, and a construct named in a comment
 // is not that construct.
@@ -131,8 +132,8 @@ describe('BUG-VARIETYACTOREMPTY-001 — the actor that lands can never be the em
     // restore arm of POST /api/varieties/sources — public.source carries trg_audit_source_upd, so
     // that write binds the actor too even though the table it audits is not cultivar. 6 -> 7 on
     // 2026-09-29 (V5-SOURCECONTACT-001) for PATCH /api/varieties/sources/:id, the same table and the
-    // same reason.
-    expect(binds).toHaveLength(7);
+    // same reason. 7 -> 8 on 2026-10-06 (V5-VARIETYBLEND-001) for blend.js setActor.
+    expect(binds).toHaveLength(8);
   });
 
   // ── the normalizer, driven directly (varieties copy) ──────────────────────────────────────────

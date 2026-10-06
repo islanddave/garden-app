@@ -58,6 +58,13 @@ const VARIETY_FACTS_COLUMNS = [
 // public.cultivar: were it missing there, every variety save would 500, not only breeding edits.
 const VARIETY_RANK_FILL_COLUMNS = ['variety_rank'];
 
+// V5-VARIETYBLEND-001 — the two columns that tell a named mix from a single variety. blend_key is
+// the LAST column of public.cultivar since migrations/v5-varietyblend-001 (47 -> 48); variety_rank
+// has been on the view since v5-varietyhybridflag-001 but no read projected it, so a client could
+// not tell a blend from a cultivar. Both are now on every full-row read and both write replies.
+// Neither is written by index.js: the only writer of blend_key, and of rank 'blend', is ./blend.js.
+const BLEND_COLUMNS = ['variety_rank', 'blend_key'];
+
 // Extract each SELECT...FROM public.cultivar block from the source. Five exist:
 // by-id GET, list GET (with q), list GET (without q), POST idempotent-by-source-id,
 // and the POST fuzzy-match probe (id/name/species/genus only — intentionally narrow,
@@ -125,6 +132,30 @@ describe('varieties Lambda SEEDINV column plumbing (static-source guard)', () =>
       }
     });
   }
+
+  // V5-VARIETYBLEND-001 — read side only. A column on three of the four reads is the bug this file
+  // exists for: the picker (list) would know a mix and the editor (by-id) would not, or the reverse.
+  for (const col of BLEND_COLUMNS) {
+    it(`every full-row SELECT block includes ${col}`, () => {
+      for (const [idx, block] of fullSelects.entries()) {
+        expect(new RegExp(`\\b${col}\\b`).test(block), `SELECT block #${idx} missing ${col}`).toBe(true);
+      }
+    });
+    it(`both RETURNING lists include ${col}`, () => {
+      for (const [idx, list] of returningLists.entries()) {
+        expect(new RegExp(`\\b${col}\\b`).test(list), `RETURNING list #${idx} missing ${col}`).toBe(true);
+      }
+    });
+    it(`the INSERT does not name ${col} — a mix is born in blend.js, never through the ordinary POST`, () => {
+      expect(new RegExp(`\\b${col}\\b`).test(insertMatch[1])).toBe(false);
+    });
+  }
+  it('blend_key is never assigned by the PUT (a rename never changes the key)', () => {
+    const put = [...SRC.matchAll(/UPDATE public\.cultivar\s+SET([\s\S]*?)WHERE/g)].map((m) => m[1]).join('\n');
+    expect(/\bblend_key\s*=/.test(put)).toBe(false);
+    expect(CLEARABLE_FIELDS).not.toContain('blend_key');
+    expect(CLEARABLE_FIELDS).not.toContain('variety_rank');
+  });
 
   // PUT partial-update block: the single UPDATE...SET containing COALESCE assignments
   // (the DELETE soft-delete UPDATE has no COALESCE and is filtered out).

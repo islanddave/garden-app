@@ -45,6 +45,13 @@
 //   PUT-writable, with one exception the handler decides itself: Open-pollinated on a row whose rank
 //   was never recorded fills variety_rank = 'cultivar' in the same UPDATE (fillsCultivarRank).
 //
+// VARIETYBLEND (V5-VARIETYBLEND-001): POST /api/varieties/blend finds or creates the named mix for a
+//   set of varieties — body { component_variety_ids: uuid[], create: boolean }, both required;
+//   create:false never writes. Its statements and rules live in ./blend.js, the only writer of
+//   variety_rank = 'blend' and of blend_key. variety_rank and blend_key are projected by every
+//   full-row read and both write replies below; neither is PUT-writable (a rename never changes the
+//   key). The restore arm answers a unique-index clash with a 409 sentence.
+//
 // CORS: handler owns CORS — Lambda URL CORS config must be empty (handler sets headers).
 
 import { randomUUID } from 'node:crypto';
@@ -60,6 +67,7 @@ import { applyDerive } from './crop-derive.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { managedPrincipalPatterns, canEditSource } from './authz.js';
+import { blendRoute, restoreConflictMessage } from './blend.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -689,23 +697,32 @@ export const handler = async (event) => {
       // trg_audit_plant_varieties, which reads app.actor_clerk_sub. A restore that skipped this
       // would land in the audit trail with no actor — the one asymmetry that would make the delete
       // attributable and its undo anonymous.
-      const [, rows] = await sql.transaction([
-        sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
-        sql`
-          UPDATE public.cultivar
-             SET deleted_at = NULL
-           WHERE id = ${varietyId}
-             AND ( created_by = ANY(${household})
-                   OR created_by LIKE ANY(${managedPatterns}::text[]) )
-             AND deleted_at IS NOT NULL
-          -- Deliberately NOT a full client row. select-columns.test.js treats any RETURNING that
-          -- aliases display_name to name as a full-row shape which must list every seed-inventory
-          -- column; a restore answers identity + state, and the caller already has the name from
-          -- the list it clicked. (No backticks in this comment: it lives inside a JS template
-          -- literal, where one would terminate the string.)
-          RETURNING id, deleted_at
-        `,
-      ]);
+      // V5-VARIETYBLEND-001 — un-deleting can now trip a unique index: the name one (a live variety
+      // took the name meanwhile) or the per-creator mix key (the same mix was made again). Either is
+      // a plain-English 409 here, never the generic arm's index name.
+      let rows;
+      try {
+        [, rows] = await sql.transaction([
+          sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
+          sql`
+            UPDATE public.cultivar
+               SET deleted_at = NULL
+             WHERE id = ${varietyId}
+               AND ( created_by = ANY(${household})
+                     OR created_by LIKE ANY(${managedPatterns}::text[]) )
+               AND deleted_at IS NOT NULL
+            -- Deliberately NOT a full client row. select-columns.test.js treats any RETURNING that
+            -- aliases display_name to name as a full-row shape which must list every seed-inventory
+            -- column; a restore answers identity + state, and the caller already has the name from
+            -- the list it clicked. (No backticks in this comment: it lives inside a JS template
+            -- literal, where one would terminate the string.)
+            RETURNING id, deleted_at
+          `,
+        ]);
+      } catch (err) {
+        if (err?.code === '23505') return resp(409, { error: restoreConflictMessage(err) });
+        throw err;
+      }
       if (!rows.length) return resp(404, { error: 'Not found or not owner' });
       return resp(200, rows[0]);
     }
@@ -869,6 +886,28 @@ export const handler = async (event) => {
       return resp(405, { error: 'Method not allowed' });
     }
 
+    // V5-VARIETYBLEND-001 — the named mix. ABOVE idMatch, beside /deleted and /voice-aliases: the
+    // path is one trailing segment, so below it "blend" would be read as a variety id (POST 405, and
+    // a GET would bind it as a uuid and 500). POST only, the preview included, so a client ahead of
+    // its Lambda gets a clean 405 rather than a read of the wrong thing.
+    if (rawPath === '/api/varieties/blend') {
+      if (method !== 'POST') return resp(405, { error: 'Method not allowed' });
+      let body;
+      try { body = JSON.parse(event.body ?? '{}'); } catch { return resp(400, { error: 'Request body must be JSON' }); }
+      const out = await blendRoute(sql, {
+        body,
+        userId,
+        household,
+        spendCreate: () => checkRateLimit(sql, userId, 'plant_varieties.create', 60),
+        newId: randomUUID,
+      });
+      // V4-TAGSUB-001: post-commit, fail-open derive of type:/lifecycle: tags, on a created mix only.
+      if (out.derive) {
+        try { await applyDerive(sql, out.derive); } catch (e) { console.error('TAGSUB derive (non-fatal) for cultivar', out.derive, e?.message ?? e); }
+      }
+      return resp(out.status, out.body);
+    }
+
     const idMatch = rawPath.match(/^\/api\/varieties\/([^/]+)$/);
 
     // The /deleted exclusion rides on the USE, not the declaration: crop-type.test.js anchors the
@@ -893,7 +932,9 @@ export const handler = async (event) => {
                  -- V5-VARIETYFACTSEDIT-001. This read seeds VarietyEditor, which now edits these
                  -- five. Left off, every stored value renders as an empty box, and the form would
                  -- refuse a breeding edit for want of a source the row already has.
-                 origin_country, origin_region, breeding_system, breeding_source, scoville_source
+                 origin_country, origin_region, breeding_system, breeding_source, scoville_source,
+                 -- V5-VARIETYBLEND-001: what tells a mix from a single variety, and its leaves.
+                 variety_rank, blend_key
           FROM public.cultivar
           WHERE id = ${varietyId}
             AND deleted_at IS NULL
@@ -1017,7 +1058,7 @@ export const handler = async (event) => {
               AND ( created_by = ANY(${household})
                     OR created_by LIKE ANY(${managedPatterns}::text[]) )
               AND deleted_at IS NULL
-            RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version, determinacy, day_length_response, grown_as, start_method, start_indoor_weeks_min, start_indoor_weeks_max, direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in, days_to_germ_min, days_to_germ_max, sow_season, sow_notes, breeding_system, breeding_source, scoville_source
+            RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version, determinacy, day_length_response, grown_as, start_method, start_indoor_weeks_min, start_indoor_weeks_max, direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in, days_to_germ_min, days_to_germ_max, sow_season, sow_notes, breeding_system, breeding_source, scoville_source, variety_rank, blend_key
           `,
         ]);
         if (!updateRows.length) return resp(404, { error: 'Not found or not owner' });
@@ -1074,7 +1115,10 @@ export const handler = async (event) => {
                    -- of the four silent cases, because that is the most considered save there is.
                    -- Both branches of this ternary carry it and must stay identical; the q/non-q
                    -- split is a WHERE difference, never a projection difference.
-                   breeding_system
+                   breeding_system,
+                   -- V5-VARIETYBLEND-001: a picked mix must arrive knowing it is one. Same rule as
+                   -- the line above - both branches carry both columns.
+                   variety_rank, blend_key
             FROM public.cultivar
             WHERE deleted_at IS NULL
               AND LOWER(display_name) LIKE ${'%' + q.toLowerCase() + '%'}
@@ -1096,7 +1140,8 @@ export const handler = async (event) => {
                    -- Identical to the q branch above by construction — see its comment. A
                    -- projection difference between these two would make the F1 warning depend on
                    -- whether the user typed in the search box.
-                   breeding_system
+                   breeding_system,
+                   variety_rank, blend_key
             FROM public.cultivar
             WHERE deleted_at IS NULL
             ORDER BY display_name ASC
@@ -1153,7 +1198,8 @@ export const handler = async (event) => {
                  determinacy, day_length_response, grown_as,
                  start_method, start_indoor_weeks_min, start_indoor_weeks_max,
                  direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in,
-                 days_to_germ_min, days_to_germ_max, sow_season, sow_notes
+                 days_to_germ_min, days_to_germ_max, sow_season, sow_notes,
+                 variety_rank, blend_key
           FROM public.cultivar
           WHERE source_proj_rescope_project_id = ${sourceProjId}
             AND deleted_at IS NULL
@@ -1258,7 +1304,7 @@ export const handler = async (event) => {
             ${body.days_to_germ_max ?? null},
             ${body.sow_season ?? null},
             ${body.sow_notes ?? null}
-          ) RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version, determinacy, day_length_response, grown_as, start_method, start_indoor_weeks_min, start_indoor_weeks_max, direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in, days_to_germ_min, days_to_germ_max, sow_season, sow_notes, breeding_system, breeding_source, scoville_source
+          ) RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version, determinacy, day_length_response, grown_as, start_method, start_indoor_weeks_min, start_indoor_weeks_max, direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in, days_to_germ_min, days_to_germ_max, sow_season, sow_notes, breeding_system, breeding_source, scoville_source, variety_rank, blend_key
         `,
         // BUG-CULTIVARNOPROFILE-001 — the cadence-profile row, in the same transaction as the
         // cultivar it describes. Shape follows lambda/plants/overwinterAttr.js, the only other

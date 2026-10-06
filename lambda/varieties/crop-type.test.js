@@ -109,6 +109,19 @@ describe('varieties Lambda — crop-types vocab route', () => {
     expect(idMatchIdx).toBeGreaterThan(-1);
     expect(cropIdx).toBeLessThan(idMatchIdx); // else "crop-types" parses as a variety id
   });
+  it('handles /api/varieties/blend BEFORE the :id route, and answers every method there', () => {
+    // V5-VARIETYBLEND-001 (R2-14). One trailing segment, so below idMatch "blend" is a variety id:
+    // POST would answer 405 and GET would bind it as a uuid and 500.
+    const blendIdx = SRC.indexOf("if (rawPath === '/api/varieties/blend')");
+    const idMatchIdx = SRC.indexOf('const idMatch = rawPath.match');
+    expect(blendIdx).toBeGreaterThan(-1);
+    expect(blendIdx).toBeLessThan(idMatchIdx);
+    // The arm is closed: nothing in it falls through to idMatch. Its first statement refuses every
+    // method but POST, and its last is a return.
+    const arm = SRC.slice(blendIdx, idMatchIdx);
+    expect(arm).toMatch(/^if \(rawPath === '\/api\/varieties\/blend'\) \{\s+if \(method !== 'POST'\) return resp\(405,/);
+    expect(arm.trimEnd()).toMatch(/return resp\(out\.status, out\.body\);\s+\}$/);
+  });
   it('crop-types route selects from crop_types filtering soft-deletes, ordered by sort_order', () => {
     const i = SRC.indexOf("rawPath === '/api/varieties/crop-types'");
     const block = SRC.slice(i, i + 500);

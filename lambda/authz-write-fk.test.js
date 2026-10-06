@@ -395,6 +395,17 @@ const NOT_IN_SITES = [
   // a value the same request just produced — one step stronger, because that one reads an id back off
   // the database and this one never leaves the handler's own scope.
   'varieties::scope_id',
+  // V5-VARIETYBLEND-001 — variety_blend_component, written by varieties/blend.js insertBlendComponents in the
+  // transaction that creates a named mix. blend_variety_id is NOT body-settable: it is the id the handler minted
+  // for the mix row the same transaction inserts (the varieties::scope_id argument, same statement group).
+  // component_variety_id IS request-derived (body.component_variety_ids, an array the body arm cannot see, then
+  // flattened to leaves) and is deliberately NOT household-gated: plant_varieties is the shared catalogue with no
+  // owner to gate against — the inventory-items::variety_id argument above — and a household gate would refuse a
+  // mix of two varieties another user created, which any planting may already carry. EXISTENCE is checked before
+  // any write (every named id and every leaf must be a row, else 400 component_unknown), and the ids are
+  // uuid-shape-checked before they reach Postgres. Pinned in lambda/varieties/blend-route.test.js
+  // ('component_unknown', 'writes one component row per LEAF').
+  'varieties::blend_variety_id', 'varieties::component_variety_id',
   // ── Gated inline by a predicate this file's SITES regex cannot express. Each is pinned by its
   //    own named assertion in the third describe block — NOT pre-absolved here. ──
   'projects::parent_id',        // POST create: inline container.created_by SELECT (asserted below)
