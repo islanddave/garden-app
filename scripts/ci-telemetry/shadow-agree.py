@@ -12,12 +12,19 @@ the unit suite. It never dispatches, re-runs, cancels or writes.
 
 THE VERDICT OF ONE SIDE, from the newest push run of that workflow for the SHA:
   GREEN       the verdict job (`build-and-test`, `build-and-test-next`) concluded success.
-  RED         the run completed and is not GREEN, for a reason of its own: a job concluded failure; or the run was
-              cancelled with NO newer push behind it (a job that hits its timeout reads `cancelled`, and so does a
-              hand cancel: the promote gate would refuse either); or the verdict job is absent or anything else.
+  RED         the run completed and is not GREEN, for a reason of its own: a job concluded failure; or a job that
+              HAD a runner was cancelled with NO newer push behind it (a job that hits its timeout reads
+              `cancelled`, and so does a hand cancel: the promote gate would refuse either); or the verdict job is
+              absent or anything else.
   SUPERSEDED  cancelled, no job failed, no job ran to its timeout, and a newer dev push run of the same workflow
               was created before the first of this run's cancelled jobs ended. Both workflows cancel in progress,
               so this is the concurrency group, not a verdict.
+  NO-RUNNER   not GREEN, not SUPERSEDED, no job failed, no job ran to its timeout, and the run's cancelled jobs
+              (at least one) ALL never got a runner (runner_id 0, no runner name: GitHub gives up on a job no hosted
+              runner acquired, about 15 min in, and a job cancelled while still queued reads the same), while every
+              job that did get a runner concluded success. The aggregator's `failure` over such a leg is the summary
+              it is everywhere else; a `skipped` job is evidence neither way. No step of the missing job ran, so
+              the side has no verdict. One cancelled job that had a runner makes the run RED as before.
   IN-FLIGHT   not completed.       MISSING   no push run for the SHA.
 A job's timeout is not in the API, so TIMEOUT_MIN restates the two workflow files' `timeout-minutes` (a test holds
 it equal to them): a cancelled job that ran at least that long timed out, whatever was pushed meanwhile.
@@ -30,12 +37,22 @@ says what the latest attempt concluded.
 THE CLASS OF ONE SHA:
   AGREE-GREEN / AGREE-RED   both sides have a verdict and it is the same.
   DISAGREE                  both sides have a verdict and they differ.
-  NOT-COUNTED               either side is SUPERSEDED, IN-FLIGHT or MISSING. It proves nothing and does not count
-                            toward the 10.
-A cancelled side cannot hide a disagreement: NOT-COUNTED is reachable for a completed run by one road only (it was
-cancelled, nothing in it failed, and a newer push exists that explains the cancel). A leg that really failed is RED
-even in a superseded run, and a cancel with nothing behind it is RED, so either shows as DISAGREE against a green.
-The cost is the safe one: a hand cancel reads RED and may raise a false DISAGREE that a person then looks at.
+  NOT-COUNTED               either side is SUPERSEDED, NO-RUNNER, IN-FLIGHT or MISSING. It proves nothing and does
+                            not count toward the 10.
+A cancelled side cannot hide a disagreement: NOT-COUNTED is reachable for a completed run by two roads only, and on
+both nothing in it failed and nothing ran to its timeout. SUPERSEDED: it was cancelled and a newer push exists that
+explains the cancel. NO-RUNNER: every cancelled job in it never started, and every job that did start succeeded, so
+no step that ran was cut short or went red; what is not counted is a job that produced nothing, never a result. A
+leg that really failed is RED on either road, and a cancel of a job that was RUNNING with nothing behind it is RED,
+so either shows as DISAGREE against a green. The cost is the safe one: a hand cancel of a running job reads RED and
+may raise a false DISAGREE that a person then looks at. A NO-RUNNER run is not lost either: its wait is in the
+queue times below, where it counts against the threshold.
+
+THE WINDOW HAS A START. COUNT_FROM_SHA is the first dev SHA whose runs carry the test-ids notice. A SHA first seen
+before it can never be TEST-IDS-EQUAL, so it is read and printed (class column BEFORE-WINDOW, with what it would
+have read) but is in no tally: not the counted total, the class counts, the test-ID counts, ACCEPTANCE or the exit
+code. The bound only ever removes rows. It is found in the run listings, which are read whole whatever --limit is;
+when it is not in them, which rows precede it cannot be told and the reading is unreadable (exit 2).
 
 TEST IDS, per unit pass (UTC, America/New_York), for SHAs with a verdict on both sides. Each pass prints one notice
 titled `test-ids <zone>` (scripts/ci-telemetry/vitest-test-ids-reporter.mjs) with the sha256 of its sorted
@@ -61,14 +78,18 @@ EACH LISTING IS READ TWICE. The run listings have been seen to change between tw
 and the newest row). If the second read's total or newest run id differs from the first, nothing is concluded.
 
 QUEUE TIMES, per ci-next.yml run: each job's wait for a runner (`started_at` minus `created_at`) and its duration.
-The plan's threshold is "any leg queued over 2 min in 3 of 10 runs": over the 10 newest runs with a started job,
-TRIPPED when 3 or more had a job wait longer than 120 s. A job that never got a runner has no queue time.
+A job cancelled before any runner took it waited from `created_at` to `completed_at` and got nothing: that is its
+wait, marked "never got a runner". The plan's threshold is "any leg queued over 2 min in 3 of 10 runs": TRIPPED when
+3 or more of the 10 newest measured runs had a job wait longer than 120 s. A run is measured when a job of it
+started, or when a job of it waited past 120 s for a runner that never came. A run whose only waits are jobs
+cancelled sooner than that (a push superseded seconds after it was made) says nothing about runners and is not one
+of the 10.
 
 Exit codes:
-  0   no DISAGREE and no TEST-IDS-DIFFER among the counted SHAs
+  0   no DISAGREE and no TEST-IDS-DIFFER among the SHAs inside the window
   1   at least one
-  2   unreadable: an API error, a reply that is not what was asked for, a truncated listing. Nothing is concluded;
-      an unreadable reply is never read as agreement
+  2   unreadable: an API error, a reply that is not what was asked for, a truncated listing, COUNT_FROM_SHA not
+      in the listings. Nothing is concluded; an unreadable reply is never read as agreement
   64  usage error
 
 Stdlib only. Run: python3 scripts/ci-telemetry/shadow-agree.py            (a table)
@@ -91,6 +112,11 @@ WINDOW = 10                     # the plan's ">= 10 dev pushes"
 QUEUE_THRESHOLD_S = 120         # "any leg queued over 2 min ..."
 QUEUE_RUNS_OVER = 3             # "... in 3 of 10 runs"
 LANDING_SLACK_S = 60            # one push creates both runs within a second or two of each other
+# Where the counting window opens: the first dev SHA whose two runs carry the test-ids notice (the commit that added
+# the v2 reporter to both workflows). Every push before it is TEST-IDS-ABSENT for good, so a window that included
+# one could never be MET. A constant and not a flag on purpose: moving it changes what the 10 pushes mean, and
+# scripts/test_shadow_agree.py pins it.
+COUNT_FROM_SHA = "1564c5647f38b7f014e55786e02c3e740f0aabd0"
 # timeout-minutes of every job, as .github/workflows/ci.yml and ci-next.yml have them. The jobs API does not report
 # a job's timeout, so this is the bound a cancelled job's duration is held against; scripts/test_shadow_agree.py
 # keeps it equal to the two files.
@@ -107,6 +133,7 @@ NOTICE_PREFIX = "test-ids "
 # What a usable notice of each format version must carry besides sha256 (vitest-test-ids-reporter.mjs FORMAT_VERSION).
 NOTICE_DIGESTS = {"1": (), "2": ("files_sha256", "names_sha256")}
 GREEN, RED, SUPERSEDED, IN_FLIGHT, MISSING = "GREEN", "RED", "SUPERSEDED", "IN-FLIGHT", "MISSING"
+NO_RUNNER = "NO-RUNNER"
 UTC = datetime.timezone.utc
 
 
@@ -294,6 +321,12 @@ def side(spec, run, jobs, siblings):
         newer = superseded_by(run, jobs, siblings)
         if newer is not None:
             return dict(out, state=SUPERSEDED, why="cancelled; run %s was pushed before it ended" % newer)
+        # No job that had a runner was cancelled (so every cancelled one was still waiting for its runner) or ended
+        # as anything but success. A `failure` still here is the aggregator's summary: any other returned RED above.
+        waiting = sorted(job["name"] for job in jobs if job.get("conclusion") == "cancelled")
+        if waiting and all(job.get("conclusion") in ("success", "skipped", "failure") for job in jobs if started(job)):
+            return dict(out, state=NO_RUNNER, why="never got a runner: %s (cancelled with no step run and no newer "
+                        "push behind it; every job that ran succeeded)" % ", ".join(waiting))
         return dict(out, state=RED, why="cancelled with no newer push behind it (a job timeout or a hand cancel)")
     return dict(out, state=RED, why="%s=%s in a run that concluded %s with no failed job" % (
         spec["verdict_job"], verdict.get("conclusion") if verdict else "absent", run.get("conclusion")))
@@ -350,22 +383,27 @@ def timings(run, jobs):
     rows = []
     for job in jobs:
         queue, duration = None, duration_s(job)
-        if started(job) and job.get("started_at"):
-            begun = parse_time(job["started_at"], "started_at of job %r" % job["name"])
-            queue = int((begun - parse_time(job.get("created_at"),
-                                            "created_at of job %r" % job["name"])).total_seconds())
+        # Cancelled with no runner: it waited until it was cancelled. `started_at` is a placeholder there.
+        gave_up = not started(job) and job.get("conclusion") == "cancelled" and bool(job.get("completed_at"))
+        until = job.get("completed_at") if gave_up else job.get("started_at") if started(job) else None
+        if until:
+            queue = int((parse_time(until, "%s of job %r" % ("completed_at" if gave_up else "started_at", job["name"]))
+                         - parse_time(job.get("created_at"), "created_at of job %r" % job["name"])).total_seconds())
         rows.append({"name": job["name"], "conclusion": job.get("conclusion"), "queue_s": queue,
-                     "duration_s": duration})
+                     "duration_s": duration, "never_got_a_runner": gave_up})
     waits = [row for row in rows if row["queue_s"] is not None]
     worst = max(waits, key=lambda row: row["queue_s"]) if waits else None
+    over = sorted(row["name"] for row in waits if row["queue_s"] > QUEUE_THRESHOLD_S)
     return {"run_id": run["id"], "sha": run["head_sha"], "jobs": rows,
             "max_queue_s": worst["queue_s"] if worst else None, "max_queue_job": worst["name"] if worst else None,
-            "over": sorted(row["name"] for row in waits if row["queue_s"] > QUEUE_THRESHOLD_S)}
+            "max_queue_never_got_a_runner": bool(worst and worst["never_got_a_runner"]), "over": over,
+            "measured": bool(over) or any(not row["never_got_a_runner"] for row in waits)}
 
 
 def queue_summary(rows):
-    """rows: timings() of ci-next runs, newest first."""
-    window = [row for row in rows if row["max_queue_s"] is not None][:WINDOW]
+    """rows: timings() of ci-next runs, newest first. The window is the newest WINDOW of them that are measured: a
+    job started, or a job waited past the threshold and never got a runner."""
+    window = [row for row in rows if row["measured"]][:WINDOW]
     over = sum(1 for row in window if row["over"])
     return {"threshold_s": QUEUE_THRESHOLD_S, "runs_over_to_trip": QUEUE_RUNS_OVER, "window": WINDOW,
             "runs_in_window": len(window), "runs_over": over,
@@ -384,6 +422,10 @@ def read(repo, limit, timeout):
     for run in serial_runs + shadow_runs:
         when = (run["created_at"], run["id"])
         first_seen[run["head_sha"]] = min(first_seen.get(run["head_sha"], when), when)
+    if COUNT_FROM_SHA not in first_seen:
+        raise Unreadable("the counting window opens at %s (COUNT_FROM_SHA), which is not among the %d dev push SHA(s) "
+                         "the two listings hold: which rows come before it cannot be told, so nothing is counted"
+                         % (COUNT_FROM_SHA[:10], len(first_seen)))
     order = sorted(first_seen, key=lambda sha: first_seen[sha], reverse=True)[:limit]
     read_once = {}
 
@@ -412,7 +454,8 @@ def read(repo, limit, timeout):
                 "conclusion": picked[name].get("conclusion")}
         row = {"sha": sha, "class": classify(sides["ci"], sides["next"]), "ci": sides["ci"], "next": sides["next"],
                "test_ids": {}}
-        row["counted"] = row["class"] != "NOT-COUNTED"
+        row["before_window"] = first_seen[sha] < first_seen[COUNT_FROM_SHA]
+        row["counted"] = row["class"] != "NOT-COUNTED" and not row["before_window"]
         if row["counted"]:
             found = {}
             for zone, (serial_job, shadow_job) in PASSES.items():
@@ -455,8 +498,9 @@ def acceptance(counted, classes, ids, queue):
 
 def report(repo, reading):
     rows = reading["shas"]
+    inside = [row for row in rows if not row["before_window"]]
     counted = [row for row in rows if row["counted"]]
-    classes = {name: sum(1 for row in rows if row["class"] == name)
+    classes = {name: sum(1 for row in inside if row["class"] == name)
                for name in ("AGREE-GREEN", "AGREE-RED", "DISAGREE", "NOT-COUNTED")}
     ids = {name: sum(1 for row in counted for one in row["test_ids"].values() if one["class"] == name)
            for name in ("EQUAL", "DIFFER", "ABSENT")}
@@ -466,10 +510,12 @@ def report(repo, reading):
     queue = dict(queue_summary(reading["queue_runs"]), runs=reading["queue_runs"])
     return {
         "schema_version": SCHEMA_VERSION, "repo": repo, "landed_at": reading["landed_at"],
+        "count_from_sha": COUNT_FROM_SHA,
         "serial": "%s %s" % (SERIAL["workflow"], SERIAL["verdict_job"]),
         "shadow": "%s %s" % (SHADOW["workflow"], SHADOW["verdict_job"]),
         "shas": rows,
-        "summary": {"shas": len(rows), "counted": len(counted), "window": WINDOW,
+        "summary": {"shas": len(rows), "before_window": len(rows) - len(inside), "counted": len(counted),
+                    "window": WINDOW,
                     "window_met": len(counted) >= WINDOW, "classes": classes, "test_ids": ids,
                     "counted_with_test_ids_equal_in_both_passes": both_equal},
         "queue": queue,
@@ -485,7 +531,7 @@ def human(doc):
     out = ["shadow-agree: %s against %s, dev pushes since %s (%s)" % (doc["serial"], doc["shadow"],
                                                                      doc["landed_at"] or "never", doc["repo"])]
     zones = list(PASSES)
-    layout = "%-10s %-12s %-24s %-24s %-16s %-16s %s"
+    layout = "%-10s %-13s %-24s %-24s %-16s %-16s %s"
     out.append(layout % ("sha", "class", "ci.yml", "ci-next.yml", "ids " + zones[0], "ids " + zones[1],
                          "runs-on ci.yml / ci-next.yml"))
     names = (("ci", "ci.yml"), ("next", "ci-next.yml"))
@@ -493,7 +539,11 @@ def human(doc):
         cells = ["%s %s" % (row[name]["state"], row[name]["run_id"] or "-") for name, _ in names]
         ids = [("TEST-IDS-" + row["test_ids"][zone]["class"]) if zone in row["test_ids"] else "-" for zone in zones]
         labels = [", ".join(row[name]["runs_on"]) or "-" for name, _ in names]
-        out.append(layout % (row["sha"][:10], row["class"], cells[0], cells[1], ids[0], ids[1], " / ".join(labels)))
+        out.append(layout % (row["sha"][:10], "BEFORE-WINDOW" if row["before_window"] else row["class"], cells[0],
+                             cells[1], ids[0], ids[1], " / ".join(labels)))
+        if row["before_window"]:
+            out.append("           first seen before %s, where the counting window opens: it would read %s and is in "
+                       "no tally" % (doc["count_from_sha"][:10], row["class"]))
         differs = [(zone, row["test_ids"][zone]["differs"]) for zone in zones
                    if zone in row["test_ids"] and row["test_ids"][zone]["class"] == "DIFFER"]
         if row["class"] in ("DISAGREE", "NOT-COUNTED", "AGREE-RED"):
@@ -512,28 +562,32 @@ def human(doc):
                        "ubuntu-latest is whatever image GitHub points it at that day, so compare the `Image:` lines "
                        "of the two job logs before reading this row as a difference in the code" % tuple(labels))
     s = doc["summary"]
-    out.append("%d SHA(s): %s" % (s["shas"], ", ".join("%s %d" % pair for pair in s["classes"].items())))
+    out.append("%d SHA(s): %s" % (s["shas"], ", ".join(
+        "%s %d" % pair for pair in list(s["classes"].items()) + [("BEFORE-WINDOW", s["before_window"])])))
     out.append("counted toward the %d-push window: %d (%s). With TEST-IDS-EQUAL in both passes: %d. "
                "Test-ID passes among the counted: %s" % (
                    s["window"], s["counted"], "met" if s["window_met"] else "not met yet",
                    s["counted_with_test_ids_equal_in_both_passes"],
                    ", ".join("%s %d" % pair for pair in s["test_ids"].items())))
     q = doc["queue"]
-    out.append("ci-next.yml queue times (a job's started_at minus created_at), threshold %d s:" % q["threshold_s"])
+    out.append("ci-next.yml queue times (a job's started_at minus created_at; to completed_at for a job cancelled "
+               "with no runner), threshold %d s:" % q["threshold_s"])
     for run in q["runs"]:
         out.append("  run %s %s  longest wait %s  over %d s: %s  durations: %s" % (
             run["run_id"], run["sha"][:10],
-            "%d s (%s)" % (run["max_queue_s"], run["max_queue_job"]) if run["max_queue_s"] is not None else "-",
+            "%d s (%s%s)" % (run["max_queue_s"], run["max_queue_job"],
+                             ", never got a runner" if run["max_queue_never_got_a_runner"] else "")
+            if run["max_queue_s"] is not None else "-",
             q["threshold_s"], ", ".join(run["over"]) or "none",
             ", ".join("%s %s" % (job["name"], "%d s" % job["duration_s"] if job["duration_s"] is not None else "-")
                       for job in run["jobs"])))
-    out.append("  %d of the newest %d run(s) had a job wait over %d s; the plan's threshold (%d of %d) is %s" % (
-        q["runs_over"], q["runs_in_window"], q["threshold_s"], q["runs_over_to_trip"], q["window"],
-        {True: "TRIPPED", False: "not tripped", None: "not tripped so far (fewer than %d runs)" % q["window"]}[
-            q["tripped"]]))
-    out.append("verdict: %s" % ("DISAGREE or TEST-IDS-DIFFER among the counted SHAs: look at the rows above"
+    out.append("  %d of the newest %d measured run(s) had a job wait over %d s; the plan's threshold (%d of %d) is %s"
+               % (q["runs_over"], q["runs_in_window"], q["threshold_s"], q["runs_over_to_trip"], q["window"],
+                  {True: "TRIPPED", False: "not tripped",
+                   None: "not tripped so far (fewer than %d runs)" % q["window"]}[q["tripped"]]))
+    out.append("verdict: %s" % ("DISAGREE or TEST-IDS-DIFFER among the SHAs inside the window: look at the rows above"
                                if doc["verdict"] == "disagree" else
-                               "no DISAGREE and no TEST-IDS-DIFFER among the counted SHAs"))
+                               "no DISAGREE and no TEST-IDS-DIFFER among the SHAs inside the window"))
     a = doc["acceptance"]
     red = " (%d of them red on both sides)" % a["counted_red"] if a["counted_red"] else ""
     out.append("ACCEPTANCE: %s" % (

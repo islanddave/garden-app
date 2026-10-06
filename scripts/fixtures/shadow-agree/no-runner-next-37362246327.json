@@ -1,0 +1,190 @@
+{
+ "_source": "A real ci-next.yml dev push run whose aggregator never got a runner, read on 2026-10-06: run 37362246327 on a25b369057. All eight legs concluded success; build-and-test-next was created at 19:35:07Z, sat 901 s with no runner (runner_id 0, no step) and was cancelled by GitHub, so the run concluded failure. GET .../actions/runs/37362246327 (trimmed to the listing row's fields), .../runs/37362246327/jobs?per_page=100 (each job trimmed, plus the aggregator's empty `steps`) and .../check-runs/111945904015/annotations (whole).",
+ "run": {
+  "conclusion": "failure",
+  "created_at": "2026-10-05T19:16:38Z",
+  "event": "push",
+  "head_branch": "dev",
+  "head_sha": "a25b369057b86782bc7329fde16aa79600cf8968",
+  "id": 37362246327,
+  "name": "CI Next \u2014 parallel shadow of build-and-test (non-gating)",
+  "path": ".github/workflows/ci-next.yml",
+  "run_attempt": 1,
+  "run_started_at": "2026-10-05T19:16:38Z",
+  "status": "completed",
+  "updated_at": "2026-10-05T19:50:09Z"
+ },
+ "jobs": {
+  "total_count": 9,
+  "jobs": [
+   {
+    "completed_at": "2026-10-05T19:18:35Z",
+    "conclusion": "success",
+    "created_at": "2026-10-05T19:16:38Z",
+    "head_sha": "a25b369057b86782bc7329fde16aa79600cf8968",
+    "id": 111939388440,
+    "labels": [
+     "ubuntu-24.04"
+    ],
+    "name": "static",
+    "run_attempt": 1,
+    "run_id": 37362246327,
+    "runner_id": 1000030898,
+    "runner_name": "GitHub Actions 1000030898",
+    "started_at": "2026-10-05T19:17:42Z",
+    "status": "completed"
+   },
+   {
+    "completed_at": "2026-10-05T19:21:31Z",
+    "conclusion": "success",
+    "created_at": "2026-10-05T19:16:38Z",
+    "head_sha": "a25b369057b86782bc7329fde16aa79600cf8968",
+    "id": 111939388740,
+    "labels": [
+     "ubuntu-24.04"
+    ],
+    "name": "gates-a",
+    "run_attempt": 1,
+    "run_id": 37362246327,
+    "runner_id": 1000030901,
+    "runner_name": "GitHub Actions 1000030901",
+    "started_at": "2026-10-05T19:17:00Z",
+    "status": "completed"
+   },
+   {
+    "completed_at": "2026-10-05T19:21:37Z",
+    "conclusion": "success",
+    "created_at": "2026-10-05T19:16:38Z",
+    "head_sha": "a25b369057b86782bc7329fde16aa79600cf8968",
+    "id": 111939388760,
+    "labels": [
+     "ubuntu-24.04"
+    ],
+    "name": "gate-probes",
+    "run_attempt": 1,
+    "run_id": 37362246327,
+    "runner_id": 1000030899,
+    "runner_name": "GitHub Actions 1000030899",
+    "started_at": "2026-10-05T19:17:08Z",
+    "status": "completed"
+   },
+   {
+    "completed_at": "2026-10-05T19:18:17Z",
+    "conclusion": "success",
+    "created_at": "2026-10-05T19:16:38Z",
+    "head_sha": "a25b369057b86782bc7329fde16aa79600cf8968",
+    "id": 111939388769,
+    "labels": [
+     "ubuntu-24.04"
+    ],
+    "name": "pytest",
+    "run_attempt": 1,
+    "run_id": 37362246327,
+    "runner_id": 1000030900,
+    "runner_name": "GitHub Actions 1000030900",
+    "started_at": "2026-10-05T19:16:46Z",
+    "status": "completed"
+   },
+   {
+    "completed_at": "2026-10-05T19:20:24Z",
+    "conclusion": "success",
+    "created_at": "2026-10-05T19:16:38Z",
+    "head_sha": "a25b369057b86782bc7329fde16aa79600cf8968",
+    "id": 111939388829,
+    "labels": [
+     "ubuntu-24.04"
+    ],
+    "name": "gates-b",
+    "run_attempt": 1,
+    "run_id": 37362246327,
+    "runner_id": 1000030902,
+    "runner_name": "GitHub Actions 1000030902",
+    "started_at": "2026-10-05T19:16:45Z",
+    "status": "completed"
+   },
+   {
+    "completed_at": "2026-10-05T19:26:34Z",
+    "conclusion": "success",
+    "created_at": "2026-10-05T19:16:38Z",
+    "head_sha": "a25b369057b86782bc7329fde16aa79600cf8968",
+    "id": 111939388853,
+    "labels": [
+     "ubuntu-24.04"
+    ],
+    "name": "gates-c",
+    "run_attempt": 1,
+    "run_id": 37362246327,
+    "runner_id": 1000030903,
+    "runner_name": "GitHub Actions 1000030903",
+    "started_at": "2026-10-05T19:17:16Z",
+    "status": "completed"
+   },
+   {
+    "completed_at": "2026-10-05T19:35:07Z",
+    "conclusion": "success",
+    "created_at": "2026-10-05T19:16:39Z",
+    "head_sha": "a25b369057b86782bc7329fde16aa79600cf8968",
+    "id": 111939388921,
+    "labels": [
+     "ubuntu-24.04"
+    ],
+    "name": "unit-utc-cov",
+    "run_attempt": 1,
+    "run_id": 37362246327,
+    "runner_id": 1000030904,
+    "runner_name": "GitHub Actions 1000030904",
+    "started_at": "2026-10-05T19:16:49Z",
+    "status": "completed"
+   },
+   {
+    "completed_at": "2026-10-05T19:32:17Z",
+    "conclusion": "success",
+    "created_at": "2026-10-05T19:16:39Z",
+    "head_sha": "a25b369057b86782bc7329fde16aa79600cf8968",
+    "id": 111939389037,
+    "labels": [
+     "ubuntu-24.04"
+    ],
+    "name": "unit-ny",
+    "run_attempt": 1,
+    "run_id": 37362246327,
+    "runner_id": 1000030905,
+    "runner_name": "GitHub Actions 1000030905",
+    "started_at": "2026-10-05T19:17:06Z",
+    "status": "completed"
+   },
+   {
+    "completed_at": "2026-10-05T19:50:08Z",
+    "conclusion": "cancelled",
+    "created_at": "2026-10-05T19:35:07Z",
+    "head_sha": "a25b369057b86782bc7329fde16aa79600cf8968",
+    "id": 111945904015,
+    "labels": [
+     "ubuntu-24.04"
+    ],
+    "name": "build-and-test-next",
+    "run_attempt": 1,
+    "run_id": 37362246327,
+    "runner_id": 0,
+    "runner_name": "",
+    "started_at": "2026-10-05T19:35:07Z",
+    "status": "completed",
+    "steps": []
+   }
+  ]
+ },
+ "annotations": [
+  {
+   "path": ".github",
+   "blob_href": "https://github.com/islanddave/garden-app/blob/a25b369057b86782bc7329fde16aa79600cf8968/.github",
+   "start_line": 1,
+   "start_column": null,
+   "end_line": 1,
+   "end_column": null,
+   "annotation_level": "failure",
+   "title": "",
+   "message": "The job was not acquired by Runner of type hosted even after multiple attempts",
+   "raw_details": ""
+  }
+ ]
+}
