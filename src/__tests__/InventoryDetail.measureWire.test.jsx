@@ -74,8 +74,10 @@ describe('the wide PUT from /inventory/:id never carries the seed measure', () =
 
     const [wide] = widePuts()
     expect(widePuts()).toHaveLength(1)
-    // Positive: the merge still happened (variety_id comes only from the list row) and the edit travelled.
-    expect(wide.body.variety_id).toBe('var-thai')
+    // Positive: the merge still happened (unit comes only from the list row) and the edit travelled.
+    // variety_id was the witness until release 2a; a seeds row no longer echoes it (useInventory).
+    expect(wide.body.unit).toBe(LOT.unit)
+    expect(wide.body).not.toHaveProperty('variety_id')
     expect(wide.body.name).toBe('Thai Dragon — tin 2')
     for (const k of MEASURE_KEYS) expect(Object.prototype.hasOwnProperty.call(wide.body, k), `wide PUT carried ${k}`).toBe(false)
     expect(measurePuts()[0].body).toEqual({ seed_count: 180, seed_count_estimated: false })
@@ -112,7 +114,8 @@ describe('useInventory.updateItem — the merge keeps the row, drops the measure
     await act(async () => { await result.current.updateItem('inv-lot-1', { name: 'X', seed_count: 1 }) })
     const body = JSON.parse(fetchSpy.mock.calls[fetchSpy.mock.calls.length - 1][1].body)
     expect(body.name).toBe('X')
-    expect(body.variety_id).toBe('var-thai')
+    expect(body.unit).toBe(LOT.unit)
+    expect(body).not.toHaveProperty('variety_id')
     for (const k of MEASURE_KEYS) expect(Object.prototype.hasOwnProperty.call(body, k), `wide PUT carried ${k}`).toBe(false)
   })
 

@@ -26,7 +26,7 @@ const TOAST_MS = 5000
 // Written only through PUT /api/inventory-items/:id/seed-measure; see updateItem.
 const SEED_MEASURE_KEYS = ['seed_count', 'seed_weight_g', 'seed_count_estimated']
 // Never echoed from the fetched list row into the wide PUT; see updateItem. `variety_id` joins them
-// only while the outgoing category is `seeds`.
+// only while the row is a seeds row and stays one.
 const SEED_ROW_ECHO_KEYS = [
   'source_plant_id', 'source_plant_ids', 'source_plants', 'source_kind', 'seed_parent_plant_count',
   'variety_rank',
@@ -135,14 +135,16 @@ export function useInventory() {
     // removed from the FETCHED ROW, before the merge, and never from `payload`: a key the caller sets
     // on purpose (source_id, acquired_from_source_id, year_harvested, or a variety_id of its own)
     // still goes through.
-    // `variety_id` is removed only while the outgoing category is `seeds`. The handler refuses a
-    // variety on a non-seeds row by reading the BODY, so the echoed key is what makes moving a packet
-    // out of Seeds answer 400 from every bundle; strip it there too and that write would succeed.
+    // `variety_id` is removed only while the row IS a seeds row and STAYS one. The handler's two
+    // variety rules read the BODY: the echoed key is what makes moving a packet out of Seeds answer
+    // 400, and an echoed `variety_id: null` is what makes moving a tool INTO Seeds answer "variety_id
+    // is required for seeds". Strip it on either move and that write would reach the database
+    // (pre-promote review PP-03).
     let base = current
     if (current) {
       base = { ...current }
       for (const k of SEED_ROW_ECHO_KEYS) delete base[k]
-      if ({ ...current, ...payload }.category === 'seeds') delete base.variety_id
+      if (current.category === 'seeds' && { ...current, ...payload }.category === 'seeds') delete base.variety_id
     }
     const fullPayload = base ? { ...base, ...payload } : { ...payload }
     // V5-SEEDQTY-001 — a seed lot's measure never rides this PUT. PUT /:id/seed-measure is the only

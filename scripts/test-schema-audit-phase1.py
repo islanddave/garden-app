@@ -143,6 +143,9 @@ real = {
             # facts plus variety_rank; all six present on prod cultivar/plant_varieties when added.
             "breeding_source", "breeding_system", "origin_country", "origin_region",
             "scoville_source", "variety_rank",
+            # V5-VARIETYBLEND-001 (2026-10-06): the named mix's key, projected beside variety_rank
+            # (BLEND_COLUMNS in the contract); on prod and staging cultivar since that day's apply.
+            "blend_key",
         ],
     },
     "lambda/plants/select-columns.test.js": {

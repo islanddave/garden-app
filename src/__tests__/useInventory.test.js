@@ -288,10 +288,15 @@ describe('useInventory — updateItem does not echo a seed lot\'s narrow-route k
     for (const k of ECHO) expect(body, `${k} was echoed`).not.toHaveProperty(k)
   })
 
-  it('a row that is not seeds keeps its variety_id, and loses it only if it is being MOVED to seeds', async () => {
+  it('a row that is not seeds keeps its variety_id key, also while it is being MOVED to seeds', async () => {
     const tool = { ...SAMPLE_DURABLE, id: 'lot-1', variety_id: 'var-odd' }
     expect((await put(tool, { name: 'X' })).variety_id).toBe('var-odd')
-    expect(await put(tool, { category: 'seeds' })).not.toHaveProperty('variety_id')
+    expect((await put(tool, { category: 'seeds' })).variety_id).toBe('var-odd')
+    // The ordinary case: a tool has no variety, and the echoed null is what the handler's
+    // "variety_id is required for seeds" rule reads. Strip the key and that move reaches the database.
+    const plain = await put({ ...SAMPLE_DURABLE, id: 'lot-1', variety_id: null }, { category: 'seeds' })
+    expect(Object.prototype.hasOwnProperty.call(plain, 'variety_id')).toBe(true)
+    expect(plain.variety_id).toBeNull()
   })
 
   it('keys the caller sets on purpose go through, with the caller\'s value', async () => {
