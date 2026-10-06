@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.171.0",
+    "date": "2026-10-06",
+    "highlights": [
+      "Groundwork for saving one jar of seed from several plants and filing it as a named mix. Nothing looks different yet; the new save screen comes in a later update"
+    ]
+  },
+  {
     "version": "4.170.1",
     "date": "2026-10-05",
     "highlights": [
