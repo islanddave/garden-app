@@ -166,6 +166,9 @@ describe('POST /api/kitchen-batches/from-jars — How it was made →', () => {
     const again = await call(JEN, 'POST', FROM, body)
     expect(again.status).toBe(200)
     expect(again.body).toMatchObject({ id: first.body.id, replayed: true })
+    // BUG-PUTUPREPLAYDROPSEDIT-001: the two stamps the client reads off a replay are one instant on an untouched batch.
+    expect(Number.isFinite(new Date(again.body.created_at).getTime())).toBe(true)
+    expect(new Date(again.body.updated_at).getTime()).toBe(new Date(again.body.created_at).getTime())
     expect(await directSql`SELECT id FROM kitchen_batch WHERE idempotency_key = ${body.idempotency_key}`).toHaveLength(1)
     const other = await call(DAVE, 'POST', FROM, { ...body, idempotency_key: key() })
     expect(other.status).toBe(409)

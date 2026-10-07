@@ -11,6 +11,7 @@ import {
   makeHousehold, teardownHousehold, call, key, seedBatch, seedJar, seedPlace, seedPlanting, CROP,
 } from './_kitchenF.js'
 import { handler as plantsHandler } from '../../lambda/plants/index.js'
+import { PLANTING_CROP_REFUSAL } from '../../lambda/preservation/pantryItems.js'
 
 const H = makeHousehold('pantry-items')
 const { DAVE, JEN, STRANGER } = H
@@ -122,6 +123,89 @@ describe('PATCH / DELETE /api/pantry/items/:id', () => {
     expect((await call(DAVE, 'DELETE', itemPath(body.item.id))).status).toBe(404)
     expect((await readItem(body.item.id)).deleted_at).not.toBeNull()
     expect((await call(DAVE, 'PATCH', itemPath(body.item.id), { notes: 'x' })).status).toBe(404)
+  })
+})
+
+// BUG-PUTUPREPLAYDROPSEDIT-001 — what the client's retry repair leans on, on real Postgres. The unit mock runs
+// no SQL (the review's I4), so the PATCH's new crop arm, its planting refusal and the two stamps the client
+// reads off a replay are executed HERE or nowhere before staging.
+describe('BUG-PUTUPREPLAYDROPSEDIT-001 — PATCH crop_type_slug, and the stamps on a replay', () => {
+  const ms = (v) => new Date(v).getTime()
+
+  it('crop_type_slug on an item tied to NO planting: 200 and the row holds it — alone, with the rest of an edit, and cleared with null; a PATCH without the key leaves it', async () => {
+    const place = await seedPlace(DAVE, { kind: 'pantry' })
+    const { body } = await create(DAVE, { name: `crop tomatos ${H.RUN}`, storage_location_id: place })
+    const id = body.item.id
+    expect(body.item.crop_type_slug).toBeNull()
+    let p = await call(JEN, 'PATCH', itemPath(id), { crop_type_slug: CROP })
+    expect(p.status, JSON.stringify(p.body)).toBe(200)
+    expect(p.body.item).toMatchObject({ id, crop_type_slug: CROP, name: `crop tomatos ${H.RUN}`, plant_id: null })
+    expect((await readItem(id)).crop_type_slug).toBe(CROP)
+    // an edit naming other keys leaves the crop where it is
+    p = await call(DAVE, 'PATCH', itemPath(id), { notes: 'two bags' })
+    expect(p.body.item).toMatchObject({ crop_type_slug: CROP, notes: 'two bags' })
+    // the body the client's retry repair sends: every key of an edit, the crop among them
+    p = await call(DAVE, 'PATCH', itemPath(id), {
+      name: `crop tomatoes ${H.RUN}`, storage_location_id: place, acquired_at: '2026-10-01', acquired_precision: 'day', use_by_target: null,
+      notes: null, quantity_value: null, quantity_unit: null, source_kind: null, source_label: null, crop_type_slug: null,
+    })
+    expect(p.status, JSON.stringify(p.body)).toBe(200)
+    expect(p.body.item).toMatchObject({ name: `crop tomatoes ${H.RUN}`, crop_type_slug: null, notes: null, acquired_at: '2026-10-01' })
+    const row = await readItem(id)
+    expect([row.name, row.crop_type_slug, row.notes, row.user_id]).toEqual([`crop tomatoes ${H.RUN}`, null, null, DAVE])
+  })
+
+  it('a crop this app does not know → 400 in words (the FK, on the UPDATE path), the row unchanged; STRANGER → 404, nothing written', async () => {
+    const place = await seedPlace(DAVE, { kind: 'pantry' })
+    const { body } = await create(DAVE, { name: `crop refused ${H.RUN}`, storage_location_id: place, crop_type_slug: CROP })
+    const id = body.item.id
+    const bad = await call(DAVE, 'PATCH', itemPath(id), { name: 'renamed with it', crop_type_slug: `no-such-crop-${H.RUN}` })
+    expect(bad.status, JSON.stringify(bad.body)).toBe(400)
+    expect(bad.body.error).toBe('That crop is not one this app knows.')
+    expect(bad.body.error).not.toMatch(/fkey|constraint/i)
+    expect((await call(STRANGER, 'PATCH', itemPath(id), { crop_type_slug: null })).status).toBe(404)
+    const row = await readItem(id)
+    expect([row.name, row.crop_type_slug]).toEqual([`crop refused ${H.RUN}`, CROP])
+  })
+
+  it('crop_type_slug on an item tied to a planting → 400 with the planting sentence, BEFORE anything is written: the keys sent with it are not applied either', async () => {
+    const place = await seedPlace(DAVE, { kind: 'cold_storage' })
+    const { plantId } = await seedPlanting(DAVE, { name: 'crop patch walla' })
+    const { body } = await create(DAVE, { name: `crop fresh ${H.RUN}`, storage_location_id: place, plant_id: plantId, crop_type_slug: CROP })
+    const id = body.item.id
+    expect(body.item).toMatchObject({ plant_id: plantId, crop_type_slug: CROP })
+    for (const crop of [null, CROP]) {
+      const p = await call(JEN, 'PATCH', itemPath(id), { name: 'renamed with it', notes: 'x', crop_type_slug: crop })
+      expect(p.status, JSON.stringify(p.body)).toBe(400)
+      expect(p.body.error).toBe(PLANTING_CROP_REFUSAL)
+    }
+    const row = await readItem(id)
+    expect([row.name, row.notes, row.crop_type_slug, row.plant_id]).toEqual([`crop fresh ${H.RUN}`, null, CROP, plantId])
+    // the same edit without the crop key goes through, and the planting's crop stays
+    const ok = await call(JEN, 'PATCH', itemPath(id), { name: `crop fresh, the red ones ${H.RUN}`, notes: 'x' })
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200)
+    expect(ok.body.item).toMatchObject({ plant_id: plantId, crop_type_slug: CROP, notes: 'x' })
+  })
+
+  it('a replay answers the item\'s two stamps: ONE instant while nothing has touched it, and updated_at moved by any PATCH (what the client reads to tell a row it just made from one changed since)', async () => {
+    const place = await seedPlace(DAVE, { kind: 'pantry' })
+    const k = key()
+    const first = await call(DAVE, 'POST', '/api/pantry/items', { idempotency_key: k, name: `stamps ${H.RUN}`, storage_location_id: place })
+    expect(first.status, JSON.stringify(first.body)).toBe(201)
+    const made = ms(first.body.item.created_at)
+    expect(Number.isFinite(made)).toBe(true)
+    expect(ms(first.body.item.updated_at)).toBe(made)
+    expect(Math.abs(Date.now() - made)).toBeLessThan(5 * 60 * 1000)          // the database's clock, near this one
+    let again = await call(JEN, 'POST', '/api/pantry/items', { idempotency_key: k, name: 'another body', storage_location_id: place })
+    expect(again.body).toMatchObject({ replayed: true, item: { id: first.body.item.id } })
+    expect([ms(again.body.item.created_at), ms(again.body.item.updated_at)]).toEqual([made, made])
+    expect((await directSql`SELECT (updated_at = created_at) AS untouched FROM pantry_item WHERE id = ${first.body.item.id}`)[0].untouched).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 20))                   // the two stamps travel at millisecond precision
+    expect((await call(JEN, 'PATCH', itemPath(first.body.item.id), { notes: 'touched' })).status).toBe(200)
+    again = await call(DAVE, 'POST', '/api/pantry/items', { idempotency_key: k, name: 'another body', storage_location_id: place })
+    expect(again.body).toMatchObject({ replayed: true, item: { id: first.body.item.id, notes: 'touched' } })
+    expect(ms(again.body.item.created_at)).toBe(made)
+    expect(ms(again.body.item.updated_at)).toBeGreaterThan(made)
   })
 })
 

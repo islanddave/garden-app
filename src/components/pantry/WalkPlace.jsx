@@ -39,7 +39,7 @@ import { createPantryItem, deletePantryItem, ensurePlaceId, listPantry, patchPan
 import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, requiredMarkChrome } from '../forms/formStyles.js'
-import { mintKey, sendPrint, noteSent, afterReplay } from '../kitchen/idempotencyKey.js'
+import { mintKey, noteSent, afterReplay, whenChoice, answerLost } from '../kitchen/idempotencyKey.js'
 import { placeChips } from '../putup/putItUp.js'
 import NameSearchField from './NameSearchField.jsx'
 import Stepper, { stepperCount } from './Stepper.jsx'
@@ -49,7 +49,8 @@ import RefusalLine, { refusalOf, refusalText } from './RefusalLine.jsx'
 import { leftWords, rowKey } from './pantryRows.js'
 import {
   AS_IS, METHOD_REQUIRED_TEXT, methodChoices, routeFor, walkWhen, walkWhenChips, previewLine, jarBody, itemBody,
-  methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS, ITEM_FIXED_KEYS, itemPatchOf, replayFixedText,
+  methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS, itemPatchOf, itemPrint, plantingDiffers, replayFixedText,
+  replayStaleText, replayUnsavedText,
 } from './putSomethingUp.js'
 
 export const WALK_TITLE = 'Walk a place'
@@ -234,7 +235,7 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
             <UnrecordedLine fetch={fetch} />
             <WalkGroup walk={walk} fetch={fetch} online={online} stock={stock} now={nowDate} bandH={bandH}
               held={heldRef.current} onHeld={onHeld} saveRef={saveRef}
-              onSaved={onSaved} onOpenExisting={setOpenRow} onMoveHere={moveHere} />
+              onSaved={onSaved} onExists={changed} onOpenExisting={setOpenRow} onMoveHere={moveHere} />
           </>
         )}
       </div>
@@ -426,10 +427,12 @@ function AlreadyHere({ fetch, placeId, seq, onOpen }) {
 // `held` / `onHeld` / `saveRef` (R2a): the group starts from what the walk was holding for it (the item typed
 // before "Change" unmounted it), reports what it holds after every change, and hands the walk its Save.
 // A REPLAYED ITEM (BUG-PUTUPREPLAYDROPSEDIT-001): as the Put something up door does it — the key stays, a
-// replayed item that may not hold what is on screen is PATCHed, and a What that became another planting (or
-// stopped being one) is said, not written. `sent` (what has gone out under the key) is held with the key.
+// replayed item that is this sitting's (made minutes ago, untouched since) and may not hold what is on screen
+// is PATCHed; one that is not is left as it is, said so, and the key let go; a What that is now another
+// planting (or none) is said, not written. `sent` (what has gone out under the key) is held with the key, in
+// memory only, so it is always this walk's. `onExists` is the walk's re-read: the item is in the Pantry.
 function WalkGroup({
-  walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK_PX, onSaved, onOpenExisting, onMoveHere,
+  walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK_PX, onSaved, onExists = null, onOpenExisting, onMoveHere,
   held = null, onHeld = null, saveRef = null,
 }) {
   const [what, setWhat] = useState(held?.what ?? null)
@@ -443,6 +446,9 @@ function WalkGroup({
   const [ownPicked, setOwnPicked] = useState(held?.ownPicked ?? '')
   const [key, setKey] = useState(held?.key ?? null)
   const [sent, setSent] = useState(held?.sent ?? [])
+  // The item this group has sent a PATCH to (its id), held with the key: a PATCH that landed with its answer
+  // lost has moved the item's updated_at, and Save again must still be able to finish it.
+  const [patched, setPatched] = useState(held?.patched ?? null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
   const [field, setField] = useState(null)
@@ -466,13 +472,13 @@ function WalkGroup({
     return () => setReloadBlocked(gateKey, false)
   }, [gateKey, hold])
   useEffect(() => {
-    onHeld?.({ what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent })
-  }, [onHeld, what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent])
+    onHeld?.({ what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent, patched })
+  }, [onHeld, what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent, patched])
 
   function reset() {
     setWhat(null); setMethod(null); setCount('1'); setDiscard({ mode: 'auto', date: '' }); setOwnChoice(null); setOwnPicked('')
     setIsRaw(false); setInOil(false)
-    setMoreOpen(false); setKey(null); setSent([]); setErr(null); setField(null)
+    setMoreOpen(false); setKey(null); setSent([]); setPatched(null); setErr(null); setField(null)
   }
 
   async function save() {
@@ -488,6 +494,8 @@ function WalkGroup({
     writingRef.current = true
     setSaving(true); setErr(null); setField(null)
     const route = routeFor(method)
+    // The item a replay answered with, once it is being written onto.
+    let onRow = null
     try {
       let saved
       if (route === 'jar') {
@@ -496,15 +504,27 @@ function WalkGroup({
         })) })
       } else {
         const body = itemBody({ key: useKey, what, place, when, discard })
-        const print = sendPrint(body, ITEM_FIXED_KEYS)
+        // The date as he chose it: this group's own answer, or the walk's (stored once, at its start).
+        const chose = ownChoice ? whenChoice('earlier', ownChoice, ownPicked) : ['walk', walk.when?.date ?? null, walk.when?.precision ?? null]
+        const print = itemPrint(body, what, chose)
         const sentNow = noteSent(sent, print)
         setSent(sentNow)
         const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
-        const todo = afterReplay(r, sentNow, print)
-        if (todo === 'fixed') { setErr(replayFixedText(saved)); setField('what'); return }
+        const todo = afterReplay(r, sentNow, print, {
+          row: saved, updatedHere: saved?.id != null && patched === saved.id, fixed: plantingDiffers(body, saved),
+        })
+        if (todo === 'stale') {
+          setKey(mintKey()); setSent([]); setPatched(null)
+          setErr(replayStaleText(saved)); setField(null)
+          onExists?.()
+          return
+        }
+        if (todo === 'fixed') { setErr(replayFixedText(saved)); setField('what'); onExists?.(); return }
         if (todo === 'update') {
+          onRow = saved
           if (saved?.id == null) throw new Error('replayed without an item')
+          setPatched(saved.id)
           const u = await patchPantryItem(fetch, saved.id, itemPatchOf(body, await ensurePlaceId(fetch, place), saved))
           saved = u?.item ?? u
         }
@@ -513,7 +533,11 @@ function WalkGroup({
       onSaved({ id: saved?.id ?? null, route, text: [n ? `${n} × ${what.name.trim()}` : what.name.trim(), methodLabel(method, what)].join(' · ') })
       reset()
     } catch (e) {
-      setErr(refusalOf(e, "Couldn't save it — what you entered is kept. Try again."))
+      if (onRow) {
+        const why = refusalOf(e, '')
+        setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: answerLost(e) }), refresh: why.refresh })
+        onExists?.()
+      } else setErr(refusalOf(e, "Couldn't save it — what you entered is kept. Try again."))
     } finally {
       writingRef.current = false
       setSaving(false)

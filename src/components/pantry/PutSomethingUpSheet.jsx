@@ -30,11 +30,17 @@
 //
 // A REPLAYED ITEM (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js). The key does not change with what
 // is typed, so after a lost answer and a change the item route answers `replayed: true` with the item the
-// FIRST Save made. The door then PATCHes what it holds onto that item and completes from the PATCH's answer.
-// A What that has become another planting (or stopped being one) cannot ride a PATCH: nothing is written and the door says
-// so (replayFixedText). A failure of that PATCH never mints a new key, whatever its status: the item exists.
-// What has gone out under the key rides in the draft as `sent`, from the first item Save on. The put-up route
-// is as it was: a replayed put-up completes from the server's row (plan R2 V2 "Retry key").
+// FIRST Save made. When that item is THIS sitting's (sent from the door that is open now, made minutes ago,
+// untouched since) the door PATCHes what it holds onto it and completes from the PATCH's answer. When it is
+// not — a draft restored with `sent` already in it, an older item, one edited since — NOTHING is written: the
+// door says it was saved earlier and this Save changed nothing (replayStaleText) and lets go of the key, so
+// the next Save adds what is on screen as a new item. A What that is now another planting (or none) cannot
+// ride a PATCH: nothing is written and the door says so (replayFixedText); put back, the next Save goes through.
+// A failure of the PATCH never mints a new key, whatever its status — the item exists — and is said as that
+// (replayUnsavedText). Each of the three tells the page (`onExists`) so the list behind shows the item.
+// What has gone out under the key rides in the draft as `sent`, from the first item Save on; its prints are
+// of what was chosen, not of the date or the searched crop (putSomethingUp.js itemPrint). The put-up route is
+// as it was: a replayed put-up completes from the server's row (plan R2 V2 "Retry key").
 //
 // A SEEDED DOOR (opened with a What: a search's "Put something up: <text> →", a planting's door) is not
 // dirty until something changes: no key, no draft written, no reload held, and a draft already stored is
@@ -55,7 +61,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome } from '../forms/formStyles.js'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
-import { mintKey, sendPrint, noteSent, afterReplay } from '../kitchen/idempotencyKey.js'
+import { mintKey, noteSent, afterReplay, whenChoice, answerLost } from '../kitchen/idempotencyKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter, FOOTER_GAP_PX } from '../kitchen/sheetScroll.js'
 import { placeChips, estimateChips, TEXTURE_CHIPS } from '../putup/putItUp.js'
 import NameSearchField from './NameSearchField.jsx'
@@ -71,7 +77,8 @@ import {
   AS_IS, DOOR_TITLE, DOOR_SHEET, METHOD_REQUIRED_TEXT, methodChoices, routeFor, saveLabel, doorWhen,
   previewLine, doorError, jarBody, itemBody, START_BATCH_INSTEAD_TEXT, isPlantingHit, methodSlot,
   doorOptionsLabel, doorFromLabel, doorNotesPlaceholder, whereFromHeading, sizeEcho, sizeTotalError,
-  SIZE_LINK_LABEL, AMOUNT_LINK_LABEL, ITEM_FIXED_KEYS, itemPatchOf, replayFixedText,
+  SIZE_LINK_LABEL, AMOUNT_LINK_LABEL, itemPatchOf, itemPrint, plantingDiffers, replayFixedText, replayStaleText,
+  replayUnsavedText,
 } from './putSomethingUp.js'
 
 const WHEN_CHIPS = [{ id: 'today', label: 'Today' }, { id: 'yesterday', label: 'Yesterday' }, { id: 'earlier', label: 'Earlier…' }]
@@ -181,15 +188,17 @@ export function resolveDraftPlace(place, chips) {
   return list.find(c => c.kind === place.kind) ?? null
 }
 
+// `onExists` (optional): the page's re-read, called with the door still open when a Save found its item
+// already in the Pantry and did not (or could not) put the change on it.
 export default function PutSomethingUpSheet({
-  open, onClose, onSaved, initialName = '', initialWhat = null, stockRows = null, onStartBatchInstead = null, now,
+  open, onClose, onSaved, onExists = null, initialName = '', initialWhat = null, stockRows = null, onStartBatchInstead = null, now,
 }) {
   if (!open) return null
-  return <DoorOpen onClose={onClose} onSaved={onSaved} initialName={initialName} initialWhat={initialWhat}
+  return <DoorOpen onClose={onClose} onSaved={onSaved} onExists={onExists} initialName={initialName} initialWhat={initialWhat}
     stockRows={stockRows} onStartBatchInstead={onStartBatchInstead} now={now} />
 }
 
-function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onStartBatchInstead, now }) {
+function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockRows, onStartBatchInstead, now }) {
   const { fetch } = useApiFetch()
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
   const draftKey = useSheetDraftKey(DOOR_SHEET, 'new')
@@ -198,6 +207,12 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
   const [key, setKey] = useState(initial.key)
   // What has gone out under `key` on the item route (idempotencyKey.js); dropped with the key.
   const [sent, setSent] = useState(() => (Array.isArray(initial.sent) ? initial.sent.filter(x => typeof x === 'string') : []))
+  // Whether every body under `key` went out from THIS door. A draft restored with `sent` in it was sent from
+  // an earlier one, and is never written onto the item it made; a key minted here is this door's.
+  const mineRef = useRef(sent.length === 0)
+  // The item this door has sent a PATCH to (its id): a PATCH that landed with its answer lost has moved the
+  // item's updated_at, and Save again must still be able to finish it.
+  const patchedRef = useRef(null)
   const [what, setWhat] = useState(initial.what)
   const [place, setPlace] = useState(initial.place)
   const [method, setMethod] = useState(initial.method)
@@ -430,8 +445,8 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
     if (!key) setKey(useKey)
     writingRef.current = true
     setSaving(true); setErr(null); setField(null)
-    // Set once the item is KNOWN to exist (a replay answered with it): a failure after that is not a new key.
-    let onRow = false
+    // The item a replay answered with, once it is being written onto: a failure after that is not a new key.
+    let onRow = null
     try {
       let saved
       if (route === 'jar') {
@@ -442,22 +457,33 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
         })) })
       } else {
         const body = itemBody({ key: useKey, what, place, when: w.when, discard, notes, amount, source })
-        const print = sendPrint(body, ITEM_FIXED_KEYS)
+        const print = itemPrint(body, what, whenChoice(whenChip, estimate, pickedDate))
         const sentNow = noteSent(sent, print)
         setSent(sentNow)
         const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
-        const todo = afterReplay(r, sentNow, print)
-        if (todo === 'fixed') {
+        const todo = afterReplay(r, sentNow, print, {
+          row: saved, mine: mineRef.current, updatedHere: saved?.id != null && patchedRef.current === saved.id,
+          fixed: plantingDiffers(body, saved),
+        })
+        if (todo === 'stale' || todo === 'fixed') {
           writingRef.current = false
           setSaving(false)
-          setErr(replayFixedText(saved)); setField('what')
+          if (todo === 'stale') {
+            // The key has done its work: it names an item this door will not write onto.
+            mineRef.current = true; patchedRef.current = null
+            setKey(mintKey()); setSent([])
+            setErr(replayStaleText(saved)); setField(null)
+          } else { setErr(replayFixedText(saved)); setField('what') }
+          onExists?.()
           return
         }
         if (todo === 'update') {
-          onRow = true
+          onRow = saved
           if (saved?.id == null) throw new Error('replayed without an item')
-          const u = await patchPantryItem(fetch, saved.id, itemPatchOf(body, await ensurePlaceId(fetch, place), saved))
+          const placeId = await ensurePlaceId(fetch, place)
+          patchedRef.current = saved.id
+          const u = await patchPantryItem(fetch, saved.id, itemPatchOf(body, placeId, saved))
           saved = u?.item ?? u
         }
       }
@@ -469,13 +495,24 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
     } catch (ex) {
       writingRef.current = false
       setSaving(false)
+      if (onRow) {
+        // The item is in the Pantry; it is the change that did not go through. Said as that, the page told,
+        // and the key kept whatever the status.
+        const why = refusalOf(ex, '')
+        setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: answerLost(ex) }), refresh: why.refresh })
+        onExists?.()
+        return
+      }
       // An ANSWERED 4xx wrote nothing, so the next attempt is a new request and gets a new key. Anything else
       // (no status, 0, a 5xx) may have landed with its answer lost: the key is kept, the retry replays it.
-      if (!onRow && typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500) { setKey(mintKey()); setSent([]) }
+      if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500) {
+        mineRef.current = true; patchedRef.current = null
+        setKey(mintKey()); setSent([])
+      }
       setErr(refusalOf(ex, "Couldn't save it — nothing was lost. Try again."))
     }
-  }, [amountUnit, amountValue, discard, draftKey, fetch, inOil, isRaw, key, method, n, notes, onSaved, place, planting,
-    sent, sizeUnit, sizeValue, sourceKind, sourceLabel, texture, w, what])
+  }, [amountUnit, amountValue, discard, draftKey, estimate, fetch, inOil, isRaw, key, method, n, notes, onExists, onSaved, pickedDate,
+    place, planting, sent, sizeUnit, sizeValue, sourceKind, sourceLabel, texture, w, whenChip, what])
 
   const name = String(what?.name ?? '').trim() || 'this'
   return (

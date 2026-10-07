@@ -19,6 +19,7 @@ import {
   putUpDateWords, shortDay, parseYmd, toYmd, discardWords, ESTIMATED_PRECISIONS, totalOfEach, qtyText,
 } from '../putup/jarWords.js'
 import { parseAmount } from './AmountField.jsx'
+import { sendPrint } from '../kitchen/idempotencyKey.js'
 
 export const AS_IS = 'as_is'
 // The no-method choice in two lengths. On its CHIP it says what it covers — true for a typed name whatever
@@ -347,11 +348,52 @@ export function itemPatchOf(body, storageLocationId, item = null) {
   if (body.plant_id == null && crop !== (item?.crop_type_slug ?? null)) patch.crop_type_slug = crop
   return patch
 }
-// Said when the first Save made the item and What has since become another planting, or stopped being one:
-// nothing is written, and the form stays as it is. `item` is the row the replay answered with.
+
+// THE PRINT OF AN ITEM SAVE (idempotencyKey.js: a print is taken of what was CHOSEN). Two parts of the body
+// are not his to choose, and are left out so an untouched retry is one body whatever happened meanwhile:
+//   · acquired_at / acquired_precision — the date the chip resolved to on the clock. `whenChoice` (the chip,
+//     and a picked day as typed) goes in instead: every way he has to change the date changes that.
+//   · crop_type_slug of a TYPED name — the name search works it out from the text, with no tap, and may
+//     answer after the first Save. The name itself is printed, and a crop he PICKED (a planting, a crop, a
+//     variety, a stock row: any What with a source other than 'typed') stays in the print.
+// Everything else in the body is printed as sent.
+export function itemPrint(body, what, whenChoice) {
+  const { acquired_at: _date, acquired_precision: _precision, ...own } = body ?? {}
+  if (!what?.source || what.source === 'typed') delete own.crop_type_slug
+  return sendPrint({ ...own, when: whenChoice ?? null }, ITEM_FIXED_KEYS)
+}
+// Whether a replayed item's planting is the one this body names. No route changes an item's planting, and
+// the row says exactly which it holds — so this is read off the row, never off what went out before.
+export function plantingDiffers(body, item) {
+  const id = (v) => (v == null ? null : String(v))
+  return id(body?.plant_id) !== id(item?.plant_id)
+}
+
+const quoted = (item) => { const name = String(item?.name ?? '').trim(); return name ? `“${name}”` : null }
+// Said when the first Save made the item and What is now another planting, or no planting: nothing is
+// written, and the form stays as it is. `item` is the row the replay answered with. Putting What back DOES
+// let the next Save through (plantingDiffers reads the row); a different planting is a new item.
 export function replayFixedText(item) {
-  const name = String(item?.name ?? '').trim()
-  return `${name ? `Already in the Pantry as “${name}”` : 'Already in the Pantry'} — the first Save went through. Which planting it came from can't be changed from here. Put it back as it was, or close this and fix it in the Pantry.`
+  const name = quoted(item)
+  return `${name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'} — the first Save went through. Which planting it came from can't be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it — or remove it in the Pantry and add it again.`
+}
+// Said when an earlier Save made the item and it is not this sitting's to write over (idempotencyKey.js
+// afterReplay 'stale'): nothing is written, the form stays, and the door lets go of the key — so the next
+// Save adds what is on screen as a new item. It says only what is certain: which body the item holds is not
+// known here, so never "your change is not on it". A replayed item can be one that was removed since.
+export function replayStaleText(item) {
+  const name = quoted(item)
+  if (item?.deleted_at) return `${name ? `${name} was saved earlier` : 'This was saved earlier'} and has been removed since. This Save did not change that. To add what is here, tap Save again.`
+  return `${name ? `${name} was already saved earlier` : 'This was already saved earlier'} — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry. If what is here is something new, tap Save again to add it.`
+}
+// Said when the first Save made the item and the change could not be put on it just now: the item is there.
+// `why` is the server's own sentence when it refused the change in words; `lost` is true when no answer came
+// back at all (the change may be on it).
+export function replayUnsavedText(item, { why = '', lost = false } = {}) {
+  const name = quoted(item)
+  const head = `${name ? `${name} is already in the Pantry` : 'This is already in the Pantry'} — the first Save went through.`
+  if (why) return `${head} This change did not save: ${why}`
+  return lost ? `${head} This change may not have saved — try again.` : `${head} This change did not save — try again.`
 }
 
 // The completion line, from what the server answered (V4 §2.2 "completion in place on the Pantry"):

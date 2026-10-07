@@ -257,7 +257,7 @@ export default function PutUpFromPlanting({ planting, fetch, onRows, renderExtra
         </div>
       )}
       <PutSomethingUpSheet open={doorOpen} initialWhat={what} stockRows={null} now={now}
-        onClose={() => setDoorOpen(false)} onSaved={onSaved} />
+        onClose={() => setDoorOpen(false)} onSaved={onSaved} onExists={stockChanged} />
     </div>
   )
 }

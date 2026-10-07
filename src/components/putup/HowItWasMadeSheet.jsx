@@ -20,9 +20,14 @@
 // Saving is ONE write (all or nothing); the key is minted when the sheet opens and reused on every retry.
 // A REPLAYED SAVE (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js): a Save whose answer was lost, a
 // change, and Save again is answered with the batch the FIRST one made. A changed name or kind goes onto it
-// through the batch's own PUT and the sheet closes as saved. Anything else (the start, what went in, the
-// jars, how many, next time) has no one route that can carry it, so nothing is written: the sheet stays
-// open and says the batch exists without that change (REPLAY_NOT_ON_IT), and the page behind is told.
+// through the batch's own PUT and the sheet closes as saved — when the batch is this sitting's (made minutes
+// ago, untouched since). Anything else (the start, what went in, the jars, how many, next time) has no one
+// route that can carry it, and a batch that is not this sitting's is not written onto: nothing is written,
+// the sheet stays open and says the batch is already saved and this Save changed nothing
+// (REPLAY_NOT_ON_IT), and the page behind is told. A PUT that fails is said as that (REPLAY_CHANGE_UNSAVED;
+// REPLAY_CHANGE_MAYBE when no answer came back), and the page is told then too.
+// THE PRINT's start is what he CHOSE: "the jars' own" until he changes it (the date that came to moves when
+// the jar list loads), then the chip he picked (Today is the instant, a new one at every tap).
 // THE UNADDED LINE (Put-Up UX pass R1, D2). A name typed into the adder and not added was dropped by Save
 // without a word. Now Save stops, puts the cursor back in the adder and says, there:
 // "Add “garlic” first — or clear it." Either act lets the next Save through. The line sits directly ABOVE
@@ -44,7 +49,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, optionalMarkChrome, inputChrome } from '../forms/formStyles.js'
 import { SheetStartChips, resolveSheetStart } from '../kitchen/StartChips.jsx'
 import KindChips, { kindBody } from '../kitchen/KindChips.jsx'
-import { mintKey, sendPrint, noteSent, afterReplay } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost } from '../kitchen/idempotencyKey.js'
 import { scrollClearOfFooter, useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
 import LineAdder, { addFirstWords } from './LineAdder.jsx'
 import LikeBatchPicker from './LikeBatchPicker.jsx'
@@ -59,7 +64,11 @@ export { canSayHowItWasMade }
 export const HOW_SHEET_TITLE = 'How it was made'
 // The parts of the from-jars body the batch's own PUT cannot carry (it carries the name and the kind).
 const FROM_JARS_FIXED = ['started', 'inputs', 'jar_ids', 'made_count', 'next_time']
-export const REPLAY_NOT_ON_IT = 'This batch was saved the first time, before your last change — so the change is not on it. Close this and open the batch to make it there.'
+// Which Save made the batch is not known here (the first, or a later one that held the change), so neither
+// sentence says the change is missing: only that this Save wrote nothing, or that the rename did not go through.
+export const REPLAY_NOT_ON_IT = 'This batch is already saved — an earlier Save went through. This Save changed nothing on it. If your last change is not there, close this and open the batch to make it there.'
+export const REPLAY_CHANGE_UNSAVED = 'This batch is already saved — the first Save went through. The change to its name or kind did not save. Try again, or close this and make it on the batch.'
+export const REPLAY_CHANGE_MAYBE = 'This batch is already saved — the first Save went through. The change to its name or kind may not have saved. Try again, or close this and check it on the batch.'
 
 const link = {
   display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, background: 'none', border: 'none',
@@ -80,6 +89,7 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   const { fetch } = useApiFetch()
   const [key] = useState(() => mintKey())
   const sentRef = useRef([])                           // what has gone out under `key` (idempotencyKey.js)
+  const putRef = useRef(null)                          // the batch this sheet has sent its PUT to (its id)
   const [label, setLabel] = useState(() => jarName(jar))
   const [rows, setRows] = useState(null)
   // The jar's full record from the put-up list once it loads (a Pantry row carries no date words of its
@@ -175,13 +185,15 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
     if (kindPart.kind_other) res.body.kind_other = kindPart.kind_other
     writingRef.current = true
     setSaving(true); setErr(null)
-    const print = sendPrint(res.body, FROM_JARS_FIXED)
+    const print = sendPrint({ ...res.body, started: changingStart ? whenChoice(chip, earlier, pickedDate) : 'jars' }, FROM_JARS_FIXED)
     const sent = noteSent(sentRef.current, print)
     sentRef.current = sent
+    // The batch a replay answered with, once it is being written onto.
+    let onRow = null
     try {
       let batch = await fetch(FROM_JARS_PATH, { method: 'POST', body: JSON.stringify(res.body) })
-      const todo = afterReplay(batch, sent, print)
-      if (todo === 'fixed') {
+      const todo = afterReplay(batch, sent, print, { row: batch, updatedHere: batch?.id != null && putRef.current === batch.id })
+      if (todo === 'fixed' || todo === 'stale') {
         writingRef.current = false
         setSaving(false)
         setErr(REPLAY_NOT_ON_IT)
@@ -189,7 +201,9 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
         return
       }
       if (todo === 'update') {
+        onRow = batch
         if (batch?.id == null) throw new Error('replayed without a batch')
+        putRef.current = batch.id
         const updated = await fetch(`/api/kitchen-batches/${batch.id}`, {
           method: 'PUT', body: JSON.stringify({ label: res.body.label, kind: res.body.kind ?? null, kind_other: res.body.kind_other ?? null }),
         })
@@ -200,6 +214,7 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
     } catch (e) {
       writingRef.current = false
       setSaving(false)
+      if (onRow?.id != null) { setErr(answerLost(e) ? REPLAY_CHANGE_MAYBE : REPLAY_CHANGE_UNSAVED); onSaved?.(onRow); return }
       setErr(fromJarsRefusal(e))
     }
   }, [changingStart, chip, chosenJars, earlier, fetch, fixedStart, key, kind, kindOther, label, labelId, lines, made, madeId, nextTime, onClose, onSaved, pending, pickedDate])

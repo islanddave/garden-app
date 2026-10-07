@@ -26,7 +26,7 @@ import React, { useId, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import Button from '../forms/Button.jsx'
-import { mintKey, sendPrint, noteSent, afterReplay } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, answerLost } from '../kitchen/idempotencyKey.js'
 import { describeRefusal } from '../../lib/putUpErrors.js'
 import { asWrittenLines, recipeLineWords, MADE_AS_WRITTEN_CTA, SAVE_AS_RECIPE_CTA } from './recipes.js'
 
@@ -85,6 +85,20 @@ export function MadeAsWrittenButton({ asWritten }) {
   )
 }
 
+// Save as recipe, when its create is answered with the recipe an EARLIER Save made, maybe under another name
+// (kitchen/idempotencyKey.js). STALE: the recipe is not this sitting's to rename (made a while ago, or changed
+// since) — nothing is written, and the key is KEPT: a new one would make a second recipe of the same batch.
+// UNSAVED: the rename was tried and did not go through (`lost`: no answer came back, so it may have).
+// Either way the recipe is there, and the sentence gives the name it answered with.
+export function saveAsRecipeStaleText(recipe) {
+  const name = String(recipe?.name ?? '').trim()
+  return `${name ? `Already saved as a recipe: “${name}”` : 'Already saved as a recipe'} — an earlier Save went through. This Save did not rename it: to rename it, open the recipe.`
+}
+export function saveAsRecipeUnsavedText(recipe, { lost = false } = {}) {
+  const name = String(recipe?.name ?? '').trim()
+  return `${name ? `Already saved as a recipe: “${name}”` : 'Already saved as a recipe'} — the first Save went through. The new name ${lost ? 'may not have saved' : 'did not save'} — try again.`
+}
+
 export function SaveAsRecipe({ batch, onChanged }) {
   const { fetch } = useApiFetch()
   const [busy, setBusy] = useState(false)
@@ -92,8 +106,9 @@ export function SaveAsRecipe({ batch, onChanged }) {
   const [saving, setSaving] = useState(false)       // the Save as recipe field is open
   const [name, setName] = useState('')
   const [saved, setSaved] = useState(null)
-  // The Save's key, the batch it is for, and what has gone out under it (kitchen/idempotencyKey.js). It
-  // outlives a failure, a Cancel and a changed name, and belongs to ONE batch: another batch is another create.
+  // The Save's key, the batch it is for, what has gone out under it, and the recipe a rename was sent to
+  // (kitchen/idempotencyKey.js). It outlives a failure, a Cancel and a changed name, and belongs to ONE
+  // batch: another batch is another create.
   const held = useRef(null)
   const nameId = `save-recipe-name-${useId()}`
   if (!batch) return null
@@ -102,25 +117,38 @@ export function SaveAsRecipe({ batch, onChanged }) {
     if (busy) return
     const n = name.trim()
     if (!n) { setErr('Give the recipe a name.'); return }
-    if (held.current?.batchId !== batch.id) held.current = { key: mintKey(), batchId: batch.id, sent: [] }
+    if (held.current?.batchId !== batch.id) held.current = { key: mintKey(), batchId: batch.id, sent: [], patched: null }
     const body = { idempotency_key: held.current.key, name: n.slice(0, 120) }
     const print = sendPrint(body)
     const sent = noteSent(held.current.sent, print)
     held.current.sent = sent
     setBusy(true); setErr(null)
+    // The recipe a replay answered with, once it is being renamed.
+    let onRow = null
     try {
       let answer = await fetch(`/api/recipes/from-batch/${batch.id}`, { method: 'POST', body: JSON.stringify(body) })
-      if (afterReplay(answer, sent, print) === 'update') {
-        // The recipe an earlier Save made under another name (its answer was lost): this name goes onto it.
-        if (answer?.recipe?.id == null) throw new Error('replayed without a recipe')
-        answer = await fetch(`/api/recipes/${answer.recipe.id}`, { method: 'PATCH', body: JSON.stringify({ name: body.name }) })
+      const todo = afterReplay(answer, sent, print, {
+        row: answer?.recipe, updatedHere: answer?.recipe?.id != null && held.current.patched === answer.recipe.id,
+      })
+      if (todo === 'stale') {
+        setErr(saveAsRecipeStaleText(answer?.recipe))
+        onChanged?.()
+        return
+      }
+      if (todo === 'update') {
+        // The recipe this sitting's earlier Save made under another name (its answer was lost): this name goes onto it.
+        onRow = answer?.recipe ?? null
+        if (onRow?.id == null) throw new Error('replayed without a recipe')
+        held.current.patched = onRow.id
+        answer = await fetch(`/api/recipes/${onRow.id}`, { method: 'PATCH', body: JSON.stringify({ name: body.name }) })
       }
       held.current = null
       setSaving(false)
       setSaved(answer?.recipe?.name ?? n)
       onChanged?.()
-    } catch {
-      setErr("Couldn't save it as a recipe — try again.")
+    } catch (e) {
+      if (onRow?.id != null) { setErr(saveAsRecipeUnsavedText(onRow, { lost: answerLost(e) })); onChanged?.() }
+      else setErr("Couldn't save it as a recipe — try again.")
     } finally { setBusy(false) }
   }
 

@@ -6,8 +6,13 @@
 // id 'new' or the recipe's id); the create is keyed (one key per draft, reused on every retry).
 // A REPLAYED CREATE (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js): the key never changes with what
 // is typed, so a Save whose answer was lost, a change, and Save again is answered with the recipe the first
-// one made. The sheet then PATCHes what it holds onto that recipe before it closes. What has gone out under
-// the key rides in the draft as `sent`, from the first Save on (a draft never sent has no such key).
+// one made. When that recipe is THIS sitting's (sent from the sheet that is open now, made minutes ago,
+// untouched since) the sheet PATCHes what it holds onto it before it closes — the PATCH replaces the whole
+// line set, which is why it goes nowhere else. Otherwise NOTHING is written: the sheet says it was saved
+// earlier and this Save changed nothing (recipeStaleText) and lets go of the key, so the next Save is a new
+// recipe. A PATCH that fails is said as what it is — the recipe is there, the change did not save
+// (recipeUnsavedText). Both tell the page (`onExists`). What has gone out under the key rides in the draft as
+// `sent`, from the first Save on (a draft never sent has no such key).
 //
 // ⚠ Notes are his text VERBATIM (including his own target pH): sent exactly as typed, never trimmed inside,
 // and shown here exactly as stored — the bold and italic of recipe detail are that surface's alone.
@@ -35,7 +40,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
 import { useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
-import { mintKey, sendPrint, noteSent, afterReplay } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, answerLost } from '../kitchen/idempotencyKey.js'
 import TypePicker from './TypePicker.jsx'
 import {
   emptyDraft, draftFromRecipe, recipeBody, exactAmountOpens, keepsKindChips, RECIPE_KIND_OPTIONS, STORAGE_KIND_WORDS,
@@ -52,6 +57,23 @@ export function isRecipeDraft(d) {
     && (d.sent === undefined || Array.isArray(d.sent))
 }
 
+const quoted = (recipe) => { const name = String(recipe?.name ?? '').trim(); return name ? `“${name}”` : null }
+// An earlier Save made the recipe and it is not this sitting's to write over: nothing is written, what was
+// typed stays, and the next Save is a new recipe. `recipe` is the one the replay answered with. It says only
+// what is certain — which body the recipe holds is not known here, so never "your change is not on it".
+export function recipeStaleText(recipe) {
+  const name = quoted(recipe)
+  return `${name ? `${name} was already saved earlier` : 'This recipe was already saved earlier'} — it is with your recipes. This Save did not change it. To change it, open the recipe. If what is here is a new recipe, tap Save again to add it.`
+}
+// The first Save made the recipe and the change could not be put on it just now. `why` is the server's own
+// sentence when it gave one; `lost` is true when no answer came back at all (the change may be on it).
+export function recipeUnsavedText(recipe, { why = '', lost = false } = {}) {
+  const name = quoted(recipe)
+  const head = `${name ? `${name} is already saved` : 'This recipe is already saved'} — the first Save went through.`
+  if (why) return `${head} This change did not save: ${why}`
+  return `${head} This change ${lost ? 'may not have saved' : 'did not save'} — try again. What you typed is still here.`
+}
+
 // The quiet text action, 48 px tall on Put-Up surfaces (UX pass R1).
 const small = { minHeight: T.buttonMinHeight, padding: '4px 8px', background: 'none', border: 'none', color: P.green,
   fontFamily: 'inherit', fontSize: T.type.sm, fontWeight: 600, cursor: 'pointer' }
@@ -66,11 +88,19 @@ export default function RecipeSheet({ open, ...rest }) {
 }
 
 // `usedTypeIds` (optional): the types this household's recipes already use — they lead the type chips.
-function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, onClose, onSaved, onTypeCreated }) {
+// `onExists` (optional): the page's re-read, called with the sheet still open when a Save found its recipe
+// already saved and did not (or could not) put the change on it.
+function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, onClose, onSaved, onExists = null, onTypeCreated }) {
   const editing = !!recipe?.id
   const draftKey = useSheetDraftKey(RECIPE_SHEET, editing ? recipe.id : 'new')
   const [initial] = useState(() => readSheetDraft(draftKey, RECIPE_SHEET, isRecipeDraft) ?? (editing ? draftFromRecipe(recipe) : emptyDraft()))
   const [d, setD] = useState(initial)
+  // Whether every body under the draft's key went out from THIS sheet: a draft restored with `sent` in it
+  // was sent from an earlier one, and is never written onto the recipe it made.
+  const mineRef = useRef(!(Array.isArray(initial.sent) && initial.sent.length))
+  // The recipe this sheet has sent its PATCH to (its id): a PATCH that landed with its answer lost has moved
+  // the recipe's updated_at, and Save again must still be able to finish it.
+  const patchedRef = useRef(null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
   // What is open on the sheet is the sheet's own, never the draft's: a line's exact amount once asked for
@@ -145,6 +175,8 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
     if (res.error) { setErr(res.error); return }
     writingRef.current = true
     setSaving(true); setErr(null)
+    // The recipe a replay answered with, once it is being written onto.
+    let onRow = null
     try {
       let answer
       if (editing) {
@@ -156,11 +188,27 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
         const sent = noteSent(d.sent, print)
         if (sent !== d.sent) setD(x => ({ ...x, sent }))
         answer = await fetch('/api/recipes', { method: 'POST', body: JSON.stringify(res.body) })
-        if (afterReplay(answer, sent, print) === 'update') {
+        const todo = afterReplay(answer, sent, print, {
+          row: answer?.recipe, mine: mineRef.current, updatedHere: answer?.recipe?.id != null && patchedRef.current === answer.recipe.id,
+        })
+        if (todo === 'stale') {
+          // Nothing is written. The key names a recipe this sheet will not write onto, so it goes, with
+          // what went out under it; the effect above mints the next one.
+          writingRef.current = false
+          setSaving(false)
+          mineRef.current = true; patchedRef.current = null
+          setD(({ key: _key, sent: _sent, ...x }) => x)
+          setErr(recipeStaleText(answer?.recipe))
+          onExists?.()
+          return
+        }
+        if (todo === 'update') {
           // The recipe the first Save made, and it may not hold this: everything the sheet shows goes onto it,
-          // as an edit would send it. A failure lands in the catch below — not saved, what was typed still here.
-          if (answer?.recipe?.id == null) throw new Error('replayed without a recipe')
-          answer = await fetch(`/api/recipes/${answer.recipe.id}`, { method: 'PATCH', body: JSON.stringify(recipeBody(d, { mode: 'edit' }).body) })
+          // as an edit would send it. A failure lands in the catch below, said as what it is.
+          onRow = answer?.recipe ?? null
+          if (onRow?.id == null) throw new Error('replayed without a recipe')
+          patchedRef.current = onRow.id
+          answer = await fetch(`/api/recipes/${onRow.id}`, { method: 'PATCH', body: JSON.stringify(recipeBody(d, { mode: 'edit' }).body) })
         }
       }
       savedRef.current = true
@@ -169,6 +217,11 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
     } catch (e) {
       writingRef.current = false
       setSaving(false)
+      if (onRow?.id != null) {
+        setErr(recipeUnsavedText(onRow, { why: e?.body?.error ?? '', lost: answerLost(e) }))
+        onExists?.()
+        return
+      }
       setErr(e?.body?.error ? `Couldn't save it: ${e.body.error}` : "Couldn't save it — try again. What you typed is still here.")
     }
   }
