@@ -219,7 +219,9 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
       // An Undo of the very act that re-filed the jar goes back to what the server said was there
       // (`previous`), name included when that act renamed it and the field still shows that name.
       // Anything else is filed by what the resulting set says, and only when the set's cultivars moved.
-      // A jar with no parents, before or after, is never sent a filing (PP-11).
+      // A jar with no parents, before or after, is never sent a filing (PP-11), with one exception: an
+      // Undo that puts a planting back onto a jar this visit emptied. The jar may by then be filed
+      // under the OTHER removed planting's cultivar, and the server does not judge a one-plant set.
       let filing = null
       let target = null
       const shown = String(lot.name ?? '').trim()
@@ -232,7 +234,7 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
           filing.name = undo.filing.previous.name
         }
         target = undo.before
-      } else if (cur.length > 0 && next.length > 0 && nextFacts.varietyIds.length > 0
+      } else if ((cur.length > 0 || undo) && next.length > 0 && nextFacts.varietyIds.length > 0
           && !sameIds(facts.varietyIds, nextFacts.varietyIds)) {
         if (nextFacts.varietyIds.length === 1) {
           const one = nextFacts.varieties.find((v) => v.variety_id != null)

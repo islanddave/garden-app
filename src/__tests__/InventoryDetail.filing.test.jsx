@@ -383,6 +383,33 @@ describe('Re-file by itself — a removal that leaves one cultivar files the jar
     expect(setBodies()).toEqual([{ source_plant_ids: [P1.id, P2.id], expected_source_plant_ids: [P1.id, P2.id, P2B.id] }])
     expect(filedLine()).toBeNull()
   })
+
+  it('Undo into a jar this visit EMPTIED files it under the planting put back, not the one removed last', async () => {
+    // Remove P2: the jar is re-filed under A1. Remove P1: no parents, so no filing (PP-11) and the jar
+    // is still A1's. Undo P2: the server does not judge a one-plant set, so without a filing in this
+    // write the jar would hold a planting of A2 and stay filed, and named, as A1.
+    await renderPage()
+    await click(removeButton(P2))
+    await waitFor(() => expect(filedLine()).toBeTruthy())
+    await click(removeButton(P1))
+    expect(setBodies()[1]).toEqual({ source_plant_ids: [], expected_source_plant_ids: [P1.id] })
+    expect(itemRef.current.variety_id).toBe(A1.id)
+    now += 401
+    await click(undoButton(P2))
+
+    expect(setBodies()).toHaveLength(3)
+    expect(setBodies()[2]).toEqual({
+      source_plant_ids: [P2.id],
+      expected_source_plant_ids: [],
+      // No cache hint: the cache this row remembers (P1) is not a member of the set being written.
+      filing: { variety_id: A2.id, expect_variety_id: A1.id, name: auto(A2, 2025) },
+    })
+    // One cultivar: named, never made as a mix.
+    expect(blendBodies()).toHaveLength(0)
+    await waitFor(() => expect(liveRows()).toHaveLength(1))
+    expect(itemRef.current.variety_id).toBe(A2.id)
+    expect(nameField().value).toBe(auto(A2, 2025))
+  })
 })
 
 describe('Re-file by itself — what it never does', () => {
@@ -393,6 +420,26 @@ describe('Re-file by itself — what it never does', () => {
     expect(setBodies()).toEqual([{ source_plant_ids: [], expected_source_plant_ids: [P2.id] }])
     expect(blendBodies()).toHaveLength(0)
     expect(filedLine()).toBeNull()
+  })
+
+  it('never sends a filing for a FIRST planting on a jar with no parents, even one of another cultivar', async () => {
+    // The no-parent picker is pinned to the jar's own cultivar, so this cannot be reached by hand. The
+    // row is made to pass that filter (`variety_id` is the jar's) while its `variety_ref`, which is
+    // what the card reads, names A2: the rule holds by itself and not only because of the pin.
+    itemRef.current = jarOfOne({ source_plant_id: null, source_plants: [] })
+    const stray = { ...pickerRow(P2), variety_id: A1.id }
+    const original = fetchSpy.getMockImplementation()
+    fetchSpy.mockImplementation((path, opts) =>
+      (String(path).startsWith('/api/plants?view=picker') ? Promise.resolve([stray]) : original(path, opts)))
+    await renderPage()
+    fireEvent.focus(screen.getByTestId('source-plant-select'))
+    await waitFor(() => expect(screen.getByTestId(`ps-opt-${P2.id}`)).toBeTruthy())
+    await click(screen.getByTestId(`ps-opt-${P2.id}`))
+
+    expect(setBodies()).toEqual([{ source_plant_ids: [P2.id], expected_source_plant_ids: [] }])
+    expect(blendBodies()).toHaveLength(0)
+    expect(filedLine()).toBeNull()
+    expect(nameField().value).toBe(auto(A1, 2025))
   })
 
   it('a mix that cannot be made writes nothing: no PUT, the add rolled back, the client’s sentence', async () => {
