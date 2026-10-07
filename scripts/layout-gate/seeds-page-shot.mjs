@@ -245,6 +245,10 @@ const tidPrefix = (name) => `[data-testid^="${name}${SUFFIX}"]`
 // the calendar — its floor counts only the date-independent cards (3 with no sow profile: Add sow
 // details + Archive; 2 in process: Archive) and the two collapsed review sections' toggles.
 const LONG_NAME = 'Money Plant (self-saved, variety unrecorded)'
+// V5-SEEDMULTIPARENT-001 (release 2b): the longest name the app can give a mix, 90 characters. The jar
+// under it has an automatic lot name, so My seeds titles its row with this — the longest title on the
+// page. It must be ON the page and held to (f)'s one-line ellipsis like the 44-character row.
+const MIX_NAME = 'Biquinho Red & Yellow Blend + Bulgarian Carrot (Shipka) + Megatron F1 (jumbo jalapeno) mix'
 // The row opened with every group open: the drying saved pepper, the only fixture row whose expanded
 // panel carries all three kinds of control — a link out ("About this variety ↗"), "Change stage in
 // Saved seeds →" and "Open details →" — and it is the first row of the first group, so it is in the
@@ -269,14 +273,18 @@ const VIEWS = [
     // Folded, fresh session: the fixture's eight crops, Sowed previously (the used-up Salad Bowl Blend),
     // the two most-counted crops and suppliers pinned in their chip rows.
     cropHeaders: 8, sowedHeaders: 1, pinnedCrops: ['Pepper', 'Tomato'], pinnedSuppliers: ['Botanical', 'Bentley'],
-    // Every group open: 32 rows. The amount shows on 11 (every "1 packet" row prints none: Hot Portugal,
+    // Every group open: 33 rows — the 33rd is release 2b's jar off three plantings (V5-SEEDMULTIPARENT-001),
+    // titled with the 90-character mix name; stored, uncounted, no heat and no supplier, so it is one more
+    // row and one more row without a stripe (9) and moves nothing else here. The amount shows on 11 (every
+    // "1 packet" row prints none: Hot Portugal,
     // Shishito, Amish Paste and Hungarian Hot Wax's 2-3 packets, the Reaper's 25 seeds, the bean's 2 oz,
     // the used-up 0 packets, and the four MEASURED saved lots — 1884's 185, the Money Plant's approx.
     // 120, Hot Paper Lantern's approx. 1200 seeds · 12.5 g and Ristra Cayenne II's 175).
-    rows: 32, longRowChips: 2, ordinalRows: 2, amountRows: 11, stripeless: 8, expandedControls: 3,
+    rows: 33, longRowChips: 2, ordinalRows: 2, amountRows: 11, stripeless: 9, expandedControls: 3,
     // One chip per bought packet, by short label — Fedco is the one supplier the palette does not know.
     suppliers: { Botanical: 8, Bentley: 6, "Johnny's": 4, Fedco: 4, Sandia: 2 },
-    // Fourteen of the fifteen peppers carry heat (Lemon Drop has no figure on record); these four labels
+    // Fourteen of the sixteen peppers carry heat (Lemon Drop has no figure on record, and the mix has
+    // none); these four labels
     // are the shapes that have to be on screen: sweet, the longest, a single bound, the saved lot's estimate.
     heatRows: 14, heatLabels: ['Sweet · 0 SHU', '1.2M–2M SHU', '23K SHU', 'est. 30K–50K SHU'],
     // (n): a LIVE first chip (tone info/warn/danger) on five lots in process — the Money Plant's ferment
@@ -292,7 +300,9 @@ const VIEWS = [
     // bought packet, though three of them (Sungold F1, the Megatron pair) are F1 too (design §2 rule 8).
     f2Rows: ['Ristra Cayenne II Saved seed 2026', 'Thai Dragon'], f1BoughtRows: ['Megatron F1 (jumbo jalapeno)', 'Sungold F1'],
   } },
-  { view: 'saved', label: 'Saved seeds', body: 'saved-seeds-view', expect: { actions: 1, cards: 7, sections: 3, f2Cards: 2 } },
+  // Release 2b: the mix jar is the 8th card, in the Stored section that was already there (3 sections). Its
+  // two chips are "Mixed seed" and the part-F2 one, neither of which is the F2 badge f2Cards counts.
+  { view: 'saved', label: 'Saved seeds', body: 'saved-seeds-view', expect: { actions: 1, cards: 8, sections: 3, f2Cards: 2 } },
   { view: 'sow', label: 'Sow now', body: 'sow-now-view', expect: { actions: 0, minSowButtons: 10, minSowHeadings: 2 } },
 ]
 // CI's pair. GATE_VIEWPORTS="426x836,360x640" measures others on demand — 426x836 is Dave's own handset
@@ -899,6 +909,8 @@ async function allOpened(v, at, vw, vh) {
     // Non-vacuity for (g): the worst row must state an amount, or (g) holds it to nothing.
     if (!long.line || !long.line.amount) mismatch.push('the 44-character row states no amount — (g) would be checking nothing on the one row that crowds it')
   }
+  const mixRow = m.rows.find(r => r.title && r.title.text === MIX_NAME)
+  if (!mixRow) mismatch.push(`the 90-character mix row ("${MIX_NAME}") is not on the page — the fixture's multi-parent jar is gone, or its row is no longer titled with its variety`)
   const withAmount = m.rows.filter(r => r.line && r.line.amount).length
   if (withAmount !== e.amountRows) mismatch.push(`${withAmount} of ${m.rows.length} rows state an amount, expected ${e.amountRows} ("1 packet" is not printed)`)
   // Non-vacuity for (i): the ordinal, in its own span on LINE 1, on exactly the identical pair.
@@ -981,6 +993,8 @@ async function allOpened(v, at, vw, vh) {
   }
   // The brief's own words for (f): the long name truncates with an ellipsis instead of wrapping.
   if (!(long.title.truncated && long.title.ellipsis)) fail(`${at}: (f) the 44-character name is not truncated with an ellipsis (truncated ${long.title.truncated}, ellipsis ${long.title.ellipsis}, ${long.title.lines} line(s))`)
+  if (!(mixRow.title.truncated && mixRow.title.ellipsis)) fail(`${at}: (f) the 90-character mix name is not truncated with an ellipsis (truncated ${mixRow.title.truncated}, ellipsis ${mixRow.title.ellipsis}, ${mixRow.title.lines} line(s))`)
+  console.log(`[seeds-page] ${at}: the 90-char mix row: title ${mixRow.title.w}px column, ink ${mixRow.title.inkW}px, ${mixRow.title.lines} line(s), ellipsis ${mixRow.title.ellipsis}, row chips [${mixRow.line ? mixRow.line.chipLabels.join(' | ') : ''}]`)
 
   // ── (g) THE AMOUNT, (i) THE ORDINAL, (j) THE SUPPLIER CHIP, (n) A LIVE STATE CHIP — each WHOLE: inside
   // its line on both axes and inside whatever clips it, with width, not ellipsised — so an item hidden

@@ -212,6 +212,13 @@ const annuum = { species: 'Capsicum annuum' }
 
 const LONG_NAME = 'Money Plant (self-saved, variety unrecorded)'   // 44 characters
 const IDENTICAL = 'Megatron F1 (jumbo jalapeno)'
+// The release 2b mix row at the end of BASE_ROWS: its name, and one parent in the contract's shape
+// (tests/contracts/seed-mix.json, `source_plants`). The planting is named for its cultivar.
+const MIX_NAME = 'Biquinho Red & Yellow Blend + Bulgarian Carrot (Shipka) + Megatron F1 (jumbo jalapeno) mix'
+const mixParent = (id, variety, breeding_system) => ({
+  id, name: variety, variety_id: varietyId(variety), variety_name: variety, breeding_system,
+  variety_rank: 'cultivar', crop_slug: 'pepper', archived: false, deleted: false,
+})
 const BASE_ROWS = [
   // pepper — the dominant crop: every heat shape, the identical pair, the broken photo.
   bought('Serrano', 'pepper', 'src-fedco', '2026-01-14', { ...heat(null, 23000), ...annuum, ...photo('square') }),
@@ -294,6 +301,23 @@ const BASE_ROWS = [
   seed('Thai Dragon', 'pepper', {
     name: 'Thai Dragon — saved 2026', seed_stage: 'drying', seed_process: 'wet', stage_entered_at: stageDaysAgo(4),
     source_plant_id: 'pl-thai', breeding_system: 'f1', ...heat(50000, 100000), ...annuum,
+  }),
+  // V5-SEEDMULTIPARENT-001 (release 2b) — one jar off THREE plantings of three varieties, filed under the
+  // longest name the app can give a mix (three names joined and " mix", 90 characters; four or more
+  // varieties collapse to "A + B + N more"). Its lot name is the automatic one, so My seeds titles the row
+  // with the mix name itself: the longest title this list can now be asked to draw, twice the 44
+  // characters of LONG_NAME. Stored, uncounted and with no heat (a mix has none on record), so it adds a
+  // row and a Saved seeds card and moves no chip, amount or heat count. My seeds prints no "Mixed seed" or
+  // part-F2 chip (UX W-2); the Saved seeds card prints both, off `source_plants`. Appended, like the two
+  // above, so no earlier row's id, created_at or photo number moves.
+  seed(MIX_NAME, 'pepper', {
+    name: `${MIX_NAME} — saved ${YEAR}`, variety_rank: 'blend', seed_stage: 'stored', stage_entered_at: stageDaysAgo(12),
+    source_plant_id: 'pl-megatron', year_harvested: YEAR, ...annuum,
+    source_plants: [
+      mixParent('pl-megatron', 'Megatron F1 (jumbo jalapeno)', 'f1'),
+      mixParent('pl-shipka', 'Bulgarian Carrot (Shipka)', 'open_pollinated'),
+      mixParent('pl-biquinho', 'Biquinho Red & Yellow Blend', 'open_pollinated'),
+    ],
   }),
 ]
 // ?bulk=N — gate:seeds-page (o) ONLY, on its own page load: N more pepper packets, each with its own

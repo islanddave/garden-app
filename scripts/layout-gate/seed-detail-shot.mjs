@@ -77,6 +77,14 @@
 //       after the Save tap, with the Seed count box focused: Save sits at the bottom of the form, and a
 //       refusal left where it rendered was 455-680px above the band — a refused Save looked like nothing.
 //
+//   (m) "SAVED FROM" AS A PARENT SET (V5-SEEDMULTIPARENT-001, release 2b), on four more states — mix4
+//       (four plantings under the 90-character mix name), samecv2, removed (a row struck by a tap, with
+//       Undo) and filed (the jar re-filed by an add, with the "Filed as" line): the card holds exactly the
+//       rows and controls the state promises; every row is on the tap floor, whole inside the card and
+//       the viewport, with its name clear of its remove or Undo control and wrapped at 360; a struck row
+//       says "Removed" in words; the "Filed as" line is whole and clear of its Undo. The controls' own
+//       heights and hit tests are (b)'s census, and (g) brings each one into the band.
+//
 // THE INSTRUMENT CHECK comes first, and a mismatch stops that state before any invariant is read: the
 // page must self-report the viewport it was asked for (trap 1), must have raised no error, must still be
 // the detail page (no "left the page" marker, the packet card and the fixture's title present, no sheet
@@ -161,6 +169,13 @@ const GERM_SOWINGS = [
 // bought packet measured nothing). seedForm: the saved lot's seed fields in the form (1 = present, 0 = the
 // bought packet's Qty on hand / Unit instead), counted by the Seed count box and the All used up control.
 const SAVED_COUNT = { label: 'Seed count', value: '175 seeds' }
+// The release 2b jars (tests/harness/seeddetail.jsx): the longest name a mix can be given by the app, the
+// mix the `filed` case's add makes, and the year the harness stamps into a saved jar's name.
+const LONG_MIX_NAME = 'Biquinho Red & Yellow Blend + Bulgarian Carrot (Shipka) + Megatron F1 (jumbo jalapeno) mix'
+const FILED_MIX_NAME = 'Kori Sitakame + Megatron F1 (jumbo jalapeno) mix'
+const YEAR = new Date().getFullYear()
+const SAVED_LOT_EXPECT = { sowThis: 0, sownLine: 0, sownFrom: [], f2: false, stageLink: 1, editSow: 1, germ: [],
+  pickerClears: [], seedCount: SAVED_COUNT, seedForm: 1 }
 const STATES = [
   { name: 'packet', harness: 'packet', sow: false,
     expect: { h1: PACKET_NAME, sowThis: 1, sownLine: 0, sownFrom: SOWN_FROM, f2: false, stageLink: 1, editSow: 1, germ: GERM_SOWINGS,
@@ -171,6 +186,27 @@ const STATES = [
   { name: 'f2', harness: 'f2', sow: false,
     expect: { h1: F2_NAME, sowThis: 0, sownLine: 0, sownFrom: [], f2: true, stageLink: 1, editSow: 1, germ: [],
       pickerClears: ['Clear planting selection'], seedCount: SAVED_COUNT, seedForm: 1 } },
+  // V5-SEEDMULTIPARENT-001 (release 2b) — (m): "Saved from" as the parent-set card. `parents` is what
+  // that card must hold, EXACTLY; the three states above carry none and must show no parent row. These
+  // jars are saved lots like f2 (drying, counted), so every other expectation is f2's — except that the
+  // card has no picker, so no clear ✕, and no F1-only parent, so no F2 fact.
+  //   mix4     four plantings of three varieties under the 90-character mix name.
+  //   samecv2  two plantings of one variety.
+  //   removed  samecv2 after the harness TAPPED the first row's remove: that row struck, with Undo.
+  //   filed    one planting, then the harness TAPPED the adder and a planting of a second variety: the
+  //            jar re-filed itself, so the title is the mix's and the "Filed as" line carries an Undo.
+  { name: 'mix4', harness: 'mix4', sow: false,
+    expect: { ...SAVED_LOT_EXPECT, h1: `${LONG_MIX_NAME} — saved ${YEAR}`,
+      parents: { rows: 4, struck: 0, removes: 4, undos: 0, add: 1, mixed: 1, filed: null, wraps: true } } },
+  { name: 'samecv2', harness: 'samecv2', sow: false,
+    expect: { ...SAVED_LOT_EXPECT, h1: `Bulgarian Carrot (Shipka) — saved ${YEAR}`,
+      parents: { rows: 2, struck: 0, removes: 2, undos: 0, add: 1, mixed: 1, filed: null, wraps: true } } },
+  { name: 'removed', harness: 'removed', sow: false,
+    expect: { ...SAVED_LOT_EXPECT, h1: `Bulgarian Carrot (Shipka) — saved ${YEAR}`,
+      parents: { rows: 2, struck: 1, removes: 1, undos: 1, add: 1, mixed: 0, filed: null, wraps: true } } },
+  { name: 'filed', harness: 'filed', sow: false,
+    expect: { ...SAVED_LOT_EXPECT, h1: `${FILED_MIX_NAME} — saved ${YEAR}`,
+      parents: { rows: 2, struck: 0, removes: 2, undos: 0, add: 1, mixed: 1, filed: `Filed as ${FILED_MIX_NAME}`, wraps: false } } },
 ]
 // 426x836 is Dave's phone (More › Debug & smoke, 2026-09-24); 390x844 stays as the mid geometry.
 const VIEWPORTS = [[360, 640], [390, 844], [426, 836]]
@@ -421,6 +457,40 @@ const MEASURE = `(() => {
       }) }
   }
 
+  // (m) the "Saved from" card as a parent set (V5-SEEDMULTIPARENT-001).
+  const sfCard = d.querySelector('${tid('seed-source-plant')}')
+  let savedFrom = null
+  if (sfCard) {
+    const cr = sfCard.getBoundingClientRect()
+    const filedEl = sfCard.querySelector('${tid('saved-from-filed')}')
+    savedFrom = { box: box(sfCard), inViewX: inViewX(cr), overflowX: sfCard.scrollWidth > sfCard.clientWidth + 1,
+      rows: [...sfCard.querySelectorAll('${tid('saved-from-row')}')].map(row => {
+        // The name: a live row's is the first span INSIDE its link (the link's chevron, centred on the
+        // row, would bridge two wrapped lines into one); a struck or deleted row's is the row's own span.
+        const first = row.firstElementChild
+        const nameEl = first && first.tagName === 'A' ? first.firstElementChild : first
+        const r = row.getBoundingClientRect(), btn = row.querySelector('button')
+        const br = btn ? btn.getBoundingClientRect() : null
+        return { text: text(row), struck: row.getAttribute('data-struck') === 'true', box: box(row), inViewX: inViewX(r),
+          inCard: r.left >= cr.left - 0.5 && r.right <= cr.right + 0.5,
+          overflowX: row.scrollWidth > row.clientWidth + 1, whole: whole(row, r), nameLines: nameEl ? lines(nameEl) : 0,
+          // The row's control: inside the row, and no run of the name painted under it.
+          btn: btn ? { label: name(btn), w: R(br.width), h: R(br.height), inside: within(br, r),
+            clearOfName: nameEl ? runsOf(nameEl).every(t => t.right <= br.left + 0.5) : null } : null }
+      }),
+      removes: sfCard.querySelectorAll('${tid('saved-from-remove')}').length,
+      undos: sfCard.querySelectorAll('${tid('saved-from-undo')}').length,
+      add: sfCard.querySelectorAll('${tid('saved-from-add')}').length,
+      mixed: sfCard.querySelectorAll('${tid('saved-from-mixed')}').length,
+      plantCount: sfCard.querySelectorAll('${tid('saved-from-plant-count')}').length,
+      help: text(sfCard.querySelector('${tid('source-plant-help')}')),
+      filed: filedEl ? (() => { const fr = filedEl.getBoundingClientRect(), fb = filedEl.querySelector('button')
+        return { text: text(filedEl.firstElementChild), box: box(filedEl), whole: whole(filedEl, fr),
+          inCard: fr.left >= cr.left - 0.5 && fr.right <= cr.right + 0.5, lines: lines(filedEl.firstElementChild),
+          undo: fb ? { label: name(fb), h: R(fb.getBoundingClientRect().height), inside: within(fb.getBoundingClientRect(), fr),
+            clearOfText: runsOf(filedEl.firstElementChild).every(t => t.right <= fb.getBoundingClientRect().left + 0.5) } : null } })() : null }
+  }
+
   const stageLink = d.querySelector('${tid('seed-stage-change-link')}')
   const h = window.__h
   return {
@@ -435,7 +505,7 @@ const MEASURE = `(() => {
       seedCountBox: d.querySelectorAll('${tid('inv-seed-count')}').length, usedUp: d.querySelectorAll('${tid('inv-used-up')}').length },
     stageLinkText: text(stageLink),
     band: { top: R(bandTop), bottom: R(bandBottom) },
-    taps, sownFrom, sownLine, breeding, seedCount, germ, footprints,
+    taps, sownFrom, sownLine, breeding, seedCount, germ, footprints, savedFrom,
     errors: h ? h.errors() : ['window.__h missing'], unstubbed: h ? h.unstubbed() : [], posts: h ? h.posts() : [],
   }
 })()`
@@ -833,6 +903,26 @@ try {
       const clears = m.taps.filter((t) => t.pickerClear).map((t) => t.label)
       if (clears.join(' | ') !== e.pickerClears.join(' | ')) mismatch.push(`picker clear buttons [${clears.join(', ')}] != [${e.pickerClears.join(', ')}] — (b) would not be measuring them`)
       if (m.footprints.length !== FAVORITES + e.pickerClears.length) mismatch.push(`${m.footprints.length} footprints read, expected ${FAVORITES + e.pickerClears.length} — (i) has nothing to read`)
+      // (m)'s surface: the parent-set card and exactly the rows and controls the state promises. A state
+      // with no parent set must show no parent row, or (m) is being skipped over a card that is there.
+      const sf = m.savedFrom
+      const pe = e.parents ?? null
+      if (!pe && sf && sf.rows.length) mismatch.push(`${sf.rows.length} parent row(s) in "Saved from" on a state whose lot carries no parent set`)
+      if (pe) {
+        if (!sf) mismatch.push('no "Saved from" card — (m) has nothing to read')
+        else {
+          if (sf.rows.length !== pe.rows) mismatch.push(`parent rows ${sf.rows.length} != ${pe.rows}`)
+          const struck = sf.rows.filter((r) => r.struck).length
+          if (struck !== pe.struck) mismatch.push(`struck rows ${struck} != ${pe.struck}${pe.struck ? ' — the harness\'s tap on the remove control did not strike a row' : ''}`)
+          if (sf.removes !== pe.removes) mismatch.push(`remove controls ${sf.removes} != ${pe.removes}`)
+          if (sf.undos !== pe.undos) mismatch.push(`row Undo controls ${sf.undos} != ${pe.undos}`)
+          if (sf.add !== pe.add) mismatch.push(`"+ Add seed from another plant" controls ${sf.add} != ${pe.add}`)
+          if (sf.mixed !== pe.mixed) mismatch.push(`"Mixed together" lines ${sf.mixed} != ${pe.mixed}`)
+          if (sf.plantCount !== 1) mismatch.push(`plant-count fields ${sf.plantCount} != 1`)
+          if (!!sf.filed !== !!pe.filed) mismatch.push(`"Filed as" line ${sf.filed ? 'present' : 'absent'}, expected ${pe.filed ? 'present' : 'absent'}${pe.filed ? ' — the harness\'s add did not re-file the jar' : ''}`)
+          if (sf.help) mismatch.push(`the card is saying "${sf.help}" — a write is still in flight or was refused`)
+        }
+      }
       if (m.counts.controls < 8) mismatch.push(`${m.counts.controls} controls measured — a page this size carries far more`)
       if (mismatch.length) {
         fail(`${at}: the fixture did not produce what this gate measures — ${mismatch.join('; ')}`)
@@ -903,6 +993,49 @@ try {
       }
       if (m.counts.stageLink && m.stageLinkText !== STAGE_LINK_WORDS) fail(`${at}: (f) the stage link reads "${m.stageLinkText}", expected "${STAGE_LINK_WORDS}"`)
 
+      // ── (m) THE "SAVED FROM" CARD, AS A PARENT SET. The controls' heights and hit tests are (b)'s
+      //    census already; this is what the census cannot see: each row whole inside the card, its name
+      //    not painted under its control, a struck row saying so in words, and the "Filed as" line whole.
+      if (pe) {
+        if (!sf.inViewX) fail(`${at}: (m) the Saved-from card spans x${sf.box.l}-${sf.box.r}, outside the ${vw}px viewport`)
+        if (sf.overflowX) fail(`${at}: (m) the Saved-from card overflows its own box horizontally`)
+        sf.rows.forEach((r, i) => {
+          const tag = `(m) parent row ${i + 1} "${r.text}"`
+          if (r.box.h < TAP_MIN_HEIGHT_PX) fail(`${at}: ${tag} is ${r.box.h}px tall, under the ${TAP_MIN_HEIGHT_PX}px tap floor`)
+          if (!r.inCard) fail(`${at}: ${tag} spans x${r.box.l}-${r.box.r}, outside its card x${sf.box.l}-${sf.box.r}`)
+          if (!r.inViewX) fail(`${at}: ${tag} spans x${r.box.l}-${r.box.r}, outside the ${vw}px viewport`)
+          if (r.overflowX) fail(`${at}: ${tag} overflows its own box horizontally`)
+          if (!r.whole.runs) fail(`${at}: ${tag} paints no text`)
+          if (!r.whole.inside) fail(`${at}: ${tag} is not whole — some of its text is painted outside the row`)
+          if (!r.whole.inViewX) fail(`${at}: ${tag} is not whole — some of its text is painted outside the viewport`)
+          if (!r.btn) fail(`${at}: ${tag} has no control (a live row carries a remove, a struck row an Undo)`)
+          else {
+            if (!r.btn.inside) fail(`${at}: ${tag}: its "${r.btn.label}" control is not inside the row`)
+            if (r.btn.clearOfName === false) fail(`${at}: ${tag}: the name is painted under its "${r.btn.label}" control`)
+            if (r.btn.w < TAP_MIN_HEIGHT_PX) fail(`${at}: ${tag}: its "${r.btn.label}" control is ${r.btn.w}px wide, under the ${TAP_MIN_HEIGHT_PX}px floor`)
+          }
+          // State is never carried by a line-through alone: the struck row says "Removed".
+          if (r.struck && !/· Removed/.test(r.text)) fail(`${at}: ${tag} is struck and does not say "Removed" in words`)
+        })
+        // The non-vacuity of "whole": at the narrowest phone a wrapped name must be among the rows.
+        if (pe.wraps && vw === 360 && !sf.rows.some((r) => r.nameLines >= 2)) fail(`${at}: (m) no parent row's name wraps at 360px — the fixture stopped carrying a name long enough to ask "whole" of a wrapped row`)
+        if (pe.filed) {
+          const f = sf.filed
+          if (f.text !== pe.filed) fail(`${at}: (m) the filed line reads "${f.text}", expected "${pe.filed}"`)
+          if (!f.inCard) fail(`${at}: (m) the filed line spans x${f.box.l}-${f.box.r}, outside its card`)
+          if (!f.whole.runs || !f.whole.inside || !f.whole.inViewX) fail(`${at}: (m) the filed line is not whole inside its own box and the viewport`)
+          if (!f.undo) fail(`${at}: (m) the filed line has no Undo`)
+          else {
+            if (!f.undo.inside) fail(`${at}: (m) the filed line's Undo is not inside the line`)
+            if (!f.undo.clearOfText) fail(`${at}: (m) the filed line's words are painted under its Undo`)
+          }
+        }
+        // The Breeding fact of a jar with a parent set is whatever the set says; it must still be whole.
+        if (m.breeding && (!m.breeding.whole || !m.breeding.whole.inside || !m.breeding.whole.inViewX || m.breeding.overflowX)) {
+          fail(`${at}: (m) the Breeding fact "${m.breeding.value}" is not whole inside the packet card and the viewport`)
+        }
+      }
+
       // ── (k) THE SEED COUNT, SURFACED.
       if (e.seedCount) {
         const c = m.seedCount
@@ -955,6 +1088,12 @@ try {
         ['Approximate switch', `document.querySelector('${tid('inv-seed-count-estimated')}')`],
         ['Weight (g)', `document.querySelector('${tid('inv-seed-weight')}')`],
         ['All used up', `document.querySelector('${tid('inv-used-up')}')`],
+        // (m) the parent-set card's controls, each present only on the states that carry them.
+        ...(pe ? Array.from({ length: pe.removes }, (_, i) => [`Parent remove ${i + 1}`, `document.querySelectorAll('${tid('saved-from-remove')}')[${i}]`]) : []),
+        ['Parent row Undo', `document.querySelector('${tid('saved-from-undo')}')`],
+        ['Add seed from another plant', `document.querySelector('${tid('saved-from-add')}')`],
+        ['Filed-as Undo', `document.querySelector('${tid('saved-from-filed-undo')}')`],
+        ['Plant count', `document.querySelector('${tid('saved-from-plant-count')}')`],
       ]
       const reached = []
       for (const [what, expr] of keys) {
@@ -969,6 +1108,7 @@ try {
       await toTop()
       shots.push(await shoot(join(OUTDIR, `seed-detail-${s.name}-${vw}x${vh}.png`)))
       const evidence = s.name === 'sown' ? `document.querySelector('${tid('sow-this-sown')}')`
+        : pe ? `document.querySelector('${tid('seed-source-plant')}')`
         : e.f2 ? `[...document.querySelectorAll('${tid('packet-fact')}')].find(f => f.getAttribute('data-fact') === 'breeding')`
         : `document.querySelector('${tid('packet-sown-from')}')`
       if (await evalSettled(`(() => { const el = ${evidence}; if (!el) return false; el.scrollIntoView({ block: 'center' }); return true })()`)) {
@@ -996,6 +1136,7 @@ try {
       if (m.sownLine) console.log(`[seed-detail] ${at}: sown line "${m.sownLine.text}" ${m.sownLine.box.w}x${m.sownLine.box.h}px · See the planting ${m.sownLine.see ? `${m.sownLine.see.h}px → ${m.sownLine.see.href}` : 'ABSENT'}`)
       if (m.breeding) console.log(`[seed-detail] ${at}: Breeding "${m.breeding.value}" on ${m.breeding.lines} line(s)`)
       console.log(`[seed-detail] ${at}: (k) ${m.seedCount ? `count fact "${m.seedCount.label}: ${m.seedCount.value}" at y${m.seedCount.box.t}-${m.seedCount.box.b} in band y${m.band.top}-${m.band.bottom}, ${m.seedCount.lines} line(s)${m.seedCount.first ? ', first fact' : ''}` : 'no count fact'} · seed fields ${m.counts.seedCountBox ? 'present' : 'absent'}`)
+      if (pe) console.log(`[seed-detail] ${at}: (m) Saved-from card x${sf.box.l}-${sf.box.r} · rows ${sf.rows.map((r) => `${r.box.w}x${r.box.h}px/${r.nameLines}L${r.struck ? ' STRUCK' : ''} [${r.btn ? `${r.btn.label} ${r.btn.w}x${r.btn.h}` : 'no control'}]`).join(', ')}${sf.filed ? ` · "${sf.filed.text}" ${sf.filed.box.w}x${sf.filed.box.h}px/${sf.filed.lines}L, Undo ${sf.filed.undo ? sf.filed.undo.h + 'px' : 'ABSENT'}` : ''}`)
       if (m.germ) console.log(`[seed-detail] ${at}: germination record x${m.germ.box.l}-${m.germ.box.r} · rows ${m.germ.rows.map((r) => `${r.box.w}x${r.box.h}px/${r.nameLines}L`).join(', ')}`)
       console.log(`[seed-detail] ${at}: formerly exempt, now floored — ${m.footprints.map((f) => `"${f.label}" hit ${f.hit.w}x${f.hit.h}px, lays out ${f.w}x${f.h}px`).join(', ')}`)
       console.log(`[seed-detail] ${at}: reach ${reached.join(' · ') || 'none'}${m.unstubbed.length ? ` · unstubbed requests: ${[...new Set(m.unstubbed)].join(', ')}` : ''}`)

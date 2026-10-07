@@ -1494,6 +1494,9 @@ const mixRowStyle = { ...varietyRowStyle, padding: '10px 12px', overflowWrap: 'a
 const linkBtnStyle = {
   background: 'none', border: 'none', padding: '4px 2px', cursor: 'pointer',
   fontSize: '0.82rem', fontWeight: 600, color: P.green, textDecoration: 'underline',
+  // The tap floor, read from the token. It rendered 24px tall until the sheet's first layout gate
+  // (gate:save-seed-sheet) measured it.
+  minHeight: T.tapMinHeight,
 }
 // V5-SEEDMULTIPARENT-001 — the "From" block. Rows are plain lines, not boxed fields: they state what
 // was chosen and are not inputs. Both controls are T.tapMinHeight tall (and the remove control as

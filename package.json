@@ -22,6 +22,8 @@
     "gate:inventory-list": "node scripts/layout-gate/inventory-list-shot.mjs --out artifacts/layout-gate/inventory-list-390x844.png",
     "gate:seeds-saved": "node scripts/layout-gate/seeds-saved-clearance.mjs",
     "gate:seeds-saved:probe-nothing": "node scripts/layout-gate/seeds-saved-clearance.mjs --probe-nothing",
+    "gate:save-seed-sheet": "node scripts/layout-gate/save-seed-sheet-clearance.mjs",
+    "gate:save-seed-sheet:probe-nothing": "node scripts/layout-gate/save-seed-sheet-clearance.mjs --probe-nothing",
     "gate:seeds-page": "node scripts/layout-gate/seeds-page-shot.mjs --outdir artifacts/layout-gate",
     "gate:seeds-page:probe-nothing": "node scripts/layout-gate/seeds-page-shot.mjs --probe-nothing --outdir artifacts/layout-gate/probe-nothing",
     "gate:seed-detail": "node scripts/layout-gate/seed-detail-shot.mjs --outdir artifacts/layout-gate",

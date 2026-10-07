@@ -419,6 +419,32 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-saved
 
+      - name: Save seed sheet layout and Save clearance (V5-SEEDMULTIPARENT-001)
+        # The first layout gate the Save seed sheet has had (release 2b, QA B4). Release 2b put a
+        # "From" block above the sheet's fields: one row per parent planting with a remove control,
+        # an adder, a plant-count field and a mix name, all above Save in a panel capped at 85vh.
+        # The only harness that mounted the sheet (tests/harness/seedwarning.*) was driven by no
+        # script, alias or workflow, and jsdom returns 0 for every rect.
+        #
+        # Real Chrome at 360x640, 390x844 and 426x836 across the five states
+        # tests/harness/saveseedsheet.jsx builds by TAPPING the real adder and the real picker: one,
+        # two and four parent plantings, the longest mix name the client can generate (90 chars),
+        # and a refused mix call with its sentence on screen. Asserts, as a census rather than a
+        # named list, that no visible button or form control is under T.tapMinHeight (the icon-only
+        # remove control sideways too); that every control, scrolled into view, hit-tests to itself;
+        # that Save is inside the panel or the panel scrolls to it, and once scrolled to hit-tests
+        # to itself at its centre and four corners with nothing sharing its box; that the notice and
+        # the refusal sentence sit above it; and that neither the document nor the panel scrolls
+        # sideways. The Lot name field (a single-line input) and the sheet's gutter are printed,
+        # not asserted. Fifteen page loads.
+        #
+        # Non-vacuous: `npm run gate:save-seed-sheet:probe-nothing` points every selector at a
+        # testid nothing renders and exits 1 on all fifteen case/viewport pairs. CI runs the gate,
+        # not the twin, as for every clearance gate.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:save-seed-sheet
+
       - name: Seeds page layout, all three views (V5-SEEDSTAB-001)
         # The whole Seeds page — title and per-view actions, the SegmentedControl view switch, the
         # ferment line, and ONE view body — on ?view=mine, ?view=saved and ?view=sow at a TRUE 360x640

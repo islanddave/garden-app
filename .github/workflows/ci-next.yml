@@ -381,6 +381,11 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-saved
 
+      - name: Save seed sheet layout and Save clearance (V5-SEEDMULTIPARENT-001)
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:save-seed-sheet
+
       - name: Seeds page layout, all three views (V5-SEEDSTAB-001)
         env:
           GATE_CHROME_FLAGS: --no-sandbox

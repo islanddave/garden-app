@@ -18,6 +18,16 @@
 //                   Breeding fact reads the F2 words, "Change stage in Saved seeds →" is the way on,
 //                   and nothing was sown from it yet (sown_from is [], so no card). No packet photo, so
 //                   the box is the "Add packet photo" button.
+//     case=mix4     V5-SEEDMULTIPARENT-001 (release 2b): a jar off FOUR plantings of three varieties,
+//                   filed under the longest name a mix can be given by the app (three variety names
+//                   joined, 90 characters). "Saved from" is the parent-set card: four rows, each a link
+//                   and a remove control, the adder, the mixed line and the plant count.
+//     case=samecv2  a jar off TWO plantings of ONE variety: the card with two rows and no mix.
+//     case=removed  `samecv2`, then the first row's remove control is TAPPED: a struck row with Undo.
+//     case=filed    a jar off one planting; "+ Add seed from another plant" is TAPPED and a planting of
+//                   a second variety chosen, so the jar re-files itself: the "Filed as …" line with Undo.
+//                   Struck rows and the "Filed as" line are session state, so both are made by the taps
+//                   a user makes, with the set write and the mix route answered by the stub below.
 //     topbar=52     the top-chrome stand-in's height; the gate passes TopChrome.jsx's BAR_H
 //     verdict=0     hide the measurement bar, for a screenshot of the surface alone
 //     remove=refuse the item's DELETE answers 409 with the sentence the Lambda sends when plantings were
@@ -139,9 +149,70 @@ const F2_LOT = row({
   sown_from: [],
 })
 
-const ITEMS = { [PACKET.id]: PACKET, [F2_LOT.id]: F2_LOT }
-const CASES = { packet: PACKET.id, f2: F2_LOT.id }
+// ── V5-SEEDMULTIPARENT-001 (release 2b) — jars with a parent SET ─────────────────────────────────────
+// `source_plants` as an ARRAY is what hands "Saved from" to the parent-set card; the F2 lot above carries
+// none and keeps the picker it always had. The cultivars are the pepper rows seedwarning.jsx and
+// seedssaved.jsx already carry as real prod rows, longest first; the bed's planting name is the longest
+// planting-name shape (a cultivar, a bed and a note), so a row's name has to wrap beside its remove
+// control at 360px.
+const PEPPERS = {
+  'var-megatron': { id: 'var-megatron', name: 'Megatron F1 (jumbo jalapeno)', display_name: 'Megatron F1 (jumbo jalapeno)', crop_type_slug: 'pepper', breeding_system: 'f1', variety_rank: 'cultivar' },
+  'var-shipka': { id: 'var-shipka', name: 'Bulgarian Carrot (Shipka)', display_name: 'Bulgarian Carrot (Shipka)', crop_type_slug: 'pepper', breeding_system: 'open_pollinated', variety_rank: 'cultivar' },
+  'var-biquinho': { id: 'var-biquinho', name: 'Biquinho Red & Yellow Blend', display_name: 'Biquinho Red & Yellow Blend', crop_type_slug: 'pepper', breeding_system: 'open_pollinated', variety_rank: 'cultivar' },
+  'var-kori': { id: 'var-kori', name: 'Kori Sitakame', display_name: 'Kori Sitakame', crop_type_slug: 'pepper', breeding_system: 'landrace', variety_rank: 'cultivar' },
+}
+// The longest name previewMixName / lambda/varieties/blend.js can generate from these: three names
+// joined and " mix" (four or more varieties collapse to "A + B + N more"). 90 characters.
+const LONG_MIX = { id: 'var-mix-long', name: 'Biquinho Red & Yellow Blend + Bulgarian Carrot (Shipka) + Megatron F1 (jumbo jalapeno) mix', crop_type_slug: 'pepper', breeding_system: null, variety_rank: 'blend' }
+LONG_MIX.display_name = LONG_MIX.name
+// The mix the `filed` case's add makes: Kori Sitakame and Megatron.
+const FILED_MIX = { id: 'var-mix-filed', name: 'Kori Sitakame + Megatron F1 (jumbo jalapeno) mix', crop_type_slug: 'pepper', breeding_system: null, variety_rank: 'blend' }
+FILED_MIX.display_name = FILED_MIX.name
+const PEPPER_PLANTINGS = [
+  { id: 'pl-megatron', name: 'Megatron F1 (jumbo jalapeno)', quantity: 1, variety: PEPPERS['var-megatron'] },
+  { id: 'pl-shipka-bed', name: 'Bulgarian Carrot (Shipka) — raised bed 3, north end, second sowing', quantity: 3, variety: PEPPERS['var-shipka'] },
+  { id: 'pl-biquinho', name: 'Biquinho Red & Yellow Blend — grow bag by the shed', quantity: 2, variety: PEPPERS['var-biquinho'] },
+  { id: 'pl-shipka-pot', name: 'Bulgarian Carrot pot 2', quantity: 1, variety: PEPPERS['var-shipka'] },
+  { id: 'pl-kori', name: 'Kori Sitakame, bed 1', quantity: 4, variety: PEPPERS['var-kori'] },
+]
+// One element of `source_plants`, in the contract's shape (tests/contracts/seed-mix.json).
+const parentOf = (id) => {
+  const p = PEPPER_PLANTINGS.find((x) => x.id === id)
+  return { id: p.id, name: p.name, variety_id: p.variety.id, variety_name: p.variety.name,
+    breeding_system: p.variety.breeding_system, variety_rank: p.variety.variety_rank,
+    crop_slug: p.variety.crop_type_slug, archived: false, deleted: false }
+}
+const YEAR = new Date().getFullYear()
+// Every jar below is still DRYING and counted, like the F2 lot, so the rest of the page is the saved
+// lot's page the gate already measures and only "Saved from" differs.
+const savedLot = (over) => row({
+  quantity_on_hand: 1, year_harvested: YEAR, seed_stage: 'drying', seed_process: 'wet',
+  stage_entered_at: stageDaysAgo(4), seed_count: 175, seed_count_estimated: false, crop_slug: 'pepper',
+  species: 'Capsicum annuum', seed_parent_plant_count: null,
+  germination: { sowings: [], seeds_sown: 0, seeds_germinated: 0, rate: null }, sown_from: [],
+  ...over,
+})
+const MIX4_LOT = savedLot({
+  id: 'lot-mix4', name: `${LONG_MIX.name} — saved ${YEAR}`, variety_id: LONG_MIX.id, variety_name: LONG_MIX.name,
+  variety_rank: 'blend', source_plant_id: 'pl-megatron', seed_parent_plant_count: 7,
+  source_plants: ['pl-megatron', 'pl-shipka-bed', 'pl-biquinho', 'pl-shipka-pot'].map(parentOf),
+})
+const SAMECV_LOT = savedLot({
+  id: 'lot-samecv', name: `Bulgarian Carrot (Shipka) — saved ${YEAR}`, variety_id: 'var-shipka',
+  variety_name: 'Bulgarian Carrot (Shipka)', variety_rank: 'cultivar', breeding_system: 'open_pollinated',
+  source_plant_id: 'pl-shipka-bed', source_plants: ['pl-shipka-bed', 'pl-shipka-pot'].map(parentOf),
+})
+const ONE_LOT = savedLot({
+  id: 'lot-one', name: `Kori Sitakame — saved ${YEAR}`, variety_id: 'var-kori', variety_name: 'Kori Sitakame',
+  variety_rank: 'cultivar', breeding_system: 'landrace',
+  source_plant_id: 'pl-kori', source_plants: ['pl-kori'].map(parentOf),
+})
+
+const ITEMS = { [PACKET.id]: PACKET, [F2_LOT.id]: F2_LOT, [MIX4_LOT.id]: MIX4_LOT, [SAMECV_LOT.id]: SAMECV_LOT, [ONE_LOT.id]: ONE_LOT }
+const CASES = { packet: PACKET.id, f2: F2_LOT.id, mix4: MIX4_LOT.id, samecv2: SAMECV_LOT.id, removed: SAMECV_LOT.id, filed: ONE_LOT.id }
 const ITEM_ID = CASES[CASE] ?? PACKET.id
+// The release 2b cases. The two older ones are served exactly the plantings and varieties they always were.
+const PARENT_SET_CASE = ['mix4', 'samecv2', 'removed', 'filed'].includes(CASE)
 
 // The lot's processing log (GET /:id/seed-stage), newest entry first as the route orders it.
 const STAGE_LOG = {
@@ -150,6 +221,9 @@ const STAGE_LOG = {
     { id: 'st-1', stage: 'fermenting', entered_at: stageDaysAgo(7), note: 'Water changed on day 2.' },
   ],
   [PACKET.id]: [],
+  [MIX4_LOT.id]: [{ id: 'st-m1', stage: 'drying', entered_at: stageDaysAgo(4), note: null }],
+  [SAMECV_LOT.id]: [{ id: 'st-s1', stage: 'drying', entered_at: stageDaysAgo(4), note: null }],
+  [ONE_LOT.id]: [{ id: 'st-o1', stage: 'drying', entered_at: stageDaysAgo(4), note: null }],
 }
 
 // The picker projection (/api/plants?view=picker): the parent of the F2 lot and the plantings sown
@@ -162,6 +236,12 @@ const PLANTINGS = [
 const VARIETIES = {
   'var-sungold': { id: 'var-sungold', name: 'Sungold F1', display_name: 'Sungold F1', crop_type_slug: 'tomato' },
   'var-thai': { id: 'var-thai', name: 'Thai Dragon', display_name: 'Thai Dragon', crop_type_slug: 'pepper' },
+  ...(PARENT_SET_CASE ? { ...PEPPERS, [LONG_MIX.id]: LONG_MIX, [FILED_MIX.id]: FILED_MIX } : {}),
+}
+// The adder lists the set's crop by `variety_ref.crop_type_slug`, so these rows carry the whole variety.
+if (PARENT_SET_CASE) {
+  PLANTINGS.push(...PEPPER_PLANTINGS.map((p) => ({ id: p.id, name: p.name, quantity: p.quantity,
+    variety_id: p.variety.id, variety_ref: p.variety, sown_at: '2026-03-02', succession_order: null, project_name: null })))
 }
 const LOCATIONS = [
   { id: 'loc-beds', name: 'Raised beds', path: 'Raised beds', covered: false },
@@ -194,6 +274,25 @@ window.fetch = (url, opts = {}, ...rest) => {
     return REMOVE_REFUSES
       ? hit('item-delete', { error: REFUSAL, blocking: [{ table: 'plants', column: 'source_inventory_item_id', count: 2 }] }, 409)
       : hit('item-delete', { ok: true })
+  }
+  // V5-SEEDMULTIPARENT-001 — the two writes the parent-set card makes. The mix route answers the one
+  // mix the `filed` case can ask for; the set write answers the set it was sent, in the contract's
+  // shape, and a `filing` that rode with it comes back `changed` with what was there before.
+  if (method === 'POST' && u.includes('/api/varieties/blend')) {
+    return hit('blend', { id: FILED_MIX.id, name: FILED_MIX.name, variety_rank: 'blend', crop_type_slug: 'pepper', exists: true, created: true }, 201)
+  }
+  const setWrite = method === 'PUT' && u.match(/\/api\/inventory-items\/([^/?]+)\/source-plants/)
+  if (setWrite) {
+    const body = JSON.parse(opts.body || '{}')
+    const lot = ITEMS[setWrite[1]]
+    const ids = body.source_plant_ids ?? []
+    const filed = body.filing ? VARIETIES[body.filing.variety_id] : null
+    return hit('source-plants', {
+      id: lot.id, source_plant_id: body.source_plant_id ?? ids[0] ?? null, source_plants: ids.map(parentOf),
+      ...(filed ? { filing: { variety_id: filed.id, variety_name: filed.name, variety_rank: filed.variety_rank,
+        name: body.filing.name ?? lot.name, changed: true,
+        previous: { variety_id: lot.variety_id, variety_name: lot.variety_name, variety_rank: lot.variety_rank, name: lot.name } } } : {}),
+    })
   }
   if (method !== 'GET') return hit('write', { ok: true })
   const stage = u.match(/\/api\/inventory-items\/([^/?]+)\/seed-stage/)
@@ -274,9 +373,39 @@ async function run() {
   for (let i = 0; i < 40 && !arrived(); i++) await settle()
   await settle()
 
+  // V5-SEEDMULTIPARENT-001 — the two cases whose state only a tap makes. `landed` is read BEFORE the
+  // taps: the `filed` case renames the jar, so the Name field stops matching the fixture's name.
+  const landed = arrived()
+  let driveError = null
+  const $ = (testid) => document.querySelector(`[data-testid="${testid}"]`)
+  const until = async (what, test) => {
+    for (let i = 0; i < 60; i++) { if (test()) return; await settle() }
+    throw new Error(`case=${CASE}: never reached "${what}"`)
+  }
+  try {
+    if (landed && CASE === 'removed') {
+      await until('the first row has a remove control', () => !!$('saved-from-remove'))
+      $('saved-from-remove').click()
+      await until('a struck row with Undo', () => !!$('saved-from-undo'))
+      await until('the set write answered', () => (hits['source-plants'] ?? 0) === 1 && !$('source-plant-help'))
+    }
+    if (landed && CASE === 'filed') {
+      await until('the adder is offered', () => !!$('saved-from-add'))
+      $('saved-from-add').click()
+      await until('the adder lists the Megatron planting', () => !!$('ps-opt-pl-megatron'))
+      $('ps-opt-pl-megatron').click()
+      await until('the "Filed as" line', () => !!$('saved-from-filed'))
+      // The add's "✓ Saved" toast is on screen for 2.5s and would answer hit tests under it.
+      await new Promise((r) => setTimeout(r, 3000))
+    }
+  } catch (err) {
+    driveError = err.message
+    errors.push(err.message)
+  }
+
   window.__h = {
     ready: () => true,
-    arrived: () => arrived(),
+    arrived: () => (PARENT_SET_CASE ? landed && !driveError : arrived()),
     errors: () => [...errors],
     hits: () => ({ ...hits }),
     posts: () => posts.map((p) => ({ ...p })),

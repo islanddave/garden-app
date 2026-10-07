@@ -4,7 +4,7 @@
 //   node scripts/layout-gate/seeds-saved-clearance.mjs                  # npm run gate:seeds-saved
 //   node scripts/layout-gate/seeds-saved-clearance.mjs --probe-nothing  # prove the instrument fires
 //
-// MEASURES, in real Chrome at a TRUE 390x844 and 360x640 (and 390x667 for the two sheet cases),
+// MEASURES, in real Chrome at a TRUE 390x844, 360x640 and 426x836 (and 390x667 for the two sheet cases),
 // across the four states tests/harness/seedssaved.jsx can render — empty / populated list /
 // candidate picker / advance sheet — of Saved seeds as the Seeds page shows it (/seeds?view=saved):
 //   (a) TAP HEIGHT — every visible button and form control, as a census rather than a named list,
@@ -142,6 +142,12 @@ const TAP_MIN_HEIGHT_PX = T.tapMinHeight
 // 360x640 viewport narrows it to 200.4px where the ceiling string STILL lands on exactly 2 line boxes
 // (167px widest line). So 2 stands at both widths, measured at its boundary, and was not edited.
 const MEASURE_MAX_LINES = 2
+// How many line boxes the ceiling string must REACH for the budget to be exercised, by viewport width.
+// At 360 and 390 it is the budget itself. At 426 (added with release 2b) the column is 36px wider than at
+// 390 — 266.4px against 255.4px of ink — so the ceiling string fits on ONE line there (measured), and
+// demanding two would red the fixture for a layout that simply has more room. The budget above still
+// binds at every width; only this non-vacuity floor follows the column.
+const ceilingLines = (vw) => (vw >= 426 ? 1 : MEASURE_MAX_LINES)
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 // The frozen SegmentedControl's own floor, read from its source (see segmented-control-exemption.mjs).
@@ -187,13 +193,24 @@ const tidPrefix = (name) => `[data-testid^="${name}${SUFFIX}"]`
 // so it is the geometry where the seed-measure line and the 44-char name are tightest — and it runs
 // on every state, sheets included.
 const NARROW = [360, 640]
+// V5-SEEDMULTIPARENT-001 (release 2b) — Dave's own handset (426x836, the geometry gate:seed-detail and
+// gate:seeds-page already run), on every state: the widest phone this page is checked at, and the one a
+// two-chip row and a 90-character mix name are read on first.
+const DAVE = [426, 836]
 // Slice 2: the 4 tracked lots plus the 2 Not started lots (i5, i6) — 6 cards in 4 sections, 2 carrying
 // "Start →", and i6's "approx. 40 seeds" is the fourth seed-measure line.
+// Release 2b: plus the 2 multi-parent jars (i7 stored, i8 drying) — 8 cards, still 4 sections; i8 adds an
+// advance button (4) and the fifth seed-measure line ("approx. 300 seeds"). The parent set's own marks
+// are EXACT too, for measureLines' reason — a fixture that stopped carrying `source_plants` would leave
+// the chips and the "Saved from N plantings" link measured by nothing: 2 "Mixed seed" chips (i7, i8),
+// 1 part-F2 chip (i8, one F1 parent among three varieties), and 3 parent links (i6's one planting, and
+// the two "Saved from N plantings →").
+const POPULATED = { cards: 8, sections: 4, startBtns: 2, measureLines: 5, mixedChips: 2, partF2Chips: 1, parentLinks: 3, emptyState: false }
 const CASES = [
-  { name: 'empty', viewports: [[390, 844], NARROW], expect: { cards: 0, sections: 0, minCandidates: 0, startBtns: 0, minControls: 1, measureLines: 0, emptyState: true, sheet: false } },
-  { name: 'list', viewports: [[390, 844], NARROW], expect: { cards: 6, sections: 4, minCandidates: 0, advanceBtns: 3, startBtns: 2, minControls: 6, measureLines: 4, emptyState: false, sheet: false } },
-  { name: 'picker', viewports: [[390, 844], [390, 667], NARROW], expect: { cards: 6, sections: 4, minCandidates: 1, startBtns: 2, minControls: 5, measureLines: 4, emptyState: false, sheet: true } },
-  { name: 'advance', viewports: [[390, 844], [390, 667], NARROW], expect: { cards: 6, sections: 4, minCandidates: 0, startBtns: 2, minControls: 4, measureLines: 4, emptyState: false, sheet: true, primary: 'stage-save' } },
+  { name: 'empty', viewports: [[390, 844], NARROW, DAVE], expect: { cards: 0, sections: 0, minCandidates: 0, startBtns: 0, minControls: 1, measureLines: 0, mixedChips: 0, partF2Chips: 0, parentLinks: 0, emptyState: true, sheet: false } },
+  { name: 'list', viewports: [[390, 844], NARROW, DAVE], expect: { ...POPULATED, minCandidates: 0, advanceBtns: 4, minControls: 6, sheet: false } },
+  { name: 'picker', viewports: [[390, 844], [390, 667], NARROW, DAVE], expect: { ...POPULATED, minCandidates: 1, minControls: 5, sheet: true } },
+  { name: 'advance', viewports: [[390, 844], [390, 667], NARROW, DAVE], expect: { ...POPULATED, minCandidates: 0, minControls: 4, sheet: true, primary: 'stage-save' } },
 ]
 // The view every case must land on. Read off the switch's checked radio, by its visible label.
 const EXPECT_VIEW_LABEL = 'Saved seeds'
@@ -398,6 +415,18 @@ const MEASURE = (c) => `(() => {
         fitsX: mr.l >= -0.5 && mr.r <= w.innerWidth + 0.5,
         overlapsAdvance: ar ? !(ar.l >= mr.r || ar.r <= mr.l || ar.t >= mr.b || ar.b <= mr.t) : false,
       } : null,
+      // V5-SEEDMULTIPARENT-001 — the parent set's chips, each read as its own box: inside the card and
+      // the viewport, and clear of the card's action button. colClips answers "did anything in the
+      // column overflow"; this answers "was it a chip".
+      chips: [...cd.querySelectorAll('${tid('lot-mixed')}, ${tid('lot-part-f2')}, ${tid('lot-f2')}')].map(ch => {
+        const c = ch.getBoundingClientRect()
+        return { text: (ch.textContent || '').trim(), w: Math.round(c.width * 10) / 10, h: Math.round(c.height * 10) / 10,
+          top: Math.round(c.top),
+          inCard: c.left >= r.l - 0.5 && c.right <= r.r + 0.5 && c.top >= r.t - 0.5 && c.bottom <= r.b + 0.5,
+          fitsX: c.left >= -0.5 && c.right <= w.innerWidth + 0.5,
+          clips: ch.scrollWidth > ch.clientWidth + 1,
+          overlapsAdvance: ar ? !(ar.l >= c.right || ar.r <= c.left || ar.t >= c.bottom || ar.b <= c.top) : false }
+      }),
       label: name(cd.querySelector('a[href]') || cd),
       h: r.h, w: r.w,
       overflowX: cd.scrollWidth > cd.clientWidth + 1,
@@ -455,7 +484,10 @@ const MEASURE = (c) => `(() => {
               controls: taps.length, links: links.length,
               advanceBtns: d.querySelectorAll('${tid('advance-stage')}').length,
               startBtns: d.querySelectorAll('${tid('start-lot')}').length,
-              measureLines: d.querySelectorAll('${tid('lot-seed-measure')}').length },
+              measureLines: d.querySelectorAll('${tid('lot-seed-measure')}').length,
+              mixedChips: d.querySelectorAll('${tid('lot-mixed')}').length,
+              partF2Chips: d.querySelectorAll('${tid('lot-part-f2')}').length,
+              parentLinks: d.querySelectorAll('${tid('lot-source-plant')}').length },
     taps, links, cardMetrics, sheet, action,
   }
 })()`
@@ -523,12 +555,16 @@ try {
       // group would otherwise measure its cards by nothing and pass.
       if (m.counts.startBtns !== e.startBtns) mismatch.push(`"Start →" buttons ${m.counts.startBtns} != ${e.startBtns} — the Not started group (fixture rows i5, i6) did not render`)
       if (m.counts.measureLines !== e.measureLines) mismatch.push(`seed-measure lines ${m.counts.measureLines} != ${e.measureLines} — the fixture's tracked rows stopped carrying seed_count/seed_weight_g, so the clearance checks below would read a card that has no such line and report a pass about nothing`)
+      // V5-SEEDMULTIPARENT-001 — exact, on every case, for measureLines' reason.
+      if (m.counts.mixedChips !== e.mixedChips) mismatch.push(`"Mixed seed" chips ${m.counts.mixedChips} != ${e.mixedChips} — the fixture's multi-parent jars (i7, i8) stopped carrying source_plants, so no card with a parent set is on screen`)
+      if (m.counts.partF2Chips !== e.partF2Chips) mismatch.push(`part-F2 chips ${m.counts.partF2Chips} != ${e.partF2Chips} — the two-chip card (i8) is not on screen`)
+      if (m.counts.parentLinks !== e.parentLinks) mismatch.push(`"Saved from" links ${m.counts.parentLinks} != ${e.parentLinks}`)
       // The same decay one level in. MEASURE_MAX_LINES is only a budget while something on screen
       // actually reaches it: water i3's count back down to four digits and the bound below is
       // satisfied by three one-line strings and proves nothing. Only the SHORT direction is checked
       // here — over budget is a layout failure and has its own message, with the card height in it.
       const maxMeasureLines = Math.max(0, ...m.cardMetrics.filter(cd => cd.measure).map(cd => cd.measure.lines))
-      if (e.measureLines > 0 && maxMeasureLines < MEASURE_MAX_LINES) mismatch.push(`the widest seed-measure line occupies ${maxMeasureLines} line box(es), short of the ${MEASURE_MAX_LINES} the budget is set at — the fixture stopped carrying the column-ceiling string ("approx. 2147483647 seeds · 9999999.99 g"), so the line-box bound below would be exercised by nothing`)
+      if (e.measureLines > 0 && maxMeasureLines < ceilingLines(vw)) mismatch.push(`the widest seed-measure line occupies ${maxMeasureLines} line box(es), short of the ${MEASURE_MAX_LINES} the budget is set at — the fixture stopped carrying the column-ceiling string ("approx. 2147483647 seeds · 9999999.99 g"), so the line-box bound below would be exercised by nothing`)
       if (m.counts.controls < e.minControls) mismatch.push(`${m.counts.controls} interactive controls, expected >=${e.minControls}`)
       if (m.emptyState !== e.emptyState) mismatch.push(`empty state ${m.emptyState}, expected ${e.emptyState}`)
       if (e.sheet && !m.sheet) mismatch.push('no [role="dialog"] — the sheet this case exists to measure never opened')
@@ -583,6 +619,13 @@ try {
           if (!ms.fitsX) fail(`${at}: card "${cd.label}": the seed-measure line sits outside the ${vw}px viewport`)
           if (ms.overlapsAdvance) fail(`${at}: card "${cd.label}": the seed-measure line's rect intersects the advance button`)
         }
+        // V5-SEEDMULTIPARENT-001 — each chip.
+        for (const ch of cd.chips) {
+          if (!ch.inCard) fail(`${at}: card "${cd.label}": the "${ch.text}" chip (${ch.w}x${ch.h}) is painted outside its card`)
+          if (!ch.fitsX) fail(`${at}: card "${cd.label}": the "${ch.text}" chip sits outside the ${vw}px viewport`)
+          if (ch.clips) fail(`${at}: card "${cd.label}": the "${ch.text}" chip clips its own words`)
+          if (ch.overlapsAdvance) fail(`${at}: card "${cd.label}": the "${ch.text}" chip's rect intersects the card's action button`)
+        }
       }
       if (m.sidewaysScroll) fail(`${at}: document scrollWidth ${m.docScrollW} > clientWidth ${m.docClientW} — the page scrolls sideways`)
 
@@ -616,6 +659,11 @@ try {
         // asserting a count that used to be reported.
         const withMeasure = m.cardMetrics.filter(cd => cd.measure)
         console.log(`[seeds-saved] ${at}: seed-measure line on ${withMeasure.length}/${m.cardMetrics.length} card(s) · ${withMeasure.map(cd => `"${cd.measure.text}" ${cd.measure.w}x${cd.measure.h} ink ${cd.measure.textW}px/${cd.measure.lines}L`).join(' / ')} · clipped ${withMeasure.filter(cd => cd.measure.clips).length} · max ${Math.max(0, ...withMeasure.map(cd => cd.measure.lines))}L of ${MEASURE_MAX_LINES}`)
+      }
+      // V5-SEEDMULTIPARENT-001 — the chips, per card: the numbers a wording change has to move.
+      const chipped = m.cardMetrics.filter(cd => cd.chips.length)
+      if (chipped.length) {
+        console.log(`[seeds-saved] ${at}: chips on ${chipped.length}/${m.cardMetrics.length} card(s) · ${chipped.map(cd => `${cd.h}px card: ${cd.chips.map(ch => `"${ch.text}" ${ch.w}x${ch.h}@y${ch.top}`).join(' + ')}`).join(' / ')} · ${m.counts.parentLinks} "Saved from" link(s)`)
       }
       if (m.sheet) {
         console.log(`[seeds-saved] ${at}: sheet y${m.sheet.top}-${m.sheet.bottom} h${m.sheet.height} · scrollable ${m.sheet.scrollable} (${m.sheet.hiddenBelowPx}px below the fold) · candidate list scroll ${m.sheet.candidateListScrollPx ?? '—'}px · narrowing control ${m.sheet.hasFilterControl ? 'present' : 'NONE'}`)

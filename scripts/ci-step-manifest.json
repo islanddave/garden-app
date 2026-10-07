@@ -334,6 +334,20 @@
       "env": {
         "GATE_CHROME_FLAGS": "--no-sandbox"
       },
+      "name": "Save seed sheet layout and Save clearance (V5-SEEDMULTIPARENT-001)",
+      "other": {},
+      "run": [
+        "npm run gate:save-seed-sheet"
+      ],
+      "shell": null,
+      "uses": null,
+      "with": null,
+      "working-directory": null
+    },
+    {
+      "env": {
+        "GATE_CHROME_FLAGS": "--no-sandbox"
+      },
       "name": "Seeds page layout, all three views (V5-SEEDSTAB-001)",
       "other": {},
       "run": [

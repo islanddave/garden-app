@@ -141,6 +141,44 @@ const NOT_STARTED = [
     source_plant_id: 'p3', created_at: daysAgo(1), updated_at: daysAgo(1),
     seed_count: 40, seed_weight_g: null, seed_count_estimated: true },
 ]
+// V5-SEEDMULTIPARENT-001 (release 2b) — two jars with a PARENT SET, so the card's new shapes are on
+// screen under the gate: the "Saved from N plantings →" link (it opens the jar, not one planting) and
+// the chips lotNotice derives from the set. Without `source_plants` on a list row neither renders, and
+// the gate would go on measuring cards from before the release.
+//   i7  TWO plantings of two open-pollinated varieties, filed under their mix, STORED: one chip
+//       ("Mixed seed"), no advance button.
+//   i8  FOUR plantings of three varieties, one of them an F1, filed under the longest name the app can
+//       give a mix (three names joined and " mix", 90 characters), still DRYING: BOTH chips ("Mixed
+//       seed" and the part-F2 one) in one wrapping row, a seed-measure line, and the 90-character name
+//       beside an advance button — the tightest card this page can now draw.
+// The cultivars are the pepper rows this file and seedwarning.jsx already carry as real prod rows.
+// Each parent is in the contract's shape (tests/contracts/seed-mix.json, `source_plants`).
+const parentPlant = (id, name, variety_id, variety_name, breeding_system) => ({
+  id, name, variety_id, variety_name, breeding_system, variety_rank: 'cultivar', crop_slug: 'pepper', archived: false, deleted: false,
+})
+const LONG_MIX_NAME = 'Biquinho Red & Yellow Blend + Bulgarian Carrot (Shipka) + Megatron F1 (jumbo jalapeno) mix'
+const MULTI_PARENT = [
+  { id: 'i7', name: 'Biquinho Red & Yellow Blend + Bulgarian Carrot (Shipka) mix — saved 2026', variety_id: 'v-mix-2',
+    variety_name: 'Biquinho Red & Yellow Blend + Bulgarian Carrot (Shipka) mix', variety_rank: 'blend', breeding_system: null,
+    crop_slug: 'pepper', status: 'active', seed_stage: 'stored', seed_process: null, updated_at: daysAgo(20),
+    source_plant_id: 'pp2', seed_parent_plant_count: 5,
+    source_plants: [
+      parentPlant('pp2', 'Bulgarian Carrot (Shipka) — raised bed 3, north end, second sowing', 'v-shipka', 'Bulgarian Carrot (Shipka)', 'open_pollinated'),
+      parentPlant('pp3', 'Biquinho Red & Yellow Blend — grow bag by the shed', 'v-biquinho', 'Biquinho Red & Yellow Blend', 'open_pollinated'),
+    ],
+    seed_count: null, seed_weight_g: null, seed_count_estimated: null },
+  { id: 'i8', name: `${LONG_MIX_NAME} — saved 2026`, variety_id: 'v-mix-3',
+    variety_name: LONG_MIX_NAME, variety_rank: 'blend', breeding_system: null,
+    crop_slug: 'pepper', status: 'active', seed_stage: 'drying', seed_process: 'dry', updated_at: daysAgo(2),
+    source_plant_id: 'pp1', seed_parent_plant_count: 7,
+    source_plants: [
+      parentPlant('pp1', 'Megatron F1 (jumbo jalapeno)', 'v-megatron', 'Megatron F1 (jumbo jalapeno)', 'f1'),
+      parentPlant('pp2', 'Bulgarian Carrot (Shipka) — raised bed 3, north end, second sowing', 'v-shipka', 'Bulgarian Carrot (Shipka)', 'open_pollinated'),
+      parentPlant('pp3', 'Biquinho Red & Yellow Blend — grow bag by the shed', 'v-biquinho', 'Biquinho Red & Yellow Blend', 'open_pollinated'),
+      parentPlant('pp4', 'Bulgarian Carrot pot 2', 'v-shipka', 'Bulgarian Carrot (Shipka)', 'open_pollinated'),
+    ],
+    seed_count: 300, seed_weight_g: null, seed_count_estimated: true },
+]
 // `crop_slug` is the `pv.crop_type_slug` alias the list query added for V5-SEEDSAVEDFILTER-001, and
 // it is on these rows so the crop facet actually RENDERS under the gate. It would otherwise be
 // measured by nothing: the facet needs more than MAX_CANDIDATES (25) untracked rows AND at least two
@@ -183,7 +221,10 @@ const PLANTINGS = [
 // below the box's clip edge and read it as "occluded" (measured 2026-09-23, 390x844 and 390x667). A row
 // scrolled half out of its own list is not a defect, so the picker's window is kept exactly as it was.
 // The page files these two by its own order (Not started, oldest first), whatever their place here.
-const ROWS = CASE === 'empty' ? UNTRACKED : [...TRACKED, ...UNTRACKED, ...NOT_STARTED]
+// MULTI_PARENT goes after TRACKED: both of its jars have a stage, so neither is a candidate and the
+// picker's window is untouched. i8 is DRYING and i7 STORED on purpose — the advance case taps the page's
+// FIRST advance button, which stays a fermenting card's, so that sheet is the one it always measured.
+const ROWS = CASE === 'empty' ? UNTRACKED : [...TRACKED, ...MULTI_PARENT, ...UNTRACKED, ...NOT_STARTED]
 
 // The two controlled vocabularies the shell's views read. Crop types label the crop chips (without
 // them the chips fall back to a slug prettifier, a degrade path, not the prod label); sources
