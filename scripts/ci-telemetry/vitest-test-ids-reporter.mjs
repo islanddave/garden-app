@@ -27,6 +27,8 @@ import { createHash } from 'node:crypto'
 
 export const TITLE_PREFIX = 'test-ids '
 // 2: files_sha256 and names_sha256 added. shadow-agree.py compares two notices only when their versions match.
+// node_files joined the line without a new version: it is a count beside the digests, not part of what they hash,
+// and shadow-agree.py reads the tokens by name.
 export const FORMAT_VERSION = 2
 const STATES = ['passed', 'failed', 'skipped', 'pending']
 
@@ -71,6 +73,15 @@ export function nameLines(testModules) {
   return testIdLines(testModules).map((line) => line.slice(0, line.lastIndexOf(' :: '))).sort()
 }
 
+/**
+ * How many of the run's files ran in the vitest project named `node` (vitest.config.ts, the A3 trial): 0 in a
+ * one-project run, where the root project has no such name. The digests cannot see which project ran a file, so
+ * this count is what tells a two-project pass from a jsdom-everything one in the notice itself.
+ */
+export function nodeFiles(testModules) {
+  return testModules.filter((mod) => mod.project && mod.project.name === 'node').length
+}
+
 /** The annotation's message: `key=value` tokens, so shadow-agree parses it without a format of its own. */
 export function summary(testModules, reason) {
   const lines = testIdLines(testModules)
@@ -85,8 +96,8 @@ export function summary(testModules, reason) {
   }
   return [`sha256=${digest(lines)}`, `files_sha256=${digest(fileLines(testModules))}`,
     `names_sha256=${digest(nameLines(testModules))}`, `tests=${tests}`,
-    ...STATES.map((state) => `${state}=${counts[state]}`), `files=${testModules.length}`, `reason=${reason}`,
-    `v=${FORMAT_VERSION}`].join(' ')
+    ...STATES.map((state) => `${state}=${counts[state]}`), `files=${testModules.length}`,
+    `node_files=${nodeFiles(testModules)}`, `reason=${reason}`, `v=${FORMAT_VERSION}`].join(' ')
 }
 
 export default class TestIdsReporter {

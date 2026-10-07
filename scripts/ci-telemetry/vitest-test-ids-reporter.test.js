@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import TestIdsReporter, {
-  testIdLines, fileLines, nameLines, digest, summary, zoneLabel, TITLE_PREFIX, FORMAT_VERSION,
+  testIdLines, fileLines, nameLines, nodeFiles, digest, summary, zoneLabel, TITLE_PREFIX, FORMAT_VERSION,
 } from './vitest-test-ids-reporter.mjs'
 
 const mod = (file, tests, state = 'passed') => ({
@@ -143,9 +143,19 @@ describe('the line it prints', () => {
     expect(written).toHaveLength(1)
     expect(written[0]).toBe(`\n::notice title=${TITLE_PREFIX}UTC::sha256=${digest(testIdLines(SUITE))} ` +
       `files_sha256=${digest(fileLines(SUITE))} names_sha256=${digest(nameLines(SUITE))} tests=3 ` +
-      'passed=1 failed=1 skipped=1 pending=0 files=2 reason=failed v=2\n')
+      'passed=1 failed=1 skipped=1 pending=0 files=2 node_files=0 reason=failed v=2\n')
     expect(summary(SUITE, 'failed')).toBe(written[0].trim().split('::')[2])
     expect(FORMAT_VERSION).toBe(2)
+  })
+
+  it('counts the files that ran in the node project, and moves no digest with it', () => {
+    const inProject = (name, module) => ({ ...module, project: { name } })
+    const twoProjects = [inProject('dom', SUITE[0]), inProject('node', SUITE[1])]
+    expect(nodeFiles(SUITE)).toBe(0)                                     // one project: no module names one
+    expect(nodeFiles(SUITE.map((module) => inProject('', module)))).toBe(0)
+    expect(nodeFiles(twoProjects)).toBe(1)
+    expect(summary(twoProjects, 'passed')).toBe(summary(SUITE, 'passed').replace(' node_files=0 ', ' node_files=1 '))
+    expect(run(twoProjects).written[0]).toContain(' files=2 node_files=1 reason=passed v=2\n')
   })
 
   it('names the zone the pass ran under, so the two passes of the serial job never share a title', () => {

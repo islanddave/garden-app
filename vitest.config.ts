@@ -2,6 +2,14 @@ import { defineConfig, configDefaults } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import TestIdsReporter from './scripts/ci-telemetry/vitest-test-ids-reporter.mjs';
 
+// The test files that need no DOM, by where they live: the `node` project of the A3 trial (see `test` below).
+// tests/parity only, never tests/**: tests/harness/_todaymeasure/v2contract.test.mjs needs a DOM.
+// The extension is vitest's own default (`?(c|m)[jt]s?(x)`), not `*`: a project's `include` REPLACES that default,
+// so `*.test.*` here would have the node project collect a file the one-project run never does (a parked
+// `x.int.test.js.txt`, a snapshot), and the two shapes would stop running the same files.
+const NODE_EXT = '?(c|m)[jt]s?(x)';
+const NODE_GLOBS = ['lambda', 'scripts', 'migrations', 'tests/parity'].map((root) => `${root}/**/*.test.${NODE_EXT}`);
+
 export default defineConfig({
   plugins: [react()],
   // OPS-JSXCLASSICFALLBACK-001. The unit run transforms JSX with esbuild, NOT with the plugin above.
@@ -54,9 +62,26 @@ export default defineConfig({
     },
   },
   test: {
-    environment: 'jsdom',
     globals: true,
-    setupFiles: ['./src/__tests__/setup.ts'],
+    // THE A3 TRIAL (CI plan item A3). With VITEST_NODE_PROJECT=1 the suite runs as two projects: `node` takes the
+    // files under NODE_GLOBS and runs them with no jsdom and no setup file; `dom` takes every other file exactly as
+    // before. Without the key (every local run, and ci.yml) the last line below is the config as it was: one
+    // project, jsdom and the setup file for every file. Only ci-next.yml's two unit steps set the key, so the shadow
+    // compares the two shapes commit for commit by test ID (scripts/ci-telemetry/shadow-agree.py);
+    // scripts/test_ci_next.py holds the key to those two steps and scripts/ci-telemetry/vitest-projects.test.js
+    // holds the projects to the tree.
+    // `environment` and `setupFiles` live INSIDE the fork, never beside it. A project with `extends: true` inherits
+    // this whole block and arrays concatenate, so a `setupFiles` out here would also load in the node project, and
+    // src/__tests__/setup.ts reads `document` in an afterEach: measured, 9,859 of 9,859 node-project tests failed.
+    // The same concatenation is what makes the dom project's `exclude` ADD to the list further down.
+    // Everything else stays out here and reaches both projects: globals, the reporters, testTimeout, exclude, env.
+    // Coverage is one merged report from this block's `coverage`, whichever shape runs.
+    ...(process.env.VITEST_NODE_PROJECT === '1'
+      ? { projects: [
+            { extends: true, test: { name: 'dom', environment: 'jsdom', setupFiles: ['./src/__tests__/setup.ts'], exclude: NODE_GLOBS } },
+            { extends: true, test: { name: 'node', environment: 'node', include: NODE_GLOBS } },
+          ] }
+      : { environment: 'jsdom', setupFiles: ['./src/__tests__/setup.ts'] }),
     // Test-ID evidence for the CI shadow comparison (scripts/ci-telemetry/vitest-test-ids-reporter.mjs): on a
     // GitHub Actions runner each run ends with one ::notice carrying the sha256 of its sorted test-ID list, which
     // scripts/ci-telemetry/shadow-agree.py compares between ci.yml and ci-next.yml. Nothing is added off the

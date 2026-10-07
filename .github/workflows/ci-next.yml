@@ -12,7 +12,8 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 # typo in `canary_red_leg` gives a normal green run.
 #
 # THE STEPS ARE ci.yml's. Every step of `build-and-test` is in exactly one leg below with the same name, run, env,
-# uses and with. Each leg repeats the setup it needs (checkout, setup-node, npm ci, Chrome, the origin/main fetch).
+# uses and with, but for one env key on the two unit steps (THE A3 TRIAL, below). Each leg repeats the setup it needs
+# (checkout, setup-node, npm ci, Chrome, the origin/main fetch).
 # Each step's reasoning is the comment beside the same-named step in ci.yml and is not copied here.
 # scripts/test_ci_next.py compares the two files step for step and runs in ci.yml's own pytest step, so until the
 # switch a step added to, edited in or removed from one file and not the other reds the GATING job. A lane that
@@ -22,7 +23,46 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 #   - one canary step at the top of every leg, which only a workflow_dispatch naming that leg can run;
 #   - `Install PyYAML ...` in `static` (ci.yml's migration gate validation gets PyYAML from the pytest step);
 #   - the TZ sentinel in `unit-ny`;
+#   - the trial's env key on the two unit steps;
 #   - the aggregator's one step.
+#
+# THE A3 TRIAL: the one place a leg step differs from ci.yml's. `Run unit tests with coverage` (unit-utc-cov) and
+# `Unit tests under America/New_York TZ (date-fragility guard)` (unit-ny) carry env VITEST_NODE_PROJECT: '1'; the
+# same two steps in ci.yml do not. With the key, vitest.config.ts runs the suite as two projects: `node` takes the
+# test files under lambda/, scripts/, migrations/ and tests/parity/ with no jsdom and no src/__tests__/setup.ts, and
+# `dom` takes every other file as before. Without it the config is what it was. So ci.yml stays jsdom-everything,
+# the legs run the two-project shape, and the per-zone test-ID comparison of scripts/ci-telemetry/shadow-agree.py is
+# between the two. scripts/test_ci_next.py admits exactly that key at that value on those two steps and reds on it
+# anywhere else in either file.
+# What the trial has to show before the shape can become the gating one:
+#   - test IDs: TEST-IDS-EQUAL in both zones on every counted row.
+#   - coverage: NOT per-file equality, and NOT a bound on the four totals. All of the run-to-run movement is in
+#     lambda/daily-plan/**, which v8 does not measure reproducibly in either shape (one tree, key unset: 2,646 to
+#     2,747 of 3,381 branches; handler.js reads run() as never entered while 41 test files call it). A bound on a
+#     total would measure that directory's noise. What is held instead:
+#       1. unit-utc-cov's `Coverage ratchet — measured floor` step stays green;
+#       2. `python3 scripts/ci-telemetry/coverage-rows.py <build-and-test job log> <unit-utc-cov job log>` prints
+#          COVERAGE-SAME on the two jobs' logs of one commit (each from
+#          `gh api repos/islanddave/garden-app/actions/jobs/<job id>/logs`): in the coverage table of the two logs,
+#          every directory row other than `All files` and `lambda/daily-plan` shows the same % Funcs and % Lines.
+#          Measured on 11 same-tree runs across both shapes: outside lambda/daily-plan the covered lines and
+#          covered functions were equal to the unit. A row that differs is a finding to explain, never noise.
+#   - the switch took: scripts/ci-telemetry/vitest-projects.test.js fails a leg whose key is set while that file
+#     still has a DOM, and each leg's test-ids notice carries node_files greater than 0 where ci.yml's carries 0.
+#     shadow-agree.py does not read that token yet: the commit that moves COUNT_FROM_SHA teaches it to give no EQUAL
+#     without it, and until then the notices are read by hand. Without this an ignored key would read as agreement:
+#     both sides jsdom-everything.
+#   - a DOM-needing test that lands under a node root and reds only a leg is the trial working, not noise: the file
+#     moves to src/__tests__/, the row stays blocking, and the count restarts from the fix.
+# The count restarts (COUNT_FROM_SHA moves, in a later commit) when a commit changes what a unit pass runs:
+# vitest.config.ts, src/__tests__/setup.ts, scripts/ci-telemetry/vitest-test-ids-reporter.mjs, .nvmrc, the `test`
+# script or the vitest / jsdom / @vitest/coverage-v8 versions in package.json, the run or env of a unit step in
+# either workflow, or this file's job graph. A new or edited test file does not; a check mirrored step for step
+# into one leg does not. A row that blocks for TEST-IDS-DIFFER, or for DISAGREE with a failed unit step in a leg,
+# is a result of the trial: COUNT_FROM_SHA does not move past it until its cause is written in the commit that
+# moves it. This commit is a restart.
+# Design and measurements: gardening-docs project-state/_promotepath-20261002/scout-a3-nodeproject-20261007.md and
+# review-a3trial-qa-20261007.md (the coverage criterion, and the one-off checks the trial was entered on).
 #
 # What the serial job handed from step to step, and where each hand-off lives now:
 #   dist/ (Build -> Verify build output -> Harvest-window chunk split)   all three in `static`, in that order
@@ -244,7 +284,11 @@ jobs:
           python3 -m pytest -q scripts/test_*.py
 
   # The UTC pass with coverage, between the two halves of the coverage ratchet: the measured floor reads the
-  # coverage/coverage-summary.json this leg's own `npm test` writes. ~14 min median, 17 min on a slow runner.
+  # coverage/coverage-summary.json this leg's own `npm test` writes. Measured before the trial key, on the soak
+  # (ci-next-soak run 37559095399, dev f792a200, 1,482 files, ten attempts): job median 17.95 min, six of ten over
+  # 17.8, the vitest step 661-1,095 s (gardening-docs project-state/_promotepath-20261002/
+  # scout-a8-and-slowdown-20261007.md, lines 351-355, with the run at 47 and the range at 62). With the trial key
+  # the A3 scout infers about 3 min less; that is not yet measured on a runner.
   unit-utc-cov:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -270,6 +314,8 @@ jobs:
 
       - name: Run unit tests with coverage
         run: npm test
+        env:
+          VITEST_NODE_PROJECT: '1'
 
       - name: Coverage ratchet — measured floor (WS-B M4)
         run: python3 scripts/check-coverage-ratchet.py --measured
@@ -319,6 +365,7 @@ jobs:
         run: npx vitest run --no-coverage
         env:
           TZ: America/New_York
+          VITEST_NODE_PROJECT: '1'
 
   # Real-Chrome gates, first group (~246 s of work measured after the idle-timer fix, run 37040756148).
   gates-a:

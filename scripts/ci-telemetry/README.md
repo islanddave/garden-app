@@ -101,8 +101,17 @@ Tested in `scripts/test_shadow_agree.py` against the replies recorded under `scr
 
 `vitest-test-ids-reporter.mjs` is where the test-ID digests come from. On a GitHub Actions runner (and nowhere
 else: `vitest.config.ts` adds it under `GITHUB_ACTIONS`) every vitest run ends with one notice,
-`test-ids <zone>: sha256=... files_sha256=... names_sha256=... tests=... passed=... failed=... skipped=... v=2`.
+`test-ids <zone>: sha256=... files_sha256=... names_sha256=... tests=... passed=... failed=... skipped=...
+files=... node_files=... v=2`.
 `sha256` is that of the sorted `file :: full test name :: state` list; the other two are of the file list alone and
-of the names without their states. It cannot fail a run. The list itself is not stored anywhere: two runs can be
+of the names without their states. `node_files` is how many of the files ran in vitest's `node` project (the A3
+trial, `.github/workflows/ci-next.yml`): above 0 in ci-next's unit legs, 0 in ci.yml's passes. It cannot fail a run. The list itself is not stored anywhere: two runs can be
 told apart, and how they differ, but not which test. Tested in `vitest-test-ids-reporter.test.js`, which also asks
 the installed vitest for its default reporters and holds `vitest.config.ts` to restating exactly those.
+
+`coverage-rows.py SERIAL_LOG SHADOW_LOG` is the A3 trial's coverage comparison. Neither workflow uploads a coverage
+artefact, so it reads the coverage table out of two unit-pass job logs of one commit
+(`gh api repos/islanddave/garden-app/actions/jobs/<job id>/logs`, or a local `npm test` log) and compares every
+directory row but `All files` and `lambda/daily-plan` on % Funcs and % Lines. Exit 0 `COVERAGE-SAME`, 1
+`COVERAGE-DIFFERS` with the rows, 2 `COVERAGE-UNREADABLE`. Tested in `scripts/test_coverage_rows.py` against the
+table of a real job log under `scripts/fixtures/coverage-rows/`.
