@@ -61,11 +61,35 @@ compares the test-ID digest of each unit pass and, when two differ, says whether
 or only the states. It prints the `runs-on` labels of each side, and lists each `ci-next.yml` job's wait for a
 runner against the plan's threshold (a job over 120 s in 3 of 10 runs).
 
-The last line is `ACCEPTANCE: MET` or `NOT MET` with each thing still missing: at least 10 SHAs counted, no
-DISAGREE, no TEST-IDS-DIFFER, TEST-IDS-EQUAL in both passes on every counted SHA, queue threshold not tripped. That
-line is separate from the exit code: exit 0 = nothing disagrees, 1 = a DISAGREE or a TEST-IDS-DIFFER among the
-counted SHAs, 2 = a reply could not be read (or a listing changed between its two reads) and nothing is concluded.
+A SHA red on both sides is agreement only when both went red at the same step, which the script reads from the job
+steps of the attempt it judges: `ci.yml` failed exactly one step, a `ci-next.yml` leg failed that step, and no leg
+is red at a step `ci.yml` ran and passed. Each SHA with a verdict on both sides is then worth one of three things:
+
+- **QUALIFIES**: one of the 10. Green on both sides, or red on both at the same step, with TEST-IDS-EQUAL in both
+  passes.
+- **EXEMPT**: not one of the 10 and not blocking. Red on both sides at the same step, and `ci.yml` stopped before a
+  unit pass, so that pass printed no digest there (its step reads `skipped`) while the shadow ran it or skipped it
+  too. The row prints what that rests on: the failed step, the pass never run, the leg that failed the same step
+  and the shadow's own digests.
+- **BLOCKS**: a DISAGREE; red on both sides where the failing step cannot be read (a job with no steps, a shadow
+  run with no leg) or is read and differs; a TEST-IDS-DIFFER; a digest absent for any other reason (the pass ran
+  and left no usable notice, the shadow lacks what the serial job has, the format versions differ). The row prints
+  why.
+
+The last line is `ACCEPTANCE: MET` or `NOT MET` with each thing still missing: at least 10 SHAs that qualify, none
+that blocks, queue threshold not tripped. It names every exempt SHA, and a MET line ends with what it does not
+cover: manifest conservation, the 10-green soak and the canary are not read here. Every SHA from the start of the
+counting window is read and tallied whatever `--limit` is; `--limit` only cuts the rows printed. That line is
+separate from the exit code: exit 0 = nothing disagrees, 1 = a DISAGREE or a TEST-IDS-DIFFER among the SHAs inside
+the window, 2 = a reply could not be read (or a listing changed between its two reads) and nothing is concluded.
 How a cancelled run is read, and why that cannot hide a disagreement, is in the docstring at the top of the script.
+
+`--json` (`schema_version` 2) carries the same reading. Per SHA: `counted` (a verdict on both sides, inside the
+window), `acceptance` (`QUALIFIES`, `EXEMPT`, `BLOCKS`, or null when not counted) and `acceptance_why`; the facts
+they rest on, `ci_failed_steps`, `ci_ran_steps`, `next_legs`, `next_red_legs`; and per pass in `test_ids`, `ci_step`
+and `next_step`, the conclusion of the step that runs the pass on each side. `acceptance` holds `met`, `missing`,
+`counted`, `qualifying` (the number set against the 10), `counted_red` (qualifying SHAs red on both sides), `exempt`
+(SHAs) and `blocking` (`sha` and `why`). `summary.window_met` is `qualifying >= 10`.
 Tested in `scripts/test_shadow_agree.py` against the replies recorded under `scripts/fixtures/shadow-agree/`.
 
 `vitest-test-ids-reporter.mjs` is where the test-ID digests come from. On a GitHub Actions runner (and nowhere

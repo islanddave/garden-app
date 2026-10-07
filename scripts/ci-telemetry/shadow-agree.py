@@ -798,8 +798,9 @@ def parse_args(argv):
     exits = next(part for part in doc if part.startswith("Exit codes:"))
     p = Parser(description=doc[0], epilog=exits, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--repo", default="islanddave/garden-app", help="owner/name (default: %(default)s)")
-    p.add_argument("--limit", type=int, default=40, help="print the newest N dev push SHAs (default: %(default)s); every SHA from COUNT_FROM_SHA on "
-                   "is read and tallied whatever N is")
+    p.add_argument("--limit", type=int, default=40,
+                   help="print the newest N dev push SHAs (default: %(default)s); every SHA from COUNT_FROM_SHA on "
+                        "is read and tallied whatever N is")
     p.add_argument("--call-timeout", type=float, default=60, help="seconds one gh call may take (default: %(default)s)")
     p.add_argument("--json", action="store_true", help="one JSON document instead of the table")
     args = p.parse_args(argv)
