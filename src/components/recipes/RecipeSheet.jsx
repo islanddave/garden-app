@@ -4,6 +4,10 @@
 // process jar and the final container a make can span (Dave 2026-09-30) and the yield as written. Only the
 // name is required. <Sheet armsBack>; the draft survives a dismiss (kitchen/sheetDraft.js, sheet 'recipe',
 // id 'new' or the recipe's id); the create is keyed (one key per draft, reused on every retry).
+// A REPLAYED CREATE (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js): the key never changes with what
+// is typed, so a Save whose answer was lost, a change, and Save again is answered with the recipe the first
+// one made. The sheet then PATCHes what it holds onto that recipe before it closes. What has gone out under
+// the key rides in the draft as `sent`, from the first Save on (a draft never sent has no such key).
 //
 // ⚠ Notes are his text VERBATIM (including his own target pH): sent exactly as typed, never trimmed inside,
 // and shown here exactly as stored — the bold and italic of recipe detail are that surface's alone.
@@ -31,7 +35,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
 import { useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
-import { mintKey } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay } from '../kitchen/idempotencyKey.js'
 import TypePicker from './TypePicker.jsx'
 import {
   emptyDraft, draftFromRecipe, recipeBody, exactAmountOpens, keepsKindChips, RECIPE_KIND_OPTIONS, STORAGE_KIND_WORDS,
@@ -45,6 +49,7 @@ const UNIT_OPTIONS = KITCHEN_UNITS.map(u => ({ value: u, label: u }))
 export function isRecipeDraft(d) {
   return !!d && typeof d === 'object' && !Array.isArray(d) && typeof d.name === 'string'
     && typeof d.notes === 'string' && Array.isArray(d.lines) && (d.key === undefined || typeof d.key === 'string')
+    && (d.sent === undefined || Array.isArray(d.sent))
 }
 
 // The quiet text action, 48 px tall on Put-Up surfaces (UX pass R1).
@@ -74,6 +79,9 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   const [placesOpen, setPlacesOpen] = useState(false)
   const [unitPicked, setUnitPicked] = useState(false)
   const writingRef = useRef(false)
+  // Set once a save lands: the draft is cleared then, and nothing may write it back before the sheet unmounts
+  // (a Save now changes the draft as it sends).
+  const savedRef = useRef(false)
   const base = useRef(JSON.stringify(editing ? draftFromRecipe(recipe) : emptyDraft()))
   const linesRef = useRef(null)
   const placesRef = useRef(null)
@@ -89,10 +97,11 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   // this sheet does not edit (form, brand, role, note, heat, salt) still belong to the line — they do unless
   // its name, number or unit changed. Clearing it here dropped them on any edit, "at the end" included.
   const setLine = (i, patch) => set({ lines: d.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) })
-  const dirty = JSON.stringify({ ...d, key: '' }) !== JSON.stringify({ ...JSON.parse(base.current), key: '' })
+  // `sent` is the key's record, not something typed: it never makes the sheet dirty.
+  const dirty = JSON.stringify({ ...d, key: '', sent: undefined }) !== JSON.stringify({ ...JSON.parse(base.current), key: '' })
 
   useEffect(() => {
-    if (!draftKey) return
+    if (!draftKey || savedRef.current) return
     if (dirty) writeSheetDraft(draftKey, RECIPE_SHEET, d)
     else clearSheetDraft(draftKey)
   }, [draftKey, dirty, d])
@@ -137,9 +146,24 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
     writingRef.current = true
     setSaving(true); setErr(null)
     try {
-      const answer = editing
-        ? await fetch(`/api/recipes/${recipe.id}`, { method: 'PATCH', body: JSON.stringify(res.body) })
-        : await fetch('/api/recipes', { method: 'POST', body: JSON.stringify(res.body) })
+      let answer
+      if (editing) {
+        answer = await fetch(`/api/recipes/${recipe.id}`, { method: 'PATCH', body: JSON.stringify(res.body) })
+      } else {
+        // Noted in the draft BEFORE the request goes: a dismiss or a reload between a lost answer and the
+        // retry must still know that another body went out under this key.
+        const print = sendPrint(res.body)
+        const sent = noteSent(d.sent, print)
+        if (sent !== d.sent) setD(x => ({ ...x, sent }))
+        answer = await fetch('/api/recipes', { method: 'POST', body: JSON.stringify(res.body) })
+        if (afterReplay(answer, sent, print) === 'update') {
+          // The recipe the first Save made, and it may not hold this: everything the sheet shows goes onto it,
+          // as an edit would send it. A failure lands in the catch below — not saved, what was typed still here.
+          if (answer?.recipe?.id == null) throw new Error('replayed without a recipe')
+          answer = await fetch(`/api/recipes/${answer.recipe.id}`, { method: 'PATCH', body: JSON.stringify(recipeBody(d, { mode: 'edit' }).body) })
+        }
+      }
+      savedRef.current = true
       clearSheetDraft(draftKey)
       onSaved?.(answer?.recipe ?? null)
     } catch (e) {

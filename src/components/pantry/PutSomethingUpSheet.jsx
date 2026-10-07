@@ -28,6 +28,14 @@
 // the same key is what makes the retry find it). Before Save, one role=status line previews the date it
 // uses and the discard-by with its basis (the shared engine, putItUp.previewDiscard).
 //
+// A REPLAYED ITEM (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js). The key does not change with what
+// is typed, so after a lost answer and a change the item route answers `replayed: true` with the item the
+// FIRST Save made. The door then PATCHes what it holds onto that item and completes from the PATCH's answer.
+// A What that has become another planting (or stopped being one) cannot ride a PATCH: nothing is written and the door says
+// so (replayFixedText). A failure of that PATCH never mints a new key, whatever its status: the item exists.
+// What has gone out under the key rides in the draft as `sent`, from the first item Save on. The put-up route
+// is as it was: a replayed put-up completes from the server's row (plan R2 V2 "Retry key").
+//
 // A SEEDED DOOR (opened with a What: a search's "Put something up: <text> →", a planting's door) is not
 // dirty until something changes: no key, no draft written, no reload held, and a draft already stored is
 // left alone until the first real change replaces it. A stored draft for the SAME seed is restored whole.
@@ -40,14 +48,14 @@ import { T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import { setReloadBlocked } from '../../lib/reloadGate.js'
 import RefusalLine, { refusalOf } from './RefusalLine.jsx'
-import { createPantryItem, ensurePlaceId } from '../../lib/pantryApi.js'
+import { createPantryItem, patchPantryItem, ensurePlaceId } from '../../lib/pantryApi.js'
 import Sheet from '../forms/Sheet.jsx'
 import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome } from '../forms/formStyles.js'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
-import { mintKey } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay } from '../kitchen/idempotencyKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter, FOOTER_GAP_PX } from '../kitchen/sheetScroll.js'
 import { placeChips, estimateChips, TEXTURE_CHIPS } from '../putup/putItUp.js'
 import NameSearchField from './NameSearchField.jsx'
@@ -63,7 +71,7 @@ import {
   AS_IS, DOOR_TITLE, DOOR_SHEET, METHOD_REQUIRED_TEXT, methodChoices, routeFor, saveLabel, doorWhen,
   previewLine, doorError, jarBody, itemBody, START_BATCH_INSTEAD_TEXT, isPlantingHit, methodSlot,
   doorOptionsLabel, doorFromLabel, doorNotesPlaceholder, whereFromHeading, sizeEcho, sizeTotalError,
-  SIZE_LINK_LABEL, AMOUNT_LINK_LABEL,
+  SIZE_LINK_LABEL, AMOUNT_LINK_LABEL, ITEM_FIXED_KEYS, itemPatchOf, replayFixedText,
 } from './putSomethingUp.js'
 
 const WHEN_CHIPS = [{ id: 'today', label: 'Today' }, { id: 'yesterday', label: 'Yesterday' }, { id: 'earlier', label: 'Earlier…' }]
@@ -93,6 +101,7 @@ export function isDoorDraft(d) {
     && optional(d.amountValue, 'string') && optional(d.amountUnit, 'string')
     && optional(d.sourceKind, 'string') && optional(d.sourceLabel, 'string')
     && optional(d.isRaw, 'boolean') && optional(d.inOil, 'boolean') && optional(d.texture, 'string')
+    && (d.sent == null || Array.isArray(d.sent))
 }
 
 // A stored value outside today's list is read as "none chosen", never shown as a chip nobody can see.
@@ -187,6 +196,8 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
   const [{ initial, seed }] = useState(() => opening({ draftKey, initialWhat, initialName }))
   const openedWithWhat = !!(initialWhat || String(initialName ?? '').trim())
   const [key, setKey] = useState(initial.key)
+  // What has gone out under `key` on the item route (idempotencyKey.js); dropped with the key.
+  const [sent, setSent] = useState(() => (Array.isArray(initial.sent) ? initial.sent.filter(x => typeof x === 'string') : []))
   const [what, setWhat] = useState(initial.what)
   const [place, setPlace] = useState(initial.place)
   const [method, setMethod] = useState(initial.method)
@@ -293,10 +304,11 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
       writeSheetDraft(draftKey, DOOR_SHEET, {
         key, what, place, method, count, whenChip, estimate, pickedDate, discard, notes,
         sizeValue, sizeUnit, amountValue, amountUnit, sourceKind, sourceLabel, isRaw, inOil, texture,
+        ...(sent.length ? { sent } : null),
       })
     } else if (ownsDraftRef.current) clearSheetDraft(draftKey)
   }, [draftKey, dirty, key, what, place, method, count, whenChip, estimate, pickedDate, discard, notes,
-    sizeValue, sizeUnit, amountValue, amountUnit, sourceKind, sourceLabel, isRaw, inOil, texture])
+    sizeValue, sizeUnit, amountValue, amountUnit, sourceKind, sourceLabel, isRaw, inOil, texture, sent])
 
   const holdReload = dirty || saving
   const gateKey = `put-something-up:${useId()}`
@@ -418,6 +430,8 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
     if (!key) setKey(useKey)
     writingRef.current = true
     setSaving(true); setErr(null); setField(null)
+    // Set once the item is KNOWN to exist (a replay answered with it): a failure after that is not a new key.
+    let onRow = false
     try {
       let saved
       if (route === 'jar') {
@@ -427,8 +441,25 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
           isRaw, inOil, size, source, texture,
         })) })
       } else {
-        const r = await createPantryItem(fetch, itemBody({ key: useKey, what, place, when: w.when, discard, notes, amount, source }))
+        const body = itemBody({ key: useKey, what, place, when: w.when, discard, notes, amount, source })
+        const print = sendPrint(body, ITEM_FIXED_KEYS)
+        const sentNow = noteSent(sent, print)
+        setSent(sentNow)
+        const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
+        const todo = afterReplay(r, sentNow, print)
+        if (todo === 'fixed') {
+          writingRef.current = false
+          setSaving(false)
+          setErr(replayFixedText(saved)); setField('what')
+          return
+        }
+        if (todo === 'update') {
+          onRow = true
+          if (saved?.id == null) throw new Error('replayed without an item')
+          const u = await patchPantryItem(fetch, saved.id, itemPatchOf(body, await ensurePlaceId(fetch, place), saved))
+          saved = u?.item ?? u
+        }
       }
       savedRef.current = true
       clearSheetDraft(draftKey)
@@ -440,11 +471,11 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
       setSaving(false)
       // An ANSWERED 4xx wrote nothing, so the next attempt is a new request and gets a new key. Anything else
       // (no status, 0, a 5xx) may have landed with its answer lost: the key is kept, the retry replays it.
-      if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500) setKey(mintKey())
+      if (!onRow && typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500) { setKey(mintKey()); setSent([]) }
       setErr(refusalOf(ex, "Couldn't save it — nothing was lost. Try again."))
     }
   }, [amountUnit, amountValue, discard, draftKey, fetch, inOil, isRaw, key, method, n, notes, onSaved, place, planting,
-    sizeUnit, sizeValue, sourceKind, sourceLabel, texture, w, what])
+    sent, sizeUnit, sizeValue, sourceKind, sourceLabel, texture, w, what])
 
   const name = String(what?.name ?? '').trim() || 'this'
   return (

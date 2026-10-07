@@ -11,7 +11,7 @@ import {
 import {
   validateItemCreate, validateItemPatch, acquiredOf, jarRow, itemRow, sortPantryRows, discardOf, matchesQuery,
   loadPantryItems, amountOf, sourceOf, projectItem, ITEM_CREATE_KEYS, ITEM_PATCH_KEYS, ITEM_SOURCE_WORDS,
-  ITEM_AMOUNT_MAX, PLANTING_SOURCE_REFUSAL,
+  ITEM_AMOUNT_MAX, PLANTING_SOURCE_REFUSAL, PLANTING_CROP_REFUSAL,
 } from './pantryItems.js';
 import { KITCHEN_UNITS } from './kitchenBatch.js';
 import { JAR_UNITS } from './jarRules.js';
@@ -803,13 +803,13 @@ const listed = (norm, from, to) => norm.slice(norm.indexOf(from) + from.length, 
   .split(',').map((s) => s.trim().replace(/^[a-z]+\./, ''));
 
 describe('R2a — the item allowlists', () => {
-  it('ITEM_CREATE_KEYS is the ten it had plus the four; ITEM_PATCH_KEYS the seven it had plus the four', () => {
+  it('ITEM_CREATE_KEYS is the ten it had plus the four; ITEM_PATCH_KEYS the seven it had plus the four, plus crop_type_slug (BUG-PUTUPREPLAYDROPSEDIT-001)', () => {
     expect([...ITEM_CREATE_KEYS].sort()).toEqual([
       'acquired_at', 'acquired_precision', 'crop_type_slug', 'idempotency_key', 'name', 'notes', 'place', 'plant_id',
       'quantity_unit', 'quantity_value', 'source_kind', 'source_label', 'storage_location_id', 'use_by_target',
     ]);
     expect([...ITEM_PATCH_KEYS].sort()).toEqual([
-      'acquired_at', 'acquired_precision', 'name', 'notes', 'quantity_unit', 'quantity_value', 'source_kind',
+      'acquired_at', 'acquired_precision', 'crop_type_slug', 'name', 'notes', 'quantity_unit', 'quantity_value', 'source_kind',
       'source_label', 'storage_location_id', 'use_by_target', 'used_up_at',
     ]);
   });
@@ -980,6 +980,70 @@ describe('R2a — POST /api/pantry/items with an amount and where-from', () => {
     expect(sourceOf({ source_kind: 'farm_stand', source_label: ' Harris ' })).toEqual({ source_kind: 'farm_stand', source_label: 'Harris' });
     expect(sourceOf({ source_kind: 'own_garden', source_label: 'Old vendor' })).toEqual({ source_kind: 'own_garden', source_label: null });
     expect(sourceOf({})).toEqual({ source_kind: null, source_label: null });
+  });
+});
+
+// BUG-PUTUPREPLAYDROPSEDIT-001 — the crop a typed name resolved to rides the PATCH, so the item a replayed
+// create answers with can take a corrected name's crop. Written only on an item tied to no planting.
+describe('PATCH /api/pantry/items/:id with crop_type_slug', () => {
+  const path = `/api/pantry/items/${ITEM}`;
+  const row = (over = {}) => [{ ...itemDb(), used_up_at: null, created_at: 'c', deleted_at: null, ...over }];
+  const CROP = 'crop_type_slug = CASE WHEN ? ::boolean AND plant_id IS NULL THEN';
+
+  it.each([
+    [{ crop_type_slug: ' ' }], [{ crop_type_slug: '' }], [{ crop_type_slug: 7 }], [{ crop_type_slug: ['tomato'] }],
+  ])('%o → 400, nothing read or written', async (b) => {
+    expect(validateItemPatch(b)).toBe('crop_type_slug must be a crop, or null for none');
+    const sql = mockSql();
+    expect((await call(sql, path, 'PATCH', b)).status).toBe(400);
+    expect(sql.calls).toHaveLength(0);
+  });
+
+  it('a crop on an item tied to no planting: the planting is read first (household-bound, live), then the crop is written, trimmed', async () => {
+    const sql = mockSql([[{ plant_id: null }], row({ name: 'Tomatoes', crop_type_slug: 'tomato' })]);
+    const res = await call(sql, path, 'PATCH', { name: 'Tomatoes', crop_type_slug: ' tomato ' }, { userId: JEN });
+    expect(res).toMatchObject({ status: 200, body: { item: { name: 'Tomatoes', crop_type_slug: 'tomato' } } });
+    expect(sql.calls).toHaveLength(2);
+    expect(sql.calls[0].norm).toBe('SELECT plant_id FROM pantry_item WHERE id = ? ::uuid AND user_id = ANY( ? ) AND deleted_at IS NULL');
+    expect(sql.calls[0].values).toEqual([ITEM, HOUSEHOLD]);
+    expect(after(sql.calls[1], 'crop_type_slug = CASE WHEN')).toBe(true);
+    expect(after(sql.calls[1], CROP)).toBe('tomato');
+    expect(sql.calls[1].norm).toContain(`${CROP} ? ::text ELSE crop_type_slug END`);
+  });
+
+  it('null clears the crop', async () => {
+    const sql = mockSql([[{ plant_id: null }], row()]);
+    expect((await call(sql, path, 'PATCH', { crop_type_slug: null })).status).toBe(200);
+    expect(after(sql.calls[1], 'crop_type_slug = CASE WHEN')).toBe(true);
+    expect(after(sql.calls[1], CROP)).toBeNull();
+  });
+
+  it('an item tied to a planting: refused in words, nothing written — its crop is the planting\'s', async () => {
+    const sql = mockSql([[{ plant_id: PLANT }]]);
+    const res = await call(sql, path, 'PATCH', { name: 'Megatron', crop_type_slug: 'tomato' });
+    expect(res).toEqual({ status: 400, body: { error: PLANTING_CROP_REFUSAL } });
+    expect(sql.calls).toHaveLength(1);
+    expect(PLANTING_CROP_REFUSAL).toBe('This came from one of your plantings, so its crop is that planting\'s. It cannot be changed here.');
+    expect(PLANTING_CROP_REFUSAL).not.toMatch(/\b(safe|shelf life|shelf-stable|keeps|good|ready|done|expired|table|default|basis)\b/i);
+  });
+
+  it('not found, a stranger\'s or a removed one → 404 from the read, nothing written', async () => {
+    const sql = mockSql([[]]);
+    expect((await call(sql, path, 'PATCH', { crop_type_slug: 'tomato' }, { householdIds: STRANGER })).status).toBe(404);
+    expect(sql.calls).toHaveLength(1);
+    expect(sql.calls[0].values).toContainEqual(STRANGER);
+  });
+
+  it('a crop this app does not know is the FK\'s 23503, answered in words', async () => {
+    const sql = mockSql([[{ plant_id: null }], err('23503', 'pantry_item_crop_type_slug_fkey')]);
+    expect(await call(sql, path, 'PATCH', { crop_type_slug: 'unobtainium' })).toEqual({ status: 400, body: { error: 'That crop is not one this app knows.' } });
+  });
+
+  it('a PATCH without the key reads no planting and leaves the crop as it is', async () => {
+    const sql = mockSql([row({ name: 'Carnaroli' })]);
+    expect((await call(sql, path, 'PATCH', { name: 'Carnaroli' })).status).toBe(200);
+    expect(sql.calls).toHaveLength(1);
+    expect(after(sql.calls[0], 'crop_type_slug = CASE WHEN')).toBe(false);
   });
 });
 

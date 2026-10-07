@@ -326,6 +326,34 @@ export function itemBody({ key, what, place, when, discard, notes = '', amount =
   return body
 }
 
+// ── A replayed item create (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js) ─────────────────────
+// The item's PATCH carries every key a create body can hold EXCEPT the planting (the Lambda's
+// ITEM_PATCH_KEYS), so plant_id is the fixed half of an item send's print. itemPatchOf is a create body as
+// that PATCH, for the item a replay answered with (`item`): a key the body left out goes as null (the create
+// stored nothing there; the PATCH is presence-sentinel, and each pair travels together), and the place goes
+// by id. The crop a typed name resolved to goes ONLY when it is not the item's already — so a change that
+// leaves the crop alone sends the body the PATCH has always taken — and never for a planting, whose crop is
+// the planting's (the Lambda refuses it there).
+export const ITEM_FIXED_KEYS = Object.freeze(['plant_id'])
+export function itemPatchOf(body, storageLocationId, item = null) {
+  const patch = {
+    name: body.name, storage_location_id: String(storageLocationId),
+    acquired_at: body.acquired_at ?? null, acquired_precision: body.acquired_precision ?? null,
+    use_by_target: body.use_by_target ?? null, notes: body.notes ?? null,
+    quantity_value: body.quantity_value ?? null, quantity_unit: body.quantity_unit ?? null,
+    source_kind: body.source_kind ?? null, source_label: body.source_label ?? null,
+  }
+  const crop = body.crop_type_slug ?? null
+  if (body.plant_id == null && crop !== (item?.crop_type_slug ?? null)) patch.crop_type_slug = crop
+  return patch
+}
+// Said when the first Save made the item and What has since become another planting, or stopped being one:
+// nothing is written, and the form stays as it is. `item` is the row the replay answered with.
+export function replayFixedText(item) {
+  const name = String(item?.name ?? '').trim()
+  return `${name ? `Already in the Pantry as “${name}”` : 'Already in the Pantry'} — the first Save went through. Which planting it came from can't be changed from here. Put it back as it was, or close this and fix it in the Pantry.`
+}
+
 // The completion line, from what the server answered (V4 §2.2 "completion in place on the Pantry"):
 // a put-up is the created row (POST /api/preservation answers the row itself); an item is `{item}`'s.
 export function completionWords({ route, saved, place = null, now = new Date() }) {

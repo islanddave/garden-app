@@ -18,6 +18,11 @@
 //   · Next time… — optional; the jars' own "Next time…" lines are copied in by the server as well, and
 //     shown here as they read everywhere else (nextTimeWords).
 // Saving is ONE write (all or nothing); the key is minted when the sheet opens and reused on every retry.
+// A REPLAYED SAVE (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js): a Save whose answer was lost, a
+// change, and Save again is answered with the batch the FIRST one made. A changed name or kind goes onto it
+// through the batch's own PUT and the sheet closes as saved. Anything else (the start, what went in, the
+// jars, how many, next time) has no one route that can carry it, so nothing is written: the sheet stays
+// open and says the batch exists without that change (REPLAY_NOT_ON_IT), and the page behind is told.
 // THE UNADDED LINE (Put-Up UX pass R1, D2). A name typed into the adder and not added was dropped by Save
 // without a word. Now Save stops, puts the cursor back in the adder and says, there:
 // "Add “garlic” first — or clear it." Either act lets the next Save through. The line sits directly ABOVE
@@ -39,7 +44,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, optionalMarkChrome, inputChrome } from '../forms/formStyles.js'
 import { SheetStartChips, resolveSheetStart } from '../kitchen/StartChips.jsx'
 import KindChips, { kindBody } from '../kitchen/KindChips.jsx'
-import { mintKey } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay } from '../kitchen/idempotencyKey.js'
 import { scrollClearOfFooter, useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
 import LineAdder, { addFirstWords } from './LineAdder.jsx'
 import LikeBatchPicker from './LikeBatchPicker.jsx'
@@ -52,6 +57,9 @@ import {
 
 export { canSayHowItWasMade }
 export const HOW_SHEET_TITLE = 'How it was made'
+// The parts of the from-jars body the batch's own PUT cannot carry (it carries the name and the kind).
+const FROM_JARS_FIXED = ['started', 'inputs', 'jar_ids', 'made_count', 'next_time']
+export const REPLAY_NOT_ON_IT = 'This batch was saved the first time, before your last change — so the change is not on it. Close this and open the batch to make it there.'
 
 const link = {
   display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, background: 'none', border: 'none',
@@ -71,6 +79,7 @@ export default function HowItWasMadeSheet({ jar, open, onClose, onSaved }) {
 function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   const { fetch } = useApiFetch()
   const [key] = useState(() => mintKey())
+  const sentRef = useRef([])                           // what has gone out under `key` (idempotencyKey.js)
   const [label, setLabel] = useState(() => jarName(jar))
   const [rows, setRows] = useState(null)
   // The jar's full record from the put-up list once it loads (a Pantry row carries no date words of its
@@ -166,8 +175,26 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
     if (kindPart.kind_other) res.body.kind_other = kindPart.kind_other
     writingRef.current = true
     setSaving(true); setErr(null)
+    const print = sendPrint(res.body, FROM_JARS_FIXED)
+    const sent = noteSent(sentRef.current, print)
+    sentRef.current = sent
     try {
-      const batch = await fetch(FROM_JARS_PATH, { method: 'POST', body: JSON.stringify(res.body) })
+      let batch = await fetch(FROM_JARS_PATH, { method: 'POST', body: JSON.stringify(res.body) })
+      const todo = afterReplay(batch, sent, print)
+      if (todo === 'fixed') {
+        writingRef.current = false
+        setSaving(false)
+        setErr(REPLAY_NOT_ON_IT)
+        onSaved?.(batch)
+        return
+      }
+      if (todo === 'update') {
+        if (batch?.id == null) throw new Error('replayed without a batch')
+        const updated = await fetch(`/api/kitchen-batches/${batch.id}`, {
+          method: 'PUT', body: JSON.stringify({ label: res.body.label, kind: res.body.kind ?? null, kind_other: res.body.kind_other ?? null }),
+        })
+        batch = { ...batch, ...updated }
+      }
       onClose?.()
       onSaved?.(batch)
     } catch (e) {

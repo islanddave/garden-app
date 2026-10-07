@@ -35,10 +35,15 @@ export const ITEM_CREATE_KEYS = [
 // The PATCH presence-sentinel allowlist. acquired_at and acquired_precision travel together; so do
 // quantity_value and quantity_unit (null, null clears the amount) and source_kind and source_label
 // (null, null un-chooses the source). plant_id is not here: a PATCH cannot change the planting.
+// crop_type_slug (BUG-PUTUPREPLAYDROPSEDIT-001): the crop a typed name resolved to, or null for none. It is
+// here so a name corrected after a create whose answer was lost can take its crop along (the client PATCHes
+// the item a replayed create answers with). On an item tied to a planting the crop is the planting's, and
+// pantryRoutes.js refuses the key (PLANTING_CROP_REFUSAL).
 export const ITEM_PATCH_KEYS = [
   'name', 'storage_location_id', 'acquired_at', 'acquired_precision', 'use_by_target', 'notes', 'used_up_at',
-  'quantity_value', 'quantity_unit', 'source_kind', 'source_label',
+  'quantity_value', 'quantity_unit', 'source_kind', 'source_label', 'crop_type_slug',
 ];
+export const PLANTING_CROP_REFUSAL = 'This came from one of your plantings, so its crop is that planting\'s. It cannot be changed here.';
 
 // A DATE column leaves as the calendar day it is — jarRules.js calendarDay's rule, restated (it is
 // module-private there): the driver hands a DATE back as a Date at local midnight in the Lambda's zone.
@@ -214,6 +219,10 @@ export function validateItemPatch(body) {
   if (has(body, 'use_by_target')) {
     const e = useByError(body.use_by_target);
     if (e) return e;
+  }
+  if (has(body, 'crop_type_slug') && body.crop_type_slug !== null
+      && (typeof body.crop_type_slug !== 'string' || normalizeText(body.crop_type_slug) == null)) {
+    return 'crop_type_slug must be a crop, or null for none';
   }
   return has(body, 'notes') ? notesError(body.notes) : null;
 }

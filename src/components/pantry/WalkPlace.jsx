@@ -39,7 +39,7 @@ import { createPantryItem, deletePantryItem, ensurePlaceId, listPantry, patchPan
 import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, requiredMarkChrome } from '../forms/formStyles.js'
-import { mintKey } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay } from '../kitchen/idempotencyKey.js'
 import { placeChips } from '../putup/putItUp.js'
 import NameSearchField from './NameSearchField.jsx'
 import Stepper, { stepperCount } from './Stepper.jsx'
@@ -49,7 +49,7 @@ import RefusalLine, { refusalOf, refusalText } from './RefusalLine.jsx'
 import { leftWords, rowKey } from './pantryRows.js'
 import {
   AS_IS, METHOD_REQUIRED_TEXT, methodChoices, routeFor, walkWhen, walkWhenChips, previewLine, jarBody, itemBody,
-  methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS,
+  methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS, ITEM_FIXED_KEYS, itemPatchOf, replayFixedText,
 } from './putSomethingUp.js'
 
 export const WALK_TITLE = 'Walk a place'
@@ -425,6 +425,9 @@ function AlreadyHere({ fetch, placeId, seq, onOpen }) {
 // One group: what · method-or-As is · how many · Save → next.
 // `held` / `onHeld` / `saveRef` (R2a): the group starts from what the walk was holding for it (the item typed
 // before "Change" unmounted it), reports what it holds after every change, and hands the walk its Save.
+// A REPLAYED ITEM (BUG-PUTUPREPLAYDROPSEDIT-001): as the Put something up door does it — the key stays, a
+// replayed item that may not hold what is on screen is PATCHed, and a What that became another planting (or
+// stopped being one) is said, not written. `sent` (what has gone out under the key) is held with the key.
 function WalkGroup({
   walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK_PX, onSaved, onOpenExisting, onMoveHere,
   held = null, onHeld = null, saveRef = null,
@@ -439,6 +442,7 @@ function WalkGroup({
   const [ownChoice, setOwnChoice] = useState(held?.ownChoice ?? null)   // a different date for this group
   const [ownPicked, setOwnPicked] = useState(held?.ownPicked ?? '')
   const [key, setKey] = useState(held?.key ?? null)
+  const [sent, setSent] = useState(held?.sent ?? [])
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
   const [field, setField] = useState(null)
@@ -462,13 +466,13 @@ function WalkGroup({
     return () => setReloadBlocked(gateKey, false)
   }, [gateKey, hold])
   useEffect(() => {
-    onHeld?.({ what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key })
-  }, [onHeld, what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key])
+    onHeld?.({ what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent })
+  }, [onHeld, what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent])
 
   function reset() {
     setWhat(null); setMethod(null); setCount('1'); setDiscard({ mode: 'auto', date: '' }); setOwnChoice(null); setOwnPicked('')
     setIsRaw(false); setInOil(false)
-    setMoreOpen(false); setKey(null); setErr(null); setField(null)
+    setMoreOpen(false); setKey(null); setSent([]); setErr(null); setField(null)
   }
 
   async function save() {
@@ -491,8 +495,19 @@ function WalkGroup({
           key: useKey, what, storageLocationId: place.id, method, when, count: stepperCount(count), discard, isRaw, inOil,
         })) })
       } else {
-        const r = await createPantryItem(fetch, itemBody({ key: useKey, what, place, when, discard }))
+        const body = itemBody({ key: useKey, what, place, when, discard })
+        const print = sendPrint(body, ITEM_FIXED_KEYS)
+        const sentNow = noteSent(sent, print)
+        setSent(sentNow)
+        const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
+        const todo = afterReplay(r, sentNow, print)
+        if (todo === 'fixed') { setErr(replayFixedText(saved)); setField('what'); return }
+        if (todo === 'update') {
+          if (saved?.id == null) throw new Error('replayed without an item')
+          const u = await patchPantryItem(fetch, saved.id, itemPatchOf(body, await ensurePlaceId(fetch, place), saved))
+          saved = u?.item ?? u
+        }
       }
       const n = route === 'jar' ? stepperCount(count) : null
       onSaved({ id: saved?.id ?? null, route, text: [n ? `${n} × ${what.name.trim()}` : what.name.trim(), methodLabel(method, what)].join(' · ') })
