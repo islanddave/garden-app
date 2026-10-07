@@ -409,12 +409,13 @@ jobs:
         # V5-SEEDSTAB-001 REPOINT (2026-09-18): the harness now mounts the real Seeds page at
         # /seeds?view=saved (Saved seeds `embedded`, with the shell's header, view switch and frame)
         # instead of the standalone page no user sees, and the instrument check refuses any other
-        # surface. Every state also runs at 360x640 — ten page loads, ~9 s measured. It was ~99 s while
+        # surface. Every state also runs at 360x640 — ten page loads then, ~9 s measured; fourteen since
+        # release 2b ran every state at 426x836 as well (V5-SEEDMULTIPARENT-001). It was ~99 s while
         # PASS at ~9 s was followed by node idling on its armed 90 s CDP timeouts (the same was true
         # of the six-load run: 1:38); each timeout is cleared on reply now. ONE named
         # tap-floor exemption: the view switch is the frozen SegmentedControl, drawn at 40px, held to
         # that floor and printed on every run (scripts/layout-gate/segmented-control-exemption.mjs).
-        # Re-proved non-vacuous: --probe-nothing exits 1 on all ten case/viewport pairs.
+        # Re-proved non-vacuous: --probe-nothing exits 1 on all fourteen case/viewport pairs.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-saved
@@ -550,8 +551,9 @@ jobs:
         # and saved the count away — review BLOCKING-1, 2026-09-25), and after the Save tap the refusal
         # is inside the visible band with the Seed count box focused (it sat 455-680px above the band).
         # It refuses a page whose viewport, surface, chrome or fixture counts are not the ones promised.
-        # Verified non-vacuous: `npm run gate:seed-detail:probe-nothing` exits 1 on all fifteen
-        # state/viewport pairs; and seven real regressions in src/** each red it by name — the 44px
+        # Verified non-vacuous: `npm run gate:seed-detail:probe-nothing` exits 1 on all twenty-seven
+        # pairs (the seven states and the two walks, each at three viewports); and seven real
+        # regressions in src/** each red it by name — the 44px
         # floor dropped from the Sown-from rows (row 1 renders 43px), floor and padding dropped (31px), a
         # long planting name made nowrap (sideways scroll at 360, row not whole at 390), See the planting's
         # floor dropped (16px), Sow this shown on a drying lot, the F2 fact reverted to "F1 hybrid", and
