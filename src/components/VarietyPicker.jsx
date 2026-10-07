@@ -27,6 +27,7 @@ import { useVarieties } from '../hooks/useVarieties.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P } from '../lib/constants.js'
 import { T } from '../lib/tokens.js'
+import { SEED_MULTI_PARENT } from '../lib/featureFlags.js'
 import {
   useComboboxInput, looseIncludes, looseIncludesCropType, looseKey,
   kbToggleBtnStyle, micToggleBtnStyle, toggleSlotsPaddingStyle,
@@ -934,6 +935,12 @@ export default function VarietyPicker({
                       <span style={{ fontWeight: 600, color: P.dark, fontSize: T.type.base }}>
                         {v.name}
                         {cl && <span style={cropTagStyle} title="Crop type">{cl}</span>}
+                        {/* V5-SEEDMULTIPARENT-001 release 2b — a mix the app made sorts directly under
+                            its first component and starts with the same words, so the row says what it
+                            is in text (never by colour alone). */}
+                        {SEED_MULTI_PARENT && v.variety_rank === 'blend' && (
+                          <span data-testid="variety-your-mix" style={mixTagStyle}>Your mix</span>
+                        )}
                       </span>
                       {(v.species || v.common_name) && (
                         <span style={{ fontSize: '0.74rem', color: P.light }}>
@@ -1254,6 +1261,8 @@ const cropTagStyle = {
   verticalAlign: 'middle',
   textTransform: 'capitalize',
 }
+// The same pill, without the capitalize: "Your mix" is a sentence-case label, not a crop name.
+const mixTagStyle = { ...cropTagStyle, textTransform: 'none' }
 
 const primerRow = {
   padding: '14px 12px',

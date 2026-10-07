@@ -39,8 +39,12 @@ import { SEED_STAGES } from '../components/seed/seedStages.js'
 // seedLots.js for the vendor and calendar-day fixes that landed with the move.
 import {
   prettySlug, candidateFacts, labelCandidates, lotMeasure, elapsedLabel, fermentUrgency, isNotStartedLot,
-  isF2Lot, F2_LABEL, kindAllowsParentPlant,
+  F2_LABEL, kindAllowsParentPlant,
 } from '../components/seed/seedLots.js'
+// V5-SEEDMULTIPARENT-001 release 2b — the jar's chips come off its PARENT SET (lotNotice, the one
+// function the save sheet and the lot page read too). With the flag off it answers today's F2 rule.
+import { lotNotice } from '../components/seed/seedParents.js'
+import { SEED_MULTI_PARENT } from '../lib/featureFlags.js'
 // Where a Not started lot came from, in My seeds' words for the same lot one tap away.
 import { originNote } from '../components/seed/mySeedsModel.js'
 import { seedsHref, addPacketHref, seedsReturnState, LOT_SECTION_KEY, LOT_SECTION_SOURCE_PLANT } from '../lib/seedsRoutes.js'
@@ -213,6 +217,9 @@ const ADD_PACKET_HREF = addPacketHref(SAVED_VIEW_HREF)
 // location.state for every page this view PUSHES (the add form, a lot's detail): its exits come back
 // here with one Back instead of pushing Seeds again.
 const SAVED_RETURN_STATE = seedsReturnState(SAVED_VIEW_HREF)
+// The stage sheet's two parent-write failures (V5-SEEDMULTIPARENT-001 release 2b, contract O-2).
+const STAGE_PARENT_FAILED = 'Stage saved, but the parent plant did not.'
+const STAGE_PARENT_MULTI = 'This jar already has more than one plant. Open the jar to change its plants.'
 // BUG-SEEDLOTOPENSATFORM-001 — "Set parent plant →" is an EDIT door: it opens the lot's page to set one
 // field, so it names that part beside the return state and the page lands on its "Saved from" card.
 // The card titles open the same page to look at the lot, so they add nothing and it opens at its top.
@@ -821,7 +828,13 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
             body: JSON.stringify({ source_plant_id: stagePlant }),
           })
         } catch (e) {
-          linkErr = e?.message || 'Stage saved, but the parent plant did not.'
+          // V5-SEEDMULTIPARENT-001 release 2b — this sheet still writes ONE parent through the legacy
+          // route, which refuses a jar that already has several (409 multi_parent_lot). That refusal
+          // gets the client's own sentence, naming where the set is edited; every other failure gets
+          // the fallback, never the server's string.
+          linkErr = !SEED_MULTI_PARENT
+            ? (e?.message || STAGE_PARENT_FAILED)
+            : (e?.status === 409 && e?.body?.code === 'multi_parent_lot') ? STAGE_PARENT_MULTI : STAGE_PARENT_FAILED
         }
       }
       // V4-SEEDSTOREDQTY-001 — the count, on the same terms as the link above: its OWN request with
@@ -1109,7 +1122,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
             const measure = lotMeasure(item)
             const added = elapsedLabel(item.created_at)
             const title = item.variety_name || item.name
-            const parentName = item.source_plant_id ? plantNameById.get(String(item.source_plant_id)) : null
+            const parents = lotParents(item)
             return (
               <div
                 key={item.id} data-testid="seed-lot-card"
@@ -1129,20 +1142,16 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                   <div data-testid="lot-unstarted-line" style={{ color: P.mid, fontSize: '0.78rem', marginTop: 3 }}>
                     Not started{added ? ` · added ${added === 'today' ? 'today' : `${added} ago`}` : ''}
                   </div>
-                  {/* Same F2 badge as the stage cards: a lot saved off an F1 plant is F2 before its
-                      process starts too (seedLots.isF2Lot, the one predicate). */}
-                  {isF2Lot(item) && (
-                    <div style={{ marginTop: 5 }}>
-                      <Badge tone="neutral" data-testid="lot-f2" style={{ whiteSpace: 'normal' }}>{F2_LABEL}</Badge>
-                    </div>
-                  )}
+                  {/* Same chips as the stage cards: a lot saved off an F1 plant is F2 before its
+                      process starts too (LotChips, the one predicate). */}
+                  <LotChips item={item} />
                   {measure && (
                     <div data-testid="lot-seed-measure" style={{ color: P.mid, fontSize: '0.78rem', marginTop: 3 }}>
                       {measure}
                     </div>
                   )}
-                  {item.source_plant_id
-                    ? (parentName && <ParentPlantLink plantId={item.source_plant_id} name={parentName} />)
+                  {(parents || item.source_plant_id)
+                    ? <LotParentLine item={item} parents={parents} plantNameById={plantNameById} />
                     : (
                       <div data-testid="lot-origin" style={{ color: P.light, fontSize: '0.78rem', marginTop: 2 }}>
                         {originNote(item)}
@@ -1260,11 +1269,9 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                     {/* V5-SEEDSTAB-001 slice 3 — seed saved off an F1 plant is F2 and will not come
                         true (seedLots.isF2Lot, the one predicate My seeds' chip and the Breeding fact
                         read too). A fact about the seed, not a stage warning, so the neutral chip. */}
-                    {isF2Lot(item) && (
-                      <div style={{ marginTop: 5 }}>
-                        <Badge tone="neutral" data-testid="lot-f2" style={{ whiteSpace: 'normal' }}>{F2_LABEL}</Badge>
-                      </div>
-                    )}
+                    {/* V5-SEEDMULTIPARENT-001 release 2b — and "Mixed seed" / "Part F2" beside it, off
+                        the jar's parent set (LotChips). */}
+                    <LotChips item={item} />
                     {/* V5-SEEDCOUNTCARD-001 — how much seed is in the jar, on the surface that
                         holds the jar. See lotMeasure() for what is on this line and why the
                         packet count is not. Rendered ONLY when something has been measured: an
@@ -1302,10 +1309,8 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                         a parent for: seed out of produce (a farm stand, a gift, a shop) can only fail
                         chk_inventory_seed_source_plant. kindAllowsParentPlant is that CHECK; an
                         own_garden lot still admits a parent and keeps the link. */}
-                    {item.source_plant_id
-                      ? (plantNameById.get(String(item.source_plant_id)) && (
-                          <ParentPlantLink plantId={item.source_plant_id} name={plantNameById.get(String(item.source_plant_id))} />
-                        ))
+                    {(lotParents(item) || item.source_plant_id)
+                      ? <LotParentLine item={item} parents={lotParents(item)} plantNameById={plantNameById} />
                       : kindAllowsParentPlant(item.source_kind) && (
                         // BUG-SEEDTAPTARGET-001 — 44px, measured not assumed. The layout gate's tap
                         // census reported this anchor at FIFTEEN pixels tall at 390x844, four of
@@ -1762,6 +1767,65 @@ function ParentPlantLink({ plantId, name }) {
     <Link to={`/plantings/${plantId}`} state={SAVED_RETURN_STATE} data-testid="lot-source-plant" style={parentLinkStyle}>
       Saved from {name} →
     </Link>
+  )
+}
+
+// V5-SEEDMULTIPARENT-001 release 2b — the jar's parent set as the list row serves it, or null when
+// there is none to read: the flag is off, the row predates the key (undefined), the read failed (null)
+// or the set is empty. Null means "render from source_plant_id, as before".
+function lotParents(item) {
+  if (!SEED_MULTI_PARENT) return null
+  const set = Array.isArray(item?.source_plants) ? item.source_plants.filter(Boolean) : []
+  return set.length > 0 ? set : null
+}
+
+// Where the jar came from. One planting: its name, a door to that planting, and the name is the one
+// the row carries, so an ARCHIVED parent is named too (the picker cache leaves archived plantings out,
+// which is why that card used to show nothing). Two or more: always the count, never the names (they
+// repeat the title above and run to two lines), and the door is the jar's own page, arriving at its
+// "Saved from" card where every planting is listed. A planting that has been DELETED is named but is
+// not a door: its page is gone.
+function LotParentLine({ item, parents, plantNameById }) {
+  if (!parents) {
+    const name = plantNameById.get(String(item.source_plant_id))
+    return name ? <ParentPlantLink plantId={item.source_plant_id} name={name} /> : null
+  }
+  if (parents.length >= 2) {
+    return (
+      <Link to={`/inventory/${item.id}`} state={SET_PARENT_STATE} data-testid="lot-source-plant" style={parentLinkStyle}>
+        Saved from {parents.length} plantings →
+      </Link>
+    )
+  }
+  const [only] = parents
+  const name = String(only.name ?? '').trim() || plantNameById.get(String(only.id))
+  if (!name) return null
+  if (only.deleted) {
+    return (
+      <div data-testid="lot-source-plant-gone" style={{ color: P.light, fontSize: '0.78rem', marginTop: 2 }}>
+        Saved from {name}
+      </div>
+    )
+  }
+  return <ParentPlantLink plantId={only.id} name={name} />
+}
+
+// The jar's chips, from lotNotice: "Mixed seed" when its plantings span more than one variety, then
+// the F2 word ("Part F2" when only some of them are F1 hybrids). Neutral text chips: a fact about the
+// seed, not a stage warning, and never carried by colour. One chip sits in the plain block the F2
+// badge always had; the row only becomes a wrapping flex line when there are two.
+const LOT_CHIP_TESTID = { mixed: 'lot-mixed', f2: 'lot-f2', part_f2: 'lot-part-f2' }
+function LotChips({ item }) {
+  const { chips } = lotNotice(item)
+  if (chips.length === 0) return null
+  return (
+    <div style={chips.length > 1 ? { marginTop: 5, display: 'flex', flexWrap: 'wrap', gap: 6 } : { marginTop: 5 }}>
+      {chips.map((c) => (
+        <Badge key={c.key} tone="neutral" data-testid={LOT_CHIP_TESTID[c.key]} style={{ whiteSpace: 'normal' }}>
+          {c.key === 'f2' ? F2_LABEL : c.label}
+        </Badge>
+      ))}
+    </div>
   )
 }
 

@@ -50,7 +50,7 @@ import { ToastProvider } from '../context/ToastContext.jsx'
 import { OverlayDirtyProvider } from '../context/OverlayContext.jsx'
 import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
-import { sowPacketFromCandidate, sowPacketFromItem, sowSourceType } from '../components/seed/SowSheet.jsx'
+import SowSheet, { sowPacketFromCandidate, sowPacketFromItem, sowSourceType } from '../components/seed/SowSheet.jsx'
 
 // One packet, in both shapes. start_method indoors_only is sowable inside on ANY date (sowEngine's
 // indoor-only overlay → sow_inside_anytime, an actionable bucket), so Sow now offers "Sow" whatever
@@ -161,6 +161,51 @@ describe('the packet shape and the source type (pure)', () => {
     expect(sowSourceType(sowPacketFromItem({ ...ITEM, source_kind: 'u_pick' }))).toBe('saved_seed')
     expect(sowSourceType(sowPacketFromItem({ ...ITEM, seed_stage: 'stored' }))).toBe('saved_seed')
     expect(sowSourceType(null)).toBe('seed_packet')
+  })
+})
+
+// V5-SEEDMULTIPARENT-001 release 2b, contract O-7 — the "Mixed seed" chip rides the packet, and only a
+// row that carries a parent set can put it there. A Sow now candidate carries none, so its packet has no
+// chip key at all, and for every jar that is not mixed the two doors still build the same packet.
+describe('the "Mixed seed" chip on the packet (pure)', () => {
+  const parent = (id, variety) => ({
+    id, name: id, variety_id: variety, variety_name: variety, breeding_system: 'open_pollinated',
+    variety_rank: 'cultivar', crop_slug: 'tomato', archived: false, deleted: false,
+  })
+  const MIXED_ITEM = { ...SAVED_ITEM, source_plants: [parent('pl-sungold', 'var-sungold'), parent('pl-brandy', 'var-brandy')] }
+
+  it('a jar off two varieties carries the chip; nothing else about its packet moves', () => {
+    const { mixedChip, ...rest } = sowPacketFromItem(MIXED_ITEM)
+    expect(mixedChip).toBe('Mixed seed')
+    expect(rest).toEqual(sowPacketFromItem(SAVED_ITEM))
+  })
+
+  it('one variety, an empty set, a failed read and an old row: no chip key, and still the candidate\'s packet', () => {
+    for (const source_plants of [[parent('pl-sungold', 'var-sungold')], [], null, undefined]) {
+      const packet = sowPacketFromItem({ ...SAVED_ITEM, source_plants })
+      expect('mixedChip' in packet).toBe(false)
+      expect(packet).toEqual(sowPacketFromCandidate(SAVED_CANDIDATE))
+    }
+  })
+
+  it('a Sow now row has no parent set to read, so its packet never has the chip', () => {
+    expect('mixedChip' in sowPacketFromCandidate(SAVED_CANDIDATE)).toBe(false)
+    // Even if a later view starts sending one: the candidate door does not read it in this release.
+    expect('mixedChip' in sowPacketFromCandidate({ ...SAVED_CANDIDATE, source_plants: MIXED_ITEM.source_plants })).toBe(false)
+  })
+
+  it('the sheet prints the chip for a packet that has it, and nothing for one that does not', async () => {
+    const open = async (packet) => {
+      await act(async () => {
+        render(<ToastProvider><SowSheet packet={packet} draftKey="sow-chip-test" onClose={() => {}} /></ToastProvider>)
+      })
+      await waitFor(() => expect(within(sowDialog()).getByLabelText(/Name/i)).toBeTruthy())
+    }
+    await open(sowPacketFromItem(MIXED_ITEM))
+    expect(within(sowDialog()).getByTestId('sow-mixed').textContent).toBe('Mixed seed')
+    cleanup()
+    await open(sowPacketFromItem(SAVED_ITEM))
+    expect(screen.queryByTestId('sow-mixed')).toBeNull()
   })
 })
 

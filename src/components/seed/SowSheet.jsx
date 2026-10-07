@@ -30,10 +30,11 @@ import { useToast } from '../../context/ToastContext.jsx'
 import { writeDraft, clearDraft } from '../../lib/draftStash.js'
 import { setReloadBlocked } from '../../lib/reloadGate.js'
 import { todayLocalISO } from '../../lib/dateLocal.js'
-import { Sheet } from '../forms'
+import { Sheet, Badge } from '../forms'
 import Spinner from '../forms/Spinner.jsx'
 import PlantingEditor from '../PlantingEditor.jsx'
 import { isSavedLot } from './seedLots.js'
+import { lotNotice } from './seedParents.js'
 
 // The one shape a Sow sheet opens on, from either host's rows: a v_sow_candidates row (Sow now) or an
 // inventory row (the packet's page). `saved` is isSavedLot — the predicate every Seeds surface uses for
@@ -43,8 +44,17 @@ export function sowPacketFromCandidate(c) {
   return { id: c.inventory_item_id, varietyId: c.variety_id ?? null, title: c.variety_name || c.item_name, saved: isSavedLot(c) }
 }
 
+//
+// V5-SEEDMULTIPARENT-001 release 2b — `mixedChip` is the jar's "Mixed seed" chip, read off its parent
+// set by lotNotice like every other surface, and the key exists ONLY on a mixed jar. A Sow now row
+// carries no parent set, so a candidate packet never has it (contract O-7): the sheet shows the chip
+// from the lot's page and not from Sow now, and the planting the two doors create is the same.
 export function sowPacketFromItem(item) {
-  return { id: item.id, varietyId: item.variety_id ?? null, title: item.variety_name || item.name, saved: isSavedLot(item) }
+  const mixed = lotNotice(item).chips.find((c) => c.key === 'mixed')
+  return {
+    id: item.id, varietyId: item.variety_id ?? null, title: item.variety_name || item.name, saved: isSavedLot(item),
+    ...(mixed ? { mixedChip: mixed.label } : {}),
+  }
 }
 
 // V5-SEEDSTAB-001 §8 / seat-seed-systems-geneticist — a planting grown from seed Dave saved himself is
@@ -160,6 +170,11 @@ export default function SowSheet({ packet, draftKey, todayISO = todayLocalISO(),
     >
       {open && (projects ? (
         <div style={{ padding: '0 16px 4px' }}>
+          {packet.mixedChip && (
+            <div style={{ marginBottom: 8 }}>
+              <Badge tone="neutral" data-testid="sow-mixed" style={{ whiteSpace: 'normal' }}>{packet.mixedChip}</Badge>
+            </div>
+          )}
           <PlantingEditor
             key={packetId}
             mode="add"

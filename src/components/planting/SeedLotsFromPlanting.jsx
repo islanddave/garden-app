@@ -27,6 +27,8 @@ import { T } from '../../lib/tokens.js'
 import { formatQtyExact, formatSeedWeight } from '../../lib/format.js'
 import { seedStageLabel } from '../seed/seedStages.js'
 import { seedCountLabel } from '../seed/seedLots.js'
+import { rowTitle } from '../seed/mySeedsModel.js'
+import { SEED_MULTI_PARENT } from '../../lib/featureFlags.js'
 
 // The container, on a list where every row is a SAVED lot (V5-SEEDQTY-001: quantity_on_hand is the
 // jar). One jar is the convention every saved lot carries, so it says nothing and is left out — Dave,
@@ -41,6 +43,17 @@ export function lotContainerLabel(q) {
   if (n === 1) return null
   if (n === 0) return 'used up'
   return `${formatQtyExact(q)} on hand`
+}
+
+// V5-SEEDMULTIPARENT-001 release 2b — a jar can be gathered off several plantings, and this page is
+// only one of them. `other_parents` is the route's list of the OTHERS ([{ id, name, variety_name }]):
+// one is named, more are counted (the names are one tap away, on the jar's page). A planting whose
+// name did not come back is counted rather than printed as a blank. Exported for test.
+export function mixedWithLine(others) {
+  if (!SEED_MULTI_PARENT || !Array.isArray(others) || others.length === 0) return null
+  const name = String(others[0]?.name ?? '').trim()
+  if (others.length === 1) return name ? `Mixed with seed from ${name}` : 'Mixed with seed from 1 other planting'
+  return `Mixed with seed from ${others.length} other plantings`
 }
 
 // { lots, failed, loading }. `loading` renders as nothing at all rather than as a skeleton: the
@@ -87,7 +100,18 @@ export default function SeedLotsFromPlanting({ lots, failed }) {
         // The lot's own name is the packet label the user typed; the variety is what the cultivar
         // is actually called. Show the variety only when it adds something — on a lot named after
         // its variety (the common case) repeating it reads as a stutter.
-        const variety = lot.variety_name && lot.variety_name !== lot.name ? lot.variety_name : null
+        //
+        // V5-SEEDMULTIPARENT-001 release 2b — "named after its variety" by My seeds' test (rowTitle):
+        // the automatic name is "<variety> — saved <year>", which never EQUALS the variety, so the
+        // plain comparison repeated it on every automatic lot. Every row here is a saved lot (it is
+        // linked to this planting), which is the one fact rowTitle needs and this route does not send.
+        // "Saved seed <year>" is automatic too but does not SAY the variety, so there it stays.
+        const variety = !SEED_MULTI_PARENT
+          ? (lot.variety_name && lot.variety_name !== lot.name ? lot.variety_name : null)
+          : (lot.variety_name && (/^Saved seed \d{4}$/.test(String(lot.name ?? '').trim())
+              || rowTitle({ ...lot, source_kind: lot.source_kind ?? 'own_garden' }) !== lot.variety_name)
+            ? lot.variety_name : null)
+        const mixedWith = mixedWithLine(lot.other_parents)
         const stage = lot.seed_stage ? seedStageLabel(lot.seed_stage) : null
         // The jar, by lotContainerLabel's rule: nothing for the one jar every saved lot is, "used up"
         // for 0 (explicit zero is "none left"; NULL is "never counted" and renders nothing — the
@@ -123,6 +147,11 @@ export default function SeedLotsFromPlanting({ lots, failed }) {
             >
               {lot.name || 'Untitled seed lot'}
             </Link>
+            {mixedWith && (
+              <div data-testid="lot-mixed-with" style={{ fontSize: T.type.xs, color: P.mid, marginTop: 2 }}>
+                {mixedWith}
+              </div>
+            )}
             {meta.length > 0 && (
               <div style={{ fontSize: T.type.xs, color: P.light, marginTop: 2 }}>
                 {meta.join(' · ')}

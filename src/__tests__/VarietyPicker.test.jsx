@@ -1172,3 +1172,29 @@ describe('VarietyPicker — create-stage identity (GENUSCREATE)', () => {
     expect(screen.getByLabelText('Genus').value).toBe('')
   })
 })
+
+// ── V5-SEEDMULTIPARENT-001 release 2b: a mix row says it is a mix (UX N-6) ───
+// The mix sorts directly under its first component and starts with the same words. Text, never colour
+// alone; a row with any other rank, or none (a Lambda that does not project it), carries no tag.
+describe('VarietyPicker — "Your mix" tag', () => {
+  const ALASKA = { id: 'n-1', name: 'Alaska Mix', crop_type_slug: 'pepper', variety_rank: 'cultivar' }
+  const MIX = { id: 'n-2', name: 'Alaska Mix + Jewel Mix Nasturtium', crop_type_slug: 'pepper', variety_rank: 'blend' }
+  const OLD = { id: 'n-3', name: 'Empress of India', crop_type_slug: 'pepper' }
+
+  it('tags the blend row beside its crop tag, and only that row', async () => {
+    fetchSpy.mockImplementation((path) => Promise.resolve(path === '/api/varieties/crop-types'
+      ? [{ slug: 'pepper', display_name: 'Pepper', default_lifecycle: 'tender_perennial', category: 'vegetable', sort_order: 0 }]
+      : [ALASKA, MIX, OLD]))
+    setup()
+    fireEvent.focus(screen.getByRole('combobox'))
+    const tag = await screen.findByTestId('variety-your-mix')
+    await waitFor(() => expect(tag.previousElementSibling).toBeTruthy())
+    expect(screen.getAllByTestId('variety-your-mix')).toHaveLength(1)
+    expect(tag.textContent).toBe('Your mix')
+    const row = tag.closest('[role="option"]')
+    expect(row.textContent).toContain('Alaska Mix + Jewel Mix Nasturtium')
+    // Beside the crop tag, in the same line, and not upper-cased by the crop tag's own transform.
+    expect(tag.previousElementSibling.getAttribute('title')).toBe('Crop type')
+    expect(tag.style.textTransform).toBe('none')
+  })
+})
