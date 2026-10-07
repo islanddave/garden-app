@@ -29,11 +29,20 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 # THE A3 TRIAL: the one place a leg step differs from ci.yml's. `Run unit tests with coverage` (unit-utc-cov) and
 # `Unit tests under America/New_York TZ (date-fragility guard)` (unit-ny) carry env VITEST_NODE_PROJECT: '1'; the
 # same two steps in ci.yml do not. With the key, vitest.config.ts runs the suite as two projects: `node` takes the
-# test files under lambda/, scripts/, migrations/ and tests/parity/ with no jsdom and no src/__tests__/setup.ts, and
-# `dom` takes every other file as before. Without it the config is what it was. So ci.yml stays jsdom-everything,
-# the legs run the two-project shape, and the per-zone test-ID comparison of scripts/ci-telemetry/shadow-agree.py is
-# between the two. scripts/test_ci_next.py admits exactly that key at that value on those two steps and reds on it
-# anywhere else in either file.
+# test files whose code under test is server-side, with no jsdom and no src/__tests__/setup.ts, and `dom` takes
+# every other file as before. Without it the config is what it was. So ci.yml stays jsdom-everything, the legs run
+# the two-project shape, and the per-zone test-ID comparison of scripts/ci-telemetry/shadow-agree.py is between the
+# two. scripts/test_ci_next.py admits exactly that key at that value on those two steps and reds on it anywhere else
+# in either file.
+# What the node project holds: a test file that lives under lambda/, scripts/, migrations/ or tests/parity/ AND
+# loads nothing under src/, itself or through what it imports. Where a test lives is not enough. When the rule was
+# written, 36 of the 530 test files under those roots imported SPA code (most to hold a Lambda's copy of a rule to
+# the page's) and six of the modules they reached read or sniff browser globals. For that code the browser is
+# production: under node such a test keeps its name and passes on the no-browser branches, and neither the test IDs
+# nor the coverage rows can see it. Those files are listed (LOADS_SRC in
+# scripts/ci-telemetry/vitest-node-project.mjs) and stay in `dom`. The list is held to the code by
+# scripts/ci-telemetry/vitest-projects.test.js, which follows the imports of every node-project file and reds the
+# GATING unit pass when one reaches src/ and is not listed, and when a listed file no longer reaches src/.
 # What the trial has to show before the shape can become the gating one:
 #   - test IDs: TEST-IDS-EQUAL in both zones on every counted row.
 #   - coverage: NOT per-file equality, and NOT a bound on the four totals. All of the run-to-run movement is in
@@ -54,15 +63,36 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 #     this an ignored key would read as agreement: both sides jsdom-everything.
 #   - a DOM-needing test that lands under a node root and reds only a leg is the trial working, not noise: the file
 #     moves to src/__tests__/, the row stays blocking, and the count restarts from the fix.
+# What the trial does NOT show: that a test which passes in both shapes takes the same path through the code in
+# both. A test ID is file, name and state, and the coverage rows reach only what `coverage.include` names. Two
+# things stand in for it:
+#   - the rule above. What is left in `node` loads only code under the four roots, for which node is production and
+#     jsdom was the less faithful stand-in;
+#   - two one-off checks made when the trial was entered, to be made again at the last counted SHA: every
+#     node-project test makes the same number of assertions under jsdom as under node, and the statements, functions
+#     and branch arms covered in every module those tests load are the same (E1 and E2 of claude-ops
+#     token-diet/analysis-20261007/rereview/06-a3trial-qa/rereview-output.md, with their scripts beside it).
+# Before the key can be removed and the two projects become the only shape (none of this blocks reading the trial):
+#   - the exit list, as commands, is "Exit" in gardening-docs
+#     project-state/_promotepath-20261002/review-a3trial-qa-20261007.md. The owner declares the exit on the output
+#     of those commands; a lane does not;
+#   - two other configs build on vitest.config.ts and are wrong with the key set: vitest.stress.config.ts fails its
+#     node-project files, and `npm run test:flag-off:seed` collects a different set of files. Both are fixed first.
 # The count restarts (COUNT_FROM_SHA moves, in a later commit) when a commit changes what a unit pass runs:
 # vitest.config.ts, src/__tests__/setup.ts, scripts/ci-telemetry/vitest-test-ids-reporter.mjs, .nvmrc, the `test`
 # script or the vitest / jsdom / @vitest/coverage-v8 versions in package.json, the run or env of a unit step in
-# either workflow, or this file's job graph. A new or edited test file does not; a check mirrored step for step
-# into one leg does not. A row that blocks for TEST-IDS-DIFFER, or for DISAGREE with a failed unit step in a leg,
-# is a result of the trial: COUNT_FROM_SHA does not move past it until its cause is written in the commit that
-# moves it. This commit is a restart.
-# Design and measurements: gardening-docs project-state/_promotepath-20261002/scout-a3-nodeproject-20261007.md and
-# review-a3trial-qa-20261007.md (the coverage criterion, and the one-off checks the trial was entered on).
+# either workflow, or this file's job graph; or when it moves an existing test file from one project to the other
+# (NODE_ROOTS, NODE_TEST_NAMED, or an existing file entering or leaving LOADS_SRC, in
+# scripts/ci-telemetry/vitest-node-project.mjs). A new or edited test file does not, whichever project it lands in,
+# so a new file added to LOADS_SRC with its test does not; a check mirrored step for step into one leg does not. A
+# row that blocks for TEST-IDS-DIFFER, or for DISAGREE with a failed unit step in a leg, is a result of the trial:
+# COUNT_FROM_SHA does not move past it until its cause is written in the commit that moves it.
+# Two commits are restarts so far: the one that began the trial, and the one that held the node project to tests
+# that load nothing under src/ (36 files went back to jsdom, so rows before it compare a different pair of shapes).
+# COUNT_FROM_SHA moves to the later one.
+# Design and measurements: gardening-docs project-state/_promotepath-20261002/scout-a3-nodeproject-20261007.md,
+# review-a3trial-qa-20261007.md (the coverage criterion, and the exit list) and lane-a3srcsplit-20261007.log (the
+# src/ rule).
 #
 # What the serial job handed from step to step, and where each hand-off lives now:
 #   dist/ (Build -> Verify build output -> Harvest-window chunk split)   all three in `static`, in that order
