@@ -4,9 +4,12 @@ Run: python3 -m pytest -q scripts/test_preflight_dual.py
 
 GitHub is a dict of replies keyed by a path fragment, handed to main() as `fetch`. The annotation shape is the one
 the API returns for a workflow command (read off promote run 37097877949 on 2026-10-05: `annotation_level`,
-`message`, `path: .github`), and the message text is what the Preflight step prints after `::notice::`. The last
-tests take that text from the real step, run through test_workflow_steps' harness, so the parser and the step
-cannot drift apart unnoticed.
+`message`, `path: .github`), and the message text is what the Preflight step prints after `::notice::`.
+
+The dual step (push 1) is no longer in promote-gate.yml: its lines here are the format it printed, kept as the
+record of what the predicate was judged from. The last tests take the text and the step NAME from the real step as
+it is now (run-based only, push 2), run through test_workflow_steps' harness, and hold the script to calling that
+CLOSED: so the parser and the step cannot drift apart unnoticed.
 """
 import importlib.util
 import io
@@ -30,6 +33,7 @@ def sha_of(n):
     return f"{n:040x}"
 STEP = "Preflight — dev unmoved + CI green on dev_sha (name-based and run-based, both required)"
 OLD_STEP = "Preflight — dev unmoved + build-and-test green"
+RUN_STEP = "Preflight — dev unmoved + CI green on dev_sha (run-based)"
 
 
 def line(check="build-and-test", name_based="success", rc=0, req_int=None, said="pass: run 1 is the newest of 1"):
@@ -39,6 +43,14 @@ def line(check="build-and-test", name_based="success", rc=0, req_int=None, said=
 
 
 GREEN = [line(), line("integration-tests", req_int="true")]
+
+
+def run_line(check="build-and-test", rc=0, req_int=None, said="pass: run 1 is the newest of 1"):
+    extra = f" require_integration={req_int}" if req_int else ""
+    return f"preflight-run-based {check} on {SHA}: run-based-exit={rc}{extra} | {said}"
+
+
+RUN_GREEN = [run_line(), run_line("integration-tests", req_int="true")]
 
 
 def attempt(messages=GREEN, promote="success", step=STEP, step_conclusion="success", has_promote=True, ran=None):
@@ -111,8 +123,8 @@ def verdict(hub, *argv):
 
 def test_five_green_promotes_with_nothing_unsafe_are_ready():
     code, v = verdict(Hub([[attempt()]] * 5))
-    assert code == 0 and v == {"ready": True, "reasons": [], "promotes_on_record": 5, "need": 5, "unsafe": 0,
-                               "record_missing": 0, "in_flight": 0, "stricter": 0}
+    assert code == 0 and v == {"ready": True, "closed": None, "reasons": [], "promotes_on_record": 5, "need": 5,
+                               "unsafe": 0, "record_missing": 0, "in_flight": 0, "stricter": 0}
     assert run(Hub([[attempt()]] * 5))[1].rstrip().endswith(
         "READY to remove the name-based check: 5 promotes on record, no unsafe line, every record readable "
         "[read 5 run(s), 5 attempt(s) since 2026-10-03T05:00:00Z; newest run 104 created 2026-10-04T04:00:00Z]")
@@ -314,31 +326,111 @@ def test_classification(name_based, rc, want):
     assert pd.classify(name_based, rc) == want
 
 
+# ── after push 2: the name-based check is gone, and the record is CLOSED, neither READY nor NOT READY ─────────────
+
+def single(messages=RUN_GREEN, **kw):
+    return attempt(messages, step=RUN_STEP, **kw)
+
+
+def test_one_run_based_only_attempt_closes_the_record_whatever_the_dual_record_said():
+    for before in ([[attempt()]] * 5, [[attempt()]] * 2, [[attempt(UNSAFE_CI, promote="failure")]], []):
+        hub = Hub(before + [[single()]])
+        code, text = run(hub)
+        n = 100 + len(before)
+        assert code == 3, text
+        last = text.rstrip().splitlines()[-1]
+        assert last.startswith(f"CLOSED: name-based check removed at run {n} attempt 1 (commit "
+                               f"{sha_of(len(before))[:8]}, created 2026-10-04T0{len(before)}:00:00Z)")
+        assert "READY" not in text
+        v = json.loads(run(hub, "--json")[1])["verdict"]
+        assert v["ready"] is None and v["closed"] == {"run": n, "attempt": 1, "sha": sha_of(len(before))[:8],
+                                                      "created": f"2026-10-04T0{len(before)}:00:00Z"}
+
+
+def test_the_closed_line_reports_the_dual_record_before_it_as_history():
+    hub = Hub([[attempt()]] * 3 + [[attempt(UNSAFE_CI, promote="failure")]] + [[single()], [single()]])
+    code, text = run(hub)
+    assert code == 3
+    assert "as history: 3 promote(s) on record, 1 unsafe line(s), 0 unreadable record(s) [read 6 run(s)" in text
+    assert "removed at run 104 attempt 1" in text  # the FIRST run-based-only attempt, not the newest
+
+
+def test_run_based_only_attempts_are_listed_with_their_lines_and_never_counted_as_dual_promotes():
+    refused = [run_line(rc=1, said="refuse: run 9 is in_progress: wait"),
+               run_line("integration-tests", rc=97, req_int="false", said="no output")]
+    hub = Hub([[attempt()]] * 4 + [[single()], [single(refused, promote="failure", step_conclusion="failure")]])
+    code, text = run(hub)
+    v = json.loads(run(hub, "--json")[1])["verdict"]
+    assert (code, v["promotes_on_record"], v["unsafe"], v["stricter"], v["record_missing"]) == (3, 4, 0, 0, 0)
+    assert "run-based-only: this workflow copy has no name-based check (2 run-based line(s) read)" in text
+    assert "run-based-pass      build-and-test: run-based-exit=0 | pass: run 1 is the newest of 1" in text
+    assert "run-based-refuse    build-and-test: run-based-exit=1 | refuse: run 9 is in_progress: wait" in text
+    assert "run-based-refuse    integration-tests: run-based-exit=97 require_integration=false | no output" in text
+
+
+@pytest.mark.parametrize("messages,conclusion", [([], "failure"), (GREEN, "success"), (["garbled"], "success"),
+                                                 ([], "skipped"),
+                                                 ([f"dev moved since dispatch (x != {SHA})"], "failure")],
+                         ids=["no-lines", "dual-lines-under-the-new-name", "garbled", "step-skipped", "refused-early"])
+def test_closure_is_told_by_the_steps_name_not_by_what_it_printed(messages, conclusion):
+    """A run-based-only step that left nothing readable is still a copy without the name-based check: never a gap
+    in a dual record, never a dual promote on record."""
+    hub = Hub([[attempt()]] * 5 + [[single(messages, promote="failure", step_conclusion=conclusion)]])
+    code, v = verdict(hub)
+    assert (code, v["ready"], v["record_missing"], v["promotes_on_record"]) == (3, None, 0, 5)
+    assert v["closed"]["run"] == 105
+
+
+def test_a_green_run_based_only_promote_that_left_no_lines_is_not_a_dual_promote_on_record():
+    assert verdict(Hub([[attempt()]] * 4 + [[single([])]]))[1]["promotes_on_record"] == 4
+
+
+def test_a_dual_step_that_printed_only_run_based_lines_is_an_unreadable_record_not_a_closure():
+    """The other direction: lines alone do not close the record. The dual step's name with no dual line is a gap."""
+    hub = Hub([[attempt()]] * 5 + [[attempt(RUN_GREEN)]])
+    code, v = verdict(hub)
+    assert (code, v["closed"], v["record_missing"]) == (1, None, 1)
+
+
+def test_an_unreadable_reply_is_still_exit_2_after_closure():
+    assert run(Hub([[attempt()]] * 5 + [[single()]], broken="/check-runs/"))[0] == 2
+
+
 # ── against the real step ────────────────────────────────────────────────────────────────────────────────────────
 
 def _lines_from_the_step(proc):
     return [a[len("::notice::"):].replace(tws.DEV_SHA, "{sha}") for a in tws._annotations(proc)
-            if a.startswith("::notice::preflight-dual ")]
+            if a.startswith("::notice::preflight-")]
 
 
-def test_the_parser_reads_what_the_step_prints_when_green(tmp_path, github):  # noqa: F811
+def test_the_real_steps_name_is_the_run_based_only_one_this_script_closes_on():
+    assert tws.PREFLIGHT == RUN_STEP
+    assert tws.PREFLIGHT.startswith(pd.PREFLIGHT_STEP) and pd.DUAL_MARK not in tws.PREFLIGHT
+    assert STEP.startswith(pd.PREFLIGHT_STEP) and pd.DUAL_MARK in STEP
+
+
+def test_the_parser_reads_what_the_step_prints_when_green_and_calls_it_closed(tmp_path, github):  # noqa: F811
     proc = tws._run_preflight(tmp_path, tws._preflight_api(github))
     messages = _lines_from_the_step(proc)
     assert proc.returncode == 0 and len(messages) == 2
-    code, v = verdict(Hub([[attempt(messages)]] * 5))
-    assert (code, v["promotes_on_record"]) == (0, 5)
+    hub = Hub([[attempt()]] * 5 + [[attempt(messages, step=tws.PREFLIGHT)]])
+    code, out = run(hub, "--json")
+    doc = json.loads(out)
+    assert code == 3 and doc["verdict"]["closed"]["run"] == 105
+    assert [(ln["check"], ln["run_based_exit"], ln["require_integration"], ln["class"])
+            for ln in doc["attempts"][-1]["lines"]] == [("build-and-test", 0, None, "run-based-pass"),
+                                                        ("integration-tests", 0, "true", "run-based-pass")]
+    assert all(ln["said"].startswith("pass: run ") for ln in doc["attempts"][-1]["lines"])
 
 
-def test_the_parser_reads_the_steps_refusals_in_both_directions(tmp_path, github):  # noqa: F811
-    stricter = tws._run_preflight(tmp_path / "a", _mk(tmp_path / "a") or tws._preflight_api(github, ci=(tws.OLDER_RERUN_TO_FAILURE,)))
-    unsafe = tws._run_preflight(tmp_path / "b", _mk(tmp_path / "b") or tws._preflight_api(
-        github, checks=((tws.BT, "failure"), (tws.INT, "success"))))
-    assert stricter.returncode == unsafe.returncode == 1
-    hub = Hub([[attempt()]] * 5 + [[attempt(_lines_from_the_step(stricter), promote="failure")],
-                                   [attempt(_lines_from_the_step(unsafe), promote="failure")]])
-    code, v = verdict(hub)
-    assert (code, v["stricter"], v["unsafe"]) == (1, 1, 1)
-
-
-def _mk(path):
-    path.mkdir()
+def test_the_parser_reads_the_steps_refusal_and_its_advisory_line(tmp_path, github):  # noqa: F811
+    api = tws._preflight_api(github, ci=(tws.OLDER_RERUN_TO_FAILURE,), **tws.INT_RED)
+    proc = tws._run_preflight(tmp_path, api, req_int="false")
+    assert proc.returncode == 1
+    hub = Hub([[attempt(_lines_from_the_step(proc), step=tws.PREFLIGHT, promote="failure",
+                        step_conclusion="failure")]])
+    code, out = run(hub, "--json")
+    assert code == 3
+    assert [(ln["check"], ln["run_based_exit"], ln["require_integration"], ln["class"])
+            for ln in json.loads(out)["attempts"][0]["lines"]] == [
+        ("build-and-test", 1, None, "run-based-refuse"), ("integration-tests", 1, "false", "run-based-refuse")]

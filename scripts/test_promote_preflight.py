@@ -225,6 +225,44 @@ def test_a_green_run_whose_named_job_did_not_succeed_refuses(rows, why):
     assert verdict(runs(run(1)), {1: jobs(*rows)})[:2] == ("refuse", why)
 
 
+SPLIT_LEGS = [(leg, "completed", "success") for leg in ("static", "pytest", "unit-utc-cov", "unit-ny", "gates-a",
+                                                         "gates-b", "gates-c", "gate-probes")]
+
+
+def test_both_shapes_of_ci_yml_pass_the_single_job_and_the_aggregator_behind_its_legs():
+    """The switch moves ci.yml's legs in under the aggregator id `build-and-test`; a lane on an older dev keeps the
+    single job. `--workflow ci.yml --job build-and-test` is the one question the promote asks of either."""
+    single = verdict(runs(run(1)), {1: jobs(GREEN_JOB)})
+    split = verdict(runs(run(1)), {1: jobs(*SPLIT_LEGS, GREEN_JOB)})
+    listed_first = verdict(runs(run(1)), {1: jobs(GREEN_JOB, *SPLIT_LEGS)})
+    assert single[:2] == split[:2] == listed_first[:2] == (
+        "pass", "run 1 is the newest of 1 and its job build-and-test succeeded")
+    # both shapes on one commit (the older run from a lane cut before the switch): the newest one's job is read
+    both = verdict(runs(run(2, started="2026-10-02T11:00:00Z"), run(1, event="workflow_dispatch", branch="lane/x")),
+                   {1: jobs(GREEN_JOB), 2: jobs(*SPLIT_LEGS, GREEN_JOB)})
+    assert both == ("pass", "run 2 is the newest of 2 and its job build-and-test succeeded", [2])
+
+
+@pytest.mark.parametrize("aggregator,why", [
+    ((JOB, "completed", "failure"), "job build-and-test of run 1 is completed/failure, need completed/success"),
+    ((JOB, "completed", "skipped"), "job build-and-test of run 1 is completed/skipped, need completed/success"),
+    ((JOB, "in_progress", None), "job build-and-test of run 1 is in_progress/None, need completed/success"),
+    (None, "run 1 has 0 jobs named build-and-test, need exactly one"),
+], ids=["red", "skipped", "unfinished", "absent"])
+def test_green_legs_do_not_stand_in_for_the_aggregator(aggregator, why):
+    rows = SPLIT_LEGS + ([aggregator] if aggregator else [])
+    assert verdict(runs(run(1)), {1: jobs(*rows)})[:2] == ("refuse", why)
+
+
+def test_a_red_leg_under_a_green_aggregator_is_the_aggregators_call_not_this_scripts():
+    """Recorded so nobody reads more into rule 6 than it holds: the script reads the run's conclusion and the one
+    named job. A leg that failed fails the run (rule 5) unless the workflow itself excuses it; whether the
+    aggregator may go green over it is pinned in ci-next's static tests, not here."""
+    rows = [("static", "completed", "failure")] + SPLIT_LEGS[1:] + [GREEN_JOB]
+    assert verdict(runs(run(1)), {1: jobs(*rows)})[0] == "pass"
+    assert verdict(runs(run(1, conclusion="failure")), {1: jobs(*rows)})[0] == "refuse"
+
+
 def test_an_unreadable_jobs_read_keeps_the_runs_it_had_already_read():
     def read_jobs(_run_id):
         raise pp.Unreadable("no usable answer from runs/1/jobs (HTTP 502)")
