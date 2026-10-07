@@ -120,6 +120,18 @@ export async function seedVarietyFixture({ run, user, tag }) {
 export function seedMixTeardown(ids, crops = {}) {
   const slugs = Object.values(crops)
   return [
+    // Release 3 (v5-seedlotaddition-001): a picking row before the link row it hangs on (RESTRICT, and
+    // the picking table's only key). Its parent arm is the next step's predicate, word for word. A file
+    // that never writes a picking deletes nothing here. On a fork without the table the statement
+    // fails, settle() records it and goes on — and the step after it is then as it always was.
+    () => directSql`
+      DELETE FROM seed_lot_addition
+       WHERE created_by = ANY(${ids})
+          OR parent_link_id IN (
+               SELECT id FROM seed_lot_parent_planting
+                WHERE created_by = ANY(${ids})
+                   OR inventory_item_id IN (SELECT id FROM inventory_items WHERE created_by = ANY(${ids}))
+                   OR plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids})))`,
     () => directSql`
       DELETE FROM seed_lot_parent_planting
        WHERE created_by = ANY(${ids})
