@@ -110,6 +110,22 @@ const clickText = (re, sel = 'button') => { const b = byText(re, sel); if (b) b.
 // the pick frame is entirely fixed-position.
 const visible = (el) => !!(el && (el.checkVisibility ? el.checkVisibility() : el.offsetParent !== null))
 
+// THE CONFIRM BUTTON HAS THREE LABELS, and the matcher here knew one. LogMany renders
+// `saving ? 'Logging…' : counting ? 'Counting…' : \`Log ${verb} on ${n}\``, so a read that landed
+// inside the confirm hold (BUG-LOGMANYSTALECONFIRM-001: every scope, type or date change holds the
+// button until the dry-run answers) found no button at all and reported primaryCount 0 — the exact
+// number that means "the commit control is missing", for a button that was on screen the whole
+// time. `.+` rather than `\w+` for the verb: it is the event label lowercased, and "fertilized /
+// fed", "hand-pollinated" and "brought inside" are not one word.
+const CONFIRM_COUNTED = /^Log .+ on \d+$/
+const CONFIRM_TEXT = /^(Counting…|Logging…|Log .+ on \d+)$/
+const confirmButtons = () => [...document.querySelectorAll('button')].filter(b => CONFIRM_TEXT.test(b.textContent))
+// Which of the three a read saw. Reported beside every primary measurement so a mid-hold read says
+// so instead of passing for a settled one.
+const confirmState = (b) => (!b ? null
+  : b.textContent === 'Counting…' ? 'counting'
+    : b.textContent === 'Logging…' ? 'saving' : 'counted')
+
 window.__h = {
   ready: () => !!byText(/^Review \d+ plantings/) || !!q('[data-testid="sc-open-pick"]'),
   openReview: () => clickText(/^Review \d+ plantings/),
@@ -198,10 +214,29 @@ window.__h = {
       docHeight: Math.round(document.documentElement.scrollHeight),
       stickyCount: [...document.querySelectorAll('body *')]
         .filter(el => { const p = getComputedStyle(el).position; return p === 'sticky' || p === 'fixed' }).length,
-      primaryH: h(byText(/^Log \w+ on \d+$/)),
-      primaryCount: [...document.querySelectorAll('button')].filter(b => /^Log \w+ on \d+$/.test(b.textContent)).length,
+      primaryH: h(confirmButtons()[0]),
+      primaryCount: confirmButtons().length,
+      primaryState: confirmState(confirmButtons()[0]),
     }
   },
+
+  // Anything that needs the confirm button ACTIONABLE waits here first. Finding the button while it
+  // reads "Counting…" is not the same as being allowed to use it: it is natively disabled for the
+  // whole hold, so a tap is a silent no-op, and a count read off it is not there to be read.
+  // Resolves with the label once it is a counted, enabled button; rejects naming what it last saw.
+  // "on 0" never resolves — zero disables the button for a different reason, and nothing to log is
+  // not a state to act on.
+  whenCounted: (ms = 5000) => new Promise((resolve, reject) => {
+    const t0 = performance.now()
+    ;(function poll() {
+      const b = confirmButtons()[0]
+      if (b && CONFIRM_COUNTED.test(b.textContent) && !b.disabled) return resolve(b.textContent)
+      if (performance.now() - t0 > ms) {
+        return reject(new Error(`confirm never became actionable in ${ms}ms — last read: ${b ? `"${b.textContent}"${b.disabled ? ' (disabled)' : ''}` : 'no confirm button'}`))
+      }
+      setTimeout(poll, 50)
+    })()
+  }),
 
   // ── S5: the BULK review list's geometry, which is the panel Dave ruled on ──────────────────
   // S4 argued AGAINST grouping this list with an ESTIMATE: "a maxHeight 240 window showing ~5 rows,
@@ -308,7 +343,7 @@ window.__h = {
     if (!f) return { present: false }
     const list = q('[data-testid="pick-list"]')
     const tray = q('[data-testid="pick-tray"]')
-    const primary = byText(/^Log \w+ on \d+$/)
+    const primary = confirmButtons()[0]
     const rect = f.getBoundingClientRect()
     const lr = list.getBoundingClientRect()
     const rows = [...list.querySelectorAll('button[aria-pressed]')]
@@ -377,7 +412,9 @@ window.__h = {
       primaryInView: pr ? Math.round(pr.bottom) <= window.innerHeight : null,
       primaryVisible: visible(primary),
       // Exactly one commit control in the document — the page copy must be suppressed.
-      primaryCount: [...document.querySelectorAll('button')].filter(b => /^Log \w+ on \d+$/.test(b.textContent)).length,
+      primaryCount: confirmButtons().length,
+      primaryState: confirmState(primary),
+      primaryDisabled: primary ? primary.disabled : null,
     }
   },
 }
