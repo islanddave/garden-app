@@ -71,6 +71,13 @@ is red at a step `ci.yml` ran and passed. Each SHA with a verdict on both sides 
   unit pass, so that pass printed no digest there (its step reads `skipped`) while the shadow ran it or skipped it
   too. The row prints what that rests on: the failed step, the pass never run, the leg that failed the same step
   and the shadow's own digests.
+
+  `ci-next.yml` cancels in progress, so a red push followed quickly by its fix leaves the legs that were still
+  running `cancelled`. Such a leg holds no verdict and, on a SHA red on both sides only, is left out of the
+  same-step check, and its cancelled pass step reads as a skipped one. It has to be all of: concluded `cancelled`,
+  no failed step, not cancelled at its timeout, and a newer `ci-next.yml` push run created before it ended. A leg
+  that failed the same step is still required, and a SHA judged with a leg left out is EXEMPT at best, never one of
+  the 10; its line names the legs and the run that cancelled them.
 - **BLOCKS**: a DISAGREE; red on both sides where the failing step cannot be read (a job with no steps, a shadow
   run with no leg) or is read and differs; a TEST-IDS-DIFFER; a digest absent for any other reason (the pass ran
   and left no usable notice, the shadow lacks what the serial job has, the format versions differ). The row prints
@@ -86,8 +93,8 @@ How a cancelled run is read, and why that cannot hide a disagreement, is in the 
 
 `--json` (`schema_version` 2) carries the same reading. Per SHA: `counted` (a verdict on both sides, inside the
 window), `acceptance` (`QUALIFIES`, `EXEMPT`, `BLOCKS`, or null when not counted) and `acceptance_why`; the facts
-they rest on, `ci_failed_steps`, `ci_ran_steps`, `next_legs`, `next_red_legs`; and per pass in `test_ids`, `ci_step`
-and `next_step`, the conclusion of the step that runs the pass on each side. `acceptance` holds `met`, `missing`,
+they rest on, `ci_failed_steps`, `ci_ran_steps`, `next_legs`, `next_red_legs`, `next_superseded_legs` (each leg the
+next push cancelled, with `superseded_by`, that run's id); and per pass in `test_ids`, `ci_step` and `next_step`, the conclusion of the step that runs the pass on each side. `acceptance` holds `met`, `missing`,
 `counted`, `qualifying` (the number set against the 10), `counted_red` (qualifying SHAs red on both sides), `exempt`
 (SHAs) and `blocking` (`sha` and `why`). `summary.window_met` is `qualifying >= 10`.
 Tested in `scripts/test_shadow_agree.py` against the replies recorded under `scripts/fixtures/shadow-agree/`.

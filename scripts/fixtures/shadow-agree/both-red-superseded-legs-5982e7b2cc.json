@@ -1,0 +1,1761 @@
+{
+ "_source": "The real dev push 5982e7b2cc, red on both sides at the same step with three legs cancelled by the next push, read on 2026-10-07: ci.yml run 37665534334 (build-and-test failed one step, `Seeds page layout, all three views (V5-SEEDSTAB-001)`, so both unit passes read `skipped` and printed no test-ids notice) and ci-next.yml run 37665534464 (gates-a failed that same step at 18:18:26Z; then dev push daf8042b created ci-next.yml run 37666476480 at 18:23:39Z and the concurrency group cancelled the legs still running, unit-utc-cov, gates-c and unit-ny, at 18:24:07-08Z, each with its running step `cancelled` and no failed step; the aggregator then ran and failed, and the run concluded `cancelled`). Both are attempt 1. Per run, as in both-red-same-step-6662e76e4e.json: GET .../actions/runs/<id> (trimmed to the listing row's fields), .../runs/<id>/jobs?filter=latest&per_page=100&page=1 (each job trimmed to the fields the other fixtures keep, plus its `steps`, whole; .../attempts/1/jobs returned the same document), and .../check-runs/<job id>/annotations?per_page=100 (whole) of build-and-test, unit-utc-cov and unit-ny. `superseded_by` is the ci-next.yml run that superseded it, 37666476480 on daf8042b: its run object trimmed the same way (the listing entry) and its jobs without their `steps`. ci.yml's run on daf8042b is not recorded.",
+ "runs": {
+  "ci": {
+   "run": {
+    "conclusion": "failure",
+    "created_at": "2026-10-07T18:16:17Z",
+    "event": "push",
+    "head_branch": "dev",
+    "head_sha": "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5",
+    "id": 37665534334,
+    "name": "CI \u2014 Build and Unit Tests",
+    "path": ".github/workflows/ci.yml",
+    "run_attempt": 1,
+    "run_started_at": "2026-10-07T18:16:17Z",
+    "status": "completed",
+    "updated_at": "2026-10-07T18:20:33Z"
+   },
+   "jobs": {
+    "total_count": 1,
+    "jobs": [
+     {
+      "completed_at": "2026-10-07T18:20:32Z",
+      "conclusion": "failure",
+      "created_at": "2026-10-07T18:16:18Z",
+      "head_sha": "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5",
+      "id": 112943651751,
+      "labels": [
+       "ubuntu-24.04"
+      ],
+      "name": "build-and-test",
+      "run_attempt": 1,
+      "run_id": 37665534334,
+      "runner_id": 1000031631,
+      "runner_name": "GitHub Actions 1000031631",
+      "started_at": "2026-10-07T18:16:22Z",
+      "status": "completed",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-07T18:16:22Z",
+        "completed_at": "2026-10-07T18:16:23Z"
+       },
+       {
+        "name": "Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:27Z"
+       },
+       {
+        "name": "Fetch origin/main for the release-version guard",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-07T18:16:27Z",
+        "completed_at": "2026-10-07T18:16:27Z"
+       },
+       {
+        "name": "Release-version guard",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-07T18:16:27Z",
+        "completed_at": "2026-10-07T18:16:28Z"
+       },
+       {
+        "name": "Workflow lint (actionlint + shellcheck, pinned and checksum-verified)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5,
+        "started_at": "2026-10-07T18:16:28Z",
+        "completed_at": "2026-10-07T18:16:30Z"
+       },
+       {
+        "name": "Python script tests (pytest)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6,
+        "started_at": "2026-10-07T18:16:30Z",
+        "completed_at": "2026-10-07T18:18:09Z"
+       },
+       {
+        "name": "Migration gate schema validation (OPS-GATERUNNER-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 7,
+        "started_at": "2026-10-07T18:18:09Z",
+        "completed_at": "2026-10-07T18:18:10Z"
+       },
+       {
+        "name": "Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8,
+        "started_at": "2026-10-07T18:18:10Z",
+        "completed_at": "2026-10-07T18:18:15Z"
+       },
+       {
+        "name": "Dependency manifest re-resolves (strict peers)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 9,
+        "started_at": "2026-10-07T18:18:15Z",
+        "completed_at": "2026-10-07T18:18:15Z"
+       },
+       {
+        "name": "Install dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 10,
+        "started_at": "2026-10-07T18:18:15Z",
+        "completed_at": "2026-10-07T18:18:17Z"
+       },
+       {
+        "name": "Lint (frozen primitives)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 11,
+        "started_at": "2026-10-07T18:18:17Z",
+        "completed_at": "2026-10-07T18:18:29Z"
+       },
+       {
+        "name": "Today-gate fixture privacy preflight (V5-TODAYSHAPE-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 12,
+        "started_at": "2026-10-07T18:18:29Z",
+        "completed_at": "2026-10-07T18:18:29Z"
+       },
+       {
+        "name": "Garden-render golden (V4-GARDENIA-001 / DESIGNSYS \u00a77)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 13,
+        "started_at": "2026-10-07T18:18:29Z",
+        "completed_at": "2026-10-07T18:18:29Z"
+       },
+       {
+        "name": "Daily-plan parity goldens (G-PARITY)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 14,
+        "started_at": "2026-10-07T18:18:29Z",
+        "completed_at": "2026-10-07T18:18:29Z"
+       },
+       {
+        "name": "Service-worker cache-key mirror",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 15,
+        "started_at": "2026-10-07T18:18:29Z",
+        "completed_at": "2026-10-07T18:18:29Z"
+       },
+       {
+        "name": "Resolve Chrome for the layout gates",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 16,
+        "started_at": "2026-10-07T18:18:29Z",
+        "completed_at": "2026-10-07T18:18:38Z"
+       },
+       {
+        "name": "Weigh-in Save-band clearance (BUG-FRAMEPADOCCLUDE-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 17,
+        "started_at": "2026-10-07T18:18:38Z",
+        "completed_at": "2026-10-07T18:19:18Z"
+       },
+       {
+        "name": "Log-chooser clearance and tap floor (BUG-LOGBANDOCCLUDE-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 18,
+        "started_at": "2026-10-07T18:19:18Z",
+        "completed_at": "2026-10-07T18:19:23Z"
+       },
+       {
+        "name": "Photo-tier payload budget (BUG-TIERLESSPHOTOS-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 19,
+        "started_at": "2026-10-07T18:19:23Z",
+        "completed_at": "2026-10-07T18:19:28Z"
+       },
+       {
+        "name": "Inventory list tap floor and row integrity (HG-4.2)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 20,
+        "started_at": "2026-10-07T18:19:28Z",
+        "completed_at": "2026-10-07T18:19:30Z"
+       },
+       {
+        "name": "Saved-seeds layout and action clearance (V4-SEEDSAVEFLOW-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 21,
+        "started_at": "2026-10-07T18:19:30Z",
+        "completed_at": "2026-10-07T18:19:43Z"
+       },
+       {
+        "name": "Save seed sheet layout and Save clearance (V5-SEEDMULTIPARENT-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 22,
+        "started_at": "2026-10-07T18:19:43Z",
+        "completed_at": "2026-10-07T18:19:59Z"
+       },
+       {
+        "name": "Seeds page layout, all three views (V5-SEEDSTAB-001)",
+        "status": "completed",
+        "conclusion": "failure",
+        "number": 23,
+        "started_at": "2026-10-07T18:19:59Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Seed detail page layout \u2014 packet, after a sow, F2 lot (V5-SEEDSTAB-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 24,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Seeds Back and lot-page arrival (BUG-SAVEDSEEDSBACKTOP-001, BUG-SEEDLOTOPENSATFORM-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 25,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Page scroll \u2014 a page opens at its top, Back returns to the place (BUG-DETAILPAGESCARRYSCROLL-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 26,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Kitchen-batch close-out layout and band clearance (V5-KBCLOSE-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 27,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Put-Up ferment walks, Start to finish and after (release F, 06-ferment-path \u00a75 L3)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 28,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Icon wiring slice 4 \u2014 five rewired surfaces (V4-ICON-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 29,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Today page shape at 426x836 (V5-TODAYSHAPE-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 30,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Today V2 contract, instrument and self-test (V5-TODAYREDESIGN-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 31,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Today V2 in the app shell (V5-TODAYREDESIGN-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 32,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Undo toast tap targets, glyph and stack (BUG-UNDOTOASTTAPTARGET-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 33,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Weigh-in Save-band stability (V4-HARVESTFRAME-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 34,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Icon optical-weight golden (V4-ICON-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 35,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Icon region-seam (V4-ICON-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 36,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Icon pair distinctness (V4-GERMVSTRANSPLANT-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 37,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Build (CI \u2014 placeholder env vars)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 38,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Verify build output",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 39,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Harvest-window chunk split (V4-RIPENESSCUES-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 40,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Event-types drift guard",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 41,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Coverage ratchet enforcement",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 42,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Run unit tests with coverage",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 43,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Unit tests under America/New_York TZ (date-fragility guard)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 44,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Coverage ratchet \u2014 measured floor (WS-B M4)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 45,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Dependency audit (blocking on moderate, WS-B M6)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 46,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Post Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 91,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:29Z"
+       },
+       {
+        "name": "Post Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 92,
+        "started_at": "2026-10-07T18:20:29Z",
+        "completed_at": "2026-10-07T18:20:30Z"
+       },
+       {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 93,
+        "started_at": "2026-10-07T18:20:30Z",
+        "completed_at": "2026-10-07T18:20:30Z"
+       }
+      ]
+     }
+    ]
+   },
+   "annotations": {
+    "112943651751": [
+     {
+      "path": ".github",
+      "blob_href": "https://github.com/islanddave/garden-app/blob/5982e7b2cc7e3fff210f63f77b0b61554b6db8c5/.github",
+      "start_line": 126,
+      "start_column": null,
+      "end_line": 126,
+      "end_column": null,
+      "annotation_level": "failure",
+      "title": "",
+      "message": "Process completed with exit code 1.",
+      "raw_details": ""
+     }
+    ]
+   }
+  },
+  "next": {
+   "run": {
+    "conclusion": "cancelled",
+    "created_at": "2026-10-07T18:16:17Z",
+    "event": "push",
+    "head_branch": "dev",
+    "head_sha": "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5",
+    "id": 37665534464,
+    "name": "CI Next \u2014 parallel shadow of build-and-test (non-gating)",
+    "path": ".github/workflows/ci-next.yml",
+    "run_attempt": 1,
+    "run_started_at": "2026-10-07T18:16:17Z",
+    "status": "completed",
+    "updated_at": "2026-10-07T18:24:15Z"
+   },
+   "jobs": {
+    "total_count": 9,
+    "jobs": [
+     {
+      "completed_at": "2026-10-07T18:24:08Z",
+      "conclusion": "cancelled",
+      "created_at": "2026-10-07T18:16:18Z",
+      "head_sha": "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5",
+      "id": 112943653161,
+      "labels": [
+       "ubuntu-24.04"
+      ],
+      "name": "unit-utc-cov",
+      "run_attempt": 1,
+      "run_id": 37665534464,
+      "runner_id": 1000031634,
+      "runner_name": "GitHub Actions 1000031634",
+      "started_at": "2026-10-07T18:16:22Z",
+      "status": "completed",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-07T18:16:22Z",
+        "completed_at": "2026-10-07T18:16:23Z"
+       },
+       {
+        "name": "Canary \u2014 force this leg red (workflow_dispatch input canary_red_leg only)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 2,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:23Z"
+       },
+       {
+        "name": "Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:27Z"
+       },
+       {
+        "name": "Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-07T18:16:27Z",
+        "completed_at": "2026-10-07T18:16:33Z"
+       },
+       {
+        "name": "Install dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5,
+        "started_at": "2026-10-07T18:16:33Z",
+        "completed_at": "2026-10-07T18:16:37Z"
+       },
+       {
+        "name": "Coverage ratchet enforcement",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6,
+        "started_at": "2026-10-07T18:16:37Z",
+        "completed_at": "2026-10-07T18:16:37Z"
+       },
+       {
+        "name": "Run unit tests with coverage",
+        "status": "completed",
+        "conclusion": "cancelled",
+        "number": 7,
+        "started_at": "2026-10-07T18:16:37Z",
+        "completed_at": "2026-10-07T18:24:05Z"
+       },
+       {
+        "name": "Coverage ratchet \u2014 measured floor (WS-B M4)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 8,
+        "started_at": "2026-10-07T18:24:05Z",
+        "completed_at": "2026-10-07T18:24:05Z"
+       },
+       {
+        "name": "Post Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 15,
+        "started_at": "2026-10-07T18:24:05Z",
+        "completed_at": "2026-10-07T18:24:05Z"
+       },
+       {
+        "name": "Post Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 16,
+        "started_at": "2026-10-07T18:24:05Z",
+        "completed_at": "2026-10-07T18:24:06Z"
+       },
+       {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 17,
+        "started_at": "2026-10-07T18:24:06Z",
+        "completed_at": "2026-10-07T18:24:06Z"
+       }
+      ]
+     },
+     {
+      "completed_at": "2026-10-07T18:17:57Z",
+      "conclusion": "success",
+      "created_at": "2026-10-07T18:16:18Z",
+      "head_sha": "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5",
+      "id": 112943653352,
+      "labels": [
+       "ubuntu-24.04"
+      ],
+      "name": "pytest",
+      "run_attempt": 1,
+      "run_id": 37665534464,
+      "runner_id": 1000031633,
+      "runner_name": "GitHub Actions 1000031633",
+      "started_at": "2026-10-07T18:16:22Z",
+      "status": "completed",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-07T18:16:22Z",
+        "completed_at": "2026-10-07T18:16:23Z"
+       },
+       {
+        "name": "Canary \u2014 force this leg red (workflow_dispatch input canary_red_leg only)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 2,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:23Z"
+       },
+       {
+        "name": "Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:27Z"
+       },
+       {
+        "name": "Python script tests (pytest)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-07T18:16:27Z",
+        "completed_at": "2026-10-07T18:17:55Z"
+       },
+       {
+        "name": "Post Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8,
+        "started_at": "2026-10-07T18:17:55Z",
+        "completed_at": "2026-10-07T18:17:55Z"
+       },
+       {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 9,
+        "started_at": "2026-10-07T18:17:55Z",
+        "completed_at": "2026-10-07T18:17:55Z"
+       }
+      ]
+     },
+     {
+      "completed_at": "2026-10-07T18:18:26Z",
+      "conclusion": "failure",
+      "created_at": "2026-10-07T18:16:18Z",
+      "head_sha": "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5",
+      "id": 112943653373,
+      "labels": [
+       "ubuntu-24.04"
+      ],
+      "name": "gates-a",
+      "run_attempt": 1,
+      "run_id": 37665534464,
+      "runner_id": 1000031632,
+      "runner_name": "GitHub Actions 1000031632",
+      "started_at": "2026-10-07T18:16:22Z",
+      "status": "completed",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:24Z"
+       },
+       {
+        "name": "Canary \u2014 force this leg red (workflow_dispatch input canary_red_leg only)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 2,
+        "started_at": "2026-10-07T18:16:24Z",
+        "completed_at": "2026-10-07T18:16:24Z"
+       },
+       {
+        "name": "Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-07T18:16:24Z",
+        "completed_at": "2026-10-07T18:16:28Z"
+       },
+       {
+        "name": "Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-07T18:16:28Z",
+        "completed_at": "2026-10-07T18:16:35Z"
+       },
+       {
+        "name": "Install dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5,
+        "started_at": "2026-10-07T18:16:35Z",
+        "completed_at": "2026-10-07T18:16:38Z"
+       },
+       {
+        "name": "Resolve Chrome for the layout gates",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6,
+        "started_at": "2026-10-07T18:16:38Z",
+        "completed_at": "2026-10-07T18:16:41Z"
+       },
+       {
+        "name": "Weigh-in Save-band clearance (BUG-FRAMEPADOCCLUDE-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 7,
+        "started_at": "2026-10-07T18:16:41Z",
+        "completed_at": "2026-10-07T18:17:02Z"
+       },
+       {
+        "name": "Log-chooser clearance and tap floor (BUG-LOGBANDOCCLUDE-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8,
+        "started_at": "2026-10-07T18:17:02Z",
+        "completed_at": "2026-10-07T18:17:06Z"
+       },
+       {
+        "name": "Photo-tier payload budget (BUG-TIERLESSPHOTOS-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 9,
+        "started_at": "2026-10-07T18:17:06Z",
+        "completed_at": "2026-10-07T18:17:15Z"
+       },
+       {
+        "name": "Inventory list tap floor and row integrity (HG-4.2)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 10,
+        "started_at": "2026-10-07T18:17:15Z",
+        "completed_at": "2026-10-07T18:17:18Z"
+       },
+       {
+        "name": "Saved-seeds layout and action clearance (V4-SEEDSAVEFLOW-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 11,
+        "started_at": "2026-10-07T18:17:18Z",
+        "completed_at": "2026-10-07T18:17:32Z"
+       },
+       {
+        "name": "Save seed sheet layout and Save clearance (V5-SEEDMULTIPARENT-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 12,
+        "started_at": "2026-10-07T18:17:32Z",
+        "completed_at": "2026-10-07T18:17:50Z"
+       },
+       {
+        "name": "Seeds page layout, all three views (V5-SEEDSTAB-001)",
+        "status": "completed",
+        "conclusion": "failure",
+        "number": 13,
+        "started_at": "2026-10-07T18:17:50Z",
+        "completed_at": "2026-10-07T18:18:22Z"
+       },
+       {
+        "name": "Seed detail page layout \u2014 packet, after a sow, F2 lot (V5-SEEDSTAB-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 14,
+        "started_at": "2026-10-07T18:18:22Z",
+        "completed_at": "2026-10-07T18:18:22Z"
+       },
+       {
+        "name": "Seeds Back and lot-page arrival (BUG-SAVEDSEEDSBACKTOP-001, BUG-SEEDLOTOPENSATFORM-001)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 15,
+        "started_at": "2026-10-07T18:18:22Z",
+        "completed_at": "2026-10-07T18:18:22Z"
+       },
+       {
+        "name": "Post Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 29,
+        "started_at": "2026-10-07T18:18:22Z",
+        "completed_at": "2026-10-07T18:18:22Z"
+       },
+       {
+        "name": "Post Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 30,
+        "started_at": "2026-10-07T18:18:22Z",
+        "completed_at": "2026-10-07T18:18:23Z"
+       },
+       {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 31,
+        "started_at": "2026-10-07T18:18:23Z",
+        "completed_at": "2026-10-07T18:18:23Z"
+       }
+      ]
+     },
+     {
+      "completed_at": "2026-10-07T18:20:02Z",
+      "conclusion": "success",
+      "created_at": "2026-10-07T18:16:18Z",
+      "head_sha": "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5",
+      "id": 112943653387,
+      "labels": [
+       "ubuntu-24.04"
+      ],
+      "name": "gates-b",
+      "run_attempt": 1,
+      "run_id": 37665534464,
+      "runner_id": 1000031635,
+      "runner_name": "GitHub Actions 1000031635",
+      "started_at": "2026-10-07T18:16:22Z",
+      "status": "completed",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:24Z"
+       },
+       {
+        "name": "Canary \u2014 force this leg red (workflow_dispatch input canary_red_leg only)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 2,
+        "started_at": "2026-10-07T18:16:24Z",
+        "completed_at": "2026-10-07T18:16:24Z"
+       },
+       {
+        "name": "Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-07T18:16:24Z",
+        "completed_at": "2026-10-07T18:16:27Z"
+       },
+       {
+        "name": "Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-07T18:16:27Z",
+        "completed_at": "2026-10-07T18:16:34Z"
+       },
+       {
+        "name": "Install dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5,
+        "started_at": "2026-10-07T18:16:34Z",
+        "completed_at": "2026-10-07T18:16:37Z"
+       },
+       {
+        "name": "Resolve Chrome for the layout gates",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6,
+        "started_at": "2026-10-07T18:16:37Z",
+        "completed_at": "2026-10-07T18:16:39Z"
+       },
+       {
+        "name": "Kitchen-batch close-out layout and band clearance (V5-KBCLOSE-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 7,
+        "started_at": "2026-10-07T18:16:39Z",
+        "completed_at": "2026-10-07T18:17:48Z"
+       },
+       {
+        "name": "Put-Up ferment walks, Start to finish and after (release F, 06-ferment-path \u00a75 L3)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8,
+        "started_at": "2026-10-07T18:17:48Z",
+        "completed_at": "2026-10-07T18:19:12Z"
+       },
+       {
+        "name": "Icon wiring slice 4 \u2014 five rewired surfaces (V4-ICON-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 9,
+        "started_at": "2026-10-07T18:19:12Z",
+        "completed_at": "2026-10-07T18:19:19Z"
+       },
+       {
+        "name": "Today page shape at 426x836 (V5-TODAYSHAPE-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 10,
+        "started_at": "2026-10-07T18:19:19Z",
+        "completed_at": "2026-10-07T18:19:38Z"
+       },
+       {
+        "name": "Undo toast tap targets, glyph and stack (BUG-UNDOTOASTTAPTARGET-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 11,
+        "started_at": "2026-10-07T18:19:38Z",
+        "completed_at": "2026-10-07T18:19:46Z"
+       },
+       {
+        "name": "Weigh-in Save-band stability (V4-HARVESTFRAME-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 12,
+        "started_at": "2026-10-07T18:19:46Z",
+        "completed_at": "2026-10-07T18:19:59Z"
+       },
+       {
+        "name": "Post Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 23,
+        "started_at": "2026-10-07T18:19:59Z",
+        "completed_at": "2026-10-07T18:20:00Z"
+       },
+       {
+        "name": "Post Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 24,
+        "started_at": "2026-10-07T18:20:00Z",
+        "completed_at": "2026-10-07T18:20:00Z"
+       },
+       {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 25,
+        "started_at": "2026-10-07T18:20:00Z",
+        "completed_at": "2026-10-07T18:20:00Z"
+       }
+      ]
+     },
+     {
+      "completed_at": "2026-10-07T18:24:07Z",
+      "conclusion": "cancelled",
+      "created_at": "2026-10-07T18:16:18Z",
+      "head_sha": "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5",
+      "id": 112943653479,
+      "labels": [
+       "ubuntu-24.04"
+      ],
+      "name": "gates-c",
+      "run_attempt": 1,
+      "run_id": 37665534464,
+      "runner_id": 1000031636,
+      "runner_name": "GitHub Actions 1000031636",
+      "started_at": "2026-10-07T18:16:22Z",
+      "status": "completed",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-07T18:16:22Z",
+        "completed_at": "2026-10-07T18:16:23Z"
+       },
+       {
+        "name": "Canary \u2014 force this leg red (workflow_dispatch input canary_red_leg only)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 2,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:23Z"
+       },
+       {
+        "name": "Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:27Z"
+       },
+       {
+        "name": "Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-07T18:16:27Z",
+        "completed_at": "2026-10-07T18:16:32Z"
+       },
+       {
+        "name": "Install dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5,
+        "started_at": "2026-10-07T18:16:32Z",
+        "completed_at": "2026-10-07T18:16:35Z"
+       },
+       {
+        "name": "Resolve Chrome for the layout gates",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6,
+        "started_at": "2026-10-07T18:16:35Z",
+        "completed_at": "2026-10-07T18:16:37Z"
+       },
+       {
+        "name": "Page scroll \u2014 a page opens at its top, Back returns to the place (BUG-DETAILPAGESCARRYSCROLL-001)",
+        "status": "completed",
+        "conclusion": "cancelled",
+        "number": 7,
+        "started_at": "2026-10-07T18:16:37Z",
+        "completed_at": "2026-10-07T18:24:05Z"
+       },
+       {
+        "name": "Post Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 13,
+        "started_at": "2026-10-07T18:24:05Z",
+        "completed_at": "2026-10-07T18:24:05Z"
+       },
+       {
+        "name": "Post Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 14,
+        "started_at": "2026-10-07T18:24:05Z",
+        "completed_at": "2026-10-07T18:24:05Z"
+       },
+       {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 15,
+        "started_at": "2026-10-07T18:24:05Z",
+        "completed_at": "2026-10-07T18:24:05Z"
+       }
+      ]
+     },
+     {
+      "completed_at": "2026-10-07T18:24:08Z",
+      "conclusion": "cancelled",
+      "created_at": "2026-10-07T18:16:18Z",
+      "head_sha": "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5",
+      "id": 112943653525,
+      "labels": [
+       "ubuntu-24.04"
+      ],
+      "name": "unit-ny",
+      "run_attempt": 1,
+      "run_id": 37665534464,
+      "runner_id": 1000031637,
+      "runner_name": "GitHub Actions 1000031637",
+      "started_at": "2026-10-07T18:16:22Z",
+      "status": "completed",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-07T18:16:22Z",
+        "completed_at": "2026-10-07T18:16:23Z"
+       },
+       {
+        "name": "Canary \u2014 force this leg red (workflow_dispatch input canary_red_leg only)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 2,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:23Z"
+       },
+       {
+        "name": "Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:27Z"
+       },
+       {
+        "name": "Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-07T18:16:27Z",
+        "completed_at": "2026-10-07T18:16:34Z"
+       },
+       {
+        "name": "Install dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5,
+        "started_at": "2026-10-07T18:16:34Z",
+        "completed_at": "2026-10-07T18:16:37Z"
+       },
+       {
+        "name": "TZ sentinel \u2014 America/New_York resolves on this runner",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6,
+        "started_at": "2026-10-07T18:16:37Z",
+        "completed_at": "2026-10-07T18:16:37Z"
+       },
+       {
+        "name": "Unit tests under America/New_York TZ (date-fragility guard)",
+        "status": "completed",
+        "conclusion": "cancelled",
+        "number": 7,
+        "started_at": "2026-10-07T18:16:37Z",
+        "completed_at": "2026-10-07T18:24:05Z"
+       },
+       {
+        "name": "Post Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 13,
+        "started_at": "2026-10-07T18:24:05Z",
+        "completed_at": "2026-10-07T18:24:05Z"
+       },
+       {
+        "name": "Post Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 14,
+        "started_at": "2026-10-07T18:24:05Z",
+        "completed_at": "2026-10-07T18:24:06Z"
+       },
+       {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 15,
+        "started_at": "2026-10-07T18:24:06Z",
+        "completed_at": "2026-10-07T18:24:06Z"
+       }
+      ]
+     },
+     {
+      "completed_at": "2026-10-07T18:17:14Z",
+      "conclusion": "success",
+      "created_at": "2026-10-07T18:16:18Z",
+      "head_sha": "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5",
+      "id": 112943653535,
+      "labels": [
+       "ubuntu-24.04"
+      ],
+      "name": "static",
+      "run_attempt": 1,
+      "run_id": 37665534464,
+      "runner_id": 1000031638,
+      "runner_name": "GitHub Actions 1000031638",
+      "started_at": "2026-10-07T18:16:22Z",
+      "status": "completed",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:24Z"
+       },
+       {
+        "name": "Canary \u2014 force this leg red (workflow_dispatch input canary_red_leg only)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 2,
+        "started_at": "2026-10-07T18:16:24Z",
+        "completed_at": "2026-10-07T18:16:24Z"
+       },
+       {
+        "name": "Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-07T18:16:24Z",
+        "completed_at": "2026-10-07T18:16:27Z"
+       },
+       {
+        "name": "Fetch origin/main for the release-version guard",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-07T18:16:27Z",
+        "completed_at": "2026-10-07T18:16:28Z"
+       },
+       {
+        "name": "Release-version guard",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5,
+        "started_at": "2026-10-07T18:16:28Z",
+        "completed_at": "2026-10-07T18:16:29Z"
+       },
+       {
+        "name": "Workflow lint (actionlint + shellcheck, pinned and checksum-verified)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6,
+        "started_at": "2026-10-07T18:16:29Z",
+        "completed_at": "2026-10-07T18:16:30Z"
+       },
+       {
+        "name": "Install PyYAML for the migration gate validation",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 7,
+        "started_at": "2026-10-07T18:16:30Z",
+        "completed_at": "2026-10-07T18:16:32Z"
+       },
+       {
+        "name": "Migration gate schema validation (OPS-GATERUNNER-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8,
+        "started_at": "2026-10-07T18:16:32Z",
+        "completed_at": "2026-10-07T18:16:33Z"
+       },
+       {
+        "name": "Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 9,
+        "started_at": "2026-10-07T18:16:33Z",
+        "completed_at": "2026-10-07T18:16:39Z"
+       },
+       {
+        "name": "Dependency manifest re-resolves (strict peers)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 10,
+        "started_at": "2026-10-07T18:16:39Z",
+        "completed_at": "2026-10-07T18:16:39Z"
+       },
+       {
+        "name": "Install dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 11,
+        "started_at": "2026-10-07T18:16:39Z",
+        "completed_at": "2026-10-07T18:16:42Z"
+       },
+       {
+        "name": "Lint (frozen primitives)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 12,
+        "started_at": "2026-10-07T18:16:42Z",
+        "completed_at": "2026-10-07T18:16:55Z"
+       },
+       {
+        "name": "Today-gate fixture privacy preflight (V5-TODAYSHAPE-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 13,
+        "started_at": "2026-10-07T18:16:55Z",
+        "completed_at": "2026-10-07T18:16:55Z"
+       },
+       {
+        "name": "Garden-render golden (V4-GARDENIA-001 / DESIGNSYS \u00a77)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 14,
+        "started_at": "2026-10-07T18:16:55Z",
+        "completed_at": "2026-10-07T18:16:55Z"
+       },
+       {
+        "name": "Daily-plan parity goldens (G-PARITY)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 15,
+        "started_at": "2026-10-07T18:16:55Z",
+        "completed_at": "2026-10-07T18:16:55Z"
+       },
+       {
+        "name": "Service-worker cache-key mirror",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 16,
+        "started_at": "2026-10-07T18:16:55Z",
+        "completed_at": "2026-10-07T18:16:55Z"
+       },
+       {
+        "name": "Icon optical-weight golden (V4-ICON-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 17,
+        "started_at": "2026-10-07T18:16:55Z",
+        "completed_at": "2026-10-07T18:16:56Z"
+       },
+       {
+        "name": "Icon region-seam (V4-ICON-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 18,
+        "started_at": "2026-10-07T18:16:56Z",
+        "completed_at": "2026-10-07T18:16:57Z"
+       },
+       {
+        "name": "Icon pair distinctness (V4-GERMVSTRANSPLANT-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 19,
+        "started_at": "2026-10-07T18:16:57Z",
+        "completed_at": "2026-10-07T18:16:57Z"
+       },
+       {
+        "name": "Build (CI \u2014 placeholder env vars)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 20,
+        "started_at": "2026-10-07T18:16:57Z",
+        "completed_at": "2026-10-07T18:16:58Z"
+       },
+       {
+        "name": "Verify build output",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 21,
+        "started_at": "2026-10-07T18:16:58Z",
+        "completed_at": "2026-10-07T18:16:58Z"
+       },
+       {
+        "name": "Harvest-window chunk split (V4-RIPENESSCUES-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 22,
+        "started_at": "2026-10-07T18:16:58Z",
+        "completed_at": "2026-10-07T18:16:58Z"
+       },
+       {
+        "name": "Event-types drift guard",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 23,
+        "started_at": "2026-10-07T18:16:58Z",
+        "completed_at": "2026-10-07T18:16:58Z"
+       },
+       {
+        "name": "Dependency audit (blocking on moderate, WS-B M6)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 24,
+        "started_at": "2026-10-07T18:16:58Z",
+        "completed_at": "2026-10-07T18:17:11Z"
+       },
+       {
+        "name": "Post Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 47,
+        "started_at": "2026-10-07T18:17:11Z",
+        "completed_at": "2026-10-07T18:17:11Z"
+       },
+       {
+        "name": "Post Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 48,
+        "started_at": "2026-10-07T18:17:11Z",
+        "completed_at": "2026-10-07T18:17:11Z"
+       },
+       {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 49,
+        "started_at": "2026-10-07T18:17:11Z",
+        "completed_at": "2026-10-07T18:17:11Z"
+       }
+      ]
+     },
+     {
+      "completed_at": "2026-10-07T18:21:38Z",
+      "conclusion": "success",
+      "created_at": "2026-10-07T18:16:18Z",
+      "head_sha": "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5",
+      "id": 112943653641,
+      "labels": [
+       "ubuntu-24.04"
+      ],
+      "name": "gate-probes",
+      "run_attempt": 1,
+      "run_id": 37665534464,
+      "runner_id": 1000031639,
+      "runner_name": "GitHub Actions 1000031639",
+      "started_at": "2026-10-07T18:16:22Z",
+      "status": "completed",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-07T18:16:23Z",
+        "completed_at": "2026-10-07T18:16:24Z"
+       },
+       {
+        "name": "Canary \u2014 force this leg red (workflow_dispatch input canary_red_leg only)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "number": 2,
+        "started_at": "2026-10-07T18:16:24Z",
+        "completed_at": "2026-10-07T18:16:24Z"
+       },
+       {
+        "name": "Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-07T18:16:24Z",
+        "completed_at": "2026-10-07T18:16:27Z"
+       },
+       {
+        "name": "Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 4,
+        "started_at": "2026-10-07T18:16:27Z",
+        "completed_at": "2026-10-07T18:16:35Z"
+       },
+       {
+        "name": "Install dependencies",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 5,
+        "started_at": "2026-10-07T18:16:35Z",
+        "completed_at": "2026-10-07T18:16:38Z"
+       },
+       {
+        "name": "Resolve Chrome for the layout gates",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 6,
+        "started_at": "2026-10-07T18:16:38Z",
+        "completed_at": "2026-10-07T18:16:42Z"
+       },
+       {
+        "name": "Today V2 contract, instrument and self-test (V5-TODAYREDESIGN-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 7,
+        "started_at": "2026-10-07T18:16:42Z",
+        "completed_at": "2026-10-07T18:21:08Z"
+       },
+       {
+        "name": "Today V2 in the app shell (V5-TODAYREDESIGN-001)",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 8,
+        "started_at": "2026-10-07T18:21:08Z",
+        "completed_at": "2026-10-07T18:21:33Z"
+       },
+       {
+        "name": "Post Run actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 15,
+        "started_at": "2026-10-07T18:21:33Z",
+        "completed_at": "2026-10-07T18:21:33Z"
+       },
+       {
+        "name": "Post Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 16,
+        "started_at": "2026-10-07T18:21:33Z",
+        "completed_at": "2026-10-07T18:21:33Z"
+       },
+       {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 17,
+        "started_at": "2026-10-07T18:21:33Z",
+        "completed_at": "2026-10-07T18:21:33Z"
+       }
+      ]
+     },
+     {
+      "completed_at": "2026-10-07T18:24:14Z",
+      "conclusion": "failure",
+      "created_at": "2026-10-07T18:24:08Z",
+      "head_sha": "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5",
+      "id": 112947102800,
+      "labels": [
+       "ubuntu-24.04"
+      ],
+      "name": "build-and-test-next",
+      "run_attempt": 1,
+      "run_id": 37665534464,
+      "runner_id": 1000031644,
+      "runner_name": "GitHub Actions 1000031644",
+      "started_at": "2026-10-07T18:24:10Z",
+      "status": "completed",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1,
+        "started_at": "2026-10-07T18:24:11Z",
+        "completed_at": "2026-10-07T18:24:11Z"
+       },
+       {
+        "name": "Every pinned leg reported, and every one succeeded",
+        "status": "completed",
+        "conclusion": "failure",
+        "number": 2,
+        "started_at": "2026-10-07T18:24:11Z",
+        "completed_at": "2026-10-07T18:24:12Z"
+       },
+       {
+        "name": "Complete job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3,
+        "started_at": "2026-10-07T18:24:12Z",
+        "completed_at": "2026-10-07T18:24:12Z"
+       }
+      ]
+     }
+    ]
+   },
+   "annotations": {
+    "112943653161": [
+     {
+      "path": ".github",
+      "blob_href": "https://github.com/islanddave/garden-app/blob/5982e7b2cc7e3fff210f63f77b0b61554b6db8c5/.github",
+      "start_line": 1,
+      "start_column": null,
+      "end_line": 1,
+      "end_column": null,
+      "annotation_level": "failure",
+      "title": "",
+      "message": "Canceling since a higher priority waiting request for ci-next-refs/heads/dev exists",
+      "raw_details": ""
+     },
+     {
+      "path": ".github",
+      "blob_href": "https://github.com/islanddave/garden-app/blob/5982e7b2cc7e3fff210f63f77b0b61554b6db8c5/.github",
+      "start_line": 3496,
+      "start_column": null,
+      "end_line": 3496,
+      "end_column": null,
+      "annotation_level": "failure",
+      "title": "",
+      "message": "The operation was canceled.",
+      "raw_details": ""
+     }
+    ],
+    "112943653525": [
+     {
+      "path": ".github",
+      "blob_href": "https://github.com/islanddave/garden-app/blob/5982e7b2cc7e3fff210f63f77b0b61554b6db8c5/.github",
+      "start_line": 1,
+      "start_column": null,
+      "end_line": 1,
+      "end_column": null,
+      "annotation_level": "failure",
+      "title": "",
+      "message": "Canceling since a higher priority waiting request for ci-next-refs/heads/dev exists",
+      "raw_details": ""
+     },
+     {
+      "path": ".github",
+      "blob_href": "https://github.com/islanddave/garden-app/blob/5982e7b2cc7e3fff210f63f77b0b61554b6db8c5/.github",
+      "start_line": 3670,
+      "start_column": null,
+      "end_line": 3670,
+      "end_column": null,
+      "annotation_level": "failure",
+      "title": "",
+      "message": "The operation was canceled.",
+      "raw_details": ""
+     }
+    ]
+   }
+  }
+ },
+ "superseded_by": {
+  "run": {
+   "conclusion": "success",
+   "created_at": "2026-10-07T18:23:39Z",
+   "event": "push",
+   "head_branch": "dev",
+   "head_sha": "daf8042bd50d923c41d68fb60f771ad59f3eeb26",
+   "id": 37666476480,
+   "name": "CI Next \u2014 parallel shadow of build-and-test (non-gating)",
+   "path": ".github/workflows/ci-next.yml",
+   "run_attempt": 1,
+   "run_started_at": "2026-10-07T18:23:39Z",
+   "status": "completed",
+   "updated_at": "2026-10-07T18:42:49Z"
+  },
+  "jobs": {
+   "total_count": 9,
+   "jobs": [
+    {
+     "completed_at": "2026-10-07T18:35:07Z",
+     "conclusion": "success",
+     "created_at": "2026-10-07T18:24:15Z",
+     "head_sha": "daf8042bd50d923c41d68fb60f771ad59f3eeb26",
+     "id": 112947152267,
+     "labels": [
+      "ubuntu-24.04"
+     ],
+     "name": "unit-ny",
+     "run_attempt": 1,
+     "run_id": 37666476480,
+     "runner_id": 1000031645,
+     "runner_name": "GitHub Actions 1000031645",
+     "started_at": "2026-10-07T18:24:17Z",
+     "status": "completed"
+    },
+    {
+     "completed_at": "2026-10-07T18:30:19Z",
+     "conclusion": "success",
+     "created_at": "2026-10-07T18:24:15Z",
+     "head_sha": "daf8042bd50d923c41d68fb60f771ad59f3eeb26",
+     "id": 112947152526,
+     "labels": [
+      "ubuntu-24.04"
+     ],
+     "name": "gates-a",
+     "run_attempt": 1,
+     "run_id": 37666476480,
+     "runner_id": 1000031646,
+     "runner_name": "GitHub Actions 1000031646",
+     "started_at": "2026-10-07T18:24:17Z",
+     "status": "completed"
+    },
+    {
+     "completed_at": "2026-10-07T18:42:40Z",
+     "conclusion": "success",
+     "created_at": "2026-10-07T18:24:15Z",
+     "head_sha": "daf8042bd50d923c41d68fb60f771ad59f3eeb26",
+     "id": 112947152594,
+     "labels": [
+      "ubuntu-24.04"
+     ],
+     "name": "unit-utc-cov",
+     "run_attempt": 1,
+     "run_id": 37666476480,
+     "runner_id": 1000031647,
+     "runner_name": "GitHub Actions 1000031647",
+     "started_at": "2026-10-07T18:24:17Z",
+     "status": "completed"
+    },
+    {
+     "completed_at": "2026-10-07T18:26:22Z",
+     "conclusion": "success",
+     "created_at": "2026-10-07T18:24:15Z",
+     "head_sha": "daf8042bd50d923c41d68fb60f771ad59f3eeb26",
+     "id": 112947152680,
+     "labels": [
+      "ubuntu-24.04"
+     ],
+     "name": "pytest",
+     "run_attempt": 1,
+     "run_id": 37666476480,
+     "runner_id": 1000031648,
+     "runner_name": "GitHub Actions 1000031648",
+     "started_at": "2026-10-07T18:24:18Z",
+     "status": "completed"
+    },
+    {
+     "completed_at": "2026-10-07T18:27:36Z",
+     "conclusion": "success",
+     "created_at": "2026-10-07T18:24:15Z",
+     "head_sha": "daf8042bd50d923c41d68fb60f771ad59f3eeb26",
+     "id": 112947152681,
+     "labels": [
+      "ubuntu-24.04"
+     ],
+     "name": "gates-b",
+     "run_attempt": 1,
+     "run_id": 37666476480,
+     "runner_id": 1000031650,
+     "runner_name": "GitHub Actions 1000031650",
+     "started_at": "2026-10-07T18:24:17Z",
+     "status": "completed"
+    },
+    {
+     "completed_at": "2026-10-07T18:29:08Z",
+     "conclusion": "success",
+     "created_at": "2026-10-07T18:24:15Z",
+     "head_sha": "daf8042bd50d923c41d68fb60f771ad59f3eeb26",
+     "id": 112947152796,
+     "labels": [
+      "ubuntu-24.04"
+     ],
+     "name": "gate-probes",
+     "run_attempt": 1,
+     "run_id": 37666476480,
+     "runner_id": 1000031649,
+     "runner_name": "GitHub Actions 1000031649",
+     "started_at": "2026-10-07T18:24:17Z",
+     "status": "completed"
+    },
+    {
+     "completed_at": "2026-10-07T18:33:36Z",
+     "conclusion": "success",
+     "created_at": "2026-10-07T18:24:15Z",
+     "head_sha": "daf8042bd50d923c41d68fb60f771ad59f3eeb26",
+     "id": 112947152875,
+     "labels": [
+      "ubuntu-24.04"
+     ],
+     "name": "gates-c",
+     "run_attempt": 1,
+     "run_id": 37666476480,
+     "runner_id": 1000031651,
+     "runner_name": "GitHub Actions 1000031651",
+     "started_at": "2026-10-07T18:24:18Z",
+     "status": "completed"
+    },
+    {
+     "completed_at": "2026-10-07T18:25:15Z",
+     "conclusion": "success",
+     "created_at": "2026-10-07T18:24:15Z",
+     "head_sha": "daf8042bd50d923c41d68fb60f771ad59f3eeb26",
+     "id": 112947152929,
+     "labels": [
+      "ubuntu-24.04"
+     ],
+     "name": "static",
+     "run_attempt": 1,
+     "run_id": 37666476480,
+     "runner_id": 1000031652,
+     "runner_name": "GitHub Actions 1000031652",
+     "started_at": "2026-10-07T18:24:18Z",
+     "status": "completed"
+    },
+    {
+     "completed_at": "2026-10-07T18:42:48Z",
+     "conclusion": "success",
+     "created_at": "2026-10-07T18:42:40Z",
+     "head_sha": "daf8042bd50d923c41d68fb60f771ad59f3eeb26",
+     "id": 112955244035,
+     "labels": [
+      "ubuntu-24.04"
+     ],
+     "name": "build-and-test-next",
+     "run_attempt": 1,
+     "run_id": 37666476480,
+     "runner_id": 1000031654,
+     "runner_name": "GitHub Actions 1000031654",
+     "started_at": "2026-10-07T18:42:43Z",
+     "status": "completed"
+    }
+   ]
+  }
+ }
+}

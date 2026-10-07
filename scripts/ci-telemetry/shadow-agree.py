@@ -79,7 +79,8 @@ the ci.yml steps that ran (success or failure), and every ci-next.yml leg that d
 ONE PASS OF ONE SHA is OK, EXEMPT or BLOCK:
   EQUAL   OK.        DIFFER   BLOCK.
   ABSENT  EXEMPT only when ci.yml has no usable digest AND its pass step reads `skipped` AND ci-next.yml either
-          has a usable digest or skipped its own pass step too. Anything else is BLOCK: the serial pass ran and
+          has a usable digest or skipped its own pass step too (or, on a SHA red on both sides, the next push
+          cancelled that step: A LEG THE NEXT PUSH CANCELLED below). Anything else is BLOCK: the serial pass ran and
           left no usable notice; the shadow ran the pass and left none; the shadow lacks what the serial job has;
           the format versions differ; a step that cannot be read.
 
@@ -90,12 +91,24 @@ Otherwise it fails, in one of two ways that are told apart: the failing step CAN
 a shadow run with no leg, a serial red with no failed step), or the steps are read and are DIFFERENT (a leg red at
 a step ci.yml passed, a red leg with no failed step, no leg red at F). Both block.
 
+A LEG THE NEXT PUSH CANCELLED HOLDS NO VERDICT. ci-next.yml cancels in progress, so a red push followed by its fix
+leaves the legs that were still running `cancelled`, while the run is RED all the same because another leg had
+already failed. A leg is SUPERSEDED-CANCELLED when all of: it concluded `cancelled`; no step of it failed; it did
+not run to its timeout; and a newer push run of ci-next.yml was created before it ended (the evidence SUPERSEDED
+rests on, held against this one leg). On an AGREE-RED SHA, and nowhere else, such a leg is left out of the same-step
+check, and its pass step reading `cancelled` is read the way `skipped` is: it stopped before the pass. The check
+still needs a leg that did fail F; when every red leg is superseded-cancelled the step CANNOT BE READ. A SHA judged
+with such a leg left out is never one of the 10: it is EXEMPT at best, and its line names the legs and the run that
+cancelled them. A cancelled leg with no newer push behind it, one that ran to its timeout, and one with a failed
+step are judged as before.
+
 WHAT ONE SHA IS WORTH TO ACCEPTANCE (`acceptance`, with `acceptance_why`). `counted` keeps its meaning: a verdict on
 both sides, inside the window.
   QUALIFIES   one of the 10. AGREE-GREEN with every pass OK; or AGREE-RED with the same-step check holding and
               every pass OK.
   EXEMPT      not one of the 10 and not blocking. AGREE-RED, the same-step check holds, no pass is BLOCK and at
-              least one is EXEMPT: both sides went red at one step and ci.yml never reached the pass. The row is
+              least one is EXEMPT (both sides went red at one step and ci.yml never reached the pass) or a leg
+              was left out of the check because the next push cancelled it. The row is
               printed with what that rests on, and the ACCEPTANCE line names every such SHA.
   BLOCKS      DISAGREE; a failed same-step check; any BLOCK pass. On a green row an EXEMPT pass is BLOCK too: a
               green job does not skip its unit pass.
@@ -436,18 +449,36 @@ def step_names(job, conclusions):
     return None if steps is None else [str(step.get("name")) for step in steps if step.get("conclusion") in conclusions]
 
 
-def step_facts(serial_job, shadow_jobs):
+def superseded_legs(run, jobs, siblings):
+    """The ci-next.yml legs the next push cancelled, as [{"name", "superseded_by": that newer run's id}]: concluded
+    `cancelled`, with steps that are read and none of them failed, not cancelled at its timeout (timed_out), and a
+    newer push run created before the leg ended (superseded_by, held against this leg alone)."""
+    slow = timed_out(SHADOW, jobs)
+    found = []
+    for job in jobs:
+        if job["name"] == SHADOW["verdict_job"] or job.get("conclusion") != "cancelled" or job["name"] in slow \
+                or not job.get("completed_at") or step_names(job, ("failure",)) != []:
+            continue
+        newer = superseded_by(run, [job], siblings)
+        if newer is not None:
+            found.append({"name": job["name"], "superseded_by": newer})
+    return found
+
+
+def step_facts(serial_job, shadow_jobs, shadow_run=None, siblings=()):
     """What the same-step check reads, off the judged attempt's jobs."""
     legs = [job for job in shadow_jobs if job["name"] != SHADOW["verdict_job"]]
     return {"ci_failed_steps": step_names(serial_job, ("failure",)),
             "ci_ran_steps": step_names(serial_job, ("success", "failure")),
             "next_legs": len(legs),
             "next_red_legs": [{"name": job["name"], "failed_steps": step_names(job, ("failure",))}
-                              for job in legs if job.get("conclusion") != "success"]}
+                              for job in legs if job.get("conclusion") != "success"],
+            "next_superseded_legs": superseded_legs(shadow_run, shadow_jobs, siblings) if shadow_run else []}
 
 
-def zone_result(one):
-    """One pass of one SHA, from its zone dict alone: (OK | EXEMPT | BLOCK, why it blocks)."""
+def zone_result(one, leg_superseded=False):
+    """One pass of one SHA, from its zone dict: (OK | EXEMPT | BLOCK, why it blocks). `leg_superseded`: the leg
+    that runs this pass was cancelled by the next push (superseded_legs), on a row red on both sides."""
     if one["class"] == "EQUAL":
         return OK, None
     if one["class"] == "DIFFER":
@@ -458,7 +489,8 @@ def zone_result(one):
     if one["ci_step"] != "skipped":
         return BLOCK, ("ci.yml has no usable test-ids notice and its pass step %s" % (
             "cannot be read" if one["ci_step"] is None else "concluded %s" % one["ci_step"]))
-    if one["next"] is None and one["next_step"] != "skipped":
+    if one["next"] is None and one["next_step"] != "skipped" \
+            and not (leg_superseded and one["next_step"] == "cancelled"):
         return BLOCK, ("ci.yml skipped the pass and ci-next.yml has no usable test-ids notice though its pass step %s"
                        % ("cannot be read" if one["next_step"] is None else "concluded %s" % one["next_step"]))
     return EXEMPT, None
@@ -467,7 +499,9 @@ def zone_result(one):
 def same_step(row):
     """Did the two sides of an AGREE-RED row go red at the same step? (HOLDS | STEP-UNREADABLE | STEP-DIFFERENT,
     why). UNREADABLE is "cannot be told", DIFFERENT is "told, and not the same"; neither is agreement."""
-    failed, ran, legs = row["ci_failed_steps"], row["ci_ran_steps"], row["next_red_legs"]
+    failed, ran = row["ci_failed_steps"], row["ci_ran_steps"]
+    gone = [leg["name"] for leg in row.get("next_superseded_legs") or []]
+    legs = [leg for leg in row["next_red_legs"] if leg["name"] not in gone]
     if failed is None or ran is None:
         return STEP_UNREADABLE, "ci.yml's job carries no steps"
     if not row["next_legs"]:
@@ -477,6 +511,9 @@ def same_step(row):
         return STEP_UNREADABLE, "ci-next.yml's %s carries no steps" % ", ".join(blind)
     if not failed:
         return STEP_UNREADABLE, "ci.yml is red with no failed step"
+    if gone and not legs:
+        return STEP_UNREADABLE, ("every red ci-next.yml leg (%s) was cancelled by the next push before it finished, "
+                                 "so no leg holds a verdict" % ", ".join(gone))
     if len(failed) != 1:
         return STEP_DIFFERENT, "ci.yml failed %d steps" % len(failed)
     step = failed[0]
@@ -503,6 +540,9 @@ def judge(row):
         return None, None, []
     red = row["class"] == "AGREE-RED"
     reasons, whys, exempt = [], [], []
+    # Legs the next push cancelled count for nothing, and only on a row red on both sides.
+    gone = (row.get("next_superseded_legs") or []) if red else []
+    gone_names = [leg["name"] for leg in gone]
     if row["class"] == "DISAGREE":
         reasons.append("DISAGREE")
         whys.append("the two sides disagree")
@@ -512,7 +552,7 @@ def judge(row):
             reasons.append(told)
             whys.append("%s: %s" % (STEP_MISSING[told], why))
     for zone, one in row["test_ids"].items():
-        result, why = zone_result(one)
+        result, why = zone_result(one, PASSES[zone][1] in gone_names)
         if result == EXEMPT and not red:
             result, why = BLOCK, "ci.yml's pass step reads skipped on a row that is not red on both sides"
         if result == BLOCK:
@@ -522,16 +562,26 @@ def judge(row):
             exempt.append(zone)
     if reasons:
         return BLOCKS, "BLOCKS acceptance: " + "; ".join(whys), reasons
-    if not exempt:
+    if not exempt and not gone:
         return QUALIFIES, None, []
     step = row["ci_failed_steps"][0]
-    return EXEMPT, (
-        'EXEMPT, not one of the %d and not blocking: ci.yml failed at "%s" and never ran its %s pass (step skipped); '
-        "ci-next.yml failed the same step in %s; its own digests: %s" % (
-            WINDOW, step, ", ".join(exempt),
-            ", ".join(leg["name"] for leg in row["next_red_legs"] if step in leg["failed_steps"]),
+    same = ", ".join(leg["name"] for leg in row["next_red_legs"] if step in leg["failed_steps"])
+    why = 'EXEMPT, not one of the %d and not blocking: ci.yml failed at "%s"' % (WINDOW, step)
+    if exempt:
+        why += (" and never ran its %s pass (step skipped); ci-next.yml failed the same step in %s; its own digests: "
+                "%s") % (
+            ", ".join(exempt), same,
             ", ".join("%s %s" % (zone, row["test_ids"][zone]["next"][:6] + ".." if row["test_ids"][zone]["next"]
-                                 else "none (step skipped)") for zone in exempt))), []
+                                 else "none (step %s)" % row["test_ids"][zone]["next_step"]) for zone in exempt))
+    else:
+        why += "; ci-next.yml failed the same step in %s" % same
+    if gone:
+        # A row judged with a leg left out is never one of the 10: that leg's steps have no verdict on this side.
+        why += "; ci-next.yml's %s %s cancelled by the next push (run %s) before %s finished and hold%s no verdict" % (
+            ", ".join(gone_names), "was" if len(gone) == 1 else "were",
+            ", ".join(str(run) for run in sorted({leg["superseded_by"] for leg in gone})),
+            "it" if len(gone) == 1 else "they", "s" if len(gone) == 1 else "")
+    return EXEMPT, why, []
 
 
 # ── queue times ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -618,7 +668,7 @@ def read(repo, limit, timeout):
                 "conclusion": picked[name].get("conclusion")}
         row = {"sha": sha, "class": classify(sides["ci"], sides["next"]), "ci": sides["ci"], "next": sides["next"],
                "test_ids": {}, "ci_failed_steps": None, "ci_ran_steps": None, "next_legs": None,
-               "next_red_legs": None}
+               "next_red_legs": None, "next_superseded_legs": None}
         row["before_window"] = first_seen[sha] < first_seen[COUNT_FROM_SHA]
         row["counted"] = row["class"] != "NOT-COUNTED" and not row["before_window"]
         if row["counted"]:
@@ -638,7 +688,7 @@ def read(repo, limit, timeout):
                                          "ci_step": ran[0], "next_step": ran[1]}
             row.update(step_facts(
                 next((j for j in judged(picked["ci"])[1] if j["name"] == SERIAL["verdict_job"]), None),
-                judged(picked["next"])[1]))
+                judged(picked["next"])[1], judged(picked["next"])[0], shadow_runs))
         row["acceptance"], row["acceptance_why"] = judge(row)[:2]
         rows.append(row)
     newest_first = sorted(shadow_runs, key=lambda run: (run["created_at"], run["id"]), reverse=True)

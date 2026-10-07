@@ -21,6 +21,8 @@ no-runner-next-37362246327.json is a real ci-next.yml run (on a25b3690) whose ag
 both-red-same-step-6662e76e4e.json is a real push red on both sides at one step, and the only recording whose jobs
 carry their `steps`: the recorded pushes have none, so a row MADE red is given steps under the names that recording
 shows (red_at()), and a row left without them is the fail-closed case.
+both-red-superseded-legs-5982e7b2cc.json is a real push red on both sides at one step whose three legs still running
+were cancelled by the next push, with the ci-next.yml run that cancelled them.
 
 The script counts from COUNT_FROM_SHA, which none of these pushes is: an autouse fixture opens the window at the
 oldest recorded push instead, and the tests of the bound move it or put the shipped value back.
@@ -1720,6 +1722,290 @@ def test_a_met_reading_stays_met_under_a_limit_and_a_limit_never_makes_one(gh):
     for limit in ("1", "10", "40"):
         code, out, _ = gh(replies, "--limit", limit)
         assert code == 0 and "ACCEPTANCE: MET: 10 SHAs counted" in out
+
+
+# ── red on both sides, and the next push cancelled the legs still running ───────────────────────────────────────
+
+SUPERSEDED_RED = "both-red-superseded-legs-5982e7b2cc.json"
+REAL_CUT = "5982e7b2cc7e3fff210f63f77b0b61554b6db8c5"
+REAL_CUT_RUNS = {"ci": 37665534334, "next": 37665534464}
+NEXT_PUSH, NEXT_PUSH_RUN = "daf8042bd50d923c41d68fb60f771ad59f3eeb26", 37666476480
+SEEDS = "Seeds page layout, all three views (V5-SEEDSTAB-001)"
+CUT_LEGS = [{"name": name, "superseded_by": NEXT_PUSH_RUN} for name in ("unit-utc-cov", "gates-c", "unit-ny")]
+CUT_DETAIL = (
+    '           EXEMPT, not one of the 10 and not blocking: ci.yml failed at "Seeds page layout, all three views '
+    '(V5-SEEDSTAB-001)" and never ran its UTC, America/New_York pass (step skipped); ci-next.yml failed the same '
+    "step in gates-a; its own digests: UTC none (step cancelled), America/New_York none (step cancelled); "
+    "ci-next.yml's unit-utc-cov, gates-c, unit-ny were cancelled by the next push (run 37666476480) before they "
+    "finished and hold no verdict")
+NO_VERDICT = "red on both sides at different steps: ci-next.yml's %s is red with no failed step"
+CUT_PASS = ("%s pass: ci.yml skipped the pass and ci-next.yml has no usable test-ids notice though its pass step "
+            "concluded cancelled")
+
+
+def real_cut_push(replies, with_the_next_push=True):
+    """The recorded pair beside whatever `replies` holds, as real_red_push() does it, and (unless told not to) the
+    ci-next.yml run of the next push, which is what cancelled its three legs."""
+    real = copy.deepcopy(_fixture(SUPERSEDED_RED))
+    for side, workflow in (("ci", "ci.yml"), ("next", "ci-next.yml")):
+        listing(replies, workflow)["workflow_runs"].insert(0, real["runs"][side]["run"])
+        listing(replies, workflow)["total_count"] += 1
+        replies[jobs_path(real["runs"][side]["run"]["id"])] = real["runs"][side]["jobs"]
+        for job_id, notes in real["runs"][side]["annotations"].items():
+            replies[annotations_path(int(job_id))] = notes
+    if with_the_next_push:
+        listing(replies, "ci-next.yml")["workflow_runs"].insert(0, real["superseded_by"]["run"])
+        listing(replies, "ci-next.yml")["total_count"] += 1
+        replies[jobs_path(NEXT_PUSH_RUN)] = real["superseded_by"]["jobs"]
+    return Push(replies, REAL_CUT)
+
+
+def cut_row(replies, step=TODAY_V2, utc=(None, A), ny=(None, None), next_push_after_min=5):
+    """A push red on both sides at `step` (sha(1)) and the push after it (sha(2), green, `next_push_after_min`
+    later). Returns both; nothing of the first is cancelled yet."""
+    p = push(replies, sha(1))
+    q = push(replies, sha(2), minutes_after=next_push_after_min)
+    q.ids()
+    red_at(p, step)
+    p.ids(utc=utc, ny=ny)
+    return p, q
+
+
+def cut_leg(p, leg, step, ended_after_s, ran_s=None):
+    """One leg cancelled while running `step`, `ended_after_s` after its run was created (`ran_s`: after it had
+    run that long instead): what ran before passed, the step reads cancelled, the rest skipped."""
+    job, names = p.job("next", leg), step_names()[leg]
+    end = (_time(job["started_at"]) + datetime.timedelta(seconds=ran_s) if ran_s is not None
+           else _time(p.next["created_at"]) + datetime.timedelta(seconds=ended_after_s))
+    job.update(conclusion="cancelled", completed_at=end.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    p.next.update(conclusion="cancelled")
+    at = names.index(step)
+    p.steps("next", leg, {name: "skipped" if n > at or name.startswith("Canary") else
+                          "cancelled" if n == at else "success" for n, name in enumerate(names)})
+
+
+def test_the_recorded_pair_with_legs_cut_by_the_next_push_is_as_recorded():
+    real = _fixture(SUPERSEDED_RED)
+    runs = real["runs"]
+    assert {side: (one["run"]["id"], one["run"]["head_sha"], one["run"]["conclusion"], one["run"]["run_attempt"])
+            for side, one in runs.items()} == {"ci": (REAL_CUT_RUNS["ci"], REAL_CUT, "failure", 1),
+                                               "next": (REAL_CUT_RUNS["next"], REAL_CUT, "cancelled", 1)}
+    serial = runs["ci"]["jobs"]["jobs"][0]
+    steps = {s["name"]: s["conclusion"] for s in serial["steps"]}
+    assert [name for name, ended in steps.items() if ended == "failure"] == [SEEDS]
+    assert (steps[UTC_PASS], steps[NY_PASS]) == ("skipped", "skipped")
+    legs = {job["name"]: job for job in runs["next"]["jobs"]["jobs"]}
+    assert {name: job["conclusion"] for name, job in legs.items()} == dict(
+        {leg: "success" for leg in LEGS}, **{"gates-a": "failure", "build-and-test-next": "failure",
+                                             "unit-utc-cov": "cancelled", "unit-ny": "cancelled",
+                                             "gates-c": "cancelled"})
+    assert [s["name"] for s in legs["gates-a"]["steps"] if s["conclusion"] == "failure"] == [SEEDS]
+    newer = real["superseded_by"]["run"]
+    assert (newer["id"], newer["head_sha"], newer["path"]) == (NEXT_PUSH_RUN, NEXT_PUSH, runs["next"]["run"]["path"])
+    for name, pass_step in (("unit-utc-cov", UTC_PASS), ("unit-ny", NY_PASS), ("gates-c", None)):
+        ended = [s["conclusion"] for s in legs[name]["steps"]]
+        assert "failure" not in ended and ended.count("cancelled") == 1 and legs[name]["runner_id"]
+        assert pass_step is None or sa.step_conclusion(legs[name], pass_step) == "cancelled"
+        # cancelled after the next push's run existed, and long before its own timeout
+        assert _time(newer["created_at"]) < _time(legs[name]["completed_at"])
+        assert sa.duration_s(legs[name]) < 600 < sa.TIMEOUT_MIN["ci-next.yml"][name] * 60
+    assert all(not any(a["title"].startswith("test-ids ") for a in notes)
+               for one in runs.values() for notes in one["annotations"].values())
+
+
+def test_the_recorded_pair_whose_running_legs_the_next_push_cancelled_reads_exempt_with_its_detail_line(gh):
+    replies = recorded()
+    real_cut_push(replies)
+    code, doc = doc_of(gh, replies)
+    mine = row(doc, REAL_CUT)
+    assert code == 0 and (mine["class"], mine["counted"], mine["acceptance"]) == ("AGREE-RED", True, "EXEMPT")
+    assert (mine["ci"]["why"], mine["next"]["why"]) == ("failed: build-and-test", "failed: gates-a")
+    assert mine["test_ids"] == {"UTC": zone(ci_step="skipped", next_step="cancelled"),
+                                NY: zone(ci_step="skipped", next_step="cancelled")}
+    assert mine["ci_failed_steps"] == [SEEDS] and mine["next_legs"] == 8
+    assert mine["next_red_legs"] == [{"name": "unit-utc-cov", "failed_steps": []},
+                                     {"name": "gates-a", "failed_steps": [SEEDS]},
+                                     {"name": "gates-c", "failed_steps": []}, {"name": "unit-ny", "failed_steps": []}]
+    assert mine["next_superseded_legs"] == CUT_LEGS
+    assert mine["acceptance_why"] == CUT_DETAIL.strip()
+    assert doc["acceptance"]["exempt"] == [REAL_CUT] and doc["acceptance"]["qualifying"] == 0
+    assert REAL_CUT not in [one["sha"] for one in doc["acceptance"]["blocking"]]
+    assert doc["acceptance"]["missing"] == ["0 of 10 counted", "test IDs absent on 2 row(s)"]  # the two recorded rows
+    after = row(doc, NEXT_PUSH)  # ci.yml's run of the next push is not recorded
+    assert (after["class"], after["ci"]["state"], after["next"]["state"], after["next_superseded_legs"]) == (
+        "NOT-COUNTED", "MISSING", "GREEN", None)
+    lines = gh(replies)[1].split("\n")
+    at = next(n for n, line in enumerate(lines) if line.startswith("5982e7b2cc AGREE-RED"))
+    assert lines[at + 1:at + 3] == ["           ci.yml: failed: build-and-test | ci-next.yml: failed: gates-a",
+                                    CUT_DETAIL]
+    assert "different steps" not in lines[-2] and lines[-2].endswith(
+        "test IDs absent on 2 row(s). Exempt (red on both sides at the same step, serial pass never ran): 1: "
+        "5982e7b2cc")
+
+
+def test_the_recorded_pair_beside_the_earlier_one_is_two_exempt_rows_and_ten_others_still_meet(gh):
+    replies = recorded()
+    ten(replies)
+    real_red_push(replies)
+    real_cut_push(replies)
+    code, verdict, line = acceptance(gh, replies)
+    assert code == 0 and verdict == {"met": True, "missing": [], "counted": 12, "counted_red": 0, "qualifying": 10,
+                                     "exempt": [REAL_CUT, REAL_RED], "blocking": []}
+    assert ". Exempt (red on both sides at the same step, serial pass never ran): 2: 5982e7b2cc, 6662e76e4e" in line
+
+
+def test_the_recorded_pair_without_the_next_push_behind_it_blocks_as_it_did(gh):
+    """The same legs, cancelled with nothing pushed after: a hand cancel or a timeout, and that is a red."""
+    replies = recorded()
+    real_cut_push(replies, with_the_next_push=False)
+    mine = row(doc_of(gh, replies)[1], REAL_CUT)
+    assert mine["class"] == "AGREE-RED" and mine["next_superseded_legs"] == [] and mine["acceptance"] == "BLOCKS"
+    assert mine["acceptance_why"] == "BLOCKS acceptance: " + "; ".join(
+        [NO_VERDICT % "unit-utc-cov", CUT_PASS % "UTC", CUT_PASS % NY])
+
+
+def test_a_leg_the_next_push_cancelled_is_left_out_and_its_cancelled_pass_step_reads_as_skipped(gh):
+    replies = recorded()
+    p, q = cut_row(replies)
+    cut_leg(p, "unit-ny", NY_PASS, ended_after_s=360)  # the next push came at 300 s
+    code, doc, mine, _ = _read(gh, replies)
+    assert mine["class"] == "AGREE-RED" and mine["next"]["why"] == "failed: gate-probes"
+    assert {"name": "unit-ny", "failed_steps": []} in mine["next_red_legs"]
+    assert mine["next_superseded_legs"] == [{"name": "unit-ny", "superseded_by": q.next["id"]}]
+    assert mine["test_ids"][NY] == zone(ci_step="skipped", next_step="cancelled")
+    assert sa.same_step(mine) == ("HOLDS", None) and mine["acceptance"] == "EXEMPT"
+    assert mine["acceptance_why"] == (
+        'EXEMPT, not one of the 10 and not blocking: ci.yml failed at "%s" and never ran its UTC, America/New_York '
+        "pass (step skipped); ci-next.yml failed the same step in gate-probes; its own digests: UTC aaaaaa.., "
+        "America/New_York none (step cancelled); ci-next.yml's unit-ny was cancelled by the next push (run %d) "
+        "before it finished and holds no verdict" % (TODAY_V2, q.next["id"]))
+    assert doc["acceptance"]["exempt"] == [sha(1)] and doc["acceptance"]["qualifying"] == 1  # the next push alone
+
+
+def test_a_leg_cancelled_before_the_next_push_existed_still_blocks(gh):
+    """Cancelled at 240 s; the next push was made at 300 s. A cancel cannot come from a push not yet made."""
+    replies = recorded()
+    p, q = cut_row(replies)
+    cut_leg(p, "unit-ny", NY_PASS, ended_after_s=240)
+    code, doc, mine, zones = _read(gh, replies)
+    assert mine["class"] == "AGREE-RED" and mine["next_superseded_legs"] == []
+    assert sa.same_step(mine) == ("STEP-DIFFERENT", "ci-next.yml's unit-ny is red with no failed step")
+    assert zones == {"UTC": "EXEMPT", NY: "BLOCK"} and mine["acceptance"] == "BLOCKS"
+    assert mine["acceptance_why"] == "BLOCKS acceptance: " + "; ".join([NO_VERDICT % "unit-ny", CUT_PASS % NY])
+    assert doc["acceptance"]["exempt"] == []
+
+
+def test_a_leg_cancelled_at_its_timeout_still_blocks_though_a_newer_push_was_behind_it(gh):
+    replies = recorded()
+    p, q = cut_row(replies)
+    cut_leg(p, "unit-ny", NY_PASS, None, ran_s=sa.TIMEOUT_MIN["ci-next.yml"]["unit-ny"] * 60)
+    assert sa.timed_out(sa.SHADOW, p.jobs("next")) == ["unit-ny"]
+    assert sa.superseded_by(p.next, [p.job("next", "unit-ny")], [p.next, q.next]) == q.next["id"]
+    code, doc, mine, zones = _read(gh, replies)
+    assert mine["class"] == "AGREE-RED" and mine["next_superseded_legs"] == []
+    assert zones == {"UTC": "EXEMPT", NY: "BLOCK"} and mine["acceptance"] == "BLOCKS"
+    assert mine["acceptance_why"] == "BLOCKS acceptance: " + "; ".join([NO_VERDICT % "unit-ny", CUT_PASS % NY])
+    cut_leg(p, "unit-ny", NY_PASS, None, ran_s=sa.TIMEOUT_MIN["ci-next.yml"]["unit-ny"] * 60 - 1)  # a second short
+    assert _read(gh, replies)[2]["acceptance"] == "EXEMPT"
+
+
+def test_a_cancelled_leg_with_a_failed_step_is_judged_by_that_step_though_a_newer_push_was_behind_it(gh):
+    """gates-c failed a step ci.yml ran and passed, then was cancelled: it holds a verdict, and it is another step."""
+    names = step_names()
+    before = names["build-and-test"][:names["build-and-test"].index(TODAY_V2)]
+    own = next(name for name in names["gates-c"]
+               if name in before and not any(name in names[leg] for leg in LEGS if leg != "gates-c"))
+    replies = recorded()
+    p, q = cut_row(replies, ny=(None, B))
+    cut_leg(p, "gates-c", names["gates-c"][names["gates-c"].index(own) + 1], ended_after_s=360)
+    next(step for step in p.job("next", "gates-c")["steps"] if step["name"] == own).update(conclusion="failure")
+    code, doc, mine, _ = _read(gh, replies)
+    assert mine["next_superseded_legs"] == [] and {"name": "gates-c", "failed_steps": [own]} in mine["next_red_legs"]
+    assert sa.same_step(mine) == (
+        "STEP-DIFFERENT", 'ci-next.yml\'s gates-c failed "%s", a step ci.yml ran and did not fail' % own)
+    assert mine["acceptance"] == "BLOCKS" and doc["acceptance"]["exempt"] == []
+
+
+def test_when_every_red_leg_was_cancelled_by_the_next_push_the_step_cannot_be_read_and_the_row_blocks(gh):
+    """Not reachable from a real reading (a run with no failed leg and a newer push behind it is SUPERSEDED and not
+    counted), so the row is made: the one leg that failed the step is taken out, leaving only the cancelled one."""
+    replies = recorded()
+    p, q = cut_row(replies)
+    cut_leg(p, "unit-ny", NY_PASS, ended_after_s=360)
+    mine = _read(gh, replies)[2]
+    mine["next_red_legs"] = [leg for leg in mine["next_red_legs"] if leg["name"] == "unit-ny"]
+    assert [leg["name"] for leg in mine["next_superseded_legs"]] == ["unit-ny"]
+    why = ("every red ci-next.yml leg (unit-ny) was cancelled by the next push before it finished, so no leg holds a "
+           "verdict")
+    assert sa.same_step(mine) == ("STEP-UNREADABLE", why)
+    assert sa.judge(mine) == (
+        "BLOCKS", "BLOCKS acceptance: red on both sides and the failing step cannot be read: " + why,
+        ["STEP-UNREADABLE"])
+    mine["next_superseded_legs"] = []  # and the same legs with no newer push: told, and different, as before
+    assert sa.same_step(mine) == ("STEP-DIFFERENT", 'ci.yml failed at "%s" and no ci-next.yml leg failed that step'
+                                  % TODAY_V2)
+
+
+def test_a_leg_the_next_push_cancelled_changes_nothing_on_a_row_that_is_not_red_on_both_sides(gh):
+    """A DISAGREE: ci.yml green (its New York pass step made to read skipped, with no notice, so that the pass would
+    be exempt if the leniency reached this row), the shadow red at gate-probes with unit-ny cut by the next push."""
+    replies = recorded()
+    p = push(replies, sha(1))
+    q = push(replies, sha(2), minutes_after=5)
+    q.ids()
+    names = step_names()
+    p.steps("ci", "build-and-test", dict(_stopped_at(names["build-and-test"], 99), **{NY_PASS: "skipped"}))
+    for leg in LEGS:
+        green_leg(p, leg)
+    red_leg(p, "gate-probes")
+    fail_step(p, "gate-probes", TODAY_V2)
+    cut_leg(p, "unit-ny", NY_PASS, ended_after_s=360)
+    p.ids(utc=(A, A), ny=(None, None))
+    code, doc, mine, _ = _read(gh, replies)
+    assert code == 1 and mine["class"] == "DISAGREE"
+    assert mine["next_superseded_legs"] == [{"name": "unit-ny", "superseded_by": q.next["id"]}]  # a fact, not a pass
+    assert mine["acceptance"] == "BLOCKS" and mine["acceptance_why"] == (
+        "BLOCKS acceptance: the two sides disagree; " + CUT_PASS % NY)
+    assert sa.judge(mine)[2] == ["DISAGREE", "IDS-ABSENT"] and doc["acceptance"]["exempt"] == []
+    green = dict(mine, **{"class": "AGREE-GREEN"})  # the same facts on a row green on both sides
+    assert sa.judge(green)[:2] == ("BLOCKS", "BLOCKS acceptance: " + CUT_PASS % NY)
+
+
+def test_a_serial_pass_that_ran_and_left_no_notice_blocks_though_the_shadow_leg_was_cancelled_by_the_next_push(gh):
+    """ci.yml went red after both passes, so its New York pass ran and owed its notice. That is the serial side's
+    own defect, and the shadow leg having been cut excuses none of it."""
+    replies = recorded()
+    p, q = cut_row(replies, step=MEASURED_FLOOR, utc=(A, A), ny=(None, None))
+    cut_leg(p, "unit-ny", NY_PASS, ended_after_s=360)
+    code, doc, mine, _ = _read(gh, replies)
+    assert mine["class"] == "AGREE-RED" and [leg["name"] for leg in mine["next_superseded_legs"]] == ["unit-ny"]
+    assert mine["test_ids"][NY] == zone(ci_step="success", next_step="cancelled")
+    assert sa.same_step(mine) == ("HOLDS", None) and mine["acceptance"] == "BLOCKS"
+    assert mine["acceptance_why"] == ("BLOCKS acceptance: America/New_York pass: ci.yml has no usable test-ids "
+                                      "notice and its pass step concluded success")
+    assert sa.zone_result(zone(ci_step="skipped", next_step="cancelled"), True) == ("EXEMPT", None)
+    assert sa.zone_result(zone(ci_step="skipped", next_step="cancelled"))[0] == "BLOCK"
+    for ci_step in ("success", "failure", "cancelled", None):
+        assert sa.zone_result(zone(ci_step=ci_step, next_step="cancelled"), True)[0] == "BLOCK", ci_step
+    for next_step in ("success", "failure", None):  # only a pass step the push cancelled reads as skipped
+        assert sa.zone_result(zone(ci_step="skipped", next_step=next_step), True)[0] == "BLOCK", next_step
+    assert sa.zone_result(zone(ci=A, ci_step="skipped", next_step="cancelled"), True)[0] == "BLOCK"
+
+
+def test_a_row_judged_with_a_leg_left_out_is_never_one_of_the_ten_even_with_equal_ids_in_both_passes(gh):
+    """Red on both sides at a step after both passes, test IDs equal in both, and gates-c cut by the next push.
+    ci.yml ran and passed every gates-c step; the shadow has no verdict on them. Not blocking, and not counted."""
+    replies = recorded()
+    p, q = cut_row(replies, step=MEASURED_FLOOR, utc=(A, A), ny=(B, B))
+    assert _read(gh, replies)[2]["acceptance"] == "QUALIFIES"  # before anything is cancelled
+    cut_leg(p, "gates-c", step_names()["gates-c"][-4], ended_after_s=360)
+    code, doc, mine, zones = _read(gh, replies)
+    assert zones == {"UTC": "OK", NY: "OK"} and sa.same_step(mine) == ("HOLDS", None)
+    assert mine["acceptance"] == "EXEMPT" and mine["acceptance_why"] == (
+        'EXEMPT, not one of the 10 and not blocking: ci.yml failed at "%s"; ci-next.yml failed the same step in '
+        "unit-utc-cov; ci-next.yml's gates-c was cancelled by the next push (run %d) before it finished and holds "
+        "no verdict" % (MEASURED_FLOOR, q.next["id"]))
+    assert doc["acceptance"]["exempt"] == [sha(1)] and doc["acceptance"]["counted_red"] == 0
 
 
 # ── a job no runner took ────────────────────────────────────────────────────────────────────────────────────────
