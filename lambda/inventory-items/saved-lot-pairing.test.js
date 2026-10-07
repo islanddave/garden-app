@@ -24,7 +24,9 @@ import { isSavedLot } from '../../src/components/seed/seedLots.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GUARD_SRC = readFileSync(resolve(__dirname, 'delete-guard.js'), 'utf8');
 const PREFLIGHT = GUARD_SRC.match(/sql`([\s\S]*?)`/)[1];
-const LOTS_SRC = readFileSync(resolve(__dirname, '../../src/components/seed/seedLots.js'), 'utf8');
+// isSavedLot's BODY lives in seedParents.js since V5-SEEDMULTIPARENT-001 (seedLots.js re-exports it, so
+// every importer is unchanged); the facts are read from the file that holds the body.
+const LOTS_SRC = readFileSync(resolve(__dirname, '../../src/components/seed/seedParents.js'), 'utf8');
 
 // The saved_lot expression, split into its OR'd terms.
 const EXPR = PREFLIGHT.match(/\((COALESCE[\s\S]*?)\)\s+AS saved_lot\b/)?.[1] ?? null;
@@ -61,7 +63,7 @@ describe('saved lot — the preflight\'s SQL and isSavedLot agree', () => {
   });
 
   it('the SQL tests exactly isSavedLot\'s facts — no more, no fewer', () => {
-    expect(LOT_BODY, 'isSavedLot not found in seedLots.js').not.toBe('');
+    expect(LOT_BODY, 'isSavedLot not found in seedParents.js').not.toBe('');
     expect(JS_FACTS.sort()).toEqual(['seed_stage', 'source_kind', 'source_plant_id']);
     expect([...SQL_FACTS].sort()).toEqual([...JS_FACTS].sort());
   });
