@@ -44,6 +44,13 @@
 // exit 1. It is a permanent, runnable proof that this file can go red. CI runs the gate, not the twin
 // (contract O-5, the convention for every clearance gate).
 //
+// A SECOND TWIN, because the first proves less than it looks. Every `--probe-nothing` failure is the
+// count check (the page did not produce what is measured), after which the case is skipped: it shows
+// the gate cannot pass on an empty page and never reaches a layout assertion. `npm run
+// gate:save-seed-sheet:probe-short` is the gate itself with the remove control forced to 30px through
+// the mutation seam below; it MUST exit 1, and on the tap floor ("renders 44x30, under the 44px tap
+// floor"), on every case that has a remove control. Run by hand, like the first twin.
+//
 // TRAPS THE SIBLINGS ALREADY PAID FOR (seeds-saved-clearance.mjs has the long form):
 //   1. macOS Chrome floors an OS window at ~500px, so geometry comes from
 //      Emulation.setDeviceMetricsOverride and the run REFUSES TO PASS unless the page self-reports it.

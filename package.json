@@ -24,6 +24,7 @@
     "gate:seeds-saved:probe-nothing": "node scripts/layout-gate/seeds-saved-clearance.mjs --probe-nothing",
     "gate:save-seed-sheet": "node scripts/layout-gate/save-seed-sheet-clearance.mjs",
     "gate:save-seed-sheet:probe-nothing": "node scripts/layout-gate/save-seed-sheet-clearance.mjs --probe-nothing",
+    "gate:save-seed-sheet:probe-short": "GATE_MUTATE_CSS='[data-testid=save-seed-from-remove]{min-height:30px!important;height:30px!important}' node scripts/layout-gate/save-seed-sheet-clearance.mjs",
     "gate:seeds-page": "node scripts/layout-gate/seeds-page-shot.mjs --outdir artifacts/layout-gate",
     "gate:seeds-page:probe-nothing": "node scripts/layout-gate/seeds-page-shot.mjs --probe-nothing --outdir artifacts/layout-gate/probe-nothing",
     "gate:seed-detail": "node scripts/layout-gate/seed-detail-shot.mjs --outdir artifacts/layout-gate",
