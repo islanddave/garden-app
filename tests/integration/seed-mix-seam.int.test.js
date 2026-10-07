@@ -33,6 +33,7 @@
 //     writes the captured examples to that path and does NOT compare; paste them into the JSON.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { randomUUID } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -59,12 +60,14 @@ const [present] = await directSql`
          EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_schema = 'public' AND table_name = 'plant_varieties' AND column_name = 'blend_key') AS blend_key,
          EXISTS (SELECT 1 FROM information_schema.columns
-                  WHERE table_schema = 'public' AND table_name = 'inventory_items' AND column_name = 'seed_parent_plant_count') AS plant_count`
+                  WHERE table_schema = 'public' AND table_name = 'inventory_items' AND column_name = 'seed_parent_plant_count') AS plant_count,
+         to_regclass('public.seed_lot_addition') IS NOT NULL AS additions`
 const MISSING = [
   !present.links && 'public.seed_lot_parent_planting (v5-seedmultiparent-001)',
   !present.blend_key && 'plant_varieties.blend_key (v5-varietyblend-001)',
   !present.components && 'public.variety_blend_component (v5-varietyblend-001)',
   !present.plant_count && 'inventory_items.seed_parent_plant_count (v5-seedplantcount-001)',
+  !present.additions && 'public.seed_lot_addition (v5-seedlotaddition-001)',
 ].filter(Boolean)
 const READY = MISSING.length === 0
 
@@ -103,14 +106,16 @@ const expectKeys = (body, keys, what) => {
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 // The file, entered a second time. Everything but `examples`.
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
-const LOT_ROUTES = ['POST /api/inventory-items', 'PUT /api/inventory-items/:id/source-plants']
-const FILING_ROUTES = ['PUT /api/inventory-items/:id/filing', 'PUT /api/inventory-items/:id/source-plants']
+const ADDITIONS_ROUTE = 'POST /api/inventory-items/:id/seed-additions'
+const LOT_ROUTES = ['POST /api/inventory-items', 'PUT /api/inventory-items/:id/source-plants', ADDITIONS_ROUTE]
+const FILING_ROUTES = ['PUT /api/inventory-items/:id/filing', 'PUT /api/inventory-items/:id/source-plants', ADDITIONS_ROUTE]
+const additionRefusal = (status, error) => ({ status, routes: [ADDITIONS_ROUTE], required: ['error', 'code'], error })
 const PINNED = {
   name: 'seed-mix',
-  version: 2,
+  version: 3,
   version_rule: 'Raise this number with ANY change to this file. The seam test pins it and pins every list below; a client test that builds mocks from this file asserts the number it was written against.',
-  release: 'V5-SEEDMULTIPARENT-001 release 2a / V5-VARIETYBLEND-001',
-  source: 'R2A-CONTRACT.md sections 2 and 3',
+  release: 'V5-SEEDMULTIPARENT-001 release 2a / V5-VARIETYBLEND-001 / V5-SEEDLOTADDITION-001 release 3',
+  source: 'R2A-CONTRACT.md sections 2 and 3; R3-CONTRACT.md sections 2, 3 and 6.5',
   verified_by: 'tests/integration/seed-mix-seam.int.test.js',
   varieties_blend: {
     route: 'POST /api/varieties/blend',
@@ -149,9 +154,72 @@ const PINNED = {
   },
   seed_measure_put: {
     route: 'PUT /api/inventory-items/:id/seed-measure',
-    request_optional: ['seed_count', 'seed_weight_g', 'seed_count_estimated', 'seed_parent_plant_count'],
-    statuses: [200],
+    request_optional: [
+      'seed_count', 'seed_weight_g', 'seed_count_estimated', 'seed_parent_plant_count',
+      'expected_seed_count', 'expected_seed_count_estimated', 'expected_seed_weight_g',
+    ],
+    statuses: [200, 409],
     required: ['seed_parent_plant_count'],
+  },
+  seed_additions_post: {
+    route: ADDITIONS_ROUTE,
+    replay_example: `${ADDITIONS_ROUTE} (replay)`,
+    request_required: ['addition_key', 'plant_id', 'expected_source_plant_ids', 'picked_on'],
+    request_optional: ['add_seed_count', 'add_estimated', 'add_seed_weight_g', 'filing'],
+    request_never: ['name', 'type', 'category'],
+    statuses: [200],
+    required: [
+      'id', 'name', 'variety_id', 'source_plant_id', 'source_plants', 'seed_count', 'seed_count_estimated',
+      'seed_weight_g', 'seed_parent_plant_count', 'quantity_on_hand', 'updated_at', 'addition',
+    ],
+    addition_required: ['id', 'replayed', 'plant_was_added', 'count_applied', 'weight_applied'],
+    required_when_filing_sent: ['filing'],
+    saved_rule: 'Only a 2xx whose body carries addition.id is a save. A replay (the same addition_key on the same lot) is a 200 with addition.replayed true, the lot as it stands now, and no filing key.',
+    refusals: {
+      lot_used_up: additionRefusal(409, 'This seed lot is used up or no longer active. Nothing was added.'),
+      addition_key_conflict: additionRefusal(409, 'That addition is already recorded against another seed lot.'),
+      own_source_lot: additionRefusal(400, 'This plant was grown from this seed lot.'),
+      amount_too_large: additionRefusal(400, 'That would make the seed count too large.'),
+      variety_mismatch_no_parents: additionRefusal(400, 'This seed lot has no plant on record and is filed under a different variety.'),
+      too_many_parents: additionRefusal(400, 'source_plant_ids can name at most 12 plantings'),
+    },
+  },
+  seed_lots_open_get: {
+    route: 'GET /api/inventory-items/seed-lots-open',
+    query_required: ['plant_id'],
+    statuses: [200],
+    required: ['plant_id', 'crop_slug', 'open_lots'],
+    row_required: [
+      'id', 'name', 'variety_id', 'variety_name', 'variety_rank', 'crop_slug', 'seed_stage', 'seed_process',
+      'stage_entered_at', 'created_at', 'updated_at', 'seed_count', 'seed_count_estimated', 'seed_weight_g',
+      'seed_parent_plant_count', 'quantity_on_hand', 'status', 'source_plant_id', 'is_member', 'same_variety',
+      'source_plants',
+    ],
+    order: 'is_member first, then same_variety, then newest (created_at, then id).',
+    failed_rule: 'Anything but a 2xx whose open_lots is an array is the failed state: an older Lambda answers this path 500.',
+  },
+  plants_seed_lots_get: {
+    route: 'GET /api/plants/:id/seed-lots',
+    statuses: [200],
+    envelope_required: ['plant_id', 'seed_lots'],
+    required: [
+      'id', 'name', 'seed_stage', 'quantity_on_hand', 'created_at', 'seed_count', 'seed_count_estimated',
+      'seed_weight_g', 'variety_name', 'other_parents',
+    ],
+    other_parent_required: ['id', 'name', 'variety_name'],
+  },
+  filing_cases: {
+    rule: 'same_variety = adding the plant would NOT change what the lot is filed under: the lot\'s variety is the plant\'s, OR a live parent\'s planting has the plant\'s variety. refile = the request must carry `filing`: the mix of the set\'s distinct varieties (the lot\'s parents plus the plant) is not what the lot is filed under now.',
+    symbols: 'A, B and C are three varieties of one crop; mix(A,B) is their named mix. null in parent_varieties is a parent planting with no variety.',
+    cases: [
+      { name: 'one parent of A, filed A, a plant of A', lot_variety: 'A', parent_varieties: ['A'], plant_variety: 'A', same_variety: true, refile: false, refile_to: null },
+      { name: 'no plant on record, filed A, a plant of A', lot_variety: 'A', parent_varieties: [], plant_variety: 'A', same_variety: true, refile: false, refile_to: null },
+      { name: 'a parent with no variety, filed A, a plant of A', lot_variety: 'A', parent_varieties: [null], plant_variety: 'A', same_variety: true, refile: false, refile_to: null },
+      { name: 'one parent of A, filed A, a plant of B', lot_variety: 'A', parent_varieties: ['A'], plant_variety: 'B', same_variety: false, refile: true, refile_to: 'mix(A,B)' },
+      { name: 'parents of A and B, filed mix(A,B), a plant of A', lot_variety: 'mix(A,B)', parent_varieties: ['A', 'B'], plant_variety: 'A', same_variety: true, refile: false, refile_to: null },
+      { name: 'parents of A and B, filed mix(A,B), a plant of C', lot_variety: 'mix(A,B)', parent_varieties: ['A', 'B'], plant_variety: 'C', same_variety: false, refile: true, refile_to: 'mix(A,B,C)' },
+      { name: 'one parent of A, filed by hand under mix(A,B), a plant of B', lot_variety: 'mix(A,B)', parent_varieties: ['A'], plant_variety: 'B', same_variety: false, refile: false, refile_to: null },
+    ],
   },
   refusals: {
     parent_without_variety: { status: 400, routes: LOT_ROUTES, required: ['error', 'code', 'plant_id'] },
@@ -167,14 +235,20 @@ const PINNED = {
     },
     lot_changed: {
       status: 409,
-      routes: ['PUT /api/inventory-items/:id/source-plants', 'PATCH /api/inventory-items/:id/source-plant', 'PUT /api/inventory-items/:id/filing'],
+      routes: [
+        'PUT /api/inventory-items/:id/source-plants', 'PATCH /api/inventory-items/:id/source-plant', 'PUT /api/inventory-items/:id/filing',
+        ADDITIONS_ROUTE, 'PUT /api/inventory-items/:id/seed-measure',
+      ],
       required: ['error', 'code'],
       error: 'This seed lot was changed at the same moment. Reload and try again.',
-      optional: ['source_plant_id', 'source_plants', 'variety_id', 'name'],
+      optional: [
+        'source_plant_id', 'source_plants', 'variety_id', 'name',
+        'seed_count', 'seed_count_estimated', 'seed_weight_g', 'seed_parent_plant_count', 'quantity_on_hand',
+      ],
     },
     multi_parent_lot: { status: 409, routes: ['PATCH /api/inventory-items/:id/source-plant'], required: ['error', 'code', 'source_plant_ids'] },
   },
-  examples_rule: 'One real reply per route, taken from the seam test\'s own fixture and cut down to the keys promised above; ids and names are placeholders. The seam test compares every real reply with its example by type, key by key. Build mocks from these.',
+  examples_rule: 'One real reply per route (and one more for a replayed addition, under seed_additions_post.replay_example), taken from the seam test\'s own fixture and cut down to the keys promised above; ids and names are placeholders. The seam test compares every real reply with its example by type, key by key. Build mocks from these.',
 }
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -184,6 +258,11 @@ const pick = (o, keys) => Object.fromEntries(keys.map((k) => [k, o?.[k]]))
 const lotKeys = (b) => ({
   ...pick(b, CONTRACT.seed_lot.required),
   source_plants: (b.source_plants ?? []).map((p) => pick(p, CONTRACT.seed_lot.source_plant_required)),
+})
+const additionKeys = (b) => ({
+  ...pick(b, CONTRACT.seed_additions_post.required),
+  source_plants: (b.source_plants ?? []).map((p) => pick(p, CONTRACT.seed_lot.source_plant_required)),
+  addition: pick(b.addition, CONTRACT.seed_additions_post.addition_required),
 })
 // A reply cut down to what the file promises for its route. Every reply key list in the file is read
 // here, so each is exercised against a real reply as well as pinned above.
@@ -207,6 +286,30 @@ const PROMISED = {
     previous: pick(b.previous, CONTRACT.filing_put.previous_required),
   }),
   'PUT /api/inventory-items/:id/seed-measure': (b) => pick(b, CONTRACT.seed_measure_put.required),
+  // Release 3. The first reply to a re-filing addition carries `filing` (the set route's own shape);
+  // a replay never does, so the two have a cut of their own each.
+  [ADDITIONS_ROUTE]: (b) => ({
+    ...additionKeys(b),
+    filing: {
+      ...pick(b.filing, CONTRACT.source_plants_put.filing_required),
+      previous: pick(b.filing?.previous, CONTRACT.source_plants_put.previous_required),
+    },
+  }),
+  [`${ADDITIONS_ROUTE} (replay)`]: (b) => additionKeys(b),
+  'GET /api/inventory-items/seed-lots-open': (b) => ({
+    ...pick(b, CONTRACT.seed_lots_open_get.required),
+    open_lots: (b.open_lots ?? []).map((row) => ({
+      ...pick(row, CONTRACT.seed_lots_open_get.row_required),
+      source_plants: (row.source_plants ?? []).map((p) => pick(p, CONTRACT.seed_lot.source_plant_required)),
+    })),
+  }),
+  'GET /api/plants/:id/seed-lots': (b) => ({
+    ...pick(b, CONTRACT.plants_seed_lots_get.envelope_required),
+    seed_lots: (b.seed_lots ?? []).map((row) => ({
+      ...pick(row, CONTRACT.plants_seed_lots_get.required),
+      other_parents: (row.other_parents ?? []).map((p) => pick(p, CONTRACT.plants_seed_lots_get.other_parent_required)),
+    })),
+  }),
 }
 // null is a type of its own here: the fixture is fixed, so a key that is null in the example is null
 // in the reply. A missing key reads 'undefined' and never matches.
@@ -268,6 +371,8 @@ describe.skipIf(!READY)('the save flow across both Lambdas', () => {
     const routes = [
       CONTRACT.varieties_blend.route, ...CONTRACT.seed_lot.routes, CONTRACT.source_plants_put.route,
       CONTRACT.filing_put.route, CONTRACT.seed_measure_put.route,
+      CONTRACT.seed_additions_post.route, CONTRACT.seed_additions_post.replay_example,
+      CONTRACT.seed_lots_open_get.route, CONTRACT.plants_seed_lots_get.route,
     ]
     expect(Object.keys(PROMISED).sort()).toEqual([...routes].sort())
     if (!RECORD_TO) expect(Object.keys(examples ?? {}).sort()).toEqual([...routes].sort())
@@ -582,5 +687,141 @@ describe.skipIf(!READY)('every other shape in tests/contracts/seed-mix.json, aga
     // parents_changed needs a concurrent writer; it is driven in seed-lot-rules.int.test.js (C7, C8),
     // where the body is held to exactly { error, code } with this sentence.
     expect(Object.keys(CONTRACT.refusals).sort()).toEqual([...Object.keys(seen), 'parents_changed'].sort())
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+// Release 3 (V5-SEEDLOTADDITION-001) — the three replies the "put it in a seed lot I already started"
+// sheet is built on, each against its recorded example
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+// The sheet reads GET /api/plants/:id/seed-lots (the plant's own lots) and GET /seed-lots-open (any lot
+// it could go into), builds its POST from a row of either, and reads the POST's reply. Its tests mock
+// all three from the examples in the contract file, so each is held here to a real reply by type.
+//
+// ITS OWN CROP. Everything below is the fixture's second crop (`b`), which no case above files a lot
+// under or links a planting of — so what the open-lots read returns here is this block's one lot and
+// nothing left behind by an earlier case, on every run.
+describe.skipIf(!READY)('release 3 — the add-to-a-lot replies, against their recorded examples', () => {
+  const r3 = {}
+  const seedLots = (plantId) => {
+    setTestUserId(USER)
+    return callHandler(plantsHandler, { method: 'GET', path: `/api/plants/${plantId}/seed-lots` })
+  }
+
+  beforeAll(async () => {
+    // A second variety of crop b, and the named mix of the two.
+    const [second] = await directSql`
+      INSERT INTO plant_varieties (name, created_by, crop_type_slug, variety_rank)
+      VALUES (${`sms-variety-b2-${RUN}`}, ${USER}, ${fx.crops.b}, 'cultivar') RETURNING id`
+    r3.b2 = second.id
+    const mix = await varieties('POST', '/api/varieties/blend', { component_variety_ids: [fx.v.b, r3.b2], create: true })
+    expect(mix.status, JSON.stringify(mix.body)).toBe(201)
+    r3.mix = mix.body
+    r3.q1 = await planting('q1', fx.v.b)
+    r3.q2 = await planting('q2', r3.b2)
+    // One lot of variety b from q1: drying, counted, weighed, one plant.
+    const made = await inv('POST', '/api/inventory-items', lotBody({ variety_id: fx.v.b, source_plant_ids: [r3.q1] }))
+    expect(made.status, JSON.stringify(made.body)).toBe(201)
+    r3.lot = made.body.id
+    const staged = await inv('POST', `/api/inventory-items/${r3.lot}/seed-stage`, { stage: 'drying', seed_process: 'dry' })
+    expect(staged.status, JSON.stringify(staged.body)).toBe(201)
+    const measured = await inv('PUT', `/api/inventory-items/${r3.lot}/seed-measure`, {
+      seed_count: 100, seed_count_estimated: false, seed_weight_g: 12.345, seed_parent_plant_count: 1,
+    })
+    expect(measured.status, JSON.stringify(measured.body)).toBe(200)
+  }, 60000)
+
+  // The one row this block writes that neither the kit's teardown nor the global sweep removes: the
+  // stage-log entry POST /seed-stage made (it names the lot, with no ON DELETE action). Before the
+  // file's own afterAll, so the lot can then go.
+  afterAll(async () => {
+    if (r3.lot) await directSql`DELETE FROM seed_lot_stage_log WHERE inventory_item_id = ${r3.lot}`
+  })
+
+  it('GET /seed-lots-open for a second planting of the crop: the lot, every REQUIRED key, and each row exactly the row keys', async () => {
+    const r = await inv('GET', `/api/inventory-items/seed-lots-open?plant_id=${r3.q2}`)
+    expect(CONTRACT.seed_lots_open_get.statuses).toContain(r.status)
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    expect(Object.keys(r.body).sort()).toEqual([...CONTRACT.seed_lots_open_get.required].sort())
+    expect(r.body).toMatchObject({ plant_id: r3.q2, crop_slug: fx.crops.b })
+    expect(r.body.open_lots.map((row) => row.id)).toEqual([r3.lot])
+    for (const row of r.body.open_lots) {
+      expect(Object.keys(row).sort()).toEqual([...CONTRACT.seed_lots_open_get.row_required].sort())
+      for (const p of row.source_plants) expect(Object.keys(p).sort()).toEqual([...CONTRACT.seed_lot.source_plant_required].sort())
+    }
+    // The contract's filing case "one parent of A, filed A, a plant of B": not the same variety.
+    expect(r.body.open_lots[0]).toMatchObject({ is_member: false, same_variety: false, variety_id: fx.v.b, seed_stage: 'drying' })
+    expectExample('GET /api/inventory-items/seed-lots-open', r)
+    r3.row = r.body.open_lots[0]
+  })
+
+  it('POST /:id/seed-additions built from that row — first, then the same request again: every REQUIRED key both times, `filing` only the first', async () => {
+    const spec = CONTRACT.seed_additions_post
+    // Exactly as the sheet builds it: the set from the row's own plants, the filing's expectation
+    // from the row's own variety, the target from the blend route.
+    const body = {
+      addition_key: randomUUID(),
+      plant_id: r3.q2,
+      expected_source_plant_ids: r3.row.source_plants.map((p) => p.id),
+      picked_on: '2026-09-01',
+      add_seed_count: 30,
+      add_estimated: true,
+      add_seed_weight_g: 1.5,
+      filing: { variety_id: r3.mix.id, expect_variety_id: r3.row.variety_id, name: `sms mix lot ${RUN}` },
+    }
+    // The body is the contract's keys and never the three an older Lambda would take for a create.
+    const allowed = [...spec.request_required, ...spec.request_optional]
+    for (const key of spec.request_required) expect(body).toHaveProperty(key)
+    for (const key of Object.keys(body)) expect(allowed, `the body carries "${key}"`).toContain(key)
+    for (const key of spec.request_never) expect(body).not.toHaveProperty(key)
+
+    const first = await inv('POST', `/api/inventory-items/${r3.lot}/seed-additions`, body)
+    expect(spec.statuses).toContain(first.status)
+    expect(first.status, JSON.stringify(first.body)).toBe(200)
+    expectKeys(first.body, [...spec.required, ...spec.required_when_filing_sent], 'POST seed-additions')
+    expect(Object.keys(first.body).sort()).toEqual([...spec.required, ...spec.required_when_filing_sent].sort())
+    expect(Object.keys(first.body.addition).sort()).toEqual([...spec.addition_required].sort())
+    expectKeys(first.body.filing, CONTRACT.source_plants_put.filing_required, 'POST seed-additions filing')
+    for (const p of first.body.source_plants) expectKeys(p, CONTRACT.seed_lot.source_plant_required, 'a source_plants element (POST seed-additions)')
+    expect(first.body.addition).toMatchObject({ replayed: false, plant_was_added: true, count_applied: true, weight_applied: true })
+    expect(first.body).toMatchObject({ id: r3.lot, variety_id: r3.mix.id, name: body.filing.name, seed_count: 130, seed_count_estimated: true, seed_weight_g: '13.845', seed_parent_plant_count: 2 })
+    expect(first.body.filing).toMatchObject({ variety_rank: 'blend', changed: true, previous: { variety_id: fx.v.b } })
+    expectExample(ADDITIONS_ROUTE, first)
+
+    const replay = await inv('POST', `/api/inventory-items/${r3.lot}/seed-additions`, body)
+    expect(replay.status, JSON.stringify(replay.body)).toBe(200)
+    expect(Object.keys(replay.body).sort()).toEqual([...spec.required].sort())
+    expect(replay.body.addition).toEqual({ ...first.body.addition, replayed: true })
+    expect(replay.body).toMatchObject({ seed_count: 130, variety_id: r3.mix.id, name: body.filing.name })
+    expectExample(CONTRACT.seed_additions_post.replay_example, replay)
+
+    // Read off the database rather than off either reply: one picking, hung on q2's link row of this lot.
+    const rows = await directSql`
+      SELECT a.id, a.seed_count, a.seed_count_estimated, a.seed_weight_g::text AS seed_weight_g, a.count_applied, a.weight_applied,
+             l.plant_id, l.inventory_item_id
+        FROM seed_lot_addition a JOIN seed_lot_parent_planting l ON l.id = a.parent_link_id
+       WHERE l.inventory_item_id = ${r3.lot}`
+    expect(rows).toEqual([{
+      id: first.body.addition.id, seed_count: 30, seed_count_estimated: true, seed_weight_g: '1.500', count_applied: true, weight_applied: true,
+      plant_id: r3.q2, inventory_item_id: r3.lot,
+    }])
+  })
+
+  it('GET /api/plants/:id/seed-lots for the first planting: the envelope, each lot\'s REQUIRED keys, and the other parent by name', async () => {
+    const spec = CONTRACT.plants_seed_lots_get
+    const r = await seedLots(r3.q1)
+    expect(spec.statuses).toContain(r.status)
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    expect(Object.keys(r.body).sort()).toEqual([...spec.envelope_required].sort())
+    expect(r.body.plant_id).toBe(r3.q1)
+    expect(r.body.seed_lots.map((row) => row.id)).toEqual([r3.lot])
+    for (const row of r.body.seed_lots) {
+      expect(Object.keys(row).sort()).toEqual([...spec.required].sort())
+      for (const p of row.other_parents) expect(Object.keys(p).sort()).toEqual([...spec.other_parent_required].sort())
+    }
+    // What the sheet's one-tap line needs: the lot as the addition left it, and the plant that joined.
+    expect(r.body.seed_lots[0]).toMatchObject({ seed_stage: 'drying', seed_count: 130, seed_count_estimated: true, seed_weight_g: '13.845' })
+    expect(r.body.seed_lots[0].other_parents.map((p) => p.id)).toEqual([r3.q2])
+    expectExample('GET /api/plants/:id/seed-lots', r)
   })
 })
