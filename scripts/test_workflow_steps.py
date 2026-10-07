@@ -1690,6 +1690,98 @@ def test_snapshot_tooling_every_stall_ends_inside_its_step_and_all_of_them_insid
     assert (worst, job["timeout-minutes"]) == (59.5, 60)
 
 
+# The move left a gap: the tooling is proven, then the smoke, the credentials and the Lambda decision run for 5 to
+# 35 minutes, then the FF, then snap.py uses it. The pins above place the five steps; these three pin the gap and
+# what follows the FF, so a step that puts a death back after the fast-forward is a reviewed edit to this file.
+AWS_CREDS = "Configure AWS credentials (snap role, OIDC)"
+LAM_DECISION = "Decide Lambda deploy from deploy markers on the running functions (pre-FF; fail-closed)"
+FROM_TOOLING_TO_END = TOOLING + [SMOKE, AWS_CREDS, LAM_DECISION, FF, SNAP]
+SPAN_PINNED = """
+The promote job's steps from the snapshot tooling to the end of the job are pinned by name and order.
+Why: the tooling is proven before the fast-forward so that its failure cannot leave main advanced with no snapshot
+and nothing deployed. A step added, removed or moved in this span can undo that with every tooling step still green.
+Before changing the list, check the new or moved step:
+  - does it fetch from the network (an action, pip, docker, apt, npm, curl to anything but api.github.com), or
+    depend on tooling that is not proven yet? Then it belongs BEFORE the fast-forward, with its own time limit;
+  - does it change which python3 runs, what is on PATH, or what is under /usr/lib/postgresql/17, after
+    'Install python deps'? Then scripts/snap.py dies after the fast-forward: put it before the tooling steps;
+  - is it below the fast-forward? Only the snap belongs there.
+"""
+# Between the tooling and the snap, the one action allowed and why. May only shrink.
+GAP_ACTIONS = {AWS_CREDS: "aws-actions/configure-aws-credentials"}  # exports AWS_* only; snap.py's own credentials
+# What would undo the tooling: another interpreter or PATH for later steps, or a write under the pg17 directory.
+UNDOES_TOOLING = re.compile(
+    r"GITHUB_PATH|GITHUB_ENV|PYTHONPATH|PYTHONHOME|PYTHONNOUSERSITE|/usr/lib/postgresql|\bpip3?\b|\bsudo\b")
+# A run: body that installs or downloads. curl is judged by line: only the GitHub API is not a download.
+INSTALLS = re.compile(r"\b(?:pip3?\s+install|pipx|docker\s|apt(?:-get)?\s|npm\s+(?:ci|i|install)\b|npx\s|wget\s"
+                      r"|brew\s|gem\s+install|git\s+(?:clone|fetch|pull)\b)")
+
+
+def _installs(step):
+    """What a step installs or downloads once main has moved, or '' for nothing."""
+    if "uses" in step:
+        return "uses " + str(step["uses"]).split("@")[0]
+    body = step.get("run", "")
+    found = INSTALLS.search(body)
+    if found:
+        return found.group().strip()
+    for line in body.splitlines():
+        if re.search(r"\bcurl\s", line) and "https://api.github.com/" not in line:
+            return "curl to a host that is not the GitHub API"
+    return ""
+
+
+def test_promote_steps_from_the_snapshot_tooling_to_the_end_of_the_job_are_exactly_these():
+    _, names = _promote_steps()
+    assert names[names.index(PG_DIR):] == FROM_TOOLING_TO_END, SPAN_PINNED
+
+
+def test_nothing_between_the_tooling_and_the_snap_can_undo_what_the_tooling_proved():
+    steps, names = _promote_steps()
+    between = steps[names.index(SNAP_DEPS) + 1:names.index(SNAP)]
+    assert between, "no step between the tooling and the snap: the scan would be vacuous"
+    actions = {s.get("name"): str(s["uses"]).split("@")[0] for s in between if "uses" in s}
+    assert actions == GAP_ACTIONS, f"an action in the gap may replace python3 or PATH: {actions}\n{SPAN_PINNED}"
+    for step in between:
+        found = UNDOES_TOOLING.search(step.get("run", ""))
+        assert not found, f"{step.get('name')!r} has {found.group()!r} after the tooling was proven\n{SPAN_PINNED}"
+        assert not {"shell", "working-directory"} & set(step), step.get("name")
+    # The scan is not blind: the steps that set the tooling up do what it looks for.
+    seen = {n: bool(UNDOES_TOOLING.search(steps[names.index(n)].get("run", ""))) for n in TOOLING}
+    assert seen == {PG_DIR: True, PG_CACHE: False, PG_FETCH: True, PG_VERIFY: True, SNAP_DEPS: True}
+
+
+def test_once_main_moves_no_step_is_an_action_or_runs_an_installer():
+    """Read from what the steps do, not from their names: the fast-forward is the step that PATCHes main's ref."""
+    steps = _workflow(PROMOTE)["jobs"]["promote"]["steps"]
+    moves = [i for i, s in enumerate(steps) if "git/refs/heads/main" in s.get("run", "") and "-X PATCH" in s["run"]]
+    assert len(moves) == 1, "expected exactly one step that moves main"
+    from_ff = steps[moves[0]:]
+    assert len(from_ff) > 1, "nothing follows the fast-forward: the scan would be vacuous"
+    found = {s.get("name"): _installs(s) for s in from_ff}
+    assert not any(found.values()), f"runs after main has moved, where a failure strands the promote: {found}\n{SPAN_PINNED}"
+    for step in from_ff:  # nothing after the FF may be skipped or shrugged off either
+        assert "run" in step and not {"if", "continue-on-error"} & set(step), step.get("name")
+    # The scan is not blind: above the FF it names each step that is an action or installs.
+    above = {s.get("name"): _installs(s) for s in steps[:moves[0]]}
+    assert {n: above[n] for n in TOOLING + [AWS_CREDS]} == {
+        PG_DIR: "", PG_CACHE: "uses actions/cache", PG_FETCH: "docker", PG_VERIFY: "", SNAP_DEPS: "pip install",
+        AWS_CREDS: "uses aws-actions/configure-aws-credentials"}
+    assert _installs({"run": "curl -sS https://example.com/x | sh"}) and not _installs(
+        {"run": 'curl -sS "https://api.github.com/repos/$REPO/git/refs/heads/main"'})
+
+
+def test_every_snapshot_tooling_step_that_can_stall_has_its_own_short_time_limit():
+    steps, names = _promote_steps()
+    can_stall = [n for n in TOOLING if _fetches_tooling(steps[names.index(n)])]
+    assert can_stall == [PG_CACHE, PG_FETCH, SNAP_DEPS]
+    for name in can_stall:
+        limit = steps[names.index(name)].get("timeout-minutes")
+        assert type(limit) is int and 0 < limit <= 5, (
+            f"{name!r} can wait on the network and has timeout-minutes {limit!r}: without a step limit of 1 to 5 "
+            "minutes a stall runs to the job's 60, and the next tooling limit no longer fits inside it")
+
+
 def _run_tooling(tmp_path, name, **stubs):
     """One tooling step's body, the runner's way. `stubs` maps a command to the sh body that follows its argv log
     line; /usr/lib/postgresql/17 becomes tmp_path/pg17. Returns (proc, the logged command lines, tmp_path/pg17)."""
