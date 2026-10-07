@@ -49,6 +49,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../lib/constants.js'
 import { useApiFetch } from '../lib/api.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
+import { HARVEST_WRITE_TIMEOUT_MS } from '../lib/harvestWriteTimeout.js'
 import { looseKey, looseIncludes, splitCropAliases } from '../lib/comboboxInput.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { fuzzyMatch } from '../lib/voiceFuzzyMatch.js'
@@ -1206,6 +1207,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     try {
       const res = await apiFetch('/api/events', {
         method: 'POST',
+        // BUG-HARVESTTIMEOUT-001: outwait the Lambda rather than aborting at 15s.
+        timeoutMs: HARVEST_WRITE_TIMEOUT_MS,
         body: JSON.stringify({
           // NULL BY DESIGN. The container is derived server-side (deriveEventProjectId), the same
           // rule dev 1f567ae applied to plantings — "no client should be expected to supply one".

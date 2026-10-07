@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { settle } from './helpers/settle.js'
 import { HARVEST_DISPOSITION_VALUES } from '../lib/harvestDisposition.js'
+import { HARVEST_WRITE_TIMEOUT_MS } from '../lib/harvestWriteTimeout.js'
 
 const { apiFetchSpy, navigateSpy, postCalls, dataRef, searchParamsRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
@@ -136,6 +137,20 @@ describe('EventNew — harvest disposition, the round trip to the POST body', ()
     expect(h.quantity).toBe(3)
     expect(h.weight).toBe(120)
     expect(h.disposition).toBe('damaged')
+  })
+})
+
+// BUG-HARVESTTIMEOUT-001 — the default 15s client timeout aborted a save the 30s Lambda went on to
+// commit. Asserted on the OPTIONS handed to the fetch wrapper, which is where the timeout is chosen.
+describe('EventNew — the harvest POST outwaits the Lambda', () => {
+  it('passes the harvest write timeout, not the 15s default', async () => {
+    renderEventNew(); await flushLoad()
+    await pickPlanting()
+    fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '1' } })
+    fireEvent.click(screen.getByText('Save'))
+    await waitFor(() => expect(postCalls.length).toBe(1))
+    const post = apiFetchSpy.mock.calls.find(c => c[0] === '/api/events' && c[1]?.method === 'POST')
+    expect(post[1].timeoutMs).toBe(HARVEST_WRITE_TIMEOUT_MS)
   })
 })
 

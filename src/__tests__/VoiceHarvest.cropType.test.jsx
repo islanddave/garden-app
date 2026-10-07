@@ -31,6 +31,7 @@ vi.mock('../lib/haptics.js', () => ({
 }))
 
 import VoiceHarvest from '../pages/VoiceHarvest.jsx'
+import { HARVEST_WRITE_TIMEOUT_MS } from '../lib/harvestWriteTimeout.js'
 
 // Real slugs, real shape. `bunching_onion` is one of the ten underscore crop types the
 // BUG-LOOSEKEYREPEAT-001 row counted on prod (12 live plantings across them); `melon` is the type
@@ -159,5 +160,16 @@ describe('saying the crop type reaches the planting', () => {
     await speak(rec, 'rocket')
     expect(statusText()).toContain('Nothing matched')
     expect(record()).not.toContain('Charentais')
+  })
+})
+
+// BUG-HARVESTTIMEOUT-001 — the voice save is a harvest POST to the same 30s Lambda.
+describe('the voice harvest POST outwaits the Lambda', () => {
+  it('passes the harvest write timeout, not the 15s default', async () => {
+    const rec = await startListening()
+    for (const line of ['cucumber', '3 count', 'next']) await speak(rec, line)
+    const isPost = (c) => c[0] === '/api/events' && c[1]?.method === 'POST'
+    await waitFor(() => expect(apiFetchSpy.mock.calls.some(isPost)).toBe(true))
+    expect(apiFetchSpy.mock.calls.find(isPost)[1].timeoutMs).toBe(HARVEST_WRITE_TIMEOUT_MS)
   })
 })

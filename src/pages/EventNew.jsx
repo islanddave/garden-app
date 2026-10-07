@@ -64,6 +64,7 @@ import { setReloadBlocked } from '../lib/reloadGate.js'
 // V4-CROPLISTORDER-001 (BD-010): crop-rank ledger — fed at the same post-save moment as
 // logone.lastPlant below; PlantingSelect reads it at picker-open to band-order its crop chips.
 import { recordCropLog } from '../lib/cropLogLedger.js'
+import { HARVEST_WRITE_TIMEOUT_MS } from '../lib/harvestWriteTimeout.js'
 // V4-HARVSESSION-002: chip-queue ranking — the same order the Today ready band shows, so the tray
 // and the band never disagree about what "next" means.
 // V4-WATERMATH-001 F0 — watering amount class (Light/Normal/Deep). See src/lib/waterDepth.js
@@ -1858,6 +1859,8 @@ export default function EventNew({ harvestSession = false } = {}) {
     try {
       result = await apiFetch('/api/events', {
         method: 'POST',
+        // BUG-HARVESTTIMEOUT-001: a harvest outwaits the Lambda rather than aborting at 15s.
+        ...(isHarvest ? { timeoutMs: HARVEST_WRITE_TIMEOUT_MS } : {}),
         body: JSON.stringify({
           project_id:    form.project_id,
           event_type:    form.event_type,

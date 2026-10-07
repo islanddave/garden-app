@@ -43,6 +43,7 @@ vi.mock('react-router-dom', async (importOriginal) => {
 })
 
 import EventDetail from '../pages/EventDetail.jsx'
+import { HARVEST_WRITE_TIMEOUT_MS } from '../lib/harvestWriteTimeout.js'
 
 // A harvest event with a paired harvest_log row — the shape GET /api/events/:id returns, including
 // the `disposition` the read half now projects.
@@ -112,6 +113,17 @@ const savedHarvest = () => {
 }
 
 beforeEach(() => { apiFetchSpy.mockReset() })
+
+// BUG-HARVESTTIMEOUT-001 — the edit is a harvest write too: same Lambda, same 30s limit.
+describe('the harvest edit PUT outwaits the Lambda', () => {
+  it('passes the harvest write timeout, not the 15s default', async () => {
+    setup(harvestEvent(null)); await flushLoad()
+    await openEditor()
+    await save()
+    const put = apiFetchSpy.mock.calls.find(c => c[1]?.method === 'PUT')
+    expect(put[1].timeoutMs).toBe(HARVEST_WRITE_TIMEOUT_MS)
+  })
+})
 
 describe('a disposition set at create can be CHANGED afterwards', () => {
   it('marking an ordinary pick "damaged" sends it on the PUT', async () => {

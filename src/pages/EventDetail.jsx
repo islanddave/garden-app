@@ -44,6 +44,7 @@ import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toG
 // V4-HARVDISPOSITION-001 — the optional pick-outcome chip row, shared verbatim with EventNew.
 import HarvestDispositionChips from '../components/HarvestDispositionChips.jsx'
 import { readHarvestDisposition } from '../lib/harvestDisposition.js'
+import { HARVEST_WRITE_TIMEOUT_MS } from '../lib/harvestWriteTimeout.js'
 import { eventTitle, eventTypeText } from '../lib/eventDisplay.js'
 import { reductionReasonLabel, canonicalEventType } from '../lib/eventTypes.js'
 
@@ -435,6 +436,8 @@ export default function EventDetail() {
 
       const updated = await fetch('/api/events/' + eventId, {
         method: 'PUT',
+        // BUG-HARVESTTIMEOUT-001: a harvest edit outwaits the Lambda rather than aborting at 15s.
+        ...(isHarvest ? { timeoutMs: HARVEST_WRITE_TIMEOUT_MS } : {}),
         body: JSON.stringify({
           event_type:    form.event_type,
           event_date:    eventDate,
