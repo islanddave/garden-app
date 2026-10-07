@@ -18,6 +18,7 @@ import { resolve, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { resolveJarUseBy, shelfLifeMonths } from '../../lambda/preservation/shelfLife.js'
+import { parseKitchenRoute, validateOutputsPayload } from '../../lambda/preservation/kitchenBatch.js'
 
 const SMOKE = readFileSync(resolve(process.cwd(), 'tests/smoke/run-smoke.sh'), 'utf8')
 const start = SMOKE.indexOf('# ── P) Put-Up 1b + Ferment')
@@ -42,7 +43,9 @@ describe('block P is present, after block N, and closed by the next block headin
     // Put-Up UX pass R1
     'p1b-clear-table', 'p1b-clear-recipe', 'p10-raw-create',
     // Put-Up R2a (lane S): a batch made from a jar that already exists (pinned in PutUpR2S.smoke.static.test.js)
-    'p11-from-jars', 'p11-replay'])('asserts %s', (tag) => {
+    'p11-from-jars', 'p11-replay',
+    // BUG-BATCHREMOVEDEADEND-001: the two outputs routes (pinned at the bottom of this file)
+    'p12-take-off', 'p12-put-back'])('asserts %s', (tag) => {
     expect(BLOCK).toContain(`"${tag}"`)
   })
 })
@@ -294,5 +297,48 @@ describe('P10 — Raw at create', () => {
     expect(resolveJarUseBy({ method: 'hot_sauce', kind: 'fridge' }, '2026-10-01').use_by_basis).toBe('table')
     expect(resolveJarUseBy({ method: 'hot_sauce', kind: 'fridge', isRaw: true }, '2026-10-01'))
       .toEqual({ use_by_target: null, use_by_basis: 'none' })
+  })
+})
+
+// BUG-BATCHREMOVEDEADEND-001 — batch detail's "Take it off this batch" and its Undo are the first screens to call the
+// two outputs routes, and this is the deployed stack's only proof they answer (the integration lane imports the
+// handler in-process). MUTATION: send the close route's key (output_preservation_log_ids) -> the validator arm reds;
+// drop either read-back -> its literal reds.
+describe('P12 — take a put-up off its batch, and put it back', () => {
+  const at = BLOCK.indexOf('# ── P12)')
+  const P12 = BLOCK.slice(at, BLOCK.indexOf('if ferm_sweep; then'))
+  const line = (needle) => P12.split('\n').find((l) => l.includes(needle)) ?? ''
+  const UUID = '00000000-0000-4000-8000-000000000000'
+
+  it('sits after P11 and the mint that follows it, before the sweep, and mints nothing of its own', () => {
+    expect(at).toBeGreaterThan(BLOCK.indexOf('fe_check "p11-replay"'))
+    expect(at).toBeGreaterThan(BLOCK.lastIndexOf('CLERK_JWT=$(mint_session_token)', BLOCK.indexOf('if ferm_sweep; then')))
+    expect(P12.split('\n').filter((l) => l.includes('mint_session_token') && !l.trim().startsWith('#'))).toEqual([])
+  })
+
+  it('reads the batch from the JAR before anything is unlinked, and fails loudly when there is none', () => {
+    expect(P12.indexOf(`FE_B11=$(fe_row "SELECT batch_id FROM preservation_log WHERE id = '\${FE_J11:-}'")`)).toBeGreaterThan(0)
+    expect(P12.indexOf('if fe_id_ok "$FE_B11"; then')).toBeLessThan(P12.indexOf('fe_req DELETE'))
+    expect(P12).toContain('fe_fail "p12-take-off"')
+  })
+
+  it('both requests are ones the Lambda routes: the unlink by jar, the link on the batch', () => {
+    expect(line('fe_req DELETE')).toContain('fe_req DELETE "$FE_BASE/api/kitchen-batches/$FE_B11/outputs/$FE_J11"')
+    expect(parseKitchenRoute(`/api/kitchen-batches/${UUID}/outputs/${UUID}`)).toMatchObject({ kind: 'output', outputId: UUID })
+    expect(line('fe_req POST')).toContain('fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B11/outputs" ')
+    expect(parseKitchenRoute(`/api/kitchen-batches/${UUID}/outputs`)).toMatchObject({ kind: 'outputs' })
+  })
+
+  it('the link body is one the route\'s own validator accepts', () => {
+    const raw = line('fe_req POST').match(/outputs" "(\{.*\})"$/)?.[1] ?? ''
+    const body = JSON.parse(raw.replace(/\\"/g, '"').replace('$FE_J11', UUID))
+    expect(body).toEqual({ preservation_log_ids: [UUID] })
+    expect(validateOutputsPayload(body)).toBeNull()
+    expect(validateOutputsPayload({ output_preservation_log_ids: [UUID] })).not.toBeNull()
+  })
+
+  it('each write is read back from the jar: off the batch and live, then on THAT batch and live', () => {
+    expect(line('fe_check "p12-take-off"')).toContain(`"$FE_CODE $(fe_row "SELECT coalesce(batch_id::text,'null')||'|'||(deleted_at IS NULL)::text FROM preservation_log WHERE id = '$FE_J11'")" "200 null|true"`)
+    expect(line('fe_check "p12-put-back"')).toContain(`"$FE_CODE $(fe_jq '.linked') $(fe_row "SELECT (batch_id = '$FE_B11')::text||'|'||(deleted_at IS NULL)::text FROM preservation_log WHERE id = '$FE_J11'")" "200 1 true|true"`)
   })
 })
