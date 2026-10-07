@@ -467,6 +467,23 @@ describe('Saved from — leaving the page', () => {
     expect(eventDeletes()).toHaveLength(0)
   })
 
+  it('leaving while the Remove is still in flight withdraws nothing: the server has not said it took it', async () => {
+    routes.events[P1B.id] = [{ id: 'ev-this-jar', event_type: 'seed_saved', metadata: { seed_lot_id: ID } }]
+    const held = deferred()
+    routes.put = () => held.promise
+    const view = await renderPage()
+    await click(removeButton(P1B))
+    // Struck at the tap, and the write is still out.
+    expect(rowOf(P1B).getAttribute('data-struck')).toBe('true')
+    expect(setBodies()).toHaveLength(1)
+
+    view.unmount()
+    await act(async () => { await Promise.resolve() })
+    // A removal the server may yet refuse must not take the plant's timeline entry with it.
+    expect(eventReads()).toHaveLength(0)
+    expect(eventDeletes()).toHaveLength(0)
+  })
+
   it('choosing an origin that refuses a parent takes the struck rows with it (UX L-5)', async () => {
     // With the last planting struck the origin select is offered. A shop-bought origin hides the parent
     // card, so the struck row's Undo, which could only be refused, goes too; that is a leaving.
