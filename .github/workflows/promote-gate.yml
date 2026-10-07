@@ -28,8 +28,12 @@ name: promote-gate
 #      DUAL EVALUATION below); the same pair for integration-test.yml (require_integration, default true).
 #   2. Version/tag skew gate — snap_version == v<package.json at dev_sha>, and that tag not already consumed.
 #   3. Prod schema gate — the L-081 audit of the promoted tree against PROD (require_schema_audit, default true).
-#   4. Write-path staging smoke gate — deploy-staging on the exact dev SHA, smoke-tests = success.
-# Then the Lambda deploy decision, which fails CLOSED to "deploy", never to "skip".
+#   4. Snapshot tooling — the pg17 client and scripts/snap.py's Python imports, fetched and proven usable (here
+#      since 2026-10-07; until then they were prepared AFTER the FF). Never a verdict on the promoted code: a red
+#      one is a runner, cache, registry or PyPI fault, and the remedy is to re-run the failed jobs.
+#   5. Write-path staging smoke gate — deploy-staging on the exact dev SHA, smoke-tests = success.
+# Then the Lambda deploy decision, which fails CLOSED to "deploy", never to "skip". After the FF the job runs one
+# step, the snap.
 #
 # PROD SCHEMA GATE (OPS-PROMOTESCHEMAGATE-001, added 2026-09-24). Until then nothing on this path read PROD's
 # schema: integration-tests forks its Neon branch from STAGING and the staging smoke runs against staging. A
@@ -256,6 +260,17 @@ jobs:
     # min, and 59.5 with the preflight at its 5-minute step limit (54.5 before the preflight's retries; the bot token minted in the first step lives 60, so do not raise
     # this job's limit past it), which passed the old 50 and would have ended the job inside snap, after the FF (review MINOR 2) — main
     # moved, nothing deployed. 60 (was 50, raised 2026-09-24 with the schema gate) covers that worst case.
+    #
+    # SNAPSHOT TOOLING (2026-10-07). The pg17 and python deps steps ran after the FF, inside the "~10 min FF and
+    # snap" above; they now run before the staging smoke. Same steps, same job, so no sum above changes: only
+    # the side of the FF their share falls on, about 3 s on a cache hit. They are bounded now, and a bound
+    # reached is a refusal before the FF. If the three limited ones (cache 2, fetch 4, deps 5 min) each ran to
+    # just under its limit and passed, the first sum becomes 48.5 + 11 = 59.5 min, still inside this limit
+    # (scripts/test_workflow_steps.py derives the 11 and the 34.5 from the steps and pins the sum: change a
+    # bound and that test together). The opted-out all-hang sums (57.5, 59.5) have no room for that as well;
+    # there the limit would end the job before the FF or inside snap, where the same durations used to end it
+    # after the FF every time. The job limit can strand main only by landing between the FF and the end of
+    # snap: that window was tooling + snap wide and is now snap alone, 20-49 s over six promotes.
     timeout-minutes: 60
     steps:
       - name: Mint garden-bot installation token
@@ -561,6 +576,105 @@ jobs:
             *) refuse "L-081 audit exit $RC at $DEV_SHA: $(remedy "$LOGS/audit.log" "$RC")" ;;
           esac
 
+      # SNAPSHOT TOOLING, BEFORE THE FAST-FORWARD (S1 pre-FF, Dave decision 2026-10-07; promote-path plan V003 §5).
+      # The five steps from here to "Install python deps" fetch and prove everything scripts/snap.py needs that the
+      # checkout does not give it: the pg17 client (pg_dump and pg_dumpall; the runner image ships a pg16 client, and
+      # pg_dump will not dump a server newer than itself) and its Python imports. Until this change they ran AFTER
+      # "Fast-forward main", so a failure or a stall in any of them left main advanced with no snapshot and nothing
+      # deployed: the fetch hung 46 minutes there on 2026-08-18. Snap is now the only step after the FF.
+      # scripts/test_workflow_steps.py fails if one of these goes back below the FF, or if a step that fetches
+      # tooling is added there.
+      #
+      # A RED STEP HERE REFUSES THE PROMOTE WITH NOTHING MOVED: main, the tags and prod are untouched. It is never a
+      # verdict on the promoted code (a runner, cache, registry or PyPI fault), the remedy is always "re-run the
+      # failed jobs", and every run: step says so in its ::error. They sit before the staging smoke, not just before
+      # the FF, so that such a refusal costs about a minute and no staging deploy.
+      #
+      # WHAT CAN RED HERE THAT COULD NOT BEFORE: only a stall, and two checks of what snap would have died on.
+      # Each failure of the old steps is still a failure (one exception: failing to remove the scratch container
+      # after a good copy is now a printed note). New: the bounds below (a stall used to be waited out, and the
+      # 46-minute one was); pg_dumpall is run as well as pg_dump; the imports are tried by the python3 that will
+      # run snap.py. The cache step is an action and prints no remedy of ours: a restore that errors is, by that
+      # action's design, its own annotation and a miss, so only its time limit can red it.
+      #
+      # BOUNDS. On a cache hit the five take about 3 s (six promotes to 2026-10-06: cache 0-2 s, deps 0-1 s, and
+      # the fetch never ran). Cache restore: 2 min. Fetch: pull 120 + 10 s, copy 30 + 5 s, remove 10 + 5 s, 3 min
+      # together under a 4 min backstop. Deps: two pip forms at 90 + 5 s and the import check at 30 + 5 s, 3.75 min
+      # together under a 5 min backstop. The two steps without a limit touch only the runner's own disk. All three
+      # limits at once are 11 min, which the promote job's timeout comment adds up and the test pins.
+      - name: Make /usr/lib/postgresql/17 writable (cache + docker cp target)
+        run: |
+          set -uo pipefail
+          fail() {
+            echo "::error title=Snapshot tooling (pre-FF)::$1 — nothing has moved (main has NOT been touched): re-run the failed jobs. A runner fault, not a verdict on the promoted code."
+            exit 1
+          }
+          sudo mkdir -p /usr/lib/postgresql/17/bin || fail "sudo mkdir -p /usr/lib/postgresql/17/bin failed (exit $?)"
+          sudo chown -R "$(id -u):$(id -g)" /usr/lib/postgresql/17 || fail "sudo chown of /usr/lib/postgresql/17 to the runner user failed (exit $?)"
+
+      # Saves, on a miss, in its post step at the END of the job and only if the job succeeded (the action's
+      # `post-if: success()`), so restoring this early changes nothing about the save. Same key as backup.yml,
+      # restore-verify.yml and revert-gate.yml.
+      - name: pg17 client cache
+        id: pg17-cache
+        timeout-minutes: 2
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/lib/postgresql/17/bin
+          key: pg17-client-postgres17-image-v1
+
+      - name: Fetch pg17 client from the postgres:17 image (cache miss only)
+        # OPS-SCHEMACHECKAPT-001: no more apt.postgresql.org (PGDG) -- see backup.yml for the full incident
+        # writeup. While this step ran AFTER the fast-forward it hung 46 minutes (2026-08-18) and stranded main at
+        # 437164e with prod still on 4.35.0 and no version tag. Each docker call now runs inside `timeout`, so a
+        # stall ends in this step's own ::error; timeout-minutes is only the backstop.
+        if: steps.pg17-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 4
+        run: |
+          set -uo pipefail
+          fail() {
+            echo "::error title=Snapshot tooling (pre-FF)::$1 — nothing has moved (main has NOT been touched): re-run the failed jobs. A registry or runner fault, not a verdict on the promoted code."
+            exit 1
+          }
+          # 124 = timed out; 137 = had to be KILLed.
+          cid=$(timeout -k 10 120 docker create postgres:17) || fail "the postgres:17 image could not be pulled and a container created from it within 120 s (exit $?)"
+          [ -n "$cid" ] || fail "creating the postgres:17 container printed no container id"
+          timeout -k 5 30 docker cp "$cid:/usr/lib/postgresql/17/bin/." /usr/lib/postgresql/17/bin/ \
+            || fail "copying /usr/lib/postgresql/17/bin out of the postgres:17 container failed, or did not finish in 30 s (exit $?)"
+          # The copy is what snap needs. A scratch container left behind on a one-job runner is not worth a refusal.
+          timeout -k 5 10 docker rm -f "$cid" > /dev/null 2>&1 \
+            || echo "note: could not remove the scratch container $cid (exit $?); the copy above succeeded"
+
+      # Both binaries scripts/snap.py runs (its step puts this directory first on PATH). A cache HIT can be the
+      # broken copy, and a re-run restores the same entry: hence the second half of the remedy.
+      - name: Verify pg17 client
+        run: |
+          set -uo pipefail
+          for tool in pg_dump pg_dumpall; do
+            if ! "/usr/lib/postgresql/17/bin/$tool" --version; then
+              echo "::error title=Snapshot tooling (pre-FF)::/usr/lib/postgresql/17/bin/$tool does not run, and scripts/snap.py calls it after the fast-forward — nothing has moved (main has NOT been touched): re-run the failed jobs. If it fails the same way again the cached copy is bad: delete the Actions cache entry pg17-client-postgres17-image-v1 so the next run fetches a fresh one. Not a verdict on the promoted code."
+              exit 1
+            fi
+          done
+
+      # The import, by the python3 that will run scripts/snap.py, is the proof; pip's exit status was all the old
+      # step had. Either one failing refuses. These runner images already carry boto3 and requests, so the install
+      # is normally a no-op (0-1 s). Bounded like the psycopg2 install above: plain form first, then the PEP-668
+      # form. scripts/test_workflow_steps.py pins the import list against snap.py's own imports.
+      - name: Install python deps
+        timeout-minutes: 5
+        run: |
+          set -uo pipefail
+          fail() {
+            echo "::error title=Snapshot tooling (pre-FF)::$1 — nothing has moved (main has NOT been touched): re-run the failed jobs. A PyPI or runner-image fault, not a verdict on the promoted code."
+            exit 1
+          }
+          timeout -k 5 90 python3 -m pip install --quiet boto3 requests \
+            || timeout -k 5 90 python3 -m pip install --quiet --break-system-packages boto3 requests \
+            || fail "pip could not install boto3 and requests in either form (exit $?; 124 or 137 = it hung)"
+          timeout -k 5 30 python3 -c "import boto3, requests, botocore.exceptions" \
+            || fail "boto3, requests and botocore.exceptions do not import after the install (exit $?), and scripts/snap.py imports them before it does anything, after the fast-forward"
+
       - name: Write-path staging smoke gate (PHASE2-CI-001 / L-145)
         env:
           BOT_TOKEN: ${{ steps.bot.outputs.token }}
@@ -692,7 +806,8 @@ jobs:
           fi
           echo "write-path staging smoke green for $DEV_SHA"
 
-      # Moved up from after the pg17 steps (2026-09-18, OPS-LAMSKIPVSMAIN-001): the Lambda decision
+      # Moved up from after the pg17 steps (2026-09-18, OPS-LAMSKIPVSMAIN-001; those steps were then below the
+      # fast-forward, and have been above the staging smoke since 2026-10-07): the Lambda decision
       # below reads the running functions with this role, and it must run BEFORE the fast-forward (see
       # there). Side effect, and a strict improvement: an OIDC or role failure now stops the promote with
       # main untouched, instead of after the fast-forward with main advanced and no snapshot. snap.py
@@ -710,7 +825,8 @@ jobs:
       #
       # Until now this step compared dev_sha's Lambda inputs with main's. main means APPROVED, not
       # DEPLOYED: this workflow fast-forwards main BEFORE deploy-lambdas runs, so a failed leg, a promote
-      # that died after its FF (snap.py, the pg17 fetch), a revert rollback or a console upload all leave
+      # that died after its FF (snap.py; the pg17 fetch too until 2026-10-07), a revert rollback or a console
+      # upload all leave
       # main naming code that is not running. A plain re-dispatch after a failed leg was the sharp case:
       # main == dev_sha, all seven inputs compared equal, the step skipped every Lambda and shipped the SPA
       # onto the stale legs (reproduced by running the old step body with DEV_SHA=main: changed=false).
@@ -776,39 +892,6 @@ jobs:
             cat /tmp/ff.json; echo "::error::fast-forward of main failed ($CODE)"; exit 1
           fi
           echo "promoted main -> $DEV_SHA"
-
-      - name: Make /usr/lib/postgresql/17 writable (cache + docker cp target)
-        run: |
-          sudo mkdir -p /usr/lib/postgresql/17/bin
-          sudo chown -R "$(id -u):$(id -g)" /usr/lib/postgresql/17
-
-      - name: pg17 client cache
-        id: pg17-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: /usr/lib/postgresql/17/bin
-          key: pg17-client-postgres17-image-v1
-
-      - name: Fetch pg17 client from the postgres:17 image (cache miss only)
-        # OPS-SCHEMACHECKAPT-001: no more apt.postgresql.org (PGDG) -- see backup.yml
-        # for the full incident writeup. This exact step, at this exact position (AFTER
-        # main has already been fast-forwarded above), is what hung 46 minutes on
-        # 2026-08-18 and stranded main at 437164e while prod stayed on 4.35.0 with no
-        # version tag -- the expensive incident variant, because main had already moved.
-        # The docker/cache fetch below removes the flaky network install; the ordering
-        # hazard itself (fast-forward before snap) is unchanged and out of scope here.
-        if: steps.pg17-cache.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          cid=$(docker create postgres:17)
-          docker cp "$cid:/usr/lib/postgresql/17/bin/." /usr/lib/postgresql/17/bin/
-          docker rm -f "$cid" >/dev/null
-
-      - name: Verify pg17 client
-        run: /usr/lib/postgresql/17/bin/pg_dump --version
-
-      - name: Install python deps
-        run: pip install boto3 requests --quiet
 
       - name: Version snap (revertibility marker)
         env:

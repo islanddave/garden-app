@@ -1543,6 +1543,287 @@ def test_schema_gate_install_step_cannot_red_the_job_and_says_why(tmp_path):
     assert len(warnings) == 1 and "require_schema_audit=false" in warnings[0]
 
 
+# ── promote-gate.yml: the snapshot tooling, prepared before the fast-forward (S1 pre-FF, 2026-10-07) ────────────
+# The pg17 client and scripts/snap.py's Python imports used to be fetched AFTER "Fast-forward main": a failure or a
+# stall there left main advanced with no snapshot and nothing deployed (the fetch hung 46 minutes on 2026-08-18).
+# They now run before the staging smoke. Pinned here: where the five steps sit; that nothing below the FF fetches
+# tooling; that they prepare exactly what snap.py uses; that every stall ends inside its step and all of them inside
+# the job's limit; and that each body's failure says nothing has moved. sudo, docker, python3 and the two pg17
+# binaries are stubs, and a body's one textual change is its /usr/lib/postgresql/17, moved into tmp_path.
+
+FF = "Fast-forward main -> dev SHA"
+SNAP = "Version snap (revertibility marker)"
+PG_DIR, PG_CACHE, PG_FETCH, PG_VERIFY, SNAP_DEPS = TOOLING = [
+    "Make /usr/lib/postgresql/17 writable (cache + docker cp target)", "pg17 client cache",
+    "Fetch pg17 client from the postgres:17 image (cache miss only)", "Verify pg17 client", "Install python deps"]
+PG_ROOT = "/usr/lib/postgresql/17"
+PG_BIN = PG_ROOT + "/bin"
+PG_KEY = "pg17-client-postgres17-image-v1"
+NOT_MOVED = "nothing has moved (main has NOT been touched): re-run the failed jobs"
+# The promote job's timeout comment, in minutes: what a slowest-passing promote spends before the tooling, and
+# what it allows after the smoke gate for the Lambda decision, the FF and the snap. The rest is derived below.
+BEFORE_TOOLING_MIN, AFTER_SMOKE_MIN = 4, 10
+# A step that fetches tooling: an installer, a registry client or a downloader in its body, or any action at all
+# (a cache restore is a download, a credentials action a network exchange). snap.py talks to Neon, S3 and GitHub
+# itself; that is its work, and it is not this.
+FETCHES = re.compile(r"\b(?:pip3?|pipx|docker|apt(?:-get)?|curl|wget|npm|npx|gh|git\s+(?:clone|fetch|pull))\b")
+
+
+def _fetches_tooling(step):
+    """How a step fetches tooling, or '' when it does not."""
+    if "uses" in step:
+        return "action " + step["uses"].split("@")[0]
+    found = FETCHES.search(step.get("run", ""))
+    return found.group() if found else ""
+
+
+def _promote_steps():
+    steps = _workflow(PROMOTE)["jobs"]["promote"]["steps"]
+    names = [s.get("name") for s in steps]
+    assert all(names.count(n) == 1 for n in TOOLING + [SCHEMA, SMOKE, FF, SNAP]), names
+    return steps, names
+
+
+def test_snapshot_tooling_is_prepared_before_the_fast_forward_and_before_the_staging_smoke():
+    _, names = _promote_steps()
+    at = names.index
+    for name in TOOLING:
+        assert at(name) < at(FF), f"{name!r} runs after the fast-forward: its failure leaves main moved, no snapshot"
+    # One block, in the order each step needs the one before: directory, restore into it, fill a miss, run, deps.
+    assert [at(n) for n in TOOLING] == list(range(at(PG_DIR), at(PG_DIR) + len(TOOLING)))
+    # After the gates that judge the promoted code and before the smoke: a tooling refusal costs no staging deploy.
+    assert at(SCHEMA) < at(PG_DIR) and at(SNAP_DEPS) < at(SMOKE) < at(FF) < at(SNAP)
+
+
+def test_nothing_after_the_fast_forward_fetches_tooling():
+    steps, names = _promote_steps()
+    after = steps[names.index(FF) + 1:]
+    # What remains below the FF, and why: the snap is the promote's commit-marker. It tags the commit main now
+    # points at and snapshots prod as that version's revert point (snap.py's header), so it follows the FF by design.
+    assert [s.get("name") for s in after] == [SNAP]
+    assert [_fetches_tooling(s) for s in after] == [""]
+    assert after[0]["run"].splitlines() == [f'export PATH="{PG_BIN}:$PATH"', "python3 scripts/snap.py"]
+    assert "if" not in after[0] and "continue-on-error" not in after[0]
+    # The scan is not blind: it names every step above the FF that does fetch.
+    found = {n: _fetches_tooling(steps[names.index(n)]) for n in TOOLING}
+    assert found == {PG_DIR: "", PG_CACHE: "action actions/cache", PG_FETCH: "docker", PG_VERIFY: "", SNAP_DEPS: "pip"}
+
+
+def test_snapshot_tooling_steps_run_on_every_path_and_cannot_be_advisory():
+    wf = _workflow(PROMOTE)
+    steps = {s.get("name"): s for s in wf["jobs"]["promote"]["steps"]}
+    for name in TOOLING:
+        step = steps[name]
+        assert "continue-on-error" not in step, name
+        # The fetch is skipped on a cache hit and by nothing else; the other four have no condition at all.
+        assert step.get("if") == ("steps.pg17-cache.outputs.cache-hit != 'true'" if name == PG_FETCH else None), name
+        assert "uses" in step or _declared_shell(wf, "promote", step) is None, name
+    assert steps[PG_CACHE]["id"] == "pg17-cache" and str(steps[PG_CACHE]["uses"]).startswith("actions/cache@")
+
+
+def _snap_needs():
+    """(third-party modules, pg binaries) scripts/snap.py uses, read from its own source."""
+    import ast
+    import sys
+    with open(os.path.join(HERE, "snap.py")) as fh:
+        tree = ast.parse(fh.read())
+    local = {os.path.splitext(f)[0] for f in os.listdir(HERE) if f.endswith(".py")}
+    modules = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            modules.add(node.module.split(".")[0])
+    tools = {n.value for n in ast.walk(tree)
+             if isinstance(n, ast.Constant) and isinstance(n.value, str) and re.fullmatch(r"pg_[a-z]+", n.value)}
+    return {m for m in modules if m not in sys.stdlib_module_names and m not in local}, tools
+
+
+def test_snapshot_tooling_prepares_exactly_what_snap_py_uses():
+    """A new import or pg binary in snap.py that these steps do not prove would be found after the FF again."""
+    third_party, tools = _snap_needs()
+    assert third_party == {"boto3", "requests", "botocore"} and tools == {"pg_dump", "pg_dumpall"}
+    steps = {s.get("name"): s for s in _workflow(PROMOTE)["jobs"]["promote"]["steps"]}
+    deps, verify = steps[SNAP_DEPS]["run"], steps[PG_VERIFY]["run"]
+    installs = [ln.split("pip install", 1)[1].split() for ln in deps.splitlines() if "pip install" in ln]
+    assert [[w for w in words if not w.startswith(("-", "\\"))] for words in installs] == [["boto3", "requests"]] * 2
+    probe = re.search(r'python3 -c "import ([^"]+)"', deps)
+    assert probe and {m.strip().split(".")[0] for m in probe.group(1).split(",")} == third_party
+    loop = re.search(r"^for tool in ([a-z_ ]+); do$", verify, re.M)
+    assert loop and set(loop.group(1).split()) == tools and f'"{PG_BIN}/$tool" --version' in verify
+    # One directory in five places: made writable, restored into, copied into, verified, and first on snap's PATH.
+    assert f"sudo mkdir -p {PG_BIN} " in steps[PG_DIR]["run"] and f" {PG_ROOT} " in steps[PG_DIR]["run"]
+    assert steps[PG_CACHE]["with"] == {"path": PG_BIN, "key": PG_KEY}
+    assert f'docker cp "$cid:{PG_BIN}/." {PG_BIN}/ ' in steps[PG_FETCH]["run"]
+    assert f'export PATH="{PG_BIN}:$PATH"' in steps[SNAP]["run"]
+    assert PG_KEY in verify  # the remedy for a bad cached copy names the entry to delete
+
+
+def _poll_seconds(body):
+    """N x S for each `for i in $(seq 1 N)` loop and the `sleep S` inside it: the longest each poll can wait."""
+    waits = []
+    for chunk in body.split("for i in $(seq 1 ")[1:]:
+        sleep = re.search(r"^\s*sleep (\d+)$", chunk.split("\ndone", 1)[0], re.M)
+        waits.append(int(chunk.split(")", 1)[0]) * int(sleep.group(1)))
+    return waits
+
+
+def test_snapshot_tooling_every_stall_ends_inside_its_step_and_all_of_them_inside_the_job():
+    job = _workflow(PROMOTE)["jobs"]["promote"]
+    steps = {s.get("name"): s for s in job["steps"]}
+    # Inside the bodies: every docker and python3 call runs as `timeout -k K D ...`, so a hang ends in the step's own
+    # ::error; timeout-minutes is the backstop and must outlast them all (the schema gate's rule, same 30 s margin).
+    for name, command, calls, worst in ((PG_FETCH, "docker", 3, 180), (SNAP_DEPS, "python3", 3, 225)):
+        body = steps[name]["run"]
+        bounds = [int(k) + int(d) for k, d in re.findall(rf"\btimeout -k (\d+) (\d+) {command}\b", body)]
+        assert len(bounds) == len(re.findall(rf"\b{command}\b", body)) == calls, (name, bounds)
+        assert sum(bounds) == worst and worst + 30 <= steps[name]["timeout-minutes"] * 60, (name, bounds)
+    limits = {n: steps[n]["timeout-minutes"] for n in TOOLING if "timeout-minutes" in steps[n]}
+    assert limits == {PG_CACHE: 2, PG_FETCH: 4, SNAP_DEPS: 5}
+    for name in (PG_DIR, PG_VERIFY):  # no limit, because they reach nothing but the runner's own disk
+        assert _fetches_tooling(steps[name]) == "", name
+    # The job. Its comment adds ~4 min before the tooling, the smoke gate's longest wait and ~10 min after it to
+    # 48.5; with all three tooling limits reached at once the FF and the snap must still fit inside the job's own.
+    smoke = _poll_seconds(steps[SMOKE]["run"])
+    assert smoke == [300, 1650, 120]
+    worst = BEFORE_TOOLING_MIN + sum(limits.values()) + sum(smoke) / 60 + AFTER_SMOKE_MIN
+    assert (worst, job["timeout-minutes"]) == (59.5, 60)
+
+
+def _run_tooling(tmp_path, name, **stubs):
+    """One tooling step's body, the runner's way. `stubs` maps a command to the sh body that follows its argv log
+    line; /usr/lib/postgresql/17 becomes tmp_path/pg17. Returns (proc, the logged command lines, tmp_path/pg17)."""
+    _, step = _step(PROMOTE, "promote", name)
+    bindir, log, root = _bindir(tmp_path), tmp_path / "argv", tmp_path / "pg17"
+    for command, body in stubs.items():
+        (bindir / command).write_text(f'#!/bin/sh\necho "{command} $*" >> "{log}"\n{body}\n')
+        (bindir / command).chmod(0o755)
+    proc = _run_as_runner(tmp_path, step["run"].replace(PG_ROOT, str(root)),
+                          dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}"))
+    return proc, (log.read_text().splitlines() if log.exists() else []), root
+
+
+def _refused_unmoved(proc):
+    """The step failed with exactly one ::error, and it says nothing has moved and what to do."""
+    errors = _errors(proc)
+    assert proc.returncode == 1 and len(errors) == 1, proc.stdout + proc.stderr
+    assert errors[0].startswith("::error title=Snapshot tooling (pre-FF)::") and NOT_MOVED in errors[0], errors[0]
+    return errors[0]
+
+
+@pytest.mark.parametrize("fails,ran", [(None, ["mkdir", "chown"]), ("mkdir", ["mkdir"]), ("chown", ["mkdir", "chown"])])
+def test_pg17_directory_step_refuses_unmoved_when_sudo_fails(tmp_path, fails, ran):
+    proc, log, root = _run_tooling(tmp_path, PG_DIR, sudo=f'[ "$1" = "{fails}" ] && exit 1\nexit 0')
+    assert [ln.split()[1] for ln in log] == ran
+    assert log[0] == f"sudo mkdir -p {root}/bin"
+    if fails:
+        assert f"sudo {fails}" in _refused_unmoved(proc)
+    else:
+        assert proc.returncode == 0 and not _annotations(proc), proc.stdout + proc.stderr
+        assert log[1] == f"sudo chown -R {os.getuid()}:{os.getgid()} {root}"
+
+
+DOCKER_STUB = """case "$1" in
+  create) [ "$CREATE_RC" = 0 ] || exit "$CREATE_RC"; [ -z "$CID" ] || echo "$CID" ;;
+  cp) exit "$CP_RC" ;;
+  rm) exit "$RM_RC" ;;
+esac"""
+
+
+def _run_fetch(tmp_path, monkeypatch, create=0, cp=0, rm=0, cid="c0ffee"):
+    for key, value in (("CREATE_RC", create), ("CP_RC", cp), ("RM_RC", rm), ("CID", cid)):
+        monkeypatch.setenv(key, str(value))
+    return _run_tooling(tmp_path, PG_FETCH, docker=DOCKER_STUB)
+
+
+def test_pg17_fetch_step_copies_the_client_out_of_the_image(tmp_path, monkeypatch):
+    proc, log, root = _run_fetch(tmp_path, monkeypatch)
+    assert proc.returncode == 0 and not _annotations(proc), proc.stdout + proc.stderr
+    assert log == ["docker create postgres:17", f"docker cp c0ffee:{root}/bin/. {root}/bin/", "docker rm -f c0ffee"]
+
+
+@pytest.mark.parametrize("outcome,said,calls", [
+    (dict(create=1), "could not be pulled and a container created from it within 120 s (exit 1)", 1),
+    (dict(create=124), "within 120 s (exit 124)", 1),          # what `timeout` returns for a pull that hung
+    (dict(cid=""), "printed no container id", 1),
+    (dict(cp=1), "failed, or did not finish in 30 s (exit 1)", 2),
+    (dict(cp=137), "did not finish in 30 s (exit 137)", 2),
+], ids=["pull-failed", "pull-hung", "no-container-id", "copy-failed", "copy-hung"])
+def test_pg17_fetch_step_refuses_unmoved_and_names_what_failed(tmp_path, monkeypatch, outcome, said, calls):
+    proc, log, _ = _run_fetch(tmp_path, monkeypatch, **outcome)
+    assert said in _refused_unmoved(proc) and len(log) == calls
+
+
+def test_pg17_fetch_step_a_scratch_container_it_cannot_remove_is_a_note_not_a_refusal(tmp_path, monkeypatch):
+    proc, log, _ = _run_fetch(tmp_path, monkeypatch, rm=1)
+    assert proc.returncode == 0 and not _annotations(proc), proc.stdout + proc.stderr
+    assert len(log) == 3 and "note: could not remove the scratch container c0ffee (exit 1)" in proc.stdout
+
+
+def _pg17_binaries(root, **exits):
+    (root / "bin").mkdir(parents=True)
+    for tool, rc in exits.items():
+        (root / "bin" / tool).write_text(f'#!/bin/sh\necho "{tool} (PostgreSQL) 17.6"\nexit {rc}\n')
+        (root / "bin" / tool).chmod(0o755)
+
+
+def test_pg17_verify_step_runs_both_binaries_snap_uses(tmp_path):
+    _pg17_binaries(tmp_path / "pg17", pg_dump=0, pg_dumpall=0)
+    proc, _, _ = _run_tooling(tmp_path, PG_VERIFY)
+    assert proc.returncode == 0 and not _annotations(proc), proc.stdout + proc.stderr
+    assert proc.stdout.splitlines() == ["pg_dump (PostgreSQL) 17.6", "pg_dumpall (PostgreSQL) 17.6"]
+
+
+@pytest.mark.parametrize("present,broken", [
+    (dict(pg_dump=0), "pg_dumpall"), (dict(pg_dumpall=0), "pg_dump"), (dict(pg_dump=0, pg_dumpall=127), "pg_dumpall"),
+    (dict(), "pg_dump"),
+], ids=["no-pg_dumpall", "no-pg_dump", "pg_dumpall-does-not-run", "empty-directory"])
+def test_pg17_verify_step_refuses_unmoved_and_names_the_binary_and_the_cache_entry(tmp_path, present, broken):
+    _pg17_binaries(tmp_path / "pg17", **present)
+    proc, _, root = _run_tooling(tmp_path, PG_VERIFY)
+    error = _refused_unmoved(proc)
+    assert f"::{root}/bin/{broken} does not run" in error
+    assert f"delete the Actions cache entry {PG_KEY}" in error
+
+
+PIP_PLAIN = "python3 -m pip install --quiet boto3 requests"
+PIP_PEP668 = "python3 -m pip install --quiet --break-system-packages boto3 requests"
+IMPORT = "python3 -c import boto3, requests, botocore.exceptions"
+PYTHON_STUB = """case "$1" in
+  -m) [ "$5" = "--break-system-packages" ] && exit "$PEP668_RC"; exit "$PLAIN_RC" ;;
+  -c) exit "$IMPORT_RC" ;;
+esac
+exit 99"""
+
+
+def _run_deps(tmp_path, monkeypatch, plain=0, pep668=0, imports=0):
+    for key, value in (("PLAIN_RC", plain), ("PEP668_RC", pep668), ("IMPORT_RC", imports)):
+        monkeypatch.setenv(key, str(value))
+    proc, log, _ = _run_tooling(tmp_path, SNAP_DEPS, python3=PYTHON_STUB)
+    return proc, log
+
+
+@pytest.mark.parametrize("plain,ran", [(0, [PIP_PLAIN, IMPORT]), (1, [PIP_PLAIN, PIP_PEP668, IMPORT]),
+                                       (124, [PIP_PLAIN, PIP_PEP668, IMPORT])],
+                         ids=["plain-form", "pep668-form-after-a-failure", "pep668-form-after-a-hang"])
+def test_deps_step_passes_only_after_an_install_form_and_the_imports_both_succeed(tmp_path, monkeypatch, plain, ran):
+    proc, log = _run_deps(tmp_path, monkeypatch, plain=plain)
+    assert proc.returncode == 0 and not _annotations(proc), proc.stdout + proc.stderr
+    assert log == ran
+
+
+@pytest.mark.parametrize("outcome,said,ran", [
+    (dict(plain=1, pep668=1), "pip could not install boto3 and requests in either form (exit 1;",
+     [PIP_PLAIN, PIP_PEP668]),
+    (dict(plain=124, pep668=137), "in either form (exit 137;", [PIP_PLAIN, PIP_PEP668]),
+    (dict(imports=1), "do not import after the install (exit 1)", [PIP_PLAIN, IMPORT]),
+    (dict(plain=1, imports=124), "do not import after the install (exit 124)", [PIP_PLAIN, PIP_PEP668, IMPORT]),
+], ids=["pip-failed-twice", "pip-hung-twice", "import-failed", "import-hung"])
+def test_deps_step_refuses_unmoved_when_pip_or_the_import_fails(tmp_path, monkeypatch, outcome, said, ran):
+    proc, log = _run_deps(tmp_path, monkeypatch, **outcome)
+    assert said in _refused_unmoved(proc) and log == ran
+
+
 def _resolve(tmp_path, **env_extra):
     _, step = _step(*RESOLVE)
     out = tmp_path / "output"
