@@ -368,6 +368,51 @@ describe('Saved from — Remove and Undo', () => {
     expect(screen.queryByTestId('saved-from-undo')).toBeNull()
     expect(card().textContent).not.toContain('Internal error')
   })
+
+  // api.js's two shapes for a request that went out and was never answered.
+  const timedOut = () => Object.assign(new Error('Request timed out'), { status: 0, timeout: true })
+  const dropped = () => new TypeError('Failed to fetch')
+
+  it.each([
+    ['timed out', timedOut],
+    ['lost its reply to a dropped connection', dropped],
+  ])('a Remove that %s claims nothing: the jar is read again and drawn as stored', async (_, errorOf) => {
+    // The write landed; only its reply was lost.
+    routes.put = (body) => { storeSet(body); return Promise.reject(errorOf()) }
+    await renderPage()
+    expect(callsTo(LOT_PATH)).toHaveLength(1)
+    await click(removeButton(P1B))
+
+    await waitFor(() => expect(help())
+      .toBe('This jar changed somewhere else just now. This is the latest. Try again if it still needs changing.'))
+    expect(callsTo(LOT_PATH)).toHaveLength(2)
+    // The planting is off the jar, as stored. Not struck: this page never heard that it was removed.
+    expect(rows()).toHaveLength(1)
+    expect(rowOf(P1B)).toBeUndefined()
+    expect(card().textContent).not.toContain('Nothing was changed')
+    expect(card().textContent).not.toContain(errorOf().message)
+  })
+
+  it.each([
+    ['cannot be read again', () => Promise.reject(new Error('offline'))],
+    // The service worker answers a read from its own copy when there is no network, and marks it.
+    ['is answered from the copy kept for offline use', () => Promise.resolve(
+      Object.defineProperty({ ...itemRef.current }, Symbol.for('garden-app.fromCache'), { value: true }))],
+  ])('an unanswered Remove whose jar %s still does not say nothing was changed', async (_, readAgain) => {
+    routes.put = () => Promise.reject(timedOut())
+    await renderPage()
+    const original = fetchSpy.getMockImplementation()
+    fetchSpy.mockImplementation((path, opts) =>
+      (String(path) === LOT_PATH && !opts?.method ? readAgain() : original(path, opts)))
+    await click(removeButton(P1B))
+
+    await waitFor(() => expect(help())
+      .toBe("That didn't finish, so the change may or may not have saved. Open this jar again to check before you try again."))
+    // The row is back as it was: nothing is struck on a guess.
+    expect(liveRows()).toHaveLength(2)
+    expect(screen.queryByTestId('saved-from-undo')).toBeNull()
+    expect(card().textContent).not.toContain('Nothing was changed')
+  })
 })
 
 describe('Saved from — leaving the page', () => {

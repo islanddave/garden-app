@@ -43,6 +43,13 @@ export const UNDO_ARM_MS = 400
 // Exported: the page's one remaining legacy parent write says the same two things (InventoryDetail).
 export const CHANGED_ELSEWHERE = 'This jar changed somewhere else just now. This is the latest. Try again if it still needs changing.'
 export const NOT_SAVED = "Couldn't save that. Nothing was changed."
+// A set write that never answered (a timeout, or a connection that dropped with the request already
+// out) may have landed with only its reply lost, so "nothing was changed" would be a guess. The jar is
+// read again; this is what is said when that read fails too.
+const NOT_CONFIRMED = "That didn't finish, so the change may or may not have saved. Open this jar again to check before you try again."
+// The service worker's mark on a reply it served from its offline copy (src/lib/api.js). Such a copy
+// is never "the latest".
+const FROM_CACHE = Symbol.for('garden-app.fromCache')
 // The client's own sentence per refusal code. Never the server's string.
 const NOT_ADDED = {
   mixed_crop_parents: "That planting is a different crop, so it wasn't added.",
@@ -162,12 +169,13 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
     }
   }, [])
 
-  // Either 409: read the jar again, in place, and draw what it says. A struck row whose plant is back
-  // on the jar is no longer struck; a "Filed as" line described a jar that has since moved.
+  // Either 409, or a set write that never answered: read the jar again, in place, and draw what it
+  // says. A struck row whose plant is back on the jar is no longer struck; a "Filed as" line described
+  // a jar that has since moved.
   async function refresh() {
     try {
       const fresh = await fetch('/api/inventory-items/' + lotId)
-      if (!fresh || !Array.isArray(fresh.source_plants)) return false
+      if (!fresh || !Array.isArray(fresh.source_plants) || fresh[FROM_CACHE] === true) return false
       const patch = {}
       for (const k of LOT_KEYS) if (Object.prototype.hasOwnProperty.call(fresh, k)) patch[k] = fresh[k]
       onLot(patch)
@@ -213,6 +221,8 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
       setSaid(`${plant.name} · Removed`)
     }
     setPending(next)
+    // True once the set write itself is out: only then can a failure have changed the jar.
+    let sent = false
 
     try {
       // ── The filing that rides with this change (O-3) ─────────────────────────────────────────────
@@ -264,6 +274,7 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
       }
       if (filing) body.filing = filing
 
+      sent = true
       const reply = await fetch(`/api/inventory-items/${lotId}/source-plants`, {
         method: 'PUT',
         body: JSON.stringify(body),
@@ -295,12 +306,17 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
       if (kind === 'add' && !undo) show({ message: '✓ Saved' })
     } catch (e) {
       // A refusal writes nothing (one transaction, one verdict), so the row goes back to how it was
-      // before the tap. A reply lost on the way is the one case the page cannot see; the next write's
-      // `expected_source_plant_ids` then answers lot_changed and the jar is read again.
+      // before the tap. A reply lost on the way (api.js: `timeout` on its own 15 s limit, the
+      // browser's TypeError with no `status` for a dropped connection) is the one case the page cannot
+      // see, so it claims nothing: the jar is read again and drawn as stored. When that read fails
+      // too, the next write's `expected_source_plant_ids` answers lot_changed and reads it then.
       if (strikes) setStruck((list) => list.filter((s) => sid(s.plant.id) !== pid))
       const code = e?.body?.code
+      const unanswered = sent && (e?.timeout || (e?.status == null && e instanceof TypeError))
       if (e?.status === 409 && (code === 'lot_changed' || code === 'parents_changed')) {
         setNotice((await refresh()) ? CHANGED_ELSEWHERE : NOT_SAVED)
+      } else if (unanswered) {
+        setNotice((await refresh()) ? CHANGED_ELSEWHERE : NOT_CONFIRMED)
       } else {
         setNotice((kind === 'add' && NOT_ADDED[code]) || NOT_SAVED)
       }

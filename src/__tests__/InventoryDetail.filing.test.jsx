@@ -455,6 +455,19 @@ describe('Re-file by itself — what it never does', () => {
     expect(screen.getByTestId('seed-source-plant').textContent).not.toContain('Too many mixes')
   })
 
+  it('a mix call that timed out left the jar alone, and the page may say so: no PUT went, no re-read', async () => {
+    // Only the set write can change the jar. The mix route writes no jar and is idempotent, so a
+    // timeout here is still "nothing was changed"; the unanswered-write sentence is the PUT's alone.
+    routes.blend = () => Promise.reject(Object.assign(new Error('Request timed out'), { status: 0, timeout: true }))
+    await renderPage()
+    await addFromPicker(P2)
+
+    await waitFor(() => expect(help()).toBe("Couldn't save that. Nothing was changed."))
+    expect(setBodies()).toHaveLength(0)
+    expect(indexesOf(LOT_PATH, 'GET')).toHaveLength(1)
+    expect(liveRows()).toHaveLength(1)
+  })
+
   it.each(['blend_required', 'variety_unusable', 'filing_crop_mismatch'])(
     'a PUT refused with %s refuses the whole edit: nothing is filed, and the next try reuses the mix', async (code) => {
       routes.put = () => Promise.reject(refused(code))
