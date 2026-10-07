@@ -430,6 +430,8 @@ describe('the lot is refused: the client’s own sentence, naming the plant', ()
     submit()
     await waitFor(() => expect(errorText()).toBe(SAVE_UNCONFIRMED))
     expect(errorText()).not.toContain('Nothing was saved')
+    // Never sent again by itself: the first may have landed, and a second would be a second jar.
+    expect(lotCalls()).toHaveLength(1)
     expectNothingSavedAndEntriesKept()
   })
 
@@ -440,6 +442,7 @@ describe('the lot is refused: the client’s own sentence, naming the plant', ()
     submit()
     await waitFor(() => expect(errorText()).toBe(SAVE_UNCONFIRMED))
     expect(errorText()).not.toContain('timed out')
+    expect(lotCalls()).toHaveLength(1)
     expectNothingSavedAndEntriesKept()
   })
 
