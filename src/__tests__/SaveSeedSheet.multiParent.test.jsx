@@ -172,15 +172,20 @@ describe('the "From" block, opened from a planting', () => {
     expect(screen.getByTestId('save-seed-add-select').getAttribute('data-exclude')).toBe('pl-jewel,pl-jewel2')
   })
 
-  it('a pick hands focus to the adder, so the next Tab stays inside the sheet', () => {
-    // The picker holds focus at the pick and unmounts with it. Left alone, focus falls to <body>, and
-    // the sheet's Tab trap wraps only at its first and last control.
+  it('a pick hands focus to the adder once the picker is gone, so the next Tab stays inside the sheet', () => {
+    // The picker unmounts with the pick, and its field goes while focused: typed in, or handed focus by
+    // the click itself, because the picker sits inside a <label> and the browser focuses a label's
+    // field AFTER the click's own handlers have run. Left alone, focus falls to <body>, and the sheet's
+    // Tab trap wraps only at its first and last control. The order is modelled here: the handler, then
+    // focus arriving inside the picker, and only then React's commit (one act), so focus moved by the
+    // handler itself would be taken back and lost.
     mount(JEWEL)
     openAdder()
     const offer = screen.getByTestId(`offer-${JEWEL_2.id}`)
-    offer.focus()
-    expect(document.activeElement).toBe(offer)
-    fireEvent.click(offer)
+    act(() => {
+      fireEvent.click(offer)
+      offer.focus()
+    })
     expect(screen.queryByTestId('save-seed-add-select')).toBeNull()
     expect(document.activeElement).toBe(screen.getByTestId('save-seed-add-plant'))
   })
