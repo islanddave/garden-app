@@ -157,9 +157,11 @@ describe('Remove this batch', () => {
     expect(onRemoved).toHaveBeenCalled()
   })
 
+  // A sitting's own jars only. The picked-jar arms (a jar the close sheet linked has another door, and
+  // other words) are PutUpBatchDetail.pickedJar.test.jsx.
   it('refused while it has jars, in words that say what to do', async () => {
     fetchMock.mockImplementation(() => Promise.reject(Object.assign(new Error('409'), { status: 409, body: { code: 'has_jars', error: 'x' } })))
-    renderDetail()
+    renderDetail({ outputs: OUTPUTS.slice(0, 2) })
     fireEvent.click(screen.getByTestId('batch-remove'))
     await act(async () => { fireEvent.click(screen.getByTestId('batch-remove-yes')) })
     await waitFor(() => expect(screen.getByTestId('batch-remove-error').textContent).toBe(HAS_JARS_TEXT))

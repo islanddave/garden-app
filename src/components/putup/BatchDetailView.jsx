@@ -22,9 +22,9 @@
 //     turns a ferment checked eight times into eight identical "Tended" lines, which is the unbroken
 //     run of absent failure signs the ruling forbids, drawn as a list instead of counted.
 //
-// These are guarded by BatchDetailView.test.jsx's own sweep, over THIS root testid. The shipped
+// These are guarded by PutUpBatchDetail.test.jsx's own sweep, over THIS root testid. The shipped
 // sweeps are scoped to `going-now-view` and would stay green over every one of them.
-import React, { useCallback, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import {
@@ -55,7 +55,7 @@ import PutItUpSheet from './PutItUpSheet.jsx'
 import { PUT_IT_UP_CTA } from './putItUp.js'
 import { useUndoPutUp, UNDO_PUT_UP_CTA, UNDONE_TEXT } from './PutUpStub.jsx'
 import { putUpDateWords, countedSize, sizeWords, ESTIMATED_PRECISIONS } from './jarWords.js'
-import { describeRefusal } from '../../lib/putUpErrors.js'
+import { describeRefusal, hasJarsText, REFUSAL_CODES } from '../../lib/putUpErrors.js'
 
 // Local copies of two private vocabularies. STAGE_KIND_LABELS is not exported from goingNow.js and
 // KITCHEN_INPUT_KINDS lives in the Lambda; both are bound to their sources by parity assertions in
@@ -454,8 +454,122 @@ function Sitting({ batchId, stage, jars, lines, onChanged, nowMs, gardenNames, o
   )
 }
 
+// ── a put-up PICKED for this batch (BUG-BATCHREMOVEDEADEND-001) ─────────────────────────────────────
+// The close sheet's "Which put-ups came out of it?" (and How it was made →) link a put-up that was
+// already in the Pantry: batch_id alone, no sitting, so no Undo. "Take it off this batch" is its door —
+// the server's repair path for a wrong pick at close (DELETE /:id/outputs/:plid), which no screen called
+// before this — and the only way such a batch can then be removed. One tap, no confirm: the put-up itself
+// is not touched, and the row that answers puts it back (POST /:id/outputs).
+//
+// The next read no longer carries the put-up, so its "Taken off · Undo" row is held by the batch surface
+// until navigation, the shape What went in's "Taken out · Undo" has.
+export const TAKE_OFF_CTA = 'Take it off this batch'
+export const TAKEN_OFF_TEXT = 'Taken off — it’s still in the Pantry.'
+export const NOT_ON_BATCH_TEXT = 'That one isn’t on this batch any more.'
+export const CANT_PUT_BACK_TEXT = 'Couldn’t put it back — it was removed, or picked for another batch since.'
+
+// A held row yields to the read once the read has CONFIRMED it. `gone` is set the first time a read of the
+// batch lacks the put-up; after that, a read that carries it again wins and the row is dropped — it was
+// linked again by a path this row never heard from (an Undo that landed while its answer was lost, a second
+// close that picked it, the other person). A `back` row is dropped as soon as the read carries the put-up.
+// Until a read has confirmed a take-off the row masks the read: that is the window while its re-read is in
+// flight. Without this a "Taken off" row could outlive the truth, hide the put-up's door and leave Remove
+// this batch refused with nothing to tap — the dead end this door exists to remove. Returns the SAME array
+// when nothing changed.
+export function reconcileTakenOff(entries, batchId, readIds) {
+  let changed = false
+  const next = []
+  for (const t of entries) {
+    if (t.batchId !== batchId) { next.push(t); continue }
+    const inRead = readIds.has(t.jar.id)
+    if (inRead && (t.back || t.gone)) { changed = true; continue }
+    if (!inRead && !t.back && !t.gone) { changed = true; next.push({ ...t, gone: true }); continue }
+    next.push(t)
+  }
+  return changed ? next : entries
+}
+
+// Code-unit order, as the database compares a date and a uuid (never a locale's collation).
+const readOrder = (a, b) => { const x = String(a ?? ''), y = String(b ?? ''); return x < y ? -1 : x > y ? 1 : 0 }
+
+function PickedJar({ batchId, jar, nowMs, fetch, onTakenOff, onChanged }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const takeOff = useCallback(async () => {
+    if (busy) return
+    setBusy(true); setErr(null)
+    try {
+      await fetch(`/api/kitchen-batches/${batchId}/outputs/${jar.id}`, { method: 'DELETE' })
+      // Stays busy: the row is replaced by its "Taken off" row as soon as the parent hears.
+      onTakenOff?.(jar)
+    } catch (e) {
+      // 404: someone else took it off, or the put-up was removed — the row is stale, so re-read.
+      if (e?.status === 404) { setErr(NOT_ON_BATCH_TEXT); onChanged?.() }
+      else setErr(describeRefusal(e)?.text ?? "Couldn't take it off — try again.")
+      setBusy(false)
+    }
+  }, [batchId, busy, fetch, jar, onChanged, onTakenOff])
+  return (
+    <li data-testid="batch-detail-output" data-jar-id={jar.id} style={{ padding: '4px 0', color: P.mid, fontSize: T.type.sm }}>
+      <span data-testid="batch-detail-output-text">{outputRowText(jar, nowMs)}</span>
+      {/* A sitting's jar is never offered this: the server refuses it (put_up_jar), and Undo is its door. */}
+      {!jar.put_up_stage_id && (
+        <div>
+          <button type="button" data-testid="batch-detail-output-take-off" disabled={busy} onClick={takeOff}
+            style={{ ...actionLink, cursor: busy ? 'default' : 'pointer' }}>
+            {TAKE_OFF_CTA}
+          </button>
+        </div>
+      )}
+      {err && (
+        <div role="alert" data-alarm-ink-exempt="error" data-testid="batch-detail-output-error"
+          style={{ color: P.terra, fontSize: '0.78rem' }}>{err}</div>
+      )}
+    </li>
+  )
+}
+
+function TakenOffJar({ batchId, jar, nowMs, fetch, onPutBack, onChanged }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const putBack = useCallback(async () => {
+    if (busy) return
+    setBusy(true); setErr(null)
+    try {
+      const answer = await fetch(`/api/kitchen-batches/${batchId}/outputs`, { method: 'POST', body: JSON.stringify({
+        preservation_log_ids: [jar.id],
+      }) })
+      // The route SKIPS a put-up it cannot link and answers 200 with the count: removed, on another batch
+      // by now — or ALREADY ON THIS ONE (an earlier Undo landed and its answer was lost). The count cannot
+      // say which, so the batch is read again: if the put-up is on it, this row gives way to the read.
+      // An older answer with no count is taken at its word.
+      if (answer && Number(answer.linked) === 0) { setErr(CANT_PUT_BACK_TEXT); setBusy(false); onChanged?.(); return }
+      onPutBack?.(jar)
+    } catch (e) {
+      setErr(describeRefusal(e)?.text ?? "Couldn't put it back — try again.")
+      setBusy(false)
+    }
+  }, [batchId, busy, fetch, jar, onChanged, onPutBack])
+  return (
+    <li data-testid="batch-detail-output-taken-off" data-jar-id={jar.id} style={{ padding: '4px 0', color: P.light, fontSize: T.type.sm }}>
+      <s>{outputRowText(jar, nowMs)}</s>
+      <div role="status" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4, color: P.mid, fontSize: '0.78rem' }}>
+        <span>{TAKEN_OFF_TEXT}</span>
+        <button type="button" data-testid="batch-detail-output-put-back" disabled={busy} onClick={putBack}
+          style={{ ...actionLink, cursor: busy ? 'default' : 'pointer' }}>Undo</button>
+      </div>
+      {err && (
+        <div role="alert" data-alarm-ink-exempt="error" data-testid="batch-detail-output-error"
+          style={{ color: P.terra, fontSize: '0.78rem' }}>{err}</div>
+      )}
+    </li>
+  )
+}
+
 // ── Remove this batch (V4 §2.3: started by mistake) — two-step, refused while it has jars ───────────
-function RemoveBatch({ batch, fetch, onRemoved }) {
+// `blockers` ({ sitting, picked }) is what this surface can see holding the batch: has_jars does not say
+// which kind of jar, and each kind has its own door (putUpErrors.hasJarsText).
+function RemoveBatch({ batch, fetch, onRemoved, blockers }) {
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
@@ -466,11 +580,13 @@ function RemoveBatch({ batch, fetch, onRemoved }) {
       await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'DELETE' })
       onRemoved?.()
     } catch (e) {
-      // has_jars says to undo its put-ups first (putUpErrors, release F); every other code, the server's words.
-      setErr(describeRefusal(e)?.text ?? "Couldn't remove it — try again.")
+      // has_jars names the door for the jars this batch has (putUpErrors.hasJarsText); every other code,
+      // the server's words.
+      const r = describeRefusal(e)
+      setErr(r?.code === REFUSAL_CODES.HAS_JARS ? hasJarsText(blockers) : r?.text ?? "Couldn't remove it — try again.")
       setBusy(false)
     }
-  }, [batch.id, busy, fetch, onRemoved])
+  }, [batch.id, blockers, busy, fetch, onRemoved])
   if (!confirming) {
     return (
       <button type="button" data-testid="batch-remove" onClick={() => setConfirming(true)}
@@ -533,6 +649,16 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
   const [checking, setChecking] = useState(false)
   const [checkSaved, setCheckSaved] = useState(null)       // stage id of the check-in just saved
   const [logErr, setLogErr] = useState(null)
+  // Put-ups taken off a batch this visit, client-held: [{ batchId, jar, back, gone }]. `back` is an Undo
+  // whose re-read has not landed yet; `gone`, a take-off a read has confirmed (reconcileTakenOff). Each entry
+  // names its batch because this surface is not remounted per batch.
+  const [takenOff, setTakenOff] = useState([])
+  const heldBatchId = batch?.id
+  useEffect(() => {
+    if (!heldBatchId) return
+    const readIds = new Set((Array.isArray(outputs) ? outputs : []).map(j => j?.id))
+    setTakenOff(t => reconcileTakenOff(t, heldBatchId, readIds))
+  }, [heldBatchId, outputs])
   const undoRef = useRef(false)
   // "Made it as written" has two doors here (the recipe row's link, and a button in the empty What went
   // in block), so they share one write and one key set. Called before the early returns: a hook.
@@ -580,6 +706,31 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
   const inputRows = Array.isArray(inputs) ? inputs : []
   const stageRows = liveStages(stages)
   const { sittings, linked } = outputSittings(outputs, stages)
+  // A picked put-up is shown from the read until it is taken off, then from `takenOff` until the read
+  // carries it again (an Undo): never both, and never neither while a re-read is in flight.
+  // Reconciled against THIS read before anything is drawn (the effect above stores the same answer), so a
+  // row never paints once from a state the read has already overtaken.
+  const readIds = new Set((Array.isArray(outputs) ? outputs : []).map(j => j?.id))
+  const off = reconcileTakenOff(takenOff, batch.id, readIds).filter(t => t.batchId === batch.id)
+  const linkedIds = new Set(linked.map(j => j.id))
+  const picked = linked.filter(j => !off.some(t => t.jar.id === j.id && !t.back))
+  const offRows = off.filter(t => !t.back || !linkedIds.has(t.jar.id))
+  // One list. The read's rows stay exactly as it ordered them (preserved_at DESC, id DESC — getBatch) and
+  // each held row goes back in where that order puts it, so a row answers where it was tapped instead of
+  // dropping to the end of the list.
+  const pickedRows = picked.map(jar => ({ jar, state: 'picked' }))
+  for (const t of offRows) {
+    const at = pickedRows.findIndex(r => (readOrder(r.jar.preserved_at, t.jar.preserved_at) || readOrder(r.jar.id, t.jar.id)) < 0)
+    pickedRows.splice(at < 0 ? pickedRows.length : at, 0, { jar: t.jar, state: t.back ? 'back' : 'off' })
+  }
+  // What holds Remove this batch. A pieced batch (How it was made →: a put_up row that wrote no jar of its
+  // own) lets go of its picked put-ups itself, so there they hold nothing.
+  const pieced = sittings.some(s => s.stage.has_own_jars === false)
+  const blockers = {
+    sitting: (Array.isArray(outputs) ? outputs : []).filter(j => j?.put_up_stage_id).length,
+    // A put-up put back whose re-read is not here yet is on the batch: it counts.
+    picked: pieced ? 0 : pickedRows.filter(r => r.state !== 'off' && !r.jar.put_up_stage_id).length,
+  }
   const gardenNames = Array.isArray(batch.garden_names) ? batch.garden_names : []
 
   const undoStageEdit = async () => {
@@ -715,7 +866,7 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
       </Section>
 
       <Section title="What came out" testId="batch-detail-outputs">
-        {sittings.length === 0 && linked.length === 0 ? (
+        {sittings.length === 0 && pickedRows.length === 0 ? (
           <div data-testid="batch-detail-outputs-empty" style={{ color: P.light, fontSize: T.type.sm }}>
             No put-ups linked to this batch.
           </div>
@@ -725,12 +876,25 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
               <Sitting key={st.id} batchId={batch.id} stage={st} jars={jars} lines={inputRows} onChanged={onChanged} nowMs={nowMs}
                 gardenNames={gardenNames} onEdit={setEditing} />
             ))}
-            {linked.map(row => (
-              <li key={row.id} data-testid="batch-detail-output"
+            {pickedRows.map(({ jar, state }) => (state === 'picked' ? (
+              <PickedJar key={jar.id} batchId={batch.id} jar={jar} nowMs={nowMs} fetch={fetch} onChanged={onChanged}
+                onTakenOff={(j) => {
+                  setTakenOff(t => [...t.filter(x => x.jar.id !== j.id), { batchId: batch.id, jar: j, back: false }])
+                  onChanged?.()
+                }} />
+            ) : state === 'back' ? (
+              // Put back, its re-read not here yet: the row as it will read, with nothing to tap.
+              <li key={`back-${jar.id}`} data-testid="batch-detail-output" data-jar-id={jar.id}
                 style={{ padding: '4px 0', color: P.mid, fontSize: T.type.sm }}>
-                <span data-testid="batch-detail-output-text">{outputRowText(row, nowMs)}</span>
+                <span data-testid="batch-detail-output-text">{outputRowText(jar, nowMs)}</span>
               </li>
-            ))}
+            ) : (
+              <TakenOffJar key={`off-${jar.id}`} batchId={batch.id} jar={jar} nowMs={nowMs} fetch={fetch} onChanged={onChanged}
+                onPutBack={(j) => {
+                  setTakenOff(t => t.map(x => (x.jar.id === j.id ? { ...x, back: true, gone: false } : x)))
+                  onChanged?.()
+                }} />
+            )))}
           </ul>
         )}
         {/* Put it up's door is in the action row under the title; the sheet it opens is mounted here. */}
@@ -749,7 +913,7 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
           <SaveAsRecipe batch={batch} onChanged={onChanged} />
         </div>
         {/* Last and quietest: removing is for a batch started by mistake, never an ending. */}
-        <RemoveBatch batch={batch} fetch={fetch} onRemoved={onRemoved ?? onChanged} />
+        <RemoveBatch batch={batch} fetch={fetch} onRemoved={onRemoved ?? onChanged} blockers={blockers} />
       </div>
 
       <StageEditSheet open={!!editing} batch={batch} stage={editing} now={nowMs} onClose={() => setEditing(null)}

@@ -360,7 +360,7 @@ describe('POST /:id/close with a picked jar — a jar the sheet linked is not a 
     })
   })
 
-  it('Remove this batch is refused while the picked jar is linked; unlinking it opens the door and the jar stays live', async () => {
+  it('Remove this batch is refused while the picked jar is linked; unlinking it opens the door, linking it again shuts it, and the jar stays live', async () => {
     const b = (await seedBatch(DAVE, { label: 'bb closed with an older jar, nothing put up' })).id
     const older = await seedJar(DAVE, { count: 3 })
     const close = await call(DAVE, 'POST', `/api/kitchen-batches/${b}/close`, { outcome: 'put_up', output_preservation_log_ids: [older] })
@@ -377,6 +377,20 @@ describe('POST /:id/close with a picked jar — a jar the sheet linked is not a 
     expect((await linkOf(older)).batch_id).toBe(b)
     const unlink = await call(JEN, 'DELETE', `/api/kitchen-batches/${b}/outputs/${older}`)
     expect(unlink.status, JSON.stringify(unlink.body)).toBe(200)
+    expect(await linkOf(older)).toMatchObject({ batch_id: null, deleted_at: null })
+
+    // "Taken off · Undo" on batch detail links it again — on a CLOSED batch (the repair path stays open after
+    // close). A jar already linked is skipped and counted, never doubled: the screen reads `linked`.
+    const outputs = `/api/kitchen-batches/${b}/outputs`
+    expect((await call(STRANGER, 'POST', outputs, { preservation_log_ids: [older] })).status).toBe(404)
+    expect((await linkOf(older)).batch_id).toBeNull()
+    const again = await call(DAVE, 'POST', outputs, { preservation_log_ids: [older] })
+    expect(again.status, JSON.stringify(again.body)).toBe(200)
+    expect(again.body).toEqual({ linked: 1, requested: 1 })
+    expect(await linkOf(older)).toMatchObject({ batch_id: b, put_up_stage_id: null, deleted_at: null, package_count: 3 })
+    expect((await call(DAVE, 'POST', outputs, { preservation_log_ids: [older] })).body).toEqual({ linked: 0, requested: 1 })
+    expect((await call(DAVE, 'DELETE', `/api/kitchen-batches/${b}`)).status).toBe(409)
+    expect((await call(DAVE, 'DELETE', `${outputs}/${older}`)).status).toBe(200)
     expect(await linkOf(older)).toMatchObject({ batch_id: null, deleted_at: null })
 
     const gone = await call(DAVE, 'DELETE', `/api/kitchen-batches/${b}`)

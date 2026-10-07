@@ -408,7 +408,10 @@ describe('BatchDetailView — what came out', () => {
   // row's TOTAL, so "3 pint · 3 packages" (read as three pints each) is now "3 containers · 3 pint in all".
   it('lists the jars as identity only, against the real projection', () => {
     renderDetail({ outputs: [OUTPUT_JAR] })
-    expect(screen.getByTestId('batch-detail-output').textContent).toBe('3 containers · 3 pint in all · Aug 12')
+    // Amended with BUG-BATCHREMOVEDEADEND-001: a picked jar's row also carries its door now, so the row is
+    // its identity and "Take it off this batch", and nothing else.
+    expect(screen.getByTestId('batch-detail-output-text').textContent).toBe('3 containers · 3 pint in all · Aug 12')
+    expect(screen.getByTestId('batch-detail-output').textContent).toBe('3 containers · 3 pint in all · Aug 12Take it off this batch')
     // The server's own SELECT omits both use-by columns, so this arm is about the projection holding.
     expect(OUTPUT_JAR.use_by_target).toBeUndefined()
     expect(OUTPUT_JAR.use_by_status).toBeUndefined()

@@ -76,6 +76,18 @@ export const JAR_REMOVED_TEXT = 'That jar was removed — nothing was changed.'
 export const HAS_SALT_LINE_TEXT = 'Take the salt line out first.'
 export const ALREADY_IN_TEXT = 'That pick is already in this batch.'
 export const HAS_JARS_TEXT = 'This batch still has jars. Undo its put-ups first — nothing was changed.'
+// has_jars does not say WHICH jars, and the two kinds have different doors (BUG-BATCHREMOVEDEADEND-001): a
+// sitting's own jars go by "Undo that put-up"; a put-up picked on the close sheet was in the Pantry before
+// the batch, has no put-up to undo, and goes by "Take it off this batch" in What came out. The surface that
+// holds the batch counts each kind and asks here for the sentence. Told nothing, it gets the shipped one.
+export const HAS_PICKED_TEXT =
+  'This batch still has put-ups picked for it. Take them off under What came out first — nothing was changed.'
+export const HAS_JARS_AND_PICKED_TEXT =
+  'This batch still has jars. Undo its put-ups, and take the picked ones off under What came out, first — nothing was changed.'
+export function hasJarsText({ sitting = 0, picked = 0 } = {}) {
+  if (picked > 0) return sitting > 0 ? HAS_JARS_AND_PICKED_TEXT : HAS_PICKED_TEXT
+  return HAS_JARS_TEXT
+}
 export const PUT_UP_IN_USE_TEXT = 'Some jars from this put-up were already used, so it can’t be undone — nothing was changed.'
 export const NOTHING_PUT_UP_HERE_TEXT =
   'This batch was pieced together from jars you’d already logged — there’s nothing to undo here. Remove the batch instead.'

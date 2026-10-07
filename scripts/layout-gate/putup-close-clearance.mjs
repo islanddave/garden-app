@@ -146,6 +146,12 @@ const CASES = [
   { name: 'close-kept',   viewports: [[390, 844]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 0, jarRows: 0, minControls: 3, closedEmpty: false, detail: true,  door: false, sheet: true, band: false, keptChips: 2 } },
   { name: 'close-yes',    viewports: [[390, 844], [390, 667]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 2, jarRows: 4, minControls: 8, closedEmpty: false, detail: true, door: false, sheet: true, band: false, primary: 'batch-close-submit' } },
   { name: 'close-no',     viewports: [[390, 844], [390, 667]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 4, jarRows: 0, minControls: 8, closedEmpty: false, detail: true, door: false, sheet: true, band: false, primary: 'batch-close-submit' } },
+  // BUG-BATCHREMOVEDEADEND-001: a batch closed through the jar picker, at both widths. `door` is false: a
+  // closed batch draws no close door. The exact counts (two picked put-ups each with their door; then one
+  // taken off beside one still picked, and Remove this batch refused in the words that name the door) are
+  // asserted by the harness before it reports ready, as `places-edit` below explains.
+  { name: 'detail-linked',     viewports: [[390, 844], [426, 836]], expect: { ...NONE, detail: true, minControls: 20, band: true } },
+  { name: 'detail-linked-off', viewports: [[390, 844], [426, 836]], expect: { ...NONE, detail: true, minControls: 20, band: true } },
   // Four cards, each holding at most one question; the stalled ferment carries the longest label AND
   // the tallest question (the stall question plus its attribution note).
   { name: 'going',        viewports: [[426, 836]], expect: { ...NONE, goingCards: 4, minControls: 11, band: true, scope: 'going-now-view' } },
