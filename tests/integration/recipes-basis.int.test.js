@@ -93,7 +93,7 @@ describe('Put it up from a batch that follows a recipe', () => {
   let own
   const idOf = (name) => {
     // Set by the sitting below. Without it the path is /api/preservation/undefined, which no jar route claims
-    // (uuid ids only) and which falls to the create POST's 400: a misleading second failure.
+    // (uuid ids only) and which answers a bare 404/405: a misleading second failure.
     expect(own?.[name], `the clear sitting did not yield its "${name}" jar`).toBeTruthy()
     return own[name]
   }
@@ -211,7 +211,7 @@ describe('Put it up from a batch that follows a recipe', () => {
 
   it('a move within the fridge kind keeps the recipe date; a move to the freezer nulls it (basis none)', async () => {
     // Set by the case above. Without it the path is /api/preservation/undefined/move, which no jar route
-    // claims (uuid ids only) and which falls to the create POST's 400 — a misleading second failure.
+    // claims (uuid ids only) and which answers a bare 404 — a misleading second failure.
     expect(fridgeJar, 'the put-up case above did not yield its fridge jar').toBeTruthy()
     const within = await call(DAVE, 'POST', `/api/preservation/${fridgeJar}/move`, { place: { kind: 'fridge', label: `rcpb fridge two ${H.RUN}` } })
     expect(within.status, JSON.stringify(within.body)).toBe(200)
