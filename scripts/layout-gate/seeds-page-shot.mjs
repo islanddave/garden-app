@@ -5,7 +5,7 @@
 //   node scripts/layout-gate/seeds-page-shot.mjs [--outdir dir]     # npm run gate:seeds-page
 //   node scripts/layout-gate/seeds-page-shot.mjs --probe-nothing    # prove the instrument fires
 //
-// MEASURES /seeds?view=mine, ?view=saved and ?view=sow at a TRUE 360x640 and 390x844, mounted by
+// MEASURES /seeds?view=mine, ?view=saved and ?view=sow at a TRUE 360x640, 390x844 and 426x836, mounted by
 // tests/harness/seeds.{html,jsx} with the app's top bar and bottom nav in place, and asserts:
 //   (a) THE VIEW SWITCH IS ONE LINE — its three radios share a top within SAME_TOP_PX, and the
 //       control sits inside the viewport.
@@ -305,12 +305,14 @@ const VIEWS = [
   { view: 'saved', label: 'Saved seeds', body: 'saved-seeds-view', expect: { actions: 1, cards: 8, sections: 3, f2Cards: 2 } },
   { view: 'sow', label: 'Sow now', body: 'sow-now-view', expect: { actions: 0, minSowButtons: 10, minSowHeadings: 2 } },
 ]
-// CI's pair. GATE_VIEWPORTS="426x836,360x640" measures others on demand — 426x836 is Dave's own handset
-// (read off it 2026-09-24). The fixture's forcing rows were sized for 360 and 390, so at another width
-// a non-vacuity check can report a fixture that no longer forces its case rather than a defect.
+// CI's three: it sets no GATE_VIEWPORTS, so this default is what it runs. 426x836 is Dave's own handset
+// (read off it 2026-09-24), a default since release 2b so the 90-character mix row on My seeds is measured
+// at his width on every run and not by hand. GATE_VIEWPORTS="412x915,360x640" measures others on demand.
+// The fixture's forcing rows were sized for 360 and 390, so at another width a non-vacuity check can
+// report a fixture that no longer forces its case rather than a defect.
 const VIEWPORTS = process.env.GATE_VIEWPORTS
   ? process.env.GATE_VIEWPORTS.split(',').map(s => s.trim().split('x').map(Number))
-  : [[360, 640], [390, 844]]
+  : [[360, 640], [390, 844], [426, 836]]
 if (!VIEWPORTS.length || VIEWPORTS.some(v => v.length !== 2 || !v.every(n => Number.isInteger(n) && n > 0))) {
   throw new Error(`GATE_VIEWPORTS="${process.env.GATE_VIEWPORTS}" is not a list of WxH`)
 }

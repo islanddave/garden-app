@@ -448,8 +448,9 @@ jobs:
 
       - name: Seeds page layout, all three views (V5-SEEDSTAB-001)
         # The whole Seeds page — title and per-view actions, the SegmentedControl view switch, the
-        # ferment line, and ONE view body — on ?view=mine, ?view=saved and ?view=sow at a TRUE 360x640
-        # and 390x844, mounted by tests/harness/seeds.{html,jsx} with the app's 52px top bar and 56px
+        # ferment line, and ONE view body — on ?view=mine, ?view=saved and ?view=sow at a TRUE 360x640,
+        # 390x844 and 426x836 (Dave's handset; the script's default since release 2b, no env here),
+        # mounted by tests/harness/seeds.{html,jsx} with the app's 52px top bar and 56px
         # bottom nav in place (their heights are read from TopChrome.jsx and constants.js and checked).
         # Fixture: 32 seed rows over 8 crops, the 44-char "Money Plant (self-saved, variety
         # unrecorded)" as a lot fermenting 5 days AND archived (two chips; the ferment line names it),
@@ -494,7 +495,7 @@ jobs:
         # It refuses to measure a view whose innerWidth or innerHeight is not the one requested, that
         # is not at scrollTop 0, or where a tap did not take.
         #
-        # Verified non-vacuous: `npm run gate:seeds-page:probe-nothing` exits 1 on all six
+        # Verified non-vacuous: `npm run gate:seeds-page:probe-nothing` exits 1 on all nine
         # view/viewport pairs; and GATE_MUTATE_CSS (CSS injected before measuring, src/** untouched)
         # reds each assertion by name — (a) switch forced to wrap, (b) actions stacked, (c) page / the
         # opened rows forced to 480px, (d) Save seed, the headers, the supplier chips, Expand all and
