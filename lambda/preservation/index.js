@@ -662,6 +662,13 @@ export const handler = async (event) => {
       return resp(405, { error: 'Method not allowed' });
     }
 
+    // The list answers the COLLECTION only, for the reason the create below does
+    // (BUG-PRESERVPOSTFALLTHROUGH-001): `method === 'GET'` alone handed the household's jars to any
+    // unclaimed GET ('/api/preservation/x/y', '/api/pantry/typo') with a 200.
+    if (method === 'GET' && rawPath !== '/api/preservation' && rawPath !== '/api/preservation/') {
+      return resp(404, { error: 'Not found' });
+    }
+
     if (method === 'GET') {
       const rows = await sql`
         SELECT p.*, s.label AS storage_label, s.kind AS storage_kind, ct.display_name AS crop_display_name,

@@ -203,6 +203,42 @@ describe('POST anywhere but the collection is not a create', () => {
   })
 })
 
+// The same hole one verb over: the jar list was reached by `method === 'GET'` alone, so any GET no route
+// above it claimed answered 200 with the household's jars. It answers the collection only.
+describe('GET anywhere but the collection is not the jar list', () => {
+  const get = (rawPath) => ({
+    requestContext: { http: { method: 'GET' } }, rawPath, headers: { authorization: 'Bearer stub-token' },
+  })
+  const listed = () => stubState.sqlCalls.some((c) => /FROM preservation_log p/.test(c.text))
+
+  it.each([
+    ['an unknown path two deep', '/api/preservation/not-a-route/deeper'],
+    ['an unknown sub-route of a real jar id', `/api/preservation/${KEY}/not-a-route`],
+    ['an unclaimed path under /api/pantry', '/api/pantry/not-a-route'],
+    ['an unknown sub-route of a batch', `/api/kitchen-batches/${KEY}/not-a-route`],
+    ['an unclaimed path under /api/recipes', `/api/recipes/${KEY}/not-a-route`],
+  ])('%s → 404, and the jar list is never read', async (_label, rawPath) => {
+    const res = parse(await handler(get(rawPath)))
+    expect(res).toEqual({ status: 404, body: { error: 'Not found' } })
+    expect(listed()).toBe(false)
+  })
+
+  it('the collection itself still lists, with or without the trailing slash, and with no rawPath at all', async () => {
+    for (const rawPath of ['/api/preservation', '/api/preservation/', undefined]) {
+      stubState.sqlCalls = []
+      expect(parse(await handler(get(rawPath)))).toEqual({ status: 200, body: [] })
+      expect(listed()).toBe(true)
+    }
+  })
+
+  it('GET /api/recipes/types still reaches the recipe router, which answers for itself', async () => {
+    const res = parse(await handler(get('/api/recipes/types')))
+    expect(res.status).toBe(200)
+    expect(Array.isArray(res.body)).toBe(false)
+    expect(listed()).toBe(false)
+  })
+})
+
 describe('the legacy PUT gate and the words for 1b\'s CHECKs', () => {
   it('validateLegacyPut requires no key at all: an absent key is unchanged', () => {
     expect(validateLegacyPut({})).toBeNull()
