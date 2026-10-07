@@ -507,6 +507,11 @@ const listWords = (words) => (words.length <= 1 ? words.join('')
 const SAVE_FAILED = "Couldn't save just now. Nothing was saved. Your entries are still here. Tap Save seed to try again."
 const SAVE_OFFLINE = "You're offline. Nothing was saved. Your entries stay here until you're back in range."
 const SAVE_NEEDS_UPDATE = 'This jar needs the latest version of the app. Nothing was saved.'
+// The lot POST that never answered: a timeout, or a connection that dropped with the request already
+// out. The jar may have landed with only its reply lost, so "nothing was saved" would be a guess, and
+// a wrong guess invites a second tap and a second jar. The mix call in front of it is idempotent and
+// writes no jar, so it keeps the plain sentence.
+const SAVE_UNCONFIRMED = "That didn't finish, so the jar may or may not have saved. Look in Seeds before you tap Save seed again."
 // The one sentence for a throw AFTER the lot landed. Every request after the create carries its own
 // catch, so this is reached only by a host callback that throws; "nothing was saved" would be false
 // there and would invite a second jar.
@@ -541,6 +546,8 @@ function saveRefusalSentence(err, { atMix = false, plants = [] } = {}) {
     const row = plants.find((p) => (p.crop_slug ?? null) !== first)
     if (row) return `${row.name || PLANTING_FALLBACK} is a different crop, so it can't share this jar. Remove it and save again.`
   }
+  const online = typeof navigator === 'undefined' || navigator.onLine !== false
+  if (!atMix && (err?.timeout || (err?.status == null && err instanceof TypeError && online))) return SAVE_UNCONFIRMED
   return isOffline(err) ? SAVE_OFFLINE : SAVE_FAILED
 }
 

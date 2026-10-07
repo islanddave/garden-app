@@ -83,6 +83,7 @@ const OTHER_CROP = plantingOf(SP_B, {
 
 const SAVE_FAILED = "Couldn't save just now. Nothing was saved. Your entries are still here. Tap Save seed to try again."
 const SAVE_OFFLINE = "You're offline. Nothing was saved. Your entries stay here until you're back in range."
+const SAVE_UNCONFIRMED = "That didn't finish, so the jar may or may not have saved. Look in Seeds before you tap Save seed again."
 const NEEDS_UPDATE = 'This jar needs the latest version of the app. Nothing was saved.'
 
 /** A rejection shaped the way src/lib/api.js throws a non-2xx: message, status, body. */
@@ -420,12 +421,25 @@ describe('the lot is refused: the client’s own sentence, naming the plant', ()
     expectNothingSavedAndEntriesKept()
   })
 
-  it('no connection at the lot: says offline', async () => {
+  // The lot POST that never answered may have landed with only its reply lost, so the sheet does not
+  // claim "nothing was saved": that sentence would invite a second tap and a second jar.
+  it('a connection that drops at the lot, while online: does not claim nothing was saved', async () => {
     route({ lot: () => Promise.reject(new TypeError('Failed to fetch')) })
     mountMix()
     fillIn()
     submit()
-    await waitFor(() => expect(errorText()).toBe(SAVE_OFFLINE))
+    await waitFor(() => expect(errorText()).toBe(SAVE_UNCONFIRMED))
+    expect(errorText()).not.toContain('Nothing was saved')
+    expectNothingSavedAndEntriesKept()
+  })
+
+  it('a timeout at the lot: does not claim nothing was saved', async () => {
+    route({ lot: () => Promise.reject(Object.assign(new Error('Request timed out'), { status: 0, timeout: true })) })
+    mountMix()
+    fillIn()
+    submit()
+    await waitFor(() => expect(errorText()).toBe(SAVE_UNCONFIRMED))
+    expect(errorText()).not.toContain('timed out')
     expectNothingSavedAndEntriesKept()
   })
 
