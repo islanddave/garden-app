@@ -10,6 +10,8 @@
 //     entries on one plant, which is worse than none (the plant's page lists the jar either way).
 //   • SILENT. Nobody asked for the entry and nobody can act on its failure, so one failed write of
 //     three leaves the toast, the routing and the sheet exactly as a clean save leaves them.
+//   • A TIMEOUT ENDS IT. The jar is saved by then, and a hanging connection would hold the sheet on
+//     "Saving…" for 15 s per remaining plant. Any other failure is over at once and the rest still go.
 // And one about the route: the SINGLE POST /api/events, once per parent. There is no batch call.
 //
 // The fetch mock routes by URL, and the event route by the body's `plant_id`, never by call order:
@@ -306,12 +308,20 @@ describe('never retried, and a failure says nothing', () => {
     expect(navigateSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('a timeout is not retried either', async () => {
-    route({ events: { 'pl-east': () => Promise.reject(Object.assign(new Error('Request timed out'), { status: 0, timeout: true })) } })
+  it('a timeout is not retried either, and it ENDS the loop: the plants after it are not asked', async () => {
+    // The jar is saved. On a connection that hangs, each further write would hold "Saving…" another
+    // 15 s before the toast and the way out, so the first write to time out is the last one sent.
+    route({ events: { 'pl-west': () => Promise.reject(Object.assign(new Error('Request timed out'), { status: 0, timeout: true })) } })
     mountThree()
     submit()
     await waitFor(() => expect(toastSpy).toHaveBeenCalled())
-    expect(eventPlants()).toEqual(['pl-east', 'pl-west', 'pl-south'])
+    expect(eventPlants()).toEqual(['pl-east', 'pl-west'])
+    // …and the save still ends exactly as a clean one does.
+    expect(toastSpy).toHaveBeenCalledTimes(1)
+    expect(toastSpy.mock.calls[0][0]).toEqual({ message: 'Seed lot saved', tone: 'success' })
+    expect(navigateSpy.mock.calls).toEqual([[`/inventory/${LOT.id}`]])
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('save-seed-error')).toBeNull()
   })
 })
 

@@ -944,6 +944,11 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
       // lost would leave two entries on one plant). The note is the same on each and names only the
       // jar, never the other plants: it is permanent, and taking a mis-tapped plant off the jar
       // later would leave a clause about it false on the others' timelines.
+      //
+      // A write that TIMED OUT ends the loop. The jar is saved already, and on a connection that
+      // hangs every further row would hold "Saving…" another 15 s (three minutes at twelve
+      // plantings) before the toast and the way out. The plants after it get no entry; each one's
+      // page lists the jar either way. Any other failure is over at once, so the rest still go.
       for (const row of rows) {
         try {
           await fetch('/api/events', {
@@ -959,10 +964,11 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
               ...(lot?.id ? { metadata: { seed_lot_id: lot.id } } : {}),
             }),
           })
-        } catch {
-          // Deliberately nothing. The lot is what the user asked for and it exists; a message about a
-          // timeline row they never requested is noise they cannot act on, and re-raising here would
-          // report a landed create as a failed save.
+        } catch (err) {
+          // Deliberately nothing said. The lot is what the user asked for and it exists; a message
+          // about a timeline row they never requested is noise they cannot act on, and re-raising
+          // here would report a landed create as a failed save.
+          if (err?.timeout) break
         }
       }
       // Built from a list rather than nested ternaries because there are now TWO optional writes
