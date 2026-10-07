@@ -136,7 +136,7 @@
 // Anything that fails before the lot exists is answered in the client's own words (see
 // saveRefusalSentence) with every field left as typed. FLAG OFF is the forward undo: no "From" block,
 // no adder, no plant count, no mix, and every request body byte-equal to the one before this change.
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 // V5-SEEDSOURCEPICKER-001 — Field and SourcePicker are InventoryAdd's own two imports for this
 // block. Reusing BOTH is what keeps the two intake doors onto `inventory_items` saying one thing:
@@ -695,6 +695,7 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
   // first plant with no variety, one whose variety was deleted (the crop is read off the joined
   // variety, and there is none), and a variety that names no crop.
   const [adderOpen, setAdderOpen] = useState(false)
+  const adderButtonRef = useRef(null)
   const adderCrop = typeof facts.cropSlug === 'string' && facts.cropSlug ? facts.cropSlug : null
   const canAdd = multi && !!adderCrop && rows.length < MAX_SEED_PARENTS
   // A STABLE array: PlantingSelect reads it as a memo dep.
@@ -1053,6 +1054,10 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
     if (!row) return
     setPicked((cur) => (rows.some((r) => String(r.id) === String(row.id)) ? cur : [...cur, row]))
     setAdderOpen(false)
+    // The picker that held focus unmounts with this pick. Left alone, focus falls to <body>, and the
+    // sheet's Tab trap only wraps at its first and last control, so the next Tab could land on the
+    // page behind the sheet. The adder is the control that opened the picker, and is still here.
+    adderButtonRef.current?.focus()
   }
 
   // BUG-SEEDSHEETBACK-001 (pre-promote MIN-3) — `armsBack` below is a per-render-site decision,
@@ -1102,6 +1107,7 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
           </ul>
           {canAdd && (
             <button
+              ref={adderButtonRef}
               type="button" data-testid="save-seed-add-plant" aria-expanded={adderOpen}
               disabled={busy} onClick={() => setAdderOpen((open) => !open)} style={fromAddStyle}
             >

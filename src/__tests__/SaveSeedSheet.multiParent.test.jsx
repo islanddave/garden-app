@@ -172,6 +172,19 @@ describe('the "From" block, opened from a planting', () => {
     expect(screen.getByTestId('save-seed-add-select').getAttribute('data-exclude')).toBe('pl-jewel,pl-jewel2')
   })
 
+  it('a pick hands focus to the adder, so the next Tab stays inside the sheet', () => {
+    // The picker holds focus at the pick and unmounts with it. Left alone, focus falls to <body>, and
+    // the sheet's Tab trap wraps only at its first and last control.
+    mount(JEWEL)
+    openAdder()
+    const offer = screen.getByTestId(`offer-${JEWEL_2.id}`)
+    offer.focus()
+    expect(document.activeElement).toBe(offer)
+    fireEvent.click(offer)
+    expect(screen.queryByTestId('save-seed-add-select')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByTestId('save-seed-add-plant'))
+  })
+
   it('the same planting cannot be added twice', () => {
     mount(JEWEL)
     addPlanting(JEWEL_2)
