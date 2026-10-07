@@ -247,8 +247,12 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
       } else if ((cur.length > 0 || undo) && next.length > 0 && nextFacts.varietyIds.length > 0
           && !sameIds(facts.varietyIds, nextFacts.varietyIds)) {
         if (nextFacts.varietyIds.length === 1) {
+          // O-4: an id with no name is a variety since deleted. A jar cannot be filed under it (the
+          // server refuses the whole edit), so the set changes alone and the filing stays as it is.
           const one = nextFacts.varieties.find((v) => v.variety_id != null)
-          target = { variety_id: one.variety_id, variety_name: one.variety_name, breeding_system: one.breeding_system }
+          if (one.variety_name != null) {
+            target = { variety_id: one.variety_id, variety_name: one.variety_name, breeding_system: one.breeding_system }
+          }
         } else {
           const mix = await fetch('/api/varieties/blend', {
             method: 'POST',
@@ -256,7 +260,7 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
           })
           target = { variety_id: mix.id, variety_name: mix.name, breeding_system: null }
         }
-        if (sid(target.variety_id) !== sid(lot.variety_id)) {
+        if (target && sid(target.variety_id) !== sid(lot.variety_id)) {
           filing = { variety_id: target.variety_id, expect_variety_id: lot.variety_id }
           const year = automaticYear(lot.variety_name, shown)
           const named = String(target.variety_name ?? '').trim()

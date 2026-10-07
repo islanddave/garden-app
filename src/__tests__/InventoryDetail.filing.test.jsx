@@ -384,6 +384,21 @@ describe('Re-file by itself — a removal that leaves one cultivar files the jar
     expect(filedLine()).toBeNull()
   })
 
+  it('sends the removal ALONE when the one cultivar left is a variety since deleted (an id with no name, O-4)', async () => {
+    // The server refuses a filing under a deleted variety, and it would refuse the whole edit with it,
+    // every time. The planting comes off; the jar stays filed, and named, as it was.
+    itemRef.current = jarOfTwo({ source_plants: [P1, { ...P2, variety_name: null, crop_slug: null }] })
+    await renderPage()
+    await click(removeButton(P1))
+
+    expect(setBodies()).toEqual([{ source_plant_ids: [P2.id], expected_source_plant_ids: [P1.id, P2.id] }])
+    expect(blendBodies()).toHaveLength(0)
+    await waitFor(() => expect(rowOf(P1).textContent).toContain(`${P1.name} · Removed`))
+    expect(filedLine()).toBeNull()
+    expect(itemRef.current.variety_id).toBe(MIX.id)
+    expect(nameField().value).toBe(auto(MIX, 2025))
+  })
+
   it('Undo into a jar this visit EMPTIED files it under the planting put back, not the one removed last', async () => {
     // Remove P2: the jar is re-filed under A1. Remove P1: no parents, so no filing (PP-11) and the jar
     // is still A1's. Undo P2: the server does not judge a one-plant set, so without a filing in this
