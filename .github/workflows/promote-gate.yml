@@ -595,7 +595,7 @@ jobs:
       # after a good copy is now a printed note). New: the bounds below (a stall used to be waited out, and the
       # 46-minute one was); pg_dumpall is run as well as pg_dump; the imports are tried by the python3 that will
       # run snap.py. The cache step is an action and prints no remedy of ours: a restore that errors is, by that
-      # action's design, its own annotation and a miss, so only its time limit can red it.
+      # action's design, its own annotation and a miss, so with its two fixed inputs only its time limit can red it.
       #
       # BOUNDS. On a cache hit the five take about 3 s (six promotes to 2026-10-06: cache 0-2 s, deps 0-1 s, and
       # the fetch never ran). Cache restore: 2 min. Fetch: pull 120 + 10 s, copy 30 + 5 s, remove 10 + 5 s, 3 min
@@ -627,7 +627,9 @@ jobs:
         # OPS-SCHEMACHECKAPT-001: no more apt.postgresql.org (PGDG) -- see backup.yml for the full incident
         # writeup. While this step ran AFTER the fast-forward it hung 46 minutes (2026-08-18) and stranded main at
         # 437164e with prod still on 4.35.0 and no version tag. Each docker call now runs inside `timeout`, so a
-        # stall ends in this step's own ::error; timeout-minutes is only the backstop.
+        # stall ends in this step's own ::error; timeout-minutes is only the backstop. The 120 s pull bound is NOT
+        # measured on this job: no promote sampled has missed the cache (backup.yml and restore-verify.yml refill
+        # the same entry from main every day). A cold pull slower than that is refused here, with nothing moved.
         if: steps.pg17-cache.outputs.cache-hit != 'true'
         timeout-minutes: 4
         run: |
@@ -658,9 +660,10 @@ jobs:
           done
 
       # The import, by the python3 that will run scripts/snap.py, is the proof; pip's exit status was all the old
-      # step had. Either one failing refuses. These runner images already carry boto3 and requests, so the install
-      # is normally a no-op (0-1 s). Bounded like the psycopg2 install above: plain form first, then the PEP-668
-      # form. scripts/test_workflow_steps.py pins the import list against snap.py's own imports.
+      # step had. Either one failing refuses. The old step took 0-1 s on each of six promotes, so the runner image
+      # evidently carries both packages already and the install is normally a no-op. Bounded like the psycopg2
+      # install above: plain form first, then the PEP-668 form. scripts/test_workflow_steps.py pins the import
+      # list against snap.py's own imports.
       - name: Install python deps
         timeout-minutes: 5
         run: |
