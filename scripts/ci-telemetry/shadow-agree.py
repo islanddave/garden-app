@@ -52,7 +52,9 @@ THE WINDOW HAS A START. COUNT_FROM_SHA is the first dev SHA whose runs carry the
 before it can never be TEST-IDS-EQUAL, so it is read and printed (class column BEFORE-WINDOW, with what it would
 have read) but is in no tally: not the counted total, the class counts, the test-ID counts, ACCEPTANCE or the exit
 code. The bound only ever removes rows. It is found in the run listings, which are read whole whatever --limit is;
-when it is not in them, which rows precede it cannot be told and the reading is unreadable (exit 2).
+when it is not in them, which rows precede it cannot be told and the reading is unreadable (exit 2). Every SHA at
+or after it is read and is in every tally, ACCEPTANCE and the exit code whatever --limit is: --limit cuts only the
+rows printed (`shas`), so a row that blocks cannot age out of the verdict or be left out by the caller's choice of N.
 
 TEST IDS, per unit pass (UTC, America/New_York), for SHAs with a verdict on both sides. Each pass prints one notice
 titled `test-ids <zone>` (scripts/ci-telemetry/vitest-test-ids-reporter.mjs) with the sha256 of its sorted
@@ -63,16 +65,49 @@ and `unit-ny`.
                    the names without their states, so the row says which differ: the file set, the test names, or
                    states only.
   TEST-IDS-ABSENT  either side has none, or more than one, or an unusable one (an interrupted run, a pending test,
-                   no test at all), or the two notices are of different format versions. When ci.yml stops at a
-                   red step before a pass, that pass never ran there: ABSENT, not a finding.
+                   no test at all), or the two notices are of different format versions. ABSENT is many causes,
+                   and all but one are a defect of the shadow or of the reporter. The one that is not: ci.yml
+                   stopped at a red step before the pass, so the pass never ran there. Which it is, is read from
+                   the job steps (THE STEPS below), never assumed from ABSENT.
+
+THE STEPS, for SHAs with a verdict on both sides, from the jobs of the attempt that is JUDGED. PASS_STEPS names the
+step that runs each unit pass (a test holds the names equal to the two workflow files). Per pass, `ci_step` and
+`next_step` are that step's conclusion in ci.yml's job and in the leg that runs the pass; None when the job is
+absent, carries no `steps`, or holds no step or more than one of that name. Per SHA: the ci.yml steps that failed,
+the ci.yml steps that ran (success or failure), and every ci-next.yml leg that did not succeed with its failed steps.
+
+ONE PASS OF ONE SHA is OK, EXEMPT or BLOCK:
+  EQUAL   OK.        DIFFER   BLOCK.
+  ABSENT  EXEMPT only when ci.yml has no usable digest AND its pass step reads `skipped` AND ci-next.yml either
+          has a usable digest or skipped its own pass step too. Anything else is BLOCK: the serial pass ran and
+          left no usable notice; the shadow ran the pass and left none; the shadow lacks what the serial job has;
+          the format versions differ; a step that cannot be read.
+
+RED ON BOTH SIDES IS AGREEMENT ONLY AT THE SAME STEP. ci-next.yml is red when ANY leg is; ci.yml is red at its FIRST
+red step. So for an AGREE-RED SHA the same-step check HOLDS only when ci.yml failed exactly one step F, at least one
+red leg failed F, and every red leg has a failed step and failed nothing but F or a step ci.yml never reached.
+Otherwise it fails, in one of two ways that are told apart: the failing step CANNOT BE READ (a job with no `steps`,
+a shadow run with no leg, a serial red with no failed step), or the steps are read and are DIFFERENT (a leg red at
+a step ci.yml passed, a red leg with no failed step, no leg red at F). Both block.
+
+WHAT ONE SHA IS WORTH TO ACCEPTANCE (`acceptance`, with `acceptance_why`). `counted` keeps its meaning: a verdict on
+both sides, inside the window.
+  QUALIFIES   one of the 10. AGREE-GREEN with every pass OK; or AGREE-RED with the same-step check holding and
+              every pass OK.
+  EXEMPT      not one of the 10 and not blocking. AGREE-RED, the same-step check holds, no pass is BLOCK and at
+              least one is EXEMPT: both sides went red at one step and ci.yml never reached the pass. The row is
+              printed with what that rests on, and the ACCEPTANCE line names every such SHA.
+  BLOCKS      DISAGREE; a failed same-step check; any BLOCK pass. On a green row an EXEMPT pass is BLOCK too: a
+              green job does not skip its unit pass.
 
 RUNNER LABELS, per side: the `runs-on` labels of the jobs judged. The API does not give the image a label resolved
 to. ci.yml's job is on `ubuntu-latest`, which GitHub moves to another image on a date of its choosing, while the
 legs are pinned; a DISAGREE or TEST-IDS-DIFFER row whose two sides ran on different labels says so.
 
-ACCEPTANCE, one line, separate from the exit code. MET only when at least 10 SHAs are counted, none is DISAGREE,
-no pass is TEST-IDS-DIFFER, every counted SHA is TEST-IDS-EQUAL in BOTH passes, and the queue threshold is not
-tripped. Otherwise NOT MET, naming each thing missing. It says how many of the counted SHAs were red on both sides.
+ACCEPTANCE, one line, separate from the exit code. MET only when at least 10 SHAs QUALIFY, none BLOCKS, and the
+queue threshold is not tripped. Otherwise NOT MET, naming each thing missing. It says how many of the qualifying
+SHAs were red on both sides and names every EXEMPT SHA. A MET line ends with what it does NOT cover: the plan's
+exit test also asks for manifest conservation, the 10-green soak and the canary, and none of those is read here.
 
 EACH LISTING IS READ TWICE. The run listings have been seen to change between two consecutive calls (total_count
 and the newest row). If the second read's total or newest run id differs from the first, nothing is concluded.
@@ -103,7 +138,7 @@ import subprocess
 import sys
 import urllib.parse
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 EXIT_AGREE, EXIT_DISAGREE, EXIT_UNREADABLE, EXIT_USAGE = 0, 1, 2, 64
 PER_PAGE = 100
 MAX_PAGES = 20
@@ -129,6 +164,14 @@ SERIAL = {"workflow": "ci.yml", "verdict_job": "build-and-test", "aggregates": F
 SHADOW = {"workflow": "ci-next.yml", "verdict_job": "build-and-test-next", "aggregates": True}
 # zone -> (the ci.yml job that ran that pass, the ci-next.yml job that ran it)
 PASSES = {"UTC": ("build-and-test", "unit-utc-cov"), "America/New_York": ("build-and-test", "unit-ny")}
+# zone -> the name of the step that runs that pass, the same in ci.yml's job and in the leg (scripts/test_ci_next.py
+# holds every ci.yml step to being in exactly one leg under the same name). scripts/test_shadow_agree.py keeps
+# these equal to the two workflow files.
+PASS_STEPS = {"UTC": "Run unit tests with coverage",
+              "America/New_York": "Unit tests under America/New_York TZ (date-fragility guard)"}
+OK, EXEMPT, BLOCK = "OK", "EXEMPT", "BLOCK"                          # one pass of one SHA
+QUALIFIES, BLOCKS = "QUALIFIES", "BLOCKS"                            # one SHA (or EXEMPT)
+HOLDS, STEP_UNREADABLE, STEP_DIFFERENT = "HOLDS", "STEP-UNREADABLE", "STEP-DIFFERENT"   # the same-step check
 NOTICE_PREFIX = "test-ids "
 # What a usable notice of each format version must carry besides sha256 (vitest-test-ids-reporter.mjs FORMAT_VERSION).
 NOTICE_DIGESTS = {"1": (), "2": ("files_sha256", "names_sha256")}
@@ -373,6 +416,123 @@ def compare_ids(serial, shadow):
     return "DIFFER", "test names" if serial["names"] != shadow["names"] else "states only"
 
 
+# ── job steps, and what one SHA is worth to acceptance ──────────────────────────────────────────────────────────
+
+def steps_of(job):
+    """The job's steps, or None when the job is absent or carries no list of them."""
+    steps = job.get("steps") if job is not None else None
+    return steps if isinstance(steps, list) and all(isinstance(step, dict) for step in steps) else None
+
+
+def step_conclusion(job, name):
+    """The conclusion of the ONE step of that name; None when it cannot be read or is not exactly one."""
+    found = [step.get("conclusion") for step in steps_of(job) or [] if step.get("name") == name]
+    return found[0] if len(found) == 1 else None
+
+
+def step_names(job, conclusions):
+    steps = steps_of(job)
+    return None if steps is None else [str(step.get("name")) for step in steps if step.get("conclusion") in conclusions]
+
+
+def step_facts(serial_job, shadow_jobs):
+    """What the same-step check reads, off the judged attempt's jobs."""
+    legs = [job for job in shadow_jobs if job["name"] != SHADOW["verdict_job"]]
+    return {"ci_failed_steps": step_names(serial_job, ("failure",)),
+            "ci_ran_steps": step_names(serial_job, ("success", "failure")),
+            "next_legs": len(legs),
+            "next_red_legs": [{"name": job["name"], "failed_steps": step_names(job, ("failure",))}
+                              for job in legs if job.get("conclusion") != "success"]}
+
+
+def zone_result(one):
+    """One pass of one SHA, from its zone dict alone: (OK | EXEMPT | BLOCK, why it blocks)."""
+    if one["class"] == "EQUAL":
+        return OK, None
+    if one["class"] == "DIFFER":
+        return BLOCK, "the test IDs differ"
+    if one["ci"] is not None:
+        return BLOCK, ("ci.yml printed its digest and ci-next.yml has no usable one" if one["next"] is None
+                       else "the two notices are of different format versions")
+    if one["ci_step"] != "skipped":
+        return BLOCK, ("ci.yml has no usable test-ids notice and its pass step %s" % (
+            "cannot be read" if one["ci_step"] is None else "concluded %s" % one["ci_step"]))
+    if one["next"] is None and one["next_step"] != "skipped":
+        return BLOCK, ("ci.yml skipped the pass and ci-next.yml has no usable test-ids notice though its pass step %s"
+                       % ("cannot be read" if one["next_step"] is None else "concluded %s" % one["next_step"]))
+    return EXEMPT, None
+
+
+def same_step(row):
+    """Did the two sides of an AGREE-RED row go red at the same step? (HOLDS | STEP-UNREADABLE | STEP-DIFFERENT,
+    why). UNREADABLE is "cannot be told", DIFFERENT is "told, and not the same"; neither is agreement."""
+    failed, ran, legs = row["ci_failed_steps"], row["ci_ran_steps"], row["next_red_legs"]
+    if failed is None or ran is None:
+        return STEP_UNREADABLE, "ci.yml's job carries no steps"
+    if not row["next_legs"]:
+        return STEP_UNREADABLE, "the ci-next.yml run has no leg"
+    blind = [leg["name"] for leg in legs if leg["failed_steps"] is None]
+    if blind:
+        return STEP_UNREADABLE, "ci-next.yml's %s carries no steps" % ", ".join(blind)
+    if not failed:
+        return STEP_UNREADABLE, "ci.yml is red with no failed step"
+    if len(failed) != 1:
+        return STEP_DIFFERENT, "ci.yml failed %d steps" % len(failed)
+    step = failed[0]
+    if not any(step in leg["failed_steps"] for leg in legs):
+        return STEP_DIFFERENT, 'ci.yml failed at "%s" and no ci-next.yml leg failed that step' % step
+    for leg in legs:
+        if not leg["failed_steps"]:
+            return STEP_DIFFERENT, "ci-next.yml's %s is red with no failed step" % leg["name"]
+        own = [name for name in leg["failed_steps"] if name != step and name in ran]
+        if own:
+            return STEP_DIFFERENT, 'ci-next.yml\'s %s failed "%s", a step ci.yml ran and did not fail' % (
+                leg["name"], own[0])
+    return HOLDS, None
+
+
+STEP_MISSING = {STEP_UNREADABLE: "red on both sides and the failing step cannot be read",
+                STEP_DIFFERENT: "red on both sides at different steps"}
+
+
+def judge(row):
+    """(acceptance, acceptance_why, reasons) of one row. `reasons` is what a BLOCKS row blocks for, each one of
+    DISAGREE, STEP-UNREADABLE, STEP-DIFFERENT, IDS-DIFFER, IDS-ABSENT."""
+    if not row["counted"]:
+        return None, None, []
+    red = row["class"] == "AGREE-RED"
+    reasons, whys, exempt = [], [], []
+    if row["class"] == "DISAGREE":
+        reasons.append("DISAGREE")
+        whys.append("the two sides disagree")
+    if red:
+        told, why = same_step(row)
+        if told != HOLDS:
+            reasons.append(told)
+            whys.append("%s: %s" % (STEP_MISSING[told], why))
+    for zone, one in row["test_ids"].items():
+        result, why = zone_result(one)
+        if result == EXEMPT and not red:
+            result, why = BLOCK, "ci.yml's pass step reads skipped on a row that is not red on both sides"
+        if result == BLOCK:
+            reasons.append("IDS-" + one["class"])
+            whys.append("%s pass: %s" % (zone, why))
+        elif result == EXEMPT:
+            exempt.append(zone)
+    if reasons:
+        return BLOCKS, "BLOCKS acceptance: " + "; ".join(whys), reasons
+    if not exempt:
+        return QUALIFIES, None, []
+    step = row["ci_failed_steps"][0]
+    return EXEMPT, (
+        'EXEMPT, not one of the %d and not blocking: ci.yml failed at "%s" and never ran its %s pass (step skipped); '
+        "ci-next.yml failed the same step in %s; its own digests: %s" % (
+            WINDOW, step, ", ".join(exempt),
+            ", ".join(leg["name"] for leg in row["next_red_legs"] if step in leg["failed_steps"]),
+            ", ".join("%s %s" % (zone, row["test_ids"][zone]["next"][:6] + ".." if row["test_ids"][zone]["next"]
+                                 else "none (step skipped)") for zone in exempt))), []
+
+
 # ── queue times ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 def started(job):
@@ -415,7 +575,7 @@ def queue_summary(rows):
 def read(repo, limit, timeout):
     shadow_runs = push_runs(repo, SHADOW["workflow"], None, timeout)
     if not shadow_runs:
-        return {"landed_at": None, "shas": [], "queue_runs": []}
+        return {"landed_at": None, "shas": [], "shown": limit, "queue_runs": []}
     landed = min(parse_time(run["created_at"], "created_at") for run in shadow_runs)
     serial_runs = push_runs(repo, SERIAL["workflow"], landed - datetime.timedelta(seconds=LANDING_SLACK_S), timeout)
     first_seen = {}
@@ -426,7 +586,10 @@ def read(repo, limit, timeout):
         raise Unreadable("the counting window opens at %s (COUNT_FROM_SHA), which is not among the %d dev push SHA(s) "
                          "the two listings hold: which rows come before it cannot be told, so nothing is counted"
                          % (COUNT_FROM_SHA[:10], len(first_seen)))
-    order = sorted(first_seen, key=lambda sha: first_seen[sha], reverse=True)[:limit]
+    order = sorted(first_seen, key=lambda sha: first_seen[sha], reverse=True)
+    # Newest first, so every SHA inside the window comes before every SHA before it: all of the former are read,
+    # and --limit only cuts what is printed.
+    order = order[:max(limit, sum(1 for sha in order if first_seen[sha] >= first_seen[COUNT_FROM_SHA]))]
     read_once = {}
 
     def judged(run):
@@ -453,47 +616,64 @@ def read(repo, limit, timeout):
                 "run_attempt": picked[name]["run_attempt"], "status": picked[name]["status"],
                 "conclusion": picked[name].get("conclusion")}
         row = {"sha": sha, "class": classify(sides["ci"], sides["next"]), "ci": sides["ci"], "next": sides["next"],
-               "test_ids": {}}
+               "test_ids": {}, "ci_failed_steps": None, "ci_ran_steps": None, "next_legs": None,
+               "next_red_legs": None}
         row["before_window"] = first_seen[sha] < first_seen[COUNT_FROM_SHA]
         row["counted"] = row["class"] != "NOT-COUNTED" and not row["before_window"]
         if row["counted"]:
             found = {}
             for zone, (serial_job, shadow_job) in PASSES.items():
-                pair = []
+                pair, ran = [], []
                 for name, job_name in (("ci", serial_job), ("next", shadow_job)):
                     job = next((j for j in judged(picked[name])[1] if j["name"] == job_name), None)
                     if job is not None and job["id"] not in found:
                         found[job["id"]] = digests(job_annotations(repo, job["id"], timeout))
                     pair.append(found[job["id"]].get(zone) if job is not None else None)
+                    ran.append(step_conclusion(job, PASS_STEPS[zone]))
                 verdict, differs = compare_ids(*pair)
                 row["test_ids"][zone] = {"class": verdict, "differs": differs,
                                          "ci": pair[0]["sha256"] if pair[0] else None,
-                                         "next": pair[1]["sha256"] if pair[1] else None}
+                                         "next": pair[1]["sha256"] if pair[1] else None,
+                                         "ci_step": ran[0], "next_step": ran[1]}
+            row.update(step_facts(
+                next((j for j in judged(picked["ci"])[1] if j["name"] == SERIAL["verdict_job"]), None),
+                judged(picked["next"])[1]))
+        row["acceptance"], row["acceptance_why"] = judge(row)[:2]
         rows.append(row)
     newest_first = sorted(shadow_runs, key=lambda run: (run["created_at"], run["id"]), reverse=True)
-    return {"landed_at": stamp(landed), "shas": rows,
+    return {"landed_at": stamp(landed), "shas": rows, "shown": limit,
             "queue_runs": [timings(*judged(run)) for run in newest_first if judged(run)[0]["status"] == "completed"]}
 
 
-def acceptance(counted, classes, ids, queue):
-    """The plan's exit test for the shadow, as one verdict and the list of what is still missing."""
-    absent = sum(1 for row in counted if any(one["class"] == "ABSENT" for one in row["test_ids"].values()))
-    differ = sum(1 for row in counted if any(one["class"] == "DIFFER" for one in row["test_ids"].values()))
+def acceptance(counted, queue):
+    """Three clauses of the plan's exit test for the shadow (agreement over the window, test IDs, queue times), as
+    one verdict and the list of what is still missing. Manifest conservation, the soak and the canary are not here."""
+    reasons = {row["sha"]: judge(row)[2] for row in counted}
+    qualifying = [row for row in counted if row["acceptance"] == QUALIFIES]
+    blocking = [row for row in counted if row["acceptance"] == BLOCKS]
+
+    def rows_with(reason):
+        return sum(1 for row in blocking if reason in reasons[row["sha"]])
+
     missing = []
-    if len(counted) < WINDOW:
-        missing.append("%d of %d counted" % (len(counted), WINDOW))
-    if classes["DISAGREE"]:
-        missing.append("%d DISAGREE" % classes["DISAGREE"])
-    if differ:
-        missing.append("TEST-IDS-DIFFER on %d row(s)" % differ)
-    if absent:
-        missing.append("test IDs absent on %d row(s)" % absent)
+    if len(qualifying) < WINDOW:
+        missing.append("%d of %d counted" % (len(qualifying), WINDOW))
+    for reason, wording in (("DISAGREE", "%d DISAGREE"), ("IDS-DIFFER", "TEST-IDS-DIFFER on %d row(s)"),
+                            ("IDS-ABSENT", "test IDs absent on %d row(s)"),
+                            (STEP_UNREADABLE, STEP_MISSING[STEP_UNREADABLE] + " on %d row(s)"),
+                            (STEP_DIFFERENT, STEP_MISSING[STEP_DIFFERENT] + " on %d row(s)")):
+        if rows_with(reason):
+            missing.append(wording % rows_with(reason))
     if queue["tripped"]:
         missing.append("queue threshold tripped (%d of the newest %d run(s) had a job wait over %d s)"
                        % (queue["runs_over"], queue["runs_in_window"], queue["threshold_s"]))
-    elif queue["tripped"] is None and len(counted) >= WINDOW:
+    elif queue["tripped"] is None and len(qualifying) >= WINDOW:
         missing.append("queue times on only %d of %d run(s)" % (queue["runs_in_window"], queue["window"]))
-    return {"met": not missing, "missing": missing, "counted": len(counted), "counted_red": classes["AGREE-RED"]}
+    return {"met": not missing and not blocking, "missing": missing, "counted": len(counted),
+            "qualifying": len(qualifying),
+            "counted_red": sum(1 for row in qualifying if row["class"] == "AGREE-RED"),
+            "exempt": [row["sha"] for row in counted if row["acceptance"] == EXEMPT],
+            "blocking": [{"sha": row["sha"], "why": row["acceptance_why"]} for row in blocking]}
 
 
 def report(repo, reading):
@@ -508,18 +688,19 @@ def report(repo, reading):
                      and all(one["class"] == "EQUAL" for one in row["test_ids"].values()))
     bad = classes["DISAGREE"] > 0 or ids["DIFFER"] > 0
     queue = dict(queue_summary(reading["queue_runs"]), runs=reading["queue_runs"])
+    accepted = acceptance(counted, queue)
     return {
         "schema_version": SCHEMA_VERSION, "repo": repo, "landed_at": reading["landed_at"],
         "count_from_sha": COUNT_FROM_SHA,
         "serial": "%s %s" % (SERIAL["workflow"], SERIAL["verdict_job"]),
         "shadow": "%s %s" % (SHADOW["workflow"], SHADOW["verdict_job"]),
-        "shas": rows,
+        "shas": rows[:reading["shown"]],
         "summary": {"shas": len(rows), "before_window": len(rows) - len(inside), "counted": len(counted),
                     "window": WINDOW,
-                    "window_met": len(counted) >= WINDOW, "classes": classes, "test_ids": ids,
+                    "window_met": accepted["qualifying"] >= WINDOW, "classes": classes, "test_ids": ids,
                     "counted_with_test_ids_equal_in_both_passes": both_equal},
         "queue": queue,
-        "acceptance": acceptance(counted, classes, ids, queue),
+        "acceptance": accepted,
         "verdict": "disagree" if bad else "agree", "error": None,
     }
 
@@ -548,6 +729,8 @@ def human(doc):
                    if zone in row["test_ids"] and row["test_ids"][zone]["class"] == "DIFFER"]
         if row["class"] in ("DISAGREE", "NOT-COUNTED", "AGREE-RED"):
             out.append("           ci.yml: %s | ci-next.yml: %s" % (row["ci"]["why"], row["next"]["why"]))
+        if row["acceptance"] in (EXEMPT, BLOCKS):
+            out.append("           " + row["acceptance_why"])
         for zone, what in differs:
             out.append("           test IDs of the %s pass differ in: %s" % (zone, what))
         for name, workflow in names:
@@ -561,12 +744,15 @@ def human(doc):
             out.append("           the two sides ran on different runner labels (%s, %s): a label such as "
                        "ubuntu-latest is whatever image GitHub points it at that day, so compare the `Image:` lines "
                        "of the two job logs before reading this row as a difference in the code" % tuple(labels))
-    s = doc["summary"]
+    s, a = doc["summary"], doc["acceptance"]
     out.append("%d SHA(s): %s" % (s["shas"], ", ".join(
         "%s %d" % pair for pair in list(s["classes"].items()) + [("BEFORE-WINDOW", s["before_window"])])))
-    out.append("counted toward the %d-push window: %d (%s). With TEST-IDS-EQUAL in both passes: %d. "
-               "Test-ID passes among the counted: %s" % (
-                   s["window"], s["counted"], "met" if s["window_met"] else "not met yet",
+    if len(doc["shas"]) < s["shas"]:
+        out.append("the table shows the newest %d of them (--limit); every tally here, ACCEPTANCE and the exit code "
+                   "are over all %d" % (len(doc["shas"]), s["shas"]))
+    out.append("verdict on both sides: %d; counted toward the %d-push window: %d (%s). With TEST-IDS-EQUAL in both "
+               "passes: %d. Test-ID passes among the SHAs with a verdict on both sides: %s" % (
+                   s["counted"], s["window"], a["qualifying"], "met" if s["window_met"] else "not met yet",
                    s["counted_with_test_ids_equal_in_both_passes"],
                    ", ".join("%s %d" % pair for pair in s["test_ids"].items())))
     q = doc["queue"]
@@ -588,14 +774,16 @@ def human(doc):
     out.append("verdict: %s" % ("DISAGREE or TEST-IDS-DIFFER among the SHAs inside the window: look at the rows above"
                                if doc["verdict"] == "disagree" else
                                "no DISAGREE and no TEST-IDS-DIFFER among the SHAs inside the window"))
-    a = doc["acceptance"]
     red = " (%d of them red on both sides)" % a["counted_red"] if a["counted_red"] else ""
+    exempt = (". Exempt (red on both sides at the same step, serial pass never ran): %d: %s" % (
+        len(a["exempt"]), ", ".join(sha[:10] for sha in a["exempt"])) if a["exempt"] else "")
     out.append("ACCEPTANCE: %s" % (
         "MET: %d SHAs counted%s, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, queue threshold not "
-        "tripped" % (a["counted"], red) if a["met"] else
-        "NOT MET: %s%s" % ("; ".join(a["missing"]),
-                           ". Of the %d counted, %d red on both sides" % (a["counted"], a["counted_red"])
-                           if a["counted_red"] else "")))
+        "tripped%s. Not checked here: manifest conservation, the 10-green soak, the canary" % (
+            a["qualifying"], red, exempt) if a["met"] else
+        "NOT MET: %s%s%s" % ("; ".join(a["missing"]),
+                             ". Of the %d counted, %d red on both sides" % (a["qualifying"], a["counted_red"])
+                             if a["counted_red"] else "", exempt)))
     return "\n".join(out) + "\n"
 
 
@@ -609,7 +797,8 @@ def parse_args(argv):
     exits = next(part for part in doc if part.startswith("Exit codes:"))
     p = Parser(description=doc[0], epilog=exits, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--repo", default="islanddave/garden-app", help="owner/name (default: %(default)s)")
-    p.add_argument("--limit", type=int, default=40, help="read the newest N dev push SHAs (default: %(default)s)")
+    p.add_argument("--limit", type=int, default=40, help="print the newest N dev push SHAs (default: %(default)s); every SHA from COUNT_FROM_SHA on "
+                   "is read and tallied whatever N is")
     p.add_argument("--call-timeout", type=float, default=60, help="seconds one gh call may take (default: %(default)s)")
     p.add_argument("--json", action="store_true", help="one JSON document instead of the table")
     args = p.parse_args(argv)

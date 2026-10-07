@@ -18,6 +18,9 @@ ci-next.yml run exists yet, so both shapes one could take (the aggregator never 
 `always()` and red over cancelled legs) are built and both must read SUPERSEDED. reruns-ci.json is two real ci.yml
 runs that were re-run, each as its listing row (the latest attempt) and as attempt 1.
 no-runner-next-37362246327.json is a real ci-next.yml run (on a25b3690) whose aggregator no runner ever took.
+both-red-same-step-6662e76e4e.json is a real push red on both sides at one step, and the only recording whose jobs
+carry their `steps`: the recorded pushes have none, so a row MADE red is given steps under the names that recording
+shows (red_at()), and a row left without them is the fail-closed case.
 
 The script counts from COUNT_FROM_SHA, which none of these pushes is: an autouse fixture opens the window at the
 oldest recorded push instead, and the tests of the bound move it or put the shipped value back.
@@ -141,6 +144,13 @@ class Push:
                 self.notice("ci", "build-and-test", zone, serial)
             if shadow:
                 self.notice("next", shadow_job, zone, shadow)
+
+    def steps(self, side, job, conclusions):
+        """Give one job its `steps`, in the API's shape: {step name: conclusion}, in that order."""
+        mine = self.job(side, job)
+        mine["steps"] = [{"name": name, "status": "completed", "conclusion": conclusion, "number": number,
+                          "started_at": mine["started_at"], "completed_at": mine["completed_at"]}
+                         for number, (name, conclusion) in enumerate(conclusions.items(), 1)]
 
     def rerun(self, side, to="success"):
         """This side's run was re-run. What it looks like NOW is served as attempt 1 (.../attempts/1 and its jobs);
@@ -285,6 +295,9 @@ def gh_on_path(tmp_path, monkeypatch):
     return run
 
 
+NO_STEPS = {"ci_step": None, "next_step": None}  # what a pass reads when its jobs carry no `steps`
+
+
 def doc_of(gh, replies, **kw):
     code, out, _ = gh(replies, "--json", **kw)
     return code, json.loads(out)
@@ -303,8 +316,8 @@ def test_the_two_real_pushes_agree_green_and_carry_no_test_ids_yet(gh):
         (NEW, "AGREE-GREEN", "GREEN", "GREEN"), (OLD, "AGREE-GREEN", "GREEN", "GREEN")]
     assert [r["ci"]["run_id"] for r in doc["shas"]] == [37164983222, 37098612753]
     assert [r["next"]["run_id"] for r in doc["shas"]] == [37164983196, 37098612816]
-    assert all(r["test_ids"] == {"UTC": {"class": "ABSENT", "differs": None, "ci": None, "next": None},
-                                 NY: {"class": "ABSENT", "differs": None, "ci": None, "next": None}}
+    assert all(r["test_ids"] == {"UTC": dict(NO_STEPS, **{"class": "ABSENT", "differs": None, "ci": None, "next": None}),
+                                 NY: dict(NO_STEPS, **{"class": "ABSENT", "differs": None, "ci": None, "next": None})}
                for r in doc["shas"])
     assert all((r["ci"]["runs_on"], r["next"]["runs_on"]) == (["ubuntu-latest"], ["ubuntu-24.04"])
                and r["ci"]["latest_attempt"] is None and r["next"]["latest_attempt"] is None for r in doc["shas"])
@@ -330,9 +343,9 @@ def test_the_table_names_the_classes_the_window_and_the_queue_threshold(gh):
     code, out, _ = gh(recorded())
     assert code == 0
     assert "dd5c08873f AGREE-GREEN   GREEN 37164983222" in out and "TEST-IDS-ABSENT" in out
-    assert "counted toward the 10-push window: 2 (not met yet)" in out
+    assert "verdict on both sides: 2; counted toward the 10-push window: 0 (not met yet)" in out
     assert "TEST-IDS-ABSENT  ubuntu-latest / ubuntu-24.04" in out and "runs-on ci.yml / ci-next.yml" in out
-    assert out.rstrip().endswith("ACCEPTANCE: NOT MET: 2 of 10 counted; test IDs absent on 2 row(s)")
+    assert out.rstrip().endswith("ACCEPTANCE: NOT MET: 0 of 10 counted; test IDs absent on 2 row(s)")
     assert "longest wait 3 s (gates-b)" in out and "unit-utc-cov 973 s" in out
     assert "0 of the newest 2 measured run(s) had a job wait over 120 s" in out and "fewer than 10 runs" in out
     assert "\nverdict: no DISAGREE and no TEST-IDS-DIFFER among the SHAs inside the window\n" in out
@@ -350,6 +363,52 @@ def red_leg(p, leg="gates-c"):
 def red_serial(p):
     p.ci.update(conclusion="failure")
     p.job("ci", "build-and-test").update(conclusion="failure")
+
+
+BOTH_RED = "both-red-same-step-6662e76e4e.json"
+TODAY_V2 = "Today V2 contract, instrument and self-test (V5-TODAYREDESIGN-001)"   # serial step 30, in gate-probes
+RATCHET = "Coverage ratchet enforcement"                             # serial step 41, in unit-utc-cov before its pass
+MEASURED_FLOOR = "Coverage ratchet — measured floor (WS-B M4)"       # serial step 44, after both passes
+UTC_PASS, NY_PASS = sa.PASS_STEPS["UTC"], sa.PASS_STEPS["America/New_York"]
+
+
+def step_names():
+    """{job: its step names, in order} as the recorded red pair shows them for all ten jobs."""
+    runs = _fixture(BOTH_RED)["runs"]
+    return {job["name"]: [step["name"] for step in job["steps"]]
+            for side in ("ci", "next") for job in runs[side]["jobs"]["jobs"]}
+
+
+def _stopped_at(names, at):
+    """A job's steps when it went red at index `at` (len(names): it did not): passed, failed, then skipped."""
+    return {name: "skipped" if n > at or name.startswith("Canary") else "failure" if n == at else "success"
+            for n, name in enumerate(names)}
+
+
+def green_leg(p, leg):
+    p.job("next", leg).update(conclusion="success")
+    p.steps("next", leg, _stopped_at(step_names()[leg], len(step_names()[leg])))
+
+
+def fail_step(p, leg, step, side="next"):
+    """One job red at `step`: what ran before it passed, what comes after was skipped."""
+    names = step_names()[leg]
+    p.steps(side, leg, _stopped_at(names, names.index(step)))
+
+
+def red_at(p, step):
+    """Both sides red at `step`, with the steps a real run shows: ci.yml's job stops there, the one leg that holds
+    the step fails it, every other leg is green. Returns that leg."""
+    names = step_names()
+    holders = [leg for leg in LEGS if step in names[leg]]
+    assert len(holders) == 1 and step in names["build-and-test"], step
+    red_serial(p)
+    fail_step(p, "build-and-test", step, side="ci")
+    for leg in LEGS:
+        green_leg(p, leg)
+    red_leg(p, holders[0])
+    fail_step(p, holders[0], step)
+    return holders[0]
 
 
 @pytest.mark.parametrize("road", ["gh", "gh_on_path"])
@@ -552,8 +611,8 @@ def test_equal_digests_in_both_passes(gh):
     push(replies, sha(1)).ids()
     code, doc = doc_of(gh, replies)
     assert code == 0 and row(doc, sha(1))["test_ids"] == {
-        "UTC": {"class": "EQUAL", "differs": None, "ci": A, "next": A},
-        NY: {"class": "EQUAL", "differs": None, "ci": B, "next": B}}
+        "UTC": dict(NO_STEPS, **{"class": "EQUAL", "differs": None, "ci": A, "next": A}),
+        NY: dict(NO_STEPS, **{"class": "EQUAL", "differs": None, "ci": B, "next": B})}
     assert doc["summary"]["test_ids"] == {"EQUAL": 2, "DIFFER": 0, "ABSENT": 4}
     assert doc["summary"]["counted_with_test_ids_equal_in_both_passes"] == 1
     assert "TEST-IDS-EQUAL" in gh(replies)[1]
@@ -610,8 +669,8 @@ def test_two_different_digests_for_one_pass_on_one_job_are_absent(gh):
     p.ids()
     p.notice("ci", "build-and-test", "UTC", B)
     code, doc = doc_of(gh, replies)
-    assert code == 0 and row(doc, sha(1))["test_ids"]["UTC"] == {"class": "ABSENT", "differs": None, "ci": None,
-                                                                 "next": A}
+    assert code == 0 and row(doc, sha(1))["test_ids"]["UTC"] == dict(NO_STEPS, **{
+        "class": "ABSENT", "differs": None, "ci": None, "next": A})
 
 
 def test_only_notices_titled_test_ids_count_and_only_on_the_job_that_ran_the_pass(gh):
@@ -624,7 +683,8 @@ def test_only_notices_titled_test_ids_count_and_only_on_the_job_that_ran_the_pas
     p.notice("next", "unit-utc-cov", "UTC", A)
     p.annotations("next", "unit-utc-cov")[-1]["annotation_level"] = "warning"  # the reporter's "no evidence" line
     code, doc = doc_of(gh, replies)
-    assert row(doc, sha(1))["test_ids"]["UTC"] == {"class": "ABSENT", "differs": None, "ci": A, "next": None}
+    assert row(doc, sha(1))["test_ids"]["UTC"] == dict(NO_STEPS, **{"class": "ABSENT", "differs": None, "ci": A,
+                                                                    "next": None})
 
 
 def test_test_ids_are_read_only_for_shas_with_a_verdict_on_both_sides(gh):
@@ -654,15 +714,17 @@ def test_a_red_pair_still_has_its_test_ids_compared(gh):
 def test_the_window_is_met_at_ten_counted_shas_not_ten_shas(gh):
     replies = recorded()
     pushes = [push(replies, sha(n), minutes_after=60) for n in range(1, 9)]
+    for p in pushes + [Push(replies, OLD), Push(replies, NEW)]:
+        p.ids()
     code, doc = doc_of(gh, replies)
     assert code == 0 and doc["summary"]["counted"] == 10 and doc["summary"]["window_met"] is True
     pushes[3].ci.update(status="in_progress", conclusion=None)
     code, doc = doc_of(gh, replies)
     assert doc["summary"]["shas"] == 10 and doc["summary"]["counted"] == 9 and doc["summary"]["window_met"] is False
-    assert "counted toward the 10-push window: 9 (not met yet)" in gh(replies)[1]
+    assert "verdict on both sides: 9; counted toward the 10-push window: 9 (not met yet)" in gh(replies)[1]
 
 
-def test_limit_reads_the_newest_shas_only(gh):
+def test_limit_prints_the_newest_shas_only_and_reads_every_sha_inside_the_window(gh, monkeypatch):
     replies = recorded()
     p = push(replies, sha(1))
     red_leg(p)
@@ -670,9 +732,19 @@ def test_limit_reads_the_newest_shas_only(gh):
     assert code == 1 and [r["sha"] for r in doc["shas"]] == [sha(1), NEW, OLD]
     code, out, calls = gh(replies, "--json", "--limit", "1")
     assert [r["sha"] for r in json.loads(out)["shas"]] == [sha(1)] and code == 1
-    mine = {annotations_path(p.job(side, name)["id"]) for side, name in (
-        ("ci", "build-and-test"), ("next", "unit-utc-cov"), ("next", "unit-ny"))}
-    assert {c[4] for c in calls if "/check-runs/" in c[4]} == mine  # no other SHA's evidence was asked for
+
+    def evidence(*pushes):
+        return {annotations_path(q.job(side, name)["id"]) for q in pushes for side, name in (
+            ("ci", "build-and-test"), ("next", "unit-utc-cov"), ("next", "unit-ny"))}
+
+    # The window is open at OLD: all three SHAs are inside it and are read, whatever is printed.
+    assert {c[4] for c in calls if "/check-runs/" in c[4]} == evidence(p, Push(replies, NEW), Push(replies, OLD))
+    assert json.loads(out)["summary"] == doc["summary"] and json.loads(out)["acceptance"] == doc["acceptance"]
+    monkeypatch.setattr(sa, "COUNT_FROM_SHA", sha(1))
+    code, out, calls = gh(replies, "--json", "--limit", "1")
+    assert [r["sha"] for r in json.loads(out)["shas"]] == [sha(1)] and code == 1
+    assert {c[4] for c in calls if "/check-runs/" in c[4]} == evidence(p)  # no SHA before the window was asked for
+    assert not any("/runs/%d/" % Push(replies, OLD).ci["id"] in c[4] for c in calls)
 
 
 def test_a_serial_run_from_before_the_shadow_landed_is_not_a_row(gh):
@@ -1035,32 +1107,60 @@ def acceptance(gh, replies):
     return code, doc["acceptance"], gh(replies)[1].rstrip().split("\n")[-1]
 
 
+NO_NOTICE_NO_STEPS = ("BLOCKS acceptance: UTC pass: ci.yml has no usable test-ids notice and its pass step cannot be "
+                      "read; America/New_York pass: ci.yml has no usable test-ids notice and its pass step cannot be read")
+NOT_COVERED = ". Not checked here: manifest conservation, the 10-green soak, the canary"
+
+
 def test_acceptance_is_not_met_on_the_real_repository_and_says_what_is_missing(gh):
     code, verdict, line = acceptance(gh, recorded())
     assert code == 0  # the exit code is another matter: nothing disagrees
-    assert verdict == {"met": False, "missing": ["2 of 10 counted", "test IDs absent on 2 row(s)"], "counted": 2,
-                       "counted_red": 0}
-    assert line == "ACCEPTANCE: NOT MET: 2 of 10 counted; test IDs absent on 2 row(s)"
+    assert verdict == {"met": False, "missing": ["0 of 10 counted", "test IDs absent on 2 row(s)"], "counted": 2,
+                       "counted_red": 0, "qualifying": 0, "exempt": [],
+                       "blocking": [{"sha": NEW, "why": NO_NOTICE_NO_STEPS}, {"sha": OLD, "why": NO_NOTICE_NO_STEPS}]}
+    assert line == "ACCEPTANCE: NOT MET: 0 of 10 counted; test IDs absent on 2 row(s)"
 
 
 def test_acceptance_is_met_at_ten_counted_with_equal_test_ids_and_quiet_queues(gh):
     replies = recorded()
     ten(replies)
     code, verdict, line = acceptance(gh, replies)
-    assert code == 0 and verdict == {"met": True, "missing": [], "counted": 10, "counted_red": 0}
+    assert code == 0 and verdict == {"met": True, "missing": [], "counted": 10, "counted_red": 0, "qualifying": 10,
+                                     "exempt": [], "blocking": []}
     assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, "
-                    "queue threshold not tripped")
+                    "queue threshold not tripped" + NOT_COVERED)
 
 
 def test_acceptance_says_how_many_of_the_counted_were_red_on_both_sides(gh):
     replies = recorded()
     pushes = ten(replies)
     for p in pushes[2:4]:
-        red_leg(p)
-        red_serial(p)
+        assert red_at(p, MEASURED_FLOOR) == "unit-utc-cov"  # after both passes: each printed its notice
     code, verdict, line = acceptance(gh, replies)
     assert code == 0 and verdict["met"] and verdict["counted_red"] == 2
     assert line.startswith("ACCEPTANCE: MET: 10 SHAs counted (2 of them red on both sides), none DISAGREE")
+    assert line.endswith("queue threshold not tripped" + NOT_COVERED)
+
+
+def test_two_rows_red_on_both_sides_at_different_steps_are_not_acceptance(gh):
+    """The sibling of the test above: the same two rows, but on one the leg that holds the step ci.yml failed is
+    green and another leg failed a step ci.yml passed."""
+    replies = recorded()
+    pushes = ten(replies)
+    for p in pushes[2:4]:
+        red_at(p, MEASURED_FLOOR)
+    other = pushes[3]
+    green_leg(other, "unit-utc-cov")
+    red_leg(other, "gates-a")
+    fail_step(other, "gates-a", "Install dependencies")
+    code, doc = doc_of(gh, replies)
+    verdict = doc["acceptance"]
+    assert code == 0 and row(doc, other.sha)["class"] == "AGREE-RED" and row(doc, other.sha)["acceptance"] == "BLOCKS"
+    assert verdict["met"] is False and verdict["counted"] == 10 and verdict["counted_red"] == 1
+    assert verdict["missing"] == ["9 of 10 counted", "red on both sides at different steps on 1 row(s)"]
+    assert verdict["blocking"] == [{"sha": other.sha, "why": (
+        'BLOCKS acceptance: red on both sides at different steps: ci.yml failed at "%s" and no ci-next.yml leg '
+        "failed that step" % MEASURED_FLOOR)}]
 
 
 def _nine(pushes):
@@ -1096,12 +1196,12 @@ def _red_and_absent(pushes):
 
 @pytest.mark.parametrize("spoil,missing,code", [
     (_nine, ["9 of 10 counted"], 0),
-    (_disagree, ["1 DISAGREE"], 1),
-    (_differ, ["TEST-IDS-DIFFER on 1 row(s)"], 1),
-    (_absent, ["test IDs absent on 3 row(s)"], 0),
+    (_disagree, ["9 of 10 counted", "1 DISAGREE"], 1),
+    (_differ, ["9 of 10 counted", "TEST-IDS-DIFFER on 1 row(s)"], 1),
+    (_absent, ["7 of 10 counted", "test IDs absent on 3 row(s)"], 0),
     (_queued, ["queue threshold tripped (3 of the newest 10 run(s) had a job wait over 120 s)"], 0),
     (lambda pushes: (_disagree(pushes), _absent(pushes), _queued(pushes)),
-     ["1 DISAGREE", "test IDs absent on 3 row(s)",
+     ["7 of 10 counted", "1 DISAGREE", "test IDs absent on 3 row(s)",
       "queue threshold tripped (3 of the newest 10 run(s) had a job wait over 120 s)"], 1),
 ])
 def test_acceptance_names_each_thing_that_is_missing(gh, spoil, missing, code):
@@ -1114,10 +1214,21 @@ def test_acceptance_names_each_thing_that_is_missing(gh, spoil, missing, code):
 
 def test_a_not_met_line_still_says_how_many_counted_rows_were_red(gh):
     replies = recorded()
-    _red_and_absent(ten(replies))
+    pushes = ten(replies)
+    _red_and_absent(pushes)
+    red_at(pushes[8], MEASURED_FLOOR)
+    code, doc = doc_of(gh, replies)
     _, verdict, line = acceptance(gh, replies)
-    assert verdict["missing"] == ["test IDs absent on 3 row(s)"] and verdict["counted_red"] == 1
-    assert line == "ACCEPTANCE: NOT MET: test IDs absent on 3 row(s). Of the 10 counted, 1 red on both sides"
+    assert verdict["missing"] == ["7 of 10 counted", "test IDs absent on 3 row(s)",
+                                  "red on both sides and the failing step cannot be read on 1 row(s)"]
+    assert row(doc, pushes[5].sha)["acceptance"] == "BLOCKS"
+    assert verdict["counted_red"] == 1 and verdict["counted"] == 10 and verdict["qualifying"] == 7
+    assert [one["sha"] for one in verdict["blocking"]] == [pushes[6].sha, pushes[5].sha, pushes[4].sha]
+    assert row(doc, pushes[5].sha)["acceptance_why"] == (
+        "BLOCKS acceptance: red on both sides and the failing step cannot be read: ci.yml's job carries no steps; "
+        "UTC pass: ci.yml has no usable test-ids notice and its pass step cannot be read")
+    assert line == ("ACCEPTANCE: NOT MET: 7 of 10 counted; test IDs absent on 3 row(s); red on both sides and the "
+                    "failing step cannot be read on 1 row(s). Of the 7 counted, 1 red on both sides")
 
 
 def test_ten_counted_with_queue_times_on_fewer_than_ten_runs_is_not_met(gh):
@@ -1128,16 +1239,37 @@ def test_ten_counted_with_queue_times_on_fewer_than_ten_runs_is_not_met(gh):
     last.next.update(conclusion="failure")
     replies[jobs_path(last.next["id"])] = {"total_count": 0, "jobs": []}
     code, verdict, line = acceptance(gh, replies)
-    assert code == 0 and verdict["counted"] == 10 and verdict["counted_red"] == 1
-    assert verdict["missing"] == ["test IDs absent on 1 row(s)", "queue times on only 9 of 10 run(s)"]
+    assert code == 0 and verdict["counted"] == 10 and verdict["counted_red"] == 0
+    assert row(doc_of(gh, replies)[1], last.sha)["acceptance"] == "BLOCKS"
+    assert verdict["missing"] == ["9 of 10 counted", "test IDs absent on 1 row(s)",
+                                  "red on both sides and the failing step cannot be read on 1 row(s)"]
+    assert verdict["blocking"] == [{"sha": last.sha, "why": (
+        "BLOCKS acceptance: red on both sides and the failing step cannot be read: ci.yml's job carries no steps; "
+        "UTC pass: ci.yml printed its digest and ci-next.yml has no usable one; "
+        "America/New_York pass: ci.yml printed its digest and ci-next.yml has no usable one")}]
+    assert doc_of(gh, replies)[1]["queue"]["runs_in_window"] == 9
     assert "NOT MET" in line
+
+
+def test_ten_qualifying_with_queue_times_on_nine_runs_is_not_met_for_the_queue_times_alone(gh):
+    """The queue arm of the test above, which that row no longer reaches (it is not one of the 10). Made: one green
+    shadow run none of whose jobs shows a runner, so it has no wait to measure."""
+    replies = recorded()
+    last = ten(replies)[-1]
+    for job in last.jobs("next"):
+        job.update(runner_id=0, runner_name="")
+    code, verdict, line = acceptance(gh, replies)
+    assert code == 0 and (verdict["counted"], verdict["qualifying"], verdict["blocking"]) == (10, 10, [])
+    assert verdict["met"] is False and verdict["missing"] == ["queue times on only 9 of 10 run(s)"]
+    assert line == "ACCEPTANCE: NOT MET: queue times on only 9 of 10 run(s)"
 
 
 def test_ten_counted_rows_without_test_ids_are_not_acceptance(gh):
     replies = recorded()
     ten(replies, ids=False)
     code, verdict, _ = acceptance(gh, replies)
-    assert code == 0 and verdict["missing"] == ["test IDs absent on 10 row(s)"]
+    assert code == 0 and verdict["missing"] == ["0 of 10 counted", "test IDs absent on 10 row(s)"]
+    assert verdict["counted"] == 10 and verdict["qualifying"] == 0 and len(verdict["blocking"]) == 10
 
 
 # ── a job no runner took ────────────────────────────────────────────────────────────────────────────────────────
@@ -1380,7 +1512,8 @@ def test_rows_before_the_opening_sha_are_printed_and_are_in_no_tally(gh, monkeyp
         "shas": 7, "before_window": 4, "counted": 3, "window": 10, "window_met": False,
         "classes": {"AGREE-GREEN": 3, "AGREE-RED": 0, "DISAGREE": 0, "NOT-COUNTED": 0},
         "test_ids": {"EQUAL": 6, "DIFFER": 0, "ABSENT": 0}, "counted_with_test_ids_equal_in_both_passes": 3}
-    assert doc["acceptance"] == {"met": False, "missing": ["3 of 10 counted"], "counted": 3, "counted_red": 0}
+    assert doc["acceptance"] == {"met": False, "missing": ["3 of 10 counted"], "counted": 3, "counted_red": 0,
+                                 "qualifying": 3, "exempt": [], "blocking": []}
     code, out, calls = gh(replies)
     asked = {c[4] for c in calls if "/check-runs/" in c[4]}
     assert asked == {annotations_path(p.job(side, name)["id"]) for p in pushes[2:] for side, name in (
@@ -1395,7 +1528,8 @@ def test_rows_before_the_opening_sha_are_printed_and_are_in_no_tally(gh, monkeyp
     assert "TEST-IDS-EQUAL   TEST-IDS-EQUAL" in lines[at - 1]
     assert out.count("BEFORE-WINDOW GREEN") == 4 and out.count("first seen before") == 4
     assert "7 SHA(s): AGREE-GREEN 3, AGREE-RED 0, DISAGREE 0, NOT-COUNTED 0, BEFORE-WINDOW 4\n" in out
-    assert "counted toward the 10-push window: 3 (not met yet). With TEST-IDS-EQUAL in both passes: 3." in out
+    assert ("verdict on both sides: 3; counted toward the 10-push window: 3 (not met yet). With TEST-IDS-EQUAL in "
+            "both passes: 3.") in out
     assert out.rstrip().endswith("ACCEPTANCE: NOT MET: 3 of 10 counted")
 
 
@@ -1410,7 +1544,7 @@ def test_a_disagreement_before_the_opening_sha_is_shown_but_only_one_at_or_after
     assert row(doc, sha(red))["class"] == "DISAGREE" and row(doc, sha(red))["counted"] is bool(code)
     assert doc["summary"]["classes"]["DISAGREE"] == disagree and doc["summary"]["counted"] == 3
     # None of the seven carries a test-ids notice: the three counted are absent, the four before are in no tally.
-    assert doc["acceptance"]["missing"] == ["3 of 10 counted"] + ["1 DISAGREE"] * disagree + [
+    assert doc["acceptance"]["missing"] == ["0 of 10 counted"] + ["1 DISAGREE"] * disagree + [
         "test IDs absent on 3 row(s)"]
     out = gh(replies)[1]
     assert "ci-next.yml: failed: gates-c" in out  # the row and its reason are printed either way
@@ -1436,7 +1570,8 @@ def test_ten_pushes_of_which_two_are_before_the_opening_sha_are_not_acceptance(g
     assert acceptance(gh, replies)[1]["met"] is True
     monkeypatch.setattr(sa, "COUNT_FROM_SHA", sha(1))
     code, verdict, line = acceptance(gh, replies)
-    assert code == 0 and verdict == {"met": False, "missing": ["8 of 10 counted"], "counted": 8, "counted_red": 0}
+    assert code == 0 and verdict == {"met": False, "missing": ["8 of 10 counted"], "counted": 8, "counted_red": 0,
+                                     "qualifying": 8, "exempt": [], "blocking": []}
     assert line == "ACCEPTANCE: NOT MET: 8 of 10 counted"
 
 
@@ -1600,8 +1735,8 @@ def test_a_differ_says_whether_it_is_the_files_the_names_or_only_the_states(gh, 
     p.notice("ci", "build-and-test", "UTC", A, **serial)
     p.notice("next", "unit-utc-cov", "UTC", B, **shadow)
     code, doc = doc_of(gh, replies)
-    assert code == 1 and row(doc, sha(1))["test_ids"]["UTC"] == {"class": "DIFFER", "differs": what, "ci": A,
-                                                                 "next": B}
+    assert code == 1 and row(doc, sha(1))["test_ids"]["UTC"] == dict(NO_STEPS, **{
+        "class": "DIFFER", "differs": what, "ci": A, "next": B})
     assert "test IDs of the UTC pass differ in: %s" % what in gh(replies)[1]
 
 
