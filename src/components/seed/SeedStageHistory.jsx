@@ -39,6 +39,10 @@ export default function SeedStageHistory({
   // way; only the label degrades.
   sourcePlantId = '',
   sourcePlantName = null,
+  // V5-SEEDMULTIPARENT-001 release 2b — how many plantings the jar came off, when the host has the
+  // parent set. Two or more: the chain says the number and names none of them (the host's "Saved from"
+  // card, directly above, lists and links every one). Null, 0 or 1: the single-parent line, as before.
+  sourcePlantCount = null,
 }) {
   const { fetch } = useApiFetch()
   const [rows,    setRows]    = useState([])
@@ -165,10 +169,14 @@ export default function SeedStageHistory({
       {/* The oldest fact in the chain, so it sits at the BOTTOM of a newest-first list. */}
       {hasParent && (
         <p data-testid="seed-history-origin" style={originChrome}>
-          Saved from{' '}
-          <Link to={`/plantings/${sourcePlantId}`} style={originLink}>
-            {sourcePlantName || 'the parent planting'}
-          </Link>
+          {sourcePlantCount >= 2 ? `Saved from ${sourcePlantCount} plantings` : (
+            <>
+              Saved from{' '}
+              <Link to={`/plantings/${sourcePlantId}`} style={originLink}>
+                {sourcePlantName || 'the parent planting'}
+              </Link>
+            </>
+          )}
         </p>
       )}
 

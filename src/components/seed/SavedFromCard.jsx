@@ -1,0 +1,555 @@
+// src/components/seed/SavedFromCard.jsx — V5-SEEDMULTIPARENT-001 release 2b. The lot page's "Saved from",
+// for a jar whose PARENT SET is known.
+//
+// A jar can be gathered off several plantings, so this card lists every one of them (each a door to its
+// planting), adds another, takes one away, and keeps the jar FILED under what the set now says: one
+// cultivar, or the named mix of several. It renders INSIDE the page's `seed-source-plant` card; the page
+// keeps the heading, the arrival ref and the origin select below.
+//
+// EVERY CHANGE IS ONE WRITE. PUT /api/inventory-items/:id/source-plants carries the whole set, the set
+// this page last read (`expected_source_plant_ids`, always), and — when the change moves the set's
+// cultivars — the `filing` that goes with it, in one transaction. A mix has to exist before it can be
+// filed under, so POST /api/varieties/blend { create: true } runs first when the set spans more than one
+// cultivar; it is idempotent, so a PUT refused after it leaves a row the next try reuses.
+//
+// ONE SET WRITE AT A TIME. While one runs no row control answers: the likeliest cause of the server's
+// "changed at the same moment" is the user's own second tap, and this removes it.
+//
+// REMOVE IS FORGIVING, IN PLACE. The row stays where it was, struck, reading "<name> · Removed", with
+// Undo where the ✕ was, until the page is left. Undo puts the planting back into the set as it stands
+// now and asks for the cache the jar had before. A removed plant's `seed_saved` timeline entry is
+// withdrawn only on LEAVING with the row still struck (see the unmount effect), so Undo never has an
+// entry to restore.
+//
+// `lot` is the page's item with `name` as the page's NAME FIELD SHOWS IT NOW: the jar is renamed with a
+// re-file only while that name is still the automatic one (rowTitle's test), and a name being typed is
+// left alone. `onLot(patch)` merges the stored answer into the page's item; `onName(name)` moves the
+// page's name field and its baseline, so the page's own Save cannot write the old name back. `notice` is
+// optional: one line the page wants said in this card's help slot (the legacy write's "changed somewhere
+// else", from the moment the set first became readable). Anything this card has to say comes first.
+import React, { useState, useRef, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
+import { useApiFetch } from '../../lib/api.js'
+import { useToast } from '../../context/ToastContext.jsx'
+import { P } from '../../lib/constants.js'
+import { T, inputChrome } from '../forms/formStyles.js'
+import PlantingSelect from '../forms/PlantingSelect.jsx'
+import { parentSetFacts, sourcePlantFromPlanting } from './seedParents.js'
+import { rowTitle } from './mySeedsModel.js'
+
+// Undo ignores taps this long after it appears, so a double tap on ✕ does not undo itself.
+export const UNDO_ARM_MS = 400
+
+// Exported: the page's one remaining legacy parent write says the same two things (InventoryDetail).
+export const CHANGED_ELSEWHERE = 'This jar changed somewhere else just now. This is the latest. Try again if it still needs changing.'
+export const NOT_SAVED = "Couldn't save that. Nothing was changed."
+// The client's own sentence per refusal code. Never the server's string.
+const NOT_ADDED = {
+  mixed_crop_parents: "That planting is a different crop, so it wasn't added.",
+  parent_without_variety: "That planting has no variety recorded, so it wasn't added.",
+}
+const COUNT_NOT_A_NUMBER = 'A plant count is a whole number, 1 or more.'
+const COUNT_NOT_SAVED = "Couldn't record the plant count."
+const EMPTY_HELP = 'The plant this seed was saved from. Leave it empty for bought seed.'
+// The page's own sentence for a failed picker load, unchanged.
+const LOAD_FAILED = "Couldn't load your plantings — the rest of this page still saves normally."
+
+// What a refetch may move on the page's item: the parent set, its cache, the filing and the count.
+export const LOT_KEYS = ['source_plant_id', 'source_plants', 'variety_id', 'variety_name', 'variety_rank',
+  'breeding_system', 'name', 'seed_parent_plant_count']
+
+const sid = (v) => String(v ?? '')
+const sameIds = (a, b) => a.length === b.length && a.every((v, i) => sid(v) === sid(b[i]))
+const insertAt = (list, item, at) => {
+  const out = list.slice()
+  out.splice(Math.max(0, Math.min(at, out.length)), 0, item)
+  return out
+}
+// O-4: a planting whose variety is gone (no id, or an id whose row is soft-deleted and so has no name)
+// is a planting with no variety.
+const hasNoVariety = (p) => p.variety_id == null || p.variety_name == null
+
+// The year of a name that is still the automatic one, else null. rowTitle answers the variety only for
+// a saved lot still on its default name ("<variety> — saved <year>" or "Saved seed <year>"); the origin
+// marker makes the question about the name alone. Both defaults end in the year.
+function automaticYear(varietyName, name) {
+  const variety = String(varietyName ?? '').trim()
+  const shown = String(name ?? '').trim()
+  if (!variety || !shown || shown === variety) return null
+  if (rowTitle({ variety_name: variety, name: shown, source_kind: 'own_garden' }) !== variety) return null
+  return shown.slice(-4)
+}
+
+// O-11 — withdraw a removed plant's `seed_saved` entries for this jar. Fired once, never awaited, every
+// failure silent: the entry links to the jar, which shows the live answer, so a missed withdrawal is a
+// stale line and not a wrong one. The list is the planting's own, capped at 200 by the route; none
+// found is success.
+function withdrawSeedSaved(fetch, plantId, lotId) {
+  Promise.resolve()
+    .then(() => fetch(`/api/events?plant_id=${encodeURIComponent(plantId)}&limit=200`))
+    .then((rows) => {
+      const list = Array.isArray(rows) ? rows : Array.isArray(rows?.events) ? rows.events : []
+      for (const ev of list) {
+        if (ev?.event_type !== 'seed_saved' || sid(ev?.metadata?.seed_lot_id) !== sid(lotId)) continue
+        Promise.resolve()
+          .then(() => fetch(`/api/events/${ev.id}`, { method: 'DELETE' }))
+          .catch(() => {})
+      }
+    })
+    .catch(() => {})
+}
+
+export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice = null }) {
+  const { fetch } = useApiFetch()
+  const { show } = useToast()
+  const lotId = lot.id
+
+  const facts = useMemo(() => parentSetFacts(lot.source_plants), [lot.source_plants])
+  const serverPlants = facts.plantings
+
+  // One set write in flight. The ref is the guard (two taps in one tick read it before a render); the
+  // state is what the card draws.
+  const busyRef = useRef(false)
+  const [busy, setBusy] = useState(false)
+  // The set the write in flight will leave, drawn at once; null between writes.
+  const [pending, setPending] = useState(null)
+  // Rows removed on this visit: { plant, index, liveIndex, before, filing, armedAt, confirmed }.
+  const [struck, setStruck] = useState([])
+  // The latest re-file: { name, act }. Lasts until the page is left, or its Undo.
+  const [filed, setFiled] = useState(null)
+  const [notice, setNotice] = useState(null)
+  const [adding, setAdding] = useState(false)
+  const [loadFailed, setLoadFailed] = useState(false)
+  // The polite announcement: the word a struck row carries, said once when it appears.
+  const [said, setSaid] = useState('')
+
+  const storedCount = lot.seed_parent_plant_count == null ? null : Number(lot.seed_parent_plant_count)
+  const [countText, setCountText] = useState(storedCount == null ? '' : String(storedCount))
+  const [countBusy, setCountBusy] = useState(false)
+  useEffect(() => { setCountText(storedCount == null ? '' : String(storedCount)) }, [storedCount])
+
+  const live = pending ?? serverPlants
+  // Live rows in the server's order, each struck row back where it stood.
+  const rows = useMemo(() => {
+    const out = live.map((plant) => ({ plant, gone: null }))
+    const liveIds = new Set(live.map((p) => sid(p.id)))
+    for (const s of struck.slice().sort((a, b) => a.index - b.index)) {
+      if (liveIds.has(sid(s.plant.id))) continue
+      out.splice(Math.min(s.index, out.length), 0, { plant: s.plant, gone: s })
+    }
+    return out
+  }, [live, struck])
+
+  // X7 — the adder's crop is the set's one shared crop. No crop (a planting with no variety, O-4
+  // included) means every add would be refused, so the adder is not offered and the card says why.
+  const orphan = live.find(hasNoVariety) ?? null
+  const liveFacts = useMemo(() => parentSetFacts(live), [live])
+  const cropSlug = !orphan && typeof liveFacts.cropSlug === 'string' ? liveFacts.cropSlug : null
+  const rowKey = rows.map((r) => sid(r.plant.id)).join(',')
+  // Stable while the rows are: PlantingSelect lists it in a memo's deps.
+  const excludeIds = useMemo(() => (rowKey ? rowKey.split(',') : []), [rowKey])
+
+  // ── Leaving with a row still struck (O-11) ─────────────────────────────────────────────────────────
+  // Unmount only: a route change, the lot reloading, or an origin that takes the parent picker away.
+  // A removal the server never confirmed is not withdrawn, and neither is a deleted planting's (its
+  // event list answers 404).
+  const leaveRef = useRef({ struck, fetch, lotId })
+  leaveRef.current = { struck, fetch, lotId }
+  useEffect(() => () => {
+    const at = leaveRef.current
+    for (const s of at.struck) {
+      if (s.confirmed && !s.plant.deleted) withdrawSeedSaved(at.fetch, s.plant.id, at.lotId)
+    }
+  }, [])
+
+  // Either 409: read the jar again, in place, and draw what it says. A struck row whose plant is back
+  // on the jar is no longer struck; a "Filed as" line described a jar that has since moved.
+  async function refresh() {
+    try {
+      const fresh = await fetch('/api/inventory-items/' + lotId)
+      if (!fresh || !Array.isArray(fresh.source_plants)) return false
+      const patch = {}
+      for (const k of LOT_KEYS) if (Object.prototype.hasOwnProperty.call(fresh, k)) patch[k] = fresh[k]
+      onLot(patch)
+      // The name field follows only while it still shows an automatic name.
+      if (typeof fresh.name === 'string' && fresh.name !== lot.name && automaticYear(lot.variety_name, lot.name)) {
+        onName(fresh.name)
+      }
+      const back = new Set(fresh.source_plants.filter(Boolean).map((p) => sid(p.id)))
+      setStruck((list) => list.filter((s) => !back.has(sid(s.plant.id))))
+      setFiled(null)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  // ── The one set write ──────────────────────────────────────────────────────────────────────────────
+  // `kind` is what happens to `plant`; `undo` is the earlier act this one reverses (a struck row's, or
+  // the "Filed as" line's, which sets `fromFiled`), null for a fresh add or remove.
+  async function run({ kind, plant, index = 0, undo = null, fromFiled = false }) {
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusy(true)
+    setNotice(null)
+
+    const cur = serverPlants
+    const pid = sid(plant.id)
+    const next = kind === 'remove'
+      ? cur.filter((p) => sid(p.id) !== pid)
+      : insertAt(cur, plant, undo ? undo.liveIndex : cur.length)
+    const nextFacts = parentSetFacts(next)
+    const before = {
+      variety_id: lot.variety_id ?? null, variety_name: lot.variety_name ?? null,
+      variety_rank: lot.variety_rank ?? null, breeding_system: lot.breeding_system ?? null,
+      cache: lot.source_plant_id ?? null, varietyIds: facts.varietyIds,
+    }
+    const liveIndex = cur.findIndex((p) => sid(p.id) === pid)
+    // A fresh removal strikes its row now; an Undo of an add simply takes the row away again.
+    const strikes = kind === 'remove' && !undo
+    if (strikes) {
+      setStruck((list) => [...list.filter((s) => sid(s.plant.id) !== pid),
+        { plant, index, liveIndex, before, filing: null, armedAt: Date.now() + UNDO_ARM_MS, confirmed: false }])
+      setSaid(`${plant.name} · Removed`)
+    }
+    setPending(next)
+
+    try {
+      // ── The filing that rides with this change (O-3) ─────────────────────────────────────────────
+      // An Undo of the very act that re-filed the jar goes back to what the server said was there
+      // (`previous`), name included when that act renamed it and the field still shows that name.
+      // Anything else is filed by what the resulting set says, and only when the set's cultivars moved.
+      // A jar with no parents, before or after, is never sent a filing (PP-11).
+      let filing = null
+      let target = null
+      const shown = String(lot.name ?? '').trim()
+      const exact = undo?.filing?.changed === true
+        && sid(lot.variety_id) === sid(undo.filing.variety_id)
+        && sameIds(nextFacts.varietyIds, undo.before.varietyIds)
+      if (exact) {
+        filing = { variety_id: undo.filing.previous.variety_id, expect_variety_id: lot.variety_id }
+        if (undo.filing.name !== undo.filing.previous.name && shown === undo.filing.name) {
+          filing.name = undo.filing.previous.name
+        }
+        target = undo.before
+      } else if (cur.length > 0 && next.length > 0 && nextFacts.varietyIds.length > 0
+          && !sameIds(facts.varietyIds, nextFacts.varietyIds)) {
+        if (nextFacts.varietyIds.length === 1) {
+          const one = nextFacts.varieties.find((v) => v.variety_id != null)
+          target = { variety_id: one.variety_id, variety_name: one.variety_name, breeding_system: one.breeding_system }
+        } else {
+          const mix = await fetch('/api/varieties/blend', {
+            method: 'POST',
+            body: JSON.stringify({ component_variety_ids: nextFacts.varietyIds, create: true }),
+          })
+          target = { variety_id: mix.id, variety_name: mix.name, breeding_system: null }
+        }
+        if (sid(target.variety_id) !== sid(lot.variety_id)) {
+          filing = { variety_id: target.variety_id, expect_variety_id: lot.variety_id }
+          const year = automaticYear(lot.variety_name, shown)
+          const named = String(target.variety_name ?? '').trim()
+          if (year && named) filing.name = `${named} — saved ${year}`
+        }
+      }
+
+      const body = {
+        source_plant_ids: next.map((p) => p.id),
+        expected_source_plant_ids: cur.map((p) => p.id),
+      }
+      // The cache hint must be a member of the set being written.
+      if (undo && undo.before.cache != null && next.some((p) => sid(p.id) === sid(undo.before.cache))) {
+        body.source_plant_id = undo.before.cache
+      }
+      if (filing) body.filing = filing
+
+      const reply = await fetch(`/api/inventory-items/${lotId}/source-plants`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      })
+
+      const stored = Array.isArray(reply?.source_plants) ? reply.source_plants.filter(Boolean) : next
+      const patch = { source_plant_id: reply?.source_plant_id ?? null, source_plants: stored }
+      const refiled = reply?.filing?.changed === true ? reply.filing : null
+      if (refiled) {
+        patch.variety_id = refiled.variety_id
+        patch.variety_name = refiled.variety_name
+        patch.variety_rank = refiled.variety_rank
+        patch.name = refiled.name
+        patch.breeding_system = target?.breeding_system ?? null
+      }
+      onLot(patch)
+      // Only a name this write sent moves the page's field: a name being typed is the user's.
+      if (refiled && filing?.name != null) onName(refiled.name)
+
+      const storedIds = new Set(stored.map((p) => sid(p.id)))
+      setStruck((list) => list
+        .filter((s) => !storedIds.has(sid(s.plant.id)))
+        .map((s) => (strikes && sid(s.plant.id) === pid ? { ...s, filing: refiled, confirmed: true } : s)))
+      // A re-file this write made by itself is the new line. An exact reversal, or the line's own
+      // Undo however it was filed, leaves nothing to say.
+      if (refiled && !exact) setFiled({ name: refiled.variety_name, act: { kind, plant, liveIndex, before, filing: refiled } })
+      else if (exact || fromFiled) setFiled(null)
+      setAdding(false)
+      if (kind === 'add' && !undo) show({ message: '✓ Saved' })
+    } catch (e) {
+      // A refusal writes nothing (one transaction, one verdict), so the row goes back to how it was
+      // before the tap. A reply lost on the way is the one case the page cannot see; the next write's
+      // `expected_source_plant_ids` then answers lot_changed and the jar is read again.
+      if (strikes) setStruck((list) => list.filter((s) => sid(s.plant.id) !== pid))
+      const code = e?.body?.code
+      if (e?.status === 409 && (code === 'lot_changed' || code === 'parents_changed')) {
+        setNotice((await refresh()) ? CHANGED_ELSEWHERE : NOT_SAVED)
+      } else {
+        setNotice((kind === 'add' && NOT_ADDED[code]) || NOT_SAVED)
+      }
+    } finally {
+      busyRef.current = false
+      setBusy(false)
+      setPending(null)
+    }
+  }
+
+  function add(planting) {
+    if (!planting || busyRef.current) return
+    run({ kind: 'add', plant: sourcePlantFromPlanting(planting) })
+  }
+
+  function remove(row, index) {
+    run({ kind: 'remove', plant: row.plant, index })
+  }
+
+  function undoRemove(s) {
+    if (busyRef.current || Date.now() < s.armedAt) return
+    run({ kind: 'add', plant: s.plant, undo: s })
+  }
+
+  // The "Filed as" line's Undo reverses the act that re-filed the jar: the planting it added comes off,
+  // or the planting it removed goes back, with the filing in the same write. When that planting has
+  // since moved by another route there is nothing left to reverse, and the line just goes.
+  function undoFiled() {
+    if (busyRef.current || !filed) return
+    const { act } = filed
+    const onJar = serverPlants.some((p) => sid(p.id) === sid(act.plant.id))
+    if ((act.kind === 'add') !== onJar) { setFiled(null); return }
+    run({ kind: act.kind === 'add' ? 'remove' : 'add', plant: act.plant, undo: act, fromFiled: true })
+  }
+
+  // ── The plant count: written when the field is left, on its own route ──────────────────────────────
+  // Blank clears it. A 200 without the key is a Lambda from before the column: nothing was saved.
+  async function saveCount() {
+    const typed = countText.trim()
+    const value = typed === '' ? null : /^\d+$/.test(typed) ? Number(typed) : NaN
+    if (value !== null && !(value >= 1 && value <= 9999)) { setNotice(COUNT_NOT_A_NUMBER); return }
+    if (value === storedCount) {
+      setNotice((n) => (n === COUNT_NOT_A_NUMBER || n === COUNT_NOT_SAVED ? null : n))
+      return
+    }
+    setCountBusy(true)
+    setNotice(null)
+    try {
+      const reply = await fetch(`/api/inventory-items/${lotId}/seed-measure`, {
+        method: 'PUT',
+        body: JSON.stringify({ seed_parent_plant_count: value }),
+      })
+      if (!reply || !Object.prototype.hasOwnProperty.call(reply, 'seed_parent_plant_count')) throw new Error('not saved')
+      onLot({ seed_parent_plant_count: reply.seed_parent_plant_count ?? null })
+      show({ message: '✓ Saved' })
+    } catch {
+      setNotice(COUNT_NOT_SAVED)
+    } finally {
+      setCountBusy(false)
+    }
+  }
+
+  const working = busy || countBusy
+  const problem = notice ?? pageNotice ?? null
+  const help = problem
+    ?? (loadFailed ? LOAD_FAILED
+      : working ? 'Saving…'
+      : live.length === 0 ? EMPTY_HELP : null)
+  const showCount = live.length > 0 || storedCount != null
+  const held = busy ? { opacity: 0.5 } : null
+
+  return (
+    <>
+      <span role="status" aria-live="polite" data-testid="saved-from-live" style={SR_ONLY}>{said}</span>
+
+      {rows.length > 0 && (
+        <div style={rowList}>
+          {rows.map((row, i) => {
+            const { plant, gone } = row
+            if (gone) {
+              return (
+                <div key={sid(plant.id)} data-testid="saved-from-row" data-struck="true" style={rowChrome}>
+                  <span style={struckText}>
+                    <span style={{ textDecoration: 'line-through' }}>{plant.name}</span>{' · Removed'}
+                  </span>
+                  {/* A deleted planting cannot be put back: the server would only refuse it. */}
+                  {!plant.deleted && (
+                    <button
+                      type="button" data-testid="saved-from-undo"
+                      aria-label={`Undo removing ${plant.name}`} aria-disabled={busy || undefined}
+                      onClick={() => undoRemove(gone)}
+                      style={{ ...undoButton, ...held }}
+                    >
+                      Undo
+                    </button>
+                  )}
+                </div>
+              )
+            }
+            return (
+              <div key={sid(plant.id)} data-testid="saved-from-row" style={rowChrome}>
+                {/* A deleted planting is named but is not a door: its page is gone. */}
+                {plant.deleted ? (
+                  <span style={rowName}>{plant.name}</span>
+                ) : (
+                  <Link to={`/plantings/${plant.id}`} data-testid="saved-from-link" style={rowLink}>
+                    <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>{plant.name}</span>
+                    <span aria-hidden="true" style={{ flexShrink: 0, fontSize: '1.1rem' }}>›</span>
+                  </Link>
+                )}
+                <button
+                  type="button" data-testid="saved-from-remove"
+                  aria-label={`Remove ${plant.name}`} aria-disabled={busy || undefined}
+                  onClick={() => remove(row, i)}
+                  style={{ ...removeButton, ...held }}
+                >
+                  <span aria-hidden="true">✕</span>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {filed && (
+        <div data-testid="saved-from-filed" role="status" style={filedLine}>
+          <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>Filed as {filed.name}</span>
+          <button
+            type="button" data-testid="saved-from-filed-undo"
+            aria-label={`Undo filing as ${filed.name}`} aria-disabled={busy || undefined}
+            onClick={undoFiled}
+            style={{ ...undoButton, ...held }}
+          >
+            Undo
+          </button>
+        </div>
+      )}
+
+      {/* No parents yet: the picker itself, pinned to the jar's own cultivar, as before this release. */}
+      {live.length === 0 && (
+        <PlantingSelect
+          id="inv-source-plant"
+          value=""
+          onChange={(pid, planting) => { if (pid) add(planting) }}
+          varietyId={lot.variety_id}
+          labelFormat="wave"
+          emptyMeaning="none"
+          required={false}
+          onLoadError={() => setLoadFailed(true)}
+          aria-label="Saved from which plant"
+          data-testid="source-plant-select"
+        />
+      )}
+
+      {live.length > 0 && cropSlug && (adding ? (
+        <PlantingSelect
+          id="inv-source-plant-add"
+          value=""
+          onChange={(pid, planting) => { if (pid) add(planting) }}
+          cropSlug={cropSlug}
+          excludeIds={excludeIds}
+          emptyText="No other plantings of this crop to add."
+          labelFormat="wave"
+          required={false}
+          autoOpen
+          onLoadError={() => setLoadFailed(true)}
+          aria-label="Add seed from another plant"
+          data-testid="saved-from-add-select"
+        />
+      ) : (
+        <button
+          type="button" data-testid="saved-from-add" aria-disabled={busy || undefined}
+          onClick={() => { if (!busyRef.current) setAdding(true) }}
+          style={{ ...addButton, ...held }}
+        >
+          + Add seed from another plant
+        </button>
+      ))}
+
+      {live.length > 0 && orphan && (
+        <p data-testid="saved-from-no-variety" style={quietLine}>
+          {orphan.name} has no variety recorded, so another planting can&apos;t be added to this jar.
+        </p>
+      )}
+
+      {live.length >= 2 && (
+        <p data-testid="saved-from-mixed" style={quietLine}>
+          {live.length === 2
+            ? 'Mixed together. A seed from this jar could be from either planting.'
+            : 'Mixed together. A seed from this jar could be from any of these plantings.'}
+        </p>
+      )}
+
+      {showCount && (
+        <label style={countLine}>
+          <span>Seed off about</span>
+          <input
+            type="text" inputMode="numeric" maxLength={4}
+            data-testid="saved-from-plant-count"
+            aria-label="About how many plants"
+            value={countText}
+            onChange={(e) => setCountText(e.target.value)}
+            onBlur={saveCount}
+            style={countField}
+          />
+          <span>plants</span>
+        </label>
+      )}
+
+      {help && (
+        <p data-testid="source-plant-help" role="status" style={{ ...helpLine, color: problem ? P.terra : P.light }}>
+          {help}
+        </p>
+      )}
+    </>
+  )
+}
+
+const SR_ONLY = {
+  position: 'absolute', width: 1, height: 1, margin: -1, padding: 0,
+  overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0,
+}
+const rowList = { display: 'flex', flexDirection: 'column', gap: T.space.xs }
+const rowChrome = { display: 'flex', alignItems: 'center', gap: T.space.sm, minHeight: T.buttonMinHeight }
+const rowLink = {
+  flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: T.space.sm,
+  minHeight: T.buttonMinHeight, color: P.green, fontWeight: 600, fontSize: T.type.base, textDecoration: 'none',
+}
+const rowName = { flex: 1, minWidth: 0, overflowWrap: 'anywhere', color: P.dark, fontWeight: 600, fontSize: T.type.base }
+const struckText = { flex: 1, minWidth: 0, overflowWrap: 'anywhere', color: P.mid, fontSize: T.type.base }
+const removeButton = {
+  flexShrink: 0, width: T.buttonMinHeight, minHeight: T.buttonMinHeight,
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  backgroundColor: 'transparent', color: P.mid, border: `1px solid ${P.border}`,
+  borderRadius: T.radiusButton, fontSize: T.type.lg, fontFamily: 'inherit', cursor: 'pointer',
+}
+const undoButton = {
+  flexShrink: 0, minHeight: T.buttonMinHeight, padding: '0 14px',
+  backgroundColor: 'transparent', color: P.green, border: `1px solid ${P.border}`,
+  borderRadius: T.radiusButton, fontSize: T.type.base, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+}
+const addButton = {
+  width: '100%', minHeight: T.buttonMinHeight, padding: '0 14px', textAlign: 'left',
+  backgroundColor: 'transparent', color: P.green, border: `1px dashed ${P.border}`,
+  borderRadius: T.radiusButton, fontSize: T.type.base, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+}
+const filedLine = {
+  display: 'flex', alignItems: 'center', gap: T.space.sm, minHeight: T.buttonMinHeight,
+  color: P.dark, fontSize: T.type.base, fontWeight: 600,
+}
+const quietLine = { margin: 0, color: P.mid, fontSize: T.type.sm, lineHeight: 1.5 }
+const countLine = { display: 'flex', alignItems: 'center', gap: T.space.sm, color: P.dark, fontSize: T.type.base }
+const countField = { ...inputChrome(false), width: 76, minHeight: T.buttonMinHeight, textAlign: 'center' }
+const helpLine = { margin: 0, fontSize: '0.78rem', lineHeight: 1.5 }

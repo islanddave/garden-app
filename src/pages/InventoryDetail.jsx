@@ -12,6 +12,7 @@ import { INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY
 import { EnumSelect, Field, Input, Select, Textarea, Button, PlantingSelect, SourcePicker } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
 import SeedStageHistory from '../components/seed/SeedStageHistory.jsx'
+import SavedFromCard, { LOT_KEYS, CHANGED_ELSEWHERE, NOT_SAVED } from '../components/seed/SavedFromCard.jsx'
 import SupplierChip from '../components/seed/SupplierChip.jsx'
 import { lotPhoto } from '../components/seed/lotPhoto.js'
 import PhotoView from '../components/photo/PhotoView.jsx'
@@ -38,7 +39,7 @@ import { readDraft } from '../lib/draftStash.js'
 import { T, helpChrome } from '../components/forms/formStyles.js'
 import SowSheet, { sowPacketFromItem } from '../components/seed/SowSheet.jsx'
 import { isInProcess } from '../lib/sowEngine.js'
-import { SCROLL_MANAGER_ENABLED } from '../lib/featureFlags.js'
+import { SCROLL_MANAGER_ENABLED, SEED_MULTI_PARENT } from '../lib/featureFlags.js'
 import { usePageScrollReturn } from '../hooks/usePageScrollManager.js'
 
 // V5-SEEDSTAB-001 — seed left the Inventory list, so a seed row's exits go to Seeds › My seeds.
@@ -65,6 +66,9 @@ const historyEntryShows = (path) => {
     return decodeURIComponent(bg && typeof bg.pathname === 'string' ? bg.pathname : window.location.pathname) === path
   } catch { return false }
 }
+
+// V5-SEEDMULTIPARENT-001 release 2b — the 409 codes that mean "this jar is not what the page shows".
+const STALE_JAR_CODES = new Set(['multi_parent_lot', 'lot_changed', 'parents_changed'])
 
 // Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
 // the former local duplicates here were removed (Lane D dedup).
@@ -493,10 +497,57 @@ export default function InventoryDetail() {
     } catch (e) {
       setSourcePlantId(prev)
       setSourcePlantName(prevName)
-      setSourcePlantErr(e?.message ?? 'Could not save that.')
+      // V5-SEEDMULTIPARENT-001 release 2b — with the flag on this legacy write is reached only for a
+      // jar whose parent set could not be read. A coded 409 then says the jar is not what this picker
+      // shows (it has more than one plant, or it changed a moment ago), and the server's sentence asks
+      // for a reload the page can do itself: read the jar again in place. When the set arrives with
+      // it the card becomes SavedFromCard, which prints this line in its own help slot; when it still
+      // does not, nothing was saved and that is all there is to say. Flag off: today's sentence.
+      if (SEED_MULTI_PARENT && e?.status === 409 && STALE_JAR_CODES.has(e?.body?.code)) {
+        setSourcePlantErr((await rereadJar()) ? CHANGED_ELSEWHERE : NOT_SAVED)
+      } else {
+        setSourcePlantErr(e?.message ?? 'Could not save that.')
+      }
     } finally {
       setSourcePlantBusy(false)
     }
+  }
+
+  // The jar's parents and filing as stored now, merged in place. The name is left out: nothing on this
+  // path moves the name field, and a heading that disagreed with it would be one more thing to explain.
+  // True only when the parent set came back readable.
+  async function rereadJar() {
+    try {
+      const fresh = await fetch('/api/inventory-items/' + id)
+      const patch = {}
+      for (const k of LOT_KEYS) {
+        if (k !== 'name' && fresh && Object.prototype.hasOwnProperty.call(fresh, k)) patch[k] = fresh[k]
+      }
+      applyLotPatch(patch)
+      return Array.isArray(fresh?.source_plants)
+    } catch {
+      return false
+    }
+  }
+
+  // ── V5-SEEDMULTIPARENT-001 release 2b — what the "Saved from" card hands back ───────────────────
+  // SavedFromCard writes the parent set (and the filing that rides with it) itself; these two put the
+  // stored answer where the rest of the page reads it. The patch is the server's: the set, its cache,
+  // and after a re-file the variety and the jar's name. `sourcePlantId` follows the cache, because
+  // liveLot(), the origin select and the processing chain all still read that one state.
+  function applyLotPatch(patch) {
+    setItem(prev => (prev ? { ...prev, ...patch } : prev))
+    if (Object.prototype.hasOwnProperty.call(patch, 'source_plant_id')) setSourcePlantId(patch.source_plant_id ?? '')
+    // A line left by the legacy write (see saveSourcePlant) is about the jar as it was before this.
+    setSourcePlantErr(null)
+  }
+  // A re-file that renamed the jar, and its Undo. The name FIELD and its baseline move together:
+  // buildChanges() sends form.name on every Save and the wide PUT cannot strip a name, so a field left
+  // on the old name would write it back with a 200 on the next unrelated edit. Moving both keeps the
+  // page clean (nothing here is unsaved input).
+  function applyLotName(nextName) {
+    setForm(f => (f ? { ...f, name: nextName } : f))
+    setBaseline(b => (b ? { ...b, name: nextName } : b))
   }
 
   // ── V5-SEEDCARDS-001 — after an upload, ask the server what the packet box should show ──────
@@ -624,6 +675,11 @@ export default function InventoryDetail() {
   // refuses a parent to a lot whose origin names a farm stand, a gift or a shop. The LIVE select value,
   // so a change of origin shows or hides the picker in the same render as the change itself.
   const parentAllowed = kindAllowsParentPlant(sourceKind)
+  // V5-SEEDMULTIPARENT-001 release 2b — the jar's parent SET, when there is one to read. Null with the
+  // flag off, and for a set that is "no answer" rather than "no parents" (undefined: a row from before
+  // release 1; null: the parents read failed). Null keeps the single picker and its legacy PATCH, which
+  // the server refuses on a jar with more than one plant; an array hands the card to SavedFromCard.
+  const parentSet = SEED_MULTI_PARENT && Array.isArray(item.source_plants) ? item.source_plants.filter(Boolean) : null
   // The supplier as last SAVED, named from the registry. Null while the registry loads, for a lot
   // with no supplier, and for an id the registry no longer lists — the card then draws no stripe.
   const savedSourceId = baseline?.source_id || null
@@ -839,7 +895,21 @@ export default function InventoryDetail() {
         {item.category === 'seeds' && (
           <div ref={sourcePlantCardRef} data-testid="seed-source-plant" style={{ ...card, marginBottom: 20 }}>
             <div style={groupLabel}>Saved from</div>
-            {parentAllowed && (
+            {/* V5-SEEDMULTIPARENT-001 release 2b — a jar can come off several plantings. With the set in
+                hand the card lists every one, adds and removes them through the set route, and keeps
+                the jar filed to match (SavedFromCard). Keyed on the lot, so its struck rows and its
+                "Filed as" line never outlive the jar they describe. `name` is the name FIELD as it
+                shows now: a re-file renames the jar only while that is still the automatic name. */}
+            {parentAllowed && parentSet && (
+              <SavedFromCard
+                key={item.id}
+                lot={{ ...item, name: form.name }}
+                onLot={applyLotPatch}
+                onName={applyLotName}
+                notice={sourcePlantErr}
+              />
+            )}
+            {parentAllowed && !parentSet && (
               <>
                 <PlantingSelect
                   id="inv-source-plant"
@@ -974,7 +1044,10 @@ export default function InventoryDetail() {
               itemId={item.id}
               currentStage={item.seed_stage ?? null}
               sourcePlantId={sourcePlantId}
-              sourcePlantName={sourcePlantName}
+              // With the parent set in hand the name is known on load, and the chain says how many
+              // plantings there are instead of naming one of several.
+              sourcePlantName={parentSet?.find(p => String(p.id) === String(sourcePlantId))?.name ?? sourcePlantName}
+              sourcePlantCount={parentSet ? parentSet.length : null}
             />
           </div>
         )}
