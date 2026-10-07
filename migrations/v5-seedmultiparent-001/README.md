@@ -224,6 +224,8 @@ parse time. On a database without the table they do not go vacuous under their s
 
 ## Rollback
 
+**Revert the public site first (since gam-site `23e4a87`, 2026-10-07).** The Gardens at Mathews site's export now reads what this migration added. Put gam-site's saved-seed generator back to its `1ef08da` form and publish that BEFORE running this rollback, or the site's Gate 1 stops every publish, not only `/seed/`.
+
 `0r-rollback.sql` drops the table and removes both stamps. Three things to know before using it:
 
 **Newest first (since `v5-seedstatsparents-001`, release 2a).** `stat_saved_lot` and `stat_source_card` now

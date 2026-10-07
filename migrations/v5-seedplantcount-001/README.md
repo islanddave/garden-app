@@ -84,6 +84,8 @@ no parent row.
 
 ## Rollback
 
+**Revert the public site first (since gam-site `23e4a87`, 2026-10-07).** The Gardens at Mathews site's export now reads what this migration added. Put gam-site's saved-seed generator back to its `1ef08da` form and publish that BEFORE running this rollback, or the site's Gate 1 stops every publish, not only `/seed/`.
+
 `0r-rollback.sql` drops the CHECKs, the column and the stamp. Three things to know before using it:
 
 1. **Nothing in the repo has to move first.** Every gate here is catalog-only and returns to vacuous with

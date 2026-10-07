@@ -1,6 +1,16 @@
 {
   "floors": [
     {
+      "floor": "v4.170.0",
+      "since": "v4.172.0",
+      "reason": "seed release 2b (the Save seed flow for several plantings): once this ships, prod holds jars with two or more parent rows in seed_lot_parent_planting and jars filed under a household mix variety. Code below v4.170.0 writes inventory_items.source_plant_id alone and cannot see link rows, so it would show and rewrite such a jar as a one-parent jar. Undo release 2b by switching SEED_MULTI_PARENT off (the flag-off build is green as it stands; rehearsal: npm run test:flag-off:seed) BEFORE any undo of release 2a (v4.171.0).",
+      "ledger": "V5-SEEDMULTIPARENT-001",
+      "undo_instead": {
+        "flag": "SEED_MULTI_PARENT",
+        "file": "src/lib/featureFlags.js"
+      }
+    },
+    {
       "floor": "v4.167.0",
       "since": "v4.167.0",
       "reason": "Put-Up B\u2032 schema and writers (v5-pantry-001, v5-batchbuilder-001, v5-recipes-001): once prod holds pantry items, pantry lines, recipes or recipe-linked batches, older code over that data misreads it \u2014 v4.164.0 has no route for /api/pantry or /api/recipes, drops pantry lines from What went in and the planting reads, ignores kitchen_batch.recipe_id and the recipe discard basis, and its put-up Remove hard-ignores the jar_was_used / jar_in_batch refusals. Forward-fix only (05-release-train \u00a74).",

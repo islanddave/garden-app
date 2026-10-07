@@ -121,6 +121,8 @@ back consistent. A component that is a soft-deleted variety is an accepted state
 
 ## Rollback
 
+**Revert the public site first (since gam-site `23e4a87`, 2026-10-07).** The Gardens at Mathews site's export now reads what this migration added. Put gam-site's saved-seed generator back to its `1ef08da` form and publish that BEFORE running this rollback, or the site's Gate 1 stops every publish, not only `/seed/`.
+
 `0r-rollback.sql` restores the 47-column view, drops the table, the index, the CHECK, the column and the
 stamp. Four things to know before using it:
 
