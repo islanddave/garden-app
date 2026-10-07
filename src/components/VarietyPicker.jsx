@@ -937,8 +937,10 @@ export default function VarietyPicker({
                         {cl && <span style={cropTagStyle} title="Crop type">{cl}</span>}
                         {/* V5-SEEDMULTIPARENT-001 release 2b — a mix the app made sorts directly under
                             its first component and starts with the same words, so the row says what it
-                            is in text (never by colour alone). */}
-                        {SEED_MULTI_PARENT && v.variety_rank === 'blend' && (
+                            is in text (never by colour alone). The test is blend_key, which only a
+                            mix the app made carries: variety_rank 'blend' is also a bought blend's
+                            (BUG-YOURMIXBOUGHTBLEND-001). */}
+                        {SEED_MULTI_PARENT && v.blend_key != null && (
                           <span data-testid="variety-your-mix" style={mixTagStyle}>Your mix</span>
                         )}
                       </span>

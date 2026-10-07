@@ -21,7 +21,8 @@ vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
 import VarietyPicker from '../components/VarietyPicker.jsx'
 
 const ALASKA = { id: 'n-1', name: 'Alaska Mix', crop_type_slug: 'pepper', variety_rank: 'cultivar' }
-const MIX = { id: 'n-2', name: 'Alaska Mix + Jewel Mix Nasturtium', crop_type_slug: 'pepper', variety_rank: 'blend' }
+// blend_key is what the flag-on picker tags on; without it this pin would pass with the flag on too.
+const MIX = { id: 'n-2', name: 'Alaska Mix + Jewel Mix Nasturtium', crop_type_slug: 'pepper', variety_rank: 'blend', blend_key: 'n-1,n-9' }
 
 beforeEach(() => { fetchSpy.mockReset() })
 
