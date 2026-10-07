@@ -9,10 +9,12 @@
 // one made. When that recipe is THIS sitting's (sent from the sheet that is open now, made minutes ago,
 // untouched since) the sheet PATCHes what it holds onto it before it closes — the PATCH replaces the whole
 // line set, which is why it goes nowhere else. Otherwise NOTHING is written: the sheet says it was saved
-// earlier and this Save changed nothing (recipeStaleText) and lets go of the key, so the next Save is a new
-// recipe. A PATCH that fails is said as what it is — the recipe is there, the change did not save
-// (recipeUnsavedText). Both tell the page (`onExists`). What has gone out under the key rides in the draft as
-// `sent`, from the first Save on (a draft never sent has no such key).
+// earlier and this Save changed nothing (recipeStaleText) and KEEPS the key, so Save again is refused again
+// and can never make a second recipe. A PATCH that fails is said as what it is — the recipe is there, the
+// change did not save (recipeUnsavedText). Both tell the page (`onExists`) and are brought into view above
+// the pinned Save. Before either, a recipe that already holds what the sheet shows is a save, with nothing
+// written (recipes.js recipeHolds). What has gone out under the key rides in the draft as `sent`, from the
+// first Save on (a draft never sent has no such key).
 //
 // ⚠ Notes are his text VERBATIM (including his own target pH): sent exactly as typed, never trimmed inside,
 // and shown here exactly as stored — the bold and italic of recipe detail are that surface's alone.
@@ -39,11 +41,11 @@ import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
-import { useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
+import { useFieldsClearOfFooter, scrollClearOfFooter } from '../kitchen/sheetScroll.js'
 import { mintKey, sendPrint, noteSent, afterReplay, answerLost } from '../kitchen/idempotencyKey.js'
 import TypePicker from './TypePicker.jsx'
 import {
-  emptyDraft, draftFromRecipe, recipeBody, exactAmountOpens, keepsKindChips, RECIPE_KIND_OPTIONS, STORAGE_KIND_WORDS,
+  emptyDraft, draftFromRecipe, recipeBody, recipeHolds, exactAmountOpens, keepsKindChips, RECIPE_KIND_OPTIONS, STORAGE_KIND_WORDS,
   KEEPS_UNIT_WORDS, KITCHEN_UNITS, EMPTY_LINE, TYPE_LABEL, TYPE_HELP, KIND_LABEL, KIND_HELP, LINE_NAME_LABEL,
   LINE_AMOUNT_LABEL, AT_THE_END_LABEL, EXACT_AMOUNT_CTA, KEEPS_LABEL, KEEPS_HELP, KEEPS_N_LABEL, MORE_PLACES_CTA, COOKED_LABEL,
 } from './recipes.js'
@@ -59,11 +61,11 @@ export function isRecipeDraft(d) {
 
 const quoted = (recipe) => { const name = String(recipe?.name ?? '').trim(); return name ? `“${name}”` : null }
 // An earlier Save made the recipe and it is not this sitting's to write over: nothing is written, what was
-// typed stays, and the next Save is a new recipe. `recipe` is the one the replay answered with. It says only
-// what is certain — which body the recipe holds is not known here, so never "your change is not on it".
+// typed stays, and the key is KEPT — Save again is refused again, never a second recipe. `recipe` is the one
+// the replay answered with. It says only what is certain (saved earlier; this Save changed nothing).
 export function recipeStaleText(recipe) {
   const name = quoted(recipe)
-  return `${name ? `${name} was already saved earlier` : 'This recipe was already saved earlier'} — it is with your recipes. This Save did not change it. To change it, open the recipe. If what is here is a new recipe, tap Save again to add it.`
+  return `${name ? `${name} was already saved earlier` : 'This recipe was already saved earlier'} — it is with your recipes. This Save did not change it. To change it, open the recipe.`
 }
 // The first Save made the recipe and the change could not be put on it just now. `why` is the server's own
 // sentence when it gave one; `lost` is true when no answer came back at all (the change may be on it).
@@ -120,6 +122,16 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   // and again when the keyboard resizes the viewport (kitchen/sheetScroll.js, as Put it up uses it).
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
+  // A replay refusal is the last line of the scroller, under the pinned Save: each is brought into view.
+  const errRef = useRef(null)
+  const [refusedSeq, setRefusedSeq] = useState(0)
+  useEffect(() => {
+    if (!refusedSeq) return
+    const el = errRef.current
+    if (!el) return
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
+    scrollClearOfFooter(el, footerRef.current)
+  }, [refusedSeq])
   const ids = { name: `recipe-name-${useId()}`, link: `recipe-link-${useId()}`, notes: `recipe-notes-${useId()}`, keepsN: `recipe-keeps-n-${useId()}` }
 
   const set = (patch) => { setD(x => ({ ...x, ...patch })); setErr(null) }
@@ -190,15 +202,14 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
         answer = await fetch('/api/recipes', { method: 'POST', body: JSON.stringify(res.body) })
         const todo = afterReplay(answer, sent, print, {
           row: answer?.recipe, mine: mineRef.current, updatedHere: answer?.recipe?.id != null && patchedRef.current === answer.recipe.id,
+          holds: recipeHolds(d, answer?.recipe),
         })
         if (todo === 'stale') {
-          // Nothing is written. The key names a recipe this sheet will not write onto, so it goes, with
-          // what went out under it; the effect above mints the next one.
+          // Nothing is written, and the key is KEPT: Save again is this refusal again, never a second recipe.
           writingRef.current = false
           setSaving(false)
-          mineRef.current = true; patchedRef.current = null
-          setD(({ key: _key, sent: _sent, ...x }) => x)
           setErr(recipeStaleText(answer?.recipe))
+          setRefusedSeq(s => s + 1)
           onExists?.()
           return
         }
@@ -219,6 +230,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
       setSaving(false)
       if (onRow?.id != null) {
         setErr(recipeUnsavedText(onRow, { why: e?.body?.error ?? '', lost: answerLost(e) }))
+        setRefusedSeq(s => s + 1)
         onExists?.()
         return
       }
@@ -342,7 +354,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
           </div>
         </fieldset>
 
-        {err && <div role="alert" data-alarm-ink-exempt="error" data-testid="recipe-sheet-error" style={{ color: P.terra, fontSize: T.type.sm, fontWeight: 600, marginBottom: 8 }}>{err}</div>}
+        {err && <div ref={errRef} role="alert" data-alarm-ink-exempt="error" data-testid="recipe-sheet-error" style={{ color: P.terra, fontSize: T.type.sm, fontWeight: 600, marginBottom: 8 }}>{err}</div>}
       </div>
       <div ref={footerRef} data-testid="recipe-sheet-footer" style={{ position: 'sticky', bottom: 0, background: P.white, padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>
         <Button data-testid="recipe-save" variant="primary" loading={saving} loadingLabel="Saving…" onClick={save} style={{ width: '100%' }}>

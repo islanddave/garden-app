@@ -35,12 +35,13 @@ function RefreshNow() {
   )
 }
 
-// `err` is a string or a { text, refresh } from refusalOf.
-export default function RefusalLine({ err, testId, style }) {
+// `err` is a string or a { text, refresh } from refusalOf. `lineRef` (optional) is the caller's handle on the
+// line, for bringing it into view.
+export default function RefusalLine({ err, testId, style, lineRef = null }) {
   if (!err) return null
   const r = typeof err === 'string' ? { text: err, refresh: false } : err
   return (
-    <div style={style}>
+    <div ref={lineRef} style={style}>
       <div role="alert" data-testid={testId} style={{ color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>{r.text}</div>
       {r.refresh && <RefreshNow />}
     </div>

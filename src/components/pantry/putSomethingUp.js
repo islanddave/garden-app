@@ -19,7 +19,7 @@ import {
   putUpDateWords, shortDay, parseYmd, toYmd, discardWords, ESTIMATED_PRECISIONS, totalOfEach, qtyText,
 } from '../putup/jarWords.js'
 import { parseAmount } from './AmountField.jsx'
-import { sendPrint } from '../kitchen/idempotencyKey.js'
+import { sendPrint, sameFact } from '../kitchen/idempotencyKey.js'
 
 export const AS_IS = 'as_is'
 // The no-method choice in two lengths. On its CHIP it says what it covers — true for a typed name whatever
@@ -368,23 +368,49 @@ export function plantingDiffers(body, item) {
   const id = (v) => (v == null ? null : String(v))
   return id(body?.plant_id) !== id(item?.plant_id)
 }
+// Whether a replayed item ALREADY HOLDS what this body would put on it (idempotencyKey.js `holds`): then there
+// is nothing to write and nothing to refuse — it is saved. Every key of the body is read against the row
+// (name, place, date and how sure, discard date, notes, amount, where from, planting, a PICKED crop). Left
+// out, as in itemPrint and for its reason: the crop a typed name resolved to, and a planting's crop (the
+// planting's own). The DATE is compared as resolved — a chip that now comes to another day is not what the
+// row holds, and a mismatch only ever sends the Save on to the rule, never to a false "saved". A removed
+// item holds nothing.
+export function itemHolds(body, item, what) {
+  if (!body || !item || item.deleted_at) return false
+  if (body.storage_location_id != null) {
+    if (!sameFact(body.storage_location_id, item.storage_location_id)) return false
+  } else if (!item.place || !sameFact(body.place?.kind, item.place.kind) || !sameFact(body.place?.label, item.place.label, { fold: true })) return false
+  const picked = body.plant_id == null && !!what?.source && what.source !== 'typed'
+  return sameFact(body.name, item.name)
+    && sameFact(body.acquired_at, item.acquired_at)
+    && sameFact(body.acquired_precision ?? (body.acquired_at ? 'day' : null), item.acquired_precision)
+    && sameFact(body.use_by_target, item.use_by_target)
+    && sameFact(body.notes, item.notes)
+    && sameFact(body.quantity_value, item.quantity_value, { numeric: true })
+    && sameFact(body.quantity_unit, item.quantity_unit)
+    && sameFact(body.source_kind, item.source_kind)
+    && sameFact(body.source_label, item.source_label)
+    && !plantingDiffers(body, item)
+    && (!picked || sameFact(body.crop_type_slug, item.crop_type_slug))
+}
 
 const quoted = (item) => { const name = String(item?.name ?? '').trim(); return name ? `“${name}”` : null }
 // Said when the first Save made the item and What is now another planting, or no planting: nothing is
 // written, and the form stays as it is. `item` is the row the replay answered with. Putting What back DOES
-// let the next Save through (plantingDiffers reads the row); a different planting is a new item.
+// let the next Save through (plantingDiffers reads the row). The key is kept, so no Save from here adds a
+// second item — and the sentence offers none.
 export function replayFixedText(item) {
   const name = quoted(item)
-  return `${name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'} — the first Save went through. Which planting it came from can't be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it — or remove it in the Pantry and add it again.`
+  return `${name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'} — the first Save went through. Which planting it came from can't be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it.`
 }
 // Said when an earlier Save made the item and it is not this sitting's to write over (idempotencyKey.js
-// afterReplay 'stale'): nothing is written, the form stays, and the door lets go of the key — so the next
-// Save adds what is on screen as a new item. It says only what is certain: which body the item holds is not
-// known here, so never "your change is not on it". A replayed item can be one that was removed since.
+// afterReplay 'stale'): nothing is written, the form stays, and the KEY IS KEPT — Save again is refused
+// again, and can never add a second item. It says only what is certain (saved earlier; this Save changed
+// nothing) and promises no way to add from here. A replayed item can be one that was removed since.
 export function replayStaleText(item) {
   const name = quoted(item)
-  if (item?.deleted_at) return `${name ? `${name} was saved earlier` : 'This was saved earlier'} and has been removed since. This Save did not change that. To add what is here, tap Save again.`
-  return `${name ? `${name} was already saved earlier` : 'This was already saved earlier'} — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry. If what is here is something new, tap Save again to add it.`
+  if (item?.deleted_at) return `${name ? `${name} was saved earlier` : 'This was saved earlier'} and has been removed since. This Save did not change that.`
+  return `${name ? `${name} was already saved earlier` : 'This was already saved earlier'} — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.`
 }
 // Said when the first Save made the item and the change could not be put on it just now: the item is there.
 // `why` is the server's own sentence when it refused the change in words; `lost` is true when no answer came

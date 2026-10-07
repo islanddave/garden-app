@@ -354,6 +354,25 @@ export function recipeBody(d, { mode = 'create' } = {}) {
   return { body }
 }
 
+// Whether a recipe ALREADY HOLDS what the sheet shows (kitchen/idempotencyKey.js `holds`): the body an edit
+// would send from the draft, against the body an edit would send from the recipe itself — every field the
+// sheet shows, lines in order. A size, a count and a line's number are compared as amounts ("2" is 2.000).
+// A recipe holding a fact the sheet does not show (a line's form or brand) does not match: only ever a
+// refusal, never a false "saved".
+const AMOUNT_KEYS = ['vessel_size', 'bottle_size', 'vessel_count']
+const amount = (v) => (v != null && String(v).trim() !== '' && Number.isFinite(Number(v)) ? String(Number(v)) : v)
+function comparable(body) {
+  const out = { ...body, lines: (body.lines ?? []).map(l => ({ ...l, ...(l.qty != null ? { qty: amount(l.qty) } : null) })) }
+  for (const k of AMOUNT_KEYS) out[k] = amount(out[k])
+  return JSON.stringify(out)
+}
+export function recipeHolds(d, recipe) {
+  if (!recipe) return false
+  const shown = recipeBody(d, { mode: 'edit' })
+  const stored = recipeBody(draftFromRecipe(recipe), { mode: 'edit' })
+  return !shown.error && !stored.error && comparable(shown.body) === comparable(stored.body)
+}
+
 // ── Make this / Made it as written / I made this ─────────────────────────────────────────────────
 // The Start sheet's prefill: the label, the kind (when it is a kind the chips offer) and the recipe it follows.
 export function startPrefill(r) {

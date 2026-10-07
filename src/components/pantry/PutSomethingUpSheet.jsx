@@ -33,11 +33,16 @@
 // FIRST Save made. When that item is THIS sitting's (sent from the door that is open now, made minutes ago,
 // untouched since) the door PATCHes what it holds onto it and completes from the PATCH's answer. When it is
 // not — a draft restored with `sent` already in it, an older item, one edited since — NOTHING is written: the
-// door says it was saved earlier and this Save changed nothing (replayStaleText) and lets go of the key, so
-// the next Save adds what is on screen as a new item. A What that is now another planting (or none) cannot
+// door says it was saved earlier and this Save changed nothing (replayStaleText) and KEEPS the key, so Save
+// again is refused again and can never add a second item. A What that is now another planting (or none) cannot
 // ride a PATCH: nothing is written and the door says so (replayFixedText); put back, the next Save goes through.
 // A failure of the PATCH never mints a new key, whatever its status — the item exists — and is said as that
-// (replayUnsavedText). Each of the three tells the page (`onExists`) so the list behind shows the item.
+// (replayUnsavedText). Each of the three tells the page (`onExists`) so the list behind shows the item, and
+// is brought into view above the pinned Save (it is the last thing in the scroller). Before any of them the
+// door reads the item itself: one that already holds what is on screen is a save, with nothing written
+// (putSomethingUp.js itemHolds). An answered 4xx mints a new key only while nothing else has gone out under
+// this one: the route validates before it looks the key up, so a refusal of a changed body says nothing
+// about an earlier one.
 // What has gone out under the key rides in the draft as `sent`, from the first item Save on; its prints are
 // of what was chosen, not of the date or the searched crop (putSomethingUp.js itemPrint). The put-up route is
 // as it was: a replayed put-up completes from the server's row (plan R2 V2 "Retry key").
@@ -77,7 +82,7 @@ import {
   AS_IS, DOOR_TITLE, DOOR_SHEET, METHOD_REQUIRED_TEXT, methodChoices, routeFor, saveLabel, doorWhen,
   previewLine, doorError, jarBody, itemBody, START_BATCH_INSTEAD_TEXT, isPlantingHit, methodSlot,
   doorOptionsLabel, doorFromLabel, doorNotesPlaceholder, whereFromHeading, sizeEcho, sizeTotalError,
-  SIZE_LINK_LABEL, AMOUNT_LINK_LABEL, itemPatchOf, itemPrint, plantingDiffers, replayFixedText, replayStaleText,
+  SIZE_LINK_LABEL, AMOUNT_LINK_LABEL, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText,
   replayUnsavedText,
 } from './putSomethingUp.js'
 
@@ -254,6 +259,9 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   const whatRef = useRef(null)
   const whenRef = useRef(null)
   const slotRef = useRef(null)
+  const errRef = useRef(null)
+  // Counts the replay refusals (saved earlier / the planting / the change did not save): each is brought into view.
+  const [refusedSeq, setRefusedSeq] = useState(0)
   // Set by the preview's Change: once the options are open, focus goes to the When chips it opened them for.
   const [toWhen, setToWhen] = useState(false)
   // A field a tap or a refusal sends focus to, by test id, once it is on screen.
@@ -362,6 +370,16 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
     scrollClearOfFooter(el, footerRef.current)
   }, [slotSeq])
 
+  // A replay refusal is the last line of the scroller and Save is pinned over its end: without this the
+  // button comes back and nothing on screen has changed. The nearest edge, then clear of the footer.
+  useEffect(() => {
+    if (!refusedSeq) return
+    const el = errRef.current
+    if (!el) return
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
+    scrollClearOfFooter(el, footerRef.current)
+  }, [refusedSeq])
+
   // THE PINNED SAVE AND A FOCUSED FIELD (sheetScroll.js): every field is kept clear of the footer, on focus
   // and again when the keyboard resizes the viewport. The size and the amount are cleared as a WHOLE block
   // — the field AND its unit chips — so the units are on screen while he types, when the block fits above
@@ -464,17 +482,15 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         saved = r?.item ?? r
         const todo = afterReplay(r, sentNow, print, {
           row: saved, mine: mineRef.current, updatedHere: saved?.id != null && patchedRef.current === saved.id,
-          fixed: plantingDiffers(body, saved),
+          fixed: plantingDiffers(body, saved), holds: itemHolds(body, saved, what),
         })
         if (todo === 'stale' || todo === 'fixed') {
+          // Nothing is written and the key is KEPT: Save again is this refusal again, never a second item.
           writingRef.current = false
           setSaving(false)
-          if (todo === 'stale') {
-            // The key has done its work: it names an item this door will not write onto.
-            mineRef.current = true; patchedRef.current = null
-            setKey(mintKey()); setSent([])
-            setErr(replayStaleText(saved)); setField(null)
-          } else { setErr(replayFixedText(saved)); setField('what') }
+          if (todo === 'stale') { setErr(replayStaleText(saved)); setField(null) }
+          else { setErr(replayFixedText(saved)); setField('what') }
+          setRefusedSeq(s => s + 1)
           onExists?.()
           return
         }
@@ -500,12 +516,15 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         // and the key kept whatever the status.
         const why = refusalOf(ex, '')
         setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: answerLost(ex) }), refresh: why.refresh })
+        setRefusedSeq(s => s + 1)
         onExists?.()
         return
       }
       // An ANSWERED 4xx wrote nothing, so the next attempt is a new request and gets a new key. Anything else
       // (no status, 0, a 5xx) may have landed with its answer lost: the key is kept, the retry replays it.
-      if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500) {
+      // And it is kept after a 4xx too once an item Save has gone out under it before (`sent`): that one may
+      // have landed, and the route refuses a body before it looks the key up.
+      if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500 && !(route === 'item' && sent.length)) {
         mineRef.current = true; patchedRef.current = null
         setKey(mintKey()); setSent([])
       }
@@ -653,7 +672,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
             </button>
           </div>
         )}
-        {field !== 'method' && <RefusalLine err={err} testId="door-error" />}
+        {field !== 'method' && <RefusalLine err={err} testId="door-error" lineRef={errRef} />}
       </div>
       <div ref={footerRef} data-testid="door-footer"
         style={{ position: 'sticky', bottom: 0, background: P.white, padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>

@@ -25,7 +25,10 @@
 // route that can carry it, and a batch that is not this sitting's is not written onto: nothing is written,
 // the sheet stays open and says the batch is already saved and this Save changed nothing
 // (REPLAY_NOT_ON_IT), and the page behind is told. A PUT that fails is said as that (REPLAY_CHANGE_UNSAVED;
-// REPLAY_CHANGE_MAYBE when no answer came back), and the page is told then too.
+// REPLAY_CHANGE_MAYBE when no answer came back), and the page is told then too. The key is the sheet's one
+// key throughout: a refused Save is refused again, never a second batch. A batch that already has the name
+// and kind on screen (and no other part differs) is a save, with nothing written. Each of the three lines is
+// brought into view above the pinned Save.
 // THE PRINT's start is what he CHOSE: "the jars' own" until he changes it (the date that came to moves when
 // the jar list loads), then the chip he picked (Today is the instant, a new one at every tap).
 // THE UNADDED LINE (Put-Up UX pass R1, D2). A name typed into the adder and not added was dropped by Save
@@ -49,7 +52,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, optionalMarkChrome, inputChrome } from '../forms/formStyles.js'
 import { SheetStartChips, resolveSheetStart } from '../kitchen/StartChips.jsx'
 import KindChips, { kindBody } from '../kitchen/KindChips.jsx'
-import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost, sameFact } from '../kitchen/idempotencyKey.js'
 import { scrollClearOfFooter, useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
 import LineAdder, { addFirstWords } from './LineAdder.jsx'
 import LikeBatchPicker from './LikeBatchPicker.jsx'
@@ -116,6 +119,8 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   const writingRef = useRef(false)
   const linesRef = useRef(null)
   const stopLineRef = useRef(null)
+  const errRef = useRef(null)
+  const [refusedSeq, setRefusedSeq] = useState(0)     // counts the replay refusals: each is brought into view
   // The focused field is kept clear of the pinned Save (see sheetScroll.js).
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
@@ -192,11 +197,16 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
     let onRow = null
     try {
       let batch = await fetch(FROM_JARS_PATH, { method: 'POST', body: JSON.stringify(res.body) })
-      const todo = afterReplay(batch, sent, print, { row: batch, updatedHere: batch?.id != null && putRef.current === batch.id })
+      const todo = afterReplay(batch, sent, print, {
+        row: batch, updatedHere: batch?.id != null && putRef.current === batch.id,
+        // What the PUT could carry is all the batch has to hold; a difference in any other part is 'fixed'.
+        holds: sameFact(batch?.label, res.body.label) && sameFact(batch?.kind, res.body.kind) && sameFact(batch?.kind_other, res.body.kind_other),
+      })
       if (todo === 'fixed' || todo === 'stale') {
         writingRef.current = false
         setSaving(false)
         setErr(REPLAY_NOT_ON_IT)
+        setRefusedSeq(s => s + 1)
         onSaved?.(batch)
         return
       }
@@ -214,7 +224,12 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
     } catch (e) {
       writingRef.current = false
       setSaving(false)
-      if (onRow?.id != null) { setErr(answerLost(e) ? REPLAY_CHANGE_MAYBE : REPLAY_CHANGE_UNSAVED); onSaved?.(onRow); return }
+      if (onRow?.id != null) {
+        setErr(answerLost(e) ? REPLAY_CHANGE_MAYBE : REPLAY_CHANGE_UNSAVED)
+        setRefusedSeq(s => s + 1)
+        onSaved?.(onRow)
+        return
+      }
       setErr(fromJarsRefusal(e))
     }
   }, [changingStart, chip, chosenJars, earlier, fetch, fixedStart, key, kind, kindOther, label, labelId, lines, made, madeId, nextTime, onClose, onSaved, pending, pickedDate])
@@ -230,6 +245,14 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
     stopLineRef.current?.scrollIntoView?.({ block: 'nearest' })
     scrollClearOfFooter(name, footerRef.current)
   }, [stops])
+
+  useEffect(() => {
+    if (!refusedSeq) return
+    const el = errRef.current
+    if (!el) return
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
+    scrollClearOfFooter(el, footerRef.current)
+  }, [refusedSeq])
 
   return (
     <Sheet open onClose={onClose} title={HOW_SHEET_TITLE} size="full" busy={saving} armsBack>
@@ -330,7 +353,7 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
           )}
         </div>
 
-        {err && <div role="alert" data-testid="how-error" style={{ marginBottom: T.space.sm, color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>{err}</div>}
+        {err && <div ref={errRef} role="alert" data-testid="how-error" style={{ marginBottom: T.space.sm, color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>{err}</div>}
       </div>
 
       <div ref={footerRef} data-testid="how-footer" style={{ position: 'sticky', bottom: 0, background: P.white,

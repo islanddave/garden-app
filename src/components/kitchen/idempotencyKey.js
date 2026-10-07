@@ -42,9 +42,16 @@ export function mintKey() {
 //     own update: once it has sent one to this row (`updatedHere`), a moved updated_at is its own, landed with
 //     its answer lost, and Save again must still be able to finish it.
 // Anything else answers 'stale': nothing is written, and the sheet says so. WHAT IT MAY SAY: `sent` tells
-// that other bodies went out, never which one landed — the row may already hold the body in hand. So a stale
-// sentence says what is certain (saved earlier; this Save changed nothing) and never "your change is not on
-// it". A row that carries neither stamp is not this sitting's.
+// that other bodies went out, never which one landed. So a stale sentence says what is certain (saved
+// earlier; this Save changed nothing) and never "your change is not on it". A row that carries neither stamp
+// is not this sitting's.
+//
+// A REFUSAL NEVER LETS GO OF THE KEY. After 'stale' or 'fixed' the sheet keeps its key and `sent`: Save again
+// replays and is refused again — it can never be a second row. Only the draft's own end retires a key.
+//
+// THE ROW ALREADY HOLDS IT (`holds`). Before any of that, the sheet reads the row the replay answered with:
+// when it holds exactly what is on screen (the fields he chose — each sheet says what it compares) there is
+// nothing to put on it and nothing to refuse. That is a save: no write, and the sheet completes as one.
 
 // How long after it was made a row is still "the one this Save just made". One Save gives up after
 // API_TIMEOUT_MS (15 s; ~30 s with a token refresh in front), so a lost answer, a correction and a second
@@ -112,7 +119,8 @@ export function noteSent(sent, print) {
 }
 
 // What a create's answer asks of the sheet that sent it:
-//   null      it is saved as sent (not a replay, or no other body ever went out under this key);
+//   null      it is saved as sent (not a replay, or no other body ever went out under this key, or the row
+//             already holds what is on screen — `holds`, the caller's own reading of the row);
 //   'stale'   a replay, another body went out before, and the row is not this sitting's: write nothing,
 //             and say it was saved earlier and this Save changed nothing;
 //   'update'  … and the row is this sitting's: put this body on the row the answer names;
@@ -121,12 +129,26 @@ export function noteSent(sent, print) {
 // `updatedHere` is true once this sheet has sent an update to this very row. `fixed` (optional) is the
 // caller's own reading of "a part the update route cannot carry" — off the row, where the row can say it
 // exactly — in place of the prints' fixed halves.
-export function afterReplay(answer, sent, print, { row = null, mine = true, updatedHere = false, fixed = null, nowMs = Date.now() } = {}) {
+export function afterReplay(answer, sent, print, { row = null, mine = true, updatedHere = false, fixed = null, holds = false, nowMs = Date.now() } = {}) {
   if (answer?.replayed !== true) return null
   const others = noteSent(sent, print).filter(s => s !== print)
   if (!others.length) return null
-  if (mine !== true || !rowIsThisSittings(row, nowMs, updatedHere)) return 'stale'
   const fixedHalf = (s) => s.slice(s.indexOf('/') + 1)
   const held = fixed == null ? others.some(s => fixedHalf(s) !== fixedHalf(print)) : fixed === true
+  if (holds === true && !held) return null
+  if (mine !== true || !rowIsThisSittings(row, nowMs, updatedHere)) return 'stale'
   return held ? 'fixed' : 'update'
+}
+
+// Two values as one fact: null, undefined and '' are all "nothing", text is compared trimmed, and with
+// `numeric` a number and its text ("2" and 2.000) are one amount. For a sheet's reading of `holds`.
+export function sameFact(a, b, { numeric = false, fold = false } = {}) {
+  const norm = (v) => {
+    if (v == null) return null
+    let s = String(v).trim()
+    if (s === '') return null
+    if (numeric && Number.isFinite(Number(s))) s = String(Number(s))
+    return fold ? s.toLowerCase() : s
+  }
+  return norm(a) === norm(b)
 }

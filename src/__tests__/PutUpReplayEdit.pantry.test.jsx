@@ -13,14 +13,16 @@
 //   • What became another planting, or stopped being one: no PATCH can carry that, so nothing is written
 //     and the door says so — and What put back lets the other changes through;
 //   • what went out under the key rides in the draft — so a draft opened again knows its Save may have
-//     landed, and NEVER writes what is typed over it onto that item (review B1): it says so, and lets go of
-//     the key;
+//     landed, and NEVER writes what is typed over it onto that item (review B1): it says so, and KEEPS the
+//     key — Save again is refused again, and no Save from there is ever a second item (QA Q3);
 //   • an item made a while ago, or changed since: nothing is written either;
+//   • an item that already holds exactly what is on screen is a save, with nothing written (QA Q3);
+//   • every such refusal is brought into view above the pinned Save (QA Q2);
 //   • an untouched retry is one body whatever the clock or the name search did meanwhile (review I2).
 // CI lane: `npm test` plus the TZ re-run. No jest-dom (L-182).
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 import { pantryFetch, apiError, PLACES } from './helpers/pantryFake.js'
@@ -46,7 +48,7 @@ import PutSomethingUpSheet, { isDoorDraft } from '../components/pantry/PutSometh
 import PutUp from '../pages/PutUp.jsx'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 import {
-  DOOR_SHEET, ITEM_FIXED_KEYS, itemPatchOf, itemPrint, plantingDiffers, replayFixedText, replayStaleText, replayUnsavedText,
+  DOOR_SHEET, ITEM_FIXED_KEYS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText, replayUnsavedText,
 } from '../components/pantry/putSomethingUp.js'
 import { sheetDraftKey, readSheetDraft } from '../components/kitchen/sheetDraft.js'
 import { validateItemPatch } from '../../lambda/preservation/pantryItems.js'
@@ -77,7 +79,7 @@ const FIRST = {
 const LONG_AGO = 11 * 60 * 1000
 const UNSAVED = '“Oat milk” is already in the Pantry — the first Save went through. This change did not save — try again.'
 const MAYBE = '“Oat milk” is already in the Pantry — the first Save went through. This change may not have saved — try again.'
-const STALE = '“Oat milk” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry. If what is here is something new, tap Save again to add it.'
+const STALE = '“Oat milk” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.'
 const LOST = () => { throw new TypeError('Failed to fetch') }       // it may have landed; its answer did not come back
 
 const tap = (id) => fireEvent.click(screen.getByTestId(id))
@@ -102,6 +104,16 @@ beforeEach(() => {
   fake = pantryFetch({ rows: [] }); stableFetch.fn = fake
   localStorage.clear(); sessionStorage.clear(); clearReloadBlocks()
 })
+// jsdom has no scrollIntoView. A stand-in that records what it was called on, for the tests that ask whether
+// a line was brought into view; taken away again after each.
+function watchScrolls() {
+  const on = []
+  Element.prototype.scrollIntoView = function scrollIntoView() { on.push(this) }
+  return on
+}
+afterEach(() => { delete Element.prototype.scrollIntoView; vi.restoreAllMocks() })
+// Whether the line with this test id (or the block that holds it) was brought into view.
+const broughtIntoView = (on, id) => on.some(el => el === screen.getByTestId(id) || el.contains(screen.getByTestId(id)))
 
 describe('the item as its PATCH — putSomethingUp.js itemPatchOf', () => {
   const BODY = { idempotency_key: 'k', name: 'Oat milk', place: { kind: 'fridge', label: 'Fridge' }, acquired_at: '2026-10-01', acquired_precision: 'day' }
@@ -135,8 +147,10 @@ describe('the item as its PATCH — putSomethingUp.js itemPatchOf', () => {
     expect(validateItemPatch({ plant_id: '99999999-aaaa-4bbb-8ccc-000000000003' })).toMatch(/cannot be changed here: plant_id/)
     expect([plantingDiffers({}, FIRST), plantingDiffers({ plant_id: null }, FIRST), plantingDiffers({ plant_id: 'p1' }, FIRST)]).toEqual([false, false, true])
     expect([plantingDiffers({ plant_id: 'p1' }, { plant_id: 'p1' }), plantingDiffers({}, { plant_id: 'p1' }), plantingDiffers({ plant_id: 'p2' }, { plant_id: 'p1' })]).toEqual([false, true, true])
-    expect(replayFixedText(FIRST)).toBe('Already in the Pantry as “Oat milk” — the first Save went through. Which planting it came from can\'t be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it — or remove it in the Pantry and add it again.')
+    expect(replayFixedText(FIRST)).toBe('Already in the Pantry as “Oat milk” — the first Save went through. Which planting it came from can\'t be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it.')
     expect(replayFixedText(null)).toMatch(/^Already in the Pantry — the first Save went through\./)
+    // The key is kept after a refusal, so no Save from the door adds it again: the sentence may not say one does.
+    expect(replayFixedText(FIRST)).not.toMatch(/add it again|Save again/)
     // No route changes an item's planting, so the sentence may not send him to the Pantry to "fix" it.
     expect(replayFixedText(FIRST)).not.toMatch(/fix it in the Pantry/)
     expect(replayFixedText(FIRST)).not.toMatch(BANNED)
@@ -144,7 +158,7 @@ describe('the item as its PATCH — putSomethingUp.js itemPatchOf', () => {
 
   it('the two other sentences: saved earlier and not written onto (a removed one says so) — never "your change is not on it", which is not known; in the Pantry and the change did not save (the server\'s reason when it gave one; "may not have" when no answer came)', () => {
     expect(replayStaleText(FIRST)).toBe(STALE)
-    expect(replayStaleText({ ...FIRST, deleted_at: '2026-10-01T15:00:00.000Z' })).toBe('“Oat milk” was saved earlier and has been removed since. This Save did not change that. To add what is here, tap Save again.')
+    expect(replayStaleText({ ...FIRST, deleted_at: '2026-10-01T15:00:00.000Z' })).toBe('“Oat milk” was saved earlier and has been removed since. This Save did not change that.')
     expect(replayStaleText(null)).toMatch(/^This was already saved earlier — it is in the Pantry\. This Save did not change it\./)
     expect(replayUnsavedText(FIRST)).toBe(UNSAVED)
     expect(replayUnsavedText(FIRST, { lost: true })).toBe(MAYBE)
@@ -155,6 +169,40 @@ describe('the item as its PATCH — putSomethingUp.js itemPatchOf', () => {
       expect(text).not.toMatch(/Couldn't save it/)
       expect(text).not.toMatch(/not (put )?on it/)
     }
+    // QA Q3: a refusal keeps the key, so Save again is refused again — no sentence may promise that it adds.
+    for (const text of [replayStaleText(FIRST), replayStaleText({ ...FIRST, deleted_at: 'x' }), replayStaleText(null)]) {
+      expect(text).not.toMatch(/Save again|to add/i)
+    }
+  })
+
+  it('Q3 — itemHolds: the item already holds what this body would put on it — every key he chose is read against the row, the date as it resolved; a typed name\'s crop and a planting\'s crop are not; a removed item holds nothing', () => {
+    const TYPED = { source: 'typed', name: 'Oat milk' }
+    const BODY2 = { idempotency_key: 'k', name: 'Oat milk', storage_location_id: 'loc-3', acquired_at: '2026-10-01', acquired_precision: 'day' }
+    expect(itemHolds(BODY2, FIRST, TYPED)).toBe(true)
+    expect(itemHolds({ ...BODY2, name: ' Oat milk ' }, FIRST, TYPED)).toBe(true)
+    for (const change of [{ name: 'Oat milk, barista' }, { storage_location_id: 'loc-1' }, { acquired_at: '2026-10-02' }, { acquired_precision: 'month' },
+      { use_by_target: '2026-11-01' }, { notes: 'x' }, { quantity_value: 2, quantity_unit: 'bag' }, { source_kind: 'store' }, { source_kind: 'store', source_label: 'Costco' },
+      { plant_id: 'p1' }]) {
+      expect(itemHolds({ ...BODY2, ...change }, FIRST, TYPED), JSON.stringify(change)).toBe(false)
+      // … and the other way: the row has it and the body does not.
+      expect(itemHolds(BODY2, { ...FIRST, ...change }, TYPED), `row ${JSON.stringify(change)}`).toBe(false)
+    }
+    const full = { use_by_target: '2026-11-01', notes: 'big bag', quantity_value: 2.5, quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco' }
+    expect(itemHolds({ ...BODY2, ...full }, { ...FIRST, ...full, quantity_value: '2.500' }, TYPED)).toBe(true)
+    // "Not sure": no date on either side.
+    expect(itemHolds({ ...BODY2, acquired_at: undefined, acquired_precision: 'unknown' }, { ...FIRST, acquired_at: null, acquired_precision: 'unknown' }, TYPED)).toBe(true)
+    // A place with no id yet is the same place by kind and name, whatever its case.
+    const typedPlace = { ...BODY2, storage_location_id: undefined, place: { kind: 'fridge', label: 'garage fridge' } }
+    expect(itemHolds(typedPlace, { ...FIRST, place: { id: 'loc-9', kind: 'fridge', label: 'Garage fridge' } }, TYPED)).toBe(true)
+    expect(itemHolds(typedPlace, { ...FIRST, place: { id: 'loc-9', kind: 'pantry', label: 'Garage fridge' } }, TYPED)).toBe(false)
+    expect(itemHolds(typedPlace, { ...FIRST, place: null }, TYPED)).toBe(false)
+    // The crop: a typed name's is the search's (not compared); a PICKED one is his; a planting's is the planting's.
+    expect(itemHolds({ ...BODY2, crop_type_slug: 'oat' }, FIRST, { ...TYPED, crop_type_slug: 'oat' })).toBe(true)
+    expect(itemHolds({ ...BODY2, crop_type_slug: 'oat' }, FIRST, { source: 'crop', name: 'Oat milk', crop_type_slug: 'oat' })).toBe(false)
+    expect(itemHolds({ ...BODY2, crop_type_slug: 'oat' }, { ...FIRST, crop_type_slug: 'oat' }, { source: 'crop', name: 'Oat milk', crop_type_slug: 'oat' })).toBe(true)
+    expect(itemHolds({ ...BODY2, plant_id: 'p1' }, { ...FIRST, plant_id: 'p1', crop_type_slug: 'pepper' }, { source: 'planting', name: 'Oat milk', plant_id: 'p1' })).toBe(true)
+    expect(itemHolds(BODY2, { ...FIRST, deleted_at: '2026-10-01T15:00:00.000Z' }, TYPED)).toBe(false)
+    expect([itemHolds(BODY2, null, TYPED), itemHolds(null, FIRST, TYPED)]).toEqual([false, false])
   })
 })
 
@@ -291,19 +339,26 @@ describe('Put something up — the item route', () => {
     expect(onSaved.mock.calls[0][0].saved).toMatchObject({ id: 'item-first', notes: 'the second carton' })
   })
 
-  it('I3 — the PATCH LANDED and only its answer was lost (the item\'s updated_at has moved — by this door): the door says the change MAY not have saved, and Save again still finishes it on the same item', async () => {
-    let row = FIRST
+  // The first item POST's answer is lost; the PATCH LANDS (the row holds it, its updated_at moves) and its
+  // first answer is lost too. `state.row` is what the Pantry holds.
+  function patchLandsAnswerLost() {
+    const state = { row: FIRST }
     let n = 0
     let patchesSeen = 0
     fake = pantryFetch({ rows: [], overrides: {
-      [`POST ${ITEMS}`]: () => { if (++n === 1) LOST(); return { item: row, replayed: true } },
+      [`POST ${ITEMS}`]: () => { if (++n === 1) LOST(); return { item: state.row, replayed: true } },
       [`PATCH ${ITEMS}/*`]: ({ body }) => {
-        row = { ...row, ...body, updated_at: new Date().toISOString() }       // it lands …
-        if (++patchesSeen === 1) LOST()                                        // … and its answer does not come back
-        return { item: row }
+        state.row = { ...state.row, ...body, updated_at: new Date().toISOString() }   // it lands …
+        if (++patchesSeen === 1) LOST()                                                // … and its answer does not come back
+        return { item: state.row }
       },
     } })
     stableFetch.fn = fake
+    return state
+  }
+
+  it('I3 / Q3 — the PATCH LANDED and only its answer was lost: the door says the change MAY not have saved; Save again finds the item already holding what is on screen and is a save — NO second PATCH, the same key', async () => {
+    const state = patchLandsAnswerLost()
     const door = await openDoor()
     asIs()
     save(); await failed()
@@ -312,14 +367,32 @@ describe('Put something up — the item route', () => {
     await waitFor(() => expect(patches()).toHaveLength(1))
     await failed(MAYBE)
     expect(door.onSaved).not.toHaveBeenCalled()
-    expect(row.updated_at).not.toBe(row.created_at)
+    expect(state.row.updated_at).not.toBe(state.row.created_at)
     save()
     await answered(door, 3)
     expect(errorText()).toBeNull()
     expect(door.onSaved).toHaveBeenCalledTimes(1)
     expect(new Set(keys()).size).toBe(1)
-    expect(patches().map(c => [c.path, c.body.notes])).toEqual([[ROW, 'the second carton'], [ROW, 'the second carton']])
+    expect(patches().map(c => [c.path, c.body.notes])).toEqual([[ROW, 'the second carton']])
     expect(door.onSaved.mock.calls[0][0].saved).toMatchObject({ id: 'item-first', notes: 'the second carton' })
+    expect(draft()).toBeNull()
+  })
+
+  it('I3 — … and a FURTHER change made before that Save: the item\'s updated_at has moved, but by this door\'s own PATCH — so the second PATCH still goes onto it', async () => {
+    patchLandsAnswerLost()
+    const door = await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'the second carton')
+    save()
+    await failed(MAYBE)
+    typeInto('door-notes', 'the second carton, opened')
+    save()
+    await answered(door, 3)
+    expect(errorText()).toBeNull()
+    expect(door.onSaved).toHaveBeenCalledTimes(1)
+    expect(new Set(keys()).size).toBe(1)
+    expect(patches().map(c => [c.path, c.body.notes])).toEqual([[ROW, 'the second carton'], [ROW, 'the second carton, opened']])
   })
 
   it('I3 — the PATCH is refused with a 4xx: its sentence is shown after "already in the Pantry" — and the key is NOT minted again (the item exists; a new key would make a second one)', async () => {
@@ -352,14 +425,39 @@ describe('Put something up — the item route', () => {
     expect(otherWrites()).toEqual([])                                         // one body under the new key: nothing to put on the row
   })
 
-  // REVIEW B1. The draft is in storage with its key and what went out under it. Opened again — minutes or
-  // days later — what is typed over it may be another thing altogether, and the PATCH sends every field.
-  it('B1 — dismissed, opened again, a DIFFERENT thing typed over the restored draft, Save: NOTHING is written onto the item the first Save made (however new it is); the door says so, tells the page, keeps the form — and the next Save adds it as a new item under a new key', async () => {
+  // QA Q3 (the 4xx half). The route validates a body BEFORE it looks the key up, so a refusal of a changed
+  // body says nothing about the one that went out first: that one may be in the Pantry.
+  it('Q3 — a lost answer, then a CHANGED body the server refuses with a 4xx: the key is KEPT (the first Save may have landed) — and the Save after goes onto that item, never a second one', async () => {
     let n = 0
-    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: ({ body }) => {
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: () => {
       n += 1
       if (n === 1) LOST()
-      return n === 2 ? { item: FIRST, replayed: true } : { item: { id: 'item-second', ...body } }
+      if (n === 2) throw apiError(400, { error: 'no' })
+      return { item: FIRST, replayed: true }
+    } } })
+    stableFetch.fn = fake
+    const door = await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'the second carton')
+    save(); await failed('no')
+    expect(draft()).toMatchObject({ key: keys()[0] })
+    save()
+    await answered(door, 3)
+    expect(new Set(keys()).size).toBe(1)
+    expect(door.onSaved).toHaveBeenCalledTimes(1)
+    expect(patches().map(c => [c.path, c.body.notes])).toEqual([[ROW, 'the second carton']])
+  })
+
+  // REVIEW B1. The draft is in storage with its key and what went out under it. Opened again — minutes or
+  // days later — what is typed over it may be another thing altogether, and the PATCH sends every field.
+  // QA Q3: the refusal KEEPS the key. Save again is the same refusal, and no create ever goes out under a new key.
+  it('B1 / Q3 — dismissed, opened again, a DIFFERENT thing typed over the restored draft, Save: NOTHING is written onto the item the first Save made (however new it is); the door says so, tells the page, keeps the form AND the key — Save again is refused again: no second item, no create under a new key', async () => {
+    let n = 0
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: () => {
+      n += 1
+      if (n === 1) LOST()
+      return { item: FIRST, replayed: true }
     } } })
     stableFetch.fn = fake
     const first = await openDoor()
@@ -380,18 +478,133 @@ describe('Put something up — the item route', () => {
     expect(second.onExists).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('door-what-name').value).toBe('Eggs')
     expect(screen.getByTestId('door-save').disabled).toBe(false)
-    // The way out: the key that names "Oat milk" is let go, with what went out under it.
-    await waitFor(() => expect(draft()?.key).not.toBe(keys()[0]))
-    expect(draft()).toMatchObject({ what: { name: 'Eggs' } })
-    expect(draft()).not.toHaveProperty('sent')
+    // The key that names "Oat milk" is KEPT, with what went out under it: the draft still holds both.
+    await waitFor(() => expect(draft()).toMatchObject({ key: keys()[0], what: { name: 'Eggs' } }))
+    expect(draft().sent).toHaveLength(2)
     save()
-    await waitFor(() => expect(second.onSaved).toHaveBeenCalledTimes(1))
-    expect(keys()).toHaveLength(3)
-    expect(keys()[2]).toMatch(UUID)
-    expect(keys()[2]).not.toBe(keys()[0])
-    expect(posts()[2].body).toMatchObject({ name: 'Eggs', storage_location_id: 'loc-1' })
+    await waitFor(() => expect(posts()).toHaveLength(3))
+    await waitFor(() => expect(screen.getByTestId('door-save').disabled).toBe(false))
+    expect(errorText()).toBe(STALE)                                            // refused again
+    save()
+    await waitFor(() => expect(posts()).toHaveLength(4))
+    await waitFor(() => expect(screen.getByTestId('door-save').disabled).toBe(false))
+    expect(errorText()).toBe(STALE)
+    expect(new Set(keys()).size).toBe(1)                                       // ZERO creates under a new key
     expect(otherWrites()).toEqual([])
-    expect(second.onSaved.mock.calls[0][0].saved).toMatchObject({ id: 'item-second', name: 'Eggs' })
+    expect(second.onSaved).not.toHaveBeenCalled()
+    expect(draft()).toMatchObject({ key: keys()[0], what: { name: 'Eggs' } })
+  })
+
+  // QA Q3 (D4). The first body never reached the server; the changed one landed with its answer lost; the door
+  // was dismissed and opened again. The item holds EXACTLY what is on screen: there is nothing to refuse.
+  it('Q3 — a restored draft whose item already holds exactly what is on screen: a SAVE, as any other — no PATCH, no refusal, the same key, the draft cleared (it used to be refused, and the Save after that made a second, identical item)', async () => {
+    let n = 0
+    let row = null
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: ({ body }) => {
+      n += 1
+      if (n === 1) LOST()                                                      // never reached the server
+      if (n === 2) { row = { ...FIRST, notes: body.notes }; LOST() }           // landed; its answer did not come back
+      return { item: row, replayed: true }
+    } } })
+    stableFetch.fn = fake
+    const first = await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'the second carton')
+    save()
+    await waitFor(() => expect(posts()).toHaveLength(2))
+    await failed()
+    await waitFor(() => expect(draft()?.sent).toHaveLength(2))
+    first.unmount()
+    const second = await openDoor()
+    expect(screen.getByTestId('door-what-name').value).toBe('Oat milk')
+    save()
+    await answered(second, 3)
+    expect(errorText()).toBeNull()
+    expect(second.onSaved).toHaveBeenCalledTimes(1)
+    expect(second.onSaved.mock.calls[0][0]).toMatchObject({ route: 'item', saved: { id: 'item-first', notes: 'the second carton' } })
+    expect(second.onExists).not.toHaveBeenCalled()
+    expect(otherWrites()).toEqual([])
+    expect(new Set(keys()).size).toBe(1)
+    expect(draft()).toBeNull()
+  })
+
+  it('Q3 — … but one field off (the notes on screen are not the item\'s): still refused, nothing written', async () => {
+    let n = 0
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: () => { if (++n < 3) LOST(); return { item: { ...FIRST, notes: 'the first carton' }, replayed: true } } } })
+    stableFetch.fn = fake
+    const first = await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'the second carton')
+    save()
+    await waitFor(() => expect(posts()).toHaveLength(2))
+    await waitFor(() => expect(draft()?.sent).toHaveLength(2))
+    first.unmount()
+    const second = await openDoor()
+    save()
+    await answered(second, 3)
+    expect(errorText()).toBe(STALE)
+    expect(otherWrites()).toEqual([])
+    expect(second.onSaved).not.toHaveBeenCalled()
+  })
+
+  // QA Q2. The refusal is the LAST line of the scroller and Save is pinned over the scroller's end.
+  it('Q2 — a refusal is an alert that is brought into view, and scrolled clear of the pinned Save: saved earlier (stale), the planting (fixed), the change did not save', async () => {
+    const on = watchScrolls()
+    // The line sits 90 px under the top of the pinned footer: the panel has to scroll by that and the gap.
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+      const box = (top, bottom) => ({ top, bottom, left: 0, right: 400, width: 400, height: bottom - top, x: 0, y: top })
+      if (this.getAttribute?.('data-testid') === 'door-footer') return box(700, 780)
+      if ([...(this.children ?? [])].some(c => c.getAttribute('data-testid') === 'door-error')) return box(730, 790)
+      return box(0, 0)
+    })
+    lostThenReplayed({ [`PATCH ${ITEMS}/*`]: () => { throw apiError(503, { error: 'boom' }) } }, { ...FIRST, ...stamps(LONG_AGO) })
+    const door = await openDoor()
+    const panel = screen.getByTestId('door-sheet').closest('[role=dialog]')
+    let top = 0
+    Object.defineProperty(panel, 'scrollTop', { configurable: true, get: () => top, set: (v) => { top = v } })
+    asIs()
+    save(); await failed()
+    expect(broughtIntoView(on, 'door-error')).toBe(false)                      // an ordinary failure is not moved to
+    tap('door-from'); typeInto('door-notes', 'the second carton')
+    save()
+    await answered(door, 2)
+    expect(errorText()).toBe(STALE)
+    expect(screen.getByTestId('door-error').getAttribute('role')).toBe('alert')
+    await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+    expect(top).toBe(98)                                                       // 790 + the 8 px gap − 700
+    // Refused again: brought into view again.
+    on.length = 0
+    save()
+    await waitFor(() => expect(posts()).toHaveLength(3))
+    await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+  })
+
+  it('Q2 — the planting refusal and a change that did not save are brought into view too', async () => {
+    const on = watchScrolls()
+    const PLANTED = { ...FIRST, name: 'Megatron jalapeño', plant_id: 'p1', crop_type_slug: 'pepper' }
+    lostThenReplayed({}, PLANTED)
+    await openDoor({ initialWhat: PLANTING })
+    tap('door-place-id:loc-3'); tap('door-method-as_is')
+    save(); await failed()
+    tap('door-what-change'); typeInto('door-what-name', 'Jalapeños from the store')
+    if (screen.getByTestId('door-method-as_is').getAttribute('aria-checked') !== 'true') tap('door-method-as_is')
+    on.length = 0
+    save()
+    await failed(replayFixedText(PLANTED))
+    await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+    cleanup()
+    localStorage.clear(); clearReloadBlocks()
+    lostThenReplayed({ [`PATCH ${ITEMS}/*`]: () => { throw apiError(503, { error: 'boom' }) } })
+    await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'the second carton')
+    on.length = 0
+    save()
+    await failed(UNSAVED)
+    await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
   })
 
   it('what went out rides in the draft as a print of what was CHOSEN (itemPrint), from the first item Save on', async () => {
@@ -403,7 +616,7 @@ describe('Put something up — the item route', () => {
     expect(draft().sent).toEqual([itemPrint(posts()[0].body, { source: 'typed', name: 'Oat milk' }, ['today'])])
   })
 
-  it('B1 — the same door, but the item was changed since the first Save made it (updated_at has moved): NOTHING is written over that change; the door says so and lets go of the key', async () => {
+  it('B1 — the same door, but the item was changed since the first Save made it (updated_at has moved): NOTHING is written over that change; the door says so and KEEPS the key', async () => {
     lostThenReplayed({}, { ...FIRST, name: 'Oat milk, barista', ...stamps(60 * 1000, 20 * 1000) })
     const door = await openDoor()
     const { onSaved, onExists } = door
@@ -417,7 +630,8 @@ describe('Put something up — the item route', () => {
     expect(onSaved).not.toHaveBeenCalled()
     expect(onExists).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('door-notes').value).toBe('the second carton')
-    await waitFor(() => expect(draft()?.key).not.toBe(keys()[0]))
+    await waitFor(() => expect(draft()).toMatchObject({ key: keys()[0], notes: 'the second carton' }))
+    expect(draft().sent).toHaveLength(2)
   })
 
   it('B1 — the same door, but the item was made longer ago than the bound (the sheet sat open): NOTHING is written', async () => {
@@ -705,14 +919,9 @@ describe('the Walk — the item route', () => {
     expect(patches()).toHaveLength(2)
   })
 
-  it('B1 — an item made longer ago than the bound (the walk sat a while), the name changed, Save: NOTHING is written; the walk says so and lets go of the key — the next Save is a new item', async () => {
-    let n = 0
-    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: ({ body }) => {
-      n += 1
-      if (n === 1) LOST()
-      return n === 2 ? { item: { ...FIRST, ...stamps(LONG_AGO) }, replayed: true } : { item: { id: 'item-second', ...body } }
-    } } })
-    stableFetch.fn = fake
+  it('B1 / Q3 — an item made longer ago than the bound (the walk sat a while), the name changed, Save: NOTHING is written; the walk says so, brings the line into view and KEEPS the key — Save again is refused again: no second item, no create under a new key', async () => {
+    const on = watchScrolls()
+    lostThenReplayed({}, { ...FIRST, ...stamps(LONG_AGO) })
     await startWalk()
     typeWhat('Oat milk'); tap('walk-method-as_is')
     save(); await failed()
@@ -725,10 +934,103 @@ describe('the Walk — the item route', () => {
     expect(errorText()).toBe(STALE)
     expect(keys()[1]).toBe(keys()[0])
     expect(screen.getByTestId('walk-what-name').value).toBe('Eggs')
-    save(); await landed()
-    expect(keys()).toHaveLength(3)
-    expect(keys()[2]).not.toBe(keys()[0])
+    expect(screen.getByTestId('walk-error').getAttribute('role')).toBe('alert')
+    await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
+    // The line stops above the walk's fixed band, as the button under it does.
+    expect(screen.getByTestId('walk-error').parentElement.style.scrollMarginBottom).toBe(screen.getByTestId('walk-save').style.scrollMarginBottom)
+    expect(screen.getByTestId('walk-save').style.scrollMarginBottom).toMatch(/^\d+px$/)
+    for (const nth of [3, 4]) {
+      on.length = 0
+      save()
+      await waitFor(() => expect(posts()).toHaveLength(nth))
+      await waitFor(() => expect(screen.getByTestId('walk-save').disabled).toBe(false))
+      expect(errorText()).toBe(STALE)                                          // refused again
+      await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
+    }
+    expect(new Set(keys()).size).toBe(1)                                       // ZERO creates under a new key
     expect(otherWrites()).toEqual([])
+    expect(screen.getByTestId('walk-what-name').value).toBe('Eggs')
+  })
+
+  // QA Q1 — the Walk's own wiring of the rule (appendix A of review-putupreplay3-qa-20261007).
+  const PLANTED = { ...FIRST, name: 'Megatron jalapeño', plant_id: 'p1', crop_type_slug: 'pepper' }
+  const plantingSearch = () => ({ plantings: [{ plant_id: 'p1', label: 'Megatron jalapeño', crop_type_slug: 'pepper', variety_id: 'v1', recent_picks: [] }], put_ups: [] })
+
+  it('Q1 — a planting item, then What let go of the planting: nothing is written, the walk says so (in view) and keeps what was typed — never a "saved" and a cleared group', async () => {
+    const on = watchScrolls()
+    lostThenReplayed({ 'GET /api/kitchen-batches/line-search': plantingSearch }, PLANTED)
+    await startWalk()
+    typeWhat('Megatron')
+    fireEvent.click(await screen.findByTestId('walk-what-hit-planting:p1', {}, { timeout: 3000 }))
+    tap('walk-method-as_is')
+    save(); await failed()
+    tap('walk-what-change'); typeWhat('Jalapeños from the store')
+    if (screen.getByTestId('walk-method-as_is').getAttribute('aria-checked') !== 'true') tap('walk-method-as_is')
+    on.length = 0
+    save()
+    await waitFor(() => expect(errorText()).toBe(replayFixedText(PLANTED)))
+    expect(posts().map(c => c.body.plant_id ?? null)).toEqual(['p1', null])
+    expect(otherWrites()).toEqual([])
+    expect(screen.getByTestId('walk-what-name').value).toBe('Jalapeños from the store')
+    await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
+    expect(new Set(keys()).size).toBe(1)
+  })
+
+  it('Q1 — "A different date for this one" picked after the lost answer is a change: it rides the PATCH', async () => {
+    lostThenReplayed()
+    await startWalk()
+    typeWhat('Oat milk'); tap('walk-method-as_is')
+    save(); await failed()
+    tap('walk-more'); tap('walk-own-last_month')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    await landed()
+    // The walk's "This month" went out first; last month is the month before it, whatever month this runs in.
+    const [first, second] = [posts()[0].body.acquired_at, patches()[0].body.acquired_at]
+    expect(patches()[0].body).toMatchObject({ acquired_precision: 'month' })
+    expect(second).toMatch(/^\d{4}-\d{2}-01$/)
+    expect(second < first).toBe(true)
+    expect(new Set(keys()).size).toBe(1)
+  })
+
+  // The walk's first item POST is lost; its PATCH LANDS and that answer is lost too.
+  function walkPatchLandsAnswerLost() {
+    let row = FIRST; let n = 0; let seen = 0
+    fake = pantryFetch({ rows: [], overrides: {
+      [`POST ${ITEMS}`]: () => { if (++n === 1) LOST(); return { item: row, replayed: true } },
+      [`PATCH ${ITEMS}/*`]: ({ body }) => { row = { ...row, ...body, updated_at: new Date().toISOString() }; if (++seen === 1) LOST(); return { item: row } },
+    } })
+    stableFetch.fn = fake
+  }
+
+  it('Q1 / Q3 — the PATCH landed and only its answer was lost: Save again finds the item already holding it and is a save — no second PATCH, one key, the group cleared', async () => {
+    walkPatchLandsAnswerLost()
+    await startWalk()
+    typeWhat('Oat milk'); tap('walk-method-as_is')
+    save(); await failed()
+    typeWhat('Oat milk, barista')
+    save()
+    await failed(MAYBE)
+    save()
+    await landed()
+    expect(posts()).toHaveLength(3)
+    expect(patches().map(c => c.body.name)).toEqual(['Oat milk, barista'])
+    expect(new Set(keys()).size).toBe(1)
+  })
+
+  it('Q1 — … and the name changed AGAIN before that Save: the item\'s updated_at moved by this walk\'s own PATCH, so the second PATCH still goes onto it', async () => {
+    walkPatchLandsAnswerLost()
+    await startWalk()
+    typeWhat('Oat milk'); tap('walk-method-as_is')
+    save(); await failed()
+    typeWhat('Oat milk, barista')
+    save()
+    await failed(MAYBE)
+    typeWhat('Oat milk, barista blend')
+    save()
+    await landed()
+    expect(patches().map(c => c.body.name)).toEqual(['Oat milk, barista', 'Oat milk, barista blend'])
+    expect(new Set(keys()).size).toBe(1)
   })
 
   it('a name whose crop the search has since worked out: the crop rides the PATCH with the name', async () => {

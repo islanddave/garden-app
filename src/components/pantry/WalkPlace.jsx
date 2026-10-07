@@ -49,7 +49,7 @@ import RefusalLine, { refusalOf, refusalText } from './RefusalLine.jsx'
 import { leftWords, rowKey } from './pantryRows.js'
 import {
   AS_IS, METHOD_REQUIRED_TEXT, methodChoices, routeFor, walkWhen, walkWhenChips, previewLine, jarBody, itemBody,
-  methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS, itemPatchOf, itemPrint, plantingDiffers, replayFixedText,
+  methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText,
   replayStaleText, replayUnsavedText,
 } from './putSomethingUp.js'
 
@@ -428,9 +428,11 @@ function AlreadyHere({ fetch, placeId, seq, onOpen }) {
 // before "Change" unmounted it), reports what it holds after every change, and hands the walk its Save.
 // A REPLAYED ITEM (BUG-PUTUPREPLAYDROPSEDIT-001): as the Put something up door does it — the key stays, a
 // replayed item that is this sitting's (made minutes ago, untouched since) and may not hold what is on screen
-// is PATCHed; one that is not is left as it is, said so, and the key let go; a What that is now another
-// planting (or none) is said, not written. `sent` (what has gone out under the key) is held with the key, in
-// memory only, so it is always this walk's. `onExists` is the walk's re-read: the item is in the Pantry.
+// is PATCHed; one that is not is left as it is and said so, and the key is KEPT (Save again is refused again,
+// never a second item); a What that is now another planting (or none) is said, not written; and an item that
+// already holds what is on screen is a save with nothing written (itemHolds). `sent` (what has gone out under
+// the key) is held with the key, in memory only, so it is always this walk's. `onExists` is the walk's
+// re-read: the item is in the Pantry. Each refusal is brought into view above the walk's band.
 function WalkGroup({
   walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK_PX, onSaved, onExists = null, onOpenExisting, onMoveHere,
   held = null, onHeld = null, saveRef = null,
@@ -455,6 +457,12 @@ function WalkGroup({
   const writingRef = useRef(false)
   const methodRef = useRef(null)
   const whatRef = useRef(null)
+  const errRef = useRef(null)
+  // Counts the replay refusals: each is brought into view (its scroll-margin is the band's height, below).
+  const [refusedSeq, setRefusedSeq] = useState(0)
+  useEffect(() => {
+    if (refusedSeq && typeof errRef.current?.scrollIntoView === 'function') errRef.current.scrollIntoView({ block: 'nearest' })
+  }, [refusedSeq])
 
   const place = walk.place
   const choices = useMemo(() => methodChoices({ placeKind: place?.kind ?? null, what }), [place, what])
@@ -513,14 +521,11 @@ function WalkGroup({
         saved = r?.item ?? r
         const todo = afterReplay(r, sentNow, print, {
           row: saved, updatedHere: saved?.id != null && patched === saved.id, fixed: plantingDiffers(body, saved),
+          holds: itemHolds(body, saved, what),
         })
-        if (todo === 'stale') {
-          setKey(mintKey()); setSent([]); setPatched(null)
-          setErr(replayStaleText(saved)); setField(null)
-          onExists?.()
-          return
-        }
-        if (todo === 'fixed') { setErr(replayFixedText(saved)); setField('what'); onExists?.(); return }
+        // Nothing is written and the key is KEPT: Save again is this refusal again, never a second item.
+        if (todo === 'stale') { setErr(replayStaleText(saved)); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
+        if (todo === 'fixed') { setErr(replayFixedText(saved)); setField('what'); setRefusedSeq(s => s + 1); onExists?.(); return }
         if (todo === 'update') {
           onRow = saved
           if (saved?.id == null) throw new Error('replayed without an item')
@@ -536,6 +541,7 @@ function WalkGroup({
       if (onRow) {
         const why = refusalOf(e, '')
         setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: answerLost(e) }), refresh: why.refresh })
+        setRefusedSeq(s => s + 1)
         onExists?.()
       } else setErr(refusalOf(e, "Couldn't save it — what you entered is kept. Try again."))
     } finally {
@@ -595,7 +601,7 @@ function WalkGroup({
         </div>
       )}
       {preview && <p role="status" data-testid="walk-preview" style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{preview}</p>}
-      <RefusalLine err={err} testId="walk-error" />
+      <RefusalLine err={err} testId="walk-error" lineRef={errRef} style={{ scrollMarginBottom: bandH + 12 }} />
       {/* scroll-margin = the band's MEASURED height: anything scrolled into view (a focused field, the
           button itself) stops above the fixed band rather than under it, at the band's tallest too. */}
       <Button variant="primary" data-testid="walk-save" loading={saving} loadingLabel="Saving…" onClick={save}

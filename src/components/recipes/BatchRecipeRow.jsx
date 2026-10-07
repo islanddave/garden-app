@@ -22,11 +22,11 @@
 // door — a second key set would add every line twice. A page shows ONE of them (Put-Up R2a, M2): batch
 // detail hands the row its hook (`asWritten`) and draws the button, so the hosted row draws no link; a row
 // mounted alone has no button below it and keeps the link.
-import React, { useId, useRef, useState } from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import Button from '../forms/Button.jsx'
-import { mintKey, sendPrint, noteSent, afterReplay, answerLost } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, answerLost, sameFact } from '../kitchen/idempotencyKey.js'
 import { describeRefusal } from '../../lib/putUpErrors.js'
 import { asWrittenLines, recipeLineWords, MADE_AS_WRITTEN_CTA, SAVE_AS_RECIPE_CTA } from './recipes.js'
 
@@ -88,6 +88,7 @@ export function MadeAsWrittenButton({ asWritten }) {
 // Save as recipe, when its create is answered with the recipe an EARLIER Save made, maybe under another name
 // (kitchen/idempotencyKey.js). STALE: the recipe is not this sitting's to rename (made a while ago, or changed
 // since) — nothing is written, and the key is KEPT: a new one would make a second recipe of the same batch.
+// A recipe that already has the name typed is a save, with nothing written. Each refusal is brought into view.
 // UNSAVED: the rename was tried and did not go through (`lost`: no answer came back, so it may have).
 // Either way the recipe is there, and the sentence gives the name it answered with.
 export function saveAsRecipeStaleText(recipe) {
@@ -110,6 +111,11 @@ export function SaveAsRecipe({ batch, onChanged }) {
   // (kitchen/idempotencyKey.js). It outlives a failure, a Cancel and a changed name, and belongs to ONE
   // batch: another batch is another create.
   const held = useRef(null)
+  const errRef = useRef(null)
+  const [refusedSeq, setRefusedSeq] = useState(0)
+  useEffect(() => {
+    if (refusedSeq && typeof errRef.current?.scrollIntoView === 'function') errRef.current.scrollIntoView({ block: 'nearest' })
+  }, [refusedSeq])
   const nameId = `save-recipe-name-${useId()}`
   if (!batch) return null
 
@@ -129,9 +135,11 @@ export function SaveAsRecipe({ batch, onChanged }) {
       let answer = await fetch(`/api/recipes/from-batch/${batch.id}`, { method: 'POST', body: JSON.stringify(body) })
       const todo = afterReplay(answer, sent, print, {
         row: answer?.recipe, updatedHere: answer?.recipe?.id != null && held.current.patched === answer.recipe.id,
+        holds: sameFact(answer?.recipe?.name, body.name),
       })
       if (todo === 'stale') {
         setErr(saveAsRecipeStaleText(answer?.recipe))
+        setRefusedSeq(s => s + 1)
         onChanged?.()
         return
       }
@@ -147,7 +155,7 @@ export function SaveAsRecipe({ batch, onChanged }) {
       setSaved(answer?.recipe?.name ?? n)
       onChanged?.()
     } catch (e) {
-      if (onRow?.id != null) { setErr(saveAsRecipeUnsavedText(onRow, { lost: answerLost(e) })); onChanged?.() }
+      if (onRow?.id != null) { setErr(saveAsRecipeUnsavedText(onRow, { lost: answerLost(e) })); setRefusedSeq(s => s + 1); onChanged?.() }
       else setErr("Couldn't save it as a recipe — try again.")
     } finally { setBusy(false) }
   }
@@ -170,7 +178,7 @@ export function SaveAsRecipe({ batch, onChanged }) {
         </div>
       )}
       {saved && <div role="status" data-testid="batch-save-as-recipe-saved" style={{ fontSize: T.type.sm, color: P.mid }}>Saved as a recipe: {saved}</div>}
-      {err && <div role="alert" data-alarm-ink-exempt="error" data-testid="batch-save-as-recipe-error" style={{ color: P.terra, fontSize: T.type.sm }}>{err}</div>}
+      {err && <div ref={errRef} role="alert" data-alarm-ink-exempt="error" data-testid="batch-save-as-recipe-error" style={{ color: P.terra, fontSize: T.type.sm }}>{err}</div>}
     </>
   )
 }
