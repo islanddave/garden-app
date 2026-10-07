@@ -351,7 +351,8 @@ describe('rename — PUT /api/storage-locations/:id', () => {
     expect(said.getAttribute('role')).toBe('status')
     expect(rowFor('loc-3').contains(said)).toBe(true)
     expect(screen.queryByTestId('pu-location-edit')).toBeNull()
-    expect(document.activeElement).toBe(within(rowFor('loc-3')).getByTestId('pu-location-rename'))
+    // The focus moves in an effect of the render that says "Saved.", so it can land one beat after the words.
+    await waitFor(() => expect(document.activeElement).toBe(within(rowFor('loc-3')).getByTestId('pu-location-rename')))
     // No timer: it is still there, and it goes when the next thing is opened.
     await settle()
     expect(screen.getByTestId('pu-location-saved')).toBeTruthy()
@@ -688,7 +689,7 @@ describe('delete — two taps, and the second one says what it does', () => {
     // In the row's place: between Garage freezr and Jen's fridge, where it was.
     const order = [...screen.getByTestId('places-sheet').querySelectorAll('[data-loc-id]')].map(el => el.getAttribute('data-loc-id'))
     expect(order).toEqual(['loc-1', 'loc-2', 'loc-3', 'loc-4', 'loc-5'])
-    expect(document.activeElement).toBe(gone)
+    await waitFor(() => expect(document.activeElement).toBe(gone))   // same effect, same beat after the words
     // Nothing was stored there, so the Pantry's list has nothing new to read.
     await settle()
     expect(pantryReads()).toHaveLength(before)
