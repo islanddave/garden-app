@@ -17,7 +17,7 @@
 // against an integer column in the CASE, and that a lot carrying the number refuses to leave Seeds
 // with the mapped sentence. Those are the integration lane's, and listed in the lane report.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
@@ -238,7 +238,7 @@ describe('seed_parent_plant_count — its two CHECKs read as sentences', () => {
   });
 });
 
-describe('seed_parent_plant_count — /seed-measure is its ONLY writer', () => {
+describe('seed_parent_plant_count — its two writers are /seed-measure and applyAddition, and no wide verb', () => {
   const putBranch = (() => {
     const start = SRC.indexOf("if (method === 'PUT')");
     return SRC.slice(start, SRC.indexOf("if (method === 'DELETE')", start));
@@ -287,13 +287,46 @@ describe('seed_parent_plant_count — /seed-measure is its ONLY writer', () => {
     expect(validateUpdate({ category: 'tools', seed_parent_plant_count: 3 })).toBeNull();
   });
 
-  it('is named by exactly ONE statement in this directory', () => {
-    const naming = ['index.js', 'seed-lot-parents.js', 'seed-lot-rules.js', 'seed-lot-filing.js', 'delete-guard.js']
-      .flatMap((f) => {
-        const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
-        return [...src.matchAll(/sql`[^`]*`/g)].map((m) => m[0]).filter((s) => /seed_parent_plant_count/.test(s)).map(() => f);
-      });
-    expect(naming).toEqual(['index.js']);
+  it('has exactly TWO writers in this directory — /seed-measure (index.js) and applyAddition (seed-lot-additions.js) — and every statement that names it is listed', () => {
+    // RESTATED for release 3 (V5-SEEDLOTADDITION-001), which gave the column its second writer: a
+    // picking from a plant NEW to the lot that stands for one plant raises the number by one.
+    // The modules are read from the DIRECTORY now (this list was five hand-kept names, and would have
+    // stayed green over a sixth module that wrote the column). Every statement that names the column
+    // is classified by what it does to it, and the list is exact: a statement added anywhere here
+    // that reads or writes the number fails this until it is entered.
+    const modules = readdirSync(__dirname).filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f)).sort();
+    expect(modules).toContain('seed-lot-additions.js');
+    const kindOf = (s) => (/\bseed_parent_plant_count\s*=\s*CASE\b/.test(s) ? 'WRITES' : 'reads');
+    const naming = modules.flatMap((f) => {
+      const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
+      return [...src.matchAll(/sql`[^`]*`/g)].map((m) => m[0])
+        .filter((s) => /seed_parent_plant_count/.test(s))
+        .map((s) => `${f}: ${kindOf(s)}`);
+    });
+    expect(naming).toEqual([
+      // /seed-measure, in source order: the write with the compare-and-set conjuncts, the read that
+      // tells its 409 from a 404 (and hands the four measure keys back), and the same write without
+      // them — the statement every caller before release 3 reaches.
+      'index.js: WRITES',
+      'index.js: reads',
+      'index.js: WRITES',
+      // judgeAddition (the lot as it stands, for a replay's 200 and a 409's body), applyAddition (the
+      // +1), and the open-lots read (a row key of GET /seed-lots-open).
+      'seed-lot-additions.js: reads',
+      'seed-lot-additions.js: WRITES',
+      'seed-lot-additions.js: reads',
+    ]);
+    // Both index.js writes are inside the /seed-measure arm: one route, not two.
+    const arm = SRC.slice(SRC.indexOf('const seedMeasureMatch = rawPath.match'), SRC.indexOf('const idMatch = rawPath.match'));
+    expect(arm.match(/\bseed_parent_plant_count\s*=\s*CASE\b/g)).toHaveLength(2);
+    expect(SRC.match(/\bseed_parent_plant_count\s*=\s*CASE\b/g)).toHaveLength(2);
+    // applyAddition's write can only ever add ONE, to a number that is already there, below the cap,
+    // for a plant that is new to the lot and stands for exactly one plant.
+    const add = decomment(readFileSync(resolve(__dirname, 'seed-lot-additions.js'), 'utf8')).replace(/\s+/g, ' ');
+    expect(add).toContain(
+      "seed_parent_plant_count = CASE WHEN pre.n0 IS NOT NULL AND pre.n0 < 9999 AND pre.one_plant IS TRUE "
+      + "AND current_setting('app.seed_lot_plant_new', true) = 'true' THEN pre.n0 + 1 ELSE pre.n0 END",
+    );
   });
 
   it('is read by PRESENCE in the route, which is what the Saved seeds strip list keys on', () => {

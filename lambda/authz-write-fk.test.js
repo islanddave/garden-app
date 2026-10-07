@@ -25,6 +25,10 @@ import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-
 // imported and executed here like the loaders above; the stubs are for the one assertion that runs
 // the inventory-items handler itself to prove a refused array writes nothing.
 import { ownsEveryPlanting } from './inventory-items/seed-lot-parents.js';
+// V5-SEEDLOTADDITION-001 — the handler, imported STATICALLY for the one release-3 case that runs it
+// (a seed addition naming a foreign planting). The older executed case below imports it lazily; that
+// one is left as it was written.
+import { handler as inventoryItemsHandler } from './inventory-items/index.js';
 import { stubState, resetStubs } from './_test-stubs/state.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -369,6 +373,16 @@ const NOT_IN_SITES = [
   // inserts. A foreign lot id selects nothing and writes nothing. The OTHER FK of that INSERT,
   // plant_id, IS body-settable and has its own entry and its own executed assertions below.
   'inventory-items::inventory_item_id',
+  // V5-SEEDLOTADDITION-001 — seed_lot_addition.parent_link_id, written by seed-lot-additions.js
+  // applyAddition for POST /api/inventory-items/:id/seed-additions. NOT BODY-SETTABLE, and for the
+  // structural reason the pair above gives: no request key of any name reaches it. The INSERT selects
+  // `pre.link_id` out of its own CTE, and `pre` is the live seed_parent row joined to
+  // public.inventory_items under the full lot predicate (`i.id = <the route's path id> AND
+  // i.created_by = ANY(householdIds) AND i.deleted_at IS NULL AND i.category = 'seeds'`). A foreign
+  // lot id selects nothing and writes nothing. What the body DOES choose is which planting's link row
+  // that is (`plant_id`) — the pair inventory-items::plant_id below, gated at the route (the third
+  // ownsEveryPlanting site, asserted below) and judged again under the lot lock.
+  'inventory-items::parent_link_id',
   'daily-plan::assignee_user_id', 'daily-plan::user_id', 'dashboard::user_id',
   'events::user_id', 'events::workspace_id', 'favorites::user_id', 'inventory-items::user_id',
   'plants::assignee_user_id', 'preservation::user_id', 'projects::assignee_user_id',
@@ -827,7 +841,10 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
     // does not exist yet has no members (Follow-up 1).
     const gate = /if \(!await ownsEveryPlanting\(sql, (\w+)\.ids, householdIds(, itemId)?\)\) \{ warnRejectedFk\(userId, 'seed_lot_parent_planting', 'plant_id', \1\.ids\.join\(','\)\); return resp\(400, \{ error: SOURCE_PLANT_IDS_UNUSABLE \}\); \}/g;
     expect([...src.matchAll(gate)].map((m) => `${m[1]}${m[2] ?? ''}`).sort()).toEqual(['parentSet', 'set, itemId']);
-    expect(src.match(/ownsEveryPlanting\(/g)).toHaveLength(2);
+    // 2 -> 3 with V5-SEEDLOTADDITION-001: POST /:id/seed-additions gates its ONE planting through the
+    // same function. It is not an array site (the regex above does not match it); its own gate, order
+    // and executed refusal are 'inventory-items gates the ONE plant_id of a seed addition' below.
+    expect(src.match(/ownsEveryPlanting\(/g)).toHaveLength(3);
     expect(src).toMatch(/const SOURCE_PLANT_IDS_UNUSABLE = 'source_plant_ids does not match plantings you can use';/);
 
     // Every id that reaches a link INSERT is one a gate has cleared. Three producers, no others:
@@ -1063,6 +1080,96 @@ describe('V4-AUTHZSWEEP-001: every settable cross-entity FK write site invokes a
         `${verb} control`).toHaveLength(1);
       expect(allowed.warned).toHaveLength(0);
     }
+  });
+
+  // ── V5-SEEDLOTADDITION-001 — the third ownsEveryPlanting site: ONE planting, by `plant_id` ──────
+  it('inventory-items gates the ONE plant_id of a seed addition, before the write, with no lot id handed over', () => {
+    const src = decomment(readFileSync(join(here, 'inventory-items/index.js'), 'utf8')).replace(/\s+/g, ' ');
+    // Negated, followed at once by the reject. The array is the one normalised id and nothing else,
+    // and there is NO fourth argument: the gate's second arm ("already a parent of this lot") is not
+    // offered here, so a planting that has been soft-deleted cannot receive a picking even on a lot
+    // it is a parent of.
+    const gate = "if (!await ownsEveryPlanting(sql, [addition.plantId], householdIds)) { warnRejectedFk(userId, 'seed_lot_parent_planting', 'plant_id', addition.plantId); return resp(400, { error: PLANT_ID_UNUSABLE }); }";
+    expect(src.split(gate)).toHaveLength(2);
+    expect(src).toMatch(/const PLANT_ID_UNUSABLE = 'plant_id does not match a planting you can use';/);
+    // The id comes from the body through the module's own normaliser, never straight off `body`.
+    expect(src).toMatch(/const addition = normalizeAddition\(JSON\.parse\(event\.body \?\? '\{\}'\)\);/);
+    // Ordering: the reject precedes the write, and the write is handed that same normalised request.
+    const gateIdx = src.indexOf(gate);
+    const write = 'addSeedToLot(sql, { lotId: itemId, householdIds, userId, ...addition })';
+    const writeIdx = src.indexOf(write);
+    expect(writeIdx).toBeGreaterThan(-1);
+    expect(gateIdx, 'the ownership gate must precede the write').toBeLessThan(writeIdx);
+    expect(src.match(/addSeedToLot\(/g)).toHaveLength(1);
+    // The gate is skipped in exactly one case — the addition_key is already recorded — and that
+    // request cannot write: the transaction answers it as a replay before any statement that inserts.
+    expect(src).toMatch(/const recorded = await readAdditionKey\(sql, addition\.additionKey\); if \(!recorded\.length\) \{ if \(!await ownsEveryPlanting\(/);
+
+    // The fourth producer of an id for the link INSERT, and it is that gated id alone.
+    const add = decomment(readFileSync(join(here, 'inventory-items/seed-lot-additions.js'), 'utf8')).replace(/\s+/g, ' ');
+    expect(add.match(/insertSeedParentLinks\(/g)).toHaveLength(1);
+    expect(add).toContain('insertSeedParentLinks(sql, { lotId, ids: [plantId], householdIds, userId })');
+    // Under the lock the plant is judged again, through the household and live — the gate's first arm.
+    expect(add).toMatch(/LEFT JOIN public\.garden_node p ON p\.id = \$\{plantId\}::uuid AND p\.created_by = ANY\(\$\{householdIds\}\)/);
+    expect(add).toContain('(p.id IS NOT NULL AND p.deleted_at IS NULL) AS plant_live');
+    expect(add).toContain("WHEN NOT g.plant_live THEN 'plants_changed'");
+    // The picking's own FK is never a bound value: it is the lot's link row for that plant.
+    expect(add).toMatch(/INSERT INTO public\.seed_lot_addition \(addition_key, parent_link_id, [^)]*\) SELECT \$\{additionKey\}::uuid, pre\.link_id,/);
+  });
+
+  it('a seed addition naming a foreign planting writes ZERO rows — executed', async () => {
+    const handler = inventoryItemsHandler;
+    const USER = 'user_stub_owner';
+    const LOT = '2d6df841-b507-4e65-8db0-97c8659df37c';
+    const KEY = '7b0c7a52-5a0e-4c57-9a55-0d6c1b1b9f10';
+    const ADDITION = '0c1d2e3f-0000-4000-8000-00000000ad01';
+    const ev = {
+      requestContext: { http: { method: 'POST' } }, rawPath: `/api/inventory-items/${LOT}/seed-additions`,
+      headers: { authorization: 'Bearer stub-token' },
+      body: JSON.stringify({ addition_key: KEY, plant_id: FOREIGN, expected_source_plant_ids: [], picked_on: '2026-09-01', add_seed_count: 12, add_estimated: false }),
+    };
+    const isKey = (t) => /FROM public\.seed_lot_addition a\s+WHERE a\.addition_key = \?::uuid\s*$/.test(t);
+    const isOwns = (t) => /FROM public\.garden_node p\s+WHERE p\.id = ANY\(\?::uuid\[\]\)\s+AND p\.created_by = ANY/.test(t);
+    const run = async (ownedRows) => {
+      resetStubs();
+      stubState.verifyTokenResult = { sub: USER };
+      stubState.sqlHandler = (text) => {
+        if (isKey(text)) return [];               // not recorded yet: the gate is not skipped
+        if (isOwns(text)) return ownedRows;
+        if (/AS verdict/.test(text)) return [{ id: LOT, verdict: 'go', plant_member: false }];
+        if (/WITH pre AS/.test(text)) return [{ id: LOT, addition_id: ADDITION, count_applied: false, weight_applied: false }];
+        return [];
+      };
+      const warned = [];
+      const orig = console.warn;
+      console.warn = (m) => warned.push(m);
+      let res;
+      try { res = await handler(ev); } finally { console.warn = orig; }
+      return { status: res.statusCode, body: JSON.parse(res.body || '{}'), warned, calls: stubState.sqlCalls };
+    };
+
+    const refused = await run([]);
+    expect(refused.status).toBe(400);
+    expect(refused.body).toEqual({ error: 'plant_id does not match a planting you can use' });
+    expect(JSON.stringify(refused.body)).not.toContain(FOREIGN);
+    expect(JSON.stringify(refused.body)).not.toContain(LOT);
+    // Only the key read and the gate ran: no lot, no lock, no link row, no picking row.
+    expect(refused.calls.map((c) => (isKey(c.text) ? 'key' : isOwns(c.text) ? 'owns' : 'OTHER'))).toEqual(['key', 'owns']);
+    expect(refused.calls[1].values).toEqual([[FOREIGN], [USER]]);
+    expect(refused.calls.filter((c) => /\b(INSERT|UPDATE)\b|FOR (UPDATE|SHARE)/.test(c.text))).toHaveLength(0);
+    expect(refused.warned).toHaveLength(1);
+    expect(JSON.parse(refused.warned[0])).toMatchObject({
+      msg: 'authz-fk-reject', userId: USER, table: 'seed_lot_parent_planting', column: 'plant_id',
+    });
+
+    // The control: the SAME request with the planting owned reaches both INSERTs. Without it the block
+    // above would pass against a handler that refuses every addition.
+    const allowed = await run([{ id: FOREIGN }]);
+    expect(allowed.status, JSON.stringify(allowed.body)).toBe(200);
+    expect(allowed.body.addition).toMatchObject({ id: ADDITION, replayed: false, plant_was_added: true });
+    expect(allowed.calls.filter((c) => /INSERT INTO public\.seed_lot_parent_planting/.test(c.text))).toHaveLength(1);
+    expect(allowed.calls.filter((c) => /INSERT INTO public\.seed_lot_addition/.test(c.text))).toHaveLength(1);
+    expect(allowed.warned).toHaveLength(0);
   });
 
   it('evidence-ingest gates a planting-typed entity_id through its planting_ref_id', () => {

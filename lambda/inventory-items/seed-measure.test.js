@@ -449,3 +449,189 @@ describe('V5-SEEDQTY-001 — validateUpdate names the FIELD, not a constraint', 
     expect(validateUpdate({ seed_weight_g: 0.5 })).toBeNull();
   });
 });
+
+// ── V5-SEEDLOTADDITION-001 (release 3) — COMPARE-AND-SET, for a caller that says what it loaded ───
+//
+// Since release 3 a picking added to a lot (POST /:id/seed-additions) raises its count, or — when
+// that picking was not counted — changes only its basis. This route writes an ABSOLUTE count from a
+// row the page loaded earlier, so a stale page would write straight over the picking on a 200. A body
+// may therefore carry what it loaded (expected_seed_count, expected_seed_count_estimated,
+// expected_seed_weight_g); a lot that no longer holds it answers 409 and is not written.
+//
+// What the stub can prove: that a body with NONE of the three keys reaches the statement it always
+// did, byte for byte, and pays for nothing new; that each key present switches its own conjunct on
+// and binds its own value; and which of 200 / 404 / 409 the route says. That a mismatch really
+// leaves the row alone is tests/integration/seed-lot-additions.int.test.js, on a real Postgres.
+describe('V5-SEEDLOTADDITION-001 /seed-measure — compare-and-set', () => {
+  const LOT_CHANGED = 'This seed lot was changed at the same moment. Reload and try again.';
+  const flat = (t) => t.replace(/\s+/g, ' ').trim();
+  // The statement every caller before release 3 reaches, as the stub records it ('?' per binding).
+  const TODAY = 'UPDATE public.inventory_items SET seed_count = CASE WHEN ? THEN ? ELSE seed_count END, '
+    + 'seed_weight_g = CASE WHEN ? THEN ? ELSE seed_weight_g END, '
+    + 'seed_count_estimated = CASE WHEN ? THEN ? ELSE seed_count_estimated END, '
+    + 'seed_parent_plant_count = CASE WHEN ? THEN ? ELSE seed_parent_plant_count END, updated_at = NOW() '
+    + "WHERE id = ? AND created_by = ANY(?) AND deleted_at IS NULL AND category = 'seeds' "
+    + 'RETURNING id, seed_count, seed_weight_g, seed_count_estimated, seed_parent_plant_count';
+  const COMPARED = TODAY.replace(' RETURNING', ' AND (NOT ?::boolean OR seed_count IS NOT DISTINCT FROM ?::int)'
+    + ' AND (NOT ?::boolean OR seed_count_estimated IS NOT DISTINCT FROM ?::boolean)'
+    + ' AND (NOT ?::boolean OR seed_weight_g IS NOT DISTINCT FROM ?::numeric) RETURNING');
+  const isFollowUp = (t) => /SELECT seed_count, seed_count_estimated, seed_weight_g, seed_parent_plant_count\s+FROM public\.inventory_items/.test(t);
+  const isPairingRead = (t) => /SELECT seed_count, seed_count_estimated\s+FROM public\.inventory_items/.test(t);
+  // The lot as stored, and what each statement of the route gets back. `matches` = did the UPDATE's
+  // WHERE (the compare included) find the row.
+  const lot = (row, { matches = true, exists = true } = {}) => {
+    stubState.sqlHandler = (text) => {
+      if (isPairingRead(text)) return exists ? [{ seed_count: row.seed_count, seed_count_estimated: row.seed_count_estimated }] : [];
+      if (isFollowUp(text)) return exists ? [row] : [];
+      if (/UPDATE public\.inventory_items/.test(text)) return matches && exists ? [{ id: ITEM, ...row }] : [];
+      return [];
+    };
+  };
+  const STORED = { seed_count: 215, seed_count_estimated: true, seed_weight_g: '12.350', seed_parent_plant_count: 3 };
+  const flagAndValue = (call, column, cast) => [
+    boundAfter(call, new RegExp(String.raw`AND \(NOT (?=\?::boolean OR ${column} IS NOT DISTINCT FROM)`)),
+    boundAfter(call, new RegExp(String.raw`\b${column} IS NOT DISTINCT FROM (?=\?::${cast}\))`)),
+  ];
+
+  it('NO expected key: the statement is the one it always was, byte for byte, and nothing else is issued', async () => {
+    for (const body of [{}, { seed_weight_g: 0.5 }, { seed_parent_plant_count: 4 }]) {
+      resetStubs();
+      stubState.verifyTokenResult = { sub: USER };
+      stubState.sqlHandler = () => [{ id: ITEM, ...STORED }];
+      // eslint-disable-next-line no-await-in-loop
+      const { status, body: reply } = parse(await handler(measure(body)));
+      expect(status).toBe(200);
+      expect(stubState.sqlCalls, JSON.stringify(body)).toHaveLength(1);
+      expect(flat(stubState.sqlCalls[0].text)).toBe(TODAY);
+      expect(stubState.sqlCalls[0].values).toHaveLength(10);
+      expect(Object.keys(reply).sort()).toEqual(['id', 'seed_count', 'seed_count_estimated', 'seed_parent_plant_count', 'seed_weight_g']);
+    }
+    // With a pair key the pairing guard's read comes first, as it always has — and still no compare.
+    resetStubs();
+    stubState.verifyTokenResult = { sub: USER };
+    storedPair(185, false);
+    await handler(measure({ seed_count: 200 }));
+    expect(stubState.sqlCalls.map((c) => (isPairingRead(c.text) ? 'pairing' : flat(c.text) === TODAY ? 'today' : 'OTHER'))).toEqual(['pairing', 'today']);
+    for (const c of stubState.sqlCalls) expect(c.text).not.toMatch(/DISTINCT/);
+  });
+
+  it('zero rows with NO expected key is 404, with no second read', async () => {
+    stubState.sqlHandler = () => [];
+    const { status, body } = parse(await handler(measure({ seed_weight_g: 0.5 })));
+    expect(status).toBe(404);
+    expect(body).toEqual({ error: 'Not found' });
+    expect(stubState.sqlCalls).toHaveLength(1);
+    expect(stubState.sqlCalls.filter((c) => isFollowUp(c.text))).toHaveLength(0);
+  });
+
+  it('each expected key switches on ITS conjunct and binds ITS value, with its cast; the other two stay off', async () => {
+    const cases = [
+      [{ expected_seed_count: 185 }, { seed_count: [true, 185], seed_count_estimated: [false, null], seed_weight_g: [false, null] }],
+      [{ expected_seed_count_estimated: false }, { seed_count: [false, null], seed_count_estimated: [true, false], seed_weight_g: [false, null] }],
+      [{ expected_seed_weight_g: 12.35 }, { seed_count: [false, null], seed_count_estimated: [false, null], seed_weight_g: [true, 12.35] }],
+      // null is a value: "I loaded no count" must be compared, not skipped.
+      [{ expected_seed_count: null, expected_seed_count_estimated: null }, { seed_count: [true, null], seed_count_estimated: [true, null], seed_weight_g: [false, null] }],
+      // A counted 0 and a `false` basis are loaded values too.
+      [{ expected_seed_count: 0, expected_seed_count_estimated: false, expected_seed_weight_g: 0 }, { seed_count: [true, 0], seed_count_estimated: [true, false], seed_weight_g: [true, 0] }],
+    ];
+    for (const [expected, bound] of cases) {
+      resetStubs();
+      stubState.verifyTokenResult = { sub: USER };
+      lot(STORED);
+      // eslint-disable-next-line no-await-in-loop
+      const { status } = parse(await handler(measure({ seed_weight_g: 13, ...expected })));
+      expect(status, JSON.stringify(expected)).toBe(200);
+      // One statement: the compare is IN the write, not a read before it.
+      expect(stubState.sqlCalls, JSON.stringify(expected)).toHaveLength(1);
+      const call = updateCall();
+      expect(flat(call.text)).toBe(COMPARED);
+      expect(flagAndValue(call, 'seed_count', 'int'), JSON.stringify(expected)).toEqual(bound.seed_count);
+      expect(flagAndValue(call, 'seed_count_estimated', 'boolean'), JSON.stringify(expected)).toEqual(bound.seed_count_estimated);
+      expect(flagAndValue(call, 'seed_weight_g', 'numeric'), JSON.stringify(expected)).toEqual(bound.seed_weight_g);
+      // The SET list is bound exactly as the plain statement binds it.
+      expect(boundAfter(call, /seed_weight_g = CASE\s*WHEN /)).toBe(true);
+      expect(boundAfter(call, /seed_weight_g = CASE\s*WHEN \?\s*THEN /)).toBe(13);
+      expect(boundAfter(call, /SET seed_count = CASE\s*WHEN /)).toBe(false);
+    }
+  });
+
+  it('a 200 through the compare keeps its five keys', async () => {
+    lot(STORED);
+    const { status, body } = parse(await handler(measure({ seed_weight_g: 13, expected_seed_weight_g: 12.35 })));
+    expect(status).toBe(200);
+    expect(Object.keys(body).sort()).toEqual(['id', 'seed_count', 'seed_count_estimated', 'seed_parent_plant_count', 'seed_weight_g']);
+  });
+
+  it('a wrong type for an expected key is a 400 in the route\'s own form, and nothing is written', async () => {
+    const bad = [
+      [{ expected_seed_count: '185' }, 'expected_seed_count must be a whole number of seeds, or null'],
+      [{ expected_seed_count: 1.5 }, 'expected_seed_count must be a whole number of seeds, or null'],
+      [{ expected_seed_count_estimated: 'false' }, 'expected_seed_count_estimated must be true, false or null'],
+      // A numeric STRING — what the driver hands a client for this very column — is refused, not coerced.
+      [{ expected_seed_weight_g: '12.350' }, 'expected_seed_weight_g must be a number of grams, or null'],
+    ];
+    for (const [expected, message] of bad) {
+      resetStubs();
+      stubState.verifyTokenResult = { sub: USER };
+      lot(STORED);
+      // eslint-disable-next-line no-await-in-loop
+      const { status, body } = parse(await handler(measure({ seed_weight_g: 13, ...expected })));
+      expect(status, JSON.stringify(expected)).toBe(400);
+      expect(body).toEqual({ error: message });
+      expect(updateIssued(), JSON.stringify(expected)).toBe(false);
+    }
+  });
+
+  it('the existing type guards and the pairing guard still answer FIRST, unchanged', async () => {
+    lot({ ...STORED, seed_count: null, seed_count_estimated: null });
+    // A count with no basis on an unmeasured lot: the pairing sentence, whatever the caller expected.
+    const pairing = parse(await handler(measure({ seed_count: 200, expected_seed_count: null })));
+    expect(pairing.status).toBe(400);
+    expect(pairing.body.error).toMatch(/has to say where the number came from/);
+    expect(updateIssued()).toBe(false);
+    // A badly typed value beats a badly typed expectation, and costs no SQL at all.
+    resetStubs();
+    stubState.verifyTokenResult = { sub: USER };
+    const typed = parse(await handler(measure({ seed_count: '200', expected_seed_count: '185' })));
+    expect(typed.body.error).toBe('seed_count must be a whole number of seeds, or null');
+    expect(stubState.sqlCalls).toHaveLength(0);
+  });
+
+  it('zero rows WITH an expected key: ONE follow-up read by the same ownership test — a row is 409 with the four measure keys', async () => {
+    lot(STORED, { matches: false });
+    const { status, body } = parse(await handler(measure({
+      seed_count: 190, seed_count_estimated: false, expected_seed_count: 185, expected_seed_count_estimated: false,
+    })));
+    expect(status).toBe(409);
+    // What the lot holds now, so the page can show it without a second request. Nothing else.
+    expect(body).toEqual({ error: LOT_CHANGED, code: 'lot_changed', ...STORED });
+    expect(stubState.sqlCalls.map((c) => (isPairingRead(c.text) ? 'pairing' : isFollowUp(c.text) ? 'follow-up' : flat(c.text) === COMPARED ? 'compared' : 'OTHER')))
+      .toEqual(['pairing', 'compared', 'follow-up']);
+    const read = stubState.sqlCalls.find((c) => isFollowUp(c.text));
+    expect(flat(read.text)).toBe(
+      "SELECT seed_count, seed_count_estimated, seed_weight_g, seed_parent_plant_count FROM public.inventory_items "
+      + "WHERE id = ? AND created_by = ANY(?) AND deleted_at IS NULL AND category = 'seeds'",
+    );
+    expect(read.values).toEqual([ITEM, [USER]]);
+  });
+
+  it('…and no row is 404, as it always was', async () => {
+    lot(STORED, { exists: false });
+    const { status, body } = parse(await handler(measure({ seed_weight_g: 13, expected_seed_weight_g: 12.35 })));
+    expect(status).toBe(404);
+    expect(body).toEqual({ error: 'Not found' });
+    expect(stubState.sqlCalls.map((c) => (isFollowUp(c.text) ? 'follow-up' : flat(c.text) === COMPARED ? 'compared' : 'OTHER'))).toEqual(['compared', 'follow-up']);
+  });
+
+  it('the keys are read in seed-lot-additions.js by `in`, never by hasOwnProperty here — the Saved seeds strip list keys on that idiom', () => {
+    const arm = SRC.slice(SRC.indexOf('const seedMeasureMatch = rawPath.match'), SRC.indexOf('const idMatch = rawPath.match'));
+    expect(arm).toContain('const expectedMeasure = readExpectedMeasure(body);');
+    // Still exactly the four presence reads the route has always had.
+    expect([...arm.matchAll(/hasOwnProperty\.call\(body, '([a-z_]+)'\)/g)].map((m) => m[1]))
+      .toEqual(['seed_count', 'seed_weight_g', 'seed_count_estimated', 'seed_parent_plant_count']);
+    expect(SRC).not.toMatch(/hasOwnProperty\.call\(body, 'expected_/);
+    // After the pairing guard and before either UPDATE.
+    expect(arm.indexOf('readExpectedMeasure(body)')).toBeGreaterThan(arm.indexOf("has to say where the number came from"));
+    expect(arm.indexOf('readExpectedMeasure(body)')).toBeLessThan(arm.indexOf('UPDATE public.inventory_items'));
+  });
+});

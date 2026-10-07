@@ -44,7 +44,12 @@ const HELPER_SRC = decomment(readFileSync(resolve(__dirname, 'seed-lot-parents.j
 // a module whose p.name would 500 with every assertion in this file green.
 const RULES_SRC = decomment(readFileSync(resolve(__dirname, 'seed-lot-rules.js'), 'utf8'));
 const FILING_SRC = decomment(readFileSync(resolve(__dirname, 'seed-lot-filing.js'), 'utf8'));
-const SRC = `${decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'))}\n${HELPER_SRC}\n${RULES_SRC}\n${FILING_SRC}`;
+// V5-SEEDLOTADDITION-001 (release 3) — FIVE. seed-lot-additions.js reads the planting a picking came
+// off (is it live and the household's, what is its variety, was it grown from this lot, does it
+// stand for one plant), and each open lot's parent plantings for their varieties. Swept with the
+// other four, and the census test below pins that it is.
+const ADD_SRC = decomment(readFileSync(resolve(__dirname, 'seed-lot-additions.js'), 'utf8'));
+const SRC = `${decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'))}\n${HELPER_SRC}\n${RULES_SRC}\n${FILING_SRC}\n${ADD_SRC}`;
 
 // EVERY sql`` template that touches garden_node — `matchAll`, not the non-global `.match` this
 // file shipped with. That returned only the FIRST such template, which was fine while there was
@@ -103,6 +108,12 @@ const AUDIT_COLUMNS = {
     // the prod audit has been asserting it on every promote. The same read also names
     // display_name, archived_at and deleted_at, already listed above.
     'cultivar_id',
+    // V5-SEEDLOTADDITION-001 (release 3) — applyAddition reads it to know whether the planting a
+    // picking came off stands for exactly ONE plant (the lot's plant count goes up by one only then).
+    // NOT re-read from information_schema by this lane for prod: lambda/events already contracts
+    // garden_node.quantity (events/garden-node-columns.test.js), so the prod audit asserts it on every
+    // promote. Read on the integration fork of staging 2026-10-07: present, numeric.
+    'quantity',
   ],
   // V5-SEEDSTAB-001 slice 3 — the first container read in this directory: sown_from LEFT JOINs it for
   // the plants Lambda's ownership arm, container-deleted gate and archived-container clause. Declared
@@ -175,13 +186,45 @@ describe('BUG-SEEDDETAIL500-001 — garden_node column contract', () => {
       const scoped = (q.match(/\bp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? []).length;
       expect(scoped, 'a planting read without the household').toBe(reads);
     }
-    // The census, so a FIFTH module cannot join the directory unswept: every non-test module that
-    // names garden_node in SQL is one of the four concatenated above.
+    // The census, so a SIXTH module cannot join the directory unswept: every non-test module that
+    // names garden_node in SQL is one of the five concatenated above (the fifth, seed-lot-additions.js,
+    // joined with release 3 and has its own test just below).
     const naming = readdirSync(__dirname)
       .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
       .filter((f) => /sql`[^`]*garden_node[^`]*`/.test(decomment(readFileSync(resolve(__dirname, f), 'utf8'))))
       .sort();
-    expect(naming).toEqual(['index.js', 'seed-lot-filing.js', 'seed-lot-parents.js', 'seed-lot-rules.js']);
+    expect(naming).toEqual(['index.js', 'seed-lot-additions.js', 'seed-lot-filing.js', 'seed-lot-parents.js', 'seed-lot-rules.js']);
+  });
+
+  it('sweeps seed-lot-additions.js too — its three garden_node statements, and what each reads', () => {
+    // Release 3. Without this the sweep could go back to four modules and every assertion in this
+    // file would stay green over a p.name in the judge or the open-lots read.
+    const add = [...ADD_SRC.matchAll(/sql`[^`]*garden_node[^`]*`/g)].map((m) => m[0]);
+    expect(add).toHaveLength(3);
+    for (const q of add) expect(GARDEN_NODE_SQLS).toContain(q);
+    const columnsOf = (q) => [...new Set([...q.matchAll(/\bp\.([a-z_][a-z0-9_]*)\b/gi)].map((m) => m[1]))].sort();
+    const judge = add.find((q) => /AS verdict/.test(q));
+    const apply = add.find((q) => /WITH pre AS/.test(q));
+    const open = add.find((q) => /LEFT JOIN LATERAL/.test(q) && /seed_lot_stage_log/.test(q));
+    for (const q of [judge, apply, open]) expect(q).toBeTruthy();
+    // The judge: is the planting the household's and live, its variety, and the lot it was grown from.
+    expect(columnsOf(judge)).toEqual(['created_by', 'cultivar_id', 'deleted_at', 'id', 'source_inventory_item_id']);
+    // applyAddition: the ONE read of quantity in this directory.
+    expect(columnsOf(apply)).toEqual(['created_by', 'id', 'quantity']);
+    expect(apply).toMatch(/\(SELECT p\.quantity = 1\s+FROM public\.garden_node p\s+WHERE p\.id = \$\{plantId\}::uuid\s+AND p\.created_by = ANY\(\$\{householdIds\}\)\) AS one_plant/);
+    expect(GARDEN_NODE_SQLS.filter((q) => /\bp\.quantity\b/.test(q))).toEqual([apply]);
+    // The open-lots read: the planting asked about (live, the household's) and each lot's parents.
+    expect(columnsOf(open)).toEqual(['created_by', 'cultivar_id', 'deleted_at', 'id', 'source_inventory_item_id']);
+    // Every planting read in the module is through the household, as the rules' and the filing's are.
+    for (const q of add) {
+      const reads = (q.match(/(?:FROM|JOIN) public\.garden_node p\b/g) ?? []).length;
+      const scoped = (q.match(/\bp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? []).length;
+      expect(reads).toBeGreaterThan(0);
+      expect(scoped, 'a planting read without the household').toBe(reads);
+    }
+    // No lock is taken through the view here: the share lock is seed-lot-parents.js lockPlantings,
+    // imported and placed by addSeedToLot.
+    expect(add.filter((q) => /\bFOR (UPDATE|SHARE|KEY SHARE|NO KEY UPDATE)\b/.test(q))).toHaveLength(0);
   });
 
   it('selects display_name (aliased to name), never a bare p.name', () => {
