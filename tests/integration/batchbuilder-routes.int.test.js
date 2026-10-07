@@ -7,6 +7,8 @@
 //   GET  /api/kitchen-batches/line-search the whole name search (V4 §2.5a): pantry items, crops
 //   POST /:id/inputs                      a 'pantry' line by pantry_item_id
 //   POST /:id/close                       the close sheet's When ("A make with nothing kept")
+//   POST /:id/close                       the close sheet's jar picker: what Undo that put-up, Remove this batch
+//                                         and unlink then do with a jar linked by batch_id alone
 // DAVE and JEN share a household; STRANGER is outside it and gets 400/404 on every arm naming DAVE's rows.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql } from './_harness.js'
@@ -320,5 +322,67 @@ describe('POST /:id/close with a When — a make with nothing kept, logged after
     expect(f2).toMatchObject({ entered_at: null, entered_precision: 'unknown' })
     const b3 = (await seedBatch(DAVE)).id
     expect((await call(STRANGER, 'POST', `/api/kitchen-batches/${b3}/close`, { outcome: 'consumed' })).status).toBe(404)
+  })
+})
+
+// The close sheet's jar picker links a jar that was put up BEFORE the batch: batch_id is set, put_up_stage_id
+// stays NULL. A sitting's own jars carry both. Undo that put-up and Remove this batch each read "this batch's
+// jars", and the one column is all that tells the two kinds apart.
+const linkOf = async (id) => (await directSql`
+  SELECT batch_id, put_up_stage_id, deleted_at, package_count, remaining_count FROM preservation_log WHERE id = ${id}`)[0]
+
+describe('POST /:id/close with a picked jar — a jar the sheet linked is not a sitting\'s jar', () => {
+  it('Undo that put-up removes the sitting\'s own jars and leaves the picked jar live, linked, its counts unchanged', async () => {
+    const b = (await seedBatch(DAVE, { label: 'bb put up, then closed with an older jar' })).id
+    const older = await seedJar(DAVE, { count: 3 })
+    // The sitting leaves the batch open (finish: false), so the sheet can still close it.
+    const put = await call(DAVE, 'POST', `/api/kitchen-batches/${b}/put-up`, {
+      idempotency_key: key(), when: { date: new Date().toISOString().slice(0, 10), precision: 'day' },
+      method: 'hot_sauce', finish: false, rows: [{ count: 2 }],
+    })
+    expect(put.status, JSON.stringify(put.body)).toBe(201)
+    const stage = put.body.stage.id
+    const own = put.body.jars.map((j) => j.id)
+    expect(own.length).toBeGreaterThan(0)
+    const close = await call(JEN, 'POST', `/api/kitchen-batches/${b}/close`, { outcome: 'put_up', output_preservation_log_ids: [older] })
+    expect(close.status, JSON.stringify(close.body)).toBe(200)
+    expect(close.body.linked_output_count).toBe(1)
+    expect(await linkOf(older), 'linked by batch_id alone (non-vacuous)').toMatchObject({ batch_id: b, put_up_stage_id: null, deleted_at: null })
+
+    expect((await call(STRANGER, 'POST', `/api/kitchen-batches/${b}/put-up/${stage}/undo`, {})).status).toBe(404)
+    const u = await call(DAVE, 'POST', `/api/kitchen-batches/${b}/put-up/${stage}/undo`, {})
+    expect(u.status, JSON.stringify(u.body)).toBe(200)
+    // The sheet closed this batch, not the sitting, so the Undo does not reopen it.
+    expect(u.body).toMatchObject({ ok: true, reopened: false })
+    for (const id of own) expect((await linkOf(id)).deleted_at, 'the sitting\'s own jar is soft-deleted').not.toBeNull()
+    expect(await linkOf(older), 'MUTATION ARM: sitting_jars without put_up_stage_id removes the picked jar too').toEqual({
+      batch_id: b, put_up_stage_id: null, deleted_at: null, package_count: 3, remaining_count: null,
+    })
+  })
+
+  it('Remove this batch is refused while the picked jar is linked; unlinking it opens the door and the jar stays live', async () => {
+    const b = (await seedBatch(DAVE, { label: 'bb closed with an older jar, nothing put up' })).id
+    const older = await seedJar(DAVE, { count: 3 })
+    const close = await call(DAVE, 'POST', `/api/kitchen-batches/${b}/close`, { outcome: 'put_up', output_preservation_log_ids: [older] })
+    expect(close.status, JSON.stringify(close.body)).toBe(200)
+    expect(close.body.linked_output_count).toBe(1)
+
+    const refused = await call(DAVE, 'DELETE', `/api/kitchen-batches/${b}`)
+    expect(refused.status).toBe(409)
+    expect(refused.body.code).toBe('has_jars')
+    expect((await readBatchRow(b)).deleted_at).toBeNull()
+    expect(await linkOf(older)).toMatchObject({ batch_id: b, deleted_at: null, package_count: 3, remaining_count: null })
+
+    expect((await call(STRANGER, 'DELETE', `/api/kitchen-batches/${b}/outputs/${older}`)).status).toBe(404)
+    expect((await linkOf(older)).batch_id).toBe(b)
+    const unlink = await call(JEN, 'DELETE', `/api/kitchen-batches/${b}/outputs/${older}`)
+    expect(unlink.status, JSON.stringify(unlink.body)).toBe(200)
+    expect(await linkOf(older)).toMatchObject({ batch_id: null, deleted_at: null })
+
+    const gone = await call(DAVE, 'DELETE', `/api/kitchen-batches/${b}`)
+    expect(gone.status, JSON.stringify(gone.body)).toBe(200)
+    // Soft: the row is still there.
+    expect((await readBatchRow(b)).deleted_at).not.toBeNull()
+    expect(await linkOf(older)).toMatchObject({ batch_id: null, deleted_at: null, package_count: 3, remaining_count: null })
   })
 })
