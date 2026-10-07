@@ -521,5 +521,14 @@ export const SOW_DATED_LINES_FROZEN = true
 // beside. ORDER: undo release 2b (flag off) before any undo of release 2a. A 2a undo under a flag-on client
 // leaves the sheet and the lot page calling routes that are gone.
 // Each of the 2b surfaces carries a flag-off test (the constant mocked false) pinning today's request body or
-// rendered card, and seedParents.test.js pins lotNotice's flag-off answers.
+// rendered card, and seedParents.flagOff.test.js pins lotNotice's flag-off answers.
+// THE UNDO BUILD IS REHEARSED, NOT ASSUMED. `npm run test:flag-off:seed` runs the seed test files against this
+// module served with the line below reading false (tests/harness/seedFlagTransform.mjs: in memory, the same
+// text scripts/forward-undo.py writes) and must end with 0 failures; run it before relying on the undo, and
+// after adding any seed test. The flip edits no test: every flag-on test file holds the flag on with its own
+// mock, every flag-off one mocks it off, and featureFlags.test.js pins only that the line is a literal declared
+// once. A new flag-on test file must hold the flag on the same way, or the rehearsal reds. The four seed layout
+// gates (save-seed-sheet, seed-detail, seeds-saved, seeds-page) measure the flag-on screens through
+// tests/harness/vite.harness.seedon.mjs, which serves the flag on whichever way it ships, so they stay green
+// on the undo build as well.
 export const SEED_MULTI_PARENT = true

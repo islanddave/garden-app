@@ -14,6 +14,13 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 
 const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
 
+// SEED_MULTI_PARENT is held ON here whichever way the literal ships. These are the flag-on cases, and the
+// release's forward undo is a build with the literal false (scripts/forward-undo.py), which must not
+// redden them: `npm run test:flag-off:seed` is that rehearsal. featureFlags.test.js pins the literal.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  get SEED_MULTI_PARENT() { return true },
+}))
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchSpy }),
 }))

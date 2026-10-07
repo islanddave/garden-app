@@ -7,9 +7,17 @@
 // route (seedMix.fixture.js says so), so the rows below are this test's own, in the Lambda's projection.
 // Flag-off twin: SavedSeeds.multiParent.flagOff.test.jsx. No jest-dom (L-182).
 import React from 'react'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+
+// SEED_MULTI_PARENT is held ON here whichever way the literal ships. These are the flag-on cases, and the
+// release's forward undo is a build with the literal false (scripts/forward-undo.py), which must not
+// redden them: `npm run test:flag-off:seed` is that rehearsal. featureFlags.test.js pins the literal.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  get SEED_MULTI_PARENT() { return true },
+}))
 
 import SeedLotsFromPlanting, { mixedWithLine } from '../components/planting/SeedLotsFromPlanting.jsx'
 

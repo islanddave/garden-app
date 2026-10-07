@@ -43,15 +43,19 @@ describe('featureFlags', () => {
     expect(typeof PLANTING_REQUIRED_ENABLED).toBe('boolean')
   })
 
-  it('SEED_MULTI_PARENT is a literal true — release 2b ships ON, declared exactly once', async () => {
-    // V5-SEEDMULTIPARENT-001 release 2b. Pins the SHIPPED value so a flip is deliberate: turning it off is
-    // the release's forward undo (the runbook is on the constant), and this is the one assertion such a
-    // build edits. The model's own tests hold the flag on or mock it off, so they do not move.
-    expect(SEED_MULTI_PARENT).toBe(true)
+  it('SEED_MULTI_PARENT is a literal boolean, declared exactly once', async () => {
+    // V5-SEEDMULTIPARENT-001 release 2b. The VALUE is not pinned here: turning it off is the release's
+    // forward undo (the runbook is on the constant), and scripts/forward-undo.py flips the literal and
+    // edits no test, so a build with it false has to be green as it stands. Every flag-on test file holds
+    // the flag on and every flag-off one mocks it off; `npm run test:flag-off:seed` rehearses that build.
+    expect(typeof SEED_MULTI_PARENT).toBe('boolean')
     // forward-undo.py flips `export const <FLAG> = true` by regex, so the line must be a literal and unique.
+    // Read from disk, so it is the tree's own line whatever a rehearsal is serving in memory.
     const { readFileSync } = await import('node:fs')
     const { resolve } = await import('node:path')
     const src = readFileSync(resolve(process.cwd(), 'src/lib/featureFlags.js'), 'utf8')
-    expect(src.match(/^export const SEED_MULTI_PARENT\s*=\s*(true|false)\b/gm)).toEqual(['export const SEED_MULTI_PARENT = true'])
+    const declared = src.match(/^export const SEED_MULTI_PARENT\s*=\s*(true|false)\b/gm)
+    expect(declared).toHaveLength(1)
+    expect(['export const SEED_MULTI_PARENT = true', 'export const SEED_MULTI_PARENT = false']).toContain(declared[0])
   })
 })

@@ -35,6 +35,7 @@
     "gate:page-scroll:flag-off": "node scripts/layout-gate/page-scroll.mjs --flag-off --outdir artifacts/layout-gate/flag-off",
     "gate:seeds-scroll:flag-off": "GATE_HARNESS_CONFIG=tests/harness/vite.harness.flagoff.mjs node scripts/layout-gate/seeds-scroll.mjs --outdir artifacts/layout-gate/flag-off",
     "test:flag-off": "vitest run --config vitest.flagoff.config.ts",
+    "test:flag-off:seed": "vitest run --config vitest.seedflagoff.config.ts --dir src/__tests__ seed InventoryDetail SowSheet VarietyPicker EventNew PlantingSelect PlantingDetail breedingNotice featureFlags",
     "gate:putup": "node scripts/layout-gate/putup-close-clearance.mjs",
     "gate:putup:probe-nothing": "node scripts/layout-gate/putup-close-clearance.mjs --probe-nothing",
     "gate:putup-ferment": "node scripts/layout-gate/putup-ferment-walk.mjs",

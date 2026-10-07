@@ -27,6 +27,13 @@ const { fetchSpy, getTokenSpy, navigateSpy, searchParamsRef, identity } = vi.hoi
   identity: { current: { user: { id: 'sub-A' }, profile: null, loading: false } },
 }))
 
+// SEED_MULTI_PARENT is held ON here whichever way the literal ships. These are the flag-on cases, and the
+// release's forward undo is a build with the literal false (scripts/forward-undo.py), which must not
+// redden them: `npm run test:flag-off:seed` is that rehearsal. featureFlags.test.js pins the literal.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  get SEED_MULTI_PARENT() { return true },
+}))
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
   useNavigate: () => navigateSpy,
