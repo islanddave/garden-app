@@ -34,14 +34,19 @@ they were produced by the same definitions.
 
 The pure functions are tested in `scripts/test_ci_telemetry.py`.
 
-## `preflight-dual.py` — is the name-based promote check safe to remove yet?
+## `preflight-dual.py` — was the name-based promote check safe to remove?
 
-promote-gate's preflight decides "CI green on dev_sha" twice and prints each pair as a `preflight-dual` notice.
-`python3 scripts/ci-telemetry/preflight-dual.py` reads those notices off every promote-gate run attempt since the
-dual preflight landed (2026-10-03) and answers the one question push 2 of the promote-path plan waits on. Exit 0 =
-READY (at least 5 promotes on record, no line where the name-based check refused and the run-based check passed,
-every record readable); 1 = NOT READY, with the reason; 2 = GitHub unreadable. Read-only. The rules are in its
-docstring; `scripts/test_preflight_dual.py` holds them, and takes the notice text from the real step.
+From 2026-10-03 until push 2 of the promote-path plan, promote-gate's preflight decided "CI green on dev_sha" twice
+and printed each pair as a `preflight-dual` notice. `python3 scripts/ci-telemetry/preflight-dual.py` reads those
+notices off every promote-gate run attempt since the dual preflight landed and answers the one question push 2
+waited on. Exit 0 = READY (at least 5 promotes on record, no line where the name-based check refused and the
+run-based check passed, every record readable); 1 = NOT READY, with the reason; 2 = GitHub unreadable. Read-only.
+
+Push 2 removed the name-based check; the step now prints one `preflight-run-based` notice per check. From the first
+promote-gate attempt that ran that step (told by the step's name) the script exits 3 and its last line starts
+`CLOSED: name-based check removed at run ...`: neither READY nor NOT READY, with the dual record before it given as
+history and each later attempt's run-based lines listed. The rules are in its docstring;
+`scripts/test_preflight_dual.py` holds them, and takes the step name and the notice text from the real step.
 
 ## The shadow's acceptance instruments
 

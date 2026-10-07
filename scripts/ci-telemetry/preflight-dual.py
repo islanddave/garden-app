@@ -25,6 +25,14 @@ name-based check, after which the run-based one stands alone. This script is the
   includes a runs listing that serves fewer rows than it counts, or that differs between two reads. The verdict
   line says what was read (window, runs, attempts, newest run), so a READY cannot be had by moving --since unseen.
 
+  CLOSED (exit 3) once push 2 has run: any attempt in the window whose Preflight step is the run-based-only one
+  (its name no longer says name-based; it prints `preflight-run-based` lines, one per check, with no name-based
+  verdict). From the first such attempt there is no dual record to judge, so the script says neither READY nor NOT
+  READY: it names that attempt as the point the name-based check was removed, lists every later attempt's
+  run-based lines as they stand, and reports the dual record before it as history. It is told by the step's NAME,
+  read from the attempt's jobs, never by the absence of lines: an attempt of the dual step that left no lines is
+  still an unreadable record.
+
 Read-only: `gh api -X GET` of the workflow's runs, each attempt's jobs, and the promote job's annotations.
     python3 scripts/ci-telemetry/preflight-dual.py [--since 2026-10-03T05:00:00Z] [--need 5] [--json]
 """
@@ -37,9 +45,12 @@ import urllib.parse
 
 REPO = "islanddave/garden-app"
 LANDED = "2026-10-03T05:00:00Z"  # the dual preflight reached dev as 8b13e438 at 05:03Z
-DUAL_STEP = "Preflight — dev unmoved + CI green on dev_sha"
+PREFLIGHT_STEP = "Preflight — dev unmoved + CI green on dev_sha"  # both copies' step names start with this
+DUAL_MARK = "name-based"  # ...and only the dual copy's goes on to say this
 LINE = re.compile(r"^\"?preflight-dual (build-and-test|integration-tests) on ([0-9a-f]{40}): name-based=(\S+) "
                   r"run-based-exit=(\d+) agree=(yes|no)(?: require_integration=(\S+))? \| (.*?)\"?$")
+RUN_LINE = re.compile(r"^\"?preflight-run-based (build-and-test|integration-tests) on ([0-9a-f]{40}): "
+                      r"run-based-exit=(\d+)(?: require_integration=(\S+))? \| (.*?)\"?$")
 EARLY_REFUSALS = ("dev moved since dispatch", "could not read dev's HEAD")
 PAGE = 100
 
@@ -103,7 +114,7 @@ def classify(name_based, rc):
 
 def read_attempt(fetch, repo, run, attempt, earlier=None):
     """One row: what this attempt's preflight recorded. kind is one of old-copy, no-preflight, carried-over,
-    refused-early, RECORD-MISSING, recorded. `earlier` is the previous attempt's row."""
+    refused-early, RECORD-MISSING, recorded, run-based-only. `earlier` is the previous attempt's row."""
     row = {"run": run["id"], "attempt": attempt, "commit": run.get("head_sha") or "", "sha": (run.get("head_sha") or "")[:8],
            "created": run.get("created_at"), "lines": [], "promote": None, "ran": None}
     doc = fetch(f"repos/{repo}/actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page={PAGE}")
@@ -117,17 +128,31 @@ def read_attempt(fetch, repo, run, attempt, earlier=None):
     row["ran"] = [promote.get("started_at"), promote.get("completed_at")]
     if earlier and earlier.get("ran") == row["ran"] and all(row["ran"]):
         return {**row, "kind": "carried-over", "why": f"the promote job of attempt {earlier['attempt']}, not re-run"}
-    step = next((s for s in promote.get("steps") or [] if str(s.get("name", "")).startswith(DUAL_STEP)), None)
+    step = next((s for s in promote.get("steps") or [] if str(s.get("name", "")).startswith(PREFLIGHT_STEP)), None)
     if step is None:
         old = any(str(s.get("name", "")).startswith("Preflight") for s in promote.get("steps") or [])
         return {**row, "kind": "old-copy" if old else "no-preflight",
                 "why": "ran a workflow copy without the dual preflight" if old else "the promote job has no preflight step"}
+    single = DUAL_MARK not in str(step.get("name", ""))
     if step.get("conclusion") in ("skipped", None):
+        if single:  # the step's name is the evidence of the copy, whether or not it ran
+            return {**row, "kind": "run-based-only", "why": "this workflow copy has no name-based check (the "
+                                                            f"preflight step is {step.get('conclusion')})"}
         return {**row, "kind": "no-preflight", "why": f"the preflight step is {step.get('conclusion')}"}
     notes = fetch(f"repos/{repo}/check-runs/{promote['id']}/annotations?per_page={PAGE}")
     if not isinstance(notes, list):
         raise Unreadable(f"run {run['id']} attempt {attempt}: the annotations reply is not a list")
     messages = [str(n.get("message", "")) for n in notes if isinstance(n, dict)]
+    if single:
+        for message in messages:
+            m = RUN_LINE.match(message)
+            if m:
+                check, sha, rc, req_int, said = m.groups()
+                row["lines"].append({"check": check, "commit": sha, "name_based": None, "run_based_exit": int(rc),
+                                     "require_integration": req_int, "said": said[:200],
+                                     "class": "run-based-pass" if int(rc) == 0 else "run-based-refuse"})
+        return {**row, "kind": "run-based-only",
+                "why": f"this workflow copy has no name-based check ({len(row['lines'])} run-based line(s) read)"}
     for message in messages:
         m = LINE.match(message)
         if m:
@@ -170,7 +195,10 @@ def judge(rows, need):
             len(flying), ", ".join(f"run {r['run']}" for r in flying)))
     if len(recorded) < need:
         reasons.append(f"{len(recorded)} of {need} promotes on record")
-    return {"ready": not reasons, "reasons": reasons, "promotes_on_record": len(recorded), "need": need,
+    single = [r for r in rows if r["kind"] == "run-based-only"]
+    closed = {key: single[0][key] for key in ("run", "attempt", "sha", "created")} if single else None
+    return {"ready": None if closed else not reasons, "closed": closed,
+            "reasons": reasons, "promotes_on_record": len(recorded), "need": need,
             "unsafe": len(unsafe), "record_missing": len(missing), "in_flight": len(flying),
             "stricter": sum(1 for r in rows for line in r["lines"] if line["class"] == "run-based-stricter")}
 
@@ -187,6 +215,10 @@ def render(rows, verdict, since):
         head = f"run {r['run']} a{r['attempt']} {r['sha']} {r['created']} promote={r['promote']} {r['kind']}"
         if r["kind"] != "recorded":
             out.append(f"{head}: {r['why']}")
+            for line in r["lines"] if r["kind"] == "run-based-only" else []:
+                extra = f" require_integration={line['require_integration']}" if line["require_integration"] else ""
+                out.append(f"    {line['class']:<19} {line['check']}: run-based-exit={line['run_based_exit']}{extra} "
+                           f"| {line['said']}")
             continue
         out.append(head + (" ON RECORD" if on_record(r) else ""))
         for line in r["lines"]:
@@ -194,9 +226,18 @@ def render(rows, verdict, since):
             out.append(f"    {line['class']:<19} {line['check']}: name-based={line['name_based']} "
                        f"run-based-exit={line['run_based_exit']}{extra} | {line['said']}")
     out.append("")
-    out.append(("READY to remove the name-based check: " if verdict["ready"] else "NOT READY: ") + (
-        f"{verdict['promotes_on_record']} promotes on record, no unsafe line, every record readable"
-        if verdict["ready"] else "; ".join(verdict["reasons"])) + f" [{what_was_read(rows, since)}]")
+    closed = verdict["closed"]
+    if closed:
+        out.append(f"CLOSED: name-based check removed at run {closed['run']} attempt {closed['attempt']} (commit "
+                   f"{closed['sha']}, created {closed['created']}), the first promote-gate attempt read whose "
+                   f"preflight is run-based only. There is no dual record from there on and nothing left to decide "
+                   f"here. The dual record before it, as history: {verdict['promotes_on_record']} promote(s) on "
+                   f"record, {verdict['unsafe']} unsafe line(s), {verdict['record_missing']} unreadable record(s) "
+                   f"[{what_was_read(rows, since)}]")
+    else:
+        out.append(("READY to remove the name-based check: " if verdict["ready"] else "NOT READY: ") + (
+            f"{verdict['promotes_on_record']} promotes on record, no unsafe line, every record readable"
+            if verdict["ready"] else "; ".join(verdict["reasons"])) + f" [{what_was_read(rows, since)}]")
     if verdict["stricter"]:
         out.append(f"({verdict['stricter']} line(s) where the run-based check was the stricter one: listed above, "
                    f"not blocking)")
@@ -206,7 +247,8 @@ def render(rows, verdict, since):
 def main(argv=None, fetch=gh, stdout=None):
     stdout = stdout or sys.stdout
     parser = argparse.ArgumentParser(description="Judge the promote preflight's dual record. Exit 0 ready, 1 not "
-                                                 "ready, 2 unreadable. Read-only.")
+                                                 "ready, 2 unreadable, 3 closed (the name-based "
+                                                 "check is already removed). Read-only.")
     parser.add_argument("--repo", default=REPO)
     parser.add_argument("--since", default=LANDED)
     parser.add_argument("--need", type=int, default=5)
@@ -231,6 +273,8 @@ def main(argv=None, fetch=gh, stdout=None):
     verdict = judge(rows, args.need)
     print(json.dumps({"verdict": verdict, "read": what_was_read(rows, args.since), "attempts": rows})
           if args.json else render(rows, verdict, args.since), file=stdout)
+    if verdict["closed"]:
+        return 3
     return 0 if verdict["ready"] else 1
 
 
