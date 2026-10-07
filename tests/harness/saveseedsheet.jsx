@@ -14,7 +14,8 @@
 // one planting (the `planting` prop, exactly as a planting page opens it) and every further row is
 // added by TAPPING "+ Add seed from another plant" and then the planting in the real PlantingSelect.
 // Nothing is forced through props or state, so "can the second plant be added at all at this width"
-// is answered before "does the result fit". The real featureFlags.js is served (SEED_MULTI_PARENT on).
+// is answered before "does the result fit". The gate serves featureFlags.js with SEED_MULTI_PARENT on,
+// whichever way it ships (tests/harness/vite.harness.seedon.mjs).
 //
 // ?case=one (default) | two | four | mixname | blendfailed
 //   one          the page's own planting, which holds exactly one plant: no plant-count field, the

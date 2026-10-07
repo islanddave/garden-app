@@ -223,7 +223,9 @@ async function startHarness() {
   if (!existsSync(bin)) throw new Error(`vite not installed at ${bin} — run npm ci --legacy-peer-deps`)
   // Spawned through vite's own bin, NOT `npx vite`: npx is a wrapper, so killing it at teardown
   // orphans the real server and hangs any caller that pipes this script's stdout.
-  const proc = spawn(process.execPath, [bin, '--config', 'tests/harness/vite.harness.config.mjs', '--port', String(PORT)], {
+  // vite.harness.seedon.mjs is the base harness config with SEED_MULTI_PARENT served ON whichever way it ships:
+  // this gate's fixtures are the flag-on screens, and the release's undo is a build with the flag off.
+  const proc = spawn(process.execPath, [bin, '--config', 'tests/harness/vite.harness.seedon.mjs', '--port', String(PORT)], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
   })
   let log = ''
