@@ -78,7 +78,10 @@ export function useWhatsNew() {
       } else {
         setUnseen(isUnseen(v, seen))
         // Local was ahead of the server (dismissed here while offline, or before this shipped) —
-        // push it up so the other device stops dotting. Fire-and-forget.
+        // push it up so the other device stops dotting. Fire-and-forget. Only against a real server
+        // answer, as in the first-run branch: after a failed or cache-served read `remote` is null
+        // because it is unknown, not because the server holds nothing, and local may be the stale side.
+        if (!prefs || servedFromCache(prefs)) return
         if (local && (!remote || cmpVersion(local, remote) > 0)) saveWhatsNewSeen({ getToken, version: local })
       }
     })

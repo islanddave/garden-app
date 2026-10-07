@@ -3,7 +3,9 @@
  *
  * useWhatsNew's first-run write, and when it must not happen. With nothing seen locally the hook marks
  * the newest release seen and pushes it to the server, so a first run shows no dot. The server column
- * is COALESCE(new, old) (lambda/critter/index.js, Route 8), so that push REPLACES whatever was stored.
+ * was COALESCE(new, old) (lambda/critter/index.js, Route 8), so that push REPLACED whatever was stored;
+ * it now keeps the larger version, but a deployed Lambda can trail the client, so the hook still holds
+ * back on its own.
  * The hook used to do this whenever the prefs read came back with no value — including when the read
  * had FAILED — which marked a release the person had never opened as seen on every device.
  *
@@ -121,5 +123,72 @@ describe('something seen locally + the prefs read failed', () => {
     const { result } = await mount(null)
     await waitFor(() => expect(result.current.unseen).toBe(true))
     expect(readSeen()).toBe(OLDER)
+  })
+})
+
+// BUG-WHATSNEWSTALELOCALPUSH-001 — the "local is ahead, push it up" write. After a read that did not
+// reach the server `remote` is null because it is UNKNOWN, and this device may be the stale one.
+describe('something seen locally + the prefs read did not reach the server: nothing is pushed', () => {
+  // KILLING MUTATION: delete the `if (!prefs || servedFromCache(prefs)) return` line in the else-branch
+  // (the code as shipped before this fix). RESULT: RED — OLDER is PATCHed over whatever the server holds.
+  it.each([
+    ['came back null', async () => null],
+    ['rejected', async () => { throw new Error('offline') }],
+  ])('the read %s', async (_name, prefs) => {
+    writeSeen(OLDER)
+    const { result } = await mount(prefs)
+    await waitFor(() => expect(result.current.unseen).toBe(true))
+    expect(saveSeenSpy).not.toHaveBeenCalled()
+    expect(readSeen()).toBe(OLDER)
+  })
+
+  // KILLING MUTATION: drop `servedFromCache(prefs)` from that guard. RESULT: RED on both rows — a
+  // cached body is taken for the server's answer and the local value is sent over it.
+  it.each([
+    ['with no value', () => fromCache(noRow())],
+    ['with an older value than this device', () => fromCache({ ...noRow(), whats_new_last_seen: OLDER })],
+  ])('the service worker answered from its cache %s', async (_name, body) => {
+    writeSeen(LATEST)
+    const { result } = await mount(body())
+    expect(saveSeenSpy).not.toHaveBeenCalled()
+    expect(readSeen()).toBe(LATEST)
+    expect(result.current.unseen).toBe(false)
+  })
+})
+
+// The only path by which reading Release Notes on one device reaches the server when the tap's own
+// PATCH did not land (offline, or seen before the column existed).
+describe('something seen locally + the server answered', () => {
+  // KILLING MUTATION: widen the else-branch guard to `return` unconditionally. RESULT: RED on both
+  // rows — a device that is genuinely ahead never tells the server.
+  it.each([
+    ['holds no value', null],
+    ['holds an older release', OLDER],
+  ])('and %s: the local value is pushed, once, and there is no dot', async (_name, remote) => {
+    writeSeen(LATEST)
+    const { result } = await mount({ ...noRow(), whats_new_last_seen: remote })
+    await waitFor(() => expect(saveSeenSpy).toHaveBeenCalledTimes(1))
+    expect(saveSeenSpy).toHaveBeenCalledWith({ getToken, version: LATEST })
+    expect(readSeen()).toBe(LATEST)
+    expect(result.current.unseen).toBe(false)
+  })
+
+  it.each([
+    ['the same release', LATEST, LATEST, false],
+    ['a newer release than this device', OLDER, LATEST, false],
+  ])('and holds %s: nothing is pushed', async (_name, local, remote, unseen) => {
+    writeSeen(local)
+    const { result } = await mount({ ...noRow(), whats_new_last_seen: remote })
+    await waitFor(() => expect(readSeen()).toBe(remote))
+    expect(saveSeenSpy).not.toHaveBeenCalled()
+    expect(result.current.unseen).toBe(unseen)
+  })
+
+  // Dotted integers, not text: '9.10.0' sorts below '9.9.0' as a string.
+  it('and holds 9.9.0 against a local 9.10.0: 9.10.0 is the newer one and is pushed', async () => {
+    writeSeen('9.10.0')
+    await mount({ ...noRow(), whats_new_last_seen: '9.9.0' })
+    await waitFor(() => expect(saveSeenSpy).toHaveBeenCalledWith({ getToken, version: '9.10.0' }))
+    expect(readSeen()).toBe('9.10.0')
   })
 })

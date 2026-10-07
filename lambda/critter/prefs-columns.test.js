@@ -77,6 +77,8 @@ const SQL_WORDS = new Set([
   'insert', 'into', 'values', 'conflict', 'do', 'update', 'set', 'excluded', 'returning',
   // Functions and cast targets these statements use.
   'coalesce', 'now', 'time', 'jsonb', 'boolean', 'text',
+  // The whats_new_last_seen arm of Route 8 (keeps the larger version).
+  'nullif', 'string_to_array', 'bigint',
 ]);
 
 const STATEMENTS = HANDLERS.flatMap((f) => {

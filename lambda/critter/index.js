@@ -404,6 +404,13 @@ export const handler = async (event) => {
       const tsObj = body.today_skipped ?? null
       const ts = tsObj == null ? null : JSON.stringify(tsObj)
       const lma = body.log_many_all_selected ?? null
+      // BUG-WHATSNEWSTALELOCALPUSH-001. whats_new_last_seen is the one column here that only moves
+      // FORWARD: the ON CONFLICT arm keeps the LARGER of incoming and stored, compared as dot-separated
+      // integers (bigint[] — 4.10.0 is above 4.9.0, which a text compare gets backwards), in the one
+      // statement so two devices cannot race it. A device with a stale local value can no longer
+      // lower it. The digit patterns guard the casts; a value on either side that is not plain dotted
+      // digits falls back to last-write, which is what validators.js leaves the door open for. The
+      // patterns spell the dot as [.] because a backslash would be eaten by the template literal.
       const wnls = body.whats_new_last_seen ?? null
       // V5-NAVCUSTOM-001. Both jsonb, so stringified here and cast ::jsonb at every binding site below,
       // exactly as today_skipped: the driver would otherwise send a JS array as a Postgres array
@@ -442,7 +449,18 @@ export const handler = async (event) => {
           garden_helper_rung1_seen = COALESCE(${ghr}, public.user_notification_prefs.garden_helper_rung1_seen),
           today_skipped        = COALESCE(${ts}::jsonb, public.user_notification_prefs.today_skipped),
           log_many_all_selected = COALESCE(${lma}::boolean, public.user_notification_prefs.log_many_all_selected),
-          whats_new_last_seen  = COALESCE(${wnls}::text, public.user_notification_prefs.whats_new_last_seen),
+          whats_new_last_seen  = CASE
+            WHEN NULLIF(${wnls}::text, '') IS NULL THEN public.user_notification_prefs.whats_new_last_seen
+            WHEN NULLIF(public.user_notification_prefs.whats_new_last_seen, '') IS NULL THEN ${wnls}::text
+            WHEN ${wnls}::text ~ '^[0-9]{1,9}([.][0-9]{1,9})*$'
+             AND public.user_notification_prefs.whats_new_last_seen ~ '^[0-9]{1,9}([.][0-9]{1,9})*$'
+              THEN CASE
+                WHEN string_to_array(${wnls}::text, '.')::bigint[] >= string_to_array(public.user_notification_prefs.whats_new_last_seen, '.')::bigint[]
+                  THEN ${wnls}::text
+                ELSE public.user_notification_prefs.whats_new_last_seen
+              END
+            ELSE ${wnls}::text
+          END,
           more_pins            = COALESCE(${mp}::jsonb, public.user_notification_prefs.more_pins),
           bar_layout           = COALESCE(${bl}::jsonb, public.user_notification_prefs.bar_layout),
           updated_at         = now()
