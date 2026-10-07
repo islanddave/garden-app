@@ -385,3 +385,96 @@ describe.skipIf(!HAS_TABLE)('every other case is exactly the event-keyed behavio
     expect((await grants(g.user)).map((x) => x.source_id)).not.toContain(g.lot)
   })
 })
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+// Release 3 (V5-SEEDLOTADDITION-001) — a later picking added to a lot that already exists
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+// The add-to-a-lot sheet POSTs the picking (POST /api/inventory-items/:id/seed-additions), and only
+// when that answers with an addition id does it post ONE seed_saved event for the planting, carrying
+// the lot id. By then the planting is a live parent of the lot — the POST made it one — so this
+// release changes nothing in lambda/events: the event is lot-keyed by the rule the cases above prove.
+// What is new is the ORDER (parent first, event second) and the metadata the event carries.
+const HAS_ADDITIONS = (await directSql`SELECT to_regclass('public.seed_lot_addition') IS NOT NULL AS ok`)[0].ok
+
+describe.skipIf(!HAS_TABLE || !HAS_ADDITIONS)('release 3 — a picking added to an existing lot, then its event', () => {
+  const addTo = (g, plantId, expected, extra = {}) => {
+    setTestUserId(g.user)
+    return callHandler(invHandler, {
+      method: 'POST', path: `/api/inventory-items/${g.lot}/seed-additions`,
+      body: { addition_key: randomUUID(), plant_id: plantId, expected_source_plant_ids: expected, picked_on: '2026-09-01', ...extra },
+    })
+  }
+  // The event as the sheet sends it: the lot id the reward check reads, and what was added.
+  const addedEvent = (g, plantId, addition, amounts = {}) => log(g, plantId, {
+    metadata: { seed_lot_id: g.lot, addition: true, seed_addition_id: addition.id, ...amounts },
+  })
+
+  it('a NEW parent by POST, then its event: flat 0, no grant keyed on the event, no critter roll — the lot was made by the flow that posts its own seed_saved event, and THAT one was paid', async () => {
+    const g = await jar('add', { parents: 1 })
+    // THE LOT'S OWN EVENT, and the reason for the zeros below. Save seed posts a seed_saved event for
+    // each planting when it makes a lot; this is that event. (A lot with no such event is the next case.)
+    const made = await saved(g, g.plants[0])
+    expect(flat(made)).toBe(10)
+    expect(rolledFor(made.body.id)).toBe(1)
+
+    const later = await planting(g.user, g.proj, 'add-later')
+    const added = await addTo(g, later, [g.plants[0]], { add_seed_count: 30, add_estimated: true, add_seed_weight_g: 1.5 })
+    expect(added.status, JSON.stringify(added.body)).toBe(200)
+    expect(added.body.addition).toMatchObject({ replayed: false, plant_was_added: true })
+
+    const r = await addedEvent(g, later, added.body.addition, { added_seed_count: 30, added_estimated: true, added_seed_weight_g: 1.5 })
+    expect(flat(r)).toBe(0)
+    // One grant, the lot's, from before. Nothing keyed on this event.
+    const rows = await grants(g.user)
+    expect(rows).toEqual([{ source_id: g.lot, amount: 10 }])
+    expect(rows.filter((x) => x.source_id === r.body.id)).toEqual([])
+    expect(rolledFor(r.body.id)).toBe(0)
+    expect((await directSql`SELECT count(*)::int AS n FROM critter_state WHERE source_event_id = ${r.body.id}`)[0].n).toBe(0)
+    // The event is on the timeline with exactly the keys the sheet sent.
+    const [row] = await directSql`SELECT plant_id, event_type, metadata FROM event_log WHERE id = ${r.body.id}`
+    expect(row).toMatchObject({ plant_id: later, event_type: 'seed_saved' })
+    expect(row.metadata).toEqual({
+      seed_lot_id: g.lot, addition: true, seed_addition_id: added.body.addition.id,
+      added_seed_count: 30, added_estimated: true, added_seed_weight_g: 1.5,
+    })
+    // Two seed_saved events now name the lot: its own, and the addition's.
+    expect((await directSql`
+      SELECT count(*)::int AS n FROM event_log
+       WHERE event_type = 'seed_saved' AND deleted_at IS NULL AND metadata->>'seed_lot_id' = ${g.lot}`)[0].n).toBe(2)
+  })
+
+  it('a SECOND picking from that same plant, and its event: still 0, still one grant, still no roll', async () => {
+    const g = await jar('add-again', { parents: 1 })
+    expect(flat(await saved(g, g.plants[0]))).toBe(10)
+    const added = await addTo(g, g.plants[0], [g.plants[0]])
+    expect(added.status, JSON.stringify(added.body)).toBe(200)
+    expect(added.body.addition.plant_was_added).toBe(false)
+    const r = await addedEvent(g, g.plants[0], added.body.addition)
+    expect(flat(r)).toBe(0)
+    expect(await grants(g.user)).toEqual([{ source_id: g.lot, amount: 10 }])
+    expect(rolledFor(r.body.id)).toBe(0)
+    // No amount was typed, so the event names none.
+    expect((await directSql`SELECT metadata FROM event_log WHERE id = ${r.body.id}`)[0].metadata)
+      .toEqual({ seed_lot_id: g.lot, addition: true, seed_addition_id: added.body.addition.id })
+  })
+
+  it('a lot with NO seed_saved event of its own (made through the Seeds door): the first addition\'s event is the lot\'s first — it DOES earn the 10, keyed on the lot, and it DOES roll', async () => {
+    // Stated, not hidden: "no roll" above is a fact about lots Save seed made. A lot created from the
+    // Seeds page has parents and no event, so the first event that ever names it is this one.
+    const g = await jar('add-door', { parents: 1 })
+    const later = await planting(g.user, g.proj, 'add-door-later')
+    const added = await addTo(g, later, [g.plants[0]])
+    expect(added.status, JSON.stringify(added.body)).toBe(200)
+    const r = await addedEvent(g, later, added.body.addition)
+    expect(flat(r)).toBe(10)
+    expect(await grants(g.user)).toEqual([{ source_id: g.lot, amount: 10 }])
+    expect(rolledFor(r.body.id)).toBe(1)
+    // And the next one is back to nothing.
+    const again = await addTo(g, later, [g.plants[0], later].sort())
+    expect(again.status, JSON.stringify(again.body)).toBe(200)
+    const second = await addedEvent(g, later, again.body.addition)
+    expect(flat(second)).toBe(0)
+    expect(rolledFor(second.body.id)).toBe(0)
+    expect(await grants(g.user)).toEqual([{ source_id: g.lot, amount: 10 }])
+  })
+})
