@@ -2212,7 +2212,7 @@ def test_a_serial_job_cancelled_while_running_is_still_red(gh):
 # ── where the window opens ──────────────────────────────────────────────────────────────────────────────────────
 
 def test_the_window_opens_at_the_first_sha_whose_legs_run_the_node_project_and_no_flag_moves_it(gh):
-    assert COUNT_FROM == "b6af3c36ffc505ce4fe1b1fb64bbd6081f6e541a"
+    assert COUNT_FROM == "788e8b17c528e6288a108f54823cf81d3ab7c113"
     source = open(SCRIPT, encoding="utf-8").read()
     assert source.count("COUNT_FROM_SHA = ") == 1 and "THE WINDOW HAS A START" in sa.__doc__
     assert 'COUNT_FROM_SHA = "%s"\n' % COUNT_FROM in source
@@ -2229,7 +2229,7 @@ def test_a_reading_that_does_not_hold_the_opening_sha_is_unreadable_not_a_count_
     red_leg(push(replies, sha(1)))
     code, doc = doc_of(gh, replies)
     assert code == 2 and doc["verdict"] == "unreadable" and set(doc) == {"schema_version", "repo", "verdict", "error"}
-    assert "b6af3c36ff (COUNT_FROM_SHA)" in doc["error"] and "not among the 3 dev push SHA(s)" in doc["error"]
+    assert "788e8b17c5 (COUNT_FROM_SHA)" in doc["error"] and "not among the 3 dev push SHA(s)" in doc["error"]
     code, out, calls = gh(replies)
     assert code == 2 and "UNREADABLE" in out and "ACCEPTANCE" not in out and "DISAGREE" not in out
     assert not any("/jobs" in c[4] or "/check-runs/" in c[4] for c in calls)  # it stops at the listings
