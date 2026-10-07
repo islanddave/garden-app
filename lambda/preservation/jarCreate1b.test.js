@@ -164,6 +164,45 @@ describe('POST /api/preservation — what 1b writes', () => {
   })
 })
 
+// BUG-PRESERVPOSTFALLTHROUGH-001 — the create block was reached by `method === 'POST'` alone, so any POST
+// no route above it claimed made a jar out of whatever body it carried. It answers the collection only.
+describe('POST anywhere but the collection is not a create', () => {
+  const postTo = (rawPath, body = base()) => ({ ...post(body), rawPath })
+  const inserted = () => stubState.sqlCalls.some((c) => /INSERT INTO preservation_log/.test(c.text))
+
+  // One segment under the collection was never the hole: /:id claims it, and POST there is a 405.
+  it('one unknown segment reads as an id, where POST is not allowed — no INSERT', async () => {
+    const res = parse(await handler(postTo('/api/preservation/not-a-route')))
+    expect(res).toEqual({ status: 405, body: { error: 'Method not allowed' } })
+    expect(inserted()).toBe(false)
+  })
+
+  it.each([
+    ['an unknown path two deep', '/api/preservation/not-a-route/deeper'],
+    ['an unknown sub-route of a real jar id', `/api/preservation/${KEY}/not-a-route`],
+    ['an unclaimed path under a sibling prefix this Lambda also serves', '/api/pantry/not-a-route'],
+  ])('%s → 404, and no INSERT is sent', async (_label, rawPath) => {
+    const res = parse(await handler(postTo(rawPath)))
+    expect(res).toEqual({ status: 404, body: { error: 'Not found' } })
+    expect(inserted()).toBe(false)
+  })
+
+  it('the collection itself still creates, with or without the trailing slash', async () => {
+    expect(parse(await handler(postTo('/api/preservation'))).status).toBe(201)
+    expect(inserted()).toBe(true)
+    stubState.sqlCalls = []
+    expect(parse(await handler(postTo('/api/preservation/'))).status).toBe(201)
+    expect(inserted()).toBe(true)
+  })
+
+  it('POST /:id/move still reaches the jar router, which answers for itself', async () => {
+    const res = parse(await handler(postTo(`/api/preservation/${KEY}/move`, { storage_location_id: 'not-a-uuid' })))
+    expect(res.status).toBe(400)
+    expect(res.body.error).not.toBe('Not found')
+    expect(inserted()).toBe(false)
+  })
+})
+
 describe('the legacy PUT gate and the words for 1b\'s CHECKs', () => {
   it('validateLegacyPut requires no key at all: an absent key is unchanged', () => {
     expect(validateLegacyPut({})).toBeNull()

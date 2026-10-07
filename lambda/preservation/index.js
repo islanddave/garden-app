@@ -678,6 +678,14 @@ export const handler = async (event) => {
       return resp(200, rows.map((r) => ({ ...projectRow(r), storage_label: r.storage_label ?? null, storage_kind: r.storage_kind ?? null, crop_display_name: r.crop_display_name ?? null })));
     }
 
+    // BUG-PRESERVPOSTFALLTHROUGH-001: create answers the COLLECTION only. Every delegate above returns
+    // null for a path it does not own, and '/api/pantry', '/api/kitchen-batches' and '/api/recipes'
+    // resolve to this Lambda too, so `method === 'POST'` alone made a jar out of any unclaimed POST
+    // ('/api/preservation/x/y', '/api/pantry/typo') that carried a valid body.
+    if (method === 'POST' && rawPath !== '/api/preservation' && rawPath !== '/api/preservation/') {
+      return resp(404, { error: 'Not found' });
+    }
+
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       const verr = validateCreate(body);
