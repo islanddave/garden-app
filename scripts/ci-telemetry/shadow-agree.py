@@ -171,7 +171,8 @@ PASS_STEPS = {"UTC": "Run unit tests with coverage",
               "America/New_York": "Unit tests under America/New_York TZ (date-fragility guard)"}
 OK, EXEMPT, BLOCK = "OK", "EXEMPT", "BLOCK"                          # one pass of one SHA
 QUALIFIES, BLOCKS = "QUALIFIES", "BLOCKS"                            # one SHA (or EXEMPT)
-HOLDS, STEP_UNREADABLE, STEP_DIFFERENT = "HOLDS", "STEP-UNREADABLE", "STEP-DIFFERENT"   # the same-step check
+# The same-step check of a row red on both sides: it holds, or the step cannot be told, or it is told and differs.
+HOLDS, STEP_UNREADABLE, STEP_DIFFERENT = "HOLDS", "STEP-UNREADABLE", "STEP-DIFFERENT"
 NOTICE_PREFIX = "test-ids "
 # What a usable notice of each format version must carry besides sha256 (vitest-test-ids-reporter.mjs FORMAT_VERSION).
 NOTICE_DIGESTS = {"1": (), "2": ("files_sha256", "names_sha256")}

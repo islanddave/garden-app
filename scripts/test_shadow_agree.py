@@ -316,9 +316,8 @@ def test_the_two_real_pushes_agree_green_and_carry_no_test_ids_yet(gh):
         (NEW, "AGREE-GREEN", "GREEN", "GREEN"), (OLD, "AGREE-GREEN", "GREEN", "GREEN")]
     assert [r["ci"]["run_id"] for r in doc["shas"]] == [37164983222, 37098612753]
     assert [r["next"]["run_id"] for r in doc["shas"]] == [37164983196, 37098612816]
-    assert all(r["test_ids"] == {"UTC": dict(NO_STEPS, **{"class": "ABSENT", "differs": None, "ci": None, "next": None}),
-                                 NY: dict(NO_STEPS, **{"class": "ABSENT", "differs": None, "ci": None, "next": None})}
-               for r in doc["shas"])
+    absent = dict(NO_STEPS, **{"class": "ABSENT", "differs": None, "ci": None, "next": None})
+    assert all(r["test_ids"] == {"UTC": absent, NY: absent} for r in doc["shas"])
     assert all((r["ci"]["runs_on"], r["next"]["runs_on"]) == (["ubuntu-latest"], ["ubuntu-24.04"])
                and r["ci"]["latest_attempt"] is None and r["next"]["latest_attempt"] is None for r in doc["shas"])
     assert doc["landed_at"] == "2026-10-03T05:04:03Z"
@@ -1107,8 +1106,9 @@ def acceptance(gh, replies):
     return code, doc["acceptance"], gh(replies)[1].rstrip().split("\n")[-1]
 
 
-NO_NOTICE_NO_STEPS = ("BLOCKS acceptance: UTC pass: ci.yml has no usable test-ids notice and its pass step cannot be "
-                      "read; America/New_York pass: ci.yml has no usable test-ids notice and its pass step cannot be read")
+NO_NOTICE_NO_STEPS = (
+    "BLOCKS acceptance: UTC pass: ci.yml has no usable test-ids notice and its pass step cannot be read; "
+    "America/New_York pass: ci.yml has no usable test-ids notice and its pass step cannot be read")
 NOT_COVERED = ". Not checked here: manifest conservation, the 10-green soak, the canary"
 
 
@@ -1270,6 +1270,456 @@ def test_ten_counted_rows_without_test_ids_are_not_acceptance(gh):
     code, verdict, _ = acceptance(gh, replies)
     assert code == 0 and verdict["missing"] == ["0 of 10 counted", "test IDs absent on 10 row(s)"]
     assert verdict["counted"] == 10 and verdict["qualifying"] == 0 and len(verdict["blocking"]) == 10
+
+
+# ── red on both sides: the same step, and a pass ci.yml never reached ───────────────────────────────────────────
+
+REAL_RED = "6662e76e4e6c73a801959e889a98659ee20ce4c7"
+REAL_RED_RUNS = {"ci": 37466560008, "next": 37466560231}
+REAL_DIGEST = "f5cdf865b45df6870f2fb10e53155eeafd37804db0a9fb1d197e328cc01bd822"
+EXEMPT_TAIL = ". Exempt (red on both sides at the same step, serial pass never ran): 1: 6662e76e4e"
+REAL_DETAIL = (
+    '           EXEMPT, not one of the 10 and not blocking: ci.yml failed at "Today V2 contract, instrument and '
+    'self-test (V5-TODAYREDESIGN-001)" and never ran its UTC, America/New_York pass (step skipped); ci-next.yml '
+    "failed the same step in gate-probes; its own digests: UTC f5cdf8.., America/New_York f5cdf8..")
+
+
+def real_red_push(replies):
+    """The recorded pair, red on both sides at one step, as a push beside whatever `replies` holds: its two runs,
+    their jobs with their steps, and the annotations of the three jobs that run a unit pass, all as recorded."""
+    real = copy.deepcopy(_fixture(BOTH_RED))["runs"]
+    for side, workflow in (("ci", "ci.yml"), ("next", "ci-next.yml")):
+        listing(replies, workflow)["workflow_runs"].insert(0, real[side]["run"])
+        listing(replies, workflow)["total_count"] += 1
+        replies[jobs_path(real[side]["run"]["id"])] = real[side]["jobs"]
+        for job_id, notes in real[side]["annotations"].items():
+            replies[annotations_path(int(job_id))] = notes
+    return Push(replies, REAL_RED)
+
+
+def zone(klass="ABSENT", ci=None, next_=None, ci_step=None, next_step=None):
+    return {"class": klass, "differs": None, "ci": ci, "next": next_, "ci_step": ci_step, "next_step": next_step}
+
+
+def test_the_recorded_red_pair_is_as_recorded():
+    runs = _fixture(BOTH_RED)["runs"]
+    assert {side: (one["run"]["id"], one["run"]["head_sha"], one["run"]["conclusion"], one["run"]["run_attempt"])
+            for side, one in runs.items()} == {"ci": (37466560008, REAL_RED, "failure", 1),
+                                               "next": (37466560231, REAL_RED, "failure", 1)}
+    serial = runs["ci"]["jobs"]["jobs"][0]
+    assert [(s["number"], s["name"]) for s in serial["steps"] if s["conclusion"] == "failure"] == [(30, TODAY_V2)]
+    assert {s["name"]: s["conclusion"] for s in serial["steps"]}[UTC_PASS] == "skipped"
+    assert {s["name"]: s["conclusion"] for s in serial["steps"]}[NY_PASS] == "skipped"
+    legs = {job["name"]: job for job in runs["next"]["jobs"]["jobs"]}
+    assert {name: job["conclusion"] for name, job in legs.items()} == dict(
+        {leg: "success" for leg in LEGS}, **{"gate-probes": "failure", "build-and-test-next": "failure"})
+    assert [s["name"] for s in legs["gate-probes"]["steps"] if s["conclusion"] == "failure"] == [TODAY_V2]
+    assert all(isinstance(job["steps"], list) and job["steps"] for job in legs.values())
+    notices = {job_id: [(a["annotation_level"], a["title"]) for a in notes]
+               for one in runs.values() for job_id, notes in one["annotations"].items()}
+    assert notices == {str(serial["id"]): [("failure", "")],
+                       str(legs["unit-utc-cov"]["id"]): [("notice", "test-ids UTC")],
+                       str(legs["unit-ny"]["id"]): [("notice", "test-ids America/New_York")]}
+
+
+def test_the_recorded_pair_red_at_one_step_with_both_serial_passes_skipped_reads_exempt_with_its_detail_line(gh):
+    replies = recorded()
+    real_red_push(replies)
+    code, doc = doc_of(gh, replies)
+    mine = row(doc, REAL_RED)
+    assert code == 0 and (mine["class"], mine["counted"], mine["acceptance"]) == ("AGREE-RED", True, "EXEMPT")
+    assert (mine["ci"]["why"], mine["next"]["why"]) == ("failed: build-and-test", "failed: gate-probes")
+    assert mine["test_ids"] == {
+        "UTC": zone(next_=REAL_DIGEST, ci_step="skipped", next_step="success"),
+        NY: zone(next_=REAL_DIGEST, ci_step="skipped", next_step="success")}
+    assert mine["ci_failed_steps"] == [TODAY_V2] and len(mine["ci_ran_steps"]) == 32 and mine["next_legs"] == 8
+    assert mine["next_red_legs"] == [{"name": "gate-probes", "failed_steps": [TODAY_V2]}]
+    assert mine["acceptance_why"] == REAL_DETAIL.strip()
+    assert doc["acceptance"]["exempt"] == [REAL_RED] and doc["acceptance"]["qualifying"] == 0
+    assert REAL_RED not in [one["sha"] for one in doc["acceptance"]["blocking"]]
+    assert doc["acceptance"]["missing"] == ["0 of 10 counted", "test IDs absent on 2 row(s)"]  # the two recorded rows
+    lines = gh(replies)[1].split("\n")
+    at = next(n for n, line in enumerate(lines) if line.startswith("6662e76e4e AGREE-RED"))
+    assert "TEST-IDS-ABSENT  TEST-IDS-ABSENT" in lines[at]
+    assert lines[at + 1:at + 3] == ["           ci.yml: failed: build-and-test | ci-next.yml: failed: gate-probes",
+                                    REAL_DETAIL]
+    assert lines[-2].endswith("test IDs absent on 2 row(s)" + EXEMPT_TAIL)
+
+
+def test_ten_qualifying_beside_the_exempt_pair_is_met_and_the_met_line_names_the_exempt_sha(gh):
+    replies = recorded()
+    ten(replies)
+    real_red_push(replies)
+    code, verdict, line = acceptance(gh, replies)
+    assert code == 0 and verdict == {"met": True, "missing": [], "counted": 11, "counted_red": 0, "qualifying": 10,
+                                     "exempt": [REAL_RED], "blocking": []}
+    assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, "
+                    "queue threshold not tripped" + EXEMPT_TAIL + NOT_COVERED)
+
+
+def test_nine_qualifying_beside_the_exempt_pair_is_nine_of_ten_and_the_window_is_not_met(gh):
+    replies = recorded()
+    _nine(ten(replies))
+    real_red_push(replies)
+    code, doc = doc_of(gh, replies)
+    assert code == 0 and doc["summary"]["counted"] == 10 and doc["summary"]["window_met"] is False
+    assert doc["acceptance"] == {"met": False, "missing": ["9 of 10 counted"], "counted": 10, "counted_red": 0,
+                                 "qualifying": 9, "exempt": [REAL_RED], "blocking": []}
+    out = gh(replies)[1]
+    assert "\nverdict on both sides: 10; counted toward the 10-push window: 9 (not met yet). With" in out
+    assert out.rstrip().split("\n")[-1] == "ACCEPTANCE: NOT MET: 9 of 10 counted" + EXEMPT_TAIL
+
+
+def _red_row(replies, step, utc=(None, A), ny=(None, B)):
+    p = push(replies, sha(1))
+    red_at(p, step)
+    p.ids(utc=utc, ny=ny)
+    return p
+
+
+def _read(gh, replies, sha_=sha(1)):
+    code, doc = doc_of(gh, replies)
+    mine = row(doc, sha_)
+    return code, doc, mine, {name: sa.zone_result(one)[0] for name, one in mine["test_ids"].items()}
+
+
+def test_red_on_both_sides_with_no_serial_notice_though_the_serial_pass_ran_blocks(gh):
+    """ci.yml went red after both passes, so each ran and owed its notice. The UTC one is missing."""
+    replies = recorded()
+    _red_row(replies, MEASURED_FLOOR, utc=(None, A), ny=(B, B))
+    code, doc, mine, zones = _read(gh, replies)
+    assert code == 0 and mine["class"] == "AGREE-RED" and mine["test_ids"]["UTC"] == zone(
+        next_=A, ci_step="success", next_step="success")
+    assert zones == {"UTC": "BLOCK", NY: "OK"} and mine["acceptance"] == "BLOCKS"
+    assert mine["acceptance_why"] == ("BLOCKS acceptance: UTC pass: ci.yml has no usable test-ids notice and its "
+                                      "pass step concluded success")
+    assert doc["acceptance"]["missing"] == ["0 of 10 counted", "test IDs absent on 3 row(s)"]
+    assert doc["acceptance"]["exempt"] == []
+
+
+@pytest.mark.parametrize("next_step", ["success", "failure", "skipped", "cancelled", None])
+def test_red_on_both_sides_with_a_serial_digest_and_no_shadow_digest_blocks_whatever_the_shadow_step_did(
+        gh, next_step):
+    """The asymmetry is one way only: ci.yml may lack what the shadow has, never the reverse. The serial notice
+    is put beside a serial pass step that reads skipped, so only the digest tells the two cases apart."""
+    replies = recorded()
+    p = _red_row(replies, TODAY_V2, utc=(A, None), ny=(None, B))
+    if next_step is None:
+        del p.job("next", "unit-utc-cov")["steps"]
+    else:
+        p.steps("next", "unit-utc-cov", dict(_stopped_at(step_names()["unit-utc-cov"], 99), **{UTC_PASS: next_step}))
+    code, doc, mine, zones = _read(gh, replies)
+    assert mine["test_ids"]["UTC"] == zone(ci=A, ci_step="skipped", next_step=next_step)
+    assert zones == {"UTC": "BLOCK", NY: "EXEMPT"} and mine["acceptance"] == "BLOCKS"
+    assert mine["acceptance_why"] == ("BLOCKS acceptance: UTC pass: ci.yml printed its digest and ci-next.yml has "
+                                      "no usable one")
+    for ci_step in ("success", "failure", "skipped", "cancelled", None):
+        assert sa.zone_result(zone(ci=A, ci_step=ci_step, next_step=next_step))[0] == "BLOCK"
+
+
+def _no_notice(p):
+    pass
+
+
+def _interrupted(p):
+    p.notice("next", "unit-utc-cov", "UTC", A, reason="interrupted")
+
+
+def _two_digests(p):
+    p.notice("next", "unit-utc-cov", "UTC", A)
+    p.notice("next", "unit-utc-cov", "UTC", C)
+
+
+@pytest.mark.parametrize("shadow_prints", [_no_notice, _interrupted, _two_digests])
+def test_a_shadow_pass_that_ran_and_left_no_usable_notice_blocks_though_the_serial_pass_was_skipped(
+        gh, shadow_prints):
+    replies = recorded()
+    p = _red_row(replies, TODAY_V2, utc=(None, None), ny=(None, B))
+    shadow_prints(p)
+    code, doc, mine, zones = _read(gh, replies)
+    assert mine["test_ids"]["UTC"] == zone(ci_step="skipped", next_step="success")
+    assert zones == {"UTC": "BLOCK", NY: "EXEMPT"} and mine["acceptance"] == "BLOCKS"
+    assert mine["acceptance_why"] == ("BLOCKS acceptance: UTC pass: ci.yml skipped the pass and ci-next.yml has no "
+                                      "usable test-ids notice though its pass step concluded success")
+    assert "test IDs absent on 3 row(s)" in doc["acceptance"]["missing"] and doc["acceptance"]["exempt"] == []
+
+
+def test_both_sides_red_before_the_pass_with_both_pass_steps_skipped_and_no_digest_is_exempt(gh):
+    """Red at the coverage-ratchet step, which unit-utc-cov runs before its pass: neither side reached UTC."""
+    replies = recorded()
+    p = push(replies, sha(1))
+    assert red_at(p, RATCHET) == "unit-utc-cov"
+    p.ids(utc=(None, None), ny=(None, B))
+    code, doc, mine, zones = _read(gh, replies)
+    assert mine["test_ids"] == {"UTC": zone(ci_step="skipped", next_step="skipped"),
+                                NY: zone(next_=B, ci_step="skipped", next_step="success")}
+    assert zones == {"UTC": "EXEMPT", NY: "EXEMPT"} and mine["acceptance"] == "EXEMPT"
+    assert mine["acceptance_why"] == (
+        'EXEMPT, not one of the 10 and not blocking: ci.yml failed at "Coverage ratchet enforcement" and never ran '
+        "its UTC, America/New_York pass (step skipped); ci-next.yml failed the same step in unit-utc-cov; its own "
+        "digests: UTC none (step skipped), America/New_York bbbbbb..")
+    assert doc["acceptance"]["exempt"] == [sha(1)]
+
+
+def test_a_serial_job_red_at_its_utc_pass_is_exempt_for_the_pass_it_never_reached_and_utc_is_still_equal(gh):
+    """The common red: a unit test fails under UTC. Both sides print the UTC notice (reason=failed is usable) and
+    ci.yml stops before the New York pass."""
+    replies = recorded()
+    p = push(replies, sha(1))
+    assert red_at(p, UTC_PASS) == "unit-utc-cov"
+    p.notice("ci", "build-and-test", "UTC", A, reason="failed", failed=2)
+    p.notice("next", "unit-utc-cov", "UTC", A, reason="failed", failed=2)
+    p.notice("next", "unit-ny", NY, B)
+    code, doc, mine, zones = _read(gh, replies)
+    assert code == 0 and mine["test_ids"] == {
+        "UTC": zone("EQUAL", ci=A, next_=A, ci_step="failure", next_step="failure"),
+        NY: zone(next_=B, ci_step="skipped", next_step="success")}
+    assert zones == {"UTC": "OK", NY: "EXEMPT"} and (mine["counted"], mine["acceptance"]) == (True, "EXEMPT")
+    assert doc["acceptance"]["exempt"] == [sha(1)] and doc["acceptance"]["qualifying"] == 0
+    assert doc["acceptance"]["counted_red"] == 0
+    out = gh(replies)[1]
+    printed = next(line for line in out.split("\n") if line.startswith(sha(1)[:10]))
+    assert "TEST-IDS-EQUAL   TEST-IDS-ABSENT" in printed
+    assert "never ran its America/New_York pass (step skipped); ci-next.yml failed the same step in unit-utc-cov" in out
+
+
+def test_one_pass_exempt_and_the_other_differing_blocks_and_is_exit_1(gh):
+    replies = recorded()
+    p = push(replies, sha(1))
+    red_at(p, UTC_PASS)
+    p.notice("ci", "build-and-test", "UTC", A, reason="failed", failed=2)
+    p.notice("next", "unit-utc-cov", "UTC", C, reason="failed", failed=1)
+    p.notice("next", "unit-ny", NY, B)
+    code, doc, mine, zones = _read(gh, replies)
+    assert code == 1 and doc["verdict"] == "disagree"
+    assert zones == {"UTC": "BLOCK", NY: "EXEMPT"} and mine["acceptance"] == "BLOCKS"
+    assert "TEST-IDS-DIFFER on 1 row(s)" in doc["acceptance"]["missing"] and doc["acceptance"]["exempt"] == []
+
+
+def test_one_pass_exempt_and_the_other_absent_though_its_serial_step_ran_blocks(gh):
+    """Made: ci.yml has no step that runs after a red one, so the UTC step is set to `success` by hand."""
+    replies = recorded()
+    p = _red_row(replies, TODAY_V2)
+    p.steps("ci", "build-and-test", dict(_stopped_at(step_names()["build-and-test"], 29), **{UTC_PASS: "success"}))
+    code, doc, mine, zones = _read(gh, replies)
+    assert mine["ci_failed_steps"] == [TODAY_V2] and sa.same_step(mine) == ("HOLDS", None)
+    assert zones == {"UTC": "BLOCK", NY: "EXEMPT"} and mine["acceptance"] == "BLOCKS"
+    assert doc["acceptance"]["exempt"] == [] and "test IDs absent on 3 row(s)" in doc["acceptance"]["missing"]
+
+
+def test_a_green_row_whose_serial_pass_step_reads_skipped_blocks_it_is_never_exempt(gh):
+    """Made, and unreachable while ci.yml has no `if:`: only a row red on both sides can be exempt."""
+    replies = recorded()
+    p = push(replies, sha(1))
+    p.ids(utc=(None, A))
+    p.steps("ci", "build-and-test", dict(_stopped_at(step_names()["build-and-test"], 99), **{UTC_PASS: "skipped"}))
+    code, doc, mine, zones = _read(gh, replies)
+    assert code == 0 and mine["class"] == "AGREE-GREEN" and zones == {"UTC": "EXEMPT", NY: "OK"}
+    assert mine["acceptance"] == "BLOCKS" and mine["acceptance_why"] == (
+        "BLOCKS acceptance: UTC pass: ci.yml's pass step reads skipped on a row that is not red on both sides")
+    assert doc["acceptance"]["exempt"] == [] and doc["acceptance"]["missing"] == [
+        "0 of 10 counted", "test IDs absent on 3 row(s)"]
+
+
+def test_the_leg_that_holds_the_failed_serial_step_green_and_another_leg_red_blocks_as_different_steps(gh):
+    """A masked disagreement: the shadow passed the gate ci.yml failed and is red for a reason of its own. The
+    other leg fails a step ci.yml never reached, so nothing but the missing F tells it apart."""
+    replies = recorded()
+    p = _red_row(replies, TODAY_V2, ny=(None, B))
+    green_leg(p, "gate-probes")
+    red_leg(p, "unit-ny")
+    fail_step(p, "unit-ny", NY_PASS)
+    code, doc, mine, _ = _read(gh, replies)
+    assert mine["class"] == "AGREE-RED" and mine["next_red_legs"] == [{"name": "unit-ny", "failed_steps": [NY_PASS]}]
+    assert sa.same_step(mine) == ("STEP-DIFFERENT", 'ci.yml failed at "%s" and no ci-next.yml leg failed that step'
+                                  % TODAY_V2)
+    assert mine["acceptance"] == "BLOCKS" and doc["acceptance"]["exempt"] == []
+    assert "red on both sides at different steps on 1 row(s)" in doc["acceptance"]["missing"]
+    assert not any("cannot be read" in one for one in doc["acceptance"]["missing"])
+    assert "           BLOCKS acceptance: red on both sides at different steps: ci.yml failed at" in gh(replies)[1]
+
+
+def test_a_second_leg_red_at_a_step_the_serial_job_passed_blocks_though_the_first_failed_the_same_step(gh):
+    replies = recorded()
+    p = _red_row(replies, TODAY_V2)
+    red_leg(p, "gates-a")
+    fail_step(p, "gates-a", "Install dependencies")
+    code, doc, mine, _ = _read(gh, replies)
+    assert sorted(leg["name"] for leg in mine["next_red_legs"]) == ["gate-probes", "gates-a"]
+    assert sa.same_step(mine) == ("STEP-DIFFERENT", "ci-next.yml's gates-a failed \"Install dependencies\", a step "
+                                                    "ci.yml ran and did not fail")
+    assert mine["acceptance"] == "BLOCKS" and doc["acceptance"]["exempt"] == []
+    assert "red on both sides at different steps on 1 row(s)" in doc["acceptance"]["missing"]
+
+
+def test_a_second_leg_red_at_a_step_the_serial_job_never_reached_does_not_spoil_the_same_step_check(gh):
+    """ci.yml stopped at step 30; the New York pass is step 43. A leg red there says nothing ci.yml contradicts."""
+    replies = recorded()
+    p = _red_row(replies, TODAY_V2, ny=(None, None))
+    red_leg(p, "unit-ny")
+    fail_step(p, "unit-ny", NY_PASS)
+    p.notice("next", "unit-ny", NY, B, reason="failed", failed=1)
+    code, doc, mine, zones = _read(gh, replies)
+    assert sorted(leg["name"] for leg in mine["next_red_legs"]) == ["gate-probes", "unit-ny"]
+    assert sa.same_step(mine) == ("HOLDS", None) and zones == {"UTC": "EXEMPT", NY: "EXEMPT"}
+    assert mine["acceptance"] == "EXEMPT" and doc["acceptance"]["exempt"] == [sha(1)]
+    assert "ci-next.yml failed the same step in gate-probes; its own digests" in mine["acceptance_why"]
+
+
+def test_a_leg_cancelled_at_its_timeout_with_no_failed_step_blocks_beside_a_leg_that_failed_the_same_step(gh):
+    replies = recorded()
+    p = _red_row(replies, TODAY_V2)
+    p.job("next", "gates-c").update(conclusion="cancelled")
+    names = step_names()["gates-c"]
+    p.steps("next", "gates-c", dict(_stopped_at(names, 99), **{names[-4]: "cancelled"}))
+    code, doc, mine, _ = _read(gh, replies)
+    assert {"name": "gates-c", "failed_steps": []} in mine["next_red_legs"]
+    assert sa.same_step(mine) == ("STEP-DIFFERENT", "ci-next.yml's gates-c is red with no failed step")
+    assert mine["acceptance"] == "BLOCKS" and doc["acceptance"]["exempt"] == []
+    assert "red on both sides at different steps on 1 row(s)" in doc["acceptance"]["missing"]
+
+
+@pytest.mark.parametrize("blind,why", [
+    (lambda p: p.job("ci", "build-and-test").pop("steps"), "ci.yml's job carries no steps"),
+    (lambda p: p.job("next", "gate-probes").pop("steps"), "ci-next.yml's gate-probes carries no steps"),
+    (lambda p: p.job("next", "gate-probes").update(steps="48"), "ci-next.yml's gate-probes carries no steps"),
+    (lambda p: p.steps("ci", "build-and-test", {"Set up job": "success", TODAY_V2: "cancelled"}),
+     "ci.yml is red with no failed step"),
+    (lambda p: p.replies.update({jobs_path(p.next["id"]): {"total_count": 0, "jobs": []}}),
+     "the ci-next.yml run has no leg"),
+])
+def test_a_failing_step_that_cannot_be_read_blocks_and_is_not_called_a_different_step(gh, blind, why):
+    replies = recorded()
+    p = _red_row(replies, TODAY_V2)
+    blind(p)
+    code, doc, mine, _ = _read(gh, replies)
+    assert mine["class"] == "AGREE-RED" and sa.same_step(mine) == ("STEP-UNREADABLE", why)
+    assert mine["acceptance"] == "BLOCKS" and doc["acceptance"]["exempt"] == []
+    assert mine["acceptance_why"].startswith(
+        "BLOCKS acceptance: red on both sides and the failing step cannot be read: " + why)
+    assert "red on both sides and the failing step cannot be read on 1 row(s)" in doc["acceptance"]["missing"]
+    assert not any("different steps" in one for one in doc["acceptance"]["missing"])
+
+
+def test_two_failed_serial_steps_are_read_and_are_not_one_step(gh):
+    replies = recorded()
+    p = _red_row(replies, TODAY_V2)
+    p.steps("ci", "build-and-test", dict(_stopped_at(step_names()["build-and-test"], 29), **{RATCHET: "failure"}))
+    code, doc, mine, _ = _read(gh, replies)
+    assert sa.same_step(mine) == ("STEP-DIFFERENT", "ci.yml failed 2 steps") and mine["acceptance"] == "BLOCKS"
+
+
+def test_a_pass_step_named_twice_or_not_at_all_cannot_be_read(gh):
+    job = {"steps": [{"name": UTC_PASS, "conclusion": "skipped"}, {"name": UTC_PASS, "conclusion": "skipped"}]}
+    assert sa.step_conclusion(job, UTC_PASS) is None and sa.step_conclusion(job, NY_PASS) is None
+    assert sa.step_conclusion({"steps": job["steps"][:1]}, UTC_PASS) == "skipped"
+    assert sa.step_conclusion(None, UTC_PASS) is None and sa.step_conclusion({}, UTC_PASS) is None
+    assert sa.zone_result(zone(next_=A, ci_step=None, next_step="success"))[0] == "BLOCK"
+    for ci_step in ("success", "failure", "cancelled", None):
+        assert sa.zone_result(zone(next_=A, ci_step=ci_step, next_step="success"))[0] == "BLOCK", ci_step
+    assert sa.zone_result(zone(next_=A, ci_step="skipped", next_step="success")) == ("EXEMPT", None)
+    assert sa.zone_result(zone(next_=A, ci_step="skipped", next_step=None)) == ("EXEMPT", None)
+    assert sa.zone_result(zone(ci=A, next_=B, ci_step="skipped", next_step="skipped")) == (
+        "BLOCK", "the two notices are of different format versions")
+
+
+def test_an_exempt_row_that_was_rerun_to_green_is_still_exempt_on_the_steps_of_attempt_1(gh):
+    replies = recorded()
+    p = real_red_push(replies)
+    for side in ("ci", "next"):
+        first = p.rerun(side, to="success")
+        assert all(job["steps"] for job in first)
+        for job in p.jobs(side):  # what the latest attempt's jobs say now: every step green
+            for step in job["steps"]:
+                step["conclusion"] = "success"
+    code, doc = doc_of(gh, replies)
+    mine = row(doc, REAL_RED)
+    assert code == 0 and (mine["class"], mine["acceptance"]) == ("AGREE-RED", "EXEMPT")
+    assert mine["ci"]["latest_attempt"] == mine["next"]["latest_attempt"] == {
+        "run_attempt": 2, "status": "completed", "conclusion": "success"}
+    assert mine["ci_failed_steps"] == [TODAY_V2] and mine["acceptance_why"] == REAL_DETAIL.strip()
+    assert mine["test_ids"]["UTC"] == zone(next_=REAL_DIGEST, ci_step="skipped", next_step="success")
+    asked = [call[4] for call in gh(replies)[2]]
+    for run_id in REAL_RED_RUNS.values():
+        assert attempt_jobs_path(run_id) in asked and jobs_path(run_id) not in asked
+
+
+def test_a_row_red_on_both_sides_at_one_step_with_equal_ids_qualifies_and_is_the_only_red_one_counted(gh):
+    replies = recorded()
+    p = push(replies, sha(1))
+    red_at(p, MEASURED_FLOOR)
+    p.ids()
+    real_red_push(replies)
+    code, doc = doc_of(gh, replies)
+    assert (row(doc, sha(1))["class"], row(doc, sha(1))["acceptance"], row(doc, sha(1))["acceptance_why"]) == (
+        "AGREE-RED", "QUALIFIES", None)
+    assert row(doc, REAL_RED)["acceptance"] == "EXEMPT" and doc["summary"]["classes"]["AGREE-RED"] == 2
+    assert (doc["acceptance"]["qualifying"], doc["acceptance"]["counted_red"]) == (1, 1)
+    assert gh(replies)[1].rstrip().split("\n")[-1] == (
+        "ACCEPTANCE: NOT MET: 1 of 10 counted; test IDs absent on 2 row(s). Of the 1 counted, 1 red on both sides"
+        + EXEMPT_TAIL)
+
+
+def test_the_pass_step_names_are_the_two_workflow_files():
+    def steps(workflow, job):
+        with open(os.path.join(HERE, "..", ".github", "workflows", workflow), encoding="utf-8") as fh:
+            return [step.get("name") for step in yaml.safe_load(fh)["jobs"][job]["steps"]]
+
+    assert set(sa.PASS_STEPS) == set(sa.PASSES)
+    for name, (serial_job, shadow_job) in sa.PASSES.items():
+        assert steps("ci.yml", serial_job).count(sa.PASS_STEPS[name]) == 1, name
+        assert steps("ci-next.yml", shadow_job).count(sa.PASS_STEPS[name]) == 1, name
+        for other in set(sa.PASSES) - {name}:  # each leg runs its own pass and not the other
+            assert sa.PASS_STEPS[other] not in steps("ci-next.yml", shadow_job)
+    assert sa.PASS_STEPS == {"UTC": "Run unit tests with coverage",
+                             NY: "Unit tests under America/New_York TZ (date-fragility guard)"}
+
+
+def test_the_json_document_is_schema_2_and_carries_what_each_row_is_worth(gh):
+    replies = recorded()
+    real_red_push(replies)
+    code, doc = doc_of(gh, replies)
+    assert doc["schema_version"] == sa.SCHEMA_VERSION == 2
+    assert set(doc["acceptance"]) == {"met", "missing", "counted", "counted_red", "qualifying", "exempt", "blocking"}
+    assert isinstance(doc["acceptance"]["qualifying"], int) and doc["acceptance"]["exempt"] == [REAL_RED]
+    assert [set(one) for one in doc["acceptance"]["blocking"]] == [{"sha", "why"}, {"sha", "why"}]
+    assert all({"acceptance", "acceptance_why", "ci_failed_steps", "ci_ran_steps", "next_legs", "next_red_legs"}
+               <= set(r) for r in doc["shas"])
+    assert [r["acceptance"] for r in doc["shas"]] == ["EXEMPT", "BLOCKS", "BLOCKS"]
+    p = push(replies, sha(1))
+    p.ci.update(status="in_progress", conclusion=None)
+    mine = row(doc_of(gh, replies)[1], sha(1))
+    assert (mine["acceptance"], mine["acceptance_why"], mine["ci_failed_steps"], mine["next_red_legs"]) == (
+        None, None, None, None)
+    code, out, _ = gh({}, "--json")
+    assert code == 2 and json.loads(out)["schema_version"] == 2
+
+
+def test_a_row_that_blocks_and_is_older_than_the_limit_still_blocks(gh):
+    replies = recorded()
+    pushes = ten(replies)
+    red_leg(pushes[2])  # the third oldest of ten: a DISAGREE
+    whole_code, whole = doc_of(gh, replies)
+    code, out, _ = gh(replies, "--json", "--limit", "3")
+    doc = json.loads(out)
+    assert [r["sha"] for r in doc["shas"]] == [p.sha for p in reversed(pushes[-3:])]
+    assert code == whole_code == 1 and doc["verdict"] == "disagree"
+    assert doc["acceptance"] == whole["acceptance"] and doc["summary"] == whole["summary"]
+    assert doc["acceptance"]["met"] is False and doc["acceptance"]["missing"] == ["9 of 10 counted", "1 DISAGREE"]
+    assert doc["acceptance"]["blocking"] == [{"sha": pushes[2].sha, "why": "BLOCKS acceptance: the two sides disagree"}]
+    code, out, _ = gh(replies, "--limit", "3")
+    assert code == 1 and out.rstrip().endswith("ACCEPTANCE: NOT MET: 9 of 10 counted; 1 DISAGREE")
+    assert ("\n10 SHA(s): AGREE-GREEN 9, AGREE-RED 0, DISAGREE 1, NOT-COUNTED 0, BEFORE-WINDOW 0\nthe table shows the "
+            "newest 3 of them (--limit); every tally here, ACCEPTANCE and the exit code are over all 10\n") in out
+    assert "DISAGREE   " not in out and "the table shows" not in gh(replies)[1]
+
+
+def test_a_met_reading_stays_met_under_a_limit_and_a_limit_never_makes_one(gh):
+    replies = recorded()
+    ten(replies)
+    for limit in ("1", "10", "40"):
+        code, out, _ = gh(replies, "--limit", limit)
+        assert code == 0 and "ACCEPTANCE: MET: 10 SHAs counted" in out
 
 
 # ── a job no runner took ────────────────────────────────────────────────────────────────────────────────────────
