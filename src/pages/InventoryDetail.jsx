@@ -904,6 +904,7 @@ export default function InventoryDetail() {
               <SavedFromCard
                 key={item.id}
                 lot={{ ...item, name: form.name }}
+                storedName={item.name}
                 onLot={applyLotPatch}
                 onName={applyLotName}
                 notice={sourcePlantErr}

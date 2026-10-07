@@ -92,6 +92,9 @@ const indexesOf = (path, method) => fetchSpy.mock.calls
 const bodiesOf = (path, method) => indexesOf(path, method).map((i) => JSON.parse(fetchSpy.mock.calls[i][1].body))
 const setBodies = () => bodiesOf(SET_PATH, 'PUT')
 const blendBodies = () => bodiesOf(BLEND_PATH, 'POST')
+const eventPosts = () => bodiesOf('/api/events', 'POST')
+const eventDeletes = () => fetchSpy.mock.calls
+  .filter(([p, o]) => String(p).startsWith('/api/events/') && o?.method === 'DELETE').map(([p]) => String(p))
 
 const refused = (code) => {
   const r = refusal(code)
@@ -123,11 +126,18 @@ function storeSet(body) {
 
 let routes
 function wire() {
+  let made = 0
   routes = {
     put: (body) => Promise.resolve(storeSet(body)),
     blend: (body) => Promise.resolve(body.component_variety_ids.length === 2
       ? blendReply()
       : blendReply({ id: MIX3.id, name: MIX3.name })),
+    events: {},
+    post: (body) => {
+      const row = { id: `ev-new-${(made += 1)}`, ...body }
+      routes.events[body.plant_id] = [row, ...(routes.events[body.plant_id] ?? [])]
+      return Promise.resolve(row)
+    },
   }
   fetchSpy.mockImplementation((path, opts) => {
     const p = String(path)
@@ -136,6 +146,17 @@ function wire() {
     if (p === BLEND_PATH && method === 'POST') return routes.blend(JSON.parse(opts.body))
     if (p === LOT_PATH && method === 'GET') return Promise.resolve(itemRef.current)
     if (p.startsWith('/api/plants?view=picker')) return Promise.resolve(PICKER)
+    // The plant's timeline as the server keeps it (V5-SEEDLOTADDENTRY-001): a POST adds the row it
+    // answers with, a DELETE takes one out.
+    if (p.startsWith('/api/events?')) {
+      return Promise.resolve(routes.events[new URLSearchParams(p.split('?')[1]).get('plant_id')] ?? [])
+    }
+    if (p === '/api/events' && method === 'POST') return routes.post(JSON.parse(opts.body))
+    if (p.startsWith('/api/events/') && method === 'DELETE') {
+      const id = p.slice('/api/events/'.length)
+      for (const k of Object.keys(routes.events)) routes.events[k] = routes.events[k].filter((e) => e.id !== id)
+      return Promise.resolve(null)
+    }
     return Promise.resolve([])
   })
 }
@@ -276,6 +297,77 @@ describe('Re-file by itself — a second cultivar files the jar as their mix', (
     expect(blendBodies()).toHaveLength(0)
     expect(filedLine()).toBeNull()
     expect(nameField().value).toBe(auto(MIX, 2025))
+  })
+})
+
+// V5-SEEDLOTADDENTRY-001 — the add that re-filed the jar also wrote the plant its `seed_saved` entry. The
+// "Filed as" line's Undo takes the plant off without striking a row, so leaving would withdraw nothing:
+// the Undo itself takes back the entry that add wrote.
+describe('Re-file by itself — the entry an add wrote goes back with the add', () => {
+  it('the note names the jar as the re-file left it, and Undo deletes that one entry after its own write', async () => {
+    await renderPage()
+    await addFromPicker(P2)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(eventPosts()[0]).toMatchObject({
+      plant_id: P2.id, event_type: 'seed_saved', notes: `Seed lot "${auto(MIX, 2025)}".`,
+      metadata: { seed_lot_id: ID },
+    })
+
+    await click(filedUndo())
+    await waitFor(() => expect(eventDeletes()).toEqual(['/api/events/ev-new-1']))
+    expect(setBodies()).toHaveLength(2)
+    expect(indexesOf(SET_PATH, 'PUT')[1]).toBeLessThan(
+      fetchSpy.mock.calls.findIndex(([p, o]) => String(p) === '/api/events/ev-new-1' && o?.method === 'DELETE'))
+    expect(routes.events[P2.id]).toEqual([])
+  })
+
+  it('Undo pressed while the entry is still going out waits for it, then takes it back', async () => {
+    let answer
+    routes.post = (body) => new Promise((resolve) => {
+      answer = () => {
+        const row = { id: 'ev-slow', ...body }
+        routes.events[body.plant_id] = [row]
+        resolve(row)
+      }
+    })
+    await renderPage()
+    await addFromPicker(P2)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    await waitFor(() => expect(filedLine()).toBeTruthy())
+
+    await click(filedUndo())
+    // The reversal's set write has not gone: the server would find the plant off the jar and pay the
+    // entry's rewards a second time.
+    expect(setBodies()).toHaveLength(1)
+    expect(eventDeletes()).toHaveLength(0)
+
+    await act(async () => { answer() })
+    await waitFor(() => expect(setBodies()).toHaveLength(2))
+    await waitFor(() => expect(eventDeletes()).toEqual(['/api/events/ev-slow']))
+  })
+
+  it('adding the plant again after that Undo writes a new entry: the old one is gone before it looks', async () => {
+    await renderPage()
+    await addFromPicker(P2)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    await click(filedUndo())
+    await waitFor(() => expect(filedLine()).toBeNull())
+    await addFromPicker(P2)
+    await waitFor(() => expect(eventPosts()).toHaveLength(2))
+    expect(eventDeletes()).toEqual(['/api/events/ev-new-1'])
+    expect(routes.events[P2.id].map((e) => e.id)).toEqual(['ev-new-2'])
+  })
+
+  it('an add that wrote no entry (the plant had one) has nothing to take back', async () => {
+    routes.events[P2.id] = [{ id: 'ev-kept', event_type: 'seed_saved', metadata: { seed_lot_id: ID } }]
+    await renderPage()
+    await addFromPicker(P2)
+    await waitFor(() => expect(filedLine()).toBeTruthy())
+    await click(filedUndo())
+    await waitFor(() => expect(filedLine()).toBeNull())
+    await act(async () => { await Promise.resolve() })
+    expect(eventPosts()).toHaveLength(0)
+    expect(eventDeletes()).toHaveLength(0)
   })
 })
 
