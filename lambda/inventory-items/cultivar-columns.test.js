@@ -154,11 +154,22 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     //   seed-lot-rules.js   3  the rules' read of each planting's variety, the "is the lot filed
     //                          under their mix" check, and the judge inside the transaction;
     //   seed-lot-filing.js  2  the filing judge (the target, and the parents' crop) and the read-back.
-    expect(STATEMENTS).toHaveLength(11);
+    //
+    // 11 -> 12 with release 3 (V5-SEEDLOTADDITION-001):
+    //   seed-lot-additions.js 1  readOpenLots, the read behind GET /seed-lots-open. It binds the view
+    //                          three times, each in a scope of its own and each as `pv`: the planting's
+    //                          variety (its crop), the variety the lot is filed under (name, rank,
+    //                          crop) and each parent planting's variety (its crop). Four columns, all
+    //                          already in the contract above, so the list did not move. No blend_key,
+    //                          no `fv`, and no liveness or ownership test of a variety.
+    expect(STATEMENTS).toHaveLength(12);
     const perFile = Object.fromEntries(HANDLERS.map((f) => [f, STATEMENTS.filter((s) => s.file === f).length]));
     expect(Object.fromEntries(Object.entries(perFile).filter(([, count]) => count > 0))).toEqual({
-      'index.js': 5, 'seed-lot-filing.js': 2, 'seed-lot-parents.js': 1, 'seed-lot-rules.js': 3,
+      'index.js': 5, 'seed-lot-additions.js': 1, 'seed-lot-filing.js': 2, 'seed-lot-parents.js': 1, 'seed-lot-rules.js': 3,
     });
+    const openLots = STATEMENTS.find((s) => s.file === 'seed-lot-additions.js').sql;
+    expect(bindings(openLots)).toEqual(['pv', 'pv', 'pv']);
+    expect(columnsOf(openLots).sort()).toEqual(['crop_type_slug', 'display_name', 'id', 'variety_rank']);
     // Two aliases, and they mean two different rows: `pv` is the variety a row resolves through
     // (the lot's, or a parent planting's); `fv` is the variety a lot is, or is about to be, FILED under.
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
