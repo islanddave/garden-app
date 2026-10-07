@@ -66,8 +66,10 @@ def test_phase4_ratchet_holds_on_the_real_tree(monkeypatch, capsys):
     assert lambdas >= 20 and refs >= 200, m.group(0)
     assert uncovered <= baseline, (
         f"Phase 4 join ratchet REGRESSED: {uncovered} relation(s) queried with no column contract in their own "
-        f"lambda directory, baseline {baseline}. Add a keyed contract in that directory -- a NEW "
-        f"*columns.test.js with `const AUDIT_COLUMNS = {{ <table>: ['col', ...] }};` -- never a raised "
-        f"baseline.\n{out}"
+        f"lambda directory, baseline {baseline}. Add a keyed contract in that directory -- a new "
+        f"`<table>: ['col', ...]` KEY in the `const AUDIT_COLUMNS = {{ ... }};` object of a keyed "
+        f"*columns.test.js that directory already has, NOT a new file (scripts/test_count_ratchets.py caps "
+        f"the files per directory; its message names the files that can take the key and says how to raise "
+        f"when there is none) -- never a raised baseline.\n{out}"
     )
     assert rc == 0, f"exit {rc}:\n{out}\n{err}"

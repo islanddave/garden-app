@@ -1,0 +1,286 @@
+{
+  "_comment": "Count ratchets (A8, small form), enforced by scripts/test_count_ratchets.py on every push. Two hard checks: the number of *columns.test.js contract files per lambda directory, and which scripts/layout-gate scripts may drive Chrome without the exit watchdog. Both are debt counters that may FALL, never RISE without a recorded reason.",
+  "_why": "Contract files were growing by about one a day, each a new vitest file paying its own jsdom start-up, because every remedy text in the repo said 'always a new file'. The schema audit reads one keyed AUDIT_COLUMNS object per file and 30 files already declare several relations in it, so a new JOIN belongs as a key in a file the directory already has. Separately, the exit watchdog only protects a gate that imports it; ten Chrome-driving scripts never did, and a new one could join them unnoticed.",
+  "_measured_at": "origin/dev daf8042bd50d923c41d68fb60f771ad59f3eeb26",
+  "_how_to_raise": "Only a columns ceiling can be raised, and only when the directory has no keyed contract file of its own or the new contract cannot share one. In ONE commit: (1) raise that directory's number in columns_tests_per_dir (a directory not listed has ceiling 0: add it); (2) add the new file name to columns_test_files for that directory; (3) append a row to raises: {\"what\": \"lambda/<dir>\", \"from\": <old ceiling>, \"to\": <new ceiling>, \"why\": \"<why an existing keyed file could not take the contract>\", \"work_item\": \"<ID>\"}. Leave _start alone: it is the history the rows are checked against. No approval is needed; the row is the review surface (git log -p scripts/count-ratchets.json). watchdog_exempt cannot be raised: a new gate imports armExitWatchdog.",
+  "_how_to_lower": "No row needed. When a columns file is deleted or folded into a sibling, lower that directory's number and remove the name from columns_test_files. When an exempt gate script gains the watchdog or is deleted, remove its name from watchdog_exempt. The test reds until you do, so headroom never accumulates.",
+  "_start": {
+    "columns_tests_per_dir": {
+      "lambda": 5,
+      "lambda/achievements": 1,
+      "lambda/critter": 4,
+      "lambda/daily-plan": 2,
+      "lambda/daily-plan-read": 3,
+      "lambda/dashboard": 7,
+      "lambda/events": 10,
+      "lambda/evidence-ingest": 6,
+      "lambda/facebook-share": 6,
+      "lambda/favorites": 1,
+      "lambda/findings": 4,
+      "lambda/harvests": 9,
+      "lambda/inventory-items": 8,
+      "lambda/locations": 2,
+      "lambda/members": 2,
+      "lambda/photos": 8,
+      "lambda/plants": 15,
+      "lambda/preservation": 13,
+      "lambda/projects": 7,
+      "lambda/shared-state": 1,
+      "lambda/storage-location": 3,
+      "lambda/tags": 7,
+      "lambda/ux-events": 4,
+      "lambda/varieties": 10,
+      "lambda/xp-reconcile": 1
+    },
+    "watchdog_exempt": [
+      "page-scroll.mjs",
+      "putup-ferment-walk.mjs",
+      "seed-detail-shot.mjs",
+      "seeds-page-shot.mjs",
+      "seeds-scroll.mjs",
+      "today-shape-v2.mjs",
+      "today-shape.mjs",
+      "today-shell-v2.mjs",
+      "tray-arrow-measure.mjs",
+      "undo-toast-target.mjs"
+    ]
+  },
+  "columns_tests_per_dir": {
+    "lambda": 5,
+    "lambda/achievements": 1,
+    "lambda/critter": 4,
+    "lambda/daily-plan": 2,
+    "lambda/daily-plan-read": 3,
+    "lambda/dashboard": 7,
+    "lambda/events": 10,
+    "lambda/evidence-ingest": 6,
+    "lambda/facebook-share": 6,
+    "lambda/favorites": 1,
+    "lambda/findings": 4,
+    "lambda/harvests": 9,
+    "lambda/inventory-items": 8,
+    "lambda/locations": 2,
+    "lambda/members": 2,
+    "lambda/photos": 8,
+    "lambda/plants": 15,
+    "lambda/preservation": 13,
+    "lambda/projects": 7,
+    "lambda/shared-state": 1,
+    "lambda/storage-location": 3,
+    "lambda/tags": 7,
+    "lambda/ux-events": 4,
+    "lambda/varieties": 10,
+    "lambda/xp-reconcile": 1
+  },
+  "columns_test_files": {
+    "lambda": [
+      "event-log-columns.test.js",
+      "household-columns.test.js",
+      "plant-projects-columns.test.js",
+      "plant-varieties-columns.test.js",
+      "plants-columns.test.js"
+    ],
+    "lambda/achievements": [
+      "select-columns.test.js"
+    ],
+    "lambda/critter": [
+      "app-config-columns.test.js",
+      "household-columns.test.js",
+      "prefs-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/daily-plan": [
+      "locations-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/daily-plan-read": [
+      "event-log-columns.test.js",
+      "household-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/dashboard": [
+      "container-columns.test.js",
+      "crop-types-columns.test.js",
+      "cultivar-columns.test.js",
+      "event-log-columns.test.js",
+      "garden-node-columns.test.js",
+      "household-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/events": [
+      "container-columns.test.js",
+      "crop-types-columns.test.js",
+      "garden-node-columns.test.js",
+      "harvest-log-columns.test.js",
+      "household-columns.test.js",
+      "plant-projects-columns.test.js",
+      "plant-varieties-columns.test.js",
+      "plants-columns.test.js",
+      "seed-lot-parent-planting-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/evidence-ingest": [
+      "event-log-columns.test.js",
+      "household-columns.test.js",
+      "plant-projects-columns.test.js",
+      "plant-varieties-columns.test.js",
+      "plants-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/facebook-share": [
+      "crop-types-columns.test.js",
+      "cultivar-columns.test.js",
+      "event-log-columns.test.js",
+      "garden-node-columns.test.js",
+      "household-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/favorites": [
+      "select-columns.test.js"
+    ],
+    "lambda/findings": [
+      "container-columns.test.js",
+      "garden-node-columns.test.js",
+      "household-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/harvests": [
+      "crop-types-columns.test.js",
+      "cultivar-columns.test.js",
+      "garden-node-columns.test.js",
+      "harvest-log-columns.test.js",
+      "household-columns.test.js",
+      "plant-projects-columns.test.js",
+      "plants-columns.test.js",
+      "select-columns.test.js",
+      "stat-views-columns.test.js"
+    ],
+    "lambda/inventory-items": [
+      "cultivar-columns.test.js",
+      "delete-guard-columns.test.js",
+      "garden-node-columns.test.js",
+      "household-columns.test.js",
+      "seed-lot-parent-planting-columns.test.js",
+      "seed-stage-columns.test.js",
+      "select-columns.test.js",
+      "source-columns.test.js"
+    ],
+    "lambda/locations": [
+      "household-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/members": [
+      "household-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/photos": [
+      "container-columns.test.js",
+      "event-log-columns.test.js",
+      "garden-node-columns.test.js",
+      "household-columns.test.js",
+      "plant-projects-columns.test.js",
+      "plant-varieties-columns.test.js",
+      "plants-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/plants": [
+      "container-columns.test.js",
+      "crop-types-columns.test.js",
+      "cultivar-columns.test.js",
+      "event-log-columns.test.js",
+      "harvest-log-columns.test.js",
+      "household-columns.test.js",
+      "inventory-items-columns.test.js",
+      "merge-surfaces-columns.test.js",
+      "plant-projects-columns.test.js",
+      "plant-varieties-columns.test.js",
+      "plants-columns.test.js",
+      "seed-lot-parent-planting-columns.test.js",
+      "select-columns.test.js",
+      "source-columns.test.js",
+      "v-resolved-care-columns.test.js"
+    ],
+    "lambda/preservation": [
+      "batchbuilder-columns.test.js",
+      "container-columns.test.js",
+      "crop-types-columns.test.js",
+      "cultivar-columns.test.js",
+      "garden-node-columns.test.js",
+      "harvest-log-columns.test.js",
+      "household-columns.test.js",
+      "kitchen-columns.test.js",
+      "pantry-columns.test.js",
+      "pantryitemamount-columns.test.js",
+      "preservation-source-columns.test.js",
+      "recipe-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/projects": [
+      "container-columns.test.js",
+      "event-log-columns.test.js",
+      "garden-node-columns.test.js",
+      "household-columns.test.js",
+      "plant-varieties-columns.test.js",
+      "plants-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/shared-state": [
+      "select-columns.test.js"
+    ],
+    "lambda/storage-location": [
+      "household-columns.test.js",
+      "preservation-log-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/tags": [
+      "container-columns.test.js",
+      "crop-types-columns.test.js",
+      "garden-node-columns.test.js",
+      "household-columns.test.js",
+      "plant-projects-columns.test.js",
+      "plant-varieties-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/ux-events": [
+      "container-columns.test.js",
+      "event-log-columns.test.js",
+      "garden-node-columns.test.js",
+      "select-columns.test.js"
+    ],
+    "lambda/varieties": [
+      "crop-types-columns.test.js",
+      "event-log-columns.test.js",
+      "household-columns.test.js",
+      "plant-projects-columns.test.js",
+      "plant-varieties-columns.test.js",
+      "plants-columns.test.js",
+      "select-columns.test.js",
+      "source-columns.test.js",
+      "variety-blend-component-columns.test.js",
+      "voice-alias-columns.test.js"
+    ],
+    "lambda/xp-reconcile": [
+      "select-columns.test.js"
+    ]
+  },
+  "watchdog_exempt": [
+    "page-scroll.mjs",
+    "putup-ferment-walk.mjs",
+    "seed-detail-shot.mjs",
+    "seeds-page-shot.mjs",
+    "seeds-scroll.mjs",
+    "today-shape-v2.mjs",
+    "today-shape.mjs",
+    "today-shell-v2.mjs",
+    "tray-arrow-measure.mjs",
+    "undo-toast-target.mjs"
+  ],
+  "recorded_only": {
+    "_comment": "NOT gated. Nothing reads these numbers; they are a dated reading for whoever sizes the Node vitest project (A3) or the leg-time alert. Do not update them to make a test pass: no test looks.",
+    "read_at": "origin/dev daf8042bd50d923c41d68fb60f771ad59f3eeb26",
+    "non_jsx_test_files_outside_src": 529,
+    "unit_test_files_total": 1496,
+    "_definition": "git ls-files matching .(test|spec).[cm]?[jt]sx? and not under tests/integration/ (the unit run's exclude in vitest.config.ts). Total 1496 = src 967, lambda 519, scripts 5, migrations 3, tests 2. Outside src and not .jsx: 529."
+  },
+  "raises": []
+}

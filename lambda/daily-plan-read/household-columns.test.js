@@ -9,7 +9,10 @@
 // (BUG-SEEDDETAIL500-001: `p.name` on garden_node passed a green audit and 500-ed every seed packet
 // page). Worse, dropping a keyed AUDIT_COLUMNS block into an existing select-columns.test.js
 // SILENTLY DESTROYS that file's coverage — parse_test_file returns on the keyed form first and never
-// reaches the AUDIT_TABLES collector (scripts/dev-main-schema-audit.py:128-137). Always a new file.
+// reaches the AUDIT_TABLES collector (scripts/dev-main-schema-audit.py:128-137). So never into an
+// AUDIT_TABLES file — and not a new file either: a new relation is a new KEY in a keyed contract file
+// the directory already has. scripts/test_count_ratchets.py caps the contract files per directory and
+// its message says exactly how. Not into THIS file: it holds household.js's relations only.
 //
 // WHY IT IS COPIED 19 TIMES: Phase 4 credits a contract only to the handler's OWN directory (it
 // groups by Path(handler).parent), and only when the AUDIT_COLUMNS literal is in that file's own

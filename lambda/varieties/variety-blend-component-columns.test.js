@@ -4,7 +4,10 @@
 // WHY A SEPARATE FILE: parse_test_file returns on the keyed AUDIT_COLUMNS form FIRST and never
 // reaches the AUDIT_TABLES collector (scripts/dev-main-schema-audit.py), so a keyed block dropped
 // into select-columns.test.js would silently destroy that file's own coverage of public.cultivar.
-// Always a new file — the reason voice-alias-columns.test.js and crop-types-columns.test.js exist.
+// That is the reason voice-alias-columns.test.js and crop-types-columns.test.js exist. It is not a
+// reason for another file: the next relation this Lambda touches goes in as a new KEY of a keyed
+// AUDIT_COLUMNS object this directory already has (this one will do). The files per directory are
+// capped by scripts/test_count_ratchets.py, whose message says exactly how.
 //
 // WHY IT LIVES IN THIS DIRECTORY: Phase 4 credits a contract only to the handler's own directory and
 // only when the AUDIT_COLUMNS literal is in this file's own source text.
