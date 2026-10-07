@@ -11,6 +11,8 @@ import json
 import os
 import stat
 import subprocess
+import threading
+import time
 import urllib.error
 
 import pytest
@@ -262,6 +264,127 @@ def test_cli_over_budget_is_unknown(monkeypatch):
     monkeypatch.setattr(cc, "DEADLINE_S", -1)
     monkeypatch.setattr(cc, "fetch_config", lambda name, region: cfg(marker(DEV)))
     assert cc.main(["--dev-sha", DEV]) == 2
+
+
+# ── the live reads: several at a time, answering as if read one after another ─────────────────────
+#
+# S1 pre-FF (2026-10-07). The 26 reads moved from a loop to a bounded pool. What the loop guaranteed and
+# the pool must keep: one failed read fails the whole check, in the loop's own words; the failure named is
+# the first in release order, whichever read finished first; and the report does not depend on timing.
+
+HEADER = f"check-lambda-current: are the running Lambdas built from {DEV}'s Lambda inputs?"
+READS_FAILED = "VERDICT: UNKNOWN — deploy (the running functions could not be read)"
+
+
+@pytest.mark.parametrize("error", [
+    RuntimeError("live read failed for garden-x: AccessDeniedException"),
+    subprocess.TimeoutExpired(["aws", "lambda", "get-function-configuration"], 45),
+    ValueError("Expecting value: line 1 column 1 (char 0)"),
+    FileNotFoundError(2, "No such file or directory: 'aws'"),
+], ids=["aws-refused", "aws-hung", "not-json", "no-aws-cli"])
+def test_cli_one_failed_read_fails_the_whole_check_in_the_same_words(monkeypatch, capsys, error):
+    bad = FNS[len(FNS) // 2]
+
+    def fetch(name, region):
+        if name == bad:
+            raise error
+        return cfg(marker(DEV))
+    monkeypatch.setattr(cc, "fetch_config", fetch)
+    assert cc.main(["--dev-sha", DEV]) == cc.UNKNOWN
+    # No per-function line, no CURRENT: the 25 reads that worked decide nothing without the 26th.
+    assert capsys.readouterr().out.splitlines() == [HEADER, f"::warning::live Lambda read failed: {error}", READS_FAILED]
+
+
+def test_cli_a_read_that_fails_in_a_way_nobody_expected_still_ends_the_check(monkeypatch):
+    def fetch(name, region):
+        if name == FNS[-1]:
+            raise KeyError("Configuration")
+        return cfg(marker(DEV))
+    monkeypatch.setattr(cc, "fetch_config", fetch)
+    with pytest.raises(KeyError):  # a crash is non-zero, and the caller deploys on every non-zero status
+        cc.main(["--dev-sha", DEV])
+
+
+def test_cli_names_the_first_failed_read_in_release_order_not_the_first_to_finish(monkeypatch, capsys):
+    early, late = FNS[1], FNS[-1]
+    late_failed = threading.Event()
+
+    def fetch(name, region):
+        if name == late:
+            late_failed.set()
+            raise RuntimeError(f"live read failed for {name}: finished first")
+        if name == early:
+            late_failed.wait(10)  # held until the LAST function's read has already failed
+            raise RuntimeError(f"live read failed for {name}: first in release order")
+        return cfg(marker(DEV))
+    monkeypatch.setattr(cc, "fetch_config", fetch)
+    assert cc.main(["--dev-sha", DEV]) == cc.UNKNOWN
+    assert late_failed.is_set(), "the later read never ran beside the earlier one"
+    assert capsys.readouterr().out.splitlines() == [
+        HEADER, f"::warning::live Lambda read failed: live read failed for {early}: first in release order",
+        READS_FAILED]
+
+
+def test_live_reads_overlap_and_never_exceed_the_bound(monkeypatch):
+    lock, seen = threading.Lock(), {"now": 0, "peak": 0}
+    full, go = threading.Event(), threading.Event()
+
+    def release():  # once the pool is full, give a pool wider than the bound time to show itself
+        full.wait(5)
+        time.sleep(0.2)
+        go.set()
+
+    def fetch(name, region):
+        with lock:
+            seen["now"] += 1
+            seen["peak"] = max(seen["peak"], seen["now"])
+            if seen["now"] >= cc.CONFIG_WORKERS:
+                full.set()
+        go.wait(10)
+        with lock:
+            seen["now"] -= 1
+        return cfg(marker(DEV), code=name)
+    monkeypatch.setattr(cc, "fetch_config", fetch)
+    threading.Thread(target=release, daemon=True).start()
+    configs = cc.fetch_configs(FNS, "us-east-1", lambda: None)
+    assert 1 < cc.CONFIG_WORKERS <= 8 < len(FNS)
+    assert seen["peak"] == cc.CONFIG_WORKERS
+    # Release order, each function holding ITS OWN read, whatever order they finished in.
+    assert list(configs) == FNS and [c["CodeSha256"] for c in configs.values()] == FNS
+
+
+def test_no_read_starts_once_the_budget_is_spent(monkeypatch):
+    started = []
+
+    def spent():
+        raise RuntimeError("over the 240s budget")
+    monkeypatch.setattr(cc, "fetch_config", lambda name, region: started.append(name))
+    with pytest.raises(RuntimeError, match="over the 240s budget"):
+        cc.fetch_configs(FNS, "us-east-1", spent)
+    assert started == []
+
+
+def test_cli_report_is_the_recorded_one_whatever_order_the_reads_finish_in(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("GH_TOKEN", "t")
+    monkeypatch.setattr(cc, "gh_ident", lambda repo, token, ref, path: f"id-{path}")
+    configs = all_marked(OLD)
+    configs[FNS[0]] = cfg(marker(NEWER))
+    configs[FNS[3]] = cfg("clerk-key-rotated 2026-08-04T19:2xZ", code=OTHER_CODE)
+    configs[FNS[7]] = None
+    configs[FNS[-1]] = cfg(marker(DEV), status="InProgress")
+    # The reference: the same configs from a file, which never goes near the pool.
+    want_rc = cc.main(["--dev-sha", DEV, "--live-json", _live_json(tmp_path, configs)])
+    want = capsys.readouterr().out
+    assert want_rc == cc.NOT_CURRENT
+    assert f"  {FNS[3]}: NO deploy marker" in want and f"  {FNS[7]}: DOES NOT EXIST yet" in want
+
+    def fetch(name, region):
+        time.sleep(0.002 * (len(FNS) - FNS.index(name)))  # the last function answers first
+        return configs[name]
+    monkeypatch.setattr(cc, "fetch_config", fetch)
+    for _ in range(3):
+        assert cc.main(["--dev-sha", DEV]) == want_rc
+        assert capsys.readouterr().out == want
 
 
 # ── the two workflow steps, executed as the runner executes them ──────────────────────────────────

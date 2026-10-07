@@ -12,7 +12,8 @@ every way the matrix can fall short leaves main describing code that is not runn
     reported "SPA-only" and shipped the SPA onto the stale legs (reproduced by executing the old step
     body with DEV_SHA=main: `changed=false`);
   * a later SPA-only promote after a partial failure nobody re-ran;
-  * a promote that died after its fast-forward (snap.py, the pg17 fetch), so deploy-lambdas never ran;
+  * a promote that died after its fast-forward (snap.py; until 2026-10-07 the pg17 fetch too), so
+    deploy-lambdas never ran;
   * revert-to.py's rollback, which restores code with update_function_code and no workflow;
   * a hand-dispatched deploy-lambda.yml from another ref, or a console upload.
 None of those is visible from git. They are all visible from the functions.
@@ -52,6 +53,7 @@ the repository contents. Never prints a function's Environment.
 """
 import argparse
 import base64
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -72,6 +74,12 @@ AWS_TIMEOUT_S = 45
 # Whole-run budget. Each call is bounded by its own timeout, and no new call starts after this, so a
 # hung network costs the promote at most ~5 minutes and then deploys — it can never fail the step.
 DEADLINE_S = 240
+# How many live reads run at once. They are independent, one `aws` process per function; read one
+# after another, promote-gate's decision step took 25-31 s before every fast-forward (six promotes to
+# 2026-10-06). Kept small on purpose: every read draws on the account's shared Lambda control-plane
+# request quota, and a throttled read the CLI's own retries do not absorb is a failed read (UNKNOWN,
+# deploy), never a skip.
+CONFIG_WORKERS = 8
 
 CURRENT, NOT_CURRENT, UNKNOWN = 0, 1, 2
 
@@ -197,6 +205,27 @@ def fetch_config(name, region):
             return None
         raise RuntimeError(f"live read failed for {name}: {proc.stderr.strip() or f'rc={proc.returncode}'}")
     return json.loads(proc.stdout)
+
+
+def fetch_configs(functions, region, budget):
+    """{function: live config, or None if it does not exist} for every name, CONFIG_WORKERS reads at a time.
+
+    Answers exactly as reading them one after another did. Results are taken in `functions` order, not
+    in the order the reads finish: the dict is in that order, and the read that raises is the FIRST
+    failing function in that order, with its own exception. A failed read fails the whole call; it is
+    never turned into a value. `budget()` runs in the worker before each read, so none STARTS past the
+    deadline. On a failure the reads not yet started are cancelled and the few in flight are waited for
+    (each is bounded by AWS_TIMEOUT_S), so nothing is still running behind the verdict."""
+    def one(fn):
+        budget()
+        return fetch_config(fn, region)
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=CONFIG_WORKERS)
+    try:
+        futures = [pool.submit(one, fn) for fn in functions]
+        return {fn: fut.result() for fn, fut in zip(functions, futures)}
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 # ── the decision ─────────────────────────────────────────────────────────────────────────────────
@@ -329,9 +358,7 @@ def main(argv=None):
                 live = json.load(fh)
             configs = {fn: live[fn] for fn in functions if fn in live}
         else:
-            for fn in functions:
-                budget()
-                configs[fn] = fetch_config(fn, args.region)
+            configs = fetch_configs(functions, args.region, budget)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as e:
         print(f"::warning::live Lambda read failed: {e}")
         print("VERDICT: UNKNOWN — deploy (the running functions could not be read)")
