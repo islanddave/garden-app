@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 // V5-SEEDMULTIPARENT-001 release 2b — the parent-set cases below are the flag-ON answers. The flag is held
 // on here so they stay green on a forward flag-off build; featureFlags.test.js alone pins the shipped
-// literal, and seedParents.test.js holds the flag-off answers.
+// literal, and seedParents.flagOff.test.js holds the flag-off answers.
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({ ...(await importOriginal()), SEED_MULTI_PARENT: true }))
 import {
   elapsedDays, elapsedLabel, fermentUrgency, dueFerments, hasLotInProcess, isSavedLot,

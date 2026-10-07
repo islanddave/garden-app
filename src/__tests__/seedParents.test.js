@@ -1,8 +1,9 @@
 // V5-SEEDMULTIPARENT-001 release 2b — seedParents.js: the parent set read once, and the one function every
 // notice about a jar comes from (the geneticist's truth table, rows 0-10). Each row is a named case; the
-// three ways a lot carries no readable set are three named cases; and with SEED_MULTI_PARENT off the answer
-// is today's rule on the filed variety, whatever the set holds.
-import { describe, it, expect, vi, afterEach } from 'vitest'
+// three ways a lot carries no readable set are three named cases. With SEED_MULTI_PARENT off the answer is
+// today's rule on the filed variety, whatever the set holds: seedParents.flagOff.test.js, a file of its own
+// so the flag is held one way per file and never switched inside one.
+import { describe, it, expect, vi } from 'vitest'
 
 // The truth-table cases are the flag-ON answers, so the flag is held on here whichever way the literal
 // ships (a forward flag-off build must not redden them); featureFlags.test.js alone pins the literal.
@@ -331,60 +332,5 @@ describe('previewMixName — lambda/varieties/blend.js’s automatic name, read 
   it('reads parentSetFacts’ varieties as they are', () => {
     const facts = parentSetFacts([f1('pl-1', 'Sungold'), f1('pl-2', 'Carmen'), f1('pl-3', 'Sungold')])
     expect(previewMixName(facts.varieties)).toBe('Carmen + Sungold mix')
-  })
-})
-
-describe('SEED_MULTI_PARENT off — today’s answers, whatever source_plants holds', () => {
-  afterEach(() => {
-    vi.doMock('../lib/featureFlags.js', async (importOriginal) => ({ ...(await importOriginal()), SEED_MULTI_PARENT: true }))
-    vi.resetModules()
-  })
-
-  async function flagOff() {
-    vi.resetModules()
-    vi.doMock('../lib/featureFlags.js', async (importOriginal) => ({ ...(await importOriginal()), SEED_MULTI_PARENT: false }))
-    const parents = await import('../components/seed/seedParents.js')
-    const lots = await import('../components/seed/seedLots.js')
-    const facts = await import('../components/seed/seedFacts.js')
-    const model = await import('../components/seed/mySeedsModel.js')
-    return { ...parents, isF2Lot: lots.isF2Lot, seedFacts: facts.seedFacts, whereFrom: model.whereFrom }
-  }
-
-  const mixedNoF1 = [sp('pl-1', 'A'), sp('pl-2', 'B')]
-  const allF1 = [f1('pl-1', 'Carmen'), f1('pl-2', 'Sungold')]
-
-  it('a jar filed under an F1 is F2 in full, even over a mixed set with no F1 in it (row 10 when on)', async () => {
-    const m = await flagOff()
-    const l = lot(mixedNoF1, { breeding_system: 'f1' })
-    expect(m.lotNotice(l)).toEqual({ row: 0, chips: [F2_CHIP], sentences: [], f2: 'full', breedingFact: ROW1_FACT })
-    expect(m.isF2Lot(l)).toBe(true)
-    expect(m.seedFacts(l).find((f) => f.key === 'breeding').value).toBe(ROW1_FACT)
-  })
-
-  it('a jar NOT filed under an F1 says nothing, even when every parent is F1 (row 8 when on)', async () => {
-    const m = await flagOff()
-    const l = lot(allF1, { breeding_system: 'open_pollinated' })
-    expect(m.lotNotice(l)).toEqual({ row: 0, chips: [], sentences: [], f2: null, breedingFact: null })
-    expect(m.isF2Lot(l)).toBe(false)
-    expect(m.seedFacts(l).find((f) => f.key === 'breeding').value).toBe('Open-pollinated')
-  })
-
-  it('no N2 for a jar filed under a mix, and no N5 for several plantings', async () => {
-    const m = await flagOff()
-    expect(m.lotNotice(lot(PARENTS_EMPTY, { variety_rank: 'blend', variety_name: 'A + B mix' })).sentences).toEqual([])
-    expect(m.lotNotice(lot([f1('pl-1', 'Carmen'), f1('pl-2', 'Carmen')])).sentences).toEqual([])
-  })
-
-  it('the three no-parent cases answer the same as with the flag on', async () => {
-    const m = await flagOff()
-    for (const parents of [PARENTS_UNDEFINED, PARENTS_NULL, PARENTS_EMPTY]) {
-      const l = lot(parents, { breeding_system: 'f1', source_plant_id: 'pl-1' })
-      expect(m.lotNotice(l)).toEqual({ ...lotNotice(l), sentences: [] })
-    }
-  })
-
-  it('My seeds says "Saved from my plant" for a jar off several plantings', async () => {
-    const m = await flagOff()
-    expect(m.whereFrom(lot(allF1), null)).toBe('Saved from my plant')
   })
 })
