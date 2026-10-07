@@ -154,8 +154,9 @@ prod read of 2026-10-07 and are equal. Gates were run through `scripts/gate_runn
   byte-equal to before, no stamp;
 - every line of the table above, against real rows: 11 legal shapes accepted, 19 refused each with the
   SQLSTATE and constraint name shown; the replay key refused twice (once after its row was soft-deleted);
-- `0r` refusing with 13 rows, and again with one row that was soft-deleted; with none, `0r` leaving a schema
-  dump byte-equal to the one before `0a`; `0r` again a no-op; `pre` 3/3, `0a`, `post` 11/11 again;
+- `0r` refusing with 13 rows, with exactly one live row, and with one row that was soft-deleted, each time
+  leaving the table, the rows and the stamp as they were; with none, `0r` leaving a schema dump byte-equal to
+  the one before `0a`; `0r` again a no-op; `pre` 3/3, `0a`, `post` 11/11 again;
 - 32 single defects injected one at a time, at least one per `post` gate, each turning exactly the gate
   written for it red and no other, and clearing on undo; the schema dump byte-equal afterwards;
 - the rollback order: `v5-seedmultiparent-001/0r-rollback.sql` with this table present exits 3 with 2BP01
