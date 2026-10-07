@@ -1,6 +1,6 @@
 // V4-PLANTINGUI-001 — quick-actions: Water (one-tap log) + Photo (deep-link). Frontend-only
 // against existing endpoints:
-//   Water  = POST /api/events {project_id, plant_id, event_type:'watering'}
+//   Water  = POST /api/events {project_id, plant_id, event_type:'watering', metadata: default depth}
 //   Photo  = deep-link to the existing log/capture flow.
 // V4-STATUSTAP-001: the status control moved to the hero (StatusPicker) — the redundant inline
 // status <select> that lived here was removed so status has a single home.
@@ -11,6 +11,7 @@ import { setPendingCapture } from '../../lib/pendingCapture.js'
 import { useApiFetch } from '../../lib/api.js'
 import { useOptionalToast } from '../../context/ToastContext.jsx'
 import { todayLocalISO } from '../../lib/dateLocal.js'
+import { WATER_DEPTH_DEFAULT, waterDepthMetadata } from '../../lib/waterDepth.js'
 import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
 import SaveSeedSheet from './SaveSeedSheet.jsx'
@@ -96,7 +97,11 @@ export default function QuickActions({ planting, onLogged }) {
     try {
       const ev = await fetch('/api/events', {
         method: 'POST',
-        body: JSON.stringify({ project_id: projectId, plant_id: plantId, event_type: 'watering' }),
+        // BUG-WATERDEPTHSINGLEEVENT-001: the depth recorded AS the default, as the Log form writes it.
+        body: JSON.stringify({
+          project_id: projectId, plant_id: plantId, event_type: 'watering',
+          metadata: waterDepthMetadata(WATER_DEPTH_DEFAULT, false),
+        }),
       })
       toast.show({ message: 'Logged watering', tone: 'success' })
       if (onLogged) onLogged(ev)

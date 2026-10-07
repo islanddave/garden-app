@@ -18,7 +18,7 @@ vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
   saveTodaySkipped: vi.fn(async () => null),
 }))
 
-import { useCareActions } from '../components/today/useCareActions.js'
+import { useCareActions, eventBody } from '../components/today/useCareActions.js'
 import { buildCareNeeded } from '../lib/careNeeded.js'
 import { todayLocalISO } from '../components/today/careStore.js'
 
@@ -142,6 +142,8 @@ describe('runBulk with V2 opts', () => {
     await act(async () => { await hook.result.current.runBulk('watering', new Set([k]), { concurrency: 4, excludeInFlight: true, bodyEventType: 'moisture_check' }) })
     expect(s.posts.map(x => x.body.event_type)).toEqual(['moisture_check'])
     expect(hook.result.current.rows.map(r => r.key)).toEqual(['p1:water_due'])
+    // The depth follows the type POSTED, not the row's: Moist on a water row writes none.
+    expect(s.posts[0].body.metadata).toBeNull()
   })
 
   it('uses the caller\'s keys as given: a bed named by a covered group is logged even while bed-wait is on', async () => {
@@ -276,5 +278,36 @@ describe('runBulk with V2 opts', () => {
     expect(u.undone.map(c => c.key)).toEqual(['p0:water_due'])
     expect(u.failed.map(c => c.key).sort()).toEqual(['p1:water_due', 'p2:water_due'])
     expect(hook.result.current.rows.map(r => r.key)).toEqual(['p0:water_due'])
+  })
+})
+
+// BUG-WATERDEPTHSINGLEEVENT-001 — a one-tap watering POSTed `metadata: null`, so it carried no depth at
+// all while the Log form and Log Many always write one, default included. The body now records the
+// preselected default as exactly that (`water_depth_source: 'default'`), and ONLY for a watering.
+describe('BUG-WATERDEPTHSINGLEEVENT-001 — the one-tap body records the default depth', () => {
+  const DEFAULT_DEPTH = { water_depth: 'normal', water_depth_source: 'default' }
+  const row = (eventType) => ({ projectId: 'proj', plantingId: 'p0', eventType })
+
+  it('a watering body carries the default depth, marked as the default', () => {
+    expect(eventBody(row('watering')).metadata).toEqual(DEFAULT_DEPTH)
+  })
+
+  it('Water all: every row of a V2 run carries it', async () => {
+    const s = server()
+    const { hook } = mount(plan(3), { fetch: s.fetch })
+    const keys = new Set(hook.result.current.rows.map(r => r.key))
+    await act(async () => { await hook.result.current.runBulk('watering', keys, { concurrency: 4, excludeInFlight: true }) })
+    expect(s.posts.map(x => x.body.metadata)).toEqual([DEFAULT_DEPTH, DEFAULT_DEPTH, DEFAULT_DEPTH])
+  })
+
+  // Mutation: gate on row.eventType instead of the effective type and these go red.
+  it.each(['moisture_check', 'cover', 'brought_inside'])('a %s posted from a water row carries none', (type) => {
+    const body = eventBody(row('watering'), type)
+    expect(body.event_type).toBe(type)
+    expect(body.metadata).toBeNull()
+  })
+
+  it.each(['fertilizing', 'observation', 'brought_inside'])('a %s row carries none', (type) => {
+    expect(eventBody(row(type)).metadata).toBeNull()
   })
 })

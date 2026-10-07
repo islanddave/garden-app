@@ -120,6 +120,8 @@ describe('BUG-MOISTURECHECKNOBUTTON-001 — what the tap writes', () => {
     expect(body.event_type).toBe('moisture_check')
     expect(body.plant_id).toBe('p1')
     expect(body.project_id).toBe('prP')
+    // BUG-WATERDEPTHSINGLEEVENT-001: the depth is a watering's. Nobody watered, so none is written.
+    expect(body.metadata).toBeNull()
     // Scoped to the row it was tapped on. The sibling stays up.
     expect(screen.getByText('Habanero')).toBeTruthy()
   })

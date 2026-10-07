@@ -37,7 +37,11 @@ describe('QuickActions', () => {
     const [path, opts] = apiFetchSpy.mock.calls[0]
     expect(path).toBe('/api/events')
     expect(opts.method).toBe('POST')
-    expect(JSON.parse(opts.body)).toEqual({ project_id: 'proj1', plant_id: 'pl1', event_type: 'watering' })
+    // BUG-WATERDEPTHSINGLEEVENT-001: the one-tap records the default depth, as the Log form does.
+    expect(JSON.parse(opts.body)).toEqual({
+      project_id: 'proj1', plant_id: 'pl1', event_type: 'watering',
+      metadata: { water_depth: 'normal', water_depth_source: 'default' },
+    })
     await waitFor(() => expect(onLogged).toHaveBeenCalled())
   })
 

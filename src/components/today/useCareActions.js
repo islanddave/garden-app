@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect, useSyncExternalStore } from 'react'
 import { NEED_LABEL, MOISTURE_CHECK_EVENT, candidateRows } from '../../lib/careNeeded.js'
 import { fetchNotificationPrefs, readTodaySkipped } from '../../lib/notificationPrefsClient.js'
+import { WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata } from '../../lib/waterDepth.js'
 import {
   todayLocalISO, subscribeSkipped, skippedSnapshot, readSkipped, writeSkipped, readUnskipped,
   skipMany, unskipMany,
@@ -28,11 +29,19 @@ const NOOP = () => {}
 
 // `eventType` overrides the row's primary type — the moisture check posts through this same body so
 // the two writes cannot drift in shape. Omitted => the row's own mapped type, as before.
+//
+// BUG-WATERDEPTHSINGLEEVENT-001 — a watering records the preselected depth AS the default, the same
+// fragment the Log form writes when the chip is left alone. It used to post `metadata: null`, which
+// left a one-tap watering indistinguishable from a row that predates depth capture. Gated on the
+// type actually POSTED, not the row's: this body also carries moisture_check, cover, brought_inside,
+// fertilizing and observation, and the server does not reject depth keys on those.
 export function eventBody(row, eventType) {
+  const type = eventType || row.eventType
   return {
-    project_id: row.projectId, event_type: eventType || row.eventType, event_date: todayLocalISO(),
+    project_id: row.projectId, event_type: type, event_date: todayLocalISO(),
     plant_id: row.plantingId, is_public: true, has_photo: false,
-    notes: null, private_notes: null, quantity: null, metadata: null,
+    notes: null, private_notes: null, quantity: null,
+    metadata: isWaterDepthType(type) ? waterDepthMetadata(WATER_DEPTH_DEFAULT, false) : null,
   }
 }
 

@@ -82,6 +82,8 @@ describe('CareNeeded — Slice 7', () => {
     expect(body.event_type).toBe('watering')
     expect(body.plant_id).toBe('p1')
     expect(body.project_id).toBe('prP')
+    // BUG-WATERDEPTHSINGLEEVENT-001: a one-tap watering records the default depth, as the Log form does.
+    expect(body.metadata).toEqual({ water_depth: 'normal', water_depth_source: 'default' })
     expect(toastMock.showUndo).toHaveBeenCalledTimes(1)
   })
 
@@ -191,6 +193,12 @@ describe('CareNeeded — Slice 7', () => {
     await waitFor(() => expect(fetchMock.mock.calls.filter(c => c[0] === '/api/events').length).toBe(2))
     await waitFor(() => expect(screen.queryByText('Bhut Jolokia')).toBeNull())
     await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalled())
+    // BUG-WATERDEPTHSINGLEEVENT-001: every row of the run carries the default depth.
+    const bodies = fetchMock.mock.calls.filter(c => c[0] === '/api/events').map(c => JSON.parse(c[1].body))
+    expect(bodies.map(b => b.metadata)).toEqual([
+      { water_depth: 'normal', water_depth_source: 'default' },
+      { water_depth: 'normal', water_depth_source: 'default' },
+    ])
   })
 
   it('secondary "choose" control still opens the scoped sheet and logs only the checked subset', async () => {
