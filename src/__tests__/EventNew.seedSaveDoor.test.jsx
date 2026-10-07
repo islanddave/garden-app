@@ -58,15 +58,32 @@ const TOMATO = {
   variety_ref: { id: 'var-brandy', name: 'Brandywine' },
 }
 
-function prime() {
+// V5-SEEDMULTIPARENT-001 — a garden with more in it, in the picker's own row shape (the log menu
+// hands the sheet one of these rows). Two more tomatoes, one of them another variety, and a pepper.
+const TOMATO_VARIETY = { id: 'var-brandy', name: 'Brandywine', crop_type_slug: 'tomato', breeding_system: 'open_pollinated', variety_rank: 'cultivar' }
+const BED_3 = { ...TOMATO, quantity: 1, variety_id: 'var-brandy', variety_ref: TOMATO_VARIETY }
+const BED_5 = { id: 'pl-2', name: 'Brandywine — bed 5', project_id: 'proj-1', project_name: 'Tomatoes', quantity: 2, variety_id: 'var-brandy', variety_ref: TOMATO_VARIETY }
+const BED_4 = {
+  id: 'pl-3', name: 'Cherokee Purple — bed 4', project_id: 'proj-1', project_name: 'Tomatoes', quantity: 1, variety_id: 'var-cherokee',
+  variety_ref: { id: 'var-cherokee', name: 'Cherokee Purple', crop_type_slug: 'tomato', breeding_system: 'open_pollinated', variety_rank: 'cultivar' },
+}
+const PEPPER = {
+  id: 'pl-4', name: 'Carmen — bed 1', project_id: 'proj-1', project_name: 'Tomatoes', quantity: 3, variety_id: 'var-carmen',
+  variety_ref: { id: 'var-carmen', name: 'Carmen', crop_type_slug: 'pepper', breeding_system: 'f1', variety_rank: 'cultivar' },
+}
+
+function prime(plants = [TOMATO]) {
   fetchSpy.mockReset()
   fetchSpy.mockImplementation((url, opts = {}) => {
     const u = String(url)
+    if (opts.method === 'POST' && u === '/api/varieties/blend') {
+      return Promise.resolve({ id: 'var-mix', name: 'Brandywine + Cherokee Purple mix', variety_rank: 'blend' })
+    }
     if (opts.method === 'POST' && u === '/api/inventory-items') return Promise.resolve({ id: 'lot-1' })
     if (opts.method === 'POST') return Promise.resolve({ id: 'evt-1' })
     if (u === '/api/projects') return Promise.resolve([{ id: 'proj-1', name: 'Tomatoes', status: 'growing' }])
     if (u === '/api/locations/with-path') return Promise.resolve([])
-    if (u.startsWith('/api/plants')) return Promise.resolve([TOMATO])
+    if (u.startsWith('/api/plants')) return Promise.resolve(plants)
     return Promise.resolve(null)
   })
 }
@@ -130,6 +147,7 @@ describe('POI-SEEDDOORMENU-001 — the menu route opens the create-a-lot sheet',
     const lot = JSON.parse(posts('/api/inventory-items')[0][1].body)
     expect(lot.category).toBe('seeds')
     expect(lot.source_plant_id).toBe('pl-1')
+    expect(lot.source_plant_ids).toEqual(['pl-1'])
     expect(lot.variety_id).toBe('var-brandy')
   })
 
@@ -148,5 +166,73 @@ describe('POI-SEEDDOORMENU-001 — the menu route opens the create-a-lot sheet',
     await renderLog('event_type=seed_saved')
     await act(async () => { await Promise.resolve() })
     expect(screen.queryByTestId('save-seed-submit')).toBeNull()
+  })
+})
+
+// ── V5-SEEDMULTIPARENT-001 — the menu door, with the REAL picker behind the adder ─────────────────
+// The sheet's own suites stub PlantingSelect and read the props it is handed. This is the one place
+// the real one is mounted under the real sheet, so "only this crop's other plantings are offered" is
+// read off the list a user would actually see, fetched the way the app fetches it.
+describe('V5-SEEDMULTIPARENT-001 — the menu door can add a second planting to the jar', () => {
+  const open = async () => {
+    prime([BED_3, BED_5, BED_4, PEPPER])
+    await renderLog('event_type=seed_saved&plant=pl-1&project=proj-1')
+    await waitFor(() => expect(screen.getByTestId('save-seed-submit')).toBeTruthy())
+  }
+  const fromRows = () => screen.getAllByTestId('save-seed-from-row').map((li) => li.querySelector('span').textContent)
+  const offered = () => [...document.querySelectorAll('[data-testid^="ps-opt-"]')].map((o) => o.getAttribute('data-testid'))
+  const openAdder = async () => {
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-add-plant')) })
+    // The tap is the gesture: the list opens with it, and fills when the planting read answers.
+    await waitFor(() => expect(offered().length).toBeGreaterThan(0))
+  }
+
+  it('the planting it was opened for is the first row, and that row cannot be removed', async () => {
+    await open()
+    expect(fromRows()).toEqual(['Brandywine — bed 3'])
+    expect(screen.queryAllByTestId('save-seed-from-remove')).toHaveLength(0)
+    expect(screen.queryByText('Which plant?'), 'asked which plant after being handed one').toBeNull()
+  })
+
+  it('the adder offers the same crop’s OTHER plantings: not the one chosen, not another crop', async () => {
+    await open()
+    await openAdder()
+    // pl-1 is already on the jar; pl-4 is a pepper.
+    expect(offered()).toEqual(['ps-opt-pl-2', 'ps-opt-pl-3'])
+    expect(screen.getByTestId('ps-footer-note').textContent)
+      .toBe('A plant with no variety recorded is not listed here. Give it a variety first.')
+  })
+
+  it('says so when the crop has no other planting to add', async () => {
+    prime([BED_3, PEPPER])
+    await renderLog('event_type=seed_saved&plant=pl-1&project=proj-1')
+    await waitFor(() => expect(screen.getByTestId('save-seed-submit')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-add-plant')) })
+    await waitFor(() => expect(screen.getByText('No other tomato plantings to add.')).toBeTruthy())
+    expect(offered()).toEqual([])
+  })
+
+  it('a second variety from that list makes the jar a mix, saved with both plantings and an event on each', async () => {
+    await open()
+    await openAdder()
+    await act(async () => { fireEvent.click(screen.getByTestId('ps-opt-pl-3')) })
+    expect(fromRows()).toEqual(['Brandywine — bed 3', 'Cherokee Purple — bed 4'])
+    expect(screen.getByRole('button', { name: 'Remove Cherokee Purple — bed 4' })).toBeTruthy()
+    expect(screen.getAllByTestId('save-seed-from-remove')).toHaveLength(1)
+    expect(screen.getByTestId('save-seed-variety-name').textContent).toBe('Brandywine + Cherokee Purple mix')
+    expect(screen.getByTestId('save-seed-mix-reason')).toBeTruthy()
+    // The next list leaves out both.
+    await openAdder()
+    expect(offered()).toEqual(['ps-opt-pl-2'])
+
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-submit')) })
+    await waitFor(() => expect(posts('/api/events')).toHaveLength(2))
+    expect(JSON.parse(posts('/api/varieties/blend')[0][1].body))
+      .toEqual({ component_variety_ids: ['var-brandy', 'var-cherokee'], create: true })
+    const lot = JSON.parse(posts('/api/inventory-items')[0][1].body)
+    expect(lot.variety_id).toBe('var-mix')
+    expect(lot.source_plant_id).toBe('pl-1')
+    expect(lot.source_plant_ids).toEqual(['pl-1', 'pl-3'])
+    expect(posts('/api/events').map(([, o]) => JSON.parse(o.body).plant_id)).toEqual(['pl-1', 'pl-3'])
   })
 })

@@ -121,6 +121,9 @@ describe('V4-SAVESEEDBTN-001 — the POST payload', () => {
     const body = bodyOf(apiFetchSpy.mock.calls[0])
     // BUG-SEEDPOSTDROPSPARENT-001 — the whole point of launching from a planting.
     expect(body.source_plant_id).toBe('pl1')
+    // V5-SEEDMULTIPARENT-001 — the parent SET rides beside the legacy key, for one planting as for
+    // several. One row here, so a set of one, and the legacy key is its first member.
+    expect(body.source_plant_ids).toEqual(['pl1'])
     // chk_inventory_seed_requires_variety — never absent, never null.
     expect(body.variety_id).toBe('v-brandywine')
     // validateCreate's consumable arm needs all three of these together.
@@ -329,7 +332,13 @@ describe('V4-SAVESEEDBTN-001 — the success path has an end', () => {
     openSheet()
     fireEvent.click(screen.getByTestId('save-seed-submit'))
     await waitFor(() => expect(screen.getByTestId('save-seed-error')).toBeTruthy())
-    expect(screen.getByTestId('save-seed-error').textContent).toContain('variety_id is required')
+    // V5-SEEDMULTIPARENT-001 — the client's own sentence, and NEVER the server's. This used to assert
+    // the opposite (`toContain('variety_id is required')`): the catch printed whatever the request
+    // threw. One of the route's sentences now reads "Reload and try again", and a reload here would
+    // throw away everything typed.
+    expect(screen.getByTestId('save-seed-error').textContent)
+      .toBe("Couldn't save just now. Nothing was saved. Your entries are still here. Tap Save seed to try again.")
+    expect(screen.getByTestId('save-seed-error').textContent).not.toContain('variety_id')
     expect(navigateSpy).not.toHaveBeenCalled()
     // The sheet stays open on its filled-in values so the save is re-tryable.
     expect(screen.getByTestId('save-seed-submit')).toBeTruthy()
@@ -356,7 +365,10 @@ describe('V4-SAVESEEDBTN-001 — the success path has an end', () => {
 // worth pinning is not "an event was posted" — it is the three properties that make the event safe
 // to add to a flow whose real product is the lot:
 //   • it cannot fail the save (the lot is what the user asked for)
-//   • exactly one per saved lot, and none for a create that failed or a sheet that was closed
+//   • exactly one per PARENT of a saved lot, and none for a create that failed or a sheet that was
+//     closed. Until V5-SEEDMULTIPARENT-001 that read "one per saved lot", which was the same thing
+//     while a lot had one parent. This file saves from one planting throughout, so its counts are
+//     still 1; SaveSeedSheet.events.test.jsx owns the several-parents case.
 //   • it asserts nothing that is not true at save time — no count, and no stage that did not land
 const eventCalls = () => apiFetchSpy.mock.calls
   .filter(([p, o]) => p === '/api/events' && o?.method === 'POST')
@@ -507,8 +519,8 @@ describe('V4-SEEDEVENT-001 — the event can never cost the user their lot', () 
   })
 })
 
-describe('V4-SEEDEVENT-001 — exactly one event per saved lot', () => {
-  it('one successful save logs one event, and only one', async () => {
+describe('V4-SEEDEVENT-001 — exactly one event per parent of a saved lot', () => {
+  it('one successful save from one planting logs one event, and only one', async () => {
     apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
     openSheet()
     fireEvent.click(screen.getByTestId('save-seed-submit'))
@@ -527,8 +539,8 @@ describe('V4-SEEDEVENT-001 — exactly one event per saved lot', () => {
     fireEvent.click(submit)
     await act(async () => { releaseCreate() })
     await waitFor(() => expect(eventCalls()).toHaveLength(1))
-    // One lot, one event. Two lots here would be the worse bug, but two events on one lot is the
-    // one this suite is responsible for.
+    // One lot, one parent, one event. Two lots here would be the worse bug, but two events on one
+    // plant is the one this suite is responsible for.
     expect(apiFetchSpy.mock.calls.filter(([p]) => p === '/api/inventory-items')).toHaveLength(1)
     expect(eventCalls()).toHaveLength(1)
   })

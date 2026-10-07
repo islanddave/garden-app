@@ -40,7 +40,10 @@ vi.mock('../components/VarietyPicker.jsx', () => ({
   default: ({ value }) => <span data-testid="variety-picker-value">{value?.id ?? 'none'}</span>,
 }))
 
-import SaveSeedSheet, { seedMeasurePayload, parseSeedWeight } from '../components/planting/SaveSeedSheet.jsx'
+import SaveSeedSheet, {
+  seedMeasurePayload, parseSeedWeight, parsePlantCount, PLANT_COUNT_MAX,
+} from '../components/planting/SaveSeedSheet.jsx'
+import { measureReply } from './fixtures/seedMix.fixture.js'
 
 const PL = {
   id: 'pl1', project_id: 'proj1', name: 'Brandywine #2', status: 'fruiting',
@@ -56,6 +59,8 @@ const openSheet = () => render(
 )
 const typeCount = (v) => fireEvent.change(screen.getByTestId('save-seed-count'), { target: { value: v } })
 const typeWeight = (v) => fireEvent.change(screen.getByTestId('save-seed-weight'), { target: { value: v } })
+// PL states no quantity, so the plant count is asked (it is hidden only for a planting of exactly 1).
+const typePlants = (v) => fireEvent.change(screen.getByTestId('save-seed-plant-count'), { target: { value: v } })
 const submit = () => fireEvent.click(screen.getByTestId('save-seed-submit'))
 
 const callsTo = (path) => apiFetchSpy.mock.calls.filter(([p]) => String(p) === path)
@@ -349,9 +354,10 @@ describe('V5-SEEDQTY-001 — a failed measure does not fail the save', () => {
     expect(navigateSpy.mock.calls[0][0]).toBe('/inventory/inv-9')
     expect(onClose).toHaveBeenCalled()
     expect(screen.queryByTestId('save-seed-error')).toBeNull()
-    // Retoned, and it names the count rather than claiming a clean save.
-    expect(toastSpy.mock.calls[0][0].tone).toBe('error')
-    expect(toastSpy.mock.calls[0][0].message).toMatch(/record the count/)
+    // Retoned, and it names the count rather than claiming a clean save. V5-SEEDMULTIPARENT-001:
+    // "the SEED count" — the sheet has a plant count too now, so "the count" no longer says which.
+    expect(toastSpy.mock.calls[0][0])
+      .toEqual({ message: "Seed lot saved — couldn't record the seed count", tone: 'error' })
   })
 
   it('a measure that LANDS leaves the toast byte-identical to a clean save', async () => {
@@ -384,8 +390,8 @@ describe('V5-SEEDQTY-001 — a failed measure does not fail the save', () => {
     fireEvent.click(screen.getByTestId('save-seed-process-dry'))
     submit()
     await waitFor(() => expect(toastSpy).toHaveBeenCalled())
-    expect(toastSpy.mock.calls[0][0].message).toMatch(/record the count/)
-    expect(toastSpy.mock.calls[0][0].message).toMatch(/start tracking it/)
+    expect(toastSpy.mock.calls[0][0])
+      .toEqual({ message: "Seed lot saved — couldn't record the seed count or start tracking it", tone: 'error' })
   })
 
   it('names the WEIGHT when that is what the user typed', async () => {
@@ -396,8 +402,8 @@ describe('V5-SEEDQTY-001 — a failed measure does not fail the save', () => {
     typeWeight('2.5')
     submit()
     await waitFor(() => expect(toastSpy).toHaveBeenCalled())
-    expect(toastSpy.mock.calls[0][0].message).toMatch(/record the weight/)
-    expect(toastSpy.mock.calls[0][0].message).not.toMatch(/record the count/)
+    expect(toastSpy.mock.calls[0][0])
+      .toEqual({ message: "Seed lot saved — couldn't record the weight", tone: 'error' })
   })
 
   it('names both when both were typed', async () => {
@@ -407,7 +413,8 @@ describe('V5-SEEDQTY-001 — a failed measure does not fail the save', () => {
     typeWeight('2.5')
     submit()
     await waitFor(() => expect(toastSpy).toHaveBeenCalled())
-    expect(toastSpy.mock.calls[0][0].message).toMatch(/record the count and weight/)
+    expect(toastSpy.mock.calls[0][0])
+      .toEqual({ message: "Seed lot saved — couldn't record the seed count and weight", tone: 'error' })
   })
 
   it('a stage-only failure keeps the wording that shipped', async () => {
@@ -418,5 +425,180 @@ describe('V5-SEEDQTY-001 — a failed measure does not fail the save', () => {
     await waitFor(() => expect(toastSpy).toHaveBeenCalled())
     expect(toastSpy.mock.calls[0][0])
       .toEqual({ message: "Seed lot saved — couldn't start tracking it", tone: 'error' })
+  })
+})
+
+// ── V5-SEEDMULTIPARENT-001 — the PLANT count rides the same route ────────────────────────────────
+// seed_parent_plant_count is written only by PUT /seed-measure. Two things about it were not true of
+// the count and the weight, and each is a way to lose the number without anyone being told:
+//   • IT CAN BE THE ONLY MEASURE. seedMeasurePayload returned null when the count and the weight were
+//     both blank, and null skips the request, so a plant count typed on its own was never sent.
+//   • THE ECHO HAS TO BE READ. The route always answers with the key; a 200 WITHOUT it came from a
+//     Lambda that predates the column, which wrote the count and the weight and dropped this.
+describe('parsePlantCount — a whole number of plants, 1 to 9999, or nothing', () => {
+  it('blank is "can’t say": null, and no error', () => {
+    for (const blank of ['', '   ', null, undefined]) {
+      expect(parsePlantCount(blank)).toEqual({ value: null, error: null })
+    }
+  })
+  it('takes a whole number from 1 to the column’s ceiling', () => {
+    expect(parsePlantCount('1')).toEqual({ value: 1, error: null })
+    expect(parsePlantCount(' 12 ')).toEqual({ value: 12, error: null })
+    expect(parsePlantCount(9)).toEqual({ value: 9, error: null })
+    expect(PLANT_COUNT_MAX).toBe(9999)
+    expect(parsePlantCount('9999')).toEqual({ value: 9999, error: null })
+  })
+  it('refuses zero, a negative, a decimal and junk with one sentence', () => {
+    for (const bad of ['0', '-3', '2.5', 'abc', '1e-1']) {
+      expect(parsePlantCount(bad)).toEqual({ value: null, error: 'A plant count is a whole number, 1 or more.' })
+    }
+  })
+  it('refuses a number past the ceiling with its own sentence', () => {
+    expect(parsePlantCount('10000')).toEqual({ value: null, error: 'A plant count can be 9999 at most.' })
+  })
+})
+
+describe('seedMeasurePayload — the plant count is a key of its own', () => {
+  it('ALONE it still makes a payload, so the request is still sent', () => {
+    expect(seedMeasurePayload('', '', false, '3')).toEqual({ seed_parent_plant_count: 3 })
+  })
+  it('rides beside the count and the weight without changing either', () => {
+    expect(seedMeasurePayload('185', '2.5', true, '3'))
+      .toEqual({ seed_count: 185, seed_count_estimated: true, seed_weight_g: 2.5, seed_parent_plant_count: 3 })
+  })
+  it('a blank or refused plant count contributes nothing', () => {
+    expect(seedMeasurePayload('', '', false, '')).toBeNull()
+    expect(seedMeasurePayload('', '', false, '0')).toBeNull()
+    expect(seedMeasurePayload('185', '', false, '2.5')).toEqual({ seed_count: 185, seed_count_estimated: false })
+  })
+  it('a three-argument caller gets exactly what it always got', () => {
+    expect(seedMeasurePayload('185', '2.5', false))
+      .toEqual({ seed_count: 185, seed_count_estimated: false, seed_weight_g: 2.5 })
+    expect(seedMeasurePayload('', '')).toBeNull()
+  })
+})
+
+describe('V5-SEEDMULTIPARENT-001 — the plant count goes to /seed-measure and its echo is read', () => {
+  /** Resolve the measure with `reply`; everything else as routeWith(). */
+  const measureAnswers = (reply) => apiFetchSpy.mockImplementation((path) => (
+    String(path).endsWith('/seed-measure') ? Promise.resolve(reply) : Promise.resolve({ id: 'inv-9' })))
+
+  it('a plant count typed on its own is sent, on the lot the create returned', async () => {
+    measureAnswers(measureReply({ seed_parent_plant_count: 3 }))
+    openSheet()
+    typePlants('3')
+    submit()
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    expect(measureCalls()).toHaveLength(1)
+    const [path, opts] = measureCalls()[0]
+    expect(path).toBe(MEASURE_PATH)
+    expect(opts.method).toBe('PUT')
+    expect(opts.body).toBe(JSON.stringify({ seed_parent_plant_count: 3 }))
+    expect(toastSpy.mock.calls[0][0]).toEqual({ message: 'Seed lot saved', tone: 'success' })
+  })
+
+  it('never rides the create: the route does not write it there', async () => {
+    measureAnswers(measureReply({ seed_parent_plant_count: 3 }))
+    openSheet()
+    typePlants('3')
+    submit()
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    const body = bodyOf(callsTo('/api/inventory-items')[0])
+    expect(Object.prototype.hasOwnProperty.call(body, 'seed_parent_plant_count')).toBe(false)
+  })
+
+  it('travels in ONE request with the seed count and the weight', async () => {
+    measureAnswers(measureReply({ seed_parent_plant_count: 3 }))
+    openSheet()
+    typeCount('185')
+    typeWeight('2.5')
+    typePlants('3')
+    submit()
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    expect(measureCalls()).toHaveLength(1)
+    expect(bodyOf(measureCalls()[0]))
+      .toEqual({ seed_count: 185, seed_count_estimated: false, seed_weight_g: 2.5, seed_parent_plant_count: 3 })
+  })
+
+  it('an echoed null still counts as an answer (the key is what is read, not its value)', async () => {
+    measureAnswers(measureReply({ seed_parent_plant_count: null }))
+    openSheet()
+    typePlants('3')
+    submit()
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    expect(toastSpy.mock.calls[0][0]).toEqual({ message: 'Seed lot saved', tone: 'success' })
+  })
+
+  it('a 200 WITHOUT the key means it was not saved, and the toast says so', async () => {
+    // What a Lambda from before the column answers. The save itself is not failed by it.
+    measureAnswers({ id: 'inv-9', seed_count: null })
+    openSheet()
+    typePlants('3')
+    submit()
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    expect(toastSpy.mock.calls[0][0])
+      .toEqual({ message: "Seed lot saved — couldn't record the plant count", tone: 'error' })
+    expect(navigateSpy.mock.calls[0][0]).toBe('/inventory/inv-9')
+    expect(screen.queryByTestId('save-seed-error')).toBeNull()
+  })
+
+  it('a 200 without the key names ONLY the plant count: the seed count beside it did land', async () => {
+    measureAnswers({ id: 'inv-9', seed_count: 185 })
+    openSheet()
+    typeCount('185')
+    typePlants('3')
+    submit()
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    expect(toastSpy.mock.calls[0][0])
+      .toEqual({ message: "Seed lot saved — couldn't record the plant count", tone: 'error' })
+  })
+
+  it('a 200 without the key is not read as a failure when no plant count was sent', async () => {
+    measureAnswers({ id: 'inv-9', seed_count: 185 })
+    openSheet()
+    typeCount('185')
+    submit()
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    expect(toastSpy.mock.calls[0][0]).toEqual({ message: 'Seed lot saved', tone: 'success' })
+  })
+
+  it('a request that THREW lost everything it carried, and each part is named', async () => {
+    routeWith(['/seed-measure'])
+    openSheet()
+    typePlants('3')
+    submit()
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    expect(toastSpy.mock.calls[0][0])
+      .toEqual({ message: "Seed lot saved — couldn't record the plant count", tone: 'error' })
+  })
+
+  it('names the seed count and the plant count when both went with it', async () => {
+    routeWith(['/seed-measure'])
+    openSheet()
+    typeCount('185')
+    typePlants('3')
+    submit()
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    expect(toastSpy.mock.calls[0][0])
+      .toEqual({ message: "Seed lot saved — couldn't record the seed count and plant count", tone: 'error' })
+  })
+
+  it('names all three when all three went with it', async () => {
+    routeWith(['/seed-measure'])
+    openSheet()
+    typeCount('185')
+    typeWeight('2.5')
+    typePlants('3')
+    submit()
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    expect(toastSpy.mock.calls[0][0])
+      .toEqual({ message: "Seed lot saved — couldn't record the seed count, weight and plant count", tone: 'error' })
+  })
+
+  it('a blank plant count sends no key, and no request when it is the only field', async () => {
+    openSheet()
+    submit()
+    await waitFor(() => expect(toastSpy).toHaveBeenCalled())
+    expect(measureCalls()).toHaveLength(0)
   })
 })

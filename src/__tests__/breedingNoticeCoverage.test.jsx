@@ -113,6 +113,13 @@ describe('the notice renders from the variety being saved', () => {
   // `planting` prop) is covered in SaveSeedSheet.test.jsx by "an F1 variety picked through the real
   // picker, with no planting prop, shows "F1 hybrid" above Save" (V5-SEEDSTAB-001). Until that test
   // existed this comment claimed coverage nothing provided.
+  //
+  // V5-SEEDMULTIPARENT-001 — and WHEN this line is not printed at all. breedingNotice speaks for one
+  // variety, so the sheet prints it only while the plantings are one variety; once they are two or
+  // more the block above Save is the parent set's own sentences (seedParents.js lotNotice) and no
+  // arm of this function is rendered. Both halves are pinned in SaveSeedSheet.multiParent.test.jsx
+  // ("says From 2 plantings of X. under today's breeding line" and "the block above Save speaks for
+  // the set"); the arms themselves are unchanged, which is what the first describe here holds.
   const Notice = ({ v }) => {
     const n = breedingNotice(v)
     return n ? <div data-testid="breeding-notice">{n.badge ? <span>{n.badge}</span> : null}<span>{n.line}</span></div> : null

@@ -113,7 +113,30 @@
 // ("Start tracking it?"), which is why ITS failure changes the toast. This one they never asked
 // for and could not act on, so its failure is swallowed and the flow finishes exactly as it would
 // have — lot created, toast shown, routed to /inventory/:id.
-import React, { useState } from 'react'
+//
+// V5-SEEDMULTIPARENT-001 release 2b — ONE JAR, SEVERAL PLANTINGS. Seed shaken into one jar off two
+// plantings used to be saved as two lots or as one lot naming half its parents. Behind
+// SEED_MULTI_PARENT the sheet keeps a SET of plantings (the "From" block) and everything that used to
+// be seeded once at mount is now DERIVED from that set on every change: the variety, the default lot
+// name, the adder's crop and the legacy source_plant_id. Seeding once was already wrong at the Seeds
+// door (picking a plant changed neither the name nor the variety) and becomes wrong everywhere once a
+// row can be removed.
+//
+// THE WRITES, each awaited before the next (R2B-CONTRACT seam S6):
+//   0. POST /api/varieties/blend { create: true } — ONLY when the plantings span two or more
+//      varieties. The mix is made at Save, for the set actually being saved, never while picking: the
+//      variety list is global, so a mix made on the way to another one would sit in every picker.
+//      Until then the Variety row shows the client's own reading of the name (previewMixName).
+//   1. POST /api/inventory-items with source_plant_ids, source_plant_id (the first row) and the filed
+//      variety. A 409 parents_changed is sent once more, silently.
+//   2. PUT /seed-measure, now also carrying seed_parent_plant_count (and sent for that key alone).
+//   3. POST /seed-stage, unchanged.
+//   4. One seed_saved event PER PARENT through the same single POST, one after another, never
+//      retried: a reply lost on the way back would otherwise leave two entries on one plant.
+// Anything that fails before the lot exists is answered in the client's own words (see
+// saveRefusalSentence) with every field left as typed. FLAG OFF is the forward undo: no "From" block,
+// no adder, no plant count, no mix, and every request body byte-equal to the one before this change.
+import React, { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 // V5-SEEDSOURCEPICKER-001 — Field and SourcePicker are InventoryAdd's own two imports for this
 // block. Reusing BOTH is what keeps the two intake doors onto `inventory_items` saying one thing:
@@ -130,6 +153,8 @@ import { P } from '../../lib/constants.js'
 import { PUTUP_SOURCE_OPTIONS } from '../../lib/dropdownRegistry.js'
 import { readMarker } from '../../lib/backNav.js'
 import { seedsHref } from '../../lib/seedsRoutes.js'
+import { SEED_MULTI_PARENT } from '../../lib/featureFlags.js'
+import { sourcePlantFromPlanting, parentSetFacts, lotNotice, previewMixName } from '../seed/seedParents.js'
 
 
 // MIRRORS src/pages/SavedSeeds.jsx's PROCESS_ENTRY, deliberately rather than importing it: that is
@@ -291,8 +316,13 @@ export function parseSeedWeight(raw) {
  * KEY-BY-KEY, because the route reads BY PRESENCE: a packet states a count or a weight, rarely both,
  * so each field independently either contributes its key or does not exist in the body. Both blank
  * returns null and no request is made at all.
+ *
+ * V5-SEEDMULTIPARENT-001 — A FOURTH, OPTIONAL ARGUMENT: the plant count (see parsePlantCount). It is
+ * a key of its own on the same route, so a plant count typed beside a blank seed count and a blank
+ * weight still returns a payload and the request is still made. Three-argument callers get exactly
+ * what they always got.
  */
-export function seedMeasurePayload(rawCount, rawWeight = '', estimated = false) {
+export function seedMeasurePayload(rawCount, rawWeight = '', estimated = false, rawPlantCount = '') {
   const payload = {}
   if (String(rawCount ?? '').trim() !== '') {
     const { value, error } = parseOpeningCount(rawCount)
@@ -303,7 +333,29 @@ export function seedMeasurePayload(rawCount, rawWeight = '', estimated = false) 
   }
   const weighed = parseSeedWeight(rawWeight)
   if (!weighed.error && weighed.value != null) payload.seed_weight_g = weighed.value
+  const plants = parsePlantCount(rawPlantCount)
+  if (!plants.error && plants.value != null) payload.seed_parent_plant_count = plants.value
   return Object.keys(payload).length ? payload : null
+}
+
+/**
+ * V5-SEEDMULTIPARENT-001 — how many separate PLANTS the seed was gathered from. Pure, exported for
+ * test. Returns { value: whole number 1-9999 | null, error }.
+ *
+ * Blank is null, which is "can't say" and writes nothing. It is a different number from the rows in
+ * the "From" block: two plantings can hold 2 and 7 plants, and seed off three of them is a jar from
+ * 3 plants. inventory_items.seed_parent_plant_count takes a whole number from 1 to 9999 and the route
+ * refuses anything else with a sentence that has no code, so a 0, a decimal and a five-figure number
+ * are answered here, before a lot exists that the refused measure would leave without its count.
+ */
+export const PLANT_COUNT_MAX = 9999
+export function parsePlantCount(raw) {
+  const typed = String(raw ?? '').trim()
+  if (typed === '') return { value: null, error: null }
+  const n = Number(typed)
+  if (!Number.isInteger(n) || n < 1) return { value: null, error: 'A plant count is a whole number, 1 or more.' }
+  if (n > PLANT_COUNT_MAX) return { value: null, error: `A plant count can be ${PLANT_COUNT_MAX} at most.` }
+  return { value: n, error: null }
 }
 
 /**
@@ -426,6 +478,86 @@ function plantingVariety(planting) {
   return null
 }
 
+// V5-SEEDMULTIPARENT-001 — the ONE cultivar a set of plantings shares, or null. Read only when the
+// set is not a mix. A planting whose variety was soft-deleted arrives with variety_id set and
+// variety_ref null (both plant reads join on `deleted_at IS NULL`); it is treated here as having no
+// variety (R2B-CONTRACT O-4), so the sheet asks for one instead of filing a jar under a variety that
+// no longer shows anywhere. That is the one place this differs from plantingVariety above, which
+// keeps the bare id and is still what the flag-off sheet seeds from.
+function sharedCultivar(rows) {
+  return rows.find((r) => r?.variety_ref?.id)?.variety_ref ?? null
+}
+
+// lambda/inventory-items refuses a thirteenth parent with a sentence that has no code. The adder
+// stops offering at the cap rather than let a save end in a refusal no tap can clear.
+const MAX_SEED_PARENTS = 12
+
+// "sweet_pepper" -> "sweet pepper", for the adder's label and its empty text.
+const cropWords = (slug) => String(slug ?? '').replace(/[-_]+/g, ' ').trim().toLowerCase()
+
+const listWords = (words) => (words.length <= 1 ? words.join('')
+  : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`)
+
+// V5-SEEDMULTIPARENT-001 — WHAT THE SHEET SAYS WHEN A SAVE DID NOT HAPPEN. Until this release the
+// catch printed whatever the request threw: the server's sentence for an HTTP error, the browser's
+// own text with no connection, "Request timed out" on a timeout. With the mix call in front of the
+// lot there are more ways to stop before anything is written, and one of the server's sentences
+// ("Reload and try again") names a step that would throw away everything typed here. So every failure
+// before the lot exists gets one of these, and the server's string is never printed.
+const SAVE_FAILED = "Couldn't save just now. Nothing was saved. Your entries are still here. Tap Save seed to try again."
+const SAVE_OFFLINE = "You're offline. Nothing was saved. Your entries stay here until you're back in range."
+const SAVE_NEEDS_UPDATE = 'This jar needs the latest version of the app. Nothing was saved.'
+// The one sentence for a throw AFTER the lot landed. Every request after the create carries its own
+// catch, so this is reached only by a host callback that throws; "nothing was saved" would be false
+// there and would invite a second jar.
+const SAVED_BUT_UNFINISHED = 'The seed lot was saved, but something went wrong after that. Look for it in Seeds before you save again.'
+const PLANTING_FALLBACK = 'One of these plantings'
+
+// api.js rethrows the browser's own error when there is no connection: a TypeError with no `status`.
+// A timeout carries status 0 and is not this.
+const isOffline = (err) => err?.status == null && !err?.timeout
+  && ((typeof navigator !== 'undefined' && navigator.onLine === false) || err instanceof TypeError)
+
+/**
+ * The sentence for a save that stopped before the lot existed. `plants` is the set as the client
+ * holds it (sourcePlantFromPlanting rows), because the two coded refusals are about ONE row and that
+ * row is off screen, above the fold, by the time Save is tapped.
+ *   parent_without_variety — carries plant_id.
+ *   mixed_crop_parents (and the mix route's mixed_crop_components) — carries nothing, so the row is
+ *     found here: the first whose crop differs from the first row's.
+ * Both are unreachable while the adder is crop-filtered; they are answered for the case where a
+ * planting changed after the picker listed it. A code with no row to name falls through to the
+ * general sentence rather than naming the wrong plant.
+ */
+function saveRefusalSentence(err, { atMix = false, plants = [] } = {}) {
+  if (atMix && err?.status === 405) return SAVE_NEEDS_UPDATE
+  const code = err?.status === 400 ? err?.body?.code : null
+  if (code === 'parent_without_variety') {
+    const row = plants.find((p) => String(p.id) === String(err.body?.plant_id))
+    if (row) return `${row.name || PLANTING_FALLBACK} has no variety recorded, so it can't share a jar. Remove it, or save it as its own jar.`
+  }
+  if (code === 'mixed_crop_parents' || code === 'mixed_crop_components') {
+    const first = plants[0]?.crop_slug ?? null
+    const row = plants.find((p) => (p.crop_slug ?? null) !== first)
+    if (row) return `${row.name || PLANTING_FALLBACK} is a different crop, so it can't share this jar. Remove it and save again.`
+  }
+  return isOffline(err) ? SAVE_OFFLINE : SAVE_FAILED
+}
+
+// "These 2 plantings hold 9 plants today." — said only when it helps, which is when the plantings
+// hold more plants than there are plantings (otherwise the rows already say it). Every planting has
+// to state a whole quantity: a sum over the ones that do would be a number that is simply wrong.
+// Words under the field, never a value in it, and never a cap on what can be typed.
+function plantsHeldHint(rows) {
+  const held = rows.map((r) => Number(r?.quantity))
+  if (!held.every((q) => Number.isInteger(q) && q >= 1)) return null
+  const total = held.reduce((a, b) => a + b, 0)
+  if (total <= rows.length) return null
+  return rows.length === 1
+    ? `This planting holds ${total} plants today.`
+    : `These ${rows.length} plantings hold ${total} plants today.`
+}
+
 // V4-SEEDINTAKEAGNOSTIC-001 — the eight source kinds, straight from the shipped registry rather than
 // a fourth hand-typed copy. That vocabulary is synchronised across four homes (this registry,
 // lambda/preservation/provenance.js, lambda/inventory-items/source-kinds.js and the DB CHECK
@@ -438,7 +570,9 @@ const NON_GARDEN_KINDS = PUTUP_SOURCE_OPTIONS.filter((o) => (o.value ?? o) !== '
  *
  * WHEN IT IS PASSED (the planting page, the event menu) nothing about this sheet changes: the parent
  * is a parameter, the variety is seeded from the record the page already loaded, and the whole happy
- * path is still zero reads.
+ * path is still zero reads. (V5-SEEDMULTIPARENT-001: it is now the FIRST ROW of a parent set, fixed
+ * in place, and "seeded" became "derived from the set on every change"; still zero reads until the
+ * user asks to add a second plant. See the state block below.)
  *
  * WHEN IT IS ABSENT the sheet asks the one question the caller could not answer — where did this seed
  * come from — and offers both real answers. Dave, 2026-09-03: "I still cannot find an easy way to
@@ -487,10 +621,24 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
   const toast = useOptionalToast()
   const navigate = useNavigate()
 
-  // The planting this save is FOR: the prop when the caller knew it, otherwise whatever the user
-  // picks below. Every downstream read goes through this, never through `planting` directly.
-  const [picked, setPicked] = useState(null)
-  const parent = planting ?? picked
+  // The plantings this save is FOR: the prop when the caller knew it, then whatever the user picks
+  // below, in pick order. `rows` is the whole parent set and every downstream read goes through it,
+  // never through `planting` directly. `parent` is its first row: the legacy source_plant_id, and
+  // the only row there is while SEED_MULTI_PARENT is off (the picker then replaces its one pick, as
+  // it always did, and nothing can add a second).
+  //
+  // The prop is NOT copied into state. From a planting page or the log menu the first row is that
+  // page's planting and stays fixed; at a planting-less door every row is one the user chose here,
+  // so every row can be taken back.
+  const multi = SEED_MULTI_PARENT
+  const [picked, setPicked] = useState([])
+  const rows = useMemo(() => (planting ? [planting, ...picked] : picked), [planting, picked])
+  const parent = rows[0] ?? null
+  // The same rows in the contract's shape, and what they add up to: how many varieties, which crop.
+  const sourcePlants = useMemo(() => rows.map(sourcePlantFromPlanting), [rows])
+  const facts = useMemo(() => parentSetFacts(sourcePlants), [sourcePlants])
+  // A mix needs two varieties the mix route can be given. A row with no variety is not one of them.
+  const isMix = multi && facts.varietyIds.length >= 2
   // null until answered, and only asked when the caller did not already know. 'plant' | 'other'.
   const [origin, setOrigin] = useState(planting ? 'plant' : null)
   const [sourceKind, setSourceKind] = useState('')
@@ -505,13 +653,51 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
   const [acquiredFromId, setAcquiredFromId] = useState('')
 
 
-  const seeded = plantingVariety(parent)
-  const [name, setName] = useState(() => defaultLotName(planting))
-  const [variety, setVariety] = useState(seeded)
+  // DERIVE, DO NOT SEED (V5-SEEDMULTIPARENT-001). The two things the user can override are kept
+  // apart from the two things the set decides, so a later change to the set never has to guess
+  // whether a value on screen was typed or defaulted:
+  //   typedName + nameTouched — the lot name follows the set until the field is typed in, then it is
+  //     the user's for good.
+  //   handVariety — a variety chosen through the picker. It is kept while the plantings are a mix
+  //     (when the mix is shown instead) and comes back when the set is one variety again, so removing
+  //     a mis-tapped plant does not silently undo a deliberate choice.
+  // Flag off, both hold exactly what `name` and `variety` held: seeded once from the prop at mount.
+  const seeded = plantingVariety(planting)
+  const [typedName, setTypedName] = useState(() => defaultLotName(planting))
+  const [nameTouched, setNameTouched] = useState(false)
+  const [handVariety, setHandVariety] = useState(multi ? null : seeded)
+  const variety = !multi ? handVariety : isMix ? null : (handVariety ?? sharedCultivar(rows))
+  // The client's reading of the mix's name, shown at once and with no request. The server names a
+  // mix from its leaves, so where a parent's variety is itself a mix the name it returns at Save can
+  // differ; that one replaces this wherever the lot name is still untouched.
+  const mixName = isMix ? previewMixName(facts.varieties) : ''
+  const name = multi && !nameTouched
+    ? defaultLotName(isMix ? { variety_ref: { name: mixName } } : parent)
+    : typedName
   // Open by default ONLY when there is nothing to show. The picker's hook fetches /api/varieties on
   // mount, so keeping it collapsed on the common path (the planting knows its cultivar) keeps the
-  // whole happy path to zero reads.
-  const [pickerOpen, setPickerOpen] = useState(!seeded)
+  // whole happy path to zero reads. With the set deciding the variety, "nothing to show" is read on
+  // every render rather than once, so picking a plant at the Seeds door closes the picker it made
+  // unnecessary; `pickerOpen` then records only that the user asked for it. Never shown for a mix:
+  // a variety offered there would be refused at Save (the server wants the mix of those plants).
+  const [pickerOpen, setPickerOpen] = useState(multi ? false : !seeded)
+  const pickerShown = multi ? (!isMix && (pickerOpen || !variety)) : pickerOpen
+  // The adder. Its crop is the set's shared crop, so every planting it lists can share the jar. With
+  // no crop to filter by it would list every planting in the garden and the server would refuse
+  // nearly all of them, so it is not offered. That ONE test covers each case that has no crop: a
+  // first plant with no variety, one whose variety was deleted (the crop is read off the joined
+  // variety, and there is none), and a variety that names no crop.
+  const [adderOpen, setAdderOpen] = useState(false)
+  const adderCrop = typeof facts.cropSlug === 'string' && facts.cropSlug ? facts.cropSlug : null
+  const canAdd = multi && !!adderCrop && rows.length < MAX_SEED_PARENTS
+  // A STABLE array: PlantingSelect reads it as a memo dep.
+  const excludeIds = useMemo(() => rows.map((r) => String(r.id)), [rows])
+  // The plant count is asked only when the rows do not already answer it: two or more plantings, or
+  // one planting that holds some number of plants other than exactly 1. A single one-plant planting
+  // shows nothing new and writes nothing. Never prefilled; the hint is words, not a value.
+  const [plantCount, setPlantCount] = useState('')
+  const showPlantCount = multi && rows.length > 0 && (rows.length >= 2 || Number(parent?.quantity) !== 1)
+  const plantHint = showPlantCount ? plantsHeldHint(rows) : null
   const [seedProcess, setSeedProcess] = useState(null)
   // BUG-SEEDZEROSOWABLE-001 — blank means "haven't counted"; see parseOpeningCount.
   const [count, setCount] = useState('')
@@ -538,8 +724,9 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
     if (busy) return
     // chk_inventory_seed_requires_variety refuses `category='seeds' AND variety_id IS NULL`, and
     // validateCreate 400s on it first. Both would tell us what we already know, so nothing leaves
-    // the client — the user gets the answer here instead of after a round trip.
-    if (!varietyId) {
+    // the client — the user gets the answer here instead of after a round trip. A mix has no id
+    // yet and is not this case: its variety is made by the first request below.
+    if (!isMix && !varietyId) {
       setError('Pick the variety this seed came from — a seed lot has to name one.')
       return
     }
@@ -569,6 +756,15 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
       setError(weighed.error)
       return
     }
+    // V5-SEEDMULTIPARENT-001 — the plant count, on the same client-first rule. Read only while its
+    // field is on screen: a number typed for two plantings and then hidden by removing one must not
+    // ride along on a save that no longer shows it.
+    const plantsTyped = showPlantCount ? plantCount : ''
+    const plantsParsed = parsePlantCount(plantsTyped)
+    if (plantsParsed.error) {
+      setError(plantsParsed.error)
+      return
+    }
     // V5-SEEDSOURCEPICKER-001 — the same client-first treatment as the three guards above, against
     // the same pair the server refuses (sourceRefsCollide -> SOURCE_DISTINCT_ERROR, and the CHECK
     // chk_inventory_source_distinct behind it). NULL on acquired_from means "not recorded, or not
@@ -581,11 +777,40 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
     }
     setBusy(true)
     setError(null)
+    // Both are read by the catch: which request stopped the save decides one sentence (a 405 means
+    // "the server is older than this app" only when the mix route answered it), and whether the lot
+    // already landed decides whether "nothing was saved" is true.
+    let lot = null
+    let lotLanded = false
+    let atMix = false
     try {
-      const lot = await fetch('/api/inventory-items', {
+      // V5-SEEDMULTIPARENT-001 — STEP 0, and only for a mix: find or make the variety this jar is
+      // filed under. One request, sent at the moment a wait is expected. The route is idempotent
+      // (the same varieties always answer with the same row), so a save that fails further down and
+      // is tapped again reuses the mix rather than minting a second.
+      let filedVarietyId = varietyId
+      let lotName = name.trim()
+      if (isMix) {
+        atMix = true
+        const mix = await fetch('/api/varieties/blend', {
+          method: 'POST',
+          body: JSON.stringify({ component_variety_ids: facts.varietyIds, create: true }),
+        })
+        if (!mix?.id) throw new Error('the mix route answered without a variety id')
+        filedVarietyId = mix.id
+        // The RETURNED name, not the preview: a mix renamed earlier, a name the server had to
+        // suffix, or a parent that is itself a mix all answer with something the client could not
+        // have built. Only while the field is untouched; a typed name is the user's.
+        if (!nameTouched && mix.name) lotName = defaultLotName({ variety_ref: { name: mix.name } })
+        atMix = false
+      }
+      // ONE array feeds both parent keys, so the legacy source_plant_id can never name a planting
+      // that is not in source_plant_ids (the route refuses that pair).
+      const parentIds = rows.map((r) => r.id)
+      const createLot = () => fetch('/api/inventory-items', {
         method: 'POST',
         body: JSON.stringify({
-          name: name.trim(),
+          name: lotName,
           category: 'seeds',
           type: 'consumable',
           unit: 'packet',
@@ -599,7 +824,7 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
           // NULL`, so a consumable row with a null count is refused outright — which is why this is
           // 1 and not omitted.
           quantity_on_hand: 1,
-          variety_id: varietyId,
+          variety_id: filedVarietyId,
           // V4-SEEDINTAKEAGNOSTIC-001 — `parent`, not `planting`: the prop when the caller knew it,
           // the picked planting when the user chose one, and NULL for seed that came from no plant
           // of ours. The two keys below are mutually exclusive by DB CHECK
@@ -607,7 +832,11 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
           // source_plant_id IS NULL), so sending both a parent and a non-garden kind would be a 400.
           // Spread rather than a null, for the same reason the event metadata is spread: the route
           // reads source_kind by PRESENCE, so an explicit null and an absent key are different.
-          source_plant_id: parent?.id ?? null,
+          source_plant_id: parentIds[0] ?? null,
+          // V5-SEEDMULTIPARENT-001 — the whole set. Sent for one planting as well as for several,
+          // and NOT sent with none: the route reads a present key as "this is the set", and seed
+          // that came off no plant of ours keeps the body it has always had.
+          ...(multi && parentIds.length ? { source_plant_ids: parentIds } : {}),
           ...(!parent && sourceKind ? { source_kind: sourceKind } : {}),
           // V5-SEEDSOURCEPICKER-001 — the named source, on the SAME `!parent` gate as the kind
           // above and for the same reason: seed off one of our own plants has its provenance in
@@ -630,6 +859,17 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
           ...(!parent && acquiredFromId ? { acquired_from_source_id: acquiredFromId } : {}),
         }),
       })
+      // V5-SEEDMULTIPARENT-001 — 409 parents_changed means a named planting stopped being usable
+      // between the route's check and its write, and nothing was written. The server's sentence for
+      // it says "Reload and try again", which here would throw away everything typed; the app can do
+      // that step itself, so the same request goes once more and only a second refusal is reported.
+      try {
+        lot = await createLot()
+      } catch (err) {
+        if (!(multi && err?.status === 409 && err?.body?.code === 'parents_changed')) throw err
+        lot = await createLot()
+      }
+      lotLanded = true
       // V5-SEEDQTY-001 — the count, as its own request on its own route. Same shape of decision as
       // the stage below: a second write that the lot's existence does not depend on, so it carries
       // its own failure rather than failing the save. The lot is what the user asked for and it
@@ -637,14 +877,24 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
       //
       // SKIPPED ENTIRELY ON A BLANK FIELD — see seedMeasurePayload. A blank count is not a zero, and
       // the request that would write one is the request not made.
+      //
+      // V5-SEEDMULTIPARENT-001 — the plant count rides this request, and its echo is READ. The route
+      // always answers with seed_parent_plant_count, so a 200 without that key came from a Lambda
+      // that predates the column: the seed count and the weight landed and the plant count did not.
       let measureFailed = false
-      const measure = seedMeasurePayload(count, weight, countEstimated)
+      let plantCountFailed = false
+      const measure = seedMeasurePayload(count, weight, countEstimated, plantsTyped)
+      const has = (k) => !!measure && Object.prototype.hasOwnProperty.call(measure, k)
       if (measure && lot?.id) {
         try {
-          await fetch(`/api/inventory-items/${lot.id}/seed-measure`, {
+          const echo = await fetch(`/api/inventory-items/${lot.id}/seed-measure`, {
             method: 'PUT',
             body: JSON.stringify(measure),
           })
+          if (has('seed_parent_plant_count')
+            && !(echo && Object.prototype.hasOwnProperty.call(echo, 'seed_parent_plant_count'))) {
+            plantCountFailed = true
+          }
         } catch {
           measureFailed = true
         }
@@ -679,24 +929,33 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
       // Skipping the POST is the honest outcome. The alternative — inventing a placeholder planting
       // to carry the event — would put plants in the garden that were never planted, which is a
       // worse lie than a missing row.
-      if (parent) try {
-        await fetch('/api/events', {
-          method: 'POST',
-          body: JSON.stringify({
-            plant_id: parent.id,
-            event_type: 'seed_saved',
-            event_date: todayLocalISO(),
-            notes: seedSavedNote(name.trim(), stageWritten),
-            // Spread, not a bare key: an unguarded `{ seed_lot_id: undefined }` serialises to `{}`,
-            // which is a valid plain object to the validator and persists an empty jsonb instead of
-            // NULL — a row that looks linked and is not.
-            ...(lot?.id ? { metadata: { seed_lot_id: lot.id } } : {}),
-          }),
-        })
-      } catch {
-        // Deliberately nothing. The lot is what the user asked for and it exists; a message about a
-        // timeline row they never requested is noise they cannot act on, and re-raising here would
-        // report a landed create as a failed save.
+      //
+      // V5-SEEDMULTIPARENT-001 — ONE EVENT PER PARENT, so the jar shows on every plant it came off.
+      // The same single POST once per row, each awaited before the next: never Promise.all (N
+      // writes racing one reward grant) and never retried (a first call that landed with its reply
+      // lost would leave two entries on one plant). The note is the same on each and names only the
+      // jar, never the other plants: it is permanent, and taking a mis-tapped plant off the jar
+      // later would leave a clause about it false on the others' timelines.
+      for (const row of rows) {
+        try {
+          await fetch('/api/events', {
+            method: 'POST',
+            body: JSON.stringify({
+              plant_id: row.id,
+              event_type: 'seed_saved',
+              event_date: todayLocalISO(),
+              notes: seedSavedNote(lotName, stageWritten),
+              // Spread, not a bare key: an unguarded `{ seed_lot_id: undefined }` serialises to `{}`,
+              // which is a valid plain object to the validator and persists an empty jsonb instead of
+              // NULL — a row that looks linked and is not.
+              ...(lot?.id ? { metadata: { seed_lot_id: lot.id } } : {}),
+            }),
+          })
+        } catch {
+          // Deliberately nothing. The lot is what the user asked for and it exists; a message about a
+          // timeline row they never requested is noise they cannot act on, and re-raising here would
+          // report a landed create as a failed save.
+        }
       }
       // Built from a list rather than nested ternaries because there are now TWO optional writes
       // that can miss independently, and a message naming only one of them would be a false all-
@@ -704,12 +963,22 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
       // Named after what the user actually typed rather than after the route: "couldn't record the
       // count" on a save where they only gave a weight would be a message about something they
       // never entered.
-      const has = (k) => !!measure && Object.prototype.hasOwnProperty.call(measure, k)
-      const measureNoun = has('seed_count') && has('seed_weight_g') ? 'record the count and weight'
+      //
+      // V5-SEEDMULTIPARENT-001 — with two counts on the sheet "the count" no longer says which, so
+      // each is named: seed count, weight, plant count. A request that threw lost all it carried; a
+      // 200 without the plant count's echo lost that one alone.
+      const sentMeasures = [
+        has('seed_count') && 'seed count',
+        has('seed_weight_g') && 'weight',
+        has('seed_parent_plant_count') && 'plant count',
+      ].filter(Boolean)
+      const measureNoun = multi
+        ? `record the ${listWords(measureFailed ? sentMeasures : ['plant count'])}`
+        : has('seed_count') && has('seed_weight_g') ? 'record the count and weight'
         : has('seed_weight_g') ? 'record the weight'
         : 'record the count'
       const missed = [
-        measureFailed && measureNoun,
+        (measureFailed || plantCountFailed) && measureNoun,
         stageFailed && 'start tracking it',
       ].filter(Boolean)
       toast.show(missed.length
@@ -756,10 +1025,27 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
       if (stageWritten && !stageFailed) go(seedsHref('saved', { lot: lot?.id }))
       else if (lot?.id) go(`/inventory/${lot.id}`)
     } catch (err) {
-      setError(err?.message || "Couldn't save the seed lot")
+      // Flag off, exactly what shipped. Flag on, the client's own sentence and never the server's:
+      // see saveRefusalSentence. The sheet stays open on every field as typed, so the retry is one
+      // tap; there is no Reload button, because a reload is the one step that would lose them.
+      setError(!multi ? (err?.message || "Couldn't save the seed lot")
+        : lotLanded ? SAVED_BUT_UNFINISHED
+        : saveRefusalSentence(err, { atMix, plants: sourcePlants }))
     } finally {
       setBusy(false)
     }
+  }
+
+  // Taking a row back. Nothing has been written before Save, so there is nothing to undo and no
+  // confirmation: the row goes, and the variety, the name and the adder's crop follow the set.
+  const removeRow = (id) => {
+    setPicked((cur) => cur.filter((r) => String(r.id) !== String(id)))
+    setAdderOpen(false)
+  }
+  const addRow = (row) => {
+    if (!row) return
+    setPicked((cur) => (rows.some((r) => String(r.id) === String(row.id)) ? cur : [...cur, row]))
+    setAdderOpen(false)
   }
 
   // BUG-SEEDSHEETBACK-001 (pre-promote MIN-3) — `armsBack` below is a per-render-site decision,
@@ -779,7 +1065,82 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
       {/* V4-SEEDINTAKEAGNOSTIC-001 — the origin block. Rendered ONLY when the caller could not
           answer it: from a planting page or the event menu this whole section is absent and the
           sheet is byte-identical to what shipped. */}
-      {parent ? (
+      {parent && multi ? (
+        // V5-SEEDMULTIPARENT-001 — the "From" block: the parent set, one row per planting. It takes
+        // the place of the one-line "From <planting>" below, and the plant count sits in it, under
+        // the rows it is about and away from the seed count further down, so a number of plants is
+        // not typed into the seed field.
+        <div data-testid="save-seed-from" style={{ margin: '0 0 14px' }}>
+          <div id="save-seed-from-label" style={fromHeadingStyle}>From</div>
+          <ul aria-labelledby="save-seed-from-label" style={fromListStyle}>
+            {rows.map((row, i) => {
+              const label = row?.name || 'this planting'
+              return (
+                <li key={String(row.id)} data-testid="save-seed-from-row" style={fromRowStyle}>
+                  <span style={fromNameStyle}>{label}</span>
+                  {/* The page's own planting is not removable: the sheet was opened FOR it. At a
+                      planting-less door every row was chosen here, the first included, and removing
+                      the last one returns to "Which plant?" with everything typed still in place. */}
+                  {!(planting && i === 0) && (
+                    <button
+                      type="button" data-testid="save-seed-from-remove" aria-label={`Remove ${label}`}
+                      disabled={busy} onClick={() => removeRow(row.id)} style={fromRemoveStyle}
+                    >
+                      <span aria-hidden="true">✕</span>
+                    </button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+          {canAdd && (
+            <button
+              type="button" data-testid="save-seed-add-plant" aria-expanded={adderOpen}
+              disabled={busy} onClick={() => setAdderOpen((open) => !open)} style={fromAddStyle}
+            >
+              + Add seed from another plant
+            </button>
+          )}
+          {canAdd && adderOpen && (
+            // The same PlantingSelect as "Which plant?", narrowed to the set's crop and without the
+            // plantings already chosen. autoOpen because the tap that asked for it is the gesture:
+            // from a planting page the second plant is then two taps, with no typing.
+            <label style={{ ...fieldLabelStyle, marginTop: 6 }}>
+              Your other {cropWords(adderCrop)} plantings
+              <PlantingSelect
+                value=""
+                onChange={(_id, row) => addRow(row)}
+                cropSlug={adderCrop}
+                excludeIds={excludeIds}
+                emptyText={`No other ${cropWords(adderCrop)} plantings to add.`}
+                footerNote="A plant with no variety recorded is not listed here. Give it a variety first."
+                labelFormat="qtyVariety"
+                autoOpen
+                data-testid="save-seed-add-select"
+              />
+            </label>
+          )}
+          {showPlantCount && (
+            <>
+              <label style={{ ...fieldLabelStyle, marginTop: 10, marginBottom: 0 }}>
+                About how many separate plants did you gather this seed from?
+                {/* No placeholder digit: a grey "e.g. 9" reads as a value already there. */}
+                <input
+                  type="number" inputMode="numeric" min="1" max={PLANT_COUNT_MAX} step="1" value={plantCount}
+                  onChange={(e) => setPlantCount(e.target.value)}
+                  aria-describedby="save-seed-plant-count-note"
+                  data-testid="save-seed-plant-count" style={inputStyle}
+                />
+              </label>
+              <p id="save-seed-plant-count-note" data-testid="save-seed-plant-count-note" style={hintStyle}>
+                Single plants, not the plantings listed above. Count each plant once, however often
+                you picked from it. Leave it blank if you can&apos;t say.
+                {plantHint && <span data-testid="save-seed-plant-count-hint" style={{ display: 'block' }}>{plantHint}</span>}
+              </p>
+            </>
+          )}
+        </div>
+      ) : parent ? (
         <p style={{ margin: '0 0 14px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.5 }}>
           From {parent?.name || 'this planting'} — the lot remembers which plant it came off.
         </p>
@@ -818,9 +1179,11 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
               dialect in a codebase that has spent real effort collapsing them to two. */}
           <label style={fieldLabelStyle}>
             Which plant?
+            {/* This picker is on screen only while no planting is chosen, so its value is always
+                unset. The pick becomes the first row of the set (and, flag off, the only one). */}
             <PlantingSelect
-              value={picked?.id ?? ''}
-              onChange={(_id, row) => setPicked(row)}
+              value=""
+              onChange={(_id, row) => setPicked(row ? [row] : [])}
               labelFormat="qtyVariety"
               data-testid="seed-plant-select"
             />
@@ -899,32 +1262,49 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
 
       <label style={fieldLabelStyle}>
         Lot name
+        {/* Typing here is what makes the name the user's: from then on the set no longer renames it. */}
         <input
-          type="text" value={name} onChange={(e) => setName(e.target.value)}
+          type="text" value={name}
+          onChange={(e) => { setTypedName(e.target.value); setNameTouched(true) }}
           data-testid="save-seed-name" style={inputStyle}
         />
       </label>
 
       <div style={fieldLabelStyle}>
         Variety
-        {!pickerOpen && (
-          <div style={varietyRowStyle}>
+        {!pickerShown && (
+          <div style={isMix ? mixRowStyle : varietyRowStyle}>
             <span data-testid="save-seed-variety-name" style={{ fontWeight: 400, color: P.dark }}>
-              {variety?.name || "this planting's variety"}
+              {isMix ? mixName : (variety?.name || "this planting's variety")}
             </span>
-            <button
-              type="button" data-testid="save-seed-variety-change"
-              onClick={() => setPickerOpen(true)} style={linkBtnStyle}
-            >
-              Change
-            </button>
+            {/* V5-SEEDMULTIPARENT-001 — NO "Change" while the plantings are different varieties.
+                The jar has to be filed under the mix of exactly those plants, so any variety picked
+                here would be refused at Save: a choice offered and then refused is a trap. The way
+                to a different variety is to take a plant off the jar, on its row above. */}
+            {!isMix && (
+              <button
+                type="button" data-testid="save-seed-variety-change"
+                onClick={() => setPickerOpen(true)} style={linkBtnStyle}
+              >
+                Change
+              </button>
+            )}
           </div>
         )}
+        {/* The explanation at the point of change. The notice block above Save does not repeat it. */}
+        {isMix && (
+          <p data-testid="save-seed-mix-reason" style={{ ...hintStyle, fontWeight: 400 }}>
+            These plants are recorded under different varieties, so this jar is filed as a mix.
+          </p>
+        )}
       </div>
-      {pickerOpen && (
+      {pickerShown && (
         <div data-testid="save-seed-variety-picker" style={{ marginBottom: 14 }}>
+          {/* A pick made here is a hand choice, and it keeps the picker open as it always has: the
+              picker closing under the finger that just used it would read as the choice being lost. */}
           <VarietyPicker
-            id="save-seed-variety" value={variety} onChange={setVariety} required
+            id="save-seed-variety" value={variety}
+            onChange={(v) => { setHandVariety(v); setPickerOpen(true) }} required
           />
           {!varietyId && (
             // Named, not silent: a planting with no cultivar is the ONE case this flow cannot
@@ -943,8 +1323,10 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
           correctly removed. */}
       {/* marginBottom 0 so the basis switch below sits against this field rather than a field-gap
           away from it — V5-SEEDESTTOGGLE-001, and the same override on SavedSeeds' count label. */}
+      {/* V5-SEEDMULTIPARENT-001 — "How many?" with no noun worked only while it was the sheet's one
+          count. With a plant count in the "From" block above, this one says what it counts. */}
       <label style={{ ...fieldLabelStyle, marginBottom: 0 }}>
-        How many? <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>
+        {multi ? 'How many seeds?' : 'How many?'} <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>
         {/* inputMode NUMERIC, not decimal: seed_count is an integer column and a decimal point one
             tap away on Dave's Android keypad is a 400 from the route (see the whole-number guard in
             save()). The weight field below is the one that wants a decimal pad. */}
@@ -1032,18 +1414,47 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
           prop would show the warning for the plant they started from rather than the seed they are
           saving. Sits above Save rather than beside the variety row so it is the last thing read
           before the tap it is about. Renders NOTHING (not an empty box) when there is no assessment
-          — see breedingNotice. */}
+          — see breedingNotice.
+
+          V5-SEEDMULTIPARENT-001 — STILL ONE BLOCK, now read from two places. While the plantings
+          are one variety (truth-table rows 0-7) the line above is unchanged and still follows the
+          Variety row, hand-picked or not; the parent set only ADDS its own sentences under it ("From
+          2 plantings of X."). Once they are two or more varieties (rows 8-10) no single variety's
+          line is true of the jar, so only the set speaks. The one-line reason under the Variety row
+          is not said again here. With no planting chosen there is no set, and the block is exactly
+          what it was. */}
       {(() => {
-        const notice = breedingNotice(variety)
-        if (!notice) return null
+        const setSays = multi && rows.length > 0
+          ? lotNotice({
+            source_plants: sourcePlants,
+            source_plant_id: parent?.id ?? null,
+            breeding_system: variety?.breeding_system ?? null,
+            variety_rank: isMix ? 'blend' : (variety?.variety_rank ?? null),
+            variety_name: isMix ? mixName : (variety?.name ?? null),
+          })
+          : null
+        const notice = setSays && setSays.row >= 8 ? null : breedingNotice(variety)
+        const sentences = setSays?.sentences ?? []
+        if (!notice && sentences.length === 0) return null
         return (
-          <div data-testid="breeding-notice" data-breeding={variety?.breeding_system} style={breedingNoticeStyle}>
-            {notice.badge && (
+          <div
+            data-testid="breeding-notice" data-breeding={notice ? variety?.breeding_system : undefined}
+            style={breedingNoticeStyle}
+          >
+            {notice?.badge && (
               <Badge tone={notice.tone} style={{ marginRight: 8, verticalAlign: 'middle' }}>
                 {notice.badge}
               </Badge>
             )}
-            <span>{notice.line}</span>
+            {notice && <span>{notice.line}</span>}
+            {sentences.map((sentence, i) => (
+              <span
+                key={sentence} data-testid="breeding-notice-set"
+                style={{ display: 'block', marginTop: notice || i > 0 ? 6 : 0 }}
+              >
+                {sentence}
+              </span>
+            ))}
           </div>
         )
       })()}
@@ -1070,9 +1481,35 @@ const varietyRowStyle = {
   minHeight: 48, marginTop: 6, padding: '0 12px',
   borderRadius: 8, border: `1px solid ${P.border}`, backgroundColor: P.white, fontSize: '1rem',
 }
+// V5-SEEDMULTIPARENT-001 — the mix's name is two or three variety names joined, so it wraps where a
+// single name did not. Same box as varietyRowStyle, with vertical padding in place of a fixed line.
+const mixRowStyle = { ...varietyRowStyle, padding: '10px 12px', overflowWrap: 'anywhere' }
 const linkBtnStyle = {
   background: 'none', border: 'none', padding: '4px 2px', cursor: 'pointer',
   fontSize: '0.82rem', fontWeight: 600, color: P.green, textDecoration: 'underline',
+}
+// V5-SEEDMULTIPARENT-001 — the "From" block. Rows are plain lines, not boxed fields: they state what
+// was chosen and are not inputs. Both controls are T.tapMinHeight tall (and the remove control as
+// wide), read from the token for V5-SEEDESTTOGGLE-001's reason. The remove control is a ✕ with the
+// planting's name in its accessible name, so it is never told apart from its neighbour by position.
+const fromHeadingStyle = { fontSize: '0.82rem', fontWeight: 600, color: P.mid }
+const fromListStyle = { listStyle: 'none', margin: '2px 0 0', padding: 0 }
+const fromRowStyle = {
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+  minHeight: T.tapMinHeight, borderBottom: `1px solid ${P.border}`,
+}
+const fromNameStyle = {
+  flex: 1, minWidth: 0, overflowWrap: 'anywhere', padding: '8px 0', color: P.dark, fontSize: '0.95rem',
+}
+const fromRemoveStyle = {
+  flexShrink: 0, minWidth: T.tapMinHeight, minHeight: T.tapMinHeight, padding: 0,
+  background: 'none', border: 'none', borderRadius: 8, cursor: 'pointer',
+  color: P.mid, fontSize: '1rem', lineHeight: 1,
+}
+const fromAddStyle = {
+  display: 'block', width: '100%', textAlign: 'left', minHeight: T.tapMinHeight, padding: '0 2px',
+  background: 'none', border: 'none', cursor: 'pointer',
+  color: P.green, fontSize: '0.9rem', fontWeight: 600,
 }
 const processRowStyle = (selected) => ({
   display: 'block', width: '100%', textAlign: 'left', minHeight: 64, padding: 12,

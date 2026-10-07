@@ -102,7 +102,8 @@ describe('V4-SEEDINTAKEAGNOSTIC-001 — no planting given', () => {
     // seed_saved is in PLANTING_REQUIRED_TYPES and validatePostBody wants project_id OR plant_id, so
     // there is nowhere for this row to go. Skipping is the honest outcome; inventing a placeholder
     // planting to carry it would put plants in the garden that were never planted.
-    // MUTATION: drop the `if (parent)` guard on the event POST and this goes red.
+    // V5-SEEDMULTIPARENT-001 — the guard is now the loop itself: one event per row of the parent
+    // set, and this lot has no rows. MUTATION: post one event outside that loop and this goes red.
     await open()
     fireEvent.click(screen.getByTestId('seed-origin-other'))
     fireEvent.click(screen.getByTestId('stub-pick-variety'))
@@ -110,6 +111,9 @@ describe('V4-SEEDINTAKEAGNOSTIC-001 — no planting given', () => {
     fireEvent.click(screen.getByTestId('save-seed-submit'))
     await waitFor(() => expect(createBody()).toBeTruthy())
     expect(eventCalls()).toHaveLength(0)
+    // And no parent SET either. The route reads a present source_plant_ids as "this is the set", so
+    // seed that came off no plant of ours keeps the body it has always had: the key is absent, not [].
+    expect(Object.prototype.hasOwnProperty.call(createBody(), 'source_plant_ids')).toBe(false)
   })
 
   it('the picked-planting arm behaves exactly like the planting-page path', async () => {
@@ -125,6 +129,7 @@ describe('V4-SEEDINTAKEAGNOSTIC-001 — no planting given', () => {
 
     await waitFor(() => expect(createBody()).toBeTruthy())
     expect(createBody().source_plant_id).toBe('pl-3')
+    expect(createBody().source_plant_ids).toEqual(['pl-3'])
     expect(Object.prototype.hasOwnProperty.call(createBody(), 'source_kind')).toBe(false)
     await waitFor(() => expect(eventCalls()).toHaveLength(1))
     expect(JSON.parse(eventCalls()[0][1].body).plant_id).toBe('pl-3')
