@@ -8,6 +8,7 @@ import {
   CATCH_UP_EDITOR_SHIPPED,
   SYSTEM_NOTIFICATIONS_ENABLED,
   PLANTING_REQUIRED_ENABLED,
+  SEED_MULTI_PARENT,
 } from '../lib/featureFlags.js'
 
 describe('featureFlags', () => {
@@ -40,5 +41,17 @@ describe('featureFlags', () => {
     // future flip so the change is deliberate. Rollback = one-line revert, no data to unwind.
     expect(PLANTING_REQUIRED_ENABLED).toBe(true)
     expect(typeof PLANTING_REQUIRED_ENABLED).toBe('boolean')
+  })
+
+  it('SEED_MULTI_PARENT is a literal true — release 2b ships ON, declared exactly once', async () => {
+    // V5-SEEDMULTIPARENT-001 release 2b. Pins the SHIPPED value so a flip is deliberate: turning it off is
+    // the release's forward undo (the runbook is on the constant), and this is the one assertion such a
+    // build edits. The model's own tests hold the flag on or mock it off, so they do not move.
+    expect(SEED_MULTI_PARENT).toBe(true)
+    // forward-undo.py flips `export const <FLAG> = true` by regex, so the line must be a literal and unique.
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const src = readFileSync(resolve(process.cwd(), 'src/lib/featureFlags.js'), 'utf8')
+    expect(src.match(/^export const SEED_MULTI_PARENT\s*=\s*(true|false)\b/gm)).toEqual(['export const SEED_MULTI_PARENT = true'])
   })
 })

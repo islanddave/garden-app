@@ -13,6 +13,8 @@
 import { formatQty } from '../../lib/format.js'
 import { isInProcess, isUnstartedSave, isDepleted, isArchivedForSeason } from '../../lib/sowEngine.js'
 import { elapsedDays, fermentUrgency, lotMeasure, isSavedLot, isF2Lot, F2_LABEL } from './seedLots.js'
+import { parentSetFacts } from './seedParents.js'
+import { SEED_MULTI_PARENT } from '../../lib/featureFlags.js'
 import { shuLabel } from '../../lib/varietySpec.js'
 import { supplierKey, supplierLabel } from '../../lib/supplierPalette.js'
 
@@ -54,7 +56,12 @@ export function howMuch(i) {
 
 // Where from. `source` is an order reference on prod, so the vendor comes from the registry through
 // `vendorOf`; a saved lot names its origin instead, and a packet with no recorded vendor says nothing.
+//
+// V5-SEEDMULTIPARENT-001 release 2b: a jar gathered off two or more plantings says "plants". The count is
+// the parent set's (`source_plants`, every element); a row with no set to read, or SEED_MULTI_PARENT off,
+// keeps the one-plant words. scripts/seed_label_ambiguity.py where_from is this function's port.
 export function whereFrom(i, vendorOf) {
+  if (SEED_MULTI_PARENT && parentSetFacts(i?.source_plants).plantings.length >= 2) return 'Saved from my plants'
   if (i?.source_plant_id != null && i.source_plant_id !== '') return 'Saved from my plant'
   const kind = String(i?.source_kind ?? '').trim()
   if (kind === 'own_garden') return 'Saved from my garden'

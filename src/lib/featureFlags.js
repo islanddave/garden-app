@@ -502,3 +502,24 @@ export const TODAY_V2_PREVIEW_ROW = true
 // changes. It never touches frost alerts. V1 Today's CultivationLead does not read it: V1 keeps its lines until V1
 // is removed (S8c), since its gate:today-shape must stay green unmodified.
 export const SOW_DATED_LINES_FROZEN = true
+
+// V5-SEEDMULTIPARENT-001 release 2b — a jar of saved seed can name MORE THAN ONE parent planting. This ONE
+// constant gates all of what the user sees of it: the "add a plant" adder and the remove control on the save
+// sheet and the lot page, the plant-count field, filing a jar of two or more cultivars as a mix (the
+// /api/varieties/blend call and the re-file line with its Undo), the "Mixed seed" and "Part F2" chips, the
+// mixed-seed sentences, the parent-set Breeding fact and "Saved from my plants" (src/components/seed/
+// seedParents.js lotNotice is the one reader of the parent set; scripts/seed_label_ambiguity.py reads this
+// line too, so its port of My seeds follows the flag).
+// OFF restores today exactly: no adder, no remove control, no plant-count field, no mix filing, no new chip
+// or line, and every request body byte-equal to today's. A jar's notices read the FILED variety again
+// whatever parent set the server returns, so a jar already saved with several plants shows its first plant
+// and its filed variety; nothing stored is touched and turning the flag back on shows the set again.
+//
+// ROLLBACK RUNBOOK. Undo this release with a FORWARD flag-off build — set this to false on dev and promote —
+// never with a revert: the server side (release 2a: the parent rows, the mix varieties, the filing and
+// source-plants routes) stays live either way, and the flag-off client is the one-parent client it was built
+// beside. ORDER: undo release 2b (flag off) before any undo of release 2a. A 2a undo under a flag-on client
+// leaves the sheet and the lot page calling routes that are gone.
+// Each of the 2b surfaces carries a flag-off test (the constant mocked false) pinning today's request body or
+// rendered card, and seedParents.test.js pins lotNotice's flag-off answers.
+export const SEED_MULTI_PARENT = true

@@ -21,6 +21,7 @@ import { formatQty, formatDate, formatSeedWeight } from '../../lib/format.js'
 import { etDay } from '../../lib/harvestSummary.js'
 import { IN_PROCESS_STAGES } from '../../lib/sowEngine.js'
 import { seedsHref } from '../../lib/seedsRoutes.js'
+import { isSavedLot, lotNotice } from './seedParents.js'
 
 // Last-resort chip label when the crop vocabulary has no row for a slug the lots DO carry. Sentence
 // case ("Winter squash"), unchanged from SavedSeeds.
@@ -233,15 +234,9 @@ export function kindAllowsParentPlant(kind) {
   return kind == null || kind === '' || kind === 'own_garden'
 }
 
-// Seed you saved yourself, as opposed to a packet you bought: it came off one of your plants, or its
-// origin kind was recorded (a farm-stand pepper, a gift), or it has been through a stage. Three
-// facts, any one sufficient, because each door that makes a saved lot writes a different one of them.
-export function isSavedLot(i) {
-  if (!i) return false
-  if (i.source_plant_id != null && i.source_plant_id !== '') return true
-  if (i.source_kind != null && i.source_kind !== '') return true
-  return i.seed_stage != null && i.seed_stage !== ''
-}
+// Seed you saved yourself, as opposed to a packet you bought. Defined in seedParents.js (the leaf this
+// module imports, so the parent-set rules can read it without a cycle) and exported from here as before.
+export { isSavedLot }
 
 // V5-SEEDSTAB-001 slice 3 (design §2 rule 8, §5.4) — seed saved off an F1 plant is F2 seed, and F2 does
 // not come true: the F1's one uniform combination segregates in its seed, so next year's plants vary,
@@ -255,7 +250,12 @@ export function isSavedLot(i) {
 //
 // One predicate and one label, read by My seeds' row chip, the Saved seeds card and the Breeding fact
 // (seedFacts.js), so no two surfaces can disagree about one jar.
+//
+// V5-SEEDMULTIPARENT-001 release 2b: the answer is seedParents.lotNotice's, which reads the jar's parent
+// SET when it has one. With no set on the row (null, absent, empty) or SEED_MULTI_PARENT off, it is the
+// rule above on the filed variety, unchanged. The label stays this ONE literal line: seed-detail-shot.mjs
+// and seeds-page-shot.mjs read it out of this file by regex.
 export const F2_LABEL = 'F2 — won’t come true'
 export function isF2Lot(i) {
-  return isSavedLot(i) && i?.breeding_system === 'f1'
+  return lotNotice(i).f2 === 'full'
 }

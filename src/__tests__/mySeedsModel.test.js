@@ -4,7 +4,12 @@
 // matter: a fermenting jar at quantity 0 is NOT used up, an unstarted save at 0 is NOT used up, and an
 // archived packet that is ALSO used up keeps both facts. Each is pinned against the engine's own
 // answer so the two views cannot drift apart about one jar.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+
+// V5-SEEDMULTIPARENT-001 release 2b — the parent-set cases below are the flag-ON answers. The flag is held
+// on here so they stay green on a forward flag-off build; featureFlags.test.js alone pins the shipped
+// literal, and seedParents.test.js holds the flag-off answers.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({ ...(await importOriginal()), SEED_MULTI_PARENT: true }))
 import {
   rowTitle, howMuch, whereFrom, howOld, ageOf, stateChips, lineLayout, lineText, isSowedPreviously,
   sortRows, groupByCrop, NO_CROP, heatOf, heatLabel, SORTS, supplierOptions, matchesSuppliers,
@@ -60,6 +65,28 @@ describe('whereFrom — origin for a saved lot, registry vendor for a bought one
     expect(whereFrom(saved({ source_plant_id: null, source_kind: 'own_garden' }), vendorOf)).toBe('Saved from my garden')
     expect(whereFrom(bought({ source_id: 'src-fedco', source: 'Order #9' }), vendorOf)).toBe('Fedco')
     expect(whereFrom(bought({ source_id: null, source: 'Order #9' }), vendorOf)).toBe('')
+  })
+
+  // V5-SEEDMULTIPARENT-001 release 2b — two or more plantings on the jar say "plants".
+  const parent = (id) => ({ id, name: id, variety_id: 'v-1', variety_name: 'Big Boy', breeding_system: null,
+    variety_rank: 'cultivar', crop_slug: 'tomato', archived: false, deleted: false })
+  it('a jar gathered off two or more plantings is "Saved from my plants"', () => {
+    expect(whereFrom(saved({ source_plants: [parent('pl-1'), parent('pl-2')] }), null)).toBe('Saved from my plants')
+    expect(whereFrom(saved({ source_plants: [parent('pl-1'), parent('pl-2'), { ...parent('pl-3'), archived: true }] }), null)).toBe('Saved from my plants')
+    expect(lineText(saved({ source_plants: [parent('pl-1'), parent('pl-2')] }), { now: NOW, year: 2026 })).toContain('Saved from my plants')
+  })
+  it('one planting on the jar keeps "Saved from my plant"', () => {
+    expect(whereFrom(saved({ source_plants: [parent('pl-1')] }), null)).toBe('Saved from my plant')
+  })
+  it('source_plants undefined: the one-plant words', () => {
+    expect(whereFrom(saved(), null)).toBe('Saved from my plant')
+  })
+  it('source_plants null: the one-plant words', () => {
+    expect(whereFrom(saved({ source_plants: null }), null)).toBe('Saved from my plant')
+  })
+  it('source_plants []: the one-plant words, or the origin kind when there is no parent plant', () => {
+    expect(whereFrom(saved({ source_plants: [] }), null)).toBe('Saved from my plant')
+    expect(whereFrom(saved({ source_plant_id: null, source_kind: 'own_garden', source_plants: [] }), null)).toBe('Saved from my garden')
   })
 })
 

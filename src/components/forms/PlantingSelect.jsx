@@ -388,6 +388,16 @@ export default function PlantingSelect({
   // so forcing focus here is focus theft on top of an unrequested keyboard. The new default means
   // "the tap that opens the picker raises the keyboard", and this open involves no tap.
   autoOpen = false,
+  // V5-SEEDMULTIPARENT-001 release 2b — three OPTIONAL props for the "add a plant" adder on the save sheet
+  // and the lot page; all absent ⇒ every other render site byte-identical.
+  //   excludeIds: rows whose String(id) is listed are dropped from the candidates (the plantings the jar
+  //     already names). Pass a STABLE array (memoised), not an inline literal: it is a memo dep below.
+  //   emptyText: replaces "No plantings yet." only — the adder's list is empty because every planting of
+  //     the crop is already on the jar, not because the garden is. The "no match" and chip texts keep theirs.
+  //   footerNote: one non-option row under the list.
+  excludeIds,
+  emptyText,
+  footerNote,
   'aria-label': ariaLabel,
   'aria-describedby': ariaDescribedBy,
   'data-testid': dataTestId,
@@ -640,6 +650,10 @@ export default function PlantingSelect({
     let list = rows
     if (varietyId) list = list.filter(p => String(p.variety_id ?? p.variety_ref?.id ?? '') === String(varietyId))
     else if (cropSlug) list = list.filter(p => p.variety_ref?.crop_type_slug === cropSlug)
+    if (excludeIds && excludeIds.length > 0) {
+      const excluded = new Set(excludeIds.map(String))
+      list = list.filter(p => !excluded.has(String(p.id)))
+    }
     const q = query.trim()
     if (q) {
       // V4-PICKERVOICE-001: voice-forgiving normalization ("sun ray" -> "Sunray"). Strictly
@@ -688,7 +702,7 @@ export default function PlantingSelect({
       if (ri > 0) sorted.unshift(sorted.splice(ri, 1)[0])
     }
     return { candidates: sorted, hiddenByChips: chipHidden }
-  }, [rows, varietyId, cropSlug, query, sort, recentPlantId, chipFilterActive, chipSelection, cropBySlug])
+  }, [rows, varietyId, cropSlug, excludeIds, query, sort, recentPlantId, chipFilterActive, chipSelection, cropBySlug])
 
   const selected = useMemo(
     () => rows.find(p => String(p.id) === String(value)) || null,
@@ -1243,7 +1257,7 @@ export default function PlantingSelect({
                     clear chips
                   </button>
                 </>
-              ) : query.trim() ? `No plantings match “${query.trim()}”.` : 'No plantings yet.'}
+              ) : query.trim() ? `No plantings match “${query.trim()}”.` : (emptyText || 'No plantings yet.')}
             </li>
           )}
           {visible.map((p, i) => (
@@ -1284,6 +1298,9 @@ export default function PlantingSelect({
             <li style={noteRow} role="presentation">
               +{hiddenCount} more — keep typing to narrow.
             </li>
+          )}
+          {footerNote && !loading && (
+            <li style={noteRow} role="presentation" data-testid="ps-footer-note">{footerNote}</li>
           )}
         </ul>
         </PanelShell>

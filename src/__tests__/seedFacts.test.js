@@ -1,7 +1,12 @@
 // V5-SEEDCARDS-001 — the one seed-fact vocabulary behind My seeds' expanded row and the seed's detail
 // page. Both pages read seedFacts(); these pins are the words themselves, so a wording change is made
 // once, here, and shows on both.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+
+// V5-SEEDMULTIPARENT-001 release 2b — the parent-set cases below are the flag-ON answers. The flag is held
+// on here so they stay green on a forward flag-off build; featureFlags.test.js alone pins the shipped
+// literal, and seedParents.test.js holds the flag-off answers.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({ ...(await importOriginal()), SEED_MULTI_PARENT: true }))
 import { seedFacts, heatFact, HEAT_SOURCE_WORDS } from '../components/seed/seedFacts.js'
 
 const PEPPER = {
@@ -61,6 +66,49 @@ describe('seedFacts', () => {
     expect(breeding({ breeding_system: 'unknown', seed_stage: 'stored' })).toBeUndefined()
     // Same place in the fixed order: last.
     expect(seedFacts({ ...PEPPER, seed_stage: 'stored' }).map((f) => f.key)).toEqual(['heat', 'origin', 'species', 'dtm', 'breeding'])
+  })
+
+  // V5-SEEDMULTIPARENT-001 release 2b — the Breeding fact is seedParents.lotNotice's, one per truth-table
+  // row. Row 1's string is byte-equal to the one above (seed-detail-shot.mjs asserts it on the page).
+  describe('Breeding fact for a jar with a parent set', () => {
+    const breeding = (i) => seedFacts(i).find((f) => f.key === 'breeding')?.value
+    const parent = (id, variety, breeding_system, over = {}) => ({
+      id, name: id, variety_id: `v-${variety}`, variety_name: variety, breeding_system, variety_rank: 'cultivar',
+      crop_slug: 'pepper', archived: false, deleted: false, ...over,
+    })
+    const jar = (source_plants, over = {}) => ({ source_plant_id: 'p1', seed_stage: 'stored', breeding_system: null, source_plants, ...over })
+
+    it('source_plants undefined, null and [] are each the filed variety’s own answer', () => {
+      for (const source_plants of [undefined, null, []]) {
+        expect(breeding(jar(source_plants, { breeding_system: 'f1' }))).toBe('F2 — won’t come true (parent F1 hybrid)')
+        expect(breeding(jar(source_plants, { breeding_system: 'landrace' }))).toBe('Landrace')
+        expect(breeding(jar(source_plants))).toBeUndefined()
+      }
+    })
+    it('row 1 (one F1 cultivar): unchanged, byte for byte', () => {
+      expect(breeding(jar([parent('p1', 'Carmen', 'f1'), parent('p2', 'Carmen', 'f1')], { breeding_system: 'f1' })))
+        .toBe('F2 — won’t come true (parent F1 hybrid)')
+    })
+    it('row 8 (every cultivar F1)', () => {
+      expect(breeding(jar([parent('p1', 'Carmen', 'f1'), parent('p2', 'Sungold', 'f1')])))
+        .toBe('F2 — won’t come true (parents F1 hybrids)')
+    })
+    it('row 9 (some F1) names the F1', () => {
+      expect(breeding(jar([parent('p1', 'Carmen', 'f1'), parent('p2', 'Ajvarski', 'open_pollinated')])))
+        .toBe('Part F2 (Carmen is an F1 hybrid)')
+    })
+    it('rows 2 and 10 print NO Breeding fact, whatever the filed variety would say', () => {
+      const blend = [parent('p1', 'Fairy Tale mix', null, { variety_rank: 'blend' })]
+      const mixed = [parent('p1', 'Nardello', 'landrace'), parent('p2', 'Ajvarski', 'open_pollinated')]
+      expect(breeding(jar(blend, { breeding_system: 'open_pollinated' }))).toBeUndefined()
+      expect(breeding(jar(mixed, { breeding_system: 'open_pollinated' }))).toBeUndefined()
+      expect(breeding(jar(mixed, { breeding_system: 'f1' }))).toBeUndefined()
+      expect(seedFacts(jar(mixed, { ...PEPPER })).map((f) => f.key)).not.toContain('breeding')
+    })
+    it('rows 3-6 keep the filed variety’s own word', () => {
+      expect(breeding(jar([parent('p1', 'Ajvarski', 'open_pollinated')], { breeding_system: 'open_pollinated' }))).toBe('Open-pollinated')
+      expect(breeding(jar([parent('p1', 'Nardello', 'landrace')], { breeding_system: 'landrace' }))).toBe('Landrace')
+    })
   })
 })
 

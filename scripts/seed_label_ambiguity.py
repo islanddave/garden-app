@@ -341,6 +341,41 @@ def is_saved_lot(i):
     return not _blank(i.get('seed_stage'))
 
 
+# V5-SEEDMULTIPARENT-001 release 2b. mySeedsModel.js whereFrom reads SEED_MULTI_PARENT from
+# src/lib/featureFlags.js, so this port reads the SAME line of the same file rather than keeping a copy of
+# the value: a forward flag-off build (the release's undo) flips one literal, and a second copy here would
+# leave this script counting lines the page no longer prints, and the parity test red on the undo build.
+FEATURE_FLAGS_JS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                'src', 'lib', 'featureFlags.js')
+_SEED_MULTI_PARENT_RE = re.compile(r'^export const SEED_MULTI_PARENT\s*=\s*(true|false)\b', re.M)
+_seed_multi_parent = None
+
+
+def seed_multi_parent(path=None):
+    """The shipped value of featureFlags.js SEED_MULTI_PARENT. Raises when the line is missing or declared
+    twice: a guessed flag would make this port disagree with the page without saying so."""
+    global _seed_multi_parent
+    if path is None and _seed_multi_parent is not None:
+        return _seed_multi_parent
+    with open(path or FEATURE_FLAGS_JS, encoding='utf-8') as fh:
+        found = _SEED_MULTI_PARENT_RE.findall(fh.read())
+    if len(found) != 1:
+        raise RuntimeError(f'SEED_MULTI_PARENT is declared {len(found)} times in {path or FEATURE_FLAGS_JS}; expected 1')
+    value = found[0] == 'true'
+    if path is None:
+        _seed_multi_parent = value
+    return value
+
+
+def parent_planting_count(i):
+    """seedParents.js parentSetFacts(i.source_plants).plantings.length: 0 unless `source_plants` is an
+    array (null = the read failed, absent = an old row), else its truthy elements."""
+    plants = i.get('source_plants')
+    if not isinstance(plants, list):
+        return 0
+    return sum(1 for p in plants if _js_truthy(p))
+
+
 def is_in_process(c):
     """sowEngine.js isInProcess."""
     raw = c.get('seed_stage')
@@ -418,7 +453,10 @@ def how_much(i):
 
 
 def where_from(i, vendor_of):
-    """mySeedsModel.js whereFrom — the vendor from the REGISTRY, never the `source` column."""
+    """mySeedsModel.js whereFrom — the vendor from the REGISTRY, never the `source` column. A jar
+    gathered off two or more plantings says "plants" (release 2b, behind SEED_MULTI_PARENT)."""
+    if seed_multi_parent() and parent_planting_count(i) >= 2:
+        return 'Saved from my plants'
     if not _blank(i.get('source_plant_id')):
         return 'Saved from my plant'
     kind = _js_trim(_js_str(i.get('source_kind')))
@@ -654,6 +692,10 @@ def my_seeds_screens(rows, vendor_of, now, year):
 # (lambda/inventory-items/index.js): every live seeds row — NO status or stage filter, a retired packet
 # is on the page with a status chip — plus the three projections the list adds. stage_entered_at is the
 # same LATERAL, newest log entry for the CURRENT stage by created_at; no COALESCE to updated_at.
+# source_plant_count (release 2b) stands in for the list's `source_plants` array: the model reads only how
+# MANY plantings a jar names, so the count of its live seed_parent link rows is projected and to_wire turns
+# it into an array of that length. Like the endpoint's own parents read, it counts every live LINK, whether
+# or not the planting behind it has since been archived or deleted.
 MYSEEDS_SQL = """
 SELECT i.id::text                AS id,
        i.name                    AS name,
@@ -661,6 +703,11 @@ SELECT i.id::text                AS id,
        i.seed_stage              AS seed_stage,
        se.entered_at             AS stage_entered_at,
        i.source_plant_id::text   AS source_plant_id,
+       (SELECT COUNT(*)
+          FROM public.seed_lot_parent_planting l
+         WHERE l.inventory_item_id = i.id
+           AND l.role = 'seed_parent'
+           AND l.deleted_at IS NULL) AS source_plant_count,
        i.source_kind             AS source_kind,
        i.source_id::text         AS source_id,
        i.quantity_on_hand        AS quantity_on_hand,
@@ -709,10 +756,14 @@ def _iso_utc(dt):
 
 def to_wire(row):
     """A psycopg row in the shape the page receives: timestamps and dates as ISO strings, numerics as
-    their text (the neon driver returns numeric as a string, e.g. '1.000'), uuids as text."""
+    their text (the neon driver returns numeric as a string, e.g. '1.000'), uuids as text.
+    `source_plant_count` (MYSEEDS_SQL) becomes the page's `source_plants`: an array of that many
+    placeholder elements, because how many there are is all the row model reads of it."""
     out = {}
     for k, v in row.items():
-        if isinstance(v, datetime):
+        if k == 'source_plant_count':
+            out['source_plants'] = [{'id': None} for _ in range(int(v or 0))]
+        elif isinstance(v, datetime):
             out[k] = _iso_utc(v)
         elif isinstance(v, date):
             out[k] = f'{v.isoformat()}T00:00:00.000Z'

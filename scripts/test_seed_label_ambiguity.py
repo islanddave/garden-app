@@ -196,7 +196,8 @@ SOURCES = [{'id': 'src-fedco', 'name': 'Fedco Seeds'}, {'id': 'src-baker', 'name
 def srow(rid, variety, **over):
     base = {'id': rid, 'name': f'{variety} packet' if variety else None, 'variety_name': variety,
             'seed_stage': None, 'stage_entered_at': None, 'source_plant_id': None, 'source_kind': None,
-            'source_id': None, 'source': None, 'quantity_on_hand': '1.000', 'unit': 'packet', 'status': 'active',
+            'source_plants': [], 'source_id': None, 'source': None, 'quantity_on_hand': '1.000', 'unit': 'packet',
+            'status': 'active',
             'purchase_date': None, 'year_harvested': None, 'seed_count': None, 'seed_weight_g': None,
             'seed_count_estimated': None, 'sow_archived_season': None}
     base.update(over)
@@ -244,6 +245,18 @@ MYSEEDS = [
     # the unstarted save, both arms: nothing measured, and the legacy zero
     srow('u1', 'Tatume', name='Tatume — saved 2026', source_plant_id='pl-5'),
     srow('u2', 'Costata Romanesco', name='Costata Romanesco — saved 2026', source_plant_id='pl-6', quantity_on_hand='0.000'),
+    # V5-SEEDMULTIPARENT-001 release 2b — the parent SET, in the list's wire shape. Two or more plantings
+    # read "Saved from my plants"; one, none, a failed read (null) and an absent key keep the one-plant words.
+    srow('m1', 'Carmen', name='Carmen — saved 2026', seed_stage='stored', source_plant_id='pl-7',
+         source_plants=[{'id': 'pl-7'}, {'id': 'pl-8'}], seed_count=40, seed_count_estimated=False),
+    srow('m2', 'Carmen + Sungold mix', name='Porch mix', seed_stage='drying', stage_entered_at='2026-09-10T15:00:00.000Z',
+         source_plant_id='pl-9', source_plants=[{'id': 'pl-9'}, {'id': 'pl-10'}, {'id': 'pl-11'}]),
+    srow('m3', 'Ajvarski', name='Ajvarski — saved 2026', seed_stage='stored', source_plant_id='pl-12',
+         source_plants=[{'id': 'pl-12'}]),
+    srow('m4', 'Jimmy Nardello', name='Jimmy Nardello — saved 2026', seed_stage='stored', source_plant_id='pl-13',
+         source_plants=None),
+    {k: v for k, v in srow('m5', 'Shishito', name='Shishito — saved 2026', seed_stage='stored',
+                           source_plant_id='pl-14').items() if k != 'source_plants'},
     # chips that are not stages
     srow('c1', 'Winter Density', **BOUGHT_2026, sow_archived_season=2026),
     srow('c2', 'Buttercrunch', **BOUGHT_2026, sow_archived_season='2026'),
@@ -353,6 +366,13 @@ def test_the_second_line_reads_as_the_model_builds_it():
     assert line('l8') == '9999999.99 g · Saved · gift' and line('l9') == '28.35 g · Saved · gift'
     assert line('l10') == '0 seeds · 0 g · Saved · gift'                   # a counted zero DOES render
     assert line('u1') == 'Not started · Saved from my plant'
+    # release 2b: the parent set. "plants" from two plantings up, and only while the flag is on.
+    many = 'Saved from my plants' if sla.seed_multi_parent() else 'Saved from my plant'
+    assert line('m1') == f'40 seeds · {many}'
+    assert line('m2') == f'Drying · {many} · harvested 2026'
+    assert line('m3') == 'Saved from my plant'                    # one planting
+    assert line('m4') == 'Saved from my plant'                    # source_plants null: the read failed
+    assert line('m5') == 'Saved from my plant'                    # no source_plants key: an old row
     assert line('u2') == 'Not started · Saved from my plant'
     assert line('c1') == 'Fedco · Archived for this season · bought 2026' and line('c2') == line('c1')
     assert 'Archived' not in line('c3')
@@ -440,6 +460,43 @@ def test_formatters_match_the_js_edges():
     assert sla.seed_count_label(1, False) == '1 seed' and sla.seed_count_label('2147483647', True) == 'approx. 2147483647 seeds'
     assert sla._js_number('inf') != sla._js_number('inf')          # NaN in JS, whatever Python's float() says
     assert sla._js_number('1_000') != sla._js_number('1_000')
+
+
+def test_where_from_follows_the_flag_the_page_reads(monkeypatch, tmp_path):
+    """SEED_MULTI_PARENT is read from featureFlags.js, the line the page itself imports, so a forward
+    flag-off build changes this port with the page. Both values are held here whichever one ships."""
+    two = srow('x', 'Carmen', source_plant_id='pl-1', source_plants=[{'id': 'pl-1'}, {'id': 'pl-2'}])
+    monkeypatch.setattr(sla, '_seed_multi_parent', True)
+    assert sla.where_from(two, None) == 'Saved from my plants'
+    assert sla.where_from(dict(two, source_plants=[{'id': 'pl-1'}]), None) == 'Saved from my plant'
+    assert sla.where_from(dict(two, source_plants=[]), None) == 'Saved from my plant'
+    assert sla.where_from(dict(two, source_plants=None), None) == 'Saved from my plant'
+    monkeypatch.setattr(sla, '_seed_multi_parent', False)
+    assert sla.where_from(two, None) == 'Saved from my plant'
+    # the reader itself: one literal line, and a missing or doubled line is an error, never a guess
+    monkeypatch.setattr(sla, '_seed_multi_parent', None)
+    assert sla.seed_multi_parent() in (True, False)
+    on, off, none, twice = (tmp_path / n for n in ('on.js', 'off.js', 'none.js', 'twice.js'))
+    on.write_text('// x\nexport const SEED_MULTI_PARENT = true\n')
+    off.write_text('export const SEED_MULTI_PARENT = false // why\n')
+    none.write_text('export const OTHER = true\n')
+    twice.write_text('export const SEED_MULTI_PARENT = true\nexport const SEED_MULTI_PARENT = false\n')
+    assert sla.seed_multi_parent(str(on)) is True and sla.seed_multi_parent(str(off)) is False
+    for bad in (none, twice):
+        with pytest.raises(RuntimeError):
+            sla.seed_multi_parent(str(bad))
+
+
+def test_the_parent_count_becomes_the_pages_source_plants():
+    """MYSEEDS_SQL projects how many live seed_parent links a jar has; to_wire hands the model an array of
+    that length, the one thing mySeedsModel.js reads of `source_plants`."""
+    sql = sla.build_myseeds_sql(None)
+    assert 'public.seed_lot_parent_planting l' in sql and 'AS source_plant_count' in sql
+    assert "l.role = 'seed_parent'" in sql and 'l.deleted_at IS NULL' in sql and 'l.inventory_item_id = i.id' in sql
+    for n in (0, 1, 3):
+        w = sla.to_wire({'id': 'a', 'source_plant_count': n})
+        assert 'source_plant_count' not in w and sla.parent_planting_count(w) == n
+    assert sla.parent_planting_count({'source_plants': None}) == 0 and sla.parent_planting_count({}) == 0
 
 
 def test_to_wire_matches_what_the_page_receives():

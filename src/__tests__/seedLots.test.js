@@ -2,7 +2,12 @@
 // that landed with the move out of SavedSeeds.jsx:
 //   · BUG-SEEDSOWRELDAY-001 — "today" is a CALENDAR date in Eastern, not "less than 24 hours ago";
 //   · the vendor is the source-registry name, never the free-text `source` (an order reference).
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+
+// V5-SEEDMULTIPARENT-001 release 2b — the parent-set cases below are the flag-ON answers. The flag is held
+// on here so they stay green on a forward flag-off build; featureFlags.test.js alone pins the shipped
+// literal, and seedParents.test.js holds the flag-off answers.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({ ...(await importOriginal()), SEED_MULTI_PARENT: true }))
 import {
   elapsedDays, elapsedLabel, fermentUrgency, dueFerments, hasLotInProcess, isSavedLot,
   candidateFacts, labelCandidates, seedCountLabel, lotMeasure,
@@ -106,6 +111,40 @@ describe('isF2Lot / F2_LABEL — seed saved off an F1 plant', () => {
   it('the label names the consequence and never calls saving F2 seed a mistake', () => {
     expect(F2_LABEL).toBe('F2 — won’t come true')
     expect(F2_LABEL).not.toMatch(/mistake|wrong|bad|avoid|don.t save|shouldn.t/i)
+  })
+
+  // V5-SEEDMULTIPARENT-001 release 2b — the predicate is seedParents.lotNotice(i).f2 === 'full'. The
+  // truth table is seedParents.test.js's; here, what this export answers for a jar WITH a parent set.
+  const parent = (id, variety, breeding_system) => ({
+    id, name: id, variety_id: `v-${variety}`, variety_name: variety, breeding_system, variety_rank: 'cultivar',
+    crop_slug: 'pepper', archived: false, deleted: false,
+  })
+  describe('with a parent set on the row', () => {
+    it('source_plants undefined: today’s rule on the filed variety', () => {
+      expect(isF2Lot({ source_plant_id: 'p1', breeding_system: 'f1' })).toBe(true)
+      expect(isF2Lot({ source_plant_id: 'p1', breeding_system: 'open_pollinated' })).toBe(false)
+    })
+    it('source_plants null: today’s rule on the filed variety', () => {
+      expect(isF2Lot({ source_plant_id: 'p1', breeding_system: 'f1', source_plants: null })).toBe(true)
+      expect(isF2Lot({ source_plant_id: 'p1', breeding_system: 'open_pollinated', source_plants: null })).toBe(false)
+    })
+    it('source_plants []: today’s rule on the filed variety', () => {
+      expect(isF2Lot({ seed_stage: 'stored', breeding_system: 'f1', source_plants: [] })).toBe(true)
+      expect(isF2Lot({ seed_stage: 'stored', breeding_system: 'landrace', source_plants: [] })).toBe(false)
+    })
+    it('one F1 cultivar, or every cultivar F1: F2 in full, whatever the jar is filed under', () => {
+      expect(isF2Lot({ source_plant_id: 'p1', breeding_system: null, source_plants: [parent('p1', 'Carmen', 'f1')] })).toBe(true)
+      expect(isF2Lot({ source_plant_id: 'p1', breeding_system: null, source_plants: [parent('p1', 'Carmen', 'f1'), parent('p2', 'Sungold', 'f1')] })).toBe(true)
+    })
+    it('a mixed jar that is only PART F1, or not F1 at all, is not "F2" in full — even filed under an F1', () => {
+      const part = [parent('p1', 'Carmen', 'f1'), parent('p2', 'Ajvarski', 'open_pollinated')]
+      const none = [parent('p1', 'Nardello', 'landrace'), parent('p2', 'Ajvarski', 'open_pollinated')]
+      expect(isF2Lot({ source_plant_id: 'p1', breeding_system: 'f1', source_plants: part })).toBe(false)
+      expect(isF2Lot({ source_plant_id: 'p1', breeding_system: 'f1', source_plants: none })).toBe(false)
+    })
+    it('one cultivar that is not F1 never REMOVES the label from a jar filed under an F1', () => {
+      expect(isF2Lot({ source_plant_id: 'p1', breeding_system: 'f1', source_plants: [parent('p1', 'Ajvarski', 'open_pollinated')] })).toBe(true)
+    })
   })
 })
 
