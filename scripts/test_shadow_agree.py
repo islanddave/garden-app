@@ -53,6 +53,7 @@ LEGS = ("static", "pytest", "unit-utc-cov", "unit-ny", "gates-a", "gates-b", "ga
 NY = "America/New_York"
 A, B, C, D = "a" * 64, "b" * 64, "c" * 64, "d" * 64
 COUNT_FROM = sa.COUNT_FROM_SHA  # as the script ships it, read before any test moves it
+NODE_FILES = 529                # what a ci-next.yml unit leg's notice carries as node_files; ci.yml's carries 0
 
 GH_STAND_IN = r'''#!{python}
 # `gh` for one test: logs argv, then prints the reply recorded for exactly this request path, or a 404.
@@ -129,11 +130,14 @@ class Push:
         return self.replies[annotations_path(self.job(side, name)["id"])]
 
     def notice(self, side, job, zone, sha256=A, **fields):
-        """A test-ids notice in the shape of the real notices recorded on build-and-test."""
+        """A test-ids notice in the shape of the real notices recorded on build-and-test. node_files is what each
+        side prints inside the window (the A3 trial): 0 on ci.yml, above 0 on a ci-next.yml leg; None leaves the
+        token out, as every notice before the trial did."""
         shape = copy.deepcopy(next(a for a in Push(recorded(), NEW).annotations("ci", "build-and-test")
                                    if a["annotation_level"] == "notice"))
         values = dict(sha256=sha256, files_sha256=C, names_sha256=D, tests=23260, passed=23257, failed=0,
-                      skipped=3, pending=0, files=1417, reason="passed", v=2)
+                      skipped=3, pending=0, files=1417, node_files=0 if side == "ci" else NODE_FILES,
+                      reason="passed", v=2)
         values.update(fields)
         values = {key: value for key, value in values.items() if value is not None}
         shape.update(title="test-ids " + zone, message=" ".join("%s=%s" % pair for pair in values.items()))
@@ -298,6 +302,8 @@ def gh_on_path(tmp_path, monkeypatch):
 
 
 NO_STEPS = {"ci_step": None, "next_step": None}  # what a pass reads when its jobs carry no `steps`
+NO_NODES = {"ci_node_files": None, "next_node_files": None}  # a side with no usable notice has no node_files
+NODES = {"ci_node_files": 0, "next_node_files": NODE_FILES}  # both sides' notices as Push.notice() makes them
 
 
 def doc_of(gh, replies, **kw):
@@ -318,7 +324,7 @@ def test_the_two_real_pushes_agree_green_and_carry_no_test_ids_yet(gh):
         (NEW, "AGREE-GREEN", "GREEN", "GREEN"), (OLD, "AGREE-GREEN", "GREEN", "GREEN")]
     assert [r["ci"]["run_id"] for r in doc["shas"]] == [37164983222, 37098612753]
     assert [r["next"]["run_id"] for r in doc["shas"]] == [37164983196, 37098612816]
-    absent = dict(NO_STEPS, **{"class": "ABSENT", "differs": None, "ci": None, "next": None})
+    absent = dict(NO_STEPS, **NO_NODES, **{"class": "ABSENT", "differs": None, "ci": None, "next": None})
     assert all(r["test_ids"] == {"UTC": absent, NY: absent} for r in doc["shas"])
     assert all((r["ci"]["runs_on"], r["next"]["runs_on"]) == (["ubuntu-latest"], ["ubuntu-24.04"])
                and r["ci"]["latest_attempt"] is None and r["next"]["latest_attempt"] is None for r in doc["shas"])
@@ -326,7 +332,8 @@ def test_the_two_real_pushes_agree_green_and_carry_no_test_ids_yet(gh):
     assert doc["summary"] == {
         "shas": 2, "before_window": 0, "counted": 2, "window": 10, "window_met": False,
         "classes": {"AGREE-GREEN": 2, "AGREE-RED": 0, "DISAGREE": 0, "NOT-COUNTED": 0},
-        "test_ids": {"EQUAL": 0, "DIFFER": 0, "ABSENT": 4}, "counted_with_test_ids_equal_in_both_passes": 0}
+        "test_ids": {"EQUAL": 0, "DIFFER": 0, "VACUOUS": 0, "ABSENT": 4},
+        "counted_with_test_ids_equal_in_both_passes": 0}
 
 
 def test_every_call_is_a_get_and_they_are_the_twelve_recorded_with_each_listing_read_twice(gh_on_path):
@@ -612,9 +619,9 @@ def test_equal_digests_in_both_passes(gh):
     push(replies, sha(1)).ids()
     code, doc = doc_of(gh, replies)
     assert code == 0 and row(doc, sha(1))["test_ids"] == {
-        "UTC": dict(NO_STEPS, **{"class": "EQUAL", "differs": None, "ci": A, "next": A}),
-        NY: dict(NO_STEPS, **{"class": "EQUAL", "differs": None, "ci": B, "next": B})}
-    assert doc["summary"]["test_ids"] == {"EQUAL": 2, "DIFFER": 0, "ABSENT": 4}
+        "UTC": dict(NO_STEPS, **NODES, **{"class": "EQUAL", "differs": None, "ci": A, "next": A}),
+        NY: dict(NO_STEPS, **NODES, **{"class": "EQUAL", "differs": None, "ci": B, "next": B})}
+    assert doc["summary"]["test_ids"] == {"EQUAL": 2, "DIFFER": 0, "VACUOUS": 0, "ABSENT": 4}
     assert doc["summary"]["counted_with_test_ids_equal_in_both_passes"] == 1
     assert "TEST-IDS-EQUAL" in gh(replies)[1]
 
@@ -671,7 +678,8 @@ def test_two_different_digests_for_one_pass_on_one_job_are_absent(gh):
     p.notice("ci", "build-and-test", "UTC", B)
     code, doc = doc_of(gh, replies)
     assert code == 0 and row(doc, sha(1))["test_ids"]["UTC"] == dict(NO_STEPS, **{
-        "class": "ABSENT", "differs": None, "ci": None, "next": A})
+        "class": "ABSENT", "differs": None, "ci": None, "next": A, "ci_node_files": None,
+        "next_node_files": NODE_FILES})
 
 
 def test_only_notices_titled_test_ids_count_and_only_on_the_job_that_ran_the_pass(gh):
@@ -685,7 +693,8 @@ def test_only_notices_titled_test_ids_count_and_only_on_the_job_that_ran_the_pas
     p.annotations("next", "unit-utc-cov")[-1]["annotation_level"] = "warning"  # the reporter's "no evidence" line
     code, doc = doc_of(gh, replies)
     assert row(doc, sha(1))["test_ids"]["UTC"] == dict(NO_STEPS, **{"class": "ABSENT", "differs": None, "ci": A,
-                                                                    "next": None})
+                                                                    "next": None, "ci_node_files": 0,
+                                                                    "next_node_files": None})
 
 
 def test_test_ids_are_read_only_for_shas_with_a_verdict_on_both_sides(gh):
@@ -1299,8 +1308,9 @@ def real_red_push(replies):
     return Push(replies, REAL_RED)
 
 
-def zone(klass="ABSENT", ci=None, next_=None, ci_step=None, next_step=None):
-    return {"class": klass, "differs": None, "ci": ci, "next": next_, "ci_step": ci_step, "next_step": next_step}
+def zone(klass="ABSENT", ci=None, next_=None, ci_step=None, next_step=None, ci_nodes=None, next_nodes=None):
+    return {"class": klass, "differs": None, "ci": ci, "next": next_, "ci_step": ci_step, "next_step": next_step,
+            "ci_node_files": ci_nodes, "next_node_files": next_nodes}
 
 
 def test_the_recorded_red_pair_is_as_recorded():
@@ -1391,7 +1401,7 @@ def test_red_on_both_sides_with_no_serial_notice_though_the_serial_pass_ran_bloc
     _red_row(replies, MEASURED_FLOOR, utc=(None, A), ny=(B, B))
     code, doc, mine, zones = _read(gh, replies)
     assert code == 0 and mine["class"] == "AGREE-RED" and mine["test_ids"]["UTC"] == zone(
-        next_=A, ci_step="success", next_step="success")
+        next_=A, ci_step="success", next_step="success", next_nodes=NODE_FILES)
     assert zones == {"UTC": "BLOCK", NY: "OK"} and mine["acceptance"] == "BLOCKS"
     assert mine["acceptance_why"] == ("BLOCKS acceptance: UTC pass: ci.yml has no usable test-ids notice and its "
                                       "pass step concluded success")
@@ -1411,7 +1421,7 @@ def test_red_on_both_sides_with_a_serial_digest_and_no_shadow_digest_blocks_what
     else:
         p.steps("next", "unit-utc-cov", dict(_stopped_at(step_names()["unit-utc-cov"], 99), **{UTC_PASS: next_step}))
     code, doc, mine, zones = _read(gh, replies)
-    assert mine["test_ids"]["UTC"] == zone(ci=A, ci_step="skipped", next_step=next_step)
+    assert mine["test_ids"]["UTC"] == zone(ci=A, ci_step="skipped", next_step=next_step, ci_nodes=0)
     assert zones == {"UTC": "BLOCK", NY: "EXEMPT"} and mine["acceptance"] == "BLOCKS"
     assert mine["acceptance_why"] == ("BLOCKS acceptance: UTC pass: ci.yml printed its digest and ci-next.yml has "
                                       "no usable one")
@@ -1454,7 +1464,7 @@ def test_both_sides_red_before_the_pass_with_both_pass_steps_skipped_and_no_dige
     p.ids(utc=(None, None), ny=(None, B))
     code, doc, mine, zones = _read(gh, replies)
     assert mine["test_ids"] == {"UTC": zone(ci_step="skipped", next_step="skipped"),
-                                NY: zone(next_=B, ci_step="skipped", next_step="success")}
+                                NY: zone(next_=B, ci_step="skipped", next_step="success", next_nodes=NODE_FILES)}
     assert zones == {"UTC": "EXEMPT", NY: "EXEMPT"} and mine["acceptance"] == "EXEMPT"
     assert mine["acceptance_why"] == (
         'EXEMPT, not one of the 10 and not blocking: ci.yml failed at "Coverage ratchet enforcement" and never ran '
@@ -1474,8 +1484,9 @@ def test_a_serial_job_red_at_its_utc_pass_is_exempt_for_the_pass_it_never_reache
     p.notice("next", "unit-ny", NY, B)
     code, doc, mine, zones = _read(gh, replies)
     assert code == 0 and mine["test_ids"] == {
-        "UTC": zone("EQUAL", ci=A, next_=A, ci_step="failure", next_step="failure"),
-        NY: zone(next_=B, ci_step="skipped", next_step="success")}
+        "UTC": zone("EQUAL", ci=A, next_=A, ci_step="failure", next_step="failure", ci_nodes=0,
+                    next_nodes=NODE_FILES),
+        NY: zone(next_=B, ci_step="skipped", next_step="success", next_nodes=NODE_FILES)}
     assert zones == {"UTC": "OK", NY: "EXEMPT"} and (mine["counted"], mine["acceptance"]) == (True, "EXEMPT")
     assert doc["acceptance"]["exempt"] == [sha(1)] and doc["acceptance"]["qualifying"] == 0
     assert doc["acceptance"]["counted_red"] == 0
@@ -2200,10 +2211,12 @@ def test_a_serial_job_cancelled_while_running_is_still_red(gh):
 
 # ── where the window opens ──────────────────────────────────────────────────────────────────────────────────────
 
-def test_the_window_opens_at_the_first_sha_that_carries_the_test_ids_notice_and_no_flag_moves_it(gh):
-    assert COUNT_FROM == "1564c5647f38b7f014e55786e02c3e740f0aabd0"
+def test_the_window_opens_at_the_first_sha_whose_legs_run_the_node_project_and_no_flag_moves_it(gh):
+    assert COUNT_FROM == "b6af3c36ffc505ce4fe1b1fb64bbd6081f6e541a"
     source = open(SCRIPT, encoding="utf-8").read()
     assert source.count("COUNT_FROM_SHA = ") == 1 and "THE WINDOW HAS A START" in sa.__doc__
+    assert 'COUNT_FROM_SHA = "%s"\n' % COUNT_FROM in source
+    assert "THE START MOVES WHEN THE SHADOW DOES" in sa.__doc__ and "in a commit after it" in sa.__doc__
     for argv in (["--count-from", OLD], ["--count-from-sha", OLD], ["--since", OLD], ["--from", OLD]):
         code, out, calls = gh(recorded(), *argv)
         assert code == 64 and out == "" and calls == []
@@ -2216,7 +2229,7 @@ def test_a_reading_that_does_not_hold_the_opening_sha_is_unreadable_not_a_count_
     red_leg(push(replies, sha(1)))
     code, doc = doc_of(gh, replies)
     assert code == 2 and doc["verdict"] == "unreadable" and set(doc) == {"schema_version", "repo", "verdict", "error"}
-    assert "1564c5647f (COUNT_FROM_SHA)" in doc["error"] and "not among the 3 dev push SHA(s)" in doc["error"]
+    assert "b6af3c36ff (COUNT_FROM_SHA)" in doc["error"] and "not among the 3 dev push SHA(s)" in doc["error"]
     code, out, calls = gh(replies)
     assert code == 2 and "UNREADABLE" in out and "ACCEPTANCE" not in out and "DISAGREE" not in out
     assert not any("/jobs" in c[4] or "/check-runs/" in c[4] for c in calls)  # it stops at the listings
@@ -2247,7 +2260,8 @@ def test_rows_before_the_opening_sha_are_printed_and_are_in_no_tally(gh, monkeyp
     assert doc["summary"] == {
         "shas": 7, "before_window": 4, "counted": 3, "window": 10, "window_met": False,
         "classes": {"AGREE-GREEN": 3, "AGREE-RED": 0, "DISAGREE": 0, "NOT-COUNTED": 0},
-        "test_ids": {"EQUAL": 6, "DIFFER": 0, "ABSENT": 0}, "counted_with_test_ids_equal_in_both_passes": 3}
+        "test_ids": {"EQUAL": 6, "DIFFER": 0, "VACUOUS": 0, "ABSENT": 0},
+        "counted_with_test_ids_equal_in_both_passes": 3}
     assert doc["acceptance"] == {"met": False, "missing": ["3 of 10 counted"], "counted": 3, "counted_red": 0,
                                  "qualifying": 3, "exempt": [], "blocking": []}
     code, out, calls = gh(replies)
@@ -2471,7 +2485,7 @@ def test_a_differ_says_whether_it_is_the_files_the_names_or_only_the_states(gh, 
     p.notice("ci", "build-and-test", "UTC", A, **serial)
     p.notice("next", "unit-utc-cov", "UTC", B, **shadow)
     code, doc = doc_of(gh, replies)
-    assert code == 1 and row(doc, sha(1))["test_ids"]["UTC"] == dict(NO_STEPS, **{
+    assert code == 1 and row(doc, sha(1))["test_ids"]["UTC"] == dict(NO_STEPS, **NODES, **{
         "class": "DIFFER", "differs": what, "ci": A, "next": B})
     assert "test IDs of the UTC pass differ in: %s" % what in gh(replies)[1]
 
@@ -2502,6 +2516,218 @@ def test_two_v1_notices_are_still_compared_but_cannot_say_what_differs(gh):
     ids = row(doc, sha(1))["test_ids"]
     assert code == 1 and (ids["UTC"]["class"], ids[NY]["class"]) == ("EQUAL", "DIFFER")
     assert ids[NY]["differs"] == "unknown (v1 notices carry one digest)"
+
+
+# ── node_files: an EQUAL that proves the shadow ran the node project and ci.yml did not ─────────────────────────
+
+SHADOW_DID_NOT = "the shadow did not run the node project (node_files=%s): its EQUAL would prove nothing"
+SERIAL_DID = "ci.yml ran the node project too (node_files=%d): both sides switched, the comparison proves nothing"
+SERIAL_SILENT = "ci.yml's notice carries no node_files"
+VACUOUS_MISSING = ("test IDs equal with the node project not shown to have run on the shadow alone (node_files) on "
+                   "%d row(s)")
+VACUOUS_CASES = [
+    (0, 0, SHADOW_DID_NOT % 0),                         # the key did nothing: both sides jsdom-everything
+    (0, None, SHADOW_DID_NOT % "missing"),              # the shadow's reporter predates the token
+    (0, "many", SHADOW_DID_NOT % "missing"),            # not a count is no count
+    (0, "-3", SHADOW_DID_NOT % "missing"),
+    (NODE_FILES, NODE_FILES, SERIAL_DID % NODE_FILES),  # the key reached ci.yml too
+    (1, NODE_FILES, SERIAL_DID % 1),
+    (None, NODE_FILES, SERIAL_SILENT),
+    ("0x0", NODE_FILES, SERIAL_SILENT),
+    (None, None, SHADOW_DID_NOT % "missing" + "; " + SERIAL_SILENT),
+    (NODE_FILES, 0, SHADOW_DID_NOT % 0 + "; " + SERIAL_DID % NODE_FILES),
+]
+
+
+def _node_counts(p, serial, shadow, utc=(A, A)):
+    """The UTC pass with `node_files` as given on each side (None: no such token); the NY pass as ids() makes it."""
+    p.notice("ci", "build-and-test", "UTC", utc[0], node_files=serial)
+    p.notice("next", "unit-utc-cov", "UTC", utc[1], node_files=shadow)
+    p.ids(utc=(None, None))
+
+
+def _as_read(value):
+    return int(value) if str(value).isdigit() else None
+
+
+@pytest.mark.parametrize("serial,shadow,why", VACUOUS_CASES)
+def test_equal_digests_without_node_files_above_0_on_the_shadow_and_0_on_ci_are_vacuous_and_block(gh, serial, shadow,
+                                                                                                    why):
+    replies = recorded()
+    _node_counts(push(replies, sha(1)), serial, shadow)
+    code, doc = doc_of(gh, replies)
+    mine = row(doc, sha(1))
+    assert code == 0 and mine["class"] == "AGREE-GREEN" and mine["test_ids"] == {
+        "UTC": dict(NO_STEPS, **{"class": "VACUOUS", "differs": None, "ci": A, "next": A,
+                                 "ci_node_files": _as_read(serial), "next_node_files": _as_read(shadow)}),
+        NY: dict(NO_STEPS, **NODES, **{"class": "EQUAL", "differs": None, "ci": B, "next": B})}
+    assert sa.zone_result(mine["test_ids"]["UTC"]) == ("BLOCK", "the test IDs are equal and " + why)
+    assert (mine["counted"], mine["acceptance"]) == (True, "BLOCKS")
+    assert mine["acceptance_why"] == "BLOCKS acceptance: UTC pass: the test IDs are equal and " + why
+    assert sa.judge(mine)[2] == ["IDS-VACUOUS"]
+    assert doc["summary"]["test_ids"] == {"EQUAL": 1, "DIFFER": 0, "VACUOUS": 1, "ABSENT": 4}
+    assert doc["summary"]["counted_with_test_ids_equal_in_both_passes"] == 0
+    assert doc["acceptance"]["qualifying"] == 0 and VACUOUS_MISSING % 1 in doc["acceptance"]["missing"]
+    assert {"sha": sha(1), "why": mine["acceptance_why"]} in doc["acceptance"]["blocking"]
+    out = gh(replies)[1]
+    printed = next(line for line in out.split("\n") if line.startswith(sha(1)[:10]))
+    assert "TEST-IDS-VACUOUS TEST-IDS-EQUAL" in printed and "           " + mine["acceptance_why"] in out.split("\n")
+
+
+@pytest.mark.parametrize("serial,shadow", [(0, NODE_FILES), (0, 1), ("0", "529"), ("00", "0529")])
+def test_equal_digests_with_node_files_above_0_on_the_shadow_and_0_on_ci_are_equal(gh, serial, shadow):
+    replies = recorded()
+    _node_counts(push(replies, sha(1)), serial, shadow)
+    code, doc = doc_of(gh, replies)
+    mine = row(doc, sha(1))
+    assert code == 0 and mine["test_ids"]["UTC"] == dict(NO_STEPS, **{
+        "class": "EQUAL", "differs": None, "ci": A, "next": A, "ci_node_files": 0, "next_node_files": int(shadow)})
+    assert mine["acceptance"] == "QUALIFIES" and doc["summary"]["counted_with_test_ids_equal_in_both_passes"] == 1
+
+
+@pytest.mark.parametrize("serial,shadow", [(serial, shadow) for serial, shadow, _ in VACUOUS_CASES] + [(0, NODE_FILES)])
+def test_digests_that_differ_are_differ_whatever_node_files_reads(gh, serial, shadow):
+    replies = recorded()
+    _node_counts(push(replies, sha(1)), serial, shadow, utc=(A, B))
+    code, doc = doc_of(gh, replies)
+    mine = row(doc, sha(1))
+    assert code == 1 and doc["verdict"] == "disagree" and mine["test_ids"]["UTC"] == dict(NO_STEPS, **{
+        "class": "DIFFER", "differs": "states only", "ci": A, "next": B, "ci_node_files": _as_read(serial),
+        "next_node_files": _as_read(shadow)})
+    assert mine["acceptance_why"] == "BLOCKS acceptance: UTC pass: the test IDs differ"
+    assert sa.judge(mine)[2] == ["IDS-DIFFER"] and doc["summary"]["test_ids"]["VACUOUS"] == 0
+    assert "test IDs of the UTC pass differ in: states only" in gh(replies)[1]
+
+
+def test_compare_ids_reads_node_files_only_when_the_digests_are_equal():
+    def notice(digest, nodes, v="2", **more):
+        return dict({"v": v, "sha256": digest, "files": C, "names": D, "node_files": nodes}, **more)
+
+    assert sa.compare_ids(notice(A, 0), notice(A, NODE_FILES)) == ("EQUAL", None)
+    assert sa.compare_ids(notice(A, 0), notice(A, 1)) == ("EQUAL", None)
+    for serial, shadow, why in VACUOUS_CASES:
+        got = sa.compare_ids(notice(A, _as_read(serial)), notice(A, _as_read(shadow)))
+        assert got == ("VACUOUS", why), (serial, shadow)
+        assert sa.compare_ids(notice(A, _as_read(serial)), notice(B, _as_read(shadow))) == ("DIFFER", "states only")
+    assert sa.compare_ids(notice(A, 0), notice(B, 0, files=A)) == ("DIFFER", "the file set")
+    assert sa.compare_ids(notice(A, 0), notice(B, 0, names=A)) == ("DIFFER", "test names")
+    assert sa.compare_ids(notice(A, 0, v="1"), notice(A, NODE_FILES)) == ("ABSENT", None)
+    assert sa.compare_ids(None, notice(A, NODE_FILES)) == ("ABSENT", None)
+    assert sa.compare_ids(notice(A, 0), None) == ("ABSENT", None)
+    assert sa.vacuous(0, NODE_FILES) is None and sa.vacuous(0, 1) is None
+
+
+def test_digests_carries_node_files_as_a_count_or_none():
+    replies = recorded()
+    p = push(replies, sha(1))
+    p.notice("ci", "build-and-test", "UTC", A)
+    p.notice("ci", "build-and-test", NY, B, node_files=None)
+    assert sa.digests(p.annotations("ci", "build-and-test")) == {
+        "UTC": {"v": "2", "sha256": A, "files": C, "names": D, "node_files": 0},
+        NY: {"v": "2", "sha256": B, "files": C, "names": D, "node_files": None}}
+    p.notice("next", "unit-utc-cov", "UTC", A)
+    assert sa.digests(p.annotations("next", "unit-utc-cov"))["UTC"]["node_files"] == NODE_FILES
+    for raw in ("many", "-1", "5.0", "", "0x10"):
+        p.notice("next", "unit-ny", NY, A, node_files=raw)
+        assert sa.digests(p.annotations("next", "unit-ny"))[NY]["node_files"] is None, raw
+        del p.annotations("next", "unit-ny")[-1]
+
+
+def test_two_notices_of_one_pass_that_differ_only_in_node_files_are_absent(gh):
+    """One job, one zone, the same digests, 529 and 0: which of the two ran cannot be told, so neither is read."""
+    replies = recorded()
+    p = push(replies, sha(1))
+    p.ids()
+    p.notice("next", "unit-utc-cov", "UTC", A, node_files=0)
+    code, doc = doc_of(gh, replies)
+    assert code == 0 and row(doc, sha(1))["test_ids"]["UTC"] == dict(NO_STEPS, **{
+        "class": "ABSENT", "differs": None, "ci": A, "next": None, "ci_node_files": 0, "next_node_files": None})
+    assert row(doc, sha(1))["acceptance"] == "BLOCKS"
+
+
+def test_ten_rows_whose_shadow_never_ran_the_node_project_are_not_acceptance(gh):
+    """Ten green pushes, every digest equal, every notice saying node_files=0: an ignored key, read as it is."""
+    replies = recorded()
+    pushes = [Push(replies, OLD), Push(replies, NEW)] + [push(replies, sha(n)) for n in range(1, 9)]
+    for p in pushes:
+        for zone_, leg, digest in (("UTC", "unit-utc-cov", A), (NY, "unit-ny", B)):
+            p.notice("ci", "build-and-test", zone_, digest)
+            p.notice("next", leg, zone_, digest, node_files=0)
+    code, verdict, line = acceptance(gh, replies)
+    assert code == 0 and (verdict["met"], verdict["counted"], verdict["qualifying"]) == (False, 10, 0)
+    assert verdict["missing"] == ["0 of 10 counted", VACUOUS_MISSING % 10] and len(verdict["blocking"]) == 10
+    assert line == "ACCEPTANCE: NOT MET: 0 of 10 counted; " + VACUOUS_MISSING % 10
+    code, doc = doc_of(gh, replies)
+    assert doc["summary"]["test_ids"] == {"EQUAL": 0, "DIFFER": 0, "VACUOUS": 20, "ABSENT": 0}
+    assert doc["summary"]["window_met"] is False
+
+
+def test_one_vacuous_row_among_ten_that_qualify_keeps_acceptance_not_met(gh):
+    replies = recorded()
+    ten(replies)
+    _node_counts(push(replies, sha(9)), NODE_FILES, NODE_FILES)
+    code, verdict, line = acceptance(gh, replies)
+    assert code == 0 and (verdict["met"], verdict["qualifying"]) == (False, 10)
+    assert verdict["missing"] == [VACUOUS_MISSING % 1]
+    assert [b["sha"] for b in verdict["blocking"]] == [sha(9)]
+    assert line == "ACCEPTANCE: NOT MET: " + VACUOUS_MISSING % 1
+
+
+@pytest.mark.parametrize("serial,shadow,why", VACUOUS_CASES)
+def test_a_vacuous_pass_blocks_a_row_red_on_both_sides_at_the_same_step(gh, serial, shadow, why):
+    """Red after both passes ran, at one step on both sides: the same-step check holds, and the row still blocks."""
+    replies = recorded()
+    p = push(replies, sha(1))
+    red_at(p, MEASURED_FLOOR)
+    _node_counts(p, serial, shadow)
+    code, doc, mine, zones = _read(gh, replies)
+    assert code == 0 and mine["class"] == "AGREE-RED" and sa.same_step(mine) == ("HOLDS", None)
+    assert mine["test_ids"]["UTC"] == zone("VACUOUS", ci=A, next_=A, ci_step="success", next_step="success",
+                                           ci_nodes=_as_read(serial), next_nodes=_as_read(shadow))
+    assert zones == {"UTC": "BLOCK", NY: "OK"} and mine["acceptance"] == "BLOCKS"
+    assert mine["acceptance_why"] == "BLOCKS acceptance: UTC pass: the test IDs are equal and " + why
+    assert doc["acceptance"]["exempt"] == [] and doc["acceptance"]["qualifying"] == 0
+
+
+def test_a_vacuous_pass_blocks_beside_a_pass_that_is_exempt(gh):
+    """Red at the UTC pass itself: NY never ran on ci.yml and is EXEMPT, which must not carry the vacuous UTC pass."""
+    replies = recorded()
+    p = push(replies, sha(1))
+    assert red_at(p, UTC_PASS) == "unit-utc-cov"
+    p.notice("ci", "build-and-test", "UTC", A, reason="failed", failed=2)
+    p.notice("next", "unit-utc-cov", "UTC", A, reason="failed", failed=2, node_files=0)
+    p.notice("next", "unit-ny", NY, B)
+    code, doc, mine, zones = _read(gh, replies)
+    assert zones == {"UTC": "BLOCK", NY: "EXEMPT"} and (mine["class"], mine["acceptance"]) == ("AGREE-RED", "BLOCKS")
+    assert mine["acceptance_why"] == "BLOCKS acceptance: UTC pass: the test IDs are equal and " + SHADOW_DID_NOT % 0
+    assert doc["acceptance"]["exempt"] == []
+
+
+@pytest.mark.parametrize("ci_step", ["skipped", "success", "failure", "cancelled", None])
+@pytest.mark.parametrize("next_step", ["skipped", "success", "failure", "cancelled", None])
+@pytest.mark.parametrize("leg_superseded", [False, True])
+def test_no_step_reading_and_no_cancelled_leg_exempts_a_vacuous_pass(ci_step, next_step, leg_superseded):
+    one = zone("VACUOUS", ci=A, next_=A, ci_step=ci_step, next_step=next_step, ci_nodes=0, next_nodes=0)
+    assert sa.zone_result(one, leg_superseded) == ("BLOCK", "the test IDs are equal and " + SHADOW_DID_NOT % 0)
+
+
+def test_rows_before_the_window_need_no_node_files_and_are_in_no_tally(gh, monkeypatch):
+    """The pushes before the trial carry notices with no node_files. They are BEFORE-WINDOW: not read, not vacuous."""
+    replies = recorded()
+    pushes = _five(replies, 4, monkeypatch)
+    for p in pushes[:3]:
+        _node_counts(p, None, None)
+    for p in pushes[3:]:
+        p.ids()
+    code, doc = doc_of(gh, replies)
+    assert code == 0 and all(r["test_ids"] == {} and r["acceptance"] is None for r in doc["shas"] if r["before_window"])
+    assert [r["sha"] for r in doc["shas"] if not r["before_window"]] == [sha(5), sha(4)]
+    assert doc["summary"]["test_ids"] == {"EQUAL": 4, "DIFFER": 0, "VACUOUS": 0, "ABSENT": 0}
+    assert doc["acceptance"] == {"met": False, "missing": ["2 of 10 counted"], "counted": 2, "counted_red": 0,
+                                 "qualifying": 2, "exempt": [], "blocking": []}
+    monkeypatch.setattr(sa, "COUNT_FROM_SHA", sha(3))            # the same pushes, one of them now inside
+    code, doc = doc_of(gh, replies)
+    assert row(doc, sha(3))["test_ids"]["UTC"]["class"] == "VACUOUS" and row(doc, sha(3))["acceptance"] == "BLOCKS"
 
 
 # ── usage ───────────────────────────────────────────────────────────────────────────────────────────────────────

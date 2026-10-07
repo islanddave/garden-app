@@ -48,22 +48,37 @@ so either shows as DISAGREE against a green. The cost is the safe one: a hand ca
 may raise a false DISAGREE that a person then looks at. A NO-RUNNER run is not lost either: its wait is in the
 queue times below, where it counts against the threshold.
 
-THE WINDOW HAS A START. COUNT_FROM_SHA is the first dev SHA whose runs carry the test-ids notice. A SHA first seen
-before it can never be TEST-IDS-EQUAL, so it is read and printed (class column BEFORE-WINDOW, with what it would
-have read) but is in no tally: not the counted total, the class counts, the test-ID counts, ACCEPTANCE or the exit
-code. The bound only ever removes rows. It is found in the run listings, which are read whole whatever --limit is;
-when it is not in them, which rows precede it cannot be told and the reading is unreadable (exit 2). Every SHA at
-or after it is read and is in every tally, ACCEPTANCE and the exit code whatever --limit is: --limit cuts only the
-rows printed (`shas`), so a row that blocks cannot age out of the verdict or be left out by the caller's choice of N.
+THE WINDOW HAS A START. COUNT_FROM_SHA is the first dev SHA whose ci-next.yml unit legs run vitest's `node` project
+(the A3 trial: the two unit steps of ci-next.yml carry the trial's env key, ci.yml's do not) and whose notices carry
+`node_files`. From that SHA on the two sides run different shapes, and the 10 pushes are asked whether the two
+shapes agree; before it they ran one shape and answered another question. So a SHA first seen before it is read
+and printed (class column BEFORE-WINDOW, with what it would have read) but is in no tally: not the counted total,
+the class counts, the test-ID counts, ACCEPTANCE or the exit code. That is every row of the window this one
+replaces (it opened at 1564c5647f, the first SHA with the test-ids notice): each row that had counted toward the 10
+there, and the two that read EXEMPT. None carries over. The bound only ever removes rows. It is found in the run
+listings, which are read whole whatever --limit is; when it is not in them, which rows precede it cannot be told
+and the reading is unreadable (exit 2). Every SHA at or after it is read and is in every tally, ACCEPTANCE and the
+exit code whatever --limit is: --limit cuts only the rows printed (`shas`), so a row that blocks cannot age out of
+the verdict or be left out by the caller's choice of N.
+
+THE START MOVES WHEN THE SHADOW DOES. Any later change to what a ci-next.yml leg runs moves COUNT_FROM_SHA to the
+head SHA of the push that carried that change, in a commit after it (the SHA does not exist before the push). The
+header of .github/workflows/ci-next.yml lists what counts as such a change, and when the constant may not move past
+a blocking row. No date and no flag moves it.
 
 TEST IDS, per unit pass (UTC, America/New_York), for SHAs with a verdict on both sides. Each pass prints one notice
 titled `test-ids <zone>` (scripts/ci-telemetry/vitest-test-ids-reporter.mjs) with the sha256 of its sorted
 `file :: full test name :: state` list. ci.yml's two are on `build-and-test`; ci-next.yml's are on `unit-utc-cov`
-and `unit-ny`.
-  TEST-IDS-EQUAL   both sides carry one usable digest and they are equal.
-  TEST-IDS-DIFFER  both carry one and they differ. A v2 notice also carries a digest of the file list and one of
-                   the names without their states, so the row says which differ: the file set, the test names, or
-                   states only.
+and `unit-ny`. The notice also carries `node_files`, how many of the pass's files ran in the `node` project. The
+digests cannot see which project ran a file, so two jsdom-everything passes (a key vitest ignored) and two
+two-project passes (a key that reached ci.yml too) both have equal digests and compare nothing.
+  TEST-IDS-EQUAL   both sides carry one usable digest, they are equal, AND the shadow's node_files is above 0 AND
+                   ci.yml's is 0: the shadow ran the node project and the serial job did not.
+  TEST-IDS-VACUOUS the digests are equal and that is not shown: the shadow's node_files is 0 or missing, ci.yml's
+                   is above 0, or ci.yml's is missing. The row prints which. Never EQUAL, never exempt.
+  TEST-IDS-DIFFER  both carry one and they differ, whatever node_files reads. A v2 notice also carries a digest of
+                   the file list and one of the names without their states, so the row says which differ: the file
+                   set, the test names, or states only.
   TEST-IDS-ABSENT  either side has none, or more than one, or an unusable one (an interrupted run, a pending test,
                    no test at all), or the two notices are of different format versions. ABSENT is many causes,
                    and all but one are a defect of the shadow or of the reporter. The one that is not: ci.yml
@@ -77,7 +92,7 @@ absent, carries no `steps`, or holds no step or more than one of that name. Per 
 the ci.yml steps that ran (success or failure), and every ci-next.yml leg that did not succeed with its failed steps.
 
 ONE PASS OF ONE SHA is OK, EXEMPT or BLOCK:
-  EQUAL   OK.        DIFFER   BLOCK.
+  EQUAL   OK.        DIFFER   BLOCK.        VACUOUS   BLOCK, on a green row and on a row red on both sides alike.
   ABSENT  EXEMPT only when ci.yml has no usable digest AND its pass step reads `skipped` AND ci-next.yml either
           has a usable digest or skipped its own pass step too (or, on a SHA red on both sides, the next push
           cancelled that step: A LEG THE NEXT PUSH CANCELLED below). Anything else is BLOCK: the serial pass ran and
@@ -160,11 +175,13 @@ WINDOW = 10                     # the plan's ">= 10 dev pushes"
 QUEUE_THRESHOLD_S = 120         # "any leg queued over 2 min ..."
 QUEUE_RUNS_OVER = 3             # "... in 3 of 10 runs"
 LANDING_SLACK_S = 60            # one push creates both runs within a second or two of each other
-# Where the counting window opens: the first dev SHA whose two runs carry the test-ids notice (the commit that added
-# the v2 reporter to both workflows). Every push before it is TEST-IDS-ABSENT for good, so a window that included
-# one could never be MET. A constant and not a flag on purpose: moving it changes what the 10 pushes mean, and
-# scripts/test_shadow_agree.py pins it.
-COUNT_FROM_SHA = "1564c5647f38b7f014e55786e02c3e740f0aabd0"
+# Where the counting window opens: the first dev SHA whose ci-next.yml unit legs run vitest's `node` project (the A3
+# trial, the head of its own dev push) and whose notices carry node_files. Every push before it compared one shape
+# with itself and can never show shadow node_files > 0, so it is BEFORE-WINDOW: the rows counted under the window
+# this replaces (from 1564c5647f) and its two EXEMPT rows are in no tally now. Any later change to what a ci-next.yml
+# leg runs moves this to that change's pushed head SHA, in a commit after it. A constant and not a flag on purpose:
+# moving it changes what the 10 pushes mean, and scripts/test_shadow_agree.py pins it.
+COUNT_FROM_SHA = "b6af3c36ffc505ce4fe1b1fb64bbd6081f6e541a"
 # timeout-minutes of every job, as .github/workflows/ci.yml and ci-next.yml have them. The jobs API does not report
 # a job's timeout, so this is the bound a cancelled job's duration is held against; scripts/test_shadow_agree.py
 # keeps it equal to the two files.
@@ -400,7 +417,8 @@ def classify(serial, shadow):
 # ── test IDs ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def digests(annotations):
-    """{zone: the one usable notice its job carries, as {"v", "sha256", "files", "names"}, or None}."""
+    """{zone: the one usable notice its job carries, as {"v", "sha256", "files", "names", "node_files"}, or None}.
+    node_files is an int, or None when the notice has no such token or it is not a count."""
     seen = {}
     for entry in annotations:
         title = str(entry.get("title") or "")
@@ -412,17 +430,35 @@ def digests(annotations):
                   and fields.get("reason") in ("passed", "failed") and fields.get("pending") == "0"
                   and fields.get("tests", "").isdigit() and int(fields["tests"]) > 0)
         seen.setdefault(title[len(NOTICE_PREFIX):], set()).add(
-            (fields["v"], fields["sha256"], fields.get("files_sha256"), fields.get("names_sha256")) if usable else None)
-    return {zone: (dict(zip(("v", "sha256", "files", "names"), next(iter(found))))
+            (fields["v"], fields["sha256"], fields.get("files_sha256"), fields.get("names_sha256"),
+             int(fields["node_files"]) if fields.get("node_files", "").isdigit() else None) if usable else None)
+    return {zone: (dict(zip(("v", "sha256", "files", "names", "node_files"), next(iter(found))))
                    if len(found) == 1 and None not in found else None) for zone, found in seen.items()}
 
 
+def vacuous(serial_nodes, shadow_nodes):
+    """Why two EQUAL digests prove nothing, from each side's node_files (an int or None); None when they do prove
+    it: the shadow ran files in the node project and ci.yml ran none there."""
+    whys = []
+    if not shadow_nodes:
+        whys.append("the shadow did not run the node project (node_files=%s): its EQUAL would prove nothing"
+                    % ("missing" if shadow_nodes is None else shadow_nodes))
+    if serial_nodes is None:
+        whys.append("ci.yml's notice carries no node_files")
+    elif serial_nodes > 0:
+        whys.append("ci.yml ran the node project too (node_files=%d): both sides switched, the comparison proves "
+                    "nothing" % serial_nodes)
+    return "; ".join(whys) or None
+
+
 def compare_ids(serial, shadow):
-    """serial and shadow: one pass's notice on each side (digests()), or None. Returns (class, what differs)."""
+    """serial and shadow: one pass's notice on each side (digests()), or None. Returns (class, what differs, or
+    why an equal pair is VACUOUS)."""
     if not serial or not shadow or serial["v"] != shadow["v"]:
         return "ABSENT", None
     if serial["sha256"] == shadow["sha256"]:
-        return "EQUAL", None
+        why = vacuous(serial.get("node_files"), shadow.get("node_files"))
+        return ("VACUOUS", why) if why else ("EQUAL", None)
     if serial["v"] not in ("2",):
         return "DIFFER", "unknown (v%s notices carry one digest)" % serial["v"]
     if serial["files"] != shadow["files"]:
@@ -483,6 +519,8 @@ def zone_result(one, leg_superseded=False):
         return OK, None
     if one["class"] == "DIFFER":
         return BLOCK, "the test IDs differ"
+    if one["class"] == "VACUOUS":       # before every EXEMPT arm: both digests are there, so no skipped step excuses it
+        return BLOCK, "the test IDs are equal and %s" % vacuous(one["ci_node_files"], one["next_node_files"])
     if one["ci"] is not None:
         return BLOCK, ("ci.yml printed its digest and ci-next.yml has no usable one" if one["next"] is None
                        else "the two notices are of different format versions")
@@ -535,7 +573,7 @@ STEP_MISSING = {STEP_UNREADABLE: "red on both sides and the failing step cannot 
 
 def judge(row):
     """(acceptance, acceptance_why, reasons) of one row. `reasons` is what a BLOCKS row blocks for, each one of
-    DISAGREE, STEP-UNREADABLE, STEP-DIFFERENT, IDS-DIFFER, IDS-ABSENT."""
+    DISAGREE, STEP-UNREADABLE, STEP-DIFFERENT, IDS-DIFFER, IDS-VACUOUS, IDS-ABSENT."""
     if not row["counted"]:
         return None, None, []
     red = row["class"] == "AGREE-RED"
@@ -682,9 +720,11 @@ def read(repo, limit, timeout):
                     pair.append(found[job["id"]].get(zone) if job is not None else None)
                     ran.append(step_conclusion(job, PASS_STEPS[zone]))
                 verdict, differs = compare_ids(*pair)
-                row["test_ids"][zone] = {"class": verdict, "differs": differs,
+                row["test_ids"][zone] = {"class": verdict, "differs": differs if verdict == "DIFFER" else None,
                                          "ci": pair[0]["sha256"] if pair[0] else None,
                                          "next": pair[1]["sha256"] if pair[1] else None,
+                                         "ci_node_files": pair[0]["node_files"] if pair[0] else None,
+                                         "next_node_files": pair[1]["node_files"] if pair[1] else None,
                                          "ci_step": ran[0], "next_step": ran[1]}
             row.update(step_facts(
                 next((j for j in judged(picked["ci"])[1] if j["name"] == SERIAL["verdict_job"]), None),
@@ -710,6 +750,8 @@ def acceptance(counted, queue):
     if len(qualifying) < WINDOW:
         missing.append("%d of %d counted" % (len(qualifying), WINDOW))
     for reason, wording in (("DISAGREE", "%d DISAGREE"), ("IDS-DIFFER", "TEST-IDS-DIFFER on %d row(s)"),
+                            ("IDS-VACUOUS", "test IDs equal with the node project not shown to have run on the "
+                                            "shadow alone (node_files) on %d row(s)"),
                             ("IDS-ABSENT", "test IDs absent on %d row(s)"),
                             (STEP_UNREADABLE, STEP_MISSING[STEP_UNREADABLE] + " on %d row(s)"),
                             (STEP_DIFFERENT, STEP_MISSING[STEP_DIFFERENT] + " on %d row(s)")):
@@ -734,7 +776,7 @@ def report(repo, reading):
     classes = {name: sum(1 for row in inside if row["class"] == name)
                for name in ("AGREE-GREEN", "AGREE-RED", "DISAGREE", "NOT-COUNTED")}
     ids = {name: sum(1 for row in counted for one in row["test_ids"].values() if one["class"] == name)
-           for name in ("EQUAL", "DIFFER", "ABSENT")}
+           for name in ("EQUAL", "DIFFER", "VACUOUS", "ABSENT")}
     both_equal = sum(1 for row in counted if row["test_ids"]
                      and all(one["class"] == "EQUAL" for one in row["test_ids"].values()))
     bad = classes["DISAGREE"] > 0 or ids["DIFFER"] > 0

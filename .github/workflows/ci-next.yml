@@ -49,9 +49,9 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 #          covered functions were equal to the unit. A row that differs is a finding to explain, never noise.
 #   - the switch took: scripts/ci-telemetry/vitest-projects.test.js fails a leg whose key is set while that file
 #     still has a DOM, and each leg's test-ids notice carries node_files greater than 0 where ci.yml's carries 0.
-#     shadow-agree.py does not read that token yet: the commit that moves COUNT_FROM_SHA teaches it to give no EQUAL
-#     without it, and until then the notices are read by hand. Without this an ignored key would read as agreement:
-#     both sides jsdom-everything.
+#     shadow-agree.py reads that token and gives no EQUAL without it: equal digests with the shadow's node_files 0
+#     or missing, or ci.yml's above 0 or missing, read TEST-IDS-VACUOUS, which blocks and is never exempt. Without
+#     this an ignored key would read as agreement: both sides jsdom-everything.
 #   - a DOM-needing test that lands under a node root and reds only a leg is the trial working, not noise: the file
 #     moves to src/__tests__/, the row stays blocking, and the count restarts from the fix.
 # The count restarts (COUNT_FROM_SHA moves, in a later commit) when a commit changes what a unit pass runs:
