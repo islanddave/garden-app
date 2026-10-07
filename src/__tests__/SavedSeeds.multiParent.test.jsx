@@ -241,9 +241,12 @@ describe('the stage sheet\'s parent write — two failure sentences (contract O-
   })
 
   it('a 409 with another code is "any other failure"', async () => {
-    patchReply = failed({ status: 409, body: { error: 'lot changed underneath', code: 'lot_changed' } })
+    // The contract's own lot_changed refusal, sentence included.
+    const no = refusal('lot_changed')
+    expect(no.status).toBe(409)
+    patchReply = failed(no)
     await saveWithParent()
     await waitFor(() => expect(document.body.textContent).toContain('Stage saved, but the parent plant did not.'))
-    expect(document.body.textContent).not.toContain('lot changed underneath')
+    expect(document.body.textContent).not.toContain(no.body.error)
   })
 })

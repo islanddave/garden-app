@@ -510,7 +510,8 @@ describe('409 parents_changed on the lot: sent once more, silently', () => {
   })
 
   it('any other 409 is not retried', async () => {
-    route({ lot: reject({ status: 409, body: { error: 'conflict', code: 'lot_changed' } }) })
+    // Uncoded: the contract lists no other 409 code for this route (lot_changed is the set routes').
+    route({ lot: reject({ status: 409, body: { error: 'conflict' } }) })
     mountMix()
     submit()
     await waitFor(() => expect(errorText()).toBe(SAVE_FAILED))

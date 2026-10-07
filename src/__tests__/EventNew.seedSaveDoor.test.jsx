@@ -57,6 +57,7 @@ vi.mock('../context/AuthContext.jsx', () => ({
 import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import * as cache from '../lib/dataCache.js'
+import { blendReply } from './fixtures/seedMix.fixture.js'
 
 // variety_ref is load-bearing rather than decorative: SaveSeedSheet defaults the lot name from it
 // AND sends variety_id on the create, which chk_inventory_seed_requires_variety refuses to be null.
@@ -84,7 +85,9 @@ function prime(plants = [TOMATO]) {
   fetchSpy.mockImplementation((url, opts = {}) => {
     const u = String(url)
     if (opts.method === 'POST' && u === '/api/varieties/blend') {
-      return Promise.resolve({ id: 'var-mix', name: 'Brandywine + Cherokee Purple mix', variety_rank: 'blend' })
+      // The contract's reply with every key the route returns: this is the one test that drives the
+      // real picker end to end, so its mix reply is not a hand-written three-key one.
+      return Promise.resolve(blendReply({ id: 'var-mix', name: 'Brandywine + Cherokee Purple mix' }))
     }
     if (opts.method === 'POST' && u === '/api/inventory-items') return Promise.resolve({ id: 'lot-1' })
     if (opts.method === 'POST') return Promise.resolve({ id: 'evt-1' })
