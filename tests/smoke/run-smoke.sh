@@ -1399,6 +1399,39 @@ else
       #   U23) LAST, after U5's SQL: one blend row for the mix | two live component rows, V2 and V3 | one
       #        cultivar care_profile | NO xp_events row of reason event_logged keyed on either EVENT id (a jar-keyed
       #        grant is keyed on the lot; a Lambda that fell back to event-keyed rewards shows here unless capped).
+      #   RELEASE 3 (V5-SEEDLOTADDITION-001; R3-CONTRACT sections 2 to 4 and 6.1), U24 to U31: seed put INTO a lot
+      #   that already exists. They run BETWEEN U21 and U22, while the mix lot and its two parents are live, on a
+      #   token of their own, with one more planting (P5 on V2: 'smoke-test-seedparent5-<run>') and three more lots,
+      #   all filed under V2: a gift ('smoke-test-seedlot-gift-<run>', stored), one made and deleted at once
+      #   ('smoke-test-seedlot-gone-<run>') and a one-parent lot of P3 ('smoke-test-seedlot-add-<run>'). Every body
+      #   of POST /:id/seed-additions is built by sp_add_body: the four required keys, plus optional ones, and never
+      #   a name, a type or a category (a Lambda from before this release takes a body with a name for a create).
+      #   U24) the mix lot gets a count (PUT /seed-measure 100, counted), read back. Then GET
+      #        /seed-lots-open?plant_id=P5 lists the mix lot and the one-parent lot, and NOT the gift lot or the
+      #        deleted one — each of those two is the one-parent lot's shape but for the one thing its name says.
+      #   U25) more seed from a plant ALREADY in the lot. The body's set is built from the real reply of GET
+      #        /api/plants/P3/seed-lots ([P3] + that row's other_parents), so a 409 here is a FAIL. Read back: the
+      #        count up by 30, and the lot's plants, cache, created_at and year_harvested as they were. Then the
+      #        identical request again → 200 replayed, the count unmoved, the same addition id; the same key on
+      #        ANOTHER lot → 409 addition_key_conflict; a stale set → 409 lot_changed, the count unmoved.
+      #   U26) seed from ANOTHER plant (P5), its body built from U24's own row (source_plants[].id) → 200, the
+      #        plant added; the GET reads three parents, and the count unmoved with its basis now estimated (nothing
+      #        was counted today).
+      #   U27) a RE-FILING addition, on the one-parent lot: a real POST /api/varieties/blend {create} for the
+      #        target, GET /seed-lots-open?plant_id=P4 for the row (same_variety false), the body's set and its
+      #        filing.expect_variety_id from that row → 200; the GET reads the lot filed under the mix, both
+      #        parents, and — the lot was never counted — seed_count and seed_count_estimated still null, with
+      #        count_applied false in the reply.
+      #   U28) that lot marked used up through the wide PUT; one more addition → 409 lot_used_up.
+      #   U29) PUT /seed-measure on the mix lot with expected_seed_count 100, which it no longer holds → 409
+      #        lot_changed carrying 130; the GET still reads 130.
+      #   U30) the addition's seed_saved event on P3, with the keys the sheet sends (seed_lot_id, addition,
+      #        seed_addition_id, added_seed_count, added_estimated) and the smoke switch; GET /api/events?plant_id=P3
+      #        then lists TWO seed_saved events naming the lot: U20's and this one.
+      #   then the one-parent lot's, the gift lot's and P5's DELETEs (the L-058 sweep takes them, and their picking
+      #   rows, by name whatever these answer; they are NOT handed to cleanup()).
+      #   U31) LAST of all, after U23's SQL: picking rows on the mix lot | on the one-parent lot | xp_events rows
+      #        keyed on U30's EVENT id → 2|1|0.
       # Later steps read what earlier ones wrote, so one fault can show as several FAIL lines; the first is the cause.
       # P1 is block D's planting. Block D cleared its variety and blocks between D and here read it that way, so
       # this block gives it block D's variety back (read back, "first-parent-variety") and clears it again at its
@@ -1407,18 +1440,19 @@ else
       # variety, made here and soft-deleted here, as are P3 and P4, so blocks H to L find the project as they did
       # before this block existed. The first lot is a seeds row on block D's variety: F3's packet body plus the
       # array. Two parents of ONE variety need no mix, which is why U1 to U6 still file under a plain variety.
-      # TWO MINTS OF ITS OWN (scripts/test_smoke_mint_log.py holds the number of mint_session_token call sites in
-      # this file; both were added to its count with this text). Requests on each token:
+      # THREE MINTS OF ITS OWN (scripts/test_smoke_mint_log.py holds the number of mint_session_token call sites in
+      # this file; each was added to its count with this text). Requests on each token:
       #   F3's token: every path through F3 ends at most three requests after a mint, G's four follow, then this
       #     block's first 14 (P2, P1's variety and its read, U0's 11): at most 21;
       #   the mint between U0 and U1: 14 (U1 to U6, then P2's DELETE);
-      #   the mint before U7: 40 (U7 to U22, then P1's variety cleared and read).
-      # 68 requests in all. Measured on the staging run of dev 1564c564 (2026-10-05): 0.2 to 0.5 s a request, so
-      # the longest stretch, the last, is 8 to 20 s of its token's 60. Both psql reads come after the last
+      #   the mint before U7: 35 (U7 to U21);
+      #   the mint before U24: 37 (U24 to U30 and their three DELETEs, then U22, P3's and P4's DELETEs, and P1's variety cleared and read).
+      # 100 requests in all. Measured on the staging run of dev 1564c564 (2026-10-05): 0.2 to 0.5 s a request, so
+      # the longest stretch, the last, is 8 to 19 s of its token's 60. All three psql reads come after the last
       # request, so no request that needs a token waits behind a database round trip. H mints its own. A token
       # that did run out would show as 401s and FAIL lines, never as a pass.
-      # NEEDS migrations/v5-seedmultiparent-001, v5-varietyblend-001, v5-seedplantcount-001 and
-      # v5-seedstatsparents-001 applied on staging. Without them the POSTs answer 500 and this block FAILS, as it
+      # NEEDS migrations/v5-seedmultiparent-001, v5-varietyblend-001, v5-seedplantcount-001,
+      # v5-seedstatsparents-001 and (U24 on) v5-seedlotaddition-001 applied on staging. Without them the POSTs answer 500 and this block FAILS, as it
       # should: the Lambdas this tree deploys cannot save a lot with parents, or make a mix, there.
       # THE VARIETY RATE LIMIT: a variety create draws on plant_varieties.create (60 an hour for a person). A run
       # now draws four times (block D, V2, V3, the mix; the swapped call finds the row and draws nothing).
@@ -1606,6 +1640,7 @@ else
           SP_VAR="${STAGING_API_VARIETIES%/}/api/varieties"
           SP_NIL="00000000-0000-0000-0000-000000000000"
           SP_MIX=""; SP_MIX_MADE=false; SP_MIXLOT=""; SP_E1="$SP_NIL"; SP_E2="$SP_NIL"
+          SP_ADDED=false; SP_L2="$SP_NIL"; SP_E3="$SP_NIL"
           sp_req POST "$STAGING_API_VARIETIES" "{\"name\": \"smoke-test-variety2-$TEST_RUN_ID\", \"crop_type_slug\": \"tomato\"}"
           SP_V2=$(sp_jq '.id // empty')
           # SP_MADE keeps each create's own status for u7-rows: by its FAIL line SP_CODE is P4's.
@@ -1743,6 +1778,113 @@ else
                   echo "⚠️  WARN [seed-parents:u21-season-stats-parent-count] STAGING_API_HARVESTS unset/placeholder — parent_count NOT read"
                 fi
 
+                # ── U24 to U30) release 3: seed put INTO a lot that already exists ──
+                # The block's third mint: everything from here to P1's variety being cleared rides it (37 requests).
+                CLERK_JWT=$(mint_session_token)
+                sp_uuid() { local u; u=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid); echo "$u" | tr 'A-Z' 'a-z'; }
+                # sp_add_body KEY PLANT EXPECTED [EXTRA] → the body of POST /:id/seed-additions: the four required
+                # keys, with EXTRA (a JSON object of optional keys) laid over them. EXPECTED is a JSON array of ids.
+                sp_add_body() {
+                  local sp_extra="${4:-}"
+                  [[ -n "$sp_extra" ]] || sp_extra='{}'
+                  jq -nc --arg k "$1" --arg p "$2" --argjson e "$3" --arg d "$SP_DAY" --argjson x "$sp_extra" \
+                    '{addition_key: $k, plant_id: $p, expected_source_plant_ids: $e, picked_on: $d} + $x' 2>/dev/null || echo '{}'
+                }
+                SP_ADD="$SP_INV/$SP_MIXLOT/seed-additions"
+                SP_LOT_V2="\"type\": \"consumable\", \"category\": \"seeds\", \"unit\": \"packet\", \"quantity_on_hand\": 1, \"variety_id\": \"$SP_V2\""
+                sp_req POST "$STAGING_API_PLANTS" "{\"project_id\": \"$CREATED_PROJECT_ID\", \"name\": \"smoke-test-seedparent5-$TEST_RUN_ID\", \"variety_id\": \"$SP_V2\"}"
+                SP_P5=$(sp_jq '.id // empty'); SP_MADE3="P5 $SP_CODE"
+                sp_req POST "$STAGING_API_INVENTORY" "{\"name\": \"smoke-test-seedlot-gift-$TEST_RUN_ID\", $SP_LOT_V2}"
+                SP_GIFT=$(sp_jq '.id // empty'); SP_MADE3="$SP_MADE3, gift lot $SP_CODE"
+                sp_req POST "$STAGING_API_INVENTORY" "{\"name\": \"smoke-test-seedlot-add-$TEST_RUN_ID\", $SP_LOT_V2, \"source_plant_id\": \"$SP_P3\"}"
+                SP_SECOND=$(sp_jq '.id // empty'); SP_MADE3="$SP_MADE3, one-parent lot $SP_CODE"
+                sp_req POST "$STAGING_API_INVENTORY" "{\"name\": \"smoke-test-seedlot-gone-$TEST_RUN_ID\", $SP_LOT_V2, \"source_plant_id\": \"$SP_P3\"}"
+                SP_GONE=$(sp_jq '.id // empty'); SP_MADE3="$SP_MADE3, deleted lot $SP_CODE"
+                if sp_id_ok "$SP_P5" && sp_id_ok "$SP_GIFT" && sp_id_ok "$SP_SECOND" && sp_id_ok "$SP_GONE"; then
+                  SP_ADDED=true; SP_L2="$SP_SECOND"
+                  sp_pass "u24-rows" "a third tomato planting ($SP_P5 on V2) and three lots filed under V2: a gift ($SP_GIFT), a one-parent lot of P3 ($SP_L2), and one to delete ($SP_GONE)"
+                  SP_THREE=$(jq -rn --arg a "$SP_P3" --arg b "$SP_P4" --arg c "$SP_P5" '[$a, $b, $c] | sort | join(",")' 2>/dev/null || echo "unsortable")
+
+                  # ── U24) the mix lot is counted; then the lots open to P5 ──
+                  # The gift lot is stored (so it reads as a saved lot) and says it came from somewhere else; the
+                  # fourth lot is deleted. Each is the one-parent lot in every other respect.
+                  sp_req DELETE "$SP_INV/$SP_GONE"
+                  SP_WRITE="$SP_CODE"; sp_req PATCH "$SP_INV/$SP_GIFT/source-kind" '{"source_kind": "gift"}'
+                  SP_WRITE="$SP_WRITE $SP_CODE"; sp_req POST "$SP_INV/$SP_GIFT/seed-stage" '{"stage": "stored"}'
+                  SP_WRITE="$SP_WRITE $SP_CODE"; sp_req PUT "$SP_INV/$SP_MIXLOT/seed-measure" '{"seed_count": 100, "seed_count_estimated": false}'
+                  SP_WRITE="$SP_WRITE $SP_CODE"; sp_req GET "$SP_INV/$SP_MIXLOT"
+                  # What a picking must not move: the lot's plants, its cache, when it was made, its year.
+                  SP_BEFORE="$(sp_jq "$SP_IDS_JQ")|$(sp_jq '.source_plant_id // "null"')|$(sp_jq '.created_at // "null"')|$(sp_jq '.year_harvested | tostring')"
+                  sp_check "u24-counted-lot" "$SP_WRITE $SP_CODE $(sp_jq '.seed_count | tostring')|$(sp_jq '.seed_count_estimated | tostring')" "200 200 201 200 200 100|false" "the fourth lot's DELETE, the gift lot's PATCH /source-kind {gift} and POST /seed-stage {stored}, the mix lot's PUT /seed-measure {100, counted}; then its GET: seed_count|seed_count_estimated"
+                  sp_req GET "$SP_INV/seed-lots-open?plant_id=$SP_P5"
+                  SP_SEEN=$(jq -rc --arg mix "$SP_MIXLOT" --arg second "$SP_L2" --arg gift "$SP_GIFT" --arg gone "$SP_GONE" 'if (.open_lots | type) == "array" then ([.open_lots[].id] as $ids | [$mix, $second, $gift, $gone] | map(. as $id | ($ids | index($id) != null) | tostring) | join(",")) else "no-open_lots:" + (.open_lots | type) end' "$SP_OUT" 2>/dev/null || echo "unparseable")
+                  # The mix lot's own row, kept for U26: its plants, as the sheet would read them.
+                  SP_OPEN_SET=$(sp_jqx "$SP_MIXLOT" '[.open_lots[]? | select(.id == $x)][0].source_plants // [] | map(.id)')
+                  sp_check "u24-open-lots" "$SP_CODE $SP_SEEN|$(sp_jqx "$SP_MIXLOT" '[.open_lots[]? | select(.id == $x)][0] | (.is_member | tostring) + "," + (.same_variety | tostring)')" "200 true,true,false,false|false,true" "GET /seed-lots-open?plant_id=P5; whether it lists the mix lot, the one-parent lot, the gift lot, the deleted lot | the mix lot's is_member,same_variety"
+
+                  # ── U25) more seed from P3, which is already in the lot ──
+                  sp_req GET "${STAGING_API_PLANTS%/}/api/plants/$SP_P3/seed-lots"
+                  SP_SET=$(jq -c --arg p "$SP_P3" --arg x "$SP_MIXLOT" '[$p] + ([.seed_lots[]? | select(.id == $x)][0].other_parents // [] | map(.id))' "$SP_OUT" 2>/dev/null || echo "unparseable")
+                  SP_BODY1=$(sp_add_body "$(sp_uuid)" "$SP_P3" "$SP_SET" '{"add_seed_count": 30, "add_estimated": false}')
+                  sp_req POST "$SP_ADD" "$SP_BODY1"
+                  SP_WRITE="$SP_CODE $(sp_jq '.addition.replayed | tostring')|$(sp_jq '.addition.plant_was_added | tostring')|$(sp_jq '.addition.count_applied | tostring')"
+                  SP_ADDITION=$(sp_jq '.addition.id // empty')
+                  sp_req GET "$SP_INV/$SP_MIXLOT"
+                  sp_check "u25-same-plant-addition" "$SP_WRITE $SP_CODE $(sp_jq '.seed_count | tostring')|$(sp_jq '.seed_count_estimated | tostring')|$(sp_jq "$SP_IDS_JQ")|$(sp_jq '.source_plant_id // "null"')|$(sp_jq '.created_at // "null"')|$(sp_jq '.year_harvested | tostring')" "200 false|false|true 200 130|false|$SP_BEFORE" "POST /seed-additions from P3 (set read from GET /api/plants/P3/seed-lots: $SP_SET), 30 counted; its status, replayed|plant_was_added|count_applied, then the GET: seed_count|basis|parent ids|source_plant_id|created_at|year_harvested, the last four as before it"
+                  sp_req POST "$SP_ADD" "$SP_BODY1"
+                  sp_check "u25-replay" "$SP_CODE $(sp_jq '.addition.replayed | tostring')|$(sp_jq '.seed_count | tostring')|$(sp_jq '.addition.id // "null"')" "200 true|130|$SP_ADDITION" "the identical request again; its status, replayed|seed_count|the first reply's addition id"
+                  sp_req POST "$SP_INV/$SP_L2/seed-additions" "$SP_BODY1"
+                  sp_check "u25-key-on-another-lot" "$SP_CODE $(sp_jq '.code // "-"')" "409 addition_key_conflict" "the same addition_key sent to the one-parent lot; its status and code"
+                  sp_req POST "$SP_ADD" "$(sp_add_body "$(sp_uuid)" "$SP_P3" "[\"$SP_P3\"]" '{"add_seed_count": 5, "add_estimated": false}')"
+                  SP_WRITE="$SP_CODE $(sp_jq '.code // "-"')"; sp_req GET "$SP_INV/$SP_MIXLOT"
+                  sp_check "u25-stale-set" "$SP_WRITE $SP_CODE $(sp_jq '.seed_count | tostring')" "409 lot_changed 200 130" "POST /seed-additions with expected_source_plant_ids [P3] on a lot that holds P3 and P4; its status and code, then the GET: seed_count"
+
+                  # ── U26) seed from P5, which is not in the lot yet: its body from U24's own row ──
+                  sp_req POST "$SP_ADD" "$(sp_add_body "$(sp_uuid)" "$SP_P5" "$SP_OPEN_SET")"
+                  SP_WRITE="$SP_CODE $(sp_jq '.addition.plant_was_added | tostring')|$(sp_jq '.addition.count_applied | tostring')"; sp_req GET "$SP_INV/$SP_MIXLOT"
+                  sp_check "u26-other-plant-addition" "$SP_WRITE $SP_CODE $(sp_jq "$SP_IDS_JQ")|$(sp_jq '.seed_count | tostring')|$(sp_jq '.seed_count_estimated | tostring')" "200 true|false 200 $SP_THREE|130|true" "POST /seed-additions from P5 with nothing counted (set from the seed-lots-open row: $SP_OPEN_SET); its status, plant_was_added|count_applied, then the GET: parent ids|seed_count|basis (estimated now: today's seed was not counted)"
+
+                  # ── U27) a re-filing addition on the one-parent lot, which has never been counted ──
+                  sp_req POST "$SP_VAR/blend" "{\"component_variety_ids\": [\"$SP_V2\", \"$SP_V3\"], \"create\": true}"
+                  SP_BLEND=$(sp_jq '.id // empty')
+                  sp_req GET "$SP_INV/seed-lots-open?plant_id=$SP_P4"
+                  SP_ROW2_SET=$(sp_jqx "$SP_L2" '[.open_lots[]? | select(.id == $x)][0].source_plants // [] | map(.id)')
+                  SP_ROW2_SAME=$(sp_jqx "$SP_L2" '[.open_lots[]? | select(.id == $x)][0].same_variety | tostring')
+                  SP_REFILE=$(jq -nc --arg v "$SP_BLEND" --arg e "$(sp_jqx "$SP_L2" '[.open_lots[]? | select(.id == $x)][0].variety_id // empty')" '{add_seed_count: 12, add_estimated: true, filing: {variety_id: $v, expect_variety_id: $e}}' 2>/dev/null || echo '{}')
+                  sp_req POST "$SP_INV/$SP_L2/seed-additions" "$(sp_add_body "$(sp_uuid)" "$SP_P4" "$SP_ROW2_SET" "$SP_REFILE")"
+                  SP_WRITE="$SP_CODE $(sp_jq '.addition.count_applied | tostring')|$(sp_jq '.filing.changed | tostring')"; sp_req GET "$SP_INV/$SP_L2"
+                  sp_check "u27-refiling-addition-uncounted" "$SP_ROW2_SAME $SP_WRITE $SP_CODE $(sp_jq '.variety_id // "null"')|$(sp_jq '.variety_rank // "null"')|$(sp_jq '.seed_count | tostring')|$(sp_jq '.seed_count_estimated | tostring')|$(sp_jq "$SP_IDS_JQ")" "false 200 false|true 200 $SP_MIX|blend|null|null|$SP_MIXBOTH" "the one-parent lot's row in GET /seed-lots-open?plant_id=P4: same_variety; POST /seed-additions from P4 with 12 estimated and a filing (target from POST /api/varieties/blend, expectation and set from the row); its status, count_applied|filing.changed, then the GET: variety_id|variety_rank|seed_count|basis|parent ids"
+
+                  # ── U28) that lot, used up, takes no more ──
+                  sp_req PUT "$SP_INV/$SP_L2" "{\"name\": \"smoke-test-seedlot-add-$TEST_RUN_ID\", \"type\": \"consumable\", \"category\": \"seeds\", \"unit\": \"packet\", \"quantity_on_hand\": 0, \"status\": \"depleted\", \"variety_id\": \"$SP_MIX\"}"
+                  SP_WRITE="$SP_CODE"; sp_req POST "$SP_INV/$SP_L2/seed-additions" "$(sp_add_body "$(sp_uuid)" "$SP_P3" "[\"$SP_P3\", \"$SP_P4\"]" '{"add_seed_count": 3, "add_estimated": false}')"
+                  sp_check "u28-used-up-lot" "$SP_WRITE $SP_CODE $(sp_jq '.code // "-"')" "200 409 lot_used_up" "PUT /api/inventory-items/:id {quantity_on_hand: 0, status: depleted} on the one-parent lot; then POST /seed-additions: its status and code"
+
+                  # ── U29) a measure written from a page loaded before the pickings ──
+                  sp_req PUT "$SP_INV/$SP_MIXLOT/seed-measure" '{"seed_count": 5, "seed_count_estimated": false, "expected_seed_count": 100}'
+                  SP_WRITE="$SP_CODE $(sp_jq '.code // "-"')|$(sp_jq '.seed_count | tostring')"; sp_req GET "$SP_INV/$SP_MIXLOT"
+                  sp_check "u29-stale-measure" "$SP_WRITE $SP_CODE $(sp_jq '.seed_count | tostring')" "409 lot_changed|130 200 130" "PUT /seed-measure {seed_count: 5, expected_seed_count: 100} on a lot that now holds 130; its status, code|the seed_count it hands back, then the GET: seed_count"
+
+                  # ── U30) the addition's event, as the sheet sends it; then both of P3's events for this lot ──
+                  sp_req POST "$STAGING_API_EVENTS" "{\"plant_id\": \"$SP_P3\", \"event_type\": \"seed_saved\", \"event_date\": \"$SP_DAY\", \"notes\": \"CI smoke — safe to delete\", \"metadata\": {\"seed_lot_id\": \"$SP_MIXLOT\", \"addition\": true, \"seed_addition_id\": \"$SP_ADDITION\", \"added_seed_count\": 30, \"added_estimated\": false, \"_skip_critter_award\": true}}"
+                  SP_WRITE="$SP_CODE"; SP_EVENT=$(sp_jq '.id // empty')
+                  if sp_id_ok "$SP_EVENT"; then SP_E3="$SP_EVENT"; fi
+                  sp_req GET "${STAGING_API_EVENTS%/}/api/events?plant_id=$SP_P3&limit=50"
+                  sp_check "u30-addition-event" "$SP_WRITE $SP_CODE $(sp_jqx "$SP_MIXLOT" "$SP_EV_JQ")" "201 200 2" "POST /api/events seed_saved on P3 naming the lot and the addition; its status, then GET /api/events?plant_id=P3: seed_saved events carrying this seed_lot_id (U20's and this one)"
+                else
+                  sp_fail "u24-rows" "the release 3 rows were not all made (HTTP of each create: $SP_MADE3): planting [$SP_P5], lots [$SP_GIFT] [$SP_SECOND] [$SP_GONE]"
+                fi
+                # The release 3 rows go back out, whichever exist. The L-058 sweep removes them by name either way.
+                if sp_id_ok "$SP_SECOND"; then
+                  if sp_drop "one-parent-lot-delete" "$SP_INV/$SP_SECOND"; then :; fi
+                fi
+                if sp_id_ok "$SP_GIFT"; then
+                  if sp_drop "gift-lot-delete" "$SP_INV/$SP_GIFT"; then :; fi
+                fi
+                if sp_id_ok "$SP_P5"; then
+                  if sp_drop "fifth-parent-delete" "${STAGING_API_PLANTS%/}/api/plants/$SP_P5"; then :; fi
+                fi
+
                 # ── U22) the lot goes, its parents still linked ──
                 sp_req DELETE "$SP_INV/$SP_MIXLOT"
                 SP_WRITE="$SP_CODE $(sp_jq '. == {"ok": true}')"
@@ -1804,6 +1946,25 @@ else
               sp_fail "u23-mix-rows-readback" "NEON_STAGING_URL unset or psql missing — the ship gate may not skip this assert"
             else
               echo "⚠️  WARN [seed-parents:u23-mix-rows-readback] NEON_STAGING_URL unset or psql missing — the mix's rows were NOT read back"
+            fi
+          fi
+
+          # ── U31) the picking rows, and what the addition's event did NOT write, through SQL ──
+          # picking rows on the mix lot | on the one-parent lot | xp_events rows of reason event_logged keyed on
+          # U30's EVENT id. 2|1|0: the mix lot took P3's and P5's (the replay, the stale set and the key sent to
+          # another lot wrote none), the one-parent lot took P4's (the one sent after it was used up wrote none),
+          # and the event paid nothing of its own — P3 is a parent of the lot, so its grant is the lot's. Read
+          # after both lots' deletes: a picking outlives its lot's soft-delete, and the L-058 sweep is what takes it.
+          if [[ "$SP_ADDED" == "true" ]]; then
+            if [[ -n "${NEON_STAGING_URL:-}" ]] && command -v psql >/dev/null 2>&1; then
+              SP_ADDROWS=$(psql "$NEON_STAGING_URL" -X -At -v ON_ERROR_STOP=1 -v lot="$SP_MIXLOT" -v second="$SP_L2" -v ev="$SP_E3" \
+                <<< "SELECT (SELECT COUNT(*) FROM seed_lot_addition a JOIN seed_lot_parent_planting l ON l.id = a.parent_link_id WHERE l.inventory_item_id = :'lot'::uuid) || '|' || (SELECT COUNT(*) FROM seed_lot_addition a JOIN seed_lot_parent_planting l ON l.id = a.parent_link_id WHERE l.inventory_item_id = :'second'::uuid) || '|' || (SELECT COUNT(*) FROM xp_events WHERE reason = 'event_logged' AND source_id = :'ev'::uuid);") \
+                || SP_ADDROWS="psql-exit-$?"
+              sp_check "u31-addition-rows-readback" "$SP_ADDROWS" "2|1|0" "seed_lot_addition on the staging DSN: picking rows on the mix lot|on the one-parent lot|xp_events rows keyed on the addition's seed_saved event"
+            elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+              sp_fail "u31-addition-rows-readback" "NEON_STAGING_URL unset or psql missing — the ship gate may not skip this assert"
+            else
+              echo "⚠️  WARN [seed-parents:u31-addition-rows-readback] NEON_STAGING_URL unset or psql missing — the picking rows were NOT read back"
             fi
           fi
         else
