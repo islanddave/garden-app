@@ -54,6 +54,20 @@ async function packet(tag, extra = {}) {
   return res.body.id
 }
 
+// A lot IN A STAGE, made the way the Seeds doors make one: the create, then POST /:id/seed-stage as a
+// second request. The create no longer writes a stage (BUG-SEEDSTAGEHEADSHIP-001: a `seed_stage` key
+// in its body is ignored), so `packet(tag, { seed_stage })` would now make an unstaged lot. The route
+// writes the stage and its seed_lot_stage_log entry in one statement.
+async function stagedPacket(tag, stage, seedProcess) {
+  const id = await packet(tag)
+  const res = await callHandler(handler, {
+    method: 'POST', path: `/api/inventory-items/${id}/seed-stage`, userId: USER,
+    body: { stage, seed_process: seedProcess },
+  })
+  expect(res.status, `POST seed-stage ${tag} -> ${JSON.stringify(res.body)}`).toBe(201)
+  return id
+}
+
 async function planting(tag, item, { archived = false, deleted = false } = {}) {
   const rows = await directSql`
     INSERT INTO plants (project_id, name, created_by, source_inventory_item_id, archived_at, deleted_at)
@@ -83,10 +97,9 @@ beforeAll(async () => {
   ids.retracted = await packet('retracted')
   await planting('retracted', ids.retracted, { deleted: true })
   // Allowed: a saved-seed lot with its own stage history and its own photo, nothing sown from it.
-  ids.lot = await packet('saved-lot', { seed_process: 'wet', seed_stage: 'fermenting' })
-  await directSql`
-    INSERT INTO seed_lot_stage_log (inventory_item_id, stage, entered_at, created_by)
-    VALUES (${ids.lot}, 'fermenting', NOW(), ${USER})`
+  // The stage row is the route's own (it used to be inserted by hand beside a create that set the
+  // stage; the route now does both, and exactly one row is what the delete case below counts).
+  ids.lot = await stagedPacket('saved-lot', 'fermenting', 'wet')
   await directSql`
     INSERT INTO photos (inventory_item_id, storage_path, created_by)
     VALUES (${ids.lot}, ${`inventory/${ids.lot}/int-delguard-${RUN}.jpg`}, ${USER})`
@@ -131,7 +144,7 @@ beforeAll(async () => {
   ids.parentPlanting = await planting('lot-parent', null)
   ids.factParent = await packet('fact-parent', { source_plant_id: ids.parentPlanting })
   ids.factKind = await packet('fact-kind', { source_kind: 'farm_stand' })
-  ids.factStage = await packet('fact-stage', { seed_process: 'wet', seed_stage: 'fermenting' })
+  ids.factStage = await stagedPacket('fact-stage', 'fermenting', 'wet')
   ids.factNone = await packet('fact-none')
   // Blocked, and called a seed lot: a lot saved from a gift, with a planting sown from it.
   ids.sownLot = await packet('sown-lot', { source_kind: 'gift' })

@@ -65,6 +65,56 @@ async function clearParent(lotId) {
   expect(status, `clear parent -> ${JSON.stringify(body)}`).toBe(200)
 }
 
+// The stage route, the history read and the card's date, shared by the "newest entry wins" cases and
+// the one-writer cases at the foot of the file (hoisted from the former, unchanged).
+const stage = (lotId, body) => callHandler(handler, {
+  method: 'POST', path: `/api/inventory-items/${lotId}/seed-stage`, body,
+})
+const history = async (lotId) => (await callHandler(handler, {
+  method: 'GET', path: `/api/inventory-items/${lotId}/seed-stage`,
+})).body
+// Both list branches: /seeds/saved fetches the filtered one, the inventory drawer the other.
+const cardFrom = async (lotId) => {
+  const out = []
+  for (const path of ['/api/inventory-items?category=seeds', '/api/inventory-items']) {
+    const { status, body } = await callHandler(handler, { method: 'GET', path })
+    expect(status, `${path} -> ${JSON.stringify(body).slice(0, 200)}`).toBe(200)
+    const row = body.find((r) => r.id === lotId)
+    expect(row, `lot missing from ${path}`).toBeTruthy()
+    out.push({ stage: row.seed_stage, from: row.stage_entered_at && new Date(row.stage_entered_at).toISOString() })
+  }
+  return out
+}
+
+// The wide PUT as every client sends it: the whole editable row. `extra` is what rides along.
+const widePut = (lot, extra = {}) => callHandler(handler, {
+  method: 'PUT', path: `/api/inventory-items/${lot.id}`,
+  body: {
+    name: lot.name, type: 'consumable', category: 'seeds', unit: 'packet',
+    quantity_on_hand: 1, variety_id: varietyId, ...extra,
+  },
+})
+// What the database holds, read with directSql and never taken from a handler's echo (L-108): the
+// lot's stage, and its log in the order every reader uses (newest entry first).
+const stored = async (lotId) => {
+  const [lot] = await directSql`SELECT seed_stage FROM inventory_items WHERE id = ${lotId}`
+  const log = await directSql`
+    SELECT id, stage, entered_at, created_by FROM seed_lot_stage_log
+     WHERE inventory_item_id = ${lotId}
+     ORDER BY created_at DESC, entered_at DESC, id DESC`
+  return { stage: lot.seed_stage, log }
+}
+// THE INVARIANT (BUG-SEEDSTAGEHEADSHIP-001): the lot's stage is the stage of its newest entry, and
+// both list branches date the card from that entry. A lot with no entries has no stage and no date.
+async function expectStageInStep(lotId) {
+  const { stage: ptr, log } = await stored(lotId)
+  const head = log[0] ?? null
+  expect(ptr, 'the lot\'s stage is not the stage of its newest entry').toBe(head ? head.stage : null)
+  const from = head ? new Date(head.entered_at).toISOString() : null
+  for (const card of await cardFrom(lotId)) expect(card).toEqual({ stage: ptr, from })
+  return { ptr, log }
+}
+
 beforeAll(async () => {
   setTestUserId(USER)
 
@@ -266,22 +316,27 @@ describe('constraints that have never executed', () => {
     expect(new Date(row.entered_at).toISOString()).toBe(backdate)
   })
 
-  it('PUT seed_stage: null clears the stage (the documented clear path)', async () => {
+  it('PUT seed_stage: null does NOT clear the stage any more: 200, the stage and its log are unchanged', async () => {
+    // REWRITTEN 2026-10-08 (BUG-SEEDSTAGEHEADSHIP-001). This case was titled "PUT seed_stage: null
+    // clears the stage (the documented clear path)" and asserted the column went NULL. That write
+    // left the lot's history saying `drying` beside a lot with no stage, and it was reachable by
+    // accident: every caller of this verb round-trips a list row, so a row fetched before the lot was
+    // staged carried the null. POST /:id/seed-stage is the stage's only writer now. The key is
+    // ignored, not refused, because installed bundles still send it.
     setTestUserId(USER)
     const { body: lot } = await createSeedLot()
-    await callHandler(handler, {
-      method: 'POST', path: `/api/inventory-items/${lot.id}/seed-stage`, body: { stage: 'drying' },
-    })
-    const { status } = await callHandler(handler, {
-      method: 'PUT', path: `/api/inventory-items/${lot.id}`,
-      body: {
-        name: lot.name, type: 'consumable', category: 'seeds', unit: 'packet',
-        quantity_on_hand: 1, variety_id: varietyId, seed_stage: null,
-      },
-    })
-    expect(status).toBe(200)
-    const [row] = await directSql`SELECT seed_stage FROM inventory_items WHERE id = ${lot.id}`
-    expect(row.seed_stage).toBeNull()
+    expect((await stage(lot.id, { stage: 'drying' })).status).toBe(201)
+    const before = await stored(lot.id)
+    expect(before.stage).toBe('drying')
+    expect(before.log).toHaveLength(1)
+
+    const { status, body } = await widePut(lot, { seed_stage: null })
+    expect(status, JSON.stringify(body)).toBe(200)
+    // The reply reports the lot's real stage, not the body's.
+    expect(body.seed_stage).toBe('drying')
+    const after = await stored(lot.id)
+    expect(after.stage).toBe('drying')
+    expect(after.log.map((r) => r.id)).toEqual(before.log.map((r) => r.id))
   })
 })
 
@@ -582,25 +637,6 @@ describe('POST must not silently drop source_plant_id', () => {
 // Each POST is its own statement, so created_at strictly increases in the order they are awaited.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 describe('newest entry wins — the history and the card follow the entry made last', () => {
-  const stage = (lotId, body) => callHandler(handler, {
-    method: 'POST', path: `/api/inventory-items/${lotId}/seed-stage`, body,
-  })
-  const history = async (lotId) => (await callHandler(handler, {
-    method: 'GET', path: `/api/inventory-items/${lotId}/seed-stage`,
-  })).body
-  // Both list branches: /seeds/saved fetches the filtered one, the inventory drawer the other.
-  const cardFrom = async (lotId) => {
-    const out = []
-    for (const path of ['/api/inventory-items?category=seeds', '/api/inventory-items']) {
-      const { status, body } = await callHandler(handler, { method: 'GET', path })
-      expect(status, `${path} -> ${JSON.stringify(body).slice(0, 200)}`).toBe(200)
-      const row = body.find((r) => r.id === lotId)
-      expect(row, `lot missing from ${path}`).toBeTruthy()
-      out.push({ stage: row.seed_stage, from: row.stage_entered_at && new Date(row.stage_entered_at).toISOString() })
-    }
-    return out
-  }
-
   it('a correction made LATER but dated EARLIER heads the history and dates the card (Purple Peach Ghost)', async () => {
     setTestUserId(USER)
     const { body: lot } = await createSeedLot()
@@ -635,5 +671,119 @@ describe('newest entry wins — the history and the card follow the entry made l
     for (const card of await cardFrom(lot.id)) {
       expect(card).toEqual({ stage: 'fermenting', from: '2026-08-20T16:00:00.000Z' })
     }
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// ONE WRITER (BUG-SEEDSTAGEHEADSHIP-001). inventory_items.seed_stage is a cache of the newest entry
+// in seed_lot_stage_log. The wide PUT and the create used to assign it and append nothing, which put
+// the cache ahead of, behind or off the log: the card's "N days" went blank or counted from the wrong
+// entry, and a fermenting lot got no overdue warning. POST /:id/seed-stage is the only writer now.
+//
+// lambda/inventory-items/seed-stage-one-writer.test.js counts the writers in the source and is what
+// gates (this workflow is not a required check). These cases are the half only a real Postgres can
+// show: that the row and the log do not move, and that the card's date survives.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('one writer — the wide PUT and the create cannot move a lot\'s stage', () => {
+  it('wide PUT carrying a STALE stage: 200, the stage, the log and the card\'s date are unchanged', async () => {
+    // The live shape: a list row loaded while the lot was drying, sent back after it was stored.
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    expect((await stage(lot.id, { stage: 'drying' })).status).toBe(201)
+    expect((await stage(lot.id, { stage: 'stored', entered_at: '2026-09-01T12:00:00' })).status).toBe(201)
+    const before = await expectStageInStep(lot.id)
+    expect(before.ptr).toBe('stored')
+    expect(before.log.map((r) => r.stage)).toEqual(['stored', 'drying'])
+
+    const { status, body } = await widePut(lot, { seed_stage: 'drying', notes: 'moved to the cool shelf' })
+    expect(status, JSON.stringify(body)).toBe(200)
+    expect(body.seed_stage).toBe('stored')
+    // Paired positive: the PUT did write. The edit beside the ignored key landed.
+    const [row] = await directSql`SELECT notes FROM inventory_items WHERE id = ${lot.id}`
+    expect(row.notes).toBe('moved to the cool shelf')
+
+    const after = await expectStageInStep(lot.id)
+    expect(after.ptr).toBe('stored')
+    expect(after.log.map((r) => r.id)).toEqual(before.log.map((r) => r.id))
+    // Dated from the stored entry (noon Eastern on the picked day), not from the drying one.
+    for (const card of await cardFrom(lot.id)) {
+      expect(card).toEqual({ stage: 'stored', from: '2026-09-01T16:00:00.000Z' })
+    }
+  })
+
+  it('wide PUT naming a stage on an UNSTAGED lot: 200, and the lot still has no stage and no entry', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    const { status, body } = await widePut(lot, { seed_stage: 'stored' })
+    expect(status, JSON.stringify(body)).toBe(200)
+    expect(body.seed_stage ?? null).toBeNull()
+    const after = await expectStageInStep(lot.id)
+    expect(after.ptr).toBeNull()
+    expect(after.log).toHaveLength(0)
+  })
+
+  it('wide PUT carrying a word that is no stage: 200, not a 400, and nothing moves', async () => {
+    // The key is not read, so it is not judged. (The DB CHECK is still armed: see "seed_stage CHECK
+    // rejects a value" above. It is never reached from here because nothing is written.)
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    expect((await stage(lot.id, { stage: 'fermenting', seed_process: 'wet' })).status).toBe(201)
+    const { status, body } = await widePut(lot, { seed_stage: 'sprouted' })
+    expect(status, JSON.stringify(body)).toBe(200)
+    const after = await expectStageInStep(lot.id)
+    expect(after.ptr).toBe('fermenting')
+    expect(after.log).toHaveLength(1)
+  })
+
+  it('create carrying a stage: 201, and the lot is born with no stage and no entry', async () => {
+    // No shipped client sends the key on a create (SaveSeedSheet stages as a second request). A
+    // caller that does gets a lot, and no stage: never a stage with nothing in the log behind it.
+    setTestUserId(USER)
+    const { status, body } = await createSeedLot({ seed_stage: 'fermenting', seed_process: 'wet' })
+    expect(status, `POST -> ${JSON.stringify(body)}`).toBe(201)
+    expect(body.seed_stage ?? null).toBeNull()
+    // Paired positive: the body was read. The key beside it is written.
+    const [row] = await directSql`SELECT seed_stage, seed_process FROM inventory_items WHERE id = ${body.id}`
+    expect(row.seed_process).toBe('wet')
+    expect(row.seed_stage).toBeNull()
+    const after = await expectStageInStep(body.id)
+    expect(after.ptr).toBeNull()
+    expect(after.log).toHaveLength(0)
+  })
+
+  it('…and with parents (the transaction path): same answer', async () => {
+    setTestUserId(USER)
+    const { status, body } = await createSeedLot({ seed_stage: 'drying', source_plant_id: parentPlantId })
+    expect(status, `POST -> ${JSON.stringify(body)}`).toBe(201)
+    expect(body.source_plant_id).toBe(parentPlantId)
+    const after = await expectStageInStep(body.id)
+    expect(after.ptr).toBeNull()
+    expect(after.log).toHaveLength(0)
+    await clearParent(body.id)
+  })
+
+  it('POST /:id/seed-stage still writes the stage AND its entry, and the card is dated from it', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    const res = await stage(lot.id, { stage: 'drying', seed_process: 'dry' })
+    expect(res.status, JSON.stringify(res.body)).toBe(201)
+    const one = await expectStageInStep(lot.id)
+    expect(one.ptr).toBe('drying')
+    expect(one.log).toHaveLength(1)
+    expect(one.log[0]).toMatchObject({ id: res.body.id, stage: 'drying', created_by: USER })
+    // stage_entered_at is NOT NULL on both list branches after a move, dated or not. (That it is
+    // the ENTRY's date, and not some other one, is expectStageInStep's equality just above.)
+    for (const card of await cardFrom(lot.id)) {
+      expect(card.stage).toBe('drying')
+      expect(card.from).not.toBeNull()
+      expect(Number.isNaN(Date.parse(card.from))).toBe(false)
+    }
+
+    // A second move: one more entry, and the invariant holds on the new head.
+    expect((await stage(lot.id, { stage: 'stored' })).status).toBe(201)
+    const two = await expectStageInStep(lot.id)
+    expect(two.ptr).toBe('stored')
+    expect(two.log.map((r) => r.stage)).toEqual(['stored', 'drying'])
+    expect(await history(lot.id)).toHaveLength(2)
   })
 })
