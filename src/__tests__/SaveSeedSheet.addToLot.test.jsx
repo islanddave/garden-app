@@ -870,7 +870,7 @@ describe('after the tap: no answer (rows 14-19, 21, 23)', () => {
   const asked = () => ['title', 'body', 'confirm', 'cancel'].map((part) => text(`confirm-sheet-${part}`))
   const UNSURE_QUESTION = [
     'Close without checking?',
-    "Today's seed may or may not have been added. Look at the lot's seed count before you add it again.",
+    "Today's seed may or may not have been added. If you close and add it again, it could go in twice.",
     'Close', 'Keep checking',
   ]
   const ORDINARY_QUESTION = ['Close without adding?', 'What you typed here will not be kept.', 'Discard', 'Keep editing']

@@ -1137,7 +1137,7 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, ownLots, onS
     : null
   // Once a request has left with no definite answer (AddToLot reports `unsure`), that question would
   // be untrue: the seed may already be in the lot, and "Keep editing" names something the locked form
-  // cannot do. So in that state, and only then, it says what is known and what to look at. These words
+  // cannot do. So in that state, and only then, it says what is known and what a second add risks. These words
   // ride in `confirmCopy`, which the registry reads when the question is raised: the three constants
   // above do not move, so nothing re-registers.
   const unsureCopy = addState.unsure ? UNSURE_CLOSE : null
