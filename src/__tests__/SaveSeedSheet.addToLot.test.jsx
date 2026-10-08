@@ -891,11 +891,11 @@ describe('after the tap: no answer (rows 14-19, 21, 23)', () => {
   const UNSURE_QUESTION = [
     'Close without checking?',
     "Today's seed may or may not have been added. If you close and add it again, it could go in twice.",
-    'Close', 'Keep checking',
+    'Close', 'Stay here',
   ]
   const ORDINARY_QUESTION = ['Close without adding?', 'What you typed here will not be kept.', 'Discard', 'Keep editing']
 
-  it('row 23 — closing in the "may or may not" state asks a question that is true there; Keep checking leaves the form as it stood', async () => {
+  it('row 23 — closing in the "may or may not" state asks a question that is true there; Stay here leaves the form as it stood', async () => {
     net.add = [timedOut(), timedOut()]
     mountAsked()
     await tap('save-seed-put-in-lot')

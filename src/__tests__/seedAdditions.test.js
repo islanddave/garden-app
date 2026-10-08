@@ -104,6 +104,9 @@ describe('what was typed', () => {
     expect(got.value).toBe(value)
     expect(!!got.error).toBe(refused)
   })
+  it('a weight over the limit names the limit in his words', () => {
+    expect(parseAddWeight('100000.001').error).toBe('That is over 100 kg. Check the number.')
+  })
 })
 
 describe('the request body', () => {

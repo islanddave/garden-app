@@ -92,7 +92,7 @@ export function parseAddWeight(raw) {
   const grams = m[2] && m[2].toLowerCase() === 'mg' ? Number(m[1]) / 1000 : Number(m[1])
   const rounded = Math.round(grams * 1000) / 1000
   if (!(rounded > 0)) return { value: null, error: 'That is too little to weigh. Leave it blank instead.' }
-  if (rounded > ADD_WEIGHT_MAX_G) return { value: null, error: 'That is more weight than one addition can hold.' }
+  if (rounded > ADD_WEIGHT_MAX_G) return { value: null, error: 'That is over 100 kg. Check the number.' }
   return { value: rounded, error: null }
 }
 
@@ -199,7 +199,7 @@ export const UNSURE_CLOSE = Object.freeze({
   title: 'Close without checking?',
   body: "Today's seed may or may not have been added. If you close and add it again, it could go in twice.",
   confirmLabel: 'Close',
-  cancelLabel: 'Keep checking',
+  cancelLabel: 'Stay here',
 })
 export const LOTS_FAILED = "Couldn't load your lots. Nothing was changed."
 export const LOTS_FROM_CACHE = "This list may be out of date. Nothing can be added until you're back in range."
