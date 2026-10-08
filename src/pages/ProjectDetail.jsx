@@ -31,6 +31,7 @@ import { PlantForm, Field, Input, Select, Textarea, Button, ErrorBanner, Plantin
 import { CROP_CHIPS_AUTO } from '../components/forms/PlantingSelect.jsx'
 // V4-CROPLISTORDER-001 (BD-010): crop-rank ledger write on the mini-logger save.
 import { recordCropLog } from '../lib/cropLogLedger.js'
+import { WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata } from '../lib/waterDepth.js'
 import Spinner from '../components/forms/Spinner.jsx'
 import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
@@ -47,8 +48,8 @@ const EVENT_PAGE_SIZE = 200
 
 // V4-PICKERGATE-001 — what THIS surface can submit, not the whole vocabulary.
 //
-// The mini-logger's POST body (handleLogEvent) has no `harvest` key and no `metadata` key at all,
-// so every type whose API contract requires one was a guaranteed 400 from here: harvest has been
+// The mini-logger's POST body (handleLogEvent) has no `harvest` key and no user-entered `metadata`
+// (only a watering's default depth, BUG-WATERDEPTHSINGLEEVENT-001), so every type whose API contract requires one was a guaranteed 400 from here: harvest has been
 // since it shipped, and V4-LOSSUI-001 added failed / given_away when it opened the creation gate.
 //
 // plantScoped: the form DOES carry a plant_id — it has a planting picker, required by
@@ -501,6 +502,8 @@ export default function ProjectDetail() {
           quantity:      eventForm.quantity.trim()       || null,
           is_public:     eventForm.is_public,
           has_photo:     !!miniPhotoFile,
+          // BUG-WATERDEPTHSINGLEEVENT-001: no depth chip here, so a watering records that the default wrote it.
+          ...(isWaterDepthType(eventForm.event_type) ? { metadata: waterDepthMetadata(WATER_DEPTH_DEFAULT, false) } : {}),
         }),
       })
 

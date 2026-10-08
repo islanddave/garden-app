@@ -24,6 +24,7 @@
 
 import { resolveCareScope, resolveCareCommand } from './voiceCareResolve.js'
 import { looseKey } from './comboboxInput.js'
+import { WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata } from './waterDepth.js'
 
 // Stamped on every row of a voice batch, as harvest voice stamps harvest_input_source, so voice care
 // can be measured later. Accepted by the server as-is: validateEventMetadata polices only the
@@ -104,12 +105,17 @@ export function careAliasUses(plan, aliasIndex) {
 }
 
 // R8's body. `ids` + the plan's key + the voice marker, and nothing that could widen the set.
+// BUG-WATERDEPTHSINGLEEVENT-001: a spoken watering names no amount, so its rows record that the
+// default wrote them (source 'default'); no other type carries the depth keys.
 export function careWriteBody(plan) {
   return {
     idempotency_key: plan.idempotencyKey,
     event_type: plan.eventType,
     scope: { type: 'ids', plant_ids: [...plan.keepIds] },
-    metadata: { care_input_source: CARE_INPUT_SOURCE },
+    metadata: {
+      care_input_source: CARE_INPUT_SOURCE,
+      ...(isWaterDepthType(plan.eventType) ? waterDepthMetadata(WATER_DEPTH_DEFAULT, false) : {}),
+    },
   }
 }
 

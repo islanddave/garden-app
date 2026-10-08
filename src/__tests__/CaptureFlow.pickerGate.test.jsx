@@ -1,8 +1,10 @@
 // V4-PICKERGATE-001 — Snap's event destination offers only what it can POST.
 //
 // Snap is the fast path: photo first, three fields, save. The event destination carries no capture
-// panel — its submit branch builds a flat body with no `harvest` key and no `metadata` key — so the
-// three types whose API contract requires one were guaranteed 400s from here.
+// panel — its submit branch builds a flat body with no `harvest` key and, for every type but
+// watering, no `metadata` key — so the three types whose API contract requires one were guaranteed
+// 400s from here. Watering alone carries metadata: the default depth (BUG-WATERDEPTHSINGLEEVENT-001,
+// last describe below), which the surface can build without a panel because nobody chooses it.
 //
 // This file once cross-asserted a SECOND destination: location. V4-LOCEVENT-001 deleted that
 // destination's Event/Date fields outright (event_log_has_anchor has no location arm, so the POST
@@ -51,6 +53,7 @@ beforeEach(() => {
     if (path === '/api/locations/with-path') return Promise.resolve(LOCS)
     return Promise.resolve({ ok: true })
   })
+  uploadSpy.mockResolvedValue({ photo: { id: 'photo-1' } })
 })
 afterEach(() => cleanup())
 
@@ -89,5 +92,39 @@ describe('V4-PICKERGATE-001 — Snap event destination (a planting, no capture p
     const sel = screen.getByLabelText('Event')
     expect(sel.value).toBe('watering')
     expect(optionValues(sel)).toContain(sel.value)
+  })
+})
+
+// BUG-WATERDEPTHSINGLEEVENT-001 — the one type this surface writes metadata for. Nobody tapped a
+// depth chip here (there is none), so the row must say the default wrote it: source 'default',
+// never 'user'. Every other type keeps the flat body, with no metadata key at all.
+describe('BUG-WATERDEPTHSINGLEEVENT-001 — Snap event destination writes the default depth on watering only', () => {
+  const eventPosts = () => fetchSpy.mock.calls
+    .filter(([p, o]) => p === '/api/events' && o?.method === 'POST')
+    .map(([, o]) => JSON.parse(o.body))
+
+  async function saveEvent(type) {
+    await snapTo('mode-event')
+    if (type) await act(async () => { fireEvent.change(screen.getByLabelText('Event'), { target: { value: type } }) })
+    await act(async () => { fireEvent.focus(screen.getByTestId('cap-evplant')) })
+    await act(async () => { fireEvent.click(await screen.findByTestId('ps-opt-pl-1')) })
+    await act(async () => { fireEvent.click(screen.getByTestId('cap-save')) })
+    await waitFor(() => expect(eventPosts().length).toBe(1))
+    return eventPosts()[0]
+  }
+
+  it('the seeded default (watering) carries the default depth, marked as a default', async () => {
+    const body = await saveEvent()
+    expect(body.event_type).toBe('watering')
+    expect(body.metadata).toEqual({ water_depth: 'normal', water_depth_source: 'default' })
+    // The existing keys are untouched.
+    expect(body).toMatchObject({ project_id: 'proj-9', plant_id: 'pl-1', is_public: true })
+  })
+
+  it.each(['observation', 'fertilizing', 'rain'])('%s carries no depth and no metadata key', async (type) => {
+    const body = await saveEvent(type)
+    expect(body.event_type).toBe(type)
+    expect(body).not.toHaveProperty('metadata')
+    expect(JSON.stringify(body)).not.toContain('water_depth')
   })
 })
