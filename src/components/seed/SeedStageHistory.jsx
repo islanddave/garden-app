@@ -62,8 +62,9 @@ export default function SeedStageHistory({
         if (!mounted) return
         // Array.isArray, not `data ?? []`: the route answers with a JSON array, and anything else
         // is a shape this component cannot read. Coercing rather than throwing keeps a surprising
-        // response from taking down the rest of the page — it renders as "nothing recorded", which
-        // is the same thing an empty array means.
+        // response from taking down the rest of the page — it renders as an empty array does:
+        // "nothing recorded" for a lot with no stage, and the "no entry for that stage" notice for
+        // a lot that has one (stageNotLogged, below).
         setRows(Array.isArray(data) ? data : [])
         setLoading(false)
       })

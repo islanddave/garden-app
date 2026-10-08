@@ -343,6 +343,20 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
     expect(screen.queryByTestId('seed-stage-off-log')).toBeNull()
   })
 
+  it('a request still PENDING says nothing about the stage — not "no entry" beside a staged lot', async () => {
+    // `rows` starts empty, so while the history is on its way a staged lot is, to the predicate,
+    // a staged lot with no entries. Only AsyncRegion's precedence (loading before children) keeps
+    // the sentence off a healthy lot during the load; this pins that.
+    historyRef.current = new Promise(() => {})   // never settles
+    await renderPage()
+    expect(itemRef.current.seed_stage).toBe('stored')
+    await waitFor(() => expect(screen.getByText('Loading this lot’s history…')).toBeTruthy())
+    expect(fetchSpy.mock.calls.filter(([p]) => String(p) === HISTORY_PATH)).toHaveLength(1)
+    expect(screen.queryByTestId('seed-stage-off-log')).toBeNull()
+    expect(screen.queryByText(/No processing stages recorded yet/)).toBeNull()
+    expect(entries()).toHaveLength(0)
+  })
+
   it('…including a failure whose message is EMPTY (api.js throws Error(\'\') on an empty statusText)', async () => {
     // `??` kept the '' and the panel read it as "no error": the failed load rendered as an empty history.
     historyRef.current = new Error('')
