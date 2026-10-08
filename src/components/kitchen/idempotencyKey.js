@@ -51,11 +51,18 @@ export function mintKey() {
 //
 // 'stale' IS THE STORED DRAFT'S END (pre-promote I-1). It is only ever said to a replay, so the first Save
 // landed and the draft has done its job: a sheet that keeps its key in a stored draft (Put something up, the
-// recipe sheet) takes that draft out of storage at the refusal and does not write it back. The sheet that is
+// recipe sheet, the Start sheet, Put it up) takes that draft out of storage at the refusal and does not write
+// it back. (The Start sheet and Put it up say ONE refusal for 'stale' and 'fixed' alike: neither has a way
+// through in the sheet that is open, so either ends its stored draft.) The sheet that is
 // open is as above; the one opened next — after a close, or a reload with no close — is clean, has no key, and
 // mints one for what is typed there as for any new thing. A draft whose answer was lost and has not been
 // refused is not touched: it restores with its key, which is what stops a second row. The sheets that hold
 // the key in memory only (the Walk, Save as recipe, How it was made) end it when they are left, as before.
+//
+// AN ANSWERED 4xx DID NOT LAND (BUG-PUTUPREPLAYREST-001). `sent` is what MAY have landed, so a sheet that
+// reads its fixed part off the prints (the Start sheet, Put it up) takes back the print of a body the server
+// answered with a 4xx — to what `sent` was before that body went. And `updatedHere` is taken back when the
+// update it was set for was answered with one: a stamp that has moved since is then another writer's.
 //
 // THE ROW ALREADY HOLDS IT (`holds`). Before any of that, the sheet reads the row the replay answered with:
 // when it holds exactly what is on screen (the fields he chose — each sheet says what it compares) there is

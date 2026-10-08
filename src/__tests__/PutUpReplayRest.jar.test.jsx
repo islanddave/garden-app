@@ -494,6 +494,7 @@ describe('Put something up — the put-up route', () => {
     ['made longer ago than the bound', { ...stamps(LONG_AGO) }],
     ['touched since it was made', { ...stamps(60 * 1000, 5 * 1000) }],
     ['carrying neither stamp', { created_at: undefined, updated_at: undefined }],
+    ['stamped two minutes later than this phone\'s clock (a slow clock is not one to judge "minutes ago" by)', { ...stamps(-2 * 60 * 1000) }],
   ])('a jar %s, the notes changed, Save: nothing is written, and the door says it was saved earlier', async (_name, first) => {
     const table = jarTable({ first })
     const door = await openDoor()

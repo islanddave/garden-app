@@ -301,6 +301,7 @@ describe('Start a batch — a replayed create', () => {
     ['made longer ago than the bound', { ...stamps(LONG_AGO) }],
     ['touched since it was made', { ...stamps(60 * 1000, 5 * 1000) }],
     ['carrying neither stamp', { created_at: undefined, updated_at: undefined }],
+    ['stamped two minutes later than this phone\'s clock', { ...stamps(-2 * 60 * 1000) }],
   ])('a batch %s, the name changed, Start it: nothing is written, and the sheet says so', async (_name, first) => {
     const table = batchTable({ first })
     const sheet = open()
