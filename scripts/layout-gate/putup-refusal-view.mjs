@@ -2,8 +2,8 @@
 // putup-refusal-view.mjs — BUG-PUTUPREPLAYREST-001: is the Put-Up replay refusal line ON SCREEN when it
 // appears, in real Chrome, at Dave's 426×836 (DPR 3)?
 //
-//   node scripts/layout-gate/putup-refusal-view.mjs                 # both sheets, both arrivals
-//   node scripts/layout-gate/putup-refusal-view.mjs --sheet door    # one sheet
+//   node scripts/layout-gate/putup-refusal-view.mjs                 # every sheet, every arrival
+//   node scripts/layout-gate/putup-refusal-view.mjs --sheet door    # one sheet (door, recipe, putupdoor, start, putitup, walk)
 //   node scripts/layout-gate/putup-refusal-view.mjs --shots <dir>   # also write a PNG per measurement
 //   node scripts/layout-gate/putup-refusal-view.mjs --list          # print the test ids each sheet draws
 //
@@ -33,6 +33,17 @@
 // INSTRUMENT CHECK, every run: the scroller is then put back where it stood when Save was tapped (`top`
 // arrival: scrollTop 0) and measured again. That state MUST read as not visible — it is what the sheet
 // would show with no scroll on refusal — or the verdict above is not worth reading.
+//
+// THE THREE QA I-5 SCENARIOS (BUG-PUTUPREPLAYREST-001 review, I-5) — the refusals that work added, which had
+// been seen only in jsdom. Each is ONE arrival (`change`) through the same loop and the same assertions:
+//   · putupdoor — the door on a METHOD chip with its options CLOSED; the lost Save; the date changed (the
+//     options opened, Yesterday, the options closed again); Save → "Already in the Pantry as …, put up … Set
+//     the date back to …". Also measured: the When chips the refusal opened (`also`).
+//   · start — Start a batch: a name, the lost tap, When changed, Start it → "This batch is already started …".
+//   · putitup — Put it up with two rows and "More about this sitting" open; the lost tap; a count changed;
+//     tap → "This is already put up …".
+// A sheet short enough not to scroll when it is filled is allowed for these (`mayNotScroll`): then nothing can
+// be under the fold at the FIRST failure and that one instrument check is skipped, and said so.
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -89,6 +100,74 @@ const SHEETS = {
     top: [['type', 'recipe-name', ', the charred one']],
   },
 }
+
+Object.assign(SHEETS, {
+  putupdoor: {
+    page: 'putupdoor', arrivals: ['change'], mayNotScroll: true,
+    ids: { error: 'door-error', footer: 'door-footer', save: 'door-save' },
+    refusal: /^Already in the Pantry as “Sweet corn, cut off the cob”, put up .+ — an earlier Save went through\. That date can't be changed once it is saved\. Set the date back to .+ and tap Save to put your other changes on it\.$/,
+    fill: [
+      ['type', 'door-what-name', 'Sweet corn, cut off the cob'],
+      ['tap', 'door-place-id:loc-cf1'],
+      ['tap', 'door-method-whole_freeze'],
+    ],
+    // The options are opened for the date and CLOSED again: the refusal has to open them itself.
+    change: [['tap', 'door-more'], ['tap', 'door-when-yesterday'], ['tap', 'door-more']],
+    also: ['door-when-yesterday'],
+  },
+  start: {
+    page: 'start', arrivals: ['change'], mayNotScroll: true,
+    ids: { error: 'start-error', footer: 'start-footer', save: 'start-submit' },
+    failure: /^Couldn't start it/,
+    refusal: /^This batch is already started — an earlier tap on “Start it” went through\. This tap changed nothing on it\. Close this and open the batch to see it\.$/,
+    fill: [
+      ['type', 'start-label', 'Megatron mash, the red one'],
+      ['tap', 'start-kind-toggle'],
+      ['tap', 'start-kind-other'],
+      ['type', 'start-kind-other-text', 'a mash'],
+      ['tap', 'following-recipe-toggle'],
+      ['type', 'following-recipe-ref', 'Noma guide, p. 40'],
+    ],
+    // When changed — to "Earlier… → Last month", which also makes the sheet longer than the screen, so the line
+    // has somewhere to be hidden and the instrument check below means something.
+    change: [['tap', 'start-when-earlier'], ['tap', 'start-when-last_month']],
+  },
+  putitup: {
+    page: 'putitup', arrivals: ['change'], mayNotScroll: true,
+    ids: { error: 'putup-error', footer: 'putup-footer', save: 'putup-finish' },
+    failure: /^Couldn't put it up/,
+    refusal: /^This is already put up — an earlier tap went through\. This tap changed nothing on it\. Close this and open the batch to see what was put up\.$/,
+    fill: [
+      ['tap', 'putup-method-hot_sauce'],
+      ['tap', 'putup-row-0-place-id:loc-fridge'],
+      ['tap', 'putup-row-add'],
+      ['tap', 'putup-sitting-more'],
+    ],
+    change: [['tap', 'putup-row-1-plus']],
+  },
+})
+
+// THE WALK (BUG-PUTUPREPLAYREST-001 re-review I-E). In a walk a refusal that leaves the group spent now ends with
+// the way on ("To log more here, end this walk and start another."), which makes the walk's "saved earlier" line its
+// longest. The Walk is a page: the document scrolls, the fixed band ("End the walk") is what can cover the line,
+// and Save is the group's own button UNDER the line — so it is tapped where it is brought to (`saveScrolls`), and
+// the line must then be whole above the band. Its options are opened so the group is as tall as it gets.
+Object.assign(SHEETS, {
+  walk: {
+    page: 'walk', arrivals: ['change'], mayNotScroll: true, saveScrolls: true,
+    ids: { error: 'walk-error', footer: 'putup-walk-band', save: 'walk-save' },
+    refusal: /^“Sweet corn, cut off the cob, late” was already saved earlier — it is in the Pantry\. This Save did not change it\. To change it, open it in the Pantry\. To log more here, end this walk and start another\.$/,
+    fill: [
+      ['tap', 'putup-walk-place-id:loc-cf1'],
+      ['tap', 'putup-walk-when-this_month'],
+      ['tap', 'putup-walk-start'],
+      ['type', 'walk-what-name', 'Sweet corn, cut off the cob'],
+      ['tap', 'walk-method-as_is'],
+      ['tap', 'walk-more'],
+    ],
+    change: [['type', 'walk-what-name', ', late']],
+  },
+})
 
 const failures = []
 const fail = m => failures.push(m)
@@ -274,10 +353,10 @@ try {
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 3, mobile: true }, cdp.sessionId)
   for (const [name, s] of Object.entries(SHEETS)) {
     if (ONLY && ONLY !== name) continue
-    for (const arrival of ['end', 'top']) {
+    for (const arrival of (s.arrivals ?? ['end', 'top'])) {
       const at = `${name}/${arrival}@${VW}x${VH}`
       try {
-        const nav = await cdp.send('Page.navigate', { url: `http://localhost:${PORT}/tests/harness/putuprefusal.html?sheet=${name}` }, cdp.sessionId)
+        const nav = await cdp.send('Page.navigate', { url: `http://localhost:${PORT}/tests/harness/putuprefusal.html?sheet=${s.page ?? name}` }, cdp.sessionId)
         if (nav.errorText) throw new Error(`navigation failed: ${nav.errorText}`)
         await sleep(300)
         await cdp.evalIn(`(async()=>{for(let i=0;i<300;i++){if(window.__h&&window.__h.ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('the harness never reached ready()')})()`)
@@ -288,31 +367,36 @@ try {
         const filled = await cdp.evalIn('window.__h.measure()')
         if (filled.vw !== VW || filled.vh !== VH || filled.dpr !== 3) throw new Error(`the page self-reports ${filled.vw}x${filled.vh} @${filled.dpr} — emulation did not take`)
         if (!filled.font || !(filled.font.faces > 0) || filled.font.failed > 0) throw new Error(`the Roboto pin did not load (${JSON.stringify(filled.font)})`)
-        if (!(filled.scroll.height > filled.scroll.client + 40)) throw new Error(`the filled sheet does not scroll (${filled.scroll.height} in ${filled.scroll.client}) — nothing could be under the fold`)
+        const scrolls = filled.scroll.height > filled.scroll.client + 40
+        if (!scrolls && !s.mayNotScroll) throw new Error(`the filled sheet does not scroll (${filled.scroll.height} in ${filled.scroll.client}) — nothing could be under the fold`)
 
-        await tap(cdp, s, s.ids.save, { still: true })
+        await tap(cdp, s, s.ids.save, { still: !s.saveScrolls })
         await sleep(500)
         const lost = await cdp.evalIn('window.__h.measure()')
         if (lost.creates !== 1) throw new Error(`the first Save sent ${lost.creates} creates, not 1 (calls: ${lost.calls.join(' | ')}; line: ${lost.text})`)
         const lpng = await shot(cdp, `${name}-${arrival}-1-first-save-lost`)
         const lv = verdictOf(lost)
         console.log(`[refusal] ${at}: first Save lost, its failure line ${JSON.stringify(lost.text)}: ${lv.toUpperCase()} — ${say(lost)}${lpng ? `\n            ${lpng}` : ''}`)
-        if (!/^Couldn't save it/.test(lost.text ?? '') || s.refusal.test(lost.text ?? '')) fail(`${at}: the first Save's line is not the ordinary failure: ${JSON.stringify(lost.text)}`)
+        if (!(s.failure ?? /^Couldn't save it/).test(lost.text ?? '') || s.refusal.test(lost.text ?? '')) fail(`${at}: the first Save's line is not the ordinary failure: ${JSON.stringify(lost.text)}`)
         if (lv !== 'fully visible') fail(`${at}: the first Save's failure line is ${lv} — ${say(lost)}`)
         // Its instrument check: the scroller back where it stood when Save was tapped, then put back again.
-        await cdp.evalIn(`(() => { document.querySelector('[role="dialog"]').scrollTop = ${filled.scroll.top} })()`)
-        await sleep(200)
-        const lc = await cdp.evalIn('window.__h.measure()')
-        const lcv = verdictOf(lc)
-        console.log(`[refusal] ${at}: first-failure control (scrollTop back to ${filled.scroll.top}, as with no scroll on a failed Save): ${lcv} — ${say(lc)}`)
-        if (lcv === 'fully visible') fail(`${at}: the first-failure instrument check did not fire — unscrolled, the line still reads as fully visible`)
-        await cdp.evalIn(`(() => { document.querySelector('[role="dialog"]').scrollTop = ${lost.scroll.top} })()`)
-        await sleep(200)
+        let lc = lost
+        let lcv = 'not run (the filled sheet does not scroll: nothing can be under the fold)'
+        if (scrolls) {
+          await cdp.evalIn(`window.__h.setScroll(${filled.scroll.top})`)
+          await sleep(200)
+          lc = await cdp.evalIn('window.__h.measure()')
+          lcv = verdictOf(lc)
+          console.log(`[refusal] ${at}: first-failure control (scrollTop back to ${filled.scroll.top}, as with no scroll on a failed Save): ${lcv} — ${say(lc)}`)
+          if (lcv === 'fully visible') fail(`${at}: the first-failure instrument check did not fire — unscrolled, the line still reads as fully visible`)
+          await cdp.evalIn(`window.__h.setScroll(${lost.scroll.top})`)
+          await sleep(200)
+        } else console.log(`[refusal] ${at}: first-failure control ${lcv} (${filled.scroll.height} in ${filled.scroll.client})`)
 
         if (arrival === 'top') await wheelToTop(cdp)
         await walk(cdp, s, s[arrival])
         const before = await cdp.evalIn('window.__h.measure()')
-        await tap(cdp, s, s.ids.save, { still: true })
+        await tap(cdp, s, s.ids.save, { still: !s.saveScrolls })
         await sleep(700)
         const m = await cdp.evalIn('window.__h.measure()')
         if (m.creates !== 2) throw new Error(`the retry sent ${m.creates - 1} creates, not 1 (calls: ${m.calls.join(' | ')})`)
@@ -321,17 +405,29 @@ try {
         const v = verdictOf(m)
         const png = await shot(cdp, `${name}-${arrival}-2-refused`)
         console.log(`[refusal] ${at}: ${v.toUpperCase()} — ${say(m)}${png ? `\n            ${png}` : ''}`)
+        console.log(`            ${JSON.stringify(m.text)}`)
         if (v !== 'fully visible') fail(`${at}: the refusal line is ${v} — ${say(m)}`)
+        // The sheet's own header row, while it is on screen: the line is wholly below it.
+        if (m.header && m.header.bottom > m.panel.top + 0.5 && m.line.top < m.header.bottom - 0.5) fail(`${at}: the refusal line starts above the sheet header's bottom (line y${m.line.top}, header bottom y${m.header.bottom})`)
+        // What the refusal is ABOUT must be on the page (it opened its disclosure); whether it is on screen with
+        // the line is measured and said — the line is the thing that has to be read.
+        const also = []
+        for (const tid of (s.also ?? [])) {
+          const o = await cdp.evalIn(`window.__h.onScreen(${JSON.stringify(tid)})`)
+          also.push({ tid, ...o })
+          console.log(`[refusal] ${at}: ${tid} — ${!o.drawn ? 'NOT ON THE PAGE' : o.whole ? `on screen with the line (y${o.box.top}–${o.box.bottom})` : `on the page, not on screen with the line (y${o.box.top}–${o.box.bottom})`}`)
+          if (!o.drawn) fail(`${at}: ${tid} is not on the page after the refusal — the disclosure it sits behind did not open`)
+        }
 
         // INSTRUMENT CHECK: the scroller back where it stood when Save was tapped.
-        await cdp.evalIn(`(() => { document.querySelector('[role="dialog"]').scrollTop = ${before.scroll.top} })()`)
+        await cdp.evalIn(`window.__h.setScroll(${before.scroll.top})`)
         await sleep(200)
         const c = await cdp.evalIn('window.__h.measure()')
         const cv = verdictOf(c)
         const cpng = await shot(cdp, `${name}-${arrival}-3-control-unscrolled`)
         console.log(`[refusal] ${at}: control (scrollTop back to ${before.scroll.top}, as with no scroll on refusal): ${cv} — ${say(c)}${cpng ? `\n            ${cpng}` : ''}`)
         if (arrival === 'top' && cv === 'fully visible') fail(`${at}: the instrument check did not fire — with the sheet at its top the line still reads as fully visible, so this run cannot tell a covered line from a clear one`)
-        results.push({ at, verdict: v, measured: m, lost: { text: lost.text, verdict: lv, line: lost.line, footer: lost.footer, scroll: lost.scroll, hits: lost.hits, control: { verdict: lcv, line: lc.line, scroll: lc.scroll } }, control: { verdict: cv, measured: c } })
+        results.push({ at, verdict: v, also, measured: m, lost: { text: lost.text, verdict: lv, line: lost.line, footer: lost.footer, scroll: lost.scroll, hits: lost.hits, control: { verdict: lcv, line: lc.line, scroll: lc.scroll } }, control: { verdict: cv, measured: c } })
       } catch (e) {
         fail(`${at}: ${e.message}`)
       }

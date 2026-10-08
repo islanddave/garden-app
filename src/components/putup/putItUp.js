@@ -430,4 +430,16 @@ export function completionStub({ batch, rows, jars, now = new Date() }) {
   return [`${label || 'This batch'} — put up`, ...parts, hint].filter(Boolean).join(' · ')
 }
 
+// A sitting's jars AS THE ROWS THEY WERE, for the stub of a REPLAYED put-up (BUG-PUTUPREPLAYREST-001): the
+// sitting an earlier tap made is said as the server answered it — never as the form reads now. Put it up
+// writes one jar per row (lambda putUp.js): its label is the row's name or the batch's, with its container,
+// how many, and where it went (`storage_label`, the route's own join).
+export function sittingRows(jars) {
+  return (Array.isArray(jars) ? jars : []).map(j => ({
+    name: String(j?.label ?? ''), count: String(j?.package_count ?? 1), inherit: false,
+    container: j?.container_label ? { label: String(j.container_label) } : null,
+    place: j?.storage_label ? { label: String(j.storage_label) } : null,
+  }))
+}
+
 export function placeWords(kind) { return KIND_WORDS[kind] ?? null }

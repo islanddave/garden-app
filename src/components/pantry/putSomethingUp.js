@@ -19,7 +19,7 @@ import {
   putUpDateWords, shortDay, parseYmd, toYmd, discardWords, ESTIMATED_PRECISIONS, totalOfEach, qtyText,
 } from '../putup/jarWords.js'
 import { parseAmount } from './AmountField.jsx'
-import { sendPrint, sameFact } from '../kitchen/idempotencyKey.js'
+import { sendPrint, payloadPrint, sameFact, rowHoldsFields } from '../kitchen/idempotencyKey.js'
 
 export const AS_IS = 'as_is'
 // The no-method choice in two lengths. On its CHIP it says what it covers — true for a typed name whatever
@@ -335,7 +335,16 @@ export function itemBody({ key, what, place, when, discard, notes = '', amount =
 // by id. The crop a typed name resolved to goes ONLY when it is not the item's already — so a change that
 // leaves the crop alone sends the body the PATCH has always taken — and never for a planting, whose crop is
 // the planting's (the Lambda refuses it there).
+// ITEM_PATCH_READS is how each field of that PATCH is read back off the item (idempotencyKey.js holdsOwnUpdate):
+// a date as its day, an amount as a number, and a date sent with no precision as the 'day' the route stores.
 export const ITEM_FIXED_KEYS = Object.freeze(['plant_id'])
+const dayRead = (v) => (v == null || v === '' ? null : String(v).slice(0, 10))
+export const ITEM_PATCH_READS = Object.freeze({
+  acquired_at: (v, item) => dayRead(v) === dayRead(item.acquired_at),
+  acquired_precision: (v, item, patch) => sameFact(v ?? (patch.acquired_at != null ? 'day' : null), item.acquired_precision),
+  use_by_target: (v, item) => dayRead(v) === dayRead(item.use_by_target),
+  quantity_value: (v, item) => sameFact(v, item.quantity_value, { numeric: true }),
+})
 export function itemPatchOf(body, storageLocationId, item = null) {
   const patch = {
     name: body.name, storage_location_id: String(storageLocationId),
@@ -394,30 +403,212 @@ export function itemHolds(body, item, what) {
     && (!picked || sameFact(body.crop_type_slug, item.crop_type_slug))
 }
 
-const quoted = (item) => { const name = String(item?.name ?? '').trim(); return name ? `“${name}”` : null }
+// A put-up's name is its label; an item's is its name.
+const quoted = (item) => { const name = String(item?.name ?? item?.label ?? '').trim(); return name ? `“${name}”` : null }
+
+// ── A replayed put-up create (BUG-PUTUPREPLAYREST-001; kitchen/idempotencyKey.js) ───────────────────────
+// PATCH /api/preservation/:id carries the name, the method, how many, the size, the discard date, Raw / In
+// oil / How dry, the notes and where it is from (the Lambda's JAR_PATCH_KEYS). It does NOT carry the date it
+// was put up, the place, or the crop / variety / planting — and it never re-works the grams a WEIGHED jar was
+// given at its create (one container in a mass unit: remaining_amount). jarPatchOf is a create body as that
+// PATCH: a key the body left out goes as the word that clears it (the create stored nothing there; the PATCH
+// is presence-sentinel, and each pair travels together), and an absent discard date is "clear" — worked out
+// again from the jar as corrected, which is what the create did.
+const hasKey = (o, k) => Object.prototype.hasOwnProperty.call(o ?? {}, k)
+export function jarPatchOf(body) {
+  return {
+    label: body.label, method: body.method, package_count: body.package_count,
+    quantity_value: body.quantity_value ?? null, quantity_unit: body.quantity_unit ?? null,
+    discard_by: !hasKey(body, 'use_by_target') ? 'clear' : (body.use_by_target == null ? 'none' : body.use_by_target),
+    is_raw: body.is_raw ?? null, in_oil: body.in_oil ?? null, texture: body.texture ?? null, notes: body.notes ?? null,
+    source_kind: body.source_kind ?? null, source_label: body.source_label ?? null,
+  }
+}
+
+// THE PRINT OF A PUT-UP SAVE, in three parts: what the PATCH can carry / the place, the planting and a PICKED
+// crop or variety / the date as he chose it (`whenChoice`, in place of the date the chip came to). Left out,
+// as in itemPrint and for its reason: the crop a typed name resolved to. It starts "jar:" — the door and the
+// Walk keep ONE `sent` for both routes, and a put-up's print is never an item's.
+export const JAR_FIXED_KEYS = Object.freeze(['storage_location_id', 'plant_id', 'crop_type_slug', 'variety_id'])
+export function jarPrint(body, what, whenChoice) {
+  const { preserved_at: _date, preserved_at_precision: _precision, preserved_at_approx: _approx, ...own } = body ?? {}
+  if (!what?.source || what.source === 'typed') delete own.crop_type_slug
+  return `jar:${sendPrint(own, JAR_FIXED_KEYS)}/${payloadPrint({ when: whenChoice ?? null })}`
+}
+// Whether the date he chose is not the one every other put-up Save under this key went out with.
+export function jarWhenMoved(sent, print) {
+  const when = (s) => s.slice(s.lastIndexOf('/') + 1)
+  return (Array.isArray(sent) ? sent : []).some(s => typeof s === 'string' && s.startsWith('jar:') && when(s) !== when(print))
+}
+
+const dayOf = dayRead
+const idOf = (v) => (v == null || v === '' ? null : String(v))
+// How each field of jarPatchOf is read back off the jar (idempotencyKey.js holdsOwnUpdate, and jarHolds below):
+// a count and a size as numbers, a flag never chosen as "not set", and the discard word with the jar's basis —
+// a date he set (or "no date") is `typed`; one left to be worked out ("clear") is anything else.
+export const JAR_PATCH_READS = Object.freeze({
+  package_count: (v, jar) => sameFact(v, jar.package_count, { numeric: true }),
+  quantity_value: (v, jar) => sameFact(v, jar.quantity_value, { numeric: true }),
+  discard_by: (v, jar) => {
+    const typed = jar.use_by_basis === 'typed'
+    return v === 'clear' ? !typed : typed && dayOf(v === 'none' ? null : v) === dayOf(jar.use_by_target)
+  },
+  is_raw: (v, jar) => (v === true) === (jar.is_raw === true),
+  in_oil: (v, jar) => (v === true) === (jar.in_oil === true),
+})
+// The part of this body the PATCH cannot put on the replayed jar — 'what' | 'name' | 'place' | 'when' | 'size'
+// — or null. Read off the ROW, which says exactly what it holds, so putting that part back lets the next Save
+// through. ('name' is a TYPED name changed to one that reads as another crop than the jar holds: the name
+// itself can be changed — in the Pantry — so it is said apart from 'what'.) Two parts are not his to choose,
+// and are read as he chose them:
+//   · the date — a chip that now comes to another day ("Today", past midnight) is not a change. It counts
+//     only once he has changed the date (`whenMoved`, jarWhenMoved), and then as it resolves now;
+//   · the crop of a TYPED name — the search's reading of the text. It counts only against a crop the jar
+//     already holds, and only once the name is another (a rename the jar's crop would contradict).
+// A planting's crop and variety are the planting's own (the server fills them in) and are not compared.
+export function jarFixedPart(body, jar, what, { whenMoved = false } = {}) {
+  if (!body || !jar) return null
+  if (idOf(body.plant_id) !== idOf(jar.plant_id)) return 'what'
+  if (body.plant_id == null) {
+    const typed = !what?.source || what.source === 'typed'
+    const cropDiffers = idOf(body.crop_type_slug) !== idOf(jar.crop_type_slug)
+    if (typed ? (cropDiffers && jar.crop_type_slug != null && !sameFact(body.label, jar.label)) : cropDiffers) return typed ? 'name' : 'what'
+    if (!typed && idOf(body.variety_id) !== idOf(jar.variety_id)) return 'what'
+  }
+  if (idOf(body.storage_location_id) !== idOf(jar.storage_location_id)) return 'place'
+  if (whenMoved && (dayOf(body.preserved_at) !== dayOf(jar.preserved_at)
+    || !sameFact(body.preserved_at_precision, jar.preserved_at_precision))) return 'when'
+  if (jar.remaining_amount != null && (!sameFact(body.package_count, jar.package_count, { numeric: true })
+    || !sameFact(body.quantity_value, jar.quantity_value, { numeric: true }) || !sameFact(body.quantity_unit, jar.quantity_unit))) return 'size'
+  return null
+}
+// Whether a replayed jar ALREADY HOLDS what this body would put on it (idempotencyKey.js `holds`): no part
+// the PATCH cannot carry differs, and every part it can is the row's — the body as its PATCH, read back field
+// by field (JAR_PATCH_READS). A removed jar holds nothing.
+export function jarHolds(body, jar, what, opts = {}) {
+  if (!body || !jar || jar.deleted_at) return false
+  if (jarFixedPart(body, jar, what, opts)) return false
+  return rowHoldsFields(jar, jarPatchOf(body), JAR_PATCH_READS)
+}
+// ── ONE KEY, TWO TABLES (QA I-1) ─────────────────────────────────────────────────────────────────────────
+// The door and the Walk keep ONE key for whichever way the thing is saved, and the two ways are two routes with
+// two tables: a put-up's key lives in preservation_log, an As is item's in pantry_item, and neither route looks
+// in the other's. So once a create has gone out under the key on one route — answered, or its answer lost — a
+// Save on the OTHER route would be a second thing for the same sitting. It is refused before anything is sent,
+// and never under a new key (that would be the same second thing). A key's route is the route its FIRST print
+// went out on: a put-up's print starts "jar:" (jarPrint), an item's never does. otherRouteSent answers that
+// route when it is not the one being saved on now, else null. (Under this rule every print of a key is on one
+// route. A draft stored by a bundle from before it can hold both; it stays on its first, so it is never left
+// with no route at all.)
+export const printRoute = (print) => (typeof print === 'string' && print.startsWith('jar:') ? 'jar' : 'item')
+export function otherRouteSent(sent, route) {
+  const first = (Array.isArray(sent) ? sent : []).find(s => typeof s === 'string')
+  if (first == null) return null
+  return printRoute(first) === route ? null : printRoute(first)
+}
+// A WALK'S WAY ON (re-review I-E). A walk's group has no close, and it keeps its key until the walk is ended: a
+// refusal with no way through in the group leaves it spent for whatever is typed there next. So every such line
+// said in a walk ends with the way on — in ONE wording, this one, wherever the Walk says it.
+const WALK_ON = 'end this walk and start another'
+export const WALK_NEXT_TEXT = `To log more here, ${WALK_ON}.`
+// Whether a line said in a walk ends with that way on (the Walk reads it: such a group is spent — delta F-2).
+export const saysWalkOn = (text) => typeof text === 'string' && text.endsWith(`${WALK_ON}.`)
+// Said for that refusal. `first` is the route the earlier Save went out on; `row` is the row it is KNOWN to
+// have made (a replay answered with it in the door that is open) or null when its answer never came back —
+// then nothing says it is in the Pantry, only that it may be, and the way on is to finish THAT Save. `walk`:
+// a walk's group has no close; its way to a new one is to end the walk. `offered` (re-review M-A): whether the
+// first way's chip is on screen where he is now. A planting has no “Fresh, as picked” at a freezer, so "choose
+// it again" would ask for a chip that is not there: the door names the row that brings it back (the place),
+// and a walk — whose place is the walk's own — says where to look and the way on.
+export function otherRouteText({ first, row = null, what = null, walk = false, offered = true }) {
+  const asIs = `as “${methodLabel(AS_IS, what)}”`
+  const was = first === 'jar' ? 'as a put-up' : asIs
+  const now = first === 'jar' ? asIs : 'as a put-up'
+  if (!row) {
+    const head = `An earlier Save of this ${was} may have gone through. It can't also be saved ${now} from here.`
+    if (first !== 'jar' && offered === false) {
+      return walk ? `${head} Look for it in the Pantry. ${WALK_NEXT_TEXT}`
+        : `${head} Pick the place it was saved to, then choose “${methodLabel(AS_IS, what)}” and tap Save to finish that one.`
+    }
+    const again = first === 'jar' ? 'Choose the method again' : `Choose “${methodLabel(AS_IS, what)}” again`
+    return `${head} ${again} and tap Save to finish that one.`
+  }
+  const name = quoted(row)
+  return `${name ? `${name} is already in the Pantry` : 'This is already in the Pantry'} ${was} — an earlier Save went through. It can't also be saved ${now} from here. If you want both, ${walk ? WALK_ON : 'close this and start a new one'}.`
+}
+
+// Said when an earlier Save made the jar and this one differs from it in a part no PATCH carries: nothing is
+// written, and the form stays as it is. `jar` is the row the replay answered with; `part` is jarFixedPart's.
+// Putting that part back DOES let the next Save through (it is read off the row) — so the sentence NAMES what
+// the jar holds, which is what to put back (QA I-6: "as it was" is not always what the jar holds — the first
+// Save may never have arrived and a later one landed). It says a thing cannot be changed only where no screen
+// changes it (the date; the planting or crop), and where the Pantry can (the place, the name, the size) it says
+// "from here" and points there. `placeLabel` is the jar's place as the caller's own list names it; with none —
+// a place that is gone, or a list that did not load — it cannot be picked here, and the sentence does not ask.
+// The key is kept. `walk`: the three lines that cannot name what to put back leave a walk's group spent, and end
+// with the walk's way on (re-review I-E); the ones that name it are the door's own — "tap Save" is the way on.
+const containersHeld = (jar) => {
+  const n = Number(jar?.package_count)
+  if (!Number.isInteger(n) || n < 1) return null
+  const q = jar?.quantity_value == null || jar.quantity_value === '' ? null : Number(jar.quantity_value)
+  const amount = q != null && Number.isFinite(q) && jar?.quantity_unit ? `${q} ${jar.quantity_unit}` : null
+  if (!amount) return `${n} ${n === 1 ? 'container' : 'containers'}`
+  return n === 1 ? `1 container of ${amount}` : `${n} containers, ${amount} in all`
+}
+export function replayJarFixedText(jar, part, { now = new Date(), placeLabel = null, walk = false } = {}) {
+  const name = quoted(jar)
+  const as = name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'
+  const went = '— an earlier Save went through.'
+  const go = 'and tap Save to put your other changes on it.'
+  const on = walk ? ` ${WALK_NEXT_TEXT}` : ''
+  const inPantry = `To change it, open it in the Pantry.${on}`
+  if (part === 'when') {
+    const unsure = jar?.preserved_at_precision === 'unknown'
+    const words = unsure ? '“Not sure”' : putUpDateWords(dayOf(jar?.preserved_at), jar?.preserved_at_precision ?? null, { approx: jar?.preserved_at_approx === true, now })
+    if (!words) return `${as} ${went} The date it was put up can't be changed once it is saved. To change anything else on it, open it in the Pantry.${on}`
+    return `${as}, ${unsure ? 'with the date “Not sure”' : `put up ${words}`} ${went} That date can't be changed once it is saved. Set the date back to ${words} ${go}`
+  }
+  if (part === 'place') {
+    const where = String(placeLabel ?? '').trim()
+    if (!where) return `${as} ${went} It can't be moved from here, and where it is now can't be picked here. ${inPantry}`
+    return `${as}, in ${where} ${went} It can't be moved from here — to move it, open it in the Pantry. Pick ${where} again ${go}`
+  }
+  if (part === 'size') {
+    const held = containersHeld(jar)
+    if (!held) return `${as} ${went} Its size and how many can't be changed from here. ${inPantry}`
+    return `${as}, ${held} ${went} Its size and how many can't be changed from here — to change them, open it in the Pantry. Set them back to ${held} ${go}`
+  }
+  if (part === 'name' && name) {
+    return `${as} ${went} That name can't be put on it from here — to rename it, open it in the Pantry. Put the name back to ${name} ${go}`
+  }
+  return `${as} ${went} Which planting or crop it is can't be changed once it is saved. Put “What is it?” back${name ? ` to ${name}` : ' as it was'} ${go}`
+}
 // Said when the first Save made the item and What is now another planting, or no planting: nothing is
 // written, and the form stays as it is. `item` is the row the replay answered with. Putting What back DOES
 // let the next Save through (plantingDiffers reads the row). The key is kept, so no Save from here adds a
 // second item — and the sentence offers none.
 export function replayFixedText(item) {
   const name = quoted(item)
-  return `${name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'} — the first Save went through. Which planting it came from can't be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it.`
+  return `${name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'} — an earlier Save went through. Which planting it came from can't be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it.`
 }
 // Said when an earlier Save made the item and it is not this sitting's to write over (idempotencyKey.js
 // afterReplay 'stale'): nothing is written, the form stays, and the KEY IS KEPT — Save again is refused
 // again, and can never add a second item. It says only what is certain (saved earlier; this Save changed
-// nothing) and promises no way to add from here. A replayed item can be one that was removed since.
-export function replayStaleText(item) {
+// nothing) and promises no way to add from here. A replayed item can be one that was removed since. `walk`: the
+// group is spent, and the line ends with the walk's way on (re-review I-E).
+export function replayStaleText(item, { walk = false } = {}) {
   const name = quoted(item)
-  if (item?.deleted_at) return `${name ? `${name} was saved earlier` : 'This was saved earlier'} and has been removed since. This Save did not change that.`
-  return `${name ? `${name} was already saved earlier` : 'This was already saved earlier'} — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.`
+  const on = walk ? ` ${WALK_NEXT_TEXT}` : ''
+  if (item?.deleted_at) return `${name ? `${name} was saved earlier` : 'This was saved earlier'} and has been removed since. This Save did not change that.${on}`
+  return `${name ? `${name} was already saved earlier` : 'This was already saved earlier'} — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.${on}`
 }
-// Said when the first Save made the item and the change could not be put on it just now: the item is there.
+// Said when an earlier Save made the item and the change could not be put on it just now: the item is there.
 // `why` is the server's own sentence when it refused the change in words; `lost` is true when no answer came
-// back at all (the change may be on it).
+// back at all (the change may be on it). "An earlier Save", never "the first": the first may never have arrived
+// and a later one landed (QA M-7).
 export function replayUnsavedText(item, { why = '', lost = false } = {}) {
   const name = quoted(item)
-  const head = `${name ? `${name} is already in the Pantry` : 'This is already in the Pantry'} — the first Save went through.`
+  const head = `${name ? `${name} is already in the Pantry` : 'This is already in the Pantry'} — an earlier Save went through.`
   if (why) return `${head} This change did not save: ${why}`
   return lost ? `${head} This change may not have saved — try again.` : `${head} This change did not save — try again.`
 }

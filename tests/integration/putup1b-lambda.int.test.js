@@ -59,6 +59,33 @@ describe('POST /api/kitchen-batches — 1b key', () => {
     expect(b.body).toMatchObject({ id: a.body.id, replayed: true })
   })
 
+  // BUG-PUTUPREPLAYREST-001 (QA I-2, I-3). What the Start sheet reads off a replayed batch
+  // (src/components/kitchen/StartBatchSheet.jsx): the two stamps — ONE instant while nothing has written to the
+  // batch, updated_at moved by any PUT — the fields its PUT carries, and recipe_id with the jar columns, which
+  // decide whether the recipe's jar is still to be put on a batch a lost tap made.
+  it('a replay answers the batch\'s two stamps as one instant while it is untouched, updated_at later after a PUT, and every field the Start sheet reads', async () => {
+    const ms = (v) => new Date(v).getTime()
+    const key = randomUUID()
+    const a = await call('POST', '/api/kitchen-batches', { label: `stamps ${RUN}`, idempotency_key: key })
+    expect(a.status, JSON.stringify(a.body)).toBe(201)
+    let again = await call('POST', '/api/kitchen-batches', { label: 'another body', kind: 'ferment', idempotency_key: key })
+    expect(again.status, JSON.stringify(again.body)).toBe(200)
+    expect(again.body).toMatchObject({ id: a.body.id, replayed: true, label: `stamps ${RUN}`, kind: null, recipe_id: null, vessel_label: null })
+    for (const k of ['label', 'kind', 'kind_other', 'recipe_ref', 'recipe_id', 'vessel_label', 'vessel_size', 'vessel_unit', 'vessel_count', 'created_at', 'updated_at']) {
+      expect(`${k}: ${Object.prototype.hasOwnProperty.call(again.body, k)}`).toBe(`${k}: true`)
+    }
+    const made = ms(again.body.created_at)
+    expect(Number.isFinite(made)).toBe(true)
+    expect(ms(again.body.updated_at)).toBe(made)
+    await new Promise((resolve) => setTimeout(resolve, 20))                   // the two stamps travel at millisecond precision
+    const put = await call('PUT', `/api/kitchen-batches/${a.body.id}`, { vessel_label: 'Half-gallon jar' })
+    expect(put.status, JSON.stringify(put.body)).toBe(200)
+    again = await call('POST', '/api/kitchen-batches', { label: 'another body', idempotency_key: key })
+    expect(again.body).toMatchObject({ id: a.body.id, replayed: true, label: `stamps ${RUN}`, vessel_label: 'Half-gallon jar' })
+    expect(ms(again.body.created_at)).toBe(made)
+    expect(ms(again.body.updated_at)).toBeGreaterThan(made)
+  })
+
   it('"Not sure" writes an undated started row with precision unknown', async () => {
     const r = await call('POST', '/api/kitchen-batches', { label: 'Mystery crock', start_precision: 'unknown', idempotency_key: randomUUID() })
     expect(r.status).toBe(201)
@@ -283,5 +310,60 @@ describe('jars — POST additions, PATCH, Move', () => {
     const m = await call('POST', `/api/preservation/${a.body.id}/move`, { place: { kind: 'fridge', label: PLACE_LABEL } })
     expect(m.status, JSON.stringify(m.body)).toBe(200)
     expect(m.body).toMatchObject({ use_by_target: null, use_by_basis: 'none' })
+  })
+
+  // BUG-PUTUPREPLAYREST-001, QA B-1 — the jar twin of pantry-items.int.test.js "a replay answers the item's two
+  // stamps". The client's retry rule (src/components/kitchen/idempotencyKey.js rowIsThisSittings) reads a jar's
+  // stamps to tell one it just made from one written to since. BY SOURCE a jar is NOT like an item: updated_at
+  // is nullable with no default (migrations/v4-putup-001/0a:97), the create's INSERT does not name it, and only
+  // the BEFORE UPDATE trigger (v5-putupmake-001/0a:418-421) writes it — so a fresh jar answers updated_at NULL,
+  // and the client reads NULL beside a real created_at as "untouched" FOR THIS TABLE ONLY. This case is the
+  // database's own word on that.
+  // IT ASSERTS WHAT THE CLIENT NEEDS, NOT THE MECHANISM (re-review I-D). rowIsThisSittings reads a jar as untouched
+  // when updated_at is NULL *or* is created_at's own instant, so the three checks before the PATCH take either:
+  // "nothing has written to it since its create". By the migration files it is NULL. A default on the live table
+  // that those files do not show would make it equal instead — the client is fine with that, and a harmless
+  // difference between a database and its files must not stop a promote. A stamp that is SET AND NOT created_at's
+  // is the one state that changes behaviour (the client then refuses every repair), and it still goes red.
+  it('a replay answers the jar\'s two stamps and every field the client compares: updated_at NULL (or created_at\'s own instant) while nothing has written to it, set and later than created_at after any PATCH', async () => {
+    const ms = (v) => new Date(v).getTime()
+    const untouched = (v, made) => (v === null ? 'null' : ms(v) === made ? 'equal to created_at' : `set and not created_at's: ${v}`)
+    const k = randomUUID()
+    const body = {
+      label: `stamps ${RUN}`, method: 'quick_pickle', preserved_at: '2026-10-01', preserved_at_precision: 'day',
+      package_count: 2, quantity_value: 16, quantity_unit: 'oz', notes: 'first', idempotency_key: k,
+    }
+    const first = await call('POST', '/api/preservation', body)
+    expect(first.status, JSON.stringify(first.body)).toBe(201)
+    const made = ms(first.body.created_at)
+    expect(Number.isFinite(made)).toBe(true)
+    expect(Math.abs(Date.now() - made)).toBeLessThan(5 * 60 * 1000)          // the database's clock, near this one
+    expect(untouched(first.body.updated_at, made)).toMatch(/^(null|equal to created_at)$/)
+    let again = await call('POST', '/api/preservation', { ...body, label: 'another body', notes: 'second' })
+    expect(again.status, JSON.stringify(again.body)).toBe(200)
+    expect(again.body).toMatchObject({ id: first.body.id, replayed: true, label: `stamps ${RUN}`, notes: 'first' })
+    expect(ms(again.body.created_at)).toBe(made)
+    expect(untouched(again.body.updated_at, made)).toMatch(/^(null|equal to created_at)$/)
+    expect((await directSql`SELECT (updated_at IS NULL OR updated_at = created_at) AS untouched FROM preservation_log WHERE id = ${first.body.id}`)[0].untouched).toBe(true)
+    // The replay is the raw row: every key the client's reading of it names is there (a missing one would read
+    // as "nothing" and let a difference through), and the date it compares by its first ten characters is the day.
+    for (const key of ['id', 'label', 'method', 'package_count', 'quantity_value', 'quantity_unit', 'remaining_amount',
+      'storage_location_id', 'plant_id', 'crop_type_slug', 'variety_id', 'preserved_at', 'preserved_at_precision',
+      'use_by_target', 'use_by_basis', 'is_raw', 'in_oil', 'texture', 'notes', 'source_kind', 'source_label',
+      'created_at', 'updated_at', 'deleted_at']) {
+      expect(`${key}: ${Object.prototype.hasOwnProperty.call(again.body, key)}`).toBe(`${key}: true`)
+    }
+    expect(String(again.body.preserved_at).slice(0, 10)).toBe('2026-10-01')
+    expect(Number(again.body.package_count)).toBe(2)
+    expect([Number(again.body.quantity_value), again.body.quantity_unit]).toEqual([16, 'oz'])
+    expect(again.body.use_by_basis).not.toBe('typed')
+    await new Promise((resolve) => setTimeout(resolve, 20))                   // the two stamps travel at millisecond precision
+    const patch = await call('PATCH', `/api/preservation/${first.body.id}`, { notes: 'touched' })
+    expect(patch.status, JSON.stringify(patch.body)).toBe(200)
+    again = await call('POST', '/api/preservation', { ...body, label: 'another body' })
+    expect(again.body).toMatchObject({ id: first.body.id, replayed: true, notes: 'touched' })
+    expect(ms(again.body.created_at)).toBe(made)
+    expect(again.body.updated_at).not.toBeNull()
+    expect(ms(again.body.updated_at)).toBeGreaterThan(made)
   })
 })

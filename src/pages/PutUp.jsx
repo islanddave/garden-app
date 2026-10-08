@@ -930,7 +930,7 @@ export default function PutUp({
             it means the sheet's hooks (its draft read, anything identity-scoped) run only when someone
             asked for it, and can never take down an ordinary visit to this page. */}
         {StartBatchSheet && startOpen && (
-          <StartBatchSheet open onClose={closeStartSheet} onStarted={onBatchStarted} initialLabel={startLabel} />
+          <StartBatchSheet open onClose={closeStartSheet} onStarted={onBatchStarted} onExists={loadGoing} initialLabel={startLabel} />
         )}
         {doorOpen && (
           <PutSomethingUpSheet open initialName={doorName} stockRows={pantry.rows} onClose={() => setDoorOpen(false)}

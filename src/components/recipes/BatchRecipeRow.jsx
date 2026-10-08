@@ -26,7 +26,7 @@ import React, { useEffect, useId, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import Button from '../forms/Button.jsx'
-import { mintKey, sendPrint, noteSent, afterReplay, answerLost, sameFact } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, answerLost, sameFact, answeredNo, updateSent, holdsOwnUpdate } from '../kitchen/idempotencyKey.js'
 import { describeRefusal } from '../../lib/putUpErrors.js'
 import { asWrittenLines, recipeLineWords, MADE_AS_WRITTEN_CTA, SAVE_AS_RECIPE_CTA } from './recipes.js'
 
@@ -97,7 +97,7 @@ export function saveAsRecipeStaleText(recipe) {
 }
 export function saveAsRecipeUnsavedText(recipe, { lost = false } = {}) {
   const name = String(recipe?.name ?? '').trim()
-  return `${name ? `Already saved as a recipe: “${name}”` : 'Already saved as a recipe'} — the first Save went through. The new name ${lost ? 'may not have saved' : 'did not save'} — try again.`
+  return `${name ? `Already saved as a recipe: “${name}”` : 'Already saved as a recipe'} — an earlier Save went through. The new name ${lost ? 'may not have saved' : 'did not save'} — try again.`
 }
 
 export function SaveAsRecipe({ batch, onChanged }) {
@@ -134,7 +134,7 @@ export function SaveAsRecipe({ batch, onChanged }) {
     try {
       let answer = await fetch(`/api/recipes/from-batch/${batch.id}`, { method: 'POST', body: JSON.stringify(body) })
       const todo = afterReplay(answer, sent, print, {
-        row: answer?.recipe, updatedHere: answer?.recipe?.id != null && held.current.patched === answer.recipe.id,
+        row: answer?.recipe, updatedHere: holdsOwnUpdate(answer?.recipe, held.current.patched),
         holds: sameFact(answer?.recipe?.name, body.name),
       })
       if (todo === 'stale') {
@@ -147,8 +147,16 @@ export function SaveAsRecipe({ batch, onChanged }) {
         // The recipe this sitting's earlier Save made under another name (its answer was lost): this name goes onto it.
         onRow = answer?.recipe ?? null
         if (onRow?.id == null) throw new Error('replayed without a recipe')
-        held.current.patched = onRow.id
-        answer = await fetch(`/api/recipes/${onRow.id}`, { method: 'PATCH', body: JSON.stringify({ name: body.name }) })
+        const was = held.current.patched
+        const patch = { name: body.name }
+        held.current.patched = updateSent(onRow.id, patch, was)
+        try {
+          answer = await fetch(`/api/recipes/${onRow.id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+        } catch (e) {
+          // An ANSWERED 4xx did not land: what this row keeps is what it kept before it.
+          if (answeredNo(e)) held.current.patched = was
+          throw e
+        }
       }
       held.current = null
       setSaving(false)

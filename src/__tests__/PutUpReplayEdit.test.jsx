@@ -38,6 +38,7 @@ vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth, useA
 
 import {
   payloadPrint, sendPrint, noteSent, afterReplay, rowIsThisSittings, whenChoice, answerLost, sameFact, REPLAY_FRESH_MS, REPLAY_CLOCK_SLACK_MS,
+  updateSent, holdsOwnUpdate, rowHoldsFields, answeredNo, UPDATES_KEPT,
 } from '../components/kitchen/idempotencyKey.js'
 import RecipeSheet, { isRecipeDraft, recipeStaleText } from '../components/recipes/RecipeSheet.jsx'
 import { recipeHolds, emptyDraft } from '../components/recipes/recipes.js'
@@ -220,6 +221,103 @@ describe('the rule — idempotencyKey.js', () => {
     expect(rowIsThisSittings({ created_at: '2026-10-07T11:59:55.000Z', updated_at: '2026-10-07T11:59:55Z' }, now)).toBe(true)
   })
 
+  it('QA B-1 — a NULL updated_at beside a real created_at is "untouched" ONLY for a table that says its create leaves it NULL (the jar\'s); every other table stamps both at insert, and a NULL there stays not this sitting\'s', () => {
+    const now = Date.UTC(2026, 9, 7, 12, 0, 0)
+    const at = (ms) => new Date(now - ms).toISOString()
+    const jar = { nullIsUntouched: true }
+    const fresh = { created_at: at(5000), updated_at: null }
+    expect(rowIsThisSittings(fresh, now)).toBe(false)                              // an item, a recipe, a batch
+    expect(rowIsThisSittings(fresh, now, false, { nullIsUntouched: false })).toBe(false)
+    expect(rowIsThisSittings(fresh, now, false, jar)).toBe(true)
+    // The bound and the clock slack are read off created_at exactly as before.
+    expect(rowIsThisSittings({ created_at: at(REPLAY_FRESH_MS), updated_at: null }, now, false, jar)).toBe(true)
+    expect(rowIsThisSittings({ created_at: at(REPLAY_FRESH_MS + 1), updated_at: null }, now, false, jar)).toBe(false)
+    expect(rowIsThisSittings({ created_at: at(-REPLAY_CLOCK_SLACK_MS - 1), updated_at: null }, now, false, jar)).toBe(false)
+    // The row must SAY null: a row with no updated_at key, a blank one, or no created_at is not one this reads.
+    expect(rowIsThisSittings({ created_at: at(5000) }, now, false, jar)).toBe(false)
+    expect(rowIsThisSittings({ created_at: at(5000), updated_at: '' }, now, false, jar)).toBe(false)
+    expect(rowIsThisSittings({ created_at: null, updated_at: null }, now, false, jar)).toBe(false)
+    expect(rowIsThisSittings({ updated_at: null }, now, false, jar)).toBe(false)
+    // Once anything has written to the jar its updated_at is a stamp, and the rule is the one every table has:
+    // moved is touched, unless it is this sheet's own update (`updatedHere`).
+    expect(rowIsThisSittings({ created_at: at(5000), updated_at: at(4000) }, now, false, jar)).toBe(false)
+    expect(rowIsThisSittings({ created_at: at(5000), updated_at: at(4000) }, now, true, jar)).toBe(true)
+    expect(rowIsThisSittings({ created_at: at(5000), updated_at: at(5000) }, now, false, jar)).toBe(true)
+    // afterReplay passes the table's word through, and nothing else about its answer changes.
+    const sent = ['a/x', 'b/x']
+    expect(afterReplay({ replayed: true }, sent, 'b/x', { row: fresh, nowMs: now })).toBe('stale')
+    expect(afterReplay({ replayed: true }, sent, 'b/x', { row: fresh, nowMs: now, nullIsUntouched: true })).toBe('update')
+    expect(afterReplay({ replayed: true }, sent, 'b/x', { row: fresh, nowMs: now, nullIsUntouched: true, mine: false })).toBe('stale')
+    expect(afterReplay({ replayed: true }, sent, 'b/x', { row: fresh, nowMs: now, nullIsUntouched: true, fixed: true })).toBe('fixed')
+  })
+
+  it('QA I-2 — the sheet\'s own update is known by what it SENT: holdsOwnUpdate is true only for the row that update went to, and only while it still holds every field sent', () => {
+    const last = updateSent('r1', { name: 'Mojo verde', notes: null })
+    expect(last).toEqual([{ id: 'r1', body: { name: 'Mojo verde', notes: null } }])
+    expect(updateSent(null, { name: 'x' })).toBeNull()
+    expect(holdsOwnUpdate({ id: 'r1', name: 'Mojo verde', notes: null, kind: 'theirs' }, last)).toBe(true)     // a field it did not send is not its to judge
+    expect(holdsOwnUpdate({ id: 'r1', name: ' Mojo verde ', notes: '' }, last)).toBe(true)                     // one fact (sameFact)
+    expect(holdsOwnUpdate({ id: 'r1', name: 'Mojo (Jen)', notes: null }, last)).toBe(false)
+    expect(holdsOwnUpdate({ id: 'r1', name: 'Mojo verde', notes: 'theirs' }, last)).toBe(false)
+    expect(holdsOwnUpdate({ id: 'r1', name: 'Mojo verde' }, last)).toBe(true)                                  // an absent key is nothing, as null is
+    expect(holdsOwnUpdate({ id: 'r2', name: 'Mojo verde', notes: null }, last)).toBe(false)                    // another row
+    expect(holdsOwnUpdate({ id: 'r1', name: 'Mojo verde', notes: null, deleted_at: '2026-10-08T00:00:00Z' }, last)).toBe(false)
+    expect(holdsOwnUpdate({ name: 'Mojo verde', notes: null }, last)).toBe(false)                              // a row with no id
+    expect(holdsOwnUpdate({ id: 'r1', name: 'Mojo verde', notes: null }, null)).toBe(false)                    // no update was ever sent
+    expect(holdsOwnUpdate(null, last)).toBe(false)
+    expect(holdsOwnUpdate({ id: 'r1' }, updateSent('r1', {}))).toBe(false)                                     // an update that sent nothing proves nothing
+    // A field that is not one key holding one value is read the sheet's way; the rest stay sameFact.
+    const reads = { count: (v, row) => Number(v) === Number(row.package_count) }
+    expect(holdsOwnUpdate({ id: 'r1', package_count: '2', name: 'a' }, updateSent('r1', { count: 2, name: 'a' }), reads)).toBe(true)
+    expect(holdsOwnUpdate({ id: 'r1', package_count: '3', name: 'a' }, updateSent('r1', { count: 2, name: 'a' }), reads)).toBe(false)
+    expect(holdsOwnUpdate({ id: 'r1', package_count: '2', name: 'b' }, updateSent('r1', { count: 2, name: 'a' }), reads)).toBe(false)
+    expect(rowHoldsFields({ package_count: '2' }, { count: 2 }, reads)).toBe(true)
+    expect([rowHoldsFields(null, { a: 1 }), rowHoldsFields({ a: 1 }, null), rowHoldsFields({ a: 1 }, {})]).toEqual([false, false, false])
+    // A sheet whose update is the whole of what it shows passes ONE function — still only for the row it went to.
+    const whole = (body, row) => body.n === row.n
+    expect(holdsOwnUpdate({ id: 'r1', n: 1 }, updateSent('r1', { n: 1 }), whole)).toBe(true)
+    expect(holdsOwnUpdate({ id: 'r1', n: 2 }, updateSent('r1', { n: 1 }), whole)).toBe(false)
+    expect(holdsOwnUpdate({ id: 'r2', n: 1 }, updateSent('r1', { n: 1 }), () => true)).toBe(false)
+    // And it is what makes a moved stamp this sheet's: afterReplay takes its answer as `updatedHere`.
+    const touched = stamps(60 * 1000, 10 * 1000)
+    const sent = ['a/x', 'b/x']
+    expect(afterReplay({ replayed: true }, sent, 'b/x', { row: { ...touched, id: 'r1', name: 'Mojo verde', notes: null }, updatedHere: holdsOwnUpdate({ id: 'r1', name: 'Mojo verde', notes: null }, last) })).toBe('update')
+    expect(afterReplay({ replayed: true }, sent, 'b/x', { row: { ...touched, id: 'r1', name: 'Mojo (Jen)', notes: null }, updatedHere: holdsOwnUpdate({ id: 'r1', name: 'Mojo (Jen)', notes: null }, last) })).toBe('stale')
+    // An update the server ANSWERED with a 4xx did not land; anything else may have.
+    expect([answeredNo({ status: 400 }), answeredNo({ status: 409 }), answeredNo({ status: 499 })]).toEqual([true, true, true])
+    expect([answeredNo({ status: 500 }), answeredNo({ status: 0 }), answeredNo(new TypeError('Failed to fetch')), answeredNo(null)]).toEqual([false, false, false, false])
+  })
+
+  // Re-review I-B. With only the LAST update kept, a row holding this sheet's EARLIER update (the last never arrived)
+  // read as somebody else's, and an edit the sheet had just said to try again was refused.
+  it('re-review I-B — a sheet keeps EVERY update it sent that may have landed, in a bounded list: the row is its own while it holds ANY ONE of them in full', () => {
+    const one = updateSent('r1', { name: 'a', notes: 'n1' })
+    const two = updateSent('r1', { name: 'b', notes: 'n2' }, one)
+    expect(one).toEqual([{ id: 'r1', body: { name: 'a', notes: 'n1' } }])       // the list before is not changed: it is what an answered 4xx goes back to
+    expect(two).toEqual([{ id: 'r1', body: { name: 'a', notes: 'n1' } }, { id: 'r1', body: { name: 'b', notes: 'n2' } }])
+    expect(holdsOwnUpdate({ id: 'r1', name: 'b', notes: 'n2' }, two)).toBe(true)                               // the last
+    expect(holdsOwnUpdate({ id: 'r1', name: 'a', notes: 'n1' }, two)).toBe(true)                               // the EARLIER one — the last never arrived
+    expect(holdsOwnUpdate({ id: 'r1', name: 'a', notes: 'n2' }, two)).toBe(false)                              // IN FULL: a field of each is neither
+    expect(holdsOwnUpdate({ id: 'r1', name: 'c', notes: 'n1' }, two)).toBe(false)                              // somebody else's name
+    expect(holdsOwnUpdate({ id: 'r2', name: 'a', notes: 'n1' }, two)).toBe(false)                              // another row
+    expect(holdsOwnUpdate({ id: 'r1', name: 'a', notes: 'n1', deleted_at: '2026-10-08T00:00:00Z' }, two)).toBe(false)
+    // The same body sent again is one entry, whatever order its keys were written in; an unknown row keeps nothing new.
+    expect(updateSent('r1', { notes: 'n1', name: 'a' }, two)).toHaveLength(2)
+    expect(updateSent(null, { name: 'x' }, two)).toEqual(two)
+    // A whole-body reader is asked of each.
+    const whole = (body, row) => body.name === row.name
+    expect(holdsOwnUpdate({ id: 'r1', name: 'a' }, two, whole)).toBe(true)
+    expect(holdsOwnUpdate({ id: 'r1', name: 'z' }, two, whole)).toBe(false)
+    // BOUNDED: the oldest goes first — and a row holding only a body no longer kept is not this sheet's (a refusal, never a write).
+    let kept = null
+    for (let i = 0; i < UPDATES_KEPT + 2; i++) kept = updateSent('r1', { name: `n${i}` }, kept)
+    expect(UPDATES_KEPT).toBe(8)
+    expect(kept).toHaveLength(UPDATES_KEPT)
+    expect(holdsOwnUpdate({ id: 'r1', name: 'n1' }, kept)).toBe(false)
+    expect(holdsOwnUpdate({ id: 'r1', name: 'n2' }, kept)).toBe(true)
+    expect(holdsOwnUpdate({ id: 'r1', name: `n${UPDATES_KEPT + 1}` }, kept)).toBe(true)
+  })
+
   it('I2 — whenChoice: the chip as chosen, never a date the clock made of it; under Earlier… the window, or the day as picked', () => {
     expect(whenChoice('today', null, '')).toEqual(['today'])
     expect(whenChoice('today', 'last_month', '2026-09-01')).toEqual(['today'])     // what sits under Earlier… is not the answer
@@ -339,7 +437,7 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     type('recipe-name', 'Mojo verde')
     await save()
     await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
-    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — the first Save went through. This change did not save: boom'))
+    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: boom'))
     expect(errorText()).not.toMatch(BANNED)
     expect(onExists).toHaveBeenCalledTimes(1)                                  // the list behind re-reads: the recipe is there
     expect(onSaved).not.toHaveBeenCalled()
@@ -362,7 +460,7 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     type('recipe-name', 'Mojo verde')
     await save()
     await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
-    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — the first Save went through. This change may not have saved — try again. What you typed is still here.'))
+    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change may not have saved — try again. What you typed is still here.'))
     expect(onSaved).not.toHaveBeenCalled()
     expect(screen.getByTestId('recipe-name').value).toBe('Mojo verde')
   })
@@ -418,6 +516,82 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     expect(sheet.onSaved).toHaveBeenCalledTimes(1)
     expect(new Set(keys(PATH)).size).toBe(1)
     expect(sentTo('PATCH', ROW).map(b => b.name)).toEqual(['Mojo verde', 'Mojo verde, hot'])
+  })
+
+  // QA I-2. A PATCH whose answer was lost may never have reached the server; the stamp that has moved since is
+  // then somebody else's, and the recipe does not hold what this sheet sent.
+  it('QA I-2 — the PATCH never reached the server and the recipe is renamed by someone else meanwhile: Save again writes NOTHING over their name — the sheet says it was saved earlier', async () => {
+    const state = { row: FIRST }
+    wire({
+      [`POST ${PATH}`]: (b, n) => (n === 1 ? LOST() : { recipe: state.row, replayed: true }),
+      [`PATCH ${ROW}`]: () => { state.row = { ...state.row, name: 'Mojo (Jen)', updated_at: new Date().toISOString() }; return LOST() },
+    })
+    const sheet = mount()
+    type('recipe-name', 'Mojo')
+    await save(); await failed()
+    type('recipe-name', 'Mojo verde')
+    await save()
+    await waitFor(() => expect(errorText()).toMatch(/This change may not have saved/))
+    await save()
+    await waitFor(() => expect(errorText()).toBe('“Mojo (Jen)” was already saved earlier — it is with your recipes. This Save did not change it. To change it, open the recipe.'))
+    expect(posts(PATH)).toHaveLength(3)
+    expect(sentTo('PATCH', ROW)).toHaveLength(1)                               // no second PATCH
+    expect(state.row.name).toBe('Mojo (Jen)')
+    expect(sheet.onSaved).not.toHaveBeenCalled()
+    expect(new Set(keys(PATH)).size).toBe(1)
+  })
+
+  // Re-review I-B (the reviewer's T3, on this sheet). Three bad answers in a row: the create's, the first PATCH's
+  // (it landed), the second PATCH's (it never arrived). The recipe holds this sheet's EARLIER PATCH — still its own.
+  const twoPatchesThenOk = () => {
+    const state = { row: FIRST }
+    let seen = 0
+    wire({
+      [`POST ${PATH}`]: (b, n) => (n === 1 ? LOST() : { recipe: state.row, replayed: true }),
+      [`PATCH ${ROW}`]: (b) => {
+        seen += 1
+        if (seen === 2) return LOST()                                           // never arrived
+        state.row = { ...state.row, ...b, updated_at: new Date().toISOString() }
+        if (seen === 1) return LOST()                                           // landed; its answer did not come back
+        return { recipe: state.row }
+      },
+    })
+    return state
+  }
+  const twoLostChanges = async () => {
+    type('recipe-name', 'Mojo')
+    await save(); await failed()
+    type('recipe-name', 'Mojo verde')
+    await save()
+    await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
+    await waitFor(() => expect(errorText()).toMatch(/This change may not have saved/))
+    type('recipe-name', 'Mojo verde, hot')
+    await save()
+    await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(2))
+    await waitFor(() => expect(errorText()).toMatch(/This change may not have saved/))
+  }
+  it('re-review I-B (T3) — the PATCH with one change lands with its answer lost, the next change\'s PATCH never arrives, Save: the recipe holds this sheet\'s EARLIER PATCH, so the change goes on and it is saved — not "saved earlier"', async () => {
+    const state = twoPatchesThenOk()
+    const sheet = mount()
+    await twoLostChanges()
+    expect(state.row.name).toBe('Mojo verde')
+    await save()
+    await waitFor(() => expect(sheet.onSaved).toHaveBeenCalledTimes(1))
+    expect(sentTo('PATCH', ROW).map(b => b.name)).toEqual(['Mojo verde', 'Mojo verde, hot', 'Mojo verde, hot'])
+    expect(state.row.name).toBe('Mojo verde, hot')
+    expect(new Set(keys(PATH)).size).toBe(1)
+    expect(draft()).toBeNull()
+  })
+  it('re-review I-B — … but renamed by someone else after that (it holds NEITHER of this sheet\'s PATCHes): refused, nothing written over their name', async () => {
+    const state = twoPatchesThenOk()
+    const sheet = mount()
+    await twoLostChanges()
+    state.row = { ...state.row, name: 'Mojo (Jen)', updated_at: new Date().toISOString() }
+    await save()
+    await waitFor(() => expect(errorText()).toBe('“Mojo (Jen)” was already saved earlier — it is with your recipes. This Save did not change it. To change it, open the recipe.'))
+    expect(sentTo('PATCH', ROW)).toHaveLength(2)
+    expect(state.row.name).toBe('Mojo (Jen)')
+    expect(sheet.onSaved).not.toHaveBeenCalled()
   })
 
   // REVIEW B1. The draft is in storage with its key and what went out under it. Opened again — minutes or
@@ -522,7 +696,7 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     on.length = 0
     type('recipe-name', 'Mojo verde')
     await save()
-    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — the first Save went through. This change did not save: boom'))
+    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: boom'))
     await waitFor(() => expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(true))
   })
 
@@ -629,7 +803,7 @@ describe('the recipes list behind the sheet is told the recipe is there', () => 
     expect(screen.queryAllByTestId('recipes-row')).toHaveLength(0)             // a lost answer: nothing is known yet
     type('recipe-name', 'Mojo verde')
     await act(async () => { tap('recipe-save') })
-    await waitFor(() => expect(screen.getByTestId('recipe-sheet-error').textContent).toBe('“Mojo” is already saved — the first Save went through. This change did not save: boom'))
+    await waitFor(() => expect(screen.getByTestId('recipe-sheet-error').textContent).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: boom'))
     await waitFor(() => expect(screen.getAllByTestId('recipes-row')).toHaveLength(1))
     expect(screen.getByTestId('recipes-row').textContent).toMatch(/^Mojo/)
     expect(screen.getByTestId('recipe-name').value).toBe('Mojo verde')         // the sheet is still open, with what was typed
@@ -696,7 +870,7 @@ describe('Save as recipe — POST /api/recipes/from-batch/:id, then PATCH /api/r
     type('batch-save-as-recipe-name', 'Settlers, the hot one')
     await save()
     await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
-    await waitFor(() => expect(errorText()).toBe('Already saved as a recipe: “Settlers of Cayenne” — the first Save went through. The new name did not save — try again.'))
+    await waitFor(() => expect(errorText()).toBe('Already saved as a recipe: “Settlers of Cayenne” — an earlier Save went through. The new name did not save — try again.'))
     expect(errorText()).not.toMatch(BANNED)
     expect(onChanged).toHaveBeenCalledTimes(1)                                 // batch detail re-reads: it follows the recipe now
     expect(screen.queryByTestId('batch-save-as-recipe-saved')).toBeNull()
@@ -716,7 +890,7 @@ describe('Save as recipe — POST /api/recipes/from-batch/:id, then PATCH /api/r
       [`PATCH ${ROW}`]: (b) => { row = { ...row, ...b, updated_at: new Date().toISOString() }; if (++seen === 1) LOST(); return { recipe: row } },
     })
   }
-  const MAYBE = 'Already saved as a recipe: “Settlers of Cayenne” — the first Save went through. The new name may not have saved — try again.'
+  const MAYBE = 'Already saved as a recipe: “Settlers of Cayenne” — an earlier Save went through. The new name may not have saved — try again.'
 
   it('BUG-PUTUPSAVEFAILHIDDEN-001 — a Save that fails the ordinary way is brought into view, and so is the same failure again', async () => {
     const on = watchScrolls()
@@ -748,6 +922,27 @@ describe('Save as recipe — POST /api/recipes/from-batch/:id, then PATCH /api/r
     expect(sentTo('PATCH', ROW)).toEqual([{ name: 'Settlers, the hot one' }])
     expect(new Set(keys(PATH)).size).toBe(1)
     expect(keys(PATH)).toHaveLength(3)
+  })
+
+  it('QA I-2 — the rename never reached the server and the recipe is renamed by someone else meanwhile: Save again writes NOTHING over their name', async () => {
+    const state = { row: FIRST }
+    wire({
+      [`POST ${PATH}`]: (b, n) => (n === 1 ? LOST() : { recipe: state.row, replayed: true }),
+      [`PATCH ${ROW}`]: () => { state.row = { ...state.row, name: 'Jen’s cayenne', updated_at: new Date().toISOString() }; return LOST() },
+    })
+    mount()
+    tap('batch-save-as-recipe')
+    await save(); await failed()
+    type('batch-save-as-recipe-name', 'Settlers, the hot one')
+    await save()
+    await waitFor(() => expect(errorText()).toBe(MAYBE))
+    await save()
+    await waitFor(() => expect(errorText()).toBe('Already saved as a recipe: “Jen’s cayenne” — an earlier Save went through. This Save did not rename it: to rename it, open the recipe.'))
+    expect(posts(PATH)).toHaveLength(3)
+    expect(sentTo('PATCH', ROW)).toHaveLength(1)                               // no second PATCH
+    expect(state.row.name).toBe('Jen’s cayenne')
+    expect(screen.queryByTestId('batch-save-as-recipe-saved')).toBeNull()
+    expect(new Set(keys(PATH)).size).toBe(1)
   })
 
   it('Q1 — … and renamed AGAIN before that Save: the recipe\'s updated_at has moved, but by this row\'s own PATCH — so the second name still goes onto it', async () => {
@@ -917,10 +1112,10 @@ describe('How it was made — POST /api/kitchen-batches/from-jars, then PUT /api
     type('how-label', 'Megatron plain, 2026')
     await save()
     await waitFor(() => expect(sentTo('PUT', ROW)).toHaveLength(1))
-    await waitFor(() => expect(screen.getByTestId('how-error').textContent).toBe('This batch is already saved — the first Save went through. The change to its name or kind did not save. Try again, or close this and make it on the batch.'))
+    await waitFor(() => expect(screen.getByTestId('how-error').textContent).toBe('This batch is already saved — an earlier Save went through. The change to its name or kind did not save. Try again, or close this and make it on the batch.'))
     expect(screen.getByTestId('how-error').textContent).toBe(REPLAY_CHANGE_UNSAVED)
     expect(REPLAY_CHANGE_UNSAVED).not.toMatch(BANNED)
-    expect(REPLAY_CHANGE_MAYBE).toBe('This batch is already saved — the first Save went through. The change to its name or kind may not have saved. Try again, or close this and check it on the batch.')
+    expect(REPLAY_CHANGE_MAYBE).toBe('This batch is already saved — an earlier Save went through. The change to its name or kind may not have saved. Try again, or close this and check it on the batch.')
     expect(REPLAY_CHANGE_MAYBE).not.toMatch(BANNED)
     expect(onClose).not.toHaveBeenCalled()
     expect(onSaved.mock.calls.map(c => c[0])).toEqual([{ ...FIRST, replayed: true }])   // the lists behind re-read
@@ -982,6 +1177,28 @@ describe('How it was made — POST /api/kitchen-batches/from-jars, then PUT /api
     expect(new Set(keys(PATH)).size).toBe(1)
     expect(keys(PATH)).toHaveLength(3)
     expect(onSaved.mock.calls.at(-1)[0]).toMatchObject({ id: 'kb-first', label: 'Megatron plain, 2026' })
+  })
+
+  it('QA I-2 — the PUT never reached the server and the batch is renamed by someone else meanwhile: Save again writes NOTHING over their name — refused', async () => {
+    const state = { row: FIRST }
+    wire({
+      'GET /api/preservation/whats-put-up': () => ({ groups: [{ label: 'Fridge', records: [JAR] }] }),
+      [`POST ${PATH}`]: (b, n) => (n === 1 ? LOST() : { ...state.row, replayed: true }),
+      [`PUT ${ROW}`]: () => { state.row = { ...state.row, label: 'Megatron (Jen)', updated_at: new Date().toISOString() }; return LOST() },
+    })
+    const { onClose } = mount()
+    await loaded()
+    await save(); await failed()
+    type('how-label', 'Megatron plain, 2026')
+    await save()
+    await waitFor(() => expect(screen.getByTestId('how-error').textContent).toBe(REPLAY_CHANGE_MAYBE))
+    await save()
+    await waitFor(() => expect(screen.getByTestId('how-error').textContent).toBe(REPLAY_NOT_ON_IT))
+    expect(posts(PATH)).toHaveLength(3)
+    expect(sentTo('PUT', ROW)).toHaveLength(1)                                 // no second PUT
+    expect(state.row.label).toBe('Megatron (Jen)')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(new Set(keys(PATH)).size).toBe(1)
   })
 
   it('Q1 — … and renamed AGAIN before that Save: the batch\'s updated_at has moved, but by this sheet\'s own PUT — so the second name still goes onto it', async () => {

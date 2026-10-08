@@ -48,8 +48,9 @@ import PutSomethingUpSheet, { isDoorDraft } from '../components/pantry/PutSometh
 import PutUp from '../pages/PutUp.jsx'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 import {
-  DOOR_SHEET, ITEM_FIXED_KEYS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText, replayUnsavedText,
+  DOOR_SHEET, ITEM_FIXED_KEYS, ITEM_PATCH_READS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText, replayUnsavedText,
 } from '../components/pantry/putSomethingUp.js'
+import { rowHoldsFields } from '../components/kitchen/idempotencyKey.js'
 import { sheetDraftKey, readSheetDraft } from '../components/kitchen/sheetDraft.js'
 import { validateItemPatch } from '../../lambda/preservation/pantryItems.js'
 import { clearReloadBlocks } from '../lib/reloadGate.js'
@@ -77,8 +78,8 @@ const FIRST = {
 }
 // A minute past the bound (idempotencyKey.js REPLAY_FRESH_MS, pinned at ten minutes in PutUpReplayEdit.test.jsx).
 const LONG_AGO = 11 * 60 * 1000
-const UNSAVED = '“Oat milk” is already in the Pantry — the first Save went through. This change did not save — try again.'
-const MAYBE = '“Oat milk” is already in the Pantry — the first Save went through. This change may not have saved — try again.'
+const UNSAVED = '“Oat milk” is already in the Pantry — an earlier Save went through. This change did not save — try again.'
+const MAYBE = '“Oat milk” is already in the Pantry — an earlier Save went through. This change may not have saved — try again.'
 const STALE = '“Oat milk” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.'
 const LOST = () => { throw new TypeError('Failed to fetch') }       // it may have landed; its answer did not come back
 
@@ -147,8 +148,8 @@ describe('the item as its PATCH — putSomethingUp.js itemPatchOf', () => {
     expect(validateItemPatch({ plant_id: '99999999-aaaa-4bbb-8ccc-000000000003' })).toMatch(/cannot be changed here: plant_id/)
     expect([plantingDiffers({}, FIRST), plantingDiffers({ plant_id: null }, FIRST), plantingDiffers({ plant_id: 'p1' }, FIRST)]).toEqual([false, false, true])
     expect([plantingDiffers({ plant_id: 'p1' }, { plant_id: 'p1' }), plantingDiffers({}, { plant_id: 'p1' }), plantingDiffers({ plant_id: 'p2' }, { plant_id: 'p1' })]).toEqual([false, true, true])
-    expect(replayFixedText(FIRST)).toBe('Already in the Pantry as “Oat milk” — the first Save went through. Which planting it came from can\'t be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it.')
-    expect(replayFixedText(null)).toMatch(/^Already in the Pantry — the first Save went through\./)
+    expect(replayFixedText(FIRST)).toBe('Already in the Pantry as “Oat milk” — an earlier Save went through. Which planting it came from can\'t be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it.')
+    expect(replayFixedText(null)).toMatch(/^Already in the Pantry — an earlier Save went through\./)
     // The key is kept after a refusal, so no Save from the door adds it again: the sentence may not say one does.
     expect(replayFixedText(FIRST)).not.toMatch(/add it again|Save again/)
     // No route changes an item's planting, so the sentence may not send him to the Pantry to "fix" it.
@@ -162,8 +163,8 @@ describe('the item as its PATCH — putSomethingUp.js itemPatchOf', () => {
     expect(replayStaleText(null)).toMatch(/^This was already saved earlier — it is in the Pantry\. This Save did not change it\./)
     expect(replayUnsavedText(FIRST)).toBe(UNSAVED)
     expect(replayUnsavedText(FIRST, { lost: true })).toBe(MAYBE)
-    expect(replayUnsavedText(FIRST, { why: 'That crop is not one this app knows.', lost: true })).toBe('“Oat milk” is already in the Pantry — the first Save went through. This change did not save: That crop is not one this app knows.')
-    expect(replayUnsavedText(null)).toMatch(/^This is already in the Pantry — the first Save went through\./)
+    expect(replayUnsavedText(FIRST, { why: 'That crop is not one this app knows.', lost: true })).toBe('“Oat milk” is already in the Pantry — an earlier Save went through. This change did not save: That crop is not one this app knows.')
+    expect(replayUnsavedText(null)).toMatch(/^This is already in the Pantry — an earlier Save went through\./)
     for (const text of [replayStaleText(FIRST), replayStaleText({ ...FIRST, deleted_at: 'x' }), replayUnsavedText(FIRST), MAYBE, replayUnsavedText(FIRST, { why: 'no' })]) {
       expect(text).not.toMatch(BANNED)
       expect(text).not.toMatch(/Couldn't save it/)
@@ -203,6 +204,34 @@ describe('the item as its PATCH — putSomethingUp.js itemPatchOf', () => {
     expect(itemHolds({ ...BODY2, plant_id: 'p1' }, { ...FIRST, plant_id: 'p1', crop_type_slug: 'pepper' }, { source: 'planting', name: 'Oat milk', plant_id: 'p1' })).toBe(true)
     expect(itemHolds(BODY2, { ...FIRST, deleted_at: '2026-10-01T15:00:00.000Z' }, TYPED)).toBe(false)
     expect([itemHolds(BODY2, null, TYPED), itemHolds(null, FIRST, TYPED)]).toEqual([false, false])
+  })
+})
+
+describe('the item\'s PATCH read back off the item — putSomethingUp.js ITEM_PATCH_READS (QA I-2)', () => {
+  const BODY = { idempotency_key: 'k', name: 'Oat milk', storage_location_id: 'loc-3', acquired_at: '2026-10-01', acquired_precision: 'day', notes: 'the second carton', quantity_value: 2, quantity_unit: 'qt' }
+  const PATCH = itemPatchOf(BODY, 'loc-3', FIRST)
+  // The item as the route answers it after that PATCH: a numeric as text, a nothing as null.
+  const AFTER = { ...FIRST, notes: 'the second carton', quantity_value: '2.000', quantity_unit: 'qt', updated_at: new Date().toISOString() }
+  const holds = (patch, item) => rowHoldsFields(item, patch, ITEM_PATCH_READS)
+  it('the item a PATCH landed on holds every field it sent — an amount as a number, a date as its day', () => {
+    expect(holds(PATCH, AFTER)).toBe(true)
+    expect(holds(PATCH, { ...AFTER, acquired_at: '2026-10-01T00:00:00.000Z' })).toBe(true)
+    // A date sent with no precision is stored as 'day' (lambda/preservation/pantryItems.js acquiredOf); no date at all is nothing.
+    expect(holds({ ...PATCH, acquired_precision: null }, AFTER)).toBe(true)
+    expect(holds({ ...PATCH, acquired_at: null, acquired_precision: null }, { ...AFTER, acquired_at: null, acquired_precision: null })).toBe(true)
+    expect(holds({ ...PATCH, acquired_at: null, acquired_precision: 'unknown' }, { ...AFTER, acquired_at: null, acquired_precision: 'unknown' })).toBe(true)
+  })
+  it('one field of it changed since by anyone: it does not — each field the PATCH sends', () => {
+    for (const theirs of [{ name: 'Oat milk (Jen)' }, { storage_location_id: 'loc-1' }, { acquired_at: '2026-09-30' }, { acquired_precision: 'month' },
+      { use_by_target: '2026-11-01' }, { notes: 'Jen: door shelf' }, { notes: null }, { quantity_value: '3.000' }, { quantity_unit: 'gal' },
+      { source_kind: 'store' }, { source_label: 'Costco' }]) {
+      expect(`${JSON.stringify(theirs)}: ${holds(PATCH, { ...AFTER, ...theirs })}`).toBe(`${JSON.stringify(theirs)}: false`)
+    }
+    // The crop rides the PATCH only when it is not the item's already; then it is read like any other field.
+    const withCrop = itemPatchOf({ ...BODY, crop_type_slug: 'oat' }, 'loc-3', FIRST)
+    expect(withCrop.crop_type_slug).toBe('oat')
+    expect(holds(withCrop, { ...AFTER, crop_type_slug: 'oat' })).toBe(true)
+    expect(holds(withCrop, AFTER)).toBe(false)
   })
 })
 
@@ -395,6 +424,118 @@ describe('Put something up — the item route', () => {
     expect(patches().map(c => [c.path, c.body.notes])).toEqual([[ROW, 'the second carton'], [ROW, 'the second carton, opened']])
   })
 
+  // QA I-2. A PATCH whose answer was lost may never have reached the server; a stamp that has moved since is then
+  // somebody else's. The door knows its own PATCH by what it sent: the item must still hold it, field by field.
+  const otherWriter = (theirs, how = 'never') => {
+    const state = { row: FIRST }
+    let n = 0
+    let seen = 0
+    fake = pantryFetch({ rows: [], overrides: {
+      [`POST ${ITEMS}`]: () => { if (++n === 1) LOST(); return { item: state.row, replayed: true } },
+      [`PATCH ${ITEMS}/*`]: ({ body }) => {
+        seen += 1
+        if (how === 'never' && seen === 1) { state.row = { ...state.row, ...theirs, updated_at: new Date().toISOString() }; LOST() }   // it did not land; they wrote
+        state.row = { ...state.row, ...body, updated_at: new Date().toISOString() }
+        if (how === 'landed' && seen === 1) LOST()
+        return { item: state.row }
+      },
+    } })
+    stableFetch.fn = fake
+    return state
+  }
+  it('QA I-2 — the PATCH never reached the server and the item is renamed and noted by someone else meanwhile: Save again writes NOTHING over their change — the door says it was saved earlier', async () => {
+    const state = otherWriter({ name: 'Oat milk (Jen)', notes: 'Jen: door shelf' })
+    const door = await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'mine')
+    save()
+    await failed(MAYBE)
+    save()
+    await failed('“Oat milk (Jen)” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.')
+    expect(posts()).toHaveLength(3)
+    expect(patches()).toHaveLength(1)                                          // no second PATCH
+    expect(state.row).toMatchObject({ name: 'Oat milk (Jen)', notes: 'Jen: door shelf' })
+    expect(door.onSaved).not.toHaveBeenCalled()
+    expect(new Set(keys()).size).toBe(1)
+  })
+  it('QA I-2 — the PATCH LANDED with its answer lost, and someone else then changes the notes it sent: a further change is NOT written over theirs', async () => {
+    const state = otherWriter(null, 'landed')
+    const door = await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'the second carton')
+    save()
+    await failed(MAYBE)
+    state.row = { ...state.row, notes: 'Jen: door shelf', updated_at: new Date().toISOString() }
+    typeInto('door-notes', 'the second carton, opened')
+    save()
+    await failed('“Oat milk” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.')
+    expect(patches()).toHaveLength(1)
+    expect(state.row.notes).toBe('Jen: door shelf')
+    expect(door.onSaved).not.toHaveBeenCalled()
+  })
+
+  // Re-review I-B (the reviewer's T3). Three bad answers in a row: the create's (it landed), the first PATCH's (it
+  // landed), the second PATCH's (it never arrived). The door kept only the LAST PATCH, so the item — holding its
+  // EARLIER one — read as somebody else's, and the change it had just said to try again was refused and the draft ended.
+  const twoPatchesThenOk = () => {
+    const state = { row: FIRST }
+    let n = 0
+    let seen = 0
+    fake = pantryFetch({ rows: [], overrides: {
+      [`POST ${ITEMS}`]: () => { if (++n === 1) LOST(); return { item: state.row, replayed: true } },
+      [`PATCH ${ITEMS}/*`]: ({ body }) => {
+        seen += 1
+        if (seen === 2) LOST()                                                  // never arrived
+        state.row = { ...state.row, ...body, updated_at: new Date().toISOString() }
+        if (seen === 1) LOST()                                                  // landed; its answer did not come back
+        return { item: state.row }
+      },
+    } })
+    stableFetch.fn = fake
+    return state
+  }
+  const twoLostNotes = async () => {
+    asIs()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'a')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    await failed(MAYBE)
+    typeInto('door-notes', 'b')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(2))
+    await failed(MAYBE)
+  }
+  it('re-review I-B (T3) — Save lands lost; notes "a", its PATCH lands lost; notes "b", its PATCH never arrives; Save: the item holds this door\'s EARLIER PATCH — still its own — so "b" goes on and it is saved, not "saved earlier"', async () => {
+    const state = twoPatchesThenOk()
+    const door = await openDoor()
+    await twoLostNotes()
+    expect(state.row.notes).toBe('a')
+    save()
+    await waitFor(() => expect(door.onSaved).toHaveBeenCalledTimes(1))
+    expect(errorText()).toBeNull()
+    expect(patches().map(c => [c.path, c.body.notes])).toEqual([[ROW, 'a'], [ROW, 'b'], [ROW, 'b']])
+    expect(state.row.notes).toBe('b')
+    expect(door.onSaved.mock.calls[0][0].saved).toMatchObject({ id: 'item-first', notes: 'b' })
+    expect(new Set(keys()).size).toBe(1)
+    expect(posts()).toHaveLength(4)
+    expect(draft()).toBeNull()
+  })
+  it('re-review I-B — … but changed by someone else after that (it holds NEITHER of this door\'s PATCHes): refused, nothing written over theirs', async () => {
+    const state = twoPatchesThenOk()
+    const door = await openDoor()
+    await twoLostNotes()
+    state.row = { ...state.row, notes: 'Jen: door shelf', updated_at: new Date().toISOString() }
+    save()
+    await failed(STALE)
+    expect(patches()).toHaveLength(2)
+    expect(state.row.notes).toBe('Jen: door shelf')
+    expect(door.onSaved).not.toHaveBeenCalled()
+    expect(new Set(keys()).size).toBe(1)
+  })
+
   it('I3 — the PATCH is refused with a 4xx: its sentence is shown after "already in the Pantry" — and the key is NOT minted again (the item exists; a new key would make a second one)', async () => {
     lostThenReplayed({ [`PATCH ${ITEMS}/*`]: () => { throw apiError(400, { error: 'That crop is not one this app knows.' }) } })
     const { onSaved, onExists } = await openDoor()
@@ -402,7 +543,7 @@ describe('Put something up — the item route', () => {
     save(); await failed()
     tap('door-from'); typeInto('door-notes', 'the second carton')
     save()
-    await failed('“Oat milk” is already in the Pantry — the first Save went through. This change did not save: That crop is not one this app knows.')
+    await failed('“Oat milk” is already in the Pantry — an earlier Save went through. This change did not save: That crop is not one this app knows.')
     expect(onExists).toHaveBeenCalledTimes(1)
     expect(onSaved).not.toHaveBeenCalled()
     save()
@@ -657,9 +798,26 @@ describe('Put something up — the item route', () => {
     save()
     await waitFor(() => expect(posts()).toHaveLength(3))
     await waitFor(() => expect(screen.getByTestId('door-save').disabled).toBe(false))
+    // QA M-2: … and it is REFUSED again, in the same words — not handed on as a save.
+    expect(errorText()).toBe(STALE.replace('“Oat milk”', '“Oat milk, barista”'))
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(onExists).toHaveBeenCalledTimes(2)
     expect(new Set(keys()).size).toBe(1)
     expect(otherWrites()).toEqual([])
     expect(draft()).toBeNull()
+  })
+
+  // QA M-5, the item route: a removed item replays like any other, and an untouched retry never looked.
+  it('QA M-5 — the item landed with its answer lost and was REMOVED since; Save again untouched: not a save — the door says it was removed', async () => {
+    lostThenReplayed({}, { ...FIRST, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    const door = await openDoor()
+    asIs()
+    save(); await failed()
+    save()
+    await failed('“Oat milk” was saved earlier and has been removed since. This Save did not change that.')
+    expect(posts()).toHaveLength(2)
+    expect(door.onSaved).not.toHaveBeenCalled()
+    expect(otherWrites()).toEqual([])
   })
 
   it('B1 — the same door, but the item was made longer ago than the bound (the sheet sat open): NOTHING is written', async () => {
@@ -873,13 +1031,15 @@ describe('the pages behind the door are told the item is there', () => {
     const before = reads()
     typeInto('door-what-name', 'Megatron jalapeño, the red ones')
     tap('door-save')
-    await waitFor(() => expect(errorText()).toBe('“Megatron jalapeño” is already in the Pantry — the first Save went through. This change did not save — try again.'))
+    await waitFor(() => expect(errorText()).toBe('“Megatron jalapeño” is already in the Pantry — an earlier Save went through. This change did not save — try again.'))
     await waitFor(() => expect(reads()).toBeGreaterThan(before))
     expect(screen.getByTestId('door-what-name').value).toBe('Megatron jalapeño, the red ones')
   })
 })
 
 describe('the Walk — the item route', () => {
+  // In a walk a refusal that leaves the group spent ends with the way on (re-review I-E).
+  const WALK_STALE = `${STALE} To log more here, end this walk and start another.`
   const startWalk = async () => {
     render(<MemoryRouter initialEntries={['/put-up?session=putup']}><PutUp /></MemoryRouter>)
     fireEvent.click(await screen.findByRole('radio', { name: 'Kitchen fridge' }))
@@ -973,7 +1133,7 @@ describe('the Walk — the item route', () => {
     // Answered: the walk says something new, or the group is cleared (saved).
     await waitFor(() => expect([errorText(), screen.getByTestId('walk-what-name').value]).not.toEqual([null, 'Eggs']))
     expect(otherWrites()).toEqual([])
-    expect(errorText()).toBe(STALE)
+    expect(errorText()).toBe(WALK_STALE)
     expect(keys()[1]).toBe(keys()[0])
     expect(screen.getByTestId('walk-what-name').value).toBe('Eggs')
     expect(screen.getByTestId('walk-error').getAttribute('role')).toBe('alert')
@@ -986,12 +1146,28 @@ describe('the Walk — the item route', () => {
       save()
       await waitFor(() => expect(posts()).toHaveLength(nth))
       await waitFor(() => expect(screen.getByTestId('walk-save').disabled).toBe(false))
-      expect(errorText()).toBe(STALE)                                          // refused again
+      expect(errorText()).toBe(WALK_STALE)                                          // refused again
       await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
     }
     expect(new Set(keys()).size).toBe(1)                                       // ZERO creates under a new key
     expect(otherWrites()).toEqual([])
     expect(screen.getByTestId('walk-what-name').value).toBe('Eggs')
+  })
+
+  // Delta F-2, the item route: the refusal says “Oat milk” is in the Pantry, so End the walk does not ask whether it is saved.
+  it('delta F-2 — an item saved earlier, a date of its own chosen, Save: "was already saved earlier … end this walk". End the walk: it ends, and nothing asks whether “Oat milk” is saved', async () => {
+    lostThenReplayed({}, { ...FIRST, ...stamps(LONG_AGO) })
+    await startWalk()
+    typeWhat('Oat milk'); tap('walk-method-as_is')
+    save(); await failed()
+    tap('walk-more'); tap('walk-own-unsure')
+    save()
+    await waitFor(() => expect(posts()).toHaveLength(2))
+    await waitFor(() => expect(errorText()).toBe(WALK_STALE))
+    tap('putup-walk-exit')
+    expect(screen.queryByTestId('putup-walk-unsaved')).toBeNull()
+    await screen.findByTestId('putup-walk-door')
+    expect(posts()).toHaveLength(2)
   })
 
   // QA Q1 — the Walk's own wiring of the rule (appendix A of review-putupreplay3-qa-20261007).

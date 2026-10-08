@@ -39,7 +39,7 @@ import { createPantryItem, deletePantryItem, ensurePlaceId, listPantry, patchPan
 import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, requiredMarkChrome } from '../forms/formStyles.js'
-import { mintKey, noteSent, afterReplay, whenChoice, answerLost } from '../kitchen/idempotencyKey.js'
+import { mintKey, noteSent, afterReplay, whenChoice, answerLost, answeredNo, updateSent, holdsOwnUpdate } from '../kitchen/idempotencyKey.js'
 import { placeChips } from '../putup/putItUp.js'
 import NameSearchField from './NameSearchField.jsx'
 import Stepper, { stepperCount } from './Stepper.jsx'
@@ -50,7 +50,8 @@ import { leftWords, rowKey } from './pantryRows.js'
 import {
   AS_IS, METHOD_REQUIRED_TEXT, methodChoices, routeFor, walkWhen, walkWhenChips, previewLine, jarBody, itemBody,
   methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText,
-  replayStaleText, replayUnsavedText,
+  replayStaleText, replayUnsavedText, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
+  JAR_PATCH_READS, ITEM_PATCH_READS, otherRouteSent, otherRouteText, saysWalkOn,
 } from './putSomethingUp.js'
 
 export const WALK_TITLE = 'Walk a place'
@@ -94,9 +95,14 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
   const saveRef = useRef(null)
   const [pendingName, setPendingName] = useState('')
   const [asking, setAsking] = useState(false)
+  // The name on screen is the one a refusal said is in the Pantry (or was, and has been removed since): the
+  // group is spent on it, and the exit does not ask whether it is saved (delta F-2).
+  const [pendingSpent, setPendingSpent] = useState(false)
   const onHeld = useCallback((snap) => {
     heldRef.current = snap
-    setPendingName(String(snap?.what?.name ?? '').trim())
+    const name = String(snap?.what?.name ?? '').trim()
+    setPendingName(name)
+    setPendingSpent(name !== '' && snap?.spent === name)
   }, [])
   // The question is about the name on screen: once that changes, it is not the question any more.
   useEffect(() => { setAsking(false) }, [pendingName])
@@ -141,11 +147,12 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
     clearWalk()
     navigate('/put-up', { replace: true })
   }, [navigate])
-  // With a name typed the first tap asks, in place; with nothing typed it ends at once.
+  // With a name typed the first tap asks, in place; with nothing typed — or a name a refusal has said is
+  // saved already — it ends at once.
   const requestExit = useCallback(() => {
-    if (pendingName) setAsking(true)
+    if (pendingName && !pendingSpent) setAsking(true)
     else exitWalk()
-  }, [exitWalk, pendingName])
+  }, [exitWalk, pendingName, pendingSpent])
   // While the two setup questions are up the group is unmounted and holds nothing: the item it was holding
   // is kept from a deploy's reload here instead.
   const heldGateKey = `walk-held:${useId()}`
@@ -433,6 +440,15 @@ function AlreadyHere({ fetch, placeId, seq, onOpen }) {
 // already holds what is on screen is a save with nothing written (itemHolds). `sent` (what has gone out under
 // the key) is held with the key, in memory only, so it is always this walk's. `onExists` is the walk's
 // re-read: the item is in the Pantry. Each refusal is brought into view above the walk's band.
+// A REPLAYED PUT-UP (BUG-PUTUPREPLAYREST-001) goes by the same rule, with the put-up's own PATCH: the name,
+// the method, how many, the discard date, Raw and In oil ride it; the date it was put up and the place (this
+// group's own date, or the walk's two answers behind "Change") and a planting or picked crop do not, and a
+// Save that differs from the jar in one of those writes nothing and says which (replayJarFixedText).
+// THE BAND SAYS WHAT THE SERVER ANSWERED — the row's name, count and method — never what the form held.
+// A refused group keeps its key until the walk is left (End the walk) or the page is loaded again — so a refusal
+// with no way through in the group ends by saying that way on (putSomethingUp.js WALK_NEXT_TEXT, re-review I-E).
+// Such a refusal names a row that IS in the Pantry (or was, and has been removed since): the group reports that
+// row's name as `spent`, and while it is the name on screen End the walk does not ask whether it is saved (delta F-2).
 function WalkGroup({
   walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK_PX, onSaved, onExists = null, onOpenExisting, onMoveHere,
   held = null, onHeld = null, saveRef = null,
@@ -448,13 +464,18 @@ function WalkGroup({
   const [ownPicked, setOwnPicked] = useState(held?.ownPicked ?? '')
   const [key, setKey] = useState(held?.key ?? null)
   const [sent, setSent] = useState(held?.sent ?? [])
-  // The item this group has sent a PATCH to (its id), held with the key: a PATCH that landed with its answer
-  // lost has moved the item's updated_at, and Save again must still be able to finish it.
+  // The PATCHes this group sent that may have landed — the row's id and each body as it went (idempotencyKey.js
+  // updateSent), held with the key: a PATCH that landed with its answer lost has moved the row's updated_at, and
+  // Save again must still be able to finish it — only while the row still holds one of them.
   const [patched, setPatched] = useState(held?.patched ?? null)
+  const [spent, setSpent] = useState(held?.spent ?? null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
   const [field, setField] = useState(null)
   const writingRef = useRef(false)
+  // The row a create under this key is KNOWN to have made, and on which route: set when a Save here is answered
+  // `replayed`. It is what the other-route refusal names (QA I-1).
+  const existsRef = useRef(null)
   const methodRef = useRef(null)
   const whatRef = useRef(null)
   const errRef = useRef(null)
@@ -480,13 +501,19 @@ function WalkGroup({
     return () => setReloadBlocked(gateKey, false)
   }, [gateKey, hold])
   useEffect(() => {
-    onHeld?.({ what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent, patched })
-  }, [onHeld, what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent, patched])
+    onHeld?.({ what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent, patched, spent })
+  }, [onHeld, what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent, patched, spent])
+  // A refusal as it is said: one that ends with the walk's way on leaves the group spent on the row it names.
+  const refusal = (text, row, route) => {
+    if (saysWalkOn(text)) setSpent(String((route === 'jar' ? row?.label : row?.name) ?? '').trim() || null)
+    return text
+  }
 
   function reset() {
     setWhat(null); setMethod(null); setCount('1'); setDiscard({ mode: 'auto', date: '' }); setOwnChoice(null); setOwnPicked('')
     setIsRaw(false); setInOil(false)
-    setMoreOpen(false); setKey(null); setSent([]); setPatched(null); setErr(null); setField(null)
+    setMoreOpen(false); setKey(null); setSent([]); setPatched(null); setSpent(null); setErr(null); setField(null)
+    existsRef.current = null
   }
 
   async function save() {
@@ -497,45 +524,99 @@ function WalkGroup({
     if (own?.error) { setErr(own.error); setField('when'); setMoreOpen(true); return }
     const dErr = doorError({ what, place, method, discard })
     if (dErr) { setErr(dErr.error); setField(dErr.field); setMoreOpen(true); return }
+    const route = routeFor(method)
+    // ONE KEY, TWO TABLES (QA I-1; putSomethingUp.js): a Save has gone out under this group's key the other way.
+    // Nothing is sent and no key is minted — this would be a second thing for one sitting.
+    const otherWay = otherRouteSent(sent, route)
+    if (otherWay) {
+      const known = existsRef.current?.route === otherWay ? existsRef.current.row : null
+      setErr(refusal(otherRouteText({ first: otherWay, row: known, what, walk: true, offered: otherWay !== 'item' || choices.asIs != null }), known, otherWay)); setField(null); setRefusedSeq(s => s + 1)
+      if (known) onExists?.()
+      return
+    }
     const useKey = key || mintKey()
     if (!key) setKey(useKey)
     writingRef.current = true
     setSaving(true); setErr(null); setField(null)
-    const route = routeFor(method)
-    // The item a replay answered with, once it is being written onto.
+    // The item or jar a replay answered with, once it is being written onto.
     let onRow = null
+    // The date as he chose it: this group's own answer, or the walk's (stored once, at its start).
+    const chose = ownChoice ? whenChoice('earlier', ownChoice, ownPicked) : ['walk', walk.when?.date ?? null, walk.when?.precision ?? null]
     try {
       let saved
       if (route === 'jar') {
-        saved = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(jarBody({
+        const body = jarBody({
           key: useKey, what, storageLocationId: place.id, method, when, count: stepperCount(count), discard, isRaw, inOil,
-        })) })
+        })
+        const print = jarPrint(body, what, chose)
+        const sentNow = noteSent(sent, print)
+        setSent(sentNow)
+        saved = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(body) })
+        if (saved?.replayed === true) existsRef.current = { route, row: saved }
+        const read = { whenMoved: jarWhenMoved(sentNow, print) }
+        const part = jarFixedPart(body, saved, what, read)
+        // A replayed row that was REMOVED since is not a save, whatever went out under the key (QA M-5).
+        const todo = saved?.replayed === true && saved.deleted_at ? 'stale' : afterReplay(saved, sentNow, print, {
+          row: saved, updatedHere: holdsOwnUpdate(saved, patched, JAR_PATCH_READS), fixed: part != null, holds: jarHolds(body, saved, what, read),
+          nullIsUntouched: true,
+        })
+        // Nothing is written — not the parts a PATCH could carry either — and the key is KEPT.
+        if (todo === 'stale') { setErr(refusal(replayStaleText(saved, { walk: true }), saved, route)); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
+        if (todo === 'fixed') {
+          const placeLabel = place?.id != null && String(place.id) === String(saved?.storage_location_id) ? place.label : null
+          setErr(refusal(replayJarFixedText(saved, part, { now, placeLabel, walk: true }), saved, route)); setField(part === 'what' || part === 'name' ? 'what' : null)
+          if (part === 'when' && ownChoice) setMoreOpen(true)
+          setRefusedSeq(s => s + 1); onExists?.(); return
+        }
+        if (todo === 'update') {
+          onRow = saved
+          if (saved?.id == null) throw new Error('replayed without a jar')
+          const patch = jarPatchOf(body)
+          setPatched(updateSent(saved.id, patch, patched))
+          try {
+            saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(patch) })
+          } catch (e) {
+            // An ANSWERED 4xx did not land: what this group keeps is what it kept before it.
+            if (answeredNo(e)) setPatched(patched)
+            throw e
+          }
+        }
       } else {
         const body = itemBody({ key: useKey, what, place, when, discard })
-        // The date as he chose it: this group's own answer, or the walk's (stored once, at its start).
-        const chose = ownChoice ? whenChoice('earlier', ownChoice, ownPicked) : ['walk', walk.when?.date ?? null, walk.when?.precision ?? null]
         const print = itemPrint(body, what, chose)
         const sentNow = noteSent(sent, print)
         setSent(sentNow)
         const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
-        const todo = afterReplay(r, sentNow, print, {
-          row: saved, updatedHere: saved?.id != null && patched === saved.id, fixed: plantingDiffers(body, saved),
+        if (r?.replayed === true) existsRef.current = { route, row: saved }
+        const todo = r?.replayed === true && saved?.deleted_at ? 'stale' : afterReplay(r, sentNow, print, {
+          row: saved, updatedHere: holdsOwnUpdate(saved, patched, ITEM_PATCH_READS), fixed: plantingDiffers(body, saved),
           holds: itemHolds(body, saved, what),
         })
         // Nothing is written and the key is KEPT: Save again is this refusal again, never a second item.
-        if (todo === 'stale') { setErr(replayStaleText(saved)); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
+        if (todo === 'stale') { setErr(refusal(replayStaleText(saved, { walk: true }), saved, route)); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
         if (todo === 'fixed') { setErr(replayFixedText(saved)); setField('what'); setRefusedSeq(s => s + 1); onExists?.(); return }
         if (todo === 'update') {
           onRow = saved
           if (saved?.id == null) throw new Error('replayed without an item')
-          setPatched(saved.id)
-          const u = await patchPantryItem(fetch, saved.id, itemPatchOf(body, await ensurePlaceId(fetch, place), saved))
-          saved = u?.item ?? u
+          const patch = itemPatchOf(body, await ensurePlaceId(fetch, place), saved)
+          setPatched(updateSent(saved.id, patch, patched))
+          try {
+            const u = await patchPantryItem(fetch, saved.id, patch)
+            saved = u?.item ?? u
+          } catch (e) {
+            if (answeredNo(e)) setPatched(patched)
+            throw e
+          }
         }
       }
-      const n = route === 'jar' ? stepperCount(count) : null
-      onSaved({ id: saved?.id ?? null, route, text: [n ? `${n} × ${what.name.trim()}` : what.name.trim(), methodLabel(method, what)].join(' · ') })
+      // The band's line is the row the server answered with (a replay's is the first Save's, a PATCH's the
+      // changed one); the form's own value stands in only for a key the answer does not carry.
+      const typedName = what.name.trim()
+      const name = String((route === 'jar' ? saved?.label : saved?.name) ?? '').trim() || typedName
+      const made = Number(saved?.package_count)
+      const n = route === 'jar' ? (Number.isInteger(made) && made >= 1 ? made : stepperCount(count)) : null
+      onSaved({ id: saved?.id ?? null, route, text: [n ? `${n} × ${name}` : name, methodLabel(route === 'jar' ? (saved?.method ?? method) : method, what)].join(' · ') })
       reset()
     } catch (e) {
       if (onRow) {
@@ -543,7 +624,12 @@ function WalkGroup({
         setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: answerLost(e) }), refresh: why.refresh })
         setRefusedSeq(s => s + 1)
         onExists?.()
-      } else { setErr(refusalOf(e, "Couldn't save it — what you entered is kept. Try again.")); setRefusedSeq(s => s + 1) }
+      } else {
+        // An ANSWERED 4xx wrote nothing, so this body is not one that may have landed: `sent` is as it was before
+        // it went — the group is not bound to a route no Save of it can be on (re-review I-A). The key stays.
+        if (answeredNo(e)) setSent(sent)
+        setErr(refusalOf(e, "Couldn't save it — what you entered is kept. Try again.")); setRefusedSeq(s => s + 1)
+      }
     } finally {
       writingRef.current = false
       setSaving(false)

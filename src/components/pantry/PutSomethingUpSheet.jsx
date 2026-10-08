@@ -43,11 +43,27 @@
 // is brought into view above the pinned Save (it is the last thing in the scroller). Before any of them the
 // door reads the item itself: one that already holds what is on screen is a save, with nothing written
 // (putSomethingUp.js itemHolds). An answered 4xx mints a new key only while nothing else has gone out under
-// this one: the route validates before it looks the key up, so a refusal of a changed body says nothing
-// about an earlier one.
-// What has gone out under the key rides in the draft as `sent`, from the first item Save on; its prints are
-// of what was chosen, not of the date or the searched crop (putSomethingUp.js itemPrint). The put-up route is
-// as it was: a replayed put-up completes from the server's row (plan R2 V2 "Retry key").
+// this one, on either route: each validates before it looks the key up, so a refusal of a changed body says
+// nothing about an earlier one.
+// What has gone out under the key rides in the draft as `sent`, from the first Save on; its prints are of
+// what was chosen, not of the date or the searched crop (putSomethingUp.js itemPrint, jarPrint).
+//
+// A REPLAYED PUT-UP (BUG-PUTUPREPLAYREST-001) is read the same way, by the same rule. Its PATCH carries the
+// name, the method, how many, the size, the discard date, Raw / In oil / How dry, the notes and where it is
+// from — so a change in those goes onto a jar that is this sitting's, and the door completes from the PATCH's
+// answer. It does not carry the date it was put up, the place, or the crop / variety / planting, and it leaves
+// a weighed jar's grams as they were: a Save that differs from the jar in one of those writes NOTHING (never
+// half of it) and says which, naming what the jar holds (replayJarFixedText) — read off the jar, so put back
+// to that, the next Save goes through.
+// A jar that is not this sitting's is said as saved earlier (replayStaleText), and that ends the stored draft.
+//
+// ONE KEY, TWO TABLES (QA I-1). The key is the same whichever way the thing is saved, and the two ways are two
+// routes that do not look in each other's table. So once a Save has gone out under it one way, a Save the OTHER
+// way is refused before anything is sent (putSomethingUp.js otherRouteText) — a jar AND an item for one sitting
+// is a second row. It never mints a new key for it. If the first row is known to be there (a replay answered in
+// this door) the refusal ends the stored draft like "saved earlier" does, and says how to have both: close this
+// and start a new one. If the first Save's answer never came back, the draft and key stay, and the sentence
+// says to choose that way again and Save — which settles it.
 //
 // A SEEDED DOOR (opened with a What: a search's "Put something up: <text> →", a planting's door) is not
 // dirty until something changes: no key, no draft written, no reload held, and a draft already stored is
@@ -68,7 +84,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome } from '../forms/formStyles.js'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
-import { mintKey, noteSent, afterReplay, whenChoice, answerLost } from '../kitchen/idempotencyKey.js'
+import { mintKey, noteSent, afterReplay, whenChoice, answerLost, answeredNo, updateSent, holdsOwnUpdate } from '../kitchen/idempotencyKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter, FOOTER_GAP_PX } from '../kitchen/sheetScroll.js'
 import { placeChips, estimateChips, TEXTURE_CHIPS } from '../putup/putItUp.js'
 import NameSearchField from './NameSearchField.jsx'
@@ -85,7 +101,8 @@ import {
   previewLine, doorError, jarBody, itemBody, START_BATCH_INSTEAD_TEXT, isPlantingHit, methodSlot,
   doorOptionsLabel, doorFromLabel, doorNotesPlaceholder, whereFromHeading, sizeEcho, sizeTotalError,
   SIZE_LINK_LABEL, AMOUNT_LINK_LABEL, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText,
-  replayUnsavedText,
+  replayUnsavedText, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
+  JAR_PATCH_READS, ITEM_PATCH_READS, otherRouteSent, otherRouteText,
 } from './putSomethingUp.js'
 
 const WHEN_CHIPS = [{ id: 'today', label: 'Today' }, { id: 'yesterday', label: 'Yesterday' }, { id: 'earlier', label: 'Earlier…' }]
@@ -212,13 +229,14 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   const [{ initial, seed }] = useState(() => opening({ draftKey, initialWhat, initialName }))
   const openedWithWhat = !!(initialWhat || String(initialName ?? '').trim())
   const [key, setKey] = useState(initial.key)
-  // What has gone out under `key` on the item route (idempotencyKey.js); dropped with the key.
+  // What has gone out under `key`, on either route (idempotencyKey.js); dropped with the key.
   const [sent, setSent] = useState(() => (Array.isArray(initial.sent) ? initial.sent.filter(x => typeof x === 'string') : []))
   // Whether every body under `key` went out from THIS door. A draft restored with `sent` in it was sent from
   // an earlier one, and is never written onto the item it made; a key minted here is this door's.
   const mineRef = useRef(sent.length === 0)
-  // The item this door has sent a PATCH to (its id): a PATCH that landed with its answer lost has moved the
-  // item's updated_at, and Save again must still be able to finish it.
+  // The PATCHes this door sent that may have landed — the row's id and each body as it went (idempotencyKey.js
+  // updateSent). A PATCH that landed with its answer lost has moved the row's updated_at, and Save again must
+  // still be able to finish it: the moved stamp is this door's own only while the row still holds one of them.
   const patchedRef = useRef(null)
   const [what, setWhat] = useState(initial.what)
   const [place, setPlace] = useState(initial.place)
@@ -256,9 +274,14 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   const ownsDraftRef = useRef(!seed)
   // Set by a "saved earlier" refusal (pre-promote I-1): the first Save landed, so the STORED draft has done its
   // job. It is taken out of storage and not written back — the door opened next, after a close or a reload, is
-  // a clean one with no key — while THIS door keeps its key and `sent`: Save again is refused again. A Save on
-  // the put-up route is another create under the same key, and stores the draft again before it goes.
+  // a clean one with no key — while THIS door keeps its key and `sent`: Save again is refused again. Nothing
+  // sets it back: once it is set a row is known to exist under the key, a Save on that row's route can only
+  // replay, and a Save on the other route is not sent (QA I-1) — no create can go out that a stored draft would
+  // have to remember.
   const [spent, setSpent] = useState(false)
+  // The row a create under this key is KNOWN to have made, and on which route ({ route, row }): set when the
+  // door that is open is answered `replayed`. It is what the other-route refusal names.
+  const existsRef = useRef(null)
   const sheetRef = useRef(null)
   const footerRef = useRef(null)
   const methodRef = useRef(null)
@@ -267,7 +290,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   const whenRef = useRef(null)
   const slotRef = useRef(null)
   const errRef = useRef(null)
-  // Counts the replay refusals (saved earlier / the planting / the change did not save): each is brought into view.
+  // Counts the replay refusals (saved earlier / a part no PATCH carries / the change did not save) and failed Saves: each is brought into view.
   const [refusedSeq, setRefusedSeq] = useState(0)
   // Set by the preview's Change: once the options are open, focus goes to the When chips it opened them for.
   const [toWhen, setToWhen] = useState(false)
@@ -467,6 +490,19 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
     }
     const fromErr = planting ? null : whereFromError(source)
     if (fromErr) { setFromOpen(true); refuse(fromErr, 'source', 'door-source-label'); return }
+    // ONE KEY, TWO TABLES (QA I-1; putSomethingUp.js). A Save has gone out under this key the OTHER way — as a
+    // put-up, and this one is As is, or the reverse: this would be a second thing for one sitting. Nothing is
+    // sent and no key is minted. When that first row is known to exist the stored draft has done its job and is
+    // ended, as "saved earlier" ends it; when its answer never came back the draft and its key stay — they are
+    // what stops a second row — and the way on is to finish that Save.
+    const otherWay = otherRouteSent(sent, route)
+    if (otherWay) {
+      const known = existsRef.current?.route === otherWay ? existsRef.current.row : null
+      setErr(otherRouteText({ first: otherWay, row: known, what, offered: otherWay !== 'item' || choices.asIs != null })); setField(null)
+      if (known) { setSpent(true); onExists?.() }
+      setRefusedSeq(s => s + 1)
+      return
+    }
     const useKey = key || mintKey()
     if (!key) setKey(useKey)
     writingRef.current = true
@@ -476,13 +512,54 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
     try {
       let saved
       if (route === 'jar') {
-        // Another create under this key: its answer may be lost too, so the draft is in storage while it is out.
-        setSpent(false)
         const storageLocationId = await ensurePlaceId(fetch, place)
-        saved = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(jarBody({
+        const body = jarBody({
           key: useKey, what, storageLocationId, method, when: w.when, count: n, discard, notes,
           isRaw, inOil, size, source, texture,
-        })) })
+        })
+        const print = jarPrint(body, what, whenChoice(whenChip, estimate, pickedDate))
+        const sentNow = noteSent(sent, print)
+        setSent(sentNow)
+        saved = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(body) })
+        if (saved?.replayed === true) existsRef.current = { route, row: saved }
+        const read = { whenMoved: jarWhenMoved(sentNow, print) }
+        const part = jarFixedPart(body, saved, what, read)
+        // A replayed row that was REMOVED since is not a save, whatever went out under the key (QA M-5).
+        const todo = saved?.replayed === true && saved.deleted_at ? 'stale' : afterReplay(saved, sentNow, print, {
+          row: saved, mine: mineRef.current, updatedHere: holdsOwnUpdate(saved, patchedRef.current, JAR_PATCH_READS),
+          fixed: part != null, holds: jarHolds(body, saved, what, read), nullIsUntouched: true,
+        })
+        if (todo === 'stale' || todo === 'fixed') {
+          // Nothing is written — not the parts a PATCH could carry either — and the key is KEPT.
+          writingRef.current = false
+          setSaving(false)
+          if (todo === 'stale') { setSpent(true); setErr(replayStaleText(saved)); setField(null) }
+          else {
+            // The sentence names what the jar holds — its date, its size, its place as this door's list names it.
+            const placeLabel = chips.find(c => c.id != null && String(c.id) === String(saved?.storage_location_id))?.label ?? null
+            setErr(replayJarFixedText(saved, part, { now: nowDate, placeLabel }))
+            setField({ what: 'what', name: 'what', place: 'where', when: 'when', size: 'size' }[part])
+            if (part === 'when') setMoreOpen(true)
+            if (part === 'size') setSizeOpen(true)
+          }
+          setRefusedSeq(s => s + 1)
+          onExists?.()
+          return
+        }
+        if (todo === 'update') {
+          onRow = saved
+          if (saved?.id == null) throw new Error('replayed without a jar')
+          const was = patchedRef.current
+          const patch = jarPatchOf(body)
+          patchedRef.current = updateSent(saved.id, patch, was)
+          try {
+            saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(patch) })
+          } catch (ex) {
+            // An ANSWERED 4xx did not land: what this door keeps is what it kept before it.
+            if (answeredNo(ex)) patchedRef.current = was
+            throw ex
+          }
+        }
       } else {
         const body = itemBody({ key: useKey, what, place, when: w.when, discard, notes, amount, source })
         const print = itemPrint(body, what, whenChoice(whenChip, estimate, pickedDate))
@@ -490,8 +567,9 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         setSent(sentNow)
         const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
-        const todo = afterReplay(r, sentNow, print, {
-          row: saved, mine: mineRef.current, updatedHere: saved?.id != null && patchedRef.current === saved.id,
+        if (r?.replayed === true) existsRef.current = { route, row: saved }
+        const todo = r?.replayed === true && saved?.deleted_at ? 'stale' : afterReplay(r, sentNow, print, {
+          row: saved, mine: mineRef.current, updatedHere: holdsOwnUpdate(saved, patchedRef.current, ITEM_PATCH_READS),
           fixed: plantingDiffers(body, saved), holds: itemHolds(body, saved, what),
         })
         if (todo === 'stale' || todo === 'fixed') {
@@ -508,9 +586,16 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
           onRow = saved
           if (saved?.id == null) throw new Error('replayed without an item')
           const placeId = await ensurePlaceId(fetch, place)
-          patchedRef.current = saved.id
-          const u = await patchPantryItem(fetch, saved.id, itemPatchOf(body, placeId, saved))
-          saved = u?.item ?? u
+          const was = patchedRef.current
+          const patch = itemPatchOf(body, placeId, saved)
+          patchedRef.current = updateSent(saved.id, patch, was)
+          try {
+            const u = await patchPantryItem(fetch, saved.id, patch)
+            saved = u?.item ?? u
+          } catch (ex) {
+            if (answeredNo(ex)) patchedRef.current = was
+            throw ex
+          }
         }
       }
       savedRef.current = true
@@ -522,7 +607,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
       writingRef.current = false
       setSaving(false)
       if (onRow) {
-        // The item is in the Pantry; it is the change that did not go through. Said as that, the page told,
+        // It is in the Pantry; it is the change that did not go through. Said as that, the page told,
         // and the key kept whatever the status.
         const why = refusalOf(ex, '')
         setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: answerLost(ex) }), refresh: why.refresh })
@@ -532,16 +617,16 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
       }
       // An ANSWERED 4xx wrote nothing, so the next attempt is a new request and gets a new key. Anything else
       // (no status, 0, a 5xx) may have landed with its answer lost: the key is kept, the retry replays it.
-      // And it is kept after a 4xx too once an item Save has gone out under it before (`sent`): that one may
-      // have landed, and the route refuses a body before it looks the key up.
-      if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500 && !(route === 'item' && sent.length)) {
-        mineRef.current = true; patchedRef.current = null
+      // And it is kept after a 4xx too once a Save has gone out under it before, on either route (`sent`): that
+      // one may have landed, and both routes refuse a body before they look the key up.
+      if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500 && !sent.length) {
+        mineRef.current = true; patchedRef.current = null; existsRef.current = null
         setKey(mintKey()); setSent([])
       }
       setErr(refusalOf(ex, "Couldn't save it — nothing was lost. Try again."))
       setRefusedSeq(s => s + 1)
     }
-  }, [amountUnit, amountValue, discard, draftKey, estimate, fetch, inOil, isRaw, key, method, n, notes, onExists, onSaved, pickedDate,
+  }, [amountUnit, amountValue, chips, choices, discard, draftKey, estimate, fetch, inOil, isRaw, key, method, n, notes, nowDate, onExists, onSaved, pickedDate,
     place, planting, sent, sizeUnit, sizeValue, sourceKind, sourceLabel, texture, w, whenChip, what])
 
   const name = String(what?.name ?? '').trim() || 'this'
