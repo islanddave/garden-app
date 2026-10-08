@@ -1,0 +1,9 @@
+{
+ "scripts/ci-telemetry/vitest-test-ids-reporter.mjs": [
+  "import { createHash } from 'node:crypto'"
+ ],
+ "lambda/findings/engine/assertion.js": [],
+ "lambda/preservation/batchBuilderRoutes.js": [
+  "import { randomUUID } from 'node:crypto';"
+ ]
+}

@@ -177,9 +177,11 @@ calls the cases make.
 
 When that ERROR appears on a commit that did not touch the module: the file it names has changed in a way the two
 conversions disagree on, or vite, `@vitejs/plugin-react` or Node has. Read the reason in the line, then the header.
-To take the provider out, revert the whole commit that brought it in. Putting `provider: 'v8'` back in
-`vitest.config.ts` alone does not recover: this module's own test holds the config to it and fails in the same unit
-step. And if a coverage threshold or `coverage-ratchet.json`'s `active_target` has since been raised above what the
+To take the provider out, revert the whole commit that brought it in. The A3 exit tooling landed in the commit after
+it and names the module (`a3-exit.config.mjs`, and a test that holds that config to it), so revert that commit
+first: the two revert cleanly in that order, and the exit tooling can land again with `provider: 'v8'`. Putting
+`provider: 'v8'` back in `vitest.config.ts` alone does not recover: this module's own test holds the config to it
+and fails in the same unit step. And if a coverage threshold or `coverage-ratchet.json`'s `active_target` has since been raised above what the
 stock provider reads (branches read about one point lower on it), the revert fails the measured floor.
 
 Re-read the header on any vitest or `@vitest/coverage-v8` upgrade (the test pins the version, so an upgrade is one
@@ -195,3 +197,45 @@ shape (ci.yml's `build-and-test`) was the one combination it had run on nowhere 
 shapes, the shadow legs Node 20.19.0 with two projects). That job's first run on dev is its acceptance: `Run unit
 tests with coverage` green with a `Coverage report from v8` table and no `ERROR: coverage-v8-two-forms:` line, and
 `Coverage ratchet — measured floor` green, read by head SHA.
+
+`a3-exit.sh OUT_DIR` makes the A3 trial's two exit checks at the current checkout, the ones its header in
+`.github/workflows/ci-next.yml` says are to be made again at the last counted SHA. Its last line is the result:
+`A3-EXIT-PASS (…)` and exit 0, or `A3-EXIT-FAIL (e1=…, e2=…, red=…, node=…, tree=…)` and exit 1. It refuses (exit 2)
+a Node other than the one `.nvmrc` names and a tree with uncommitted paths; `A3_EXIT_ANY_NODE=1` and
+`A3_EXIT_ANY_TREE=1` run it anyway and the result is then never a pass. It runs the node project's files under jsdom
+(with the repo setup file) and under node through `a3-exit.config.mjs`, a vitest config of its own that imports
+`vitest.config.ts` for everything outside the environment (what it carries and leaves behind is listed in
+`a3-exit-carry.mjs`, and an unlisted key stops it) and changes nothing about `npm test`; it leaves out
+`vitest-projects.test.js`, whose guard fails by design outside the trial's own two shapes.
+
+`a3-exit.py e1 JSDOM.jsonl NODE.jsonl` (E1, assertion parity) compares, test by test, the state and the number of
+`expect` assertions that `a3-exit-count.mjs` and `a3-exit-recorder.mjs` wrote: `E1-SAME` or `E1-DIFFER`. A test that
+asserts only through `node:assert` reads 0 on both sides. A side whose counter did not run (a test that ran with no
+count, or 0 assertions in all) is `E1-UNREADABLE`; two sides not shown to be two environments (each test line says
+whether its file had a `document`) are `E1-VACUOUS`.
+
+`a3-exit.py e2 JSDOM_A JSDOM_B NODE_A NODE_B --setup-loads CONTROL --root DIR` (E2, loaded-module coverage parity)
+reads four `coverage-final.json`. Two per environment, because one tree can give one file two whole readings:
+`lambda/daily-plan/engine.js` came back with 1,214 or 1,257 of its 1,374 items covered in both environments, each
+reading the same in jsdom and node hit for hit (ledger row `BUG-ENGINECOVERAGETWOREADINGS-001`). That was the stock
+coverage provider. `a3-exit.config.mjs` now reads coverage through `coverage-v8-two-forms.mjs`, as the unit run
+does, and in the one run made since (Node 26) the four files held `engine.js` hit for hit the same; the two runs
+per environment and the rule for readings are kept, and are what would show it if that stopped. A file whose two
+runs agree inside each environment is compared item by item (statement, function, branch arm; matched by source
+extent, then by kind and start line: `extent-only`, printed, not counted). A file whose runs disagree is compared
+reading to reading: `same under a shared reading` when one jsdom run and one node run agree item for item, `not
+compared` when none do. Limit: when both runs of each environment give one reading and the environments' readings
+are not the same one, that reads `E2-DIFFER`; four files cannot tell it from code that ran differently. Printed and
+not counted: `generated import glue` (the line-1 statements vite's client transform makes of `import { a } from
+'node:x'`, only when there are exactly as many as the source has such bindings), `hit count differs, covered-ness the
+same`, and an uncovered item only one map holds. A covered item or file that only one environment has counts, except
+what the control run (`a3-exit.control.mjs`) shows the setup file covering in a module it loads; the control's files
+also have to be in both jsdom runs and in neither node run, or the verdict is `E2-VACUOUS`. Last line `E2-SAME`,
+`E2-DIFFER (n differences in m files; k items in f files not compared)` or, with no difference and anything not
+compared, `E2-INCONCLUSIVE (k items in f files not compared)`.
+
+`a3-exit.py` exits 0 / 1, 2 when an input is missing, empty or not the reporter's shape (never a traceback) and 3
+for `E2-INCONCLUSIVE`. Seven vitest runs, no network, output outside the checkout. Tested in
+`scripts/test_a3_exit.py` (the comparers, on built inputs and on real output cut into `scripts/fixtures/a3-exit/`),
+`scripts/test_a3_exit_sh.py` (the wrapper, against a stand-in vitest) and `a3-exit-fixture.test.js` (the counter,
+the recorder and the config, by running `a3-exit.fixture.mjs` in both environments).
