@@ -70,9 +70,10 @@ describe('the rain row carries tomorrow whenever tomorrow is enough to change wa
   it('cold day, the gauge has measured 0.45″ today, 0.40″ at 70% tomorrow: the measurement AND tomorrow', () => {
     const plan = planFor({ today_observed_in: 0.45, today_remaining_in: 0, tomorrow_precip_in: 0.4, tomorrow_pop: 70 })
     expect(cueSpeaksRain(plan.hydrology)).toBe(true)
-    expect(rowB(plan)).toEqual(['0.45″ fallen today · none more expected', '0.40″ tomorrow · 70% chance'])
+    expect(rowB(plan)).toEqual(['0.45″ fallen today', '0.40″ tomorrow · 70% chance'])
     const w = widgetLines(plan)
-    expect(w.text).toContain('0.45″ fallen today · none more expected')
+    expect(w.text).toContain('0.45″ fallen today')
+    expect(w.text).not.toContain('none more expected')
     expect(w.next).toBe('0.40″ tomorrow · 70% chance')
   })
 
@@ -89,6 +90,80 @@ describe('the rain row carries tomorrow whenever tomorrow is enough to change wa
     const plan = planFor({ today_precip_in: 0.5, today_pop: null, tomorrow_precip_in: 0.4, tomorrow_pop: null })
     expect(rowB(plan)).toEqual(['0.50″ today', '0.40″ tomorrow'])
     expect(widgetLines(plan).text).not.toMatch(/\d% chance|null|undefined|NaN/)
+  })
+})
+
+// Row B is 360 px wide at 426 and holds both notes on ONE row (gate:today-shape:v2, state v2-frost-rain). The
+// measured line is the long one, so beside tomorrow's note it keeps its amounts and drops the rest; alone it is
+// the sentence it always was. rainSentences picks the form, so the row and the weather card print the same words.
+describe('the measured line is short beside tomorrow\'s note and whole when it stands alone', () => {
+  const rs = (hydrology, flags = {}) => rainSentences({ hydrology, ...flags })
+  const BASE = { today_precip_in: 0, today_pop: 40 }
+  const WET = { tomorrow_precip_in: 0.4, tomorrow_pop: 70 }
+  const QUIET = { tomorrow_precip_in: 0.05, tomorrow_pop: 20 }
+  const LIVE = (tomorrow) => ({ live: true, generatedAt: '2026-09-24T09:30:00.000Z', liveHydrology: { today_precip_in: 0, today_pop: 40, ...tomorrow } })
+
+  it('nothing more expected: "N″ fallen today" beside, the full sentence alone', () => {
+    const fallen = { ...BASE, today_observed_in: 0.45, today_remaining_in: 0 }
+    expect(rs({ ...fallen, ...WET })).toMatchObject({ rainNote: '0.45″ fallen today', nextNote: '0.40″ tomorrow · 70% chance' })
+    expect(rs({ ...fallen, ...QUIET })).toMatchObject({ rainNote: '0.45″ fallen today · none more expected', nextNote: null })
+    // no forecast behind the day: alone it was already the bare measurement, and beside it is the same words
+    expect(rs({ ...fallen, ...QUIET }, { noForecast: true }).rainNote).toBe('0.45″ fallen today')
+    expect(rs({ ...fallen, ...WET }, { noForecast: true }).rainNote).toBe('0.45″ fallen today')
+  })
+
+  it('more expected: "N″ fallen · M″ more" beside (no chance), the full sentence alone', () => {
+    const mid = { ...BASE, today_observed_in: 0.14, today_remaining_in: 0.15 }
+    expect(rs({ ...mid, ...WET })).toMatchObject({ rainNote: '0.14″ fallen · 0.15″ more', nextNote: '0.40″ tomorrow · 70% chance' })
+    expect(rs({ ...mid, ...QUIET })).toMatchObject({ rainNote: '0.14″ fallen · 0.15″ more expected · 40%', nextNote: null })
+  })
+
+  it('under the live overlay the "as of H:MM" is dropped only beside tomorrow\'s note', () => {
+    const fallen = { ...BASE, today_observed_in: 0.45, today_remaining_in: 0 }
+    const mid = { ...BASE, today_observed_in: 0.14, today_remaining_in: 0.15 }
+    expect(rs(fallen, LIVE(QUIET))).toMatchObject({ rainNote: '0.45″ fallen as of 5:30 AM · none more expected', nextNote: null })
+    expect(rs(fallen, LIVE(WET))).toMatchObject({ rainNote: '0.45″ fallen today', nextNote: '0.40″ tomorrow · 70% chance' })
+    expect(rs(mid, LIVE(QUIET))).toMatchObject({ rainNote: '0.14″ fallen as of 5:30 AM · 0.15″ more expected · 40%', nextNote: null })
+    expect(rs(mid, LIVE(WET))).toMatchObject({ rainNote: '0.14″ fallen · 0.15″ more', nextNote: '0.40″ tomorrow · 70% chance' })
+  })
+
+  it('a tomorrow that is only BIGGER (under the watering bar) puts the same short line beside it', () => {
+    const fallen = { ...BASE, today_observed_in: 0.05, today_remaining_in: 0 }
+    expect(rs({ ...fallen, tomorrow_precip_in: 0.2, tomorrow_pop: 40 })).toMatchObject({ rainNote: '0.05″ fallen today', nextNote: '0.20″ tomorrow · 40% chance' })
+  })
+
+  it('a forecast today line is the same beside tomorrow\'s note as alone', () => {
+    const today = { today_precip_in: 0.5, today_pop: 80 }
+    expect(rs({ ...today, ...WET }).rainNote).toBe('0.50″ today · 80% chance')
+    expect(rs({ ...today, ...QUIET }).rainNote).toBe('0.50″ today · 80% chance')
+  })
+
+  it('the row and the weather card print the same two lines', () => {
+    for (const hy of [
+      { today_observed_in: 0.45, today_remaining_in: 0, ...WET },
+      { today_observed_in: 0.14, today_remaining_in: 0.15, today_pop: 40, ...WET },
+      { today_observed_in: 0.45, today_remaining_in: 0, tomorrow_precip_in: 0.4, tomorrow_pop: null },
+      { today_observed_in: 0.45, today_remaining_in: 0, ...QUIET },
+    ]) {
+      const plan = planFor(hy)
+      const notes = rowB(plan)
+      const w = widgetLines(plan)
+      expect(notes.length, JSON.stringify(hy)).toBeGreaterThan(0)
+      for (const n of notes) expect(w.text.split(n).length - 1, n).toBe(1)
+      expect(w.next).toBe(notes[1] ?? null)
+      for (const n of notes) expect(n).not.toMatch(/ · $|^ · | ·  · |null|undefined|NaN/)
+    }
+  })
+})
+
+describe('a line with neither an amount nor a chance prints nothing at all', () => {
+  it('no empty note, no lone icon, no stray separator on either surface', () => {
+    const plan = planFor({ today_precip_in: null, today_pop: null, tomorrow_precip_in: null, tomorrow_pop: null })
+    expect(rainSentences({ hydrology: plan.hydrology })).toEqual({ rainNote: null, nextNote: null, gaugeMeasured: false })
+    expect(rowB(plan)).toEqual([])
+    const { container } = rtlRender(<WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={D.generated_at} planDate={D.plan_date} />)
+    expect(screen.queryByTestId('weather-next-rain')).toBeNull()
+    expect(container.textContent).not.toMatch(/chance|fallen|tomorrow|could climb|″/)
   })
 })
 
@@ -124,7 +199,10 @@ describe('a chance nobody reported is left out of every sentence', () => {
     expect(rs({ tomorrow_precip_in: 0.14 }).rainNote).toBe('0.14″ tomorrow')
     expect(rs({ today_observed_in: 0.14, today_remaining_in: 0.15 }).rainNote).toBe('0.14″ fallen · 0.15″ more expected')
     expect(rs({ today_precip_in: 0.21 }, { uncertain: true, showery: true }).rainNote).toBe('~0.21″ today — could climb')
-    expect(rs({}, { uncertain: true, showery: true }).rainNote).toBe('little so far, could climb')
+    // no amount and no chance on a showery day: the line still says which day it is about
+    expect(rs({}, { uncertain: true, showery: true }).rainNote).toBe('Showers tomorrow · little so far, could climb')
+    expect(rs({ today_precip_in: 0.04 }, { uncertain: true, showery: true }).rainNote).toBe('Showers today · little so far, could climb')
+    expect(rs({ today_precip_in: 0.04, today_pop: 60 }, { uncertain: true, showery: true }).rainNote).toBe('60% chance today · little so far, could climb')
     // nothing known at all: no line, where the overlay used to open one reading "0% chance of rain tomorrow"
     expect(rs({}, { live: true, liveHydrology: { today_precip_in: 0, tomorrow_precip_in: null } })).toEqual({ rainNote: null, nextNote: null, gaugeMeasured: false })
   })

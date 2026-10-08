@@ -94,7 +94,7 @@ describe('the following-day line', () => {
   it('a measured day is the first line even when the forecast calls today dry, so the next line is tomorrow', () => {
     const h = { ...DRY, today_observed_in: 0.29, today_remaining_in: 0, tomorrow_precip_in: 0.5, tomorrow_pop: 60,
       day2_precip_in: 1, day2_pop: 80, day2_date: '2026-09-27' }
-    expect(rs(h)).toEqual({ rainNote: '0.29″ fallen today · none more expected', nextNote: '0.50″ tomorrow · 60% chance', gaugeMeasured: true })
+    expect(rs(h)).toEqual({ rainNote: '0.29″ fallen today', nextNote: '0.50″ tomorrow · 60% chance', gaugeMeasured: true })
   })
 
   it('after a measured line it must beat fallen + still-expected', () => {
@@ -191,7 +191,7 @@ describe('pure', () => {
     const a = rainSentences(args)
     vi.setSystemTime(new Date('2027-07-04T23:59:00Z'))
     expect(rainSentences(args)).toEqual(a)
-    expect(a).toEqual({ rainNote: '0.14″ fallen as of 5:30 AM · 0.15″ more expected · 40%', nextNote: '0.60″ tomorrow · 70% chance', gaugeMeasured: true })
+    expect(a).toEqual({ rainNote: '0.14″ fallen · 0.15″ more', nextNote: '0.60″ tomorrow · 70% chance', gaugeMeasured: true })
   })
 
   it('basisTimeLabel is the ET clock time, or null', () => {

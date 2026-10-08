@@ -143,7 +143,7 @@ describe('BUG-WXOUTAGESTAMPCOPY-001 — an empty forecast is credited to nobody'
 
   it('with the live overlay: the stored placeholder is still not read as a forecast; the live stamp is unchanged', () => {
     card(bound(null, FULL), LIVE)
-    expect(rainLine()).toBe('0.01″ fallen as of 6:00 AM')
+    expect(rainLine()).toBe('0.01″ fallen today')
     expect(stamp()).toBe('Updated 12:10 PM · live forecast')   // the live fetch DID return, so it is named
     cleanup()
     card(stored(null), LIVE)
@@ -177,15 +177,16 @@ describe('complete and partial snapshots do not move — every line of the card,
       '0.01″ fallen · 0.20″ more expected · 40%', 'As of Jul 6 · 6:00 AM · rain gauge + forecast', SHOWERY]],
     ['COMPLETE, gauge, the hourly forecast has nothing left', () => bound(forecast({ hourly_precip: hourly({}) }), FULL), {}, [...HEAD,
       'LANES: Containers: water — 1 of 3 cans | In-ground beds: water — 1 of 3 cans',
-      '0.01″ fallen today · none more expected', '0.20″ tomorrow · 35% chance', 'As of Jul 6 · 6:00 AM · rain gauge + forecast']],
+      '0.01″ fallen today', '0.20″ tomorrow · 35% chance', 'As of Jul 6 · 6:00 AM · rain gauge + forecast']],
     // Same provenance pair as the outage ('wholeday'/'no_hourly'), but a real whole-day forecast the gauge has
-    // already beaten: "none more expected" is TRUE here and must stay.
+    // already beaten: "none more expected" is TRUE here and stays whenever the line stands alone. Beside
+    // tomorrow's note (as here) it takes its short form (BUG-RAINTOMORROWMISLABEL-001 b, rainSentences).
     ['COMPLETE, gauge, no hourly block, whole-day forecast exceeded', () => bound(forecast({ hourly_precip: null, today_precip_in: 0.005 }), FULL), {}, [...HEAD,
       'LANES: Containers: water — 1 of 3 cans | In-ground beds: water — 1 of 3 cans',
-      '0.01″ fallen today · none more expected', '0.20″ tomorrow · 35% chance', 'As of Jul 6 · 6:00 AM · rain gauge + forecast']],
+      '0.01″ fallen today', '0.20″ tomorrow · 35% chance', 'As of Jul 6 · 6:00 AM · rain gauge + forecast']],
     ['COMPLETE, gauge, live overlay', () => bound(forecast({ hourly_precip: hourly({}) }), FULL), LIVE, [...HEAD,
       'LANES: Containers: water — 1 of 3 cans | In-ground beds: water — 1 of 3 cans',
-      '0.01″ fallen as of 6:00 AM · none more expected', '0.10″ tomorrow · 20% chance', 'Updated 12:10 PM · live forecast']],
+      '0.01″ fallen today', '0.10″ tomorrow · 20% chance', 'Updated 12:10 PM · live forecast']],
     // PARTIAL: the forecast did return figures, so whatever arrived keeps its source.
     ['PARTIAL, no gauge (D+1..D+2 missing)', () => stored({ recent_precip_in: 0.05, today_precip_in: 0.1, today_pop: 40, upcoming_precip_in: null, tomorrow_precip_in: null, tomorrow_pop: null }), {}, [...HEAD,
       'LANES: Containers: water — 2 of 3 cans | In-ground beds: water — 2 of 3 cans',

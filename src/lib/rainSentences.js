@@ -144,20 +144,6 @@ export function rainSentences({ hydrology, liveHydrology = null, live = false, u
   const measuredPop = hydrology?.today_pop ?? null
   const fallenSuffix = measuredAt ? ` as of ${measuredAt}` : ''
 
-  // BUG-WXOUTAGESTAMPCOPY-001 — "none more expected" is a forecast statement. With no forecast behind it the
-  // remainder is the merge's placeholder 0, so the measurement stands alone.
-  const rainNote = gaugeMeasured
-    ? (remainingToday != null && remainingToday > 0
-        ? `${measuredToday.toFixed(2)}″ fallen${fallenSuffix} · ${remainingToday.toFixed(2)}″ more expected${chanceBit(measuredPop, '%')}`
-        : `${measuredToday.toFixed(2)}″ fallen${fallenSuffix || ' today'}${noForecast ? '' : ' · none more expected'}`)
-    : softenedNote
-    ? (rainAmtKnown && rainIn >= 0.1
-        ? `~${rainIn.toFixed(2)}″ ${rainWhen}${chanceBit(rainPop, '%')} — could climb`
-        : `${rainPop != null ? `${rainPop}% chance ${rainWhen} · ` : ''}little so far, could climb`)
-    : (!rainAmtKnown
-        ? (rainPop != null ? `${rainPop}% chance of rain ${rainWhen}` : null)
-        : `${rainIn.toFixed(2)}″ ${rainWhen}${chanceBit(rainPop)}`)
-
   // BUG-RAINFCSTONEMODEL-001 (b) — the FOLLOWING day, on its own line, when it brings more rain than the
   // line above describes. The card showed one day and one day only, so on 2026-09-25 a forecast 1.72″
   // Sunday was nowhere on it while the line read 0.05″ for Saturday. "The line above" is today whenever
@@ -172,10 +158,44 @@ export function rainSentences({ hydrology, liveHydrology = null, live = false, u
   // BUG-RAINTOMORROWMISLABEL-001 (b) — …or when it is TOMORROW and brings enough to change watering, whatever
   // today holds. The engine's rain cue reads tomorrow alone, and it loses the one cue slot to a freeze, cold or
   // heat cue; on a day that also rained, "more than the line above" then left tomorrow's rain nowhere on Today.
+  // The rule reads the RAW amount, as the engine does (0.2999″ does not fire, though it prints as 0.30″); the
+  // older "more than the line above" test beside it compares what is printed, so it stays on rounded figures.
   const nextMatters = firstIsToday && rainChangesWatering(nextIn, nextPop)
   const nextNote = (Number.isFinite(nextIn) && round2(nextIn) >= NEXT_DAY_MIN_IN && (round2(nextIn) > round2(firstAmt) || nextMatters) && nextWhen)
     ? `${nextIn.toFixed(2)}″ ${nextWhen}${chanceBit(nextPop)}`
     : null
+  const beside = nextNote != null
+
+  // BUG-WXOUTAGESTAMPCOPY-001 — "none more expected" is a forecast statement. With no forecast behind it the
+  // remainder is the merge's placeholder 0, so the measurement stands alone.
+  //
+  // BUG-RAINTOMORROWMISLABEL-001 (b) — the measured line has a SHORT form for when tomorrow's note sits beside
+  // it (`beside`, below). The glance card's row B is 360 px at 426 and holds both notes on one row; the full
+  // measured line plus tomorrow's is 397–465 px, wraps, and pushes Needs care off the first screen. So beside
+  // tomorrow's note the line keeps its two amounts and drops the rest: `N″ fallen today` (no "none more
+  // expected", and no "as of H:MM": with a time the pair has 7.8 px to spare at 10:00 AM and a wider time
+  // wraps) or `N″ fallen · M″ more` (no chance). Alone, it is the full sentence it always was. Chosen here,
+  // from the sentences, not by CSS, so the row and the weather card print the same words; the card stacks
+  // the two lines and had room for the long form, and takes the short one anyway so the two surfaces never
+  // disagree. KNOWN COST: under the live overlay the short form carries no basis time, and the card's stamp
+  // then reads "Updated {now} · live forecast" over a measurement taken at plan generation — the "· live
+  // forecast" wording (BUG-WXLIVESTAMPSTALE-001) is what still tells the two apart.
+  const rainNote = gaugeMeasured
+    ? (remainingToday != null && remainingToday > 0
+        ? (beside
+            ? `${measuredToday.toFixed(2)}″ fallen · ${remainingToday.toFixed(2)}″ more`
+            : `${measuredToday.toFixed(2)}″ fallen${fallenSuffix} · ${remainingToday.toFixed(2)}″ more expected${chanceBit(measuredPop, '%')}`)
+        : (beside
+            ? `${measuredToday.toFixed(2)}″ fallen today`
+            : `${measuredToday.toFixed(2)}″ fallen${fallenSuffix || ' today'}${noForecast ? '' : ' · none more expected'}`))
+    : softenedNote
+    ? (rainAmtKnown && rainIn >= 0.1
+        ? `~${rainIn.toFixed(2)}″ ${rainWhen}${chanceBit(rainPop, '%')} — could climb`
+        // With no chance to lead it the line still names its day ("Showers today · …"), never a bare clause.
+        : `${rainPop != null ? `${rainPop}% chance ${rainWhen}` : `Showers ${rainWhen}`} · little so far, could climb`)
+    : (!rainAmtKnown
+        ? (rainPop != null ? `${rainPop}% chance of rain ${rainWhen}` : null)
+        : `${rainIn.toFixed(2)}″ ${rainWhen}${chanceBit(rainPop)}`)
 
   // The rain line's display gate (was the card's render condition).
   // BUG-RAINCARDFORECASTONLY-001 adds `gaugeMeasured`: a day whose rain has ALREADY FALLEN can leave every
