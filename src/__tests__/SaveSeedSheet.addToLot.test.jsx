@@ -926,6 +926,27 @@ describe('after the tap: no answer (rows 14-19, 21, 23)', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('row 23 — while "Adding…" stands and the first answer is still out, closing asks the same question, and Close has the host read the lots again', async () => {
+    const first = defer()
+    net.add = [() => first.promise]
+    mountAsked()
+    await tap('save-seed-put-in-lot')
+    await tap('save-seed-submit')
+    expect(submitBtn().textContent).toBe('Adding…')
+    expect(calls('add').length).toBe(1)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Close' })) })
+    expect(asked()).toEqual(UNSURE_QUESTION)
+    expect(document.body.textContent).not.toMatch(/without adding|will not be kept|Discard|Keep editing/)
+    expect(onClose).not.toHaveBeenCalled()
+    await tap('confirm-sheet-confirm')
+    expect(onSeedMaybeAdded).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onSeedMaybeAdded.mock.invocationCallOrder[0]).toBeLessThan(onClose.mock.invocationCallOrder[0])
+    expect(onSeedAdded).not.toHaveBeenCalled()
+    expect(toastSpy).not.toHaveBeenCalled()
+    expect(counts()).toEqual({ add: 1, event: 0, open: 0 })
+  })
+
   it('row 23 — a lot picked and nothing sent: the question keeps its own words, and closing reads nothing again', async () => {
     mountAsked()
     await tap('save-seed-put-in-lot')

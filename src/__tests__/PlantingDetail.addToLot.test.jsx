@@ -121,6 +121,42 @@ describe('PlantingDetail — after "Put it in <lot>" (V5-SEEDLOTADDITION-001)', 
     expect(screen.queryByText(/Couldn.t check for seed saved/)).toBeNull()
   })
 
+  it('closed while the first add is still out ("Adding…"): the true question is asked, and Close reads the lots again', async () => {
+    // The POST lands on the server and never answers.
+    const base = apiFetchSpy.getMockImplementation()
+    let posts = 0
+    apiFetchSpy.mockImplementation((path, opts = {}) => {
+      if (opts.method === 'POST' && String(path) === `/api/inventory-items/${LOT.id}/seed-additions`) {
+        posts += 1
+        base(path, opts)
+        return new Promise(() => {})
+      }
+      return base(path, opts)
+    })
+    mount(DismissRegistryProvider)
+    await waitFor(() => expect(screen.getByText(/Drying · 120 seeds/)).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-open')) })
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-put-in-lot')) })
+    fireEvent.change(screen.getByTestId('seed-add-count'), { target: { value: '30' } })
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-submit')) })
+    expect(screen.getByTestId('save-seed-submit').textContent).toBe('Adding…')
+    expect(posts).toBe(1)
+    expect(lotReads()).toBe(1)
+
+    // The sheet's own Close: Escape is swallowed while a write is out, the visible control is not.
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Close' })) })
+    expect(screen.getByTestId('confirm-sheet-title').textContent).toBe('Close without checking?')
+    expect(document.body.textContent).not.toMatch(/without adding|Discard/)
+    await act(async () => { fireEvent.click(screen.getByTestId('confirm-sheet-confirm')) })
+    await waitFor(() => expect(screen.queryByTestId('seed-add-form')).toBeNull())
+    expect(screen.queryByTestId('left-the-page')).toBeNull()
+    await waitFor(() => expect(lotReads()).toBe(2))
+    await waitFor(() => expect(screen.getByText(/Drying · 150 seeds/)).toBeTruthy())
+    expect(screen.queryByText(`Added to ${LOT.name}`)).toBeNull()
+    expect(paths((p, o) => o.method === 'POST' && p === '/api/events').length).toBe(0)
+    expect(posts).toBe(1)
+  })
+
   it('closed while an add had no definite answer: the lots are read again, and the row shows what the lot holds', async () => {
     // The first POST lands on the server and its reply is lost; the automatic second try is lost too.
     const base = apiFetchSpy.getMockImplementation()

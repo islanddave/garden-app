@@ -143,11 +143,12 @@ export default function AddToLot({ planting, ownLots = [], startLot = null, Basi
 
   const locked = phase !== 'idle'
   // `unsure`: a request left and no definite answer has come back, so today's seed may be in the lot.
-  // True from the automatic second try ("Checking…") until an answer, a refusal or Try again settles it.
+  // True from the tap ("Adding…") until an answer or a refusal settles it: closing does not stop a
+  // request that is out, nor the second try that follows a timeout, so the seed can still land.
   useEffect(() => {
     onState?.({
       dirty: !!lot, busy: phase === 'sending' || phase === 'checking',
-      unsure: phase === 'checking' || phase === 'unknown',
+      unsure: phase !== 'idle',
     })
   }, [lot, phase]) // eslint-disable-line react-hooks/exhaustive-deps
 
