@@ -3,7 +3,7 @@
 // appears, in real Chrome, at Dave's 426×836 (DPR 3)?
 //
 //   node scripts/layout-gate/putup-refusal-view.mjs                 # every sheet, every arrival
-//   node scripts/layout-gate/putup-refusal-view.mjs --sheet door    # one sheet (door, recipe, putupdoor, start, putitup)
+//   node scripts/layout-gate/putup-refusal-view.mjs --sheet door    # one sheet (door, recipe, putupdoor, start, putitup, walk)
 //   node scripts/layout-gate/putup-refusal-view.mjs --shots <dir>   # also write a PNG per measurement
 //   node scripts/layout-gate/putup-refusal-view.mjs --list          # print the test ids each sheet draws
 //
@@ -144,6 +144,28 @@ Object.assign(SHEETS, {
       ['tap', 'putup-sitting-more'],
     ],
     change: [['tap', 'putup-row-1-plus']],
+  },
+})
+
+// THE WALK (BUG-PUTUPREPLAYREST-001 re-review I-E). In a walk a refusal that leaves the group spent now ends with
+// the way on ("To log more here, end this walk and start another."), which makes the walk's "saved earlier" line its
+// longest. The Walk is a page: the document scrolls, the fixed band ("End the walk") is what can cover the line,
+// and Save is the group's own button UNDER the line — so it is tapped where it is brought to (`saveScrolls`), and
+// the line must then be whole above the band. Its options are opened so the group is as tall as it gets.
+Object.assign(SHEETS, {
+  walk: {
+    page: 'walk', arrivals: ['change'], mayNotScroll: true, saveScrolls: true,
+    ids: { error: 'walk-error', footer: 'putup-walk-band', save: 'walk-save' },
+    refusal: /^“Sweet corn, cut off the cob, late” was already saved earlier — it is in the Pantry\. This Save did not change it\. To change it, open it in the Pantry\. To log more here, end this walk and start another\.$/,
+    fill: [
+      ['tap', 'putup-walk-place-id:loc-cf1'],
+      ['tap', 'putup-walk-when-this_month'],
+      ['tap', 'putup-walk-start'],
+      ['type', 'walk-what-name', 'Sweet corn, cut off the cob'],
+      ['tap', 'walk-method-as_is'],
+      ['tap', 'walk-more'],
+    ],
+    change: [['type', 'walk-what-name', ', late']],
   },
 })
 
@@ -348,7 +370,7 @@ try {
         const scrolls = filled.scroll.height > filled.scroll.client + 40
         if (!scrolls && !s.mayNotScroll) throw new Error(`the filled sheet does not scroll (${filled.scroll.height} in ${filled.scroll.client}) — nothing could be under the fold`)
 
-        await tap(cdp, s, s.ids.save, { still: true })
+        await tap(cdp, s, s.ids.save, { still: !s.saveScrolls })
         await sleep(500)
         const lost = await cdp.evalIn('window.__h.measure()')
         if (lost.creates !== 1) throw new Error(`the first Save sent ${lost.creates} creates, not 1 (calls: ${lost.calls.join(' | ')}; line: ${lost.text})`)
@@ -361,20 +383,20 @@ try {
         let lc = lost
         let lcv = 'not run (the filled sheet does not scroll: nothing can be under the fold)'
         if (scrolls) {
-          await cdp.evalIn(`(() => { document.querySelector('[role="dialog"]').scrollTop = ${filled.scroll.top} })()`)
+          await cdp.evalIn(`window.__h.setScroll(${filled.scroll.top})`)
           await sleep(200)
           lc = await cdp.evalIn('window.__h.measure()')
           lcv = verdictOf(lc)
           console.log(`[refusal] ${at}: first-failure control (scrollTop back to ${filled.scroll.top}, as with no scroll on a failed Save): ${lcv} — ${say(lc)}`)
           if (lcv === 'fully visible') fail(`${at}: the first-failure instrument check did not fire — unscrolled, the line still reads as fully visible`)
-          await cdp.evalIn(`(() => { document.querySelector('[role="dialog"]').scrollTop = ${lost.scroll.top} })()`)
+          await cdp.evalIn(`window.__h.setScroll(${lost.scroll.top})`)
           await sleep(200)
         } else console.log(`[refusal] ${at}: first-failure control ${lcv} (${filled.scroll.height} in ${filled.scroll.client})`)
 
         if (arrival === 'top') await wheelToTop(cdp)
         await walk(cdp, s, s[arrival])
         const before = await cdp.evalIn('window.__h.measure()')
-        await tap(cdp, s, s.ids.save, { still: true })
+        await tap(cdp, s, s.ids.save, { still: !s.saveScrolls })
         await sleep(700)
         const m = await cdp.evalIn('window.__h.measure()')
         if (m.creates !== 2) throw new Error(`the retry sent ${m.creates - 1} creates, not 1 (calls: ${m.calls.join(' | ')})`)
@@ -398,7 +420,7 @@ try {
         }
 
         // INSTRUMENT CHECK: the scroller back where it stood when Save was tapped.
-        await cdp.evalIn(`(() => { document.querySelector('[role="dialog"]').scrollTop = ${before.scroll.top} })()`)
+        await cdp.evalIn(`window.__h.setScroll(${before.scroll.top})`)
         await sleep(200)
         const c = await cdp.evalIn('window.__h.measure()')
         const cv = verdictOf(c)

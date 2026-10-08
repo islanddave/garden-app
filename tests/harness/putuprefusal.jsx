@@ -13,6 +13,12 @@
 //   ?sheet=putupdoor  Put something up on a METHOD chip (the put-up route: POST /api/preservation)   — QA I-5
 //   ?sheet=start      Start a batch (POST /api/kitchen-batches)                                     — QA I-5
 //   ?sheet=putitup    Put it up (POST /api/kitchen-batches/:id/put-up)                              — QA I-5
+//   ?sheet=walk       Walk a place, As is (POST /api/pantry/items)                                   — re-review I-E
+//
+// THE WALK IS A PAGE, NOT A SHEET: its scroller is the document, what covers its end is the walk's fixed band
+// ("End the walk"), and Save is the group's own button, under the line. So for it `footer` is the band, the
+// "panel" is the viewport, and the scroll is the document's. Its "saved earlier" line is the door's with the
+// walk's way on at its end ("To log more here, end this walk and start another.") — the longest line a walk says.
 //
 // THE WIRE, faked at window.fetch so the real useApiFetch, the real <Sheet> and the real sheet run:
 //   the FIRST create is lost — the request goes out and no answer comes back (fetch rejects);
@@ -37,6 +43,7 @@ import PutSomethingUpSheet from '../../src/components/pantry/PutSomethingUpSheet
 import RecipeSheet from '../../src/components/recipes/RecipeSheet.jsx'
 import StartBatchSheet from '../../src/components/kitchen/StartBatchSheet.jsx'
 import PutItUpSheet from '../../src/components/putup/PutItUpSheet.jsx'
+import WalkPlace from '../../src/components/pantry/WalkPlace.jsx'
 
 const q = new URLSearchParams(location.search)
 const SHEET = q.get('sheet') || 'door'
@@ -126,6 +133,7 @@ window.fetch = (url, init, ...rest) => {
     return json({ ...made.row, replayed: true })
   }
   if (u.includes('/api/storage-locations')) return json(PLACES)
+  if (method === 'GET' && /\/api\/pantry(\?|$)/.test(u)) return json({ rows: [] })
   if (method === 'GET') return json({})
   return Promise.resolve(new Response(JSON.stringify({ error: 'the harness has no answer for this write' }), { status: 500, headers: { 'Content-Type': 'application/json' } }))
 }
@@ -141,7 +149,9 @@ const box = (el) => {
   const r = el.getBoundingClientRect()
   return { top: +r.top.toFixed(1), bottom: +r.bottom.toFixed(1), left: +r.left.toFixed(1), right: +r.right.toFixed(1), height: +r.height.toFixed(1) }
 }
+const WALK = SHEET === 'walk'
 const IDS = {
+  walk: { error: 'walk-error', footer: 'putup-walk-band', save: 'walk-save' },
   recipe: { error: 'recipe-sheet-error', footer: 'recipe-sheet-footer', save: 'recipe-save' },
   start: { error: 'start-error', footer: 'start-footer', save: 'start-submit' },
   putitup: { error: 'putup-error', footer: 'putup-footer', save: 'putup-finish' },
@@ -149,10 +159,12 @@ const IDS = {
 
 // Every number is read from the live document. `hits` asks the browser what is painted on top at nine
 // points of the line: a point the pinned footer covers answers with the footer, not the line.
+// What scrolls: the sheet's dialog — or, for the Walk (a page), the document.
+const scroller = () => (WALK ? document.scrollingElement : document.querySelector('[role="dialog"]'))
 function measure() {
   const line = byTid(IDS.error)
   const footer = byTid(IDS.footer)
-  const panel = document.querySelector('[role="dialog"]')
+  const panel = scroller()
   const l = box(line)
   const hits = []
   if (line && l) {
@@ -166,9 +178,11 @@ function measure() {
     sheet: SHEET, vw: innerWidth, vh: innerHeight, dpr: devicePixelRatio,
     font: window.__fontPin ? { faces: window.__fontPin.faces, failed: window.__fontPin.failed?.length ?? 0 } : null,
     text: line?.textContent ?? null,
-    line: l, footer: box(footer), save: box(byTid(IDS.save)), panel: box(panel),
+    // The Walk's "panel" is the viewport: the document's own box moves with its scroll.
+    line: l, footer: box(footer), save: box(byTid(IDS.save)),
+    panel: WALK ? { top: 0, bottom: innerHeight, left: 0, right: innerWidth, height: innerHeight } : box(panel),
     // The sheet's own header row (its title and Close; it scrolls with the sheet): the line is below it.
-    header: box(panel?.querySelector('[data-sheet-close]')?.parentElement ?? null),
+    header: WALK ? null : box(panel?.querySelector('[data-sheet-close]')?.parentElement ?? null),
     scroll: panel ? { top: Math.round(panel.scrollTop), height: panel.scrollHeight, client: panel.clientHeight } : null,
     hits, creates: creates.n, calls: calls.slice(), saved: !!window.__saved,
   }
@@ -181,28 +195,33 @@ async function run() {
   } catch { /* no storage: nothing to clear */ }
   createRoot(document.getElementById('root')).render(
     <AuthProvider>
-      <MemoryRouter>
-        {SHEET === 'recipe' ? <Recipe />
+      <MemoryRouter initialEntries={[WALK ? '/put-up?session=putup' : '/']}>
+        {WALK ? <WalkPlace />
+          : SHEET === 'recipe' ? <Recipe />
           : SHEET === 'start' ? <StartBatchSheet open onClose={() => {}} onStarted={() => { window.__saved = true }} />
             : SHEET === 'putitup' ? <PutItUpSheet open batch={MASH} onClose={() => {}} onDone={() => { window.__saved = true }} />
               : <PutSomethingUpSheet open onClose={() => {}} onSaved={() => { window.__saved = true }} />}
       </MemoryRouter>
     </AuthProvider>,
   )
-  for (let i = 0; i < 100 && !byTid(IDS.save); i += 1) await new Promise(r => setTimeout(r, 50))
+  // The Walk opens on its two questions: it is ready when they can be answered (its Save comes after them).
+  const up = () => !!byTid(IDS.save) || (WALK && !!byTid('putup-walk-start'))
+  for (let i = 0; i < 100 && !up(); i += 1) await new Promise(r => setTimeout(r, 50))
   try { await document.fonts.ready } catch { /* the font report says so */ }
   window.__h = {
-    ready: () => !!byTid(IDS.save),
+    ready: up,
     measure,
+    // The scroller put where the driver says (its instrument checks).
+    setScroll: (y) => { const el = scroller(); if (el) el.scrollTop = y },
     box: (t) => box(byTid(t)),
     // Whether the control with this test id is painted, whole, between the scroller's top and the pinned footer.
     onScreen: (t) => {
-      const el = byTid(t); const footer = byTid(IDS.footer); const panel = document.querySelector('[role="dialog"]')
-      if (!el || !footer || !panel) return { drawn: !!el, whole: false }
+      const el = byTid(t); const footer = byTid(IDS.footer); const panel = WALK ? null : document.querySelector('[role="dialog"]')
+      if (!el || !footer || (!panel && !WALK)) return { drawn: !!el, whole: false }
       const r = el.getBoundingClientRect()
-      const floor = Math.min(footer.getBoundingClientRect().top, panel.getBoundingClientRect().bottom, innerHeight)
+      const floor = Math.min(footer.getBoundingClientRect().top, panel ? panel.getBoundingClientRect().bottom : innerHeight, innerHeight)
       const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
-      return { drawn: true, whole: r.top >= Math.max(panel.getBoundingClientRect().top, 0) - 0.5 && r.bottom <= floor + 0.5 && !!top && (top === el || el.contains(top) || top.contains(el)), box: box(el) }
+      return { drawn: true, whole: r.top >= Math.max(panel ? panel.getBoundingClientRect().top : 0, 0) - 0.5 && r.bottom <= floor + 0.5 && !!top && (top === el || el.contains(top) || top.contains(el)), box: box(el) }
     },
     testids: () => [...document.querySelectorAll('[data-testid]')].map(e => e.getAttribute('data-testid')),
   }
