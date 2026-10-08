@@ -77,7 +77,7 @@ export default function GlanceCard({
                 </span>
                 <span aria-hidden="true" style={{ ...chevronStyle, marginLeft: 'auto', alignSelf: 'center' }}>{CHEVRON.closed}</span>
               </span>
-              <span style={rowB}>
+              <span data-testid="glance-rain" style={rowB}>
                 {rain.map((t) => (
                   <span key={t} style={rainItem}>
                     <Icon name="care.rainPct" size={13} decorative style={{ color: ICON_COLORS.dropBody, flexShrink: 0 }} />

@@ -196,6 +196,23 @@ export const STATES = [
       { family: 'owner-floors', armedAt: 'S6', owners: ['glance', 'care', 'harvest', 'resting'], why: 'S6: each owner of a moved region, opened from the default render, is at least its recorded height — a region deleted inside it (dropRegionInOwner) shortens it' },
     ],
   },
+  // BUG-RAINTOMORROWMISLABEL-001 (b), 2026-10-08. v2-frost's day (cold cue + frost watch, so the engine's one cue
+  // slot is taken) on which the gauge has measured rain AND tomorrow brings enough to change watering: the rain
+  // row carries both notes. The first state with its own weather (`wx`, todaymeasure.jsx): the default stub's
+  // tomorrow is 0.22″, under the bar. Its floors and ceilings are v2-frost's OWN numbers, copied, not recorded —
+  // the second note may not cost the page a pixel (document 1959, last pixel 1853, Needs care top 800).
+  {
+    name: 'v2-frost-rain', fixture: 'busyfull', grafts: ['gaugerain'], clock: S924, prefs: 'prefs.default.json',
+    // five models, [D0, D1, D2]: D1 mean 0.40″ with 4 of 5 wet (80%), D2 0.03″.
+    wx: { models: { gfs_global: [0.02, 0.7, 0.1], ecmwf_ifs025: [0.03, 0.6, 0.05], gem_seamless: [0.05, 0.4, 0], icon_seamless: [0.08, 0.3, 0], ncep_nbm_conus: [0.02, 0, 0] } },
+    proves: 'a measured today beside a tomorrow that changes watering: both notes on ONE row, nothing below moves',
+    checks: [
+      ...common(),
+      { family: 'glance-rain', armedAt: 'S3', notes: ['0.45″ fallen today', '0.40″ tomorrow · 80% chance'], why: 'both notes, the measured line in its short form, on one row of the 360px rain row' },
+      { family: 'first-screen', armedAt: 'S3', mustContain: ['today-glance', 'weather-cue-line', 'frost-alert-line', 'today-jumpbar'], mustShowText: ['today-verdict'], why: 'as v2-frost: the closed glance card with both alert lines, the bar, and a verdict nothing cuts off' },
+      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+72' }, why: "v2-frost's E4 ceiling, unchanged: Needs care's header top ≤ 800 with the second rain note on the row" },
+    ],
+  },
   {
     name: 'v2-busy', fixture: 'busy', clock: S924, prefs: 'prefs.default.json',
     proves: 'Protect open (chill, first seen), Needs care open (small)',

@@ -252,11 +252,16 @@ let prefsServed = 0
 // ?wx=live restores the real read for characterisation runs.
 const WX_LIVE = params.get('wx') === 'live'
 const etDayOffset = (n) => new Date(Date.now() + n * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+// PER-STATE WEATHER (v2 only; BUG-RAINTOMORROWMISLABEL-001 b). A contract row may carry `wx` — any of
+// precipitation_sum, precipitation_probability_max (the five-day arrays below) and models (the five model
+// columns of the second stub, [D0, D1, D2] each) — and the two stubs answer with those instead. Every state
+// without `wx`, and every v1 state, gets the fixed numbers it always got. __h.v2().wx says which was served.
+const WX_STATE = V2STATE?.wx || null
 const OPEN_METEO_STUB = {
   daily: {
     time: [-2, -1, 0, 1, 2].map(etDayOffset),
-    precipitation_sum: [0.31, 0.12, 0.04, 0.22, 0.09],
-    precipitation_probability_max: [80, 45, 18, 61, 33],
+    precipitation_sum: WX_STATE?.precipitation_sum ?? [0.31, 0.12, 0.04, 0.22, 0.09],
+    precipitation_probability_max: WX_STATE?.precipitation_probability_max ?? [80, 45, 18, 61, 33],
   },
 }
 
@@ -267,11 +272,11 @@ const OPEN_METEO_STUB = {
 const OPEN_METEO_MODELS_STUB = {
   daily: {
     time: [0, 1, 2].map(etDayOffset),
-    precipitation_sum_gfs_global: [0.02, 0.5, 0.2],
-    precipitation_sum_ecmwf_ifs025: [0.03, 0.3, 0.15],
-    precipitation_sum_gem_seamless: [0.05, 0.3, 0.1],
-    precipitation_sum_icon_seamless: [0.08, 0, 0],
-    precipitation_sum_ncep_nbm_conus: [0.02, 0, 0],
+    precipitation_sum_gfs_global: WX_STATE?.models?.gfs_global ?? [0.02, 0.5, 0.2],
+    precipitation_sum_ecmwf_ifs025: WX_STATE?.models?.ecmwf_ifs025 ?? [0.03, 0.3, 0.15],
+    precipitation_sum_gem_seamless: WX_STATE?.models?.gem_seamless ?? [0.05, 0.3, 0.1],
+    precipitation_sum_icon_seamless: WX_STATE?.models?.icon_seamless ?? [0.08, 0, 0],
+    precipitation_sum_ncep_nbm_conus: WX_STATE?.models?.ncep_nbm_conus ?? [0.02, 0, 0],
   },
 }
 
@@ -657,6 +662,7 @@ window.__h = {
     requested: V2, problem: V2PROBLEM, state: V2STATE?.name ?? null, fixture: FIX, route: v2Route,
     flag: (() => { try { return localStorage.getItem('garden.todayV2') } catch { return null } })(),
     seeds: V2SEEDS.map(([k]) => k), grafts: V2STATE?.grafts || [], redate: V2STATE?.redate || null,
+    wx: WX_STATE ? 'state' : 'default',
     planDate: PAYLOAD?.plan_date ?? null,
     prefs: { fixture: V2STATE?.prefs ?? null, delayMs: V2WIRE?.prefsDelayMs ?? 0, served: prefsServed, bytes: V2PREFS ? JSON.stringify(V2PREFS).length : 0 },
     critterOrigin: import.meta.env.VITE_API_CRITTERS || null,
