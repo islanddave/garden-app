@@ -1,10 +1,11 @@
 // V5-SEEDLOTADDITION-001 (seed release 3) — two rules of this release that no rendered test can hold
 // (contract T28), read from the source files themselves.
 //
-// 1. THE WORD. Dave, 2026-10-07: he does not think of saved seed as jars. On the two screens this
-//    release touches (Save seed and the lot page) every sentence says "lot" or "seed lot". The rendered
-//    tests can only see the states they reach; this reads every string and every line of JSX text in the
-//    five files that draw those screens. Comments are not on screen and are left alone.
+// 1. THE WORD. Dave, 2026-10-07: he does not think of saved seed as jars. On the three screens this
+//    release touches (Save seed, the lot page, and Saved seeds, whose stage sheet's count write the
+//    release changed) every sentence says "lot" or "seed lot". The rendered tests can only see the
+//    states they reach; this reads every string and every line of JSX text in the six files that draw
+//    those screens. Comments are not on screen and are left alone.
 //
 // 2. THE TEST FILES STAND STILL UNDER A FLAG FLIP. The forward undo of this release is a build with the
 //    flag line false, rehearsed by serving that line to the unchanged test files. A test that re-mocks a
@@ -55,6 +56,7 @@ const SCREEN_FILES = [
   'src/components/planting/SaveSeedSheet.jsx',
   'src/components/seed/SavedFromCard.jsx',
   'src/components/seed/seedParents.js',
+  'src/pages/SavedSeeds.jsx',
 ]
 const OLD_WORD = /\bjars?\b/i
 
@@ -80,7 +82,7 @@ describe('the comment stripper this file relies on', () => {
   })
 })
 
-describe('"seed lot" / "lot", never the old word, on Save seed and the lot page (D5)', () => {
+describe('"seed lot" / "lot", never the old word, on Save seed, the lot page and Saved seeds (D5)', () => {
   it.each(SCREEN_FILES)('%s', (file) => {
     const lines = stripComments(read(file)).split('\n')
     const hits = lines.map((text, i) => ({ line: i + 1, text: text.trim() })).filter((l) => OLD_WORD.test(l.text))

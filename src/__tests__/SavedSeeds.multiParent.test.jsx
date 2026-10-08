@@ -229,7 +229,7 @@ describe('the stage sheet\'s parent write — two failure sentences (contract O-
     patchReply = failed(no)
     await saveWithParent()
     await waitFor(() => expect(document.body.textContent)
-      .toContain('This jar already has more than one plant. Open the jar to change its plants.'))
+      .toContain('This lot already has more than one plant. Open the lot to change its plants.'))
     expect(document.body.textContent).not.toContain(no.body.error)
   })
 

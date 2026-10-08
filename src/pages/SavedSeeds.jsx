@@ -122,7 +122,7 @@ const cropSlugOf = (i) => i.crop_slug
 // "Required" here means an answer is required, never that the answer must be non-zero.
 const COUNT_ASK = {
   fermenting: {
-    label: 'How many are in the jar?',
+    label: 'How many are in this lot?',
     help: 'Optional — a rough count is fine, and you can change it at every step.',
   },
   drying: {
@@ -222,7 +222,7 @@ const ADD_PACKET_HREF = addPacketHref(SAVED_VIEW_HREF)
 const SAVED_RETURN_STATE = seedsReturnState(SAVED_VIEW_HREF)
 // The stage sheet's two parent-write failures (V5-SEEDMULTIPARENT-001 release 2b, contract O-2).
 const STAGE_PARENT_FAILED = 'Stage saved, but the parent plant did not.'
-const STAGE_PARENT_MULTI = 'This jar already has more than one plant. Open the jar to change its plants.'
+const STAGE_PARENT_MULTI = 'This lot already has more than one plant. Open the lot to change its plants.'
 // BUG-SEEDLOTOPENSATFORM-001 — "Set parent plant →" is an EDIT door: it opens the lot's page to set one
 // field, so it names that part beside the return state and the page lands on its "Saved from" card.
 // The card titles open the same page to look at the lot, so they add nothing and it opens at its top.
@@ -261,7 +261,7 @@ const FERMENT_URGENCY = {
     tone: 'danger', ink: P.severityUrgent, border: P.alertBorder,
     // "By", not "Past": days are calendar days in Eastern now (BUG-SEEDSOWRELDAY-001), so day 5 can
     // arrive ~96h in, and "past 5 days" overstated it.
-    badge: 'Overdue', note: 'By day 5 the seed can sprout in the jar.',
+    badge: 'Overdue', note: 'By day 5 the seed can sprout.',
   },
 }
 

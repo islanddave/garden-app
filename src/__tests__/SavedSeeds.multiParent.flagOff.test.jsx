@@ -103,7 +103,7 @@ describe('flag off — the Saved seeds card is the pre-release card', () => {
     expect(patch[0]).toBe('/api/inventory-items/inv-1/source-plant')
     expect(JSON.parse(patch[1].body)).toEqual({ source_plant_id: 'pl-sungold' })
     await waitFor(() => expect(document.body.textContent).toContain(no.body.error))
-    expect(document.body.textContent).not.toContain('This jar already has more than one plant')
+    expect(document.body.textContent).not.toContain('This lot already has more than one plant')
   })
 })
 
