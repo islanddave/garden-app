@@ -478,9 +478,9 @@ describe('Put something up — the item route', () => {
     expect(second.onExists).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('door-what-name').value).toBe('Eggs')
     expect(screen.getByTestId('door-save').disabled).toBe(false)
-    // The key that names "Oat milk" is KEPT, with what went out under it: the draft still holds both.
-    await waitFor(() => expect(draft()).toMatchObject({ key: keys()[0], what: { name: 'Eggs' } }))
-    expect(draft().sent).toHaveLength(2)
+    // The key that names "Oat milk" is KEPT by the door that is open: the Saves below go out under it. The STORED
+    // draft ended with the refusal and is not written back (pre-promote I-1; PutUpSpentKey.test.jsx).
+    await waitFor(() => expect(draft()).toBeNull())
     save()
     await waitFor(() => expect(posts()).toHaveLength(3))
     await waitFor(() => expect(screen.getByTestId('door-save').disabled).toBe(false))
@@ -492,7 +492,8 @@ describe('Put something up — the item route', () => {
     expect(new Set(keys()).size).toBe(1)                                       // ZERO creates under a new key
     expect(otherWrites()).toEqual([])
     expect(second.onSaved).not.toHaveBeenCalled()
-    expect(draft()).toMatchObject({ key: keys()[0], what: { name: 'Eggs' } })
+    expect(screen.getByTestId('door-what-name').value).toBe('Eggs')
+    expect(draft()).toBeNull()
   })
 
   // QA Q3 (D4). The first body never reached the server; the changed one landed with its answer lost; the door
@@ -630,8 +631,15 @@ describe('Put something up — the item route', () => {
     expect(onSaved).not.toHaveBeenCalled()
     expect(onExists).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('door-notes').value).toBe('the second carton')
-    await waitFor(() => expect(draft()).toMatchObject({ key: keys()[0], notes: 'the second carton' }))
-    expect(draft().sent).toHaveLength(2)
+    // KEPT by the door that is open: Save again goes out under it. The stored draft ended with the refusal
+    // (pre-promote I-1; PutUpSpentKey.test.jsx).
+    await waitFor(() => expect(draft()).toBeNull())
+    save()
+    await waitFor(() => expect(posts()).toHaveLength(3))
+    await waitFor(() => expect(screen.getByTestId('door-save').disabled).toBe(false))
+    expect(new Set(keys()).size).toBe(1)
+    expect(otherWrites()).toEqual([])
+    expect(draft()).toBeNull()
   })
 
   it('B1 — the same door, but the item was made longer ago than the bound (the sheet sat open): NOTHING is written', async () => {

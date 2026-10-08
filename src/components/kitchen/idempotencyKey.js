@@ -49,6 +49,14 @@ export function mintKey() {
 // A REFUSAL NEVER LETS GO OF THE KEY. After 'stale' or 'fixed' the sheet keeps its key and `sent`: Save again
 // replays and is refused again — it can never be a second row. Only the draft's own end retires a key.
 //
+// 'stale' IS THE STORED DRAFT'S END (pre-promote I-1). It is only ever said to a replay, so the first Save
+// landed and the draft has done its job: a sheet that keeps its key in a stored draft (Put something up, the
+// recipe sheet) takes that draft out of storage at the refusal and does not write it back. The sheet that is
+// open is as above; the one opened next — after a close, or a reload with no close — is clean, has no key, and
+// mints one for what is typed there as for any new thing. A draft whose answer was lost and has not been
+// refused is not touched: it restores with its key, which is what stops a second row. The sheets that hold
+// the key in memory only (the Walk, Save as recipe, How it was made) end it when they are left, as before.
+//
 // THE ROW ALREADY HOLDS IT (`holds`). Before any of that, the sheet reads the row the replay answered with:
 // when it holds exactly what is on screen (the fields he chose — each sheet says what it compares) there is
 // nothing to put on it and nothing to refuse. That is a save: no write, and the sheet completes as one.

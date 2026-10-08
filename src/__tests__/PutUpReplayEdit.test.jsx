@@ -448,9 +448,9 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     expect(screen.getByTestId('recipe-save').disabled).toBe(false)
     expect(screen.getByTestId('recipe-sheet-error').getAttribute('role')).toBe('alert')
     await waitFor(() => expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(true))
-    // The key that names "Mojo" is KEPT, with what went out under it: the draft still holds both.
-    await waitFor(() => expect(draft()).toMatchObject({ key: keys(PATH)[0], name: 'Chimichurri', notes: 'parsley, not cilantro' }))
-    expect(draft().sent).toHaveLength(2)
+    // The key that names "Mojo" is KEPT by the sheet that is open: the Saves below go out under it. The STORED
+    // draft ended with the refusal and is not written back (pre-promote I-1; PutUpSpentKey.test.jsx).
+    await waitFor(() => expect(draft()).toBeNull())
     for (const nth of [3, 4]) {
       on.length = 0
       await save()
@@ -461,7 +461,8 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     expect(new Set(keys(PATH)).size).toBe(1)                                   // ZERO creates under a new key
     expect(otherWrites(PATH)).toEqual([])
     expect(second.onSaved).not.toHaveBeenCalled()
-    expect(draft()).toMatchObject({ key: keys(PATH)[0], name: 'Chimichurri' })
+    expect(screen.getByTestId('recipe-name').value).toBe('Chimichurri')
+    expect(draft()).toBeNull()
   })
 
   // QA Q3 (D4). The first body never reached the server; the changed one landed with its answer lost; the sheet
