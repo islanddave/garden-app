@@ -328,7 +328,7 @@ describe('the sentence — putSomethingUp.js replayJarFixedText', () => {
     const jar = rawJar(BODY)
     expect(replayJarFixedText(jar, 'place', { now: NOW })).toBe('Already in the Pantry as “Corn” — an earlier Save went through. It can\'t be moved from here, and where it is now can\'t be picked here. To change it, open it in the Pantry.')
     expect(replayJarFixedText({ ...jar, package_count: null }, 'size', OPTS)).toBe('Already in the Pantry as “Corn” — an earlier Save went through. Its size and how many can\'t be changed from here. To change it, open it in the Pantry.')
-    expect(replayJarFixedText({ ...jar, preserved_at: null, preserved_at_precision: null }, 'when', OPTS)).toBe('Already in the Pantry as “Corn” — an earlier Save went through. The date it was put up can\'t be changed once it is saved. To change it, open it in the Pantry.')
+    expect(replayJarFixedText({ ...jar, preserved_at: null, preserved_at_precision: null }, 'when', OPTS)).toBe('Already in the Pantry as “Corn” — an earlier Save went through. The date it was put up can\'t be changed once it is saved. To change anything else on it, open it in the Pantry.')
   })
   it('the two the item route already says read a jar\'s name (its label) the same way — and say "an earlier Save", never "the first" (QA M-7)', () => {
     const jar = rawJar(BODY)

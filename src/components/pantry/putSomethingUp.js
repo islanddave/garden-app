@@ -548,7 +548,7 @@ export function replayJarFixedText(jar, part, { now = new Date(), placeLabel = n
   if (part === 'when') {
     const unsure = jar?.preserved_at_precision === 'unknown'
     const words = unsure ? '“Not sure”' : putUpDateWords(dayOf(jar?.preserved_at), jar?.preserved_at_precision ?? null, { approx: jar?.preserved_at_approx === true, now })
-    if (!words) return `${as} ${went} The date it was put up can't be changed once it is saved. ${inPantry}`
+    if (!words) return `${as} ${went} The date it was put up can't be changed once it is saved. To change anything else on it, open it in the Pantry.`
     return `${as}, ${unsure ? 'with the date “Not sure”' : `put up ${words}`} ${went} That date can't be changed once it is saved. Set the date back to ${words} ${go}`
   }
   if (part === 'place') {
