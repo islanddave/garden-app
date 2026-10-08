@@ -61,6 +61,20 @@ compares the test-ID digest of each unit pass and, when two differ, says whether
 or only the states. It prints the `runs-on` labels of each side, and lists each `ci-next.yml` job's wait for a
 runner against the plan's threshold (a job over 120 s in 3 of 10 runs).
 
+The counting window opens at `COUNT_FROM_SHA`, a constant in the script:
+`b6af3c36ffc505ce4fe1b1fb64bbd6081f6e541a`, the first dev SHA whose `ci-next.yml` unit legs run vitest's `node`
+project (the A3 trial). Every push before it prints as BEFORE-WINDOW and is in no tally, including every row that
+counted and the two that were EXEMPT under the window it replaces (from `1564c5647f`). Any later change to what a
+`ci-next.yml` leg runs moves the constant to that change's pushed head SHA, in a commit after it; the header of
+`.github/workflows/ci-next.yml` lists what counts as such a change.
+
+Two equal digests are TEST-IDS-EQUAL only when the notices also show that the shadow ran the node project and
+`ci.yml` did not: `node_files` above 0 on the leg and exactly 0 on `ci.yml`. Equal digests without that are
+TEST-IDS-VACUOUS, and the row says which it is: the shadow's `node_files` is 0 or missing (the key did nothing, so
+both sides ran jsdom-everything), `ci.yml`'s is above 0 (both sides switched), or `ci.yml`'s is missing. VACUOUS
+blocks on a green row and on a row red on both sides alike; no skipped step exempts it. Digests that differ are
+TEST-IDS-DIFFER whatever `node_files` reads.
+
 A SHA red on both sides is agreement only when both went red at the same step, which the script reads from the job
 steps of the attempt it judges: `ci.yml` failed exactly one step, a `ci-next.yml` leg failed that step, and no leg
 is red at a step `ci.yml` ran and passed. Each SHA with a verdict on both sides is then worth one of three things:
@@ -79,7 +93,7 @@ is red at a step `ci.yml` ran and passed. Each SHA with a verdict on both sides 
   that failed the same step is still required, and a SHA judged with a leg left out is EXEMPT at best, never one of
   the 10; its line names the legs and the run that cancelled them.
 - **BLOCKS**: a DISAGREE; red on both sides where the failing step cannot be read (a job with no steps, a shadow
-  run with no leg) or is read and differs; a TEST-IDS-DIFFER; a digest absent for any other reason (the pass ran
+  run with no leg) or is read and differs; a TEST-IDS-DIFFER; a TEST-IDS-VACUOUS; a digest absent for any other reason (the pass ran
   and left no usable notice, the shadow lacks what the serial job has, the format versions differ). The row prints
   why.
 
@@ -94,7 +108,10 @@ How a cancelled run is read, and why that cannot hide a disagreement, is in the 
 `--json` (`schema_version` 2) carries the same reading. Per SHA: `counted` (a verdict on both sides, inside the
 window), `acceptance` (`QUALIFIES`, `EXEMPT`, `BLOCKS`, or null when not counted) and `acceptance_why`; the facts
 they rest on, `ci_failed_steps`, `ci_ran_steps`, `next_legs`, `next_red_legs`, `next_superseded_legs` (each leg the
-next push cancelled, with `superseded_by`, that run's id); and per pass in `test_ids`, `ci_step` and `next_step`, the conclusion of the step that runs the pass on each side. `acceptance` holds `met`, `missing`,
+next push cancelled, with `superseded_by`, that run's id); and per pass in `test_ids`, `ci_step` and `next_step`, the conclusion of the step that runs the pass on each side, and `ci_node_files` and `next_node_files`, each side's
+`node_files` (a number, or null when that side has no usable notice or its notice has no such count). A pass's
+`class` is `EQUAL`, `DIFFER`, `VACUOUS` or `ABSENT`, and `summary.test_ids` counts each. `schema_version` stayed 2
+when `VACUOUS` and the two `node_files` fields were added: no field that was there changed what it means. `acceptance` holds `met`, `missing`,
 `counted`, `qualifying` (the number set against the 10), `counted_red` (qualifying SHAs red on both sides), `exempt`
 (SHAs) and `blocking` (`sha` and `why`). `summary.window_met` is `qualifying >= 10`.
 Tested in `scripts/test_shadow_agree.py` against the replies recorded under `scripts/fixtures/shadow-agree/`.
@@ -108,6 +125,14 @@ of the names without their states. `node_files` is how many of the files ran in 
 trial, `.github/workflows/ci-next.yml`): above 0 in ci-next's unit legs, 0 in ci.yml's passes. It cannot fail a run. The list itself is not stored anywhere: two runs can be
 told apart, and how they differ, but not which test. Tested in `vitest-test-ids-reporter.test.js`, which also asks
 the installed vitest for its default reporters and holds `vitest.config.ts` to restating exactly those.
+
+`vitest-node-project.mjs` says which test files that `node` project runs: the `*.test.*` files under `lambda/`,
+`scripts/`, `migrations/` and `tests/parity/` that load nothing under `src/`. `vitest.config.ts` builds both
+projects from its `nodeProjectFiles()`. `LOADS_SRC` in it is the sorted list of test files under those roots that
+do load SPA code and so stay in the `dom` project. `vitest-projects.test.js` holds the list to the tree in both
+directions: it follows the imports of every node-project file and fails, with the chain, when one reaches `src/`
+and is not listed; and it fails when a listed file no longer does. When it asks for a file to be added, add the
+path to `LOADS_SRC` in sorted order.
 
 `coverage-rows.py SERIAL_LOG SHADOW_LOG` is the A3 trial's coverage comparison. Neither workflow uploads a coverage
 artefact, so it reads the coverage table out of two unit-pass job logs of one commit
