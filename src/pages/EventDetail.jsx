@@ -36,7 +36,8 @@ import { PROJECTS_HIDDEN, EVENT_REANCHOR_ENABLED, WATER_DEPTH_EDIT_ENABLED } fro
 // V4-WATERMATH-001 F0 — the amount class is correctable from history (flag-gated; see featureFlags).
 import WaterDepthChips from '../components/WaterDepthChips.jsx'
 import {
-  isWaterDepthType, readWaterDepth, waterDepthMetadata, waterDepthLabel,
+  isWaterDepthType, isWaterDepth, readWaterDepth, waterDepthMetadata, waterDepthLabel,
+  WATER_DEPTH_DEFAULT,
 } from '../lib/waterDepth.js'
 // BUG-HARVESTEDIT-001: the SAME constants the create form uses. The unit list also mirrors
 // harvest_log_unit_check in the database, so an option here that Postgres would reject cannot exist.
@@ -303,6 +304,10 @@ export default function EventDetail() {
       // written before capture shipped) seeds to the default — the same value the engine fold
       // already assumes for it — so opening the editor never silently reclassifies anything.
       water_depth: readWaterDepth(event.metadata),
+      // BUG-WATERDEPTHSINGLEEVENT-001: did the gardener tap a chip in THIS edit. The seeded class
+      // above is only what the chips show; this is what decides whether the save may claim a
+      // choice. A form field (not separate state) so the dirty guard below sees a same-class tap.
+      water_depth_touched: false,
     }
     setForm(seeded)
     // Same object into both — the guard below compares by value, and every field here is a
@@ -433,6 +438,18 @@ export default function EventDetail() {
           if (String(form[k] ?? '').trim() === '' && event[k] != null) clearKeys.push(k)
         }
       }
+      // BUG-WATERDEPTHSINGLEEVENT-001: what this save says about the amount class, or null to say
+      // nothing. Tapped => the tapped class as a choice. Untouched => nothing, with one exception:
+      // an event re-typed INTO watering that carries no class is a watering being made here, so it
+      // gets what every unchosen create writes (useCareActions: default class, source 'default').
+      // A stored watering with no class stays bare — stamping it here would be a backfill the
+      // gardener never asked for, and the ledger fold already reads absent as the default.
+      const depthApplies = WATER_DEPTH_EDIT_ENABLED && isWaterDepthType(form.event_type)
+      const becameWatering = !isWaterDepthType(event.event_type) && !isWaterDepth(event.metadata?.water_depth)
+      const depthFragment = !depthApplies ? null
+        : form.water_depth_touched ? waterDepthMetadata(form.water_depth, true)
+        : becameWatering ? waterDepthMetadata(WATER_DEPTH_DEFAULT, false)
+        : null
 
       const updated = await fetch('/api/events/' + eventId, {
         method: 'PUT',
@@ -468,12 +485,16 @@ export default function EventDetail() {
             : {}),
           // V4-WATERMATH-001 F0: sent as a MERGE over the row's existing metadata, never as a
           // replacement — this form renders exactly one metadata key and must not null the rest
-          // (the same rule the `clear` channel above exists to enforce for columns). An edited
-          // class is always source='user': the default only ever writes itself at creation.
-          ...(WATER_DEPTH_EDIT_ENABLED && isWaterDepthType(form.event_type)
+          // (the same rule the `clear` channel above exists to enforce for columns).
+          // BUG-WATERDEPTHSINGLEEVENT-001: source='user' ONLY when a chip was tapped in this edit
+          // (tapping the stored class counts — a tap is a choice). Otherwise the key is ABSENT,
+          // which the PUT's has-key grammar reads as "keep the column byte-identical": a note-only
+          // edit can no longer turn a one-tap `normal/default` row, or a bare legacy row, into a
+          // claimed choice. See depthFragment above for the one untouched case that still writes.
+          ...(depthFragment
             ? { metadata: {
                 ...(event.metadata && typeof event.metadata === 'object' ? event.metadata : {}),
-                ...waterDepthMetadata(form.water_depth, true),
+                ...depthFragment,
               } }
             : {}),
           ...(clearKeys.length ? { clear: clearKeys } : {}),
@@ -741,7 +762,7 @@ export default function EventDetail() {
               </label>
               <WaterDepthChips
                 value={form.water_depth}
-                onChange={v => setForm(f => ({ ...f, water_depth: v }))}
+                onChange={v => setForm(f => ({ ...f, water_depth: v, water_depth_touched: true }))}
                 idPrefix="ev-water-depth"
               />
             </div>
