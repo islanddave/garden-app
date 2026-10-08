@@ -1054,6 +1054,11 @@ export default function PlantingDetail() {
           (V5-SEEDSTAB-001) — so it reports nothing through onLogged, which is for EVENTS here. */}
       <QuickActions
         planting={pl}
+        // V5-SEEDLOTADDITION-001 — the sheet offers this planting's own open lot by name, from the
+        // list this page already read. After seed went into one: read the lots again (the row's
+        // count moved) and refetch the events (the addition's timeline entry). The page stays put.
+        ownLots={seedLots.lots}
+        onSeedAdded={() => { seedLots.reload(); setRefreshKey(k => k + 1) }}
         onLogged={(ev) => {
           setRefreshKey(k => k + 1)
           // Optimistic field updates so the UI reacts before the next full record load; the reload

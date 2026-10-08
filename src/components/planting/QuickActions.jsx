@@ -76,7 +76,9 @@ const seedBtn = {
   backgroundColor: P.white, color: P.green,
 }
 
-export default function QuickActions({ planting, onLogged }) {
+// V5-SEEDLOTADDITION-001 — `ownLots` and `onSeedAdded` pass straight through to SaveSeedSheet: the
+// planting's own seed lots as its page read them, and what the page does after seed went into one.
+export default function QuickActions({ planting, onLogged, ownLots, onSeedAdded }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
   const [watering, setWatering] = useState(false)
@@ -292,7 +294,10 @@ export default function QuickActions({ planting, onLogged }) {
       </button>
 
       {seedOpen && (
-        <SaveSeedSheet planting={planting} onClose={() => setSeedOpen(false)} />
+        <SaveSeedSheet
+          planting={planting} onClose={() => setSeedOpen(false)}
+          ownLots={ownLots} onSeedAdded={onSeedAdded}
+        />
       )}
     </div>
   )

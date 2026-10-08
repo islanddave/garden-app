@@ -20,7 +20,7 @@
 // different and worse claim than "we could not check" — it is the one answer that makes a user stop
 // looking for a lot they really do have. So `failed` is surfaced as its own state and the page
 // treats it as content: heading, card, and a line that says the check did not complete.
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -56,13 +56,33 @@ export function mixedWithLine(others) {
   return `Mixed with seed from ${others.length} other plantings`
 }
 
-// { lots, failed, loading }. `loading` renders as nothing at all rather than as a skeleton: the
+// { lots, failed, loading, reload }. `loading` renders as nothing at all rather than as a skeleton: the
 // section has no reserved space on the page, so a placeholder would be a block appearing and
 // disappearing above the fold on every planting.
+//
+// V5-SEEDLOTADDITION-001 — `reload()` reads the lots again, for the planting page after seed went into
+// one of them. The rows on screen stay until the new ones land (no `loading`, so nothing blinks), and
+// a reload that fails leaves them as they were: they were true a moment ago, and "couldn't check" over
+// a list the user just watched would be the worse claim.
 export function useSeedLotsFromPlanting(plantingId, fetch) {
   const [lots, setLots] = useState([])
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
+  const [again, setAgain] = useState(0)
+  const reload = useCallback(() => setAgain((n) => n + 1), [])
+
+  useEffect(() => {
+    if (!plantingId || again === 0) return
+    let cancelled = false
+    Promise.resolve(fetch(`/api/plants/${plantingId}/seed-lots`))
+      .then(data => {
+        if (cancelled || !Array.isArray(data?.seed_lots)) return
+        setLots(data.seed_lots)
+        setFailed(false)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [again]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!plantingId) return
@@ -78,7 +98,7 @@ export function useSeedLotsFromPlanting(plantingId, fetch) {
     return () => { cancelled = true }
   }, [plantingId, fetch])
 
-  return { lots, loading, failed }
+  return { lots, loading, failed, reload }
 }
 
 // True when the section is worth a heading: something to show, or something to admit.
