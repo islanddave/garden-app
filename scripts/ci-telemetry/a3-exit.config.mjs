@@ -12,7 +12,8 @@
 // passed on as it is (plugins, esbuild, resolve.alias: the Lambda dependency stubs the handlers need to load). From
 // its `test` block: globals, testTimeout, exclude and env. Left behind on purpose: environment, setupFiles and
 // projects (the thing under comparison), reporters (the CI test-ID notice) and coverage (its include, reporters and
-// thresholds measure the SPA and gate `npm test`).
+// thresholds measure the SPA and gate `npm test`). Both lists are in ./a3-exit-carry.mjs, and a key of that block
+// that is in neither stops this config: a setting added there later is carried or left behind in writing.
 //
 // ONE FILE IS LEFT OUT BY NAME, in both environments: scripts/ci-telemetry/vitest-projects.test.js. Its first test
 // holds this very thing, that a file has no DOM only where the trial's env key is set AND the project is named
@@ -29,10 +30,14 @@
 //
 // A3_EXIT_CONTROL=1 (jsdom only) runs ./a3-exit.control.mjs alone: one test that imports nothing. With WIDE its
 // coverage file names exactly the modules the repo setup file loads, which a3-exit.py e2 takes as --setup-loads.
+//
+// A3_EXIT_FIXTURE=1 (either environment) runs ./a3-exit.fixture.mjs alone: tests with known assertion counts.
+// ./a3-exit-fixture.test.js does that and holds the tests.jsonl it gets; a3-exit.sh never sets it.
 import { fileURLToPath } from 'node:url'
 import base from '../../vitest.config.ts'
 import { nodeProjectFiles } from './vitest-node-project.mjs'
 import Recorder from './a3-exit-recorder.mjs'
+import { carry } from './a3-exit-carry.mjs'
 
 const repo = fileURLToPath(new URL('../..', import.meta.url)).replace(/\/$/, '')
 const here = 'scripts/ci-telemetry'
@@ -48,7 +53,10 @@ if (!out || !out.startsWith('/')) {
 }
 const control = process.env.A3_EXIT_CONTROL === '1'
 if (control && mode !== 'jsdom') throw new Error('A3_EXIT_CONTROL=1 is for A3_EXIT_ENV=jsdom: node has no setup file')
+const fixture = process.env.A3_EXIT_FIXTURE === '1'
+if (control && fixture) throw new Error('A3_EXIT_CONTROL=1 and A3_EXIT_FIXTURE=1 each run one file alone: set one')
 const wide = process.env.A3_EXIT_WIDE === '1'
+const alone = control ? `${here}/a3-exit.control.mjs` : fixture ? `${here}/a3-exit.fixture.mjs` : null
 
 const files = nodeProjectFiles(repo)
 if (!files.includes(LEFT_OUT)) {
@@ -61,15 +69,12 @@ export default {
   ...outsideTest,
   root: repo,
   test: {
-    globals: baseTest.globals,
-    testTimeout: baseTest.testTimeout,
-    exclude: baseTest.exclude,
-    env: baseTest.env,
+    ...carry(baseTest),
     environment: mode,
     // The counter first in both modes, so the only difference between them is the repo setup file.
     setupFiles: [`./${here}/a3-exit-count.mjs`, ...(mode === 'jsdom' ? ['./src/__tests__/setup.ts'] : [])],
-    include: control ? [`${here}/a3-exit.control.mjs`] : files.filter((file) => file !== LEFT_OUT),
-    reporters: ['dot', new Recorder({ out, mode, leftOut: control ? [] : [LEFT_OUT] })],
+    include: alone ? [alone] : files.filter((file) => file !== LEFT_OUT),
+    reporters: ['dot', new Recorder({ out, mode, leftOut: alone ? [] : [LEFT_OUT] })],
     coverage: wide
       ? { enabled: true, provider: 'v8', reporter: ['json'], reportsDirectory: `${out}/coverage` }
       : { enabled: false },

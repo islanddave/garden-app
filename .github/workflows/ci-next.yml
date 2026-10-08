@@ -71,8 +71,9 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 #   - two one-off checks made when the trial was entered, to be made again at the last counted SHA: every
 #     node-project test makes the same number of assertions under jsdom as under node, and the statements, functions
 #     and branch arms covered in every module those tests load are the same (E1 and E2 of claude-ops
-#     token-diet/analysis-20261007/rereview/06-a3trial-qa/rereview-output.md; `scripts/ci-telemetry/a3-exit.sh
-#     OUT_DIR` makes both at the current checkout and prints E1-SAME / E2-SAME or what differs).
+#     token-diet/analysis-20261007/rereview/06-a3trial-qa/rereview-output.md). `scripts/ci-telemetry/a3-exit.sh
+#     OUT_DIR` makes both at the current checkout, on the Node of .nvmrc and a clean tree. They are met when its
+#     last line is `A3-EXIT-PASS` (exit 0), and not when it is `A3-EXIT-FAIL (e1=…, e2=…, red=…, node=…, tree=…)`.
 # Before the key can be removed and the two projects become the only shape (none of this blocks reading the trial):
 #   - the exit list, as commands, is "Exit" in gardening-docs
 #     project-state/_promotepath-20261002/review-a3trial-qa-20261007.md. The owner declares the exit on the output
