@@ -36,8 +36,9 @@
 // page's name field and its baseline, so the page's own Save cannot write the old name back. `notice` is
 // optional: one line the page wants said in this card's help slot (the legacy write's "changed somewhere
 // else", from the moment the set first became readable). Anything this card has to say comes first.
-// `storedName` is the jar's name as SAVED: an entry's note is permanent, so it never quotes a name that
-// is only typed.
+// `storedName` is the jar's name as LAST SAVED (the page's baseline, which its own Save and a re-file
+// both move): an entry's note is permanent, so it never quotes a name that is only typed, nor the name
+// the page loaded with once a rename has been saved.
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
@@ -99,15 +100,36 @@ function automaticYear(varietyName, name) {
   return shown.slice(-4)
 }
 
+// The planting's live entries, ALL of them. The route answers its newest 200 by entry date, and an
+// entry an add writes is dated the jar's start day, so on a busy planting it sits past the first page
+// from the moment it is written (prod 2026-10-08: two plantings over 200, the busiest at 246). The
+// first request is the one this card has always sent (a bare array); only a full page asks for more,
+// by `offset`, which the route answers as { events, has_more }. `fromCache` is the first reply's mark.
+const EVENTS_PAGE = 200
+// 5,000 entries: no planting is near it, and a route that kept answering full pages must not spin.
+const EVENTS_MAX_PAGES = 25
+async function plantEntries(fetch, plantId) {
+  const base = `/api/events?plant_id=${encodeURIComponent(plantId)}&limit=${EVENTS_PAGE}`
+  const first = await fetch(base)
+  const fromCache = first?.[FROM_CACHE] === true
+  const list = (Array.isArray(first) ? first : Array.isArray(first?.events) ? first.events : []).slice()
+  let more = !fromCache && list.length >= EVENTS_PAGE
+  for (let page = 1; more && page < EVENTS_MAX_PAGES; page += 1) {
+    const next = await fetch(`${base}&offset=${page * EVENTS_PAGE}`)
+    const rows = Array.isArray(next?.events) ? next.events : Array.isArray(next) ? next : []
+    list.push(...rows)
+    more = next?.has_more === true && rows.length > 0
+  }
+  return { list, fromCache }
+}
+
 // O-11 — withdraw a removed plant's `seed_saved` entries for this jar. Fired once, never awaited, every
 // failure silent: the entry links to the jar, which shows the live answer, so a missed withdrawal is a
-// stale line and not a wrong one. The list is the planting's own, capped at 200 by the route; none
-// found is success.
+// stale line and not a wrong one. None found is success.
 function withdrawSeedSaved(fetch, plantId, lotId) {
   Promise.resolve()
-    .then(() => fetch(`/api/events?plant_id=${encodeURIComponent(plantId)}&limit=200`))
-    .then((rows) => {
-      const list = Array.isArray(rows) ? rows : Array.isArray(rows?.events) ? rows.events : []
+    .then(() => plantEntries(fetch, plantId))
+    .then(({ list }) => {
       for (const ev of list) {
         if (!isSeedSavedFor(ev, lotId)) continue
         Promise.resolve()
@@ -135,14 +157,13 @@ export function lotStartDay(lot) {
 // V5-SEEDLOTADDENTRY-001 — the `seed_saved` entry for a plant added from this page. Resolves to the id
 // of the entry it wrote, or null when it wrote none: the plant still has a live one for this jar, the
 // list came from the offline copy (which cannot say, and with no network the write fails anyway), or
-// anything failed. Never rejects and says nothing: the plant is on the jar either way. Same list and
-// the same 200 cap as the withdrawal.
+// anything failed (a later page included: a list it could not finish is a list that cannot say).
+// Never rejects and says nothing: the plant is on the jar either way. Same list as the withdrawal.
 function writeSeedSaved(fetch, plantId, lotId, day, note) {
   return Promise.resolve()
-    .then(() => fetch(`/api/events?plant_id=${encodeURIComponent(plantId)}&limit=200`))
-    .then((rows) => {
-      if (rows?.[FROM_CACHE] === true) return null
-      const list = Array.isArray(rows) ? rows : Array.isArray(rows?.events) ? rows.events : []
+    .then(() => plantEntries(fetch, plantId))
+    .then(({ list, fromCache }) => {
+      if (fromCache) return null
       if (list.some((ev) => isSeedSavedFor(ev, lotId))) return null
       return fetch('/api/events', {
         method: 'POST',

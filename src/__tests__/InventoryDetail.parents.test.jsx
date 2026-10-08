@@ -526,8 +526,10 @@ describe('Saved from — leaving the page', () => {
 // writes one `seed_saved` entry per parent; a plant added on this page got none, so remove, leave and
 // add again left it a parent with no line and its date gone.
 describe('Saved from — the timeline entry an add writes', () => {
-  // Midday UTC: the same local day on any runner.
+  // 16:00Z is the same local day in both CI zones (UTC and America/New_York) and on the author's Mac.
+  // It is the next day from UTC+8 eastward; the evening case below is the one that tells zones apart.
   const STARTED = '2026-10-06T16:00:00.000Z'
+  const CHANGED = 'This jar changed somewhere else just now. This is the latest. Try again if it still needs changing.'
   const thisJars = (id = 'ev-first') => ({ id, event_type: 'seed_saved', event_date: '2026-10-06', metadata: { seed_lot_id: ID } })
   const nameField = () => screen.getByLabelText('Name')
 
@@ -568,6 +570,153 @@ describe('Saved from — the timeline entry an add writes', () => {
     await addFromPicker(P3)
     await waitFor(() => expect(eventPosts()).toHaveLength(1))
     expect(bodyOf(eventPosts()[0]).notes).toBe('Seed lot "Saved A1 jar".')
+  })
+
+  // Review RF-01 / Q1: the page's Save moves its baseline, not `item`, so the name as loaded is stale
+  // once a rename has been saved.
+  it('a name SAVED on this visit, then an add: the note quotes the name as saved', async () => {
+    itemRef.current = jar({ created_at: STARTED })
+    await renderPage()
+    await act(async () => { fireEvent.change(nameField(), { target: { value: 'Renamed and saved' } }) })
+    await click(screen.getByText('Save changes'))
+    await waitFor(() => expect(screen.getByText('✓ Saved')).toBeTruthy())
+    expect(nameField().value).toBe('Renamed and saved')
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(bodyOf(eventPosts()[0]).notes).toBe('Seed lot "Renamed and saved".')
+  })
+
+  // Q4: a one-plant lot whose parent is corrected goes through the FIRST picker, onto an empty set.
+  it('the first picker on a lot with no parents writes the entry too', async () => {
+    itemRef.current = jar({ created_at: STARTED, source_plants: [], source_plant_id: null })
+    await renderPage()
+    fireEvent.focus(screen.getByTestId('source-plant-select'))
+    await waitFor(() => expect(screen.getByTestId(`ps-opt-${P1.id}`)).toBeTruthy())
+    await click(screen.getByTestId(`ps-opt-${P1.id}`))
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(setBodies()[0]).toMatchObject({ source_plant_ids: [P1.id], expected_source_plant_ids: [] })
+    expect(bodyOf(eventPosts()[0])).toEqual({
+      plant_id: P1.id, event_type: 'seed_saved', event_date: '2026-10-06',
+      notes: 'Seed lot "Saved A1 jar".', metadata: { seed_lot_id: ID },
+    })
+  })
+
+  // Q2: 01:30Z is the evening before in America/New_York (the unit-ny job) and the same day in UTC, so
+  // dating by the UTC day turns this red there.
+  it('a lot started late in the evening is dated its LOCAL day', async () => {
+    const LATE = '2026-10-07T01:30:00.000Z'
+    const d = new Date(LATE)
+    const pad = (n) => String(n).padStart(2, '0')
+    const localDay = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    itemRef.current = jar({ created_at: LATE })
+    await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(bodyOf(eventPosts()[0]).event_date).toBe(localDay)
+  })
+
+  // Q3: the entry goes when the page is LEFT with the row still struck, never at the remove tap.
+  it('add, remove, Undo, leave: the plant is on the lot and keeps the entry the add wrote', async () => {
+    const view = await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    await click(removeButton(P3))
+    await waitFor(() => expect(undoButton(P3)).toBeTruthy())
+    pastTheGuard()
+    await click(undoButton(P3))
+    await waitFor(() => expect(liveRows()).toHaveLength(3))
+    view.unmount()
+    await act(async () => { await Promise.resolve() })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(eventDeletes()).toHaveLength(0)
+    expect(routes.events[P3.id]).toHaveLength(1)
+  })
+
+  // Q9(a), contract O-11a: known and filed (V5-SEEDR2BFOLLOWUPS-001). Stated so a change either way shows.
+  it('an add that landed with its reply lost: the plant is on the lot and gets no entry', async () => {
+    routes.put = (body) => { storeSet(body); return Promise.reject(Object.assign(new Error('Request timed out'), { status: 0, timeout: true })) }
+    await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(help()).toBe(CHANGED))
+    await act(async () => { await Promise.resolve() })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(rowOf(P3)).toBeTruthy()
+    expect(eventPosts()).toHaveLength(0)
+  })
+
+  // Review RF-02 / Q11. The route answers the newest 200 by entry date; an entry dated the jar's start
+  // day sits past them on a busy planting (prod 2026-10-08: two plantings over 200).
+  describe('a planting with more than 200 entries', () => {
+    const filler = (n) => Array.from({ length: n }, (_, i) => ({ id: `ev-w-${i}`, event_type: 'watering', event_date: '2026-10-07' }))
+    // The route as the server answers it: a bare newest-200 with no offset, the envelope with one.
+    const paged = (all) => {
+      const original = fetchSpy.getMockImplementation()
+      fetchSpy.mockImplementation((path, opts) => {
+        const p = String(path)
+        if (!p.startsWith('/api/events?') || opts?.method) return original(path, opts)
+        const q = new URLSearchParams(p.split('?')[1])
+        const rows = all()
+        if (!q.has('offset')) return Promise.resolve(rows.slice(0, 200))
+        const at = Number(q.get('offset'))
+        const page = rows.slice(at, at + 200)
+        return Promise.resolve({ events: page, limit: 200, offset: at, has_more: page.length === 200 })
+      })
+    }
+
+    it('an add reads on past the first page and writes none when the entry is there', async () => {
+      await renderPage()
+      paged(() => [...filler(200), ...filler(200).map((e) => ({ ...e, id: `b-${e.id}` })), thisJars('ev-old')])
+      await addFromPicker(P3)
+      await waitFor(() => expect(eventReads().map(([p]) => p)).toEqual([
+        `/api/events?plant_id=${P3.id}&limit=200`,
+        `/api/events?plant_id=${P3.id}&limit=200&offset=200`,
+        `/api/events?plant_id=${P3.id}&limit=200&offset=400`,
+      ]))
+      await act(async () => { await Promise.resolve() })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(eventPosts()).toHaveLength(0)
+    })
+
+    it('an add writes the entry when no page holds one', async () => {
+      await renderPage()
+      paged(() => [...filler(200), ...filler(40).map((e) => ({ ...e, id: `b-${e.id}` }))])
+      await addFromPicker(P3)
+      await waitFor(() => expect(eventPosts()).toHaveLength(1))
+      expect(eventReads()).toHaveLength(2)
+    })
+
+    it('a later page that fails writes nothing: a list it could not finish cannot say', async () => {
+      await renderPage()
+      const original = fetchSpy.getMockImplementation()
+      fetchSpy.mockImplementation((path, opts) => {
+        const p = String(path)
+        if (p.startsWith('/api/events?') && !opts?.method) {
+          return p.includes('offset=') ? Promise.reject(new Error('offline')) : Promise.resolve(filler(200))
+        }
+        return original(path, opts)
+      })
+      await addFromPicker(P3)
+      await waitFor(() => expect(eventReads()).toHaveLength(2))
+      await act(async () => { await Promise.resolve() })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(eventPosts()).toHaveLength(0)
+      expect(liveRows()).toHaveLength(3)
+      expect(help()).toBe('')
+    })
+
+    it('leaving with the row struck withdraws an entry that sits past the first page', async () => {
+      const view = await renderPage()
+      paged(() => [...filler(200), thisJars('ev-deep')])
+      await click(removeButton(P1B))
+      await waitFor(() => expect(undoButton(P1B)).toBeTruthy())
+      view.unmount()
+      await waitFor(() => expect(eventDeletes()).toHaveLength(1))
+      expect(eventDeletes()[0][0]).toBe('/api/events/ev-deep')
+      expect(eventReads().map(([p]) => p)).toEqual([
+        `/api/events?plant_id=${P1B.id}&limit=200`,
+        `/api/events?plant_id=${P1B.id}&limit=200&offset=200`,
+      ])
+    })
   })
 
   it('writes none when the plant still has a live entry for this jar', async () => {

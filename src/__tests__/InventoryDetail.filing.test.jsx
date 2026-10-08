@@ -358,6 +358,68 @@ describe('Re-file by itself — the entry an add wrote goes back with the add', 
     expect(routes.events[P2.id].map((e) => e.id)).toEqual(['ev-new-2'])
   })
 
+  // Q5: the server's row goes when the DELETE is ANSWERED. The wiring above takes it out when it is sent.
+  it('adding the plant again waits for the Undo’s DELETE to be answered, not just sent', async () => {
+    await renderPage()
+    await addFromPicker(P2)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    const original = fetchSpy.getMockImplementation()
+    let land = null
+    fetchSpy.mockImplementation((path, opts) => {
+      if (String(path).startsWith('/api/events/') && opts?.method === 'DELETE') {
+        return new Promise((resolve) => { land = () => { original(path, opts); resolve(null) } })
+      }
+      return original(path, opts)
+    })
+    await click(filedUndo())
+    await waitFor(() => expect(filedLine()).toBeNull())
+    await waitFor(() => expect(land).toBeTruthy())
+    await addFromPicker(P2)
+    await act(async () => { await Promise.resolve() })
+    await new Promise((r) => setTimeout(r, 20))
+    // Held: the re-add has not gone out, so it cannot have read a list that still holds the old entry.
+    expect(setBodies()).toHaveLength(2)
+    await act(async () => { land() })
+    await waitFor(() => expect(setBodies()).toHaveLength(3))
+    await waitFor(() => expect(eventPosts()).toHaveLength(2))
+  })
+
+  // Q6: a failed take-back is silent and never blocks the plant's next add. The stale entry stays, as a
+  // missed withdrawal's does, and the re-add sees it and writes no second one.
+  it('the Undo’s DELETE fails: nothing is said, and adding the plant again still saves', async () => {
+    await renderPage()
+    await addFromPicker(P2)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    const original = fetchSpy.getMockImplementation()
+    fetchSpy.mockImplementation((path, opts) =>
+      (String(path).startsWith('/api/events/') && opts?.method === 'DELETE'
+        ? Promise.reject(Object.assign(new Error('Internal error'), { status: 500 })) : original(path, opts)))
+    await click(filedUndo())
+    await waitFor(() => expect(filedLine()).toBeNull())
+    await waitFor(() => expect(eventDeletes()).toHaveLength(1))
+    expect(help()).toBe('')
+    await addFromPicker(P2)
+    await waitFor(() => expect(setBodies()).toHaveLength(3))
+    await waitFor(() => expect(liveRows()).toHaveLength(2))
+    await act(async () => { await Promise.resolve() })
+    expect(help()).toBe('')
+    expect(eventPosts()).toHaveLength(1)
+  })
+
+  // Q7: "an Undo writes none" holds for the "Filed as" line's Undo of a REMOVAL too.
+  it('the "Filed as" Undo of a removal reads and writes no entry', async () => {
+    itemRef.current = jarOfTwo()
+    await renderPage()
+    await click(removeButton(P2))
+    await waitFor(() => expect(filedLine()).toBeTruthy())
+    await click(filedUndo())
+    await waitFor(() => expect(liveRows()).toHaveLength(2))
+    await act(async () => { await Promise.resolve() })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(fetchSpy.mock.calls.filter(([p, o]) => String(p).startsWith('/api/events?') && !o?.method)).toHaveLength(0)
+    expect(eventPosts()).toHaveLength(0)
+  })
+
   it('an add that wrote no entry (the plant had one) has nothing to take back', async () => {
     routes.events[P2.id] = [{ id: 'ev-kept', event_type: 'seed_saved', metadata: { seed_lot_id: ID } }]
     await renderPage()
