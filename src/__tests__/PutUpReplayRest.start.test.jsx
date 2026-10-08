@@ -486,6 +486,33 @@ describe('Start a batch — a replayed create', () => {
     expect(sheet.onStarted.mock.calls[0][0]).toMatchObject({ label: 'Pepper mash, red and hot' })
   })
 
+  // Delta F-6 (the reviewer's T3, at this sheet). Three bad answers in a row: the create's (it landed), the first
+  // PUT's (it landed), the second PUT's (it never arrived). The batch holds this sheet's EARLIER PUT, and is still
+  // its own only because the sheet keeps every PUT it sent, not the last one alone.
+  it('delta F-6 (T3) — Start it lands lost; the name changed, its PUT lands lost; changed again, that PUT never arrives; Start it: the batch holds this sheet\'s EARLIER PUT — still its own — so the name goes on and it lands: one batch, one key', async () => {
+    const table = batchTable({ onPut: (n) => { if (n === 2) throw new TypeError('Failed to fetch'); return n === 1 ? 'lost' : undefined } })
+    const sheet = open()
+    type('start-label', 'Pepper mash')
+    await startIt(); await said(GENERIC)
+    type('start-label', 'Pepper mash, red')
+    await startIt()
+    await said(START_CHANGE_MAYBE)
+    type('start-label', 'Pepper mash, red and hot')
+    await startIt()
+    await answered(3)
+    await waitFor(() => expect(puts()).toHaveLength(2))
+    await said(START_CHANGE_MAYBE)
+    expect(table.row.label).toBe('Pepper mash, red')                            // the second PUT never arrived
+    await startIt()
+    await waitFor(() => expect(sheet.onStarted).toHaveBeenCalledTimes(1))
+    expect(puts().map(([, b]) => b.label)).toEqual(['Pepper mash, red', 'Pepper mash, red and hot', 'Pepper mash, red and hot'])
+    expect(table.row).toMatchObject({ id: 'kb-first', label: 'Pepper mash, red and hot' })
+    expect(sheet.onStarted.mock.calls[0][0]).toMatchObject({ id: 'kb-first', label: 'Pepper mash, red and hot' })
+    expect(keys()).toHaveLength(4)
+    expect(new Set(keys()).size).toBe(1)
+    expect(stored()).toBeNull()
+  })
+
   it('… and untouched after that lost answer: the batch already holds it — started, with no second PUT', async () => {
     batchTable({ onPut: (n) => (n === 1 ? 'lost' : undefined) })
     const sheet = open()

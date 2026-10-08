@@ -880,6 +880,34 @@ describe('Put something up — the put-up route', () => {
     expect(told(door).saved).toMatchObject({ id: 'jar-first', notes: 'the second tray, blanched' })
   })
 
+  // Delta F-6 (the reviewer's T3, at this door's put-up route). Three bad answers in a row: the create's (it
+  // landed), the first PATCH's (it landed), the second PATCH's (it never arrived). The jar holds this door's EARLIER
+  // PATCH, and is still its own only because the door keeps every update it sent, not the last one alone.
+  it('delta F-6 (T3) — Save lands lost; notes "a", its PATCH lands lost; notes "b", its PATCH never arrives; Save: the jar holds this door\'s EARLIER PATCH — still its own — so "b" goes on and it is saved: one jar, one key', async () => {
+    const table = jarTable({ onPatch: (n) => { if (n === 2) LOST(); return n === 1 ? 'lost' : undefined } })
+    const door = await openDoor()
+    corn()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'a')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    await failed(MAYBE)
+    typeInto('door-notes', 'b')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(2))
+    await failed(MAYBE)
+    expect(table.row.notes).toBe('a')                                           // the second PATCH never arrived
+    save()
+    await waitFor(() => expect(door.onSaved).toHaveBeenCalledTimes(1))
+    expect(errorText()).toBeNull()
+    expect(patches().map(c => [c.path, c.body.notes])).toEqual([[ROW, 'a'], [ROW, 'b'], [ROW, 'b']])
+    expect(table.row).toMatchObject({ id: 'jar-first', notes: 'b' })
+    expect(told(door).saved).toMatchObject({ id: 'jar-first', notes: 'b' })
+    expect(posts()).toHaveLength(4)
+    expect(new Set(keys()).size).toBe(1)
+    expect(draft()).toBeNull()
+  })
+
   it('… and untouched after that lost answer: the jar already holds it — a save, with no second PATCH', async () => {
     jarTable({ onPatch: (n) => (n === 1 ? 'lost' : undefined) })
     const door = await openDoor()
