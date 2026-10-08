@@ -1419,6 +1419,26 @@ describe('the Walk — the put-up route', () => {
     expect(band()).toBe('✓ 1 × Beans · Freeze whole')
   })
 
+  it('re-review I-E — the walk\'s place changed ("Change") after a lost answer: the jar is where it was first saved, which this walk cannot pick — nothing is written, and the line ends with the way on', async () => {
+    const table = jarTable()
+    await startWalk()
+    corn()
+    save(); await failed()
+    const before = { ...table.row }
+    tap('putup-walk-change')
+    fireEvent.click(await screen.findByRole('radio', { name: 'Chest Freezer 2' }))
+    fireEvent.click(screen.getByTestId('putup-walk-start'))
+    await screen.findByTestId('putup-walk-group')
+    expect(screen.getByTestId('walk-what-name').value).toBe('Corn')             // the group came back whole, with its key
+    save()
+    await answered(2)
+    expect(errorText()).toBe(`Already in the Pantry as “Corn” — an earlier Save went through. It can't be moved from here, and where it is now can't be picked here. To change it, open it in the Pantry.${WALK_ON}`)
+    expect(otherWrites()).toEqual([])
+    expect(table.row).toEqual(before)
+    expect(band()).toBeNull()
+    expect(new Set(keys()).size).toBe(1)
+  })
+
   // Re-review M-A, in a walk: the place is the walk's, so the line cannot send him to the place row.
   it('re-review M-A — in a walk at a freezer: As is with a typed name, its answer lost; a PLANTING picked for it (no “Fresh, as picked” at a freezer), a method, Save: refused, nothing sent — the line asks for no chip that is not there', async () => {
     const hits = { plantings: [{ plant_id: 'p-blue', label: 'Blueberries', crop_type_slug: 'blueberry', variety_id: 'v-blue', recent_picks: [] }], put_ups: [] }
