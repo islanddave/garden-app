@@ -2,6 +2,8 @@
 // (contract T19). The page stays where it is, reads the plant's lots a second time, and the lot's row
 // shows the new count without a reload. Both flags are held on by ONE static mock;
 // PlantingDetail.seedLots.test.jsx has none and keeps pinning the section itself. No jest-dom (L-182).
+// Also: the sheet closed while an add had no definite answer. The page reads the lots again then too,
+// so the row says what the lot holds whichever way the add went.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
@@ -21,6 +23,7 @@ vi.mock('../lib/harvestWindows.js', () => import('./helpers/harvestWindowsSyncSt
 
 import PlantingDetail from '../pages/PlantingDetail.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
+import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
 import { additionReply, plantSeedLot, plantSeedLotsReply } from './fixtures/seedMix.fixture.js'
 
 const LOT = plantSeedLot({ name: 'Cinderella — saved 2026', variety_name: 'Cinderella', seed_count: 120, seed_count_estimated: false, seed_weight_g: null })
@@ -57,15 +60,18 @@ beforeEach(() => {
   })
 })
 
-const mount = () => render(
-  <ToastProvider>
-    <MemoryRouter initialEntries={['/projects/proj1/plantings/pl1']}>
-      <Routes>
-        <Route path="/projects/:id/plantings/:plantingId" element={<PlantingDetail />} />
-        <Route path="*" element={<div data-testid="left-the-page" />} />
-      </Routes>
-    </MemoryRouter>
-  </ToastProvider>,
+// `Outer` is the registry that asks before a close, for the case that needs the question asked.
+const mount = (Outer = React.Fragment) => render(
+  <Outer>
+    <ToastProvider>
+      <MemoryRouter initialEntries={['/projects/proj1/plantings/pl1']}>
+        <Routes>
+          <Route path="/projects/:id/plantings/:plantingId" element={<PlantingDetail />} />
+          <Route path="*" element={<div data-testid="left-the-page" />} />
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>
+  </Outer>,
 )
 
 describe('PlantingDetail — after "Put it in <lot>" (V5-SEEDLOTADDITION-001)', () => {
@@ -113,5 +119,48 @@ describe('PlantingDetail — after "Put it in <lot>" (V5-SEEDLOTADDITION-001)', 
     await act(async () => { await Promise.resolve() })
     expect(screen.getByText(/Drying · 120 seeds/)).toBeTruthy()
     expect(screen.queryByText(/Couldn.t check for seed saved/)).toBeNull()
+  })
+
+  it('closed while an add had no definite answer: the lots are read again, and the row shows what the lot holds', async () => {
+    // The first POST lands on the server and its reply is lost; the automatic second try is lost too.
+    const base = apiFetchSpy.getMockImplementation()
+    let posts = 0
+    apiFetchSpy.mockImplementation((path, opts = {}) => {
+      if (opts.method === 'POST' && String(path) === `/api/inventory-items/${LOT.id}/seed-additions`) {
+        posts += 1
+        if (posts === 1) base(path, opts)
+        return Promise.reject(Object.assign(new Error('Request timed out'), { status: 0, timeout: true }))
+      }
+      return base(path, opts)
+    })
+    mount(DismissRegistryProvider)
+    await waitFor(() => expect(screen.getByText(/Drying · 120 seeds/)).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-open')) })
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-put-in-lot')) })
+    fireEvent.change(screen.getByTestId('seed-add-count'), { target: { value: '30' } })
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-submit')) })
+    await waitFor(() => expect(screen.getByTestId('seed-add-retry')).toBeTruthy())
+    expect(posts).toBe(2)
+    expect(lotReads()).toBe(1)
+
+    // Asked, and kept open: nothing is read.
+    await act(async () => { fireEvent.keyDown(document, { key: 'Escape' }) })
+    expect(screen.getByTestId('confirm-sheet-title').textContent).toBe('Close without checking?')
+    await act(async () => { fireEvent.click(screen.getByTestId('confirm-sheet-cancel')) })
+    expect(screen.getByTestId('seed-add-retry')).toBeTruthy()
+    expect(lotReads()).toBe(1)
+
+    // Asked again, and closed: the sheet goes, the page stays, the lots are read a second time.
+    await act(async () => { fireEvent.keyDown(document, { key: 'Escape' }) })
+    await act(async () => { fireEvent.click(screen.getByTestId('confirm-sheet-confirm')) })
+    await waitFor(() => expect(screen.queryByTestId('seed-add-form')).toBeNull())
+    expect(screen.queryByTestId('left-the-page')).toBeNull()
+    await waitFor(() => expect(lotReads()).toBe(2))
+    await waitFor(() => expect(screen.getByText(/Drying · 150 seeds/)).toBeTruthy())
+    expect(screen.queryByText(/Drying · 120 seeds/)).toBeNull()
+    // Nothing said it was added, and no timeline entry was written for an add nobody saw land.
+    expect(screen.queryByText(`Added to ${LOT.name}`)).toBeNull()
+    expect(paths((p, o) => o.method === 'POST' && p === '/api/events').length).toBe(0)
+    expect(posts).toBe(2)
   })
 })

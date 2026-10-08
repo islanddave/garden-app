@@ -163,7 +163,7 @@ import { readMarker } from '../../lib/backNav.js'
 import { seedsHref } from '../../lib/seedsRoutes.js'
 import { SEED_MULTI_PARENT } from '../../lib/featureFlags.js'
 import { sourcePlantFromPlanting, parentSetFacts, lotNotice, previewMixName } from '../seed/seedParents.js'
-import { addToLotAvailable, isOpenLot, lotFactsLine } from '../seed/seedAdditions.js'
+import { addToLotAvailable, isOpenLot, lotFactsLine, UNSURE_CLOSE } from '../seed/seedAdditions.js'
 import AddToLot from './AddToLot.jsx'
 
 
@@ -634,13 +634,15 @@ const NON_GARDEN_KINDS = PUTUP_SOURCE_OPTIONS.filter((o) => (o.value ?? o) !== '
 // a duplicate history entry. Without it the sheet keeps its navigating ending for the planting page
 // and the event menu.
 //
-// V5-SEEDLOTADDITION-001 — `ownLots` and `onSeedAdded(reply, { replace })`, both optional. `ownLots` is
-// the planting's own seed lots as its page already read them (GET /api/plants/:id/seed-lots); a host
-// that has none passes nothing and gets the general link. `onSeedAdded` is called after seed went into
-// an existing lot, before the sheet closes: the host refreshes what it shows, or goes to the planting.
-// `replace` is true while this sheet's Back marker is the current history entry (see the navigate note
-// at the end of save()).
-export default function SaveSeedSheet({ planting, onClose, onSaved, ownLots, onSeedAdded }) {
+// V5-SEEDLOTADDITION-001 — `ownLots`, `onSeedAdded(reply, { replace })` and `onSeedMaybeAdded()`, all
+// optional. `ownLots` is the planting's own seed lots as its page already read them (GET
+// /api/plants/:id/seed-lots); a host that has none passes nothing and gets the general link.
+// `onSeedAdded` is called after seed went into an existing lot, before the sheet closes: the host
+// refreshes what it shows, or goes to the planting. `replace` is true while this sheet's Back marker is
+// the current history entry (see the navigate note at the end of save()). `onSeedMaybeAdded` is called
+// when the sheet is closed while an add has no definite answer (the seed may or may not be in the
+// lot), before it closes: a host that draws the plant's lots reads them again.
+export default function SaveSeedSheet({ planting, onClose, onSaved, ownLots, onSeedAdded, onSeedMaybeAdded }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
   const navigate = useNavigate()
@@ -758,7 +760,7 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, ownLots, onS
   const namedLot = openOwnLots.length === 1 ? openOwnLots[0] : null
   // 'new' is the form below. 'add' puts AddToLot in its place: the list, or the form on `namedLot`.
   const [mode, setMode] = useState('new')
-  const [addState, setAddState] = useState({ dirty: false, busy: false })
+  const [addState, setAddState] = useState({ dirty: false, busy: false, unsure: false })
   // One row in From, and it is the page's own planting with a variety: the read behind the list is
   // by that planting, and a second plant is a different question (a new lot off both).
   const showPutIn = addOn && !!planting && rows.length === 1 && !!planting.variety_ref?.id
@@ -1133,13 +1135,25 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, ownLots, onS
   const discardProps = addOn
     ? { confirmOnDirty: true, confirmTitle: 'Close without adding?', confirmBody: 'What you typed here will not be kept.' }
     : null
+  // Once a request has left with no definite answer (AddToLot reports `unsure`), that question would
+  // be untrue: the seed may already be in the lot, and "Keep editing" names something the locked form
+  // cannot do. So in that state, and only then, it says what is known and what to look at. These words
+  // ride in `confirmCopy`, which the registry reads when the question is raised: the three constants
+  // above do not move, so nothing re-registers.
+  const unsureCopy = addState.unsure ? UNSURE_CLOSE : null
+  // Closing from that state: the host reads this plant's lots again, so the row on the page under the
+  // sheet says what the lot holds whichever way the add went. Then the sheet closes, as after a save.
+  const closeAdd = () => {
+    if (addState.unsure && onSeedMaybeAdded) onSeedMaybeAdded()
+    if (onClose) onClose()
+  }
   if (addOn && mode === 'add' && planting) {
     return (
-      <Sheet open busy={addState.busy} dirty={addState.dirty} armsBack onClose={onClose} title="Save seed" {...discardProps}>
+      <Sheet open busy={addState.busy} dirty={addState.dirty} armsBack onClose={closeAdd} title="Save seed" {...discardProps} confirmCopy={unsureCopy}>
         <AddToLot
           planting={planting} ownLots={openOwnLots} startLot={namedLot} Basis={SeedCountBasis}
           onState={setAddState}
-          onBack={() => { setAddState({ dirty: false, busy: false }); setMode('new') }}
+          onBack={() => { setAddState({ dirty: false, busy: false, unsure: false }); setMode('new') }}
           onAdded={seedAdded}
         />
       </Sheet>

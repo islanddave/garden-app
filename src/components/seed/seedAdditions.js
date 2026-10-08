@@ -187,6 +187,15 @@ export const ADD_REFUSED = "Couldn't add to that lot. Nothing was changed."
 export const ADD_OFFLINE = "You're offline. Nothing was added. Your entries stay here until you're back in range."
 export const ADD_CHECKING = 'Checking whether that was added…'
 export const ADD_UNKNOWN = "That didn't finish, so today's seed may or may not have been added. Tap Try again. It will not be added twice."
+// The close question while that stands (and while "Checking…" does). The ordinary one, "Close without
+// adding?", would be untrue here: the seed may already be in the lot. This one claims only what is
+// known and says what to look at before a second add.
+export const UNSURE_CLOSE = Object.freeze({
+  title: 'Close without checking?',
+  body: "Today's seed may or may not have been added. Look at the lot's seed count before you add it again.",
+  confirmLabel: 'Close',
+  cancelLabel: 'Keep checking',
+})
 export const LOTS_FAILED = "Couldn't load your lots. Nothing was changed."
 export const LOTS_FROM_CACHE = "This list may be out of date. Nothing can be added until you're back in range."
 

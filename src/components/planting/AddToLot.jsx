@@ -84,8 +84,8 @@ function sameVariety(lot, plant) {
  * `planting` is the page's planting (the one row in From). `ownLots` are its open lots as the sheet
  * read them when it opened. `startLot` is the one named on the link, or null for the list.
  * `Basis` is the sheet's own count-basis switch, passed in so the two forms cannot drift apart.
- * `onState({ dirty, busy })` tells the sheet what its close control should do; `onBack` returns to the
- * new-lot form; `onAdded(reply)` ends the sheet after a save.
+ * `onState({ dirty, busy, unsure })` tells the sheet what its close control should do and ask; `onBack`
+ * returns to the new-lot form; `onAdded(reply)` ends the sheet after a save.
  */
 export default function AddToLot({ planting, ownLots = [], startLot = null, Basis, onState, onBack, onAdded }) {
   const { fetch } = useApiFetch()
@@ -142,8 +142,13 @@ export default function AddToLot({ planting, ownLots = [], startLot = null, Basi
   const inFlightRef = useRef(false)
 
   const locked = phase !== 'idle'
+  // `unsure`: a request left and no definite answer has come back, so today's seed may be in the lot.
+  // True from the automatic second try ("Checking…") until an answer, a refusal or Try again settles it.
   useEffect(() => {
-    onState?.({ dirty: !!lot, busy: phase === 'sending' || phase === 'checking' })
+    onState?.({
+      dirty: !!lot, busy: phase === 'sending' || phase === 'checking',
+      unsure: phase === 'checking' || phase === 'unknown',
+    })
   }, [lot, phase]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // The list is read when it is first shown, and not at all on the named link's straight path.

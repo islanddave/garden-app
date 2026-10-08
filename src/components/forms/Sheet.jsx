@@ -88,12 +88,16 @@ function focusablesIn(panel) {
 // renders exactly as before, so every other render site is byte-identical. Ignored when `title` is
 // set — the title owns that slot. Whatever goes here is the caller's: in an armsBack sheet, a
 // control that NAVIGATES must be a SheetRowLink, or it strands the armed Back entry.
-export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, busy = false, closeLabel = 'Close', kind = 'modal', armsBack = false, backIntercept = null, confirmOnDirty = false, confirmTitle = null, confirmBody = null, headerStart = null }) {
+// V5-SEEDLOTADDITION-001 — `confirmCopy` is the discard question's words for the state the sheet is in
+// right now ({ title, body, confirmLabel, cancelLabel }, any of them), passed straight to the registry,
+// which reads it only when the question is raised. Additive: absent, the question is the registered
+// confirmTitle / confirmBody with the registry's own buttons, as at every other render site.
+export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, busy = false, closeLabel = 'Close', kind = 'modal', armsBack = false, backIntercept = null, confirmOnDirty = false, confirmTitle = null, confirmBody = null, confirmCopy = null, headerStart = null }) {
   const panelRef = useRef(null)
   const restoreRef = useRef(null)
   const { registered, isTopmost, requestDismiss } = useDismissable({
     open, onDismiss: onClose, dirty, busy, layer: LAYER.SHEET, kind, armsBack, backIntercept,
-    confirmOnDirty, confirmTitle, confirmBody,
+    confirmOnDirty, confirmTitle, confirmBody, confirmCopy,
   })
   // Latest-value refs: keep the keydown handler current WITHOUT making onClose/dirty deps of the
   // focus effect. Callers pass inline closures recreated every render; if their identity drove the

@@ -173,6 +173,7 @@ const sameInputSent = (spy) => spy.mock.calls
 
 const onClose = vi.fn()
 const onSeedAdded = vi.fn()
+const onSeedMaybeAdded = vi.fn()
 let jarChecks = 0
 
 beforeEach(() => {
@@ -180,7 +181,7 @@ beforeEach(() => {
   net.event = [{ id: 'ev-1' }]
   apiFetchSpy.mockReset()
   apiFetchSpy.mockImplementation((...c) => (net[kind(c)] ? answer(net[kind(c)]) : Promise.reject(new Error(`unexpected request ${c[0]}`))))
-  navigateSpy.mockReset(); toastSpy.mockReset(); onClose.mockReset(); onSeedAdded.mockReset()
+  navigateSpy.mockReset(); toastSpy.mockReset(); onClose.mockReset(); onSeedAdded.mockReset(); onSeedMaybeAdded.mockReset()
   offered.plant = SECOND
 })
 // row 26 — whatever a case left on screen says "lot", never the old word.
@@ -858,21 +859,98 @@ describe('after the tap: no answer (rows 14-19, 21, 23)', () => {
     expect(bodies('event')[0].metadata.added_seed_count).toBe(12)
   })
 
-  it('row 23 — closing in the "may or may not" state asks the discard question first', async () => {
+  // Row 23. The sheet as the app holds it: under the registry that asks before a close. `asked()` is the
+  // whole question as drawn; the two it can be are spelled out once, here.
+  const mountAsked = () => render(
+    <DismissRegistryProvider>
+      <SaveSeedSheet planting={MEMBER} onClose={onClose} onSeedAdded={onSeedAdded} onSeedMaybeAdded={onSeedMaybeAdded} ownLots={[OWN]} />
+    </DismissRegistryProvider>,
+  )
+  const escape = () => act(async () => { fireEvent.keyDown(document, { key: 'Escape' }) })
+  const asked = () => ['title', 'body', 'confirm', 'cancel'].map((part) => text(`confirm-sheet-${part}`))
+  const UNSURE_QUESTION = [
+    'Close without checking?',
+    "Today's seed may or may not have been added. Look at the lot's seed count before you add it again.",
+    'Close', 'Keep checking',
+  ]
+  const ORDINARY_QUESTION = ['Close without adding?', 'What you typed here will not be kept.', 'Discard', 'Keep editing']
+
+  it('row 23 — closing in the "may or may not" state asks a question that is true there; Keep checking leaves the form as it stood', async () => {
     net.add = [timedOut(), timedOut()]
-    render(
-      <DismissRegistryProvider>
-        <SaveSeedSheet planting={MEMBER} onClose={onClose} onSeedAdded={onSeedAdded} ownLots={[OWN]} />
-      </DismissRegistryProvider>,
-    )
+    mountAsked()
     await tap('save-seed-put-in-lot')
     await tap('save-seed-submit')
     await waitFor(() => expect(text('seed-add-error')).toBe(`${UNKNOWN}Try again`))
-    await act(async () => { fireEvent.keyDown(document, { key: 'Escape' }) })
-    expect(screen.getByTestId('confirm-sheet-title').textContent).toBe('Close without adding?')
+    await escape()
+    expect(asked()).toEqual(UNSURE_QUESTION)
+    // nothing on screen says the seed was not added, or offers to edit a form that is locked
+    expect(document.body.textContent).not.toMatch(/without adding|will not be kept|Discard|Keep editing/)
     expect(onClose).not.toHaveBeenCalled()
     await tap('confirm-sheet-cancel')
+    expect(screen.queryByTestId('confirm-sheet')).toBeNull()
     expect(text('seed-add-error')).toBe(`${UNKNOWN}Try again`)
+    expect(screen.getByTestId('seed-add-retry').disabled).toBe(false)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onSeedMaybeAdded).not.toHaveBeenCalled()
+    expect(counts()).toEqual({ add: 2, event: 0, open: 0 })
+  })
+
+  it('row 23 — Close from that question has the host read the plant\'s lots again, then closes: no event, nothing called added', async () => {
+    net.add = [timedOut(), timedOut()]
+    mountAsked()
+    await tap('save-seed-put-in-lot')
+    await tap('save-seed-submit')
+    await waitFor(() => expect(text('seed-add-error')).toBe(`${UNKNOWN}Try again`))
+    await escape()
+    await tap('confirm-sheet-confirm')
+    expect(onSeedMaybeAdded).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onSeedMaybeAdded.mock.invocationCallOrder[0]).toBeLessThan(onClose.mock.invocationCallOrder[0])
+    expect(onSeedAdded).not.toHaveBeenCalled()
+    expect(toastSpy).not.toHaveBeenCalled()
+    expect(counts()).toEqual({ add: 2, event: 0, open: 0 })
+  })
+
+  it('row 23 — while "Checking…" stands the labelled Close asks the same question, not "Close without adding?"', async () => {
+    const second = defer()
+    net.add = [timedOut(), () => second.promise]
+    mountAsked()
+    await tap('save-seed-put-in-lot')
+    await tap('save-seed-submit')
+    await waitFor(() => expect(text('seed-add-checking')).toBe(CHECKING))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Close' })) })
+    expect(asked()).toEqual(UNSURE_QUESTION)
+    await tap('confirm-sheet-cancel')
+    await act(async () => { second.reject(timedOut()) })
+    await waitFor(() => expect(text('seed-add-error')).toBe(`${UNKNOWN}Try again`))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('row 23 — a lot picked and nothing sent: the question keeps its own words, and closing reads nothing again', async () => {
+    mountAsked()
+    await tap('save-seed-put-in-lot')
+    type('seed-add-count', '30')
+    await escape()
+    expect(asked()).toEqual(ORDINARY_QUESTION)
+    await tap('confirm-sheet-confirm')
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onSeedMaybeAdded).not.toHaveBeenCalled()
+    expect(apiFetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('row 23 — once Try again is answered with a definite refusal, the ordinary question is back and closing reads nothing again', async () => {
+    net.add = [timedOut(), timedOut(), coded('amount_too_large')]
+    mountAsked()
+    await tap('save-seed-put-in-lot')
+    await tap('save-seed-submit')
+    await waitFor(() => expect(text('seed-add-error')).toBe(`${UNKNOWN}Try again`))
+    await tap('seed-add-retry')
+    await waitFor(() => expect(text('seed-add-error')).toBe(REFUSED))
+    await escape()
+    expect(asked()).toEqual(ORDINARY_QUESTION)
+    await tap('confirm-sheet-confirm')
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onSeedMaybeAdded).not.toHaveBeenCalled()
   })
 
   it('row 23 — the new-lot form is not asked that question: one Escape closes it, as before', async () => {

@@ -100,6 +100,7 @@ const RELEASE_TEST_FILES = [
   'src/__tests__/SaveSeedSheet.addToLot.flagOff.test.jsx',
   'src/__tests__/seedAdditions.test.js',
   'src/__tests__/PlantingDetail.addToLot.test.jsx',
+  'src/__tests__/Sheet.confirmCopy.test.jsx',
   'src/__tests__/InventoryDetail.stillSays.test.jsx',
   'src/__tests__/InventoryDetail.parents.flagOff.test.jsx',
   'src/__tests__/seedLotWording.static.test.js',
