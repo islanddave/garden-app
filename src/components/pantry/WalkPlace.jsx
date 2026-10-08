@@ -50,7 +50,7 @@ import { leftWords, rowKey } from './pantryRows.js'
 import {
   AS_IS, METHOD_REQUIRED_TEXT, methodChoices, routeFor, walkWhen, walkWhenChips, previewLine, jarBody, itemBody,
   methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText,
-  replayStaleText, replayUnsavedText,
+  replayStaleText, replayUnsavedText, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
 } from './putSomethingUp.js'
 
 export const WALK_TITLE = 'Walk a place'
@@ -433,6 +433,12 @@ function AlreadyHere({ fetch, placeId, seq, onOpen }) {
 // already holds what is on screen is a save with nothing written (itemHolds). `sent` (what has gone out under
 // the key) is held with the key, in memory only, so it is always this walk's. `onExists` is the walk's
 // re-read: the item is in the Pantry. Each refusal is brought into view above the walk's band.
+// A REPLAYED PUT-UP (BUG-PUTUPREPLAYREST-001) goes by the same rule, with the put-up's own PATCH: the name,
+// the method, how many, the discard date, Raw and In oil ride it; the date it was put up and the place (this
+// group's own date, or the walk's two answers behind "Change") and a planting or picked crop do not, and a
+// Save that differs from the jar in one of those writes nothing and says which (replayJarFixedText).
+// THE BAND SAYS WHAT THE SERVER ANSWERED — the row's name, count and method — never what the form held.
+// A refused group keeps its key until the walk is left (End the walk) or the page is loaded again.
 function WalkGroup({
   walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK_PX, onSaved, onExists = null, onOpenExisting, onMoveHere,
   held = null, onHeld = null, saveRef = null,
@@ -448,8 +454,8 @@ function WalkGroup({
   const [ownPicked, setOwnPicked] = useState(held?.ownPicked ?? '')
   const [key, setKey] = useState(held?.key ?? null)
   const [sent, setSent] = useState(held?.sent ?? [])
-  // The item this group has sent a PATCH to (its id), held with the key: a PATCH that landed with its answer
-  // lost has moved the item's updated_at, and Save again must still be able to finish it.
+  // The item or jar this group has sent a PATCH to (its id), held with the key: a PATCH that landed with its
+  // answer lost has moved the row's updated_at, and Save again must still be able to finish it.
   const [patched, setPatched] = useState(held?.patched ?? null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
@@ -502,18 +508,40 @@ function WalkGroup({
     writingRef.current = true
     setSaving(true); setErr(null); setField(null)
     const route = routeFor(method)
-    // The item a replay answered with, once it is being written onto.
+    // The item or jar a replay answered with, once it is being written onto.
     let onRow = null
+    // The date as he chose it: this group's own answer, or the walk's (stored once, at its start).
+    const chose = ownChoice ? whenChoice('earlier', ownChoice, ownPicked) : ['walk', walk.when?.date ?? null, walk.when?.precision ?? null]
     try {
       let saved
       if (route === 'jar') {
-        saved = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(jarBody({
+        const body = jarBody({
           key: useKey, what, storageLocationId: place.id, method, when, count: stepperCount(count), discard, isRaw, inOil,
-        })) })
+        })
+        const print = jarPrint(body, what, chose)
+        const sentNow = noteSent(sent, print)
+        setSent(sentNow)
+        saved = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(body) })
+        const read = { whenMoved: jarWhenMoved(sentNow, print) }
+        const part = jarFixedPart(body, saved, what, read)
+        const todo = afterReplay(saved, sentNow, print, {
+          row: saved, updatedHere: saved?.id != null && patched === saved.id, fixed: part != null, holds: jarHolds(body, saved, what, read),
+        })
+        // Nothing is written — not the parts a PATCH could carry either — and the key is KEPT.
+        if (todo === 'stale') { setErr(replayStaleText(saved)); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
+        if (todo === 'fixed') {
+          setErr(replayJarFixedText(saved, part)); setField(part === 'what' ? 'what' : null)
+          if (part === 'when' && ownChoice) setMoreOpen(true)
+          setRefusedSeq(s => s + 1); onExists?.(); return
+        }
+        if (todo === 'update') {
+          onRow = saved
+          if (saved?.id == null) throw new Error('replayed without a jar')
+          setPatched(saved.id)
+          saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(jarPatchOf(body)) })
+        }
       } else {
         const body = itemBody({ key: useKey, what, place, when, discard })
-        // The date as he chose it: this group's own answer, or the walk's (stored once, at its start).
-        const chose = ownChoice ? whenChoice('earlier', ownChoice, ownPicked) : ['walk', walk.when?.date ?? null, walk.when?.precision ?? null]
         const print = itemPrint(body, what, chose)
         const sentNow = noteSent(sent, print)
         setSent(sentNow)
@@ -534,8 +562,13 @@ function WalkGroup({
           saved = u?.item ?? u
         }
       }
-      const n = route === 'jar' ? stepperCount(count) : null
-      onSaved({ id: saved?.id ?? null, route, text: [n ? `${n} × ${what.name.trim()}` : what.name.trim(), methodLabel(method, what)].join(' · ') })
+      // The band's line is the row the server answered with (a replay's is the first Save's, a PATCH's the
+      // changed one); the form's own value stands in only for a key the answer does not carry.
+      const typedName = what.name.trim()
+      const name = String((route === 'jar' ? saved?.label : saved?.name) ?? '').trim() || typedName
+      const made = Number(saved?.package_count)
+      const n = route === 'jar' ? (Number.isInteger(made) && made >= 1 ? made : stepperCount(count)) : null
+      onSaved({ id: saved?.id ?? null, route, text: [n ? `${n} × ${name}` : name, methodLabel(route === 'jar' ? (saved?.method ?? method) : method, what)].join(' · ') })
       reset()
     } catch (e) {
       if (onRow) {

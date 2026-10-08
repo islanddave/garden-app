@@ -746,6 +746,32 @@ describe('the retry key — a new one only after an answered 4xx', () => {
     expect(keys()[1]).toBe(keys()[0])
   })
 
+  // BUG-PUTUPREPLAYREST-001. The test above answers the replay with the EDITED body echoed back, so it could
+  // not see the edit being dropped. This one answers what the server does: the row the FIRST body made.
+  it('… and answered with the row the FIRST body made: the same key, and the note is put on that row by its PATCH — never dropped, never a second create', async () => {
+    let first = null
+    const made = new Date(Date.now() - 30 * 1000).toISOString()
+    wire({ overrides: {
+      'POST /api/preservation': ({ body }) => {
+        if (!first) { first = { id: 'jar-1', ...body, use_by_target: '2027-10-01', use_by_basis: 'table', created_at: made, updated_at: made }; throw new TypeError('Failed to fetch') }
+        return { ...first, replayed: true }
+      },
+      'PATCH /api/preservation/*': ({ body }) => ({ ...first, ...body, updated_at: new Date().toISOString() }),
+    } })
+    const { onSaved } = await openDoor()
+    answer('whole_freeze')
+    save()
+    await waitFor(() => expect(errorText()).toBe("Couldn't save it — nothing was lost. Try again."))
+    tap('door-from'); typeInto('door-notes', 'the second tray')
+    save()
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+    expect(keys()).toHaveLength(2)
+    expect(keys()[1]).toBe(keys()[0])
+    expect(first.notes).toBeUndefined()                                       // the first body had no note
+    expect(fake.calls('PATCH').map(c => [c.path, c.body.notes])).toEqual([['/api/preservation/jar-1', 'the second tray']])
+    expect(onSaved.mock.calls[0][0].saved).toMatchObject({ id: 'jar-1', notes: 'the second tray' })
+  })
+
   it.each([[500], [503], [0]])('a %i keeps the key', async (status) => {
     let n = 0
     wire({ overrides: { 'POST /api/preservation': ({ body }) => {

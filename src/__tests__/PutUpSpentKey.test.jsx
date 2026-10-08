@@ -336,16 +336,25 @@ describe('Put something up — a "saved earlier" refusal ends the stored draft',
     expect(stored()).toBeNull()
   })
 
-  it('… and when the put-up route answers that Save with a 4xx, the new key it mints is stored with the draft, as for any put-up', async () => {
-    const { door } = await refusedInOneSitting({ overrides: { [`POST ${JARS}`]: () => { throw apiError(400, { error: 'count must be a whole number' }) } } })
+  // BUG-PUTUPREPLAYREST-001 (item 6). This test used to pin the opposite — "the new key it mints is stored
+  // with the draft" — and that new key is what made a second item: item Saves had gone out under the old one,
+  // the item is there, and the next As is Save went out under a key the server had never seen.
+  it('… and when the put-up route answers that Save with a 4xx, the key is KEPT with what went out under it — back on As is, Save is refused again: one item, one key', async () => {
+    const { items, door } = await refusedInOneSitting({ overrides: { [`POST ${JARS}`]: () => { throw apiError(400, { error: 'count must be a whole number' }) } } })
     const key = keys()[0]
     if (!screen.queryByTestId('door-method-whole_freeze')) tap('door-method-more')
     tap('door-method-whole_freeze')
     save(); await answered(door, 1, JARS)
-    await waitFor(() => expect(stored()?.data?.key).toMatch(UUID))
-    expect(stored().data.key).not.toBe(key)
-    expect(stored().data).not.toHaveProperty('sent')
-    expect(stored().data).toMatchObject({ method: 'whole_freeze', what: { name: 'Oat milk' } })
+    await waitFor(() => expect(stored()?.data?.method).toBe('whole_freeze'))
+    expect(stored().data.key).toBe(key)
+    expect(stored().data.sent).toHaveLength(3)                                // the two As is Saves, and this put-up
+    expect(stored().data).toMatchObject({ what: { name: 'Oat milk' } })
+    expect(keys(JARS)).toEqual([key])
+    tap('door-method-as_is')
+    save(); await answered(door, 3)
+    expect(errorText()).toBe(STALE)
+    expect(new Set(keys()).size).toBe(1)
+    expect(items.rows()).toHaveLength(1)
   })
 
   it('the refused door, put back to exactly what the item holds: a save as before, with nothing written and nothing stored', async () => {

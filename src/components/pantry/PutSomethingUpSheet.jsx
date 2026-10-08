@@ -43,11 +43,18 @@
 // is brought into view above the pinned Save (it is the last thing in the scroller). Before any of them the
 // door reads the item itself: one that already holds what is on screen is a save, with nothing written
 // (putSomethingUp.js itemHolds). An answered 4xx mints a new key only while nothing else has gone out under
-// this one: the route validates before it looks the key up, so a refusal of a changed body says nothing
-// about an earlier one.
-// What has gone out under the key rides in the draft as `sent`, from the first item Save on; its prints are
-// of what was chosen, not of the date or the searched crop (putSomethingUp.js itemPrint). The put-up route is
-// as it was: a replayed put-up completes from the server's row (plan R2 V2 "Retry key").
+// this one, on either route: each validates before it looks the key up, so a refusal of a changed body says
+// nothing about an earlier one.
+// What has gone out under the key rides in the draft as `sent`, from the first Save on; its prints are of
+// what was chosen, not of the date or the searched crop (putSomethingUp.js itemPrint, jarPrint).
+//
+// A REPLAYED PUT-UP (BUG-PUTUPREPLAYREST-001) is read the same way, by the same rule. Its PATCH carries the
+// name, the method, how many, the size, the discard date, Raw / In oil / How dry, the notes and where it is
+// from — so a change in those goes onto a jar that is this sitting's, and the door completes from the PATCH's
+// answer. It does not carry the date it was put up, the place, or the crop / variety / planting, and it leaves
+// a weighed jar's grams as they were: a Save that differs from the jar in one of those writes NOTHING (never
+// half of it) and says which (replayJarFixedText) — read off the jar, so put back, the next Save goes through.
+// A jar that is not this sitting's is said as saved earlier (replayStaleText), and that ends the stored draft.
 //
 // A SEEDED DOOR (opened with a What: a search's "Put something up: <text> →", a planting's door) is not
 // dirty until something changes: no key, no draft written, no reload held, and a draft already stored is
@@ -85,7 +92,7 @@ import {
   previewLine, doorError, jarBody, itemBody, START_BATCH_INSTEAD_TEXT, isPlantingHit, methodSlot,
   doorOptionsLabel, doorFromLabel, doorNotesPlaceholder, whereFromHeading, sizeEcho, sizeTotalError,
   SIZE_LINK_LABEL, AMOUNT_LINK_LABEL, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText,
-  replayUnsavedText,
+  replayUnsavedText, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
 } from './putSomethingUp.js'
 
 const WHEN_CHIPS = [{ id: 'today', label: 'Today' }, { id: 'yesterday', label: 'Yesterday' }, { id: 'earlier', label: 'Earlier…' }]
@@ -212,13 +219,13 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   const [{ initial, seed }] = useState(() => opening({ draftKey, initialWhat, initialName }))
   const openedWithWhat = !!(initialWhat || String(initialName ?? '').trim())
   const [key, setKey] = useState(initial.key)
-  // What has gone out under `key` on the item route (idempotencyKey.js); dropped with the key.
+  // What has gone out under `key`, on either route (idempotencyKey.js); dropped with the key.
   const [sent, setSent] = useState(() => (Array.isArray(initial.sent) ? initial.sent.filter(x => typeof x === 'string') : []))
   // Whether every body under `key` went out from THIS door. A draft restored with `sent` in it was sent from
   // an earlier one, and is never written onto the item it made; a key minted here is this door's.
   const mineRef = useRef(sent.length === 0)
-  // The item this door has sent a PATCH to (its id): a PATCH that landed with its answer lost has moved the
-  // item's updated_at, and Save again must still be able to finish it.
+  // The item or jar this door has sent a PATCH to (its id): a PATCH that landed with its answer lost has
+  // moved the row's updated_at, and Save again must still be able to finish it.
   const patchedRef = useRef(null)
   const [what, setWhat] = useState(initial.what)
   const [place, setPlace] = useState(initial.place)
@@ -267,7 +274,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   const whenRef = useRef(null)
   const slotRef = useRef(null)
   const errRef = useRef(null)
-  // Counts the replay refusals (saved earlier / the planting / the change did not save): each is brought into view.
+  // Counts the replay refusals (saved earlier / a part no PATCH carries / the change did not save) and failed Saves: each is brought into view.
   const [refusedSeq, setRefusedSeq] = useState(0)
   // Set by the preview's Change: once the options are open, focus goes to the When chips it opened them for.
   const [toWhen, setToWhen] = useState(false)
@@ -479,10 +486,41 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         // Another create under this key: its answer may be lost too, so the draft is in storage while it is out.
         setSpent(false)
         const storageLocationId = await ensurePlaceId(fetch, place)
-        saved = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(jarBody({
+        const body = jarBody({
           key: useKey, what, storageLocationId, method, when: w.when, count: n, discard, notes,
           isRaw, inOil, size, source, texture,
-        })) })
+        })
+        const print = jarPrint(body, what, whenChoice(whenChip, estimate, pickedDate))
+        const sentNow = noteSent(sent, print)
+        setSent(sentNow)
+        saved = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(body) })
+        const read = { whenMoved: jarWhenMoved(sentNow, print) }
+        const part = jarFixedPart(body, saved, what, read)
+        const todo = afterReplay(saved, sentNow, print, {
+          row: saved, mine: mineRef.current, updatedHere: saved?.id != null && patchedRef.current === saved.id,
+          fixed: part != null, holds: jarHolds(body, saved, what, read),
+        })
+        if (todo === 'stale' || todo === 'fixed') {
+          // Nothing is written — not the parts a PATCH could carry either — and the key is KEPT.
+          writingRef.current = false
+          setSaving(false)
+          if (todo === 'stale') { setSpent(true); setErr(replayStaleText(saved)); setField(null) }
+          else {
+            setErr(replayJarFixedText(saved, part))
+            setField({ what: 'what', place: 'where', when: 'when', size: 'size' }[part])
+            if (part === 'when') setMoreOpen(true)
+            if (part === 'size') setSizeOpen(true)
+          }
+          setRefusedSeq(s => s + 1)
+          onExists?.()
+          return
+        }
+        if (todo === 'update') {
+          onRow = saved
+          if (saved?.id == null) throw new Error('replayed without a jar')
+          patchedRef.current = saved.id
+          saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(jarPatchOf(body)) })
+        }
       } else {
         const body = itemBody({ key: useKey, what, place, when: w.when, discard, notes, amount, source })
         const print = itemPrint(body, what, whenChoice(whenChip, estimate, pickedDate))
@@ -522,7 +560,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
       writingRef.current = false
       setSaving(false)
       if (onRow) {
-        // The item is in the Pantry; it is the change that did not go through. Said as that, the page told,
+        // It is in the Pantry; it is the change that did not go through. Said as that, the page told,
         // and the key kept whatever the status.
         const why = refusalOf(ex, '')
         setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: answerLost(ex) }), refresh: why.refresh })
@@ -532,9 +570,9 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
       }
       // An ANSWERED 4xx wrote nothing, so the next attempt is a new request and gets a new key. Anything else
       // (no status, 0, a 5xx) may have landed with its answer lost: the key is kept, the retry replays it.
-      // And it is kept after a 4xx too once an item Save has gone out under it before (`sent`): that one may
-      // have landed, and the route refuses a body before it looks the key up.
-      if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500 && !(route === 'item' && sent.length)) {
+      // And it is kept after a 4xx too once a Save has gone out under it before, on either route (`sent`): that
+      // one may have landed, and both routes refuse a body before they look the key up.
+      if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500 && !sent.length) {
         mineRef.current = true; patchedRef.current = null
         setKey(mintKey()); setSent([])
       }

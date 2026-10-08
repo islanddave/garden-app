@@ -19,7 +19,7 @@ import {
   putUpDateWords, shortDay, parseYmd, toYmd, discardWords, ESTIMATED_PRECISIONS, totalOfEach, qtyText,
 } from '../putup/jarWords.js'
 import { parseAmount } from './AmountField.jsx'
-import { sendPrint, sameFact } from '../kitchen/idempotencyKey.js'
+import { sendPrint, payloadPrint, sameFact } from '../kitchen/idempotencyKey.js'
 
 export const AS_IS = 'as_is'
 // The no-method choice in two lengths. On its CHIP it says what it covers — true for a typed name whatever
@@ -394,7 +394,105 @@ export function itemHolds(body, item, what) {
     && (!picked || sameFact(body.crop_type_slug, item.crop_type_slug))
 }
 
-const quoted = (item) => { const name = String(item?.name ?? '').trim(); return name ? `“${name}”` : null }
+// A put-up's name is its label; an item's is its name.
+const quoted = (item) => { const name = String(item?.name ?? item?.label ?? '').trim(); return name ? `“${name}”` : null }
+
+// ── A replayed put-up create (BUG-PUTUPREPLAYREST-001; kitchen/idempotencyKey.js) ───────────────────────
+// PATCH /api/preservation/:id carries the name, the method, how many, the size, the discard date, Raw / In
+// oil / How dry, the notes and where it is from (the Lambda's JAR_PATCH_KEYS). It does NOT carry the date it
+// was put up, the place, or the crop / variety / planting — and it never re-works the grams a WEIGHED jar was
+// given at its create (one container in a mass unit: remaining_amount). jarPatchOf is a create body as that
+// PATCH: a key the body left out goes as the word that clears it (the create stored nothing there; the PATCH
+// is presence-sentinel, and each pair travels together), and an absent discard date is "clear" — worked out
+// again from the jar as corrected, which is what the create did.
+const hasKey = (o, k) => Object.prototype.hasOwnProperty.call(o ?? {}, k)
+export function jarPatchOf(body) {
+  return {
+    label: body.label, method: body.method, package_count: body.package_count,
+    quantity_value: body.quantity_value ?? null, quantity_unit: body.quantity_unit ?? null,
+    discard_by: !hasKey(body, 'use_by_target') ? 'clear' : (body.use_by_target == null ? 'none' : body.use_by_target),
+    is_raw: body.is_raw ?? null, in_oil: body.in_oil ?? null, texture: body.texture ?? null, notes: body.notes ?? null,
+    source_kind: body.source_kind ?? null, source_label: body.source_label ?? null,
+  }
+}
+
+// THE PRINT OF A PUT-UP SAVE, in three parts: what the PATCH can carry / the place, the planting and a PICKED
+// crop or variety / the date as he chose it (`whenChoice`, in place of the date the chip came to). Left out,
+// as in itemPrint and for its reason: the crop a typed name resolved to. It starts "jar:" — the door and the
+// Walk keep ONE `sent` for both routes, and a put-up's print is never an item's.
+export const JAR_FIXED_KEYS = Object.freeze(['storage_location_id', 'plant_id', 'crop_type_slug', 'variety_id'])
+export function jarPrint(body, what, whenChoice) {
+  const { preserved_at: _date, preserved_at_precision: _precision, preserved_at_approx: _approx, ...own } = body ?? {}
+  if (!what?.source || what.source === 'typed') delete own.crop_type_slug
+  return `jar:${sendPrint(own, JAR_FIXED_KEYS)}/${payloadPrint({ when: whenChoice ?? null })}`
+}
+// Whether the date he chose is not the one every other put-up Save under this key went out with.
+export function jarWhenMoved(sent, print) {
+  const when = (s) => s.slice(s.lastIndexOf('/') + 1)
+  return (Array.isArray(sent) ? sent : []).some(s => typeof s === 'string' && s.startsWith('jar:') && when(s) !== when(print))
+}
+
+const dayOf = (v) => (v == null || v === '' ? null : String(v).slice(0, 10))
+const idOf = (v) => (v == null || v === '' ? null : String(v))
+// The part of this body the PATCH cannot put on the replayed jar — 'what' | 'place' | 'when' | 'size' — or
+// null. Read off the ROW, which says exactly what it holds, so putting that part back lets the next Save
+// through. Two parts are not his to choose, and are read as he chose them:
+//   · the date — a chip that now comes to another day ("Today", past midnight) is not a change. It counts
+//     only once he has changed the date (`whenMoved`, jarWhenMoved), and then as it resolves now;
+//   · the crop of a TYPED name — the search's reading of the text. It counts only against a crop the jar
+//     already holds, and only once the name is another (a rename the jar's crop would contradict).
+// A planting's crop and variety are the planting's own (the server fills them in) and are not compared.
+export function jarFixedPart(body, jar, what, { whenMoved = false } = {}) {
+  if (!body || !jar) return null
+  if (idOf(body.plant_id) !== idOf(jar.plant_id)) return 'what'
+  if (body.plant_id == null) {
+    const typed = !what?.source || what.source === 'typed'
+    const cropDiffers = idOf(body.crop_type_slug) !== idOf(jar.crop_type_slug)
+    if (typed ? (cropDiffers && jar.crop_type_slug != null && !sameFact(body.label, jar.label)) : cropDiffers) return 'what'
+    if (!typed && idOf(body.variety_id) !== idOf(jar.variety_id)) return 'what'
+  }
+  if (idOf(body.storage_location_id) !== idOf(jar.storage_location_id)) return 'place'
+  if (whenMoved && (dayOf(body.preserved_at) !== dayOf(jar.preserved_at)
+    || !sameFact(body.preserved_at_precision, jar.preserved_at_precision))) return 'when'
+  if (jar.remaining_amount != null && (!sameFact(body.package_count, jar.package_count, { numeric: true })
+    || !sameFact(body.quantity_value, jar.quantity_value, { numeric: true }) || !sameFact(body.quantity_unit, jar.quantity_unit))) return 'size'
+  return null
+}
+// Whether a replayed jar ALREADY HOLDS what this body would put on it (idempotencyKey.js `holds`): no part
+// the PATCH cannot carry differs, and every part it can is the row's. The discard date is read with its
+// basis: a date he set (or "no date") is `typed`; one left to be worked out is anything else. A removed jar
+// holds nothing.
+export function jarHolds(body, jar, what, opts = {}) {
+  if (!body || !jar || jar.deleted_at) return false
+  if (jarFixedPart(body, jar, what, opts)) return false
+  const typed = jar.use_by_basis === 'typed'
+  const discard = hasKey(body, 'use_by_target') ? typed && dayOf(body.use_by_target) === dayOf(jar.use_by_target) : !typed
+  return discard
+    && sameFact(body.label, jar.label)
+    && sameFact(body.method, jar.method)
+    && sameFact(body.package_count, jar.package_count, { numeric: true })
+    && sameFact(body.quantity_value, jar.quantity_value, { numeric: true })
+    && sameFact(body.quantity_unit, jar.quantity_unit)
+    && (body.is_raw === true) === (jar.is_raw === true)
+    && (body.in_oil === true) === (jar.in_oil === true)
+    && sameFact(body.texture, jar.texture)
+    && sameFact(body.notes, jar.notes)
+    && sameFact(body.source_kind, jar.source_kind)
+    && sameFact(body.source_label, jar.source_label)
+}
+// Said when an earlier Save made the jar and this one differs from it in a part no PATCH carries: nothing is
+// written, and the form stays as it is. `jar` is the row the replay answered with; `part` is jarFixedPart's.
+// Putting that part back DOES let the next Save through (it is read off the row). The key is kept.
+const JAR_FIXED_WORDS = Object.freeze({
+  when: "The date it was put up can't be changed once it is saved.",
+  place: "Where it lives can't be changed from here — to move it, open it in the Pantry.",
+  what: "What it is can't be changed once it is saved.",
+  size: "Its size and how many can't be changed from here.",
+})
+export function replayJarFixedText(jar, part) {
+  const name = quoted(jar)
+  return `${name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'} — an earlier Save went through. ${JAR_FIXED_WORDS[part] ?? JAR_FIXED_WORDS.what} Put that back as it was and tap Save to put your other changes on it.`
+}
 // Said when the first Save made the item and What is now another planting, or no planting: nothing is
 // written, and the form stays as it is. `item` is the row the replay answered with. Putting What back DOES
 // let the next Save through (plantingDiffers reads the row). The key is kept, so no Save from here adds a
