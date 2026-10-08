@@ -643,7 +643,7 @@ describe('Start a batch — a replayed create', () => {
   // from the form with no check that the batch is this sitting's. Now it has the check the refused path has.
   const HIS_JAR = { vessel_label: 'Quart jar', vessel_size: '1', vessel_unit: 'qt', vessel_count: 2 }
   const jarDraft = () => { const raw = localStorage.getItem(JAR_DRAFT_KEY); return raw ? JSON.parse(raw) : null }
-  it('re-review I-C (S6) — Make this lands with its answer lost and the sheet is closed; the cook sets ANOTHER jar on that batch; Make this again most of a day later (the stored draft comes back), Start it: the recipe\'s jar is NOT put over his — nothing is written, the sheet says so, and the stored draft is ended', async () => {
+  it('re-review I-C (S6) — Make this lands with its answer lost and the sheet is closed; the cook sets ANOTHER jar on that batch; Make this again most of a day later (the stored draft comes back), Start it: the recipe\'s jar is NOT put over his — nothing is written, and nothing is said of the recipe\'s jar (delta F-3: the batch holds one he chose): it lands on the batch, and the stored draft is ended', async () => {
     const table = batchTable()
     const first = open({ recipe: JAR_RECIPE })
     await startIt(); await said(GENERIC)
@@ -654,32 +654,26 @@ describe('Start a batch — a replayed create', () => {
     const second = open({ recipe: JAR_RECIPE })
     expect(screen.getByTestId('start-label').value).toBe('Roll for Initiative')  // it looks like a fresh Make this
     await startIt()
-    await answered(2)
-    await said(startRefusalText({ jar: 'not' }))
+    await waitFor(() => expect(second.onStarted).toHaveBeenCalledTimes(1))
+    expect(second.onStarted.mock.calls[0][0]).toMatchObject({ id: 'kb-first', ...HIS_JAR })
+    expect(errorText()).toBeNull()
     expect(otherWrites()).toEqual([])
     expect(table.row).toEqual(before)
-    expect(second.onStarted).not.toHaveBeenCalled()
-    expect(second.onExists).toHaveBeenCalledTimes(1)
     expect(new Set(keys()).size).toBe(1)
     await waitFor(() => expect(jarDraft()).toBeNull())
-    await startIt()                                                             // tapped again: the same refusal, still nothing written
-    await answered(3)
-    await said(startRefusalText({ jar: 'not' }))
-    expect(otherWrites()).toEqual([])
   })
 
-  it('re-review I-C — the same sheet, minutes later, but the batch was TOUCHED by someone else meanwhile (they set a jar): one body under the key, so nothing to refuse on the form — and still the recipe\'s jar is not put over theirs', async () => {
+  it('re-review I-C — the same sheet, minutes later, but the batch was TOUCHED by someone else meanwhile (they set a jar): one body under the key, so nothing to refuse on the form — and still the recipe\'s jar is not put over theirs, nor said to be missing (delta F-3): it lands', async () => {
     const table = batchTable()
     const sheet = open({ recipe: JAR_RECIPE })
     await startIt(); await said(GENERIC)
     table.row = { ...table.row, ...HIS_JAR, updated_at: new Date().toISOString() }
     const before = { ...table.row }
     await startIt()
-    await answered(2)
-    await said(startRefusalText({ jar: 'not' }))
+    await waitFor(() => expect(sheet.onStarted).toHaveBeenCalledTimes(1))
+    expect(errorText()).toBeNull()
     expect(otherWrites()).toEqual([])
     expect(table.row).toEqual(before)
-    expect(sheet.onStarted).not.toHaveBeenCalled()
   })
 
   it('re-review I-C — a restored draft with a past batch picked over it: the copied lines are NOT added to a batch that is not this sitting\'s, and the sheet says so', async () => {
@@ -750,6 +744,74 @@ describe('Start a batch — a replayed create', () => {
     await startIt()
     await waitFor(() => expect(second.onStarted).toHaveBeenCalledTimes(1))
     expect(otherWrites()).toEqual([])
+  })
+
+  // Delta F-3 (the reviewer's C1, C2). "This sheet's own PUT" vouches for the four fields that PUT sends, not for
+  // the jar: with that PUT landed and its answer lost, a jar somebody set meanwhile was read as this sitting's
+  // batch and the recipe's jar was PUT over it. The recipe's jar now goes only onto a batch that holds no jar.
+  const ownPutLandsLost = async (props = { recipe: JAR_RECIPE }) => {
+    const sheet = open(props)
+    await startIt(); await said(GENERIC)
+    type('start-label', 'Roll for Initiative, hot')
+    await startIt()
+    await said(startUnsavedText({ lost: true, jar: 'not' }))
+    return sheet
+  }
+  it('delta F-3 (C1) — Make this lands lost; the name changed, its PUT lands lost; someone sets ANOTHER jar on the batch; Start it: the recipe\'s jar is NOT put over theirs — no jar PUT, the batch as they left it, and the sheet lands', async () => {
+    const table = batchTable({ onPut: (n) => (n === 1 ? 'lost' : undefined) })
+    const sheet = await ownPutLandsLost()
+    table.row = { ...table.row, ...HIS_JAR, updated_at: new Date().toISOString() }
+    const before = { ...table.row }
+    await startIt()
+    await waitFor(() => expect(sheet.onStarted).toHaveBeenCalledTimes(1))
+    expect(puts().map(([, b]) => b)).toEqual([{ label: 'Roll for Initiative, hot', kind: 'ferment', kind_other: null, recipe_ref: null }])
+    expect(table.row).toEqual(before)
+    expect(new Set(keys()).size).toBe(1)
+  })
+
+  it('delta F-3 (C2) — … and with the name changed again before that tap (the update path): the name goes on, the jar they set is intact, no jar PUT', async () => {
+    const table = batchTable({ onPut: (n) => (n === 1 ? 'lost' : undefined) })
+    const sheet = await ownPutLandsLost()
+    table.row = { ...table.row, ...HIS_JAR, updated_at: new Date().toISOString() }
+    type('start-label', 'Roll for Initiative, hotter')
+    await startIt()
+    await waitFor(() => expect(sheet.onStarted).toHaveBeenCalledTimes(1))
+    expect(puts().map(([, b]) => Object.keys(b).some(k => k.startsWith('vessel_')))).toEqual([false, false])
+    expect(table.row).toMatchObject({ label: 'Roll for Initiative, hotter', ...HIS_JAR })
+  })
+
+  it('delta F-3 — … and when that second PUT fails, nothing is said of the recipe\'s jar: the batch holds a jar somebody chose', async () => {
+    const table = batchTable({ onPut: (n) => { if (n === 2) throw apiError(503, 'boom'); return n === 1 ? 'lost' : undefined } })
+    const sheet = await ownPutLandsLost()
+    table.row = { ...table.row, ...HIS_JAR, updated_at: new Date().toISOString() }
+    type('start-label', 'Roll for Initiative, hotter')
+    await startIt()
+    await said(START_CHANGE_UNSAVED)
+    expect(table.row).toMatchObject(HIS_JAR)
+    expect(sheet.onStarted).not.toHaveBeenCalled()
+  })
+
+  it('delta F-3 — … and on the refused path (the start changed): this sitting\'s batch, but it holds their jar — no jar PUT, and the plain line', async () => {
+    const table = batchTable({ onPut: (n) => (n === 1 ? 'lost' : undefined) })
+    const sheet = await ownPutLandsLost()
+    table.row = { ...table.row, ...HIS_JAR, updated_at: new Date().toISOString() }
+    const before = { ...table.row }
+    tap('start-when-yesterday')
+    await startIt()
+    await answered(3)
+    await said(START_REPLAY_NOT_ON_IT)
+    expect(puts()).toHaveLength(1)
+    expect(table.row).toEqual(before)
+    expect(sheet.onStarted).not.toHaveBeenCalled()
+  })
+
+  it('delta F-3 (C4) — nobody else: after the lost PUT, Start it puts the recipe\'s jar on, once, and lands', async () => {
+    const table = batchTable({ onPut: (n) => (n === 1 ? 'lost' : undefined) })
+    const sheet = await ownPutLandsLost()
+    await startIt()
+    await waitFor(() => expect(sheet.onStarted).toHaveBeenCalledTimes(1))
+    expect(puts().slice(1)).toEqual([JAR_PUT])
+    expect(table.row).toMatchObject({ label: 'Roll for Initiative, hot', vessel_label: 'Half-gallon jar' })
   })
 
   it('a double tap on Start it sends one request', async () => {

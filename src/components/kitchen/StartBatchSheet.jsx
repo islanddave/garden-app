@@ -62,7 +62,7 @@
 //     THE TAP THAT WENT THROUGH DESCRIBED THEM, never from the edited form: the copied lines when every tap
 //     under the key went out with this same pick (each line carries its own key, and POST /:id/inputs replays a
 //     key it holds — lineRoutes.js addKeyedLines — so sending them again adds nothing); the jar when the BATCH
-//     says it was started from this recipe and does not hold that jar already (a merge PUT of fixed values);
+//     says it was started from this recipe and holds no jar (a merge PUT of fixed values);
 //   · the batch is not this sitting's ('stale'), or which pick the landed tap had is not known → nothing is sent.
 // Either way the sentence says what this tap did and what was left off (startRefusalText), and a change whose
 // PUT failed says what did not follow it (startUnsavedText).
@@ -71,6 +71,10 @@
 // stored Make this draft tapped again most of a day on) or one somebody has written to since. The lines and the
 // jar are then not this tap's to add: neither is sent, and when one of them is missing from the batch the sheet
 // stays and says so in the refusal's own words. With nothing left off there is nothing to say, and it lands.
+// THE RECIPE'S JAR GOES ONLY ONTO A BATCH THAT HOLDS NO JAR (delta F-3), on every path. "This sheet's own PUT"
+// vouches for the four fields that PUT sends and not for the jar, so a batch read as this sitting's may hold a
+// jar somebody set since. A batch that holds one — the recipe's, or one somebody chose — is sent nothing for the
+// jar and told nothing about the recipe's: it is not left off, and "open the batch to add it" would be to replace theirs.
 //
 // <Sheet armsBack>, size full; the draft survives a dismiss (kitchen/sheetDraft.js, sheet 'start',
 // batch 'new'); confirmOnDirty off; the reload gate is held while anything is typed or a write is in
@@ -93,7 +97,7 @@ import { readSheetDraft, writeSheetDraft, clearSheetDraft } from './sheetDraft.j
 import { useSheetDraftKey } from './useSheetDraftKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter } from './sheetScroll.js'
 import { readCaptureMeta } from '../../lib/imagePipeline.js'
-import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost, sameFact, answeredNo, updateSent, holdsOwnUpdate, rowHoldsFields, rowIsThisSittings } from './idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost, sameFact, answeredNo, updateSent, holdsOwnUpdate, rowIsThisSittings } from './idempotencyKey.js'
 import LikeBatchPicker from '../putup/LikeBatchPicker.jsx'
 // Put-Up release 4 — "Following a recipe?" (pick one of the household's recipes → recipe_id, or F's free text),
 // and Make this's prefill (a recipe's name, kind and process jar).
@@ -150,11 +154,10 @@ export function startUnsavedText({ lost = false, lines = null, jar = null } = {}
 export const START_REPLAY_NOT_ON_IT = startRefusalText()
 export const START_CHANGE_UNSAVED = startUnsavedText()
 export const START_CHANGE_MAYBE = startUnsavedText({ lost: true })
-// How the recipe's jar (recipes.js vesselPatch) is read back off a batch: a size and a count as numbers.
-const VESSEL_READS = Object.freeze({
-  vessel_size: (v, batch) => sameFact(v, batch.vessel_size, { numeric: true }),
-  vessel_count: (v, batch) => sameFact(v, batch.vessel_count, { numeric: true }),
-})
+// Whether a batch holds no jar at all: the four jar columns carry no default, and the create's answer and a
+// replay's both carry them (kitchenRoutes.js createBatch reads the batch's own view).
+const JAR_FIELDS = ['vessel_label', 'vessel_size', 'vessel_unit', 'vessel_count']
+const holdsNoJar = (batch) => !!batch && JAR_FIELDS.every(k => sameFact(batch[k], null))
 
 const EMPTY = { label: '', chip: 'today', earlier: null, pickedDate: '', kind: null, kindOther: '', key: '', recipeId: null, recipeRef: '' }
 
@@ -445,7 +448,7 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
           } else if (copied === false && like?.lines?.length) follow.lines = 'not'
         }
         const jar = recipe && batch?.id != null && batch.recipe_id != null && String(batch.recipe_id) === String(recipe.id) ? vesselPatch(recipe) : null
-        if (jar && !followedRef.current.jar && !rowHoldsFields(batch, jar, VESSEL_READS)) {
+        if (jar && !followedRef.current.jar && holdsNoJar(batch)) {
           follow.jar = !own ? 'not' : await went(Promise.resolve(fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(jar) })))
         }
         if (follow.lines === 'added') followedRef.current.lines = true
@@ -486,7 +489,7 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
       }
       // Make this (release 4): the recipe's process jar, through the merge PUT. Best effort — the batch is
       // already started, and its Jar & heat row can set the jar if this does not land.
-      const vp = !notOurs && recipe && batch?.id && following.recipeId === recipe.id ? vesselPatch(recipe) : null
+      const vp = !notOurs && recipe && batch?.id && following.recipeId === recipe.id && holdsNoJar(batch) ? vesselPatch(recipe) : null
       if (vp) await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(vp) }).catch(() => {})
       landedRef.current = true
       clearSheetDraft(draftKey)
@@ -497,7 +500,7 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
       if (onRow?.id != null) {
         // The batch is started; it is the change that did not go through. Said as that — with what would have
         // followed it and was not sent — and the page told.
-        const jar = recipe && following.recipeId === recipe.id ? vesselPatch(recipe) : null
+        const jar = recipe && following.recipeId === recipe.id && holdsNoJar(onRow) ? vesselPatch(recipe) : null
         setErr(startUnsavedText({ lost: answerLost(e), lines: like?.lines?.length ? 'not' : null, jar: jar ? 'not' : null }))
         setFailedSeq(s => s + 1)
         onExists?.(onRow)
