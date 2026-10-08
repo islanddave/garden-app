@@ -784,6 +784,21 @@ def test_preflight_does_not_read_the_commits_check_runs(tmp_path, github, check_
     assert api.reads(CHECK_RUNS) == 0
 
 
+@pytest.mark.parametrize("ending,rc", [
+    ("sys.exit(1)", "1"), ("sys.exit(2)", "2"), ("sys.exit(3)", "3"),
+    ("sys.stdout.flush(); os.kill(os.getpid(), signal.SIGKILL)", "137"),
+], ids=["exit-1", "exit-2", "an-exit-the-script-never-uses", "killed-after-printing"])
+def test_preflight_a_pass_line_with_a_non_zero_exit_is_not_a_pass(tmp_path, github, ending, rc):
+    """A pass is exit 0 AND the script's own `pass: ` line. With the name-based check gone this step is the only
+    decision that CI is green, so both halves are held: a `pass: ` line never admits on its own, whatever the exit
+    code (one the script uses, one it never uses, a kill after it printed)."""
+    script = f'import os, signal, sys\nprint("pass: run 1 is the newest of 1 | runs=1")\n{ending}\n'
+    proc = _run_preflight(tmp_path, _preflight_api(github), script=script)
+    errors = _refused(proc)
+    assert [fields["run-based-exit"] for _, fields in _record(proc)] == [rc, rc]
+    assert len(errors) == 2
+
+
 def test_preflight_refuses_when_dev_moved_and_reads_nothing_else(tmp_path, github):
     api = _preflight_api(github, dev=(_json({"object": {"sha": "f" * 40}}),))
     proc = _run_preflight(tmp_path, api)
@@ -794,8 +809,9 @@ def test_preflight_refuses_when_dev_moved_and_reads_nothing_else(tmp_path, githu
 
 @pytest.mark.parametrize("dev", [NOT_JSON, DROP, _json({"message": "Not Found"}, 404), _json([]),
                                  _json({"object": {"sha": "abc\n::error::injected"}}),
-                                 _json({"object": {"sha": ""}})],
-                         ids=["not-json", "no-reply", "404", "array", "sha-with-a-workflow-command", "empty-sha"])
+                                 _json({"object": {"sha": ""}}), (200, DEV_AT[1], CUT)],
+                         ids=["not-json", "no-reply", "404", "array", "sha-with-a-workflow-command", "empty-sha",
+                              "whole-reply-then-the-transfer-is-cut"])
 def test_preflight_an_unreadable_dev_ref_is_named_as_that_not_as_dev_having_moved(tmp_path, github, dev):
     """The remedies differ: dispatch the same commit again, against pick up the new head."""
     api = _preflight_api(github, dev=(dev,))
