@@ -16,14 +16,23 @@
 //   The host passes the Map in, from a ref, so the ordering survives a re-created adjuster.
 //
 // Still the WIDE PUT until the narrow /:id/quantity route lands (slice 3). `buildBody` is how a host
-// decides what rides along with the new quantity: the Inventory list round-trips its row as it
-// always has. (My seeds used this with a seed-column strip until V5-SEEDCARDS-001 removed its row
+// decides what rides along with the new quantity: the Inventory list round-trips its row, less the
+// stage (see wideBody). (My seeds used this with a seed-column strip until V5-SEEDCARDS-001 removed its row
 // stepper at Dave's request — "the 'on hand' item … is not needed"; the seam stays, exercised by
 // quantityAdjuster.test.js, for the next host that needs it.)
 
-// The shipped body: the whole row, with the new value. Kept as the default so the Inventory page's
-// write is byte-identical to what it was before the extraction.
-export const wideBody = (row, col, value) => ({ ...row, [col]: value })
+// The shipped body: the row with the new value, less the one key a quantity tap must never carry.
+//
+// BUG-SEEDSTAGEHEADSHIP-001 — `seed_stage` is not sent. The row is the list's, as old as the list,
+// and POST /:id/seed-stage is the stage's only writer: a − / + tap on a lot that had been moved on
+// from another tab or device sent the old stage back and the wide PUT wrote it, with no entry in the
+// lot's history. The handler ignores the key now; this is the half that holds before that Lambda
+// is deployed. Everything else rides as it did, so a host that needs more gone passes `buildBody`.
+export const wideBody = (row, col, value) => {
+  const body = { ...row, [col]: value }
+  delete body.seed_stage
+  return body
+}
 
 // The shipped success commit: the server's row replaces the list's. A host whose rows carry list-only
 // projections (crop, variety name, stage age) merges instead, or the projection vanishes on write.
