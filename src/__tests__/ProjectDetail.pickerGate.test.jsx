@@ -15,7 +15,7 @@
 // Harness mirrors ProjectDetail.eventPaging.test.jsx (router fully stubbed; heavy children stubbed).
 // No jest-dom (L-182).
 import React from 'react'
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
 
 const { apiFetchSpy, navigateSpy, paramsRef } = vi.hoisted(() => ({
@@ -75,6 +75,12 @@ async function openMiniLogger() {
   fireEvent.click(screen.getByText('+ Log event'))
   return screen.getByLabelText('Event type *')
 }
+
+// The '+ Log event' toggle schedules logFormRef.current?.scrollIntoView() on a timer and jsdom ships no
+// scrollIntoView, so under load it lands after the test and surfaces as an uncaught exception (exit 1 with
+// every test green). Defined, not spied on — as ProjectDetail.formGuard.test.jsx does.
+beforeAll(() => { Element.prototype.scrollIntoView = function () {} })
+afterAll(() => { delete Element.prototype.scrollIntoView })
 
 describe('V4-PICKERGATE-001 — ProjectDetail mini-logger event-type <select>', () => {
   it('renders EXACTLY the surface\'s creatable set, derived — not a hand-list', () => {
