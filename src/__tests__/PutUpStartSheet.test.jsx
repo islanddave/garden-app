@@ -336,6 +336,37 @@ describe('the Start sheet — the write', () => {
     expect(body(1).cover_photo_id).toBe('photo-1')
   })
 
+  // BUG-PUTUPSAVEFAILHIDDEN-001: the failure line is the last line of the scroller, under the pinned Start it.
+  it('a start that fails is brought into view and scrolled clear of the pinned footer, and so is the same failure again', async () => {
+    const on = []
+    Element.prototype.scrollIntoView = function scrollIntoView() { on.push(this) }
+    const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+      const box = (top, bottom) => ({ top, bottom, left: 0, right: 400, width: 400, height: bottom - top, x: 0, y: top })
+      if (this.getAttribute?.('data-testid') === 'start-footer') return box(700, 780)
+      if (this.getAttribute?.('data-testid') === 'start-error') return box(730, 745)
+      return box(0, 0)
+    })
+    try {
+      fetchSpy.mockImplementation((p, o = {}) => (o.method === 'POST' ? Promise.reject(new TypeError('Failed to fetch')) : Promise.resolve(null)))
+      render(<Host />)
+      const panel = sheet().closest('[role=dialog]')
+      let top = 0
+      Object.defineProperty(panel, 'scrollTop', { configurable: true, get: () => top, set: (v) => { top = v } })
+      type('start-label', 'Pepper mash')
+      await startIt()
+      await waitFor(() => expect(screen.getByTestId('start-error').textContent).toBe("Couldn't start it — try again. What you typed is still here."))
+      await waitFor(() => expect(on).toContain(screen.getByTestId('start-error')))
+      expect(top).toBe(53)                                                     // 745 + the 8 px gap − 700
+      on.length = 0
+      await startIt()
+      await waitFor(() => expect(kbPosts()).toHaveLength(2))
+      await waitFor(() => expect(on).toContain(screen.getByTestId('start-error')))
+    } finally {
+      rects.mockRestore()
+      delete Element.prototype.scrollIntoView
+    }
+  })
+
   it('the Going-now door can add its own photo', async () => {
     render(<Host />)
     expect(screen.getByTestId('start-photo-add').textContent).toBe('Add a photo')
