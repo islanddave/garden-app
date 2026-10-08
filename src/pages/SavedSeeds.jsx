@@ -44,9 +44,6 @@ import {
 // V5-SEEDMULTIPARENT-001 release 2b — the jar's chips come off its PARENT SET (lotNotice, the one
 // function the save sheet and the lot page read too). With the flag off it answers today's F2 rule.
 import { lotNotice } from '../components/seed/seedParents.js'
-// V5-SEEDLOTADDITION-001 — the lot page's own sentence for "this lot changed somewhere else", said by the
-// stage sheet's count write too (see submitStage).
-import { CHANGED_ELSEWHERE } from '../components/seed/SavedFromCard.jsx'
 import { SEED_MULTI_PARENT } from '../lib/featureFlags.js'
 // Where a Not started lot came from, in My seeds' words for the same lot one tap away.
 import { originNote } from '../components/seed/mySeedsModel.js'
@@ -869,8 +866,9 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
       // open. So the body also says what that row held (count, basis, weight as a number; null for
       // "the row had none"), and the route answers 409 lot_changed, writing nothing, when the lot no
       // longer holds it. The stage move has landed and stands; only the count did not, and the
-      // sentence says the lot changed rather than printing the server's. The reload below draws the
-      // lot as it now is.
+      // sentence says both, and that the lot changed, rather than printing the server's. It is this
+      // sheet's own: the lot page's "Try again" has nothing to act on here, where the sheet has closed
+      // and the card offers the next stage. The reload below draws the lot as it now is.
       let qtyWriteErr = null
       if (count.value != null) {
         const loaded = advancing.item
@@ -887,7 +885,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
           })
         } catch (e) {
           qtyWriteErr = e?.status === 409 && e?.body?.code === 'lot_changed'
-            ? CHANGED_ELSEWHERE
+            ? 'Stage saved, but the count did not. The lot changed somewhere else just now.'
             : (e?.message || 'Stage saved, but the count did not.')
         }
       }
