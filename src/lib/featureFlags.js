@@ -538,4 +538,11 @@ export const SEED_MULTI_PARENT = true
 // already written stay. ORDER: switch this off before any Lambda-only rollback (an older Lambda answers the POST "name is required") and before any undo of release 2b.
 // Rehearsed by `npm run test:flag-off:seedadd` (tests/harness/seedFlagTransform.mjs, in memory, the text scripts/forward-undo.py writes); it must end with 0 failures. Every
 // add-mode test file holds BOTH flags on with its own mock; the seed layout gates serve both on through tests/harness/vite.harness.seedon.mjs.
+// WHAT THIS DOES NOT SWITCH OFF, on purpose. (1) The wording: "lot" where these screens said otherwise. (2) The count write's guard: with this false the lot page and the
+// Saved seeds stage sheet still send expected_seed_count, expected_seed_count_estimated and expected_seed_weight_g with every PUT /api/inventory-items/:id/seed-measure, and
+// the Lambda still answers 409 lot_changed when the lot no longer holds what the page loaded. So a flag-off build is NOT the previous release on the wire: those two request
+// bodies differ, and a count save can be refused where it used to be written. That is intended. The guard only ever refuses a write made from a row that has since changed,
+// and a Lambda from before this release reads its four measure keys by name and ignores every other key (read in the v4.172.0 handler). With this false no client can add
+// seed, so the guard has nothing new to catch, and it does no harm. Taking the guard itself out is a code change, not this flag: a forward build that reverts 74c2f805 (the
+// lot page), a1d6f660 (the stage sheet) and b79fe5ff (their request-body pins). With no expected key sent, the Lambda runs the statement it ran before.
 export const SEED_ADD_TO_LOT = true
