@@ -77,7 +77,7 @@ export function parseAddCount(raw) {
     return { value: null, error: 'Type a whole number of seeds, 1 or more, or leave it blank.' }
   }
   const n = Number(typed)
-  if (n > ADD_COUNT_MAX) return { value: null, error: 'That is more seeds than one addition can hold.' }
+  if (n > ADD_COUNT_MAX) return { value: null, error: 'That is over a million seeds. Check the number.' }
   return { value: n, error: null }
 }
 
