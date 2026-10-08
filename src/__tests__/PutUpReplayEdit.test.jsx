@@ -437,7 +437,7 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     type('recipe-name', 'Mojo verde')
     await save()
     await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
-    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — the first Save went through. This change did not save: boom'))
+    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: boom'))
     expect(errorText()).not.toMatch(BANNED)
     expect(onExists).toHaveBeenCalledTimes(1)                                  // the list behind re-reads: the recipe is there
     expect(onSaved).not.toHaveBeenCalled()
@@ -460,7 +460,7 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     type('recipe-name', 'Mojo verde')
     await save()
     await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
-    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — the first Save went through. This change may not have saved — try again. What you typed is still here.'))
+    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change may not have saved — try again. What you typed is still here.'))
     expect(onSaved).not.toHaveBeenCalled()
     expect(screen.getByTestId('recipe-name').value).toBe('Mojo verde')
   })
@@ -696,7 +696,7 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     on.length = 0
     type('recipe-name', 'Mojo verde')
     await save()
-    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — the first Save went through. This change did not save: boom'))
+    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: boom'))
     await waitFor(() => expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(true))
   })
 
@@ -803,7 +803,7 @@ describe('the recipes list behind the sheet is told the recipe is there', () => 
     expect(screen.queryAllByTestId('recipes-row')).toHaveLength(0)             // a lost answer: nothing is known yet
     type('recipe-name', 'Mojo verde')
     await act(async () => { tap('recipe-save') })
-    await waitFor(() => expect(screen.getByTestId('recipe-sheet-error').textContent).toBe('“Mojo” is already saved — the first Save went through. This change did not save: boom'))
+    await waitFor(() => expect(screen.getByTestId('recipe-sheet-error').textContent).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: boom'))
     await waitFor(() => expect(screen.getAllByTestId('recipes-row')).toHaveLength(1))
     expect(screen.getByTestId('recipes-row').textContent).toMatch(/^Mojo/)
     expect(screen.getByTestId('recipe-name').value).toBe('Mojo verde')         // the sheet is still open, with what was typed
@@ -870,7 +870,7 @@ describe('Save as recipe — POST /api/recipes/from-batch/:id, then PATCH /api/r
     type('batch-save-as-recipe-name', 'Settlers, the hot one')
     await save()
     await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
-    await waitFor(() => expect(errorText()).toBe('Already saved as a recipe: “Settlers of Cayenne” — the first Save went through. The new name did not save — try again.'))
+    await waitFor(() => expect(errorText()).toBe('Already saved as a recipe: “Settlers of Cayenne” — an earlier Save went through. The new name did not save — try again.'))
     expect(errorText()).not.toMatch(BANNED)
     expect(onChanged).toHaveBeenCalledTimes(1)                                 // batch detail re-reads: it follows the recipe now
     expect(screen.queryByTestId('batch-save-as-recipe-saved')).toBeNull()
@@ -890,7 +890,7 @@ describe('Save as recipe — POST /api/recipes/from-batch/:id, then PATCH /api/r
       [`PATCH ${ROW}`]: (b) => { row = { ...row, ...b, updated_at: new Date().toISOString() }; if (++seen === 1) LOST(); return { recipe: row } },
     })
   }
-  const MAYBE = 'Already saved as a recipe: “Settlers of Cayenne” — the first Save went through. The new name may not have saved — try again.'
+  const MAYBE = 'Already saved as a recipe: “Settlers of Cayenne” — an earlier Save went through. The new name may not have saved — try again.'
 
   it('BUG-PUTUPSAVEFAILHIDDEN-001 — a Save that fails the ordinary way is brought into view, and so is the same failure again', async () => {
     const on = watchScrolls()
@@ -1112,10 +1112,10 @@ describe('How it was made — POST /api/kitchen-batches/from-jars, then PUT /api
     type('how-label', 'Megatron plain, 2026')
     await save()
     await waitFor(() => expect(sentTo('PUT', ROW)).toHaveLength(1))
-    await waitFor(() => expect(screen.getByTestId('how-error').textContent).toBe('This batch is already saved — the first Save went through. The change to its name or kind did not save. Try again, or close this and make it on the batch.'))
+    await waitFor(() => expect(screen.getByTestId('how-error').textContent).toBe('This batch is already saved — an earlier Save went through. The change to its name or kind did not save. Try again, or close this and make it on the batch.'))
     expect(screen.getByTestId('how-error').textContent).toBe(REPLAY_CHANGE_UNSAVED)
     expect(REPLAY_CHANGE_UNSAVED).not.toMatch(BANNED)
-    expect(REPLAY_CHANGE_MAYBE).toBe('This batch is already saved — the first Save went through. The change to its name or kind may not have saved. Try again, or close this and check it on the batch.')
+    expect(REPLAY_CHANGE_MAYBE).toBe('This batch is already saved — an earlier Save went through. The change to its name or kind may not have saved. Try again, or close this and check it on the batch.')
     expect(REPLAY_CHANGE_MAYBE).not.toMatch(BANNED)
     expect(onClose).not.toHaveBeenCalled()
     expect(onSaved.mock.calls.map(c => c[0])).toEqual([{ ...FIRST, replayed: true }])   // the lists behind re-read

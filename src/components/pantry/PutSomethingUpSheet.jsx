@@ -498,7 +498,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
     const otherWay = otherRouteSent(sent, route)
     if (otherWay) {
       const known = existsRef.current?.route === otherWay ? existsRef.current.row : null
-      setErr(otherRouteText({ first: otherWay, row: known, what })); setField(null)
+      setErr(otherRouteText({ first: otherWay, row: known, what, offered: otherWay !== 'item' || choices.asIs != null })); setField(null)
       if (known) { setSpent(true); onExists?.() }
       setRefusedSeq(s => s + 1)
       return
@@ -626,7 +626,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
       setErr(refusalOf(ex, "Couldn't save it — nothing was lost. Try again."))
       setRefusedSeq(s => s + 1)
     }
-  }, [amountUnit, amountValue, chips, discard, draftKey, estimate, fetch, inOil, isRaw, key, method, n, notes, nowDate, onExists, onSaved, pickedDate,
+  }, [amountUnit, amountValue, chips, choices, discard, draftKey, estimate, fetch, inOil, isRaw, key, method, n, notes, nowDate, onExists, onSaved, pickedDate,
     place, planting, sent, sizeUnit, sizeValue, sourceKind, sourceLabel, texture, w, whenChip, what])
 
   const name = String(what?.name ?? '').trim() || 'this'

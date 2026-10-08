@@ -97,7 +97,7 @@ export function saveAsRecipeStaleText(recipe) {
 }
 export function saveAsRecipeUnsavedText(recipe, { lost = false } = {}) {
   const name = String(recipe?.name ?? '').trim()
-  return `${name ? `Already saved as a recipe: “${name}”` : 'Already saved as a recipe'} — the first Save went through. The new name ${lost ? 'may not have saved' : 'did not save'} — try again.`
+  return `${name ? `Already saved as a recipe: “${name}”` : 'Already saved as a recipe'} — an earlier Save went through. The new name ${lost ? 'may not have saved' : 'did not save'} — try again.`
 }
 
 export function SaveAsRecipe({ batch, onChanged }) {

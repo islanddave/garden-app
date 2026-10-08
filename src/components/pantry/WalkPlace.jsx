@@ -516,7 +516,7 @@ function WalkGroup({
     const otherWay = otherRouteSent(sent, route)
     if (otherWay) {
       const known = existsRef.current?.route === otherWay ? existsRef.current.row : null
-      setErr(otherRouteText({ first: otherWay, row: known, what, walk: true })); setField(null); setRefusedSeq(s => s + 1)
+      setErr(otherRouteText({ first: otherWay, row: known, what, walk: true, offered: otherWay !== 'item' || choices.asIs != null })); setField(null); setRefusedSeq(s => s + 1)
       if (known) onExists?.()
       return
     }

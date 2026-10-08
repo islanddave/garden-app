@@ -398,6 +398,21 @@ describe('one key, two tables — putSomethingUp.js otherRouteSent, otherRouteTe
     for (const [said, words] of all) { expect(said).toBe(words); expect(said).not.toMatch(BANNED) }
     for (const [said] of all.slice(4)) expect(said).not.toMatch(/is already in the Pantry|is in the Pantry/)
   })
+  // Re-review M-A. A planting has no “Fresh, as picked” at a freezer, so "choose it again" asked for a chip that
+  // is not on screen. When the first way is not offered the line names a way that is: the place, in the door; in
+  // a walk (whose place is the walk's) where to look, and the way on.
+  it('re-review M-A — when the first way\'s chip is NOT offered where he is now, the line does not ask for it: the door names the place row, the walk says where to look and the way on', () => {
+    const planting = { source: 'planting', name: 'Megatron', plant_id: 'p1' }
+    const door = otherRouteText({ first: 'item', what: planting, offered: false })
+    const walk = otherRouteText({ first: 'item', what: planting, offered: false, walk: true })
+    expect(door).toBe('An earlier Save of this as “Fresh, as picked” may have gone through. It can\'t also be saved as a put-up from here. Pick the place it was saved to, then choose “Fresh, as picked” and tap Save to finish that one.')
+    expect(walk).toBe(`An earlier Save of this as “Fresh, as picked” may have gone through. It can't also be saved as a put-up from here. Look for it in the Pantry.${WALK_ON}`)
+    for (const said of [door, walk]) { expect(said).not.toMatch(BANNED); expect(said).not.toMatch(/is already in the Pantry|is in the Pantry|Choose “Fresh, as picked” again/) }
+    // Offered (the default), or the first way was a put-up (a method is always offered), or the row is KNOWN: as before.
+    expect(otherRouteText({ first: 'item', what: planting, offered: true })).toBe(otherRouteText({ first: 'item', what: planting }))
+    expect(otherRouteText({ first: 'jar', what: planting, offered: false })).toBe(otherRouteText({ first: 'jar', what: planting }))
+    expect(otherRouteText({ first: 'item', row: { name: 'Megatron' }, what: planting, offered: false })).toBe(otherRouteText({ first: 'item', row: { name: 'Megatron' }, what: planting }))
+  })
 })
 
 describe('Put something up — the put-up route', () => {
@@ -1044,6 +1059,30 @@ describe('Put something up — the put-up route', () => {
     expect(keys(ITEMS)[0]).not.toBe(keys()[0])
   })
 
+  // Re-review M-A (the reviewer's S4a).
+  it('re-review M-A (S4a) — a planting, “Fresh, as picked” at the fridge with its answer lost; the place changed to a freezer (no such chip there), a method, Save: refused — and the line names a way that IS on screen. Followed, the one item is finished: no put-up', async () => {
+    const planting = { source: 'planting', name: 'Megatron jalapeño', plant_id: 'p1', crop_type_slug: 'pepper', variety_id: 'v1' }
+    let n = 0
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: ({ body }) => { if (++n === 1) LOST(); return { item: { id: 'item-new', ...body } } } } })
+    stableFetch.fn = fake
+    const door = await openDoor({ initialWhat: planting })
+    tap('door-place-id:loc-3'); tap('door-method-as_is')
+    save(); await failed()
+    tap('door-place-id:loc-1')                                                 // a freezer: a planting has no “Fresh, as picked” there
+    await waitFor(() => expect(screen.queryByTestId('door-method-as_is')).toBeNull())
+    method('whole_freeze')
+    save()
+    await failed('An earlier Save of this as “Fresh, as picked” may have gone through. It can\'t also be saved as a put-up from here. Pick the place it was saved to, then choose “Fresh, as picked” and tap Save to finish that one.')
+    expect(posts()).toHaveLength(0)
+    tap('door-place-id:loc-3'); tap('door-method-as_is')                       // as the line says
+    save()
+    await waitFor(() => expect(door.onSaved).toHaveBeenCalledTimes(1))
+    expect(told(door).route).toBe('item')
+    expect(posts(ITEMS)).toHaveLength(2)
+    expect(new Set(keys(ITEMS)).size).toBe(1)
+    expect(posts()).toHaveLength(0)
+  })
+
   // Found twice on 2026-10-08 (the spent-key lane's S4): As is, lost; a change; refused "saved earlier"; a
   // method chip, and the put-up route answers a 4xx — which minted a NEW key although item Saves had gone out
   // under the old one; back to As is, Save: a second item.
@@ -1378,6 +1417,122 @@ describe('the Walk — the put-up route', () => {
     expect(keys()[3]).toMatch(/^[0-9a-f-]{36}$/)
     expect(keys()[3]).not.toBe(firstKey)
     expect(band()).toBe('✓ 1 × Beans · Freeze whole')
+  })
+
+  // Re-review M-A, in a walk: the place is the walk's, so the line cannot send him to the place row.
+  it('re-review M-A — in a walk at a freezer: As is with a typed name, its answer lost; a PLANTING picked for it (no “Fresh, as picked” at a freezer), a method, Save: refused, nothing sent — the line asks for no chip that is not there', async () => {
+    const hits = { plantings: [{ plant_id: 'p-blue', label: 'Blueberries', crop_type_slug: 'blueberry', variety_id: 'v-blue', recent_picks: [] }], put_ups: [] }
+    fake = pantryFetch({ rows: [], lineSearch: hits, overrides: { [`POST ${ITEMS}`]: () => LOST() } })
+    stableFetch.fn = fake
+    await startWalk()
+    typeWhat('Blue'); tap('walk-method-as_is')
+    await screen.findByTestId('walk-what-hit-planting:p-blue', {}, { timeout: 2000 })   // the search has answered; he saves what he typed
+    save(); await failed()
+    fireEvent.click(await screen.findByTestId('walk-what-hit-planting:p-blue', {}, { timeout: 2000 }))
+    await waitFor(() => expect(screen.queryByTestId('walk-method-as_is')).toBeNull())
+    method('whole_freeze')
+    save()
+    await failed(`An earlier Save of this as “Fresh, as picked” may have gone through. It can't also be saved as a put-up from here. Look for it in the Pantry.${WALK_ON}`)
+    expect(posts()).toHaveLength(0)
+    expect(posts(ITEMS)).toHaveLength(1)
+  })
+
+  // Re-review M-B. The Walk's As is route had no case of its own for "the moved stamp is this group's only while
+  // the item holds what it sent" or for a removed item: both lines could be put back to the old rule with every
+  // test green. A table of one item, as the item route answers it.
+  const itemTable = ({ first = {}, onPatch = null } = {}) => {
+    const state = { row: null, patches: 0 }
+    fake = pantryFetch({ rows: [], overrides: {
+      [`POST ${ITEMS}`]: ({ body }) => {
+        if (state.row == null) {
+          const at = new Date(Date.now() - 30 * 1000).toISOString()
+          state.row = {
+            id: 'item-first', user_id: 'user_dave', name: body.name, storage_location_id: 'loc-1', place: { ...PLACES[0] },
+            acquired_at: body.acquired_at ?? null, acquired_precision: body.acquired_precision ?? null, use_by_target: body.use_by_target ?? null,
+            plant_id: null, crop_type_slug: body.crop_type_slug ?? null, quantity_value: null, quantity_unit: null, source_kind: null, source_label: null,
+            used_up_at: null, notes: null, created_at: at, updated_at: at, deleted_at: null, ...first,
+          }
+          LOST()                                                                // landed; its answer did not come back
+        }
+        return { item: state.row, replayed: true }
+      },
+      [`PATCH ${ITEMS}/*`]: ({ body }) => {
+        state.patches += 1
+        const how = onPatch?.(state.patches, body, state)                       // may throw: the PATCH did not land
+        state.row = { ...state.row, ...body, updated_at: new Date().toISOString() }
+        if (how === 'lost') LOST()
+        return { item: state.row }
+      },
+    } })
+    stableFetch.fn = fake
+    return state
+  }
+  const oatMilk = () => { typeWhat('Oat milk'); tap('walk-method-as_is') }
+  const itemAnswered = async (nth) => {
+    await waitFor(() => expect(posts(ITEMS)).toHaveLength(nth))
+    await waitFor(() => expect(screen.getByTestId('walk-save').disabled).toBe(false))
+  }
+  const ITEM_MAYBE = '“Oat milk” is already in the Pantry — an earlier Save went through. This change may not have saved — try again.'
+  it('re-review M-B — the walk, As is: the PATCH never reached the server and the item is renamed by someone else meanwhile: Save again writes NOTHING over their change — the walk says it was saved earlier', async () => {
+    const state = itemTable({ onPatch: (n, body, st) => { if (n === 1) { st.row = { ...st.row, name: 'Oat milk (Jen)', updated_at: new Date().toISOString() }; LOST() } } })
+    await startWalk()
+    oatMilk()
+    save(); await failed()
+    typeWhat('Oat milk, barista')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    await failed(ITEM_MAYBE)
+    save()
+    await itemAnswered(3)
+    expect(errorText()).toBe(`“Oat milk (Jen)” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.${WALK_ON}`)
+    expect(patches()).toHaveLength(1)                                           // no second PATCH
+    expect(state.row.name).toBe('Oat milk (Jen)')
+    expect(band()).toBeNull()
+    expect(new Set(keys(ITEMS)).size).toBe(1)
+  })
+  it('re-review M-B — … the PATCH LANDED with its answer lost, and someone else then renames it: a further change is NOT written over theirs', async () => {
+    const state = itemTable({ onPatch: (n) => (n === 1 ? 'lost' : undefined) })
+    await startWalk()
+    oatMilk()
+    save(); await failed()
+    typeWhat('Oat milk, barista')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    await failed('“Oat milk” is already in the Pantry — an earlier Save went through. This change may not have saved — try again.')
+    state.row = { ...state.row, name: 'Oat milk (Jen)', updated_at: new Date().toISOString() }
+    typeWhat('Oat milk, barista, opened')
+    save()
+    await itemAnswered(3)
+    expect(errorText()).toBe(`“Oat milk (Jen)” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.${WALK_ON}`)
+    expect(patches()).toHaveLength(1)
+    expect(state.row.name).toBe('Oat milk (Jen)')
+  })
+  it('re-review M-B — … and its own PATCH, landed with its answer lost, is still its own: a further change goes onto the item', async () => {
+    const state = itemTable({ onPatch: (n) => (n === 1 ? 'lost' : undefined) })
+    await startWalk()
+    oatMilk()
+    save(); await failed()
+    typeWhat('Oat milk, barista')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    await failed(ITEM_MAYBE)
+    typeWhat('Oat milk, barista, opened')
+    save(); await landed()
+    expect(patches().map(c => c.body.name)).toEqual(['Oat milk, barista', 'Oat milk, barista, opened'])
+    expect(state.row.name).toBe('Oat milk, barista, opened')
+    expect(band()).toBe('✓ Oat milk, barista, opened · As is')
+    expect(new Set(keys(ITEMS)).size).toBe(1)
+  })
+  it('re-review M-B — the walk, As is: the item was REMOVED since, Save again untouched — the band does not tick a removed item; the walk says it was removed, and the way on', async () => {
+    itemTable({ first: { deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() } })
+    await startWalk()
+    oatMilk()
+    save(); await failed()
+    save()
+    await itemAnswered(2)
+    expect(errorText()).toBe(`“Oat milk” was saved earlier and has been removed since. This Save did not change that.${WALK_ON}`)
+    expect(band()).toBeNull()
+    expect(patches()).toHaveLength(0)
   })
 
   it('the PATCH landed with its answer lost; a further change, Save: it still goes onto that jar', async () => {

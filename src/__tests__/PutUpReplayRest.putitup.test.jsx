@@ -159,8 +159,8 @@ describe('the words, and the stub from what the server answered', () => {
     expect(sittingRows(null)).toEqual([])
     // A replay with NO jars is not a sitting to make a stub of (QA I-4): the sheet refuses it — the cases below.
   })
-  it('QA I-4 — a put-up that is gone says so: not in the Pantry any more, this tap changed nothing, how to enter it again — and never "already put up"', () => {
-    expect(PUT_UP_REPLAY_GONE).toBe('That put-up is not in the Pantry any more — it was undone or removed since. This tap changed nothing. To enter it again, close this and open Put it up from the batch.')
+  it('QA I-4 — a put-up that is gone says so: not in the Pantry anymore, this tap changed nothing, how to put it up again (by way of the batch: re-review M-E, M-F) — and never "already put up"', () => {
+    expect(PUT_UP_REPLAY_GONE).toBe('That put-up is not in the Pantry anymore — it was undone or removed since. This tap changed nothing. To put it up again, close this and open the batch.')
     expect(PUT_UP_REPLAY_GONE).not.toMatch(BANNED)
     expect(PUT_UP_REPLAY_GONE).not.toMatch(/already put up|open the batch to see/i)
   })

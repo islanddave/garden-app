@@ -514,13 +514,20 @@ export const WALK_NEXT_TEXT = `To log more here, ${WALK_ON}.`
 // Said for that refusal. `first` is the route the earlier Save went out on; `row` is the row it is KNOWN to
 // have made (a replay answered with it in the door that is open) or null when its answer never came back —
 // then nothing says it is in the Pantry, only that it may be, and the way on is to finish THAT Save. `walk`:
-// a walk's group has no close; its way to a new one is to end the walk.
-export function otherRouteText({ first, row = null, what = null, walk = false }) {
+// a walk's group has no close; its way to a new one is to end the walk. `offered` (re-review M-A): whether the
+// first way's chip is on screen where he is now. A planting has no “Fresh, as picked” at a freezer, so "choose
+// it again" would ask for a chip that is not there: the door names the row that brings it back (the place),
+// and a walk — whose place is the walk's own — says where to look and the way on.
+export function otherRouteText({ first, row = null, what = null, walk = false, offered = true }) {
   const asIs = `as “${methodLabel(AS_IS, what)}”`
   const was = first === 'jar' ? 'as a put-up' : asIs
   const now = first === 'jar' ? asIs : 'as a put-up'
   if (!row) {
     const head = `An earlier Save of this ${was} may have gone through. It can't also be saved ${now} from here.`
+    if (first !== 'jar' && offered === false) {
+      return walk ? `${head} Look for it in the Pantry. ${WALK_NEXT_TEXT}`
+        : `${head} Pick the place it was saved to, then choose “${methodLabel(AS_IS, what)}” and tap Save to finish that one.`
+    }
     const again = first === 'jar' ? 'Choose the method again' : `Choose “${methodLabel(AS_IS, what)}” again`
     return `${head} ${again} and tap Save to finish that one.`
   }

@@ -70,8 +70,8 @@ const FROM_JARS_FIXED = ['started', 'inputs', 'jar_ids', 'made_count', 'next_tim
 // Which Save made the batch is not known here (the first, or a later one that held the change), so neither
 // sentence says the change is missing: only that this Save wrote nothing, or that the rename did not go through.
 export const REPLAY_NOT_ON_IT = 'This batch is already saved — an earlier Save went through. This Save changed nothing on it. If your last change is not there, close this and open the batch to make it there.'
-export const REPLAY_CHANGE_UNSAVED = 'This batch is already saved — the first Save went through. The change to its name or kind did not save. Try again, or close this and make it on the batch.'
-export const REPLAY_CHANGE_MAYBE = 'This batch is already saved — the first Save went through. The change to its name or kind may not have saved. Try again, or close this and check it on the batch.'
+export const REPLAY_CHANGE_UNSAVED = 'This batch is already saved — an earlier Save went through. The change to its name or kind did not save. Try again, or close this and make it on the batch.'
+export const REPLAY_CHANGE_MAYBE = 'This batch is already saved — an earlier Save went through. The change to its name or kind may not have saved. Try again, or close this and check it on the batch.'
 
 const link = {
   display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, background: 'none', border: 'none',

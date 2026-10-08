@@ -73,7 +73,7 @@ export function recipeStaleText(recipe) {
 // sentence when it gave one; `lost` is true when no answer came back at all (the change may be on it).
 export function recipeUnsavedText(recipe, { why = '', lost = false } = {}) {
   const name = quoted(recipe)
-  const head = `${name ? `${name} is already saved` : 'This recipe is already saved'} — the first Save went through.`
+  const head = `${name ? `${name} is already saved` : 'This recipe is already saved'} — an earlier Save went through.`
   if (why) return `${head} This change did not save: ${why}`
   return `${head} This change ${lost ? 'may not have saved' : 'did not save'} — try again. What you typed is still here.`
 }

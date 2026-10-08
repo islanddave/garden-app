@@ -79,7 +79,9 @@ const EMPTY_SITTING = { lines: [], madeG: '', mashG: '', nextTime: '' }
 // landed is not known here, so it never says the change is missing: only that this tap wrote nothing.
 export const PUT_UP_REPLAY_NOT_ON_IT = 'This is already put up — an earlier tap went through. This tap changed nothing on it. Close this and open the batch to see what was put up.'
 // Said when the sitting an earlier tap made has no jar left: undone, or its jars removed — which is not known.
-export const PUT_UP_REPLAY_GONE = 'That put-up is not in the Pantry any more — it was undone or removed since. This tap changed nothing. To enter it again, close this and open Put it up from the batch.'
+// The way on names the batch, not its Put it up: after a FINISHED sitting's jars were removed one by one the
+// batch is still closed, and Put it up is behind Reopen (re-review M-F).
+export const PUT_UP_REPLAY_GONE = 'That put-up is not in the Pantry anymore — it was undone or removed since. This tap changed nothing. To put it up again, close this and open the batch.'
 
 // What the preview says when Raw or In oil is what took the date away (Put-Up R2a, amendment D7; ruling
 // Df-3 = F-3). THE ONE COPY on this surface: the door (pantry/) holds its own and a test binds the two, so
