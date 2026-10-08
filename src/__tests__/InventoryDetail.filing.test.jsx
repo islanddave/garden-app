@@ -687,7 +687,7 @@ describe('Re-file by itself — what it never does', () => {
     await addFromPicker(P2B)
 
     await waitFor(() => expect(help())
-      .toBe('This jar changed somewhere else just now. This is the latest. Try again if it still needs changing.'))
+      .toBe('This lot changed somewhere else just now. This is the latest. Try again if it still needs changing.'))
     expect(liveRows()).toHaveLength(2)
     expect(filedLine()).toBeNull()
     // The jar was renamed elsewhere, and the field still showed the automatic name: it follows.

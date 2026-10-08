@@ -2,6 +2,16 @@
   "floors": [
     {
       "floor": "v4.170.0",
+      "since": "v4.174.0",
+      "reason": "seed release 3 (put more seed in a seed lot already started): once this ships, prod holds rows in seed_lot_addition, lots whose count was raised by a picking, and seed_saved timeline entries marked addition. Code at or above v4.170.0 reads every row this release leaves, never names seed_lot_addition, never hard-deletes a link row, and its merge moves link rows so pickings follow. Undo release 3 by switching SEED_ADD_TO_LOT off (rehearsal: npm run test:flag-off:seedadd); the table stays. The count-save guard (three expected_seed_* keys on the measure PUT) is not behind the flag: undoing it is a code revert of 74c2f805, a1d6f660 and b79fe5ff.",
+      "ledger": "V5-SEEDLOTADDITION-001",
+      "undo_instead": {
+        "flag": "SEED_ADD_TO_LOT",
+        "file": "src/lib/featureFlags.js"
+      }
+    },
+    {
+      "floor": "v4.170.0",
       "since": "v4.172.0",
       "reason": "seed release 2b (the Save seed flow for several plantings): once this ships, prod holds jars with two or more parent rows in seed_lot_parent_planting and jars filed under a household mix variety. Code below v4.170.0 writes inventory_items.source_plant_id alone and cannot see link rows, so it would show and rewrite such a jar as a one-parent jar. Undo release 2b by switching SEED_MULTI_PARENT off (the flag-off build is green as it stands; rehearsal: npm run test:flag-off:seed) BEFORE any undo of release 2a (v4.171.0).",
       "ledger": "V5-SEEDMULTIPARENT-001",

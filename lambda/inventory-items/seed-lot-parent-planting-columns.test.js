@@ -62,9 +62,41 @@ const AUDIT_COLUMNS = {
     'updated_at',
     'deleted_at',
   ],
+  // V5-SEEDLOTADDITION-001 (release 3) — the picking table, a SECOND KEY of this literal rather than
+  // a file of its own: its rows hang on this table's rows (parent_link_id is its only foreign key),
+  // every statement that names it is in seed-lot-additions.js beside statements that name this one,
+  // and a new contract file would raise the directory's count ratchet for no new coverage.
+  //
+  // ONLY the columns a statement here names — eleven of the table's thirteen. updated_at and
+  // deleted_at are on the table and nothing in this directory reads or writes either, so the audit
+  // must not assert them for it; the sweep below holds this list to the SQL in both directions too.
+  seed_lot_addition: [
+    'id',
+    'addition_key',
+    'parent_link_id',
+    'picked_on',
+    'seed_count',
+    'seed_count_estimated',
+    'seed_weight_g',
+    'count_applied',
+    'weight_applied',
+    'created_by',
+    'created_at',
+  ],
 };
 
 const CONTRACT = AUDIT_COLUMNS.seed_lot_parent_planting;
+
+// The picking table's statements and how each names it. One alias, `a`, wherever it is read; the one
+// INSERT names its columns in a parenthesised list and RETURNs three of them bare.
+const ADDITION_TABLE = 'seed_lot_addition';
+const ADDITION_CONTRACT = AUDIT_COLUMNS.seed_lot_addition;
+// The ONE binding of the link table that is deliberately not filtered to a live seed_parent row: the
+// key lookup of seed-lot-additions.js judgeAddition, which finds the link row a recorded picking
+// hangs on WHETHER OR NOT that row is still live (the plant may have been taken off the lot, or
+// merged into another plant on it, since the picking was recorded — and the request must still read
+// as a replay). It is reached by primary key from the picking row, never by lot or planting.
+const KEY_LOOKUP_ALIAS = 'kl';
 
 const STATEMENTS = HANDLERS.flatMap((f) => {
   const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
@@ -109,8 +141,14 @@ describe('V5-SEEDMULTIPARENT-001 — lambda/inventory-items seed_lot_parent_plan
     // new module: seed-lot-rules.js's read of which plantings are already parents, and its judge of
     // the same inside the transaction; seed-lot-filing.js's judge, which reads the lot's parents to
     // know their crop.
+    //
+    // FOURTEEN with release 3 (V5-SEEDLOTADDITION-001). Three more, all in seed-lot-additions.js: the
+    // judge (the lot's live parents three ways, and the key's own link row), applyAddition (the link
+    // row a picking hangs on, and the member cache's two reads) and the open-lots read (each lot's
+    // parents, aggregated).
     expect(STATEMENTS.map((s) => s.file).sort()).toEqual([
       'index.js',
+      'seed-lot-additions.js', 'seed-lot-additions.js', 'seed-lot-additions.js',
       'seed-lot-filing.js',
       'seed-lot-parents.js', 'seed-lot-parents.js', 'seed-lot-parents.js', 'seed-lot-parents.js',
       'seed-lot-parents.js', 'seed-lot-parents.js', 'seed-lot-parents.js',
@@ -154,8 +192,11 @@ describe('V5-SEEDMULTIPARENT-001 — lambda/inventory-items seed_lot_parent_plan
     // seed parents the day one is written, with no test here failing. deleted_at IS NULL because a
     // removed parent is a soft-deleted row, and it must stop being a parent everywhere at once.
     let checked = 0;
+    let exempted = 0;
     for (const { file, sql } of STATEMENTS) {
       for (const { alias } of bindingsOf(sql)) {
+        // The named exemption (release 3): the key lookup, in seed-lot-additions.js and nowhere else.
+        if (file === 'seed-lot-additions.js' && alias === KEY_LOOKUP_ALIAS) { exempted++; continue; }
         expect(sql, `${file}: ${alias} is read without the role filter`)
           .toMatch(new RegExp(String.raw`\b${alias}\.role = 'seed_parent'`));
         expect(sql, `${file}: ${alias} is read without the live-row filter`)
@@ -167,7 +208,26 @@ describe('V5-SEEDMULTIPARENT-001 — lambda/inventory-items seed_lot_parent_plan
     // soft-delete's target and its two, the cache's four, the gate's member arm, the create's
     // assertion, and index.js's one. Not a vacuous loop.
     expect(checked).toBeGreaterThanOrEqual(16);
+    // Exactly one binding is exempt, so the exemption cannot quietly come to cover a second read.
+    expect(exempted).toBe(1);
     for (const { file, sql } of STATEMENTS) expect(sql, file).not.toMatch(/pollen_parent/);
+  });
+
+  it('the one exempt binding is the key lookup: joined by primary key from the picking row, and it filters nothing', () => {
+    const lookups = STATEMENTS.filter(({ sql }) => bindingsOf(sql).some((b) => b.alias === KEY_LOOKUP_ALIAS));
+    expect(lookups.map((s) => s.file)).toEqual(['seed-lot-additions.js']);
+    const [{ sql }] = lookups;
+    expect(sql).toMatch(/LEFT JOIN public\.seed_lot_addition a ON a\.addition_key = \$\{additionKey\}::uuid\s+LEFT JOIN public\.seed_lot_parent_planting kl ON kl\.id = a\.parent_link_id/);
+    // It reads which lot the row belongs to and when it was written, and nothing else — and it is
+    // never a predicate on role or liveness, which is the whole of what the exemption allows.
+    expect([...new Set([...sql.matchAll(/\bkl\.([a-z_]+)\b/g)].map((m) => m[1]))].sort())
+      .toEqual(['created_at', 'id', 'inventory_item_id']);
+    expect(sql).not.toMatch(/\bkl\.(role|deleted_at)\b/);
+    // Every OTHER binding of the link table in that same statement keeps both filters.
+    for (const { alias } of bindingsOf(sql).filter((b) => b.alias !== KEY_LOOKUP_ALIAS)) {
+      expect(sql).toMatch(new RegExp(String.raw`\b${alias}\.role = 'seed_parent'`));
+      expect(sql).toMatch(new RegExp(String.raw`\b${alias}\.deleted_at IS NULL`));
+    }
   });
 
   it('every INSERT names the role explicitly, as seed_parent', () => {
@@ -254,8 +314,111 @@ describe('V5-SEEDMULTIPARENT-001 — lambda/inventory-items seed_lot_parent_plan
     expect(decl, 'AUDIT_COLUMNS literal not found by the auditor pattern').not.toBeNull();
     expect(decl[1]).not.toMatch(/\bconst\b/);
     const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual([TABLE]);
+    expect(pairs.map((m) => m[1])).toEqual([TABLE, ADDITION_TABLE]);
     const cols = [...pairs[0][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
     expect(cols).toEqual(CONTRACT);
+    const additionCols = [...pairs[1][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+    expect(additionCols).toEqual(ADDITION_CONTRACT);
+  });
+});
+
+// ── V5-SEEDLOTADDITION-001 (release 3) — the picking table, held to the same sweeps ────────────────
+describe('V5-SEEDLOTADDITION-001 — lambda/inventory-items seed_lot_addition column contract', () => {
+  const NAMING = HANDLERS.flatMap((f) => {
+    const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
+    return [...src.matchAll(/sql`([^`]*)`/g)]
+      .map((m) => m[1])
+      .filter((s) => new RegExp(`\\b${ADDITION_TABLE}\\b`).test(s))
+      .map((sql) => ({ file: f, sql }));
+  });
+  const BOUND = new RegExp(String.raw`\b(FROM|JOIN)\s+public\.${ADDITION_TABLE}\s+([a-z_][a-z0-9_]*)`, 'gi');
+  const boundIn = (s) => [...s.matchAll(BOUND)].map((m) => m[2]);
+  const INSERT = new RegExp(String.raw`INSERT\s+INTO\s+public\.${ADDITION_TABLE}\s*\(([^)]*)\)\s*(?:VALUES|SELECT)\b`, 'gi');
+  const insertedIn = (s) => [...s.matchAll(INSERT)].flatMap((m) => m[1].split(',').map((c) => c.trim()).filter(Boolean));
+  // The INSERT's RETURNING list: bare names, by SQL's own rule for a statement with no alias.
+  const returnedIn = (s) => [...s.matchAll(
+    new RegExp(String.raw`INSERT\s+INTO\s+public\.${ADDITION_TABLE}\b[\s\S]*?\bRETURNING\s+([a-z_, ]+?)\s*\)`, 'gi'),
+  )].flatMap((m) => m[1].split(',').map((c) => c.trim()).filter(Boolean));
+
+  it('finds the statements: three, all in seed-lot-additions.js', () => {
+    // The fast path's key read, the judge's key lookup, and applyAddition's INSERT. Exact, like the
+    // link table's own list above: a fourth statement is reviewed against the contract, not inherited.
+    expect(NAMING.map((s) => s.file)).toEqual(['seed-lot-additions.js', 'seed-lot-additions.js', 'seed-lot-additions.js']);
+    // No other module names the table — index.js reaches it only through that one.
+    expect(HANDLERS.filter((f) => new RegExp(`\\b${ADDITION_TABLE}\\b`)
+      .test(decomment(readFileSync(resolve(__dirname, f), 'utf8'))))).toEqual(['seed-lot-additions.js']);
+  });
+
+  it('names the table schema-qualified everywhere, aliased `a` wherever it is read', () => {
+    for (const { file, sql } of NAMING) {
+      const mentions = (sql.match(new RegExp(`\\b${ADDITION_TABLE}\\b`, 'g')) ?? []).length;
+      const inserts = (sql.match(new RegExp(String.raw`INSERT\s+INTO\s+public\.${ADDITION_TABLE}\s*\(`, 'gi')) ?? []).length;
+      expect(boundIn(sql).length + inserts, `${file}: a reference the sweeps cannot attribute`).toBe(mentions);
+      for (const alias of boundIn(sql)) expect(alias, file).toBe('a');
+    }
+  });
+
+  it('references no column absent from the contract, and declares none it does not use', () => {
+    const referenced = [...new Set(NAMING.flatMap(({ sql }) => [
+      ...(boundIn(sql).length ? [...sql.matchAll(/\ba\.([a-z_][a-z0-9_]*)\b/gi)].map((m) => m[1]) : []),
+      ...insertedIn(sql),
+      ...returnedIn(sql),
+    ]))].sort();
+    expect(referenced).toEqual([...ADDITION_CONTRACT].sort());
+    // The two the table has and this directory leaves alone.
+    for (const col of ['updated_at', 'deleted_at']) expect(ADDITION_CONTRACT).not.toContain(col);
+  });
+
+  it('has exactly one INSERT, and its column list and its SELECT line up', () => {
+    const inserts = NAMING.filter(({ sql }) => insertedIn(sql).length > 0);
+    expect(inserts).toHaveLength(1);
+    const [{ sql }] = inserts;
+    expect(insertedIn(sql)).toEqual([
+      'addition_key', 'parent_link_id', 'picked_on', 'seed_count', 'seed_count_estimated', 'seed_weight_g',
+      'count_applied', 'weight_applied', 'created_by',
+    ]);
+    expect(returnedIn(sql)).toEqual(['id', 'count_applied', 'weight_applied']);
+    // Key, the lot's own link row, the day, the count and its basis (never one without the other),
+    // the weight, the two flags, the caller. created_at is the table's default and is never written.
+    expect(sql.replace(/\s+/g, ' ')).toContain(
+      "SELECT ${additionKey}::uuid, pre.link_id, ${pickedOn}::date, ${addCount}::int, "
+      + 'CASE WHEN ${addCount}::int IS NULL THEN NULL ELSE ${addEstimated}::boolean END, ${addWeight}::numeric, '
+      + '(pre.c0 IS NOT NULL AND ${addCount}::int IS NOT NULL), (pre.w0 IS NOT NULL AND ${addWeight}::numeric IS NOT NULL), '
+      + '${userId}::text FROM upd JOIN pre ON pre.id = upd.id',
+    );
+    // No statement here updates or deletes a picking: the table is insert-only in this release.
+    for (const { file, sql: text } of NAMING) {
+      expect(text, file).not.toMatch(new RegExp(String.raw`\b(UPDATE|DELETE\s+FROM)\s+public\.${ADDITION_TABLE}\b`, 'i'));
+    }
+  });
+
+  it('every inventory_items column seed-lot-additions.js names is pinned by select-columns.test.js', () => {
+    // The fifth module here to name inventory_items outside index.js, and the second to WRITE it.
+    // The same check the two tests above make for the other four.
+    const contract = readFileSync(resolve(__dirname, 'select-columns.test.js'), 'utf8');
+    const list = contract.match(/const INVENTORY_ITEMS_COLUMNS = \[([\s\S]*?)\];/);
+    expect(list, 'select-columns.test.js no longer declares INVENTORY_ITEMS_COLUMNS').not.toBeNull();
+    const pinned = new Set([...decomment(list[1]).matchAll(/'(\w+)'/g)].map((m) => m[1]));
+    const add = (decomment(readFileSync(resolve(__dirname, 'seed-lot-additions.js'), 'utf8')).match(/sql`[^`]*`/g) ?? []).join('\n');
+    const read = [...new Set([...add.matchAll(/\bi\.(\w+)/g)].map((m) => m[1]))].sort();
+    expect(read).toEqual([
+      'category', 'created_at', 'created_by', 'deleted_at', 'id', 'name', 'quantity_on_hand', 'seed_count',
+      'seed_count_estimated', 'seed_parent_plant_count', 'seed_process', 'seed_stage', 'seed_weight_g',
+      'source_kind', 'source_plant_id', 'status', 'updated_at', 'variety_id',
+    ]);
+    expect(read.filter((c) => !pinned.has(c))).toEqual([]);
+    // Exactly one write of the lot row, and its six SET targets (bare, by SQL's own rule) are these.
+    const sets = [...add.matchAll(/UPDATE public\.inventory_items i\s+SET\b([\s\S]*?)\bFROM pre\b/g)];
+    expect(sets).toHaveLength(1);
+    const targets = [...sets[0][1].matchAll(/(?:^|,)\s*([a-z_]+)\s*=\s*(?:CASE|NOW\(\))/g)].map((m) => m[1]);
+    expect(targets).toEqual([
+      'source_plant_id', 'seed_count', 'seed_count_estimated', 'seed_weight_g', 'seed_parent_plant_count', 'updated_at',
+    ]);
+    expect(targets.filter((c) => !pinned.has(c))).toEqual([]);
+    // What a picking must never move: the lot's own age, stage, process, container count and status.
+    for (const col of ['created_at', 'year_harvested', 'seed_stage', 'seed_process', 'quantity_on_hand', 'status', 'name', 'variety_id']) {
+      expect(targets).not.toContain(col);
+    }
+    expect(add.match(/\bUPDATE public\.inventory_items\b/g)).toHaveLength(1);
   });
 });

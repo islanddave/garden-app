@@ -347,3 +347,60 @@ describe('inventory-items Lambda — SEEDLINK ownership gate (executed against t
     expect(warned).toHaveLength(0);
   });
 });
+
+// ── V5-SEEDLOTADDITION-001 (release 3) — the two new arms ─────────────────────────────────────────
+// Failure modes guarded, one per arm, and neither would fail loudly on its own:
+//   - GET /seed-lots-open drifts below idMatch: 'seed-lots-open' is then an item id, reaches Postgres
+//     as a non-uuid and answers 500 — which is exactly what a Lambda that PREDATES the arm answers,
+//     so a reordering would be indistinguishable from a rollback.
+//   - POST /:id/seed-additions drifts below the generic POST arm: idMatch cannot take its two
+//     segments, so the request falls to the create and answers 400 `name is required`, having saved
+//     nothing, on every picking.
+describe('inventory-items Lambda — release 3 arms (static-source guard)', () => {
+  const idMatchIdx = SRC.indexOf('const idMatch = rawPath.match');
+  const openIdx = SRC.indexOf("rawPath === '/api/inventory-items/seed-lots-open'");
+  const addIdx = SRC.indexOf('const seedAdditionsMatch = rawPath.match');
+  const genericPostIdx = SRC.indexOf("if (method === 'POST') {", idMatchIdx);
+
+  it('both arms are declared, textually BEFORE the idMatch regex and the generic POST arm', () => {
+    expect(idMatchIdx).toBeGreaterThan(-1);
+    expect(openIdx).toBeGreaterThan(-1);
+    expect(addIdx).toBeGreaterThan(-1);
+    expect(genericPostIdx).toBeGreaterThan(idMatchIdx);
+    expect(openIdx, 'seed-lots-open must precede idMatch').toBeLessThan(idMatchIdx);
+    expect(addIdx, 'seed-additions must precede idMatch').toBeLessThan(idMatchIdx);
+    expect(addIdx, 'seed-additions must precede the generic POST arm').toBeLessThan(genericPostIdx);
+  });
+
+  it('seed-lots-open is a LITERAL route beside sow-candidates, GET-only', () => {
+    // Literal, so src/__tests__/clientRouteLambdaContract.test.js can match a client call to it, and
+    // so it cannot be reached by an id that happens to look like it.
+    const sowIdx = SRC.indexOf("rawPath === '/api/inventory-items/sow-candidates'");
+    const extractIdx = SRC.indexOf("rawPath === '/api/inventory-items/extract-seeds'");
+    expect(openIdx).toBeGreaterThan(sowIdx);
+    expect(openIdx).toBeLessThan(extractIdx);
+    const arm = SRC.slice(openIdx, extractIdx);
+    expect(arm).toMatch(/if \(method !== 'GET'\) return resp\(405, \{ error: 'Method not allowed' \}\);/);
+    // plant_id is REQUIRED and is a uuid before anything is asked of the database.
+    expect(arm).toMatch(/const forPlant = event\.queryStringParameters\?\.plant_id;/);
+    expect(arm.indexOf('UUID_RE.test(forPlant)')).toBeLessThan(arm.indexOf('readOpenLots('));
+    expect(arm).not.toMatch(/crop_slug/);
+  });
+
+  it('seed-additions is its own two-segment arm beside the set route, POST-only, and refuses a non-uuid lot id before any SQL', () => {
+    const setIdx = SRC.indexOf('const sourcePlantsMatch = rawPath.match');
+    const filingIdx = SRC.indexOf('const filingMatch = rawPath.match');
+    expect(addIdx).toBeGreaterThan(setIdx);
+    expect(addIdx).toBeLessThan(filingIdx);
+    const arm = SRC.slice(addIdx, filingIdx);
+    expect(arm).toContain(String.raw`rawPath.match(/^\/api\/inventory-items\/([^/]+)\/seed-additions$/)`);
+    expect(arm).toMatch(/if \(method !== 'POST'\) return resp\(405, \{ error: 'Method not allowed' \}\);/);
+    const order = ['normalizeAddition(', 'UUID_RE.test(itemId)', 'readAdditionKey(', 'ownsEveryPlanting(', 'checkParentRules(', 'addSeedToLot(']
+      .map((marker) => arm.indexOf(marker));
+    for (const i of order) expect(i).toBeGreaterThan(-1);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    // idMatch's own regex still cannot take the path — the reason an older Lambda answers it as a create.
+    expect('/api/inventory-items/2d6df841-b507-4e65-8db0-97c8659df37c/seed-additions').not.toMatch(/^\/api\/inventory-items\/([^/]+)$/);
+    expect(SRC).toContain(String.raw`const idMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)$/);`);
+  });
+});

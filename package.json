@@ -1,7 +1,7 @@
 {
   "name": "garden-app",
   "private": true,
-  "version": "4.173.0",
+  "version": "4.174.0",
   "type": "module",
   "engines": {
     "node": "20.x"
@@ -25,6 +25,7 @@
     "gate:save-seed-sheet": "node scripts/layout-gate/save-seed-sheet-clearance.mjs",
     "gate:save-seed-sheet:probe-nothing": "node scripts/layout-gate/save-seed-sheet-clearance.mjs --probe-nothing",
     "gate:save-seed-sheet:probe-short": "GATE_MUTATE_CSS='[data-testid=save-seed-from-remove]{min-height:30px!important;height:30px!important}' node scripts/layout-gate/save-seed-sheet-clearance.mjs",
+    "gate:save-seed-sheet:probe-short-lot": "GATE_MUTATE_CSS='[data-testid=seed-lot-row]{min-height:40px!important;height:40px!important}' node scripts/layout-gate/save-seed-sheet-clearance.mjs",
     "gate:seeds-page": "node scripts/layout-gate/seeds-page-shot.mjs --outdir artifacts/layout-gate",
     "gate:seeds-page:probe-nothing": "node scripts/layout-gate/seeds-page-shot.mjs --probe-nothing --outdir artifacts/layout-gate/probe-nothing",
     "gate:seed-detail": "node scripts/layout-gate/seed-detail-shot.mjs --outdir artifacts/layout-gate",
@@ -36,7 +37,9 @@
     "gate:page-scroll:flag-off": "node scripts/layout-gate/page-scroll.mjs --flag-off --outdir artifacts/layout-gate/flag-off",
     "gate:seeds-scroll:flag-off": "GATE_HARNESS_CONFIG=tests/harness/vite.harness.flagoff.mjs node scripts/layout-gate/seeds-scroll.mjs --outdir artifacts/layout-gate/flag-off",
     "test:flag-off": "vitest run --config vitest.flagoff.config.ts",
-    "test:flag-off:seed": "vitest run --config vitest.seedflagoff.config.ts --dir src/__tests__ seed InventoryDetail SowSheet VarietyPicker EventNew PlantingSelect PlantingDetail breedingNotice featureFlags",
+    "test:flag-off:seed": "vitest run --config vitest.seedflagoff.config.ts --dir src/__tests__ seed InventoryDetail SowSheet VarietyPicker EventNew PlantingSelect PlantingDetail breedingNotice featureFlags QuickActions",
+    "test:flag-off:seedadd": "vitest run --config vitest.seedaddflagoff.config.ts --dir src/__tests__ seed InventoryDetail SowSheet VarietyPicker EventNew PlantingSelect PlantingDetail breedingNotice featureFlags QuickActions",
+    "test:flag-off:seedboth": "SEED_BOTH_FLAGS_OFF=1 vitest run --config vitest.seedaddflagoff.config.ts --dir src/__tests__ seed InventoryDetail SowSheet VarietyPicker EventNew PlantingSelect PlantingDetail breedingNotice featureFlags QuickActions",
     "gate:putup": "node scripts/layout-gate/putup-close-clearance.mjs",
     "gate:putup:probe-nothing": "node scripts/layout-gate/putup-close-clearance.mjs --probe-nothing",
     "gate:putup-ferment": "node scripts/layout-gate/putup-ferment-walk.mjs",

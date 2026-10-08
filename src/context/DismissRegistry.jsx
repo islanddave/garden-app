@@ -122,7 +122,15 @@ export function DismissRegistryProvider({ children }) {
   const raiseConfirm = useCallback((entry) => {
     if (pendingConfirmRef.current) return false      // one question at a time
     if (!entry) return false
-    const next = { id: entry.id, title: entry.confirmTitle, body: entry.confirmBody }
+    // V5-SEEDLOTADDITION-001 — a surface may say its question differently for the state it is in right
+    // now (confirmCopy below). Read here, when the question is raised, and each word falls back to the
+    // registered one, so a surface that passes none is asked exactly what it always was.
+    const live = entry.copyRef?.current || null
+    const next = {
+      id: entry.id,
+      title: live?.title ?? entry.confirmTitle, body: live?.body ?? entry.confirmBody,
+      confirmLabel: live?.confirmLabel ?? null, cancelLabel: live?.cancelLabel ?? null,
+    }
     pendingConfirmRef.current = next
     setPendingConfirm(next)
     return true
@@ -402,6 +410,8 @@ export function DismissRegistryProvider({ children }) {
           open={!!pendingConfirm}
           title={pendingConfirm?.title || undefined}
           body={pendingConfirm?.body || undefined}
+          confirmLabel={pendingConfirm?.confirmLabel || undefined}
+          cancelLabel={pendingConfirm?.cancelLabel || undefined}
           onConfirm={() => resolveConfirm(true)}
           onCancel={() => resolveConfirm(false)}
         />
@@ -438,6 +448,13 @@ export function useDismissable({
   // exactly the failure the dirty/busy exclusion below exists to prevent, so the copy travels as
   // strings, which compare by value.
   confirmOnDirty = false, confirmTitle = null, confirmBody = null,
+  // confirmCopy (V5-SEEDLOTADDITION-001): the question's words for the state the surface is in RIGHT
+  //   NOW, when they differ from the registered ones: { title, body, confirmLabel, cancelLabel }, any
+  //   of them, or null. Read through a REF when the question is raised, never registered and never
+  //   pushed through update(), for backIntercept's reason: an inline literal is new every render, and
+  //   as a dep it would unregister and re-register the surface (and re-arm its Back entry) each time
+  //   its state moved. Whether a question is asked at all is still `dirty` and `confirmOnDirty`.
+  confirmCopy = null,
   // backIntercept: the topmost surface handling this Back ITSELF (a sub-state step-back) instead of
   //   being dismissed. Read through a REF, never pushed through update(): update()'s shallow
   //   compare is true on every render for an inline closure, which would produce a new entries
@@ -454,6 +471,8 @@ export function useDismissable({
   useEffect(() => { cbRef.current = onDismiss }, [onDismiss])
   const interceptRef = useRef(backIntercept)
   useEffect(() => { interceptRef.current = backIntercept }, [backIntercept])
+  const copyRef = useRef(confirmCopy)
+  useEffect(() => { copyRef.current = confirmCopy }, [confirmCopy])
 
   const canIntercept = !!backIntercept
 
@@ -466,7 +485,7 @@ export function useDismissable({
     const newId = api.register({
       layer, cbRef, dirty: !!dirty, busy: !!busy,
       kind, armsBack: !!armsBack, interceptRef, canIntercept: !!canIntercept,
-      confirmOnDirty: !!confirmOnDirty, confirmTitle, confirmBody,
+      confirmOnDirty: !!confirmOnDirty, confirmTitle, confirmBody, copyRef,
     })
     setId(newId)
     idRef.current = newId

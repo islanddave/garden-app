@@ -656,6 +656,9 @@ function MetadataSection({ eventType, metadataState, onMetadataChange }) {
 // and every deep link are byte-identical.
 export default function EventNew({ harvestSession = false } = {}) {
   const navigate       = useNavigate()
+  // V5-SEEDLOTADDITION-001 — set once the sheet has put seed into an existing lot and this page is
+  // leaving for the planting's; see the SaveSeedSheet render site.
+  const seedAddedRef = useRef(false)
   const [searchParams] = useSearchParams()
   const preselectedProjectId = searchParams.get('project') || ''
   // V5-LOSSTOKEN-001: a saved or stale link can still say ?event_type=failed / given_away.
@@ -3650,10 +3653,20 @@ export default function EventNew({ harvestSession = false } = {}) {
         rather than a picker, so opening it without one would throw that away and ask the question
         twice. Closing without saving clears the type, so the user lands back on the chooser instead
         of behind a dismissed sheet. */}
+    {/* V5-SEEDLOTADDITION-001 — seed put into a lot that already exists ends on that PLANTING's
+        page, where the lot's row and the new timeline entry both are; the sheet makes no lot to
+        route to. The sheet closes straight after, and that close must not clear the type: it would
+        draw the chooser for a frame under a page that is already leaving. */}
     {seedSaveTarget && (
       <SaveSeedSheet
         planting={seedSaveTarget}
-        onClose={() => setForm(f => ({ ...f, event_type: '' }))}
+        onClose={() => { if (!seedAddedRef.current) setForm(f => ({ ...f, event_type: '' })) }}
+        onSeedAdded={(_reply, { replace } = {}) => {
+          seedAddedRef.current = true
+          const to = `/plantings/${seedSaveTarget.id}`
+          if (replace) navigate(to, { replace: true })
+          else navigate(to)
+        }}
       />
     )}
     {/* V4-WEIGHFRAME-001: `height` + `overflow: hidden`, not `minHeight`. The frame's entire claim is

@@ -136,6 +136,14 @@
 // Anything that fails before the lot exists is answered in the client's own words (see
 // saveRefusalSentence) with every field left as typed. FLAG OFF is the forward undo: no "From" block,
 // no adder, no plant count, no mix, and every request body byte-equal to the one before this change.
+//
+// V5-SEEDLOTADDITION-001 (seed release 3) — "PUT IT IN A SEED LOT I ALREADY STARTED". More seed off a
+// plant whose lot is already drying is not a new lot. Behind SEED_ADD_TO_LOT (and only while
+// SEED_MULTI_PARENT is on too; seedAdditions.addToLotAvailable is the one reader) the From block
+// carries one more row, a link, while the sheet holds its own planting and nothing else. It opens the
+// lot list or, when the plant has exactly one lot that can still take seed, the add form on that lot;
+// both are AddToLot.jsx, drawn in this sheet in the form's place. FLAG OFF: no link, no list, no form,
+// no request to either new route, and every Save seed body equal to the flag-on one.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 // V5-SEEDSOURCEPICKER-001 — Field and SourcePicker are InventoryAdd's own two imports for this
@@ -155,6 +163,8 @@ import { readMarker } from '../../lib/backNav.js'
 import { seedsHref } from '../../lib/seedsRoutes.js'
 import { SEED_MULTI_PARENT } from '../../lib/featureFlags.js'
 import { sourcePlantFromPlanting, parentSetFacts, lotNotice, previewMixName } from '../seed/seedParents.js'
+import { addToLotAvailable, isOpenLot, lotFactsLine, UNSURE_CLOSE } from '../seed/seedAdditions.js'
+import AddToLot from './AddToLot.jsx'
 
 
 // MIRRORS src/pages/SavedSeeds.jsx's PROCESS_ENTRY, deliberately rather than importing it: that is
@@ -506,12 +516,12 @@ const listWords = (words) => (words.length <= 1 ? words.join('')
 // before the lot exists gets one of these, and the server's string is never printed.
 const SAVE_FAILED = "Couldn't save just now. Nothing was saved. Your entries are still here. Tap Save seed to try again."
 const SAVE_OFFLINE = "You're offline. Nothing was saved. Your entries stay here until you're back in range."
-const SAVE_NEEDS_UPDATE = 'This jar needs the latest version of the app. Nothing was saved.'
+const SAVE_NEEDS_UPDATE = 'This lot needs the latest version of the app. Nothing was saved.'
 // The lot POST that never answered: a timeout, or a connection that dropped with the request already
 // out. The jar may have landed with only its reply lost, so "nothing was saved" would be a guess, and
 // a wrong guess invites a second tap and a second jar. The mix call in front of it is idempotent and
 // writes no jar, so it keeps the plain sentence.
-const SAVE_UNCONFIRMED = "That didn't finish, so the jar may or may not have saved. Look in Seeds before you tap Save seed again."
+const SAVE_UNCONFIRMED = "That didn't finish, so the lot may or may not have saved. Look in Seeds before you tap Save seed again."
 // The one sentence for a throw AFTER the lot landed. Every request after the create carries its own
 // catch, so this is reached only by a host callback that throws; "nothing was saved" would be false
 // there and would invite a second jar.
@@ -539,12 +549,12 @@ function saveRefusalSentence(err, { atMix = false, plants = [] } = {}) {
   const code = err?.status === 400 ? err?.body?.code : null
   if (code === 'parent_without_variety') {
     const row = plants.find((p) => String(p.id) === String(err.body?.plant_id))
-    if (row) return `${row.name || PLANTING_FALLBACK} has no variety recorded, so it can't share a jar. Remove it, or save it as its own jar.`
+    if (row) return `${row.name || PLANTING_FALLBACK} has no variety recorded, so it can't share a lot. Remove it, or save it as its own lot.`
   }
   if (code === 'mixed_crop_parents' || code === 'mixed_crop_components') {
     const first = plants[0]?.crop_slug ?? null
     const row = plants.find((p) => (p.crop_slug ?? null) !== first)
-    if (row) return `${row.name || PLANTING_FALLBACK} is a different crop, so it can't share this jar. Remove it and save again.`
+    if (row) return `${row.name || PLANTING_FALLBACK} is a different crop, so it can't share this lot. Remove it and save again.`
   }
   const online = typeof navigator === 'undefined' || navigator.onLine !== false
   if (!atMix && (err?.timeout || (err?.status == null && err instanceof TypeError && online))) return SAVE_UNCONFIRMED
@@ -623,7 +633,16 @@ const NON_GARDEN_KINDS = PUTUP_SOURCE_OPTIONS.filter((o) => (o.value ?? o) !== '
 // /seeds/saved target redirects back to it), refetch the whole seed list, drop the filters and stack
 // a duplicate history entry. Without it the sheet keeps its navigating ending for the planting page
 // and the event menu.
-export default function SaveSeedSheet({ planting, onClose, onSaved }) {
+//
+// V5-SEEDLOTADDITION-001 — `ownLots`, `onSeedAdded(reply, { replace })` and `onSeedMaybeAdded()`, all
+// optional. `ownLots` is the planting's own seed lots as its page already read them (GET
+// /api/plants/:id/seed-lots); a host that has none passes nothing and gets the general link.
+// `onSeedAdded` is called after seed went into an existing lot, before the sheet closes: the host
+// refreshes what it shows, or goes to the planting. `replace` is true while this sheet's Back marker is
+// the current history entry (see the navigate note at the end of save()). `onSeedMaybeAdded` is called
+// when the sheet is closed while an add has no definite answer (the seed may or may not be in the
+// lot), before it closes: a host that draws the plant's lots reads them again.
+export default function SaveSeedSheet({ planting, onClose, onSaved, ownLots, onSeedAdded, onSeedMaybeAdded }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
   const navigate = useNavigate()
@@ -730,6 +749,31 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
   const [weight, setWeight] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+
+  // V5-SEEDLOTADDITION-001 — the link's words and target are FIXED WHEN THE SHEET OPENS. The host's
+  // list is empty while it loads and after a failed read, and a link that turned from the general
+  // words into a lot's name under the thumb would be tapped as the wrong one. So the lots are read
+  // once, here: exactly one open lot of this plant's is named, anything else is the general link.
+  const addOn = addToLotAvailable()
+  const [openOwnLots] = useState(() => (addOn && planting && Array.isArray(ownLots)
+    ? ownLots.filter((l) => isOpenLot(l)) : []))
+  const namedLot = openOwnLots.length === 1 ? openOwnLots[0] : null
+  // 'new' is the form below. 'add' puts AddToLot in its place: the list, or the form on `namedLot`.
+  const [mode, setMode] = useState('new')
+  const [addState, setAddState] = useState({ dirty: false, busy: false, unsure: false })
+  // One row in From, and it is the page's own planting with a variety: the read behind the list is
+  // by that planting, and a second plant is a different question (a new lot off both).
+  const showPutIn = addOn && !!planting && rows.length === 1 && !!planting.variety_ref?.id
+  // Coming back from the list ("Start a new seed lot instead") the list's controls are gone, so
+  // focus returns to the link that opened it rather than falling to <body>, outside the Tab trap.
+  const putInRef = useRef(null)
+  const wasAddingRef = useRef(false)
+  useEffect(() => {
+    if (mode === 'add') { wasAddingRef.current = true; return }
+    if (!wasAddingRef.current) return
+    wasAddingRef.current = false
+    putInRef.current?.focus()
+  }, [mode])
 
   const varietyId = variety?.id ?? null
   // The missing VARIETY is deliberately NOT in here, and that is the one interesting line in this
@@ -1076,6 +1120,46 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
     setAdderOpen(false)
   }
 
+  // V5-SEEDLOTADDITION-001 — seed went into an existing lot. The host hears first (it refreshes the
+  // plant's lots, or leaves for the plant's page), then the sheet closes; the plant's page is where
+  // this ends. The marker is read BEFORE onClose for the reason given at the end of save().
+  const seedAdded = (reply) => {
+    const markerCurrent = typeof window !== 'undefined' && !!window.history && !!readMarker(window.history.state)
+    if (onSeedAdded) onSeedAdded(reply, { replace: markerCurrent })
+    if (onClose) onClose()
+  }
+
+  // The discard question is this sheet's only while a lot is picked (AddToLot reports `dirty`). The
+  // three props are constants so the sheet registers once: changing any of them would unregister and
+  // re-register it, and re-arm its Back entry, in the middle of a save.
+  const discardProps = addOn
+    ? { confirmOnDirty: true, confirmTitle: 'Close without adding?', confirmBody: 'What you typed here will not be kept.' }
+    : null
+  // Once a request has left with no definite answer (AddToLot reports `unsure`), that question would
+  // be untrue: the seed may already be in the lot, and "Keep editing" names something the locked form
+  // cannot do. So in that state, and only then, it says what is known and what a second add risks. These words
+  // ride in `confirmCopy`, which the registry reads when the question is raised: the three constants
+  // above do not move, so nothing re-registers.
+  const unsureCopy = addState.unsure ? UNSURE_CLOSE : null
+  // Closing from that state: the host reads this plant's lots again, so the row on the page under the
+  // sheet says what the lot holds whichever way the add went. Then the sheet closes, as after a save.
+  const closeAdd = () => {
+    if (addState.unsure && onSeedMaybeAdded) onSeedMaybeAdded()
+    if (onClose) onClose()
+  }
+  if (addOn && mode === 'add' && planting) {
+    return (
+      <Sheet open busy={addState.busy} dirty={addState.dirty} armsBack onClose={closeAdd} title="Save seed" {...discardProps} confirmCopy={unsureCopy}>
+        <AddToLot
+          planting={planting} ownLots={openOwnLots} startLot={namedLot} Basis={SeedCountBasis}
+          onState={setAddState}
+          onBack={() => { setAddState({ dirty: false, busy: false, unsure: false }); setMode('new') }}
+          onAdded={seedAdded}
+        />
+      </Sheet>
+    )
+  }
+
   // BUG-SEEDSHEETBACK-001 (pre-promote MIN-3) — `armsBack` below is a per-render-site decision,
   // exactly as Sheet's own contract requires. The arming defaults OFF because one useDismissable
   // call serves every Sheet, and enrolling them all would orphan a pushed entry on BottomNav's
@@ -1089,7 +1173,7 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
   // count and process choice with it. Armed, decideBack dismisses the topmost layer only: one Back
   // closes the sheet, a second leaves /log.
   return (
-    <Sheet open busy={busy} armsBack onClose={onClose} title="Save seed">
+    <Sheet open busy={busy} armsBack onClose={onClose} title="Save seed" {...discardProps}>
       {/* V4-SEEDINTAKEAGNOSTIC-001 — the origin block. Rendered ONLY when the caller could not
           answer it: from a planting page or the event menu this whole section is absent and the
           sheet is byte-identical to what shipped. */}
@@ -1148,6 +1232,21 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
                 data-testid="save-seed-add-select"
               />
             </label>
+          )}
+          {showPutIn && (
+            // V5-SEEDLOTADDITION-001 — the other answer to "where does this seed go". Same style as
+            // the adder above it, and under the adder's picker while that is open. Named for the one lot it can only mean, with that lot's facts under
+            // the name; otherwise the general words, and the list.
+            <button
+              ref={putInRef}
+              type="button" data-testid="save-seed-put-in-lot"
+              disabled={busy} onClick={() => setMode('add')} style={fromPutInStyle}
+            >
+              {namedLot ? `Put it in ${namedLot.name || 'the seed lot I started'}` : 'Put it in a seed lot I already started'}
+              {namedLot && lotFactsLine(namedLot) && (
+                <span style={fromPutInLineStyle}>{lotFactsLine(namedLot)}</span>
+              )}
+            </button>
           )}
           {showPlantCount && (
             <>
@@ -1323,7 +1422,7 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
         {/* The explanation at the point of change. The notice block above Save does not repeat it. */}
         {isMix && (
           <p data-testid="save-seed-mix-reason" style={{ ...hintStyle, fontWeight: 400 }}>
-            These plants are recorded under different varieties, so this jar is filed as a mix.
+            These plants are recorded under different varieties, so this lot is filed as a mix.
           </p>
         )}
       </div>
@@ -1543,6 +1642,9 @@ const fromAddStyle = {
   background: 'none', border: 'none', cursor: 'pointer',
   color: P.green, fontSize: '0.9rem', fontWeight: 600,
 }
+// V5-SEEDLOTADDITION-001 — the adder's style, with room for a second line under a lot's name.
+const fromPutInStyle = { ...fromAddStyle, padding: '8px 2px', overflowWrap: 'anywhere' }
+const fromPutInLineStyle = { display: 'block', marginTop: 2, color: P.mid, fontSize: '0.78rem', fontWeight: 400 }
 const processRowStyle = (selected) => ({
   display: 'block', width: '100%', textAlign: 'left', minHeight: 64, padding: 12,
   marginBottom: 10, borderRadius: 8, cursor: 'pointer',

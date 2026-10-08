@@ -430,24 +430,61 @@ export default function InventoryDetail() {
     // landed and stands; a measure that did not land is named in the toast, and stays unsaved input
     // (the baseline keeps the old measure), so the guard holds and the next Save sends it again.
     // On success the card reads the stored measure at once: the route answers the three columns.
+    //
+    // V5-SEEDLOTADDITION-001 — COMPARE-AND-SET. The form writes an ABSOLUTE count from a lot loaded a
+    // while ago, and seed can now be added to that lot from a planting in the meantime. So the body
+    // also says what this page loaded (the three `expected_` keys, see seedMeasureChanges), and the
+    // route refuses with 409 lot_changed when the lot no longer holds that, answering with what it
+    // holds now. Nothing was written: the card shows the answer's values, the fields keep what was
+    // typed, and the answer becomes the baseline, so the next Save is compared with the latest and
+    // goes through if he still means it.
     let missed = null
+    let changed = null
     if (measure) {
+      const written = measureColumns(measure)
       try {
         const stored = await fetch(`/api/inventory-items/${id}/seed-measure`, {
           method: 'PUT',
           body: JSON.stringify(measure),
         })
-        setItem(prev => (prev ? { ...prev, ...measure, ...measureColumns(stored) } : prev))
-      } catch {
-        missed = measureWords(measure)
+        setItem(prev => (prev ? { ...prev, ...written, ...measureColumns(stored) } : prev))
+      } catch (e) {
+        if (e?.status === 409 && e?.body?.code === 'lot_changed') {
+          const now = measureColumns(e.body)
+          setItem(prev => (prev ? { ...prev, ...now } : prev))
+          // In the form's own shapes (see the form's initial values), so the next diff reads them.
+          changed = {
+            seed_count: now.seed_count != null ? String(now.seed_count) : '',
+            seed_count_estimated: now.seed_count_estimated === true,
+            seed_weight_g: formatQtyExact(now.seed_weight_g),
+          }
+          // A field he did NOT change follows the lot: left showing the old value it would be read
+          // as a change on the next Save and written back over the latest. The count and its basis
+          // are one fact, so they are kept or moved together.
+          const follow = {}
+          if (sent.seed_count === baseline.seed_count && sent.seed_count_estimated === baseline.seed_count_estimated) {
+            follow.seed_count = changed.seed_count
+            follow.seed_count_estimated = changed.seed_count_estimated
+          }
+          if (sent.seed_weight_g === baseline.seed_weight_g) follow.seed_weight_g = changed.seed_weight_g
+          if (Object.keys(follow).length) setForm(f => ({ ...f, ...follow }))
+        } else {
+          missed = measureWords(written)
+        }
       }
     }
     setSaving(false)
     // The measure keys advance only when the measure was on screen and did not miss: an unsent or
     // failed count keeps the OLD measure as its baseline, so it stays unsaved input and the guard holds.
-    setBaseline(missed || !measureShown ? { ...sent, ...measureColumns(baseline) } : sent)
+    // A measure the lot had moved under takes the lot's answer as its baseline instead.
+    setBaseline(changed ? { ...sent, ...changed }
+      : missed || !measureShown ? { ...sent, ...measureColumns(baseline) } : sent)
     if (typeof sent?.name === 'string' && sent.name.trim()) setSavedName(sent.name.trim())
-    // Operational confirmation via the GLOBAL toast layer (auto-dismisses).
+    // Operational confirmation via the GLOBAL toast layer (auto-dismisses). The changed-elsewhere
+    // sentence stays on the page instead: it explains why the card and the fields now disagree.
+    if (changed) { setErrors({ _form: CHANGED_ELSEWHERE }); return }
+    // A save that went through takes that sentence down again; nothing else clears the form's line.
+    setErrors(prev => (prev?._form === CHANGED_ELSEWHERE ? {} : prev))
     show(missed ? { message: `Saved — couldn't record the ${missed}`, tone: 'error' } : { message: '✓ Saved' })
   }
 
@@ -1597,7 +1634,15 @@ function seedMeasureChanges(from, to) {
   const wasWeight = parseSeedWeight(from?.seed_weight_g).value
   const nowWeight = parseSeedWeight(to?.seed_weight_g).value
   if (wasWeight !== nowWeight) out.seed_weight_g = nowWeight
-  return Object.keys(out).length ? out : null
+  if (!Object.keys(out).length) return null
+  // V5-SEEDLOTADDITION-001 — what this page LOADED rides on every measure PUT, all three always: the
+  // count as a whole number or null, its basis as a boolean or null, the weight as a number or null
+  // (never the string the row arrives with; the route refuses one). null is "I loaded no value". The
+  // route compares each with the lot and refuses the write when one differs.
+  out.expected_seed_count = was
+  out.expected_seed_count_estimated = wasBasis
+  out.expected_seed_weight_g = wasWeight
+  return out
 }
 
 // The toast's words for a measure that did not land, naming what was entered — SaveSeedSheet's rule.

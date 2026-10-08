@@ -202,8 +202,8 @@ describe('Saved from — the rows', () => {
 
   it.each([
     [1, null],
-    [2, 'Mixed together. A seed from this jar could be from either planting.'],
-    [3, 'Mixed together. A seed from this jar could be from any of these plantings.'],
+    [2, 'Mixed together. A seed from this lot could be from either planting.'],
+    [3, 'Mixed together. A seed from this lot could be from any of these plantings.'],
   ])('with %i planting(s) the mixed-together line reads %j', async (n, line) => {
     itemRef.current = jar({ source_plants: [P1, P1B, P3].slice(0, n) })
     await renderPage()
@@ -290,7 +290,7 @@ describe('Saved from — adding a planting', () => {
     expect(rows()).toHaveLength(1)
     expect(screen.queryByTestId('saved-from-add')).toBeNull()
     expect(screen.getByTestId('saved-from-no-variety').textContent)
-      .toBe(`${P1.name} has no variety recorded, so another planting can't be added to this jar.`)
+      .toBe(`${P1.name} has no variety recorded, so another planting can't be added to this lot.`)
   })
 })
 
@@ -407,7 +407,7 @@ describe('Saved from — Remove and Undo', () => {
     await click(removeButton(P1B))
 
     await waitFor(() => expect(help())
-      .toBe('This jar changed somewhere else just now. This is the latest. Try again if it still needs changing.'))
+      .toBe('This lot changed somewhere else just now. This is the latest. Try again if it still needs changing.'))
     expect(callsTo(LOT_PATH)).toHaveLength(2)
     // The planting is off the jar, as stored. Not struck: this page never heard that it was removed.
     expect(rows()).toHaveLength(1)
@@ -430,7 +430,7 @@ describe('Saved from — Remove and Undo', () => {
     await click(removeButton(P1B))
 
     await waitFor(() => expect(help())
-      .toBe("That didn't finish, so the change may or may not have saved. Open this jar again to check before you try again."))
+      .toBe("That didn't finish, so the change may or may not have saved. Open this lot again to check before you try again."))
     // The row is back as it was: nothing is struck on a guess.
     expect(liveRows()).toHaveLength(2)
     expect(screen.queryByTestId('saved-from-undo')).toBeNull()
@@ -529,7 +529,7 @@ describe('Saved from — the timeline entry an add writes', () => {
   // 16:00Z is the same local day in both CI zones (UTC and America/New_York) and on the author's Mac.
   // It is the next day from UTC+8 eastward; the evening case below is the one that tells zones apart.
   const STARTED = '2026-10-06T16:00:00.000Z'
-  const CHANGED = 'This jar changed somewhere else just now. This is the latest. Try again if it still needs changing.'
+  const CHANGED = 'This lot changed somewhere else just now. This is the latest. Try again if it still needs changing.'
   const thisJars = (id = 'ev-first') => ({ id, event_type: 'seed_saved', event_date: '2026-10-06', metadata: { seed_lot_id: ID } })
   const nameField = () => screen.getByLabelText('Name')
 
@@ -948,7 +948,7 @@ describe('Saved from — the jar changed somewhere else (both 409 codes)', () =>
     await click(removeButton(P1B))
 
     await waitFor(() => expect(help())
-      .toBe('This jar changed somewhere else just now. This is the latest. Try again if it still needs changing.'))
+      .toBe('This lot changed somewhere else just now. This is the latest. Try again if it still needs changing.'))
     // Read again, once, in place: the rows are the jar as stored now, and the failed strike is undone.
     expect(callsTo(LOT_PATH)).toHaveLength(2)
     expect(liveRows()).toHaveLength(3)

@@ -119,7 +119,7 @@ const cropSlugOf = (i) => i.crop_slug
 // "Required" here means an answer is required, never that the answer must be non-zero.
 const COUNT_ASK = {
   fermenting: {
-    label: 'How many are in the jar?',
+    label: 'How many are in this lot?',
     help: 'Optional — a rough count is fine, and you can change it at every step.',
   },
   drying: {
@@ -219,7 +219,7 @@ const ADD_PACKET_HREF = addPacketHref(SAVED_VIEW_HREF)
 const SAVED_RETURN_STATE = seedsReturnState(SAVED_VIEW_HREF)
 // The stage sheet's two parent-write failures (V5-SEEDMULTIPARENT-001 release 2b, contract O-2).
 const STAGE_PARENT_FAILED = 'Stage saved, but the parent plant did not.'
-const STAGE_PARENT_MULTI = 'This jar already has more than one plant. Open the jar to change its plants.'
+const STAGE_PARENT_MULTI = 'This lot already has more than one plant. Open the lot to change its plants.'
 // BUG-SEEDLOTOPENSATFORM-001 — "Set parent plant →" is an EDIT door: it opens the lot's page to set one
 // field, so it names that part beside the return state and the page lands on its "Saved from" card.
 // The card titles open the same page to look at the lot, so they add nothing and it opens at its top.
@@ -258,7 +258,7 @@ const FERMENT_URGENCY = {
     tone: 'danger', ink: P.severityUrgent, border: P.alertBorder,
     // "By", not "Past": days are calendar days in Eastern now (BUG-SEEDSOWRELDAY-001), so day 5 can
     // arrive ~96h in, and "past 5 days" overstated it.
-    badge: 'Overdue', note: 'By day 5 the seed can sprout in the jar.',
+    badge: 'Overdue', note: 'By day 5 the seed can sprout.',
   },
 }
 
@@ -860,15 +860,33 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
       // that reason: chk_inventory_seed_count_basis_pairing requires
       // `(seed_count IS NULL) = (seed_count_estimated IS NULL)` and the route 400s on a half-pair
       // rather than completing it with a `false` nobody said.
+      //
+      // V5-SEEDLOTADDITION-001 — COMPARE-AND-SET. This is an ABSOLUTE count written from the row the
+      // sheet opened on, and seed can now be added to that lot from a planting while the sheet is
+      // open. So the body also says what that row held (count, basis, weight as a number; null for
+      // "the row had none"), and the route answers 409 lot_changed, writing nothing, when the lot no
+      // longer holds it. The stage move has landed and stands; only the count did not, and the
+      // sentence says both, and that the lot changed, rather than printing the server's. It is this
+      // sheet's own: the lot page's "Try again" has nothing to act on here, where the sheet has closed
+      // and the card offers the next stage. The reload below draws the lot as it now is.
       let qtyWriteErr = null
       if (count.value != null) {
+        const loaded = advancing.item
         try {
-          await fetch(`/api/inventory-items/${advancing.item.id}/seed-measure`, {
+          await fetch(`/api/inventory-items/${loaded.id}/seed-measure`, {
             method: 'PUT',
-            body: JSON.stringify({ seed_count: count.value, seed_count_estimated: qtyEstimated }),
+            body: JSON.stringify({
+              seed_count: count.value,
+              seed_count_estimated: qtyEstimated,
+              expected_seed_count: loaded.seed_count == null ? null : Number(loaded.seed_count),
+              expected_seed_count_estimated: typeof loaded.seed_count_estimated === 'boolean' ? loaded.seed_count_estimated : null,
+              expected_seed_weight_g: loaded.seed_weight_g == null ? null : Number(loaded.seed_weight_g),
+            }),
           })
         } catch (e) {
-          qtyWriteErr = e?.message || 'Stage saved, but the count did not.'
+          qtyWriteErr = e?.status === 409 && e?.body?.code === 'lot_changed'
+            ? 'Stage saved, but the count did not. The lot changed somewhere else just now.'
+            : (e?.message || 'Stage saved, but the count did not.')
         }
       }
       // V5-SEEDYEARHARVESTED-001 — the ONE key on this page with no narrow route, so it is the only

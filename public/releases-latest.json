@@ -1,14 +1,9 @@
 {
-  "version": "4.173.0",
+  "version": "4.174.0",
   "date": "2026-10-08",
   "highlights": [
-    "A one-tap watering now records a normal water amount, so it counts in the plant's water record",
-    "Saving a harvest waits longer on a weak signal instead of giving up early",
-    "The plant picker shows the real sowing day; it was showing the day before",
-    "Put-up: a put-up picked from the Pantry for a batch can be taken off that batch, with Undo, so a batch closed that way can be removed",
-    "Put-up: a change you make after a lost connection is kept when you save again",
-    "Adding a plant on a seed lot's page puts a Seed saved entry on that plant's timeline",
-    "A bought seed blend is no longer tagged Your mix",
-    "The Release Notes dot stays cleared after you have read the notes on another device"
+    "Add more seed to a seed lot you already started: Save seed now offers \"Put it in\" your lot, with a count that never claims more than it knows",
+    "Seed screens say \"lot\" instead of \"jar\"",
+    "A seed count saved from an old screen can no longer overwrite a newer one"
   ]
 }

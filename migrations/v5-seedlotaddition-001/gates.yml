@@ -1,0 +1,369 @@
+# gates.yml
+# V5-SEEDLOTADDITION-001: one new table, seed_lot_addition. No change to any existing table.
+#
+# ── SEQUENCING: THE DATABASES FIRST, THEN THE CODE ───────────────────────────────────────────────
+#   1. STAGING: pre -> sweep -> 0a -> post -> rehearse 0r -> pre -> 0a -> post. Before the server lane.
+#   2. PROD (Dave's first-hand OK for a prod database change, outside 07:00-08:00 UTC, after a
+#      pre-apply copy): pre -> sweep -> 0a -> post.
+#   3. ONLY THEN may a commit that names seed_lot_addition under lambda/** reach dev. Once one is on
+#      dev, the promote's prod schema gate refuses every promote until the table is on prod.
+#   README.md has the commands and the reason for each step. This directory itself is safe in the
+#   tree before either database is applied, because of the next paragraph.
+#
+# ANY pre/sweep/post assertion failing is a HARD ABORT.
+#
+# ── EVERY post GATE IS SELF-ARMING AND CATALOG-ONLY ──────────────────────────────────────────────
+#   `continuous:` DEFAULTS TO TRUE (scripts/gate_runner.py) and .github/workflows/gate-invariants.yml
+#   runs `gate_runner.py --all --phase post --continuous-only` against LIVE PROD AND LIVE STAGING on
+#   every migrations/** push and on a Tuesday cron, with no skip-if-unapplied logic. So each gate
+#   returns rows only when the migration IS applied (stamp 5.0.0-seedlotaddition-001 exists) AND the
+#   invariant is violated: vacuous before the apply, asserting permanently after, with no follow-up
+#   edit to forget. 0a writes the stamp in the same transaction as the DDL, so "applied" and "armed"
+#   are one event, and post_schema_version_recorded (armed on the TABLE, not on itself) proves the
+#   stamp landed.
+#
+#   NO `::regclass` ANYWHERE BELOW, AND NO SQL THAT NAMES THE TABLE OR ONE OF ITS COLUMNS AS AN
+#   IDENTIFIER. Postgres resolves a relation name, a column name and a regclass cast at PARSE time,
+#   before any WHERE or EXISTS runs. `SELECT ... FROM public.seed_lot_addition` under a false guard
+#   still raises 42P01 on an unapplied database, and an erroring gate reds the run for every migration
+#   in the tree. Every reference is a string compared against pg_class.relname, pg_attribute.attname
+#   or information_schema. So nothing here has to move before a rollback.
+#
+# ── WHAT THESE GATES DO NOT COVER, stated so the coverage is not overread ────────────────────────
+#   * NO ROW-LEVEL GATE, deliberately. The five CHECKs and the foreign key ARE the row rules and
+#     Postgres enforces them on every write; a gate re-reading the rows would only restate them, and
+#     it would have to name the table.
+#   * There is NO gate "no live picking under a retired link row", and there must never be one. A
+#     picking follows its link row and is not soft-deleted with it (0a header A2): such a gate would
+#     red the first time a parent with pickings is taken off a lot.
+#   * Nothing relates a picking's amounts to the lot's total. The total can be re-measured after the
+#     picking was written, and a picking may record an amount that moved no total.
+#   * Column types are not pinned (only presence and nullability are). The garden_ro grant is not
+#     asserted either way: prod has it from a default ACL and staging does not (0a header A7). The
+#     absence of RLS is not asserted.
+
+pre:
+  - name: pre_table_absent
+    note: >
+      The starting state. Reads pg_class for ANY relation of this name in public: a view or a
+      leftover table would make CREATE TABLE IF NOT EXISTS a silent no-op. continuous false: false by
+      design once 0a runs.
+    sql: |
+      SELECT c.relname FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'seed_lot_addition'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_not_already_applied
+    note: >
+      A stamp with no table would arm every post gate below against nothing. continuous false, as
+      above.
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.0.0-seedlotaddition-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # The foreign key's target, checked rather than assumed: seed_lot_parent_planting is a TABLE in
+  # public and its primary key is the single uuid column `id`. If v5-seedmultiparent-001 has been
+  # rolled back, or the key reshaped, 0a would fail part-way through its DO block; this says so first.
+  - name: pre_link_table_present
+    sql: |
+      SELECT 1 FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+       WHERE t.relname = 'seed_lot_parent_planting' AND t.relkind = 'r'
+         AND c.contype = 'p' AND cardinality(c.conkey) = 1
+         AND a.attname = 'id' AND format_type(a.atttypid, NULL) = 'uuid'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  # No name collision on any object this DDL creates. A pre-existing relation of the same name would
+  # make CREATE INDEX IF NOT EXISTS a silent no-op and leave the RESTRICT probe unindexed, or the
+  # replay key without its unique index, with the apply reporting success.
+  - name: sweep_no_index_name_collisions
+    sql: |
+      SELECT c.relname FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public'
+         AND c.relname IN ('seed_lot_addition_pkey', 'uq_sla_addition_key', 'idx_sla_parent_link')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # 0a's ADD CONSTRAINT guards are scoped to this table, so a same-named constraint elsewhere would
+  # not make it skip one. But the five CHECK names join the inventory-items handler's
+  # constraint-message map in this release, and that map is keyed by name alone: the same name on
+  # another table would answer with this table's sentence.
+  - name: sweep_no_constraint_name_collisions
+    sql: |
+      SELECT conname FROM pg_constraint
+       WHERE conname IN ('seed_lot_addition_pkey',
+                         'seed_lot_addition_parent_link_id_fkey',
+                         'chk_sla_seed_count_positive',
+                         'chk_sla_count_basis_pairing',
+                         'chk_sla_seed_weight_positive',
+                         'chk_sla_count_applied_needs_count',
+                         'chk_sla_weight_applied_needs_weight')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  # SELF-ARMING AND CATALOG-ONLY, EVERY ONE. See the header for why that is forced. Eleven gates.
+
+  # ARMED ON THE DDL, NOT ON ITSELF. Guarding "the version row exists" with "the version row exists"
+  # is circular and cannot self-arm; guarding it with "the TABLE exists" is not. 0a writes the table
+  # and the row in one transaction, so a row here means someone hand-applied the DDL or deleted the
+  # stamp: exactly the state that would silence every EXISTS-guarded gate below.
+  - name: post_schema_version_recorded
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM pg_class c
+                       JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'public' AND c.relname = 'seed_lot_addition')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-seedlotaddition-001')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a header A2. Two assertions, either one a row:
+  #   (a) the wanted foreign key is there and exact: its name, its one column, the link TABLE and its
+  #       `id`, ON DELETE RESTRICT ('r'), validated. Weakened to CASCADE, a hard delete of a link row
+  #       would take its pickings with it instead of stopping; re-added NOT VALID, old rows are
+  #       unchecked. Read from the catalog columns, not from pg_get_constraintdef, so it does not
+  #       depend on search_path;
+  #   (b) it is the ONLY foreign key on the table, leaving aside one that points at inventory_items or
+  #       plants. Those two are the next gate's, so that one defect reds one gate. A second key to
+  #       the link table, or a key to any third table, is a design decision with its own delete action
+  #       to argue, not a drive-by.
+  - name: post_exactly_one_fk_restrict_validated_to_link_table
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedlotaddition-001')
+         AND (   NOT EXISTS (SELECT 1 FROM pg_constraint c
+                               JOIN pg_class t      ON t.oid = c.conrelid
+                               JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+                               JOIN pg_class tgt    ON tgt.oid = c.confrelid
+                               JOIN pg_namespace tn ON tn.oid = tgt.relnamespace AND tn.nspname = 'public'
+                               JOIN pg_attribute a  ON a.attrelid = c.conrelid  AND a.attnum = c.conkey[1]
+                               JOIN pg_attribute ta ON ta.attrelid = c.confrelid AND ta.attnum = c.confkey[1]
+                              WHERE t.relname = 'seed_lot_addition' AND c.contype = 'f'
+                                AND c.conname = 'seed_lot_addition_parent_link_id_fkey'
+                                AND cardinality(c.conkey) = 1 AND a.attname = 'parent_link_id'
+                                AND tgt.relname = 'seed_lot_parent_planting' AND tgt.relkind = 'r'
+                                AND ta.attname = 'id'
+                                AND c.confdeltype = 'r' AND c.convalidated)
+              OR (SELECT count(*) FROM pg_constraint c
+                    JOIN pg_class t      ON t.oid = c.conrelid
+                    JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+                    JOIN pg_class tgt    ON tgt.oid = c.confrelid
+                    JOIN pg_namespace tn ON tn.oid = tgt.relnamespace
+                   WHERE t.relname = 'seed_lot_addition' AND c.contype = 'f'
+                     AND NOT (tn.nspname = 'public'
+                              AND tgt.relname IN ('inventory_items', 'plants'))) <> 1)
+    expect: rowcount_eq
+    value: 0
+
+  # 0a header A1, the ruling this table is built on. One row per offending constraint, naming it.
+  #   inventory_items: a key here would be the SIXTH to that table. It reds
+  #     v5-invrefstrand-001 post_inventory_fk_census_is_unchanged and is unclassified in
+  #     lambda/inventory-items/delete-guard.js.
+  #   plants: scripts/merge-surface-inventory.py finds every foreign key to plants and requires it in
+  #     lambda/plants/merge.js SURFACES. This table is reached through link rows, which a merge
+  #     repoints; a direct key would be a surface the merge does not know.
+  - name: post_no_fk_to_inventory_items_or_plants
+    continuous: true
+    sql: |
+      SELECT c.conname FROM pg_constraint c
+        JOIN pg_class t      ON t.oid = c.conrelid
+        JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_class tgt    ON tgt.oid = c.confrelid
+        JOIN pg_namespace tn ON tn.oid = tgt.relnamespace AND tn.nspname = 'public'
+       WHERE t.relname = 'seed_lot_addition' AND c.contype = 'f'
+         AND tgt.relname IN ('inventory_items', 'plants')
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedlotaddition-001')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a header A1, the half a foreign-key census cannot see. merge-surface-inventory.py classes ANY
+  # uuid column whose name matches this pattern, foreign key or not, as a planting surface. The
+  # pattern below is that script's SOFT_REF_SQL pattern, character for character: change one, change
+  # both. One row per offending column, naming it.
+  - name: post_no_planting_shaped_uuid_column
+    continuous: true
+    sql: |
+      SELECT c.column_name FROM information_schema.columns c
+       WHERE c.table_schema = 'public' AND c.table_name = 'seed_lot_addition'
+         AND c.data_type = 'uuid'
+         AND c.column_name ~ '(plant|target_id|subject_id|entity_id|node_id|leaf_id)'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedlotaddition-001')
+    expect: rowcount_eq
+    value: 0
+
+  # One row per column that is missing or has become nullable. The nine. A nullable parent_link_id is
+  # a picking off no planting; a nullable addition_key is a row no replay can find (a unique index
+  # admits any number of NULLs); a nullable applied flag is a write that did not say what it did.
+  - name: post_not_null_columns
+    continuous: true
+    sql: |
+      SELECT want.column_name
+        FROM unnest(ARRAY['id','addition_key','parent_link_id','picked_on','count_applied',
+                          'weight_applied','created_by','created_at','updated_at']::text[])
+             AS want(column_name)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedlotaddition-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public'
+                            AND c.table_name = 'seed_lot_addition'
+                            AND c.column_name = want.column_name AND c.is_nullable = 'NO')
+    expect: rowcount_eq
+    value: 0
+
+  # One row per column that is missing or has become NOT NULL. The three amounts must stay nullable:
+  # NULL is "not given", and a picking with a weight and no count is ordinary. deleted_at must stay
+  # nullable: NOT NULL would mean no live row.
+  - name: post_nullable_columns
+    continuous: true
+    sql: |
+      SELECT want.column_name
+        FROM unnest(ARRAY['seed_count','seed_count_estimated','seed_weight_g',
+                          'deleted_at']::text[]) AS want(column_name)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedlotaddition-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public'
+                            AND c.table_name = 'seed_lot_addition'
+                            AND c.column_name = want.column_name AND c.is_nullable = 'YES')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a header A6. Neither flag has a default: every writer says whether it moved the total. A default
+  # would let an INSERT that forgot the flag record an answer nobody gave. One row per flag that has
+  # one, naming it.
+  - name: post_applied_flags_have_no_default
+    continuous: true
+    sql: |
+      SELECT c.column_name FROM information_schema.columns c
+       WHERE c.table_schema = 'public' AND c.table_name = 'seed_lot_addition'
+         AND c.column_name IN ('count_applied', 'weight_applied')
+         AND c.column_default IS NOT NULL
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedlotaddition-001')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a header A5 and A6. Two halves, one row per finding, naming the constraint:
+  #   (a) each of the five is on this table, VALIDATED, and exactly this text. A bare name match passes
+  #       on a permanently NOT VALID constraint and on a body someone widened; the five names join the
+  #       handler's constraint-message map in this release, so a renamed CHECK would answer a raw 23514;
+  #   (b) the table carries no CHECK besides the five. A sixth is writer-coupled by construction (the
+  #       one writer was built against five): add it on purpose, with this list, or not at all.
+  - name: post_five_checks_validated_and_exactly_these
+    continuous: true
+    sql: |
+      SELECT want.conname
+        FROM (VALUES ('chk_sla_seed_count_positive',
+                      'CHECK (((seed_count IS NULL) OR (seed_count >= 1)))'),
+                     ('chk_sla_count_basis_pairing',
+                      'CHECK (((seed_count IS NULL) = (seed_count_estimated IS NULL)))'),
+                     ('chk_sla_seed_weight_positive',
+                      'CHECK (((seed_weight_g IS NULL) OR (seed_weight_g > (0)::numeric)))'),
+                     ('chk_sla_count_applied_needs_count',
+                      'CHECK (((NOT count_applied) OR (seed_count IS NOT NULL)))'),
+                     ('chk_sla_weight_applied_needs_weight',
+                      'CHECK (((NOT weight_applied) OR (seed_weight_g IS NOT NULL)))'))
+             AS want(conname, def)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedlotaddition-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'seed_lot_addition' AND c.contype = 'c'
+                            AND c.conname = want.conname AND c.convalidated
+                            AND pg_get_constraintdef(c.oid) = want.def)
+      UNION ALL
+      SELECT c.conname::text
+        FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'seed_lot_addition' AND c.contype = 'c'
+         AND c.conname NOT IN ('chk_sla_seed_count_positive',
+                               'chk_sla_count_basis_pairing',
+                               'chk_sla_seed_weight_positive',
+                               'chk_sla_count_applied_needs_count',
+                               'chk_sla_weight_applied_needs_weight')
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedlotaddition-001')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a header A3. One row per Save intent, for ever. All properties from pg_index rather than from the
+  # index's printed definition: on this table, UNIQUE, valid, exactly the one column, no expression,
+  # and NOT PARTIAL. PARTIAL IS THE DEFECT THIS EXISTS FOR: `WHERE deleted_at IS NULL` would let a
+  # picking that was taken back be written a second time by a replay of its own request.
+  - name: post_addition_key_unique_and_not_partial
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedlotaddition-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_index ix
+                           JOIN pg_class ic    ON ic.oid = ix.indexrelid
+                           JOIN pg_class t     ON t.oid = ix.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                           JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = ix.indkey[0]
+                          WHERE t.relname = 'seed_lot_addition'
+                            AND ic.relname = 'uq_sla_addition_key'
+                            AND ix.indisunique AND ix.indisvalid
+                            AND ix.indnatts = 1 AND a.attname = 'addition_key'
+                            AND ix.indpred IS NULL AND ix.indexprs IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # 0a header A4. The foreign key column's index: on this table, exactly its one column, NOT partial,
+  # not unique, valid. Partial, it cannot serve a RESTRICT probe (which has no deleted_at term), and
+  # every delete of a link row scans this table. Unique would be worse: one picking per parent, by
+  # accident.
+  - name: post_parent_link_index_present_and_not_partial
+    continuous: true
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedlotaddition-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_index ix
+                           JOIN pg_class ic    ON ic.oid = ix.indexrelid
+                           JOIN pg_class t     ON t.oid = ix.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                           JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = ix.indkey[0]
+                          WHERE t.relname = 'seed_lot_addition'
+                            AND ic.relname = 'idx_sla_parent_link'
+                            AND ix.indnatts = 1 AND a.attname = 'parent_link_id'
+                            AND ix.indpred IS NULL AND ix.indexprs IS NULL
+                            AND NOT ix.indisunique AND ix.indisvalid)
+    expect: rowcount_eq
+    value: 0
+
+  # 0a header A7. NO TRIGGER. updated_at is written by the handler; a trigger doing it would be
+  # invisible to the mock-sql unit suites (BUG-KBOWNERTRIGGER-001). The foreign key's own internal
+  # triggers are excluded. One row per trigger, naming it.
+  - name: post_no_trigger_on_the_table
+    continuous: true
+    sql: |
+      SELECT g.tgname FROM pg_trigger g
+        JOIN pg_class t     ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'seed_lot_addition' AND NOT g.tgisinternal
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-seedlotaddition-001')
+    expect: rowcount_eq
+    value: 0

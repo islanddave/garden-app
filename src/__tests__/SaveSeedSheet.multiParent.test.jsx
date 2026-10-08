@@ -96,7 +96,7 @@ const NO_CROP = { id: 'pl-nocrop', name: 'Mystery vine', quantity: 1, variety_id
 
 // Both names already say "mix", so the joined name takes no " mix" of its own (blend.js's rule).
 const MIX_NAME = 'Alaska Mix + Jewel Mix Nasturtium'
-const MIX_REASON = 'These plants are recorded under different varieties, so this jar is filed as a mix.'
+const MIX_REASON = 'These plants are recorded under different varieties, so this lot is filed as a mix.'
 
 const onClose = vi.fn()
 const mount = (planting) => render(<SaveSeedSheet planting={planting} onClose={onClose} />)
@@ -320,7 +320,7 @@ describe('two or more varieties: the jar is a mix', () => {
     expect(block.textContent).not.toContain('Open-pollinated')
     expect(block.textContent).toBe(
       'Mixed seed from Alaska Mix and Jewel Mix Nasturtium. Each seed came off one or the other, '
-      + 'and some may be crosses. Expect more than one kind of plant from this jar.')
+      + 'and some may be crosses. Expect more than one kind of plant from this lot.')
     expect(block.textContent).not.toContain(MIX_REASON)
     expect(screen.getAllByText(MIX_REASON)).toHaveLength(1)
   })
@@ -453,7 +453,7 @@ describe('a set the real picker would not have offered: a plant with no variety 
     expect(callsTo('/api/varieties/blend')).toHaveLength(0)
     expect(lotBody().variety_id).toBe('v-jewel')
     expect(screen.getByTestId('save-seed-error').textContent)
-      .toBe("Volunteer squash has no variety recorded, so it can't share a jar. Remove it, or save it as its own jar.")
+      .toBe("Volunteer squash has no variety recorded, so it can't share a lot. Remove it, or save it as its own lot.")
   })
 
   it('the block above Save does not print the one variety’s line over a set that is two kinds of plant', () => {

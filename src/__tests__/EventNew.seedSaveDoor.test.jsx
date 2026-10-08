@@ -33,6 +33,8 @@ const { fetchSpy, getTokenSpy, navigateSpy, searchParamsRef, identity } = vi.hoi
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   get SEED_MULTI_PARENT() { return true },
+  // V5-SEEDLOTADDITION-001 — held on beside it, for the same reason: the last describe is its door.
+  get SEED_ADD_TO_LOT() { return true },
 }))
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
@@ -57,7 +59,7 @@ vi.mock('../context/AuthContext.jsx', () => ({
 import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import * as cache from '../lib/dataCache.js'
-import { blendReply } from './fixtures/seedMix.fixture.js'
+import { blendReply, openLotsReply, openLotRow, additionReply } from './fixtures/seedMix.fixture.js'
 
 // variety_ref is load-bearing rather than decorative: SaveSeedSheet defaults the lot name from it
 // AND sends variety_id on the create, which chk_inventory_seed_requires_variety refuses to be null.
@@ -244,5 +246,74 @@ describe('V5-SEEDMULTIPARENT-001 — the menu door can add a second planting to 
     expect(lot.source_plant_id).toBe('pl-1')
     expect(lot.source_plant_ids).toEqual(['pl-1', 'pl-3'])
     expect(posts('/api/events').map(([, o]) => JSON.parse(o.body).plant_id)).toEqual(['pl-1', 'pl-3'])
+  })
+})
+
+// V5-SEEDLOTADDITION-001 (seed release 3) — "Put it in a seed lot I already started", from the log menu.
+// This door has no list of the plant's lots to hand the sheet, so the link is the general one and the
+// lots are read on the tap. And it ends differently from a new lot: there is no new lot to route to, so
+// it goes to the PLANTING's page, where the lot's row and the new timeline entry both are.
+describe('V5-SEEDLOTADDITION-001 — adding to a lot already started, from the menu door', () => {
+  const ROW = openLotRow({ name: 'Brandywine — saved 2026', is_member: true, same_variety: true })
+  function primeWithLots() {
+    prime([BED_3])
+    const base = fetchSpy.getMockImplementation()
+    fetchSpy.mockImplementation((url, opts = {}) => {
+      const u = String(url)
+      if (u.startsWith('/api/inventory-items/seed-lots-open')) {
+        return Promise.resolve(openLotsReply({ plant_id: 'pl-1', crop_slug: 'tomato', open_lots: [ROW] }))
+      }
+      if (opts.method === 'POST' && u === `/api/inventory-items/${ROW.id}/seed-additions`) {
+        return Promise.resolve(additionReply({ name: ROW.name }))
+      }
+      return base(url, opts)
+    })
+  }
+  const openLotsReads = () => fetchSpy.mock.calls.filter(([p]) => String(p).startsWith('/api/inventory-items/seed-lots-open'))
+
+  it('shows the general link only, and reads the lots on the tap, not before', async () => {
+    primeWithLots()
+    await renderLog('event_type=seed_saved&plant=pl-1&project=proj-1')
+    await waitFor(() => expect(screen.getByTestId('save-seed-put-in-lot')).toBeTruthy())
+    expect(screen.getByTestId('save-seed-put-in-lot').textContent).toBe('Put it in a seed lot I already started')
+    expect(openLotsReads()).toHaveLength(0)
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-put-in-lot')) })
+    await waitFor(() => expect(screen.getByTestId('seed-lot-row')).toBeTruthy())
+    expect(openLotsReads()).toHaveLength(1)
+    expect(String(openLotsReads()[0][0])).toBe('/api/inventory-items/seed-lots-open?plant_id=pl-1')
+  })
+
+  it('after a successful add it goes to that planting\'s page, and does not fall back to the type chooser', async () => {
+    primeWithLots()
+    await renderLog('event_type=seed_saved&plant=pl-1&project=proj-1')
+    await waitFor(() => expect(screen.getByTestId('save-seed-put-in-lot')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-put-in-lot')) })
+    await waitFor(() => expect(screen.getByTestId('seed-lot-row')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('seed-lot-row')) })
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-submit')) })
+
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalledTimes(1))
+    expect(navigateSpy.mock.calls[0][0]).toBe('/plantings/pl-1')
+    // One timeline entry, the addition's own; and no lot was created.
+    expect(posts('/api/events')).toHaveLength(1)
+    const ev = JSON.parse(posts('/api/events')[0][1].body)
+    expect(ev.plant_id).toBe('pl-1')
+    expect(ev.metadata.addition).toBe(true)
+    expect(ev.notes).toBe(`Added seed to "${ROW.name}".`)
+    expect(posts('/api/inventory-items')).toHaveLength(0)
+    // The type was not cleared: the sheet is still this page's until the route changes under it.
+    expect(screen.getByTestId('seed-add-form')).toBeTruthy()
+  })
+
+  it('closing the list without adding still clears the type, as closing the sheet always has', async () => {
+    primeWithLots()
+    await renderLog('event_type=seed_saved&plant=pl-1&project=proj-1')
+    await waitFor(() => expect(screen.getByTestId('save-seed-put-in-lot')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-put-in-lot')) })
+    await waitFor(() => expect(screen.getByTestId('seed-lot-row')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Close' })) })
+    await waitFor(() => expect(screen.queryByTestId('seed-lot-list-heading')).toBeNull())
+    expect(screen.queryByTestId('save-seed-submit')).toBeNull()
+    expect(navigateSpy).not.toHaveBeenCalled()
   })
 })

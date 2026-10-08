@@ -179,6 +179,13 @@ const STEPS = [
   // The two parent arms are exactly what those two steps delete: NS_INVENTORY is the next line's own
   // predicate, and NS_PLANTS plus the name arm is the plants step's (NS_PLANTS alone has no name arm).
   // Skipped on a fork without the table.
+  //
+  // v5-seedlotaddition-001: seed_lot_addition names ONLY its link row (parent_link_id, ON DELETE RESTRICT —
+  // it carries deleted_at too), so a picking row must go before the link row on the next line or that
+  // DELETE 23503s and leaves the link, its lot and its planting behind it. The parent arm is the next
+  // line's own predicate, character for character, so every link row that step deletes has had its
+  // pickings removed by this one. Skipped on a fork without the table.
+  ['seed_lot_addition',           `DELETE FROM seed_lot_addition WHERE created_by LIKE ${NS} OR parent_link_id IN (SELECT id FROM seed_lot_parent_planting WHERE created_by LIKE ${NS} OR inventory_item_id IN (${NS_INVENTORY}) OR plant_id IN (${NS_PLANTS}) OR plant_id IN (SELECT id FROM plants WHERE name LIKE ${NS}))`],
   ['seed_lot_parent_planting',    `DELETE FROM seed_lot_parent_planting WHERE created_by LIKE ${NS} OR inventory_item_id IN (${NS_INVENTORY}) OR plant_id IN (${NS_PLANTS}) OR plant_id IN (SELECT id FROM plants WHERE name LIKE ${NS})`],
   ['inventory_items',             `DELETE FROM inventory_items WHERE created_by LIKE ${NS} OR user_id LIKE ${NS} OR name LIKE ${NS} OR variety_id IN (${NS_VARIETIES})`],
   // BUG-ENTITYTAGORPHAN-001. entity_tag was never swept at all — the polymorphic edge had no FK, no

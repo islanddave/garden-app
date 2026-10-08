@@ -193,6 +193,9 @@ const STATES = [
   //   mix4     four plantings of three varieties under the 90-character mix name.
   //   samecv2  two plantings of one variety.
   //   removed  samecv2 after the harness TAPPED the first row's remove: that row struck, with Undo.
+  //            V5-SEEDLOTADDITION-001 (seed release 3, R9): the lot is COUNTED (175), so while the row is
+  //            struck the card says what the lot still says. `stillSays` is how many of that line the PAGE
+  //            must carry, exactly: 1 here, 0 in every other state (no row is struck in them).
   //   filed    one planting, then the harness TAPPED the adder and a planting of a second variety: the
   //            jar re-filed itself, so the title is the mix's and the "Filed as" line carries an Undo.
   { name: 'mix4', harness: 'mix4', sow: false,
@@ -203,7 +206,7 @@ const STATES = [
       parents: { rows: 2, struck: 0, removes: 2, undos: 0, add: 1, mixed: 1, filed: null, wraps: true } } },
   { name: 'removed', harness: 'removed', sow: false,
     expect: { ...SAVED_LOT_EXPECT, h1: `Bulgarian Carrot (Shipka) — saved ${YEAR}`,
-      parents: { rows: 2, struck: 1, removes: 1, undos: 1, add: 1, mixed: 0, filed: null, wraps: true } } },
+      parents: { rows: 2, struck: 1, removes: 1, undos: 1, add: 1, mixed: 0, filed: null, wraps: true, stillSays: 1 } } },
   { name: 'filed', harness: 'filed', sow: false,
     expect: { ...SAVED_LOT_EXPECT, h1: `${FILED_MIX_NAME} — saved ${YEAR}`,
       parents: { rows: 2, struck: 0, removes: 2, undos: 0, add: 1, mixed: 1, filed: `Filed as ${FILED_MIX_NAME}`, wraps: false } } },
@@ -461,6 +464,10 @@ const MEASURE = `(() => {
 
   // (m) the "Saved from" card as a parent set (V5-SEEDMULTIPARENT-001).
   const sfCard = d.querySelector('${tid('seed-source-plant')}')
+  // The "still says" line (V5-SEEDLOTADDITION-001), counted over the whole PAGE, not the card.
+  const stillEls = [...d.querySelectorAll('${tid('saved-from-still-says')}')]
+  const stillSays = { count: stillEls.length, lines: stillEls.map(el => { const r = el.getBoundingClientRect()
+    return { text: text(el), box: box(el), inViewX: inViewX(r), inCard: !!sfCard && sfCard.contains(el), shown: r.height > 0 } }) }
   let savedFrom = null
   if (sfCard) {
     const cr = sfCard.getBoundingClientRect()
@@ -507,7 +514,7 @@ const MEASURE = `(() => {
       seedCountBox: d.querySelectorAll('${tid('inv-seed-count')}').length, usedUp: d.querySelectorAll('${tid('inv-used-up')}').length },
     stageLinkText: text(stageLink),
     band: { top: R(bandTop), bottom: R(bandBottom) },
-    taps, sownFrom, sownLine, breeding, seedCount, germ, footprints, savedFrom,
+    taps, sownFrom, sownLine, breeding, seedCount, germ, footprints, savedFrom, stillSays,
     errors: h ? h.errors() : ['window.__h missing'], unstubbed: h ? h.unstubbed() : [], posts: h ? h.posts() : [],
   }
 })()`
@@ -910,6 +917,14 @@ try {
       const sf = m.savedFrom
       const pe = e.parents ?? null
       if (!pe && sf && sf.rows.length) mismatch.push(`${sf.rows.length} parent row(s) in "Saved from" on a state whose lot carries no parent set`)
+      // R9: exactly once while a row is struck on a counted lot, and nowhere on the page otherwise.
+      const wantStill = pe?.stillSays ?? 0
+      if (m.stillSays.count !== wantStill) mismatch.push(`"The lot still says" lines ${m.stillSays.count} != ${wantStill}${wantStill ? ' — a plant was taken off a counted lot and the card does not say what the lot still says' : ''}`)
+      for (const l of m.stillSays.lines) {
+        if (!l.inCard) mismatch.push('the "still says" line is outside the "Saved from" card')
+        if (!l.shown) mismatch.push('the "still says" line has no height')
+        if (!(l.text || '').includes(`The lot still says ${SAVED_COUNT.value}.`)) mismatch.push(`the "still says" line reads "${l.text}" and does not name the lot's count`)
+      }
       if (pe) {
         if (!sf) mismatch.push('no "Saved from" card — (m) has nothing to read')
         else {
@@ -1139,6 +1154,7 @@ try {
       if (m.breeding) console.log(`[seed-detail] ${at}: Breeding "${m.breeding.value}" on ${m.breeding.lines} line(s)`)
       console.log(`[seed-detail] ${at}: (k) ${m.seedCount ? `count fact "${m.seedCount.label}: ${m.seedCount.value}" at y${m.seedCount.box.t}-${m.seedCount.box.b} in band y${m.band.top}-${m.band.bottom}, ${m.seedCount.lines} line(s)${m.seedCount.first ? ', first fact' : ''}` : 'no count fact'} · seed fields ${m.counts.seedCountBox ? 'present' : 'absent'}`)
       if (pe) console.log(`[seed-detail] ${at}: (m) Saved-from card x${sf.box.l}-${sf.box.r} · rows ${sf.rows.map((r) => `${r.box.w}x${r.box.h}px/${r.nameLines}L${r.struck ? ' STRUCK' : ''} [${r.btn ? `${r.btn.label} ${r.btn.w}x${r.btn.h}` : 'no control'}]`).join(', ')}${sf.filed ? ` · "${sf.filed.text}" ${sf.filed.box.w}x${sf.filed.box.h}px/${sf.filed.lines}L, Undo ${sf.filed.undo ? sf.filed.undo.h + 'px' : 'ABSENT'}` : ''}`)
+      if (m.stillSays.count) console.log(`[seed-detail] ${at}: (m) still-says line ${m.stillSays.lines.map((l) => `"${l.text}" ${l.box.w}x${l.box.h}px`).join(' | ')} — exactly ${m.stillSays.count} on the page`)
       if (m.germ) console.log(`[seed-detail] ${at}: germination record x${m.germ.box.l}-${m.germ.box.r} · rows ${m.germ.rows.map((r) => `${r.box.w}x${r.box.h}px/${r.nameLines}L`).join(', ')}`)
       console.log(`[seed-detail] ${at}: formerly exempt, now floored — ${m.footprints.map((f) => `"${f.label}" hit ${f.hit.w}x${f.hit.h}px, lays out ${f.w}x${f.h}px`).join(', ')}`)
       console.log(`[seed-detail] ${at}: reach ${reached.join(' · ') || 'none'}${m.unstubbed.length ? ` · unstubbed requests: ${[...new Set(m.unstubbed)].join(', ')}` : ''}`)

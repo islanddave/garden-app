@@ -232,6 +232,8 @@ parse time. On a database without the table they do not go vacuous under their s
 read this table, so `0r-rollback.sql` refuses up front, naming them, until
 `migrations/v5-seedstatsparents-001/0r-rollback.sql` has put both views back. Then the three points below apply.
 
+**Newer still (since `v5-seedlotaddition-001`, release 3):** `seed_lot_addition.parent_link_id` references this table, so run `migrations/v5-seedlotaddition-001/0r-rollback.sql` before this file, or the `DROP TABLE` here stops on that foreign key with a raw 2BP01, changing nothing (it fails closed; no guard was added for it).
+
 1. **Push 2 has happened (2026-10-05), so undo it first.** Move the two row-level gates out of `gates.yml`
    (back to a `gates-rowlevel.yml.pending` file, which the runner does not load), push, and let that reach the branch whose corpus runs against the database — dev for the
    push-triggered run, `main` for the cron. With the table gone they error rather than pass.

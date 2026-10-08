@@ -49,17 +49,19 @@ import { T, inputChrome } from '../forms/formStyles.js'
 import PlantingSelect from '../forms/PlantingSelect.jsx'
 import { parentSetFacts, sourcePlantFromPlanting } from './seedParents.js'
 import { rowTitle } from './mySeedsModel.js'
+import { seedCountLabel } from './seedLots.js'
+import { addToLotAvailable } from './seedAdditions.js'
 
 // Undo ignores taps this long after it appears, so a double tap on ✕ does not undo itself.
 export const UNDO_ARM_MS = 400
 
 // Exported: the page's one remaining legacy parent write says the same two things (InventoryDetail).
-export const CHANGED_ELSEWHERE = 'This jar changed somewhere else just now. This is the latest. Try again if it still needs changing.'
+export const CHANGED_ELSEWHERE = 'This lot changed somewhere else just now. This is the latest. Try again if it still needs changing.'
 export const NOT_SAVED = "Couldn't save that. Nothing was changed."
 // A set write that never answered (a timeout, or a connection that dropped with the request already
 // out) may have landed with only its reply lost, so "nothing was changed" would be a guess. The jar is
 // read again; this is what is said when that read fails too.
-const NOT_CONFIRMED = "That didn't finish, so the change may or may not have saved. Open this jar again to check before you try again."
+const NOT_CONFIRMED = "That didn't finish, so the change may or may not have saved. Open this lot again to check before you try again."
 // The service worker's mark on a reply it served from its offline copy (src/lib/api.js). Such a copy
 // is never "the latest".
 const FROM_CACHE = Symbol.for('garden-app.fromCache')
@@ -487,6 +489,8 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
     }
   }
 
+  const stillSays = addToLotAvailable() && struck.length > 0
+    ? seedCountLabel(lot.seed_count, lot.seed_count_estimated) : ''
   const working = busy || countBusy
   const problem = notice ?? pageNotice ?? null
   const help = problem
@@ -549,6 +553,17 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
         </div>
       )}
 
+      {/* V5-SEEDLOTADDITION-001 — taking a plant off the lot does not take its seed out of the count:
+          the count is one number for the whole lot, and what was added off each plant is kept with
+          the plant's link, not subtracted. So while a row is struck the card says what the lot still
+          says and leaves the number to the person who knows. Nothing to say for a lot with no count;
+          gone with the strike on Undo. */}
+      {stillSays && (
+        <p data-testid="saved-from-still-says" role="status" style={quietLine}>
+          The lot still says {stillSays}. Change the count if that is no longer right.
+        </p>
+      )}
+
       {filed && (
         <div data-testid="saved-from-filed" role="status" style={filedLine}>
           <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>Filed as {filed.name}</span>
@@ -606,15 +621,15 @@ export default function SavedFromCard({ lot, onLot, onName, storedName = null, n
 
       {live.length > 0 && orphan && (
         <p data-testid="saved-from-no-variety" style={quietLine}>
-          {orphan.name} has no variety recorded, so another planting can&apos;t be added to this jar.
+          {orphan.name} has no variety recorded, so another planting can&apos;t be added to this lot.
         </p>
       )}
 
       {live.length >= 2 && (
         <p data-testid="saved-from-mixed" style={quietLine}>
           {live.length === 2
-            ? 'Mixed together. A seed from this jar could be from either planting.'
-            : 'Mixed together. A seed from this jar could be from any of these plantings.'}
+            ? 'Mixed together. A seed from this lot could be from either planting.'
+            : 'Mixed together. A seed from this lot could be from any of these plantings.'}
         </p>
       )}
 

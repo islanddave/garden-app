@@ -43,7 +43,10 @@
 //   * the mix found by its NAME only: a renamed mix keeps its component rows and the same 23503 follows;
 //   * the mix ids captured after a delete has run, or the capture, the delete or the residue term run without
 //     the to_regclass test on a database that has no variety_blend_component;
-//   * a release 2a assert deleted, reordered so it reads before it writes, or its expected string loosened.
+//   * a release 2a assert deleted, reordered so it reads before it writes, or its expected string loosened;
+//   * RELEASE 3. A smoke lot's stage rows deleted after "DELETE FROM inventory_items", or not at all: 23503 at the
+//     first run after U24 gives the gift lot a stage, and at every run after it (seed_lot_stage_log's key to
+//     inventory_items has no ON DELETE action; rehearsed on a local PG 17).
 //
 // WHAT IT DOES NOT CATCH: whether the SQL is right for the live schema, or whether the Lambdas answer as block U
 // expects. Every deploy-staging run executes both for real.
@@ -141,11 +144,16 @@ describe('the L-058 sweep takes a smoke lot\'s parent links before the plantings
     expect(arm).toContain('SEED_PARENT_LEFT="(SELECT COUNT(*) FROM seed_lot_parent_planting ')
     expect(arm).not.toContain('-c "DELETE FROM plants ')
     // every psql call that names the table is the probe or sits in that arm; the main chain names it nowhere
+    // 3 -> 4 with release 3: the picking delete names the table too (it selects the link rows about to go),
+    // and it is the FIRST statement of the arm, ahead of the link delete (its own describe is below).
     const calls = run.split('\n').filter((l) => l.includes('psql ') && l.includes('seed_lot_parent_planting'))
-    expect(calls).toHaveLength(3)
+    expect(calls).toHaveLength(4)
     expect(calls[0]).toContain("to_regclass('public.seed_lot_parent_planting')")
+    expect(calls[1]).toContain('-c "DELETE FROM seed_lot_addition WHERE parent_link_id IN (SELECT id FROM seed_lot_parent_planting ')
+    expect(calls[2]).toContain('-c "DELETE FROM seed_lot_parent_planting ')
     expect(arm).toContain(calls[1].trim())
     expect(arm).toContain(calls[2].trim())
+    expect(arm).toContain(calls[3].trim())
     expect(run.split('\n').filter((l) => l.trimStart().startsWith('-c "') && l.includes('seed_lot_parent_planting'))).toHaveLength(0)
     // a cast would raise 42P01 on a database without the table
     expect(run).not.toMatch(/seed_lot_parent_planting'::regclass/)
@@ -163,13 +171,171 @@ describe('the L-058 sweep takes a smoke lot\'s parent links before the plantings
       `SEED_PARENT_LEFT="(SELECT COUNT(*) FROM seed_lot_parent_planting WHERE inventory_item_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]) OR plant_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]))"`,
     )
     const remaining = run.split('\n').find((l) => l.startsWith('REMAINING='))
-    expect(remaining).toContain(" + $SEED_PARENT_LEFT + (SELECT COUNT(*) FROM plant_varieties WHERE id = ANY('{$SMOKE_MIX_IDS}'::uuid[])) + $BLEND_LEFT;\")")
-    expect(remaining.endsWith(' + $BLEND_LEFT;")')).toBe(true)
+    // Release 3 APPENDED two terms (the picking table's, then the stage rows', last); every term before them reads
+    // as it did.
+    expect(remaining).toContain(" + $SEED_PARENT_LEFT + (SELECT COUNT(*) FROM plant_varieties WHERE id = ANY('{$SMOKE_MIX_IDS}'::uuid[])) + $BLEND_LEFT + $SEED_ADDITION_LEFT + (SELECT COUNT(*) FROM seed_lot_stage_log ")
+    expect(remaining.endsWith(";\")")).toBe(true)
     expect(remaining).not.toContain('seed_lot_parent_planting')
   })
 
   it('still fails the step when residue remains', () => {
     expect(run).toMatch(/if \[\[ "\$REMAINING" != "0" \]\]; then\n\s*echo "[^\n]*\n\s*exit 1\n\s*fi/)
+  })
+})
+
+// ── release 3: a picking row goes before the link row it hangs on (V5-SEEDLOTADDITION-001) ────────────────────────
+// seed_lot_addition has ONE foreign key, parent_link_id -> seed_lot_parent_planting(id), ON DELETE RESTRICT. A
+// picking left under a smoke lot's link row stops the link delete with 23503; under ON_ERROR_STOP the step fails
+// there, the row stays, and every later run fails the same way until staging is cleaned by hand. "A link row about
+// to be deleted" is whatever the step's OWN link delete says it is — read from that statement, as the two
+// predicates above are read from theirs, so narrowing or widening the link delete without the picking delete
+// fails this file.
+describe('the L-058 sweep takes a smoke lot\'s pickings before its parent links', () => {
+  const run = SWEEP.run
+  const lines = run.split('\n')
+  const LINK_DELETES = run.match(/-c "DELETE FROM seed_lot_parent_planting WHERE [^"]+;"/g) ?? []
+  const LINK_PREDICATE = (LINK_DELETES[0] ?? '').replace(/^-c "DELETE FROM seed_lot_parent_planting WHERE /, '').replace(/;"$/, '')
+  const PICKING_DELETE = `DELETE FROM seed_lot_addition WHERE parent_link_id IN (SELECT id FROM seed_lot_parent_planting WHERE ${LINK_PREDICATE});`
+  const PROBE = `SEED_ADDITION_TABLE=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT to_regclass('public.seed_lot_addition') IS NOT NULL;")`
+  const LEFT = `SEED_ADDITION_LEFT="(SELECT COUNT(*) FROM seed_lot_addition WHERE parent_link_id IN (SELECT id FROM seed_lot_parent_planting WHERE inventory_item_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]) OR plant_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[])))"`
+  const outer = run.indexOf('if [[ "$SEED_PARENT_TABLE" == "t" ]]; then')
+  const arm = run.slice(outer, run.indexOf('\nelse\n', outer))
+  const inner = arm.indexOf('if [[ "$SEED_ADDITION_TABLE" == "t" ]]; then')
+  // where the inner guard's `fi` is (indented: it is nested one level inside the arm)
+  const closes = inner + arm.slice(inner).search(/\n\s*fi\n/)
+
+  it('has one link delete to take its predicate from, and it is the one the block above pins', () => {
+    expect(LINK_DELETES).toHaveLength(1)
+    expect(LINK_PREDICATE).toBe(`inventory_item_id IN (${SMOKE_LOTS}) OR plant_id IN (${SMOKE_PLANTS})`)
+  })
+
+  it('deletes exactly the pickings whose link row the link delete is about to remove — its predicate, character for character', () => {
+    const deletes = run.match(/DELETE FROM seed_lot_addition\b[^"]*/g) ?? []
+    expect(deletes).toEqual([PICKING_DELETE])
+    expect(lines.filter((l) => l.trim() === `psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -c "${PICKING_DELETE}"`)).toHaveLength(1)
+  })
+
+  it('runs it INSIDE the arm that knows the link table exists, under its own to_regclass guard, and BEFORE the link delete', () => {
+    expect(inner).toBeGreaterThan(0)
+    const picking = arm.indexOf('DELETE FROM seed_lot_addition ')
+    const link = arm.indexOf('-c "DELETE FROM seed_lot_parent_planting ')
+    expect(picking).toBeGreaterThan(inner)
+    expect(link).toBeGreaterThan(picking)
+    // the inner guard closes before the link delete, so the link delete does not depend on the picking table
+    expect(closes).toBeGreaterThan(picking)
+    expect(link).toBeGreaterThan(closes)
+    // and it has no `else`: the block above finds the arm's end by its first one
+    expect(arm.slice(inner, closes)).not.toMatch(/\belse\b/)
+    expect(arm).toContain('SEED_PARENT_LEFT="(SELECT COUNT(*) FROM seed_lot_parent_planting ')
+    // order in the whole step: pickings, links, the pointer move, the clear, plantings, lots
+    const at = (text) => run.indexOf(text)
+    const order = [
+      at('DELETE FROM seed_lot_addition '), at('-c "DELETE FROM seed_lot_parent_planting '), at('UPDATE inventory_items i SET source_plant_id = (SELECT'),
+      at('UPDATE inventory_items SET source_plant_id = NULL'), at('-c "DELETE FROM plants '), at('-c "DELETE FROM inventory_items '),
+    ]
+    for (const i of order) expect(i).toBeGreaterThan(-1)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+  })
+
+  it('reads the table\'s presence once with to_regclass, beside the link table\'s probe, and names it nowhere else outside the arm', () => {
+    const probe = run.indexOf(PROBE)
+    const linkProbe = run.indexOf(`SEED_PARENT_TABLE=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT to_regclass('public.seed_lot_parent_planting') IS NOT NULL;")`)
+    expect(probe).toBeGreaterThan(linkProbe)
+    expect(outer).toBeGreaterThan(probe)
+    expect(lines.filter((l) => l.trim().startsWith('SEED_ADDITION_TABLE='))).toHaveLength(1)
+    // every line that names the table: the probe, the delete and the residue term (both in the arm), and the
+    // closing echo's list of what was counted
+    const naming = lines.filter((l) => l.includes('seed_lot_addition')).map((l) => l.trim())
+    expect(naming).toHaveLength(4)
+    expect(naming[0]).toBe(PROBE)
+    expect(arm).toContain(naming[1])
+    expect(arm).toContain(naming[2])
+    expect(naming[3].startsWith('echo "')).toBe(true)
+    expect(lines.filter((l) => l.trimStart().startsWith('-c "') && l.includes('seed_lot_addition'))).toHaveLength(0)
+    // a cast would raise 42P01 on a database without the table
+    expect(run).not.toMatch(/seed_lot_addition'::regclass/)
+  })
+
+  it('counts leftover pickings by the ids captured before any delete, in the term straight after the mix\'s', () => {
+    expect(run).toContain('\nSEED_ADDITION_LEFT="0"\n')
+    expect(run.indexOf('\nSEED_ADDITION_LEFT="0"\n')).toBeLessThan(outer)
+    expect(arm).toContain(LEFT)
+    expect(arm.indexOf(LEFT)).toBeGreaterThan(arm.indexOf('DELETE FROM seed_lot_addition '))
+    expect(arm.indexOf(LEFT)).toBeLessThan(closes)
+    const remaining = lines.find((l) => l.startsWith('REMAINING='))
+    // it was the last term until the stage rows' term was appended after it (the describe below)
+    expect(remaining).toContain(' + $BLEND_LEFT + $SEED_ADDITION_LEFT + (SELECT COUNT(*) FROM seed_lot_stage_log ')
+    expect(remaining.match(/\$SEED_ADDITION_LEFT/g)).toHaveLength(1)
+    expect(remaining).not.toContain('seed_lot_addition')
+  })
+})
+
+// ── release 3, pre-promote review (regression B2): a lot's stage rows go before the lot ──────────────────────────
+// seed_lot_stage_log.inventory_item_id names inventory_items with NO ON DELETE action, and POST /seed-stage, its
+// one writer, adds a row on every call. Block U's U24 is the smoke's first call of that route (the gift lot), and
+// the API DELETE after it is a soft delete. A stage row left under a smoke lot stops "DELETE FROM inventory_items"
+// with 23503; the step fails there, the lot and the row stay, and every later run fails on the same row. "A smoke
+// lot" is whatever the step's OWN lot delete says it is, as above, so narrowing or widening that delete without
+// this one fails this file.
+describe('the L-058 sweep takes a smoke lot\'s stage rows before the lot', () => {
+  const run = SWEEP.run
+  const lines = run.split('\n')
+  const STAGE_DELETE = `DELETE FROM seed_lot_stage_log WHERE inventory_item_id IN (${SMOKE_LOTS});`
+  const STAGE_LEFT = "(SELECT COUNT(*) FROM seed_lot_stage_log WHERE inventory_item_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]))"
+  const at = lines.findIndex((l) => l.trim() === `-c "${STAGE_DELETE}" \\`)
+
+  it('deletes exactly the stage rows of the lots the lot delete is about to remove: its predicate, character for character', () => {
+    const deletes = run.match(/DELETE FROM seed_lot_stage_log\b[^"]*/g) ?? []
+    expect(deletes).toEqual([STAGE_DELETE])
+    expect(at).toBeGreaterThan(-1)
+  })
+
+  it('runs it in the first chain, under ON_ERROR_STOP, directly ahead of the lot delete', () => {
+    // the very next line is the lot delete: nothing can be put between a lot's stage rows and the lot
+    expect(lines[at + 1].trim()).toBe(`${LOTS_DELETES[0]} \\`)
+    // a line of the first chain: after the call that opens it, before the care_profile delete that ends it
+    const chain = lines.findIndex((l) => l.trim() === 'psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 \\')
+    const chainEnd = lines.findIndex((l, i) => i > chain && l.trimStart().startsWith('-c "') && !l.trimEnd().endsWith('\\'))
+    expect(chain).toBeGreaterThan(-1)
+    expect(at).toBeGreaterThan(chain)
+    expect(at).toBeLessThan(chainEnd)
+    for (let i = chain + 1; i <= chainEnd; i += 1) expect(lines[i].trimStart().startsWith('-c "')).toBe(true)
+    expect(lines[chainEnd].trim().startsWith('-c "DELETE FROM care_profile ')).toBe(true)
+  })
+
+  it('needs no to_regclass test: the table is named by no probe and by no cast', () => {
+    expect(run).not.toContain("to_regclass('public.seed_lot_stage_log')")
+    expect(run).not.toMatch(/seed_lot_stage_log'::regclass/)
+    // every line that names the table: the delete, the residue sum, and the two echoes that list what was done
+    const naming = lines.filter((l) => l.includes('seed_lot_stage_log')).map((l) => l.trim())
+    expect(naming).toHaveLength(4)
+    expect(naming[0]).toBe(`-c "${STAGE_DELETE}" \\`)
+    expect(naming[1].startsWith('echo "  swept: ')).toBe(true)
+    expect(naming[2].startsWith('REMAINING=')).toBe(true)
+    expect(naming[3].startsWith('echo "')).toBe(true)
+  })
+
+  it('counts leftover stage rows by the lot ids captured before any delete, as the LAST term of the residue sum', () => {
+    const capture = run.indexOf('SMOKE_PARENT_KEYS=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c ')
+    expect(capture).toBeGreaterThan(-1)
+    expect(run.indexOf(STAGE_DELETE)).toBeGreaterThan(capture)
+    const remaining = lines.find((l) => l.startsWith('REMAINING='))
+    expect(remaining.endsWith(` + $SEED_ADDITION_LEFT + ${STAGE_LEFT};")`)).toBe(true)
+    expect(remaining.match(/seed_lot_stage_log/g)).toHaveLength(1)
+    // never by a join on the smoke name: after the sweep no smoke lot is left to join through
+    expect(remaining).not.toMatch(/FROM seed_lot_stage_log[^)]*IN \(SELECT id FROM inventory_items/)
+  })
+
+  it('is what block U needs: the smoke stages only a lot the sweep collects by name', () => {
+    const staged = SMOKE.match(/sp_req POST "[^"]*\/seed-stage"/g) ?? []
+    expect(staged).toEqual(['sp_req POST "$SP_INV/$SP_GIFT/seed-stage"'])
+    // SP_GIFT is the id of the create on the line above its assignment, and that create's name says smoke
+    const smokeLines = SMOKE.split('\n')
+    const assigned = smokeLines.findIndex((l) => l.trimStart().startsWith("SP_GIFT=$(sp_jq '.id // empty')"))
+    expect(smokeLines.filter((l) => /\bSP_GIFT=/.test(l))).toHaveLength(1)
+    expect(smokeLines[assigned - 1].trim()).toBe(
+      'sp_req POST "$STAGING_API_INVENTORY" "{\\"name\\": \\"smoke-test-seedlot-gift-$TEST_RUN_ID\\", $SP_LOT_V2}"',
+    )
   })
 })
 
@@ -499,10 +665,15 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     expect(code).toContain('sp_check "u6-delete-with-parents" "$SP_WRITE $SP_CODE" "200 true 404"')
   })
 
-  it('mints twice: between U0 and U1, and before U7', () => {
+  it('mints three times: between U0 and U1, before U7, and before U24', () => {
     const mints = [...code.matchAll(/^\s*CLERK_JWT=\$\(mint_session_token\)$/gm)].map((m) => m.index)
-    expect(mints).toHaveLength(2)
-    expect(code.match(/mint_session_token/g) ?? []).toHaveLength(2)
+    expect(mints).toHaveLength(3)
+    expect(code.match(/mint_session_token/g) ?? []).toHaveLength(3)
+    // the third (release 3): after U21, straight ahead of the first release 3 line, and before U22
+    expect(mints[2]).toBeGreaterThan(code.indexOf('u21-season-stats-parent-count] STAGING_API_HARVESTS unset/placeholder — parent_count NOT read'))
+    expect(mints[2]).toBeLessThan(code.indexOf('smoke-test-seedparent5-$TEST_RUN_ID'))
+    expect(mints[2]).toBeLessThan(code.indexOf('sp_check "u22-mix-lot-delete"'))
+    expect(flat).toContain('CLERK_JWT=$(mint_session_token)\nsp_uuid() {')
     // the first: after U0's last line, straight ahead of the two-parent create
     expect(mints[0]).toBeGreaterThan(code.indexOf('sp_fail "u0a-legacy-create"'))
     expect(flat).toContain('CLERK_JWT=$(mint_session_token)\nsp_req POST "$STAGING_API_INVENTORY" "{\\"name\\": \\"smoke-test-seedlot-$TEST_RUN_ID\\"')
@@ -554,9 +725,14 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     'u12-mix-lot-readback', 'u13-list-row', 'u14-plant-count-readback', 'u15-filing-to-component',
     'u16-stale-list-row-put-keeps-filing', 'u17-filing-back-from-previous', 'u18-plant-count-cleared',
     'u19-stale-set-refused', 'u20-seed-saved-first-parent', 'u20-seed-saved-second-parent',
-    'u21-season-stats-parent-count', 'u22-mix-lot-delete', 'first-parent-variety-restored',
-    // the two SQL reads, last
-    'u5-link-rows-readback', 'u23-mix-rows-readback',
+    'u21-season-stats-parent-count',
+    // release 3: between U21 and U22, while the mix lot and its parents are live
+    'u24-counted-lot', 'u24-open-lots', 'u25-same-plant-addition', 'u25-replay', 'u25-key-on-another-lot',
+    'u25-stale-set', 'u26-other-plant-addition', 'u27-refiling-addition-uncounted', 'u28-used-up-lot',
+    'u29-stale-measure', 'u30-addition-event',
+    'u22-mix-lot-delete', 'first-parent-variety-restored',
+    // the three SQL reads, last
+    'u5-link-rows-readback', 'u23-mix-rows-readback', 'u31-addition-rows-readback',
   ]
 
   it('still compares at every assert: each label is an sp_check call, in this order, and there are no others', () => {
@@ -965,9 +1141,10 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     expect(cleanup.slice(without)).toMatch(/^\n  elif \[\[ "\$DATA_CREATED" == "true" \]\]; then\n(?:\s*#[^\n]*\n)*\s*echo "Cleanup: no session token in hand, so the API soft-deletes were skipped; the workflow's L-058 sweep removes the rows"\n  fi\n/)
   })
 
-  it('makes 68 requests, 14 then 14 then 40 between its mints, the numbers its own comment reasons from', () => {
+  it('makes 100 requests, 14 then 14 then 35 then 37 between its mints, the numbers its own comment reasons from', () => {
     // A request is an sp_req call, or a call of one of the four helpers that make exactly one each. Counted per
-    // stretch: before the first mint, between the two, after the second.
+    // stretch: before the first mint, between each two, after the third (release 3 added the third mint and
+    // 32 requests: U24 to U30 and their three DELETEs).
     const HELPERS = ['sp_state() {', 'sp_drop() {', 'sp_refused() {']
     for (const helper of HELPERS) {
       const body = flat.slice(flat.indexOf(helper), flat.indexOf('\n}', flat.indexOf(helper)))
@@ -982,13 +1159,17 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     const body = flat.slice(flat.indexOf('sp_req POST "$STAGING_API_PLANTS" '))
     expect(requests(flat.slice(0, flat.indexOf('sp_req POST "$STAGING_API_PLANTS" ')))).toBe(HELPERS.length)
     const stretches = body.split('CLERK_JWT=$(mint_session_token)\n')
-    expect(stretches).toHaveLength(3)
-    expect(stretches.map(requests)).toEqual([14, 14, 40])
+    expect(stretches).toHaveLength(4)
+    expect(stretches.map(requests)).toEqual([14, 14, 35, 37])
+    // no stretch is longer than the one the block ran with before release 3 (40), which was measured
+    expect(Math.max(...stretches.map(requests))).toBeLessThanOrEqual(40)
     // a larger block needs its token paragraph re-read: these are the sentences that carry the numbers
     expect(block).toContain("block's first 14 (P2, P1's variety and its read, U0's 11): at most 21;")
     expect(block).toContain('the mint between U0 and U1: 14 (U1 to U6, then P2\'s DELETE);')
-    expect(block).toContain('the mint before U7: 40 (U7 to U22, then P1\'s variety cleared and read).')
-    expect(block).toContain('# 68 requests in all.')
+    expect(block).toContain('the mint before U7: 35 (U7 to U21);')
+    expect(block).toContain("the mint before U24: 37 (U24 to U30 and their three DELETEs, then U22, P3's and P4's DELETEs, and P1's variety cleared and read).")
+    expect(block).toContain('# 100 requests in all.')
+    expect(block).toContain('# THREE MINTS OF ITS OWN')
   })
 
   it('fails the ship gate, rather than skipping, when it cannot run or cannot read the rows', () => {
@@ -1004,5 +1185,189 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     expect(cleanup).toContain('"${STAGING_API_PLANTS%/}/api/plants/${CREATED_SEEDPARENT_PLANT_ID}"')
     expect(SMOKE.slice(0, SMOKE.indexOf('cleanup() {'))).toMatch(/^CREATED_SEEDLOT_ID=""$/m)
     expect(SMOKE.slice(0, SMOKE.indexOf('cleanup() {'))).toMatch(/^CREATED_SEEDPARENT_PLANT_ID=""$/m)
+  })
+})
+
+// ── release 3: seed put INTO a lot that already exists (V5-SEEDLOTADDITION-001; R3-CONTRACT 6.1) ───────────────────
+// U24 to U31. Block U cannot run until its commit is on dev (staging only), so what holds it until then is this:
+// that every additions request is the contract's body and nothing else, that each body is built from a REAL reply
+// (the smoke proves the client's own flow, not a hand-written one), and that no picking row is ever written to
+// staging by a script whose workflow does not also sweep it.
+describe('staging smoke block U, release 3: additions to an existing seed lot', () => {
+  const FIXTURE = JSON.parse(readFileSync(resolve(process.cwd(), 'tests/contracts/seed-mix.json'), 'utf8'))
+  const spec = FIXTURE.seed_additions_post
+  const u = SMOKE.slice(SMOKE.indexOf('# ── U24 to U30) release 3'), SMOKE.indexOf('# ── U22) the lot goes, its parents still linked'))
+  const flatU = u.split('\n').map((l) => l.trim()).join('\n')
+  const keysOf = (objectText) => [...objectText.matchAll(/(?:^|[{,]\s*)"?([a-z_]+)"?\s*:/g)].map((m) => m[1])
+
+  it('finds the stretch, between U21 and U22', () => {
+    expect(u.length).toBeGreaterThan(2000)
+    expect(SMOKE.indexOf('# ── U24 to U30) release 3')).toBeGreaterThan(SMOKE.indexOf('sp_check "u21-season-stats-parent-count"'))
+    expect(SMOKE.indexOf('# ── U24 to U30) release 3')).toBeLessThan(SMOKE.indexOf('sp_check "u22-mix-lot-delete"'))
+  })
+
+  it('builds EVERY additions body with sp_add_body: the contract\'s four required keys, and nothing else at the top', () => {
+    const helper = flatU.slice(flatU.indexOf('sp_add_body() {'), flatU.indexOf('\n}', flatU.indexOf('sp_add_body() {')))
+    const base = helper.match(/'(\{addition_key: [^}]*\}) \+ \$x'/)
+    expect(base, 'sp_add_body no longer lays its extras over one object literal').not.toBeNull()
+    expect(keysOf(base[1])).toEqual(spec.request_required)
+    // every request to the route sends what that helper built: directly, or the one body kept to send twice
+    const sends = [...flatU.matchAll(/sp_req POST "(?:\$SP_ADD|\$SP_INV\/\$SP_L2\/seed-additions)" (.*)$/gm)].map((m) => m[1])
+    expect(sends).toHaveLength(7)
+    for (const body of sends) expect(body === '"$SP_BODY1"' || body.startsWith('"$(sp_add_body '), body).toBe(true)
+    expect(flatU).toContain(`SP_BODY1=$(sp_add_body "$(sp_uuid)" "$SP_P3" "$SP_SET" '{"add_seed_count": 30, "add_estimated": false}')`)
+    // and there is no other way to the route in the whole script
+    // (the route is spelled four times: SP_ADD's own assignment, and the three sends to the one-parent lot)
+    expect(SMOKE.match(/seed-additions"/g)).toHaveLength(4)
+    expect(SMOKE).toContain('SP_ADD="$SP_INV/$SP_MIXLOT/seed-additions"')
+    expect([...SMOKE.matchAll(/sp_req POST "[^"]*seed-additions[^"]*"/g)]).toHaveLength(3)
+    expect(SMOKE.match(/sp_req POST "\$SP_ADD" /g)).toHaveLength(4)
+  })
+
+  it('lays only the contract\'s optional keys over them — never a name, a type or a category', () => {
+    // the literal extras at the call sites, and the one built by jq for the re-filing addition
+    const literals = [...flatU.matchAll(/sp_add_body [^\n]*? '(\{[^']*\})'\)/g)].map((m) => m[1])
+    expect(literals).toHaveLength(3)
+    const refile = flatU.match(/SP_REFILE=\$\(jq -nc [^\n]*'(\{add_seed_count: 12, add_estimated: true, filing: \{variety_id: \$v, expect_variety_id: \$e\}\})'/)
+    expect(refile, 'the re-filing addition\'s extras are no longer one jq object').not.toBeNull()
+    const used = new Set()
+    for (const text of [...literals, refile[1].replace(/filing: \{[^}]*\}/, 'filing: 0')]) {
+      for (const key of keysOf(text)) {
+        used.add(key)
+        expect(spec.request_optional, `an additions body carries "${key}"`).toContain(key)
+        expect(spec.request_never).not.toContain(key)
+      }
+    }
+    // all four optional keys but the weight are sent by some step; a count never goes without its basis
+    expect([...used].sort()).toEqual(['add_estimated', 'add_seed_count', 'filing'])
+    for (const text of literals) expect(keysOf(text)).toEqual(['add_seed_count', 'add_estimated'])
+    // the filing is the filing route's own two keys
+    expect(keysOf(refile[1].match(/filing: (\{[^}]*\})/)[1])).toEqual(['variety_id', 'expect_variety_id'])
+    for (const never of spec.request_never) expect(base(never)).toBe(false)
+    function base(key) { return new RegExp(`\\{addition_key:[^}]*\\b${key}\\b`).test(flatU) }
+  })
+
+  it('builds each body from a REAL reply: the plant\'s own lots, the open-lots row, the blend route', () => {
+    // same plant: [plant] + the lot's other_parents, out of GET /api/plants/:id/seed-lots
+    expect(flatU).toContain('sp_req GET "${STAGING_API_PLANTS%/}/api/plants/$SP_P3/seed-lots"\nSP_SET=$(jq -c --arg p "$SP_P3" --arg x "$SP_MIXLOT" \'[$p] + ([.seed_lots[]? | select(.id == $x)][0].other_parents // [] | map(.id))\' "$SP_OUT"')
+    // another plant: the row's own source_plants, out of GET /seed-lots-open
+    expect(flatU).toContain('sp_req GET "$SP_INV/seed-lots-open?plant_id=$SP_P5"')
+    expect(flatU).toContain(`SP_OPEN_SET=$(sp_jqx "$SP_MIXLOT" '[.open_lots[]? | select(.id == $x)][0].source_plants // [] | map(.id)')`)
+    expect(flatU).toContain('sp_req POST "$SP_ADD" "$(sp_add_body "$(sp_uuid)" "$SP_P5" "$SP_OPEN_SET")"')
+    // re-filing: the target from a real blend POST, the set and the expectation from the row
+    const blend = flatU.indexOf('sp_req POST "$SP_VAR/blend" "{\\"component_variety_ids\\": [\\"$SP_V2\\", \\"$SP_V3\\"], \\"create\\": true}"\nSP_BLEND=$(sp_jq \'.id // empty\')')
+    const row = flatU.indexOf('sp_req GET "$SP_INV/seed-lots-open?plant_id=$SP_P4"')
+    const post = flatU.indexOf('sp_req POST "$SP_INV/$SP_L2/seed-additions" "$(sp_add_body "$(sp_uuid)" "$SP_P4" "$SP_ROW2_SET" "$SP_REFILE")"')
+    expect(blend).toBeGreaterThan(-1)
+    expect(row).toBeGreaterThan(blend)
+    expect(post).toBeGreaterThan(row)
+    expect(flatU).toContain(`SP_ROW2_SET=$(sp_jqx "$SP_L2" '[.open_lots[]? | select(.id == $x)][0].source_plants // [] | map(.id)')`)
+    expect(flatU).toContain(`--arg v "$SP_BLEND" --arg e "$(sp_jqx "$SP_L2" '[.open_lots[]? | select(.id == $x)][0].variety_id // empty')"`)
+    // five keys for seven sends: one body goes out three times on purpose (the replay, and the other lot)
+    expect(flatU.match(/\$\(sp_uuid\)/g)).toHaveLength(5)
+  })
+
+  it('expects each answer the contract gives: the count up once, the replay, the two 409s, the uncounted lot, the used-up lot, the stale measure, both in the client\'s own body', () => {
+    for (const [label, expected] of [
+      ['u24-counted-lot', '"200 200 201 200 200 100|false"'],
+      ['u24-open-lots', '"200 true,true,false,false|false,true"'],
+      ['u25-same-plant-addition', '"200 false|false|true 200 130|false|$SP_BEFORE"'],
+      ['u25-replay', '"200 true|130|$SP_ADDITION"'],
+      ['u25-key-on-another-lot', '"409 addition_key_conflict"'],
+      ['u25-stale-set', '"409 lot_changed 200 130"'],
+      ['u26-other-plant-addition', '"200 true|false 200 $SP_THREE|130|true"'],
+      ['u27-refiling-addition-uncounted', '"false 200 false|true 200 $SP_MIX|blend|null|null|$SP_MIXBOTH"'],
+      ['u28-used-up-lot', '"200 409 lot_used_up"'],
+      ['u29-stale-measure', '"409 lot_changed|130 200 130"'],
+      ['u30-addition-event', '"201 200 2"'],
+    ]) {
+      const line = flatU.split('\n').find((l) => l.startsWith(`sp_check "${label}" `))
+      expect(line, label).toBeDefined()
+      expect(line, label).toContain(`" ${expected} "`)
+    }
+    // the codes it compares are codes the contract file names
+    expect(Object.keys(spec.refusals)).toEqual(expect.arrayContaining(['addition_key_conflict', 'lot_used_up']))
+    expect(FIXTURE.refusals.lot_changed.routes).toEqual(expect.arrayContaining([spec.route, FIXTURE.seed_measure_put.route]))
+    // what a picking must not move is read BEFORE the first addition and compared after it
+    expect(flatU.indexOf('SP_BEFORE="$(sp_jq "$SP_IDS_JQ")|$(sp_jq \'.source_plant_id // "null"\')|$(sp_jq \'.created_at // "null"\')|$(sp_jq \'.year_harvested | tostring\')"'))
+      .toBeGreaterThan(-1)
+    expect(flatU.indexOf('SP_BEFORE=')).toBeLessThan(flatU.indexOf('sp_req POST "$SP_ADD" "$SP_BODY1"'))
+    // Both count writes go out in the CLIENT'S OWN BODY (pre-promote QA review, I2). Since this release every count
+    // save from the lot page and the stage sheet carries what the page loaded in all three expected keys (contract
+    // 2.9.6), flag on or off, so that is the shape staging must see written and read back. U24's lot was never
+    // counted or weighed: all three null, and the write must land (its read-back is the u24-counted-lot assert
+    // above). U29's page loaded the lot at U24 (100, counted, no weight) and the lot has moved on: 409, nothing
+    // written.
+    const measures = (flatU.match(/sp_req PUT "\$SP_INV\/\$SP_MIXLOT\/seed-measure" '\{[^']*\}'/g) ?? [])
+      .map((call) => JSON.parse(call.slice(call.indexOf("'") + 1, -1)))
+      .filter((body) => 'seed_count' in body)
+    expect(measures).toEqual([
+      { seed_count: 100, seed_count_estimated: false, expected_seed_count: null, expected_seed_count_estimated: null, expected_seed_weight_g: null },
+      { seed_count: 5, seed_count_estimated: false, expected_seed_count: 100, expected_seed_count_estimated: false, expected_seed_weight_g: null },
+    ])
+    for (const body of measures) {
+      // toEqual reads a missing key and an undefined one alike, so the three are asserted present by name
+      expect(Object.keys(body)).toEqual(['seed_count', 'seed_count_estimated', 'expected_seed_count', 'expected_seed_count_estimated', 'expected_seed_weight_g'])
+      for (const key of Object.keys(body)) expect(FIXTURE.seed_measure_put.request_optional).toContain(key)
+    }
+    // no count write in the block goes out the old way, with no expected key
+    expect(flatU).not.toMatch(/seed-measure" '\{"seed_count": \d+, "seed_count_estimated": (true|false)\}'/)
+  })
+
+  it('the two lots that must NOT be offered differ from the one that is by one thing each', () => {
+    // all three are V2 lots made by one body; the gift is stored (so it reads as a saved lot) and says gift,
+    // the other is deleted, and both would be listed otherwise
+    expect(flatU.match(/\$SP_LOT_V2/g)).toHaveLength(3)
+    expect(flatU).toContain('sp_req POST "$STAGING_API_INVENTORY" "{\\"name\\": \\"smoke-test-seedlot-gift-$TEST_RUN_ID\\", $SP_LOT_V2}"')
+    expect(flatU).toContain('sp_req POST "$STAGING_API_INVENTORY" "{\\"name\\": \\"smoke-test-seedlot-add-$TEST_RUN_ID\\", $SP_LOT_V2, \\"source_plant_id\\": \\"$SP_P3\\"}"')
+    expect(flatU).toContain('sp_req POST "$STAGING_API_INVENTORY" "{\\"name\\": \\"smoke-test-seedlot-gone-$TEST_RUN_ID\\", $SP_LOT_V2, \\"source_plant_id\\": \\"$SP_P3\\"}"')
+    expect(flatU).toContain(`sp_req PATCH "$SP_INV/$SP_GIFT/source-kind" '{"source_kind": "gift"}'`)
+    expect(flatU).toContain(`sp_req POST "$SP_INV/$SP_GIFT/seed-stage" '{"stage": "stored"}'`)
+    expect(flatU).toContain('sp_req DELETE "$SP_INV/$SP_GONE"')
+    expect(flatU.indexOf('sp_req DELETE "$SP_INV/$SP_GONE"')).toBeLessThan(flatU.indexOf('sp_req GET "$SP_INV/seed-lots-open?plant_id=$SP_P5"'))
+    // every row the stretch makes is named so the workflow's sweep matches it
+    for (const name of [...flatU.matchAll(/\\"name\\": \\"([^"\\]+)\\"/g)].map((m) => m[1])) expect(name.startsWith('smoke-test-'), name).toBe(true)
+  })
+
+  it('sends the addition\'s event with the sheet\'s metadata keys and the smoke switch, and then counts two for one planting and lot', () => {
+    const post = flatU.split('\n').find((l) => l.startsWith('sp_req POST "$STAGING_API_EVENTS" ') && l.includes('seed_addition_id'))
+    expect(post).toBeDefined()
+    const metadata = post.match(/\\"metadata\\": \{([^}]*)\}/)[1]
+    expect([...metadata.matchAll(/\\"([a-z_]+)\\":/g)].map((m) => m[1]))
+      .toEqual(['seed_lot_id', 'addition', 'seed_addition_id', 'added_seed_count', 'added_estimated', '_skip_critter_award'])
+    expect(post).toContain('\\"plant_id\\": \\"$SP_P3\\", \\"event_type\\": \\"seed_saved\\", \\"event_date\\": \\"$SP_DAY\\"')
+    expect(post).toContain('\\"seed_lot_id\\": \\"$SP_MIXLOT\\", \\"addition\\": true, \\"seed_addition_id\\": \\"$SP_ADDITION\\", \\"added_seed_count\\": 30, \\"added_estimated\\": false')
+    // the amounts are those of the body that was POSTed in U25
+    expect(flatU).toContain(`'{"add_seed_count": 30, "add_estimated": false}'`)
+    expect(flatU.indexOf('if sp_id_ok "$SP_EVENT"; then SP_E3="$SP_EVENT"; fi')).toBeGreaterThan(flatU.indexOf(post))
+  })
+
+  it('reads the picking rows back through SQL LAST, with every id bound and none spliced, for rows it made', () => {
+    const block = SMOKE.slice(SMOKE.indexOf('# ── U) A saved-seed lot'), SMOKE.indexOf('# ── H) Bulk Quick-Log'))
+    const read = block.indexOf('SP_ADDROWS=$(psql "$NEON_STAGING_URL" ')
+    expect(read).toBeGreaterThan(block.indexOf('SP_MIXROWS=$(psql "$NEON_STAGING_URL" '))
+    expect(block.lastIndexOf('sp_req ')).toBeLessThan(block.indexOf('SP_ROWS=$(psql "$NEON_STAGING_URL" '))
+    expect(block.lastIndexOf('sp_drop ')).toBeLessThan(block.indexOf('SP_ROWS=$(psql "$NEON_STAGING_URL" '))
+    expect(block).toContain('-v lot="$SP_MIXLOT" -v second="$SP_L2" -v ev="$SP_E3"')
+    const sql = block.slice(read, block.indexOf('|| SP_ADDROWS="psql-exit-$?"'))
+    expect(sql.match(/:'(lot|second|ev)'::uuid/g)).toEqual([":'lot'::uuid", ":'second'::uuid", ":'ev'::uuid"])
+    expect(sql).not.toMatch(/'\$SP_/)
+    expect(sql.match(/FROM seed_lot_addition a JOIN seed_lot_parent_planting l ON l\.id = a\.parent_link_id WHERE l\.inventory_item_id = /g)).toHaveLength(2)
+    expect(sql).toContain("FROM xp_events WHERE reason = 'event_logged' AND source_id = :'ev'::uuid")
+    expect(block).toContain('sp_check "u31-addition-rows-readback" "$SP_ADDROWS" "2|1|0"')
+    // only when the stretch made its rows; and an id that was never made is the nil uuid, which keys nothing
+    expect(block).toMatch(/if \[\[ "\$SP_ADDED" == "true" \]\]; then\n\s*if \[\[ -n "\$\{NEON_STAGING_URL:-\}" \]\] && command -v psql >\/dev\/null 2>&1; then\n\s*SP_ADDROWS=\$\(psql /)
+    expect(block).toContain('SP_ADDED=false; SP_L2="$SP_NIL"; SP_E3="$SP_NIL"')
+    expect(block).toMatch(/elif \[\[ -n "\$\{SMOKE_REQUIRE_AUTH:-\}" \]\]; then\n\s*sp_fail "u31-addition-rows-readback"/)
+  })
+
+  it('writes picking rows only in a tree whose workflow sweeps them first: the smoke and the sweep are one commit', () => {
+    // The smoke's lots carry 'smoke-test-' in their names, the sweep's link delete takes a lot's link rows by
+    // that name, and the picking delete takes exactly the pickings under those link rows, ahead of it.
+    const run = SWEEP.run
+    expect(SMOKE).toContain('/seed-additions')
+    expect(run).toContain('DELETE FROM seed_lot_addition WHERE parent_link_id IN (SELECT id FROM seed_lot_parent_planting WHERE ')
+    expect(run.indexOf('DELETE FROM seed_lot_addition ')).toBeLessThan(run.indexOf('-c "DELETE FROM seed_lot_parent_planting '))
+    expect(LOTS_PREDICATE).toBe("name ILIKE '%smoke%'")
   })
 })

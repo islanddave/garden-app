@@ -143,18 +143,56 @@ describe('inventory-items SELECT-column contract (L-081 Phase 1)', () => {
     expect(INVENTORY_ITEMS_COLUMNS.length).toBeGreaterThanOrEqual(39);
   });
 
-  it('seed_parent_plant_count has ONE writer: named by /seed-measure, and by no other statement here', () => {
+  it('seed_parent_plant_count has ONE writer in this file: named by /seed-measure, and by no other route here', () => {
     // Release 2a (data-schema seat S8, regression seat R2-20). The column is safe for clients that
     // predate it only while it stays out of the two statements every caller round-trips a stale row
     // into or creates through: a bare assignment in the wide PUT loses the number on every unrelated
     // edit, and a key the POST INSERT did not name would be a 201 with the value dropped.
+    //
+    // RESTATED for release 3 (V5-SEEDLOTADDITION-001). /seed-measure became a compare-and-set for a
+    // caller that says what it loaded, and that took two more statements IN THAT ROUTE: the same
+    // UPDATE with the compare in its WHERE, and the read that tells a 409 from a 404 (it hands the
+    // four measure keys back). So three statements of this file name the column, all three in the
+    // one arm, and the claim is unchanged: /seed-measure is the only route here that writes it. The
+    // column's second writer in the DIRECTORY is seed-lot-additions.js applyAddition, pinned in
+    // seed-parent-plant-count.test.js.
     const statements = SRC.match(/sql`[\s\S]*?`/g) ?? [];
     const naming = statements.filter((s) => /\bseed_parent_plant_count\b/.test(s));
-    expect(naming).toHaveLength(1);
-    // That one statement is the /seed-measure UPDATE: presence-guarded, and echoed in RETURNING.
-    expect(naming[0]).toMatch(/seed_count_estimated = CASE/);
-    expect(naming[0]).toMatch(/seed_parent_plant_count = CASE\s+WHEN \$\{hasPlantCount\} THEN \$\{body\.seed_parent_plant_count \?\? null\}\s+ELSE seed_parent_plant_count\s+END/);
-    expect(naming[0]).toMatch(/RETURNING id, seed_count, seed_weight_g, seed_count_estimated, seed_parent_plant_count/);
+    expect(naming).toHaveLength(3);
+    const arm = SRC.slice(SRC.indexOf('const seedMeasureMatch = rawPath.match'), SRC.indexOf('const idMatch = rawPath.match'));
+    for (const s of naming) expect(arm, 'a statement outside the /seed-measure arm names the column').toContain(s);
+    // Two are the /seed-measure UPDATE: presence-guarded, and echoed in RETURNING. In source order,
+    // the compare-and-set form first, then the statement every caller before release 3 reaches.
+    const updates = naming.filter((s) => /^sql`\s*UPDATE public\.inventory_items\b/.test(s));
+    expect(updates).toHaveLength(2);
+    for (const u of updates) {
+      expect(u).toMatch(/seed_count_estimated = CASE/);
+      expect(u).toMatch(/seed_parent_plant_count = CASE\s+WHEN \$\{hasPlantCount\} THEN \$\{body\.seed_parent_plant_count \?\? null\}\s+ELSE seed_parent_plant_count\s+END/);
+      expect(u).toMatch(/RETURNING id, seed_count, seed_weight_g, seed_count_estimated, seed_parent_plant_count/);
+    }
+    // ONE write in two spellings: the SET list and the RETURNING are the same text, and so is the lot
+    // predicate. What differs is the three compare conjuncts, which only the first carries.
+    const flat = (u) => u.replace(/\s+/g, ' ');
+    const setOf = (u) => flat(u).match(/ SET (.*?) WHERE /)[1];
+    const tailOf = (u) => flat(u).match(/( RETURNING .*)$/)[1];
+    expect(setOf(updates[0])).toBe(setOf(updates[1]));
+    expect(tailOf(updates[0])).toBe(tailOf(updates[1]));
+    const LOT = "WHERE id = ${itemId} AND created_by = ANY(${householdIds}) AND deleted_at IS NULL AND category = 'seeds'";
+    for (const u of updates) expect(flat(u)).toContain(LOT);
+    expect(flat(updates[1])).toContain(`${LOT} RETURNING`);
+    expect(flat(updates[0])).toContain(
+      `${LOT} AND (NOT \${expectedMeasure.hasCount}::boolean OR seed_count IS NOT DISTINCT FROM \${expectedMeasure.count}::int)`
+      + ' AND (NOT ${expectedMeasure.hasBasis}::boolean OR seed_count_estimated IS NOT DISTINCT FROM ${expectedMeasure.basis}::boolean)'
+      + ' AND (NOT ${expectedMeasure.hasWeight}::boolean OR seed_weight_g IS NOT DISTINCT FROM ${expectedMeasure.weight}::numeric) RETURNING',
+    );
+    expect(updates[1]).not.toMatch(/expectedMeasure|DISTINCT/);
+    // The third only reads: the four measure keys, by the UPDATE's own ownership test.
+    const reads = naming.filter((s) => !updates.includes(s));
+    expect(reads).toHaveLength(1);
+    expect(flat(reads[0])).toBe(
+      "sql` SELECT seed_count, seed_count_estimated, seed_weight_g, seed_parent_plant_count FROM public.inventory_items "
+      + "WHERE id = ${itemId} AND created_by = ANY(${householdIds}) AND deleted_at IS NULL AND category = 'seeds' `",
+    );
     // …so neither of these names it.
     const widePut = statements.find((s) => /UPDATE inventory_items SET\s+name\s+=/.test(s));
     const insert = statements.find((s) => /INSERT INTO inventory_items \(/.test(s));

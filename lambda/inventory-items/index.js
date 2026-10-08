@@ -41,6 +41,15 @@ import {
 // that changes it). Each in its own module beside the one above, for the reason that one gives.
 import { checkParentRules, judgeParentRules } from './seed-lot-rules.js';
 import { normalizeFiling, fileSeedLot, VARIETY_UNUSABLE, FILING_CROP_MISMATCH } from './seed-lot-filing.js';
+// V5-SEEDLOTADDITION-001 (release 3) — a later picking into a lot that already exists
+// (public.seed_lot_addition), the read that offers the lots it could go into, and the three
+// compare-and-set keys of /seed-measure. The request rule, the transaction and both reads are in
+// their own module, for the reason the three above are.
+import {
+  normalizeAddition, readAdditionKey, addSeedToLot, readOpenLots, openLotsOf, readExpectedMeasure,
+  LOT_USED_UP, ADDITION_KEY_CONFLICT, OWN_SOURCE_LOT, AMOUNT_TOO_LARGE, VARIETY_MISMATCH_NO_PARENTS,
+  TOO_MANY_PARENTS,
+} from './seed-lot-additions.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -117,6 +126,9 @@ export const METADATA_MAX_BYTES = 8192;
 // files, which would leave this map silently dead with the suite green. All four names were
 // verified against live prod `pg_constraint` on 2026-09-02 (pre-promote pass MIN-2); re-verify there
 // rather than trusting the unit test if this map ever stops firing.
+const ADDITION_NOT_SAVED =
+  'That seed could not be added as entered. Nothing was changed. Check the count and the weight, then try again.';
+
 export const SEED_CONSTRAINT_MESSAGES = {
   chk_inventory_source_plant_seeds_only:
     'This lot records the plant it was saved from, so it has to stay in Seeds. Clear "Saved from" first if you want to move it to another category.',
@@ -181,6 +193,19 @@ export const SEED_CONSTRAINT_MESSAGES = {
     'This lot records how many plants its seed came from, so it has to stay in Seeds. Clear that number first if you want to move it to another category.',
   chk_inventory_seed_parent_plant_count_positive:
     'The number of plants a seed lot came from has to be at least 1. Leave it blank if you do not know.',
+  // V5-SEEDLOTADDITION-001 (release 3) — the five CHECKs of public.seed_lot_addition, the picking
+  // table POST /:id/seed-additions writes. A BACKSTOP ONLY: that route's own rule answers every one
+  // of them first (a count from 1 up and never without its basis, a weight rounded to the column's
+  // three places BEFORE it is tested for being more than nothing), and the two `applied` flags are
+  // set by the statement that writes the row. So none of these is expected to fire — and if one
+  // does, the batch has rolled back whole and the person reads a sentence, not a constraint's name
+  // and not a 500. ONE sentence for the five: by the time a CHECK is what refused, which one it was
+  // is not something the person can act on.
+  chk_sla_seed_count_positive: ADDITION_NOT_SAVED,
+  chk_sla_count_basis_pairing: ADDITION_NOT_SAVED,
+  chk_sla_seed_weight_positive: ADDITION_NOT_SAVED,
+  chk_sla_count_applied_needs_count: ADDITION_NOT_SAVED,
+  chk_sla_weight_applied_needs_weight: ADDITION_NOT_SAVED,
 };
 
 // A plain JSON object, not an array and not a scalar. jsonb would happily store `"abc"` or `[1]`,
@@ -338,6 +363,53 @@ function filingReply(resp, out) {
   }
   if (out.outcome === 'conflict') return resp(409, { error: LOT_CHANGED, code: 'lot_changed' });
   return resp(200, { id: out.id, ...out.filing });
+}
+
+// V5-SEEDLOTADDITION-001 — the generic refusal of a planting the caller cannot use, on the two routes
+// that take ONE planting by `plant_id`. One string for "not yours", "deleted" and "no such planting",
+// like the array gate's above, and with no lot named in it.
+const PLANT_ID_UNUSABLE = 'plant_id does not match a planting you can use';
+
+// What addSeedToLot decided, as HTTP (POST /:id/seed-additions). The refusals it shares with the set
+// route and the filing route are those routes' own, word for word and code for code; a code is beside
+// a sentence, never instead of one.
+//
+// A 200 is the lot as this request left it — or, for a replay, as it stands now — with `addition`
+// saying what happened to this picking. A client must treat ONLY a 2xx that carries `addition.id` as
+// a save: an older Lambda answers this path from the generic POST arm, with a 400 and no code.
+function seedAdditionReply(resp, out) {
+  if (out.outcome === 'not_found') return resp(404, { error: 'Not found' });
+  if (out.outcome === 'key_conflict') return resp(409, { error: ADDITION_KEY_CONFLICT, code: 'addition_key_conflict' });
+  if (out.outcome === 'used_up') return resp(409, { error: LOT_USED_UP, code: 'lot_used_up' });
+  // The lot is not what the caller last read: its plants (the set and the measure keys ride along, so
+  // the sheet can redraw without a second fetch) or, from the re-file, the variety it is filed under.
+  if (out.outcome === 'lot_changed') {
+    const { outcome: _outcome, ...asStored } = out;
+    return resp(409, { error: LOT_CHANGED, code: 'lot_changed', ...asStored });
+  }
+  // The sentence chk_inventory_seed_source_plant gives for the same refusal, as the set route answers it.
+  if (out.outcome === 'source_kind') {
+    return resp(400, { error: SEED_CONSTRAINT_MESSAGES.chk_inventory_seed_source_plant });
+  }
+  if (out.outcome === 'plants_changed' || out.outcome === 'rules_changed') return resp(409, parentsChangedBody());
+  if (out.outcome === 'own_source_lot') return resp(400, { error: OWN_SOURCE_LOT, code: 'own_source_lot' });
+  if (out.outcome === 'no_parent_variety') {
+    return resp(400, { error: VARIETY_MISMATCH_NO_PARENTS, code: 'variety_mismatch_no_parents' });
+  }
+  if (out.outcome === 'too_many_parents') return resp(400, { error: TOO_MANY_PARENTS, code: 'too_many_parents' });
+  if (out.outcome === 'amount_too_large') return resp(400, { error: AMOUNT_TOO_LARGE, code: 'amount_too_large' });
+  if (out.outcome === 'variety_unusable') return resp(400, { error: VARIETY_UNUSABLE, code: 'variety_unusable' });
+  if (out.outcome === 'filing_crop_mismatch') {
+    return resp(400, { error: FILING_CROP_MISMATCH, code: 'filing_crop_mismatch' });
+  }
+  // The transaction rolled back whole: nothing to report but the code.
+  if (out.outcome === 'conflict') return resp(409, { error: LOT_CHANGED, code: 'lot_changed' });
+  return resp(200, {
+    ...out.lot,
+    source_plants: out.source_plants,
+    ...(out.filing ? { filing: out.filing } : {}),
+    addition: out.addition,
+  });
 }
 
 export function validateCreate(body) {
@@ -504,6 +576,35 @@ export const handler = async (event) => {
         WHERE created_by = ANY(${householdIds})
       `;
       return resp(200, { items: rows });
+    }
+
+    // ── V5-SEEDLOTADDITION-001 — which lots could this planting's seed go into? ────────────────────
+    // GET /api/inventory-items/seed-lots-open?plant_id=<uuid>
+    //
+    // A LITERAL route, beside sow-candidates and ABOVE idMatch for the reason that one gives: below
+    // it, 'seed-lots-open' is an item id, reaches Postgres as a non-uuid and answers 500 (which is
+    // what a Lambda that predates this arm does with the path).
+    //
+    // `plant_id` is REQUIRED — not a crop: which lots are open depends on the planting's variety and
+    // on the lot it was grown from. A planting the household cannot use (foreign, deleted, no such
+    // row) is one generic 400 that names no lot. A planting with no variety is a 200 with no lots.
+    //
+    // The parents ride beside the lots as their own statement, like the list read's — but here a
+    // failed parents read fails the request: the sheet builds its next request from `source_plants`,
+    // and "unknown" must not reach it as "none".
+    if (rawPath === '/api/inventory-items/seed-lots-open') {
+      if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
+      const forPlant = event.queryStringParameters?.plant_id;
+      if (typeof forPlant !== 'string' || !UUID_RE.test(forPlant)) {
+        return resp(400, { error: 'plant_id must be the id of a planting' });
+      }
+      const [openRows, parentRows] = await Promise.all([
+        readOpenLots(sql, { plantId: forPlant.toLowerCase(), householdIds }),
+        readSourcePlants(sql, householdIds),
+      ]);
+      const open = openLotsOf(openRows, parentRows);
+      if (!open) return resp(400, { error: PLANT_ID_UNUSABLE });
+      return resp(200, open);
     }
 
     // SEEDINV: seed-packet extractor. Also checked BEFORE /api/inventory-items/:id so
@@ -807,6 +908,53 @@ export const handler = async (event) => {
         lotId: itemId, ids: set.ids, householdIds, userId,
         expected: expected?.ids ?? null, cacheHint, rules: true, filing,
       }));
+    }
+
+    // ── V5-SEEDLOTADDITION-001 — one more picking INTO this lot. ───────────────────────────────────
+    // POST /api/inventory-items/:id/seed-additions
+    //   { addition_key, plant_id, expected_source_plant_ids, picked_on,
+    //     add_seed_count?, add_estimated?, add_seed_weight_g?, filing? }
+    //
+    // ABOVE idMatch and the generic POST arm, beside the set route: the path has two segments, so
+    // idMatch's /([^/]+)$/ cannot take it, and a Lambda without this arm answers it from the generic
+    // POST as a create with no name (400, no code, nothing written). That is why the body never
+    // carries a top-level name, type or category, and why nothing here reads one.
+    //
+    // IDEMPOTENT ON addition_key. The first request writes; every later one with the same key on the
+    // same lot answers 200 with `addition.replayed: true` and writes nothing — whatever has happened
+    // to the lot or the plant since. So the order below is: the body's shape; then ONE read, "is this
+    // key already recorded"; and only when it is not, the ownership gate and the parent rules. A
+    // replay skips both and goes straight to the transaction, which is where it is recognised.
+    //
+    // The gate and the rules are the fast path, as on the set route: the write judges everything
+    // again under the lot lock (seed-lot-additions.js, addSeedToLot).
+    const seedAdditionsMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)\/seed-additions$/);
+    if (seedAdditionsMatch) {
+      const itemId = seedAdditionsMatch[1];
+      if (method !== 'POST') return resp(405, { error: 'Method not allowed' });
+      const addition = normalizeAddition(JSON.parse(event.body ?? '{}'));
+      if (addition.error) return resp(400, { error: addition.error });
+      // A malformed lot id is an absent lot (22P02 is unmapped and would answer 500).
+      if (!UUID_RE.test(itemId)) return resp(404, { error: 'Not found' });
+
+      const recorded = await readAdditionKey(sql, addition.additionKey);
+      if (!recorded.length) {
+        // AUTHZ — the ONE planting this request can link, by the array gate's first arm only (no lot
+        // id is handed over): the seed has to come off a LIVE planting of the household, even one
+        // that is already a parent of this lot.
+        if (!await ownsEveryPlanting(sql, [addition.plantId], householdIds)) {
+          warnRejectedFk(userId, 'seed_lot_parent_planting', 'plant_id', addition.plantId);
+          return resp(400, { error: PLANT_ID_UNUSABLE });
+        }
+        // The parent rules over the set the caller last read with this plant in it. They answer
+        // nothing when the plant is already a parent, or when the lot is not the caller's.
+        const refusal = await checkParentRules(sql, {
+          ids: addition.ruleIds, householdIds, lotId: itemId, varietyId: addition.filing?.varietyId ?? null,
+        });
+        if (refusal) return resp(400, refusal);
+      }
+
+      return seedAdditionReply(resp, await addSeedToLot(sql, { lotId: itemId, householdIds, userId, ...addition }));
     }
 
     // ── V5-SEEDMULTIPARENT-001 (release 2a) — which VARIETY is this lot filed under? ───────────────
@@ -1156,6 +1304,73 @@ export const handler = async (event) => {
       // The fourth arm (seed_parent_plant_count, release 2a) is that same integer shape; it was NOT
       // separately PREPAREd — the unit suite opens no database — so the integration lane's
       // null-clears case is what proves it.
+      //
+      // ── V5-SEEDLOTADDITION-001 — COMPARE-AND-SET, and only for a caller that asks for it. ────────
+      // This route writes an ABSOLUTE count from a row the page loaded earlier. Since release 3 a
+      // picking added to the lot in between (POST /:id/seed-additions) raises the count — or, when
+      // that picking was not counted, changes only the basis — and a stale page would write straight
+      // over it on a 200. So a body may say what it loaded:
+      //   expected_seed_count            integer | null
+      //   expected_seed_count_estimated  boolean | null
+      //   expected_seed_weight_g         number  | null
+      // Each key that is PRESENT is compared with the stored column (IS NOT DISTINCT FROM, so null
+      // means "I loaded no value") in the UPDATE's own WHERE; a key that is absent compares nothing.
+      // The keys are read in seed-lot-additions.js, not by hasOwnProperty here — see that function.
+      //
+      // A BODY WITH NONE OF THE THREE IS THE STATEMENT BELOW, UNCHANGED: what every client before
+      // release 3 sends, answered exactly as before. The compare has its own statement so that one
+      // does not move by a byte.
+      //
+      // After the pairing guard's read and its 404, so that guard answers first, as it always has.
+      const expectedMeasure = readExpectedMeasure(body);
+      if (expectedMeasure.error) return resp(400, { error: expectedMeasure.error });
+      if (expectedMeasure.any) {
+        // The same SET list, the same lot predicate, and one conjunct per expected key. Each conjunct
+        // is switched on by its own presence flag; the value's cast gives a bare null a type.
+        const compared = await sql`
+          UPDATE public.inventory_items
+             SET seed_count = CASE
+                   WHEN ${hasCount} THEN ${body.seed_count ?? null}
+                   ELSE seed_count
+                 END,
+                 seed_weight_g = CASE
+                   WHEN ${hasWeight} THEN ${body.seed_weight_g ?? null}
+                   ELSE seed_weight_g
+                 END,
+                 seed_count_estimated = CASE
+                   WHEN ${hasEstimated} THEN ${body.seed_count_estimated ?? null}
+                   ELSE seed_count_estimated
+                 END,
+                 seed_parent_plant_count = CASE
+                   WHEN ${hasPlantCount} THEN ${body.seed_parent_plant_count ?? null}
+                   ELSE seed_parent_plant_count
+                 END,
+                 updated_at = NOW()
+           WHERE id = ${itemId}
+             AND created_by = ANY(${householdIds})
+             AND deleted_at IS NULL
+             AND category = 'seeds'
+             AND (NOT ${expectedMeasure.hasCount}::boolean OR seed_count IS NOT DISTINCT FROM ${expectedMeasure.count}::int)
+             AND (NOT ${expectedMeasure.hasBasis}::boolean OR seed_count_estimated IS NOT DISTINCT FROM ${expectedMeasure.basis}::boolean)
+             AND (NOT ${expectedMeasure.hasWeight}::boolean OR seed_weight_g IS NOT DISTINCT FROM ${expectedMeasure.weight}::numeric)
+          RETURNING id, seed_count, seed_weight_g, seed_count_estimated, seed_parent_plant_count
+        `;
+        if (compared.length) return resp(200, compared[0]);
+        // Nothing matched: either the lot is not the caller's live seed lot, or it no longer holds
+        // what the caller loaded. ONE read, by the UPDATE's own ownership test, tells them apart —
+        // and hands back what the lot holds now, so the page can show it without a second request.
+        const [stored] = await sql`
+          SELECT seed_count, seed_count_estimated, seed_weight_g, seed_parent_plant_count
+            FROM public.inventory_items
+           WHERE id = ${itemId}
+             AND created_by = ANY(${householdIds})
+             AND deleted_at IS NULL
+             AND category = 'seeds'
+        `;
+        if (!stored) return resp(404, { error: 'Not found' });
+        return resp(409, { error: LOT_CHANGED, code: 'lot_changed', ...stored });
+      }
+
       const rows = await sql`
         UPDATE public.inventory_items
            SET seed_count = CASE

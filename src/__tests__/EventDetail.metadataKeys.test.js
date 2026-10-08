@@ -71,6 +71,10 @@ const PROD_METADATA_KEYS = [
   // BUG-LOSSEVENTLABEL-001: the given_away reason key (V4-LOSSEVENT-001 writes it). 0 given_away rows
   // in prod on 2026-09-29, so it is decided before its first live row.
   ['giveaway_reason', 0],
+  // V5-SEEDLOTADDITION-001 (seed release 3): the five keys a `seed_saved` entry carries when seed went
+  // into a lot that already existed. Decided before their first live row.
+  ['addition', 0], ['seed_addition_id', 0], ['added_estimated', 0],
+  ['added_seed_count', 0], ['added_seed_weight_g', 0],
 ]
 
 describe('BUG-EVTMETARAWKEYS-001 — no live metadata key renders raw', () => {
@@ -113,5 +117,27 @@ describe('BUG-EVTMETARAWKEYS-001 — no live metadata key renders raw', () => {
     // dead code that reads as live. Cheap to assert, invisible otherwise.
     const overlap = [...hiddenKeys()].filter((k) => labelledKeys().has(k))
     expect(overlap).toEqual([])
+  })
+})
+
+describe('V5-SEEDLOTADDITION-001 — an addition\'s entry reads as what was added', () => {
+  it('the two amounts are labelled and the three machine keys are hidden', () => {
+    const labelled = labelledKeys()
+    const hidden = hiddenKeys()
+    for (const k of ['added_seed_count', 'added_seed_weight_g']) {
+      expect(labelled.has(k), `${k} is not labelled`).toBe(true)
+      expect(hidden.has(k), `${k} is hidden`).toBe(false)
+    }
+    for (const k of ['addition', 'seed_addition_id', 'added_estimated']) {
+      expect(hidden.has(k), `${k} is not hidden`).toBe(true)
+    }
+    expect(SRC).toMatch(/^\s{2}added_seed_count:\s+'Seeds added',$/m)
+    expect(SRC).toMatch(/^\s{2}added_seed_weight_g:\s+'Weight added',$/m)
+  })
+  it('the count is printed with its basis and the weight in grams', () => {
+    // The formatter map is two literals in a page; read like the two sets above.
+    expect(SRC).toContain("added_seed_count: (v, m) => seedCountLabel(v, m?.added_estimated === true) || v,")
+    expect(SRC).toContain('added_seed_weight_g: v => `${v} g`,')
+    expect(SRC).toContain('METADATA_VALUE_FORMAT[key](rawValue, ev.metadata)')
   })
 })

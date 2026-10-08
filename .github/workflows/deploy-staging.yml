@@ -943,11 +943,36 @@ jobs:
         # THE TABLE MAY NOT EXIST, for the reason given above for seed_lot_parent_planting, and it is handled the same
         # way: to_regclass once, and the capture, the delete and the residue term only when it is there. Without it
         # the captured list is empty, and '{}'::uuid[] matches nothing in the main chain.
+        # RELEASE 3 (V5-SEEDLOTADDITION-001): A PICKING ROW GOES BEFORE THE LINK ROW IT HANGS ON. seed_lot_addition has
+        # one foreign key, parent_link_id -> seed_lot_parent_planting(id), ON DELETE RESTRICT. One picking row under a
+        # smoke lot's link row that this step did not delete first would stop the link delete below with 23503; under
+        # ON_ERROR_STOP the step fails there, the row stays, and every later run by every session fails the same way
+        # until staging is cleaned by hand. So, inside the arm that knows the link table exists and BEFORE its delete:
+        # every picking whose link row that delete is about to remove, by that delete's own predicate. Its presence is
+        # read once with to_regclass, like the two tables above, and without it nothing names it. Its residue term is
+        # keyed on the ids captured before any delete (a picking that survived kept its link row alive, so the join
+        # still finds it) and is the LAST term of the sum, so every term before it reads as it always has.
         # NOT SWEPT, on purpose: xp_events. A seed_saved event that names a lot is paid once per person per jar, by a
         # row whose source_id is the LOT id, so one such row can outlive each run's smoke lot. xp_events.source_id has
         # no foreign key, each run's lot id is new, and this sweep has never deleted the event-keyed rows every other
         # smoke event leaves either. Deleting only these would also hand the smoke user back part of its daily
         # allowance, which block U's comment says the smoke must not lean on.
+        # RELEASE 3, pre-promote review (regression B2): A LOT'S STAGE ROWS GO BEFORE THE LOT. seed_lot_stage_log names
+        # inventory_items with NO ON DELETE action (migrations/v4-seedsaveflow-001/0a-ddl.sql; the standing gate in
+        # v5-invrefstrand-001 pins it 'a'), and POST /seed-stage, its one writer, adds a row on every call. Block U's
+        # U24 is the smoke's first call of that route (it gives the gift lot a stage), and the API DELETE that follows
+        # is a soft delete, so the row is still there when this step runs. As the step stood, "DELETE FROM
+        # inventory_items" then raised 23503, the step failed with the lot and its row left behind, and every later
+        # run failed on the same row (rehearsed on a local PG 17: the step as it stood stops there, this one ends at 0;
+        # record: gardening-docs project-state/_seedmultiparent-20261005/r3/lane-F-report.log). So, in the main chain
+        # and directly ahead of the lot delete: the stage rows of every lot that delete is about to remove, by that
+        # delete's own predicate. It is keyed on the lot, not on U24, so a later step that stages any smoke-named lot,
+        # and a smoke-named lot someone staged by hand, are covered without another edit here.
+        # NO to_regclass TEST, unlike the three tables above: this one is not optional. The inventory handler's list
+        # read joins it on every request (GET /api/inventory-items), so a database without it answers 500 to the
+        # smoke's own reads long before this step runs.
+        # Its residue term counts by the lot ids captured before any delete and is the LAST term of the sum. With the
+        # key in place it can only read above 0 if a lot survived (the inventory_items term then counts it too).
         if: always()
         env:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
@@ -959,6 +984,7 @@ jobs:
           echo "🧹 L-058 cleanup sweep starting against staging Neon (FK-safe order)..."
           SMOKE_VARIETY_IDS=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT COALESCE(string_agg(id::text, ','), '') FROM plant_varieties WHERE name ILIKE '%smoke%';")
           SEED_PARENT_TABLE=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT to_regclass('public.seed_lot_parent_planting') IS NOT NULL;")
+          SEED_ADDITION_TABLE=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT to_regclass('public.seed_lot_addition') IS NOT NULL;")
           SMOKE_PARENT_KEYS=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT COALESCE(string_agg(id::text, ','), '') FROM (SELECT id FROM inventory_items WHERE name ILIKE '%smoke%' UNION ALL SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')) k;")
           BLEND_TABLE=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT to_regclass('public.variety_blend_component') IS NOT NULL;")
           SMOKE_MIX_IDS=""
@@ -972,7 +998,12 @@ jobs:
             echo "  variety_blend_component is not on this database (to_regclass: '$BLEND_TABLE') — no mix to sweep"
           fi
           SEED_PARENT_LEFT="0"
+          SEED_ADDITION_LEFT="0"
           if [[ "$SEED_PARENT_TABLE" == "t" ]]; then
+            if [[ "$SEED_ADDITION_TABLE" == "t" ]]; then
+              psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -c "DELETE FROM seed_lot_addition WHERE parent_link_id IN (SELECT id FROM seed_lot_parent_planting WHERE inventory_item_id IN (SELECT id FROM inventory_items WHERE name ILIKE '%smoke%') OR plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')));"
+              SEED_ADDITION_LEFT="(SELECT COUNT(*) FROM seed_lot_addition WHERE parent_link_id IN (SELECT id FROM seed_lot_parent_planting WHERE inventory_item_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]) OR plant_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[])))"
+            fi
             psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -c "DELETE FROM seed_lot_parent_planting WHERE inventory_item_id IN (SELECT id FROM inventory_items WHERE name ILIKE '%smoke%') OR plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%'));"
             psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -c "UPDATE inventory_items i SET source_plant_id = (SELECT l.plant_id FROM seed_lot_parent_planting l WHERE l.inventory_item_id = i.id AND l.role = 'seed_parent' AND l.deleted_at IS NULL ORDER BY l.created_at, l.id LIMIT 1) WHERE i.name NOT ILIKE '%smoke%' AND i.source_plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')) RETURNING i.id, i.name, i.source_plant_id;"
             SEED_PARENT_LEFT="(SELECT COUNT(*) FROM seed_lot_parent_planting WHERE inventory_item_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]) OR plant_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]))"
@@ -997,6 +1028,7 @@ jobs:
             -c "DELETE FROM entity_tag     WHERE entity_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')) OR entity_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%') OR entity_id = ANY('{$SMOKE_MIX_IDS}'::uuid[]) OR entity_id IN (SELECT id FROM locations WHERE name ILIKE '%smoke%') OR entity_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "UPDATE inventory_items SET source_plant_id = NULL WHERE source_plant_id IS NOT NULL AND (name ILIKE '%smoke%' OR source_plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')));" \
             -c "DELETE FROM plants         WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
+            -c "DELETE FROM seed_lot_stage_log WHERE inventory_item_id IN (SELECT id FROM inventory_items WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM inventory_items WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM entity         WHERE entity_type='cultivar' AND (cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%') OR cultivar_ref_id = ANY('{$SMOKE_MIX_IDS}'::uuid[]));" \
             -c "DELETE FROM care_profile   WHERE scope='cultivar' AND (scope_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%') OR scope_id = ANY('{$SMOKE_MIX_IDS}'::uuid[]));"
@@ -1008,10 +1040,10 @@ jobs:
             -c "DELETE FROM locations      WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM garden_shared_state WHERE natural_key ILIKE '%smoke%';" \
             -c "DELETE FROM plant_projects  WHERE name ILIKE '%smoke%';"
-          echo "  swept: harvest_log, event_log, entity_memory, favorites, event_batches, plants, inventory_items, care_profile, variety_blend_component, plant_varieties, locations, plant_projects"
-          REMAINING=$(psql "$NEON_STAGING_URL" -At -c "SELECT (SELECT COUNT(*) FROM plant_projects WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plant_varieties WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plants WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM locations WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM inventory_items WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM care_profile WHERE scope='cultivar' AND scope_id = ANY('{$SMOKE_VARIETY_IDS}'::uuid[])) + $SEED_PARENT_LEFT + (SELECT COUNT(*) FROM plant_varieties WHERE id = ANY('{$SMOKE_MIX_IDS}'::uuid[])) + $BLEND_LEFT;")
+          echo "  swept: harvest_log, event_log, entity_memory, favorites, event_batches, plants, seed_lot_stage_log, inventory_items, care_profile, variety_blend_component, plant_varieties, locations, plant_projects"
+          REMAINING=$(psql "$NEON_STAGING_URL" -At -c "SELECT (SELECT COUNT(*) FROM plant_projects WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plant_varieties WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plants WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM locations WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM inventory_items WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM care_profile WHERE scope='cultivar' AND scope_id = ANY('{$SMOKE_VARIETY_IDS}'::uuid[])) + $SEED_PARENT_LEFT + (SELECT COUNT(*) FROM plant_varieties WHERE id = ANY('{$SMOKE_MIX_IDS}'::uuid[])) + $BLEND_LEFT + $SEED_ADDITION_LEFT + (SELECT COUNT(*) FROM seed_lot_stage_log WHERE inventory_item_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]));")
           if [[ "$REMAINING" != "0" ]]; then
             echo "⚠ WARN: $REMAINING smoke residue row(s) remain after sweep — possible FK constraint preventing delete"
             exit 1
           fi
-          echo "✅ L-058 cleanup complete — 0 smoke residue rows (plant_projects + plant_varieties + plants + locations + inventory_items + care_profile + seed_lot_parent_planting + variety_blend_component)"
+          echo "✅ L-058 cleanup complete — 0 smoke residue rows (plant_projects + plant_varieties + plants + locations + inventory_items + care_profile + seed_lot_parent_planting + variety_blend_component + seed_lot_addition + seed_lot_stage_log)"

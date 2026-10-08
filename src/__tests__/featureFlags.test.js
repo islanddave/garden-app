@@ -9,6 +9,7 @@ import {
   SYSTEM_NOTIFICATIONS_ENABLED,
   PLANTING_REQUIRED_ENABLED,
   SEED_MULTI_PARENT,
+  SEED_ADD_TO_LOT,
 } from '../lib/featureFlags.js'
 
 describe('featureFlags', () => {
@@ -57,5 +58,23 @@ describe('featureFlags', () => {
     const declared = src.match(/^export const SEED_MULTI_PARENT\s*=\s*(true|false)\b/gm)
     expect(declared).toHaveLength(1)
     expect(['export const SEED_MULTI_PARENT = true', 'export const SEED_MULTI_PARENT = false']).toContain(declared[0])
+  })
+
+  it('SEED_ADD_TO_LOT is a literal boolean, declared exactly once, directly under SEED_MULTI_PARENT', async () => {
+    // V5-SEEDLOTADDITION-001 (seed release 3). Same rule as the flag above it and for the same reason:
+    // the value is not pinned (flag off is the forward undo, rehearsed by `npm run test:flag-off:seedadd`),
+    // the line is, because forward-undo.py flips it by regex. Read from disk.
+    expect(typeof SEED_ADD_TO_LOT).toBe('boolean')
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const src = readFileSync(resolve(process.cwd(), 'src/lib/featureFlags.js'), 'utf8')
+    const declared = src.match(/^export const SEED_ADD_TO_LOT\s*=\s*(true|false)\b/gm)
+    expect(declared).toHaveLength(1)
+    expect(['export const SEED_ADD_TO_LOT = true', 'export const SEED_ADD_TO_LOT = false']).toContain(declared[0])
+    // Under its neighbour with only its own runbook comment between: release 3 is undone before 2b.
+    const lines = src.split('\n')
+    const at = lines.findIndex((l) => /^export const SEED_MULTI_PARENT\s*=/.test(l))
+    const next = lines.slice(at + 1).find((l) => !l.startsWith('//'))
+    expect(next).toBe(declared[0])
   })
 })
