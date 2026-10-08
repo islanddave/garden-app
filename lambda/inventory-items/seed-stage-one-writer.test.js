@@ -73,7 +73,10 @@ const writersIn = ({ file, src }) => [
 ];
 
 const INDEX = MODULES.find((m) => m.file === 'inventory-items/index.js');
-const statementsOf = (src) => src.match(/sql`[^`]*`/g) ?? [];
+// Each tagged template's TEXT, without the tag or its backticks. (Kept to one balanced pair on one
+// line: src/__tests__/sqlTemplateComments.test.js reads this file too, and a lone backtick after the
+// tag would open a template for it that runs on into the comments below.)
+const statementsOf = (src) => [...src.matchAll(/sql`([^`]*)`/g)].map((m) => m[1]);
 
 describe('seed_stage has one writer — static, every non-test module under lambda/', () => {
   it('reads the module list from the directory, and it is not empty', () => {
@@ -126,7 +129,7 @@ describe('seed_stage has one writer — static, every non-test module under lamb
     const writing = statementsOf(INDEX.src).filter((s) => writersIn({ file: 'x', src: s }).length > 0);
     expect(writing).toHaveLength(1);
     const [cte] = writing;
-    expect(cte).toMatch(/^sql` WITH upd AS \( UPDATE public\.inventory_items SET seed_stage = \$\{body\.stage\}, /);
+    expect(cte).toMatch(/^ WITH upd AS \( UPDATE public\.inventory_items SET seed_stage = \$\{body\.stage\}, /);
     // One bound expression feeds both, so the lot's stage and its newest entry cannot differ.
     expect(cte).toContain(
       'INSERT INTO public.seed_lot_stage_log (inventory_item_id, stage, entered_at, note, created_by) '
