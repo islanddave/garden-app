@@ -586,6 +586,25 @@ describe('Saved from — the timeline entry an add writes', () => {
     expect(bodyOf(eventPosts()[0]).notes).toBe('Seed lot "Renamed and saved".')
   })
 
+  // Delta review RD-02: a name changed elsewhere reaches `item` through the re-read, not the baseline.
+  it('a name changed elsewhere, read again after a 409, is the one the note quotes', async () => {
+    itemRef.current = jar({ created_at: STARTED, name: 'My own jar name' })
+    await renderPage()
+    let n = 0
+    const realPut = routes.put
+    routes.put = (body) => {
+      n += 1
+      if (n > 1) return realPut(body)
+      itemRef.current = { ...itemRef.current, name: 'Renamed elsewhere' }
+      return Promise.reject(refused('lot_changed'))
+    }
+    await addFromPicker(P3)
+    await waitFor(() => expect(help()).toBe(CHANGED))
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(bodyOf(eventPosts()[0]).notes).toBe('Seed lot "Renamed elsewhere".')
+  })
+
   // Q4: a one-plant lot whose parent is corrected goes through the FIRST picker, onto an empty set.
   it('the first picker on a lot with no parents writes the entry too', async () => {
     itemRef.current = jar({ created_at: STARTED, source_plants: [], source_plant_id: null })
@@ -702,6 +721,63 @@ describe('Saved from — the timeline entry an add writes', () => {
       expect(eventPosts()).toHaveLength(0)
       expect(liveRows()).toHaveLength(3)
       expect(help()).toBe('')
+    })
+
+    // Delta review RD-01: what was read is still acted on when a later page fails.
+    it('leaving withdraws a first-page entry even when the next page fails', async () => {
+      const view = await renderPage()
+      const original = fetchSpy.getMockImplementation()
+      fetchSpy.mockImplementation((path, opts) => {
+        const p = String(path)
+        if (p.startsWith('/api/events?') && !opts?.method) {
+          return p.includes('offset=') ? Promise.reject(new Error('offline')) : Promise.resolve([thisJars('ev-top'), ...filler(199)])
+        }
+        return original(path, opts)
+      })
+      await click(removeButton(P1B))
+      await waitFor(() => expect(undoButton(P1B)).toBeTruthy())
+      view.unmount()
+      await waitFor(() => expect(eventDeletes()).toHaveLength(1))
+      expect(eventDeletes()[0][0]).toBe('/api/events/ev-top')
+    })
+
+    // RD-03: the offline copy cannot say, on any page.
+    it('a later page answered from the offline copy writes nothing', async () => {
+      await renderPage()
+      const original = fetchSpy.getMockImplementation()
+      fetchSpy.mockImplementation((path, opts) => {
+        const p = String(path)
+        if (p.startsWith('/api/events?') && !opts?.method) {
+          return Promise.resolve(p.includes('offset=')
+            ? Object.defineProperty({ events: [], has_more: false }, Symbol.for('garden-app.fromCache'), { value: true })
+            : filler(200))
+        }
+        return original(path, opts)
+      })
+      await addFromPicker(P3)
+      await waitFor(() => expect(eventReads()).toHaveLength(2))
+      await act(async () => { await Promise.resolve() })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(eventPosts()).toHaveLength(0)
+    })
+
+    // RD-05: a route that always has more stops at the cap, and a list that did not end cannot say.
+    it('a route that never ends is read 25 times and nothing is written', async () => {
+      await renderPage()
+      const original = fetchSpy.getMockImplementation()
+      fetchSpy.mockImplementation((path, opts) => {
+        const p = String(path)
+        if (p.startsWith('/api/events?') && !opts?.method) {
+          return Promise.resolve(p.includes('offset=') ? { events: filler(200), has_more: true } : filler(200))
+        }
+        return original(path, opts)
+      })
+      await addFromPicker(P3)
+      await waitFor(() => expect(eventReads()).toHaveLength(25))
+      await act(async () => { await Promise.resolve() })
+      await new Promise((r) => setTimeout(r, 30))
+      expect(eventReads()).toHaveLength(25)
+      expect(eventPosts()).toHaveLength(0)
     })
 
     it('leaving with the row struck withdraws an entry that sits past the first page', async () => {
