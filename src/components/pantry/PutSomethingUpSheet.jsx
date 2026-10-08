@@ -34,8 +34,10 @@
 // untouched since) the door PATCHes what it holds onto it and completes from the PATCH's answer. When it is
 // not — a draft restored with `sent` already in it, an older item, one edited since — NOTHING is written: the
 // door says it was saved earlier and this Save changed nothing (replayStaleText) and KEEPS the key, so Save
-// again is refused again and can never add a second item. A What that is now another planting (or none) cannot
-// ride a PATCH: nothing is written and the door says so (replayFixedText); put back, the next Save goes through.
+// again is refused again and can never add a second item. That refusal ends the STORED draft (`spent`): the
+// first Save landed, so the door closed and opened again, or reloaded, is a clean one and what is typed there
+// is a new item under a new key. A What that is now another planting (or none) cannot ride a PATCH: nothing
+// is written and the door says so (replayFixedText); put back, the next Save goes through.
 // A failure of the PATCH never mints a new key, whatever its status — the item exists — and is said as that
 // (replayUnsavedText). Each of the three tells the page (`onExists`) so the list behind shows the item, and
 // is brought into view above the pinned Save (it is the last thing in the scroller). Before any of them the
@@ -252,6 +254,11 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   // The stored draft is this door's to replace or clear only once it has written one (or restored it): a
   // fresh seeded open leaves a draft it did not make alone until the first real change.
   const ownsDraftRef = useRef(!seed)
+  // Set by a "saved earlier" refusal (pre-promote I-1): the first Save landed, so the STORED draft has done its
+  // job. It is taken out of storage and not written back — the door opened next, after a close or a reload, is
+  // a clean one with no key — while THIS door keeps its key and `sent`: Save again is refused again. A Save on
+  // the put-up route is another create under the same key, and stores the draft again before it goes.
+  const [spent, setSpent] = useState(false)
   const sheetRef = useRef(null)
   const footerRef = useRef(null)
   const methodRef = useRef(null)
@@ -322,7 +329,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   useEffect(() => { if (dirty && !key) setKey(mintKey()) }, [dirty, key])
   useEffect(() => {
     if (!draftKey || savedRef.current) return
-    if (dirty) {
+    if (dirty && !spent) {
       ownsDraftRef.current = true
       writeSheetDraft(draftKey, DOOR_SHEET, {
         key, what, place, method, count, whenChip, estimate, pickedDate, discard, notes,
@@ -331,7 +338,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
       })
     } else if (ownsDraftRef.current) clearSheetDraft(draftKey)
   }, [draftKey, dirty, key, what, place, method, count, whenChip, estimate, pickedDate, discard, notes,
-    sizeValue, sizeUnit, amountValue, amountUnit, sourceKind, sourceLabel, isRaw, inOil, texture, sent])
+    sizeValue, sizeUnit, amountValue, amountUnit, sourceKind, sourceLabel, isRaw, inOil, texture, sent, spent])
 
   const holdReload = dirty || saving
   const gateKey = `put-something-up:${useId()}`
@@ -469,6 +476,8 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
     try {
       let saved
       if (route === 'jar') {
+        // Another create under this key: its answer may be lost too, so the draft is in storage while it is out.
+        setSpent(false)
         const storageLocationId = await ensurePlaceId(fetch, place)
         saved = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(jarBody({
           key: useKey, what, storageLocationId, method, when: w.when, count: n, discard, notes,
@@ -489,7 +498,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
           // Nothing is written and the key is KEPT: Save again is this refusal again, never a second item.
           writingRef.current = false
           setSaving(false)
-          if (todo === 'stale') { setErr(replayStaleText(saved)); setField(null) }
+          if (todo === 'stale') { setSpent(true); setErr(replayStaleText(saved)); setField(null) }
           else { setErr(replayFixedText(saved)); setField('what') }
           setRefusedSeq(s => s + 1)
           onExists?.()
