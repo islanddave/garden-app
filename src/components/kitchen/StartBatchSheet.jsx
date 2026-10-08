@@ -38,6 +38,22 @@
 // uploading it twice. No idempotency key in 1a (they arrive with release 1b); `busy` + a synchronous
 // ref refuse a second Start it, and Back / the backdrop are refused mid-write.
 //
+// A REPLAYED START (BUG-PUTUPREPLAYREST-001; kitchen/idempotencyKey.js; the precedent on this PUT is
+// putup/HowItWasMadeSheet.jsx). A Start it whose answer was lost, a change, and Start it again is answered
+// with the batch the FIRST tap made. A changed name, kind or typed recipe reference goes onto it through the
+// batch's own merge PUT and the sheet lands on what the PUT answered — when the batch is this sitting's (sent
+// from the sheet that is open, made minutes ago, untouched since). When it started, the recipe it was started
+// from and its photo ride no route (the PUT would move the start and the photo on the batch and leave its
+// `started` row behind; nothing sets recipe_id), and a batch that is not this sitting's is not written onto:
+// NOTHING is written, the sheet stays open and says so (START_REPLAY_NOT_ON_IT), and the page is told
+// (`onExists`). That refusal has no way through in this sheet — which tap landed is not known — so it ends the
+// STORED draft: the sheet opened next is a clean one with a new key, while this one keeps its key and is
+// refused again, never a second batch. A PUT that fails is said as that (START_CHANGE_UNSAVED; _MAYBE when no
+// answer came back), with the draft kept so Start it again can finish it. A batch that already holds the
+// name, kind and reference on screen (and no other part differs) is started, with nothing written.
+// What has gone out under the key rides in the draft as `sent`; its print is of what was CHOSEN — the start
+// chip, never the instant "Today" came to.
+//
 // <Sheet armsBack>, size full; the draft survives a dismiss (kitchen/sheetDraft.js, sheet 'start',
 // batch 'new'); confirmOnDirty off; the reload gate is held while anything is typed or a write is in
 // flight. "Start it" is pinned above the keyboard (a sticky footer; the app's viewport meta resizes
@@ -59,7 +75,7 @@ import { readSheetDraft, writeSheetDraft, clearSheetDraft } from './sheetDraft.j
 import { useSheetDraftKey } from './useSheetDraftKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter } from './sheetScroll.js'
 import { readCaptureMeta } from '../../lib/imagePipeline.js'
-import { mintKey } from './idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost, sameFact } from './idempotencyKey.js'
 import LikeBatchPicker from '../putup/LikeBatchPicker.jsx'
 // Put-Up release 4 — "Following a recipe?" (pick one of the household's recipes → recipe_id, or F's free text),
 // and Make this's prefill (a recipe's name, kind and process jar).
@@ -81,6 +97,14 @@ export const START_FROM_BATCH = 'a past batch'
 // landing now (sheetLanding.js) and is still exported from here, where it has always been found.
 export { LAND_FALLBACK_MS } from './sheetLanding.js'
 const FOOTER_PX = 76
+// The parts of the create the batch's merge PUT is not used for (it carries the name, the kind and the typed
+// recipe reference): when it started, the recipe it was started from, the photo.
+const START_FIXED = ['started', 'recipe_id', 'cover_photo_id']
+// Which tap made the batch is not known here, so no sentence says the change is missing: only that this tap
+// wrote nothing, or that the change to what the PUT carries did not go through.
+export const START_REPLAY_NOT_ON_IT = 'This batch is already started — an earlier tap on Start it went through. This one changed nothing on it. Close this and open the batch to see it.'
+export const START_CHANGE_UNSAVED = 'This batch is already started — an earlier tap on Start it went through. Your last change did not save. Try again, or close this and open the batch.'
+export const START_CHANGE_MAYBE = 'This batch is already started — an earlier tap on Start it went through. Your last change may not have saved. Try again, or close this and check the batch.'
 
 const EMPTY = { label: '', chip: 'today', earlier: null, pickedDate: '', kind: null, kindOther: '', key: '', recipeId: null, recipeRef: '' }
 
@@ -97,6 +121,7 @@ const fromButton = (open) => ({
 // beside `recipeId` so the sheet can say what was picked without a read. A draft a release-4 client stored
 // has `recipeId` alone and still restores (the Start-from row names it from the list); one whose `recipe`
 // is not that shape is dropped whole, like any other draft that would half-restore.
+// `sent` (what has gone out under `key`, idempotencyKey.js) is optional the same way.
 export function isStartDraft(d) {
   return !!d && typeof d === 'object' && !Array.isArray(d)
     && typeof d.label === 'string' && typeof d.pickedDate === 'string' && typeof d.kindOther === 'string'
@@ -108,6 +133,7 @@ export function isStartDraft(d) {
     && (d.recipeRef === undefined || typeof d.recipeRef === 'string')
     && (d.recipe == null || (typeof d.recipe === 'object' && !Array.isArray(d.recipe)
       && typeof d.recipe.id === 'string' && typeof d.recipe.name === 'string' && d.recipe.id === d.recipeId))
+    && (d.sent == null || Array.isArray(d.sent))
 }
 
 // Put-Up release 1b (train §6a "Snap's start date"): Snap's photo carries the day it was taken, and
@@ -134,13 +160,15 @@ export function photoDayChoice(takenAt, now = new Date()) {
 // fresh intent and WINS over a stored draft (the door's own "seeded" rule, PutSomethingUpSheet.jsx): the
 // draft is not restored, and the first write replaces it. Read ONCE, at mount: a host that re-renders with
 // another value does not retype the field under the cook.
-export default function StartBatchSheet({ open, onClose, onStarted, photo = null, photoPreview = null, photoTakenAt, now, recipe = null, initialLabel = '' }) {
+// `onExists(batch)` (optional): the page's re-read, called with the sheet still open when a Start it found its
+// batch already started and did not (or could not) put the change on it.
+export default function StartBatchSheet({ open, onClose, onStarted, onExists = null, photo = null, photoPreview = null, photoTakenAt, now, recipe = null, initialLabel = '' }) {
   if (!open) return null
-  return <StartBatchOpen onClose={onClose} onStarted={onStarted} photo={photo} photoPreview={photoPreview}
+  return <StartBatchOpen onClose={onClose} onStarted={onStarted} onExists={onExists} photo={photo} photoPreview={photoPreview}
     photoTakenAt={photoTakenAt} now={now} recipe={recipe} initialLabel={initialLabel} />
 }
 
-function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt, now, recipe, initialLabel }) {
+function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, photoTakenAt, now, recipe, initialLabel }) {
   const { fetch } = useApiFetch()
   const uploader = useUploadPhoto({ errorMode: 'surface' })
   const draftKey = useSheetDraftKey(START_SHEET, recipe?.id ? `recipe-${recipe.id}` : 'new')
@@ -154,6 +182,20 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
     ...(seed ? { label: seed } : null),
   }
   const [key, setKey] = useState(initial.key ?? '')
+  // What has gone out under `key` (idempotencyKey.js), kept with it in the draft.
+  const [sent, setSent] = useState(() => (Array.isArray(initial.sent) ? initial.sent.filter(x => typeof x === 'string') : []))
+  // Whether every body under `key` went out from THIS sheet: a draft restored with `sent` in it was sent from
+  // an earlier one, and is never written onto the batch it made.
+  const mineRef = useRef(sent.length === 0)
+  // The batch this sheet has sent its PUT to (its id): a PUT that landed with its answer lost has moved the
+  // batch's updated_at, and Start it again must still be able to finish it.
+  const putRef = useRef(null)
+  // Set by a replay refusal: the first tap landed, so the STORED draft has done its job. It is taken out of
+  // storage and not written back, while this sheet keeps its key and `sent`.
+  const [spent, setSpent] = useState(false)
+  // Set once a start lands: the draft is cleared then, and nothing may write it back before the sheet
+  // unmounts (`sent` changes while the create is out, and its render can be committed after the clear).
+  const landedRef = useRef(false)
   const [label, setLabel] = useState(initial.label)
   const [chip, setChip] = useState(initial.chip)
   const [earlier, setEarlier] = useState(initial.earlier)
@@ -185,8 +227,8 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
   // The focused field is kept clear of the pinned Start it (see sheetScroll.js).
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
-  // A failed start is the last line of the scroller, under the pinned Start it: each is brought into view
-  // (counted, so the same failure twice is brought into view twice).
+  // A failed start or a replay refusal is the last line of the scroller, under the pinned Start it: each is
+  // brought into view (counted, so the same failure twice is brought into view twice).
   const errRef = useRef(null)
   const [failedSeq, setFailedSeq] = useState(0)
   useEffect(() => {
@@ -221,7 +263,7 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
     || following.recipeId != null || following.recipeRef.trim() !== ''
 
   useEffect(() => {
-    if (!draftKey) return
+    if (!draftKey || landedRef.current) return
     // The draft carries what can be serialised; a picked File cannot, and is not pretended to.
     const text = label.trim() !== '' || chip !== 'today' || earlier != null || pickedDate !== '' || kind != null || kindOther.trim() !== ''
       || following.recipeId != null || following.recipeRef.trim() !== ''
@@ -230,9 +272,10 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
     const recipePart = following.recipeId != null || following.recipeRef !== ''
       ? { recipeId: following.recipeId, recipeRef: following.recipeRef, ...(following.recipe ? { recipe: following.recipe } : null) }
       : {}
-    if (text) writeSheetDraft(draftKey, START_SHEET, { label, chip, earlier, pickedDate, kind, kindOther, key, ...recipePart })
-    else clearSheetDraft(draftKey)
-  }, [draftKey, label, chip, earlier, pickedDate, kind, kindOther, key, following])
+    if (text && !spent) {
+      writeSheetDraft(draftKey, START_SHEET, { label, chip, earlier, pickedDate, kind, kindOther, key, ...recipePart, ...(sent.length ? { sent } : null) })
+    } else clearSheetDraft(draftKey)
+  }, [draftKey, label, chip, earlier, pickedDate, kind, kindOther, key, following, sent, spent])
 
   // The create's idempotency key (release 1b, V4 §6.5): minted the first time the sheet is dirty, kept
   // in the draft, reused on every retry — a Start it whose answer was lost is a replay, not a twin.
@@ -300,6 +343,8 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
     if (!key) setKey(useKey)
     writingRef.current = true
     setSaving(true); setErr(null)
+    // The batch a replay answered with, once it is being written onto.
+    let onRow = null
     try {
       let coverId = uploadedRef.current && uploadedRef.current.file === file ? uploadedRef.current.photoId : null
       if (file && !coverId) {
@@ -310,10 +355,37 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
         coverId = r.photo.id
         uploadedRef.current = { file, photoId: coverId }
       }
-      const batch = await fetch('/api/kitchen-batches', { method: 'POST', body: JSON.stringify({
-        label: text, ...when.start, ...kindPart, ...(coverId ? { cover_photo_id: coverId } : {}), idempotency_key: useKey,
-        ...followingBody(following),
-      }) })
+      const chose = { label: text, ...kindPart, ...(coverId ? { cover_photo_id: coverId } : {}), ...followingBody(following) }
+      // The print's start is the chip, not the date it came to: Today is the instant, a new one at every tap.
+      const print = sendPrint({ ...chose, started: whenChoice(chip, earlier, pickedDate) }, START_FIXED)
+      const sentNow = noteSent(sent, print)
+      setSent(sentNow)
+      let batch = await fetch('/api/kitchen-batches', { method: 'POST', body: JSON.stringify({ ...chose, ...when.start, idempotency_key: useKey }) })
+      const todo = afterReplay(batch, sentNow, print, {
+        row: batch, mine: mineRef.current, updatedHere: batch?.id != null && putRef.current === batch.id,
+        // What the PUT could carry is all the batch has to hold; a difference in any other part is 'fixed'.
+        holds: sameFact(batch?.label, chose.label) && sameFact(batch?.kind, chose.kind) && sameFact(batch?.kind_other, chose.kind_other)
+          && sameFact(batch?.recipe_ref, chose.recipe_ref),
+      })
+      if (todo === 'fixed' || todo === 'stale') {
+        // Nothing is written and the key is KEPT: Start it again is this refusal again, never a second batch.
+        writingRef.current = false
+        setSaving(false)
+        setSpent(true)
+        setErr(START_REPLAY_NOT_ON_IT)
+        setFailedSeq(s => s + 1)
+        onExists?.(batch)
+        return
+      }
+      if (todo === 'update') {
+        onRow = batch
+        if (batch?.id == null) throw new Error('replayed without a batch')
+        putRef.current = batch.id
+        const updated = await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify({
+          label: chose.label, kind: chose.kind ?? null, kind_other: chose.kind_other ?? null, recipe_ref: chose.recipe_ref ?? null,
+        }) })
+        batch = { ...batch, ...updated }
+      }
       // The copied lines, keyed (a retry replays them). A refusal here leaves a batch with fewer lines,
       // never a lost batch: its detail page adds or edits lines as usual.
       if (like?.lines?.length && batch?.id) {
@@ -325,17 +397,25 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
       // already started, and its Jar & heat row can set the jar if this does not land.
       const vp = recipe && batch?.id && following.recipeId === recipe.id ? vesselPatch(recipe) : null
       if (vp) await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(vp) }).catch(() => {})
+      landedRef.current = true
       clearSheetDraft(draftKey)
       land(batch)
     } catch (e) {
       writingRef.current = false
       setSaving(false)
+      if (onRow?.id != null) {
+        // The batch is started; it is the change that did not go through. Said as that, and the page told.
+        setErr(answerLost(e) ? START_CHANGE_MAYBE : START_CHANGE_UNSAVED)
+        setFailedSeq(s => s + 1)
+        onExists?.(onRow)
+        return
+      }
       setErr(e?.photo
         ? "Couldn't save the photo — try again, or remove it."
         : "Couldn't start it — try again. What you typed is still here.")
       setFailedSeq(s => s + 1)
     }
-  }, [chip, draftKey, earlier, fetch, file, following, key, kind, kindOther, label, labelId, land, like, now, pickedDate, recipe, uploader])
+  }, [chip, draftKey, earlier, fetch, file, following, key, kind, kindOther, label, labelId, land, like, now, onExists, pickedDate, recipe, sent, uploader])
 
   return (
     <Sheet open onClose={onClose} title={START_SHEET_TITLE} size="full" busy={saving} armsBack>
