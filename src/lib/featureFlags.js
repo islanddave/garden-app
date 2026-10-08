@@ -532,3 +532,10 @@ export const SOW_DATED_LINES_FROZEN = true
 // tests/harness/vite.harness.seedon.mjs, which serves the flag on whichever way it ships, so they stay green
 // on the undo build as well.
 export const SEED_MULTI_PARENT = true
+// V5-SEEDLOTADDITION-001 (seed release 3) — "Put it in a seed lot I already started": the link in Save seed's From block, the lot list, the add form and its POST
+// /api/inventory-items/:id/seed-additions, and the "still says" line on the lot page. Shown only while SEED_MULTI_PARENT is also true. ROLLBACK RUNBOOK. Undo this release
+// with a FORWARD flag-off build (set this to false on dev and promote), never with a revert: the table seed_lot_addition and the two routes stay live either way, and rows
+// already written stay. ORDER: switch this off before any Lambda-only rollback (an older Lambda answers the POST "name is required") and before any undo of release 2b.
+// Rehearsed by `npm run test:flag-off:seedadd` (tests/harness/seedFlagTransform.mjs, in memory, the text scripts/forward-undo.py writes); it must end with 0 failures. Every
+// add-mode test file holds BOTH flags on with its own mock; the seed layout gates serve both on through tests/harness/vite.harness.seedon.mjs.
+export const SEED_ADD_TO_LOT = true
