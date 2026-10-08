@@ -26,7 +26,10 @@
 //   · the line's box is inside the scroller's box and ends above the pinned footer's top;
 //   · the browser paints the LINE at nine points across it (elementFromPoint) — a point under the footer
 //     answers with the footer;
-//   · the refusal text is the replay refusal, and exactly two creates went out (never a third).
+//   · the refusal text is the replay refusal, and exactly two creates went out (never a third);
+//   · BUG-PUTUPSAVEFAILHIDDEN-001: the ORDINARY failure line the first, lost Save leaves ("Couldn't save
+//     it…") passes the same two checks, and is not the refusal. Its own instrument check: the scroller put
+//     back where it stood when Save was tapped must NOT read as fully visible.
 // INSTRUMENT CHECK, every run: the scroller is then put back where it stood when Save was tapped (`top`
 // arrival: scrollTop 0) and measured again. That state MUST read as not visible — it is what the sheet
 // would show with no scroll on refusal — or the verdict above is not worth reading.
@@ -291,7 +294,20 @@ try {
         await sleep(500)
         const lost = await cdp.evalIn('window.__h.measure()')
         if (lost.creates !== 1) throw new Error(`the first Save sent ${lost.creates} creates, not 1 (calls: ${lost.calls.join(' | ')}; line: ${lost.text})`)
-        await shot(cdp, `${name}-${arrival}-1-first-save-lost`)
+        const lpng = await shot(cdp, `${name}-${arrival}-1-first-save-lost`)
+        const lv = verdictOf(lost)
+        console.log(`[refusal] ${at}: first Save lost, its failure line ${JSON.stringify(lost.text)}: ${lv.toUpperCase()} — ${say(lost)}${lpng ? `\n            ${lpng}` : ''}`)
+        if (!/^Couldn't save it/.test(lost.text ?? '') || s.refusal.test(lost.text ?? '')) fail(`${at}: the first Save's line is not the ordinary failure: ${JSON.stringify(lost.text)}`)
+        if (lv !== 'fully visible') fail(`${at}: the first Save's failure line is ${lv} — ${say(lost)}`)
+        // Its instrument check: the scroller back where it stood when Save was tapped, then put back again.
+        await cdp.evalIn(`(() => { document.querySelector('[role="dialog"]').scrollTop = ${filled.scroll.top} })()`)
+        await sleep(200)
+        const lc = await cdp.evalIn('window.__h.measure()')
+        const lcv = verdictOf(lc)
+        console.log(`[refusal] ${at}: first-failure control (scrollTop back to ${filled.scroll.top}, as with no scroll on a failed Save): ${lcv} — ${say(lc)}`)
+        if (lcv === 'fully visible') fail(`${at}: the first-failure instrument check did not fire — unscrolled, the line still reads as fully visible`)
+        await cdp.evalIn(`(() => { document.querySelector('[role="dialog"]').scrollTop = ${lost.scroll.top} })()`)
+        await sleep(200)
 
         if (arrival === 'top') await wheelToTop(cdp)
         await walk(cdp, s, s[arrival])
@@ -305,7 +321,6 @@ try {
         const v = verdictOf(m)
         const png = await shot(cdp, `${name}-${arrival}-2-refused`)
         console.log(`[refusal] ${at}: ${v.toUpperCase()} — ${say(m)}${png ? `\n            ${png}` : ''}`)
-        console.log(`[refusal] ${at}: lost-answer line before the retry: ${JSON.stringify(lost.text)} — ${verdictOf(lost)} (${lost.line ? `y${lost.line.top}–${lost.line.bottom}, footer top y${lost.footer.top}` : 'no line'})`)
         if (v !== 'fully visible') fail(`${at}: the refusal line is ${v} — ${say(m)}`)
 
         // INSTRUMENT CHECK: the scroller back where it stood when Save was tapped.
@@ -316,7 +331,7 @@ try {
         const cpng = await shot(cdp, `${name}-${arrival}-3-control-unscrolled`)
         console.log(`[refusal] ${at}: control (scrollTop back to ${before.scroll.top}, as with no scroll on refusal): ${cv} — ${say(c)}${cpng ? `\n            ${cpng}` : ''}`)
         if (arrival === 'top' && cv === 'fully visible') fail(`${at}: the instrument check did not fire — with the sheet at its top the line still reads as fully visible, so this run cannot tell a covered line from a clear one`)
-        results.push({ at, verdict: v, measured: m, lost: { text: lost.text, verdict: verdictOf(lost), line: lost.line, footer: lost.footer }, control: { verdict: cv, measured: c } })
+        results.push({ at, verdict: v, measured: m, lost: { text: lost.text, verdict: lv, line: lost.line, footer: lost.footer, scroll: lost.scroll, hits: lost.hits, control: { verdict: lcv, line: lc.line, scroll: lc.scroll } }, control: { verdict: cv, measured: c } })
       } catch (e) {
         fail(`${at}: ${e.message}`)
       }

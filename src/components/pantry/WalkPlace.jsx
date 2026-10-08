@@ -458,7 +458,7 @@ function WalkGroup({
   const methodRef = useRef(null)
   const whatRef = useRef(null)
   const errRef = useRef(null)
-  // Counts the replay refusals: each is brought into view (its scroll-margin is the band's height, below).
+  // Counts the replay refusals and failed Saves: each is brought into view (its scroll-margin is the band's height, below).
   const [refusedSeq, setRefusedSeq] = useState(0)
   useEffect(() => {
     if (refusedSeq && typeof errRef.current?.scrollIntoView === 'function') errRef.current.scrollIntoView({ block: 'nearest' })
@@ -543,7 +543,7 @@ function WalkGroup({
         setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: answerLost(e) }), refresh: why.refresh })
         setRefusedSeq(s => s + 1)
         onExists?.()
-      } else setErr(refusalOf(e, "Couldn't save it — what you entered is kept. Try again."))
+      } else { setErr(refusalOf(e, "Couldn't save it — what you entered is kept. Try again.")); setRefusedSeq(s => s + 1) }
     } finally {
       writingRef.current = false
       setSaving(false)

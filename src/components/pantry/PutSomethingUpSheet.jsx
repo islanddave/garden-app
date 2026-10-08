@@ -370,8 +370,9 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
     scrollClearOfFooter(el, footerRef.current)
   }, [slotSeq])
 
-  // A replay refusal is the last line of the scroller and Save is pinned over its end: without this the
-  // button comes back and nothing on screen has changed. The nearest edge, then clear of the footer.
+  // A replay refusal or a failed Save is the last line of the scroller and Save is pinned over its end:
+  // without this the button comes back and nothing on screen has changed. The nearest edge, then clear of
+  // the footer. Counted, not read off the text: the same failure twice is brought into view twice.
   useEffect(() => {
     if (!refusedSeq) return
     const el = errRef.current
@@ -529,6 +530,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         setKey(mintKey()); setSent([])
       }
       setErr(refusalOf(ex, "Couldn't save it — nothing was lost. Try again."))
+      setRefusedSeq(s => s + 1)
     }
   }, [amountUnit, amountValue, discard, draftKey, estimate, fetch, inOil, isRaw, key, method, n, notes, onExists, onSaved, pickedDate,
     place, planting, sent, sizeUnit, sizeValue, sourceKind, sourceLabel, texture, w, whenChip, what])
@@ -672,7 +674,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
             </button>
           </div>
         )}
-        {field !== 'method' && <RefusalLine err={err} testId="door-error" lineRef={errRef} />}
+        {field !== 'method' && <RefusalLine err={err} testId="door-error" lineRef={errRef} style={{ marginBottom: FOOTER_GAP_PX }} />}
       </div>
       <div ref={footerRef} data-testid="door-footer"
         style={{ position: 'sticky', bottom: 0, background: P.white, padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>
