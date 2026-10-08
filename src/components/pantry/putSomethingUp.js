@@ -506,6 +506,11 @@ export function otherRouteSent(sent, route) {
   if (first == null) return null
   return printRoute(first) === route ? null : printRoute(first)
 }
+// A WALK'S WAY ON (re-review I-E). A walk's group has no close, and it keeps its key until the walk is ended: a
+// refusal with no way through in the group leaves it spent for whatever is typed there next. So every such line
+// said in a walk ends with the way on — in ONE wording, this one, wherever the Walk says it.
+const WALK_ON = 'end this walk and start another'
+export const WALK_NEXT_TEXT = `To log more here, ${WALK_ON}.`
 // Said for that refusal. `first` is the route the earlier Save went out on; `row` is the row it is KNOWN to
 // have made (a replay answered with it in the door that is open) or null when its answer never came back —
 // then nothing says it is in the Pantry, only that it may be, and the way on is to finish THAT Save. `walk`:
@@ -515,11 +520,12 @@ export function otherRouteText({ first, row = null, what = null, walk = false })
   const was = first === 'jar' ? 'as a put-up' : asIs
   const now = first === 'jar' ? asIs : 'as a put-up'
   if (!row) {
+    const head = `An earlier Save of this ${was} may have gone through. It can't also be saved ${now} from here.`
     const again = first === 'jar' ? 'Choose the method again' : `Choose “${methodLabel(AS_IS, what)}” again`
-    return `An earlier Save of this ${was} may have gone through. It can't also be saved ${now} from here. ${again} and tap Save to finish that one.`
+    return `${head} ${again} and tap Save to finish that one.`
   }
   const name = quoted(row)
-  return `${name ? `${name} is already in the Pantry` : 'This is already in the Pantry'} ${was} — an earlier Save went through. It can't also be saved ${now} from here. If you want both, ${walk ? 'end this walk and start another' : 'close this and start a new one'}.`
+  return `${name ? `${name} is already in the Pantry` : 'This is already in the Pantry'} ${was} — an earlier Save went through. It can't also be saved ${now} from here. If you want both, ${walk ? WALK_ON : 'close this and start a new one'}.`
 }
 
 // Said when an earlier Save made the jar and this one differs from it in a part no PATCH carries: nothing is
@@ -530,7 +536,8 @@ export function otherRouteText({ first, row = null, what = null, walk = false })
 // changes it (the date; the planting or crop), and where the Pantry can (the place, the name, the size) it says
 // "from here" and points there. `placeLabel` is the jar's place as the caller's own list names it; with none —
 // a place that is gone, or a list that did not load — it cannot be picked here, and the sentence does not ask.
-// The key is kept.
+// The key is kept. `walk`: the three lines that cannot name what to put back leave a walk's group spent, and end
+// with the walk's way on (re-review I-E); the ones that name it are the door's own — "tap Save" is the way on.
 const containersHeld = (jar) => {
   const n = Number(jar?.package_count)
   if (!Number.isInteger(n) || n < 1) return null
@@ -539,16 +546,17 @@ const containersHeld = (jar) => {
   if (!amount) return `${n} ${n === 1 ? 'container' : 'containers'}`
   return n === 1 ? `1 container of ${amount}` : `${n} containers, ${amount} in all`
 }
-export function replayJarFixedText(jar, part, { now = new Date(), placeLabel = null } = {}) {
+export function replayJarFixedText(jar, part, { now = new Date(), placeLabel = null, walk = false } = {}) {
   const name = quoted(jar)
   const as = name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'
   const went = '— an earlier Save went through.'
   const go = 'and tap Save to put your other changes on it.'
-  const inPantry = 'To change it, open it in the Pantry.'
+  const on = walk ? ` ${WALK_NEXT_TEXT}` : ''
+  const inPantry = `To change it, open it in the Pantry.${on}`
   if (part === 'when') {
     const unsure = jar?.preserved_at_precision === 'unknown'
     const words = unsure ? '“Not sure”' : putUpDateWords(dayOf(jar?.preserved_at), jar?.preserved_at_precision ?? null, { approx: jar?.preserved_at_approx === true, now })
-    if (!words) return `${as} ${went} The date it was put up can't be changed once it is saved. To change anything else on it, open it in the Pantry.`
+    if (!words) return `${as} ${went} The date it was put up can't be changed once it is saved. To change anything else on it, open it in the Pantry.${on}`
     return `${as}, ${unsure ? 'with the date “Not sure”' : `put up ${words}`} ${went} That date can't be changed once it is saved. Set the date back to ${words} ${go}`
   }
   if (part === 'place') {
@@ -577,11 +585,13 @@ export function replayFixedText(item) {
 // Said when an earlier Save made the item and it is not this sitting's to write over (idempotencyKey.js
 // afterReplay 'stale'): nothing is written, the form stays, and the KEY IS KEPT — Save again is refused
 // again, and can never add a second item. It says only what is certain (saved earlier; this Save changed
-// nothing) and promises no way to add from here. A replayed item can be one that was removed since.
-export function replayStaleText(item) {
+// nothing) and promises no way to add from here. A replayed item can be one that was removed since. `walk`: the
+// group is spent, and the line ends with the walk's way on (re-review I-E).
+export function replayStaleText(item, { walk = false } = {}) {
   const name = quoted(item)
-  if (item?.deleted_at) return `${name ? `${name} was saved earlier` : 'This was saved earlier'} and has been removed since. This Save did not change that.`
-  return `${name ? `${name} was already saved earlier` : 'This was already saved earlier'} — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.`
+  const on = walk ? ` ${WALK_NEXT_TEXT}` : ''
+  if (item?.deleted_at) return `${name ? `${name} was saved earlier` : 'This was saved earlier'} and has been removed since. This Save did not change that.${on}`
+  return `${name ? `${name} was already saved earlier` : 'This was already saved earlier'} — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.${on}`
 }
 // Said when an earlier Save made the item and the change could not be put on it just now: the item is there.
 // `why` is the server's own sentence when it refused the change in words; `lost` is true when no answer came

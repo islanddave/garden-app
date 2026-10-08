@@ -471,7 +471,8 @@ describe('the recipe sheet — a "saved earlier" refusal ends the stored draft',
 // The Walk's key is the walk page's own, held in memory and never stored (WalkPlace.jsx heldRef): there is no
 // draft for a refusal to leave behind. Leaving the walk ends the key, as it always has.
 describe('the Walk — its key is never stored: leaving the walk ends it (unchanged)', () => {
-  const STALE = '“Oat milk” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.'
+  // In a walk the line ends with the way on (re-review I-E) — which is what this case then does.
+  const STALE = '“Oat milk” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry. To log more here, end this walk and start another.'
   const keys = () => fake.calls('POST').filter(c => c.path === ITEMS).map(c => c.body.idempotency_key)
   const errorText = () => screen.queryByTestId('walk-error')?.textContent ?? null
   const walk = () => render(<MemoryRouter initialEntries={['/put-up?session=putup']}><PutUp /></MemoryRouter>)

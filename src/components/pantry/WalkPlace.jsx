@@ -439,7 +439,8 @@ function AlreadyHere({ fetch, placeId, seq, onOpen }) {
 // group's own date, or the walk's two answers behind "Change") and a planting or picked crop do not, and a
 // Save that differs from the jar in one of those writes nothing and says which (replayJarFixedText).
 // THE BAND SAYS WHAT THE SERVER ANSWERED — the row's name, count and method — never what the form held.
-// A refused group keeps its key until the walk is left (End the walk) or the page is loaded again.
+// A refused group keeps its key until the walk is left (End the walk) or the page is loaded again — so a refusal
+// with no way through in the group ends by saying that way on (putSomethingUp.js WALK_NEXT_TEXT, re-review I-E).
 function WalkGroup({
   walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK_PX, onSaved, onExists = null, onOpenExisting, onMoveHere,
   held = null, onHeld = null, saveRef = null,
@@ -546,10 +547,10 @@ function WalkGroup({
           nullIsUntouched: true,
         })
         // Nothing is written — not the parts a PATCH could carry either — and the key is KEPT.
-        if (todo === 'stale') { setErr(replayStaleText(saved)); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
+        if (todo === 'stale') { setErr(replayStaleText(saved, { walk: true })); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
         if (todo === 'fixed') {
           const placeLabel = place?.id != null && String(place.id) === String(saved?.storage_location_id) ? place.label : null
-          setErr(replayJarFixedText(saved, part, { now, placeLabel })); setField(part === 'what' || part === 'name' ? 'what' : null)
+          setErr(replayJarFixedText(saved, part, { now, placeLabel, walk: true })); setField(part === 'what' || part === 'name' ? 'what' : null)
           if (part === 'when' && ownChoice) setMoreOpen(true)
           setRefusedSeq(s => s + 1); onExists?.(); return
         }
@@ -579,7 +580,7 @@ function WalkGroup({
           holds: itemHolds(body, saved, what),
         })
         // Nothing is written and the key is KEPT: Save again is this refusal again, never a second item.
-        if (todo === 'stale') { setErr(replayStaleText(saved)); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
+        if (todo === 'stale') { setErr(replayStaleText(saved, { walk: true })); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
         if (todo === 'fixed') { setErr(replayFixedText(saved)); setField('what'); setRefusedSeq(s => s + 1); onExists?.(); return }
         if (todo === 'update') {
           onRow = saved

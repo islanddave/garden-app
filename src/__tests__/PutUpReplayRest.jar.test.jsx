@@ -42,7 +42,7 @@ import PutSomethingUpSheet, { isDoorDraft } from '../components/pantry/PutSometh
 import PutUp from '../pages/PutUp.jsx'
 import {
   DOOR_SHEET, completionWords, jarBody, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
-  replayStaleText, replayUnsavedText, printRoute, otherRouteSent, otherRouteText,
+  replayStaleText, replayUnsavedText, printRoute, otherRouteSent, otherRouteText, WALK_NEXT_TEXT,
 } from '../components/pantry/putSomethingUp.js'
 import { putUpDateWords } from '../components/putup/jarWords.js'
 import { START_REPLAY_NOT_ON_IT } from '../components/kitchen/StartBatchSheet.jsx'
@@ -177,6 +177,8 @@ const nameText = (name) => `${HEAD(name)} That name can't be put on it from here
 const STALE = '“Corn” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.'
 const UNSAVED = '“Corn” is already in the Pantry — an earlier Save went through. This change did not save — try again.'
 const MAYBE = '“Corn” is already in the Pantry — an earlier Save went through. This change may not have saved — try again.'
+// Re-review I-E: in a walk a refusal that leaves the group spent ends with the way on — one wording, wherever the Walk says it.
+const WALK_ON = ' To log more here, end this walk and start another.'
 
 describe('a put-up as its PATCH — putSomethingUp.js jarPatchOf', () => {
   it('every part the PATCH can carry, an absent one as the word that clears it — and the Lambda takes it; no key of the create\'s own', () => {
@@ -337,6 +339,31 @@ describe('the sentence — putSomethingUp.js replayJarFixedText', () => {
     expect(replayUnsavedText(jar)).toBe(UNSAVED)
     expect(replayUnsavedText(jar, { lost: true })).toBe(MAYBE)
     for (const said of [replayUnsavedText(jar), replayUnsavedText(jar, { lost: true }), replayUnsavedText(jar, { why: 'no' }), replayUnsavedText(null)]) expect(said).not.toMatch(/the first Save/)
+  })
+  // Re-review I-E. A walk's group keeps its key until the walk is ended, so a refusal with no way through in the
+  // group leaves it spent: the line ends with the way on, in ONE wording — the clause the other-route refusal has.
+  it('re-review I-E — in a walk, every refusal that leaves the group spent ends with the way on, in one wording; a refusal that names what to put back already has its way on, and is as the door says it', () => {
+    const jar = rawJar(BODY)
+    const walk = { walk: true }
+    expect(WALK_NEXT_TEXT).toBe('To log more here, end this walk and start another.')
+    expect(WALK_ON).toBe(` ${WALK_NEXT_TEXT}`)
+    expect(replayStaleText(jar, walk)).toBe(`${STALE}${WALK_ON}`)
+    expect(replayStaleText({ ...jar, deleted_at: '2026-10-01T18:00:00Z' }, walk)).toBe(`“Corn” was saved earlier and has been removed since. This Save did not change that.${WALK_ON}`)
+    expect(replayStaleText(null, walk)).toBe(`This was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.${WALK_ON}`)
+    // The three that cannot name what to put back.
+    expect(replayJarFixedText(jar, 'place', { now: NOW, walk: true })).toBe(`Already in the Pantry as “Corn” — an earlier Save went through. It can't be moved from here, and where it is now can't be picked here. To change it, open it in the Pantry.${WALK_ON}`)
+    expect(replayJarFixedText({ ...jar, package_count: null }, 'size', { ...OPTS, walk: true })).toBe(`Already in the Pantry as “Corn” — an earlier Save went through. Its size and how many can't be changed from here. To change it, open it in the Pantry.${WALK_ON}`)
+    expect(replayJarFixedText({ ...jar, preserved_at: null, preserved_at_precision: null }, 'when', { ...OPTS, walk: true })).toBe(`Already in the Pantry as “Corn” — an earlier Save went through. The date it was put up can't be changed once it is saved. To change anything else on it, open it in the Pantry.${WALK_ON}`)
+    // Those that say what to put back: the same line in a walk as in the door — "tap Save" is the way on.
+    for (const part of ['when', 'place', 'size', 'name', 'what']) {
+      expect(replayJarFixedText(jar, part, { ...OPTS, walk: true })).toBe(replayJarFixedText(jar, part, OPTS))
+      expect(replayJarFixedText(jar, part, { ...OPTS, walk: true })).toMatch(/tap Save to put your other changes on it\.$/)
+    }
+    // One wording: the other-route refusal's clause is this one's.
+    expect(otherRouteText({ first: 'jar', row: jar, what: TYPED, walk: true })).toMatch(/If you want both, end this walk and start another\.$/)
+    // The door's lines are untouched.
+    expect(replayStaleText(jar)).toBe(STALE)
+    for (const said of [replayStaleText(jar, walk), replayStaleText({ ...jar, deleted_at: 'x' }, walk), replayJarFixedText(jar, 'place', { now: NOW, walk: true })]) expect(said).not.toMatch(BANNED)
   })
 })
 
@@ -1152,14 +1179,14 @@ describe('the Walk — the put-up route', () => {
     on.length = 0
     save()
     await answered(2)
-    expect(errorText()).toBe(STALE)
+    expect(errorText()).toBe(STALE + WALK_ON)
     await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
     expect(otherWrites()).toEqual([])
     expect(table.row).toEqual(before)
     expect(band()).toBeNull()
     save()
     await answered(3)
-    expect(errorText()).toBe(STALE)
+    expect(errorText()).toBe(STALE + WALK_ON)
     expect(new Set(keys()).size).toBe(1)
     expect(screen.getByTestId('walk-what-name').value).toBe('Peas')
   })
@@ -1200,7 +1227,7 @@ describe('the Walk — the put-up route', () => {
     await waitFor(() => expect(errorText()).toMatch(/This change did not save: This was changed somewhere else/))
     save()
     await answered(3)
-    expect(errorText()).toBe('“Corn (Jen)” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.')
+    expect(errorText()).toBe(`“Corn (Jen)” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.${WALK_ON}`)
     expect(patches()).toHaveLength(1)
     expect(table.row.label).toBe('Corn (Jen)')
     expect(band()).toBeNull()
@@ -1213,7 +1240,7 @@ describe('the Walk — the put-up route', () => {
     save(); await failed()
     save()
     await answered(2)
-    expect(errorText()).toBe('“Corn” was saved earlier and has been removed since. This Save did not change that.')
+    expect(errorText()).toBe(`“Corn” was saved earlier and has been removed since. This Save did not change that.${WALK_ON}`)
     expect(band()).toBeNull()
     expect(otherWrites()).toEqual([])
   })
@@ -1309,11 +1336,48 @@ describe('the Walk — the put-up route', () => {
     await failed(MAYBE)
     save()
     await answered(3)
-    expect(errorText()).toBe('“Corn (Jen)” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.')
+    expect(errorText()).toBe(`“Corn (Jen)” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.${WALK_ON}`)
     expect(patches()).toHaveLength(1)
     expect(table.row.label).toBe('Corn (Jen)')
     expect(band()).toBeNull()
     expect(new Set(keys()).size).toBe(1)
+  })
+
+  // Re-review I-E. The key is kept through a refusal (never a second row), so the group is spent — and the line
+  // now says the way on. Followed: a clean group, and what is saved there goes out under a key of its own.
+  it('re-review I-E — after "saved earlier" the group is refused for the next thing typed there too, under the one key; the line says the way on — End the walk, start another: a CLEAN group, and its Save goes out under a NEW key', async () => {
+    let firstKey = null
+    jarTable({ first: { ...stamps(LONG_AGO) }, onPost: (n, body) => {
+      if (firstKey == null) firstKey = body.idempotency_key
+      return body.idempotency_key === firstKey ? undefined : { ...rawJar(body), id: 'jar-second' }   // another key is another jar
+    } })
+    await startWalk()
+    corn()
+    save(); await failed()
+    typeWhat('Peas')
+    save()
+    await answered(2)
+    expect(errorText()).toBe(STALE + WALK_ON)
+    typeWhat('Beans')                                                           // the next thing, typed in the same group
+    save()
+    await answered(3)
+    expect(errorText()).toBe(STALE + WALK_ON)
+    expect(keys()).toEqual([firstKey, firstKey, firstKey])
+    expect(band()).toBeNull()
+    tap('putup-walk-exit')                                                      // a name is typed, so the walk asks first
+    tap('putup-walk-exit-anyway')
+    fireEvent.click(await screen.findByTestId('putup-walk-door'))
+    fireEvent.click(await screen.findByRole('radio', { name: 'Chest Freezer 1' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'This month' }))
+    fireEvent.click(screen.getByTestId('putup-walk-start'))
+    await screen.findByTestId('putup-walk-group')
+    expect([screen.getByTestId('walk-what-name').value, errorText(), band()]).toEqual(['', null, null])
+    typeWhat('Beans'); method('whole_freeze')
+    save(); await landed()
+    expect(posts()).toHaveLength(4)
+    expect(keys()[3]).toMatch(/^[0-9a-f-]{36}$/)
+    expect(keys()[3]).not.toBe(firstKey)
+    expect(band()).toBe('✓ 1 × Beans · Freeze whole')
   })
 
   it('the PATCH landed with its answer lost; a further change, Save: it still goes onto that jar', async () => {

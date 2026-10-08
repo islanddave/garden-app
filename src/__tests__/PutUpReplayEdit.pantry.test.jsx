@@ -1038,6 +1038,8 @@ describe('the pages behind the door are told the item is there', () => {
 })
 
 describe('the Walk — the item route', () => {
+  // In a walk a refusal that leaves the group spent ends with the way on (re-review I-E).
+  const WALK_STALE = `${STALE} To log more here, end this walk and start another.`
   const startWalk = async () => {
     render(<MemoryRouter initialEntries={['/put-up?session=putup']}><PutUp /></MemoryRouter>)
     fireEvent.click(await screen.findByRole('radio', { name: 'Kitchen fridge' }))
@@ -1131,7 +1133,7 @@ describe('the Walk — the item route', () => {
     // Answered: the walk says something new, or the group is cleared (saved).
     await waitFor(() => expect([errorText(), screen.getByTestId('walk-what-name').value]).not.toEqual([null, 'Eggs']))
     expect(otherWrites()).toEqual([])
-    expect(errorText()).toBe(STALE)
+    expect(errorText()).toBe(WALK_STALE)
     expect(keys()[1]).toBe(keys()[0])
     expect(screen.getByTestId('walk-what-name').value).toBe('Eggs')
     expect(screen.getByTestId('walk-error').getAttribute('role')).toBe('alert')
@@ -1144,7 +1146,7 @@ describe('the Walk — the item route', () => {
       save()
       await waitFor(() => expect(posts()).toHaveLength(nth))
       await waitFor(() => expect(screen.getByTestId('walk-save').disabled).toBe(false))
-      expect(errorText()).toBe(STALE)                                          // refused again
+      expect(errorText()).toBe(WALK_STALE)                                          // refused again
       await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
     }
     expect(new Set(keys()).size).toBe(1)                                       // ZERO creates under a new key
