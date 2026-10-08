@@ -149,6 +149,22 @@ describe('seed_stage has one writer — static, every non-test module under lamb
     expect(INDEX.src.split(cte)).toHaveLength(2);
   });
 
+  it('the log is append-only — no statement under lambda/ rewrites or removes an entry', () => {
+    // The invariant is "the cache equals the head of the log". One cache writer and one log INSERT
+    // hold it only while the log's head cannot move any other way: an UPDATE or a DELETE on an entry
+    // changes which one is newest with the count above still true.
+    const LOG_REWRITE = /(DELETE FROM|UPDATE|TRUNCATE)\s+(public\.)?seed_lot_stage_log/gi;
+    const rewritesIn = ({ file, src }) => [...src.matchAll(LOG_REWRITE)].map((m) => `${file}: ${m[1].toUpperCase()}`);
+    expect(MODULES.flatMap(rewritesIn)).toEqual([]);
+    // The matcher sees each form, and neither the append nor a read is one.
+    const probe = (src) => rewritesIn({ file: 'probe.js', src });
+    expect(probe('DELETE FROM public.seed_lot_stage_log WHERE id = ${id}')).toEqual(['probe.js: DELETE FROM']);
+    expect(probe('UPDATE seed_lot_stage_log SET entered_at = ${at} WHERE id = ${id}')).toEqual(['probe.js: UPDATE']);
+    expect(probe('TRUNCATE public.seed_lot_stage_log')).toEqual(['probe.js: TRUNCATE']);
+    expect(probe('INSERT INTO public.seed_lot_stage_log (inventory_item_id, stage) SELECT upd.id, ${s} FROM upd')).toEqual([]);
+    expect(probe('SELECT sl.entered_at FROM public.seed_lot_stage_log sl WHERE sl.inventory_item_id = i.id')).toEqual([]);
+  });
+
   it('the wide PUT and the create do not read the key from the body', () => {
     // `body.stage` is the /seed-stage route's own key. `body.seed_stage` was the other two routes'.
     expect(INDEX.src).not.toMatch(/body\.seed_stage\b/);
