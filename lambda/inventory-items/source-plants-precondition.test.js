@@ -364,9 +364,12 @@ describe('the new keys are read by VALUE in index.js — not by the presence idi
     // Exact, so a key added by that idiom is a decision someone made in this file rather than a
     // surprise in a client test. `seed_parent_plant_count` IS meant to be there: it is the fourth
     // /seed-measure key, and the Saved seeds strip list names it (R2A-CONTRACT section 5).
+    //
+    // `seed_stage` LEFT this list with BUG-SEEDSTAGEHEADSHIP-001: the wide PUT no longer reads the key
+    // at all (POST /:id/seed-stage is the stage's one writer), so no route reads it by presence.
     expect(byPresence).toEqual([
       'acquired_from_source_id', 'featured_photo_id', 'seed_count', 'seed_count_estimated',
-      'seed_parent_plant_count', 'seed_process', 'seed_stage', 'seed_weight_g', 'source_id',
+      'seed_parent_plant_count', 'seed_process', 'seed_weight_g', 'source_id',
       'source_kind', 'source_plant_id', 'source_plant_ids', 'variety_id', 'year_harvested',
     ]);
     for (const k of ['name', 'filing', 'expected_source_plant_ids', 'expect_variety_id']) {

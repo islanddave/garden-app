@@ -459,7 +459,7 @@ export function validateUpdate(body) {
   if (body.status != null && !VALID_STATUSES.includes(body.status)) return `status must be one of: ${VALID_STATUSES.join(', ')}`;
   if (body.variety_id != null && body.category != null && body.category !== 'seeds') return 'variety_id is only allowed when category is seeds';
   // BUG-INVSEEDPUT400-001. PRESENCE, not value — the same hasOwnProperty idiom the PUT's SET list
-  // already uses for featured_photo_id / seed_process / seed_stage, and here for the same reason.
+  // already uses for featured_photo_id / seed_process, and here for the same reason.
   // This ran on the RAW body with no merge against the stored row, so `category === 'seeds' &&
   // variety_id == null` was true of any payload that named the category and left the variety alone.
   // InventoryDetail's buildChanges() emits exactly that: it sends `category` and has never sent
@@ -986,7 +986,7 @@ export const handler = async (event) => {
     // stylistic. Every assignment in the PUT's SET list is unconditional (`= ${body.x ?? null}`) and
     // InventoryDetail's buildChanges() sends nothing seed-related, so a bare `source_plant_id =`
     // there would silently NULL the provenance on every unrelated inventory edit and return 200 —
-    // the exact trap the seed_process/seed_stage CASE guards below document at length. Same shape as
+    // the exact trap the seed_process CASE guard below documents at length. Same shape as
     // /sow-archive above: narrow, single-concern, method-checked, seeds-only.
     const sourcePlantMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)\/source-plant$/);
     if (sourcePlantMatch) {
@@ -994,7 +994,7 @@ export const handler = async (event) => {
       if (method !== 'PATCH') return resp(405, { error: 'Method not allowed' });
       const body = JSON.parse(event.body ?? '{}');
 
-      // PRESENCE, not truthiness — the hasOwnProperty idiom the PUT already uses for seed_stage.
+      // PRESENCE, not truthiness — the hasOwnProperty idiom the PUT already uses for seed_process.
       // `null` is a MEANINGFUL value here (a parent being cleared, or one Dave never knew), so a
       // `body.source_plant_id != null` test would make "not recorded" unreachable rather than
       // first-class. The 400 is for a body that never mentions the key at all.
@@ -1604,12 +1604,21 @@ export const handler = async (event) => {
 
         // V2-PHOTO-F1: strict validation for featured_photo_id (linkage = photos.inventory_item_id).
         const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
-        // V4-SEEDSAVEFLOW-001 — presence, not truthiness. `seed_stage: null` is a MEANINGFUL value
-        // (a lot deliberately cleared back to "no stage"), so the test has to be "did the client
-        // mention this key" rather than "did it send something". hasOwnProperty answers that; a
-        // `body.seed_stage != null` check would make clearing a stage impossible.
+        // V4-SEEDSAVEFLOW-001 — presence, not truthiness. `seed_process: null` is a MEANINGFUL value
+        // (a process deliberately unrecorded), so the test has to be "did the client mention this
+        // key" rather than "did it send something". hasOwnProperty answers that; a
+        // `body.seed_process != null` check would make clearing it impossible.
+        //
+        // BUG-SEEDSTAGEHEADSHIP-001 — THE STAGE IS NOT READ HERE AT ALL. This verb used to assign
+        // seed_stage behind the same guard and append nothing to seed_lot_stage_log, so every
+        // caller that round-trips a list row (all of them) could move a lot's stage off its own
+        // history with a 200: the card then counts from the wrong entry or from none, and the
+        // fermenting-overdue warning goes dark. POST /:id/seed-stage is the one writer; it writes
+        // the stage and its log entry in one statement. A `seed_stage` key in this body is IGNORED,
+        // not refused — installed bundles and un-reloaded tabs still echo it on unrelated edits and
+        // a 400 would break those saves — and RETURNING * below still reports the lot's real stage.
+        // seed-stage-one-writer.test.js reds the build if an assignment comes back.
         const hasSeedProcess = Object.prototype.hasOwnProperty.call(body, 'seed_process');
-        const hasSeedStage   = Object.prototype.hasOwnProperty.call(body, 'seed_stage');
         // BUG-INVSEEDPUT400-001 — the second half of that fix, and the half that would have been
         // easy to skip. Relaxing validateUpdate alone would have converted a wrong 400 into SILENT
         // DATA LOSS: `variety_id` was a bare assignment below, so the first edit from a caller that
@@ -1632,12 +1641,8 @@ export const handler = async (event) => {
         // Vocabulary is enforced by a DB CHECK, but a 400 here is a better answer than a 500 from a
         // constraint violation — and it names the legal values, which the constraint error does not.
         const SEED_PROCESSES = ['wet', 'dry', 'fresh'];
-        const SEED_STAGES    = ['fermenting', 'drying', 'stored'];
         if (hasSeedProcess && body.seed_process != null && !SEED_PROCESSES.includes(body.seed_process)) {
           return resp(400, { error: `seed_process must be one of ${SEED_PROCESSES.join(', ')}` });
-        }
-        if (hasSeedStage && body.seed_stage != null && !SEED_STAGES.includes(body.seed_stage)) {
-          return resp(400, { error: `seed_stage must be one of ${SEED_STAGES.join(', ')}` });
         }
         if (hasFeatured && body.featured_photo_id != null) {
           const linkRows = await sql`
@@ -1756,22 +1761,23 @@ export const handler = async (event) => {
               WHEN ${hasVariety}::boolean AND source_plant_id IS NULL THEN ${body.variety_id ?? null}
               ELSE variety_id
             END,
-            -- V4-SEEDSAVEFLOW-001. EXPLICIT-PRESENCE GUARDS, NOT BARE ASSIGNMENTS, and this is the
+            -- V4-SEEDSAVEFLOW-001. AN EXPLICIT-PRESENCE GUARD, NOT A BARE ASSIGNMENT, and this is the
             -- difference between working and destroying data. Every other column above is a bare
             -- assignment, which is safe only because the edit form renders and returns all of them
-            -- (see the note at the top of this block). It does NOT render these two:
+            -- (see the note at the top of this block). It does NOT render this one:
             -- InventoryDetail's buildChanges() sends name/category/status/notes/source/source_url/
             -- purchase_date/unit_cost/location_text/quantity_purchased plus the consumable-or-durable
             -- set, and nothing seed-related. A bare assignment here would therefore NULL the seed
-            -- stage every time Dave edited an inventory item for any unrelated reason — silently,
-            -- with a 200, losing the process history the whole feature exists to hold.
+            -- process every time Dave edited an inventory item for any unrelated reason, silently,
+            -- with a 200.
+            --
+            -- The lot's stage, which used to sit beside this behind the same guard, is DELIBERATELY
+            -- ABSENT and must stay absent (BUG-SEEDSTAGEHEADSHIP-001): this statement cannot append
+            -- the log entry a stage move needs, so it does not move the stage. See the note above
+            -- the presence guards; seed-stage-one-writer.test.js pins the omission.
             seed_process = CASE
               WHEN ${hasSeedProcess} THEN ${body.seed_process ?? null}
               ELSE seed_process
-            END,
-            seed_stage = CASE
-              WHEN ${hasSeedStage} THEN ${body.seed_stage ?? null}
-              ELSE seed_stage
             END,
             -- V4-SOURCEREG-001. EXPLICIT-PRESENCE GUARDS for the same reason as the two above, and
             -- with a wider blast radius than any of them. The four columns already guarded here are
@@ -2261,10 +2267,18 @@ export const handler = async (event) => {
       // Stringify + explicit ::jsonb cast is the house pattern (lambda/events/index.js:485) — an
       // uncast bound object cannot be typed by the driver, and a bare null needs the cast too.
       const metadataJson = body.metadata != null ? JSON.stringify(body.metadata) : null;
-      // V4-SEEDSAVEFLOW-001 — seed_process / seed_stage are NAMED in the INSERT below rather than
-      // left to default, for exactly the reason the metadata note above records: Postgres does not
+      // V4-SEEDSAVEFLOW-001 — seed_process is NAMED in the INSERT below rather than left to
+      // default, for exactly the reason the metadata note above records: Postgres does not
       // complain about a key the INSERT never mentions, so an omitted column returns 201 and
-      // silently drops what the client sent. Both are nullable, so a non-seed item writes NULL.
+      // silently drops what the client sent. It is nullable, so a non-seed item writes NULL.
+      //
+      // BUG-SEEDSTAGEHEADSHIP-001 — THE LOT'S STAGE IS DELIBERATELY NOT NAMED, and that omission is
+      // the fix rather than the defect the paragraph above describes. A stage written here had no
+      // entry in seed_lot_stage_log, so the lot was born with no date to count from. The column is
+      // nullable with no default, so every lot is created unstaged; a `seed_stage` key in the body
+      // is ignored (201, and the row says NULL), and POST /:id/seed-stage is how a lot gets a stage,
+      // which is what SaveSeedSheet has always done as its second request. No shipped client sends
+      // the key on a create. seed-stage-one-writer.test.js reds the build if the column comes back.
       //
       // THIS COMMENT LIVES OUT HERE, NOT INSIDE THE COLUMN LIST, AND THAT IS NOT STYLE. The L-081
       // auditor's Phase 2 parses the parenthesised column list literally and does NOT strip `--`
@@ -2294,7 +2308,7 @@ export const handler = async (event) => {
           quantity_on_hand, reorder_threshold, reorder_quantity,
           quantity, condition, brand, model,
           image_url, featured_image_id, variety_id, metadata,
-          seed_process, seed_stage, source_plant_id, source_kind,
+          seed_process, source_plant_id, source_kind,
           source_id, acquired_from_source_id
         ) VALUES (
           ${lotId}::uuid, ${userId}, ${userId}, ${body.type}, ${body.name.trim()}, ${body.category},
@@ -2310,7 +2324,7 @@ export const handler = async (event) => {
           ${body.brand ?? null}, ${body.model ?? null},
           ${body.image_url ?? null}, ${body.featured_image_id ?? null}, ${body.variety_id ?? null},
           ${metadataJson}::jsonb,
-          ${body.seed_process ?? null}, ${body.seed_stage ?? null}, ${cachePlantId}, ${sourceKind},
+          ${body.seed_process ?? null}, ${cachePlantId}, ${sourceKind},
           ${body.source_id ?? null}, ${body.acquired_from_source_id ?? null}
         ) RETURNING *, (SELECT pv.variety_rank FROM public.cultivar pv
                          WHERE pv.id = inventory_items.variety_id) AS variety_rank
