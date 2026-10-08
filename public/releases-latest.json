@@ -1,10 +1,14 @@
 {
-  "version": "4.172.0",
-  "date": "2026-10-07",
+  "version": "4.173.0",
+  "date": "2026-10-08",
   "highlights": [
-    "Save seed can take seed from several plants into one jar: tap Add seed from another plant. If the plants are different varieties, the jar is filed as a named mix, for example Jewel + Alaska mix",
-    "A saved jar's page lists every plant its seed came from. You can add a plant or remove one, with Undo, and the jar re-files itself to match",
-    "You can note about how many plants the seed came off",
-    "Saved seeds cards show Mixed seed and how many plantings a jar came from, and a planting's page says which other plants its jar was mixed with"
+    "A one-tap watering now records a normal water amount, so it counts in the plant's water record",
+    "Saving a harvest waits longer on a weak signal instead of giving up early",
+    "The plant picker shows the real sowing day; it was showing the day before",
+    "Put-up: a put-up picked from the Pantry for a batch can be taken off that batch, with Undo, so a batch closed that way can be removed",
+    "Put-up: a change you make after a lost connection is kept when you save again",
+    "Adding a plant on a seed lot's page puts a Seed saved entry on that plant's timeline",
+    "A bought seed blend is no longer tagged Your mix",
+    "The Release Notes dot stays cleared after you have read the notes on another device"
   ]
 }
