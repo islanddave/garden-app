@@ -727,8 +727,8 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     'u19-stale-set-refused', 'u20-seed-saved-first-parent', 'u20-seed-saved-second-parent',
     'u21-season-stats-parent-count',
     // release 3: between U21 and U22, while the mix lot and its parents are live
-    'u24-counted-lot', 'u24-open-lots', 'u25-same-plant-addition', 'u25-replay', 'u25-key-on-another-lot',
-    'u25-stale-set', 'u26-other-plant-addition', 'u27-refiling-addition-uncounted', 'u28-used-up-lot',
+    'u24-counted-lot', 'u24-open-lots', 'u24-stage-ignored-by-wide-put', 'u25-same-plant-addition', 'u25-replay',
+    'u25-key-on-another-lot', 'u25-stale-set', 'u26-other-plant-addition', 'u27-refiling-addition-uncounted', 'u28-used-up-lot',
     'u29-stale-measure', 'u30-addition-event',
     'u22-mix-lot-delete', 'first-parent-variety-restored',
     // the three SQL reads, last
@@ -1141,10 +1141,10 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     expect(cleanup.slice(without)).toMatch(/^\n  elif \[\[ "\$DATA_CREATED" == "true" \]\]; then\n(?:\s*#[^\n]*\n)*\s*echo "Cleanup: no session token in hand, so the API soft-deletes were skipped; the workflow's L-058 sweep removes the rows"\n  fi\n/)
   })
 
-  it('makes 100 requests, 14 then 14 then 35 then 37 between its mints, the numbers its own comment reasons from', () => {
+  it('makes 102 requests, 14 then 14 then 35 then 39 between its mints, the numbers its own comment reasons from', () => {
     // A request is an sp_req call, or a call of one of the four helpers that make exactly one each. Counted per
     // stretch: before the first mint, between each two, after the third (release 3 added the third mint and
-    // 32 requests: U24 to U30 and their three DELETEs).
+    // 32 requests: U24 to U30 and their three DELETEs; the wide PUT that must not move a stage, and its GET, two more).
     const HELPERS = ['sp_state() {', 'sp_drop() {', 'sp_refused() {']
     for (const helper of HELPERS) {
       const body = flat.slice(flat.indexOf(helper), flat.indexOf('\n}', flat.indexOf(helper)))
@@ -1160,15 +1160,15 @@ describe('block U of the smoke: a seed lot with two parent plantings', () => {
     expect(requests(flat.slice(0, flat.indexOf('sp_req POST "$STAGING_API_PLANTS" ')))).toBe(HELPERS.length)
     const stretches = body.split('CLERK_JWT=$(mint_session_token)\n')
     expect(stretches).toHaveLength(4)
-    expect(stretches.map(requests)).toEqual([14, 14, 35, 37])
+    expect(stretches.map(requests)).toEqual([14, 14, 35, 39])
     // no stretch is longer than the one the block ran with before release 3 (40), which was measured
     expect(Math.max(...stretches.map(requests))).toBeLessThanOrEqual(40)
     // a larger block needs its token paragraph re-read: these are the sentences that carry the numbers
     expect(block).toContain("block's first 14 (P2, P1's variety and its read, U0's 11): at most 21;")
     expect(block).toContain('the mint between U0 and U1: 14 (U1 to U6, then P2\'s DELETE);')
     expect(block).toContain('the mint before U7: 35 (U7 to U21);')
-    expect(block).toContain("the mint before U24: 37 (U24 to U30 and their three DELETEs, then U22, P3's and P4's DELETEs, and P1's variety cleared and read).")
-    expect(block).toContain('# 100 requests in all.')
+    expect(block).toContain("the mint before U24: 39 (U24 to U30 and their three DELETEs, then U22, P3's and P4's DELETEs, and P1's variety cleared and read).")
+    expect(block).toContain('# 102 requests in all.')
     expect(block).toContain('# THREE MINTS OF ITS OWN')
   })
 
@@ -1271,6 +1271,7 @@ describe('staging smoke block U, release 3: additions to an existing seed lot', 
     for (const [label, expected] of [
       ['u24-counted-lot', '"200 200 201 200 200 100|false"'],
       ['u24-open-lots', '"200 true,true,false,false|false,true"'],
+      ['u24-stage-ignored-by-wide-put', '"200 200 stored"'],
       ['u25-same-plant-addition', '"200 false|false|true 200 130|false|$SP_BEFORE"'],
       ['u25-replay', '"200 true|130|$SP_ADDITION"'],
       ['u25-key-on-another-lot', '"409 addition_key_conflict"'],
@@ -1317,12 +1318,14 @@ describe('staging smoke block U, release 3: additions to an existing seed lot', 
   it('the two lots that must NOT be offered differ from the one that is by one thing each', () => {
     // all three are V2 lots made by one body; the gift is stored (so it reads as a saved lot) and says gift,
     // the other is deleted, and both would be listed otherwise
-    expect(flatU.match(/\$SP_LOT_V2/g)).toHaveLength(3)
+    // (the fourth use is the gift lot's own body again, in the wide PUT that must leave its stage alone)
+    expect(flatU.match(/\$SP_LOT_V2/g)).toHaveLength(4)
     expect(flatU).toContain('sp_req POST "$STAGING_API_INVENTORY" "{\\"name\\": \\"smoke-test-seedlot-gift-$TEST_RUN_ID\\", $SP_LOT_V2}"')
     expect(flatU).toContain('sp_req POST "$STAGING_API_INVENTORY" "{\\"name\\": \\"smoke-test-seedlot-add-$TEST_RUN_ID\\", $SP_LOT_V2, \\"source_plant_id\\": \\"$SP_P3\\"}"')
     expect(flatU).toContain('sp_req POST "$STAGING_API_INVENTORY" "{\\"name\\": \\"smoke-test-seedlot-gone-$TEST_RUN_ID\\", $SP_LOT_V2, \\"source_plant_id\\": \\"$SP_P3\\"}"')
     expect(flatU).toContain(`sp_req PATCH "$SP_INV/$SP_GIFT/source-kind" '{"source_kind": "gift"}'`)
     expect(flatU).toContain(`sp_req POST "$SP_INV/$SP_GIFT/seed-stage" '{"stage": "stored"}'`)
+    expect(flatU).toContain('sp_req PUT "$SP_INV/$SP_GIFT" "{\\"name\\": \\"smoke-test-seedlot-gift-$TEST_RUN_ID\\", $SP_LOT_V2, \\"seed_stage\\": null}"\nSP_WRITE="$SP_CODE"; sp_req GET "$SP_INV/$SP_GIFT"\nsp_check "u24-stage-ignored-by-wide-put" "$SP_WRITE $SP_CODE $(sp_jq \'.seed_stage // "null"\')" "200 200 stored" ')
     expect(flatU).toContain('sp_req DELETE "$SP_INV/$SP_GONE"')
     expect(flatU.indexOf('sp_req DELETE "$SP_INV/$SP_GONE"')).toBeLessThan(flatU.indexOf('sp_req GET "$SP_INV/seed-lots-open?plant_id=$SP_P5"'))
     // every row the stretch makes is named so the workflow's sweep matches it

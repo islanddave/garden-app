@@ -1413,7 +1413,9 @@ else
       #        That PUT and U29's are the lot page's own body: since this release every count save from the client
       #        carries what the page loaded in three keys (expected_seed_count, expected_seed_count_estimated,
       #        expected_seed_weight_g), flag on or off. Here all three are null: the lot was never counted or
-      #        weighed, and the write must still go through (200) with them compared.
+      #        weighed, and the write must still go through (200) with them compared. Last, the gift lot, stored
+      #        through POST /seed-stage, is sent back through the wide PUT with seed_stage: null → 200, and its GET
+      #        still reads stored: that verb no longer writes the stage (BUG-SEEDSTAGEHEADSHIP-001).
       #   U25) more seed from a plant ALREADY in the lot. The body's set is built from the real reply of GET
       #        /api/plants/P3/seed-lots ([P3] + that row's other_parents), so a 409 here is a FAIL. Read back: the
       #        count up by 30, and the lot's plants, cache, created_at and year_harvested as they were. Then the
@@ -1451,9 +1453,9 @@ else
       #     block's first 14 (P2, P1's variety and its read, U0's 11): at most 21;
       #   the mint between U0 and U1: 14 (U1 to U6, then P2's DELETE);
       #   the mint before U7: 35 (U7 to U21);
-      #   the mint before U24: 37 (U24 to U30 and their three DELETEs, then U22, P3's and P4's DELETEs, and P1's variety cleared and read).
-      # 100 requests in all. Measured on the staging run of dev 1564c564 (2026-10-05): 0.2 to 0.5 s a request, so
-      # the longest stretch, the last, is 8 to 19 s of its token's 60. All three psql reads come after the last
+      #   the mint before U24: 39 (U24 to U30 and their three DELETEs, then U22, P3's and P4's DELETEs, and P1's variety cleared and read).
+      # 102 requests in all. Measured on the staging run of dev 1564c564 (2026-10-05): 0.2 to 0.5 s a request, so
+      # the longest stretch, the last, is 8 to 20 s of its token's 60. All three psql reads come after the last
       # request, so no request that needs a token waits behind a database round trip. H mints its own. A token
       # that did run out would show as 401s and FAIL lines, never as a pass.
       # NEEDS migrations/v5-seedmultiparent-001, v5-varietyblend-001, v5-seedplantcount-001,
@@ -1784,7 +1786,7 @@ else
                 fi
 
                 # ── U24 to U30) release 3: seed put INTO a lot that already exists ──
-                # The block's third mint: everything from here to P1's variety being cleared rides it (37 requests).
+                # The block's third mint: everything from here to P1's variety being cleared rides it (39 requests).
                 CLERK_JWT=$(mint_session_token)
                 sp_uuid() { local u; u=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid); echo "$u" | tr 'A-Z' 'a-z'; }
                 # sp_add_body KEY PLANT EXPECTED [EXTRA] → the body of POST /:id/seed-additions: the four required
@@ -1826,6 +1828,12 @@ else
                   # The mix lot's own row, kept for U26: its plants, as the sheet would read them.
                   SP_OPEN_SET=$(sp_jqx "$SP_MIXLOT" '[.open_lots[]? | select(.id == $x)][0].source_plants // [] | map(.id)')
                   sp_check "u24-open-lots" "$SP_CODE $SP_SEEN|$(sp_jqx "$SP_MIXLOT" '[.open_lots[]? | select(.id == $x)][0] | (.is_member | tostring) + "," + (.same_variety | tostring)')" "200 true,true,false,false|false,true" "GET /seed-lots-open?plant_id=P5; whether it lists the mix lot, the one-parent lot, the gift lot, the deleted lot | the mix lot's is_member,same_variety"
+                  # The gift lot's stage has one writer, the POST above (BUG-SEEDSTAGEHEADSHIP-001). The wide PUT
+                  # is sent the lot as it was created plus seed_stage: null, the key an installed bundle still
+                  # echoes: it answers 200 and the lot is still stored. A Lambda that writes the key reads null.
+                  sp_req PUT "$SP_INV/$SP_GIFT" "{\"name\": \"smoke-test-seedlot-gift-$TEST_RUN_ID\", $SP_LOT_V2, \"seed_stage\": null}"
+                  SP_WRITE="$SP_CODE"; sp_req GET "$SP_INV/$SP_GIFT"
+                  sp_check "u24-stage-ignored-by-wide-put" "$SP_WRITE $SP_CODE $(sp_jq '.seed_stage // "null"')" "200 200 stored" "PUT /api/inventory-items/:id on the gift lot with its own fields and seed_stage: null; its status, then the GET: seed_stage"
 
                   # ── U25) more seed from P3, which is already in the lot ──
                   sp_req GET "${STAGING_API_PLANTS%/}/api/plants/$SP_P3/seed-lots"
