@@ -753,8 +753,9 @@ describe('listRowPutBody — the strip list, and its agreement with the handler'
     expect(hm, 'SEED_ROW_ECHO_KEYS not found in useInventory.js — renamed, moved, or reformatted').toBeTruthy()
     const theirs = [...hm[1].matchAll(/'([^']*)'/g)].map(x => x[1])
     expect(theirs.filter(k => !ours.includes(k)), 'stripped on the lot page but not on this one').toEqual([])
-    // The lot page's stage strip is its own one-key list (removed after the merge, like the measure).
-    expect(hook).toMatch(/\bSEED_STAGE_KEYS\s*=\s*\['seed_stage'\]/)
+    // The lot page's stage strip is its own list, the stage and its twin the process (removed after
+    // the merge, like the measure).
+    expect(hook).toMatch(/\bSEED_STAGE_KEYS\s*=\s*\['seed_stage', 'seed_process'\]/)
     for (const k of ['source_id', 'acquired_from_source_id', 'year_harvested', 'variety_id']) {
       expect(theirs, `${k} must not be in the lot page's unconditional list`).not.toContain(k)
     }

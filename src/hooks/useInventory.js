@@ -26,7 +26,7 @@ const TOAST_MS = 5000
 // Written only through PUT /api/inventory-items/:id/seed-measure; see updateItem.
 const SEED_MEASURE_KEYS = ['seed_count', 'seed_weight_g', 'seed_count_estimated']
 // Written only through POST /api/inventory-items/:id/seed-stage; see updateItem.
-const SEED_STAGE_KEYS = ['seed_stage']
+const SEED_STAGE_KEYS = ['seed_stage', 'seed_process']
 // Never echoed from the fetched list row into the wide PUT; see updateItem. `variety_id` joins them
 // only while the row is a seeds row and stays one.
 const SEED_ROW_ECHO_KEYS = [
@@ -163,6 +163,9 @@ export function useInventory() {
     // a card lost its "N days" and a ferment its overdue warning. The handler ignores the key now;
     // not sending it is the half that holds on a Lambda that has not been deployed yet. Removed
     // AFTER the merge, like the measure: no caller of this function sets a stage.
+    // `seed_process` is its twin and goes with it: the same stale row carries it, both of its
+    // writers are on POST /:id/seed-stage, and the wide PUT still assigns it by presence, so an
+    // echoed old value put a lot's process back (the card lost " · wet process") with a 200.
     for (const k of SEED_STAGE_KEYS) delete fullPayload[k]
     try {
       const updated = await fetch('/api/inventory-items/' + id, {

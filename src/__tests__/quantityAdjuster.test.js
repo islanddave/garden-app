@@ -65,19 +65,19 @@ describe('createQuantityAdjuster against a non-useInventory store', () => {
   // BUG-SEEDSTAGEHEADSHIP-001 — POST /:id/seed-stage is the stage's only writer. The default body
   // is the row as the host's list holds it, which is as old as that list.
   it('the default body is the row with the new value, and never the lot\'s stage', async () => {
-    const store = makeStore([{ id: 'a', type: 'consumable', name: 'Sugar Baby saved 2026', quantity_on_hand: 1, seed_stage: 'drying', source_id: 's1' }])
+    const store = makeStore([{ id: 'a', type: 'consumable', name: 'Sugar Baby saved 2026', quantity_on_hand: 1, seed_stage: 'drying', seed_process: 'wet', source_id: 's1' }])
     const fetch = vi.fn().mockResolvedValue({})
     await createQuantityAdjuster({ fetch, ...store, showToast: vi.fn() })('a', +1)
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(fetch.mock.calls[0][0]).toBe('/api/inventory-items/a')
-    // Exact: everything else on the row rides, the stage is the one key that does not.
+    // Exact: everything else on the row rides, the stage and the process are the keys that do not.
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
       id: 'a', type: 'consumable', name: 'Sugar Baby saved 2026', quantity_on_hand: 2, source_id: 's1',
     })
     // A copy is what loses the key. The host's row keeps its stage.
-    const row = { a: 1, q: 1, seed_stage: 'drying' }
+    const row = { a: 1, q: 1, seed_stage: 'drying', seed_process: 'wet' }
     expect(wideBody(row, 'q', 2)).toEqual({ a: 1, q: 2 })
-    expect(row).toEqual({ a: 1, q: 1, seed_stage: 'drying' })
+    expect(row).toEqual({ a: 1, q: 1, seed_stage: 'drying', seed_process: 'wet' })
   })
 
   it('BUG-INVPUTREORDER-001: an older response landing LAST does not rewind the row', async () => {

@@ -257,12 +257,12 @@ describe('useInventory — updateItem does not echo a seed lot\'s narrow-route k
     seed_parent_plant_count: 4, seed_count: 40, seed_weight_g: 1.2, seed_count_estimated: true,
     source_id: 'src-row', acquired_from_source_id: 'src-row-2', year_harvested: 1986,
     // The stage as it stood when the list loaded (BUG-SEEDSTAGEHEADSHIP-001).
-    seed_stage: 'drying',
+    seed_stage: 'drying', seed_process: 'wet',
   }
   const ECHO = ['source_plant_id', 'source_plant_ids', 'source_plants', 'source_kind',
                 'seed_parent_plant_count', 'variety_rank',
                 'seed_count', 'seed_weight_g', 'seed_count_estimated',
-                'seed_stage']
+                'seed_stage', 'seed_process']
 
   async function put(row, payload) {
     fetchSpy.mockResolvedValueOnce(row ? [row] : [])
@@ -329,6 +329,8 @@ describe('useInventory — updateItem does not echo a seed lot\'s narrow-route k
     expect(LOT.seed_stage).toBe('drying')
     const body = await put(LOT, { name: 'Renamed', notes: 'moved to the cool shelf' })
     expect(Object.prototype.hasOwnProperty.call(body, 'seed_stage')).toBe(false)
+    expect(LOT.seed_process).toBe('wet')
+    expect(Object.prototype.hasOwnProperty.call(body, 'seed_process')).toBe(false)
     // Paired positive: the body is the merged row, with the edit in it.
     expect(body).toMatchObject({ id: 'lot-1', name: 'Renamed', notes: 'moved to the cool shelf', category: 'seeds' })
   })
@@ -337,6 +339,7 @@ describe('useInventory — updateItem does not echo a seed lot\'s narrow-route k
     // A null is how the old clear was spelled; it must not ride either.
     expect(await put(LOT, { seed_stage: 'stored' })).not.toHaveProperty('seed_stage')
     expect(await put(LOT, { seed_stage: null })).not.toHaveProperty('seed_stage')
+    expect(await put(LOT, { seed_process: 'dry' })).not.toHaveProperty('seed_process')
     // …and with no row in the list (a deep link), where there is no merge at all.
     expect(await put(null, { name: 'X', seed_stage: 'stored' })).toEqual({ name: 'X' })
   })
@@ -364,7 +367,7 @@ describe('useInventory — adjustQuantity', () => {
   // BUG-SEEDSTAGEHEADSHIP-001 — the − / + tap round-trips the list row, which carries the lot's
   // stage as it stood when the list loaded. The tap must not send it back.
   it('a quantity tap on a staged seed lot sends the new quantity and the row, never the stage', async () => {
-    const staged = { ...SAMPLE_CONSUMABLE, seed_stage: 'drying' }
+    const staged = { ...SAMPLE_CONSUMABLE, seed_stage: 'drying', seed_process: 'wet' }
     fetchSpy.mockResolvedValueOnce([staged])
     const { result } = renderHook(() => useInventory())
     await waitFor(() => expect(result.current.loading).toBe(false))
@@ -375,6 +378,7 @@ describe('useInventory — adjustQuantity', () => {
     expect(puts).toHaveLength(1)
     const body = JSON.parse(puts[0][1].body)
     expect(Object.prototype.hasOwnProperty.call(body, 'seed_stage')).toBe(false)
+    expect(Object.prototype.hasOwnProperty.call(body, 'seed_process')).toBe(false)
     // Paired positive: it is the row that went, with the new count.
     expect(body).toMatchObject({ id: 'item-1', name: 'Test Seeds', category: 'seeds', quantity_on_hand: 11 })
     // The reply is the lot's real stage and the list takes it.
