@@ -31,6 +31,12 @@
 // What has gone out rides in the draft as `sent`; its print is of what was CHOSEN (the When chip, not the day
 // it came to). THE STUB of a replayed sitting is built from the server's jars, never from the form.
 //
+// A REPLAYED SITTING WITH NO JARS IS GONE (QA I-4). The route finds a sitting by its key and answers with its
+// LIVE jars; it does not look for an Undo. A sitting is never written with fewer than one jar, so `replayed`
+// with none is certain — that put-up was undone, or its jars were removed — whatever went out under the key.
+// It is not a put-up: nothing is written, the host is not told one, the sheet says so (PUT_UP_REPLAY_GONE),
+// the batch behind re-reads, and the stored draft ends so the sheet opened next can enter it again.
+//
 // <Sheet armsBack>, size full, busy while writing; the draft (kitchen/sheetDraft.js, sheet 'putup',
 // keyed per person per batch) survives Back; confirmOnDirty off; the reload gate is held while dirty or
 // writing. Completion is shown IN PLACE by the host (onDone hands it the stub words), never a toast.
@@ -72,6 +78,8 @@ const EMPTY_SITTING = { lines: [], madeG: '', mashG: '', nextTime: '' }
 // Said when an earlier tap made the sitting and another body has gone out under its key since. Which one
 // landed is not known here, so it never says the change is missing: only that this tap wrote nothing.
 export const PUT_UP_REPLAY_NOT_ON_IT = 'This is already put up — an earlier tap went through. This one changed nothing on it. Close this and open the batch to see what was put up.'
+// Said when the sitting an earlier tap made has no jar left: undone, or its jars removed — which is not known.
+export const PUT_UP_REPLAY_GONE = 'That put-up is not in the Pantry any more — it was undone or removed since. This tap changed nothing. To enter it again, close this and open Put it up from the batch.'
 
 // What the preview says when Raw or In oil is what took the date away (Put-Up R2a, amendment D7; ruling
 // Df-3 = F-3). THE ONE COPY on this surface: the door (pantry/) holds its own and a test binds the two, so
@@ -625,20 +633,23 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
     setSent(sentNow)
     try {
       const answer = await fetch(`/api/kitchen-batches/${batch.id}/put-up`, { method: 'POST', body: JSON.stringify(res.body) })
+      const listed = Array.isArray(answer?.jars) ? answer.jars : (Array.isArray(answer?.outputs) ? answer.outputs : null)
+      const jars = listed ?? []
+      // A replay that LISTS its jars and has none: that put-up is gone (undone, or its jars removed).
+      const gone = answer?.replayed === true && listed != null && listed.length === 0
       // No route puts a changed sitting onto the one an earlier tap made, so it is never this sheet's to
       // write (`mine: false`): a replay with another body out under the key is refused, and the key KEPT.
-      if (afterReplay(answer, sentNow, print, { mine: false }) === 'stale') {
+      if (gone || afterReplay(answer, sentNow, print, { mine: false }) === 'stale') {
         writingRef.current = false
         setSaving(false)
         setSpent(true)
-        setErr(PUT_UP_REPLAY_NOT_ON_IT)
+        setErr(gone ? PUT_UP_REPLAY_GONE : PUT_UP_REPLAY_NOT_ON_IT)
         setFailedSeq(s => s + 1)
         onChanged?.()
         return
       }
       doneRef.current = true
       clearSheetDraft(draftKey)
-      const jars = Array.isArray(answer?.jars) ? answer.jars : (Array.isArray(answer?.outputs) ? answer.outputs : [])
       // A replay is the sitting an earlier tap made: its stub is the server's jars. Otherwise the sitting was
       // made from this very body, and the form's rows are it (in the order he entered them).
       const stub = completionStub({ batch, rows: answer?.replayed === true ? sittingRows(jars) : rows, jars, now: nowDate })

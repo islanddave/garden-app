@@ -27,7 +27,7 @@ vi.mock('../lib/api.js', () => ({
 const auth = { user: { id: 'user_dave' } }
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth }))
 
-import PutItUpSheet, { isPutItUpDraft, PUT_UP_REPLAY_NOT_ON_IT } from '../components/putup/PutItUpSheet.jsx'
+import PutItUpSheet, { isPutItUpDraft, PUT_UP_REPLAY_NOT_ON_IT, PUT_UP_REPLAY_GONE } from '../components/putup/PutItUpSheet.jsx'
 import { completionStub, sittingRows, newRow } from '../components/putup/putItUp.js'
 import { clearReloadBlocks } from '../lib/reloadGate.js'
 
@@ -157,7 +157,12 @@ describe('the words, and the stub from what the server answered', () => {
       .toBe('Megatron mash — put up · 5 × 5 oz woozy · Fridge · Megatron reaper: 2 × 8 oz woozy · Chest Freezer 1 · 3 containers')
     expect(sittingRows([])).toEqual([])
     expect(sittingRows(null)).toEqual([])
-    expect(completionStub({ batch: { label: 'Megatron mash' }, rows: sittingRows([]), jars: [], now: new Date(NOW) })).toBe('Megatron mash — put up')
+    // A replay with NO jars is not a sitting to make a stub of (QA I-4): the sheet refuses it — the cases below.
+  })
+  it('QA I-4 — a put-up that is gone says so: not in the Pantry any more, this tap changed nothing, how to enter it again — and never "already put up"', () => {
+    expect(PUT_UP_REPLAY_GONE).toBe('That put-up is not in the Pantry any more — it was undone or removed since. This tap changed nothing. To enter it again, close this and open Put it up from the batch.')
+    expect(PUT_UP_REPLAY_GONE).not.toMatch(BANNED)
+    expect(PUT_UP_REPLAY_GONE).not.toMatch(/already put up|open the batch to see/i)
   })
   it('a draft carries what went out under its key — optional, so a draft stored before this still restores', () => {
     const base = { key: 'k', chip: 'today', estimate: null, pickedDate: '', method: 'hot_sauce', rows: [newRow()], sitting: { lines: [], madeG: '', nextTime: '' } }
@@ -218,6 +223,65 @@ describe('Put it up — a replayed sitting', () => {
     expect(table.finish).toBe(true)
     expect(sheet()).toBeNull()
     expect(stored()).toBeNull()
+  })
+
+  // QA I-4. The route finds a sitting by its key and answers `replayed` with its LIVE jars — it does not look for
+  // an Undo. A sitting always has at least one jar, so a replay with none is certain: it was undone, or its jars
+  // were removed. The sheet used to complete on it ("Megatron mash — put up", and `finish: true` to the host).
+  it('QA I-4 (P1) — put up with its answer lost, that put-up UNDONE, tapped again untouched: NOT a put-up — the sheet stays open and says it is gone, the host is not told, the batch behind re-reads, the stored draft ends; the sheet opened next is a clean one', async () => {
+    const on = watchScrolls()
+    const table = sittingTable()
+    const s = await open()
+    await fillMinimum()
+    await tap('putup-finish'); await said(GENERIC)
+    await waitFor(() => expect(stored()?.data?.sent).toHaveLength(1))
+    table.sitting = { ...table.sitting, jars: [], batch: { ...MASH, closed_at: null } }   // Undo that put-up
+    on.length = 0
+    await tap('putup-finish')
+    await answered(2)
+    await said(PUT_UP_REPLAY_GONE)
+    expect(screen.getByTestId('putup-error').getAttribute('role')).toBe('alert')
+    await waitFor(() => expect(on).toContain(screen.getByTestId('putup-error')))
+    expect(sheet()).toBeTruthy()
+    expect(s.onDone).not.toHaveBeenCalled()
+    expect(s.onChanged).toHaveBeenCalledTimes(1)
+    expect(otherWrites()).toEqual([])
+    await waitFor(() => expect(stored()).toBeNull())
+    await tap('putup-finish')
+    await answered(3)
+    expect(errorText()).toBe(PUT_UP_REPLAY_GONE)                               // refused again under the one key
+    expect(new Set(keys()).size).toBe(1)
+    expect(s.onDone).not.toHaveBeenCalled()
+    await tap('putup-row-0-plus')                                              // … and nothing typed after writes the draft back
+    expect(stored()).toBeNull()
+  })
+
+  it('QA I-4 (P2) — … and with the count changed first: it is said as GONE, never as "already put up"', async () => {
+    const table = sittingTable()
+    const s = await open()
+    await fillMinimum()
+    await tap('putup-finish'); await said(GENERIC)
+    table.sitting = { ...table.sitting, jars: [] }
+    await tap('putup-row-0-plus')
+    await tap('putup-finish')
+    await answered(2)
+    await said(PUT_UP_REPLAY_GONE)
+    expect(s.onDone).not.toHaveBeenCalled()
+    expect(s.onChanged).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(stored()).toBeNull())
+  })
+
+  it('QA I-4 — an answer that is NOT a replay is a put-up whatever it lists (the sitting was made from this very body)', async () => {
+    fetchMock.mockImplementation((path, o = {}) => {
+      if (path === '/api/storage-locations') return Promise.resolve(PLACES)
+      if (/\/put-up$/.test(path) && o.method === 'POST') return Promise.resolve({ stage: { id: 'ksl-1' }, jars: [], inputs: [], batch: MASH })
+      return Promise.resolve(null)
+    })
+    const s = await open()
+    await fillMinimum()
+    await tap('putup-finish')
+    await waitFor(() => expect(s.onDone).toHaveBeenCalledTimes(1))
+    expect(s.onDone.mock.calls[0][0].stub).toMatch(/^Megatron mash — put up · 1 container · Fridge/)
   })
 
   it('the stub on a replay is built from the SERVER\'s jars, never from the form: a sitting that reads otherwise is said as it reads', async () => {
