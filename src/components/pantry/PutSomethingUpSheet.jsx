@@ -28,6 +28,25 @@
 // the same key is what makes the retry find it). Before Save, one role=status line previews the date it
 // uses and the discard-by with its basis (the shared engine, putItUp.previewDiscard).
 //
+// A REPLAYED ITEM (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js). The key does not change with what
+// is typed, so after a lost answer and a change the item route answers `replayed: true` with the item the
+// FIRST Save made. When that item is THIS sitting's (sent from the door that is open now, made minutes ago,
+// untouched since) the door PATCHes what it holds onto it and completes from the PATCH's answer. When it is
+// not — a draft restored with `sent` already in it, an older item, one edited since — NOTHING is written: the
+// door says it was saved earlier and this Save changed nothing (replayStaleText) and KEEPS the key, so Save
+// again is refused again and can never add a second item. A What that is now another planting (or none) cannot
+// ride a PATCH: nothing is written and the door says so (replayFixedText); put back, the next Save goes through.
+// A failure of the PATCH never mints a new key, whatever its status — the item exists — and is said as that
+// (replayUnsavedText). Each of the three tells the page (`onExists`) so the list behind shows the item, and
+// is brought into view above the pinned Save (it is the last thing in the scroller). Before any of them the
+// door reads the item itself: one that already holds what is on screen is a save, with nothing written
+// (putSomethingUp.js itemHolds). An answered 4xx mints a new key only while nothing else has gone out under
+// this one: the route validates before it looks the key up, so a refusal of a changed body says nothing
+// about an earlier one.
+// What has gone out under the key rides in the draft as `sent`, from the first item Save on; its prints are
+// of what was chosen, not of the date or the searched crop (putSomethingUp.js itemPrint). The put-up route is
+// as it was: a replayed put-up completes from the server's row (plan R2 V2 "Retry key").
+//
 // A SEEDED DOOR (opened with a What: a search's "Put something up: <text> →", a planting's door) is not
 // dirty until something changes: no key, no draft written, no reload held, and a draft already stored is
 // left alone until the first real change replaces it. A stored draft for the SAME seed is restored whole.
@@ -40,14 +59,14 @@ import { T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import { setReloadBlocked } from '../../lib/reloadGate.js'
 import RefusalLine, { refusalOf } from './RefusalLine.jsx'
-import { createPantryItem, ensurePlaceId } from '../../lib/pantryApi.js'
+import { createPantryItem, patchPantryItem, ensurePlaceId } from '../../lib/pantryApi.js'
 import Sheet from '../forms/Sheet.jsx'
 import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome } from '../forms/formStyles.js'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
-import { mintKey } from '../kitchen/idempotencyKey.js'
+import { mintKey, noteSent, afterReplay, whenChoice, answerLost } from '../kitchen/idempotencyKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter, FOOTER_GAP_PX } from '../kitchen/sheetScroll.js'
 import { placeChips, estimateChips, TEXTURE_CHIPS } from '../putup/putItUp.js'
 import NameSearchField from './NameSearchField.jsx'
@@ -63,7 +82,8 @@ import {
   AS_IS, DOOR_TITLE, DOOR_SHEET, METHOD_REQUIRED_TEXT, methodChoices, routeFor, saveLabel, doorWhen,
   previewLine, doorError, jarBody, itemBody, START_BATCH_INSTEAD_TEXT, isPlantingHit, methodSlot,
   doorOptionsLabel, doorFromLabel, doorNotesPlaceholder, whereFromHeading, sizeEcho, sizeTotalError,
-  SIZE_LINK_LABEL, AMOUNT_LINK_LABEL,
+  SIZE_LINK_LABEL, AMOUNT_LINK_LABEL, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText,
+  replayUnsavedText,
 } from './putSomethingUp.js'
 
 const WHEN_CHIPS = [{ id: 'today', label: 'Today' }, { id: 'yesterday', label: 'Yesterday' }, { id: 'earlier', label: 'Earlier…' }]
@@ -93,6 +113,7 @@ export function isDoorDraft(d) {
     && optional(d.amountValue, 'string') && optional(d.amountUnit, 'string')
     && optional(d.sourceKind, 'string') && optional(d.sourceLabel, 'string')
     && optional(d.isRaw, 'boolean') && optional(d.inOil, 'boolean') && optional(d.texture, 'string')
+    && (d.sent == null || Array.isArray(d.sent))
 }
 
 // A stored value outside today's list is read as "none chosen", never shown as a chip nobody can see.
@@ -172,21 +193,31 @@ export function resolveDraftPlace(place, chips) {
   return list.find(c => c.kind === place.kind) ?? null
 }
 
+// `onExists` (optional): the page's re-read, called with the door still open when a Save found its item
+// already in the Pantry and did not (or could not) put the change on it.
 export default function PutSomethingUpSheet({
-  open, onClose, onSaved, initialName = '', initialWhat = null, stockRows = null, onStartBatchInstead = null, now,
+  open, onClose, onSaved, onExists = null, initialName = '', initialWhat = null, stockRows = null, onStartBatchInstead = null, now,
 }) {
   if (!open) return null
-  return <DoorOpen onClose={onClose} onSaved={onSaved} initialName={initialName} initialWhat={initialWhat}
+  return <DoorOpen onClose={onClose} onSaved={onSaved} onExists={onExists} initialName={initialName} initialWhat={initialWhat}
     stockRows={stockRows} onStartBatchInstead={onStartBatchInstead} now={now} />
 }
 
-function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onStartBatchInstead, now }) {
+function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockRows, onStartBatchInstead, now }) {
   const { fetch } = useApiFetch()
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
   const draftKey = useSheetDraftKey(DOOR_SHEET, 'new')
   const [{ initial, seed }] = useState(() => opening({ draftKey, initialWhat, initialName }))
   const openedWithWhat = !!(initialWhat || String(initialName ?? '').trim())
   const [key, setKey] = useState(initial.key)
+  // What has gone out under `key` on the item route (idempotencyKey.js); dropped with the key.
+  const [sent, setSent] = useState(() => (Array.isArray(initial.sent) ? initial.sent.filter(x => typeof x === 'string') : []))
+  // Whether every body under `key` went out from THIS door. A draft restored with `sent` in it was sent from
+  // an earlier one, and is never written onto the item it made; a key minted here is this door's.
+  const mineRef = useRef(sent.length === 0)
+  // The item this door has sent a PATCH to (its id): a PATCH that landed with its answer lost has moved the
+  // item's updated_at, and Save again must still be able to finish it.
+  const patchedRef = useRef(null)
   const [what, setWhat] = useState(initial.what)
   const [place, setPlace] = useState(initial.place)
   const [method, setMethod] = useState(initial.method)
@@ -228,6 +259,9 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
   const whatRef = useRef(null)
   const whenRef = useRef(null)
   const slotRef = useRef(null)
+  const errRef = useRef(null)
+  // Counts the replay refusals (saved earlier / the planting / the change did not save): each is brought into view.
+  const [refusedSeq, setRefusedSeq] = useState(0)
   // Set by the preview's Change: once the options are open, focus goes to the When chips it opened them for.
   const [toWhen, setToWhen] = useState(false)
   // A field a tap or a refusal sends focus to, by test id, once it is on screen.
@@ -293,10 +327,11 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
       writeSheetDraft(draftKey, DOOR_SHEET, {
         key, what, place, method, count, whenChip, estimate, pickedDate, discard, notes,
         sizeValue, sizeUnit, amountValue, amountUnit, sourceKind, sourceLabel, isRaw, inOil, texture,
+        ...(sent.length ? { sent } : null),
       })
     } else if (ownsDraftRef.current) clearSheetDraft(draftKey)
   }, [draftKey, dirty, key, what, place, method, count, whenChip, estimate, pickedDate, discard, notes,
-    sizeValue, sizeUnit, amountValue, amountUnit, sourceKind, sourceLabel, isRaw, inOil, texture])
+    sizeValue, sizeUnit, amountValue, amountUnit, sourceKind, sourceLabel, isRaw, inOil, texture, sent])
 
   const holdReload = dirty || saving
   const gateKey = `put-something-up:${useId()}`
@@ -334,6 +369,16 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
     if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
     scrollClearOfFooter(el, footerRef.current)
   }, [slotSeq])
+
+  // A replay refusal is the last line of the scroller and Save is pinned over its end: without this the
+  // button comes back and nothing on screen has changed. The nearest edge, then clear of the footer.
+  useEffect(() => {
+    if (!refusedSeq) return
+    const el = errRef.current
+    if (!el) return
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
+    scrollClearOfFooter(el, footerRef.current)
+  }, [refusedSeq])
 
   // THE PINNED SAVE AND A FOCUSED FIELD (sheetScroll.js): every field is kept clear of the footer, on focus
   // and again when the keyboard resizes the viewport. The size and the amount are cleared as a WHOLE block
@@ -418,6 +463,8 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
     if (!key) setKey(useKey)
     writingRef.current = true
     setSaving(true); setErr(null); setField(null)
+    // The item a replay answered with, once it is being written onto: a failure after that is not a new key.
+    let onRow = null
     try {
       let saved
       if (route === 'jar') {
@@ -427,8 +474,34 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
           isRaw, inOil, size, source, texture,
         })) })
       } else {
-        const r = await createPantryItem(fetch, itemBody({ key: useKey, what, place, when: w.when, discard, notes, amount, source }))
+        const body = itemBody({ key: useKey, what, place, when: w.when, discard, notes, amount, source })
+        const print = itemPrint(body, what, whenChoice(whenChip, estimate, pickedDate))
+        const sentNow = noteSent(sent, print)
+        setSent(sentNow)
+        const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
+        const todo = afterReplay(r, sentNow, print, {
+          row: saved, mine: mineRef.current, updatedHere: saved?.id != null && patchedRef.current === saved.id,
+          fixed: plantingDiffers(body, saved), holds: itemHolds(body, saved, what),
+        })
+        if (todo === 'stale' || todo === 'fixed') {
+          // Nothing is written and the key is KEPT: Save again is this refusal again, never a second item.
+          writingRef.current = false
+          setSaving(false)
+          if (todo === 'stale') { setErr(replayStaleText(saved)); setField(null) }
+          else { setErr(replayFixedText(saved)); setField('what') }
+          setRefusedSeq(s => s + 1)
+          onExists?.()
+          return
+        }
+        if (todo === 'update') {
+          onRow = saved
+          if (saved?.id == null) throw new Error('replayed without an item')
+          const placeId = await ensurePlaceId(fetch, place)
+          patchedRef.current = saved.id
+          const u = await patchPantryItem(fetch, saved.id, itemPatchOf(body, placeId, saved))
+          saved = u?.item ?? u
+        }
       }
       savedRef.current = true
       clearSheetDraft(draftKey)
@@ -438,13 +511,27 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
     } catch (ex) {
       writingRef.current = false
       setSaving(false)
+      if (onRow) {
+        // The item is in the Pantry; it is the change that did not go through. Said as that, the page told,
+        // and the key kept whatever the status.
+        const why = refusalOf(ex, '')
+        setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: answerLost(ex) }), refresh: why.refresh })
+        setRefusedSeq(s => s + 1)
+        onExists?.()
+        return
+      }
       // An ANSWERED 4xx wrote nothing, so the next attempt is a new request and gets a new key. Anything else
       // (no status, 0, a 5xx) may have landed with its answer lost: the key is kept, the retry replays it.
-      if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500) setKey(mintKey())
+      // And it is kept after a 4xx too once an item Save has gone out under it before (`sent`): that one may
+      // have landed, and the route refuses a body before it looks the key up.
+      if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500 && !(route === 'item' && sent.length)) {
+        mineRef.current = true; patchedRef.current = null
+        setKey(mintKey()); setSent([])
+      }
       setErr(refusalOf(ex, "Couldn't save it — nothing was lost. Try again."))
     }
-  }, [amountUnit, amountValue, discard, draftKey, fetch, inOil, isRaw, key, method, n, notes, onSaved, place, planting,
-    sizeUnit, sizeValue, sourceKind, sourceLabel, texture, w, what])
+  }, [amountUnit, amountValue, discard, draftKey, estimate, fetch, inOil, isRaw, key, method, n, notes, onExists, onSaved, pickedDate,
+    place, planting, sent, sizeUnit, sizeValue, sourceKind, sourceLabel, texture, w, whenChip, what])
 
   const name = String(what?.name ?? '').trim() || 'this'
   return (
@@ -585,7 +672,7 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onSta
             </button>
           </div>
         )}
-        {field !== 'method' && <RefusalLine err={err} testId="door-error" />}
+        {field !== 'method' && <RefusalLine err={err} testId="door-error" lineRef={errRef} />}
       </div>
       <div ref={footerRef} data-testid="door-footer"
         style={{ position: 'sticky', bottom: 0, background: P.white, padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>

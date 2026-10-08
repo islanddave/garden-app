@@ -18,6 +18,19 @@
 //   · Next time… — optional; the jars' own "Next time…" lines are copied in by the server as well, and
 //     shown here as they read everywhere else (nextTimeWords).
 // Saving is ONE write (all or nothing); the key is minted when the sheet opens and reused on every retry.
+// A REPLAYED SAVE (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js): a Save whose answer was lost, a
+// change, and Save again is answered with the batch the FIRST one made. A changed name or kind goes onto it
+// through the batch's own PUT and the sheet closes as saved — when the batch is this sitting's (made minutes
+// ago, untouched since). Anything else (the start, what went in, the jars, how many, next time) has no one
+// route that can carry it, and a batch that is not this sitting's is not written onto: nothing is written,
+// the sheet stays open and says the batch is already saved and this Save changed nothing
+// (REPLAY_NOT_ON_IT), and the page behind is told. A PUT that fails is said as that (REPLAY_CHANGE_UNSAVED;
+// REPLAY_CHANGE_MAYBE when no answer came back), and the page is told then too. The key is the sheet's one
+// key throughout: a refused Save is refused again, never a second batch. A batch that already has the name
+// and kind on screen (and no other part differs) is a save, with nothing written. Each of the three lines is
+// brought into view above the pinned Save.
+// THE PRINT's start is what he CHOSE: "the jars' own" until he changes it (the date that came to moves when
+// the jar list loads), then the chip he picked (Today is the instant, a new one at every tap).
 // THE UNADDED LINE (Put-Up UX pass R1, D2). A name typed into the adder and not added was dropped by Save
 // without a word. Now Save stops, puts the cursor back in the adder and says, there:
 // "Add “garlic” first — or clear it." Either act lets the next Save through. The line sits directly ABOVE
@@ -39,7 +52,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, optionalMarkChrome, inputChrome } from '../forms/formStyles.js'
 import { SheetStartChips, resolveSheetStart } from '../kitchen/StartChips.jsx'
 import KindChips, { kindBody } from '../kitchen/KindChips.jsx'
-import { mintKey } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost, sameFact } from '../kitchen/idempotencyKey.js'
 import { scrollClearOfFooter, useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
 import LineAdder, { addFirstWords } from './LineAdder.jsx'
 import LikeBatchPicker from './LikeBatchPicker.jsx'
@@ -52,6 +65,13 @@ import {
 
 export { canSayHowItWasMade }
 export const HOW_SHEET_TITLE = 'How it was made'
+// The parts of the from-jars body the batch's own PUT cannot carry (it carries the name and the kind).
+const FROM_JARS_FIXED = ['started', 'inputs', 'jar_ids', 'made_count', 'next_time']
+// Which Save made the batch is not known here (the first, or a later one that held the change), so neither
+// sentence says the change is missing: only that this Save wrote nothing, or that the rename did not go through.
+export const REPLAY_NOT_ON_IT = 'This batch is already saved — an earlier Save went through. This Save changed nothing on it. If your last change is not there, close this and open the batch to make it there.'
+export const REPLAY_CHANGE_UNSAVED = 'This batch is already saved — the first Save went through. The change to its name or kind did not save. Try again, or close this and make it on the batch.'
+export const REPLAY_CHANGE_MAYBE = 'This batch is already saved — the first Save went through. The change to its name or kind may not have saved. Try again, or close this and check it on the batch.'
 
 const link = {
   display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, background: 'none', border: 'none',
@@ -71,6 +91,8 @@ export default function HowItWasMadeSheet({ jar, open, onClose, onSaved }) {
 function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   const { fetch } = useApiFetch()
   const [key] = useState(() => mintKey())
+  const sentRef = useRef([])                           // what has gone out under `key` (idempotencyKey.js)
+  const putRef = useRef(null)                          // the batch this sheet has sent its PUT to (its id)
   const [label, setLabel] = useState(() => jarName(jar))
   const [rows, setRows] = useState(null)
   // The jar's full record from the put-up list once it loads (a Pantry row carries no date words of its
@@ -97,6 +119,8 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   const writingRef = useRef(false)
   const linesRef = useRef(null)
   const stopLineRef = useRef(null)
+  const errRef = useRef(null)
+  const [refusedSeq, setRefusedSeq] = useState(0)     // counts the replay refusals: each is brought into view
   // The focused field is kept clear of the pinned Save (see sheetScroll.js).
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
@@ -166,13 +190,46 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
     if (kindPart.kind_other) res.body.kind_other = kindPart.kind_other
     writingRef.current = true
     setSaving(true); setErr(null)
+    const print = sendPrint({ ...res.body, started: changingStart ? whenChoice(chip, earlier, pickedDate) : 'jars' }, FROM_JARS_FIXED)
+    const sent = noteSent(sentRef.current, print)
+    sentRef.current = sent
+    // The batch a replay answered with, once it is being written onto.
+    let onRow = null
     try {
-      const batch = await fetch(FROM_JARS_PATH, { method: 'POST', body: JSON.stringify(res.body) })
+      let batch = await fetch(FROM_JARS_PATH, { method: 'POST', body: JSON.stringify(res.body) })
+      const todo = afterReplay(batch, sent, print, {
+        row: batch, updatedHere: batch?.id != null && putRef.current === batch.id,
+        // What the PUT could carry is all the batch has to hold; a difference in any other part is 'fixed'.
+        holds: sameFact(batch?.label, res.body.label) && sameFact(batch?.kind, res.body.kind) && sameFact(batch?.kind_other, res.body.kind_other),
+      })
+      if (todo === 'fixed' || todo === 'stale') {
+        writingRef.current = false
+        setSaving(false)
+        setErr(REPLAY_NOT_ON_IT)
+        setRefusedSeq(s => s + 1)
+        onSaved?.(batch)
+        return
+      }
+      if (todo === 'update') {
+        onRow = batch
+        if (batch?.id == null) throw new Error('replayed without a batch')
+        putRef.current = batch.id
+        const updated = await fetch(`/api/kitchen-batches/${batch.id}`, {
+          method: 'PUT', body: JSON.stringify({ label: res.body.label, kind: res.body.kind ?? null, kind_other: res.body.kind_other ?? null }),
+        })
+        batch = { ...batch, ...updated }
+      }
       onClose?.()
       onSaved?.(batch)
     } catch (e) {
       writingRef.current = false
       setSaving(false)
+      if (onRow?.id != null) {
+        setErr(answerLost(e) ? REPLAY_CHANGE_MAYBE : REPLAY_CHANGE_UNSAVED)
+        setRefusedSeq(s => s + 1)
+        onSaved?.(onRow)
+        return
+      }
       setErr(fromJarsRefusal(e))
     }
   }, [changingStart, chip, chosenJars, earlier, fetch, fixedStart, key, kind, kindOther, label, labelId, lines, made, madeId, nextTime, onClose, onSaved, pending, pickedDate])
@@ -188,6 +245,14 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
     stopLineRef.current?.scrollIntoView?.({ block: 'nearest' })
     scrollClearOfFooter(name, footerRef.current)
   }, [stops])
+
+  useEffect(() => {
+    if (!refusedSeq) return
+    const el = errRef.current
+    if (!el) return
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
+    scrollClearOfFooter(el, footerRef.current)
+  }, [refusedSeq])
 
   return (
     <Sheet open onClose={onClose} title={HOW_SHEET_TITLE} size="full" busy={saving} armsBack>
@@ -288,7 +353,7 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
           )}
         </div>
 
-        {err && <div role="alert" data-testid="how-error" style={{ marginBottom: T.space.sm, color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>{err}</div>}
+        {err && <div ref={errRef} role="alert" data-testid="how-error" style={{ marginBottom: T.space.sm, color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>{err}</div>}
       </div>
 
       <div ref={footerRef} data-testid="how-footer" style={{ position: 'sticky', bottom: 0, background: P.white,

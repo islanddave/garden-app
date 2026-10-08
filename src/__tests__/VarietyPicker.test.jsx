@@ -1182,11 +1182,14 @@ describe('VarietyPicker — create-stage identity (GENUSCREATE)', () => {
 
 // ── V5-SEEDMULTIPARENT-001 release 2b: a mix row says it is a mix (UX N-6) ───
 // The mix sorts directly under its first component and starts with the same words. Text, never colour
-// alone; a row with any other rank, or none (a Lambda that does not project it), carries no tag.
+// alone. What makes a row the household's mix is its blend_key (lambda/varieties/blend.js), never its
+// rank: a row with no key (a Lambda that does not project it, or a bought blend ranked 'blend' by
+// v5-varietyhybridflag-001) carries no tag.
 describe('VarietyPicker — "Your mix" tag', () => {
-  const ALASKA = { id: 'n-1', name: 'Alaska Mix', crop_type_slug: 'pepper', variety_rank: 'cultivar' }
-  const MIX = { id: 'n-2', name: 'Alaska Mix + Jewel Mix Nasturtium', crop_type_slug: 'pepper', variety_rank: 'blend' }
+  const ALASKA = { id: 'n-1', name: 'Alaska Mix', crop_type_slug: 'pepper', variety_rank: 'cultivar', blend_key: null }
+  const MIX = { id: 'n-2', name: 'Alaska Mix + Jewel Mix Nasturtium', crop_type_slug: 'pepper', variety_rank: 'blend', blend_key: 'n-1,n-9' }
   const OLD = { id: 'n-3', name: 'Empress of India', crop_type_slug: 'pepper' }
+  const BOUGHT = { id: 'n-4', name: 'Cayenne Blend', crop_type_slug: 'pepper', variety_rank: 'blend', blend_key: null }
 
   it('tags the blend row beside its crop tag, and only that row', async () => {
     fetchSpy.mockImplementation((path) => Promise.resolve(path === '/api/varieties/crop-types'
@@ -1203,5 +1206,25 @@ describe('VarietyPicker — "Your mix" tag', () => {
     // Beside the crop tag, in the same line, and not upper-cased by the crop tag's own transform.
     expect(tag.previousElementSibling.getAttribute('title')).toBe('Crop type')
     expect(tag.style.textTransform).toBe('none')
+  })
+
+  // BUG-YOURMIXBOUGHTBLEND-001 — the rank alone said "Your mix" on a vendor's blend.
+  it('a bought blend (rank blend, no blend_key) carries no tag', async () => {
+    fetchSpy.mockImplementation((path) => Promise.resolve(path === '/api/varieties/crop-types'
+      ? [{ slug: 'pepper', display_name: 'Pepper', default_lifecycle: 'tender_perennial', category: 'vegetable', sort_order: 0 }]
+      : [BOUGHT, MIX]))
+    setup()
+    fireEvent.focus(screen.getByRole('combobox'))
+    // The crop tag arrives last, so the bought row is fully drawn before it is judged.
+    const bought = await waitFor(() => {
+      const found = screen.getAllByRole('option').find((o) => o.textContent.includes(BOUGHT.name))
+      expect(found.querySelector('[title="Crop type"]')).toBeTruthy()
+      return found
+    })
+    expect(bought.querySelector('[data-testid="variety-your-mix"]')).toBeNull()
+    expect(bought.textContent).not.toContain('Your mix')
+    const tags = screen.getAllByTestId('variety-your-mix')
+    expect(tags).toHaveLength(1)
+    expect(tags[0].closest('[role="option"]').textContent).toContain(MIX.name)
   })
 })

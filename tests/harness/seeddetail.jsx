@@ -294,7 +294,11 @@ window.fetch = (url, opts = {}, ...rest) => {
         previous: { variety_id: lot.variety_id, variety_name: lot.variety_name, variety_rank: lot.variety_rank, name: lot.name } } } : {}),
     })
   }
+  // V5-SEEDLOTADDENTRY-001: an add on this page reads the planting's entries, then writes one. Both are
+  // answered as the server does, so the unstubbed list stays a list of requests nobody planned.
+  if (method === 'POST' && /\/api\/events(\?|$)/.test(u)) return hit('event-post', { id: 'ev-harness', ...JSON.parse(opts.body || '{}') }, 201)
   if (method !== 'GET') return hit('write', { ok: true })
+  if (/\/api\/events\?/.test(u)) return hit('events', [])
   const stage = u.match(/\/api\/inventory-items\/([^/?]+)\/seed-stage/)
   if (stage) return hit('seed-stage', STAGE_LOG[stage[1]] ?? [])
   const item = u.match(/\/api\/inventory-items\/([^/?]+)(\?|$)/)

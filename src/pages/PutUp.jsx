@@ -934,7 +934,7 @@ export default function PutUp({
         )}
         {doorOpen && (
           <PutSomethingUpSheet open initialName={doorName} stockRows={pantry.rows} onClose={() => setDoorOpen(false)}
-            onSaved={onDoorSaved} onStartBatchInstead={StartBatchSheet ? onStartBatchInstead : undefined} />
+            onSaved={onDoorSaved} onExists={pantry.reload} onStartBatchInstead={StartBatchSheet ? onStartBatchInstead : undefined} />
         )}
         {how?.sheet ?? null}
       </div>

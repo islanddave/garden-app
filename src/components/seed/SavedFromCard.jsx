@@ -21,17 +21,30 @@
 // withdrawn only on LEAVING with the row still struck (see the unmount effect), so Undo never has an
 // entry to restore.
 //
+// AN ADD WRITES THE PLANT ITS ENTRY (V5-SEEDLOTADDENTRY-001; Dave 2026-10-07). The Save seed sheet
+// writes one `seed_saved` entry per parent; a plant added HERE got none, so a plant removed, withdrawn
+// and added back had lost its line for good, and a corrected jar could have a line on no plant. A fresh
+// add (never an Undo, whose entry was never withdrawn) now writes that plant one entry for this jar,
+// dated the day the jar was started, unless it still has a live one. It runs after the set write and
+// is never waited for, with one exception: a later change to THAT plant waits for it, because the
+// server pays an entry's rewards per jar only while its plant is on the jar
+// (lambda/events/seedLotRewards.js). Taking the add back takes the entry it wrote back too.
+//
 // `lot` is the page's item with `name` as the page's NAME FIELD SHOWS IT NOW: the jar is renamed with a
 // re-file only while that name is still the automatic one (rowTitle's test), and a name being typed is
 // left alone. `onLot(patch)` merges the stored answer into the page's item; `onName(name)` moves the
 // page's name field and its baseline, so the page's own Save cannot write the old name back. `notice` is
 // optional: one line the page wants said in this card's help slot (the legacy write's "changed somewhere
 // else", from the moment the set first became readable). Anything this card has to say comes first.
+// `storedName` is the jar's name as the server last confirmed it (at load, after the page's own Save,
+// after a re-file, after a re-read): an entry's note is permanent, so it never quotes a name that is
+// only typed, nor one a save or a change elsewhere has since replaced.
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
 import { useToast } from '../../context/ToastContext.jsx'
 import { P } from '../../lib/constants.js'
+import { toLocalISO, todayLocalISO } from '../../lib/dateLocal.js'
 import { T, inputChrome } from '../forms/formStyles.js'
 import PlantingSelect from '../forms/PlantingSelect.jsx'
 import { parentSetFacts, sourcePlantFromPlanting } from './seedParents.js'
@@ -89,17 +102,48 @@ function automaticYear(varietyName, name) {
   return shown.slice(-4)
 }
 
+// The planting's live entries, ALL of them. The route answers its newest 200 by entry date, and an
+// entry an add writes is dated the jar's start day, so on a busy planting it sits past the first page
+// from the moment it is written (prod 2026-10-08: two plantings over 200, the busiest at 246). The
+// first request is the one this card has always sent (a bare array); only a full page asks for more,
+// by `offset`, which the route answers as { events, has_more }. A failed FIRST read rejects. After
+// that it answers what it has: `complete` is false when a later page failed, came from the offline
+// copy (`fromCache`: such a copy is never the latest, on any page), or the cap was reached with more
+// to read. The withdrawal acts on what was read; the add writes only on a complete list.
+const EVENTS_PAGE = 200
+// 5,000 entries: no planting is near it, and a route that kept answering full pages must not spin.
+const EVENTS_MAX_PAGES = 25
+async function plantEntries(fetch, plantId) {
+  const base = `/api/events?plant_id=${encodeURIComponent(plantId)}&limit=${EVENTS_PAGE}`
+  const first = await fetch(base)
+  const list = (Array.isArray(first) ? first : Array.isArray(first?.events) ? first.events : []).slice()
+  if (first?.[FROM_CACHE] === true) return { list, fromCache: true, complete: false }
+  let more = list.length >= EVENTS_PAGE
+  for (let page = 1; more; page += 1) {
+    if (page >= EVENTS_MAX_PAGES) return { list, fromCache: false, complete: false }
+    let next
+    try {
+      next = await fetch(`${base}&offset=${page * EVENTS_PAGE}`)
+    } catch {
+      return { list, fromCache: false, complete: false }
+    }
+    if (next?.[FROM_CACHE] === true) return { list, fromCache: true, complete: false }
+    const rows = Array.isArray(next?.events) ? next.events : Array.isArray(next) ? next : []
+    list.push(...rows)
+    more = next?.has_more === true && rows.length > 0
+  }
+  return { list, fromCache: false, complete: true }
+}
+
 // O-11 — withdraw a removed plant's `seed_saved` entries for this jar. Fired once, never awaited, every
 // failure silent: the entry links to the jar, which shows the live answer, so a missed withdrawal is a
-// stale line and not a wrong one. The list is the planting's own, capped at 200 by the route; none
-// found is success.
+// stale line and not a wrong one. None found is success.
 function withdrawSeedSaved(fetch, plantId, lotId) {
   Promise.resolve()
-    .then(() => fetch(`/api/events?plant_id=${encodeURIComponent(plantId)}&limit=200`))
-    .then((rows) => {
-      const list = Array.isArray(rows) ? rows : Array.isArray(rows?.events) ? rows.events : []
+    .then(() => plantEntries(fetch, plantId))
+    .then(({ list }) => {
       for (const ev of list) {
-        if (ev?.event_type !== 'seed_saved' || sid(ev?.metadata?.seed_lot_id) !== sid(lotId)) continue
+        if (!isSeedSavedFor(ev, lotId)) continue
         Promise.resolve()
           .then(() => fetch(`/api/events/${ev.id}`, { method: 'DELETE' }))
           .catch(() => {})
@@ -108,7 +152,46 @@ function withdrawSeedSaved(fetch, plantId, lotId) {
     .catch(() => {})
 }
 
-export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice = null }) {
+const isSeedSavedFor = (ev, lotId) =>
+  ev?.event_type === 'seed_saved' && sid(ev?.metadata?.seed_lot_id) === sid(lotId)
+
+// The note on an entry an add from this page writes. Only what stays true: the sheet's own note also
+// states a stage and "No count yet", which a jar met later may have left behind.
+export const addedSeedSavedNote = (lotName) => `Seed lot "${String(lotName ?? '').trim()}".`
+
+// The day the jar was started, as a local date: the day its seed came off the plants, and the date the
+// sheet's entries for it carry. No readable created_at: today.
+export function lotStartDay(lot) {
+  const at = lot?.created_at ? new Date(lot.created_at) : null
+  return at && !Number.isNaN(at.getTime()) ? toLocalISO(at) : todayLocalISO()
+}
+
+// V5-SEEDLOTADDENTRY-001 — the `seed_saved` entry for a plant added from this page. Resolves to the id
+// of the entry it wrote, or null when it wrote none: the plant still has a live one for this jar, the
+// list came from the offline copy (which cannot say, and with no network the write fails anyway), or
+// anything failed (a list that is not `complete` cannot say, whichever page stopped it).
+// Never rejects and says nothing: the plant is on the jar either way. Same list as the withdrawal.
+function writeSeedSaved(fetch, plantId, lotId, day, note) {
+  return Promise.resolve()
+    .then(() => plantEntries(fetch, plantId))
+    .then(({ list, complete }) => {
+      if (!complete) return null
+      if (list.some((ev) => isSeedSavedFor(ev, lotId))) return null
+      return fetch('/api/events', {
+        method: 'POST',
+        body: JSON.stringify({
+          plant_id: plantId,
+          event_type: 'seed_saved',
+          event_date: day,
+          notes: note,
+          metadata: { seed_lot_id: lotId },
+        }),
+      }).then((ev) => ev?.id ?? null)
+    })
+    .catch(() => null)
+}
+
+export default function SavedFromCard({ lot, onLot, onName, storedName = null, notice: pageNotice = null }) {
   const { fetch } = useApiFetch()
   const { show } = useToast()
   const lotId = lot.id
@@ -120,6 +203,8 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
   // state is what the card draws.
   const busyRef = useRef(false)
   const [busy, setBusy] = useState(false)
+  // Plant id -> the entry write an add on this visit started (a promise of its id, or of null).
+  const wroteRef = useRef(new Map())
   // The set the write in flight will leave, drawn at once; null between writes.
   const [pending, setPending] = useState(null)
   // Rows removed on this visit: { plant, index, liveIndex, before, filing, armedAt, confirmed }.
@@ -227,6 +312,11 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
     let sent = false
 
     try {
+      // This plant's own entry write, when an add on this visit started one, settles before the set
+      // moves under it (see the header). It never rejects.
+      const own = wroteRef.current.get(pid)
+      if (own) await own
+
       // ── The filing that rides with this change (O-3) ─────────────────────────────────────────────
       // An Undo of the very act that re-filed the jar goes back to what the server said was there
       // (`previous`), name included when that act renamed it and the field still shows that name.
@@ -310,6 +400,20 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
       else if (exact || fromFiled) setFiled(null)
       setAdding(false)
       if (kind === 'add' && !undo) show({ message: '✓ Saved' })
+
+      // ── The plant's timeline entry (V5-SEEDLOTADDENTRY-001) ──────────────────────────────────────
+      // Only once the server holds the plant on the jar. An add taken back (the "Filed as" line's
+      // Undo: nothing is struck, so leaving would withdraw nothing) takes back the entry it wrote.
+      if (kind === 'add' && !undo && storedIds.has(pid)) {
+        wroteRef.current.set(pid, writeSeedSaved(fetch, plant.id, lotId, lotStartDay(lot),
+          addedSeedSavedNote(refiled?.name ?? storedName ?? lot.name)))
+      } else if (kind === 'remove' && undo && own && !storedIds.has(pid)) {
+        // Kept in the map, settling to null: adding the plant again waits for the entry to be gone
+        // before it looks for one.
+        wroteRef.current.set(pid, own
+          .then((id) => (id ? fetch(`/api/events/${id}`, { method: 'DELETE' }) : null))
+          .then(() => null, () => null))
+      }
     } catch (e) {
       // A refusal writes nothing (one transaction, one verdict), so the row goes back to how it was
       // before the tap. A reply lost on the way (api.js: `timeout` on its own 15 s limit, the

@@ -42,6 +42,7 @@ import { AuthProvider } from '../../src/context/AuthContext.jsx'
 import PutUp from '../../src/pages/PutUp.jsx'
 import StartBatchSheet from '../../src/components/kitchen/StartBatchSheet.jsx'
 import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
+import { HAS_PICKED_TEXT } from '../../src/lib/putUpErrors.js'
 
 const q = new URLSearchParams(location.search)
 const CASE = q.get('case') || 'closed'
@@ -166,6 +167,65 @@ const DETAIL = {
   outputs: [],
 }
 
+// ── BUG-BATCHREMOVEDEADEND-001: a batch CLOSED THROUGH THE JAR PICKER (cases `detail-linked*`) ───────
+// "Did it make anything you kept?" Yes → "Which put-ups came out of it?" links jars that were already
+// in the Pantry: batch_id only, put_up_stage_id NULL, and no put_up row in the log (kitchenRoutes.js
+// closeBatch `linked`). So What came out has no sitting and no Undo, and Remove this batch is refused
+// while those jars are live. Two rows, because outputRowText words them two ways: one logged since
+// release 1b (it has a name and a container) and one from before (size and date only). Both rows and
+// the label are constructed, not seen in any database.
+//
+// The stub keeps state the way the routes do (kitchenRoutes.js deleteBatch, unlinkOutput, linkOutputs):
+// the remove answers 409 has_jars WITH THAT ROUTE'S OWN BODY while a jar is linked, an unlink takes its
+// jar out of the next read, a link puts it back, and the remove goes through once none is left.
+const LINKED_ID = 'kb-linked'
+const LINKED_CASE = CASE.startsWith('detail-linked')
+const LINKED_DETAIL = {
+  ...DETAIL, id: LINKED_ID, label: 'Reaper hot sauce, small pot', closed_at: '2026-09-03T12:00:00.000Z', outcome: 'put_up',
+  current_stage_kind: 'finished', current_stage_label: null, current_stage_entered_at: '2026-09-03T12:00:00.000Z',
+  input_count: '0', output_count: '2', inputs: [],
+  stages: [
+    { id: 'ksl-l2', batch_id: LINKED_ID, stage_kind: 'finished', label: null, entered_at: '2026-09-03T12:00:00.000Z',
+      cue_observed: null, note: null },
+    { id: 'ksl-l1', batch_id: LINKED_ID, stage_kind: 'started', label: null, entered_at: iso('2026-08-02T09:00:00'),
+      cue_observed: null, note: null },
+  ],
+}
+const LINKED_JARS = [
+  { id: 'pl-l1', batch_id: LINKED_ID, user_id: 'harness_user', put_up_stage_id: null, label: 'Reaper hot sauce',
+    container_label: '5 oz bottle', package_count: 6, remaining_count: 6, quantity_value: null, quantity_unit: null,
+    preserved_at: '2026-09-02', preserved_at_precision: 'day', preserved_at_approx: false, stock_mode: 'counted' },
+  { id: 'pl-l2', batch_id: LINKED_ID, user_id: 'harness_user', put_up_stage_id: null, label: null, container_label: null,
+    package_count: 2, remaining_count: 2, quantity_value: '2', quantity_unit: 'pint',
+    preserved_at: '2026-08-30', preserved_at_precision: null, preserved_at_approx: false, stock_mode: 'counted' },
+]
+let linkedJars = LINKED_JARS
+let linkedGone = false
+const answer = (status, body) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
+function linkedCase(u, init) {
+  const method = String(init?.method ?? 'GET').toUpperCase()
+  const del = method === 'DELETE'
+  const out = u.match(/\/outputs\/([^/?]+)/)
+  if (del && out) {
+    if (!linkedJars.some(j => j.id === out[1])) return answer(404, { error: 'Not found' })
+    linkedJars = linkedJars.filter(j => j.id !== out[1])
+    return answer(200, { ok: true })
+  }
+  if (method === 'POST' && u.includes('/outputs')) {
+    const ids = [...new Set(JSON.parse(init.body).preservation_log_ids)]
+    const back = LINKED_JARS.filter(j => ids.includes(j.id) && !linkedJars.some(l => l.id === j.id))
+    linkedJars = LINKED_JARS.filter(j => linkedJars.some(l => l.id === j.id) || back.some(b => b.id === j.id))
+    return answer(200, { linked: back.length, requested: ids.length })
+  }
+  if (del) {
+    if (linkedJars.length) return answer(409, { error: 'This batch still has jars. Undo its put-ups (or unlink the jars) first.', code: 'has_jars' })
+    linkedGone = true
+    return answer(200, { ok: true })
+  }
+  if (linkedGone) return answer(404, { error: 'Not found' })
+  return answer(200, { ...LINKED_DETAIL, output_count: String(linkedJars.length), outputs: linkedJars })
+}
+
 // ── the jar list inside the close sheet ──────────────────────────────────────────────────────────
 // whats-put-up answers `{ group_by, groups: [{ label, records }] }` and the GROUP LABEL is the only
 // place the crop name appears (JarPicker.jsx:52-55), so the grouping is not cosmetic — flatten it
@@ -244,6 +304,7 @@ const realFetch = window.fetch
 const json = (body) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }))
 window.fetch = (url, ...rest) => {
   const u = String(url)
+  if (LINKED_CASE && u.includes(`/api/kitchen-batches/${LINKED_ID}`)) return linkedCase(u, rest[0])
   if (u.includes('/close')) return json({ ok: true })
   if (u.includes('/api/storage-locations')) return json(PLACES)
   if (u.includes('/api/kitchen-batches?state=closed')) return json({ state: 'closed', batches: CASE === 'closed-empty' ? [] : CLOSED })
@@ -312,7 +373,7 @@ const byTid = (t) => document.querySelector(`[data-testid="${t}"]`)
 // are never both set. The Put-Up 1a cases open /put-up bare: with batches going, the page's own
 // bare-open default lands on Going now.
 const ENTRY = CASE.startsWith('closed') ? '/put-up?state=closed'
-  : GOING_CASE ? '/put-up' : `/put-up?batch=${DETAIL.id}`
+  : GOING_CASE ? '/put-up' : `/put-up?batch=${LINKED_CASE ? LINKED_ID : DETAIL.id}`
 
 // THE START SHEET, mounted beside the page exactly as the page lane's seam mounts it (PutUp.jsx holds
 // the open state and passes onStartBatch). It is a fixed-position sheet, so where it sits in the tree
@@ -499,6 +560,31 @@ async function run() {
       if (!el || !inPanel(el)) problems.push(`${what} is not painted inside the panel on screen`)
     }
     if (problems.length) throw new Error(`places-edit: ${problems.join('; ')}`)
+  }
+
+  // BUG-BATCHREMOVEDEADEND-001 — the picked put-ups' door, through the real controls.
+  //   detail-linked      the closed batch as it opens: two picked put-ups, each with "Take it off this batch"
+  //   detail-linked-off  the first one taken off ("Taken off · Undo" beside the one still picked), then Remove
+  //                      this batch → Remove it, refused: the line that names the door is on screen
+  // Each checks itself before it reports ready, as `places-edit` does and for the same reason: the gate has
+  // no count for these controls, and a case that never drew them must fail ("harness never reached ready()"),
+  // not pass on the page's other buttons.
+  if (LINKED_CASE) {
+    const n = (t) => document.querySelectorAll(`[data-testid="${t}"]`).length
+    const need = async (what, test) => {
+      for (let i = 0; i < 40 && !test(); i += 1) await settle()
+      if (!test()) throw new Error(`${CASE}: ${what}`)
+    }
+    await need('the two picked put-ups never drew their door', () => n('batch-detail-output-take-off') === 2)
+    if (CASE === 'detail-linked-off') {
+      click('batch-detail-output-take-off')
+      await need('no "Taken off · Undo" row beside the one still picked', () =>
+        n('batch-detail-output-taken-off') === 1 && n('batch-detail-output-put-back') === 1 && n('batch-detail-output-take-off') === 1)
+      click('batch-remove'); await settle()
+      click('batch-remove-yes')
+      await need('Remove this batch did not answer with the picked-put-ups line', () => byTid('batch-remove-error')?.textContent === HAS_PICKED_TEXT)
+    }
+    if (n('batch-detail-undo-putup') !== 0) throw new Error(`${CASE}: a batch with no sitting drew an Undo that put-up`)
   }
 
   // Put-Up release 1b (V4 §6.7 "lane entry render": Put it up, 2 rows, one expanded, keyboard up). The

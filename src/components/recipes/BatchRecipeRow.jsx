@@ -22,11 +22,11 @@
 // door — a second key set would add every line twice. A page shows ONE of them (Put-Up R2a, M2): batch
 // detail hands the row its hook (`asWritten`) and draws the button, so the hosted row draws no link; a row
 // mounted alone has no button below it and keeps the link.
-import React, { useId, useRef, useState } from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import Button from '../forms/Button.jsx'
-import { mintKey } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, answerLost, sameFact } from '../kitchen/idempotencyKey.js'
 import { describeRefusal } from '../../lib/putUpErrors.js'
 import { asWrittenLines, recipeLineWords, MADE_AS_WRITTEN_CTA, SAVE_AS_RECIPE_CTA } from './recipes.js'
 
@@ -85,6 +85,21 @@ export function MadeAsWrittenButton({ asWritten }) {
   )
 }
 
+// Save as recipe, when its create is answered with the recipe an EARLIER Save made, maybe under another name
+// (kitchen/idempotencyKey.js). STALE: the recipe is not this sitting's to rename (made a while ago, or changed
+// since) — nothing is written, and the key is KEPT: a new one would make a second recipe of the same batch.
+// A recipe that already has the name typed is a save, with nothing written. Each refusal is brought into view.
+// UNSAVED: the rename was tried and did not go through (`lost`: no answer came back, so it may have).
+// Either way the recipe is there, and the sentence gives the name it answered with.
+export function saveAsRecipeStaleText(recipe) {
+  const name = String(recipe?.name ?? '').trim()
+  return `${name ? `Already saved as a recipe: “${name}”` : 'Already saved as a recipe'} — an earlier Save went through. This Save did not rename it: to rename it, open the recipe.`
+}
+export function saveAsRecipeUnsavedText(recipe, { lost = false } = {}) {
+  const name = String(recipe?.name ?? '').trim()
+  return `${name ? `Already saved as a recipe: “${name}”` : 'Already saved as a recipe'} — the first Save went through. The new name ${lost ? 'may not have saved' : 'did not save'} — try again.`
+}
+
 export function SaveAsRecipe({ batch, onChanged }) {
   const { fetch } = useApiFetch()
   const [busy, setBusy] = useState(false)
@@ -92,7 +107,15 @@ export function SaveAsRecipe({ batch, onChanged }) {
   const [saving, setSaving] = useState(false)       // the Save as recipe field is open
   const [name, setName] = useState('')
   const [saved, setSaved] = useState(null)
-  const saveKey = useRef(null)
+  // The Save's key, the batch it is for, what has gone out under it, and the recipe a rename was sent to
+  // (kitchen/idempotencyKey.js). It outlives a failure, a Cancel and a changed name, and belongs to ONE
+  // batch: another batch is another create.
+  const held = useRef(null)
+  const errRef = useRef(null)
+  const [refusedSeq, setRefusedSeq] = useState(0)
+  useEffect(() => {
+    if (refusedSeq && typeof errRef.current?.scrollIntoView === 'function') errRef.current.scrollIntoView({ block: 'nearest' })
+  }, [refusedSeq])
   const nameId = `save-recipe-name-${useId()}`
   if (!batch) return null
 
@@ -100,16 +123,40 @@ export function SaveAsRecipe({ batch, onChanged }) {
     if (busy) return
     const n = name.trim()
     if (!n) { setErr('Give the recipe a name.'); return }
-    if (!saveKey.current) saveKey.current = mintKey()
+    if (held.current?.batchId !== batch.id) held.current = { key: mintKey(), batchId: batch.id, sent: [], patched: null }
+    const body = { idempotency_key: held.current.key, name: n.slice(0, 120) }
+    const print = sendPrint(body)
+    const sent = noteSent(held.current.sent, print)
+    held.current.sent = sent
     setBusy(true); setErr(null)
+    // The recipe a replay answered with, once it is being renamed.
+    let onRow = null
     try {
-      const answer = await fetch(`/api/recipes/from-batch/${batch.id}`, { method: 'POST', body: JSON.stringify({ idempotency_key: saveKey.current, name: n.slice(0, 120) }) })
-      saveKey.current = null
+      let answer = await fetch(`/api/recipes/from-batch/${batch.id}`, { method: 'POST', body: JSON.stringify(body) })
+      const todo = afterReplay(answer, sent, print, {
+        row: answer?.recipe, updatedHere: answer?.recipe?.id != null && held.current.patched === answer.recipe.id,
+        holds: sameFact(answer?.recipe?.name, body.name),
+      })
+      if (todo === 'stale') {
+        setErr(saveAsRecipeStaleText(answer?.recipe))
+        setRefusedSeq(s => s + 1)
+        onChanged?.()
+        return
+      }
+      if (todo === 'update') {
+        // The recipe this sitting's earlier Save made under another name (its answer was lost): this name goes onto it.
+        onRow = answer?.recipe ?? null
+        if (onRow?.id == null) throw new Error('replayed without a recipe')
+        held.current.patched = onRow.id
+        answer = await fetch(`/api/recipes/${onRow.id}`, { method: 'PATCH', body: JSON.stringify({ name: body.name }) })
+      }
+      held.current = null
       setSaving(false)
       setSaved(answer?.recipe?.name ?? n)
       onChanged?.()
-    } catch {
-      setErr("Couldn't save it as a recipe — try again.")
+    } catch (e) {
+      if (onRow?.id != null) { setErr(saveAsRecipeUnsavedText(onRow, { lost: answerLost(e) })); setRefusedSeq(s => s + 1); onChanged?.() }
+      else setErr("Couldn't save it as a recipe — try again.")
     } finally { setBusy(false) }
   }
 
@@ -131,7 +178,7 @@ export function SaveAsRecipe({ batch, onChanged }) {
         </div>
       )}
       {saved && <div role="status" data-testid="batch-save-as-recipe-saved" style={{ fontSize: T.type.sm, color: P.mid }}>Saved as a recipe: {saved}</div>}
-      {err && <div role="alert" data-alarm-ink-exempt="error" data-testid="batch-save-as-recipe-error" style={{ color: P.terra, fontSize: T.type.sm }}>{err}</div>}
+      {err && <div ref={errRef} role="alert" data-alarm-ink-exempt="error" data-testid="batch-save-as-recipe-error" style={{ color: P.terra, fontSize: T.type.sm }}>{err}</div>}
     </>
   )
 }

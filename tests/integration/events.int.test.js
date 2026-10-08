@@ -875,6 +875,28 @@ describe('GET /api/events?plant_id= without project_id — planting-scoped (BUG-
     for (const row of body) expect(row.project_id).toBeNull()
   })
 
+  // V5-SEEDLOTADDENTRY-001 (delta review RD-04): the seed lot page reads a planting's entries to the
+  // end by `offset`. This is the only case that runs the plant_id-alone branch with it.
+  it('pages by offset: the envelope, every row once, has_more false at the end', async () => {
+    setTestUserId(USER)
+    const seen = []
+    for (let offset = 0; offset <= ownEventIds.length + 1; offset += 1) {
+      const { status, body } = await callHandler(handler, {
+        method: 'GET', path: `/api/events?plant_id=${plantlessId}&limit=1&offset=${offset}`,
+      })
+      expect(status).toBe(200)
+      expect(Object.keys(body).sort()).toEqual(['events', 'has_more', 'limit', 'offset'])
+      expect(body.limit).toBe(1)
+      expect(body.offset).toBe(offset)
+      expect(body.has_more).toBe(body.events.length === 1)
+      seen.push(...body.events.map((r) => r.id))
+      if (!body.has_more) break
+    }
+    expect(seen.length).toBe(ownEventIds.length)
+    expect(new Set(seen).size).toBe(seen.length)
+    for (const id of ownEventIds) expect(seen).toContain(id)
+  })
+
   it('soft-deleted events stay out of the plant-scoped list', async () => {
     setTestUserId(USER)
     const created = await callHandler(handler, {

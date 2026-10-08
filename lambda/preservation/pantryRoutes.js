@@ -26,7 +26,7 @@ import { MASS_G, normalizeText } from './kitchenBatch.js';
 import { loadPlantings } from './lineRoutes.js';
 import {
   isUuid, validateItemCreate, validateItemPatch, acquiredOf, amountOf, sourceOf, projectItem, jarRow, itemRow,
-  sortPantryRows, matchesQuery, PANTRY_GROUPS, PLANTING_SOURCE_REFUSAL,
+  sortPantryRows, matchesQuery, PANTRY_GROUPS, PLANTING_SOURCE_REFUSAL, PLANTING_CROP_REFUSAL,
 } from './pantryItems.js';
 
 const MASS_UNITS = Object.keys(MASS_G);
@@ -273,15 +273,30 @@ async function replayItem(sql, key, householdIds) {
 // writes both columns of a pair: null, null clears the amount, or un-chooses the source. A source that is
 // not our garden on an item tied to a planting is refused by chk_pantry_item_source_plant in the UPDATE
 // itself — the stored plant_id is the database's to read — and answered in words (itemError).
+// crop_type_slug (BUG-PUTUPREPLAYDROPSEDIT-001) is written only on an item tied to NO planting: with a
+// planting the crop is the planting's (the create's "that planting is a different crop"), so the key is
+// refused there before anything is written — plant_id is read first, and no route ever changes it — and the
+// UPDATE's own CASE holds the same rule. An unknown crop is the FK's 23503, answered in words (itemError).
 export async function patchItem(sql, itemId, body, householdIds) {
   if (!isUuid(itemId)) return notFound;
   const verr = validateItemPatch(body);
   if (verr) return bad(verr);
   const p = Object.fromEntries([
     'name', 'storage_location_id', 'acquired_at', 'use_by_target', 'notes', 'used_up_at', 'quantity_value', 'source_kind',
+    'crop_type_slug',
   ].map((k) => [k, has(body, k)]));
   if (p.storage_location_id && !(await loadPlace(sql, body.storage_location_id, householdIds))) {
     return bad('storage_location_id does not match a place you can use');
+  }
+  if (p.crop_type_slug) {
+    const tied = await sql`
+      SELECT plant_id FROM pantry_item
+      WHERE id = ${itemId}::uuid
+        AND user_id = ANY(${householdIds})
+        AND deleted_at IS NULL
+    `;
+    if (!tied.length) return notFound;
+    if (tied[0].plant_id != null) return bad(PLANTING_CROP_REFUSAL);
   }
   const acq = p.acquired_at ? acquiredOf(body) : { acquired_at: null, acquired_precision: null };
   const amt = p.quantity_value ? amountOf(body) : { quantity_value: null, quantity_unit: null };
@@ -297,6 +312,8 @@ export async function patchItem(sql, itemId, body, householdIds) {
           acquired_at         = CASE WHEN ${p.acquired_at}::boolean THEN ${acq.acquired_at}::date ELSE acquired_at END,
           acquired_precision  = CASE WHEN ${p.acquired_at}::boolean THEN ${acq.acquired_precision}::text ELSE acquired_precision END,
           use_by_target       = CASE WHEN ${p.use_by_target}::boolean THEN ${body.use_by_target ?? null}::date ELSE use_by_target END,
+          crop_type_slug      = CASE WHEN ${p.crop_type_slug}::boolean AND plant_id IS NULL THEN ${normalizeText(body.crop_type_slug)}::text
+                                     ELSE crop_type_slug END,
           notes               = CASE WHEN ${p.notes}::boolean THEN ${normalizeText(body.notes)}::text ELSE notes END,
           quantity_value      = CASE WHEN ${p.quantity_value}::boolean THEN ${amt.quantity_value}::numeric ELSE quantity_value END,
           quantity_unit       = CASE WHEN ${p.quantity_value}::boolean THEN ${amt.quantity_unit}::text ELSE quantity_unit END,

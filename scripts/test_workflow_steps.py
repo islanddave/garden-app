@@ -1782,6 +1782,56 @@ def test_every_snapshot_tooling_step_that_can_stall_has_its_own_short_time_limit
             "minutes a stall runs to the job's 60, and the next tooling limit no longer fits inside it")
 
 
+# After the fast-forward the promote runs three called workflows and two jobs of its own. A job that `uses:` a
+# workflow cannot carry timeout-minutes (GitHub does not accept the key there), so each limit sits on the job that
+# has the steps. None is None on purpose: spa-withheld is one echo and an exit 1, and has no limit by decision.
+DEPLOY_JOB_LIMITS = {
+    "deploy-lambda.yml": {"deploy": 10},
+    "deploy.yml": {"deploy": 15},  # above its own smoke step's bounded worst case, about 826 s
+    "verify-lambda-invariants.yml": {"verify": 10},
+}
+AFTER_PROMOTE_LIMITS = {"verify": 10, "spa-withheld": None}
+CALLER_JOBS = {
+    PROMOTE: {"deploy-lambdas", "deploy", "verify-lambda-invariants"},
+    "deploy-lambda.yml": {"verify-daily-plan"},
+    "deploy.yml": set(),
+    "verify-lambda-invariants.yml": set(),
+}
+
+
+def _needs(job):
+    needs = job.get("needs", [])
+    return {needs} if isinstance(needs, str) else set(needs)
+
+
+def test_every_deploy_job_that_runs_after_the_fast_forward_has_its_pinned_time_limit():
+    """What a limit bounds: a job that hangs once it is running. What it does not: a job still waiting for a
+    runner, which never starts its clock; that bound is scripts/run-status.py STUCK, then a cancel and a re-run of
+    the failed jobs. Without this pin a limit can be dropped, or a new job arrive, at the 360-minute default."""
+    for name, pinned in DEPLOY_JOB_LIMITS.items():
+        jobs = _workflow(name)["jobs"]
+        limits = {j: job.get("timeout-minutes") for j, job in jobs.items() if "uses" not in job}
+        assert limits == pinned and all(type(v) is int for v in limits.values()), (name, limits)
+    jobs = _workflow(PROMOTE)["jobs"]
+    after = {"promote"}
+    while True:
+        more = {j for j, job in jobs.items() if _needs(job) & after} - after
+        if not more:
+            break
+        after |= more
+    limits = {j: jobs[j].get("timeout-minutes") for j in after - {"promote"} if "uses" not in jobs[j]}
+    assert limits == AFTER_PROMOTE_LIMITS, limits
+    assert type(limits["verify"]) is int and jobs["promote"]["timeout-minutes"] == 60
+    for name, callers in CALLER_JOBS.items():
+        jobs = _workflow(name)["jobs"]
+        found = {j for j, job in jobs.items() if "uses" in job}
+        assert found == callers, (name, found)  # so the scan below cannot pass on nothing
+        limited = sorted(j for j in found if "timeout-minutes" in jobs[j])
+        assert not limited, (
+            f"{name}: {limited} call a reusable workflow and carry timeout-minutes, which GitHub refuses when the "
+            "workflow is loaded; put the limit on the called workflow's own job")
+
+
 def _run_tooling(tmp_path, name, **stubs):
     """One tooling step's body, the runner's way. `stubs` maps a command to the sh body that follows its argv log
     line; /usr/lib/postgresql/17 becomes tmp_path/pg17. Returns (proc, the logged command lines, tmp_path/pg17)."""

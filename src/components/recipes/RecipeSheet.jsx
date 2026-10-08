@@ -4,6 +4,17 @@
 // process jar and the final container a make can span (Dave 2026-09-30) and the yield as written. Only the
 // name is required. <Sheet armsBack>; the draft survives a dismiss (kitchen/sheetDraft.js, sheet 'recipe',
 // id 'new' or the recipe's id); the create is keyed (one key per draft, reused on every retry).
+// A REPLAYED CREATE (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js): the key never changes with what
+// is typed, so a Save whose answer was lost, a change, and Save again is answered with the recipe the first
+// one made. When that recipe is THIS sitting's (sent from the sheet that is open now, made minutes ago,
+// untouched since) the sheet PATCHes what it holds onto it before it closes — the PATCH replaces the whole
+// line set, which is why it goes nowhere else. Otherwise NOTHING is written: the sheet says it was saved
+// earlier and this Save changed nothing (recipeStaleText) and KEEPS the key, so Save again is refused again
+// and can never make a second recipe. A PATCH that fails is said as what it is — the recipe is there, the
+// change did not save (recipeUnsavedText). Both tell the page (`onExists`) and are brought into view above
+// the pinned Save. Before either, a recipe that already holds what the sheet shows is a save, with nothing
+// written (recipes.js recipeHolds). What has gone out under the key rides in the draft as `sent`, from the
+// first Save on (a draft never sent has no such key).
 //
 // ⚠ Notes are his text VERBATIM (including his own target pH): sent exactly as typed, never trimmed inside,
 // and shown here exactly as stored — the bold and italic of recipe detail are that surface's alone.
@@ -30,11 +41,11 @@ import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
-import { useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
-import { mintKey } from '../kitchen/idempotencyKey.js'
+import { useFieldsClearOfFooter, scrollClearOfFooter } from '../kitchen/sheetScroll.js'
+import { mintKey, sendPrint, noteSent, afterReplay, answerLost } from '../kitchen/idempotencyKey.js'
 import TypePicker from './TypePicker.jsx'
 import {
-  emptyDraft, draftFromRecipe, recipeBody, exactAmountOpens, keepsKindChips, RECIPE_KIND_OPTIONS, STORAGE_KIND_WORDS,
+  emptyDraft, draftFromRecipe, recipeBody, recipeHolds, exactAmountOpens, keepsKindChips, RECIPE_KIND_OPTIONS, STORAGE_KIND_WORDS,
   KEEPS_UNIT_WORDS, KITCHEN_UNITS, EMPTY_LINE, TYPE_LABEL, TYPE_HELP, KIND_LABEL, KIND_HELP, LINE_NAME_LABEL,
   LINE_AMOUNT_LABEL, AT_THE_END_LABEL, EXACT_AMOUNT_CTA, KEEPS_LABEL, KEEPS_HELP, KEEPS_N_LABEL, MORE_PLACES_CTA, COOKED_LABEL,
 } from './recipes.js'
@@ -45,6 +56,24 @@ const UNIT_OPTIONS = KITCHEN_UNITS.map(u => ({ value: u, label: u }))
 export function isRecipeDraft(d) {
   return !!d && typeof d === 'object' && !Array.isArray(d) && typeof d.name === 'string'
     && typeof d.notes === 'string' && Array.isArray(d.lines) && (d.key === undefined || typeof d.key === 'string')
+    && (d.sent === undefined || Array.isArray(d.sent))
+}
+
+const quoted = (recipe) => { const name = String(recipe?.name ?? '').trim(); return name ? `“${name}”` : null }
+// An earlier Save made the recipe and it is not this sitting's to write over: nothing is written, what was
+// typed stays, and the key is KEPT — Save again is refused again, never a second recipe. `recipe` is the one
+// the replay answered with. It says only what is certain (saved earlier; this Save changed nothing).
+export function recipeStaleText(recipe) {
+  const name = quoted(recipe)
+  return `${name ? `${name} was already saved earlier` : 'This recipe was already saved earlier'} — it is with your recipes. This Save did not change it. To change it, open the recipe.`
+}
+// The first Save made the recipe and the change could not be put on it just now. `why` is the server's own
+// sentence when it gave one; `lost` is true when no answer came back at all (the change may be on it).
+export function recipeUnsavedText(recipe, { why = '', lost = false } = {}) {
+  const name = quoted(recipe)
+  const head = `${name ? `${name} is already saved` : 'This recipe is already saved'} — the first Save went through.`
+  if (why) return `${head} This change did not save: ${why}`
+  return `${head} This change ${lost ? 'may not have saved' : 'did not save'} — try again. What you typed is still here.`
 }
 
 // The quiet text action, 48 px tall on Put-Up surfaces (UX pass R1).
@@ -61,11 +90,19 @@ export default function RecipeSheet({ open, ...rest }) {
 }
 
 // `usedTypeIds` (optional): the types this household's recipes already use — they lead the type chips.
-function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, onClose, onSaved, onTypeCreated }) {
+// `onExists` (optional): the page's re-read, called with the sheet still open when a Save found its recipe
+// already saved and did not (or could not) put the change on it.
+function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, onClose, onSaved, onExists = null, onTypeCreated }) {
   const editing = !!recipe?.id
   const draftKey = useSheetDraftKey(RECIPE_SHEET, editing ? recipe.id : 'new')
   const [initial] = useState(() => readSheetDraft(draftKey, RECIPE_SHEET, isRecipeDraft) ?? (editing ? draftFromRecipe(recipe) : emptyDraft()))
   const [d, setD] = useState(initial)
+  // Whether every body under the draft's key went out from THIS sheet: a draft restored with `sent` in it
+  // was sent from an earlier one, and is never written onto the recipe it made.
+  const mineRef = useRef(!(Array.isArray(initial.sent) && initial.sent.length))
+  // The recipe this sheet has sent its PATCH to (its id): a PATCH that landed with its answer lost has moved
+  // the recipe's updated_at, and Save again must still be able to finish it.
+  const patchedRef = useRef(null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
   // What is open on the sheet is the sheet's own, never the draft's: a line's exact amount once asked for
@@ -74,6 +111,9 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   const [placesOpen, setPlacesOpen] = useState(false)
   const [unitPicked, setUnitPicked] = useState(false)
   const writingRef = useRef(false)
+  // Set once a save lands: the draft is cleared then, and nothing may write it back before the sheet unmounts
+  // (a Save now changes the draft as it sends).
+  const savedRef = useRef(false)
   const base = useRef(JSON.stringify(editing ? draftFromRecipe(recipe) : emptyDraft()))
   const linesRef = useRef(null)
   const placesRef = useRef(null)
@@ -82,6 +122,16 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   // and again when the keyboard resizes the viewport (kitchen/sheetScroll.js, as Put it up uses it).
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
+  // A replay refusal is the last line of the scroller, under the pinned Save: each is brought into view.
+  const errRef = useRef(null)
+  const [refusedSeq, setRefusedSeq] = useState(0)
+  useEffect(() => {
+    if (!refusedSeq) return
+    const el = errRef.current
+    if (!el) return
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
+    scrollClearOfFooter(el, footerRef.current)
+  }, [refusedSeq])
   const ids = { name: `recipe-name-${useId()}`, link: `recipe-link-${useId()}`, notes: `recipe-notes-${useId()}`, keepsN: `recipe-keeps-n-${useId()}` }
 
   const set = (patch) => { setD(x => ({ ...x, ...patch })); setErr(null) }
@@ -89,10 +139,11 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   // this sheet does not edit (form, brand, role, note, heat, salt) still belong to the line — they do unless
   // its name, number or unit changed. Clearing it here dropped them on any edit, "at the end" included.
   const setLine = (i, patch) => set({ lines: d.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) })
-  const dirty = JSON.stringify({ ...d, key: '' }) !== JSON.stringify({ ...JSON.parse(base.current), key: '' })
+  // `sent` is the key's record, not something typed: it never makes the sheet dirty.
+  const dirty = JSON.stringify({ ...d, key: '', sent: undefined }) !== JSON.stringify({ ...JSON.parse(base.current), key: '' })
 
   useEffect(() => {
-    if (!draftKey) return
+    if (!draftKey || savedRef.current) return
     if (dirty) writeSheetDraft(draftKey, RECIPE_SHEET, d)
     else clearSheetDraft(draftKey)
   }, [draftKey, dirty, d])
@@ -136,15 +187,53 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
     if (res.error) { setErr(res.error); return }
     writingRef.current = true
     setSaving(true); setErr(null)
+    // The recipe a replay answered with, once it is being written onto.
+    let onRow = null
     try {
-      const answer = editing
-        ? await fetch(`/api/recipes/${recipe.id}`, { method: 'PATCH', body: JSON.stringify(res.body) })
-        : await fetch('/api/recipes', { method: 'POST', body: JSON.stringify(res.body) })
+      let answer
+      if (editing) {
+        answer = await fetch(`/api/recipes/${recipe.id}`, { method: 'PATCH', body: JSON.stringify(res.body) })
+      } else {
+        // Noted in the draft BEFORE the request goes: a dismiss or a reload between a lost answer and the
+        // retry must still know that another body went out under this key.
+        const print = sendPrint(res.body)
+        const sent = noteSent(d.sent, print)
+        if (sent !== d.sent) setD(x => ({ ...x, sent }))
+        answer = await fetch('/api/recipes', { method: 'POST', body: JSON.stringify(res.body) })
+        const todo = afterReplay(answer, sent, print, {
+          row: answer?.recipe, mine: mineRef.current, updatedHere: answer?.recipe?.id != null && patchedRef.current === answer.recipe.id,
+          holds: recipeHolds(d, answer?.recipe),
+        })
+        if (todo === 'stale') {
+          // Nothing is written, and the key is KEPT: Save again is this refusal again, never a second recipe.
+          writingRef.current = false
+          setSaving(false)
+          setErr(recipeStaleText(answer?.recipe))
+          setRefusedSeq(s => s + 1)
+          onExists?.()
+          return
+        }
+        if (todo === 'update') {
+          // The recipe the first Save made, and it may not hold this: everything the sheet shows goes onto it,
+          // as an edit would send it. A failure lands in the catch below, said as what it is.
+          onRow = answer?.recipe ?? null
+          if (onRow?.id == null) throw new Error('replayed without a recipe')
+          patchedRef.current = onRow.id
+          answer = await fetch(`/api/recipes/${onRow.id}`, { method: 'PATCH', body: JSON.stringify(recipeBody(d, { mode: 'edit' }).body) })
+        }
+      }
+      savedRef.current = true
       clearSheetDraft(draftKey)
       onSaved?.(answer?.recipe ?? null)
     } catch (e) {
       writingRef.current = false
       setSaving(false)
+      if (onRow?.id != null) {
+        setErr(recipeUnsavedText(onRow, { why: e?.body?.error ?? '', lost: answerLost(e) }))
+        setRefusedSeq(s => s + 1)
+        onExists?.()
+        return
+      }
       setErr(e?.body?.error ? `Couldn't save it: ${e.body.error}` : "Couldn't save it — try again. What you typed is still here.")
     }
   }
@@ -265,7 +354,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
           </div>
         </fieldset>
 
-        {err && <div role="alert" data-alarm-ink-exempt="error" data-testid="recipe-sheet-error" style={{ color: P.terra, fontSize: T.type.sm, fontWeight: 600, marginBottom: 8 }}>{err}</div>}
+        {err && <div ref={errRef} role="alert" data-alarm-ink-exempt="error" data-testid="recipe-sheet-error" style={{ color: P.terra, fontSize: T.type.sm, fontWeight: 600, marginBottom: 8 }}>{err}</div>}
       </div>
       <div ref={footerRef} data-testid="recipe-sheet-footer" style={{ position: 'sticky', bottom: 0, background: P.white, padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>
         <Button data-testid="recipe-save" variant="primary" loading={saving} loadingLabel="Saving…" onClick={save} style={{ width: '100%' }}>

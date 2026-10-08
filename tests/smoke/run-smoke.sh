@@ -53,7 +53,8 @@
 #        discard date (the engine's date, then the recipe's on a batch that follows one), P2 salt line,
 #        P3 draw → Mark used → RowEditor, P4 weighed draw to 0 g, P5 take out/restore, P6 check-in edit,
 #        P7 SHU save, P8 Undo put-up restores grams, P9 batch removal restores the count, P10 Raw at create,
-#        P11 a batch made from a jar that already exists (from-jars) and its replay;
+#        P11 a batch made from a jar that already exists (from-jars) and its replay, P12 that jar taken off the
+#        batch and put back (the two outputs routes);
 #        REQUIRED (a FAIL, never a WARN) whenever the checked-out tree carries migrations/v5-fermentpath-001; its own
 #        FK-ordered hard-delete
 #     Q) (after Put-Up's N, independent of the project) one fixed-name source (V5-SOURCECONTACT-001):
@@ -2760,6 +2761,9 @@ SQL
 # One more, from Put-Up R2a:
 #   P11) POST /api/kitchen-batches/from-jars on a jar that already exists → the jar's batch is closed as put_up; the
 #        same body again → 200 replayed, one batch on the key.
+# One more, with batch detail's "Take it off this batch" (BUG-BATCHREMOVEDEADEND-001):
+#   P12) DELETE /api/kitchen-batches/:id/outputs/:plid on P11's jar → the jar is live and on no batch; POST
+#        /:id/outputs with it → linked 1, the jar is on that batch again.
 # Stock is read back through SQL (NEON_STAGING_URL + psql, as block D does): remaining_amount and consumed_at are
 # not on every API projection, and the ledger (pantry_use) has no read route in F.
 # GATED ON F BEING DEPLOYED: F's DDL and Lambda reach staging only at F's sitting. The probe is GET
@@ -3063,6 +3067,25 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       fi
 
       CLERK_JWT=$(mint_session_token)
+
+      # ── P12) Take it off this batch, and its Undo: the two outputs routes ──
+      # BUG-BATCHREMOVEDEADEND-001. Batch detail's "Take it off this batch" is the first screen to call DELETE
+      # /api/kitchen-batches/:id/outputs/:plid, and its "Taken off · Undo" the first to call POST /:id/outputs; neither
+      # route had a smoke. On P11's batch, which is closed and holds its jar by batch_id alone (the shape the close
+      # sheet's jar picker makes too): unlink → the jar is live and on no batch; link again → the answer counts 1 and
+      # the jar is on that batch again. The batch id is read from the JAR before the unlink, so the last check compares
+      # the link to what it was, not to the answer's shape. Two requests on the mint above: block P gains no mint, and
+      # block Q, which starts on this token, gets it a few seconds older. P11's rows are the only ones touched and
+      # they end as P11 left them, so ferm_sweep is unchanged.
+      FE_B11=$(fe_row "SELECT batch_id FROM preservation_log WHERE id = '${FE_J11:-}'")
+      if fe_id_ok "$FE_B11"; then
+        fe_req DELETE "$FE_BASE/api/kitchen-batches/$FE_B11/outputs/$FE_J11"
+        fe_check "p12-take-off" "$FE_CODE $(fe_row "SELECT coalesce(batch_id::text,'null')||'|'||(deleted_at IS NULL)::text FROM preservation_log WHERE id = '$FE_J11'")" "200 null|true" "DELETE /api/kitchen-batches/:id/outputs/:plid; the jar's batch|live"
+        fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B11/outputs" "{\"preservation_log_ids\": [\"$FE_J11\"]}"
+        fe_check "p12-put-back" "$FE_CODE $(fe_jq '.linked') $(fe_row "SELECT (batch_id = '$FE_B11')::text||'|'||(deleted_at IS NULL)::text FROM preservation_log WHERE id = '$FE_J11'")" "200 1 true|true" "POST /api/kitchen-batches/:id/outputs; linked, then the jar on that batch|live"
+      else
+        fe_fail "p12-take-off" "P11's jar names no batch (from-jars did not link it)"
+      fi
     fi
     if ferm_sweep; then
       FERM_DIRTY=false

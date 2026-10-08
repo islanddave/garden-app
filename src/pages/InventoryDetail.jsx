@@ -105,6 +105,10 @@ export default function InventoryDetail() {
   // hit. Re-baselining here is additive. V5-SEEDCARDS-001: the packet card is its one reader — it
   // shows the supplier and packet link AS SAVED, which is exactly what this holds and `item` does not.
   const [baseline,     setBaseline]     = useState(null)
+  // The lot's name as the server last confirmed it: at load, after a Save, after a re-file and after a
+  // re-read in place. `item.name` misses this page's own Save and the baseline misses a name changed
+  // elsewhere that the field did not adopt; the Saved-from card quotes this one in a permanent note.
+  const [savedName,    setSavedName]    = useState(null)
 
   // ── V4-SEEDLINK-001 — seed-lot provenance ("Saved from") ───────────────────
   // Its OWN state and its OWN write, deliberately outside form/baseline/buildChanges, for two
@@ -209,6 +213,7 @@ export default function InventoryDetail() {
         setItem(data)
         setForm(itemToForm(data))
         setBaseline(itemToForm(data))
+        setSavedName(typeof data?.name === 'string' ? data.name : null)
         // '' not null: PlantingSelect's `value` is a string and '' is its cleared state.
         setSourcePlantId(data.source_plant_id ?? '')
         setSourceKind(data.source_kind ?? '')
@@ -474,6 +479,7 @@ export default function InventoryDetail() {
     // A measure the lot had moved under takes the lot's answer as its baseline instead.
     setBaseline(changed ? { ...sent, ...changed }
       : missed || !measureShown ? { ...sent, ...measureColumns(baseline) } : sent)
+    if (typeof sent?.name === 'string' && sent.name.trim()) setSavedName(sent.name.trim())
     // Operational confirmation via the GLOBAL toast layer (auto-dismisses). The changed-elsewhere
     // sentence stays on the page instead: it explains why the card and the fields now disagree.
     if (changed) { setErrors({ _form: CHANGED_ELSEWHERE }); return }
@@ -574,6 +580,7 @@ export default function InventoryDetail() {
   // liveLot(), the origin select and the processing chain all still read that one state.
   function applyLotPatch(patch) {
     setItem(prev => (prev ? { ...prev, ...patch } : prev))
+    if (typeof patch.name === 'string') setSavedName(patch.name)
     if (Object.prototype.hasOwnProperty.call(patch, 'source_plant_id')) setSourcePlantId(patch.source_plant_id ?? '')
     // A line left by the legacy write (see saveSourcePlant) is about the jar as it was before this.
     setSourcePlantErr(null)
@@ -585,6 +592,7 @@ export default function InventoryDetail() {
   function applyLotName(nextName) {
     setForm(f => (f ? { ...f, name: nextName } : f))
     setBaseline(b => (b ? { ...b, name: nextName } : b))
+    setSavedName(nextName)
   }
 
   // ── V5-SEEDCARDS-001 — after an upload, ask the server what the packet box should show ──────
@@ -941,6 +949,7 @@ export default function InventoryDetail() {
               <SavedFromCard
                 key={item.id}
                 lot={{ ...item, name: form.name }}
+                storedName={savedName ?? item.name}
                 onLot={applyLotPatch}
                 onName={applyLotName}
                 notice={sourcePlantErr}

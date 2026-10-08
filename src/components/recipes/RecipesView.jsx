@@ -166,7 +166,7 @@ export default function RecipesView({ onBatchStarted, now, openId: pageOpenId = 
       ))}
 
       <RecipeSheet open={!!sheet} recipe={null} types={types} usedTypeIds={usedTypeIds} fetch={fetch} onTypeCreated={onTypeCreated}
-        onClose={() => setSheet(null)} onSaved={onNewSaved} />
+        onClose={() => setSheet(null)} onSaved={onNewSaved} onExists={loadList} />
     </div>
   )
 }

@@ -11,7 +11,9 @@
 //   * a struck row lasts only until the page is left, and leaving is what withdraws that plant's
 //     `seed_saved` timeline entry for this jar (contract O-11);
 //   * the two 409 codes, with and without `lot_changed`'s extra keys: the jar is read again in place,
-//     and neither the server's sentence nor a Reload button ever shows.
+//     and neither the server's sentence nor a Reload button ever shows;
+//   * the `seed_saved` entry a fresh add writes that plant (V5-SEEDLOTADDENTRY-001): its body, the
+//     cases that write none, and that a later change to the plant waits for it.
 //
 // A one-cultivar jar throughout, so no write here carries a filing; the re-file is
 // InventoryDetail.filing.test.jsx. Mocks come from the contract-built fixture. The fetch mock routes by
@@ -48,6 +50,7 @@ vi.mock('../hooks/useInventory.js', () => ({
 import InventoryDetail from '../pages/InventoryDetail.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { lotReply, sourcePlantsPutReply, measureReply, refusal } from './fixtures/seedMix.fixture.js'
+import { todayLocalISO } from '../lib/dateLocal.js'
 
 // The contract's jar: three plantings of two cultivars. P1 and P1B are one cultivar (A1), P2 another.
 const CONTRACT_LOT = lotReply()
@@ -87,6 +90,7 @@ const bodyOf = (call) => JSON.parse(call[1].body)
 const setBodies = () => callsTo(SET_PATH, 'PUT').map(bodyOf)
 const eventReads = () => fetchSpy.mock.calls.filter(([p, o]) => String(p).startsWith('/api/events?') && !o?.method)
 const eventDeletes = () => fetchSpy.mock.calls.filter(([p, o]) => String(p).startsWith('/api/events/') && o?.method === 'DELETE')
+const eventPosts = () => callsTo('/api/events', 'POST')
 
 const refused = (code, extra = {}) => {
   const r = refusal(code)
@@ -108,13 +112,20 @@ function storeSet(body) {
   return sourcePlantsPutReply({ id: ID, source_plant_id: cache, source_plants: plants })
 }
 
-// Each handler is replaceable per test. `events` is keyed by plant_id.
+// Each handler is replaceable per test. `events` is keyed by plant_id and behaves as the server's list
+// does: a POST adds the row it answers with, a DELETE takes a row out.
 let routes
 function wire() {
+  let made = 0
   routes = {
     put: (body) => Promise.resolve(storeSet(body)),
     measure: (body) => Promise.resolve(measureReply(body)),
     events: {},
+    post: (body) => {
+      const row = { id: `ev-new-${(made += 1)}`, ...body }
+      routes.events[body.plant_id] = [row, ...(routes.events[body.plant_id] ?? [])]
+      return Promise.resolve(row)
+    },
     kind: () => Promise.resolve({ id: ID }),
   }
   fetchSpy.mockImplementation((path, opts) => {
@@ -129,7 +140,12 @@ function wire() {
       const plantId = new URLSearchParams(p.split('?')[1]).get('plant_id')
       return Promise.resolve(routes.events[plantId] ?? [])
     }
-    if (p.startsWith('/api/events/') && method === 'DELETE') return Promise.resolve(null)
+    if (p === '/api/events' && method === 'POST') return routes.post(JSON.parse(opts.body))
+    if (p.startsWith('/api/events/') && method === 'DELETE') {
+      const id = p.slice('/api/events/'.length)
+      for (const k of Object.keys(routes.events)) routes.events[k] = routes.events[k].filter((e) => e.id !== id)
+      return Promise.resolve(null)
+    }
     return Promise.resolve([])
   })
 }
@@ -503,6 +519,416 @@ describe('Saved from — leaving the page', () => {
     await waitFor(() => expect(rows()).toHaveLength(0))
     await waitFor(() =>
       expect(eventReads().map(([p]) => p)).toEqual([`/api/events?plant_id=${P1.id}&limit=200`]))
+  })
+})
+
+// V5-SEEDLOTADDENTRY-001 (re-review RR-04; Dave 2026-10-07: "Write the line on add"). The Save seed sheet
+// writes one `seed_saved` entry per parent; a plant added on this page got none, so remove, leave and
+// add again left it a parent with no line and its date gone.
+describe('Saved from — the timeline entry an add writes', () => {
+  // 16:00Z is the same local day in both CI zones (UTC and America/New_York) and on the author's Mac.
+  // It is the next day from UTC+8 eastward; the evening case below is the one that tells zones apart.
+  const STARTED = '2026-10-06T16:00:00.000Z'
+  const CHANGED = 'This lot changed somewhere else just now. This is the latest. Try again if it still needs changing.'
+  const thisJars = (id = 'ev-first') => ({ id, event_type: 'seed_saved', event_date: '2026-10-06', metadata: { seed_lot_id: ID } })
+  const nameField = () => screen.getByLabelText('Name')
+
+  it('a fresh add writes that plant ONE entry for this jar, after the set write, dated the day the jar was started', async () => {
+    itemRef.current = jar({ created_at: STARTED })
+    await renderPage()
+    await addFromPicker(P3)
+
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(eventReads().map(([p]) => p)).toEqual([`/api/events?plant_id=${P3.id}&limit=200`])
+    expect(bodyOf(eventPosts()[0])).toEqual({
+      plant_id: P3.id,
+      event_type: 'seed_saved',
+      event_date: '2026-10-06',
+      notes: 'Seed lot "Saved A1 jar".',
+      metadata: { seed_lot_id: ID },
+    })
+    const at = (path, method) => fetchSpy.mock.calls.findIndex(([p, o]) => String(p) === path && (o?.method ?? 'GET') === method)
+    expect(at(SET_PATH, 'PUT')).toBeLessThan(at('/api/events', 'POST'))
+    // Nothing more follows it.
+    await act(async () => { await Promise.resolve() })
+    expect(eventPosts()).toHaveLength(1)
+    expect(eventDeletes()).toHaveLength(0)
+  })
+
+  it('a jar with no readable start day dates the entry today', async () => {
+    itemRef.current = jar({ created_at: null })
+    await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(bodyOf(eventPosts()[0]).event_date).toBe(todayLocalISO())
+  })
+
+  it('the note quotes the name as SAVED, never one that is only typed', async () => {
+    itemRef.current = jar({ created_at: STARTED })
+    await renderPage()
+    await act(async () => { fireEvent.change(nameField(), { target: { value: 'half a new na' } }) })
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(bodyOf(eventPosts()[0]).notes).toBe('Seed lot "Saved A1 jar".')
+  })
+
+  // Review RF-01 / Q1: the page's Save moves its baseline, not `item`, so the name as loaded is stale
+  // once a rename has been saved.
+  it('a name SAVED on this visit, then an add: the note quotes the name as saved', async () => {
+    itemRef.current = jar({ created_at: STARTED })
+    await renderPage()
+    await act(async () => { fireEvent.change(nameField(), { target: { value: 'Renamed and saved' } }) })
+    await click(screen.getByText('Save changes'))
+    await waitFor(() => expect(screen.getByText('✓ Saved')).toBeTruthy())
+    expect(nameField().value).toBe('Renamed and saved')
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(bodyOf(eventPosts()[0]).notes).toBe('Seed lot "Renamed and saved".')
+  })
+
+  // Delta review RD-02: a name changed elsewhere reaches `item` through the re-read, not the baseline.
+  it('a name changed elsewhere, read again after a 409, is the one the note quotes', async () => {
+    itemRef.current = jar({ created_at: STARTED, name: 'My own jar name' })
+    await renderPage()
+    let n = 0
+    const realPut = routes.put
+    routes.put = (body) => {
+      n += 1
+      if (n > 1) return realPut(body)
+      itemRef.current = { ...itemRef.current, name: 'Renamed elsewhere' }
+      return Promise.reject(refused('lot_changed'))
+    }
+    await addFromPicker(P3)
+    await waitFor(() => expect(help()).toBe(CHANGED))
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(bodyOf(eventPosts()[0]).notes).toBe('Seed lot "Renamed elsewhere".')
+  })
+
+  // Q4: a one-plant lot whose parent is corrected goes through the FIRST picker, onto an empty set.
+  it('the first picker on a lot with no parents writes the entry too', async () => {
+    itemRef.current = jar({ created_at: STARTED, source_plants: [], source_plant_id: null })
+    await renderPage()
+    fireEvent.focus(screen.getByTestId('source-plant-select'))
+    await waitFor(() => expect(screen.getByTestId(`ps-opt-${P1.id}`)).toBeTruthy())
+    await click(screen.getByTestId(`ps-opt-${P1.id}`))
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(setBodies()[0]).toMatchObject({ source_plant_ids: [P1.id], expected_source_plant_ids: [] })
+    expect(bodyOf(eventPosts()[0])).toEqual({
+      plant_id: P1.id, event_type: 'seed_saved', event_date: '2026-10-06',
+      notes: 'Seed lot "Saved A1 jar".', metadata: { seed_lot_id: ID },
+    })
+  })
+
+  // Q2: 01:30Z is the evening before in America/New_York (the unit-ny job) and the same day in UTC, so
+  // dating by the UTC day turns this red there.
+  it('a lot started late in the evening is dated its LOCAL day', async () => {
+    const LATE = '2026-10-07T01:30:00.000Z'
+    const d = new Date(LATE)
+    const pad = (n) => String(n).padStart(2, '0')
+    const localDay = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    itemRef.current = jar({ created_at: LATE })
+    await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(bodyOf(eventPosts()[0]).event_date).toBe(localDay)
+  })
+
+  // Q3: the entry goes when the page is LEFT with the row still struck, never at the remove tap.
+  it('add, remove, Undo, leave: the plant is on the lot and keeps the entry the add wrote', async () => {
+    const view = await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    await click(removeButton(P3))
+    await waitFor(() => expect(undoButton(P3)).toBeTruthy())
+    pastTheGuard()
+    await click(undoButton(P3))
+    await waitFor(() => expect(liveRows()).toHaveLength(3))
+    view.unmount()
+    await act(async () => { await Promise.resolve() })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(eventDeletes()).toHaveLength(0)
+    expect(routes.events[P3.id]).toHaveLength(1)
+  })
+
+  // Q9(a), contract O-11a: known and filed (V5-SEEDR2BFOLLOWUPS-001). Stated so a change either way shows.
+  it('an add that landed with its reply lost: the plant is on the lot and gets no entry', async () => {
+    routes.put = (body) => { storeSet(body); return Promise.reject(Object.assign(new Error('Request timed out'), { status: 0, timeout: true })) }
+    await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(help()).toBe(CHANGED))
+    await act(async () => { await Promise.resolve() })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(rowOf(P3)).toBeTruthy()
+    expect(eventPosts()).toHaveLength(0)
+  })
+
+  // Review RF-02 / Q11. The route answers the newest 200 by entry date; an entry dated the jar's start
+  // day sits past them on a busy planting (prod 2026-10-08: two plantings over 200).
+  describe('a planting with more than 200 entries', () => {
+    const filler = (n) => Array.from({ length: n }, (_, i) => ({ id: `ev-w-${i}`, event_type: 'watering', event_date: '2026-10-07' }))
+    // The route as the server answers it: a bare newest-200 with no offset, the envelope with one.
+    const paged = (all) => {
+      const original = fetchSpy.getMockImplementation()
+      fetchSpy.mockImplementation((path, opts) => {
+        const p = String(path)
+        if (!p.startsWith('/api/events?') || opts?.method) return original(path, opts)
+        const q = new URLSearchParams(p.split('?')[1])
+        const rows = all()
+        if (!q.has('offset')) return Promise.resolve(rows.slice(0, 200))
+        const at = Number(q.get('offset'))
+        const page = rows.slice(at, at + 200)
+        return Promise.resolve({ events: page, limit: 200, offset: at, has_more: page.length === 200 })
+      })
+    }
+
+    it('an add reads on past the first page and writes none when the entry is there', async () => {
+      await renderPage()
+      paged(() => [...filler(200), ...filler(200).map((e) => ({ ...e, id: `b-${e.id}` })), thisJars('ev-old')])
+      await addFromPicker(P3)
+      await waitFor(() => expect(eventReads().map(([p]) => p)).toEqual([
+        `/api/events?plant_id=${P3.id}&limit=200`,
+        `/api/events?plant_id=${P3.id}&limit=200&offset=200`,
+        `/api/events?plant_id=${P3.id}&limit=200&offset=400`,
+      ]))
+      await act(async () => { await Promise.resolve() })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(eventPosts()).toHaveLength(0)
+    })
+
+    it('an add writes the entry when no page holds one', async () => {
+      await renderPage()
+      paged(() => [...filler(200), ...filler(40).map((e) => ({ ...e, id: `b-${e.id}` }))])
+      await addFromPicker(P3)
+      await waitFor(() => expect(eventPosts()).toHaveLength(1))
+      expect(eventReads()).toHaveLength(2)
+    })
+
+    it('a later page that fails writes nothing: a list it could not finish cannot say', async () => {
+      await renderPage()
+      const original = fetchSpy.getMockImplementation()
+      fetchSpy.mockImplementation((path, opts) => {
+        const p = String(path)
+        if (p.startsWith('/api/events?') && !opts?.method) {
+          return p.includes('offset=') ? Promise.reject(new Error('offline')) : Promise.resolve(filler(200))
+        }
+        return original(path, opts)
+      })
+      await addFromPicker(P3)
+      await waitFor(() => expect(eventReads()).toHaveLength(2))
+      await act(async () => { await Promise.resolve() })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(eventPosts()).toHaveLength(0)
+      expect(liveRows()).toHaveLength(3)
+      expect(help()).toBe('')
+    })
+
+    // Delta review RD-01: what was read is still acted on when a later page fails.
+    it('leaving withdraws a first-page entry even when the next page fails', async () => {
+      const view = await renderPage()
+      const original = fetchSpy.getMockImplementation()
+      fetchSpy.mockImplementation((path, opts) => {
+        const p = String(path)
+        if (p.startsWith('/api/events?') && !opts?.method) {
+          return p.includes('offset=') ? Promise.reject(new Error('offline')) : Promise.resolve([thisJars('ev-top'), ...filler(199)])
+        }
+        return original(path, opts)
+      })
+      await click(removeButton(P1B))
+      await waitFor(() => expect(undoButton(P1B)).toBeTruthy())
+      view.unmount()
+      await waitFor(() => expect(eventDeletes()).toHaveLength(1))
+      expect(eventDeletes()[0][0]).toBe('/api/events/ev-top')
+    })
+
+    // RD-03: the offline copy cannot say, on any page.
+    it('a later page answered from the offline copy writes nothing', async () => {
+      await renderPage()
+      const original = fetchSpy.getMockImplementation()
+      fetchSpy.mockImplementation((path, opts) => {
+        const p = String(path)
+        if (p.startsWith('/api/events?') && !opts?.method) {
+          return Promise.resolve(p.includes('offset=')
+            ? Object.defineProperty({ events: [], has_more: false }, Symbol.for('garden-app.fromCache'), { value: true })
+            : filler(200))
+        }
+        return original(path, opts)
+      })
+      await addFromPicker(P3)
+      await waitFor(() => expect(eventReads()).toHaveLength(2))
+      await act(async () => { await Promise.resolve() })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(eventPosts()).toHaveLength(0)
+    })
+
+    // RD-05: a route that always has more stops at the cap, and a list that did not end cannot say.
+    it('a route that never ends is read 25 times and nothing is written', async () => {
+      await renderPage()
+      const original = fetchSpy.getMockImplementation()
+      fetchSpy.mockImplementation((path, opts) => {
+        const p = String(path)
+        if (p.startsWith('/api/events?') && !opts?.method) {
+          return Promise.resolve(p.includes('offset=') ? { events: filler(200), has_more: true } : filler(200))
+        }
+        return original(path, opts)
+      })
+      await addFromPicker(P3)
+      await waitFor(() => expect(eventReads()).toHaveLength(25))
+      await act(async () => { await Promise.resolve() })
+      await new Promise((r) => setTimeout(r, 30))
+      expect(eventReads()).toHaveLength(25)
+      expect(eventPosts()).toHaveLength(0)
+    })
+
+    it('leaving with the row struck withdraws an entry that sits past the first page', async () => {
+      const view = await renderPage()
+      paged(() => [...filler(200), thisJars('ev-deep')])
+      await click(removeButton(P1B))
+      await waitFor(() => expect(undoButton(P1B)).toBeTruthy())
+      view.unmount()
+      await waitFor(() => expect(eventDeletes()).toHaveLength(1))
+      expect(eventDeletes()[0][0]).toBe('/api/events/ev-deep')
+      expect(eventReads().map(([p]) => p)).toEqual([
+        `/api/events?plant_id=${P1B.id}&limit=200`,
+        `/api/events?plant_id=${P1B.id}&limit=200&offset=200`,
+      ])
+    })
+  })
+
+  it('writes none when the plant still has a live entry for this jar', async () => {
+    routes.events[P3.id] = [thisJars()]
+    await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventReads()).toHaveLength(1))
+    await act(async () => { await Promise.resolve() })
+    expect(eventPosts()).toHaveLength(0)
+  })
+
+  it('an entry for another jar, or another kind of entry naming this one, is not this plant’s entry', async () => {
+    routes.events[P3.id] = [
+      { id: 'ev-other-jar', event_type: 'seed_saved', metadata: { seed_lot_id: 'another-lot' } },
+      { id: 'ev-harvest', event_type: 'harvest', metadata: { seed_lot_id: ID } },
+      { id: 'ev-no-meta', event_type: 'seed_saved', metadata: null },
+    ]
+    await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+  })
+
+  it.each([
+    ['cannot be read', () => Promise.reject(new Error('offline'))],
+    // The service worker's offline copy cannot say what is on the timeline now.
+    ['is answered from the copy kept for offline use', () => Promise.resolve(
+      Object.defineProperty([], Symbol.for('garden-app.fromCache'), { value: true }))],
+  ])('when the plant’s list %s nothing is written, and the add is still saved', async (_, list) => {
+    await renderPage()
+    const original = fetchSpy.getMockImplementation()
+    fetchSpy.mockImplementation((path, opts) =>
+      (String(path).startsWith('/api/events?') ? list() : original(path, opts)))
+    await addFromPicker(P3)
+
+    await waitFor(() => expect(eventReads()).toHaveLength(1))
+    await act(async () => { await Promise.resolve() })
+    expect(eventPosts()).toHaveLength(0)
+    expect(liveRows()).toHaveLength(3)
+    expect(screen.getByText('✓ Saved')).toBeTruthy()
+    expect(help()).toBe('')
+  })
+
+  it('an entry that could not be written is silent: the plant is on the jar either way', async () => {
+    routes.post = () => Promise.reject(Object.assign(new Error('Internal error'), { status: 500 }))
+    await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    await act(async () => { await Promise.resolve() })
+    expect(liveRows()).toHaveLength(3)
+    expect(help()).toBe('')
+    expect(card().textContent).not.toContain('Internal error')
+  })
+
+  it('an add the server refused reads and writes nothing', async () => {
+    routes.put = () => Promise.reject(refused('mixed_crop_parents'))
+    await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(help()).toBe("That planting is a different crop, so it wasn't added."))
+    expect(eventReads()).toHaveLength(0)
+    expect(eventPosts()).toHaveLength(0)
+  })
+
+  it('Undo of a removal writes none: that plant’s entry was never withdrawn', async () => {
+    routes.events[P1B.id] = [thisJars()]
+    await renderPage()
+    await click(removeButton(P1B))
+    pastTheGuard()
+    await click(undoButton(P1B))
+    await waitFor(() => expect(liveRows()).toHaveLength(2))
+    await act(async () => { await Promise.resolve() })
+    expect(eventReads()).toHaveLength(0)
+    expect(eventPosts()).toHaveLength(0)
+  })
+
+  it('remove, leave, come back and add it again: the plant has its entry again, on its first date', async () => {
+    itemRef.current = jar({ created_at: STARTED })
+    routes.events[P1B.id] = [thisJars()]
+    const view = await renderPage()
+    await click(removeButton(P1B))
+    await waitFor(() => expect(undoButton(P1B)).toBeTruthy())
+    view.unmount()
+    await waitFor(() => expect(eventDeletes()).toHaveLength(1))
+    expect(routes.events[P1B.id]).toEqual([])
+
+    await renderPage()
+    expect(rowOf(P1B)).toBeUndefined()
+    await addFromPicker(P1B)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(bodyOf(eventPosts()[0])).toEqual({
+      plant_id: P1B.id, event_type: 'seed_saved', event_date: '2026-10-06',
+      notes: 'Seed lot "Saved A1 jar".', metadata: { seed_lot_id: ID },
+    })
+    expect(routes.events[P1B.id]).toHaveLength(1)
+  })
+
+  it('a plant added and then removed on the same visit: leaving withdraws the entry the add wrote', async () => {
+    const view = await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    await click(removeButton(P3))
+    await waitFor(() => expect(undoButton(P3)).toBeTruthy())
+    view.unmount()
+    await waitFor(() => expect(eventDeletes()).toHaveLength(1))
+    expect(eventDeletes()[0][0]).toBe('/api/events/ev-new-1')
+    expect(routes.events[P3.id]).toEqual([])
+  })
+
+  it('a change to that plant WAITS for its entry write: the set never moves under an entry still going out', async () => {
+    const held = deferred()
+    routes.post = () => held.promise
+    await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    expect(setBodies()).toHaveLength(1)
+
+    await click(removeButton(P3))
+    // Struck at the tap; its set write is held back, and so is every other row control.
+    expect(rowOf(P3).getAttribute('data-struck')).toBe('true')
+    expect(help()).toBe('Saving…')
+    await click(removeButton(P1))
+    expect(setBodies()).toHaveLength(1)
+
+    await act(async () => { held.resolve({ id: 'ev-held' }) })
+    await waitFor(() => expect(setBodies()).toHaveLength(2))
+    expect(setBodies()[1]).toEqual({
+      source_plant_ids: [P1.id, P1B.id], expected_source_plant_ids: [P1.id, P1B.id, P3.id],
+    })
+  })
+
+  it('a change to ANOTHER plant does not wait for it', async () => {
+    routes.post = () => deferred().promise
+    await renderPage()
+    await addFromPicker(P3)
+    await waitFor(() => expect(eventPosts()).toHaveLength(1))
+    await click(removeButton(P1B))
+    expect(setBodies()).toHaveLength(2)
   })
 })
 

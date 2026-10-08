@@ -73,6 +73,11 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
+    # Bounds a verify that hangs once it is RUNNING (a stuck AWS read); the slowest healthy run on record is 73 s.
+    # One limit covers both callers (promote-gate.yml and deploy-lambda.yml), whose `uses:` jobs cannot carry one.
+    # It does NOT bound a job still waiting for a runner: that is scripts/run-status.py STUCK, then cancel and
+    # re-run the failed jobs. Pinned by scripts/test_workflow_steps.py.
+    timeout-minutes: 10
     environment: production
     steps:
       # Needed by the config-manifest step below. Pinned to the ref being deployed, NOT the branch

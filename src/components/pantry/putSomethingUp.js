@@ -19,6 +19,7 @@ import {
   putUpDateWords, shortDay, parseYmd, toYmd, discardWords, ESTIMATED_PRECISIONS, totalOfEach, qtyText,
 } from '../putup/jarWords.js'
 import { parseAmount } from './AmountField.jsx'
+import { sendPrint, sameFact } from '../kitchen/idempotencyKey.js'
 
 export const AS_IS = 'as_is'
 // The no-method choice in two lengths. On its CHIP it says what it covers — true for a typed name whatever
@@ -324,6 +325,101 @@ export function itemBody({ key, what, place, when, discard, notes = '', amount =
   const nt = String(notes ?? '').trim()
   if (nt) body.notes = nt
   return body
+}
+
+// ── A replayed item create (BUG-PUTUPREPLAYDROPSEDIT-001; kitchen/idempotencyKey.js) ─────────────────────
+// The item's PATCH carries every key a create body can hold EXCEPT the planting (the Lambda's
+// ITEM_PATCH_KEYS), so plant_id is the fixed half of an item send's print. itemPatchOf is a create body as
+// that PATCH, for the item a replay answered with (`item`): a key the body left out goes as null (the create
+// stored nothing there; the PATCH is presence-sentinel, and each pair travels together), and the place goes
+// by id. The crop a typed name resolved to goes ONLY when it is not the item's already — so a change that
+// leaves the crop alone sends the body the PATCH has always taken — and never for a planting, whose crop is
+// the planting's (the Lambda refuses it there).
+export const ITEM_FIXED_KEYS = Object.freeze(['plant_id'])
+export function itemPatchOf(body, storageLocationId, item = null) {
+  const patch = {
+    name: body.name, storage_location_id: String(storageLocationId),
+    acquired_at: body.acquired_at ?? null, acquired_precision: body.acquired_precision ?? null,
+    use_by_target: body.use_by_target ?? null, notes: body.notes ?? null,
+    quantity_value: body.quantity_value ?? null, quantity_unit: body.quantity_unit ?? null,
+    source_kind: body.source_kind ?? null, source_label: body.source_label ?? null,
+  }
+  const crop = body.crop_type_slug ?? null
+  if (body.plant_id == null && crop !== (item?.crop_type_slug ?? null)) patch.crop_type_slug = crop
+  return patch
+}
+
+// THE PRINT OF AN ITEM SAVE (idempotencyKey.js: a print is taken of what was CHOSEN). Two parts of the body
+// are not his to choose, and are left out so an untouched retry is one body whatever happened meanwhile:
+//   · acquired_at / acquired_precision — the date the chip resolved to on the clock. `whenChoice` (the chip,
+//     and a picked day as typed) goes in instead: every way he has to change the date changes that.
+//   · crop_type_slug of a TYPED name — the name search works it out from the text, with no tap, and may
+//     answer after the first Save. The name itself is printed, and a crop he PICKED (a planting, a crop, a
+//     variety, a stock row: any What with a source other than 'typed') stays in the print.
+// Everything else in the body is printed as sent.
+export function itemPrint(body, what, whenChoice) {
+  const { acquired_at: _date, acquired_precision: _precision, ...own } = body ?? {}
+  if (!what?.source || what.source === 'typed') delete own.crop_type_slug
+  return sendPrint({ ...own, when: whenChoice ?? null }, ITEM_FIXED_KEYS)
+}
+// Whether a replayed item's planting is the one this body names. No route changes an item's planting, and
+// the row says exactly which it holds — so this is read off the row, never off what went out before.
+export function plantingDiffers(body, item) {
+  const id = (v) => (v == null ? null : String(v))
+  return id(body?.plant_id) !== id(item?.plant_id)
+}
+// Whether a replayed item ALREADY HOLDS what this body would put on it (idempotencyKey.js `holds`): then there
+// is nothing to write and nothing to refuse — it is saved. Every key of the body is read against the row
+// (name, place, date and how sure, discard date, notes, amount, where from, planting, a PICKED crop). Left
+// out, as in itemPrint and for its reason: the crop a typed name resolved to, and a planting's crop (the
+// planting's own). The DATE is compared as resolved — a chip that now comes to another day is not what the
+// row holds, and a mismatch only ever sends the Save on to the rule, never to a false "saved". A removed
+// item holds nothing.
+export function itemHolds(body, item, what) {
+  if (!body || !item || item.deleted_at) return false
+  if (body.storage_location_id != null) {
+    if (!sameFact(body.storage_location_id, item.storage_location_id)) return false
+  } else if (!item.place || !sameFact(body.place?.kind, item.place.kind) || !sameFact(body.place?.label, item.place.label, { fold: true })) return false
+  const picked = body.plant_id == null && !!what?.source && what.source !== 'typed'
+  return sameFact(body.name, item.name)
+    && sameFact(body.acquired_at, item.acquired_at)
+    && sameFact(body.acquired_precision ?? (body.acquired_at ? 'day' : null), item.acquired_precision)
+    && sameFact(body.use_by_target, item.use_by_target)
+    && sameFact(body.notes, item.notes)
+    && sameFact(body.quantity_value, item.quantity_value, { numeric: true })
+    && sameFact(body.quantity_unit, item.quantity_unit)
+    && sameFact(body.source_kind, item.source_kind)
+    && sameFact(body.source_label, item.source_label)
+    && !plantingDiffers(body, item)
+    && (!picked || sameFact(body.crop_type_slug, item.crop_type_slug))
+}
+
+const quoted = (item) => { const name = String(item?.name ?? '').trim(); return name ? `“${name}”` : null }
+// Said when the first Save made the item and What is now another planting, or no planting: nothing is
+// written, and the form stays as it is. `item` is the row the replay answered with. Putting What back DOES
+// let the next Save through (plantingDiffers reads the row). The key is kept, so no Save from here adds a
+// second item — and the sentence offers none.
+export function replayFixedText(item) {
+  const name = quoted(item)
+  return `${name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'} — the first Save went through. Which planting it came from can't be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it.`
+}
+// Said when an earlier Save made the item and it is not this sitting's to write over (idempotencyKey.js
+// afterReplay 'stale'): nothing is written, the form stays, and the KEY IS KEPT — Save again is refused
+// again, and can never add a second item. It says only what is certain (saved earlier; this Save changed
+// nothing) and promises no way to add from here. A replayed item can be one that was removed since.
+export function replayStaleText(item) {
+  const name = quoted(item)
+  if (item?.deleted_at) return `${name ? `${name} was saved earlier` : 'This was saved earlier'} and has been removed since. This Save did not change that.`
+  return `${name ? `${name} was already saved earlier` : 'This was already saved earlier'} — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.`
+}
+// Said when the first Save made the item and the change could not be put on it just now: the item is there.
+// `why` is the server's own sentence when it refused the change in words; `lost` is true when no answer came
+// back at all (the change may be on it).
+export function replayUnsavedText(item, { why = '', lost = false } = {}) {
+  const name = quoted(item)
+  const head = `${name ? `${name} is already in the Pantry` : 'This is already in the Pantry'} — the first Save went through.`
+  if (why) return `${head} This change did not save: ${why}`
+  return lost ? `${head} This change may not have saved — try again.` : `${head} This change did not save — try again.`
 }
 
 // The completion line, from what the server answered (V4 §2.2 "completion in place on the Pantry"):

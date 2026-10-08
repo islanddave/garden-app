@@ -71,6 +71,9 @@ describe('POST /api/recipes + GET — household scope, replay, the link scheme',
     const r = await call(JEN, 'POST', '/api/recipes', body({ idempotency_key: k, name: 'different' }))
     expect(r.status).toBe(200)
     expect(r.body).toMatchObject({ replayed: true, recipe: { id: rid } })
+    // BUG-PUTUPREPLAYDROPSEDIT-001: the two stamps the client reads off a replay are one instant on an untouched recipe.
+    expect(Number.isFinite(new Date(r.body.recipe.created_at).getTime())).toBe(true)
+    expect(new Date(r.body.recipe.updated_at).getTime()).toBe(new Date(r.body.recipe.created_at).getTime())
     const n = await directSql`SELECT count(*)::int AS n FROM recipe WHERE idempotency_key = ${k}::uuid`
     expect(n[0].n).toBe(1)
     const s = await call(STRANGER, 'POST', '/api/recipes', body({ idempotency_key: k }))
