@@ -1035,6 +1035,11 @@ jobs:
     needs: [resolve, deploy]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
+    # Bounds this job if it hangs once it is RUNNING (a stuck API read in verify-deploy.py); the slowest healthy
+    # run on record is 21 s. It does NOT bound a job still waiting for a runner: that is scripts/run-status.py
+    # STUCK, then cancel and re-run the failed jobs. The three `uses:` jobs above cannot carry a limit (GitHub
+    # does not accept the key there); theirs live in the called workflows. Pinned by scripts/test_workflow_steps.py.
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: read

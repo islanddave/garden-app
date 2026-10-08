@@ -31,6 +31,13 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
+    # Bounds a deploy that hangs once it is RUNNING (a stuck npm ci, s3 sync, CORS restore or smoke curl); the
+    # slowest healthy run on record is 111 s. 15, not 10: the post-deploy HTTP smoke is itself bounded at about
+    # 742 s when every probe times out twice (14 checks x 53 s), and its FAIL lines and final verdict must print
+    # before the limit can cut the job. It does NOT bound a job still waiting for a runner: that is
+    # scripts/run-status.py STUCK, then cancel and re-run the failed jobs. A fired limit reads `cancelled`, not
+    # `failure`. Pinned by scripts/test_workflow_steps.py.
+    timeout-minutes: 15
     environment: production
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
