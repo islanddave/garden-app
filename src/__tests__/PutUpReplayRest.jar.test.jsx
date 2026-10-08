@@ -1419,6 +1419,79 @@ describe('the Walk — the put-up route', () => {
     expect(band()).toBe('✓ 1 × Beans · Freeze whole')
   })
 
+  // Delta F-2 (the reviewer's W1). The refusal says the thing is in the Pantry and the way on is to end the walk;
+  // End the walk then asked `"Corn" isn't saved.` · Save it · End without it — about the thing it had just said
+  // is saved. A group spent on the name its refusal's row holds is not asked about: the walk ends.
+  const ended = async () => {
+    expect(screen.queryByTestId('putup-walk-unsaved')).toBeNull()
+    await screen.findByTestId('putup-walk-door')
+    expect(screen.queryByTestId('putup-walk-group')).toBeNull()
+  }
+  it('delta F-2 (W1) — Corn lands with its answer lost; the count changed, Save after ten minutes: "was already saved earlier … end this walk". End the walk: it ENDS — nothing asks whether “Corn” is saved, and no third POST goes out', async () => {
+    jarTable({ first: { ...stamps(LONG_AGO) } })
+    await startWalk()
+    corn()
+    save(); await failed()
+    tap('walk-count-plus')
+    save()
+    await answered(2)
+    expect(errorText()).toBe(STALE + WALK_ON)
+    tap('putup-walk-exit')
+    await ended()
+    expect(posts()).toHaveLength(2)
+    expect(otherWrites()).toEqual([])
+  })
+
+  it('delta F-2 — the jar was removed since: "has been removed since … end this walk". End the walk: it ends, with no question', async () => {
+    jarTable({ first: { deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() } })
+    await startWalk()
+    corn()
+    save(); await failed()
+    save()
+    await answered(2)
+    expect(errorText()).toBe(`“Corn” was saved earlier and has been removed since. This Save did not change that.${WALK_ON}`)
+    tap('putup-walk-exit')
+    await ended()
+  })
+
+  it('delta F-2 — the spent group comes back whole after "Change": End the walk still ends, with no question', async () => {
+    jarTable({ first: { ...stamps(LONG_AGO) } })
+    await startWalk()
+    corn()
+    save(); await failed()
+    tap('walk-count-plus')
+    save()
+    await answered(2)
+    expect(errorText()).toBe(STALE + WALK_ON)
+    tap('putup-walk-change')
+    fireEvent.click(screen.getByTestId('putup-walk-start'))
+    await screen.findByTestId('putup-walk-group')
+    expect(screen.getByTestId('walk-what-name').value).toBe('Corn')
+    tap('putup-walk-exit')
+    await ended()
+  })
+
+  it('delta F-2 — unchanged for an entry that is NOT saved: a Save whose answer was lost (it may not have landed) is asked about, and “Save it” saves; and ANOTHER name typed into a spent group is asked about', async () => {
+    jarTable({ lands: 2, first: { ...stamps(LONG_AGO) } })
+    await startWalk()
+    corn()
+    save(); await failed()                                                      // never reached the server
+    tap('putup-walk-exit')
+    expect(screen.getByTestId('putup-walk-unsaved-text').textContent).toBe('"Corn" isn\'t saved.')
+    tap('putup-walk-exit-save')                                                 // "Save it": landed; its answer did not come back
+    await answered(2)
+    await failed()
+    tap('walk-count-plus')
+    save()
+    await answered(3)
+    expect(errorText()).toBe(STALE + WALK_ON)
+    typeWhat('Beans')
+    tap('putup-walk-exit')
+    expect(screen.getByTestId('putup-walk-unsaved-text').textContent).toBe('"Beans" isn\'t saved.')
+    expect(screen.getByTestId('putup-walk-exit-save')).toBeTruthy()
+    expect(screen.getByTestId('putup-walk-exit-anyway')).toBeTruthy()
+  })
+
   it('re-review I-E — the walk\'s place changed ("Change") after a lost answer: the jar is where it was first saved, which this walk cannot pick — nothing is written, and the line ends with the way on', async () => {
     const table = jarTable()
     await startWalk()

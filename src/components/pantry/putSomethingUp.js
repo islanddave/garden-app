@@ -511,6 +511,8 @@ export function otherRouteSent(sent, route) {
 // said in a walk ends with the way on — in ONE wording, this one, wherever the Walk says it.
 const WALK_ON = 'end this walk and start another'
 export const WALK_NEXT_TEXT = `To log more here, ${WALK_ON}.`
+// Whether a line said in a walk ends with that way on (the Walk reads it: such a group is spent — delta F-2).
+export const saysWalkOn = (text) => typeof text === 'string' && text.endsWith(`${WALK_ON}.`)
 // Said for that refusal. `first` is the route the earlier Save went out on; `row` is the row it is KNOWN to
 // have made (a replay answered with it in the door that is open) or null when its answer never came back —
 // then nothing says it is in the Pantry, only that it may be, and the way on is to finish THAT Save. `walk`:

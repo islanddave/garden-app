@@ -1154,6 +1154,22 @@ describe('the Walk — the item route', () => {
     expect(screen.getByTestId('walk-what-name').value).toBe('Eggs')
   })
 
+  // Delta F-2, the item route: the refusal says “Oat milk” is in the Pantry, so End the walk does not ask whether it is saved.
+  it('delta F-2 — an item saved earlier, a date of its own chosen, Save: "was already saved earlier … end this walk". End the walk: it ends, and nothing asks whether “Oat milk” is saved', async () => {
+    lostThenReplayed({}, { ...FIRST, ...stamps(LONG_AGO) })
+    await startWalk()
+    typeWhat('Oat milk'); tap('walk-method-as_is')
+    save(); await failed()
+    tap('walk-more'); tap('walk-own-unsure')
+    save()
+    await waitFor(() => expect(posts()).toHaveLength(2))
+    await waitFor(() => expect(errorText()).toBe(WALK_STALE))
+    tap('putup-walk-exit')
+    expect(screen.queryByTestId('putup-walk-unsaved')).toBeNull()
+    await screen.findByTestId('putup-walk-door')
+    expect(posts()).toHaveLength(2)
+  })
+
   // QA Q1 — the Walk's own wiring of the rule (appendix A of review-putupreplay3-qa-20261007).
   const PLANTED = { ...FIRST, name: 'Megatron jalapeño', plant_id: 'p1', crop_type_slug: 'pepper' }
   const plantingSearch = () => ({ plantings: [{ plant_id: 'p1', label: 'Megatron jalapeño', crop_type_slug: 'pepper', variety_id: 'v1', recent_picks: [] }], put_ups: [] })

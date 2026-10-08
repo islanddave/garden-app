@@ -51,7 +51,7 @@ import {
   AS_IS, METHOD_REQUIRED_TEXT, methodChoices, routeFor, walkWhen, walkWhenChips, previewLine, jarBody, itemBody,
   methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText,
   replayStaleText, replayUnsavedText, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
-  JAR_PATCH_READS, ITEM_PATCH_READS, otherRouteSent, otherRouteText,
+  JAR_PATCH_READS, ITEM_PATCH_READS, otherRouteSent, otherRouteText, saysWalkOn,
 } from './putSomethingUp.js'
 
 export const WALK_TITLE = 'Walk a place'
@@ -95,9 +95,14 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
   const saveRef = useRef(null)
   const [pendingName, setPendingName] = useState('')
   const [asking, setAsking] = useState(false)
+  // The name on screen is the one a refusal said is in the Pantry (or was, and has been removed since): the
+  // group is spent on it, and the exit does not ask whether it is saved (delta F-2).
+  const [pendingSpent, setPendingSpent] = useState(false)
   const onHeld = useCallback((snap) => {
     heldRef.current = snap
-    setPendingName(String(snap?.what?.name ?? '').trim())
+    const name = String(snap?.what?.name ?? '').trim()
+    setPendingName(name)
+    setPendingSpent(name !== '' && snap?.spent === name)
   }, [])
   // The question is about the name on screen: once that changes, it is not the question any more.
   useEffect(() => { setAsking(false) }, [pendingName])
@@ -142,11 +147,12 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
     clearWalk()
     navigate('/put-up', { replace: true })
   }, [navigate])
-  // With a name typed the first tap asks, in place; with nothing typed it ends at once.
+  // With a name typed the first tap asks, in place; with nothing typed — or a name a refusal has said is
+  // saved already — it ends at once.
   const requestExit = useCallback(() => {
-    if (pendingName) setAsking(true)
+    if (pendingName && !pendingSpent) setAsking(true)
     else exitWalk()
-  }, [exitWalk, pendingName])
+  }, [exitWalk, pendingName, pendingSpent])
   // While the two setup questions are up the group is unmounted and holds nothing: the item it was holding
   // is kept from a deploy's reload here instead.
   const heldGateKey = `walk-held:${useId()}`
@@ -441,6 +447,8 @@ function AlreadyHere({ fetch, placeId, seq, onOpen }) {
 // THE BAND SAYS WHAT THE SERVER ANSWERED — the row's name, count and method — never what the form held.
 // A refused group keeps its key until the walk is left (End the walk) or the page is loaded again — so a refusal
 // with no way through in the group ends by saying that way on (putSomethingUp.js WALK_NEXT_TEXT, re-review I-E).
+// Such a refusal names a row that IS in the Pantry (or was, and has been removed since): the group reports that
+// row's name as `spent`, and while it is the name on screen End the walk does not ask whether it is saved (delta F-2).
 function WalkGroup({
   walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK_PX, onSaved, onExists = null, onOpenExisting, onMoveHere,
   held = null, onHeld = null, saveRef = null,
@@ -460,6 +468,7 @@ function WalkGroup({
   // updateSent), held with the key: a PATCH that landed with its answer lost has moved the row's updated_at, and
   // Save again must still be able to finish it — only while the row still holds one of them.
   const [patched, setPatched] = useState(held?.patched ?? null)
+  const [spent, setSpent] = useState(held?.spent ?? null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
   const [field, setField] = useState(null)
@@ -492,13 +501,18 @@ function WalkGroup({
     return () => setReloadBlocked(gateKey, false)
   }, [gateKey, hold])
   useEffect(() => {
-    onHeld?.({ what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent, patched })
-  }, [onHeld, what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent, patched])
+    onHeld?.({ what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent, patched, spent })
+  }, [onHeld, what, method, count, moreOpen, discard, isRaw, inOil, ownChoice, ownPicked, key, sent, patched, spent])
+  // A refusal as it is said: one that ends with the walk's way on leaves the group spent on the row it names.
+  const refusal = (text, row, route) => {
+    if (saysWalkOn(text)) setSpent(String((route === 'jar' ? row?.label : row?.name) ?? '').trim() || null)
+    return text
+  }
 
   function reset() {
     setWhat(null); setMethod(null); setCount('1'); setDiscard({ mode: 'auto', date: '' }); setOwnChoice(null); setOwnPicked('')
     setIsRaw(false); setInOil(false)
-    setMoreOpen(false); setKey(null); setSent([]); setPatched(null); setErr(null); setField(null)
+    setMoreOpen(false); setKey(null); setSent([]); setPatched(null); setSpent(null); setErr(null); setField(null)
     existsRef.current = null
   }
 
@@ -516,7 +530,7 @@ function WalkGroup({
     const otherWay = otherRouteSent(sent, route)
     if (otherWay) {
       const known = existsRef.current?.route === otherWay ? existsRef.current.row : null
-      setErr(otherRouteText({ first: otherWay, row: known, what, walk: true, offered: otherWay !== 'item' || choices.asIs != null })); setField(null); setRefusedSeq(s => s + 1)
+      setErr(refusal(otherRouteText({ first: otherWay, row: known, what, walk: true, offered: otherWay !== 'item' || choices.asIs != null }), known, otherWay)); setField(null); setRefusedSeq(s => s + 1)
       if (known) onExists?.()
       return
     }
@@ -547,10 +561,10 @@ function WalkGroup({
           nullIsUntouched: true,
         })
         // Nothing is written — not the parts a PATCH could carry either — and the key is KEPT.
-        if (todo === 'stale') { setErr(replayStaleText(saved, { walk: true })); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
+        if (todo === 'stale') { setErr(refusal(replayStaleText(saved, { walk: true }), saved, route)); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
         if (todo === 'fixed') {
           const placeLabel = place?.id != null && String(place.id) === String(saved?.storage_location_id) ? place.label : null
-          setErr(replayJarFixedText(saved, part, { now, placeLabel, walk: true })); setField(part === 'what' || part === 'name' ? 'what' : null)
+          setErr(refusal(replayJarFixedText(saved, part, { now, placeLabel, walk: true }), saved, route)); setField(part === 'what' || part === 'name' ? 'what' : null)
           if (part === 'when' && ownChoice) setMoreOpen(true)
           setRefusedSeq(s => s + 1); onExists?.(); return
         }
@@ -580,7 +594,7 @@ function WalkGroup({
           holds: itemHolds(body, saved, what),
         })
         // Nothing is written and the key is KEPT: Save again is this refusal again, never a second item.
-        if (todo === 'stale') { setErr(replayStaleText(saved, { walk: true })); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
+        if (todo === 'stale') { setErr(refusal(replayStaleText(saved, { walk: true }), saved, route)); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
         if (todo === 'fixed') { setErr(replayFixedText(saved)); setField('what'); setRefusedSeq(s => s + 1); onExists?.(); return }
         if (todo === 'update') {
           onRow = saved
