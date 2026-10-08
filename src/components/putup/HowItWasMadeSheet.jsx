@@ -120,7 +120,7 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   const linesRef = useRef(null)
   const stopLineRef = useRef(null)
   const errRef = useRef(null)
-  const [refusedSeq, setRefusedSeq] = useState(0)     // counts the replay refusals: each is brought into view
+  const [refusedSeq, setRefusedSeq] = useState(0)     // counts the replay refusals and failed Saves: each is brought into view
   // The focused field is kept clear of the pinned Save (see sheetScroll.js).
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
@@ -231,6 +231,7 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
         return
       }
       setErr(fromJarsRefusal(e))
+      setRefusedSeq(s => s + 1)
     }
   }, [changingStart, chip, chosenJars, earlier, fetch, fixedStart, key, kind, kindOther, label, labelId, lines, made, madeId, nextTime, onClose, onSaved, pending, pickedDate])
 

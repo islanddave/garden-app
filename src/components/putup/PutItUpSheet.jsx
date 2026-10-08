@@ -453,6 +453,17 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
   const writingRef = useRef(false)
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
+  // A failed write is the last line of the scroller, under the pinned footer: each is brought into view
+  // (counted, so the same failure twice is brought into view twice).
+  const errRef = useRef(null)
+  const [failedSeq, setFailedSeq] = useState(0)
+  useEffect(() => {
+    if (!failedSeq) return
+    const el = errRef.current
+    if (!el) return
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
+    scrollClearOfFooter(el, footerRef.current)
+  }, [failedSeq])
   const nextTimeId = `putup-nexttime-${useId()}`
   const madeId = `putup-made-${useId()}`
 
@@ -594,6 +605,7 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
       writingRef.current = false
       setSaving(false)
       const body = e?.body && typeof e.body === 'object' ? e.body : null
+      setFailedSeq(s => s + 1)
       if (body?.code === 'batch_closed' && body.reopen) {
         setReopenDoor(true)
         setErr(typeof body.error === 'string' && body.error.trim() ? body.error.trim() : 'This batch is finished. Reopen it to bottle more →')
@@ -726,7 +738,7 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
         )}
 
         {err && (
-          <div role="alert" data-testid="putup-error" style={{ marginBottom: T.space.sm, color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>{err}</div>
+          <div ref={errRef} role="alert" data-testid="putup-error" style={{ marginBottom: T.space.sm, color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>{err}</div>
         )}
         {reopenDoor && (
           <button type="button" data-testid="putup-reopen" disabled={saving} onClick={reopen} style={{ ...quietLink, marginBottom: T.space.sm }}>

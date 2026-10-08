@@ -566,7 +566,10 @@ describe('Put something up — the item route', () => {
     Object.defineProperty(panel, 'scrollTop', { configurable: true, get: () => top, set: (v) => { top = v } })
     asIs()
     save(); await failed()
-    expect(broughtIntoView(on, 'door-error')).toBe(false)                      // an ordinary failure is not moved to
+    // BUG-PUTUPSAVEFAILHIDDEN-001: the ordinary failure is the same last line under the same pinned Save.
+    await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+    expect(top).toBe(98)
+    on.length = 0; top = 0
     tap('door-from'); typeInto('door-notes', 'the second carton')
     save()
     await answered(door, 2)
@@ -578,6 +581,23 @@ describe('Put something up — the item route', () => {
     on.length = 0
     save()
     await waitFor(() => expect(posts()).toHaveLength(3))
+    await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+  })
+
+  // BUG-PUTUPSAVEFAILHIDDEN-001, measured in Chrome at 426x836: the failure line sat at y771-786 under the
+  // pinned Save (top y755), and nothing on screen changed after the tap.
+  it('a Save that fails the ordinary way is brought into view, and so is the same failure again; the line keeps 8 px under it at the scroller\'s end', async () => {
+    const on = watchScrolls()
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: LOST } }); stableFetch.fn = fake
+    await openDoor()
+    asIs()
+    save(); await failed()
+    await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+    expect(screen.getByTestId('door-error').parentElement.style.marginBottom).toBe('8px')
+    on.length = 0
+    save()
+    await waitFor(() => expect(posts()).toHaveLength(2))
+    await failed()
     await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
   })
 
@@ -917,6 +937,20 @@ describe('the Walk — the item route', () => {
     save(); await landed()
     expect(new Set(keys()).size).toBe(1)
     expect(patches()).toHaveLength(2)
+  })
+
+  it('BUG-PUTUPSAVEFAILHIDDEN-001 — a Save that fails the ordinary way is brought into view, and so is the same failure again', async () => {
+    const on = watchScrolls()
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: LOST } }); stableFetch.fn = fake
+    await startWalk()
+    typeWhat('Oat milk'); tap('walk-method-as_is')
+    save(); await failed()
+    await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
+    on.length = 0
+    save()
+    await waitFor(() => expect(posts()).toHaveLength(2))
+    await failed()
+    await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
   })
 
   it('B1 / Q3 — an item made longer ago than the bound (the walk sat a while), the name changed, Save: NOTHING is written; the walk says so, brings the line into view and KEEPS the key — Save again is refused again: no second item, no create under a new key', async () => {

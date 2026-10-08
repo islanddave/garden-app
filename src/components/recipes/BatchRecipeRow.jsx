@@ -156,7 +156,7 @@ export function SaveAsRecipe({ batch, onChanged }) {
       onChanged?.()
     } catch (e) {
       if (onRow?.id != null) { setErr(saveAsRecipeUnsavedText(onRow, { lost: answerLost(e) })); setRefusedSeq(s => s + 1); onChanged?.() }
-      else setErr("Couldn't save it as a recipe — try again.")
+      else { setErr("Couldn't save it as a recipe — try again."); setRefusedSeq(s => s + 1) }
     } finally { setBusy(false) }
   }
 

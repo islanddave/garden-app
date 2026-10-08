@@ -57,7 +57,7 @@ import { SheetStartChips, SHEET_START_CHIPS, EARLIER_CHIPS, resolveSheetStart } 
 import KindChips, { KIND_CHIPS, kindBody } from './KindChips.jsx'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from './sheetDraft.js'
 import { useSheetDraftKey } from './useSheetDraftKey.js'
-import { useFieldsClearOfFooter } from './sheetScroll.js'
+import { useFieldsClearOfFooter, scrollClearOfFooter } from './sheetScroll.js'
 import { readCaptureMeta } from '../../lib/imagePipeline.js'
 import { mintKey } from './idempotencyKey.js'
 import LikeBatchPicker from '../putup/LikeBatchPicker.jsx'
@@ -185,6 +185,17 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
   // The focused field is kept clear of the pinned Start it (see sheetScroll.js).
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
+  // A failed start is the last line of the scroller, under the pinned Start it: each is brought into view
+  // (counted, so the same failure twice is brought into view twice).
+  const errRef = useRef(null)
+  const [failedSeq, setFailedSeq] = useState(0)
+  useEffect(() => {
+    if (!failedSeq) return
+    const el = errRef.current
+    if (!el) return
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
+    scrollClearOfFooter(el, footerRef.current)
+  }, [failedSeq])
   const labelId = `start-label-${useId()}`
 
   useEffect(() => () => { if (ownPreview) URL.revokeObjectURL(ownPreview) }, [ownPreview])
@@ -322,6 +333,7 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
       setErr(e?.photo
         ? "Couldn't save the photo — try again, or remove it."
         : "Couldn't start it — try again. What you typed is still here.")
+      setFailedSeq(s => s + 1)
     }
   }, [chip, draftKey, earlier, fetch, file, following, key, kind, kindOther, label, labelId, land, like, now, pickedDate, recipe, uploader])
 
@@ -423,7 +435,7 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
           locked={lockedRecipe} />
 
         {err && (
-          <div role="alert" data-testid="start-error"
+          <div ref={errRef} role="alert" data-testid="start-error"
             style={{ marginBottom: T.space.sm, color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>{err}</div>
         )}
       </div>
