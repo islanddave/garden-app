@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Viewport copied from ./index.html for the same reason it is copied there. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>Put-Up release F — the ferment walks (Start → Put it up → finish → edit)</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #faf8f3; }
+      /* No instrument bar: the walk measures the page at its true geometry, and a fixed bar on top
+         would be what elementFromPoint reports. The verdict goes to document.title and #verdict. */
+      #verdict { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="verdict"></div>
+    <div id="root"></div>
+    <script type="module" src="/tests/harness/putuprefusal.jsx"></script>
+  </body>
+</html>
