@@ -59,6 +59,33 @@ describe('POST /api/kitchen-batches — 1b key', () => {
     expect(b.body).toMatchObject({ id: a.body.id, replayed: true })
   })
 
+  // BUG-PUTUPREPLAYREST-001 (QA I-2, I-3). What the Start sheet reads off a replayed batch
+  // (src/components/kitchen/StartBatchSheet.jsx): the two stamps — ONE instant while nothing has written to the
+  // batch, updated_at moved by any PUT — the fields its PUT carries, and recipe_id with the jar columns, which
+  // decide whether the recipe's jar is still to be put on a batch a lost tap made.
+  it('a replay answers the batch\'s two stamps as one instant while it is untouched, updated_at later after a PUT, and every field the Start sheet reads', async () => {
+    const ms = (v) => new Date(v).getTime()
+    const key = randomUUID()
+    const a = await call('POST', '/api/kitchen-batches', { label: `stamps ${RUN}`, idempotency_key: key })
+    expect(a.status, JSON.stringify(a.body)).toBe(201)
+    let again = await call('POST', '/api/kitchen-batches', { label: 'another body', kind: 'ferment', idempotency_key: key })
+    expect(again.status, JSON.stringify(again.body)).toBe(200)
+    expect(again.body).toMatchObject({ id: a.body.id, replayed: true, label: `stamps ${RUN}`, kind: null, recipe_id: null, vessel_label: null })
+    for (const k of ['label', 'kind', 'kind_other', 'recipe_ref', 'recipe_id', 'vessel_label', 'vessel_size', 'vessel_unit', 'vessel_count', 'created_at', 'updated_at']) {
+      expect(`${k}: ${Object.prototype.hasOwnProperty.call(again.body, k)}`).toBe(`${k}: true`)
+    }
+    const made = ms(again.body.created_at)
+    expect(Number.isFinite(made)).toBe(true)
+    expect(ms(again.body.updated_at)).toBe(made)
+    await new Promise((resolve) => setTimeout(resolve, 20))                   // the two stamps travel at millisecond precision
+    const put = await call('PUT', `/api/kitchen-batches/${a.body.id}`, { vessel_label: 'Half-gallon jar' })
+    expect(put.status, JSON.stringify(put.body)).toBe(200)
+    again = await call('POST', '/api/kitchen-batches', { label: 'another body', idempotency_key: key })
+    expect(again.body).toMatchObject({ id: a.body.id, replayed: true, label: `stamps ${RUN}`, vessel_label: 'Half-gallon jar' })
+    expect(ms(again.body.created_at)).toBe(made)
+    expect(ms(again.body.updated_at)).toBeGreaterThan(made)
+  })
+
   it('"Not sure" writes an undated started row with precision unknown', async () => {
     const r = await call('POST', '/api/kitchen-batches', { label: 'Mystery crock', start_precision: 'unknown', idempotency_key: randomUUID() })
     expect(r.status).toBe(201)
