@@ -318,11 +318,16 @@ describe('jars — POST additions, PATCH, Move', () => {
   // is nullable with no default (migrations/v4-putup-001/0a:97), the create's INSERT does not name it, and only
   // the BEFORE UPDATE trigger (v5-putupmake-001/0a:418-421) writes it — so a fresh jar answers updated_at NULL,
   // and the client reads NULL beside a real created_at as "untouched" FOR THIS TABLE ONLY. This case is the
-  // database's own word on that. If the first NULL assertion goes red with a timestamp equal to created_at, the
-  // live table has a default the migrations do not show: the client reads that as untouched too, so nothing is
-  // unsafe — change this case and the fake in src/__tests__/PutUpReplayRest.jar.test.jsx (`stamps`) to say so.
-  it('a replay answers the jar\'s two stamps and every field the client compares: updated_at NULL while nothing has written to it, set and later than created_at after any PATCH', async () => {
+  // database's own word on that.
+  // IT ASSERTS WHAT THE CLIENT NEEDS, NOT THE MECHANISM (re-review I-D). rowIsThisSittings reads a jar as untouched
+  // when updated_at is NULL *or* is created_at's own instant, so the three checks before the PATCH take either:
+  // "nothing has written to it since its create". By the migration files it is NULL. A default on the live table
+  // that those files do not show would make it equal instead — the client is fine with that, and a harmless
+  // difference between a database and its files must not stop a promote. A stamp that is SET AND NOT created_at's
+  // is the one state that changes behaviour (the client then refuses every repair), and it still goes red.
+  it('a replay answers the jar\'s two stamps and every field the client compares: updated_at NULL (or created_at\'s own instant) while nothing has written to it, set and later than created_at after any PATCH', async () => {
     const ms = (v) => new Date(v).getTime()
+    const untouched = (v, made) => (v === null ? 'null' : ms(v) === made ? 'equal to created_at' : `set and not created_at's: ${v}`)
     const k = randomUUID()
     const body = {
       label: `stamps ${RUN}`, method: 'quick_pickle', preserved_at: '2026-10-01', preserved_at_precision: 'day',
@@ -333,13 +338,13 @@ describe('jars — POST additions, PATCH, Move', () => {
     const made = ms(first.body.created_at)
     expect(Number.isFinite(made)).toBe(true)
     expect(Math.abs(Date.now() - made)).toBeLessThan(5 * 60 * 1000)          // the database's clock, near this one
-    expect(first.body.updated_at).toBeNull()
+    expect(untouched(first.body.updated_at, made)).toMatch(/^(null|equal to created_at)$/)
     let again = await call('POST', '/api/preservation', { ...body, label: 'another body', notes: 'second' })
     expect(again.status, JSON.stringify(again.body)).toBe(200)
     expect(again.body).toMatchObject({ id: first.body.id, replayed: true, label: `stamps ${RUN}`, notes: 'first' })
     expect(ms(again.body.created_at)).toBe(made)
-    expect(again.body.updated_at).toBeNull()
-    expect((await directSql`SELECT (updated_at IS NULL) AS never FROM preservation_log WHERE id = ${first.body.id}`)[0].never).toBe(true)
+    expect(untouched(again.body.updated_at, made)).toMatch(/^(null|equal to created_at)$/)
+    expect((await directSql`SELECT (updated_at IS NULL OR updated_at = created_at) AS untouched FROM preservation_log WHERE id = ${first.body.id}`)[0].untouched).toBe(true)
     // The replay is the raw row: every key the client's reading of it names is there (a missing one would read
     // as "nothing" and let a difference through), and the date it compares by its first ten characters is the day.
     for (const key of ['id', 'label', 'method', 'package_count', 'quantity_value', 'quantity_unit', 'remaining_amount',
