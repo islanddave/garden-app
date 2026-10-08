@@ -77,6 +77,84 @@ describe('BUG-FEEDINTERVALZERO-001 -- resolveCadence restores the default feedin
   });
 });
 
+// "Use crop default" means the normal interval for THAT KIND OF PLANT, so the restored value comes from
+// the same ladder a planting with no DB profile already climbs -- bundled variety, then genus, then
+// cadence.default -- and the first POSITIVE interval on it wins. Straight to the global 14 would make a
+// Lithops (bundled: twice a year) a fortnightly feeder. Expected values are read from the data file.
+describe('BUG-FEEDINTERVALZERO-001 -- the restored interval is the plant\'s own bundled one first', () => {
+  const LITHOPS_IV = cad.by_variety.Lithops.fertilize_interval_days;
+  const CAPSICUM_IV = cad.by_genus_fallback.Capsicum.fertilize_interval_days;
+  const NULL_GENUS = 'Sempervivum'; // bundled genus entry that ships a null interval
+  const NULL_VARIETY = 'Garlic (hardneck)'; // bundled variety entry that ships a null interval
+  const ALLIUM_IV = cad.by_genus_fallback.Allium.fertilize_interval_days;
+
+  it('fixture guard: the bundled rungs hold the values these cases lean on', () => {
+    expect(LITHOPS_IV).toBe(180);
+    expect(CAPSICUM_IV).toBeGreaterThan(0);
+    expect(CAPSICUM_IV).not.toBe(DEFAULT_IV);
+    expect(cad.by_variety['No Such Pepper']).toBeUndefined();
+    expect(cad.by_genus_fallback[NULL_GENUS].fertilize_interval_days).toBe(null);
+    expect(cad.by_variety[NULL_VARIETY].fertilize_interval_days).toBe(null);
+    expect(ALLIUM_IV).toBeGreaterThan(0);
+    expect(ALLIUM_IV).not.toBe(DEFAULT_IV);
+  });
+
+  for (const [label, bad] of [['0', 0], ['negative', -5], ['NaN', NaN]]) {
+    it(`${label} on a Lithops -> the bundled variety interval (${LITHOPS_IV}), rest of the db profile as adopted`, () => {
+      const p = dbP({ crop: 'succulent (Lithops / living stone)', fertilize_interval_days: bad }, { variety: 'Lithops' });
+      expect(resolveCadence(p, cad)).toEqual({
+        crop: 'succulent (Lithops / living stone)', water_interval_days_container: 7,
+        fertilize_interval_days: LITHOPS_IV, _via: 'db',
+      });
+    });
+
+    it(`${label}, variety not bundled but genus is -> the genus interval (${CAPSICUM_IV})`, () => {
+      const c = resolveCadence(dbP({ fertilize_interval_days: bad }, { variety: 'No Such Pepper', genus: 'Capsicum' }), cad);
+      expect(c.fertilize_interval_days).toBe(CAPSICUM_IV);
+      expect(c._via).toBe('db');
+      expect(c.crop).toBe('houseplant');
+    });
+
+    it(`${label}, neither variety nor genus bundled -> the global default (${DEFAULT_IV})`, () => {
+      const c = resolveCadence(dbP({ fertilize_interval_days: bad }, { variety: 'nope', genus: 'nope' }), cad);
+      expect(c.fertilize_interval_days).toBe(DEFAULT_IV);
+    });
+  }
+
+  it('the variety is found by name too, exactly as the bundled path finds it', () => {
+    const p = dbP({ fertilize_interval_days: 0 }, { name: 'Lithops' });
+    expect(resolveCadence(p, cad).fertilize_interval_days).toBe(LITHOPS_IV);
+  });
+
+  it('a rung with no positive interval is stepped over, not adopted', () => {
+    // variety null -> genus positive
+    expect(resolveCadence(dbP({ fertilize_interval_days: 0 }, { variety: NULL_VARIETY, genus: 'Allium' }), cad)
+      .fertilize_interval_days).toBe(ALLIUM_IV);
+    // genus null -> default
+    expect(resolveCadence(dbP({ fertilize_interval_days: 0 }, { genus: NULL_GENUS }), cad)
+      .fertilize_interval_days).toBe(DEFAULT_IV);
+  });
+
+  it('a Lithops with 0 is held on its own clock: silent at 40 days since a feed, due at 180', () => {
+    const o = { variety: 'Lithops' };
+    expect(rec({ fertilize_interval_days: 0 }, { ...o, last_fert: daysAgo(40) })).toBeNull();
+    expect(rec({ fertilize_interval_days: 0 }, { ...o, last_fert: daysAgo(LITHOPS_IV - 1) })).toBeNull();
+    expect(rec({ fertilize_interval_days: 0 }, { ...o, last_fert: daysAgo(LITHOPS_IV) }).interval).toBe(LITHOPS_IV);
+  });
+
+  it('a POSITIVE, absent or null db interval never consults the bundle, even on a Lithops', () => {
+    const o = { variety: 'Lithops' };
+    expect(resolveCadence(dbP({ fertilize_interval_days: 30 }, o), cad).fertilize_interval_days).toBe(30);
+    expect('fertilize_interval_days' in resolveCadence(dbP({}, o), cad)).toBe(false);
+    expect(resolveCadence(dbP({ fertilize_interval_days: null }, o), cad).fertilize_interval_days).toBe(null);
+  });
+
+  it('no rung positive (a cadence file with no default) leaves the profile as adopted', () => {
+    const bare = { by_variety: {}, by_genus_fallback: {} };
+    expect(resolveCadence(dbP({ fertilize_interval_days: 0 }), bare).fertilize_interval_days).toBe(0);
+  });
+});
+
 describe('BUG-FEEDINTERVALZERO-001 -- everything else is untouched', () => {
   it('a positive cultivar interval is carried as written (both the gate and the release)', () => {
     expect(resolveCadence(dbP({ fertilize_interval_days: 30 }), cad).fertilize_interval_days).toBe(30);

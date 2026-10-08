@@ -72,7 +72,7 @@
             "crop": "succulent (Lithops / living stone)",
             "id": "li1",
             "in_ground": false,
-            "interval": 14,
+            "interval": 180,
             "item": "Worm Castings (Brut 12lb + Wiggle Worm 30lb)",
             "name": "Lithops (seeded)",
             "never": true,

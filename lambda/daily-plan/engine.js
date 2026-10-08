@@ -80,12 +80,16 @@ function resolveCadence(p, cad){
   const cs = p && p.cadence_scopes;
   const adopt = Array.isArray(cs) ? cs.length > 0
                                   : !!(p && p.db_cadence && p.db_cadence._seeded); // legacy; flag-OFF only
-  // BUG-FEEDINTERVALZERO-001 — A NON-POSITIVE FEED INTERVAL IS A MISTAKE; THE DEFAULT IS RESTORED HERE.
-  // Owner decision 2026-10-08: "ignore zero, use crop default" — NOT "zero means never remind" (that is
-  // no_calendar_feed, which fertilizeRec reads first and which still wins). The view's shallow
-  // right-wins merge (above) lets a cultivar 0 OVERWRITE the system row's 14, so the default is already
-  // gone when the profile reaches the engine and cannot be recovered from p.db_cadence. cad.default is
-  // the bundled mirror of that system row (both 14), so it is what an interval-less cultivar inherits.
+  // BUG-FEEDINTERVALZERO-001 — A NON-POSITIVE FEED INTERVAL IS A MISTAKE; THE PLANT'S OWN IS RESTORED HERE.
+  // Owner decision 2026-10-08: "ignore zero, use crop default — the normal interval for that kind of
+  // plant" — NOT "zero means never remind" (that is no_calendar_feed, which fertilizeRec reads first and
+  // which still wins). The view's shallow right-wins merge (above) lets a cultivar 0 OVERWRITE the
+  // system row's 14, so the default is already gone when the profile reaches the engine and cannot be
+  // recovered from p.db_cadence. What replaces it is the first POSITIVE interval on the bundled ladder
+  // (bundledRungs: variety, genus, cad.default) — the same one this planting would climb with no DB
+  // profile at all. Not straight to cad.default: the bundle knows a Lithops feeds every 180 days, and
+  // the global 14 would make it a fortnightly feeder. A rung whose interval is null is stepped over.
+  // ONLY the interval is taken; every other key stays as adopted and _via stays 'db'.
   // Done on the adopted profile only, because that is the only path a merge can have clobbered: the
   // bundled rows are positive-or-null by construction and are returned exactly as before.
   // Scoped to a NUMBER that cannot be a cadence (<=0, NaN). Absent or null stays absent or null — that
@@ -93,16 +97,27 @@ function resolveCadence(p, cad){
   // this ticket is not about. Here rather than in fertilizeRec so the emitted item's `interval`
   // carries the restored value and daily-plan-read/doneEvents.js prices the same clock the engine used.
   if(p && p.db_cadence && adopt){
-    const iv=p.db_cadence.fertilize_interval_days, dv=cad && cad.default && cad.default.fertilize_interval_days;
-    if(typeof iv==='number' && !(iv>0) && typeof dv==='number' && dv>0) return {...p.db_cadence, fertilize_interval_days:dv, _via:'db'};
+    const iv=p.db_cadence.fertilize_interval_days;
+    if(typeof iv==='number' && !(iv>0) && cad){
+      const r=bundledRungs(p, cad).find(x=>typeof x.fertilize_interval_days==='number' && x.fertilize_interval_days>0);
+      if(r) return {...p.db_cadence, fertilize_interval_days:r.fertilize_interval_days, _via:'db'};
+    }
     return {...p.db_cadence, _via:'db'};
   }
+  return bundledRungs(p, cad)[0];
+}
+// The bundled cadence-data-v2.json ladder for a planting, most specific first: variety (matched on
+// p.variety, then p.name), genus, default. The default rung is always present, so [0] is the bundled
+// resolution; resolveCadence's BUG-FEEDINTERVALZERO-001 arm walks the rest for a usable feed interval.
+function bundledRungs(p, cad){
+  const out=[];
   const byV=cad.by_variety||{};
   const key=[p.variety, p.name].find(k=>k && byV[k]);
-  if(key) return {...byV[key], _via:'variety:'+key};
+  if(key) out.push({...byV[key], _via:'variety:'+key});
   const gf=(cad.by_genus_fallback||{})[p.genus];
-  if(gf) return {crop:p.genus, ...gf, _via:'genus:'+p.genus};
-  return {crop:p.genus||'unknown', ...cad.default, _via:'default'};
+  if(gf) out.push({crop:p.genus, ...gf, _via:'genus:'+p.genus});
+  out.push({crop:p.genus||'unknown', ...cad.default, _via:'default'});
+  return out;
 }
 
 // MG feed phase from weeks since potting into fresh mix.
