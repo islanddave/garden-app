@@ -18,6 +18,19 @@
 // minted the first time the sheet is dirty, kept in the draft, and reused on every retry and reload
 // (V4 §5.2, §6.5) — a retried Save after a dropped answer is a replay, never a second sitting.
 //
+// A REPLAYED SITTING (BUG-PUTUPREPLAYREST-001; kitchen/idempotencyKey.js). The key does not change with what
+// is on the sheet, and a sitting has NO update route (its rows are jars; the only whole-sitting write is
+// Undo). So once another body has gone out under the key — a count changed, a row added, the OTHER footer
+// button: `finish` is part of the body, and both buttons share the key — a tap answered `replayed: true`
+// writes nothing and is REFUSED in words (PUT_UP_REPLAY_NOT_ON_IT): the sheet stays open, the host is not
+// told a put-up, and the batch behind re-reads (`onChanged`). Which tap landed is not known here, and the
+// answer does not carry everything a sitting holds (the mash weight, Next time…), so the sheet cannot tell
+// "already holds this" and the sentence says only what is certain. That refusal ends the STORED draft — the
+// first tap landed — so the sheet opened next is a clean one with a new key (the rest can still be put up
+// later), while this one keeps its key and is refused again. One body only is the retry it always was.
+// What has gone out rides in the draft as `sent`; its print is of what was CHOSEN (the When chip, not the day
+// it came to). THE STUB of a replayed sitting is built from the server's jars, never from the form.
+//
 // <Sheet armsBack>, size full, busy while writing; the draft (kitchen/sheetDraft.js, sheet 'putup',
 // keyed per person per batch) survives Back; confirmOnDirty off; the reload gate is held while dirty or
 // writing. Completion is shown IN PLACE by the host (onDone hands it the stub words), never a toast.
@@ -40,14 +53,14 @@ import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/she
 import { recipeFirstRow, recipePreview } from '../recipes/recipes.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter } from '../kitchen/sheetScroll.js'
-import { mintKey } from '../kitchen/idempotencyKey.js'
+import { mintKey, payloadPrint, noteSent, afterReplay, whenChoice } from '../kitchen/idempotencyKey.js'
 import LineAdder, { addFirstWords } from './LineAdder.jsx'
 import { lineWords } from './lines.js'
 import {
   PUT_IT_UP_TITLE, FINISH_CTA, LATER_CTA, PUT_IT_UP_SHEET, WHEN_CHIPS, estimateChips, preselectWhen,
   resolveWhen, METHOD_LABELS, ALL_PUT_UP_METHODS, methodChipsForKind, RAW_METHODS, TEXTURE_METHODS,
   PH_METHODS, TEXTURE_CHIPS, RAW_LABEL, RAW_HINT, IN_OIL_LABEL, DISCARD_LABELS, containerChoices, placeChips, newRow,
-  rowSummary, rowCount, previewDiscard, groupPreviews, putUpBody, completionStub, effectiveRows, drawnJarIds,
+  rowSummary, rowCount, previewDiscard, groupPreviews, putUpBody, completionStub, sittingRows, effectiveRows, drawnJarIds,
 } from './putItUp.js'
 import { NEW_PLACE_KINDS } from './placeKinds.js'
 
@@ -56,6 +69,9 @@ const FOOTER_PX = 132
 export { mintKey }
 
 const EMPTY_SITTING = { lines: [], madeG: '', mashG: '', nextTime: '' }
+// Said when an earlier tap made the sitting and another body has gone out under its key since. Which one
+// landed is not known here, so it never says the change is missing: only that this tap wrote nothing.
+export const PUT_UP_REPLAY_NOT_ON_IT = 'This is already put up — an earlier tap went through. This one changed nothing on it. Close this and open the batch to see what was put up.'
 
 // What the preview says when Raw or In oil is what took the date away (Put-Up R2a, amendment D7; ruling
 // Df-3 = F-3). THE ONE COPY on this surface: the door (pantry/) holds its own and a test binds the two, so
@@ -94,6 +110,7 @@ function isRow(r) {
     && !!r.discard && ['auto', 'date', 'none'].includes(r.discard.mode)
 }
 // The draft's shape, checked on read: a record that fails any arm is dropped, never half-restored.
+// `sent` (what has gone out under `key`, idempotencyKey.js) is optional: a draft stored before it restores.
 export function isPutItUpDraft(d) {
   return !!d && typeof d === 'object' && !Array.isArray(d)
     && typeof d.key === 'string' && (d.chip === null || WHEN_CHIPS.some(c => c.id === d.chip))
@@ -103,6 +120,7 @@ export function isPutItUpDraft(d) {
     && !!d.sitting && Array.isArray(d.sitting.lines) && d.sitting.lines.every(isLine) && typeof d.sitting.madeG === 'string'
     && (d.sitting.mashG === undefined || typeof d.sitting.mashG === 'string')
     && typeof d.sitting.nextTime === 'string'
+    && (d.sent == null || Array.isArray(d.sent))
 }
 
 // The sheet's quiet actions are 48 px tall (Put-Up UX pass R1, F16): height only.
@@ -426,6 +444,14 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
     key: '', chip: preChip, estimate: null, pickedDate: '', method: null, rows: [recipeFirstRow(batch.recipe)], sitting: EMPTY_SITTING,
   })
   const [key, setKey] = useState(initial.key)
+  // What has gone out under `key` (idempotencyKey.js), kept with it in the draft.
+  const [sent, setSent] = useState(() => (Array.isArray(initial.sent) ? initial.sent.filter(x => typeof x === 'string') : []))
+  // Set by a replay refusal: the first tap landed, so the STORED draft has done its job. It is taken out of
+  // storage and not written back, while this sheet keeps its key and `sent`.
+  const [spent, setSpent] = useState(false)
+  // Set once a put-up lands: the draft is cleared then, and nothing may write it back before the sheet
+  // unmounts (`sent` changes while the write is out, and its render can be committed after the clear).
+  const doneRef = useRef(false)
   // A draft stored before When started on Today can hold `chip: null` (nothing chosen yet). It restores to
   // Today like any other open — never to a When nobody asked for and Save then refuses.
   const [chip, setChip] = useState(initial.chip ?? preChip)
@@ -453,8 +479,8 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
   const writingRef = useRef(false)
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
-  // A failed write is the last line of the scroller, under the pinned footer: each is brought into view
-  // (counted, so the same failure twice is brought into view twice).
+  // A failed write or a replay refusal is the last line of the scroller, under the pinned footer: each is
+  // brought into view (counted, so the same failure twice is brought into view twice).
   const errRef = useRef(null)
   const [failedSeq, setFailedSeq] = useState(0)
   useEffect(() => {
@@ -494,10 +520,11 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
   useEffect(() => { if (dirty && !key) setKey(mintKey()) }, [dirty, key])
 
   useEffect(() => {
-    if (!draftKey) return
-    if (dirty) writeSheetDraft(draftKey, PUT_IT_UP_SHEET, { key, chip, estimate, pickedDate, method, rows, sitting })
-    else clearSheetDraft(draftKey)
-  }, [draftKey, dirty, key, chip, estimate, pickedDate, method, rows, sitting])
+    if (!draftKey || doneRef.current) return
+    if (dirty && !spent) {
+      writeSheetDraft(draftKey, PUT_IT_UP_SHEET, { key, chip, estimate, pickedDate, method, rows, sitting, ...(sent.length ? { sent } : null) })
+    } else clearSheetDraft(draftKey)
+  }, [draftKey, dirty, key, chip, estimate, pickedDate, method, rows, sitting, sent, spent])
 
   const holdReload = dirty || saving
   const gateKey = `putup-sheet:${useId()}`
@@ -592,11 +619,29 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
     }
     writingRef.current = true
     setSaving(true); setErr(null)
+    // The whole body is printed — `finish` with it — and When as the chip he chose, not the day it came to.
+    const print = payloadPrint({ ...res.body, when: whenChoice(chip, estimate, pickedDate) })
+    const sentNow = noteSent(sent, print)
+    setSent(sentNow)
     try {
       const answer = await fetch(`/api/kitchen-batches/${batch.id}/put-up`, { method: 'POST', body: JSON.stringify(res.body) })
+      // No route puts a changed sitting onto the one an earlier tap made, so it is never this sheet's to
+      // write (`mine: false`): a replay with another body out under the key is refused, and the key KEPT.
+      if (afterReplay(answer, sentNow, print, { mine: false }) === 'stale') {
+        writingRef.current = false
+        setSaving(false)
+        setSpent(true)
+        setErr(PUT_UP_REPLAY_NOT_ON_IT)
+        setFailedSeq(s => s + 1)
+        onChanged?.()
+        return
+      }
+      doneRef.current = true
       clearSheetDraft(draftKey)
       const jars = Array.isArray(answer?.jars) ? answer.jars : (Array.isArray(answer?.outputs) ? answer.outputs : [])
-      const stub = completionStub({ batch, rows, jars, now: nowDate })
+      // A replay is the sitting an earlier tap made: its stub is the server's jars. Otherwise the sitting was
+      // made from this very body, and the form's rows are it (in the order he entered them).
+      const stub = completionStub({ batch, rows: answer?.replayed === true ? sittingRows(jars) : rows, jars, now: nowDate })
       writingRef.current = false
       setSaving(false)
       onClose?.()
@@ -604,6 +649,9 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
     } catch (e) {
       writingRef.current = false
       setSaving(false)
+      // An ANSWERED 4xx wrote nothing, so this body is not one that may have landed: `sent` is as it was
+      // before it went (a body that went out earlier, and may have landed then, is still in it).
+      if (typeof e?.status === 'number' && e.status >= 400 && e.status < 500) setSent(sent)
       const body = e?.body && typeof e.body === 'object' ? e.body : null
       setFailedSeq(s => s + 1)
       if (body?.code === 'batch_closed' && body.reopen) {
@@ -614,7 +662,7 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
       const r = describeRefusal(e)
       setErr(r ? r.text : "Couldn't put it up — try again. Everything you entered is still here.")
     }
-  }, [batch, chip, draftKey, estimate, fetch, heldAdder, heldRow, key, method, nowDate, onClose, onDone, openRow, pickedDate, rows, sitting])
+  }, [batch, chip, draftKey, estimate, fetch, heldAdder, heldRow, key, method, nowDate, onChanged, onClose, onDone, openRow, pickedDate, rows, sent, sitting])
 
   const estimates = estimateChips(nowDate)
 
