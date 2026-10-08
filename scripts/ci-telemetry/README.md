@@ -140,3 +140,19 @@ artefact, so it reads the coverage table out of two unit-pass job logs of one co
 directory row but `All files` and `lambda/daily-plan` on % Funcs and % Lines. Exit 0 `COVERAGE-SAME`, 1
 `COVERAGE-DIFFERS` with the rows, 2 `COVERAGE-UNREADABLE`. Tested in `scripts/test_coverage_rows.py` against the
 table of a real job log under `scripts/fixtures/coverage-rows/`.
+
+`a3-exit.sh OUT_DIR` makes the A3 trial's two exit checks at the current checkout, the ones its header in
+`.github/workflows/ci-next.yml` says are to be made again at the last counted SHA. It runs the node project's
+files under jsdom (with the repo setup file) and under node through `a3-exit.config.mjs`, a vitest config of its own
+that imports `vitest.config.ts` for everything outside the environment and changes nothing about `npm test`; it
+leaves out `vitest-projects.test.js`, whose guard fails by design outside the trial's own two shapes. `a3-exit.py e1
+JSDOM.jsonl NODE.jsonl` (E1, assertion parity) compares, test by test, the state and the number of `expect`
+assertions that `a3-exit-count.mjs` and `a3-exit-recorder.mjs` wrote: `E1-SAME` or `E1-DIFFER`. A test that asserts
+only through `node:assert` reads 0 on both sides. `a3-exit.py e2 JSDOM_A JSDOM_B NODE_A NODE_B --setup-loads
+CONTROL` (E2, loaded-module coverage parity) reads four `coverage-final.json`, two per environment because v8 does
+not count every file the same twice, and counts a statement, function or branch arm as a difference only when both
+runs of each environment agree on it and the environments do not: `E2-SAME` or `E2-DIFFER (n stable differences in m
+files)`. Items are matched by source extent, then by kind and start line (`extent-only`, printed, not counted); a
+covered item or file that only one environment has counts, except a jsdom-only file the control run
+(`a3-exit.control.mjs`) shows the setup file loading. Both exit 0 / 1, and 2 when an input is missing or empty. Seven
+vitest runs, no network, output outside the checkout. Tested in `scripts/test_a3_exit.py`.
