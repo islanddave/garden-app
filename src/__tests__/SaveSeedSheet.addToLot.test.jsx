@@ -68,6 +68,7 @@ const MIX = 'sms-variety-b-example-run + sms-variety-b2-example-run mix'
 
 const CHANGED = 'This lot changed somewhere else just now. This is the latest. Tap Add to this lot if it still needs adding.'
 const USED_UP = 'That lot is marked used up or no longer in use. Nothing was added. Open the lot to change that first.'
+const LOT_GONE = 'This lot can no longer take more seed. Nothing was added. Tap Change lot to pick another.'
 const REFUSED = "Couldn't add to that lot. Nothing was changed."
 const OFFLINE = "You're offline. Nothing was added. Your entries stay here until you're back in range."
 const CHECKING = 'Checking whether that was added…'
@@ -699,13 +700,15 @@ describe('after the tap: refused (rows 11-13, 22)', () => {
     expect(counts()).toEqual({ add: 1, event: 0, open: 2 })
   })
 
-  it('row 22 — the read lands but no longer lists the lot: it cannot take seed, and Add stays off', async () => {
+  it('row 22 — the read lands but no longer lists the lot: it cannot take seed, no cause is named, Add stays off and Change lot is live', async () => {
     await openNamed()
     net.add = [httpErr(409, { error: 'x', code: 'parents_changed' })]
     net.open = [openLotsReply({ plant_id: MEMBER.id, open_lots: [] })]
     await tap('save-seed-submit')
-    await waitFor(() => expect(text('seed-add-error')).toBe(USED_UP))
+    await waitFor(() => expect(text('seed-add-error')).toBe(LOT_GONE))
+    expect(document.body.textContent).not.toMatch(/used up|no longer in use|Open the lot/)
     expect(submitBtn().disabled).toBe(true)
+    await waitFor(() => expect(screen.getByTestId('seed-add-change-lot').disabled).toBe(false))
     expect(counts()).toEqual({ add: 1, event: 0, open: 1 })
   })
 })

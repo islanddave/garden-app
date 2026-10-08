@@ -37,7 +37,7 @@ import {
   lotFactsLine, lotRowLine, parseAddCount, parseAddWeight, buildAdditionBody, additionSaved,
   additionEventBody, outcomeLine, refileSentence, sentenceForRefusal, isChangedRefusal, addedToast,
   cropWords, lotsLoadingLine, lotsNoneLine, otherLotsDivider,
-  STORED_LOT_LINE, ADD_OFFLINE, ADD_REFUSED, ADD_USED_UP, ADD_CHECKING, ADD_UNKNOWN, LOTS_FAILED, LOTS_FROM_CACHE,
+  STORED_LOT_LINE, ADD_OFFLINE, ADD_REFUSED, ADD_LOT_GONE, ADD_CHECKING, ADD_UNKNOWN, LOTS_FAILED, LOTS_FROM_CACHE,
 } from '../seed/seedAdditions.js'
 
 // The service worker's mark on a reply it served from its offline copy (src/lib/api.js). Such a copy
@@ -214,8 +214,9 @@ export default function AddToLot({ planting, ownLots = [], startLot = null, Basi
     if (!aliveRef.current) return
     if (!fresh) { setNeedsRead(true); setError(LOTS_FAILED); return }
     const row = fresh.find((r) => sid(r.id) === sid(lotId))
-    // The read lists only lots that can still take seed. Gone from it, this one no longer can.
-    if (!row) { setNeedsRead(true); setError(ADD_USED_UP); return }
+    // The read lists only lots that can still take seed. Gone from it, this one no longer can. Why is
+    // not known here, so the sentence gives no reason.
+    if (!row) { setNeedsRead(true); setError(ADD_LOT_GONE); return }
     setNeedsRead(false)
     setLot(row)
   }
