@@ -286,9 +286,11 @@ const FERMENT_URGENCY = {
 // strips all three.
 //
 // `seed_stage` is the one that would BITE rather than merely leak. The list row carries the lot's
-// stage as it was BEFORE the advance, so echoing that key back would revert the stage the POST just
-// wrote — a 200 that silently undoes the action the sheet is titled for. Omitted, the handler's
-// presence guard leaves the freshly-written value alone.
+// stage as it was BEFORE the advance, so echoing that key back used to revert the stage the POST just
+// wrote — a 200 that silently undid the action the sheet is titled for. Since
+// BUG-SEEDSTAGEHEADSHIP-001 the wide PUT does not read the key at all (POST /:id/seed-stage is the
+// stage's only writer), so the freshly-written value stands either way; the key stays stripped
+// because that is the half that holds against a Lambda older than that fix.
 //
 // Two keys here that InventoryDetail's lists do not carry: `variety_name` and `stage_entered_at` are
 // projections the LIST query adds (a cultivar join and a LATERAL), not columns. Inert in the SET

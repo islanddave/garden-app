@@ -21,9 +21,9 @@
 //
 // THE STUB EXECUTES NO SQL. What is NOT shown here: that a real row's stage and log are unchanged
 // after such a PUT, and that a created lot's stage is NULL. Those are
-// tests/integration/seed-lifecycle.int.test.js, on the integration lane, which gates nothing
-// (DECISION-V100: "An invariant living only on the integration lane gates nothing"). This file is on
-// the unit lane and is the one that gates.
+// tests/integration/seed-lifecycle.int.test.js, on the integration lane, which gates a PROMOTE
+// (promote-gate.yml requires integration-tests by default since 2026-08-06) and not a push to dev.
+// This file is on the unit lane and gates both.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, dirname, join, relative, sep } from 'node:path';

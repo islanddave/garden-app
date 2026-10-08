@@ -680,9 +680,10 @@ describe('newest entry wins — the history and the card follow the entry made l
 // the cache ahead of, behind or off the log: the card's "N days" went blank or counted from the wrong
 // entry, and a fermenting lot got no overdue warning. POST /:id/seed-stage is the only writer now.
 //
-// lambda/inventory-items/seed-stage-one-writer.test.js counts the writers in the source and is what
-// gates (this workflow is not a required check). These cases are the half only a real Postgres can
-// show: that the row and the log do not move, and that the card's date survives.
+// lambda/inventory-items/seed-stage-one-writer.test.js counts the writers in the source, on the unit
+// lane. This workflow gates a promote (promote-gate.yml requires integration-tests by default) but
+// not a push to dev. These cases are the half only a real Postgres can show: that the row and the
+// log do not move, and that the card's date survives.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 describe('one writer — the wide PUT and the create cannot move a lot\'s stage', () => {
   it('wide PUT carrying a STALE stage: 200, the stage, the log and the card\'s date are unchanged', async () => {
