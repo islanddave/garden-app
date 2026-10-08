@@ -167,23 +167,23 @@ afterEach(() => { clearReloadBlocks(); delete Element.prototype.scrollIntoView }
 
 describe('the words', () => {
   it('are these, exactly — what is certain, and no banned word', () => {
-    expect(START_REPLAY_NOT_ON_IT).toBe('This batch is already started — an earlier tap on Start it went through. This one changed nothing on it. Close this and open the batch to see it.')
-    expect(START_CHANGE_UNSAVED).toBe('This batch is already started — an earlier tap on Start it went through. Your last change did not save. Try again, or close this and open the batch.')
-    expect(START_CHANGE_MAYBE).toBe('This batch is already started — an earlier tap on Start it went through. Your last change may not have saved. Try again, or close this and check the batch.')
+    expect(START_REPLAY_NOT_ON_IT).toBe('This batch is already started — an earlier tap on “Start it” went through. This tap changed nothing on it. Close this and open the batch to see it.')
+    expect(START_CHANGE_UNSAVED).toBe('This batch is already started — an earlier tap on “Start it” went through. Your last change did not save. Try again, or close this and open the batch.')
+    expect(START_CHANGE_MAYBE).toBe('This batch is already started — an earlier tap on “Start it” went through. Your last change may not have saved. Try again, or close this and check the batch.')
     for (const s of [START_REPLAY_NOT_ON_IT, START_CHANGE_UNSAVED, START_CHANGE_MAYBE]) expect(s).not.toMatch(BANNED)
     // It does not know which tap landed, so it never says the change is missing.
     expect(START_REPLAY_NOT_ON_IT).not.toMatch(/your change is not|is not on it|was lost/i)
   })
   it('QA I-3 — a refused start says what became of the lines copied in and the recipe\'s jar: added by this tap, not added, or not known — in these words', () => {
-    const HEAD = 'This batch is already started — an earlier tap on Start it went through.'
+    const HEAD = 'This batch is already started — an earlier tap on “Start it” went through.'
     const all = [
       [startRefusalText(), START_REPLAY_NOT_ON_IT],
       [startRefusalText({ lines: null, jar: null }), START_REPLAY_NOT_ON_IT],
       [startRefusalText({ jar: 'added' }), `${HEAD} This tap added the recipe's jar and nothing else. Close this and open the batch to see it.`],
       [startRefusalText({ lines: 'added' }), `${HEAD} This tap added what was copied in from the past batch and nothing else. Close this and open the batch to see it.`],
       [startRefusalText({ lines: 'added', jar: 'added' }), `${HEAD} This tap added what was copied in from the past batch and the recipe's jar and nothing else. Close this and open the batch to see it.`],
-      [startRefusalText({ jar: 'not' }), `${HEAD} This one changed nothing on it. The recipe's jar was not added. Close this and open the batch to add it.`],
-      [startRefusalText({ lines: 'not', jar: 'not' }), `${HEAD} This one changed nothing on it. What was copied in from the past batch and the recipe's jar were not added. Close this and open the batch to add them.`],
+      [startRefusalText({ jar: 'not' }), `${HEAD} This tap changed nothing on it. The recipe's jar was not added. Close this and open the batch to add it.`],
+      [startRefusalText({ lines: 'not', jar: 'not' }), `${HEAD} This tap changed nothing on it. What was copied in from the past batch and the recipe's jar were not added. Close this and open the batch to add them.`],
       [startRefusalText({ lines: 'added', jar: 'not' }), `${HEAD} This tap added what was copied in from the past batch and nothing else. The recipe's jar was not added. Close this and open the batch to add it.`],
       // An answer that never came back: it may be on the batch, so nothing says this tap changed nothing.
       [startRefusalText({ lines: 'maybe' }), `${HEAD} What was copied in from the past batch may not have been added. Close this and open the batch to check.`],

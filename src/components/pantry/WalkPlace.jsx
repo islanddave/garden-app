@@ -547,7 +547,8 @@ function WalkGroup({
         // Nothing is written — not the parts a PATCH could carry either — and the key is KEPT.
         if (todo === 'stale') { setErr(replayStaleText(saved)); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }
         if (todo === 'fixed') {
-          setErr(replayJarFixedText(saved, part)); setField(part === 'what' ? 'what' : null)
+          const placeLabel = place?.id != null && String(place.id) === String(saved?.storage_location_id) ? place.label : null
+          setErr(replayJarFixedText(saved, part, { now, placeLabel })); setField(part === 'what' || part === 'name' ? 'what' : null)
           if (part === 'when' && ownChoice) setMoreOpen(true)
           setRefusedSeq(s => s + 1); onExists?.(); return
         }

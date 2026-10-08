@@ -141,7 +141,7 @@ afterEach(() => { clearReloadBlocks(); delete Element.prototype.scrollIntoView }
 
 describe('the words, and the stub from what the server answered', () => {
   it('the refusal says what is certain — already put up, this tap changed nothing — and no banned word', () => {
-    expect(PUT_UP_REPLAY_NOT_ON_IT).toBe('This is already put up — an earlier tap went through. This one changed nothing on it. Close this and open the batch to see what was put up.')
+    expect(PUT_UP_REPLAY_NOT_ON_IT).toBe('This is already put up — an earlier tap went through. This tap changed nothing on it. Close this and open the batch to see what was put up.')
     expect(PUT_UP_REPLAY_NOT_ON_IT).not.toMatch(BANNED)
     // It does not know which tap landed, so it never says the change is missing.
     expect(PUT_UP_REPLAY_NOT_ON_IT).not.toMatch(/your change is not|is not on it|was lost/i)

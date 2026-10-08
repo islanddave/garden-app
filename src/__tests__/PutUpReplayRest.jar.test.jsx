@@ -44,6 +44,7 @@ import {
   DOOR_SHEET, completionWords, jarBody, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
   replayStaleText, replayUnsavedText, printRoute, otherRouteSent, otherRouteText,
 } from '../components/pantry/putSomethingUp.js'
+import { putUpDateWords } from '../components/putup/jarWords.js'
 import { sheetDraftKey, readSheetDraft } from '../components/kitchen/sheetDraft.js'
 import { validateJarPatch } from '../../lambda/preservation/jarRoutes.js'
 import { clearReloadBlocks } from '../lib/reloadGate.js'
@@ -162,14 +163,19 @@ const broughtIntoView = (on, id) => on.some(el => el === screen.getByTestId(id) 
 
 const TYPED = { source: 'typed', name: 'Corn' }
 const BODY = jarBody({ key: 'k', what: TYPED, storageLocationId: 'loc-1', method: 'whole_freeze', when: { date: '2026-10-01', precision: 'day' }, count: 2 })
-const fixedText = (name, part) => `Already in the Pantry as “${name}” — an earlier Save went through. ${part} Put that back as it was and tap Save to put your other changes on it.`
-const WHEN_PART = "The date it was put up can't be changed once it is saved."
-const PLACE_PART = "Where it lives can't be changed from here — to move it, open it in the Pantry."
-const WHAT_PART = "What it is can't be changed once it is saved."
-const SIZE_PART = "Its size and how many can't be changed from here."
+// The jar refusals, as the door says them (QA I-6): each NAMES what the jar holds — that is what to put back.
+const HEAD = (name, held = '') => `Already in the Pantry as “${name}”${held} — an earlier Save went through.`
+const GO = 'and tap Save to put your other changes on it.'
+const whenText = (name, day) => `${HEAD(name, `, put up ${day}`)} That date can't be changed once it is saved. Set the date back to ${day} ${GO}`
+const placeText = (name, place) => `${HEAD(name, `, in ${place}`)} It can't be moved from here — to move it, open it in the Pantry. Pick ${place} again ${GO}`
+const sizeText = (name, held) => `${HEAD(name, `, ${held}`)} Its size and how many can't be changed from here — to change them, open it in the Pantry. Set them back to ${held} ${GO}`
+const whatText = (name) => `${HEAD(name)} Which planting or crop it is can't be changed once it is saved. Put “What is it?” back to “${name}” ${GO}`
+// The walk's date is the real clock's ("This month"): what the jar holds, in the words the Pantry says it in.
+const walkDay = (jar) => putUpDateWords(String(jar.preserved_at).slice(0, 10), jar.preserved_at_precision, { now: new Date() })
+const nameText = (name) => `${HEAD(name)} That name can't be put on it from here — to rename it, open it in the Pantry. Put the name back to “${name}” ${GO}`
 const STALE = '“Corn” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.'
-const UNSAVED = '“Corn” is already in the Pantry — the first Save went through. This change did not save — try again.'
-const MAYBE = '“Corn” is already in the Pantry — the first Save went through. This change may not have saved — try again.'
+const UNSAVED = '“Corn” is already in the Pantry — an earlier Save went through. This change did not save — try again.'
+const MAYBE = '“Corn” is already in the Pantry — an earlier Save went through. This change may not have saved — try again.'
 
 describe('a put-up as its PATCH — putSomethingUp.js jarPatchOf', () => {
   it('every part the PATCH can carry, an absent one as the word that clears it — and the Lambda takes it; no key of the create\'s own', () => {
@@ -237,8 +243,11 @@ describe('what a PATCH cannot carry, read off the jar — putSomethingUp.js jarF
     expect(jarFixedPart({ ...BODY, crop_type_slug: 'corn' }, JAR, TYPED)).toBeNull()                       // answered late: the jar holds none
     expect(jarFixedPart(BODY, { ...JAR, crop_type_slug: 'corn' }, TYPED)).toBeNull()                       // the same name, not answered this time
     expect(jarFixedPart({ ...BODY, label: 'Corn, cut', crop_type_slug: 'corn' }, { ...JAR, crop_type_slug: 'corn' }, { ...TYPED, name: 'Corn, cut' })).toBeNull()
-    expect(jarFixedPart({ ...BODY, label: 'Peppers', crop_type_slug: 'pepper' }, { ...JAR, crop_type_slug: 'corn' }, { ...TYPED, name: 'Peppers' })).toBe('what')
-    expect(jarFixedPart({ ...BODY, label: 'Salsa' }, { ...JAR, crop_type_slug: 'corn' }, { ...TYPED, name: 'Salsa' })).toBe('what')
+    // … and then it is the NAME that cannot ride (QA I-6): said apart from 'what', because a name can be changed in the Pantry.
+    expect(jarFixedPart({ ...BODY, label: 'Peppers', crop_type_slug: 'pepper' }, { ...JAR, crop_type_slug: 'corn' }, { ...TYPED, name: 'Peppers' })).toBe('name')
+    expect(jarFixedPart({ ...BODY, label: 'Salsa' }, { ...JAR, crop_type_slug: 'corn' }, { ...TYPED, name: 'Salsa' })).toBe('name')
+    // A PICKED crop that differs is 'what' — nothing changes a jar's crop.
+    expect(jarFixedPart({ ...BODY, label: 'Peppers', crop_type_slug: 'pepper' }, { ...JAR, crop_type_slug: 'corn' }, { source: 'crop', name: 'Peppers', crop_type_slug: 'pepper' })).toBe('what')
   })
   it('the date counts only once he has CHANGED it (whenMoved): a chip that now comes to another day is not a change', () => {
     const tomorrow = { ...BODY, preserved_at: '2026-10-02' }
@@ -288,21 +297,45 @@ describe('the jar already holds it — putSomethingUp.js jarHolds', () => {
 })
 
 describe('the sentence — putSomethingUp.js replayJarFixedText', () => {
-  it('names the jar as it was saved, says the one part that cannot change, and how to go on — in these words, and no banned one', () => {
+  const OPTS = { now: NOW, placeLabel: 'Chest Freezer 1' }
+  it('QA I-6 — names the jar AND what it holds in the part that cannot change — that is what to put back — and how to go on; in these words, and no banned one', () => {
     const jar = rawJar(BODY)
-    expect(replayJarFixedText(jar, 'when')).toBe(fixedText('Corn', WHEN_PART))
-    expect(replayJarFixedText(jar, 'place')).toBe(fixedText('Corn', PLACE_PART))
-    expect(replayJarFixedText(jar, 'what')).toBe(fixedText('Corn', WHAT_PART))
-    expect(replayJarFixedText(jar, 'size')).toBe(fixedText('Corn', SIZE_PART))
-    expect(replayJarFixedText({ ...jar, label: null }, 'when')).toBe(`Already in the Pantry — an earlier Save went through. ${WHEN_PART} Put that back as it was and tap Save to put your other changes on it.`)
-    for (const part of ['when', 'place', 'what', 'size']) {
-      expect(replayJarFixedText(jar, part)).not.toMatch(BANNED)
-      expect(replayJarFixedText(jar, part)).not.toMatch(/your change is not|is not on it|was lost/i)
+    expect(replayJarFixedText(jar, 'when', OPTS)).toBe('Already in the Pantry as “Corn”, put up Oct 1 — an earlier Save went through. That date can\'t be changed once it is saved. Set the date back to Oct 1 and tap Save to put your other changes on it.')
+    expect(replayJarFixedText(jar, 'place', OPTS)).toBe('Already in the Pantry as “Corn”, in Chest Freezer 1 — an earlier Save went through. It can\'t be moved from here — to move it, open it in the Pantry. Pick Chest Freezer 1 again and tap Save to put your other changes on it.')
+    expect(replayJarFixedText(jar, 'size', OPTS)).toBe('Already in the Pantry as “Corn”, 2 containers — an earlier Save went through. Its size and how many can\'t be changed from here — to change them, open it in the Pantry. Set them back to 2 containers and tap Save to put your other changes on it.')
+    expect(replayJarFixedText(jar, 'what', OPTS)).toBe('Already in the Pantry as “Corn” — an earlier Save went through. Which planting or crop it is can\'t be changed once it is saved. Put “What is it?” back to “Corn” and tap Save to put your other changes on it.')
+    // A TYPED name that reads as another crop: the name CAN be changed — in the Pantry — so it never says it cannot.
+    expect(replayJarFixedText(jar, 'name', OPTS)).toBe('Already in the Pantry as “Corn” — an earlier Save went through. That name can\'t be put on it from here — to rename it, open it in the Pantry. Put the name back to “Corn” and tap Save to put your other changes on it.')
+    expect([replayJarFixedText(jar, 'when', OPTS), replayJarFixedText(jar, 'place', OPTS), replayJarFixedText(jar, 'size', OPTS), replayJarFixedText(jar, 'what', OPTS), replayJarFixedText(jar, 'name', OPTS)])
+      .toEqual([whenText('Corn', 'Oct 1'), placeText('Corn', 'Chest Freezer 1'), sizeText('Corn', '2 containers'), whatText('Corn'), nameText('Corn')])
+    for (const part of ['when', 'place', 'what', 'name', 'size']) {
+      expect(replayJarFixedText(jar, part, OPTS)).not.toMatch(BANNED)
+      expect(replayJarFixedText(jar, part, OPTS)).not.toMatch(/your change is not|is not on it|was lost|as it was/i)
     }
-    // The two the item route already says read a jar's name (its label) the same way.
+  })
+  it('QA I-6 — what the jar holds, as it holds it: a date in another year, a rough date, "Not sure"; one weighed container; a count with a size', () => {
+    const jar = rawJar(BODY)
+    expect(replayJarFixedText({ ...jar, preserved_at: '2025-09-30T00:00:00.000Z' }, 'when', OPTS)).toBe(whenText('Corn', 'Sep 30, 2025'))
+    expect(replayJarFixedText({ ...jar, preserved_at: '2026-09-01T00:00:00.000Z', preserved_at_precision: 'month' }, 'when', OPTS)).toBe(whenText('Corn', 'sometime in September'))
+    expect(replayJarFixedText({ ...jar, preserved_at_precision: 'unknown' }, 'when', OPTS))
+      .toBe('Already in the Pantry as “Corn”, with the date “Not sure” — an earlier Save went through. That date can\'t be changed once it is saved. Set the date back to “Not sure” and tap Save to put your other changes on it.')
+    expect(replayJarFixedText({ ...jar, package_count: 1, quantity_value: '2.00', quantity_unit: 'lb' }, 'size', OPTS)).toBe(sizeText('Corn', '1 container of 2 lb'))
+    expect(replayJarFixedText({ ...jar, package_count: 3, quantity_value: '24.00', quantity_unit: 'oz' }, 'size', OPTS)).toBe(sizeText('Corn', '3 containers, 24 oz in all'))
+    expect(replayJarFixedText({ ...jar, label: null }, 'when', OPTS)).toBe('Already in the Pantry, put up Oct 1 — an earlier Save went through. That date can\'t be changed once it is saved. Set the date back to Oct 1 and tap Save to put your other changes on it.')
+  })
+  it('QA I-6 — a part it cannot name is not asked for: a place this list does not hold (gone, or not read) cannot be picked here, so the sentence sends him to the Pantry instead of "put it back"', () => {
+    const jar = rawJar(BODY)
+    expect(replayJarFixedText(jar, 'place', { now: NOW })).toBe('Already in the Pantry as “Corn” — an earlier Save went through. It can\'t be moved from here, and where it is now can\'t be picked here. To change it, open it in the Pantry.')
+    expect(replayJarFixedText({ ...jar, package_count: null }, 'size', OPTS)).toBe('Already in the Pantry as “Corn” — an earlier Save went through. Its size and how many can\'t be changed from here. To change it, open it in the Pantry.')
+    expect(replayJarFixedText({ ...jar, preserved_at: null, preserved_at_precision: null }, 'when', OPTS)).toBe('Already in the Pantry as “Corn” — an earlier Save went through. The date it was put up can\'t be changed once it is saved. To change it, open it in the Pantry.')
+  })
+  it('the two the item route already says read a jar\'s name (its label) the same way — and say "an earlier Save", never "the first" (QA M-7)', () => {
+    const jar = rawJar(BODY)
     expect(replayStaleText(jar)).toBe(STALE)
     expect(replayStaleText({ ...jar, deleted_at: '2026-10-01T18:00:00Z' })).toBe('“Corn” was saved earlier and has been removed since. This Save did not change that.')
     expect(replayUnsavedText(jar)).toBe(UNSAVED)
+    expect(replayUnsavedText(jar, { lost: true })).toBe(MAYBE)
+    for (const said of [replayUnsavedText(jar), replayUnsavedText(jar, { lost: true }), replayUnsavedText(jar, { why: 'no' }), replayUnsavedText(null)]) expect(said).not.toMatch(/the first Save/)
   })
 })
 
@@ -428,7 +461,7 @@ describe('Put something up — the put-up route', () => {
     on.length = 0
     save()
     await answered(door, 2)
-    expect(errorText()).toBe(fixedText('Corn', WHEN_PART))
+    expect(errorText()).toBe(whenText('Corn', 'Oct 1'))
     expect(screen.getByTestId('door-error').getAttribute('role')).toBe('alert')
     await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
     expect(otherWrites()).toEqual([])
@@ -440,7 +473,7 @@ describe('Put something up — the put-up route', () => {
     on.length = 0
     save()
     await answered(door, 3)
-    expect(errorText()).toBe(fixedText('Corn', WHEN_PART))                     // refused again
+    expect(errorText()).toBe(whenText('Corn', 'Oct 1'))                     // refused again
     await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
     expect(otherWrites()).toEqual([])
     tap('door-when-today')
@@ -449,6 +482,51 @@ describe('Put something up — the put-up route', () => {
     expect(new Set(keys()).size).toBe(1)
     expect(patches().map(c => [c.path, c.body.notes])).toEqual([[ROW, 'the second tray']])
     expect(told(door).saved).toMatchObject({ id: 'jar-first', notes: 'the second tray', preserved_at: '2026-10-01' })
+  })
+
+  it('QA I-6 — a typed name changed to one the jar\'s crop would contradict: nothing is written, and the door does NOT say the name cannot be changed — it says where it can, and names the name to put back; put back, the rest goes through', async () => {
+    const table = jarTable({ first: { crop_type_slug: 'corn' } })
+    const door = await openDoor()
+    corn()
+    save(); await failed()
+    typeInto('door-what-name', 'Salsa')
+    tap('door-from'); typeInto('door-notes', 'the second tray')
+    save()
+    await answered(door, 2)
+    expect(errorText()).toBe(nameText('Corn'))
+    expect(errorText()).not.toMatch(/can't be changed once/)
+    expect(otherWrites()).toEqual([])
+    expect(table.row.label).toBe('Corn')
+    typeInto('door-what-name', 'Corn')
+    save()
+    await waitFor(() => expect(door.onSaved).toHaveBeenCalledTimes(1))
+    expect(patches().map(c => [c.body.label, c.body.notes])).toEqual([['Corn', 'the second tray']])
+  })
+
+  // QA I-6 (the sequence the review ran as J5). "As it was" is not always what the jar holds: the first Save
+  // never arrived, the second — another place — landed. Put back to the FIRST place he is refused again; the
+  // sentence names the place the jar is in, and picking that one goes through.
+  it('QA I-6 (J5) — place 1 never arrives, place 2 lands with its answer lost, place put back to 1, Save: refused — and the sentence NAMES the place the jar is in (2); that place picked, the Save goes through', async () => {
+    jarTable({ lands: 2 })
+    const door = await openDoor()
+    corn()
+    save(); await failed()
+    tap('door-place-id:loc-2')
+    save(); await failed()
+    tap('door-place-id:loc-1')
+    tap('door-from'); typeInto('door-notes', 'the second tray')
+    save()
+    await answered(door, 3)
+    expect(errorText()).toBe(placeText('Corn', PLACES[1].label))
+    save()
+    await answered(door, 4)
+    expect(errorText()).toBe(placeText('Corn', PLACES[1].label))
+    expect(otherWrites()).toEqual([])
+    tap('door-place-id:loc-2')
+    save()
+    await waitFor(() => expect(door.onSaved).toHaveBeenCalledTimes(1))
+    expect(told(door).saved).toMatchObject({ id: 'jar-first', storage_location_id: 'loc-2', notes: 'the second tray' })
+    expect(new Set(keys()).size).toBe(1)
   })
 
   it('the PLACE changed after a lost answer: nothing is written, and the door says the place cannot change from here', async () => {
@@ -461,7 +539,7 @@ describe('Put something up — the put-up route', () => {
     if (screen.getByTestId('door-method-whole_freeze').getAttribute('aria-checked') !== 'true') method('whole_freeze')
     save()
     await answered(door, 2)
-    expect(errorText()).toBe(fixedText('Corn', PLACE_PART))
+    expect(errorText()).toBe(placeText('Corn', 'Chest Freezer 1'))
     expect(otherWrites()).toEqual([])
     expect(table.row).toEqual(before)
     expect(door.onSaved).not.toHaveBeenCalled()
@@ -479,7 +557,7 @@ describe('Put something up — the put-up route', () => {
     typeInto('door-size-value', '3')
     save()
     await answered(door, 2)
-    expect(errorText()).toBe(fixedText('Corn', SIZE_PART))
+    expect(errorText()).toBe(sizeText('Corn', '1 container of 2 lb'))
     expect(otherWrites()).toEqual([])
     expect(table.row).toEqual(before)
     expect(door.onSaved).not.toHaveBeenCalled()
@@ -609,7 +687,7 @@ describe('Put something up — the put-up route', () => {
     save(); await failed()
     tap('door-from'); typeInto('door-notes', 'the second tray')
     save()
-    await failed('“Corn” is already in the Pantry — the first Save went through. This change did not save: This was changed somewhere else — close and open it again.')
+    await failed('“Corn” is already in the Pantry — an earlier Save went through. This change did not save: This was changed somewhere else — close and open it again.')
     expect(door.onSaved).not.toHaveBeenCalled()
     save()
     await waitFor(() => expect(posts()).toHaveLength(3))
@@ -629,7 +707,7 @@ describe('Put something up — the put-up route', () => {
     save(); await failed()
     tap('door-from'); typeInto('door-notes', 'the second tray')
     save()
-    await failed('“Corn” is already in the Pantry — the first Save went through. This change did not save: This was changed somewhere else — close and open it again.')
+    await failed('“Corn” is already in the Pantry — an earlier Save went through. This change did not save: This was changed somewhere else — close and open it again.')
     save()
     await answered(door, 3)
     expect(errorText()).toBe(STALE)
@@ -710,7 +788,7 @@ describe('Put something up — the put-up route', () => {
     await failed(MAYBE)
     typeInto('door-notes', 'the second tray, blanched')
     save()
-    await failed('“Corn” is already in the Pantry — the first Save went through. This change did not save: That is not a method this app knows.')
+    await failed('“Corn” is already in the Pantry — an earlier Save went through. This change did not save: That is not a method this app knows.')
     expect(table.row.notes).toBe('the second tray')
     save()
     await waitFor(() => expect(door.onSaved).toHaveBeenCalledTimes(1))
@@ -1005,7 +1083,7 @@ describe('the Walk — the put-up route', () => {
     on.length = 0
     save()
     await answered(2)
-    expect(errorText()).toBe(fixedText('Corn', WHEN_PART))
+    expect(errorText()).toBe(whenText('Corn', walkDay(table.row)))
     await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
     expect(otherWrites()).toEqual([])
     expect(table.row).toEqual(before)
@@ -1013,7 +1091,7 @@ describe('the Walk — the put-up route', () => {
     expect(screen.getByTestId('walk-what-name').value).toBe('Corn')
     save()
     await answered(3)
-    expect(errorText()).toBe(fixedText('Corn', WHEN_PART))
+    expect(errorText()).toBe(whenText('Corn', walkDay(table.row)))
     tap('walk-own-unsure')                                                     // back to the walk's own date
     save(); await landed()
     expect(new Set(keys()).size).toBe(1)

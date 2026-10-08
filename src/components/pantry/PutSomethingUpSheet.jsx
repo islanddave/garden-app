@@ -53,7 +53,8 @@
 // from — so a change in those goes onto a jar that is this sitting's, and the door completes from the PATCH's
 // answer. It does not carry the date it was put up, the place, or the crop / variety / planting, and it leaves
 // a weighed jar's grams as they were: a Save that differs from the jar in one of those writes NOTHING (never
-// half of it) and says which (replayJarFixedText) — read off the jar, so put back, the next Save goes through.
+// half of it) and says which, naming what the jar holds (replayJarFixedText) — read off the jar, so put back
+// to that, the next Save goes through.
 // A jar that is not this sitting's is said as saved earlier (replayStaleText), and that ends the stored draft.
 //
 // ONE KEY, TWO TABLES (QA I-1). The key is the same whichever way the thing is saved, and the two ways are two
@@ -533,8 +534,10 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
           setSaving(false)
           if (todo === 'stale') { setSpent(true); setErr(replayStaleText(saved)); setField(null) }
           else {
-            setErr(replayJarFixedText(saved, part))
-            setField({ what: 'what', place: 'where', when: 'when', size: 'size' }[part])
+            // The sentence names what the jar holds — its date, its size, its place as this door's list names it.
+            const placeLabel = chips.find(c => c.id != null && String(c.id) === String(saved?.storage_location_id))?.label ?? null
+            setErr(replayJarFixedText(saved, part, { now: nowDate, placeLabel }))
+            setField({ what: 'what', name: 'what', place: 'where', when: 'when', size: 'size' }[part])
             if (part === 'when') setMoreOpen(true)
             if (part === 'size') setSizeOpen(true)
           }
@@ -622,7 +625,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
       setErr(refusalOf(ex, "Couldn't save it — nothing was lost. Try again."))
       setRefusedSeq(s => s + 1)
     }
-  }, [amountUnit, amountValue, discard, draftKey, estimate, fetch, inOil, isRaw, key, method, n, notes, onExists, onSaved, pickedDate,
+  }, [amountUnit, amountValue, chips, discard, draftKey, estimate, fetch, inOil, isRaw, key, method, n, notes, nowDate, onExists, onSaved, pickedDate,
     place, planting, sent, sizeUnit, sizeValue, sourceKind, sourceLabel, texture, w, whenChip, what])
 
   const name = String(what?.name ?? '').trim() || 'this'

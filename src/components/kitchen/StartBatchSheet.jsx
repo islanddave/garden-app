@@ -119,7 +119,7 @@ const START_FIXED = ['started', 'recipe_id', 'cover_photo_id']
 // batch; the recipe's jar): null — there was none, or it is on the batch already; 'added' by this tap; 'not'
 // added; 'maybe' — sent, and its answer never came back. A 'maybe' may be on the batch, so nothing then says
 // this tap changed nothing.
-const START_HEAD = 'This batch is already started — an earlier tap on Start it went through.'
+const START_HEAD = 'This batch is already started — an earlier tap on “Start it” went through.'
 const FOLLOW_NAMES = { lines: 'what was copied in from the past batch', jar: "the recipe's jar" }
 const followsIn = (follow, state) => ['lines', 'jar'].filter(k => follow?.[k] === state).map(k => FOLLOW_NAMES[k])
 const sentenceStart = (s) => s.charAt(0).toUpperCase() + s.slice(1)
@@ -127,7 +127,7 @@ export function startRefusalText(follow = null) {
   const added = followsIn(follow, 'added'); const not = followsIn(follow, 'not'); const maybe = followsIn(follow, 'maybe')
   const parts = [START_HEAD]
   if (added.length) parts.push(`This tap added ${added.join(' and ')} and nothing else.`)
-  else if (!maybe.length) parts.push('This one changed nothing on it.')
+  else if (!maybe.length) parts.push('This tap changed nothing on it.')
   if (not.length) parts.push(`${sentenceStart(not.join(' and '))} ${not.length > 1 ? 'were' : 'was'} not added.`)
   if (maybe.length) parts.push(`${sentenceStart(maybe.join(' and '))} may not have been added.`)
   parts.push(maybe.length ? 'Close this and open the batch to check.'

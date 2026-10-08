@@ -78,8 +78,8 @@ const FIRST = {
 }
 // A minute past the bound (idempotencyKey.js REPLAY_FRESH_MS, pinned at ten minutes in PutUpReplayEdit.test.jsx).
 const LONG_AGO = 11 * 60 * 1000
-const UNSAVED = '“Oat milk” is already in the Pantry — the first Save went through. This change did not save — try again.'
-const MAYBE = '“Oat milk” is already in the Pantry — the first Save went through. This change may not have saved — try again.'
+const UNSAVED = '“Oat milk” is already in the Pantry — an earlier Save went through. This change did not save — try again.'
+const MAYBE = '“Oat milk” is already in the Pantry — an earlier Save went through. This change may not have saved — try again.'
 const STALE = '“Oat milk” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.'
 const LOST = () => { throw new TypeError('Failed to fetch') }       // it may have landed; its answer did not come back
 
@@ -148,8 +148,8 @@ describe('the item as its PATCH — putSomethingUp.js itemPatchOf', () => {
     expect(validateItemPatch({ plant_id: '99999999-aaaa-4bbb-8ccc-000000000003' })).toMatch(/cannot be changed here: plant_id/)
     expect([plantingDiffers({}, FIRST), plantingDiffers({ plant_id: null }, FIRST), plantingDiffers({ plant_id: 'p1' }, FIRST)]).toEqual([false, false, true])
     expect([plantingDiffers({ plant_id: 'p1' }, { plant_id: 'p1' }), plantingDiffers({}, { plant_id: 'p1' }), plantingDiffers({ plant_id: 'p2' }, { plant_id: 'p1' })]).toEqual([false, true, true])
-    expect(replayFixedText(FIRST)).toBe('Already in the Pantry as “Oat milk” — the first Save went through. Which planting it came from can\'t be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it.')
-    expect(replayFixedText(null)).toMatch(/^Already in the Pantry — the first Save went through\./)
+    expect(replayFixedText(FIRST)).toBe('Already in the Pantry as “Oat milk” — an earlier Save went through. Which planting it came from can\'t be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it.')
+    expect(replayFixedText(null)).toMatch(/^Already in the Pantry — an earlier Save went through\./)
     // The key is kept after a refusal, so no Save from the door adds it again: the sentence may not say one does.
     expect(replayFixedText(FIRST)).not.toMatch(/add it again|Save again/)
     // No route changes an item's planting, so the sentence may not send him to the Pantry to "fix" it.
@@ -163,8 +163,8 @@ describe('the item as its PATCH — putSomethingUp.js itemPatchOf', () => {
     expect(replayStaleText(null)).toMatch(/^This was already saved earlier — it is in the Pantry\. This Save did not change it\./)
     expect(replayUnsavedText(FIRST)).toBe(UNSAVED)
     expect(replayUnsavedText(FIRST, { lost: true })).toBe(MAYBE)
-    expect(replayUnsavedText(FIRST, { why: 'That crop is not one this app knows.', lost: true })).toBe('“Oat milk” is already in the Pantry — the first Save went through. This change did not save: That crop is not one this app knows.')
-    expect(replayUnsavedText(null)).toMatch(/^This is already in the Pantry — the first Save went through\./)
+    expect(replayUnsavedText(FIRST, { why: 'That crop is not one this app knows.', lost: true })).toBe('“Oat milk” is already in the Pantry — an earlier Save went through. This change did not save: That crop is not one this app knows.')
+    expect(replayUnsavedText(null)).toMatch(/^This is already in the Pantry — an earlier Save went through\./)
     for (const text of [replayStaleText(FIRST), replayStaleText({ ...FIRST, deleted_at: 'x' }), replayUnsavedText(FIRST), MAYBE, replayUnsavedText(FIRST, { why: 'no' })]) {
       expect(text).not.toMatch(BANNED)
       expect(text).not.toMatch(/Couldn't save it/)
@@ -483,7 +483,7 @@ describe('Put something up — the item route', () => {
     save(); await failed()
     tap('door-from'); typeInto('door-notes', 'the second carton')
     save()
-    await failed('“Oat milk” is already in the Pantry — the first Save went through. This change did not save: That crop is not one this app knows.')
+    await failed('“Oat milk” is already in the Pantry — an earlier Save went through. This change did not save: That crop is not one this app knows.')
     expect(onExists).toHaveBeenCalledTimes(1)
     expect(onSaved).not.toHaveBeenCalled()
     save()
@@ -954,7 +954,7 @@ describe('the pages behind the door are told the item is there', () => {
     const before = reads()
     typeInto('door-what-name', 'Megatron jalapeño, the red ones')
     tap('door-save')
-    await waitFor(() => expect(errorText()).toBe('“Megatron jalapeño” is already in the Pantry — the first Save went through. This change did not save — try again.'))
+    await waitFor(() => expect(errorText()).toBe('“Megatron jalapeño” is already in the Pantry — an earlier Save went through. This change did not save — try again.'))
     await waitFor(() => expect(reads()).toBeGreaterThan(before))
     expect(screen.getByTestId('door-what-name').value).toBe('Megatron jalapeño, the red ones')
   })

@@ -456,9 +456,11 @@ export const JAR_PATCH_READS = Object.freeze({
   is_raw: (v, jar) => (v === true) === (jar.is_raw === true),
   in_oil: (v, jar) => (v === true) === (jar.in_oil === true),
 })
-// The part of this body the PATCH cannot put on the replayed jar — 'what' | 'place' | 'when' | 'size' — or
-// null. Read off the ROW, which says exactly what it holds, so putting that part back lets the next Save
-// through. Two parts are not his to choose, and are read as he chose them:
+// The part of this body the PATCH cannot put on the replayed jar — 'what' | 'name' | 'place' | 'when' | 'size'
+// — or null. Read off the ROW, which says exactly what it holds, so putting that part back lets the next Save
+// through. ('name' is a TYPED name changed to one that reads as another crop than the jar holds: the name
+// itself can be changed — in the Pantry — so it is said apart from 'what'.) Two parts are not his to choose,
+// and are read as he chose them:
 //   · the date — a chip that now comes to another day ("Today", past midnight) is not a change. It counts
 //     only once he has changed the date (`whenMoved`, jarWhenMoved), and then as it resolves now;
 //   · the crop of a TYPED name — the search's reading of the text. It counts only against a crop the jar
@@ -470,7 +472,7 @@ export function jarFixedPart(body, jar, what, { whenMoved = false } = {}) {
   if (body.plant_id == null) {
     const typed = !what?.source || what.source === 'typed'
     const cropDiffers = idOf(body.crop_type_slug) !== idOf(jar.crop_type_slug)
-    if (typed ? (cropDiffers && jar.crop_type_slug != null && !sameFact(body.label, jar.label)) : cropDiffers) return 'what'
+    if (typed ? (cropDiffers && jar.crop_type_slug != null && !sameFact(body.label, jar.label)) : cropDiffers) return typed ? 'name' : 'what'
     if (!typed && idOf(body.variety_id) !== idOf(jar.variety_id)) return 'what'
   }
   if (idOf(body.storage_location_id) !== idOf(jar.storage_location_id)) return 'place'
@@ -522,16 +524,47 @@ export function otherRouteText({ first, row = null, what = null, walk = false })
 
 // Said when an earlier Save made the jar and this one differs from it in a part no PATCH carries: nothing is
 // written, and the form stays as it is. `jar` is the row the replay answered with; `part` is jarFixedPart's.
-// Putting that part back DOES let the next Save through (it is read off the row). The key is kept.
-const JAR_FIXED_WORDS = Object.freeze({
-  when: "The date it was put up can't be changed once it is saved.",
-  place: "Where it lives can't be changed from here — to move it, open it in the Pantry.",
-  what: "What it is can't be changed once it is saved.",
-  size: "Its size and how many can't be changed from here.",
-})
-export function replayJarFixedText(jar, part) {
+// Putting that part back DOES let the next Save through (it is read off the row) — so the sentence NAMES what
+// the jar holds, which is what to put back (QA I-6: "as it was" is not always what the jar holds — the first
+// Save may never have arrived and a later one landed). It says a thing cannot be changed only where no screen
+// changes it (the date; the planting or crop), and where the Pantry can (the place, the name, the size) it says
+// "from here" and points there. `placeLabel` is the jar's place as the caller's own list names it; with none —
+// a place that is gone, or a list that did not load — it cannot be picked here, and the sentence does not ask.
+// The key is kept.
+const containersHeld = (jar) => {
+  const n = Number(jar?.package_count)
+  if (!Number.isInteger(n) || n < 1) return null
+  const q = jar?.quantity_value == null || jar.quantity_value === '' ? null : Number(jar.quantity_value)
+  const amount = q != null && Number.isFinite(q) && jar?.quantity_unit ? `${q} ${jar.quantity_unit}` : null
+  if (!amount) return `${n} ${n === 1 ? 'container' : 'containers'}`
+  return n === 1 ? `1 container of ${amount}` : `${n} containers, ${amount} in all`
+}
+export function replayJarFixedText(jar, part, { now = new Date(), placeLabel = null } = {}) {
   const name = quoted(jar)
-  return `${name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'} — an earlier Save went through. ${JAR_FIXED_WORDS[part] ?? JAR_FIXED_WORDS.what} Put that back as it was and tap Save to put your other changes on it.`
+  const as = name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'
+  const went = '— an earlier Save went through.'
+  const go = 'and tap Save to put your other changes on it.'
+  const inPantry = 'To change it, open it in the Pantry.'
+  if (part === 'when') {
+    const unsure = jar?.preserved_at_precision === 'unknown'
+    const words = unsure ? '“Not sure”' : putUpDateWords(dayOf(jar?.preserved_at), jar?.preserved_at_precision ?? null, { approx: jar?.preserved_at_approx === true, now })
+    if (!words) return `${as} ${went} The date it was put up can't be changed once it is saved. ${inPantry}`
+    return `${as}, ${unsure ? 'with the date “Not sure”' : `put up ${words}`} ${went} That date can't be changed once it is saved. Set the date back to ${words} ${go}`
+  }
+  if (part === 'place') {
+    const where = String(placeLabel ?? '').trim()
+    if (!where) return `${as} ${went} It can't be moved from here, and where it is now can't be picked here. ${inPantry}`
+    return `${as}, in ${where} ${went} It can't be moved from here — to move it, open it in the Pantry. Pick ${where} again ${go}`
+  }
+  if (part === 'size') {
+    const held = containersHeld(jar)
+    if (!held) return `${as} ${went} Its size and how many can't be changed from here. ${inPantry}`
+    return `${as}, ${held} ${went} Its size and how many can't be changed from here — to change them, open it in the Pantry. Set them back to ${held} ${go}`
+  }
+  if (part === 'name' && name) {
+    return `${as} ${went} That name can't be put on it from here — to rename it, open it in the Pantry. Put the name back to ${name} ${go}`
+  }
+  return `${as} ${went} Which planting or crop it is can't be changed once it is saved. Put “What is it?” back${name ? ` to ${name}` : ' as it was'} ${go}`
 }
 // Said when the first Save made the item and What is now another planting, or no planting: nothing is
 // written, and the form stays as it is. `item` is the row the replay answered with. Putting What back DOES
@@ -539,7 +572,7 @@ export function replayJarFixedText(jar, part) {
 // second item — and the sentence offers none.
 export function replayFixedText(item) {
   const name = quoted(item)
-  return `${name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'} — the first Save went through. Which planting it came from can't be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it.`
+  return `${name ? `Already in the Pantry as ${name}` : 'Already in the Pantry'} — an earlier Save went through. Which planting it came from can't be changed once it is saved. Put “What is it?” back as it was and tap Save to put your other changes on it.`
 }
 // Said when an earlier Save made the item and it is not this sitting's to write over (idempotencyKey.js
 // afterReplay 'stale'): nothing is written, the form stays, and the KEY IS KEPT — Save again is refused
@@ -550,12 +583,13 @@ export function replayStaleText(item) {
   if (item?.deleted_at) return `${name ? `${name} was saved earlier` : 'This was saved earlier'} and has been removed since. This Save did not change that.`
   return `${name ? `${name} was already saved earlier` : 'This was already saved earlier'} — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.`
 }
-// Said when the first Save made the item and the change could not be put on it just now: the item is there.
+// Said when an earlier Save made the item and the change could not be put on it just now: the item is there.
 // `why` is the server's own sentence when it refused the change in words; `lost` is true when no answer came
-// back at all (the change may be on it).
+// back at all (the change may be on it). "An earlier Save", never "the first": the first may never have arrived
+// and a later one landed (QA M-7).
 export function replayUnsavedText(item, { why = '', lost = false } = {}) {
   const name = quoted(item)
-  const head = `${name ? `${name} is already in the Pantry` : 'This is already in the Pantry'} — the first Save went through.`
+  const head = `${name ? `${name} is already in the Pantry` : 'This is already in the Pantry'} — an earlier Save went through.`
   if (why) return `${head} This change did not save: ${why}`
   return lost ? `${head} This change may not have saved — try again.` : `${head} This change did not save — try again.`
 }
