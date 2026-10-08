@@ -1062,9 +1062,10 @@ export default function InventoryDetail() {
             `stored` transition. Both are gone: a lot's stage is now changed in exactly one place,
             /seeds/saved, where every change writes a seed_lot_stage_log row and can be dated to the
             day the lot actually entered the stage. Two writers, one of which could not log, is what
-            made the pointer and the history diverge on 3 of 3 live lots — the divergence notice
-            below still fires because the wide PUT and the create INSERT can both still set
-            `seed_stage` server-side, and neither appends.
+            made the pointer and the history diverge on 3 of 3 live lots. Since
+            BUG-SEEDSTAGEHEADSHIP-001 the server agrees: the wide PUT and the create INSERT no
+            longer write `seed_stage`, so POST /seed-stage is the only writer. The divergence
+            notice below stays for a lot that was staged before then.
 
             SEEDS ONLY, gated exactly like the two cards above. A hori-hori has no processing chain
             and must not grow an empty one. */}
@@ -1556,7 +1557,8 @@ export default function InventoryDetail() {
 // wide PUT solely through useInventory.updateItem(buildChanges()), which emits the edit form's own
 // projection and names no derived or presence-guarded key. A saved lot's seed measure goes the other
 // way, through PUT /seed-measure (handleSave), and updateItem strips the three measure keys its
-// list-row merge would otherwise carry onto the wide PUT (2026-09-25).
+// list-row merge would otherwise carry onto the wide PUT (2026-09-25) — and, since
+// BUG-SEEDSTAGEHEADSHIP-001, the row's `seed_stage`, which that merge DID carry.
 //
 // The contract they documented is NOT gone — /seeds/saved still round-trips a whole row into that
 // PUT for the count, and LIST_ROW_PUT_STRIP in src/pages/SavedSeeds.jsx carries the same per-key

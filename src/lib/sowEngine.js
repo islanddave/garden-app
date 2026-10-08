@@ -1241,14 +1241,14 @@ export const IN_PROCESS_STAGES = Object.freeze(['fermenting', 'drying']);
  * "unfinished", and treating it as in-process would divert the entire sow list into "not ready yet",
  * the wrong-late direction at full scale.
  *
- * CORRECTED 2026-09-03 (BUG-SEEDSTAGEHEADSHIP-001). This paragraph used to say seed_stage "is written
- * only by POST /seed-stage" and called that structural. It is not true and had not been true since
- * V4-SEEDHISTORY-001: there are THREE writers — the /seed-stage CTE (lambda/inventory-items/index.js
- * :447-466), the wide PUT's presence-guarded arm (:858-860, which InventoryDetail's stage control
- * drives), and the create INSERT (:1075-1090). Only the first appends to seed_lot_stage_log. The
- * CONCLUSION above survives — a bought packet is still never staged by any of the three — but the
- * ground it stood on did not, and an assumption that lives in a comment is invisible to CI when a
- * second writer arrives. Stated as a measurement now rather than as an architectural guarantee.
+ * CORRECTED 2026-09-03, AND AGAIN 2026-10-08 (BUG-SEEDSTAGEHEADSHIP-001). This paragraph first said
+ * seed_stage "is written only by POST /seed-stage" and called that structural, while THREE
+ * statements in lambda/inventory-items/index.js wrote it: the /seed-stage CTE, the wide PUT's
+ * presence-guarded arm and the create INSERT, and only the first appends to seed_lot_stage_log.
+ * The other two no longer write the column, so the sentence is true now — and it is no longer an
+ * assumption that lives in a comment: lambda/inventory-items/seed-stage-one-writer.test.js counts
+ * the statements that assign it, and a second writer reds the build. The CONCLUSION above never
+ * rested on the count: a bought packet was not staged by any of the three either.
  *
  * seed_process (`wet | dry`) is deliberately NOT read: it says HOW a lot is being processed, never
  * WHETHER it still is. Stage alone decides. Trimmed/lower-cased before the membership test and

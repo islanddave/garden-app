@@ -154,6 +154,45 @@ describe('seed_stage has one writer — static, every non-test module under lamb
   });
 });
 
+describe('stage_entered_at — three copies of one LATERAL, held to one text', () => {
+  // The date a card counts from is read by the same subquery in three statements: the list's two
+  // branches (index.js) and the open-lots read (seed-lot-additions.js). It is an equijoin on the
+  // lot's CURRENT stage, newest entry first, which is only the right entry while the one writer
+  // above is the only writer. A copy that drifted (a different order key, a fallback, a dropped
+  // stage predicate) would date the same lot differently on two screens.
+  //
+  // SHAPE, NOT BEHAVIOUR. That the key picks the right row in Postgres is
+  // tests/integration/seed-lifecycle.int.test.js; seed-lot-shape.test.js pins the order key per branch.
+  const LATERAL = /LEFT JOIN LATERAL \( SELECT sl\.entered_at\b.*?\) (\w+) ON TRUE/g;
+  const copies = MODULES.flatMap(({ file, src }) => [...src.matchAll(LATERAL)].map((m) => ({ file, text: m[0], alias: m[1] })));
+
+  it('there are exactly three, where they are expected', () => {
+    expect(copies.map((c) => c.file)).toEqual([
+      'inventory-items/index.js', 'inventory-items/index.js', 'inventory-items/seed-lot-additions.js',
+    ]);
+    // …and no statement reads an entry's date off the log in some other shape.
+    const reads = MODULES.flatMap(({ file, src }) => (src.match(/\bAS stage_entered_at\b/g) ?? []).map(() => file));
+    expect(reads).toEqual(copies.map((c) => c.file));
+  });
+
+  it('all three are the same text, aliases included', () => {
+    expect(new Set(copies.map((c) => c.text)).size).toBe(1);
+    expect(copies[0].text).toBe(
+      'LEFT JOIN LATERAL ( SELECT sl.entered_at FROM public.seed_lot_stage_log sl '
+      + 'WHERE i.seed_stage IS NOT NULL AND sl.inventory_item_id = i.id AND sl.stage = i.seed_stage '
+      + 'ORDER BY sl.created_at DESC, sl.entered_at DESC, sl.id DESC LIMIT 1 ) se ON TRUE',
+    );
+  });
+
+  it('each is projected bare — nullable on purpose, never COALESCEd to another date', () => {
+    for (const { file, src } of MODULES.filter((m) => copies.some((c) => c.file === m.file))) {
+      const projected = src.match(/[^,(]*\bAS stage_entered_at\b/g) ?? [];
+      expect(projected.length, file).toBeGreaterThan(0);
+      for (const p of projected) expect(p.trim(), file).toBe('se.entered_at AS stage_entered_at');
+    }
+  });
+});
+
 describe('seed_stage has one writer — driven through the handler', () => {
   const USER = 'user_stub_owner';
   const ITEM = '2d6df841-b507-4e65-8db0-97c8659df37c';
