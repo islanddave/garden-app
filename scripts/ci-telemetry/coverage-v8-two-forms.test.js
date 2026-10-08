@@ -846,3 +846,15 @@ describe('where it is switched on (vitest.config.ts)', () => {
     expect(two).not.toMatch(/provider|coverage/i)
   })
 })
+
+describe('where else it is switched on (scripts/ci-telemetry/a3-exit.config.mjs)', () => {
+  it('is the provider of the A3 exit checks, named as vitest.config.ts names it', () => {
+    // That config writes a coverage block of its own and so inherits nothing from vitest.config.ts. Its E2 check
+    // compares what two environments covered in every module they load: on the stock provider it compared two
+    // draws of lambda/daily-plan/engine.js and read a difference or not by which were drawn.
+    const exit = readFileSync(resolve(process.cwd(), 'scripts/ci-telemetry/a3-exit.config.mjs'), 'utf8')
+    expect(exit.match(/^\s*provider: .*$/gm)).toEqual(["          provider: 'custom',"])
+    expect(exit.match(/^\s*customProviderModule: .*$/gm))
+      .toEqual(["          customProviderModule: './scripts/ci-telemetry/coverage-v8-two-forms.mjs',"])
+  })
+})
