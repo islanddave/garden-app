@@ -44,6 +44,9 @@ import {
 // V5-SEEDMULTIPARENT-001 release 2b — the jar's chips come off its PARENT SET (lotNotice, the one
 // function the save sheet and the lot page read too). With the flag off it answers today's F2 rule.
 import { lotNotice } from '../components/seed/seedParents.js'
+// V5-SEEDLOTADDITION-001 — the lot page's own sentence for "this lot changed somewhere else", said by the
+// stage sheet's count write too (see submitStage).
+import { CHANGED_ELSEWHERE } from '../components/seed/SavedFromCard.jsx'
 import { SEED_MULTI_PARENT } from '../lib/featureFlags.js'
 // Where a Not started lot came from, in My seeds' words for the same lot one tap away.
 import { originNote } from '../components/seed/mySeedsModel.js'
@@ -860,15 +863,32 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
       // that reason: chk_inventory_seed_count_basis_pairing requires
       // `(seed_count IS NULL) = (seed_count_estimated IS NULL)` and the route 400s on a half-pair
       // rather than completing it with a `false` nobody said.
+      //
+      // V5-SEEDLOTADDITION-001 — COMPARE-AND-SET. This is an ABSOLUTE count written from the row the
+      // sheet opened on, and seed can now be added to that lot from a planting while the sheet is
+      // open. So the body also says what that row held (count, basis, weight as a number; null for
+      // "the row had none"), and the route answers 409 lot_changed, writing nothing, when the lot no
+      // longer holds it. The stage move has landed and stands; only the count did not, and the
+      // sentence says the lot changed rather than printing the server's. The reload below draws the
+      // lot as it now is.
       let qtyWriteErr = null
       if (count.value != null) {
+        const loaded = advancing.item
         try {
-          await fetch(`/api/inventory-items/${advancing.item.id}/seed-measure`, {
+          await fetch(`/api/inventory-items/${loaded.id}/seed-measure`, {
             method: 'PUT',
-            body: JSON.stringify({ seed_count: count.value, seed_count_estimated: qtyEstimated }),
+            body: JSON.stringify({
+              seed_count: count.value,
+              seed_count_estimated: qtyEstimated,
+              expected_seed_count: loaded.seed_count == null ? null : Number(loaded.seed_count),
+              expected_seed_count_estimated: typeof loaded.seed_count_estimated === 'boolean' ? loaded.seed_count_estimated : null,
+              expected_seed_weight_g: loaded.seed_weight_g == null ? null : Number(loaded.seed_weight_g),
+            }),
           })
         } catch (e) {
-          qtyWriteErr = e?.message || 'Stage saved, but the count did not.'
+          qtyWriteErr = e?.status === 409 && e?.body?.code === 'lot_changed'
+            ? CHANGED_ELSEWHERE
+            : (e?.message || 'Stage saved, but the count did not.')
         }
       }
       // V5-SEEDYEARHARVESTED-001 — the ONE key on this page with no narrow route, so it is the only

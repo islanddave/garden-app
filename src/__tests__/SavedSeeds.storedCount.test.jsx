@@ -314,7 +314,61 @@ describe('BUG-SEEDZEROSOWABLE-001 — the advance sheet asks at every stage', ()
     expect(body.seed_count_estimated).toBe(false)
     // The narrow route reads BY PRESENCE, so an extra key is an assignment, not a no-op. A
     // `quantity_on_hand` here would be the original defect wearing the new route.
-    expect(Object.keys(body).sort()).toEqual(['seed_count', 'seed_count_estimated'])
+    // V5-SEEDLOTADDITION-001 — plus what the row held when the sheet opened, for the route to compare:
+    // three `expected_` keys, always all three. Still no quantity, and nothing else.
+    expect(Object.keys(body).sort()).toEqual([
+      'expected_seed_count', 'expected_seed_count_estimated', 'expected_seed_weight_g',
+      'seed_count', 'seed_count_estimated',
+    ])
+    expect(body.expected_seed_count).toBe(LOT.seed_count ?? null)
+    expect(body.expected_seed_count_estimated).toBe(typeof LOT.seed_count_estimated === 'boolean' ? LOT.seed_count_estimated : null)
+    expect(body.expected_seed_weight_g).toBe(LOT.seed_weight_g == null ? null : Number(LOT.seed_weight_g))
+  })
+
+  it('T26 — the expected keys are the row\'s own values: a weight as a NUMBER, and null for what the row never had', async () => {
+    await mount([{ ...LOT, seed_count: 120, seed_count_estimated: true, seed_weight_g: '13.845' }])
+    await click('advance-stage')
+    await typeCount('14')
+    await click('stage-save')
+    const body = measureBody()
+    expect(body.expected_seed_count).toBe(120)
+    expect(body.expected_seed_count_estimated).toBe(true)
+    expect(body.expected_seed_weight_g).toBe(13.845)
+  })
+
+  it('T26 — an uncounted row says so with three nulls', async () => {
+    await mount([{ ...UNCOUNTED, seed_weight_g: null }])
+    await click('advance-stage')
+    await typeCount('14')
+    await click('stage-save')
+    const body = measureBody()
+    expect([body.expected_seed_count, body.expected_seed_count_estimated, body.expected_seed_weight_g]).toEqual([null, null, null])
+  })
+
+  it('T26 — 409 lot_changed on the count: the stage move stands, and the sheet\'s own sentence is said, never the server\'s', async () => {
+    const refused = { error: 'This seed lot was changed at the same moment. Reload and try again.', code: 'lot_changed',
+      seed_count: 150, seed_count_estimated: true, seed_weight_g: null, seed_parent_plant_count: null }
+    fetchSpy.mockImplementation((path, opts) => {
+      const p = String(path)
+      if (opts?.method === 'PUT' && p.endsWith('/seed-measure')) {
+        return Promise.reject(Object.assign(new Error(refused.error), { status: 409, body: refused }))
+      }
+      if (opts?.method) return Promise.resolve({ ok: true })
+      if (p.startsWith('/api/plants?view=picker')) return Promise.resolve([])
+      if (p.startsWith('/api/inventory-items')) return Promise.resolve([LOT])
+      return Promise.resolve([])
+    })
+    await act(async () => { render(<ToastProvider><SavedSeeds /></ToastProvider>) })
+    await waitFor(() => expect(screen.getByText('Saved seeds')).toBeTruthy())
+    await click('advance-stage')
+    await typeCount('14')
+    await click('stage-save')
+    await waitFor(() => expect(screen.queryByTestId('stage-save')).toBeNull())
+    expect(document.body.textContent).toContain('This lot changed somewhere else just now. This is the latest. Try again if it still needs changing.')
+    expect(document.body.textContent).not.toContain(refused.error)
+    // One stage POST, one count PUT: nothing is retried.
+    expect(writes().filter(([p]) => String(p).endsWith('/seed-stage'))).toHaveLength(1)
+    expect(writes().filter(([p]) => String(p).endsWith('/seed-measure'))).toHaveLength(1)
   })
 
   it('accepts a genuine zero — "I counted, and there is none"', async () => {
