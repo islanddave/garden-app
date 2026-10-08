@@ -90,8 +90,8 @@ const OTHER_CROP = plantingOf(SP_B, {
 
 const SAVE_FAILED = "Couldn't save just now. Nothing was saved. Your entries are still here. Tap Save seed to try again."
 const SAVE_OFFLINE = "You're offline. Nothing was saved. Your entries stay here until you're back in range."
-const SAVE_UNCONFIRMED = "That didn't finish, so the jar may or may not have saved. Look in Seeds before you tap Save seed again."
-const NEEDS_UPDATE = 'This jar needs the latest version of the app. Nothing was saved.'
+const SAVE_UNCONFIRMED = "That didn't finish, so the lot may or may not have saved. Look in Seeds before you tap Save seed again."
+const NEEDS_UPDATE = 'This lot needs the latest version of the app. Nothing was saved.'
 
 /** A rejection shaped the way src/lib/api.js throws a non-2xx: message, status, body. */
 const httpError = ({ status, body }) => Object.assign(new Error(body?.error ?? `HTTP ${status}`), { status, body })
@@ -341,7 +341,7 @@ describe('the mix call fails: no lot is asked for, and the sentence is the clien
     fillIn()
     submit()
     await waitFor(() => expect(errorText())
-      .toBe("Sungold by the gate is a different crop, so it can't share this jar. Remove it and save again."))
+      .toBe("Sungold by the gate is a different crop, so it can't share this lot. Remove it and save again."))
     expect(lotCalls()).toHaveLength(0)
     expectNothingSavedAndEntriesKept()
   })
@@ -372,7 +372,7 @@ describe('the lot is refused: the client’s own sentence, naming the plant', ()
     fillIn()
     submit()
     await waitFor(() => expect(errorText())
-      .toBe(`${A.name} has no variety recorded, so it can't share a jar. Remove it, or save it as its own jar.`))
+      .toBe(`${A.name} has no variety recorded, so it can't share a lot. Remove it, or save it as its own lot.`))
     expect(errorText()).not.toContain(refused.body.error)
     expect(lotCalls()).toHaveLength(1)
     expectNothingSavedAndEntriesKept()
@@ -397,7 +397,7 @@ describe('the lot is refused: the client’s own sentence, naming the plant', ()
     fillIn()
     submit()
     await waitFor(() => expect(errorText())
-      .toBe("Sungold by the gate is a different crop, so it can't share this jar. Remove it and save again."))
+      .toBe("Sungold by the gate is a different crop, so it can't share this lot. Remove it and save again."))
     expect(errorText()).not.toContain(refused.body.error)
     expectNothingSavedAndEntriesKept()
   })

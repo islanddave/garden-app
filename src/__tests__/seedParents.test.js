@@ -125,7 +125,7 @@ describe('lotNotice — the truth table', () => {
       })
       it(`${name}: a jar filed under a mix reads N2`, () => {
         expect(lotNotice(lot(parents, { variety_rank: 'blend', variety_name: 'Carmen + Ajvarski mix', source_plant_id: 'pl-1' })).sentences).toEqual([
-          'Carmen + Ajvarski mix is a mix, not one variety. This jar holds only what the plants you gathered from carried, so the mix shifts each time it is saved.',
+          'Carmen + Ajvarski mix is a mix, not one variety. This lot holds only what the plants you gathered from carried, so the mix shifts each time it is saved.',
         ])
       })
     }
@@ -153,7 +153,7 @@ describe('lotNotice — the truth table', () => {
     expect(lotNotice(lot([blend('pl-1'), blend('pl-2')], { breeding_system: 'open_pollinated' }))).toEqual({
       row: 2, chips: [], f2: null, breedingFact: '',
       sentences: [
-        'Fairy Tale mix is a mix, not one variety. This jar holds only what the plants you gathered from carried, so the mix shifts each time it is saved.',
+        'Fairy Tale mix is a mix, not one variety. This lot holds only what the plants you gathered from carried, so the mix shifts each time it is saved.',
         'From 2 plantings of Fairy Tale mix.',
       ],
     })
@@ -196,7 +196,7 @@ describe('lotNotice — the truth table', () => {
     expect(lotNotice(lot([f1('pl-1', 'Sungold'), f1('pl-2', 'Carmen')]))).toEqual({
       row: 8, chips: [MIXED_CHIP, F2_CHIP], f2: 'full',
       sentences: [
-        'Mixed seed from Carmen and Sungold. Each seed came off one or the other, and some may be crosses. Expect more than one kind of plant from this jar.',
+        'Mixed seed from Carmen and Sungold. Each seed came off one or the other, and some may be crosses. Expect more than one kind of plant from this lot.',
         'Every plant here is an F1 hybrid, so none of this seed will come true.',
       ],
       breedingFact: 'F2 — won’t come true (parents F1 hybrids)',
@@ -208,7 +208,7 @@ describe('lotNotice — the truth table', () => {
     expect(lotNotice(lot(set))).toEqual({
       row: 9, chips: [MIXED_CHIP, PART_CHIP], f2: 'part',
       sentences: [
-        'Mixed seed from Ajvarski, Carmen and Jimmy Nardello. Each seed came off one of them, and some may be crosses. Expect more than one kind of plant from this jar.',
+        'Mixed seed from Ajvarski, Carmen and Jimmy Nardello. Each seed came off one of them, and some may be crosses. Expect more than one kind of plant from this lot.',
         'The seed that came off Carmen, an F1 hybrid, will vary, sometimes a lot.',
       ],
       breedingFact: 'Part F2 (Carmen is an F1 hybrid)',
@@ -218,7 +218,7 @@ describe('lotNotice — the truth table', () => {
   it('row 9: a no-variety parent and a parent that is itself a mix both count as not F1', () => {
     const withNone = lotNotice(lot([f1('pl-1', 'Carmen'), sp('pl-2', null)]))
     expect(withNone).toMatchObject({ row: 9, f2: 'part' })
-    expect(withNone.sentences[0]).toBe('Mixed seed from Carmen and a plant with no variety recorded. Each seed came off one or the other, and some may be crosses. Expect more than one kind of plant from this jar.')
+    expect(withNone.sentences[0]).toBe('Mixed seed from Carmen and a plant with no variety recorded. Each seed came off one or the other, and some may be crosses. Expect more than one kind of plant from this lot.')
     const withBlend = lotNotice(lot([f1('pl-1', 'Carmen'), sp('pl-2', 'Fairy Tale mix', { variety_rank: 'blend', breeding_system: 'f1' })]))
     expect(withBlend).toMatchObject({ row: 9, f2: 'part', breedingFact: 'Part F2 (Carmen is an F1 hybrid)' })
   })
@@ -236,7 +236,7 @@ describe('lotNotice — the truth table', () => {
     const set = [sp('pl-1', 'Jimmy Nardello', { breeding_system: 'landrace' }), sp('pl-2', 'Ajvarski', { breeding_system: 'open_pollinated' })]
     const expected = {
       row: 10, chips: [MIXED_CHIP], f2: null, breedingFact: '',
-      sentences: ['Mixed seed from Ajvarski and Jimmy Nardello. Each seed came off one or the other, and some may be crosses. Expect more than one kind of plant from this jar.'],
+      sentences: ['Mixed seed from Ajvarski and Jimmy Nardello. Each seed came off one or the other, and some may be crosses. Expect more than one kind of plant from this lot.'],
     }
     expect(lotNotice(lot(set))).toEqual(expected)
     expect(lotNotice(lot(set, { breeding_system: 'f1' }))).toEqual(expected)

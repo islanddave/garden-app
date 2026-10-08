@@ -108,9 +108,9 @@ const listWords = (words) => (words.length <= 1 ? words.join('')
   : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`)
 
 const n1 = (names) => (names.length === 2
-  ? `Mixed seed from ${names[0]} and ${names[1]}. Each seed came off one or the other, and some may be crosses. Expect more than one kind of plant from this jar.`
-  : `Mixed seed from ${listWords(names)}. Each seed came off one of them, and some may be crosses. Expect more than one kind of plant from this jar.`)
-const n2 = (x) => `${x} is a mix, not one variety. This jar holds only what the plants you gathered from carried, so the mix shifts each time it is saved.`
+  ? `Mixed seed from ${names[0]} and ${names[1]}. Each seed came off one or the other, and some may be crosses. Expect more than one kind of plant from this lot.`
+  : `Mixed seed from ${listWords(names)}. Each seed came off one of them, and some may be crosses. Expect more than one kind of plant from this lot.`)
+const n2 = (x) => `${x} is a mix, not one variety. This lot holds only what the plants you gathered from carried, so the mix shifts each time it is saved.`
 const n3 = (x) => `The seed that came off ${x}, an F1 hybrid, will vary, sometimes a lot.`
 const N4 = 'Every plant here is an F1 hybrid, so none of this seed will come true.'
 const n5 = (n, x) => `From ${n} plantings of ${x}.`

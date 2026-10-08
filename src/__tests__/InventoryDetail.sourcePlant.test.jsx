@@ -313,7 +313,7 @@ describe('InventoryDetail — Saved from for a jar whose parent set is no answer
       await act(async () => { fireEvent.click(screen.getByLabelText('Clear planting selection')) })
 
       await waitFor(() => expect(screen.getByTestId('source-plant-help').textContent)
-        .toBe('This jar changed somewhere else just now. This is the latest. Try again if it still needs changing.'))
+        .toBe('This lot changed somewhere else just now. This is the latest. Try again if it still needs changing.'))
       expect(lotReads()).toHaveLength(2)
       // With the set in hand the card lists it.
       expect(screen.getAllByTestId('saved-from-row')).toHaveLength(2)
