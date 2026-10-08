@@ -28,6 +28,7 @@ import EventDeleteConfirm from '../components/photo/EventDeleteConfirm.jsx'
 // V5-SEEDSTAB-001 slice 2 — a seed_saved event's door to its lot (SeedLotAnchor below): the planting's
 // live seed lots, read the way the planting page reads them, and where a lot's door lands.
 import { useSeedLotsFromPlanting } from '../components/planting/SeedLotsFromPlanting.jsx'
+import { seedCountLabel } from '../components/seed/seedLots.js'
 import { lotHref } from '../components/seed/seedLots.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect, Sheet } from '../components/forms'
 // The same label chrome <Field> renders, for the one control on this form that cannot BE a Field.
@@ -108,6 +109,10 @@ const METADATA_LABELS = {
   issue_label:               'Issue',
   status_from:               'Status before',
   status_to:                 'Status after',
+  // V5-SEEDLOTADDITION-001 — seed put into a lot that already existed. These two are what he typed
+  // on the add form, so they are labelled; the three keys beside them are hidden below.
+  added_seed_count:          'Seeds added',
+  added_seed_weight_g:       'Weight added',
 }
 
 // Metadata keys that are MACHINE provenance rather than user-entered detail. Filtered out of the
@@ -148,8 +153,13 @@ const METADATA_LABELS = {
 // every row of a batch logged by voice on Log many, so voice care can be measured later. Machine
 // provenance, and it lands on every event of the batch (101 for one "water all bag area") — hidden
 // before its first live row, caught by the pre-promote seat (review-logmany-voice.md IMPORTANT-1).
+//
+// `addition`, `seed_addition_id`, `added_estimated` (V5-SEEDLOTADDITION-001) ride a `seed_saved` entry
+// written when seed went into an existing lot: a flag saying so, the picking row's uuid, and the basis
+// of the count. The basis is not dropped: it is read into the "Seeds added" value ("approx. 30 seeds"),
+// which is where a person would look for it. Hidden in the change that starts writing them.
 const METADATA_HIDDEN_KEYS = new Set([
-  'water_depth_source', 'seed_lot_id',
+  'water_depth_source', 'seed_lot_id', 'addition', 'seed_addition_id', 'added_estimated',
   'batch_id', 'batch_v', 'precip_source', 'station_series', 'rain_backfill', 'auto_logged',
   'entity_level', 'schema', 'source', 'harvest_input_source', 'migrate_to_location',
   'target_location_id', 'scope_intended', 'assumed_units', 'care_input_source',
@@ -181,8 +191,11 @@ function photoDeleteFailureCopy(failed, total) {
   return `The event was deleted, but ${failed} of ${total} photos could not be deleted — they are still in your garden photos.`
 }
 
-// Value formatters for keys whose stored value is a code, not display text.
+// Value formatters for keys whose stored value is a code, not display text. Each is handed the value
+// and the whole metadata object: the seed count's "approx." is a second key of the same entry.
 const METADATA_VALUE_FORMAT = {
+  added_seed_count: (v, m) => seedCountLabel(v, m?.added_estimated === true) || v,
+  added_seed_weight_g: v => `${v} g`,
   water_depth: v => waterDepthLabel(v),
   // The chip captions the reason was picked from ("Not sure", not "unknown").
   loss_reason: v => reductionReasonLabel(v),
@@ -1331,7 +1344,7 @@ function EventFields({ event: ev }) {
           }}>
             {metadataEntries.map(([key, rawValue]) => {
               const label = METADATA_LABELS[key] ?? null
-              const value = METADATA_VALUE_FORMAT[key] ? METADATA_VALUE_FORMAT[key](rawValue) : rawValue
+              const value = METADATA_VALUE_FORMAT[key] ? METADATA_VALUE_FORMAT[key](rawValue, ev.metadata) : rawValue
               return (
                 <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
                   <span style={{ fontSize: T.type.sm, color: P.mid, flexShrink: 0 }}>
