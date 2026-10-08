@@ -1,0 +1,18 @@
+{
+  "node": "v26.4.0",
+  "vitest": "4.1.11",
+  "script": {
+    "scriptId": "241",
+    "url": "scripts/fixtures/coverage-two-forms/only-node.js",
+    "functions": [
+      { "functionName": "", "ranges": [{ "startOffset": 0, "endOffset": 741, "count": 1 }], "isBlockCoverage": true },
+      {
+        "functionName": "called",
+        "ranges": [{ "startOffset": 591, "endOffset": 657, "count": 2 }, { "startOffset": 626, "endOffset": 638, "count": 0 }],
+        "isBlockCoverage": true
+      },
+      { "functionName": "notCalled", "ranges": [{ "startOffset": 659, "endOffset": 700, "count": 0 }], "isBlockCoverage": false }
+    ],
+    "startOffset": 0
+  }
+}

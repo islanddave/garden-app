@@ -144,4 +144,54 @@ artefact, so it reads the coverage table out of two unit-pass job logs of one co
 (`gh api repos/islanddave/garden-app/actions/jobs/<job id>/logs`, or a local `npm test` log) and compares every
 directory row but `All files` and `lambda/daily-plan` on % Funcs and % Lines. Exit 0 `COVERAGE-SAME`, 1
 `COVERAGE-DIFFERS` with the rows, 2 `COVERAGE-UNREADABLE`. Tested in `scripts/test_coverage_rows.py` against the
-table of a real job log under `scripts/fixtures/coverage-rows/`.
+table of a real job log under `scripts/fixtures/coverage-rows/`. The two rows were left out because the stock
+provider did not read `lambda/daily-plan` the same way twice; with `coverage-v8-two-forms.mjs` (next) it does, so
+that reason is gone. They are still left out: the script does what it did, and putting them back in (its `EXCLUDED`,
+with the pin in the test) is the trial owner's call.
+
+`coverage-v8-two-forms.mjs` is the unit run's coverage provider (`vitest.config.ts`, `coverage.customProviderModule`):
+the installed `@vitest/coverage-v8` provider, subclassed, with one thing changed. A module under `lambda/daily-plan/`
+reaches V8 in two forms under one URL, vite's text of it in a test file that imports it and the file's own text
+wherever `handler.js` or a `createRequire` loads it, and the stock provider converts both against vite's text at one
+start offset, taken from whichever per-test-file result it read last. One tree therefore read `engine.js` as 1,214
+or 1,257 covered items by draw where 1,325 were covered (the 59 test files that load it), and `handler.js` `run()` as
+never entered (BUG-ENGINECOVERAGETWOREADINGS-001). A module only Node loads was misread too, the same way every
+time, and not always downwards: `rainLog.js` read 103 covered items in those files where this module reads 94 (93 by
+the review's hand count). The module converts each form against the text it was compiled from and merges the two
+item for item. It changes no test. Its worker side is the stock one: with one project the workers load
+`@vitest/coverage-v8` themselves; with the A3 trial's env key set every worker evaluates this module too and gets
+the stock module's own three functions from it.
+
+It fails the run (an `ERROR: coverage-v8-two-forms:` line and exit 1, like a missed threshold, and one `::error`
+annotation on a runner) in two cases. One: a file loaded both ways whose two conversions are not one list, item for
+item and in order; what Node ran of that file is then left out of the report. Two: any hit count below zero. That
+second check is a tripwire for one symptom of a gross misreading (ranges read against the wrong text, or a
+wrapper's length off). It does not show that a conversion is right: in review, every Node script read one character
+off gave 16 more covered items on 59 test files and no negative count. So never read "0 negative counts" as proof
+of the figures. What holds
+the figures is `coverage-v8-two-forms.test.js`: it asks the installed package for its version and for each member
+the module leans on (its header lists them), and it runs `scripts/fixtures/coverage-two-forms/` (one module loaded
+through vite, by Node, and both ways in one worker; one a worker leaves half loaded; one only vite loads; one only
+Node loads) through a real `vitest run --coverage`, as one project and as two, and holds every hit count to the
+calls the cases make.
+
+When that ERROR appears on a commit that did not touch the module: the file it names has changed in a way the two
+conversions disagree on, or vite, `@vitejs/plugin-react` or Node has. Read the reason in the line, then the header.
+To take the provider out, revert the whole commit that brought it in. Putting `provider: 'v8'` back in
+`vitest.config.ts` alone does not recover: this module's own test holds the config to it and fails in the same unit
+step. And if a coverage threshold or `coverage-ratchet.json`'s `active_target` has since been raised above what the
+stock provider reads (branches read about one point lower on it), the revert fails the measured floor.
+
+Re-read the header on any vitest or `@vitest/coverage-v8` upgrade (the test pins the version, so an upgrade is one
+deliberate edit), and when the fixture run goes red after a vite or `@vitejs/plugin-react` upgrade or on another
+Node. To see what the stock provider makes of the same fixture, and whether an upgrade has fixed it upstream:
+`D=$(mktemp -d) && npx vitest run --config scripts/fixtures/coverage-two-forms/vitest.config.mjs --coverage
+--coverage.provider=v8 --coverage.reportsDirectory="$D"` (the directory is named so that the run does not replace
+`./coverage`; the cases pass either way; read `$D/coverage-final.json`, where stock gives `byNode` 0 hits for 3
+calls and reads `notCalled` of `only-node.js`, which nothing calls, as entered).
+
+What the first gating run had to show, for the record: when the provider landed, CI's Node with the one-project
+shape (ci.yml's `build-and-test`) was the one combination it had run on nowhere (local runs were Node 26 in both
+shapes, the shadow legs Node 20.19.0 with two projects). That job's first run on dev is its acceptance: `Run unit
+tests with coverage` green with a `Coverage report from v8` table and no `ERROR: coverage-v8-two-forms:` line, and
+`Coverage ratchet — measured floor` green, read by head SHA.
