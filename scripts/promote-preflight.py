@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Run-based CI verdict for one commit: did <workflow> pass on <sha>, judged from its workflow RUNS.
 
-promote-gate.yml's preflight calls this beside its older check-run lookup (dual evaluation, promote-path plan A2.1):
-a promote needs both. Read-only: GETs of one runs listing and one jobs listing, nothing else. A session can run it
-by hand before asking for a promote; it answers what the gate will answer.
+promote-gate.yml's preflight calls this, and since push 2 of promote-path plan A2.1 it is that step's only CI
+verdict (push 1 ran it beside the older check-run lookup and required both). Read-only: GETs of one runs listing and
+one jobs listing, nothing else. A session can run it by hand before asking for a promote; it answers what the gate
+will answer.
 
 WHY RUNS AND NOT CHECK-RUNS. `commits/<sha>/check-runs?filter=latest` is latest per RUN, not per name. Two runs of
 one workflow on a commit give two same-named check-runs, and a job that `needs` other jobs has no check-run at all
@@ -26,6 +27,9 @@ arguments are malformed). The caller treats anything but 0 as a refusal. stdout 
     <pass|refuse|unreadable>: <reason> | runs=<id>:<event>@<branch>:a<attempt>:<status>/<conclusion>,...
 Every value taken from a reply is reduced to [A-Za-z0-9_.-] before it is printed, so the line is safe inside a
 workflow annotation. The caller requires BOTH exit 0 and a line starting `pass: `.
+
+<job> is matched by exact name among the newest run's jobs, whatever else is listed: ci.yml's single
+`build-and-test` job and, once ci.yml is split, the `build-and-test` aggregator behind its legs both satisfy rule 6.
 
 A run counts whatever branch it ran on: a workflow_dispatch of <workflow> on a lane branch at the same commit is a
 run on that commit. A red or unfinished one refuses the promote until it is re-run green (for integration-test.yml,
