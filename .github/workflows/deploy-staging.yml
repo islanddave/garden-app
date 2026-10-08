@@ -957,6 +957,22 @@ jobs:
         # no foreign key, each run's lot id is new, and this sweep has never deleted the event-keyed rows every other
         # smoke event leaves either. Deleting only these would also hand the smoke user back part of its daily
         # allowance, which block U's comment says the smoke must not lean on.
+        # RELEASE 3, pre-promote review (regression B2): A LOT'S STAGE ROWS GO BEFORE THE LOT. seed_lot_stage_log names
+        # inventory_items with NO ON DELETE action (migrations/v4-seedsaveflow-001/0a-ddl.sql; the standing gate in
+        # v5-invrefstrand-001 pins it 'a'), and POST /seed-stage, its one writer, adds a row on every call. Block U's
+        # U24 is the smoke's first call of that route (it gives the gift lot a stage), and the API DELETE that follows
+        # is a soft delete, so the row is still there when this step runs. As the step stood, "DELETE FROM
+        # inventory_items" then raised 23503, the step failed with the lot and its row left behind, and every later
+        # run failed on the same row (rehearsed on a local PG 17: the step as it stood stops there, this one ends at 0;
+        # record: gardening-docs project-state/_seedmultiparent-20261005/r3/lane-F-report.log). So, in the main chain
+        # and directly ahead of the lot delete: the stage rows of every lot that delete is about to remove, by that
+        # delete's own predicate. It is keyed on the lot, not on U24, so a later step that stages any smoke-named lot,
+        # and a smoke-named lot someone staged by hand, are covered without another edit here.
+        # NO to_regclass TEST, unlike the three tables above: this one is not optional. The inventory handler's list
+        # read joins it on every request (GET /api/inventory-items), so a database without it answers 500 to the
+        # smoke's own reads long before this step runs.
+        # Its residue term counts by the lot ids captured before any delete and is the LAST term of the sum. With the
+        # key in place it can only read above 0 if a lot survived (the inventory_items term then counts it too).
         if: always()
         env:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
@@ -1012,6 +1028,7 @@ jobs:
             -c "DELETE FROM entity_tag     WHERE entity_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')) OR entity_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%') OR entity_id = ANY('{$SMOKE_MIX_IDS}'::uuid[]) OR entity_id IN (SELECT id FROM locations WHERE name ILIKE '%smoke%') OR entity_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "UPDATE inventory_items SET source_plant_id = NULL WHERE source_plant_id IS NOT NULL AND (name ILIKE '%smoke%' OR source_plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')));" \
             -c "DELETE FROM plants         WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
+            -c "DELETE FROM seed_lot_stage_log WHERE inventory_item_id IN (SELECT id FROM inventory_items WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM inventory_items WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM entity         WHERE entity_type='cultivar' AND (cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%') OR cultivar_ref_id = ANY('{$SMOKE_MIX_IDS}'::uuid[]));" \
             -c "DELETE FROM care_profile   WHERE scope='cultivar' AND (scope_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%') OR scope_id = ANY('{$SMOKE_MIX_IDS}'::uuid[]));"
@@ -1023,10 +1040,10 @@ jobs:
             -c "DELETE FROM locations      WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM garden_shared_state WHERE natural_key ILIKE '%smoke%';" \
             -c "DELETE FROM plant_projects  WHERE name ILIKE '%smoke%';"
-          echo "  swept: harvest_log, event_log, entity_memory, favorites, event_batches, plants, inventory_items, care_profile, variety_blend_component, plant_varieties, locations, plant_projects"
-          REMAINING=$(psql "$NEON_STAGING_URL" -At -c "SELECT (SELECT COUNT(*) FROM plant_projects WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plant_varieties WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plants WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM locations WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM inventory_items WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM care_profile WHERE scope='cultivar' AND scope_id = ANY('{$SMOKE_VARIETY_IDS}'::uuid[])) + $SEED_PARENT_LEFT + (SELECT COUNT(*) FROM plant_varieties WHERE id = ANY('{$SMOKE_MIX_IDS}'::uuid[])) + $BLEND_LEFT + $SEED_ADDITION_LEFT;")
+          echo "  swept: harvest_log, event_log, entity_memory, favorites, event_batches, plants, seed_lot_stage_log, inventory_items, care_profile, variety_blend_component, plant_varieties, locations, plant_projects"
+          REMAINING=$(psql "$NEON_STAGING_URL" -At -c "SELECT (SELECT COUNT(*) FROM plant_projects WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plant_varieties WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plants WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM locations WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM inventory_items WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM care_profile WHERE scope='cultivar' AND scope_id = ANY('{$SMOKE_VARIETY_IDS}'::uuid[])) + $SEED_PARENT_LEFT + (SELECT COUNT(*) FROM plant_varieties WHERE id = ANY('{$SMOKE_MIX_IDS}'::uuid[])) + $BLEND_LEFT + $SEED_ADDITION_LEFT + (SELECT COUNT(*) FROM seed_lot_stage_log WHERE inventory_item_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]));")
           if [[ "$REMAINING" != "0" ]]; then
             echo "⚠ WARN: $REMAINING smoke residue row(s) remain after sweep — possible FK constraint preventing delete"
             exit 1
           fi
-          echo "✅ L-058 cleanup complete — 0 smoke residue rows (plant_projects + plant_varieties + plants + locations + inventory_items + care_profile + seed_lot_parent_planting + variety_blend_component + seed_lot_addition)"
+          echo "✅ L-058 cleanup complete — 0 smoke residue rows (plant_projects + plant_varieties + plants + locations + inventory_items + care_profile + seed_lot_parent_planting + variety_blend_component + seed_lot_addition + seed_lot_stage_log)"

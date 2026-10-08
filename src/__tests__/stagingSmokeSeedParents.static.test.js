@@ -43,7 +43,10 @@
 //   * the mix found by its NAME only: a renamed mix keeps its component rows and the same 23503 follows;
 //   * the mix ids captured after a delete has run, or the capture, the delete or the residue term run without
 //     the to_regclass test on a database that has no variety_blend_component;
-//   * a release 2a assert deleted, reordered so it reads before it writes, or its expected string loosened.
+//   * a release 2a assert deleted, reordered so it reads before it writes, or its expected string loosened;
+//   * RELEASE 3. A smoke lot's stage rows deleted after "DELETE FROM inventory_items", or not at all: 23503 at the
+//     first run after U24 gives the gift lot a stage, and at every run after it (seed_lot_stage_log's key to
+//     inventory_items has no ON DELETE action; rehearsed on a local PG 17).
 //
 // WHAT IT DOES NOT CATCH: whether the SQL is right for the live schema, or whether the Lambdas answer as block U
 // expects. Every deploy-staging run executes both for real.
@@ -168,9 +171,10 @@ describe('the L-058 sweep takes a smoke lot\'s parent links before the plantings
       `SEED_PARENT_LEFT="(SELECT COUNT(*) FROM seed_lot_parent_planting WHERE inventory_item_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]) OR plant_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]))"`,
     )
     const remaining = run.split('\n').find((l) => l.startsWith('REMAINING='))
-    // Release 3 APPENDED one term (the picking table's, last); every term before it reads as it did.
-    expect(remaining).toContain(" + $SEED_PARENT_LEFT + (SELECT COUNT(*) FROM plant_varieties WHERE id = ANY('{$SMOKE_MIX_IDS}'::uuid[])) + $BLEND_LEFT + $SEED_ADDITION_LEFT;\")")
-    expect(remaining.endsWith(' + $BLEND_LEFT + $SEED_ADDITION_LEFT;")')).toBe(true)
+    // Release 3 APPENDED two terms (the picking table's, then the stage rows', last); every term before them reads
+    // as it did.
+    expect(remaining).toContain(" + $SEED_PARENT_LEFT + (SELECT COUNT(*) FROM plant_varieties WHERE id = ANY('{$SMOKE_MIX_IDS}'::uuid[])) + $BLEND_LEFT + $SEED_ADDITION_LEFT + (SELECT COUNT(*) FROM seed_lot_stage_log ")
+    expect(remaining.endsWith(";\")")).toBe(true)
     expect(remaining).not.toContain('seed_lot_parent_planting')
   })
 
@@ -252,16 +256,86 @@ describe('the L-058 sweep takes a smoke lot\'s pickings before its parent links'
     expect(run).not.toMatch(/seed_lot_addition'::regclass/)
   })
 
-  it('counts leftover pickings by the ids captured before any delete, as the LAST term of the residue sum', () => {
+  it('counts leftover pickings by the ids captured before any delete, in the term straight after the mix\'s', () => {
     expect(run).toContain('\nSEED_ADDITION_LEFT="0"\n')
     expect(run.indexOf('\nSEED_ADDITION_LEFT="0"\n')).toBeLessThan(outer)
     expect(arm).toContain(LEFT)
     expect(arm.indexOf(LEFT)).toBeGreaterThan(arm.indexOf('DELETE FROM seed_lot_addition '))
     expect(arm.indexOf(LEFT)).toBeLessThan(closes)
     const remaining = lines.find((l) => l.startsWith('REMAINING='))
-    expect(remaining.endsWith(' + $SEED_ADDITION_LEFT;")')).toBe(true)
+    // it was the last term until the stage rows' term was appended after it (the describe below)
+    expect(remaining).toContain(' + $BLEND_LEFT + $SEED_ADDITION_LEFT + (SELECT COUNT(*) FROM seed_lot_stage_log ')
     expect(remaining.match(/\$SEED_ADDITION_LEFT/g)).toHaveLength(1)
     expect(remaining).not.toContain('seed_lot_addition')
+  })
+})
+
+// ── release 3, pre-promote review (regression B2): a lot's stage rows go before the lot ──────────────────────────
+// seed_lot_stage_log.inventory_item_id names inventory_items with NO ON DELETE action, and POST /seed-stage, its
+// one writer, adds a row on every call. Block U's U24 is the smoke's first call of that route (the gift lot), and
+// the API DELETE after it is a soft delete. A stage row left under a smoke lot stops "DELETE FROM inventory_items"
+// with 23503; the step fails there, the lot and the row stay, and every later run fails on the same row. "A smoke
+// lot" is whatever the step's OWN lot delete says it is, as above, so narrowing or widening that delete without
+// this one fails this file.
+describe('the L-058 sweep takes a smoke lot\'s stage rows before the lot', () => {
+  const run = SWEEP.run
+  const lines = run.split('\n')
+  const STAGE_DELETE = `DELETE FROM seed_lot_stage_log WHERE inventory_item_id IN (${SMOKE_LOTS});`
+  const STAGE_LEFT = "(SELECT COUNT(*) FROM seed_lot_stage_log WHERE inventory_item_id = ANY('{$SMOKE_PARENT_KEYS}'::uuid[]))"
+  const at = lines.findIndex((l) => l.trim() === `-c "${STAGE_DELETE}" \\`)
+
+  it('deletes exactly the stage rows of the lots the lot delete is about to remove: its predicate, character for character', () => {
+    const deletes = run.match(/DELETE FROM seed_lot_stage_log\b[^"]*/g) ?? []
+    expect(deletes).toEqual([STAGE_DELETE])
+    expect(at).toBeGreaterThan(-1)
+  })
+
+  it('runs it in the first chain, under ON_ERROR_STOP, directly ahead of the lot delete', () => {
+    // the very next line is the lot delete: nothing can be put between a lot's stage rows and the lot
+    expect(lines[at + 1].trim()).toBe(`${LOTS_DELETES[0]} \\`)
+    // a line of the first chain: after the call that opens it, before the care_profile delete that ends it
+    const chain = lines.findIndex((l) => l.trim() === 'psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 \\')
+    const chainEnd = lines.findIndex((l, i) => i > chain && l.trimStart().startsWith('-c "') && !l.trimEnd().endsWith('\\'))
+    expect(chain).toBeGreaterThan(-1)
+    expect(at).toBeGreaterThan(chain)
+    expect(at).toBeLessThan(chainEnd)
+    for (let i = chain + 1; i <= chainEnd; i += 1) expect(lines[i].trimStart().startsWith('-c "')).toBe(true)
+    expect(lines[chainEnd].trim().startsWith('-c "DELETE FROM care_profile ')).toBe(true)
+  })
+
+  it('needs no to_regclass test: the table is named by no probe and by no cast', () => {
+    expect(run).not.toContain("to_regclass('public.seed_lot_stage_log')")
+    expect(run).not.toMatch(/seed_lot_stage_log'::regclass/)
+    // every line that names the table: the delete, the residue sum, and the two echoes that list what was done
+    const naming = lines.filter((l) => l.includes('seed_lot_stage_log')).map((l) => l.trim())
+    expect(naming).toHaveLength(4)
+    expect(naming[0]).toBe(`-c "${STAGE_DELETE}" \\`)
+    expect(naming[1].startsWith('echo "  swept: ')).toBe(true)
+    expect(naming[2].startsWith('REMAINING=')).toBe(true)
+    expect(naming[3].startsWith('echo "')).toBe(true)
+  })
+
+  it('counts leftover stage rows by the lot ids captured before any delete, as the LAST term of the residue sum', () => {
+    const capture = run.indexOf('SMOKE_PARENT_KEYS=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c ')
+    expect(capture).toBeGreaterThan(-1)
+    expect(run.indexOf(STAGE_DELETE)).toBeGreaterThan(capture)
+    const remaining = lines.find((l) => l.startsWith('REMAINING='))
+    expect(remaining.endsWith(` + $SEED_ADDITION_LEFT + ${STAGE_LEFT};")`)).toBe(true)
+    expect(remaining.match(/seed_lot_stage_log/g)).toHaveLength(1)
+    // never by a join on the smoke name: after the sweep no smoke lot is left to join through
+    expect(remaining).not.toMatch(/FROM seed_lot_stage_log[^)]*IN \(SELECT id FROM inventory_items/)
+  })
+
+  it('is what block U needs: the smoke stages only a lot the sweep collects by name', () => {
+    const staged = SMOKE.match(/sp_req POST "[^"]*\/seed-stage"/g) ?? []
+    expect(staged).toEqual(['sp_req POST "$SP_INV/$SP_GIFT/seed-stage"'])
+    // SP_GIFT is the id of the create on the line above its assignment, and that create's name says smoke
+    const smokeLines = SMOKE.split('\n')
+    const assigned = smokeLines.findIndex((l) => l.trimStart().startsWith("SP_GIFT=$(sp_jq '.id // empty')"))
+    expect(smokeLines.filter((l) => /\bSP_GIFT=/.test(l))).toHaveLength(1)
+    expect(smokeLines[assigned - 1].trim()).toBe(
+      'sp_req POST "$STAGING_API_INVENTORY" "{\\"name\\": \\"smoke-test-seedlot-gift-$TEST_RUN_ID\\", $SP_LOT_V2}"',
+    )
   })
 })
 
