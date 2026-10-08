@@ -195,7 +195,8 @@ describe('"water all bag area" — the happy path', () => {
       idempotency_key: expect.any(String),
       event_type: 'watering',
       scope: { type: 'ids', plant_ids: idsIn(BAG) },
-      metadata: { care_input_source: 'voice' },
+      // BUG-WATERDEPTHSINGLEEVENT-001: a spoken watering names no amount — the default, marked as one.
+      metadata: { care_input_source: 'voice', water_depth: 'normal', water_depth_source: 'default' },
     }])
     expect(screen.getByText('in Pasture > Bag Area')).toBeTruthy()
     expect(screen.getByTestId('logmany-voice-recorded').textContent).toBe('Logged by voice, for today.')

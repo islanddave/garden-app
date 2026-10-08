@@ -1,10 +1,11 @@
 // V4-PICKERGATE-001 — the ProjectDetail mini-logger offers only what its POST can carry.
 //
 // The mini-logger's handleLogEvent builds a FLAT body: project_id, event_type, plant_id,
-// event_date, title, notes, private_notes, quantity, is_public, has_photo. No `harvest` key and no
-// `metadata` key at all. So the three types whose API contract requires one of those were a
-// guaranteed 400 from this surface — harvest since the page shipped, failed / given_away from the
-// moment V4-LOSSUI-001 opened the creation gate.
+// event_date, title, notes, private_notes, quantity, is_public, has_photo. No `harvest` key and,
+// for every type but watering, no `metadata` key at all. So the three types whose API contract
+// requires one of those were a guaranteed 400 from this surface — harvest since the page shipped,
+// failed / given_away from the moment V4-LOSSUI-001 opened the creation gate. Watering alone
+// carries metadata: the default depth (BUG-WATERDEPTHSINGLEEVENT-001, last describe below).
 //
 // WHY A RENDER TEST AND NOT ONLY THE PURE ONE. creatableEventTypes.test.js proves the SET is right.
 // It cannot prove this page renders that set: the page could compute the filtered list and then map
@@ -15,7 +16,7 @@
 // No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
 
 const { apiFetchSpy, navigateSpy, paramsRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
@@ -122,5 +123,45 @@ describe('V4-PICKERGATE-001 — ProjectDetail mini-logger event-type <select>', 
     const sel = await openMiniLogger()
     expect(sel.value).toBe('observation')
     expect(optionValues(sel)).toContain(sel.value)
+  })
+})
+
+// BUG-WATERDEPTHSINGLEEVENT-001 — the one type the mini-logger writes metadata for. There is no
+// depth chip on this form, so the row must say the default wrote it: source 'default', never 'user'.
+describe('BUG-WATERDEPTHSINGLEEVENT-001 — the mini-logger writes the default depth on watering only', () => {
+  const PLANTS = [{ id: 'pl-1', name: 'Basil', project_id: 'proj-1' }]
+  const eventPosts = () => apiFetchSpy.mock.calls
+    .filter(([p, o]) => p === '/api/events' && o?.method === 'POST')
+    .map(([, o]) => JSON.parse(o.body))
+
+  async function logEvent(type) {
+    const base = apiFetchSpy.getMockImplementation()
+    apiFetchSpy.mockImplementation((path, options = {}) => {
+      if (path.startsWith('/api/plants')) return Promise.resolve(PLANTS)
+      if (path === '/api/events' && options.method === 'POST') return Promise.resolve({ id: 'ev-1' })
+      return base(path, options)
+    })
+    const sel = await openMiniLogger()
+    await act(async () => { fireEvent.change(sel, { target: { value: type } }) })
+    await act(async () => { fireEvent.focus(screen.getByTestId('projdetail-mini-planting')) })
+    await act(async () => { fireEvent.click(await screen.findByTestId('ps-opt-pl-1')) })
+    await act(async () => { fireEvent.submit(sel.closest('form')) })
+    await waitFor(() => expect(eventPosts().length).toBe(1))
+    return eventPosts()[0]
+  }
+
+  it('a watering carries the default depth, marked as a default', async () => {
+    const body = await logEvent('watering')
+    expect(body.event_type).toBe('watering')
+    expect(body.metadata).toEqual({ water_depth: 'normal', water_depth_source: 'default' })
+    // The existing keys are untouched.
+    expect(body).toMatchObject({ project_id: 'proj-1', plant_id: 'pl-1', title: null, notes: null, has_photo: false })
+  })
+
+  it.each(['observation', 'fertilizing', 'rain'])('%s carries no depth and no metadata key', async (type) => {
+    const body = await logEvent(type)
+    expect(body.event_type).toBe(type)
+    expect(body).not.toHaveProperty('metadata')
+    expect(JSON.stringify(body)).not.toContain('water_depth')
   })
 })
