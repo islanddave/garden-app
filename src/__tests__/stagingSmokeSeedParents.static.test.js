@@ -1267,8 +1267,9 @@ describe('staging smoke block U, release 3: additions to an existing seed lot', 
     expect(flatU.match(/\$\(sp_uuid\)/g)).toHaveLength(5)
   })
 
-  it('expects each answer the contract gives: the count up once, the replay, the two 409s, the uncounted lot, the used-up lot, the stale measure', () => {
+  it('expects each answer the contract gives: the count up once, the replay, the two 409s, the uncounted lot, the used-up lot, the stale measure, both in the client\'s own body', () => {
     for (const [label, expected] of [
+      ['u24-counted-lot', '"200 200 201 200 200 100|false"'],
       ['u24-open-lots', '"200 true,true,false,false|false,true"'],
       ['u25-same-plant-addition', '"200 false|false|true 200 130|false|$SP_BEFORE"'],
       ['u25-replay', '"200 true|130|$SP_ADDITION"'],
@@ -1291,9 +1292,26 @@ describe('staging smoke block U, release 3: additions to an existing seed lot', 
     expect(flatU.indexOf('SP_BEFORE="$(sp_jq "$SP_IDS_JQ")|$(sp_jq \'.source_plant_id // "null"\')|$(sp_jq \'.created_at // "null"\')|$(sp_jq \'.year_harvested | tostring\')"'))
       .toBeGreaterThan(-1)
     expect(flatU.indexOf('SP_BEFORE=')).toBeLessThan(flatU.indexOf('sp_req POST "$SP_ADD" "$SP_BODY1"'))
-    // the stale measure sends the one expected key that is stale, beside a real write
-    expect(flatU).toContain(`sp_req PUT "$SP_INV/$SP_MIXLOT/seed-measure" '{"seed_count": 5, "seed_count_estimated": false, "expected_seed_count": 100}'`)
-    for (const key of ['seed_count', 'seed_count_estimated', 'expected_seed_count']) expect(FIXTURE.seed_measure_put.request_optional).toContain(key)
+    // Both count writes go out in the CLIENT'S OWN BODY (pre-promote QA review, I2). Since this release every count
+    // save from the lot page and the stage sheet carries what the page loaded in all three expected keys (contract
+    // 2.9.6), flag on or off, so that is the shape staging must see written and read back. U24's lot was never
+    // counted or weighed: all three null, and the write must land (its read-back is the u24-counted-lot assert
+    // above). U29's page loaded the lot at U24 (100, counted, no weight) and the lot has moved on: 409, nothing
+    // written.
+    const measures = (flatU.match(/sp_req PUT "\$SP_INV\/\$SP_MIXLOT\/seed-measure" '\{[^']*\}'/g) ?? [])
+      .map((call) => JSON.parse(call.slice(call.indexOf("'") + 1, -1)))
+      .filter((body) => 'seed_count' in body)
+    expect(measures).toEqual([
+      { seed_count: 100, seed_count_estimated: false, expected_seed_count: null, expected_seed_count_estimated: null, expected_seed_weight_g: null },
+      { seed_count: 5, seed_count_estimated: false, expected_seed_count: 100, expected_seed_count_estimated: false, expected_seed_weight_g: null },
+    ])
+    for (const body of measures) {
+      // toEqual reads a missing key and an undefined one alike, so the three are asserted present by name
+      expect(Object.keys(body)).toEqual(['seed_count', 'seed_count_estimated', 'expected_seed_count', 'expected_seed_count_estimated', 'expected_seed_weight_g'])
+      for (const key of Object.keys(body)) expect(FIXTURE.seed_measure_put.request_optional).toContain(key)
+    }
+    // no count write in the block goes out the old way, with no expected key
+    expect(flatU).not.toMatch(/seed-measure" '\{"seed_count": \d+, "seed_count_estimated": (true|false)\}'/)
   })
 
   it('the two lots that must NOT be offered differ from the one that is by one thing each', () => {

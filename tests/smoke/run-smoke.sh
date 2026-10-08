@@ -1410,6 +1410,10 @@ else
       #   U24) the mix lot gets a count (PUT /seed-measure 100, counted), read back. Then GET
       #        /seed-lots-open?plant_id=P5 lists the mix lot and the one-parent lot, and NOT the gift lot or the
       #        deleted one — each of those two is the one-parent lot's shape but for the one thing its name says.
+      #        That PUT and U29's are the lot page's own body: since this release every count save from the client
+      #        carries what the page loaded in three keys (expected_seed_count, expected_seed_count_estimated,
+      #        expected_seed_weight_g), flag on or off. Here all three are null: the lot was never counted or
+      #        weighed, and the write must still go through (200) with them compared.
       #   U25) more seed from a plant ALREADY in the lot. The body's set is built from the real reply of GET
       #        /api/plants/P3/seed-lots ([P3] + that row's other_parents), so a 409 here is a FAIL. Read back: the
       #        count up by 30, and the lot's plants, cache, created_at and year_harvested as they were. Then the
@@ -1424,8 +1428,8 @@ else
       #        parents, and — the lot was never counted — seed_count and seed_count_estimated still null, with
       #        count_applied false in the reply.
       #   U28) that lot marked used up through the wide PUT; one more addition → 409 lot_used_up.
-      #   U29) PUT /seed-measure on the mix lot with expected_seed_count 100, which it no longer holds → 409
-      #        lot_changed carrying 130; the GET still reads 130.
+      #   U29) PUT /seed-measure on the mix lot from a page that loaded it at U24 (expected 100, counted, no
+      #        weight), which it no longer holds → 409 lot_changed carrying 130; the GET still reads 130.
       #   U30) the addition's seed_saved event on P3, with the keys the sheet sends (seed_lot_id, addition,
       #        seed_addition_id, added_seed_count, added_estimated) and the smoke switch; GET /api/events?plant_id=P3
       #        then lists TWO seed_saved events naming the lot: U20's and this one.
@@ -1812,11 +1816,11 @@ else
                   sp_req DELETE "$SP_INV/$SP_GONE"
                   SP_WRITE="$SP_CODE"; sp_req PATCH "$SP_INV/$SP_GIFT/source-kind" '{"source_kind": "gift"}'
                   SP_WRITE="$SP_WRITE $SP_CODE"; sp_req POST "$SP_INV/$SP_GIFT/seed-stage" '{"stage": "stored"}'
-                  SP_WRITE="$SP_WRITE $SP_CODE"; sp_req PUT "$SP_INV/$SP_MIXLOT/seed-measure" '{"seed_count": 100, "seed_count_estimated": false}'
+                  SP_WRITE="$SP_WRITE $SP_CODE"; sp_req PUT "$SP_INV/$SP_MIXLOT/seed-measure" '{"seed_count": 100, "seed_count_estimated": false, "expected_seed_count": null, "expected_seed_count_estimated": null, "expected_seed_weight_g": null}'
                   SP_WRITE="$SP_WRITE $SP_CODE"; sp_req GET "$SP_INV/$SP_MIXLOT"
                   # What a picking must not move: the lot's plants, its cache, when it was made, its year.
                   SP_BEFORE="$(sp_jq "$SP_IDS_JQ")|$(sp_jq '.source_plant_id // "null"')|$(sp_jq '.created_at // "null"')|$(sp_jq '.year_harvested | tostring')"
-                  sp_check "u24-counted-lot" "$SP_WRITE $SP_CODE $(sp_jq '.seed_count | tostring')|$(sp_jq '.seed_count_estimated | tostring')" "200 200 201 200 200 100|false" "the fourth lot's DELETE, the gift lot's PATCH /source-kind {gift} and POST /seed-stage {stored}, the mix lot's PUT /seed-measure {100, counted}; then its GET: seed_count|seed_count_estimated"
+                  sp_check "u24-counted-lot" "$SP_WRITE $SP_CODE $(sp_jq '.seed_count | tostring')|$(sp_jq '.seed_count_estimated | tostring')" "200 200 201 200 200 100|false" "the fourth lot's DELETE, the gift lot's PATCH /source-kind {gift} and POST /seed-stage {stored}, the mix lot's PUT /seed-measure {100, counted, and the three expected keys null: the lot had no count, basis or weight}; then its GET: seed_count|seed_count_estimated"
                   sp_req GET "$SP_INV/seed-lots-open?plant_id=$SP_P5"
                   SP_SEEN=$(jq -rc --arg mix "$SP_MIXLOT" --arg second "$SP_L2" --arg gift "$SP_GIFT" --arg gone "$SP_GONE" 'if (.open_lots | type) == "array" then ([.open_lots[].id] as $ids | [$mix, $second, $gift, $gone] | map(. as $id | ($ids | index($id) != null) | tostring) | join(",")) else "no-open_lots:" + (.open_lots | type) end' "$SP_OUT" 2>/dev/null || echo "unparseable")
                   # The mix lot's own row, kept for U26: its plants, as the sheet would read them.
@@ -1862,9 +1866,9 @@ else
                   sp_check "u28-used-up-lot" "$SP_WRITE $SP_CODE $(sp_jq '.code // "-"')" "200 409 lot_used_up" "PUT /api/inventory-items/:id {quantity_on_hand: 0, status: depleted} on the one-parent lot; then POST /seed-additions: its status and code"
 
                   # ── U29) a measure written from a page loaded before the pickings ──
-                  sp_req PUT "$SP_INV/$SP_MIXLOT/seed-measure" '{"seed_count": 5, "seed_count_estimated": false, "expected_seed_count": 100}'
+                  sp_req PUT "$SP_INV/$SP_MIXLOT/seed-measure" '{"seed_count": 5, "seed_count_estimated": false, "expected_seed_count": 100, "expected_seed_count_estimated": false, "expected_seed_weight_g": null}'
                   SP_WRITE="$SP_CODE $(sp_jq '.code // "-"')|$(sp_jq '.seed_count | tostring')"; sp_req GET "$SP_INV/$SP_MIXLOT"
-                  sp_check "u29-stale-measure" "$SP_WRITE $SP_CODE $(sp_jq '.seed_count | tostring')" "409 lot_changed|130 200 130" "PUT /seed-measure {seed_count: 5, expected_seed_count: 100} on a lot that now holds 130; its status, code|the seed_count it hands back, then the GET: seed_count"
+                  sp_check "u29-stale-measure" "$SP_WRITE $SP_CODE $(sp_jq '.seed_count | tostring')" "409 lot_changed|130 200 130" "PUT /seed-measure {seed_count: 5, expected: 100, counted, no weight} on a lot that now holds 130; its status, code|the seed_count it hands back, then the GET: seed_count"
 
                   # ── U30) the addition's event, as the sheet sends it; then both of P3's events for this lot ──
                   sp_req POST "$STAGING_API_EVENTS" "{\"plant_id\": \"$SP_P3\", \"event_type\": \"seed_saved\", \"event_date\": \"$SP_DAY\", \"notes\": \"CI smoke — safe to delete\", \"metadata\": {\"seed_lot_id\": \"$SP_MIXLOT\", \"addition\": true, \"seed_addition_id\": \"$SP_ADDITION\", \"added_seed_count\": 30, \"added_estimated\": false, \"_skip_critter_award\": true}}"
