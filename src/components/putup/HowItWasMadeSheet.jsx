@@ -92,7 +92,7 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   const { fetch } = useApiFetch()
   const [key] = useState(() => mintKey())
   const sentRef = useRef([])                           // what has gone out under `key` (idempotencyKey.js)
-  const putRef = useRef(null)                          // the PUT this sheet last sent that may have landed (updateSent)
+  const putRef = useRef(null)                          // the PUTs this sheet sent that may have landed (updateSent)
   const [label, setLabel] = useState(() => jarName(jar))
   const [rows, setRows] = useState(null)
   // The jar's full record from the put-up list once it loads (a Pantry row carries no date words of its
@@ -215,12 +215,12 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
         if (batch?.id == null) throw new Error('replayed without a batch')
         const was = putRef.current
         const put = { label: res.body.label, kind: res.body.kind ?? null, kind_other: res.body.kind_other ?? null }
-        putRef.current = updateSent(batch.id, put)
+        putRef.current = updateSent(batch.id, put, was)
         let updated
         try {
           updated = await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(put) })
         } catch (e) {
-          // An ANSWERED 4xx did not land: the PUT this sheet keeps is the one before it.
+          // An ANSWERED 4xx did not land: what this sheet keeps is what it kept before it.
           if (answeredNo(e)) putRef.current = was
           throw e
         }

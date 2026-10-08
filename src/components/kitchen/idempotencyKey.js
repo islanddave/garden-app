@@ -68,17 +68,30 @@ export function mintKey() {
 // THE SHEET'S OWN UPDATE IS KNOWN BY WHAT IT SENT, NOT BY HAVING SENT (QA I-2). "This sheet sent an update to
 // this row" does not make a moved updated_at its own: an update whose answer was lost may never have reached
 // the server, and the stamp was then moved by somebody else — whose change the next Save would write over. So a
-// sheet keeps the BODY of the update it last sent that may have landed (`updateSent`), and `updatedHere` is
-// true only while the replayed row is that row AND still holds every field that update sent, read field by
+// sheet keeps the BODY of each update it sent that may have landed (`updateSent`), and `updatedHere` is true
+// only while the replayed row is that row AND still holds every field one of those updates sent, read field by
 // field (`holdsOwnUpdate`; each sheet says how a sent field is read off its row). A row that holds anything
 // else in one of those fields was written by someone else since — or never got this sheet's update — and is
 // 'stale': nothing is written. Every sheet that puts a body onto a replayed row uses this one reading.
 //
+// EVERY ONE THAT MAY HAVE LANDED, NOT ONLY THE LAST (re-review I-B). Whichever of them arrived last is what the
+// row holds: the last one sent may never have reached the server while the one before it did, and the row —
+// holding that earlier body, its stamp moved — is as much this sheet's own as one holding the last. So the
+// kept updates are a list, and the row is this sheet's while it holds ANY ONE of them IN FULL (never a field
+// of one and a field of another: that is somebody's write in between). A sheet's updates all send the same
+// fields (the item's adds a typed name's crop only when that is not the item's already), so whichever is held
+// vouches for the fields the next one writes. The list is short
+// (UPDATES_KEPT, the oldest dropped first): a row that holds only a body no longer kept reads as not this
+// sheet's, which is a refusal and never a write. It lives in memory with the open sheet and is NOT in the
+// stored draft: a draft that comes back out of storage with `sent` in it is not `mine`, and nothing is ever
+// written onto its row, so there is nothing for a stored list to vouch for.
+//
 // AN ANSWERED 4xx DID NOT LAND (BUG-PUTUPREPLAYREST-001). `sent` is what MAY have landed, so a sheet that
 // reads its fixed part off the prints (the Start sheet, Put it up) takes back the print of a body the server
-// answered with a 4xx — to what `sent` was before that body went. And the update a sheet keeps is taken back
-// to the one before it when the server answered it with a 4xx (`answeredNo`): the row may still hold that
-// earlier one, and it is still this sheet's.
+// answered with a 4xx — to what `sent` was before that body went — and so does the Walk, whose one key serves
+// two routes (re-review I-A). And the updates a sheet keeps are taken back to what they were before the one
+// the server answered with a 4xx (`answeredNo`): the row may still hold an earlier one, and that is still
+// this sheet's.
 //
 // THE ROW ALREADY HOLDS IT (`holds`). Before any of that, the sheet reads the row the replay answered with:
 // when it holds exactly what is on screen (the fields he chose — each sheet says what it compares) there is
@@ -114,10 +127,21 @@ export function answeredNo(err) {
   return typeof err?.status === 'number' && err.status >= 400 && err.status < 500
 }
 
-// ── The sheet's own update (QA I-2) ─────────────────────────────────────────────────────────────────
-// What a sheet keeps of the update it last sent to a row: the row's id and the body exactly as it went.
-export function updateSent(id, body) {
-  return id == null ? null : { id: String(id), body: body ?? {} }
+// ── The sheet's own updates (QA I-2, re-review I-B) ─────────────────────────────────────────────────
+// How many of its own updates a sheet keeps. Each one is a Save whose create was answered and whose update was
+// not, with a change before it — eight of those in one sitting is past any connection worth retrying on.
+export const UPDATES_KEPT = 8
+// The kept list as a list: a single { id, body } (what a sheet kept before the list) reads as a list of one.
+const ownUpdates = (kept) => (Array.isArray(kept) ? kept : kept ? [kept] : []).filter(u => u && u.id != null && u.body && typeof u.body === 'object')
+// What a sheet keeps of the updates it sent to a row: `before` (what it kept until now) with this one — the
+// row's id and the body exactly as it went — at its end. A new list every time, so the one before is still
+// there to go back to when the server answers this one with a 4xx. The same body sent again is one entry.
+export function updateSent(id, body, before = null) {
+  const list = ownUpdates(before)
+  if (id == null) return list.length ? list : null
+  const next = { id: String(id), body: body ?? {} }
+  const text = canonText(next.body)
+  return [...list.filter(u => !(String(u.id) === next.id && canonText(u.body) === text)), next].slice(-UPDATES_KEPT)
 }
 // Whether a row holds every field of `body`, field by field. `reads` names the fields that are not "the same
 // key holding the same value" on the row: field → (sent value, row, body) => boolean. Any other field is one
@@ -127,14 +151,14 @@ export function rowHoldsFields(row, body, reads = null) {
   const fields = Object.keys(body)
   return fields.length > 0 && fields.every(k => (typeof reads?.[k] === 'function' ? reads[k](body[k], row, body) === true : sameFact(body[k], row[k])))
 }
-// Whether `row` is the row this sheet's last update (`last`, from updateSent) went to AND still holds every
-// field it sent — the only thing that makes a moved updated_at this sheet's own. `reads` as above; a sheet
-// whose update is the whole of what it shows passes ONE function (body, row) => boolean instead. A removed
-// row holds nothing.
-export function holdsOwnUpdate(row, last, reads = null) {
-  if (!row || !last || row.id == null || String(row.id) !== String(last.id) || row.deleted_at) return false
-  if (typeof reads === 'function') return reads(last.body, row) === true
-  return rowHoldsFields(row, last.body, reads)
+// Whether `row` is the row one of this sheet's kept updates (`kept`, from updateSent) went to AND still holds
+// every field that one sent — the only thing that makes a moved updated_at this sheet's own. `reads` as above;
+// a sheet whose update is the whole of what it shows passes ONE function (body, row) => boolean instead. A
+// removed row holds nothing.
+export function holdsOwnUpdate(row, kept, reads = null) {
+  if (!row || row.id == null || row.deleted_at) return false
+  return ownUpdates(kept).some(u => String(u.id) === String(row.id)
+    && (typeof reads === 'function' ? reads(u.body, row) === true : rowHoldsFields(row, u.body, reads)))
 }
 
 // A date question's ANSWER as it goes into a print: the chip, and under "Earlier…" the window or the day
@@ -144,15 +168,20 @@ export function whenChoice(chip, earlier = null, pickedDate = '') {
   return earlier === 'pickdate' ? ['pickdate', pickedDate ?? ''] : ['earlier', earlier ?? null]
 }
 
-// The print of a body: the same for the same content whatever order its keys were written in, and without
-// the body's OWN key (a line's key is content, and stays). 64 bits of cyrb53 and the length; never sent.
-export function payloadPrint(body) {
+// A body as one text, the same for the same content whatever order its keys were written in.
+function canonText(body) {
   const canon = (v) => (Array.isArray(v) ? v.map(canon)
     : v && typeof v === 'object' ? Object.keys(v).sort().reduce((o, k) => { o[k] = canon(v[k]); return o }, {})
     : v)
+  return JSON.stringify(canon(body))
+}
+
+// The print of a body: the same for the same content whatever order its keys were written in, and without
+// the body's OWN key (a line's key is content, and stays). 64 bits of cyrb53 and the length; never sent.
+export function payloadPrint(body) {
   const own = { ...(body ?? {}) }
   delete own.idempotency_key
-  const s = JSON.stringify(canon(own))
+  const s = canonText(own)
   let h1 = 0xdeadbeef; let h2 = 0x41c6ce57
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i)
@@ -186,7 +215,7 @@ export function noteSent(sent, print) {
 //   'update'  … and the row is this sitting's: put this body on the row the answer names;
 //   'fixed'   … but they differ in a part the update route cannot carry: write nothing, and say so.
 // `row` is the row the answer holds; `mine` is false for a key whose `sent` came out of storage;
-// `updatedHere` is holdsOwnUpdate's answer: the row still holds what this sheet last sent it. `fixed` (optional) is the
+// `updatedHere` is holdsOwnUpdate's answer: the row still holds an update this sheet sent it. `fixed` (optional) is the
 // caller's own reading of "a part the update route cannot carry" — off the row, where the row can say it
 // exactly — in place of the prints' fixed halves. `nullIsUntouched` is the jar table's (rowIsThisSittings).
 export function afterReplay(answer, sent, print, { row = null, mine = true, updatedHere = false, fixed = null, holds = false, nullIsUntouched = false, nowMs = Date.now() } = {}) {

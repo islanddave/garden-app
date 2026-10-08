@@ -455,9 +455,9 @@ function WalkGroup({
   const [ownPicked, setOwnPicked] = useState(held?.ownPicked ?? '')
   const [key, setKey] = useState(held?.key ?? null)
   const [sent, setSent] = useState(held?.sent ?? [])
-  // The PATCH this group last sent that may have landed — the row's id and the body as it went (idempotencyKey.js
+  // The PATCHes this group sent that may have landed — the row's id and each body as it went (idempotencyKey.js
   // updateSent), held with the key: a PATCH that landed with its answer lost has moved the row's updated_at, and
-  // Save again must still be able to finish it — only while the row still holds that body.
+  // Save again must still be able to finish it — only while the row still holds one of them.
   const [patched, setPatched] = useState(held?.patched ?? null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
@@ -557,11 +557,11 @@ function WalkGroup({
           onRow = saved
           if (saved?.id == null) throw new Error('replayed without a jar')
           const patch = jarPatchOf(body)
-          setPatched(updateSent(saved.id, patch))
+          setPatched(updateSent(saved.id, patch, patched))
           try {
             saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(patch) })
           } catch (e) {
-            // An ANSWERED 4xx did not land: the PATCH this group keeps is the one before it.
+            // An ANSWERED 4xx did not land: what this group keeps is what it kept before it.
             if (answeredNo(e)) setPatched(patched)
             throw e
           }
@@ -585,7 +585,7 @@ function WalkGroup({
           onRow = saved
           if (saved?.id == null) throw new Error('replayed without an item')
           const patch = itemPatchOf(body, await ensurePlaceId(fetch, place), saved)
-          setPatched(updateSent(saved.id, patch))
+          setPatched(updateSent(saved.id, patch, patched))
           try {
             const u = await patchPantryItem(fetch, saved.id, patch)
             saved = u?.item ?? u

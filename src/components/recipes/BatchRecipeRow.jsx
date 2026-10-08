@@ -149,11 +149,11 @@ export function SaveAsRecipe({ batch, onChanged }) {
         if (onRow?.id == null) throw new Error('replayed without a recipe')
         const was = held.current.patched
         const patch = { name: body.name }
-        held.current.patched = updateSent(onRow.id, patch)
+        held.current.patched = updateSent(onRow.id, patch, was)
         try {
           answer = await fetch(`/api/recipes/${onRow.id}`, { method: 'PATCH', body: JSON.stringify(patch) })
         } catch (e) {
-          // An ANSWERED 4xx did not land: the rename this row keeps is the one before it.
+          // An ANSWERED 4xx did not land: what this row keeps is what it kept before it.
           if (answeredNo(e)) held.current.patched = was
           throw e
         }

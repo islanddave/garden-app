@@ -476,6 +476,66 @@ describe('Put something up — the item route', () => {
     expect(door.onSaved).not.toHaveBeenCalled()
   })
 
+  // Re-review I-B (the reviewer's T3). Three bad answers in a row: the create's (it landed), the first PATCH's (it
+  // landed), the second PATCH's (it never arrived). The door kept only the LAST PATCH, so the item — holding its
+  // EARLIER one — read as somebody else's, and the change it had just said to try again was refused and the draft ended.
+  const twoPatchesThenOk = () => {
+    const state = { row: FIRST }
+    let n = 0
+    let seen = 0
+    fake = pantryFetch({ rows: [], overrides: {
+      [`POST ${ITEMS}`]: () => { if (++n === 1) LOST(); return { item: state.row, replayed: true } },
+      [`PATCH ${ITEMS}/*`]: ({ body }) => {
+        seen += 1
+        if (seen === 2) LOST()                                                  // never arrived
+        state.row = { ...state.row, ...body, updated_at: new Date().toISOString() }
+        if (seen === 1) LOST()                                                  // landed; its answer did not come back
+        return { item: state.row }
+      },
+    } })
+    stableFetch.fn = fake
+    return state
+  }
+  const twoLostNotes = async () => {
+    asIs()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'a')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    await failed(MAYBE)
+    typeInto('door-notes', 'b')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(2))
+    await failed(MAYBE)
+  }
+  it('re-review I-B (T3) — Save lands lost; notes "a", its PATCH lands lost; notes "b", its PATCH never arrives; Save: the item holds this door\'s EARLIER PATCH — still its own — so "b" goes on and it is saved, not "saved earlier"', async () => {
+    const state = twoPatchesThenOk()
+    const door = await openDoor()
+    await twoLostNotes()
+    expect(state.row.notes).toBe('a')
+    save()
+    await waitFor(() => expect(door.onSaved).toHaveBeenCalledTimes(1))
+    expect(errorText()).toBeNull()
+    expect(patches().map(c => [c.path, c.body.notes])).toEqual([[ROW, 'a'], [ROW, 'b'], [ROW, 'b']])
+    expect(state.row.notes).toBe('b')
+    expect(door.onSaved.mock.calls[0][0].saved).toMatchObject({ id: 'item-first', notes: 'b' })
+    expect(new Set(keys()).size).toBe(1)
+    expect(posts()).toHaveLength(4)
+    expect(draft()).toBeNull()
+  })
+  it('re-review I-B — … but changed by someone else after that (it holds NEITHER of this door\'s PATCHes): refused, nothing written over theirs', async () => {
+    const state = twoPatchesThenOk()
+    const door = await openDoor()
+    await twoLostNotes()
+    state.row = { ...state.row, notes: 'Jen: door shelf', updated_at: new Date().toISOString() }
+    save()
+    await failed(STALE)
+    expect(patches()).toHaveLength(2)
+    expect(state.row.notes).toBe('Jen: door shelf')
+    expect(door.onSaved).not.toHaveBeenCalled()
+    expect(new Set(keys()).size).toBe(1)
+  })
+
   it('I3 — the PATCH is refused with a 4xx: its sentence is shown after "already in the Pantry" — and the key is NOT minted again (the item exists; a new key would make a second one)', async () => {
     lostThenReplayed({ [`PATCH ${ITEMS}/*`]: () => { throw apiError(400, { error: 'That crop is not one this app knows.' }) } })
     const { onSaved, onExists } = await openDoor()

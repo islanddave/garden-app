@@ -234,9 +234,9 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   // Whether every body under `key` went out from THIS door. A draft restored with `sent` in it was sent from
   // an earlier one, and is never written onto the item it made; a key minted here is this door's.
   const mineRef = useRef(sent.length === 0)
-  // The PATCH this door last sent that may have landed — the row's id and the body as it went (idempotencyKey.js
+  // The PATCHes this door sent that may have landed — the row's id and each body as it went (idempotencyKey.js
   // updateSent). A PATCH that landed with its answer lost has moved the row's updated_at, and Save again must
-  // still be able to finish it: the moved stamp is this door's own only while the row still holds that body.
+  // still be able to finish it: the moved stamp is this door's own only while the row still holds one of them.
   const patchedRef = useRef(null)
   const [what, setWhat] = useState(initial.what)
   const [place, setPlace] = useState(initial.place)
@@ -551,11 +551,11 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
           if (saved?.id == null) throw new Error('replayed without a jar')
           const was = patchedRef.current
           const patch = jarPatchOf(body)
-          patchedRef.current = updateSent(saved.id, patch)
+          patchedRef.current = updateSent(saved.id, patch, was)
           try {
             saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(patch) })
           } catch (ex) {
-            // An ANSWERED 4xx did not land: the PATCH this door keeps is the one before it.
+            // An ANSWERED 4xx did not land: what this door keeps is what it kept before it.
             if (answeredNo(ex)) patchedRef.current = was
             throw ex
           }
@@ -588,7 +588,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
           const placeId = await ensurePlaceId(fetch, place)
           const was = patchedRef.current
           const patch = itemPatchOf(body, placeId, saved)
-          patchedRef.current = updateSent(saved.id, patch)
+          patchedRef.current = updateSent(saved.id, patch, was)
           try {
             const u = await patchPantryItem(fetch, saved.id, patch)
             saved = u?.item ?? u

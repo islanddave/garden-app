@@ -102,9 +102,9 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   // Whether every body under the draft's key went out from THIS sheet: a draft restored with `sent` in it
   // was sent from an earlier one, and is never written onto the recipe it made.
   const mineRef = useRef(!(Array.isArray(initial.sent) && initial.sent.length))
-  // The PATCH this sheet last sent that may have landed — the recipe's id and the draft it was built from
+  // The PATCHes this sheet sent that may have landed — the recipe's id and the draft each was built from
   // (idempotencyKey.js updateSent). A PATCH that landed with its answer lost has moved the recipe's updated_at,
-  // and Save again must still be able to finish it — only while the recipe still holds that draft (recipeHolds).
+  // and Save again must still be able to finish it — only while the recipe still holds one of them (recipeHolds).
   const patchedRef = useRef(null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
@@ -228,11 +228,11 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
           onRow = answer?.recipe ?? null
           if (onRow?.id == null) throw new Error('replayed without a recipe')
           const was = patchedRef.current
-          patchedRef.current = updateSent(onRow.id, d)
+          patchedRef.current = updateSent(onRow.id, d, was)
           try {
             answer = await fetch(`/api/recipes/${onRow.id}`, { method: 'PATCH', body: JSON.stringify(recipeBody(d, { mode: 'edit' }).body) })
           } catch (e) {
-            // An ANSWERED 4xx did not land: the PATCH this sheet keeps is the one before it.
+            // An ANSWERED 4xx did not land: what this sheet keeps is what it kept before it.
             if (answeredNo(e)) patchedRef.current = was
             throw e
           }

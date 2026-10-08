@@ -38,7 +38,7 @@ vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth, useA
 
 import {
   payloadPrint, sendPrint, noteSent, afterReplay, rowIsThisSittings, whenChoice, answerLost, sameFact, REPLAY_FRESH_MS, REPLAY_CLOCK_SLACK_MS,
-  updateSent, holdsOwnUpdate, rowHoldsFields, answeredNo,
+  updateSent, holdsOwnUpdate, rowHoldsFields, answeredNo, UPDATES_KEPT,
 } from '../components/kitchen/idempotencyKey.js'
 import RecipeSheet, { isRecipeDraft, recipeStaleText } from '../components/recipes/RecipeSheet.jsx'
 import { recipeHolds, emptyDraft } from '../components/recipes/recipes.js'
@@ -253,7 +253,7 @@ describe('the rule — idempotencyKey.js', () => {
 
   it('QA I-2 — the sheet\'s own update is known by what it SENT: holdsOwnUpdate is true only for the row that update went to, and only while it still holds every field sent', () => {
     const last = updateSent('r1', { name: 'Mojo verde', notes: null })
-    expect(last).toEqual({ id: 'r1', body: { name: 'Mojo verde', notes: null } })
+    expect(last).toEqual([{ id: 'r1', body: { name: 'Mojo verde', notes: null } }])
     expect(updateSent(null, { name: 'x' })).toBeNull()
     expect(holdsOwnUpdate({ id: 'r1', name: 'Mojo verde', notes: null, kind: 'theirs' }, last)).toBe(true)     // a field it did not send is not its to judge
     expect(holdsOwnUpdate({ id: 'r1', name: ' Mojo verde ', notes: '' }, last)).toBe(true)                     // one fact (sameFact)
@@ -286,6 +286,36 @@ describe('the rule — idempotencyKey.js', () => {
     // An update the server ANSWERED with a 4xx did not land; anything else may have.
     expect([answeredNo({ status: 400 }), answeredNo({ status: 409 }), answeredNo({ status: 499 })]).toEqual([true, true, true])
     expect([answeredNo({ status: 500 }), answeredNo({ status: 0 }), answeredNo(new TypeError('Failed to fetch')), answeredNo(null)]).toEqual([false, false, false, false])
+  })
+
+  // Re-review I-B. With only the LAST update kept, a row holding this sheet's EARLIER update (the last never arrived)
+  // read as somebody else's, and an edit the sheet had just said to try again was refused.
+  it('re-review I-B — a sheet keeps EVERY update it sent that may have landed, in a bounded list: the row is its own while it holds ANY ONE of them in full', () => {
+    const one = updateSent('r1', { name: 'a', notes: 'n1' })
+    const two = updateSent('r1', { name: 'b', notes: 'n2' }, one)
+    expect(one).toEqual([{ id: 'r1', body: { name: 'a', notes: 'n1' } }])       // the list before is not changed: it is what an answered 4xx goes back to
+    expect(two).toEqual([{ id: 'r1', body: { name: 'a', notes: 'n1' } }, { id: 'r1', body: { name: 'b', notes: 'n2' } }])
+    expect(holdsOwnUpdate({ id: 'r1', name: 'b', notes: 'n2' }, two)).toBe(true)                               // the last
+    expect(holdsOwnUpdate({ id: 'r1', name: 'a', notes: 'n1' }, two)).toBe(true)                               // the EARLIER one — the last never arrived
+    expect(holdsOwnUpdate({ id: 'r1', name: 'a', notes: 'n2' }, two)).toBe(false)                              // IN FULL: a field of each is neither
+    expect(holdsOwnUpdate({ id: 'r1', name: 'c', notes: 'n1' }, two)).toBe(false)                              // somebody else's name
+    expect(holdsOwnUpdate({ id: 'r2', name: 'a', notes: 'n1' }, two)).toBe(false)                              // another row
+    expect(holdsOwnUpdate({ id: 'r1', name: 'a', notes: 'n1', deleted_at: '2026-10-08T00:00:00Z' }, two)).toBe(false)
+    // The same body sent again is one entry, whatever order its keys were written in; an unknown row keeps nothing new.
+    expect(updateSent('r1', { notes: 'n1', name: 'a' }, two)).toHaveLength(2)
+    expect(updateSent(null, { name: 'x' }, two)).toEqual(two)
+    // A whole-body reader is asked of each.
+    const whole = (body, row) => body.name === row.name
+    expect(holdsOwnUpdate({ id: 'r1', name: 'a' }, two, whole)).toBe(true)
+    expect(holdsOwnUpdate({ id: 'r1', name: 'z' }, two, whole)).toBe(false)
+    // BOUNDED: the oldest goes first — and a row holding only a body no longer kept is not this sheet's (a refusal, never a write).
+    let kept = null
+    for (let i = 0; i < UPDATES_KEPT + 2; i++) kept = updateSent('r1', { name: `n${i}` }, kept)
+    expect(UPDATES_KEPT).toBe(8)
+    expect(kept).toHaveLength(UPDATES_KEPT)
+    expect(holdsOwnUpdate({ id: 'r1', name: 'n1' }, kept)).toBe(false)
+    expect(holdsOwnUpdate({ id: 'r1', name: 'n2' }, kept)).toBe(true)
+    expect(holdsOwnUpdate({ id: 'r1', name: `n${UPDATES_KEPT + 1}` }, kept)).toBe(true)
   })
 
   it('I2 — whenChoice: the chip as chosen, never a date the clock made of it; under Earlier… the window, or the day as picked', () => {
@@ -509,6 +539,59 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     expect(state.row.name).toBe('Mojo (Jen)')
     expect(sheet.onSaved).not.toHaveBeenCalled()
     expect(new Set(keys(PATH)).size).toBe(1)
+  })
+
+  // Re-review I-B (the reviewer's T3, on this sheet). Three bad answers in a row: the create's, the first PATCH's
+  // (it landed), the second PATCH's (it never arrived). The recipe holds this sheet's EARLIER PATCH — still its own.
+  const twoPatchesThenOk = () => {
+    const state = { row: FIRST }
+    let seen = 0
+    wire({
+      [`POST ${PATH}`]: (b, n) => (n === 1 ? LOST() : { recipe: state.row, replayed: true }),
+      [`PATCH ${ROW}`]: (b) => {
+        seen += 1
+        if (seen === 2) return LOST()                                           // never arrived
+        state.row = { ...state.row, ...b, updated_at: new Date().toISOString() }
+        if (seen === 1) return LOST()                                           // landed; its answer did not come back
+        return { recipe: state.row }
+      },
+    })
+    return state
+  }
+  const twoLostChanges = async () => {
+    type('recipe-name', 'Mojo')
+    await save(); await failed()
+    type('recipe-name', 'Mojo verde')
+    await save()
+    await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
+    await waitFor(() => expect(errorText()).toMatch(/This change may not have saved/))
+    type('recipe-name', 'Mojo verde, hot')
+    await save()
+    await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(2))
+    await waitFor(() => expect(errorText()).toMatch(/This change may not have saved/))
+  }
+  it('re-review I-B (T3) — the PATCH with one change lands with its answer lost, the next change\'s PATCH never arrives, Save: the recipe holds this sheet\'s EARLIER PATCH, so the change goes on and it is saved — not "saved earlier"', async () => {
+    const state = twoPatchesThenOk()
+    const sheet = mount()
+    await twoLostChanges()
+    expect(state.row.name).toBe('Mojo verde')
+    await save()
+    await waitFor(() => expect(sheet.onSaved).toHaveBeenCalledTimes(1))
+    expect(sentTo('PATCH', ROW).map(b => b.name)).toEqual(['Mojo verde', 'Mojo verde, hot', 'Mojo verde, hot'])
+    expect(state.row.name).toBe('Mojo verde, hot')
+    expect(new Set(keys(PATH)).size).toBe(1)
+    expect(draft()).toBeNull()
+  })
+  it('re-review I-B — … but renamed by someone else after that (it holds NEITHER of this sheet\'s PATCHes): refused, nothing written over their name', async () => {
+    const state = twoPatchesThenOk()
+    const sheet = mount()
+    await twoLostChanges()
+    state.row = { ...state.row, name: 'Mojo (Jen)', updated_at: new Date().toISOString() }
+    await save()
+    await waitFor(() => expect(errorText()).toBe('“Mojo (Jen)” was already saved earlier — it is with your recipes. This Save did not change it. To change it, open the recipe.'))
+    expect(sentTo('PATCH', ROW)).toHaveLength(2)
+    expect(state.row.name).toBe('Mojo (Jen)')
+    expect(sheet.onSaved).not.toHaveBeenCalled()
   })
 
   // REVIEW B1. The draft is in storage with its key and what went out under it. Opened again — minutes or
