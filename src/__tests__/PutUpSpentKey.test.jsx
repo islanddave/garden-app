@@ -313,48 +313,46 @@ describe('Put something up — a "saved earlier" refusal ends the stored draft',
     expect(form()).toEqual(CLEAN)
   })
 
-  it('refused, then put up through a method chip instead — another create, under the same key — and THAT answer is lost: the draft is stored again with its key, and the door opened again retries it: one put-up, never two', async () => {
-    let n = 0
-    const { door } = await refusedInOneSitting({ overrides: { [`POST ${JARS}`]: ({ body }) => {
-      if (++n === 1) LOST()                                                   // the put-up landed; its answer was lost
-      return { id: 'jar-1', ...body, replayed: true }
-    } } })
+  // QA I-1, decided by the rule (does it make a second thing for one sitting?). This case used to treat the
+  // method-chip Save as a legitimate second create under the same key ("one put-up, never two"). But the item the
+  // refusal had just named IS in the Pantry, and the key lives in two tables that do not look in each other: that
+  // put-up was a jar AND an item for one sitting. It is refused before it is sent, and the draft stays ended.
+  const OTHER_WAY = '“Oat milk” is already in the Pantry as “As is” — an earlier Save went through. It can\'t also be saved as a put-up from here. If you want both, close this and start a new one.'
+  const chooseFreeze = () => { if (!screen.queryByTestId('door-method-whole_freeze')) tap('door-method-more'); tap('door-method-whole_freeze') }
+  it('refused, then a method chip instead: that Save is REFUSED before it is sent — the item is in the Pantry, and one key never makes an item AND a put-up; nothing is stored again, and the door opened next is a clean one', async () => {
+    const { items, door } = await refusedInOneSitting({ overrides: { [`POST ${JARS}`]: ({ body }) => ({ id: 'jar-1', ...body }) } })
     const key = keys()[0]
     expect(stored()).toBeNull()
-    if (!screen.queryByTestId('door-method-whole_freeze')) tap('door-method-more')
-    tap('door-method-whole_freeze')
-    save(); await answered(door, 1, JARS)
-    await failed()
-    await waitFor(() => expect(stored()?.data).toMatchObject({ key, method: 'whole_freeze', what: { name: 'Oat milk' } }))
-    door.unmount()
-    const again = await openDoor()
-    expect(form().what).toBe('Oat milk')
+    chooseFreeze()
     save()
-    await waitFor(() => expect(again.onSaved).toHaveBeenCalledTimes(1))
-    expect(keys(JARS)).toEqual([key, key])
-    expect(again.onSaved.mock.calls[0][0]).toMatchObject({ route: 'jar', saved: { id: 'jar-1' } })
+    await waitFor(() => expect(errorText()).toBe(OTHER_WAY))
+    expect(keys(JARS)).toEqual([])                                             // no put-up was sent — under this key or any other
+    expect(keys()).toEqual([key, key])
+    expect(items.rows()).toHaveLength(1)
+    expect(door.onSaved).not.toHaveBeenCalled()
+    expect(stored()).toBeNull()                                                // the draft is not stored again
+    typeInto('door-notes', 'and again')
     expect(stored()).toBeNull()
+    door.unmount()
+    await openDoor()
+    expect(form()).toEqual(CLEAN)
   })
 
-  // BUG-PUTUPREPLAYREST-001 (item 6). This test used to pin the opposite — "the new key it mints is stored
-  // with the draft" — and that new key is what made a second item: item Saves had gone out under the old one,
-  // the item is there, and the next As is Save went out under a key the server had never seen.
-  it('… and when the put-up route answers that Save with a 4xx, the key is KEPT with what went out under it — back on As is, Save is refused again: one item, one key', async () => {
+  // BUG-PUTUPREPLAYREST-001 (item 6). Before it, a 4xx on that put-up minted a NEW key, and the next As is Save
+  // went out under a key the server had never seen: a second item. Now the put-up is never sent at all.
+  it('… and back on As is, Save is refused as it was ("saved earlier"): one item, one key, and no put-up ever sent', async () => {
     const { items, door } = await refusedInOneSitting({ overrides: { [`POST ${JARS}`]: () => { throw apiError(400, { error: 'count must be a whole number' }) } } })
     const key = keys()[0]
-    if (!screen.queryByTestId('door-method-whole_freeze')) tap('door-method-more')
-    tap('door-method-whole_freeze')
-    save(); await answered(door, 1, JARS)
-    await waitFor(() => expect(stored()?.data?.method).toBe('whole_freeze'))
-    expect(stored().data.key).toBe(key)
-    expect(stored().data.sent).toHaveLength(3)                                // the two As is Saves, and this put-up
-    expect(stored().data).toMatchObject({ what: { name: 'Oat milk' } })
-    expect(keys(JARS)).toEqual([key])
+    chooseFreeze()
+    save()
+    await waitFor(() => expect(errorText()).toBe(OTHER_WAY))
     tap('door-method-as_is')
     save(); await answered(door, 3)
     expect(errorText()).toBe(STALE)
-    expect(new Set(keys()).size).toBe(1)
+    expect(keys()).toEqual([key, key, key])
+    expect(keys(JARS)).toEqual([])
     expect(items.rows()).toHaveLength(1)
+    expect(stored()).toBeNull()
   })
 
   it('the refused door, put back to exactly what the item holds: a save as before, with nothing written and nothing stored', async () => {

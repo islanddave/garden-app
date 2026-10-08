@@ -51,7 +51,7 @@ import {
   AS_IS, METHOD_REQUIRED_TEXT, methodChoices, routeFor, walkWhen, walkWhenChips, previewLine, jarBody, itemBody,
   methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText,
   replayStaleText, replayUnsavedText, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
-  JAR_PATCH_READS, ITEM_PATCH_READS,
+  JAR_PATCH_READS, ITEM_PATCH_READS, otherRouteSent, otherRouteText,
 } from './putSomethingUp.js'
 
 export const WALK_TITLE = 'Walk a place'
@@ -463,6 +463,9 @@ function WalkGroup({
   const [err, setErr] = useState(null)
   const [field, setField] = useState(null)
   const writingRef = useRef(false)
+  // The row a create under this key is KNOWN to have made, and on which route: set when a Save here is answered
+  // `replayed`. It is what the other-route refusal names (QA I-1).
+  const existsRef = useRef(null)
   const methodRef = useRef(null)
   const whatRef = useRef(null)
   const errRef = useRef(null)
@@ -495,6 +498,7 @@ function WalkGroup({
     setWhat(null); setMethod(null); setCount('1'); setDiscard({ mode: 'auto', date: '' }); setOwnChoice(null); setOwnPicked('')
     setIsRaw(false); setInOil(false)
     setMoreOpen(false); setKey(null); setSent([]); setPatched(null); setErr(null); setField(null)
+    existsRef.current = null
   }
 
   async function save() {
@@ -505,11 +509,20 @@ function WalkGroup({
     if (own?.error) { setErr(own.error); setField('when'); setMoreOpen(true); return }
     const dErr = doorError({ what, place, method, discard })
     if (dErr) { setErr(dErr.error); setField(dErr.field); setMoreOpen(true); return }
+    const route = routeFor(method)
+    // ONE KEY, TWO TABLES (QA I-1; putSomethingUp.js): a Save has gone out under this group's key the other way.
+    // Nothing is sent and no key is minted — this would be a second thing for one sitting.
+    const otherWay = otherRouteSent(sent, route)
+    if (otherWay) {
+      const known = existsRef.current?.route === otherWay ? existsRef.current.row : null
+      setErr(otherRouteText({ first: otherWay, row: known, what, walk: true })); setField(null); setRefusedSeq(s => s + 1)
+      if (known) onExists?.()
+      return
+    }
     const useKey = key || mintKey()
     if (!key) setKey(useKey)
     writingRef.current = true
     setSaving(true); setErr(null); setField(null)
-    const route = routeFor(method)
     // The item or jar a replay answered with, once it is being written onto.
     let onRow = null
     // The date as he chose it: this group's own answer, or the walk's (stored once, at its start).
@@ -524,6 +537,7 @@ function WalkGroup({
         const sentNow = noteSent(sent, print)
         setSent(sentNow)
         saved = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(body) })
+        if (saved?.replayed === true) existsRef.current = { route, row: saved }
         const read = { whenMoved: jarWhenMoved(sentNow, print) }
         const part = jarFixedPart(body, saved, what, read)
         const todo = afterReplay(saved, sentNow, print, {
@@ -557,6 +571,7 @@ function WalkGroup({
         setSent(sentNow)
         const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
+        if (r?.replayed === true) existsRef.current = { route, row: saved }
         const todo = afterReplay(r, sentNow, print, {
           row: saved, updatedHere: holdsOwnUpdate(saved, patched, ITEM_PATCH_READS), fixed: plantingDiffers(body, saved),
           holds: itemHolds(body, saved, what),

@@ -56,6 +56,14 @@
 // half of it) and says which (replayJarFixedText) — read off the jar, so put back, the next Save goes through.
 // A jar that is not this sitting's is said as saved earlier (replayStaleText), and that ends the stored draft.
 //
+// ONE KEY, TWO TABLES (QA I-1). The key is the same whichever way the thing is saved, and the two ways are two
+// routes that do not look in each other's table. So once a Save has gone out under it one way, a Save the OTHER
+// way is refused before anything is sent (putSomethingUp.js otherRouteText) — a jar AND an item for one sitting
+// is a second row. It never mints a new key for it. If the first row is known to be there (a replay answered in
+// this door) the refusal ends the stored draft like "saved earlier" does, and says how to have both: close this
+// and start a new one. If the first Save's answer never came back, the draft and key stay, and the sentence
+// says to choose that way again and Save — which settles it.
+//
 // A SEEDED DOOR (opened with a What: a search's "Put something up: <text> →", a planting's door) is not
 // dirty until something changes: no key, no draft written, no reload held, and a draft already stored is
 // left alone until the first real change replaces it. A stored draft for the SAME seed is restored whole.
@@ -93,7 +101,7 @@ import {
   doorOptionsLabel, doorFromLabel, doorNotesPlaceholder, whereFromHeading, sizeEcho, sizeTotalError,
   SIZE_LINK_LABEL, AMOUNT_LINK_LABEL, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText,
   replayUnsavedText, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
-  JAR_PATCH_READS, ITEM_PATCH_READS,
+  JAR_PATCH_READS, ITEM_PATCH_READS, otherRouteSent, otherRouteText,
 } from './putSomethingUp.js'
 
 const WHEN_CHIPS = [{ id: 'today', label: 'Today' }, { id: 'yesterday', label: 'Yesterday' }, { id: 'earlier', label: 'Earlier…' }]
@@ -265,9 +273,14 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   const ownsDraftRef = useRef(!seed)
   // Set by a "saved earlier" refusal (pre-promote I-1): the first Save landed, so the STORED draft has done its
   // job. It is taken out of storage and not written back — the door opened next, after a close or a reload, is
-  // a clean one with no key — while THIS door keeps its key and `sent`: Save again is refused again. A Save on
-  // the put-up route is another create under the same key, and stores the draft again before it goes.
+  // a clean one with no key — while THIS door keeps its key and `sent`: Save again is refused again. Nothing
+  // sets it back: once it is set a row is known to exist under the key, a Save on that row's route can only
+  // replay, and a Save on the other route is not sent (QA I-1) — no create can go out that a stored draft would
+  // have to remember.
   const [spent, setSpent] = useState(false)
+  // The row a create under this key is KNOWN to have made, and on which route ({ route, row }): set when the
+  // door that is open is answered `replayed`. It is what the other-route refusal names.
+  const existsRef = useRef(null)
   const sheetRef = useRef(null)
   const footerRef = useRef(null)
   const methodRef = useRef(null)
@@ -476,6 +489,19 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
     }
     const fromErr = planting ? null : whereFromError(source)
     if (fromErr) { setFromOpen(true); refuse(fromErr, 'source', 'door-source-label'); return }
+    // ONE KEY, TWO TABLES (QA I-1; putSomethingUp.js). A Save has gone out under this key the OTHER way — as a
+    // put-up, and this one is As is, or the reverse: this would be a second thing for one sitting. Nothing is
+    // sent and no key is minted. When that first row is known to exist the stored draft has done its job and is
+    // ended, as "saved earlier" ends it; when its answer never came back the draft and its key stay — they are
+    // what stops a second row — and the way on is to finish that Save.
+    const otherWay = otherRouteSent(sent, route)
+    if (otherWay) {
+      const known = existsRef.current?.route === otherWay ? existsRef.current.row : null
+      setErr(otherRouteText({ first: otherWay, row: known, what })); setField(null)
+      if (known) { setSpent(true); onExists?.() }
+      setRefusedSeq(s => s + 1)
+      return
+    }
     const useKey = key || mintKey()
     if (!key) setKey(useKey)
     writingRef.current = true
@@ -485,8 +511,6 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
     try {
       let saved
       if (route === 'jar') {
-        // Another create under this key: its answer may be lost too, so the draft is in storage while it is out.
-        setSpent(false)
         const storageLocationId = await ensurePlaceId(fetch, place)
         const body = jarBody({
           key: useKey, what, storageLocationId, method, when: w.when, count: n, discard, notes,
@@ -496,6 +520,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         const sentNow = noteSent(sent, print)
         setSent(sentNow)
         saved = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(body) })
+        if (saved?.replayed === true) existsRef.current = { route, row: saved }
         const read = { whenMoved: jarWhenMoved(sentNow, print) }
         const part = jarFixedPart(body, saved, what, read)
         const todo = afterReplay(saved, sentNow, print, {
@@ -538,6 +563,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         setSent(sentNow)
         const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
+        if (r?.replayed === true) existsRef.current = { route, row: saved }
         const todo = afterReplay(r, sentNow, print, {
           row: saved, mine: mineRef.current, updatedHere: holdsOwnUpdate(saved, patchedRef.current, ITEM_PATCH_READS),
           fixed: plantingDiffers(body, saved), holds: itemHolds(body, saved, what),
@@ -590,7 +616,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
       // And it is kept after a 4xx too once a Save has gone out under it before, on either route (`sent`): that
       // one may have landed, and both routes refuse a body before they look the key up.
       if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500 && !sent.length) {
-        mineRef.current = true; patchedRef.current = null
+        mineRef.current = true; patchedRef.current = null; existsRef.current = null
         setKey(mintKey()); setSent([])
       }
       setErr(refusalOf(ex, "Couldn't save it — nothing was lost. Try again."))

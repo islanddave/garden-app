@@ -42,7 +42,7 @@ import PutSomethingUpSheet, { isDoorDraft } from '../components/pantry/PutSometh
 import PutUp from '../pages/PutUp.jsx'
 import {
   DOOR_SHEET, completionWords, jarBody, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
-  replayStaleText, replayUnsavedText,
+  replayStaleText, replayUnsavedText, printRoute, otherRouteSent, otherRouteText,
 } from '../components/pantry/putSomethingUp.js'
 import { sheetDraftKey, readSheetDraft } from '../components/kitchen/sheetDraft.js'
 import { validateJarPatch } from '../../lambda/preservation/jarRoutes.js'
@@ -303,6 +303,39 @@ describe('the sentence — putSomethingUp.js replayJarFixedText', () => {
     expect(replayStaleText(jar)).toBe(STALE)
     expect(replayStaleText({ ...jar, deleted_at: '2026-10-01T18:00:00Z' })).toBe('“Corn” was saved earlier and has been removed since. This Save did not change that.')
     expect(replayUnsavedText(jar)).toBe(UNSAVED)
+  })
+})
+
+describe('one key, two tables — putSomethingUp.js otherRouteSent, otherRouteText (QA I-1)', () => {
+  const JAR_PRINT = jarPrint(BODY, TYPED, ['today'])
+  it('a key\'s route is the route its FIRST print went out on; a Save the other way is told which', () => {
+    expect(printRoute(JAR_PRINT)).toBe('jar')
+    expect(printRoute('1a.x.y/2.b.c')).toBe('item')
+    expect(otherRouteSent([], 'jar')).toBeNull()
+    expect(otherRouteSent(undefined, 'item')).toBeNull()
+    expect(otherRouteSent([JAR_PRINT], 'jar')).toBeNull()
+    expect(otherRouteSent([JAR_PRINT], 'item')).toBe('jar')
+    expect(otherRouteSent(['1a.x.y/2.b.c'], 'item')).toBeNull()
+    expect(otherRouteSent(['1a.x.y/2.b.c'], 'jar')).toBe('item')
+    // A draft stored before this rule can hold both: it stays on its first route, so one way is always open.
+    expect([otherRouteSent([JAR_PRINT, '1a.x.y/2.b.c'], 'jar'), otherRouteSent([JAR_PRINT, '1a.x.y/2.b.c'], 'item')]).toEqual([null, 'jar'])
+    expect([otherRouteSent(['1a.x.y/2.b.c', JAR_PRINT], 'jar'), otherRouteSent(['1a.x.y/2.b.c', JAR_PRINT], 'item')]).toEqual(['item', null])
+  })
+  it('the sentence — in these words: what is certain, how to go on, and no banned word', () => {
+    const jar = rawJar(BODY)
+    const all = [
+      [otherRouteText({ first: 'jar', row: jar, what: TYPED }), '“Corn” is already in the Pantry as a put-up — an earlier Save went through. It can\'t also be saved as “As is” from here. If you want both, close this and start a new one.'],
+      [otherRouteText({ first: 'item', row: { name: 'Oat milk' }, what: TYPED }), '“Oat milk” is already in the Pantry as “As is” — an earlier Save went through. It can\'t also be saved as a put-up from here. If you want both, close this and start a new one.'],
+      [otherRouteText({ first: 'jar', row: jar, what: TYPED, walk: true }), '“Corn” is already in the Pantry as a put-up — an earlier Save went through. It can\'t also be saved as “As is” from here. If you want both, end this walk and start another.'],
+      [otherRouteText({ first: 'jar', row: {}, what: TYPED }), 'This is already in the Pantry as a put-up — an earlier Save went through. It can\'t also be saved as “As is” from here. If you want both, close this and start a new one.'],
+      // Its answer never came back: nothing says it is in the Pantry — only that it may be, and how to settle it.
+      [otherRouteText({ first: 'jar', what: TYPED }), 'An earlier Save of this as a put-up may have gone through. It can\'t also be saved as “As is” from here. Choose the method again and tap Save to finish that one.'],
+      [otherRouteText({ first: 'item', what: TYPED }), 'An earlier Save of this as “As is” may have gone through. It can\'t also be saved as a put-up from here. Choose “As is” again and tap Save to finish that one.'],
+      // A planting's as-is chip reads "Fresh, as picked", and the sentence says the chip's own words.
+      [otherRouteText({ first: 'item', what: { source: 'planting', name: 'Megatron', plant_id: 'p1' } }), 'An earlier Save of this as “Fresh, as picked” may have gone through. It can\'t also be saved as a put-up from here. Choose “Fresh, as picked” again and tap Save to finish that one.'],
+    ]
+    for (const [said, words] of all) { expect(said).toBe(words); expect(said).not.toMatch(BANNED) }
+    for (const [said] of all.slice(4)) expect(said).not.toMatch(/is already in the Pantry|is in the Pantry/)
   })
 })
 
@@ -720,6 +753,109 @@ describe('Put something up — the put-up route', () => {
     expect(told(door).saved).toMatchObject({ notes: 'the second tray' })
   })
 
+  // QA I-1. One key goes to TWO tables: the put-up route keeps it in preservation_log, As is in pantry_item, and
+  // neither looks in the other. So a Save on the other route under a key that has (or may have) already made a
+  // row is a second thing for one sitting. It is refused BEFORE anything is sent — never under a new key either.
+  const OTHER_WAY_MAYBE = 'An earlier Save of this as a put-up may have gone through. It can\'t also be saved as “As is” from here. Choose the method again and tap Save to finish that one.'
+  const OTHER_WAY_KNOWN = '“Corn” is already in the Pantry as a put-up — an earlier Save went through. It can\'t also be saved as “As is” from here. If you want both, close this and start a new one.'
+  it('QA I-1 (J1) — the put-up landed with its answer lost, then As is, Save: REFUSED, nothing sent — one key never makes a jar AND an item. Not known to have landed, so the draft and its key stay; the method chosen again finishes the one jar', async () => {
+    const on = watchScrolls()
+    const table = jarTable()
+    const door = await openDoor()
+    corn()
+    save(); await failed()
+    tap('door-method-as_is')
+    on.length = 0
+    save()
+    await failed(OTHER_WAY_MAYBE)
+    expect(screen.getByTestId('door-error').getAttribute('role')).toBe('alert')
+    await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+    expect(posts(ITEMS)).toHaveLength(0)
+    expect(posts()).toHaveLength(1)
+    expect(door.onSaved).not.toHaveBeenCalled()
+    expect(draft()).toMatchObject({ key: keys()[0], method: 'as_is' })
+    save()
+    await failed(OTHER_WAY_MAYBE)                                              // refused again, and still nothing sent
+    expect(posts(ITEMS)).toHaveLength(0)
+    method('whole_freeze')
+    save()
+    await waitFor(() => expect(door.onSaved).toHaveBeenCalledTimes(1))
+    expect(told(door)).toMatchObject({ route: 'jar', saved: { id: 'jar-first' } })
+    expect(new Set(keys()).size).toBe(1)
+    expect(posts(ITEMS)).toHaveLength(0)
+    expect(table.posts).toBe(2)
+    expect(draft()).toBeNull()
+  })
+
+  it('QA I-1 (J2) — the put-up landed lost, the date changed, Save (refused: the date), then As is, Save: REFUSED — the jar is KNOWN to be in the Pantry. Nothing is sent, the page is told, the stored draft is ended, and the door opened next is a clean one', async () => {
+    jarTable()
+    const door = await openDoor()
+    corn()
+    save(); await failed()
+    tap('door-more'); tap('door-when-yesterday')
+    save()
+    await answered(door, 2)
+    expect(errorText()).toMatch(/^Already in the Pantry as “Corn”/)
+    expect(draft()).toMatchObject({ key: keys()[0] })
+    tap('door-method-as_is')
+    save()
+    await failed(OTHER_WAY_KNOWN)
+    expect(posts(ITEMS)).toHaveLength(0)
+    expect(posts()).toHaveLength(2)
+    expect(door.onSaved).not.toHaveBeenCalled()
+    expect(door.onExists).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(draft()).toBeNull())                            // the first Save landed: the stored draft has done its job
+    tap('door-from'); typeInto('door-notes', 'still here')                     // … and nothing typed after writes it back
+    expect(draft()).toBeNull()
+    save()
+    await failed(OTHER_WAY_KNOWN)
+    expect(posts(ITEMS)).toHaveLength(0)
+    door.unmount()
+    await openDoor()
+    expect(screen.getByTestId('door-what-name').value).toBe('')
+    expect(draft()).toBeNull()
+  })
+
+  it('QA I-1 — after "saved earlier" on the put-up route, As is, Save: refused the same way (the jar is known), nothing sent', async () => {
+    jarTable({ first: { ...stamps(LONG_AGO) } })
+    const door = await openDoor()
+    corn()
+    save(); await failed()
+    typeInto('door-what-name', 'Corn, cut')
+    save()
+    await failed(STALE)
+    tap('door-method-as_is')
+    save()
+    await failed(OTHER_WAY_KNOWN)
+    expect(posts(ITEMS)).toHaveLength(0)
+    expect(door.onSaved).not.toHaveBeenCalled()
+  })
+
+  it('QA I-1 (J8) — As is landed with its answer lost, then a method chip, Save: REFUSED, no put-up sent; “As is” chosen again finishes the one item', async () => {
+    let n = 0
+    const item = { id: 'item-first', user_id: 'user_dave', name: 'Corn', storage_location_id: 'loc-1', place: { ...PLACES[0] },
+      acquired_at: '2026-10-01', acquired_precision: 'day', use_by_target: null, plant_id: null, crop_type_slug: null,
+      quantity_value: null, quantity_unit: null, source_kind: null, source_label: null, used_up_at: null, notes: null,
+      created_at: new Date().toISOString(), updated_at: null, deleted_at: null }
+    item.updated_at = item.created_at
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: () => { if (++n === 1) LOST(); return { item, replayed: true } } } })
+    stableFetch.fn = fake
+    const door = await openDoor()
+    typeInto('door-what-name', 'Corn'); tap('door-place-id:loc-1'); tap('door-method-as_is')
+    save(); await failed()
+    method('whole_freeze')
+    save()
+    await failed('An earlier Save of this as “As is” may have gone through. It can\'t also be saved as a put-up from here. Choose “As is” again and tap Save to finish that one.')
+    expect(posts(JARS)).toHaveLength(0)
+    expect(draft()).toMatchObject({ key: keys(ITEMS)[0] })
+    tap('door-method-as_is')
+    save()
+    await waitFor(() => expect(door.onSaved).toHaveBeenCalledTimes(1))
+    expect(told(door)).toMatchObject({ route: 'item', saved: { id: 'item-first' } })
+    expect(posts(JARS)).toHaveLength(0)
+    expect(new Set(keys(ITEMS)).size).toBe(1)
+  })
+
   it('a double tap on Save sends one request', async () => {
     jarTable()
     const door = await openDoor()
@@ -767,7 +903,7 @@ describe('Put something up — the put-up route', () => {
   // Found twice on 2026-10-08 (the spent-key lane's S4): As is, lost; a change; refused "saved earlier"; a
   // method chip, and the put-up route answers a 4xx — which minted a NEW key although item Saves had gone out
   // under the old one; back to As is, Save: a second item.
-  it('after a "saved earlier" refusal on As is, a 4xx on the put-up route does NOT mint a new key: back on As is, Save is refused again — one item', async () => {
+  it('QA I-1 — after a "saved earlier" refusal on As is, a method chip, Save: the put-up is NOT sent (the item is known) and no new key is minted: back on As is, Save is refused again — one item', async () => {
     const item = {
       id: 'item-first', user_id: 'user_dave', name: 'Oat milk', storage_location_id: 'loc-3', place: { ...PLACES[2] },
       acquired_at: '2026-10-01', acquired_precision: 'day', use_by_target: null, plant_id: null, crop_type_slug: null,
@@ -788,12 +924,15 @@ describe('Put something up — the put-up route', () => {
     const ITEM_STALE = '“Oat milk” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.'
     await failed(ITEM_STALE)
     method('quick_pickle')
-    save(); await failed('no')
+    save()
+    await failed('“Oat milk” is already in the Pantry as “As is” — an earlier Save went through. It can\'t also be saved as a put-up from here. If you want both, close this and start a new one.')
+    expect(posts(JARS)).toHaveLength(0)
     tap('door-method-as_is')
     save()
     await waitFor(() => expect(posts(ITEMS)).toHaveLength(3))
     await failed(ITEM_STALE)
-    expect(new Set([...keys(ITEMS), ...keys(JARS)]).size).toBe(1)             // ONE key, on both routes
+    expect(new Set(keys(ITEMS)).size).toBe(1)                                  // ONE key, and only ever on the item route
+    expect(posts(JARS)).toHaveLength(0)
     expect(door.onSaved).not.toHaveBeenCalled()
   })
 })
@@ -945,6 +1084,32 @@ describe('the Walk — the put-up route', () => {
     expect(patches()).toHaveLength(1)
     expect(table.row.label).toBe('Corn (Jen)')
     expect(band()).toBeNull()
+  })
+
+  it('QA I-1 — the put-up landed with its answer lost, then As is, Save: REFUSED in the walk too, nothing sent; the method chosen again finishes the one jar. And once the jar is KNOWN, the walk says how to have both', async () => {
+    const table = jarTable()
+    await startWalk()
+    corn()
+    save(); await failed()
+    tap('walk-method-as_is')
+    save()
+    await failed('An earlier Save of this as a put-up may have gone through. It can\'t also be saved as “As is” from here. Choose the method again and tap Save to finish that one.')
+    expect(posts(ITEMS)).toHaveLength(0)
+    expect(posts()).toHaveLength(1)
+    expect(band()).toBeNull()
+    // The jar becomes KNOWN: a Save the first way, with a date of its own (a part no PATCH carries), is answered with it.
+    method('whole_freeze'); tap('walk-more'); tap('walk-own-unsure')
+    save()
+    await answered(2)
+    expect(errorText()).toMatch(/^Already in the Pantry as “Corn”/)
+    tap('walk-method-as_is')
+    save()
+    await failed('“Corn” is already in the Pantry as a put-up — an earlier Save went through. It can\'t also be saved as “As is” from here. If you want both, end this walk and start another.')
+    expect(posts(ITEMS)).toHaveLength(0)
+    expect(posts()).toHaveLength(2)
+    expect(new Set(keys()).size).toBe(1)
+    expect(band()).toBeNull()
+    expect(table.row.id).toBe('jar-first')
   })
 
   it('QA I-2 — the PATCH never reached the server and the jar is renamed by someone else meanwhile: Save again writes nothing over their change — the walk says it was saved earlier', async () => {

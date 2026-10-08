@@ -488,6 +488,38 @@ export function jarHolds(body, jar, what, opts = {}) {
   if (jarFixedPart(body, jar, what, opts)) return false
   return rowHoldsFields(jar, jarPatchOf(body), JAR_PATCH_READS)
 }
+// ── ONE KEY, TWO TABLES (QA I-1) ─────────────────────────────────────────────────────────────────────────
+// The door and the Walk keep ONE key for whichever way the thing is saved, and the two ways are two routes with
+// two tables: a put-up's key lives in preservation_log, an As is item's in pantry_item, and neither route looks
+// in the other's. So once a create has gone out under the key on one route — answered, or its answer lost — a
+// Save on the OTHER route would be a second thing for the same sitting. It is refused before anything is sent,
+// and never under a new key (that would be the same second thing). A key's route is the route its FIRST print
+// went out on: a put-up's print starts "jar:" (jarPrint), an item's never does. otherRouteSent answers that
+// route when it is not the one being saved on now, else null. (Under this rule every print of a key is on one
+// route. A draft stored by a bundle from before it can hold both; it stays on its first, so it is never left
+// with no route at all.)
+export const printRoute = (print) => (typeof print === 'string' && print.startsWith('jar:') ? 'jar' : 'item')
+export function otherRouteSent(sent, route) {
+  const first = (Array.isArray(sent) ? sent : []).find(s => typeof s === 'string')
+  if (first == null) return null
+  return printRoute(first) === route ? null : printRoute(first)
+}
+// Said for that refusal. `first` is the route the earlier Save went out on; `row` is the row it is KNOWN to
+// have made (a replay answered with it in the door that is open) or null when its answer never came back —
+// then nothing says it is in the Pantry, only that it may be, and the way on is to finish THAT Save. `walk`:
+// a walk's group has no close; its way to a new one is to end the walk.
+export function otherRouteText({ first, row = null, what = null, walk = false }) {
+  const asIs = `as “${methodLabel(AS_IS, what)}”`
+  const was = first === 'jar' ? 'as a put-up' : asIs
+  const now = first === 'jar' ? asIs : 'as a put-up'
+  if (!row) {
+    const again = first === 'jar' ? 'Choose the method again' : `Choose “${methodLabel(AS_IS, what)}” again`
+    return `An earlier Save of this ${was} may have gone through. It can't also be saved ${now} from here. ${again} and tap Save to finish that one.`
+  }
+  const name = quoted(row)
+  return `${name ? `${name} is already in the Pantry` : 'This is already in the Pantry'} ${was} — an earlier Save went through. It can't also be saved ${now} from here. If you want both, ${walk ? 'end this walk and start another' : 'close this and start a new one'}.`
+}
+
 // Said when an earlier Save made the jar and this one differs from it in a part no PATCH carries: nothing is
 // written, and the form stays as it is. `jar` is the row the replay answered with; `part` is jarFixedPart's.
 // Putting that part back DOES let the next Save through (it is read off the row). The key is kept.
