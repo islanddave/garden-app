@@ -138,6 +138,85 @@ describe('EventDetail — editing the class is flag-gated', () => {
     expect(screen.getByTestId('ev-water-depth-normal').getAttribute('aria-pressed')).toBe('true')
   })
 
+  // BUG-WATERDEPTHSINGLEEVENT-001 follow-on. The save used to stamp source='user' on every edit, so
+  // changing only a note turned a one-tap `normal/default` row into a claimed choice. Dave
+  // 2026-10-08: source is 'user' only when a chip is tapped in THAT edit. An untouched class sends
+  // no `metadata` key at all — the PUT's has-key grammar then keeps the stored column byte-identical.
+  async function editNoteAndSave({ tap } = {}) {
+    await flushLoad()
+    fireEvent.click(await screen.findByRole('button', { name: /edit/i }))
+    fireEvent.change(document.getElementById('ev-notes'), { target: { value: 'moved the hose' } })
+    if (tap) fireEvent.click(screen.getByTestId(`ev-water-depth-${tap}`))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /save changes|save/i })) })
+    await waitFor(() => expect(putBodies.length).toBe(1))
+    expect(putBodies[0].notes).toBe('moved the hose')
+    return putBodies[0]
+  }
+
+  it('flag ON: a note-only edit of a normal/default row does not touch its class or source', async () => {
+    flagRef.current = true
+    setup({ ...wateringEvent, metadata: { water_depth: 'normal', water_depth_source: 'default' } })
+    const body = await editNoteAndSave()
+    expect(Object.hasOwn(body, 'metadata')).toBe(false)
+  })
+
+  it('flag ON: a note-only edit of a deep/user row does not touch its class or source', async () => {
+    flagRef.current = true
+    setup()
+    const body = await editNoteAndSave()
+    expect(Object.hasOwn(body, 'metadata')).toBe(false)
+  })
+
+  it('flag ON: tapping the SAME class that was stored is still a choice (source=user)', async () => {
+    flagRef.current = true
+    setup({ ...wateringEvent, metadata: { water_depth: 'normal', water_depth_source: 'default' } })
+    const body = await editNoteAndSave({ tap: 'normal' })
+    expect(body.metadata).toEqual({ water_depth: 'normal', water_depth_source: 'user' })
+  })
+
+  it('flag ON: a bare legacy row (no metadata) is not given a class or a source by a note-only edit', async () => {
+    flagRef.current = true
+    setup({ ...wateringEvent, metadata: null })
+    const body = await editNoteAndSave()
+    expect(Object.hasOwn(body, 'metadata')).toBe(false)
+  })
+
+  it('flag ON: a stored class with no source is left as stored by a note-only edit', async () => {
+    flagRef.current = true
+    setup({ ...wateringEvent, metadata: { water_depth: 'light' } })
+    const body = await editNoteAndSave()
+    expect(Object.hasOwn(body, 'metadata')).toBe(false)
+  })
+
+  it('flag ON: other metadata keys survive both a note-only edit and a chip tap', async () => {
+    flagRef.current = true
+    const stored = { water_depth: 'normal', water_depth_source: 'default', batch_id: 'b-7', care_input_source: 'today' }
+    setup({ ...wateringEvent, metadata: stored })
+    const untouched = await editNoteAndSave()
+    // Absent key = the server keeps the whole column, batch_id and care_input_source included.
+    expect(Object.hasOwn(untouched, 'metadata')).toBe(false)
+    cleanup()
+    putBodies.length = 0
+    setup({ ...wateringEvent, metadata: stored })
+    const tapped = await editNoteAndSave({ tap: 'deep' })
+    expect(tapped.metadata).toEqual({
+      batch_id: 'b-7', care_input_source: 'today', water_depth: 'deep', water_depth_source: 'user',
+    })
+  })
+
+  it('flag ON: re-typing a class-less event INTO watering without a tap records the default, not a choice', async () => {
+    flagRef.current = true
+    setup({ ...wateringEvent, event_type: 'observation', metadata: { batch_id: 'b-7' } })
+    await flushLoad()
+    fireEvent.click(await screen.findByRole('button', { name: /edit/i }))
+    fireEvent.change(document.getElementById('ev-event-type'), { target: { value: 'watering' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /save changes|save/i })) })
+    await waitFor(() => expect(putBodies.length).toBe(1))
+    expect(putBodies[0].metadata).toEqual({
+      batch_id: 'b-7', water_depth: 'normal', water_depth_source: 'default',
+    })
+  })
+
   it('flag ON: a non-watering event gets no chips', async () => {
     flagRef.current = true
     setup({ ...wateringEvent, event_type: 'observation', metadata: null })
