@@ -4,9 +4,10 @@
 //   node scripts/layout-gate/save-seed-sheet-clearance.mjs                  # npm run gate:save-seed-sheet
 //   node scripts/layout-gate/save-seed-sheet-clearance.mjs --probe-nothing  # prove the instrument fires
 //
-// MEASURES, in real Chrome at a TRUE 360x640, 390x844 and 426x836, the five states
+// MEASURES, in real Chrome at a TRUE 360x640, 390x844 and 426x836, the twelve states
 // tests/harness/saveseedsheet.jsx can produce — one / two / four parent plantings, the longest mix
-// name the client can generate, and a refused mix call — of the sheet as a planting page opens it:
+// name the client can generate, a refused mix call, and the seven of "put it in a seed lot I already
+// started" (below) — of the sheet as a planting page opens it:
 //   (a) TAP HEIGHT — every visible button and form control in the document, as a census rather than
 //       a named list, against T.tapMinHeight read from the token file. The remove control is an icon
 //       with no words, so it is held to the same number sideways as well.
@@ -50,6 +51,21 @@
 // gate:save-seed-sheet:probe-short` is the gate itself with the remove control forced to 30px through
 // the mutation seam below; it MUST exit 1, and on the tap floor ("renders 44x30, under the 44px tap
 // floor"), on every case that has a remove control. Run by hand, like the first twin.
+//
+// A THIRD TWIN, for the lot list: `npm run gate:save-seed-sheet:probe-short-lot` forces a lot row to
+// 40px. It MUST exit 1 on every list case that has a row, on the tap floor and on the lot-row floor.
+//
+// ADD TO A LOT ALREADY STARTED (V5-SEEDLOTADDITION-001, seed release 3). The From block's link swaps the
+// form for a lot list and then an add form, so each case carries a MODE:
+//   new    the new-lot form: everything above, plus the link, EXACTLY once while From has one row and
+//          absent otherwise.
+//   list   "Which seed lot?": heading, 0 / 1 / 6 lot rows, the state line only when there are none, the
+//          way back, and NO primary action. (a) with every lot row held to LOT_ROW_MIN_PX, (b) and (d).
+//   add    the add form: (a), (b), (d), and (c) with the re-file sentence and the refusal above the button.
+// NOT MEASURED HERE: the list while loading, failed or served from the offline copy (their "Try again"),
+// the "may or may not have been added" state and its "Try again". HOW MANY LINES
+// THE LONGEST LOT NAME WRAPS TO IS PRINTED, NEVER ASSERTED: it depends on the runner's fonts, and no
+// check in this file, the instrument checks included, reads a line count.
 //
 // TRAPS THE SIBLINGS ALREADY PAID FOR (seeds-saved-clearance.mjs has the long form):
 //   1. macOS Chrome floors an OS window at ~500px, so geometry comes from
@@ -107,13 +123,36 @@ const LONGEST_MIX_NAME = 'Biquinho Red & Yellow Blend + Bulgarian Carrot (Shipka
 //   mix         the jar is filed as a mix: the reason line is there and "Change" is not.
 //   notice      sentences in the block above Save (the F1 parent speaks in every case).
 //   error       the refusal sentence.
+//   put         the "Put it in a seed lot I already started" link: exactly 1 while From has ONE row,
+//               absent with two or more. `putText` is what it must read when it names a lot.
+// mode 'list':
+//   lots        rows in the list; the state line is there only when this is 0.
+//   longest     a lot name some row must carry, whole.
+//   reads       requests to /seed-lots-open the harness answered.
+// mode 'add':
+//   refile      the re-file block; `refileNames` is a lot name its sentence must contain.
+//   addError    the refusal sentence.
+//   reads       as above: the named link opens the form with NO read.
 const VIEWPORTS = [[360, 640], [390, 844], [426, 836]]
+// The lot named on the link, and the longest lot name the app generates (the longest mix name, saved
+// this year). Both spelled in tests/harness/saveseedsheet.jsx too; the two files move together.
+const OWN_LOT_NAME = 'Megatron F1 (jumbo jalapeno) — saved 2026'
+const LONGEST_LOT_NAME = `${LONGEST_MIX_NAME} — saved 2026`
+// A lot row is a two-line choice: 56px, the height contract 5.3 gives it, above the general tap floor.
+const LOT_ROW_MIN_PX = 56
 const CASES = [
-  { name: 'one', expect: { rows: 1, removes: 0, plantCount: 0, hint: 0, mix: false, notice: true, error: 0 } },
-  { name: 'two', expect: { rows: 2, removes: 1, plantCount: 1, hint: 1, mix: true, notice: true, error: 0 } },
-  { name: 'four', expect: { rows: 4, removes: 3, plantCount: 1, hint: 1, mix: true, notice: true, error: 0 } },
-  { name: 'mixname', expect: { rows: 3, removes: 2, plantCount: 1, hint: 1, mix: true, notice: true, error: 0, varietyName: LONGEST_MIX_NAME } },
-  { name: 'blendfailed', expect: { rows: 2, removes: 1, plantCount: 1, hint: 1, mix: true, notice: true, error: 1 } },
+  { name: 'one', mode: 'new', expect: { rows: 1, removes: 0, plantCount: 0, hint: 0, mix: false, notice: true, error: 0, put: 1, putText: 'Put it in a seed lot I already started' } },
+  { name: 'two', mode: 'new', expect: { rows: 2, removes: 1, plantCount: 1, hint: 1, mix: true, notice: true, error: 0, put: 0 } },
+  { name: 'four', mode: 'new', expect: { rows: 4, removes: 3, plantCount: 1, hint: 1, mix: true, notice: true, error: 0, put: 0 } },
+  { name: 'mixname', mode: 'new', expect: { rows: 3, removes: 2, plantCount: 1, hint: 1, mix: true, notice: true, error: 0, put: 0, varietyName: LONGEST_MIX_NAME } },
+  { name: 'blendfailed', mode: 'new', expect: { rows: 2, removes: 1, plantCount: 1, hint: 1, mix: true, notice: true, error: 1, put: 0 } },
+  { name: 'named', mode: 'new', expect: { rows: 1, removes: 0, plantCount: 0, hint: 0, mix: false, notice: true, error: 0, put: 1, putText: `Put it in ${OWN_LOT_NAME}Drying · approx. 120 seeds` } },
+  { name: 'list0', mode: 'list', expect: { lots: 0, reads: 1 } },
+  { name: 'list1', mode: 'list', expect: { lots: 1, reads: 1 } },
+  { name: 'list6', mode: 'list', expect: { lots: 6, reads: 1, longest: LONGEST_LOT_NAME } },
+  { name: 'addcounted', mode: 'add', expect: { refile: 0, addError: 0, reads: 0, goingInto: OWN_LOT_NAME } },
+  { name: 'addrefile', mode: 'add', expect: { refile: 1, addError: 0, reads: 1, refileNames: LONGEST_LOT_NAME } },
+  { name: 'addrefused', mode: 'add', expect: { refile: 1, addError: 1, reads: 1, refileNames: LONGEST_LOT_NAME } },
 ]
 
 const failures = []
@@ -240,6 +279,12 @@ const MEASURE = () => `(() => {
   const varietyName = d.querySelector('${tid('save-seed-variety-name')}')
   const notice = d.querySelector('${tid('breeding-notice')}')
   const error = d.querySelector('${tid('save-seed-error')}')
+  // Add to a lot already started: the list's rows, and the add form's two sentences.
+  const lotRows = [...d.querySelectorAll('${tid('seed-lot-row')}')]
+  const refile = d.querySelector('${tid('seed-add-refile')}')
+  const addError = d.querySelector('${tid('seed-add-error')}')
+  const linesOf = el => { const rg = d.createRange(); rg.selectNodeContents(el)
+    return new Set([...rg.getClientRects()].filter(r => r.width > 0.5 && r.height > 0.5).map(r => Math.round(r.top))).size }
 
   // Where focus sits once the harness has built the case. REPORTED: the sheet opens with focus on its
   // first control, which since release 2b is the adder and no longer the Lot name field.
@@ -313,6 +358,8 @@ const MEASURE = () => `(() => {
     const above = el => (el && shown(el) ? el.getBoundingClientRect().bottom <= r.top + 0.5 : null)
     action.noticeAbove = above(notice)
     action.errorAbove = above(error)
+    action.refileAbove = above(refile)
+    action.addErrorAbove = above(addError)
   }
   if (panel) panel.scrollTop = 0
 
@@ -329,6 +376,21 @@ const MEASURE = () => `(() => {
       mixReason: d.querySelectorAll('${tid('save-seed-mix-reason')}').length,
       change: d.querySelectorAll('${tid('save-seed-variety-change')}').length,
       error: error ? 1 : 0,
+      put: d.querySelectorAll('${tid('save-seed-put-in-lot')}').length,
+      submit: d.querySelectorAll('${tid('save-seed-submit')}').length,
+      listHeading: d.querySelectorAll('${tid('seed-lot-list-heading')}').length,
+      listBack: d.querySelectorAll('${tid('seed-lot-list-back')}').length,
+      listState: d.querySelectorAll('${tid('seed-lot-list-state')}').length,
+      lotRows: lotRows.length,
+      goingInto: d.querySelectorAll('${tid('seed-add-going-into')}').length,
+      changeLot: d.querySelectorAll('${tid('seed-add-change-lot')}').length,
+      addCount: d.querySelectorAll('${tid('seed-add-count')}').length,
+      addBasis: d.querySelectorAll('${tid('seed-add-estimated')}').length,
+      addOutcome: d.querySelectorAll('${tid('seed-add-outcome')}').length,
+      addWeight: d.querySelectorAll('${tid('seed-add-weight')}').length,
+      addRefile: refile ? 1 : 0,
+      addError: addError ? 1 : 0,
+      addRetry: d.querySelectorAll('${tid('seed-add-retry')}').length,
       noticeSentences: notice ? notice.querySelectorAll('${tid('breeding-notice-set')}').length : 0,
       controls: taps.length,
     },
@@ -341,6 +403,17 @@ const MEASURE = () => `(() => {
       return new Set([...rg.getClientRects()].filter(r => r.width > 0.5 && r.height > 0.5).map(r => Math.round(r.top))).size
     })() : 0,
     errorText: text(error),
+    lotsReads: w.__h && w.__h.lotsReads ? w.__h.lotsReads() : null,
+    putText: text(d.querySelector('${tid('save-seed-put-in-lot')}')),
+    stateText: text(d.querySelector('${tid('seed-lot-list-state')}')),
+    goingText: text(d.querySelector('${tid('seed-add-going-into')}')),
+    outcomeText: text(d.querySelector('${tid('seed-add-outcome')}')),
+    refileText: text(refile),
+    addErrorText: text(addError),
+    // Each lot row: its box, its name (the row's first line), and how many lines that name takes.
+    // The line count is REPORTED ONLY — it moves with the runner's fonts.
+    lotRowBoxes: lotRows.map(el => { const nm = el.firstElementChild; return {
+      name: text(nm), w: box(el).w, h: box(el).h, nameLines: nm ? linesOf(nm) : 0 } }),
     rowHeights: rows.map(el => box(el).h),
     removeBoxes: removes.map(el => ({ label: name(el), w: box(el).w, h: box(el).h })),
     // REPORTED, not asserted — see SCOPE in the header.
@@ -405,22 +478,61 @@ try {
       const e = c.expect
       const mismatch = []
       if (!m.sheet) mismatch.push('no [role="dialog"] — the sheet never opened')
-      if (!m.action) mismatch.push('no save-seed-submit control — the primary action did not render')
-      if (!m.nameField) mismatch.push('no save-seed-name field')
-      if (m.counts.rows !== e.rows) mismatch.push(`parent rows ${m.counts.rows} != ${e.rows}`)
-      if (m.counts.removes !== e.removes) mismatch.push(`remove controls ${m.counts.removes} != ${e.removes}`)
-      if (m.counts.add !== 1) mismatch.push(`"+ Add seed from another plant" controls ${m.counts.add} != 1`)
-      if (m.counts.plantCount !== e.plantCount) mismatch.push(`plant-count fields ${m.counts.plantCount} != ${e.plantCount}`)
-      if (m.counts.hint !== e.hint) mismatch.push(`plant-count hints ${m.counts.hint} != ${e.hint} — the harness plantings stopped carrying a whole quantity`)
-      if (m.counts.mixReason !== (e.mix ? 1 : 0)) mismatch.push(`mix reason lines ${m.counts.mixReason} != ${e.mix ? 1 : 0}`)
-      if (m.counts.change !== (e.mix ? 0 : 1)) mismatch.push(`"Change" controls ${m.counts.change} != ${e.mix ? 0 : 1}`)
-      if (m.counts.error !== e.error) mismatch.push(`refusal sentences ${m.counts.error} != ${e.error}`)
-      if (m.notice !== e.notice) mismatch.push(`notice above Save ${m.notice ? 'present' : 'absent'}, expected ${e.notice ? 'present' : 'absent'}`)
-      if (e.varietyName != null && m.varietyName !== e.varietyName) mismatch.push(`the Variety row reads "${m.varietyName}", expected the longest generated name "${e.varietyName}"`)
-      if (!m.varietyName) mismatch.push('the Variety row names nothing')
-      // Rows, removes, add, name, the count and weight fields, the basis switch, three process rows,
-      // Save and the sheet's own close: a census that found fewer than this did not see the sheet.
-      if (m.counts.controls < 8 + e.removes) mismatch.push(`${m.counts.controls} interactive controls, expected >=${8 + e.removes}`)
+      const exact = (what, got, want) => { if (got !== want) mismatch.push(`${what} ${got} != ${want}`) }
+      if (c.mode === 'new') {
+        if (!m.action) mismatch.push('no save-seed-submit control — the primary action did not render')
+        if (!m.nameField) mismatch.push('no save-seed-name field')
+        // The link shows only while From has exactly one row (contract 5.2.3): exactly once, or absent.
+        exact('"Put it in a seed lot" links', m.counts.put, e.put)
+        if (e.putText != null && m.putText !== e.putText) mismatch.push(`the link reads "${m.putText}", expected "${e.putText}"`)
+        if (m.counts.rows !== e.rows) mismatch.push(`parent rows ${m.counts.rows} != ${e.rows}`)
+        if (m.counts.removes !== e.removes) mismatch.push(`remove controls ${m.counts.removes} != ${e.removes}`)
+        if (m.counts.add !== 1) mismatch.push(`"+ Add seed from another plant" controls ${m.counts.add} != 1`)
+        if (m.counts.plantCount !== e.plantCount) mismatch.push(`plant-count fields ${m.counts.plantCount} != ${e.plantCount}`)
+        if (m.counts.hint !== e.hint) mismatch.push(`plant-count hints ${m.counts.hint} != ${e.hint} — the harness plantings stopped carrying a whole quantity`)
+        if (m.counts.mixReason !== (e.mix ? 1 : 0)) mismatch.push(`mix reason lines ${m.counts.mixReason} != ${e.mix ? 1 : 0}`)
+        if (m.counts.change !== (e.mix ? 0 : 1)) mismatch.push(`"Change" controls ${m.counts.change} != ${e.mix ? 0 : 1}`)
+        if (m.counts.error !== e.error) mismatch.push(`refusal sentences ${m.counts.error} != ${e.error}`)
+        if (m.notice !== e.notice) mismatch.push(`notice above Save ${m.notice ? 'present' : 'absent'}, expected ${e.notice ? 'present' : 'absent'}`)
+        if (e.varietyName != null && m.varietyName !== e.varietyName) mismatch.push(`the Variety row reads "${m.varietyName}", expected the longest generated name "${e.varietyName}"`)
+        if (!m.varietyName) mismatch.push('the Variety row names nothing')
+        // Rows, removes, add, name, the count and weight fields, the basis switch, three process rows,
+        // Save and the sheet's own close, and the link to a lot already started while From has one row:
+        // a census that found fewer than this did not see the sheet.
+        if (m.counts.controls < 8 + e.removes + e.put) mismatch.push(`${m.counts.controls} interactive controls, expected >=${8 + e.removes + e.put}`)
+      } else if (c.mode === 'list') {
+        exact('"Which seed lot?" headings', m.counts.listHeading, 1)
+        exact('"Start a new seed lot instead" controls', m.counts.listBack, 1)
+        exact('lot rows', m.counts.lotRows, e.lots)
+        exact('list state lines', m.counts.listState, e.lots === 0 ? 1 : 0)
+        exact('save-seed-submit controls (the list has no primary action)', m.counts.submit, 0)
+        exact('"Put it in a seed lot" links (the list took the form\'s place)', m.counts.put, 0)
+        exact('add-form "Going into" blocks', m.counts.goingInto, 0)
+        exact('reads of /seed-lots-open', m.lotsReads, e.reads)
+        if (e.lots === 0 && !m.stateText) mismatch.push('the state line says nothing')
+        if (e.longest != null && !m.lotRowBoxes.some(r => r.name === e.longest)) mismatch.push(`no lot row is named "${e.longest}" — the longest lot name is not on the list`)
+        // The rows, the way back and the sheet's own close.
+        if (m.counts.controls < e.lots + 2) mismatch.push(`${m.counts.controls} interactive controls, expected >=${e.lots + 2}`)
+      } else {
+        if (!m.action) mismatch.push('no save-seed-submit control — "Add to this lot" did not render')
+        exact('"Going into" blocks', m.counts.goingInto, 1)
+        exact('"Change lot" controls', m.counts.changeLot, 1)
+        exact('count fields', m.counts.addCount, 1)
+        exact('weight fields', m.counts.addWeight, 1)
+        exact('count-basis switches', m.counts.addBasis, 1)
+        exact('outcome lines', m.counts.addOutcome, 1)
+        exact('save-seed-submit controls', m.counts.submit, 1)
+        exact('re-file blocks', m.counts.addRefile, e.refile)
+        exact('refusal sentences', m.counts.addError, e.addError)
+        exact('"Try again" controls', m.counts.addRetry, 0)
+        exact('lot-list headings (the form took the list\'s place)', m.counts.listHeading, 0)
+        exact('"Put it in a seed lot" links', m.counts.put, 0)
+        exact('reads of /seed-lots-open', m.lotsReads, e.reads)
+        if (e.goingInto != null && !(m.goingText || '').includes(e.goingInto)) mismatch.push(`"Going into" reads "${m.goingText}", expected it to name "${e.goingInto}"`)
+        if (e.refileNames != null && !(m.refileText || '').includes(e.refileNames)) mismatch.push(`the re-file sentence reads "${m.refileText}", expected it to name "${e.refileNames}"`)
+        // Change lot, the count and weight fields, the basis switch, "Add to this lot", the sheet's close.
+        if (m.counts.controls < 6) mismatch.push(`${m.counts.controls} interactive controls, expected >=6`)
+      }
       if (mismatch.length) {
         // A selector that matched nothing is a FAILURE, never a quiet pass. If the sheet was
         // redesigned, tests/harness/saveseedsheet.jsx and the CASES table here move together.
@@ -429,7 +541,7 @@ try {
       }
       // The zero-box detector: an unrendered document hands back elements whose every box is 0x0,
       // and every "clears the floor" assertion below is then vacuously true.
-      const heights = m.taps.map(t => t.h).concat(m.rowHeights)
+      const heights = m.taps.map(t => t.h).concat(m.rowHeights, m.lotRowBoxes.map(r => r.h))
       if (!heights.length) fail(`${at}: no boxes measured at all`)
       else if (heights.every(h => h === 0)) fail(`${at}: every one of ${heights.length} measured boxes is 0px tall — this is what an unrendered document looks like, not a passing layout`)
       else if (m.docScrollW === 0 || m.docClientW === 0) fail(`${at}: document reports scrollWidth ${m.docScrollW} / clientWidth ${m.docClientW} — nothing was laid out`)
@@ -440,6 +552,9 @@ try {
       for (const r of m.removeBoxes) {
         if (r.w < TAP_MIN_HEIGHT_PX) fail(`${at}: remove control "${r.label}" is ${r.w}px wide — an icon with no words needs the ${TAP_MIN_HEIGHT_PX}px floor sideways too`)
       }
+      for (const r of m.lotRowBoxes) {
+        if (r.h < LOT_ROW_MIN_PX) fail(`${at}: lot row "${r.name}" renders ${r.w}x${r.h}, under the ${LOT_ROW_MIN_PX}px floor a two-line lot row is held to`)
+      }
 
       // ── (b) REACH — each control, scrolled to the middle of the panel.
       for (const t of m.taps) {
@@ -449,21 +564,28 @@ try {
         if (!t.fitsX) fail(`${at}: control "${t.label}" sits outside the ${vw}px viewport — unreachable`)
       }
 
-      // ── (c) SAVE.
+      // ── (c) SAVE — the new-lot form's "Save seed" and the add form's "Add to this lot". The list has
+      //    no primary action (asserted above).
       const a = m.action
       if (m.sheet.visibility !== 'visible') fail(`${at}: sheet visibility is '${m.sheet.visibility}' — an invisible panel makes every measurement vacuous`)
       if (m.sheet.height <= 0) fail(`${at}: sheet panel has zero height`)
-      if (!a.fitsX) fail(`${at}: "${a.label}" sits outside the ${vw}px viewport`)
-      // Below the panel's visible fold is acceptable only while the panel actually scrolls. Clipped
-      // out of a non-scrolling panel is unreachable, full stop.
-      if (!a.insidePanelAtRest && !m.sheet.scrollable) fail(`${at}: "${a.label}" is painted outside a panel that does not scroll — unreachable`)
-      if (a.insidePanelAtRest && a.hitAtRest === false) fail(`${at}: "${a.label}" is inside the panel as the sheet opens and does not hit-test to itself — occluded`)
-      if (!a.insidePanelScrolled) fail(`${at}: "${a.label}" is still outside the panel's visible box (y${a.scrolledTop}-${a.scrolledBottom}) after scrolling to it — the panel does not scroll far enough to show it`)
-      const missed = a.hits.filter(h => h !== true).length
-      if (missed) fail(`${at}: "${a.label}", scrolled to, hit-tests to itself at only ${a.hits.length - missed} of ${a.hits.length} points (centre and four corners: ${a.hits.join(', ')}) — something is painted over it`)
-      if (a.overlappers.length) fail(`${at}: ${a.overlappers.length} element(s) share part of "${a.label}"'s box: ${a.overlappers.join('; ')}`)
-      if (a.noticeAbove === false) fail(`${at}: the notice is not above "${a.label}" — a sentence about the save sits under the button it is about`)
-      if (a.errorAbove === false) fail(`${at}: the refusal sentence is not above "${a.label}"`)
+      if (c.mode !== 'list') {
+        if (!a.fitsX) fail(`${at}: "${a.label}" sits outside the ${vw}px viewport`)
+        // Below the panel's visible fold is acceptable only while the panel actually scrolls. Clipped
+        // out of a non-scrolling panel is unreachable, full stop.
+        if (!a.insidePanelAtRest && !m.sheet.scrollable) fail(`${at}: "${a.label}" is painted outside a panel that does not scroll — unreachable`)
+        if (a.insidePanelAtRest && a.hitAtRest === false) fail(`${at}: "${a.label}" is inside the panel as the sheet opens and does not hit-test to itself — occluded`)
+        if (!a.insidePanelScrolled) fail(`${at}: "${a.label}" is still outside the panel's visible box (y${a.scrolledTop}-${a.scrolledBottom}) after scrolling to it — the panel does not scroll far enough to show it`)
+        const missed = a.hits.filter(h => h !== true).length
+        if (missed) fail(`${at}: "${a.label}", scrolled to, hit-tests to itself at only ${a.hits.length - missed} of ${a.hits.length} points (centre and four corners: ${a.hits.join(', ')}) — something is painted over it`)
+        if (a.overlappers.length) fail(`${at}: ${a.overlappers.length} element(s) share part of "${a.label}"'s box: ${a.overlappers.join('; ')}`)
+        if (a.noticeAbove === false) fail(`${at}: the notice is not above "${a.label}" — a sentence about the save sits under the button it is about`)
+        if (a.errorAbove === false) fail(`${at}: the refusal sentence is not above "${a.label}"`)
+        // `null` is "not on screen"; the counts above already said whether it should be. Present, it
+        // must be above the button it is about.
+        if (c.mode === 'add' && e.refile && a.refileAbove !== true) fail(`${at}: the re-file sentence is not above "${a.label}"`)
+        if (c.mode === 'add' && e.addError && a.addErrorAbove !== true) fail(`${at}: the refusal sentence is not above "${a.label}"`)
+      }
 
       // ── (d) NO SIDEWAYS SCROLL.
       if (m.sidewaysScroll) fail(`${at}: document scrollWidth ${m.docScrollW} > clientWidth ${m.docClientW} — the page scrolls sideways`)
@@ -472,9 +594,23 @@ try {
 
       // ── The record. Printed on pass as well as fail: these are the numbers a redesign has to move.
       const minTap = Math.min(...m.taps.map(t => t.h))
-      console.log(`[save-seed-sheet] ${at}: ${m.counts.rows} row(s) ${m.rowHeights.join('/')}px · ${m.counts.removes} remove ${m.removeBoxes.map(r => `${r.w}x${r.h}`).join('/') || '—'} · ${m.counts.controls} controls, shortest ${minTap}px (floor ${TAP_MIN_HEIGHT_PX}px), ${short.length} under · notice ${m.counts.noticeSentences} set sentence(s)`)
-      console.log(`[save-seed-sheet] ${at}: sheet y${m.sheet.top}-${m.sheet.bottom} h${m.sheet.height} · gutter L${m.sheet.gutterL}/R${m.sheet.gutterR}px [REPORTED] · scrollable ${m.sheet.scrollable} (${m.sheet.hiddenBelowPx}px below the fold) · "${a.label}" h${a.h} at rest y${a.top}-${a.bottom} insidePanel ${a.insidePanelAtRest} · scrolled to y${a.scrolledTop}-${a.scrolledBottom}, hits ${a.hits.filter(h => h === true).length}/${a.hits.length}, overlapped by ${a.overlappers.length}`)
-      console.log(`[save-seed-sheet] ${at}: Variety "${m.varietyName}" (${m.varietyName.length} chars, ${m.varietyLines} line(s)) · Lot name field ${m.nameField.chars} chars, ink ${m.nameField.scrollW}px in ${m.nameField.clientW}px, ${m.nameField.clips ? 'SCROLLS INSIDE THE FIELD' : 'fits'} [REPORTED, NOT ASSERTED — a single-line input; the name is printed in full in the Variety row] · focus on "${m.focused ?? 'nothing'}" [REPORTED]${m.errorText ? ` · refusal "${m.errorText}"` : ''}`)
+      const sheetWords = `sheet y${m.sheet.top}-${m.sheet.bottom} h${m.sheet.height} · scrollable ${m.sheet.scrollable} (${m.sheet.hiddenBelowPx}px below the fold)`
+      const actionWords = a ? `"${a.label}" h${a.h} at rest y${a.top}-${a.bottom} insidePanel ${a.insidePanelAtRest} · scrolled to y${a.scrolledTop}-${a.scrolledBottom}, hits ${a.hits.filter(h => h === true).length}/${a.hits.length}, overlapped by ${a.overlappers.length}` : ''
+      if (c.mode === 'new') {
+        console.log(`[save-seed-sheet] ${at}: ${m.counts.rows} row(s) ${m.rowHeights.join('/')}px · ${m.counts.removes} remove ${m.removeBoxes.map(r => `${r.w}x${r.h}`).join('/') || '—'} · ${m.counts.controls} controls, shortest ${minTap}px (floor ${TAP_MIN_HEIGHT_PX}px), ${short.length} under · notice ${m.counts.noticeSentences} set sentence(s)`)
+        console.log(`[save-seed-sheet] ${at}: sheet y${m.sheet.top}-${m.sheet.bottom} h${m.sheet.height} · gutter L${m.sheet.gutterL}/R${m.sheet.gutterR}px [REPORTED] · scrollable ${m.sheet.scrollable} (${m.sheet.hiddenBelowPx}px below the fold) · "${a.label}" h${a.h} at rest y${a.top}-${a.bottom} insidePanel ${a.insidePanelAtRest} · scrolled to y${a.scrolledTop}-${a.scrolledBottom}, hits ${a.hits.filter(h => h === true).length}/${a.hits.length}, overlapped by ${a.overlappers.length}`)
+        console.log(`[save-seed-sheet] ${at}: Variety "${m.varietyName}" (${m.varietyName.length} chars, ${m.varietyLines} line(s)) · Lot name field ${m.nameField.chars} chars, ink ${m.nameField.scrollW}px in ${m.nameField.clientW}px, ${m.nameField.clips ? 'SCROLLS INSIDE THE FIELD' : 'fits'} [REPORTED, NOT ASSERTED — a single-line input; the name is printed in full in the Variety row] · focus on "${m.focused ?? 'nothing'}" [REPORTED]${m.errorText ? ` · refusal "${m.errorText}"` : ''}`)
+        console.log(`[save-seed-sheet] ${at}: link to a lot already started ${m.counts.put ? `"${m.putText}"` : 'absent'} (${e.rows} row(s) in From)`)
+      } else if (c.mode === 'list') {
+        const rowMin = m.lotRowBoxes.length ? Math.min(...m.lotRowBoxes.map(r => r.h)) : null
+        console.log(`[save-seed-sheet] ${at}: LIST · ${m.counts.lotRows} lot row(s) ${m.lotRowBoxes.map(r => r.h).join('/') || '—'}px (floor ${LOT_ROW_MIN_PX}px, shortest ${rowMin ?? '—'}) · ${m.counts.controls} controls, shortest ${minTap}px (floor ${TAP_MIN_HEIGHT_PX}px), ${short.length} under · ${sheetWords} · reads ${m.lotsReads}${m.stateText ? ` · state "${m.stateText}"` : ''}`)
+        const long = e.longest != null ? m.lotRowBoxes.find(r => r.name === e.longest) : null
+        if (long) console.log(`[save-seed-sheet] ${at}: longest lot name (${long.name.length} chars) takes ${long.nameLines} line(s) in a ${long.w}x${long.h} row [REPORTED, NEVER ASSERTED — the runner's fonts decide]`)
+      } else {
+        console.log(`[save-seed-sheet] ${at}: ADD · ${m.counts.controls} controls, shortest ${minTap}px (floor ${TAP_MIN_HEIGHT_PX}px), ${short.length} under · re-file ${m.counts.addRefile} above ${a.refileAbove} · refusal ${m.counts.addError} above ${a.addErrorAbove} · reads ${m.lotsReads}`)
+        console.log(`[save-seed-sheet] ${at}: ${sheetWords} · ${actionWords}`)
+        console.log(`[save-seed-sheet] ${at}: going into "${m.goingText}" · outcome "${m.outcomeText}"${m.refileText ? ` · re-file "${m.refileText}"` : ''}${m.addErrorText ? ` · refusal "${m.addErrorText}"` : ''}`)
+      }
     }
   }
 } catch (e) {
@@ -499,5 +635,5 @@ if (PROBE_NOTHING) {
   console.error('\n[save-seed-sheet] FAIL — and this one is the real defect: every selector pointed at a testid that does not exist and the gate still found nothing to complain about. The non-vacuity checks are not doing their job.')
   process.exit(1)
 }
-console.log('[save-seed-sheet] PASS')
+console.log(`[save-seed-sheet] PASS — ${CASES.length} cases x ${VIEWPORTS.length} viewports`)
 armExitWatchdog()
