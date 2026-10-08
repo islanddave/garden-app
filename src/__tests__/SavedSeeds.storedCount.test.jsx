@@ -670,8 +670,9 @@ describe('listRowPutBody — the strip list, and its agreement with the handler'
     // second hand-maintained copy. `Object.prototype.hasOwnProperty.call(body, 'x')` is the handler's
     // own presence idiom, and every key written that way is one where OMITTING is the guaranteed
     // no-op and MENTIONING is an assignment. This page round-trips a LIST row into the wide PUT, so
-    // any such key it echoes back is a stale value asserted as an edit — `seed_stage` most of all,
-    // where it would revert the move the sheet was titled for.
+    // any such key it echoes back is a stale value asserted as an edit. (`seed_stage` was the worst
+    // of them, reverting the move the sheet was titled for, until BUG-SEEDSTAGEHEADSHIP-001 took the
+    // key out of the handler's reach altogether — see the named pin below.)
     //
     // Whole-file rather than PUT-arm-only, deliberately: the sub-routes use the same idiom for
     // source_plant_id / source_kind, and those two are in our strip list as a DELAY FUSE for the day
@@ -711,10 +712,17 @@ describe('listRowPutBody — the strip list, and its agreement with the handler'
     // key's ABSENCE from the body, so a spread list row defeats that guard from inside the payload it
     // rides in — and the victims are 4 curated, irreplaceable rows including a hand-entered 1986.
     // Naming it means losing the handler's presence guard reds here, not just losing the strip.
-    for (const k of ['acquired_from_source_id', 'featured_photo_id', 'seed_process', 'seed_stage',
+    for (const k of ['acquired_from_source_id', 'featured_photo_id', 'seed_process',
                      'source_id', 'source_kind', 'source_plant_id', 'variety_id', 'year_harvested']) {
       expect(guarded, `${k} is presence-guarded in the handler and the scrape lost it`).toContain(k)
     }
+    // `seed_stage` LEFT that list on 2026-10-08 (BUG-SEEDSTAGEHEADSHIP-001), and both halves are
+    // pinned. The handler no longer reads the key by presence, or at all: POST /:id/seed-stage is the
+    // stage's only writer, and the wide PUT ignores it. The strip STAYS, named, because containment
+    // can no longer reach it: this page still round-trips a list row, and a bundle that sent the key
+    // to a Lambda older than that change would revert the move the sheet was titled for.
+    expect(guarded, 'the wide PUT reads seed_stage by presence again').not.toContain('seed_stage')
+    expect(ours, 'seed_stage must stay in LIST_ROW_PUT_STRIP').toContain('seed_stage')
     expect(guarded.filter(k => !ours.includes(k)),
       'the handler reads these by presence and this page does not strip them').toEqual([])
     // The GET-DERIVED half has no such idiom to scrape — these are columns the id-GET and the list
@@ -744,6 +752,8 @@ describe('listRowPutBody — the strip list, and its agreement with the handler'
     expect(hm, 'SEED_ROW_ECHO_KEYS not found in useInventory.js — renamed, moved, or reformatted').toBeTruthy()
     const theirs = [...hm[1].matchAll(/'([^']*)'/g)].map(x => x[1])
     expect(theirs.filter(k => !ours.includes(k)), 'stripped on the lot page but not on this one').toEqual([])
+    // The lot page's stage strip is its own one-key list (removed after the merge, like the measure).
+    expect(hook).toMatch(/\bSEED_STAGE_KEYS\s*=\s*\['seed_stage'\]/)
     for (const k of ['source_id', 'acquired_from_source_id', 'year_harvested', 'variety_id']) {
       expect(theirs, `${k} must not be in the lot page's unconditional list`).not.toContain(k)
     }
