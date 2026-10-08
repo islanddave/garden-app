@@ -96,7 +96,7 @@ describe('BUG-SEEDYEARNOOP-001 — inventory PUT year_harvested write contract',
 
   it('tests PRESENCE, not truthiness, so an explicit null can clear the year', () => {
     // hasOwnProperty rather than != null: a year entered by mistake must be removable. The same
-    // reasoning as seed_stage (index.js:786-789) and source_id, which use this idiom already.
+    // reasoning as seed_process and source_id, which use this idiom already.
     expect(SRC).toMatch(
       /const hasYearHarvested\s*=\s*Object\.prototype\.hasOwnProperty\.call\(body,\s*'year_harvested'\)/,
     );

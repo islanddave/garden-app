@@ -49,10 +49,11 @@
 //     named in NEITHER the INSERT column list nor its VALUES, so a client that sent one got 201
 //     back with the provenance silently dropped. It is persisted and household-authorized now.
 //
-// THE STAGE IS A SECOND REQUEST, not a field on the create. The INSERT does name seed_stage, but
-// writing it there sets the column WITHOUT a seed_lot_stage_log row — and /seeds/saved derives its
-// entire queue from stage_entered_at (a lot with no log entry sorts LAST, duration unknown). POST
-// /seed-stage writes the column and the log row in one statement, so the lot lands on that page
+// THE STAGE IS A SECOND REQUEST, not a field on the create. The INSERT does not name seed_stage and
+// the create ignores the key (BUG-SEEDSTAGEHEADSHIP-001): written there, the column was set WITHOUT
+// a seed_lot_stage_log row — and /seeds/saved derives its entire queue from stage_entered_at (a lot
+// with no log entry sorts LAST, duration unknown). POST /seed-stage is the stage's only writer and
+// writes the column and the log row in one statement, so the lot lands on that page
 // with a real clock on it. It also carries its own failure: the lot exists either way, and
 // reporting a landed create as failed because an optional stage did not land is the worse error.
 //

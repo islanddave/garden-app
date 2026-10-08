@@ -13,7 +13,7 @@
 // had set had quietly gone.
 //
 // BUG-INVSEEDPUT400-001 is the precedent and the shape: featured_photo_id / variety_id /
-// seed_process / seed_stage all carry a hasOwnProperty sentinel feeding
+// seed_process all carry a hasOwnProperty sentinel feeding
 // `CASE WHEN <flag> THEN <value> ELSE <column> END`, and `metadata` is excluded from the SET list
 // outright for the same reason. These two take the sentinel.
 //
@@ -173,7 +173,7 @@ describe('V4-SOURCEREG-001 PUT — writing and clearing', () => {
 
   it('an EXPLICIT null clears one id without touching the other', async () => {
     // Presence, not truthiness. `source_id: null` means "this row no longer records an originator",
-    // and a `!= null` test would make that unreachable — the failure mode the seed_stage sentinel
+    // and a `!= null` test would make that unreachable — the failure mode the seed_process sentinel
     // beside it was written to avoid.
     const { status } = parse(await handler(put({ ...buildChangesPayload(), source_id: null })));
     expect(status).toBe(200);

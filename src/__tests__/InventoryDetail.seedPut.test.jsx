@@ -121,7 +121,13 @@ describe('BUG-INVSEEDPUT400-001 — the seed-packet PUT payload', () => {
     expect(body.type).toBe('consumable')
     // And the merge is still a merge: keys the form does not name ride through from the list row.
     expect(body.variety_name).toBe('Green Flesh')
-    expect(body.seed_stage).toBeNull()
+    // …except the lot's stage. PIN INVERTED 2026-10-08 (BUG-SEEDSTAGEHEADSHIP-001): this line read
+    // `expect(body.seed_stage).toBeNull()`, the list row's stage riding back as a second witness
+    // that the merge still merged. That echo was the defect. The wide PUT wrote whatever stage the
+    // body carried and logged nothing, so this null CLEARED a stage set since the list loaded, with
+    // a 200. POST /:id/seed-stage is the only writer now; updateItem removes the key, and
+    // variety_name above is the witness that remains.
+    expect(body).not.toHaveProperty('seed_stage')
   })
 
   it('strips them when the list row actually holds values, and keeps what the form set', async () => {
@@ -131,12 +137,15 @@ describe('BUG-INVSEEDPUT400-001 — the seed-packet PUT payload', () => {
       seed_parent_plant_count: 4, variety_rank: 'blend', seed_count: 40, seed_weight_g: 1.2,
       seed_count_estimated: true, source_id: 'src-stale', acquired_from_source_id: 'src-stale-2',
       year_harvested: 1986,
+      // The stage as the list held it: the lot has been moved on to `stored` since, elsewhere.
+      seed_stage: 'drying',
     }] })
     await renderAndSave()
     const body = putBody()
     for (const k of ['variety_id', 'source_plant_id', 'source_plant_ids', 'source_plants', 'source_kind',
                      'seed_parent_plant_count', 'variety_rank',
-                     'seed_count', 'seed_weight_g', 'seed_count_estimated']) {
+                     'seed_count', 'seed_weight_g', 'seed_count_estimated',
+                     'seed_stage']) {
       expect(body, `${k} was echoed from the list row`).not.toHaveProperty(k)
     }
     // The three keys this form owns are PRESENT, and carry the form's value (the id GET's row, which

@@ -25,6 +25,8 @@ import { createQuantityAdjuster } from '../lib/quantityAdjuster.js'
 const TOAST_MS = 5000
 // Written only through PUT /api/inventory-items/:id/seed-measure; see updateItem.
 const SEED_MEASURE_KEYS = ['seed_count', 'seed_weight_g', 'seed_count_estimated']
+// Written only through POST /api/inventory-items/:id/seed-stage; see updateItem.
+const SEED_STAGE_KEYS = ['seed_stage', 'seed_process']
 // Never echoed from the fetched list row into the wide PUT; see updateItem. `variety_id` joins them
 // only while the row is a seeds row and stays one.
 const SEED_ROW_ECHO_KEYS = [
@@ -154,6 +156,17 @@ export function useInventory() {
     // they rode inert; stripped, the body cannot re-assert a stale count the day one is added — the
     // BUG-INVLOSTUPDATE-001 shape that is the reason the narrow route exists.
     for (const k of SEED_MEASURE_KEYS) delete fullPayload[k]
+    // BUG-SEEDSTAGEHEADSHIP-001 — nor does its stage, and for the same reason. POST /:id/seed-stage
+    // is the only writer (it logs the entry in the same statement), and the list row merged above
+    // carries the stage as it stood when the list loaded: a lot moved on from another tab or device
+    // since then was moved straight back here, with a 200 and no entry in its history, which is how
+    // a card lost its "N days" and a ferment its overdue warning. The handler ignores the key now;
+    // not sending it is the half that holds on a Lambda that has not been deployed yet. Removed
+    // AFTER the merge, like the measure: no caller of this function sets a stage.
+    // `seed_process` is its twin and goes with it: the same stale row carries it, both of its
+    // writers are on POST /:id/seed-stage, and the wide PUT still assigns it by presence, so an
+    // echoed old value put a lot's process back (the card lost " · wet process") with a 200.
+    for (const k of SEED_STAGE_KEYS) delete fullPayload[k]
     try {
       const updated = await fetch('/api/inventory-items/' + id, {
         method: 'PUT',
@@ -191,7 +204,7 @@ export function useInventory() {
   // above travel with it; this hook supplies the
   // three things it no longer owns — the row as it is NOW (itemsRef), the commit that assigns that
   // ref synchronously (commitItems), and its own toast. The body and the success commit are the
-  // shipped defaults, so this page's write is byte-identical to what it was.
+  // shipped defaults: the row with the new quantity, less `seed_stage` (wideBody).
   const getRow = useCallback(id => itemsRef.current.find(i => i.id === id), [])
   const commitRow = useCallback(
     (id, next) => commitItems(prev => prev.map(i => (i.id === id ? next(i) : i))),

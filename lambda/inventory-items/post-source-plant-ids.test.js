@@ -529,6 +529,20 @@ describe('POST with source_plant_ids — one transaction (source shape; the stub
     expect(POST_ARM).toMatch(/const lotId = randomUUID\(\);/);
     expect(SRC).toMatch(/import \{ randomUUID \} from 'node:crypto';/);
     expect(POST_ARM).toMatch(/const cachePlantId = sourcePlantId \?\? parentIds\[0\] \?\? null;/);
-    expect(POST_ARM).toMatch(/\$\{body\.seed_stage \?\? null\}, \$\{cachePlantId\}, \$\{sourceKind\},/);
+    // The neighbours on both sides, so the cache is bound in source_plant_id's position: the column
+    // list reads `seed_process, source_plant_id, source_kind,` and the values must read the same way.
+    expect(POST_ARM).toMatch(/\bseed_process, source_plant_id, source_kind, source_id, acquired_from_source_id \) VALUES \(/);
+    expect(POST_ARM).toMatch(/\$\{body\.seed_process \?\? null\}, \$\{cachePlantId\}, \$\{sourceKind\},/);
+  });
+
+  it('never names the lot\'s stage: POST /:id/seed-stage is its only writer (BUG-SEEDSTAGEHEADSHIP-001)', () => {
+    // The create used to bind `${body.seed_stage ?? null}` between the process and the cache, which
+    // made a staged lot with no entry in seed_lot_stage_log. Comments are stripped, so the note above
+    // the INSERT that explains the omission does not satisfy or break this. The whole-tree count is
+    // seed-stage-one-writer.test.js; this is the create arm's own half, beside its other omission.
+    expect(POST_ARM).not.toMatch(/seed_stage/);
+    expect(POST_ARM).not.toMatch(/seed_lot_stage_log/);
+    // …and the arm is the one being read: its sibling key is still bound there.
+    expect(POST_ARM).toMatch(/\$\{body\.seed_process \?\? null\}/);
   });
 });

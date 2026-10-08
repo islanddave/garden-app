@@ -2,8 +2,9 @@
 //
 // src/components/seed/seedStages.js is the THIRD declaration of the same three values. The other two
 // are the DB CHECKs (two of them, on inventory_items and on seed_lot_stage_log) and the Lambda
-// (twice — the /seed-stage route and the wide PUT). Neither can import from the other, so the only
-// thing standing between them is a test that reads all of them and fails when one moves.
+// (once — the /seed-stage route; the wide PUT's copy went with BUG-SEEDSTAGEHEADSHIP-001, when that
+// verb stopped reading the stage). Neither can import from the other, so the only thing standing
+// between them is a test that reads all of them and fails when one moves.
 //
 // V4-SEEDSTOREDQTY-001 REMOVED THE FOURTH. src/pages/SavedSeeds.jsx used to redeclare the array, and
 // this file scraped that page's source text to prove the copy still agreed. It now imports
@@ -65,13 +66,17 @@ describe('seed-stage vocabulary — one set, four declarations', () => {
     expect(sqlInList(ddl, 'stage', '0a-ddl.sql')).toEqual(SEED_STAGES)
   })
 
-  it('matches BOTH Lambda declarations — the /seed-stage route and the wide PUT', () => {
+  it('matches the ONE Lambda declaration — the /seed-stage route, the stage\'s only writer', () => {
     const handler = read('lambda/inventory-items/index.js')
     // The route's own copy, which validates the POST body's `stage`.
     expect(jsArrayLiteral(handler, 'STAGES', 'lambda/inventory-items/index.js')).toEqual(SEED_STAGES)
-    // The wide PUT's copy, which validates `seed_stage` — the key the control on InventoryDetail
-    // sends, and the one whose null-to-clear path this feature made reachable.
-    expect(jsArrayLiteral(handler, 'SEED_STAGES', 'lambda/inventory-items/index.js')).toEqual(SEED_STAGES)
+    // THERE WAS A SECOND (BUG-SEEDSTAGEHEADSHIP-001). The wide PUT declared `SEED_STAGES` to validate
+    // a `seed_stage` key it then wrote with no entry in the lot's history. That verb no longer reads
+    // the key, so it has no vocabulary to keep in step, and this case used to require the copy to
+    // exist. A second array of stage names in the handler is a second place a stage is being
+    // judged: it reds here, and the writer count is lambda/inventory-items/seed-stage-one-writer.test.js.
+    expect(handler, 'the wide PUT declares a stage vocabulary again').not.toMatch(/\bSEED_STAGES\s*=\s*\[/)
+    expect(handler.match(/\bSTAGES\s*=\s*\[/g), 'exactly one stage array in the handler').toHaveLength(1)
   })
 
   it('SavedSeeds.jsx takes the vocabulary from here rather than restating it', () => {

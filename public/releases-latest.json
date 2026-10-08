@@ -1,12 +1,7 @@
 {
-  "version": "4.175.0",
+  "version": "4.176.0",
   "date": "2026-10-08",
   "highlights": [
-    "The weather card's rain row shows tomorrow's rain whenever enough is coming to change watering, even when it also rains today, and no longer prints a made-up 0% chance",
-    "Put-up: when a Save fails, the message now scrolls into view above the Save button instead of hiding under it",
-    "Put-up: after \"already saved earlier\", closing the sheet gives you a clean one next time instead of staying stuck on the old item",
-    "A watering logged from Snap, a container's quick log or by voice records a normal water amount",
-    "Editing only the note on a watering no longer marks its water amount as your choice",
-    "A care profile with a feeding interval of zero falls back to that plant's usual interval instead of asking every day"
+    "A seed lot's stage now changes in one place only (Saved seeds). Saving a count or other details from an older screen can no longer put a lot back to an earlier stage or drop its wet/dry process."
   ]
 }

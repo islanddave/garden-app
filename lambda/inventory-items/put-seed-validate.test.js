@@ -63,7 +63,8 @@ const buildChangesPayload = () => ({
 
 // The value bound to ONE named placeholder, not "is this value anywhere in the list".
 // `expect(values).toContain(false)` looked like it proved the presence guard was off, and did not:
-// the same UPDATE binds hasFeatured, hasSeedProcess and hasSeedStage, so a `false` from any of them
+// the same UPDATE binds hasFeatured and hasSeedProcess (and bound hasSeedStage until
+// BUG-SEEDSTAGEHEADSHIP-001 took the stage out of this verb), so a `false` from any of them
 // satisfied it and a hasVariety pinned to `true` survived the mutation. The stub builds its text as
 // `strings.join('?')`, so the value for a placeholder is indexed by how many '?' precede it.
 const boundAfter = (call, re) => {

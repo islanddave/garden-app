@@ -147,9 +147,14 @@ describe('InventoryDetail — the seed_stage control is gone (V5-SEEDSTAGEONEPLA
 
   it('saves the form through updateItem, carrying no seed column at all', async () => {
     // The buildChanges() separation, kept from the file this replaces and now load-bearing in the
-    // other direction. The wide PUT reads seed_stage / seed_process by PRESENCE, so the edit form
-    // must not so much as MENTION them: a key in the body is an assignment, and this form has no
-    // idea what the lot's stage is. Omission is the only spelling of "leave it alone".
+    // other direction. The wide PUT reads seed_process by PRESENCE (and read seed_stage the same way
+    // until BUG-SEEDSTAGEHEADSHIP-001 made POST /seed-stage the stage's only writer), so the edit
+    // form must not so much as MENTION them: a key in the body is an assignment, and this form has
+    // no idea what the lot's stage is. Omission is the only spelling of "leave it alone".
+    //
+    // THIS IS buildChanges(), BEFORE THE MERGE. useInventory is mocked here, so what reaches the wire
+    // after updateItem merges the list row is not visible from this file: that the stage is not
+    // echoed there is held by useInventory.test.js and InventoryDetail.seedPut.test.jsx.
     await renderPage()
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Green Flesh Honeydew (2026)' } })
     await act(async () => { fireEvent.click(screen.getByText('Save changes')) })

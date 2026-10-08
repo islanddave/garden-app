@@ -1338,9 +1338,10 @@ describe('what a CLOSED batch accepts', () => {
 describe('the view is the only read surface', () => {
   it('never SELECTs from kitchen_batch directly', async () => {
     // What makes "no current-stage cache" survivable is ONE derivation. The one existing instance of
-    // cache-beside-log — inventory_items.seed_stage — has three cache writers and one log writer, all
-    // 3 live staged lots diverged, and the shipped stage_entered_at LATERAL returns NULL on 100% of
-    // them. Mutation: change readBatch or loadOwnedBatch to read the base table.
+    // cache-beside-log — inventory_items.seed_stage — had three cache writers and one log writer, all
+    // 3 live staged lots diverged, and the shipped stage_entered_at LATERAL returned NULL on 100% of
+    // them (it has one writer since BUG-SEEDSTAGEHEADSHIP-001; the lesson stands). Mutation: change
+    // readBatch or loadOwnedBatch to read the base table.
     expect(SRC).not.toMatch(/FROM\s+kitchen_batch\b/);
     expect(SRC).toMatch(/FROM v_kitchen_batch_current/);
   });

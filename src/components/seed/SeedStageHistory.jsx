@@ -62,8 +62,9 @@ export default function SeedStageHistory({
         if (!mounted) return
         // Array.isArray, not `data ?? []`: the route answers with a JSON array, and anything else
         // is a shape this component cannot read. Coercing rather than throwing keeps a surprising
-        // response from taking down the rest of the page — it renders as "nothing recorded", which
-        // is the same thing an empty array means.
+        // response from taking down the rest of the page — it renders as an empty array does:
+        // "nothing recorded" for a lot with no stage, and the "no entry for that stage" notice for
+        // a lot that has one (stageNotLogged, below).
         setRows(Array.isArray(data) ? data : [])
         setLoading(false)
       })
@@ -77,19 +78,16 @@ export default function SeedStageHistory({
   }, [itemId, fetch, attempt])
 
   const hasParent = Boolean(sourcePlantId)
-  // Empty means "nothing to say at all". A lot with a parent but no stages still has a chain worth
-  // one line, so it is NOT empty — AsyncRegion's empty branch short-circuits children, and routing
-  // that case through it would hide the provenance the page just recorded.
-  const isEmpty = rows.length === 0 && !hasParent
 
   // The newest logged entry carrying the lot's current stage. Found rather than assumed to be row
-  // 0, because inventory_items.seed_stage can still be written WITHOUT appending a log row: only the
-  // /seed-stage CTE logs, while the wide PUT and the create INSERT both assign the column and append
-  // nothing. (The client's one non-logging stage writer — the <select> that used to sit on
-  // /inventory/:id — was removed by V5-SEEDSTAGEONEPLACE-001, but the two server-side writers remain
-  // and every live staged lot predates the change.) "Newest entry" and "where the lot is now" are
-  // therefore genuinely allowed to differ, and when they do the user is told so below rather than
-  // left to notice.
+  // 0, because a lot's stage and its history were once written separately: until
+  // BUG-SEEDSTAGEHEADSHIP-001 the wide PUT and the create INSERT both assigned
+  // inventory_items.seed_stage and appended nothing, and so did the <select> that used to sit on
+  // /inventory/:id (removed by V5-SEEDSTAGEONEPLACE-001). POST /:id/seed-stage is the only writer
+  // now and it logs in the same statement, so no NEW lot can get into that state — but a lot staged
+  // before then can still be in it, and nothing here repairs one. "Newest entry" and "where the lot
+  // is now" are therefore still allowed to differ on such a row, and when they do the user is told
+  // so below rather than left to notice.
   //
   // NEWEST ENTRY WINS (Dave, 2026-09-17). The route orders rows by when each entry was MADE, not by
   // the date it carries, so a backdated correction from /seeds/saved lands at row 0 — it is the lot's
@@ -101,9 +99,9 @@ export default function SeedStageHistory({
   // BUG-SEEDSTAGEHEADSHIP-001 — MEMBERSHIP IS THE WRONG PREDICATE, and the difference is the whole
   // point of this notice. `currentIdx === -1` asks "is the current stage ANYWHERE in the history".
   // The invariant this panel exists to report is "is the current stage the HEAD of the history" —
-  // and the two disagree whenever the pointer is moved BACKWARDS without a log row (the wide PUT),
-  // onto a stage that is already logged with a newer entry still above it. (A correction made on
-  // /seeds/saved logs a new entry, which heads the list.)
+  // and the two disagree whenever the pointer was moved BACKWARDS without a log row (the wide PUT,
+  // before it stopped writing the stage), onto a stage that is already logged with a newer entry
+  // still above it. (A correction made on /seeds/saved logs a new entry, which heads the list.)
   //
   // Worked: log (newest entry first) [stored, drying, fermenting], lot set back to `drying`.
   // currentIdx is 1, membership says "no divergence", nothing renders — and the reader sees the
@@ -113,9 +111,22 @@ export default function SeedStageHistory({
   // The shipped test could not tell the two predicates apart: its fixture is a SINGLE row, where
   // `=== -1` and `!== 0` always agree. Adding a three-row fixture is what makes this a detector
   // rather than a decoration.
-  const stageNotLogged = Boolean(currentStage) && currentIdx === -1 && rows.length > 0
+  //
+  // NOT LOGGED INCLUDES AN EMPTY HISTORY. This used to carry `&& rows.length > 0`, so a lot that
+  // has a stage and no entries at all fell through to "No processing stages recorded yet." — the
+  // sentence for a lot nobody ever staged, shown beside a lot that is, say, stored. That lot has no
+  // date to count from (the list's stage_entered_at is NULL for it), and saying nothing here left
+  // the missing "N days" on its card unexplained.
+  const stageNotLogged = Boolean(currentStage) && currentIdx === -1
   const stageBehindLog = currentIdx > 0
   const stageOffLog = stageNotLogged || stageBehindLog
+
+  // Empty means "nothing to say at all". A lot with a parent but no stages still has a chain worth
+  // one line, and a lot with a stage but no entries has the notice, so neither is empty —
+  // AsyncRegion's empty branch short-circuits children, and routing either case through it would
+  // hide the line. Error and loading still win over both (AsyncRegion's precedence), so a history
+  // that FAILED to load never reads as "no entry".
+  const isEmpty = rows.length === 0 && !hasParent && !stageNotLogged
 
   return (
     <AsyncRegion
@@ -153,16 +164,22 @@ export default function SeedStageHistory({
         </ol>
       )}
 
-      {/* Two different facts, so two different sentences. "No entry for it" tells the reader the
-          history simply does not cover where the lot is. "A newer entry above" tells them the
-          history goes FURTHER than the lot does — the pointer was moved back — which is the case
-          that otherwise renders as a current badge stranded mid-list under a newer row. "Newer",
-          not "later": rows are in entry order, so the row above can carry an EARLIER date. */}
+      {/* Two different facts, so two different sentences. "No entry for that stage" tells the
+          reader the history simply does not cover where the lot is — with other entries above it
+          or with none at all. "A newer entry above" tells them the history goes FURTHER than the
+          lot does — the pointer was moved back — which is the case that otherwise renders as a
+          current badge stranded mid-list under a newer row. "Newer", not "later": rows are in
+          entry order, so the row above can carry an EARLIER date.
+
+          The first sentence states only what this component can see: the stage the lot carries
+          and the absence of an entry for it. It does not say how the lot got there or when, and it
+          no longer says "here": nothing on this page has set a stage since
+          V5-SEEDSTAGEONEPLACE-001. */}
       {stageOffLog && (
         <p data-testid="seed-stage-off-log" style={noteInk}>
           {stageBehindLog
             ? `Set back to ${seedStageLabel(currentStage)} here — there’s a newer entry above it.`
-            : `Set to ${seedStageLabel(currentStage)} here — there’s no processing entry for it.`}
+            : `This lot is marked ${seedStageLabel(currentStage)}, but its history has no entry for that stage.`}
         </p>
       )}
 
@@ -180,7 +197,9 @@ export default function SeedStageHistory({
         </p>
       )}
 
-      {rows.length === 0 && hasParent && (
+      {/* Not beside the notice above: "none recorded yet" under "marked Stored" would be the same
+          contradiction the notice exists to remove. */}
+      {rows.length === 0 && hasParent && !stageNotLogged && (
         <p data-testid="seed-stage-none-yet" style={noteInk}>
           No processing stages recorded yet.
         </p>
