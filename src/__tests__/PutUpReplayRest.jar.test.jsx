@@ -579,6 +579,28 @@ describe('Put something up — the put-up route', () => {
     expect(draft().key).toBe(keys()[0])
   })
 
+  // The PATCH is refused because the jar was changed elsewhere (the route's own guard). Its stamp has moved —
+  // by the other writer. A PATCH that was ANSWERED with a 4xx did not land, so that moved stamp is not this door's.
+  it('the PATCH is refused with a 4xx and the jar is changed by someone else meanwhile: Save again writes NOTHING over their change — the door says it was saved earlier', async () => {
+    const table = jarTable({ onPatch: () => {
+      table.row = { ...table.row, notes: 'Jen: top shelf', updated_at: new Date().toISOString() }
+      throw apiError(409, { error: 'This was changed somewhere else — close and open it again.' })
+    } })
+    const door = await openDoor()
+    corn()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'the second tray')
+    save()
+    await failed('“Corn” is already in the Pantry — the first Save went through. This change did not save: This was changed somewhere else — close and open it again.')
+    save()
+    await answered(door, 3)
+    expect(errorText()).toBe(STALE)
+    expect(patches()).toHaveLength(1)                                          // no second PATCH
+    expect(table.row.notes).toBe('Jen: top shelf')
+    expect(door.onSaved).not.toHaveBeenCalled()
+    expect(new Set(keys()).size).toBe(1)
+  })
+
   it('the PATCH LANDED and only its answer was lost: the door says the change MAY not have saved; Save again finds the jar holding it — no second PATCH; and a FURTHER change before that Save still goes onto it (the moved stamp is this door\'s own)', async () => {
     const table = jarTable({ onPatch: (n) => (n === 1 ? 'lost' : undefined) })
     const door = await openDoor()
@@ -818,6 +840,26 @@ describe('the Walk — the put-up route', () => {
     expect(patches()).toHaveLength(2)
     expect(table.row.label).toBe('Corn, cut')
     expect(band()).toBe('✓ 1 × Corn, cut · Freeze whole')
+  })
+
+  it('the PATCH is refused with a 4xx and the jar is changed by someone else meanwhile: Save again writes nothing over their change', async () => {
+    const table = jarTable({ onPatch: () => {
+      table.row = { ...table.row, label: 'Corn (Jen)', updated_at: new Date().toISOString() }
+      throw apiError(409, { error: 'This was changed somewhere else — close and open it again.' })
+    } })
+    await startWalk()
+    corn()
+    save(); await failed()
+    typeWhat('Corn, cut')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    await waitFor(() => expect(errorText()).toMatch(/This change did not save: This was changed somewhere else/))
+    save()
+    await answered(3)
+    expect(errorText()).toBe('“Corn (Jen)” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.')
+    expect(patches()).toHaveLength(1)
+    expect(table.row.label).toBe('Corn (Jen)')
+    expect(band()).toBeNull()
   })
 
   it('the PATCH landed with its answer lost; a further change, Save: it still goes onto that jar', async () => {

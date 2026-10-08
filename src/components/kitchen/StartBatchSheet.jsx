@@ -380,10 +380,18 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
       if (todo === 'update') {
         onRow = batch
         if (batch?.id == null) throw new Error('replayed without a batch')
+        const was = putRef.current
         putRef.current = batch.id
-        const updated = await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify({
-          label: chose.label, kind: chose.kind ?? null, kind_other: chose.kind_other ?? null, recipe_ref: chose.recipe_ref ?? null,
-        }) })
+        let updated
+        try {
+          updated = await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify({
+            label: chose.label, kind: chose.kind ?? null, kind_other: chose.kind_other ?? null, recipe_ref: chose.recipe_ref ?? null,
+          }) })
+        } catch (e) {
+          // An ANSWERED 4xx did not land: if the batch's stamp has moved by the next tap, it was not this sheet.
+          if (typeof e?.status === 'number' && e.status >= 400 && e.status < 500) putRef.current = was
+          throw e
+        }
         batch = { ...batch, ...updated }
       }
       // The copied lines, keyed (a retry replays them). A refusal here leaves a batch with fewer lines,

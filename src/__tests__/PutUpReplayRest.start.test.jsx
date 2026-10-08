@@ -359,6 +359,27 @@ describe('Start a batch — a replayed create', () => {
     expect(table.row.label).toBe('Pepper mash, red')
   })
 
+  // A PUT that was ANSWERED with a 4xx did not land: a stamp that has moved since is somebody else's.
+  it('the PUT is refused with a 4xx and the batch is changed by someone else meanwhile: Start it again writes NOTHING over their change — refused', async () => {
+    const table = batchTable({ onPut: () => {
+      table.row = { ...table.row, label: 'Pepper mash (Jen)', updated_at: new Date().toISOString() }
+      throw apiError(409, 'Take the salt line out first.')
+    } })
+    const sheet = open()
+    type('start-label', 'Pepper mash')
+    await startIt(); await said(GENERIC)
+    type('start-label', 'Pepper mash, red')
+    await startIt()
+    await said(START_CHANGE_UNSAVED)
+    await startIt()
+    await answered(3)
+    await said(START_REPLAY_NOT_ON_IT)
+    expect(puts()).toHaveLength(1)                                             // no second PUT
+    expect(table.row.label).toBe('Pepper mash (Jen)')
+    expect(sheet.onStarted).not.toHaveBeenCalled()
+    expect(new Set(keys()).size).toBe(1)
+  })
+
   it('the PUT LANDED and only its answer was lost: the sheet says the change MAY not have saved; a FURTHER change, Start it: it still goes onto that batch (the moved stamp is this sheet\'s own)', async () => {
     const table = batchTable({ onPut: (n) => (n === 1 ? 'lost' : undefined) })
     const sheet = open()

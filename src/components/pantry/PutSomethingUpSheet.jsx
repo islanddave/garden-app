@@ -518,8 +518,15 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         if (todo === 'update') {
           onRow = saved
           if (saved?.id == null) throw new Error('replayed without a jar')
+          const was = patchedRef.current
           patchedRef.current = saved.id
-          saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(jarPatchOf(body)) })
+          try {
+            saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(jarPatchOf(body)) })
+          } catch (ex) {
+            // An ANSWERED 4xx did not land: if the jar's stamp has moved by the next Save, it was not this door.
+            if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500) patchedRef.current = was
+            throw ex
+          }
         }
       } else {
         const body = itemBody({ key: useKey, what, place, when: w.when, discard, notes, amount, source })

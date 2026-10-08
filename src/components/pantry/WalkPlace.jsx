@@ -538,7 +538,13 @@ function WalkGroup({
           onRow = saved
           if (saved?.id == null) throw new Error('replayed without a jar')
           setPatched(saved.id)
-          saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(jarPatchOf(body)) })
+          try {
+            saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(jarPatchOf(body)) })
+          } catch (e) {
+            // An ANSWERED 4xx did not land: if the jar's stamp has moved by the next Save, it was not this group.
+            if (typeof e?.status === 'number' && e.status >= 400 && e.status < 500) setPatched(patched)
+            throw e
+          }
         }
       } else {
         const body = itemBody({ key: useKey, what, place, when, discard })
