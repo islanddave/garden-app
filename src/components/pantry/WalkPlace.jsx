@@ -609,7 +609,12 @@ function WalkGroup({
         setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: answerLost(e) }), refresh: why.refresh })
         setRefusedSeq(s => s + 1)
         onExists?.()
-      } else { setErr(refusalOf(e, "Couldn't save it — what you entered is kept. Try again.")); setRefusedSeq(s => s + 1) }
+      } else {
+        // An ANSWERED 4xx wrote nothing, so this body is not one that may have landed: `sent` is as it was before
+        // it went — the group is not bound to a route no Save of it can be on (re-review I-A). The key stays.
+        if (answeredNo(e)) setSent(sent)
+        setErr(refusalOf(e, "Couldn't save it — what you entered is kept. Try again.")); setRefusedSeq(s => s + 1)
+      }
     } finally {
       writingRef.current = false
       setSaving(false)

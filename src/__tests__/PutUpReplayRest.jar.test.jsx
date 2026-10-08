@@ -1000,6 +1000,23 @@ describe('Put something up — the put-up route', () => {
     expect(keys()[1]).not.toBe(keys()[0])
   })
 
+  // Re-review I-A, the door's side (it already had this right; pinned so it stays so): an ANSWERED 4xx on the first
+  // create binds the door to no route — the other way goes out, under the new key.
+  it('re-review I-A — a put-up the server ANSWERED with a 400, then As is, Save: ONE item POST, saved — nothing says an earlier Save may have gone through', async () => {
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${JARS}`]: () => { throw apiError(400, { error: 'no' }) } } })
+    stableFetch.fn = fake
+    const door = await openDoor()
+    corn()
+    save(); await failed('no')
+    tap('door-method-as_is')
+    save()
+    await waitFor(() => expect(door.onSaved).toHaveBeenCalledTimes(1))
+    expect(told(door).route).toBe('item')
+    expect(posts(ITEMS)).toHaveLength(1)
+    expect(posts()).toHaveLength(1)
+    expect(keys(ITEMS)[0]).not.toBe(keys()[0])
+  })
+
   // Found twice on 2026-10-08 (the spent-key lane's S4): As is, lost; a change; refused "saved earlier"; a
   // method chip, and the put-up route answers a 4xx — which minted a NEW key although item Saves had gone out
   // under the old one; back to As is, Save: a second item.
@@ -1225,6 +1242,57 @@ describe('the Walk — the put-up route', () => {
     expect(new Set(keys()).size).toBe(1)
     expect(band()).toBeNull()
     expect(table.row.id).toBe('jar-first')
+  })
+
+  // Re-review I-A. A create the server ANSWERED with a 4xx did not land (idempotencyKey.js), so it is not a Save
+  // that "may have gone through": the group is not bound to that route, and the other way goes out.
+  it('re-review I-A — a put-up the server ANSWERED with a 400 did not land: As is, Save goes out — ONE item POST, saved, and nothing says an earlier Save may have gone through', async () => {
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${JARS}`]: () => { throw apiError(400, { error: 'That method is not one of ours.' }) } } })
+    stableFetch.fn = fake
+    await startWalk()
+    corn()
+    save()
+    await answered(1)
+    expect(errorText()).not.toBeNull()
+    expect(band()).toBeNull()
+    tap('walk-method-as_is')
+    save(); await landed()
+    expect(posts(ITEMS)).toHaveLength(1)
+    expect(posts()).toHaveLength(1)
+    expect(band()).toBe('✓ Corn · As is')
+  })
+
+  it('re-review I-A — the other way: As is ANSWERED with a 429, then a method, Save: ONE put-up POST, saved', async () => {
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: () => { throw apiError(429, { error: 'Too many at once — try again in a moment.' }) } } })
+    stableFetch.fn = fake
+    await startWalk()
+    typeWhat('Corn'); tap('walk-method-as_is')
+    save()
+    await waitFor(() => expect(posts(ITEMS)).toHaveLength(1))
+    await waitFor(() => expect(screen.getByTestId('walk-save').disabled).toBe(false))
+    expect(errorText()).not.toBeNull()
+    method('whole_freeze')
+    save(); await landed()
+    expect(posts()).toHaveLength(1)
+    expect(posts(ITEMS)).toHaveLength(1)
+    expect(band()).toBe('✓ 1 × Corn · Freeze whole')
+  })
+
+  it('re-review I-A — only the ANSWERED one is taken back: a put-up whose answer was LOST, then a changed one answered 400, then As is — still refused (the first may have gone through), nothing sent', async () => {
+    const table = jarTable({ onPost: (n) => { if (n === 2) throw apiError(400, { error: 'Not that one.' }); return undefined } })
+    await startWalk()
+    corn()
+    save(); await failed()
+    typeWhat('Corn, cut')
+    save()
+    await answered(2)
+    expect(errorText()).not.toBeNull()
+    tap('walk-method-as_is')
+    save()
+    await failed('An earlier Save of this as a put-up may have gone through. It can\'t also be saved as “As is” from here. Choose the method again and tap Save to finish that one.')
+    expect(posts(ITEMS)).toHaveLength(0)
+    expect(posts()).toHaveLength(2)
+    expect(table.row.label).toBe('Corn')
   })
 
   it('QA I-2 — the PATCH never reached the server and the jar is renamed by someone else meanwhile: Save again writes nothing over their change — the walk says it was saved earlier', async () => {
