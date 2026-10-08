@@ -410,6 +410,9 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
         onExists?.(onRow)
         return
       }
+      // An ANSWERED 4xx wrote nothing, so this body is not one that may have landed: `sent` is as it was
+      // before it went (a body that went out earlier, and may have landed then, is still in it).
+      if (typeof e?.status === 'number' && e.status >= 400 && e.status < 500) setSent(sent)
       setErr(e?.photo
         ? "Couldn't save the photo — try again, or remove it."
         : "Couldn't start it — try again. What you typed is still here.")

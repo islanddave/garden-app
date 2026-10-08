@@ -58,7 +58,7 @@ const rowOf = (body, over = {}) => ({
 // A table of one batch. The first POST that lands does so with its answer lost (`lands` — the ones before it
 // never reached the server); every POST after is answered with the row, replayed. `onPut(n)` may throw (the PUT
 // did NOT land) or return 'lost' (it landed, its answer did not come back).
-function batchTable({ first = {}, lands = 1, onPut = null } = {}) {
+function batchTable({ first = {}, lands = 1, onPut = null, onPost = null } = {}) {
   const state = { row: null, posts: 0, puts: 0 }
   fetchSpy.mockImplementation((path, o = {}) => {
     const method = o.method ?? 'GET'
@@ -66,6 +66,8 @@ function batchTable({ first = {}, lands = 1, onPut = null } = {}) {
     if (path === '/api/recipes') return Promise.resolve({ recipes: [RECIPE] })
     if (path === '/api/kitchen-batches' && method === 'POST') {
       state.posts += 1
+      const forced = onPost?.(state.posts, body)
+      if (forced !== undefined) return forced
       if (!state.row) {
         if (state.posts < lands) return lost()
         state.row = rowOf(body, first)
@@ -386,6 +388,27 @@ describe('Start a batch — a replayed create', () => {
     await waitFor(() => expect(sheet.onStarted).toHaveBeenCalledTimes(1))
     expect(puts()).toHaveLength(1)
     expect(new Set(keys()).size).toBe(1)
+  })
+
+  // An ANSWERED 4xx wrote nothing, so that body is not one that may have landed — and its start, which the
+  // server never took, does not make every later Start it look like a change of start.
+  it('a lost answer, then a changed start the server refuses with a 4xx; the start put back and the name changed, Start it: the key is kept, and the name goes onto the one batch', async () => {
+    const table = batchTable({ onPost: (n) => (n === 2 ? Promise.reject(apiError(400, 'start_anchor_kind must be one of: memory')) : undefined) })
+    const sheet = open()
+    type('start-label', 'Pepper mash')
+    await startIt(); await said(GENERIC)
+    tap('start-when-yesterday')
+    await startIt()
+    await answered(2)
+    expect(errorText()).toBe(GENERIC)
+    await waitFor(() => expect(stored()?.data?.sent).toHaveLength(1))          // the refused body is not kept as one that went out
+    tap('start-when-today'); type('start-label', 'Pepper mash, red')
+    await startIt()
+    await waitFor(() => expect(sheet.onStarted).toHaveBeenCalledTimes(1))
+    expect(new Set(keys()).size).toBe(1)
+    expect(keys()).toHaveLength(3)
+    expect(puts().map(([, b]) => b.label)).toEqual(['Pepper mash, red'])
+    expect(table.row.label).toBe('Pepper mash, red')
   })
 
   it('a double tap on Start it sends one request', async () => {
