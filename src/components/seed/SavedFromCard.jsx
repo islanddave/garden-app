@@ -36,6 +36,8 @@ import { T, inputChrome } from '../forms/formStyles.js'
 import PlantingSelect from '../forms/PlantingSelect.jsx'
 import { parentSetFacts, sourcePlantFromPlanting } from './seedParents.js'
 import { rowTitle } from './mySeedsModel.js'
+import { seedCountLabel } from './seedLots.js'
+import { addToLotAvailable } from './seedAdditions.js'
 
 // Undo ignores taps this long after it appears, so a double tap on ✕ does not undo itself.
 export const UNDO_ARM_MS = 400
@@ -383,6 +385,8 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
     }
   }
 
+  const stillSays = addToLotAvailable() && struck.length > 0
+    ? seedCountLabel(lot.seed_count, lot.seed_count_estimated) : ''
   const working = busy || countBusy
   const problem = notice ?? pageNotice ?? null
   const help = problem
@@ -443,6 +447,17 @@ export default function SavedFromCard({ lot, onLot, onName, notice: pageNotice =
             )
           })}
         </div>
+      )}
+
+      {/* V5-SEEDLOTADDITION-001 — taking a plant off the lot does not take its seed out of the count:
+          the count is one number for the whole lot, and what was added off each plant is kept with
+          the plant's link, not subtracted. So while a row is struck the card says what the lot still
+          says and leaves the number to the person who knows. Nothing to say for a lot with no count;
+          gone with the strike on Undo. */}
+      {stillSays && (
+        <p data-testid="saved-from-still-says" role="status" style={quietLine}>
+          The lot still says {stillSays}. Change the count if that is no longer right.
+        </p>
       )}
 
       {filed && (

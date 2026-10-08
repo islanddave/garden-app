@@ -180,7 +180,9 @@ export function refileSentence({ plantingName, mixName, newLotName = null }) {
 
 // ── What the form says after the tap ─────────────────────────────────────────────────────────────────
 export const ADD_CHANGED = 'This lot changed somewhere else just now. This is the latest. Tap Add to this lot if it still needs adding.'
-export const ADD_USED_UP = 'That lot is marked used up or no longer in use. Nothing was added.'
+// The last sentence is true because the lot's page can undo both things the server means by it: the
+// "All used up" toggle (or the Qty on hand field) and the Status select.
+export const ADD_USED_UP = 'That lot is marked used up or no longer in use. Nothing was added. Open the lot to change that first.'
 export const ADD_REFUSED = "Couldn't add to that lot. Nothing was changed."
 export const ADD_OFFLINE = "You're offline. Nothing was added. Your entries stay here until you're back in range."
 export const ADD_CHECKING = 'Checking whether that was added…'

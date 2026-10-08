@@ -225,7 +225,7 @@ describe('the sentence for every answer', () => {
   })
   it('the exact words', () => {
     expect(ADD_CHANGED).toBe('This lot changed somewhere else just now. This is the latest. Tap Add to this lot if it still needs adding.')
-    expect(ADD_USED_UP).toBe('That lot is marked used up or no longer in use. Nothing was added.')
+    expect(ADD_USED_UP).toBe('That lot is marked used up or no longer in use. Nothing was added. Open the lot to change that first.')
     expect(ADD_REFUSED).toBe("Couldn't add to that lot. Nothing was changed.")
   })
   it('every code the contract gives the additions route has a sentence, and none is the server\'s', () => {

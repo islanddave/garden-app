@@ -67,7 +67,7 @@ const CROP = 'sms crop b example run'
 const MIX = 'sms-variety-b-example-run + sms-variety-b2-example-run mix'
 
 const CHANGED = 'This lot changed somewhere else just now. This is the latest. Tap Add to this lot if it still needs adding.'
-const USED_UP = 'That lot is marked used up or no longer in use. Nothing was added.'
+const USED_UP = 'That lot is marked used up or no longer in use. Nothing was added. Open the lot to change that first.'
 const REFUSED = "Couldn't add to that lot. Nothing was changed."
 const OFFLINE = "You're offline. Nothing was added. Your entries stay here until you're back in range."
 const CHECKING = 'Checking whether that was added…'
