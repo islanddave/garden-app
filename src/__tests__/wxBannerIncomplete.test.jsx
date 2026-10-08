@@ -112,14 +112,22 @@ describe('BUG-WXBANNERSHOWERYCOPY-001 — missing forecast gets its own caveat, 
     expect(screen.queryByText(/could climb/)).toBeNull()
   })
 
-  it('a GENUINE showery snapshot is unchanged: Showery pattern + the could-climb note, no outage copy', () => {
+  it('a GENUINE showery snapshot is unchanged: Showery pattern + the softened note, no outage copy', () => {
     const hy = { recent_precip_in: 0.05, today_precip_in: 0.21, today_pop: 88, upcoming_precip_in: 0.95, tomorrow_precip_in: 0.74, tomorrow_pop: 63 }
     const h = stored(hy)
     expect(h.status).toMatchObject({ ok: true, uncertainty: { flag: true } })
-    card(h)
+    const { unmount } = card(h)
     expect(screen.getByText(/Showery pattern/)).toBeTruthy()
-    expect(screen.getByText(/could climb/)).toBeTruthy()
+    // tomorrow's 0.74″ sits beside it, so the note is in its short form (BUG-RAINTOMORROWMISLABEL-001)
+    expect(screen.getByText(/~0\.21″ today · 88%/)).toBeTruthy()
     expect(screen.queryByText(LEAD)).toBeNull()
+    unmount()
+    // the same day with a quiet tomorrow: the note stands alone and keeps its hedge
+    const alone = stored({ ...hy, upcoming_precip_in: 0.05, tomorrow_precip_in: 0.05, tomorrow_pop: 20 })
+    expect(alone.status).toMatchObject({ ok: true, uncertainty: { flag: true } })
+    card(alone)
+    expect(screen.getByText(/Showery pattern/)).toBeTruthy()
+    expect(screen.getByText(/~0\.21″ today · 88% — could climb/)).toBeTruthy()
   })
 
   it('stale still outranks it (one banner, not two)', () => {

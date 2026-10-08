@@ -45,6 +45,7 @@ import { PlantForm } from '../components/forms/index.js'
 import StartBatchSheet from '../components/kitchen/StartBatchSheet.jsx'
 // V4-CROPLISTORDER-001 (BD-010): crop-rank ledger write on the event save below.
 import { recordCropLog } from '../lib/cropLogLedger.js'
+import { WATER_DEPTH_DEFAULT, isWaterDepthType, waterDepthMetadata } from '../lib/waterDepth.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
@@ -488,6 +489,8 @@ export default function CaptureFlow() {
         if (!pl) throw new Error('Pick a planting')
         const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify({
           project_id: pl.project_id ?? null, plant_id: pl.id, event_type: evType, event_date: evDate, is_public: true,
+          // BUG-WATERDEPTHSINGLEEVENT-001: no depth chip here, so a watering records that the default wrote it.
+          ...(isWaterDepthType(evType) ? { metadata: waterDepthMetadata(WATER_DEPTH_DEFAULT, false) } : {}),
         }) })
         // V4-CROPLISTORDER-001 (BD-010): the event row exists — mark the crop's log day for
         // picker chip ranking (falsy/unresolvable slug is a silent no-op inside the ledger).

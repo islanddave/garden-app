@@ -478,9 +478,9 @@ describe('Put something up — the item route', () => {
     expect(second.onExists).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('door-what-name').value).toBe('Eggs')
     expect(screen.getByTestId('door-save').disabled).toBe(false)
-    // The key that names "Oat milk" is KEPT, with what went out under it: the draft still holds both.
-    await waitFor(() => expect(draft()).toMatchObject({ key: keys()[0], what: { name: 'Eggs' } }))
-    expect(draft().sent).toHaveLength(2)
+    // The key that names "Oat milk" is KEPT by the door that is open: the Saves below go out under it. The STORED
+    // draft ended with the refusal and is not written back (pre-promote I-1; PutUpSpentKey.test.jsx).
+    await waitFor(() => expect(draft()).toBeNull())
     save()
     await waitFor(() => expect(posts()).toHaveLength(3))
     await waitFor(() => expect(screen.getByTestId('door-save').disabled).toBe(false))
@@ -492,7 +492,8 @@ describe('Put something up — the item route', () => {
     expect(new Set(keys()).size).toBe(1)                                       // ZERO creates under a new key
     expect(otherWrites()).toEqual([])
     expect(second.onSaved).not.toHaveBeenCalled()
-    expect(draft()).toMatchObject({ key: keys()[0], what: { name: 'Eggs' } })
+    expect(screen.getByTestId('door-what-name').value).toBe('Eggs')
+    expect(draft()).toBeNull()
   })
 
   // QA Q3 (D4). The first body never reached the server; the changed one landed with its answer lost; the door
@@ -566,7 +567,10 @@ describe('Put something up — the item route', () => {
     Object.defineProperty(panel, 'scrollTop', { configurable: true, get: () => top, set: (v) => { top = v } })
     asIs()
     save(); await failed()
-    expect(broughtIntoView(on, 'door-error')).toBe(false)                      // an ordinary failure is not moved to
+    // BUG-PUTUPSAVEFAILHIDDEN-001: the ordinary failure is the same last line under the same pinned Save.
+    await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+    expect(top).toBe(98)
+    on.length = 0; top = 0
     tap('door-from'); typeInto('door-notes', 'the second carton')
     save()
     await answered(door, 2)
@@ -578,6 +582,23 @@ describe('Put something up — the item route', () => {
     on.length = 0
     save()
     await waitFor(() => expect(posts()).toHaveLength(3))
+    await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+  })
+
+  // BUG-PUTUPSAVEFAILHIDDEN-001, measured in Chrome at 426x836: the failure line sat at y771-786 under the
+  // pinned Save (top y755), and nothing on screen changed after the tap.
+  it('a Save that fails the ordinary way is brought into view, and so is the same failure again; the line keeps 8 px under it at the scroller\'s end', async () => {
+    const on = watchScrolls()
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: LOST } }); stableFetch.fn = fake
+    await openDoor()
+    asIs()
+    save(); await failed()
+    await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+    expect(screen.getByTestId('door-error').parentElement.style.marginBottom).toBe('8px')
+    on.length = 0
+    save()
+    await waitFor(() => expect(posts()).toHaveLength(2))
+    await failed()
     await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
   })
 
@@ -630,8 +651,15 @@ describe('Put something up — the item route', () => {
     expect(onSaved).not.toHaveBeenCalled()
     expect(onExists).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('door-notes').value).toBe('the second carton')
-    await waitFor(() => expect(draft()).toMatchObject({ key: keys()[0], notes: 'the second carton' }))
-    expect(draft().sent).toHaveLength(2)
+    // KEPT by the door that is open: Save again goes out under it. The stored draft ended with the refusal
+    // (pre-promote I-1; PutUpSpentKey.test.jsx).
+    await waitFor(() => expect(draft()).toBeNull())
+    save()
+    await waitFor(() => expect(posts()).toHaveLength(3))
+    await waitFor(() => expect(screen.getByTestId('door-save').disabled).toBe(false))
+    expect(new Set(keys()).size).toBe(1)
+    expect(otherWrites()).toEqual([])
+    expect(draft()).toBeNull()
   })
 
   it('B1 — the same door, but the item was made longer ago than the bound (the sheet sat open): NOTHING is written', async () => {
@@ -917,6 +945,20 @@ describe('the Walk — the item route', () => {
     save(); await landed()
     expect(new Set(keys()).size).toBe(1)
     expect(patches()).toHaveLength(2)
+  })
+
+  it('BUG-PUTUPSAVEFAILHIDDEN-001 — a Save that fails the ordinary way is brought into view, and so is the same failure again', async () => {
+    const on = watchScrolls()
+    fake = pantryFetch({ rows: [], overrides: { [`POST ${ITEMS}`]: LOST } }); stableFetch.fn = fake
+    await startWalk()
+    typeWhat('Oat milk'); tap('walk-method-as_is')
+    save(); await failed()
+    await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
+    on.length = 0
+    save()
+    await waitFor(() => expect(posts()).toHaveLength(2))
+    await failed()
+    await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
   })
 
   it('B1 / Q3 — an item made longer ago than the bound (the walk sat a while), the name changed, Save: NOTHING is written; the walk says so, brings the line into view and KEEPS the key — Save again is refused again: no second item, no create under a new key', async () => {

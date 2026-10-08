@@ -448,9 +448,9 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     expect(screen.getByTestId('recipe-save').disabled).toBe(false)
     expect(screen.getByTestId('recipe-sheet-error').getAttribute('role')).toBe('alert')
     await waitFor(() => expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(true))
-    // The key that names "Mojo" is KEPT, with what went out under it: the draft still holds both.
-    await waitFor(() => expect(draft()).toMatchObject({ key: keys(PATH)[0], name: 'Chimichurri', notes: 'parsley, not cilantro' }))
-    expect(draft().sent).toHaveLength(2)
+    // The key that names "Mojo" is KEPT by the sheet that is open: the Saves below go out under it. The STORED
+    // draft ended with the refusal and is not written back (pre-promote I-1; PutUpSpentKey.test.jsx).
+    await waitFor(() => expect(draft()).toBeNull())
     for (const nth of [3, 4]) {
       on.length = 0
       await save()
@@ -461,7 +461,8 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     expect(new Set(keys(PATH)).size).toBe(1)                                   // ZERO creates under a new key
     expect(otherWrites(PATH)).toEqual([])
     expect(second.onSaved).not.toHaveBeenCalled()
-    expect(draft()).toMatchObject({ key: keys(PATH)[0], name: 'Chimichurri' })
+    expect(screen.getByTestId('recipe-name').value).toBe('Chimichurri')
+    expect(draft()).toBeNull()
   })
 
   // QA Q3 (D4). The first body never reached the server; the changed one landed with its answer lost; the sheet
@@ -496,13 +497,29 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     expect(draft()).toBeNull()
   })
 
+  // BUG-PUTUPSAVEFAILHIDDEN-001, measured in Chrome at 426x836: the failure line's last 3 px were under the pinned Save.
+  it('a Save that fails the ordinary way is brought into view, and so is the same failure again', async () => {
+    const on = watchScrolls()
+    wire({ [`POST ${PATH}`]: LOST })
+    mount()
+    type('recipe-name', 'Mojo')
+    await save(); await failed()
+    await waitFor(() => expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(true))
+    on.length = 0
+    await save()
+    await waitFor(() => expect(posts(PATH)).toHaveLength(2))
+    await failed()
+    await waitFor(() => expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(true))
+  })
+
   it('Q2 — a change that did not save is brought into view too', async () => {
     const on = watchScrolls()
     lostThenReplayed(() => { throw apiError(503, { error: 'boom' }) })
     mount()
     type('recipe-name', 'Mojo')
     await save(); await failed()
-    expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(false)              // an ordinary failure is not moved to
+    await waitFor(() => expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(true))   // BUG-PUTUPSAVEFAILHIDDEN-001
+    on.length = 0
     type('recipe-name', 'Mojo verde')
     await save()
     await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — the first Save went through. This change did not save: boom'))
@@ -700,6 +717,20 @@ describe('Save as recipe — POST /api/recipes/from-batch/:id, then PATCH /api/r
     })
   }
   const MAYBE = 'Already saved as a recipe: “Settlers of Cayenne” — the first Save went through. The new name may not have saved — try again.'
+
+  it('BUG-PUTUPSAVEFAILHIDDEN-001 — a Save that fails the ordinary way is brought into view, and so is the same failure again', async () => {
+    const on = watchScrolls()
+    wire({ [`POST ${PATH}`]: LOST })
+    mount()
+    tap('batch-save-as-recipe')
+    await save(); await failed()
+    await waitFor(() => expect(broughtIntoView(on, 'batch-save-as-recipe-error')).toBe(true))
+    on.length = 0
+    await save()
+    await waitFor(() => expect(posts(PATH)).toHaveLength(2))
+    await failed()
+    await waitFor(() => expect(broughtIntoView(on, 'batch-save-as-recipe-error')).toBe(true))
+  })
 
   it('Q1 / Q3 — the rename LANDED and only its answer was lost: the row says it MAY not have saved (in view); Save again finds the recipe already under that name and is a save — no second PATCH, the same key', async () => {
     const on = watchScrolls()
@@ -917,13 +948,28 @@ describe('How it was made — POST /api/kitchen-batches/from-jars, then PUT /api
     })
   }
 
+  it('BUG-PUTUPSAVEFAILHIDDEN-001 — a Save that fails the ordinary way is brought into view, and so is the same failure again', async () => {
+    const on = watchScrolls()
+    wire({ 'GET /api/preservation/whats-put-up': () => ({ groups: [{ label: 'Fridge', records: [JAR] }] }), [`POST ${PATH}`]: LOST })
+    mount()
+    await loaded()
+    await save(); await failed()
+    await waitFor(() => expect(broughtIntoView(on, 'how-error')).toBe(true))
+    on.length = 0
+    await save()
+    await waitFor(() => expect(posts(PATH)).toHaveLength(2))
+    await failed()
+    await waitFor(() => expect(broughtIntoView(on, 'how-error')).toBe(true))
+  })
+
   it('Q1 / Q3 — the PUT LANDED and only its answer was lost: the sheet says the change MAY not have saved (in view); Save again finds the batch already under that name and is a save — no second PUT, the same key, closed', async () => {
     const on = watchScrolls()
     putLandsAnswerLost()
     const { onClose, onSaved } = mount()
     await loaded()
     await save(); await failed()
-    expect(broughtIntoView(on, 'how-error')).toBe(false)                       // an ordinary failure is not moved to
+    await waitFor(() => expect(broughtIntoView(on, 'how-error')).toBe(true))   // BUG-PUTUPSAVEFAILHIDDEN-001
+    on.length = 0
     type('how-label', 'Megatron plain, 2026')
     await save()
     await waitFor(() => expect(screen.getByTestId('how-error').textContent).toBe(REPLAY_CHANGE_MAYBE))

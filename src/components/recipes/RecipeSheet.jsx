@@ -10,7 +10,9 @@
 // untouched since) the sheet PATCHes what it holds onto it before it closes — the PATCH replaces the whole
 // line set, which is why it goes nowhere else. Otherwise NOTHING is written: the sheet says it was saved
 // earlier and this Save changed nothing (recipeStaleText) and KEEPS the key, so Save again is refused again
-// and can never make a second recipe. A PATCH that fails is said as what it is — the recipe is there, the
+// and can never make a second recipe. That refusal ends the STORED draft (`spent`): the first Save landed, so
+// the sheet closed and opened again, or reloaded, is an empty one and what is typed there is a new recipe
+// under a new key. A PATCH that fails is said as what it is — the recipe is there, the
 // change did not save (recipeUnsavedText). Both tell the page (`onExists`) and are brought into view above
 // the pinned Save. Before either, a recipe that already holds what the sheet shows is a save, with nothing
 // written (recipes.js recipeHolds). What has gone out under the key rides in the draft as `sent`, from the
@@ -114,6 +116,10 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   // Set once a save lands: the draft is cleared then, and nothing may write it back before the sheet unmounts
   // (a Save now changes the draft as it sends).
   const savedRef = useRef(false)
+  // Set by a "saved earlier" refusal (pre-promote I-1): the first Save landed, so the STORED draft has done its
+  // job. It is taken out of storage and not written back — the sheet opened next, after a close or a reload,
+  // is an empty one with no key — while THIS sheet keeps its key and `sent`: Save again is refused again.
+  const [spent, setSpent] = useState(false)
   const base = useRef(JSON.stringify(editing ? draftFromRecipe(recipe) : emptyDraft()))
   const linesRef = useRef(null)
   const placesRef = useRef(null)
@@ -122,7 +128,8 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   // and again when the keyboard resizes the viewport (kitchen/sheetScroll.js, as Put it up uses it).
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
-  // A replay refusal is the last line of the scroller, under the pinned Save: each is brought into view.
+  // A replay refusal or a failed Save is the last line of the scroller, under the pinned Save: each is
+  // brought into view (counted, so the same failure twice is brought into view twice).
   const errRef = useRef(null)
   const [refusedSeq, setRefusedSeq] = useState(0)
   useEffect(() => {
@@ -144,9 +151,9 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
 
   useEffect(() => {
     if (!draftKey || savedRef.current) return
-    if (dirty) writeSheetDraft(draftKey, RECIPE_SHEET, d)
+    if (dirty && !spent) writeSheetDraft(draftKey, RECIPE_SHEET, d)
     else clearSheetDraft(draftKey)
-  }, [draftKey, dirty, d])
+  }, [draftKey, dirty, d, spent])
   // The create's key: minted when the sheet is first dirty, kept in the draft, reused on every retry.
   useEffect(() => { if (!editing && dirty && !d.key) setD(x => ({ ...x, key: mintKey() })) }, [editing, dirty, d.key])
 
@@ -208,6 +215,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
           // Nothing is written, and the key is KEPT: Save again is this refusal again, never a second recipe.
           writingRef.current = false
           setSaving(false)
+          setSpent(true)
           setErr(recipeStaleText(answer?.recipe))
           setRefusedSeq(s => s + 1)
           onExists?.()
@@ -235,6 +243,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
         return
       }
       setErr(e?.body?.error ? `Couldn't save it: ${e.body.error}` : "Couldn't save it — try again. What you typed is still here.")
+      setRefusedSeq(s => s + 1)
     }
   }
 

@@ -6,7 +6,7 @@
 //   node scripts/layout-gate/today-shape-v2.mjs --self-test      # arm every check against an EMPTY V2; must red the census
 //   node scripts/layout-gate/today-shape-v2.mjs --record         # write the v2 budget for the ARMED floors (clean tree only)
 //
-// WHAT IT IS. The plan-v2 §9.1 contract — 20 states, assertions (a)–(m), the REGIONS map — held as DATA in
+// WHAT IT IS. The plan-v2 §9.1 contract — 21 states, assertions (a)–(m), the REGIONS map — held as DATA in
 // tests/harness/_todaymeasure/today-v2-contract.mjs and run here against tests/harness/todaymeasure.html?v2=1
 // (the real TodayRoute chooser under the real AuthProvider and PrefsProvider, only the wire stubbed), served by
 // tests/harness/vite.harness.v2.mjs. A NEW script: scripts/layout-gate/today-shape.mjs (v1) stays byte-identical
@@ -274,6 +274,9 @@ const MEASURE = `(() => {
     prefsLoaded: (d.querySelector('[data-prefs-loaded]') || { getAttribute: () => null }).getAttribute('data-prefs-loaded'),
     sections, regions, testidCounts, firstBoxes, closedSpots, counts, spotCtl, groupBulk, careSummary, sowRowText,
     glance: glanceEl ? { ...box(glanceEl), shown: shown(glanceEl), expanded: glanceToggle ? glanceToggle.getAttribute('aria-expanded') : null, stale: !!glanceEl.querySelector('[data-stale="true"]') } : null,
+    // The closed card's rain row (row B): each note's words and its unrounded box, and the row's own box.
+    glanceRain: (() => { const row = glanceEl ? glanceEl.querySelector(tid('glance-rain')) : null; if (!row) return null; const rr = row.getBoundingClientRect(); const cw = parseFloat(w.getComputedStyle(row).columnGap) || 0
+      return { top: rr.top + sy, h: rr.height, w: rr.width, gap: cw, notes: [...row.children].map(el => { const r = el.getBoundingClientRect(); return { text: (el.textContent || '').trim(), top: r.top + sy, h: r.height, w: r.width, right: r.right - rr.left } }) } })(),
     verdict, textFit, bar: bar ? { ...box(bar), sw: bar.scrollWidth, cw: bar.clientWidth, ox: w.getComputedStyle(bar).overflowX, chips } : null,
     weather: all(tid('today-weather')).length,
     fingerprints: [...fps], fontSizes: [...fonts], cards: cards.length, cardNest,
@@ -347,6 +350,21 @@ const CHECKERS = {
         if (r.t < 0 || r.b > FIRST_SCREEN) { F(`'${id}' text paints at y=${r.t}..${r.b}, not inside the first screen [0, ${FIRST_SCREEN})`); break }
       }
     }
+  },
+  // BUG-RAINTOMORROWMISLABEL-001 (b): the rain row's notes, word for word, all on ONE row — every note starts at
+  // the row's top and the row is no taller than its tallest note. A second row is 17.5px that moves Needs care
+  // past the first screen (measured 814 against 800), so first-screen reds with it; this names the cause.
+  'glance-rain': (m, c, F) => {
+    const g = m.glanceRain
+    if (!g) { F('no rain row (glance-rain) in the closed glance card'); return }
+    const got = g.notes.map(n => n.text)
+    if (JSON.stringify(got) !== JSON.stringify(c.notes)) F(`the rain row reads ${JSON.stringify(got)}, the contract says ${JSON.stringify(c.notes)}`)
+    if (!g.notes.length) return
+    const tallest = Math.max(...g.notes.map(n => n.h))
+    const wrapped = g.notes.filter(n => Math.abs(n.top - g.notes[0].top) > 0.5)
+    const used = g.notes.reduce((a, n) => a + n.w, 0) + g.gap * (g.notes.length - 1)
+    if (wrapped.length || g.h > tallest + 0.5) F(`the rain row wraps: ${g.notes.length} note(s) need ${used.toFixed(2)}px in a ${g.w.toFixed(2)}px row and it is ${g.h.toFixed(2)}px tall against a ${tallest.toFixed(2)}px note (${wrapped.map(n => JSON.stringify(n.text)).join(', ') || 'none'} on a later row)`)
+    else if (c.spareMin != null && g.w - used < c.spareMin) F(`the rain row has ${(g.w - used).toFixed(2)}px to spare, under the ${c.spareMin}px the contract asks for`)
   },
   glance: (m, c, F) => {
     if (c.present === false) { if (m.glance) F('a glance card rendered in a state with no plan'); return }
@@ -1193,6 +1211,7 @@ try {
     else pinned = pin.source
     if (budget?.font && pin?.ok && pin.source !== budget.font) fail(at, 'instrument', `the harness pins ${pin.source}, the v2 budget was recorded in ${budget.font} — re-record, never compare across fonts`)
     if (!m.harness.weatherStubbed) fail(at, 'instrument', 'Open-Meteo was NOT stubbed')
+    if ((v2.wx === 'state') !== !!state.wx) fail(at, 'instrument', `the weather stub served the ${v2.wx} numbers, the contract row ${state.wx ? 'carries its own (wx)' : 'carries none'}`)
     for (const p of m.harness.liveRequests || []) fail(at, 'instrument', `a third-party request ESCAPED the harness to the live network — ${p}`)
     for (const f of m.harness.fixtures.filter(f => !f.ok || f.bytes === 0)) fail(at, 'fixture', `fixture ${f.name} is unusable (${f.why || 'zero bytes'})`)
     for (const need of ['v2-grafts.json', 'locations.full.json', state.prefs]) if (!m.harness.fixtures.some(f => f.name === need && f.ok)) fail(at, 'fixture', `fixture ${need} was not loaded — the state is not the one the contract names`)
@@ -1231,7 +1250,7 @@ try {
     const TRAY = /painted 1 glyph\(s\) of "(More ▾|Less ▴)"$/
     for (const v of census.violations.filter(x => !TRAY.test(x)).slice(0, 3)) fail(at, 'instrument', `a HOST font painted text the Roboto pin should own — ${v}`)
 
-    console.log(`[today-shape-v2] ${at}: route ${v2.route} · ${armed.length} armed / ${pend.length} PENDING check(s) · prefs GET ×${m.harness.prefsGets} (${v2.prefs.fixture}${v2.prefs.delayMs ? `, +${v2.prefs.delayMs}ms` : ''}) · seeds ${v2.seeds.join(', ')} · plan ${v2.planDate}${v2.grafts.length ? ` · grafts ${v2.grafts.join('+')}` : ''} · ${m.scrollHeight}px, content ends y=${m.contentBottom}, ${m.controls} controls · sections [${m.sections.map(s => `${s.key}:${s.header?.expanded ?? '?'}`).join(' ')}]`)
+    console.log(`[today-shape-v2] ${at}: route ${v2.route} · ${armed.length} armed / ${pend.length} PENDING check(s) · prefs GET ×${m.harness.prefsGets} (${v2.prefs.fixture}${v2.prefs.delayMs ? `, +${v2.prefs.delayMs}ms` : ''}) · seeds ${v2.seeds.join(', ')} · plan ${v2.planDate}${v2.grafts.length ? ` · grafts ${v2.grafts.join('+')}` : ''}${m.glanceRain?.notes.length ? ` · rain row ${m.glanceRain.notes.map(n => `"${n.text}" ${n.w.toFixed(2)}`).join(' + ')} in ${m.glanceRain.w.toFixed(2)} (gap ${m.glanceRain.gap}, row ${m.glanceRain.h.toFixed(2)} tall)` : ''} · ${m.scrollHeight}px, content ends y=${m.contentBottom}, ${m.controls} controls · sections [${m.sections.map(s => `${s.key}:${s.header?.expanded ?? '?'}`).join(' ')}]`)
     if (isArmed({ armedAt: 'S2' }, LANDED, false) && !SELF_TEST && !PROBE_NOTHING) recorded[state.name] = {
       clock: state.clock,
       contentBottomFloor: Math.round(m.contentBottom * 0.99),

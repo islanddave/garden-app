@@ -24,8 +24,12 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
-    testTimeout: 30000,
-    hookTimeout: 20000,
+    // Raised 2026-10-08 (30 s / 20 s before). Two runs in one day (37779684569, 37789121447) went red on a
+    // beforeAll or a single test that stalled against the ephemeral Neon branch, on commits that touched no code
+    // under test; both passed on re-run. One stall on record exceeded 30 s, so this narrows the flake and does not
+    // prove it gone. No `retry`: a retried write test can pass over a real double-write.
+    testTimeout: 60000,
+    hookTimeout: 45000,
     include: ['tests/integration/**/*.int.test.js'],
     // BUG-INTFIXTURELEAK-001. Per-file afterAll() is best-effort: it is skipped when beforeAll
     // throws, when a file fails to import, or when the run is cancelled. globalSetup's teardown runs

@@ -268,6 +268,38 @@ describe('Put it up — the one keyed write', () => {
     expect(bodyOf(putUps()[1]).idempotency_key).toBe(bodyOf(putUps()[0]).idempotency_key)
   })
 
+  // BUG-PUTUPSAVEFAILHIDDEN-001: the failure line is the last line of the scroller, under the pinned footer.
+  it('a failed write is brought into view and scrolled clear of the pinned footer, and so is the same failure again', async () => {
+    const on = []
+    Element.prototype.scrollIntoView = function scrollIntoView() { on.push(this) }
+    const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+      const box = (top, bottom) => ({ top, bottom, left: 0, right: 400, width: 400, height: bottom - top, x: 0, y: top })
+      if (this.getAttribute?.('data-testid') === 'putup-footer') return box(700, 780)
+      if (this.getAttribute?.('data-testid') === 'putup-error') return box(730, 745)
+      return box(0, 0)
+    })
+    try {
+      wire({ putUp: () => Promise.reject(new TypeError('Failed to fetch')) })
+      await openPutUp()
+      await fillMinimum()
+      const panel = sheet().closest('[role=dialog]')
+      let top = 0
+      Object.defineProperty(panel, 'scrollTop', { configurable: true, get: () => top, set: (v) => { top = v } })
+      await tap('putup-finish')
+      await waitFor(() => expect(screen.getByTestId('putup-error').textContent).toBe(
+        "Couldn't put it up — try again. Everything you entered is still here."))
+      await waitFor(() => expect(on).toContain(screen.getByTestId('putup-error')))
+      expect(top).toBe(53)                                                     // 745 + the 8 px gap − 700
+      on.length = 0
+      await tap('putup-finish')
+      await waitFor(() => expect(putUps()).toHaveLength(2))
+      await waitFor(() => expect(on).toContain(screen.getByTestId('putup-error')))
+    } finally {
+      rects.mockRestore()
+      delete Element.prototype.scrollIntoView
+    }
+  })
+
   it('refuses a Save with no place, in words, and writes nothing', async () => {
     await openPutUp()
     await tap('putup-when-today')

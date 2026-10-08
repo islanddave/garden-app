@@ -419,7 +419,8 @@ describe('PutUp ↔ registerSW end to end', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save put-up' }))
     await screen.findByText(/Now in/i)
-    expect(env.reload).toHaveBeenCalledTimes(1)
+    // The held reload is released by a passive effect, which can run after the line that paints.
+    await waitFor(() => expect(env.reload).toHaveBeenCalledTimes(1))
     teardown()
   })
 })

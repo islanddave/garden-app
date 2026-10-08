@@ -128,6 +128,36 @@ describe('R8 — the write body', () => {
     expect(CARE_INPUT_SOURCE).toBe('voice')
   })
 
+  // BUG-WATERDEPTHSINGLEEVENT-001 — a spoken "water all …" names no amount, so every row records
+  // that the default wrote it. The fertilizing body above is the guard on the gate: no depth keys.
+  it('a watering batch carries the default depth beside the voice marker', async () => {
+    const plan = await prepare('water all pasture in ground', fakeApi().apiFetch)
+    const body = careWriteBody(plan)
+    expect(body.event_type).toBe('watering')
+    expect(body.metadata).toEqual({
+      care_input_source: 'voice', water_depth: 'normal', water_depth_source: 'default',
+    })
+    // The shipped validator accepts it, and the server merge keeps all three under its batch keys.
+    expect(validateBatchBody({ ...body, idempotency_key: '9b2d1c4e-0000-4000-8000-000000000002' })).toBeNull()
+    const { defaultMetadata } = buildBatchMetadataPlan({
+      batchId: 'batch-w', metadata: body.metadata, plantMetadata: undefined, plantIds: body.scope.plant_ids,
+    })
+    expect(defaultMetadata).toEqual({
+      care_input_source: 'voice', water_depth: 'normal', water_depth_source: 'default',
+      batch_id: 'batch-w', batch_v: 1,
+    })
+  })
+
+  it('writeCarePlan puts that same watering body on the wire', async () => {
+    const { apiFetch, calls } = fakeApi()
+    const plan = await prepare('water all pasture in ground', apiFetch)
+    await writeCarePlan(apiFetch, plan)
+    const write = calls.find(c => c.body && !c.body.dry_run)
+    expect(write.body.metadata).toEqual({
+      care_input_source: 'voice', water_depth: 'normal', water_depth_source: 'default',
+    })
+  })
+
   it('passes the SHIPPED server validator, and the marker survives the server metadata merge', async () => {
     // lambda/events/validators.js — the functions the events Lambda runs on this exact body. Nothing
     // in the app has ever sent care_input_source, so this is the only evidence the server keeps it.
