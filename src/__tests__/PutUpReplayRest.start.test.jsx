@@ -638,6 +638,120 @@ describe('Start a batch — a replayed create', () => {
     expect(puts()).toHaveLength(1)                                             // the one that failed
   })
 
+  // Re-review I-C (the reviewer's S6; live before this work). A replay the rule reads as "saved as sent" — ONE body
+  // under the key, or a batch that already holds the form — went on to send the copied lines and the recipe's jar
+  // from the form with no check that the batch is this sitting's. Now it has the check the refused path has.
+  const HIS_JAR = { vessel_label: 'Quart jar', vessel_size: '1', vessel_unit: 'qt', vessel_count: 2 }
+  const jarDraft = () => { const raw = localStorage.getItem(JAR_DRAFT_KEY); return raw ? JSON.parse(raw) : null }
+  it('re-review I-C (S6) — Make this lands with its answer lost and the sheet is closed; the cook sets ANOTHER jar on that batch; Make this again most of a day later (the stored draft comes back), Start it: the recipe\'s jar is NOT put over his — nothing is written, the sheet says so, and the stored draft is ended', async () => {
+    const table = batchTable()
+    const first = open({ recipe: JAR_RECIPE })
+    await startIt(); await said(GENERIC)
+    await waitFor(() => expect(jarDraft()?.data?.sent).toHaveLength(1))
+    first.unmount()
+    table.row = { ...table.row, ...HIS_JAR, ...stamps(20 * 60 * 60 * 1000, 19 * 60 * 60 * 1000) }
+    const before = { ...table.row }
+    const second = open({ recipe: JAR_RECIPE })
+    expect(screen.getByTestId('start-label').value).toBe('Roll for Initiative')  // it looks like a fresh Make this
+    await startIt()
+    await answered(2)
+    await said(startRefusalText({ jar: 'not' }))
+    expect(otherWrites()).toEqual([])
+    expect(table.row).toEqual(before)
+    expect(second.onStarted).not.toHaveBeenCalled()
+    expect(second.onExists).toHaveBeenCalledTimes(1)
+    expect(new Set(keys()).size).toBe(1)
+    await waitFor(() => expect(jarDraft()).toBeNull())
+    await startIt()                                                             // tapped again: the same refusal, still nothing written
+    await answered(3)
+    await said(startRefusalText({ jar: 'not' }))
+    expect(otherWrites()).toEqual([])
+  })
+
+  it('re-review I-C — the same sheet, minutes later, but the batch was TOUCHED by someone else meanwhile (they set a jar): one body under the key, so nothing to refuse on the form — and still the recipe\'s jar is not put over theirs', async () => {
+    const table = batchTable()
+    const sheet = open({ recipe: JAR_RECIPE })
+    await startIt(); await said(GENERIC)
+    table.row = { ...table.row, ...HIS_JAR, updated_at: new Date().toISOString() }
+    const before = { ...table.row }
+    await startIt()
+    await answered(2)
+    await said(startRefusalText({ jar: 'not' }))
+    expect(otherWrites()).toEqual([])
+    expect(table.row).toEqual(before)
+    expect(sheet.onStarted).not.toHaveBeenCalled()
+  })
+
+  it('re-review I-C — a restored draft with a past batch picked over it: the copied lines are NOT added to a batch that is not this sitting\'s, and the sheet says so', async () => {
+    const table = batchTable()
+    const first = open()
+    type('start-label', 'Pepper mash')
+    tap('start-kind-toggle'); tap('start-kind-ferment')
+    await startIt(); await said(GENERIC)
+    await waitFor(() => expect(stored()?.data?.sent).toHaveLength(1))
+    first.unmount()
+    const second = open()
+    await pickPast()                                                            // fills nothing (the name and the kind are there): the form is the body that went out
+    await startIt()
+    await answered(2)
+    await said(startRefusalText({ lines: 'not' }))
+    expect(linePosts()).toHaveLength(0)
+    expect(table.lines).toHaveLength(0)
+    expect(puts()).toEqual([])
+    expect(second.onStarted).not.toHaveBeenCalled()
+  })
+
+  it('re-review I-C — the ordinary retry is unchanged: Make this, the answer lost, Start it again from the SAME sheet — this sitting\'s batch, untouched: it lands, with the recipe\'s jar on it', async () => {
+    const table = batchTable()
+    const sheet = open({ recipe: JAR_RECIPE })
+    await startIt(); await said(GENERIC)
+    await startIt()
+    await waitFor(() => expect(sheet.onStarted).toHaveBeenCalledTimes(1))
+    expect(puts()).toEqual([JAR_PUT])
+    expect(table.row).toMatchObject({ vessel_label: 'Half-gallon jar', vessel_count: 1 })
+    expect(new Set(keys()).size).toBe(1)
+  })
+
+  it('re-review I-C — and a first-time Make this (no replay at all) puts the recipe\'s jar on, as it always has', async () => {
+    fetchSpy.mockImplementation((path, o = {}) => {
+      if (path === '/api/kitchen-batches' && o.method === 'POST') return Promise.resolve(rowOf(JSON.parse(o.body)))
+      if (o.method === 'PUT') return Promise.resolve({ ...JSON.parse(o.body) })
+      return Promise.resolve(null)
+    })
+    const sheet = open({ recipe: JAR_RECIPE })
+    await startIt()
+    await waitFor(() => expect(sheet.onStarted).toHaveBeenCalledTimes(1))
+    expect(puts()).toEqual([JAR_PUT])
+  })
+
+  it('re-review I-C — a restored draft with NOTHING to follow (a plain start), Start it untouched: it lands on the batch as before — nothing written, nothing to say', async () => {
+    const table = batchTable()
+    const first = open()
+    type('start-label', 'Pepper mash')
+    await startIt(); await said(GENERIC)
+    await waitFor(() => expect(stored()?.data?.sent).toHaveLength(1))
+    first.unmount()
+    table.row = { ...table.row, ...stamps(20 * 60 * 60 * 1000, 19 * 60 * 60 * 1000) }
+    const second = open()
+    await startIt()
+    await waitFor(() => expect(second.onStarted).toHaveBeenCalledTimes(1))
+    expect(otherWrites()).toEqual([])
+    expect(second.onStarted.mock.calls[0][0]).toMatchObject({ id: 'kb-first', replayed: true })
+  })
+
+  it('re-review I-C — a restored Make this draft whose batch ALREADY holds the recipe\'s jar: nothing to send and nothing to say — it lands', async () => {
+    const table = batchTable()
+    const first = open({ recipe: JAR_RECIPE })
+    await startIt(); await said(GENERIC)
+    await waitFor(() => expect(jarDraft()?.data?.sent).toHaveLength(1))
+    first.unmount()
+    table.row = { ...table.row, ...JAR_PUT[1], ...stamps(20 * 60 * 60 * 1000, 19 * 60 * 60 * 1000) }
+    const second = open({ recipe: JAR_RECIPE })
+    await startIt()
+    await waitFor(() => expect(second.onStarted).toHaveBeenCalledTimes(1))
+    expect(otherWrites()).toEqual([])
+  })
+
   it('a double tap on Start it sends one request', async () => {
     batchTable()
     open()

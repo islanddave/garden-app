@@ -66,6 +66,11 @@
 //   · the batch is not this sitting's ('stale'), or which pick the landed tap had is not known → nothing is sent.
 // Either way the sentence says what this tap did and what was left off (startRefusalText), and a change whose
 // PUT failed says what did not follow it (startUnsavedText).
+// A REPLAY THAT NEEDS NOTHING PUT ON IT IS HELD TO THE SAME TEST (re-review I-C). One body under the key, or a
+// batch that already holds the form, is "started, as sent" — and may still be an earlier sitting's batch (a
+// stored Make this draft tapped again most of a day on) or one somebody has written to since. The lines and the
+// jar are then not this tap's to add: neither is sent, and when one of them is missing from the batch the sheet
+// stays and says so in the refusal's own words. With nothing left off there is nothing to say, and it lands.
 //
 // <Sheet armsBack>, size full; the draft survives a dismiss (kitchen/sheetDraft.js, sheet 'start',
 // batch 'new'); confirmOnDirty off; the reload gate is held while anything is typed or a write is in
@@ -88,7 +93,7 @@ import { readSheetDraft, writeSheetDraft, clearSheetDraft } from './sheetDraft.j
 import { useSheetDraftKey } from './useSheetDraftKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter } from './sheetScroll.js'
 import { readCaptureMeta } from '../../lib/imagePipeline.js'
-import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost, sameFact, answeredNo, updateSent, holdsOwnUpdate, rowHoldsFields } from './idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost, sameFact, answeredNo, updateSent, holdsOwnUpdate, rowHoldsFields, rowIsThisSittings } from './idempotencyKey.js'
 import LikeBatchPicker from '../putup/LikeBatchPicker.jsx'
 // Put-Up release 4 — "Following a recipe?" (pick one of the household's recipes → recipe_id, or F's free text),
 // and Make this's prefill (a recipe's name, kind and process jar).
@@ -420,7 +425,11 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
         holds: sameFact(batch?.label, chose.label) && sameFact(batch?.kind, chose.kind) && sameFact(batch?.kind_other, chose.kind_other)
           && sameFact(batch?.recipe_ref, chose.recipe_ref),
       })
-      if (todo === 'fixed' || todo === 'stale') {
+      // A replay with nothing to put on it, on a batch that is not this sitting's: what follows a start is not
+      // this tap's to add either (re-review I-C; see WHAT FOLLOWS A START).
+      const notOurs = todo == null && batch?.replayed === true
+        && !(mineRef.current && rowIsThisSittings(batch, Date.now(), holdsOwnUpdate(batch, putRef.current)))
+      if (todo === 'fixed' || todo === 'stale' || notOurs) {
         // None of what is on the form is written, and the key is KEPT: Start it again is this refusal again,
         // never a second batch. What follows a start is sent as the tap that went through described it — and
         // only onto a batch that is this sitting's ('fixed'); see WHAT FOLLOWS A START.
@@ -441,13 +450,16 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
         }
         if (follow.lines === 'added') followedRef.current.lines = true
         if (follow.jar === 'added') followedRef.current.jar = true
-        writingRef.current = false
-        setSaving(false)
-        setSpent(true)
-        setErr(startRefusalText(follow))
-        setFailedSeq(s => s + 1)
-        onExists?.(batch)
-        return
+        // (`notOurs` with nothing left off: it is started as sent, and the sheet lands on it below.)
+        if (!notOurs || follow.lines || follow.jar) {
+          writingRef.current = false
+          setSaving(false)
+          setSpent(true)
+          setErr(startRefusalText(follow))
+          setFailedSeq(s => s + 1)
+          onExists?.(batch)
+          return
+        }
       }
       if (todo === 'update') {
         onRow = batch
@@ -467,14 +479,14 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
       }
       // The copied lines, keyed (a retry replays them). A refusal here leaves a batch with fewer lines,
       // never a lost batch: its detail page adds or edits lines as usual.
-      if (like?.lines?.length && batch?.id) {
+      if (!notOurs && like?.lines?.length && batch?.id) {
         await Promise.resolve(fetch(`/api/kitchen-batches/${batch.id}/inputs`, {
           method: 'POST', body: JSON.stringify({ inputs: like.lines }),
         })).catch(() => {})
       }
       // Make this (release 4): the recipe's process jar, through the merge PUT. Best effort — the batch is
       // already started, and its Jar & heat row can set the jar if this does not land.
-      const vp = recipe && batch?.id && following.recipeId === recipe.id ? vesselPatch(recipe) : null
+      const vp = !notOurs && recipe && batch?.id && following.recipeId === recipe.id ? vesselPatch(recipe) : null
       if (vp) await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(vp) }).catch(() => {})
       landedRef.current = true
       clearSheetDraft(draftKey)
