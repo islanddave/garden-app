@@ -36,4 +36,32 @@ describe('card and callout print one tomorrow', () => {
     }
     expect(spoke).toBeGreaterThan(10)   // anti-vacuity: the callout fired on enough cells to mean something
   })
+
+  // BUG-RAINTOMORROWMISLABEL-001 (b) — the card keeps its own copy of the callout's bar (rainSentences.js
+  // rainChangesWatering), because under a today line it decides whether tomorrow is printed at all. Today here
+  // out-rains every tomorrow in the sweep, so "brings more than the line above" can never open the line: it is
+  // there exactly when the callout would speak. Move either bar alone and a cell on its edge reds.
+  it('under a rainy today, tomorrow is on the card exactly when the callout would speak', () => {
+    let spoke = 0, silent = 0
+    for (const amt of [0.14, 0.29, 0.2999, 0.3, 0.31, 0.49, 0.5, 0.58, 1.72]) {
+      for (const pop of [null, 0, 29, 30, 37, 49, 50, 51, 60, 64, 100]) {
+        const h = { recent_precip_in: 0, today_precip_in: 2, today_pop: 90, tomorrow_precip_in: amt, tomorrow_pop: pop, upcoming_precip_in: amt }
+        const c = computeCallout(WX, h)
+        const { container } = render(<WeatherWidget weather={WX} hydrology={h} generatedAt="2026-09-25T20:00:00Z" planDate="2026-09-25" />)
+        const next = container.querySelector('[data-testid="weather-next-rain"]')?.textContent ?? null
+        const card = container.textContent
+        cleanup()
+        expect(card).toContain('2.00″ today · 90% chance')
+        if (c?.icon === 'rain') {
+          spoke++
+          expect(next, `${amt} @ ${pop}`).toBe(`${amt.toFixed(2)}″ tomorrow${pop != null ? ` · ${pop}% chance` : ''}`)
+        } else {
+          silent++
+          expect(next, `${amt} @ ${pop}`).toBeNull()
+        }
+      }
+    }
+    expect(spoke).toBeGreaterThan(20)
+    expect(silent).toBeGreaterThan(20)
+  })
 })

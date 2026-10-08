@@ -241,6 +241,24 @@ describe('v2 grafts and the re-dating helper', () => {
     const g = groupsOfRows(payload.plan.water_due, PLANTS, read('locations.full.json'))
     expect(g.Outside - 2).toBe(135)
   })
+  // BUG-RAINTOMORROWMISLABEL-001 (b): the one state with its own weather, held to v2-frost's own numbers.
+  it('gaugerain moves the two measured-rain fields and nothing else, and v2-frost-rain carries v2-frost\'s ceilings', () => {
+    const { payload } = applyGrafts(D, PLANTS, ['gaugerain'], G)
+    expect(payload.plan.hydrology).toEqual({ ...D.plan.hydrology, today_observed_in: 0.45, today_remaining_in: 0 })
+    expect({ ...payload.plan, hydrology: null }).toEqual({ ...D.plan, hydrology: null })
+    expect(STATES.filter((x) => x.wx).map((x) => x.name)).toEqual(['v2-frost-rain'])
+    const rain = STATES.find((x) => x.name === 'v2-frost-rain')
+    const cols = Object.values(rain.wx.models)
+    expect(cols).toHaveLength(5)
+    expect(Math.round(cols.reduce((a, c) => a + c[1], 0) / 5 * 100) / 100).toBe(0.4)      // D1 mean: over the 0.30″ bar
+    expect(cols.filter((c) => c[1] >= 0.01).length * 20).toBe(80)                          // D1 chance: over 50%
+    expect(rain.checks.filter((c) => c.family === 'glance-rain' && isArmed(c))).toHaveLength(1)
+    expect(rain.checks.some((c) => c.headerTopMax?.care === 'FIRST_SCREEN+72')).toBe(true)
+    const B = read('today-shape-budget.v2.json').states
+    for (const k of ['clock', 'contentBottomFloor', 'contentBottomCeiling', 'controlsFloor', 'scrollHeightCeiling']) expect(B['v2-frost-rain'][k], k).toBe(B['v2-frost'][k])
+    expect(STATES).toHaveLength(21)
+    expect(STATES.reduce((a, x) => a + x.checks.filter((c) => isArmed(c)).length, 0)).toBe(265)
+  })
   it('stale serves the plan one day back', () => {
     expect(applyGrafts(D, PLANTS, ['stale'], G).payload.plan_date).toBe('2026-09-23')
   })

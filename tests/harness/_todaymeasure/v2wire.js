@@ -59,6 +59,8 @@ export function applyGrafts(payload, plants, names, G) {
         const cold = [...reworded, ...g.cold_add]
         return { ...plan, cold, weather: { ...(plan.weather || {}), ...g.weather }, counts: { ...(plan.counts || {}), cold: cold.length } }
       })
+    } else if (n === 'gaugerain') {
+      p = withPlan(p, (plan) => ({ ...plan, hydrology: { ...(plan.hydrology || {}), ...g.hydrology } }))
     } else if (n === 'stale') {
       p = redatePayload(p, g.plan_date)
     } else {

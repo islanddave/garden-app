@@ -51,6 +51,18 @@
         }
       }
     },
+    "v2-frost-rain": {
+      "clock": "2026-09-24T14:30:00.000Z",
+      "contentBottomFloor": 1799,
+      "contentBottomCeiling": 1853,
+      "controlsFloor": 65,
+      "scrollHeightCeiling": 1959,
+      "measured": {
+        "scrollHeight": 1921,
+        "contentBottom": 1817,
+        "controls": 67
+      }
+    },
     "v2-busy": {
       "clock": "2026-09-24T14:30:00.000Z",
       "contentBottomFloor": 1676,
