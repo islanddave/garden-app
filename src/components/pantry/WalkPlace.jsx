@@ -526,6 +526,7 @@ function WalkGroup({
         const part = jarFixedPart(body, saved, what, read)
         const todo = afterReplay(saved, sentNow, print, {
           row: saved, updatedHere: saved?.id != null && patched === saved.id, fixed: part != null, holds: jarHolds(body, saved, what, read),
+          nullIsUntouched: true,
         })
         // Nothing is written — not the parts a PATCH could carry either — and the key is KEPT.
         if (todo === 'stale') { setErr(replayStaleText(saved)); setField(null); setRefusedSeq(s => s + 1); onExists?.(); return }

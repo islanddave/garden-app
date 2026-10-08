@@ -41,6 +41,12 @@ export function mintKey() {
 //     one now(); every later write to the row goes through its set_updated_at trigger) — EXCEPT this sheet's
 //     own update: once it has sent one to this row (`updatedHere`), a moved updated_at is its own, landed with
 //     its answer lost, and Save again must still be able to finish it.
+//     THE JAR TABLE IS THE ONE EXCEPTION TO "the two are one now()" (QA B-1). preservation_log.updated_at is
+//     nullable with no default and the create's INSERT does not name it, so a jar nobody has written to since
+//     its create carries updated_at NULL; its BEFORE UPDATE trigger stamps the first write after. The jar's two
+//     doors say so (`nullIsUntouched`), and for them a NULL updated_at beside a real created_at reads as
+//     untouched. pantry_item, recipe and kitchen_batch declare both stamps NOT NULL DEFAULT now() and their
+//     INSERTs name neither: for them a NULL is not a row this rule knows, and stays "not this sitting's".
 // Anything else answers 'stale': nothing is written, and the sheet says so. WHAT IT MAY SAY: `sent` tells
 // that other bodies went out, never which one landed. So a stale sentence says what is certain (saved
 // earlier; this Save changed nothing) and never "your change is not on it". A row that carries neither stamp
@@ -79,9 +85,11 @@ export const REPLAY_FRESH_MS = 10 * 60 * 1000
 export const REPLAY_CLOCK_SLACK_MS = 60 * 1000
 
 const stampMs = (v) => (v == null || v === '' ? NaN : new Date(v).getTime())
-export function rowIsThisSittings(row, nowMs = Date.now(), updatedHere = false) {
+export function rowIsThisSittings(row, nowMs = Date.now(), updatedHere = false, { nullIsUntouched = false } = {}) {
   const made = stampMs(row?.created_at)
-  const touched = stampMs(row?.updated_at)
+  // The jar table only: the row SAYS updated_at is NULL (the key is there, and null) — never written since its create.
+  const never = nullIsUntouched === true && Number.isFinite(made) && row.updated_at === null
+  const touched = never ? made : stampMs(row?.updated_at)
   if (!Number.isFinite(made) || !Number.isFinite(touched)) return false
   if (touched !== made && updatedHere !== true) return false
   const age = nowMs - made
@@ -143,15 +151,15 @@ export function noteSent(sent, print) {
 // `row` is the row the answer holds; `mine` is false for a key whose `sent` came out of storage;
 // `updatedHere` is true once this sheet has sent an update to this very row. `fixed` (optional) is the
 // caller's own reading of "a part the update route cannot carry" — off the row, where the row can say it
-// exactly — in place of the prints' fixed halves.
-export function afterReplay(answer, sent, print, { row = null, mine = true, updatedHere = false, fixed = null, holds = false, nowMs = Date.now() } = {}) {
+// exactly — in place of the prints' fixed halves. `nullIsUntouched` is the jar table's (rowIsThisSittings).
+export function afterReplay(answer, sent, print, { row = null, mine = true, updatedHere = false, fixed = null, holds = false, nullIsUntouched = false, nowMs = Date.now() } = {}) {
   if (answer?.replayed !== true) return null
   const others = noteSent(sent, print).filter(s => s !== print)
   if (!others.length) return null
   const fixedHalf = (s) => s.slice(s.indexOf('/') + 1)
   const held = fixed == null ? others.some(s => fixedHalf(s) !== fixedHalf(print)) : fixed === true
   if (holds === true && !held) return null
-  if (mine !== true || !rowIsThisSittings(row, nowMs, updatedHere)) return 'stale'
+  if (mine !== true || !rowIsThisSittings(row, nowMs, updatedHere, { nullIsUntouched })) return 'stale'
   return held ? 'fixed' : 'update'
 }
 

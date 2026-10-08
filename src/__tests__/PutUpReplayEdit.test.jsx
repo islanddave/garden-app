@@ -220,6 +220,36 @@ describe('the rule — idempotencyKey.js', () => {
     expect(rowIsThisSittings({ created_at: '2026-10-07T11:59:55.000Z', updated_at: '2026-10-07T11:59:55Z' }, now)).toBe(true)
   })
 
+  it('QA B-1 — a NULL updated_at beside a real created_at is "untouched" ONLY for a table that says its create leaves it NULL (the jar\'s); every other table stamps both at insert, and a NULL there stays not this sitting\'s', () => {
+    const now = Date.UTC(2026, 9, 7, 12, 0, 0)
+    const at = (ms) => new Date(now - ms).toISOString()
+    const jar = { nullIsUntouched: true }
+    const fresh = { created_at: at(5000), updated_at: null }
+    expect(rowIsThisSittings(fresh, now)).toBe(false)                              // an item, a recipe, a batch
+    expect(rowIsThisSittings(fresh, now, false, { nullIsUntouched: false })).toBe(false)
+    expect(rowIsThisSittings(fresh, now, false, jar)).toBe(true)
+    // The bound and the clock slack are read off created_at exactly as before.
+    expect(rowIsThisSittings({ created_at: at(REPLAY_FRESH_MS), updated_at: null }, now, false, jar)).toBe(true)
+    expect(rowIsThisSittings({ created_at: at(REPLAY_FRESH_MS + 1), updated_at: null }, now, false, jar)).toBe(false)
+    expect(rowIsThisSittings({ created_at: at(-REPLAY_CLOCK_SLACK_MS - 1), updated_at: null }, now, false, jar)).toBe(false)
+    // The row must SAY null: a row with no updated_at key, a blank one, or no created_at is not one this reads.
+    expect(rowIsThisSittings({ created_at: at(5000) }, now, false, jar)).toBe(false)
+    expect(rowIsThisSittings({ created_at: at(5000), updated_at: '' }, now, false, jar)).toBe(false)
+    expect(rowIsThisSittings({ created_at: null, updated_at: null }, now, false, jar)).toBe(false)
+    expect(rowIsThisSittings({ updated_at: null }, now, false, jar)).toBe(false)
+    // Once anything has written to the jar its updated_at is a stamp, and the rule is the one every table has:
+    // moved is touched, unless it is this sheet's own update (`updatedHere`).
+    expect(rowIsThisSittings({ created_at: at(5000), updated_at: at(4000) }, now, false, jar)).toBe(false)
+    expect(rowIsThisSittings({ created_at: at(5000), updated_at: at(4000) }, now, true, jar)).toBe(true)
+    expect(rowIsThisSittings({ created_at: at(5000), updated_at: at(5000) }, now, false, jar)).toBe(true)
+    // afterReplay passes the table's word through, and nothing else about its answer changes.
+    const sent = ['a/x', 'b/x']
+    expect(afterReplay({ replayed: true }, sent, 'b/x', { row: fresh, nowMs: now })).toBe('stale')
+    expect(afterReplay({ replayed: true }, sent, 'b/x', { row: fresh, nowMs: now, nullIsUntouched: true })).toBe('update')
+    expect(afterReplay({ replayed: true }, sent, 'b/x', { row: fresh, nowMs: now, nullIsUntouched: true, mine: false })).toBe('stale')
+    expect(afterReplay({ replayed: true }, sent, 'b/x', { row: fresh, nowMs: now, nullIsUntouched: true, fixed: true })).toBe('fixed')
+  })
+
   it('I2 — whenChoice: the chip as chosen, never a date the clock made of it; under Earlier… the window, or the day as picked', () => {
     expect(whenChoice('today', null, '')).toEqual(['today'])
     expect(whenChoice('today', 'last_month', '2026-09-01')).toEqual(['today'])     // what sits under Earlier… is not the answer

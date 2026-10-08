@@ -56,9 +56,13 @@ const ITEMS = '/api/pantry/items'
 const ROW = `${JARS}/jar-first`
 const LONG_AGO = 11 * 60 * 1000                       // a minute past REPLAY_FRESH_MS
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
-const stamps = (madeAgoMs = 30 * 1000, touchedAgoMs = madeAgoMs) => {
+// The stamps a jar carries, BY SOURCE (QA B-1): created_at is `NOT NULL DEFAULT now()`; updated_at is nullable with
+// no default (migrations/v4-putup-001/0a-additive-ddl.sql:96-97), the create's INSERT does not name it
+// (lambda/preservation/index.js:765-772), and only the BEFORE UPDATE trigger writes it (v5-putupmake-001/0a:418-421).
+// So a jar nobody has written to since its create carries updated_at NULL; `touchedAgoMs` is a write since.
+const stamps = (madeAgoMs = 30 * 1000, touchedAgoMs = null) => {
   const now = Date.now()
-  return { created_at: new Date(now - madeAgoMs).toISOString(), updated_at: new Date(now - touchedAgoMs).toISOString() }
+  return { created_at: new Date(now - madeAgoMs).toISOString(), updated_at: touchedAgoMs == null ? null : new Date(now - touchedAgoMs).toISOString() }
 }
 const LOST = () => { throw new TypeError('Failed to fetch') }       // it may have landed; its answer did not come back
 const MASS_G = { g: 1, kg: 1000, oz: 28.3495, lb: 453.592 }

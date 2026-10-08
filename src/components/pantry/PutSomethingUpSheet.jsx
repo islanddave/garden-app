@@ -498,7 +498,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         const part = jarFixedPart(body, saved, what, read)
         const todo = afterReplay(saved, sentNow, print, {
           row: saved, mine: mineRef.current, updatedHere: saved?.id != null && patchedRef.current === saved.id,
-          fixed: part != null, holds: jarHolds(body, saved, what, read),
+          fixed: part != null, holds: jarHolds(body, saved, what, read), nullIsUntouched: true,
         })
         if (todo === 'stale' || todo === 'fixed') {
           // Nothing is written — not the parts a PATCH could carry either — and the key is KEPT.

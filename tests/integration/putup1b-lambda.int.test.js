@@ -284,4 +284,54 @@ describe('jars — POST additions, PATCH, Move', () => {
     expect(m.status, JSON.stringify(m.body)).toBe(200)
     expect(m.body).toMatchObject({ use_by_target: null, use_by_basis: 'none' })
   })
+
+  // BUG-PUTUPREPLAYREST-001, QA B-1 — the jar twin of pantry-items.int.test.js "a replay answers the item's two
+  // stamps". The client's retry rule (src/components/kitchen/idempotencyKey.js rowIsThisSittings) reads a jar's
+  // stamps to tell one it just made from one written to since. BY SOURCE a jar is NOT like an item: updated_at
+  // is nullable with no default (migrations/v4-putup-001/0a:97), the create's INSERT does not name it, and only
+  // the BEFORE UPDATE trigger (v5-putupmake-001/0a:418-421) writes it — so a fresh jar answers updated_at NULL,
+  // and the client reads NULL beside a real created_at as "untouched" FOR THIS TABLE ONLY. This case is the
+  // database's own word on that. If the first NULL assertion goes red with a timestamp equal to created_at, the
+  // live table has a default the migrations do not show: the client reads that as untouched too, so nothing is
+  // unsafe — change this case and the fake in src/__tests__/PutUpReplayRest.jar.test.jsx (`stamps`) to say so.
+  it('a replay answers the jar\'s two stamps and every field the client compares: updated_at NULL while nothing has written to it, set and later than created_at after any PATCH', async () => {
+    const ms = (v) => new Date(v).getTime()
+    const k = randomUUID()
+    const body = {
+      label: `stamps ${RUN}`, method: 'quick_pickle', preserved_at: '2026-10-01', preserved_at_precision: 'day',
+      package_count: 2, quantity_value: 16, quantity_unit: 'oz', notes: 'first', idempotency_key: k,
+    }
+    const first = await call('POST', '/api/preservation', body)
+    expect(first.status, JSON.stringify(first.body)).toBe(201)
+    const made = ms(first.body.created_at)
+    expect(Number.isFinite(made)).toBe(true)
+    expect(Math.abs(Date.now() - made)).toBeLessThan(5 * 60 * 1000)          // the database's clock, near this one
+    expect(first.body.updated_at).toBeNull()
+    let again = await call('POST', '/api/preservation', { ...body, label: 'another body', notes: 'second' })
+    expect(again.status, JSON.stringify(again.body)).toBe(200)
+    expect(again.body).toMatchObject({ id: first.body.id, replayed: true, label: `stamps ${RUN}`, notes: 'first' })
+    expect(ms(again.body.created_at)).toBe(made)
+    expect(again.body.updated_at).toBeNull()
+    expect((await directSql`SELECT (updated_at IS NULL) AS never FROM preservation_log WHERE id = ${first.body.id}`)[0].never).toBe(true)
+    // The replay is the raw row: every key the client's reading of it names is there (a missing one would read
+    // as "nothing" and let a difference through), and the date it compares by its first ten characters is the day.
+    for (const key of ['id', 'label', 'method', 'package_count', 'quantity_value', 'quantity_unit', 'remaining_amount',
+      'storage_location_id', 'plant_id', 'crop_type_slug', 'variety_id', 'preserved_at', 'preserved_at_precision',
+      'use_by_target', 'use_by_basis', 'is_raw', 'in_oil', 'texture', 'notes', 'source_kind', 'source_label',
+      'created_at', 'updated_at', 'deleted_at']) {
+      expect(`${key}: ${Object.prototype.hasOwnProperty.call(again.body, key)}`).toBe(`${key}: true`)
+    }
+    expect(String(again.body.preserved_at).slice(0, 10)).toBe('2026-10-01')
+    expect(Number(again.body.package_count)).toBe(2)
+    expect([Number(again.body.quantity_value), again.body.quantity_unit]).toEqual([16, 'oz'])
+    expect(again.body.use_by_basis).not.toBe('typed')
+    await new Promise((resolve) => setTimeout(resolve, 20))                   // the two stamps travel at millisecond precision
+    const patch = await call('PATCH', `/api/preservation/${first.body.id}`, { notes: 'touched' })
+    expect(patch.status, JSON.stringify(patch.body)).toBe(200)
+    again = await call('POST', '/api/preservation', { ...body, label: 'another body' })
+    expect(again.body).toMatchObject({ id: first.body.id, replayed: true, notes: 'touched' })
+    expect(ms(again.body.created_at)).toBe(made)
+    expect(again.body.updated_at).not.toBeNull()
+    expect(ms(again.body.updated_at)).toBeGreaterThan(made)
+  })
 })
