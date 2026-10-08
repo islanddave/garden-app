@@ -68,6 +68,7 @@ const MIX = 'sms-variety-b-example-run + sms-variety-b2-example-run mix'
 
 const CHANGED = 'This lot changed somewhere else just now. This is the latest. Tap Add to this lot if it still needs adding.'
 const USED_UP = 'That lot is marked used up or no longer in use. Nothing was added. Open the lot to change that first.'
+const LOT_GONE = 'This lot can no longer take more seed. Nothing was added. Tap Change lot to pick another.'
 const REFUSED = "Couldn't add to that lot. Nothing was changed."
 const OFFLINE = "You're offline. Nothing was added. Your entries stay here until you're back in range."
 const CHECKING = 'Checking whether that was added…'
@@ -476,6 +477,23 @@ describe('the add form before the tap (rows 6-8)', () => {
     expect(counts()).toEqual({ add: 1, event: 1, open: 1 })
   })
 
+  it('row 8 — a lot whose only parent has no variety: one variety is not a mix, so nothing says it will be re-filed, and no filing is sent', async () => {
+    const bare = { ...ROW.source_plants[0], variety_id: null, variety_name: null }
+    const row = openLotRow({ variety_id: null, variety_name: null, source_plants: [bare], is_member: false, same_variety: false })
+    net.add = [additionReply()]
+    await openFromList([row])
+    expect(screen.queryByTestId('seed-add-refile')).toBeNull()
+    // The set's own notice stays: it claims a mixed set, not a re-file.
+    expect(text('seed-add-set-notice')).toBe(
+      `Mixed seed from ${V_B.name} and a plant with no variety recorded. Each seed came off one or the other, and some may be crosses. Expect more than one kind of plant from this lot.`)
+    expect(document.body.textContent).not.toMatch(/filed as a mix|renamed|different variety/)
+    await tap('save-seed-submit')
+    await waitFor(() => expect(calls('add').length).toBe(1))
+    expect(calls('blend').length).toBe(0)
+    expect(Object.keys(bodies('add')[0])).not.toContain('filing')
+    expect(bodies('add')[0].expected_source_plant_ids).toEqual([bare.id])
+  })
+
   // The contract's own cases: A, B and C are variety ids, and the mix route answers a set with the
   // contract's name for it, so `refile_to` is exactly the id the filing must carry.
   it.each(filingCases())('row 8 — $name: sentence only when same_variety is false, filing only when the mix is new', async (c) => {
@@ -699,13 +717,15 @@ describe('after the tap: refused (rows 11-13, 22)', () => {
     expect(counts()).toEqual({ add: 1, event: 0, open: 2 })
   })
 
-  it('row 22 — the read lands but no longer lists the lot: it cannot take seed, and Add stays off', async () => {
+  it('row 22 — the read lands but no longer lists the lot: it cannot take seed, no cause is named, Add stays off and Change lot is live', async () => {
     await openNamed()
     net.add = [httpErr(409, { error: 'x', code: 'parents_changed' })]
     net.open = [openLotsReply({ plant_id: MEMBER.id, open_lots: [] })]
     await tap('save-seed-submit')
-    await waitFor(() => expect(text('seed-add-error')).toBe(USED_UP))
+    await waitFor(() => expect(text('seed-add-error')).toBe(LOT_GONE))
+    expect(document.body.textContent).not.toMatch(/used up|no longer in use|Open the lot/)
     expect(submitBtn().disabled).toBe(true)
+    await waitFor(() => expect(screen.getByTestId('seed-add-change-lot').disabled).toBe(false))
     expect(counts()).toEqual({ add: 1, event: 0, open: 1 })
   })
 })
@@ -870,12 +890,12 @@ describe('after the tap: no answer (rows 14-19, 21, 23)', () => {
   const asked = () => ['title', 'body', 'confirm', 'cancel'].map((part) => text(`confirm-sheet-${part}`))
   const UNSURE_QUESTION = [
     'Close without checking?',
-    "Today's seed may or may not have been added. Look at the lot's seed count before you add it again.",
-    'Close', 'Keep checking',
+    "Today's seed may or may not have been added. If you close and add it again, it could go in twice.",
+    'Close', 'Stay here',
   ]
   const ORDINARY_QUESTION = ['Close without adding?', 'What you typed here will not be kept.', 'Discard', 'Keep editing']
 
-  it('row 23 — closing in the "may or may not" state asks a question that is true there; Keep checking leaves the form as it stood', async () => {
+  it('row 23 — closing in the "may or may not" state asks a question that is true there; Stay here leaves the form as it stood', async () => {
     net.add = [timedOut(), timedOut()]
     mountAsked()
     await tap('save-seed-put-in-lot')
@@ -924,6 +944,27 @@ describe('after the tap: no answer (rows 14-19, 21, 23)', () => {
     await act(async () => { second.reject(timedOut()) })
     await waitFor(() => expect(text('seed-add-error')).toBe(`${UNKNOWN}Try again`))
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('row 23 — while "Adding…" stands and the first answer is still out, closing asks the same question, and Close has the host read the lots again', async () => {
+    const first = defer()
+    net.add = [() => first.promise]
+    mountAsked()
+    await tap('save-seed-put-in-lot')
+    await tap('save-seed-submit')
+    expect(submitBtn().textContent).toBe('Adding…')
+    expect(calls('add').length).toBe(1)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Close' })) })
+    expect(asked()).toEqual(UNSURE_QUESTION)
+    expect(document.body.textContent).not.toMatch(/without adding|will not be kept|Discard|Keep editing/)
+    expect(onClose).not.toHaveBeenCalled()
+    await tap('confirm-sheet-confirm')
+    expect(onSeedMaybeAdded).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onSeedMaybeAdded.mock.invocationCallOrder[0]).toBeLessThan(onClose.mock.invocationCallOrder[0])
+    expect(onSeedAdded).not.toHaveBeenCalled()
+    expect(toastSpy).not.toHaveBeenCalled()
+    expect(counts()).toEqual({ add: 1, event: 0, open: 0 })
   })
 
   it('row 23 — a lot picked and nothing sent: the question keeps its own words, and closing reads nothing again', async () => {

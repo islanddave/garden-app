@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.174.0",
+    "date": "2026-10-08",
+    "highlights": [
+      "Add more seed to a seed lot you already started: Save seed now offers \"Put it in\" your lot, with a count that never claims more than it knows",
+      "Seed screens say \"lot\" instead of \"jar\"",
+      "A seed count saved from an old screen can no longer overwrite a newer one"
+    ]
+  },
+  {
     "version": "4.173.0",
     "date": "2026-10-08",
     "highlights": [

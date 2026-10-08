@@ -77,7 +77,7 @@ export function parseAddCount(raw) {
     return { value: null, error: 'Type a whole number of seeds, 1 or more, or leave it blank.' }
   }
   const n = Number(typed)
-  if (n > ADD_COUNT_MAX) return { value: null, error: 'That is more seeds than one addition can hold.' }
+  if (n > ADD_COUNT_MAX) return { value: null, error: 'That is over a million seeds. Check the number.' }
   return { value: n, error: null }
 }
 
@@ -92,7 +92,7 @@ export function parseAddWeight(raw) {
   const grams = m[2] && m[2].toLowerCase() === 'mg' ? Number(m[1]) / 1000 : Number(m[1])
   const rounded = Math.round(grams * 1000) / 1000
   if (!(rounded > 0)) return { value: null, error: 'That is too little to weigh. Leave it blank instead.' }
-  if (rounded > ADD_WEIGHT_MAX_G) return { value: null, error: 'That is more weight than one addition can hold.' }
+  if (rounded > ADD_WEIGHT_MAX_G) return { value: null, error: 'That is over 100 kg. Check the number.' }
   return { value: rounded, error: null }
 }
 
@@ -169,8 +169,9 @@ export function outcomeLine(lot, count = null, estimated = false) {
 
 export const STORED_LOT_LINE = 'This lot is marked stored. Seed that is not fully dry can spoil the rest.'
 
-// The re-file sentence, shown before the tap whenever adding this plant changes what the lot is filed
-// under. An automatic lot name follows the mix; a name he typed stays.
+// The re-file sentence, shown before the tap when adding this plant makes the set name two or more
+// varieties (the form decides that; one variety is not a mix and is not re-filed). An automatic lot
+// name follows the mix; a name he typed stays.
 export function refileSentence({ plantingName, mixName, newLotName = null }) {
   const who = String(plantingName ?? '').trim() || 'This planting'
   return newLotName
@@ -183,18 +184,22 @@ export const ADD_CHANGED = 'This lot changed somewhere else just now. This is th
 // The last sentence is true because the lot's page can undo both things the server means by it: the
 // "All used up" toggle (or the Qty on hand field) and the Status select.
 export const ADD_USED_UP = 'That lot is marked used up or no longer in use. Nothing was added. Open the lot to change that first.'
+// The lot is gone from the re-read and the app does not know why: the answer that led there names no
+// cause. So this names none, and points at the one control that leads somewhere.
+export const ADD_LOT_GONE = 'This lot can no longer take more seed. Nothing was added. Tap Change lot to pick another.'
 export const ADD_REFUSED = "Couldn't add to that lot. Nothing was changed."
 export const ADD_OFFLINE = "You're offline. Nothing was added. Your entries stay here until you're back in range."
 export const ADD_CHECKING = 'Checking whether that was added…'
 export const ADD_UNKNOWN = "That didn't finish, so today's seed may or may not have been added. Tap Try again. It will not be added twice."
-// The close question while that stands (and while "Checking…" does). The ordinary one, "Close without
-// adding?", would be untrue here: the seed may already be in the lot. This one claims only what is
-// known and says what to look at before a second add.
+// The close question while that stands (and from the tap, while "Adding…" and "Checking…" do). The
+// ordinary one, "Close without adding?", would be untrue here: the seed may already be in the lot.
+// This one claims only what is known and what a second add risks. It names nothing to look at: a lot
+// with no count shows none, and a blank addition leaves a counted lot at the same number.
 export const UNSURE_CLOSE = Object.freeze({
   title: 'Close without checking?',
-  body: "Today's seed may or may not have been added. Look at the lot's seed count before you add it again.",
+  body: "Today's seed may or may not have been added. If you close and add it again, it could go in twice.",
   confirmLabel: 'Close',
-  cancelLabel: 'Keep checking',
+  cancelLabel: 'Stay here',
 })
 export const LOTS_FAILED = "Couldn't load your lots. Nothing was changed."
 export const LOTS_FROM_CACHE = "This list may be out of date. Nothing can be added until you're back in range."

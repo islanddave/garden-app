@@ -37,7 +37,7 @@ import {
   lotFactsLine, lotRowLine, parseAddCount, parseAddWeight, buildAdditionBody, additionSaved,
   additionEventBody, outcomeLine, refileSentence, sentenceForRefusal, isChangedRefusal, addedToast,
   cropWords, lotsLoadingLine, lotsNoneLine, otherLotsDivider,
-  STORED_LOT_LINE, ADD_OFFLINE, ADD_REFUSED, ADD_USED_UP, ADD_CHECKING, ADD_UNKNOWN, LOTS_FAILED, LOTS_FROM_CACHE,
+  STORED_LOT_LINE, ADD_OFFLINE, ADD_REFUSED, ADD_LOT_GONE, ADD_CHECKING, ADD_UNKNOWN, LOTS_FAILED, LOTS_FROM_CACHE,
 } from '../seed/seedAdditions.js'
 
 // The service worker's mark on a reply it served from its offline copy (src/lib/api.js). Such a copy
@@ -143,11 +143,12 @@ export default function AddToLot({ planting, ownLots = [], startLot = null, Basi
 
   const locked = phase !== 'idle'
   // `unsure`: a request left and no definite answer has come back, so today's seed may be in the lot.
-  // True from the automatic second try ("Checking…") until an answer, a refusal or Try again settles it.
+  // True from the tap ("Adding…") until an answer or a refusal settles it: closing does not stop a
+  // request that is out, nor the second try that follows a timeout, so the seed can still land.
   useEffect(() => {
     onState?.({
       dirty: !!lot, busy: phase === 'sending' || phase === 'checking',
-      unsure: phase === 'checking' || phase === 'unknown',
+      unsure: phase !== 'idle',
     })
   }, [lot, phase]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -213,8 +214,9 @@ export default function AddToLot({ planting, ownLots = [], startLot = null, Basi
     if (!aliveRef.current) return
     if (!fresh) { setNeedsRead(true); setError(LOTS_FAILED); return }
     const row = fresh.find((r) => sid(r.id) === sid(lotId))
-    // The read lists only lots that can still take seed. Gone from it, this one no longer can.
-    if (!row) { setNeedsRead(true); setError(ADD_USED_UP); return }
+    // The read lists only lots that can still take seed. Gone from it, this one no longer can. Why is
+    // not known here, so the sentence gives no reason.
+    if (!row) { setNeedsRead(true); setError(ADD_LOT_GONE); return }
     setNeedsRead(false)
     setLot(row)
   }
@@ -403,6 +405,11 @@ export default function AddToLot({ planting, ownLots = [], startLot = null, Basi
   const typed = parseAddCount(count)
   const outcome = outcomeLine(lot, typed.error ? null : typed.value, estimated)
   const working = phase === 'sending'
+  // The re-file sentence is drawn on the rule the request is built on (submit, STEP 0): only a set that
+  // names two or more varieties is re-filed as a mix. A lot whose plant has no variety recorded is
+  // listed as "another variety" and gets no re-file, so it gets no sentence; the set's own notice,
+  // which is true of the set either way, still stands.
+  const refiles = !!refile && refile.varietyIds.length >= 2
   return (
     <div data-testid="seed-add-form">
       <div ref={goingRef} tabIndex={-1} data-testid="seed-add-going-into" style={goingStyle}>
@@ -417,11 +424,11 @@ export default function AddToLot({ planting, ownLots = [], startLot = null, Basi
         </button>
       </div>
 
-      {refile && (
-        <div data-testid="seed-add-refile" style={noteStyle}>
-          <span style={{ display: 'block' }}>{refile.sentence}</span>
-          {refile.notice.map((sentence) => (
-            <span key={sentence} style={{ display: 'block', marginTop: 6 }}>{sentence}</span>
+      {refile && (refiles || refile.notice.length > 0) && (
+        <div data-testid={refiles ? 'seed-add-refile' : 'seed-add-set-notice'} style={noteStyle}>
+          {refiles && <span style={{ display: 'block' }}>{refile.sentence}</span>}
+          {refile.notice.map((sentence, i) => (
+            <span key={sentence} style={{ display: 'block', marginTop: refiles || i > 0 ? 6 : 0 }}>{sentence}</span>
           ))}
         </div>
       )}
