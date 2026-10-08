@@ -9,10 +9,14 @@
 // required gates on a build that is correct. Here they keep measuring the layout the flag will show again when
 // it is turned back on. While the flag ships true this config changes nothing.
 //
+// V5-SEEDLOTADDITION-001 (seed release 3): SEED_ADD_TO_LOT is served true as well, for the same reason. Its undo
+// is also a forward flag-off build, and gate:save-seed-sheet's list and add-form cases, and gate:seed-detail's
+// "still says" line, are that flag's screens. All four gates load this file, so all four now see both on.
+//
 // A separate file for the reason vite.harness.mutant.mjs gives: every other harness entry and every other gate
 // keeps the base config, so they go on measuring the build as it ships. A run is on this config iff it was
 // pointed here.
 import base from './vite.harness.config.mjs'
-import { seedMultiParentOn } from './seedFlagTransform.mjs'
+import { seedMultiParentOn, seedAddToLotOn } from './seedFlagTransform.mjs'
 
-export default { ...base, plugins: [seedMultiParentOn(), ...(base.plugins || [])] }
+export default { ...base, plugins: [seedMultiParentOn(), seedAddToLotOn(), ...(base.plugins || [])] }
