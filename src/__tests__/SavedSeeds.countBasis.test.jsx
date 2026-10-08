@@ -160,7 +160,7 @@ describe('the advance sheet — SET, CHANGE and the pair that must travel togeth
     await mountPage()
     await click('advance-stage')          // drying -> stored, count prefilled to 185
     await click('stage-save')
-    expect(measureBody()).toEqual({ seed_count: 185, seed_count_estimated: false })
+    expect(measureBody()).toEqual({ seed_count: 185, seed_count_estimated: false, expected_seed_count: 185, expected_seed_count_estimated: false, expected_seed_weight_g: null })
   })
 
   it('SETS the basis: switching it on writes true beside the same count', async () => {
@@ -168,7 +168,7 @@ describe('the advance sheet — SET, CHANGE and the pair that must travel togeth
     await click('advance-stage')
     await toggleBasis()
     await click('stage-save')
-    expect(measureBody()).toEqual({ seed_count: 185, seed_count_estimated: true })
+    expect(measureBody()).toEqual({ seed_count: 185, seed_count_estimated: true, expected_seed_count: 185, expected_seed_count_estimated: false, expected_seed_weight_g: null })
   })
 
   it('SEEDS FROM THE LOT: an estimated lot re-saved untouched stays estimated', async () => {
@@ -180,7 +180,7 @@ describe('the advance sheet — SET, CHANGE and the pair that must travel togeth
     await click('advance-stage')
     expect(basis().getAttribute('aria-checked')).toBe('true')
     await click('stage-save')
-    expect(measureBody()).toEqual({ seed_count: 7000, seed_count_estimated: true })
+    expect(measureBody()).toEqual({ seed_count: 7000, seed_count_estimated: true, expected_seed_count: 7000, expected_seed_count_estimated: true, expected_seed_weight_g: null })
   })
 
   it('CHANGES it back: an estimate corrected to a hand count writes false', async () => {
@@ -188,7 +188,7 @@ describe('the advance sheet — SET, CHANGE and the pair that must travel togeth
     await click('advance-stage')
     await toggleBasis()
     await click('stage-save')
-    expect(measureBody()).toEqual({ seed_count: 7000, seed_count_estimated: false })
+    expect(measureBody()).toEqual({ seed_count: 7000, seed_count_estimated: false, expected_seed_count: 7000, expected_seed_count_estimated: true, expected_seed_weight_g: null })
   })
 
   it('reads NULL as not-estimated — the historical row, not a third state', async () => {

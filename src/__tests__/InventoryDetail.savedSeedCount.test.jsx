@@ -296,7 +296,7 @@ describe('the save — PUT /seed-measure only on a change, keyed by presence', (
     await renderPage(SAVED)
     type(countField(), '180')
     await save()
-    expect(measurePuts()).toEqual([{ seed_count: 180, seed_count_estimated: false }])
+    expect(measurePuts()).toEqual([{ seed_count: 180, seed_count_estimated: false, expected_seed_count: 175, expected_seed_count_estimated: false, expected_seed_weight_g: null }])
     expectNoMeasureOnMainPut()
   })
 
@@ -304,7 +304,7 @@ describe('the save — PUT /seed-measure only on a change, keyed by presence', (
     await renderPage(SAVED)
     await act(async () => { fireEvent.click(basis()) })
     await save()
-    expect(measurePuts()).toEqual([{ seed_count: 175, seed_count_estimated: true }])
+    expect(measurePuts()).toEqual([{ seed_count: 175, seed_count_estimated: true, expected_seed_count: 175, expected_seed_count_estimated: false, expected_seed_weight_g: null }])
   })
 
   it('a first count carries the switch\'s answer', async () => {
@@ -312,14 +312,14 @@ describe('the save — PUT /seed-measure only on a change, keyed by presence', (
     type(countField(), '40')
     await act(async () => { fireEvent.click(basis()) })
     await save()
-    expect(measurePuts()).toEqual([{ seed_count: 40, seed_count_estimated: true }])
+    expect(measurePuts()).toEqual([{ seed_count: 40, seed_count_estimated: true, expected_seed_count: null, expected_seed_count_estimated: null, expected_seed_weight_g: null }])
   })
 
   it('clearing the count clears its basis in the same body — both null, never a half-pair', async () => {
     await renderPage(SAVED)
     type(countField(), '')
     await save()
-    expect(measurePuts()).toEqual([{ seed_count: null, seed_count_estimated: null }])
+    expect(measurePuts()).toEqual([{ seed_count: null, seed_count_estimated: null, expected_seed_count: 175, expected_seed_count_estimated: false, expected_seed_weight_g: null }])
     await waitFor(() => expect(factRows()[0]).toEqual(['Seed count', 'Not counted yet']))
   })
 
@@ -335,13 +335,13 @@ describe('the save — PUT /seed-measure only on a change, keyed by presence', (
     const { unmount } = await renderPage(UNCOUNTED)
     type(weightField(), '2.5')
     await save()
-    expect(measurePuts()).toEqual([{ seed_weight_g: 2.5 }])
+    expect(measurePuts()).toEqual([{ seed_weight_g: 2.5, expected_seed_count: null, expected_seed_count_estimated: null, expected_seed_weight_g: null }])
     unmount()
     fetchSpy.mockClear(); updateItemSpy.mockClear()
     await renderPage(UNCOUNTED)
     type(weightField(), '250 mg')
     await save()
-    expect(measurePuts()).toEqual([{ seed_weight_g: 0.25 }])
+    expect(measurePuts()).toEqual([{ seed_weight_g: 0.25, expected_seed_count: null, expected_seed_count_estimated: null, expected_seed_weight_g: null }])
   })
 
   it('a weight compared by VALUE: "3.20" on a lot of 3.2 g is no change; a cleared weight sends null', async () => {
@@ -354,7 +354,7 @@ describe('the save — PUT /seed-measure only on a change, keyed by presence', (
     await renderPage({ ...SAVED, seed_weight_g: '3.200' })
     type(weightField(), '')
     await save()
-    expect(measurePuts()).toEqual([{ seed_weight_g: null }])
+    expect(measurePuts()).toEqual([{ seed_weight_g: null, expected_seed_count: 175, expected_seed_count_estimated: false, expected_seed_weight_g: 3.2 }])
   })
 
   it('count and weight changed together travel in ONE request', async () => {
@@ -362,7 +362,7 @@ describe('the save — PUT /seed-measure only on a change, keyed by presence', (
     type(countField(), '160')
     type(weightField(), '3')
     await save()
-    expect(measurePuts()).toEqual([{ seed_count: 160, seed_count_estimated: false, seed_weight_g: 3 }])
+    expect(measurePuts()).toEqual([{ seed_count: 160, seed_count_estimated: false, seed_weight_g: 3, expected_seed_count: 175, expected_seed_count_estimated: false, expected_seed_weight_g: null }])
   })
 
   it('goes AFTER the main save has landed, never beside it', async () => {
@@ -436,13 +436,13 @@ describe('a typo never erases a count (review BLOCKING-1)', () => {
     const { unmount } = await renderPage(SAVED)
     type(countField(), ' 0180 ')
     await save()
-    expect(measurePuts()).toEqual([{ seed_count: 180, seed_count_estimated: false }])
+    expect(measurePuts()).toEqual([{ seed_count: 180, seed_count_estimated: false, expected_seed_count: 175, expected_seed_count_estimated: false, expected_seed_weight_g: null }])
     unmount()
     fetchSpy.mockClear(); updateItemSpy.mockClear()
     await renderPage(SAVED)
     type(countField(), '   ')
     await save()
-    expect(measurePuts()).toEqual([{ seed_count: null, seed_count_estimated: null }])
+    expect(measurePuts()).toEqual([{ seed_count: null, seed_count_estimated: null, expected_seed_count: 175, expected_seed_count_estimated: false, expected_seed_weight_g: null }])
     await waitFor(() => expect(factRows()[0]).toEqual(['Seed count', 'Not counted yet']))
   })
 })
@@ -515,7 +515,7 @@ describe('a count typed and then hidden is neither sent nor baselined (review MI
     await act(async () => { fireEvent.change(origin(), { target: { value: 'farm_stand' } }) })
     expect(countField().value).toBe('180')
     await save()
-    expect(measurePuts()).toEqual([{ seed_count: 180, seed_count_estimated: false }])
+    expect(measurePuts()).toEqual([{ seed_count: 180, seed_count_estimated: false, expected_seed_count: 175, expected_seed_count_estimated: false, expected_seed_weight_g: null }])
     await waitFor(() => expect(isReloadBlocked()).toBe(false))
   })
 })
