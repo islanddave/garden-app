@@ -58,12 +58,18 @@
 // else (lambda/preservation/kitchenRoutes.js createBatch). The lines copied from a past batch and the recipe's
 // process jar are SEPARATE requests, sent only once the create has been answered — so a tap whose answer was
 // lost never sent them. A refused replay does not leave them off in silence:
-//   · the batch is this sitting's ('fixed': sent from this sheet, made minutes ago, untouched) → they are sent AS
+//   · the batch is this sheet's own (every body under the key went out from the sheet that is open now, and
+//     nothing but this sheet has written to it since) → they are sent AS
 //     THE TAP THAT WENT THROUGH DESCRIBED THEM, never from the edited form: the copied lines when every tap
 //     under the key went out with this same pick (each line carries its own key, and POST /:id/inputs replays a
 //     key it holds — lineRoutes.js addKeyedLines — so sending them again adds nothing); the jar when the BATCH
 //     says it was started from this recipe and holds no jar (a merge PUT of fixed values);
-//   · the batch is not this sitting's ('stale'), or which pick the landed tap had is not known → nothing is sent.
+//   · the batch is not (a draft restored from storage, or touched by someone since), or which pick the landed
+//     tap had is not known → nothing is sent.
+// HOW LONG AGO IT WAS MADE IS NOT ASKED HERE (delta F-4). The ten-minute bound is for writing the form over the
+// batch's own fields (the name, the kind, the reference). A keyed line adds nothing twice and the jar goes only
+// onto a batch with none, so neither can write over anything: a tap from the same sheet after a long loss of
+// signal still adds them.
 // Either way the sentence says what this tap did and what was left off (startRefusalText), and a change whose
 // PUT failed says what did not follow it (startUnsavedText).
 // A REPLAY THAT NEEDS NOTHING PUT ON IT IS HELD TO THE SAME TEST (re-review I-C). One body under the key, or a
@@ -428,15 +434,17 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
         holds: sameFact(batch?.label, chose.label) && sameFact(batch?.kind, chose.kind) && sameFact(batch?.kind_other, chose.kind_other)
           && sameFact(batch?.recipe_ref, chose.recipe_ref),
       })
-      // A replay with nothing to put on it, on a batch that is not this sitting's: what follows a start is not
-      // this tap's to add either (re-review I-C; see WHAT FOLLOWS A START).
-      const notOurs = todo == null && batch?.replayed === true
-        && !(mineRef.current && rowIsThisSittings(batch, Date.now(), holdsOwnUpdate(batch, putRef.current)))
+      // Whether what follows a start is this tap's to add: the batch is this sheet's own and untouched since —
+      // read at the batch's own instant, so its age is not asked (delta F-4; see WHAT FOLLOWS A START).
+      const ours = mineRef.current && rowIsThisSittings(batch, new Date(batch?.created_at).getTime(), holdsOwnUpdate(batch, putRef.current))
+      // A replay with nothing to put on it, on a batch that is not: what follows a start is not this tap's to
+      // add either (re-review I-C).
+      const notOurs = todo == null && batch?.replayed === true && !ours
       if (todo === 'fixed' || todo === 'stale' || notOurs) {
         // None of what is on the form is written, and the key is KEPT: Start it again is this refusal again,
         // never a second batch. What follows a start is sent as the tap that went through described it — and
-        // only onto a batch that is this sitting's ('fixed'); see WHAT FOLLOWS A START.
-        const own = todo === 'fixed'
+        // only onto a batch that is this sheet's own (`ours`); see WHAT FOLLOWS A START.
+        const own = ours
         const follow = { lines: null, jar: null }
         const went = (send) => send.then(() => 'added', (e) => (answeredNo(e) ? 'not' : 'maybe'))
         const copied = likeSentRef.current

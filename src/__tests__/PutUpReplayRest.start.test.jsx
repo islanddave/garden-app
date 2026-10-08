@@ -596,17 +596,73 @@ describe('Start a batch — a replayed create', () => {
     expect(table.lines).toHaveLength(0)
   })
 
-  it('QA I-3 — a batch that is NOT this sitting\'s (made a while ago) is not written onto: neither the lines nor the jar is sent, and the sentence says both were left off', async () => {
+  // Delta F-4. What follows a start is this sheet's to add whatever the batch's age — the lines are keyed and the
+  // jar goes only onto a batch with none — while the batch's OWN fields keep the ten-minute bound.
+  it('QA I-3, delta F-4 — this sheet\'s own batch, made a while ago, with the name changed: the NAME is not written onto it (the age bound stands for the batch\'s own fields) — and the lines and the jar the start that went through was made with are added, once, and the sentence says so', async () => {
     const table = batchTable({ first: { ...stamps(LONG_AGO) } })
-    open({ recipe: JAR_RECIPE })
+    const sheet = open({ recipe: JAR_RECIPE })
     await pickPast()
     await startIt(); await said(GENERIC)
     type('start-label', 'Roll for Initiative, again')
     await startIt()
     await answered(2)
+    await said(startRefusalText({ lines: 'added', jar: 'added' }))
+    expect(puts()).toEqual([JAR_PUT])
+    expect(table.lines).toHaveLength(2)
+    expect(table.row).toMatchObject({ label: 'Roll for Initiative', vessel_label: 'Half-gallon jar' })
+    expect(sheet.onStarted).not.toHaveBeenCalled()
+    await startIt()
+    await answered(3)
+    await said(START_REPLAY_NOT_ON_IT)
+    expect(puts()).toEqual([JAR_PUT])
+    expect(linePosts()).toHaveLength(1)
+    expect(new Set(keys()).size).toBe(1)
+  })
+
+  it('delta F-4 (C5) — Make this with a past batch copied in, Start it lands with its answer lost; ELEVEN MINUTES pass; Start it again from the SAME sheet, untouched: the copied lines and the recipe\'s jar are added, once each, and it lands', async () => {
+    const table = batchTable({ first: { ...stamps(LONG_AGO) } })
+    const sheet = open({ recipe: JAR_RECIPE })
+    await pickPast()
+    await startIt(); await said(GENERIC)
+    expect(otherWrites()).toEqual([])
+    await startIt()
+    await waitFor(() => expect(sheet.onStarted).toHaveBeenCalledTimes(1))
+    expect(errorText()).toBeNull()
+    expect(puts()).toEqual([JAR_PUT])
+    expect(linePosts()).toHaveLength(1)
+    expect(linePosts()[0][1].inputs.map(l => l.label)).toEqual(['Megatron jalapeño', 'Salt'])
+    expect(table.lines).toHaveLength(2)
+    expect(table.row).toMatchObject({ label: 'Roll for Initiative', vessel_label: 'Half-gallon jar', vessel_count: 1 })
+    expect(new Set(keys()).size).toBe(1)
+  })
+
+  it('delta F-4 — … but TOUCHED by someone else meanwhile (no jar set): neither the lines nor the jar is sent, at any age, and the sentence says both were left off', async () => {
+    const table = batchTable({ first: { ...stamps(LONG_AGO) } })
+    const sheet = open({ recipe: JAR_RECIPE })
+    await pickPast()
+    await startIt(); await said(GENERIC)
+    table.row = { ...table.row, cover_photo_id: 'photo-jen', updated_at: new Date().toISOString() }
+    await startIt()
+    await answered(2)
     await said(startRefusalText({ lines: 'not', jar: 'not' }))
     expect(otherWrites()).toEqual([])
-    expect(table.row.vessel_label ?? null).toBeNull()
+    expect(sheet.onStarted).not.toHaveBeenCalled()
+  })
+
+  it('delta F-4 — a RESTORED Make this draft (not this sitting\'s) whose batch holds no jar, minutes old and untouched: still nothing is sent, and the sentence says the jar was not added', async () => {
+    const table = batchTable()
+    const first = open({ recipe: JAR_RECIPE })
+    await startIt(); await said(GENERIC)
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(JAR_DRAFT_KEY))?.data?.sent).toHaveLength(1))
+    first.unmount()
+    const before = { ...table.row }
+    const second = open({ recipe: JAR_RECIPE })
+    await startIt()
+    await answered(2)
+    await said(startRefusalText({ jar: 'not' }))
+    expect(otherWrites()).toEqual([])
+    expect(table.row).toEqual(before)
+    expect(second.onStarted).not.toHaveBeenCalled()
   })
 
   it('QA I-3 — the lines\' answer is lost: the sentence says they MAY not have been added, and the next tap sends them again under their keys — added once', async () => {
