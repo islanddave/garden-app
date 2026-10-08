@@ -87,9 +87,14 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 # so a new file added to LOADS_SRC with its test does not; a check mirrored step for step into one leg does not. A
 # row that blocks for TEST-IDS-DIFFER, or for DISAGREE with a failed unit step in a leg, is a result of the trial:
 # COUNT_FROM_SHA does not move past it until its cause is written in the commit that moves it.
-# Two commits are restarts so far: the one that began the trial, and the one that held the node project to tests
-# that load nothing under src/ (36 files went back to jsdom, so rows before it compare a different pair of shapes).
-# COUNT_FROM_SHA moves to the later one.
+# Three commits are restarts so far: the one that began the trial; the one that held the node project to tests
+# that load nothing under src/ (36 files went back to jsdom, so rows before it compare a different pair of shapes);
+# and the one that named scripts/ci-telemetry/coverage-v8-two-forms.mjs as vitest.config.ts's coverage provider
+# (BUG-ENGINECOVERAGETWOREADINGS-001). The third changes no test and no test ID, only how coverage is read: a
+# lambda/daily-plan module that reached V8 both as vite's text and as the file's own is converted one form at a
+# time, so the run-to-run movement described under "coverage" above is what the provider before it did, in both
+# shapes. That criterion is left as written; tightening it is the owner's.
+# COUNT_FROM_SHA moves to the latest restart, each time in a later commit that names the restart's pushed SHA.
 # Design and measurements: gardening-docs project-state/_promotepath-20261002/scout-a3-nodeproject-20261007.md,
 # review-a3trial-qa-20261007.md (the coverage criterion, and the exit list) and lane-a3srcsplit-20261007.log (the
 # src/ rule).

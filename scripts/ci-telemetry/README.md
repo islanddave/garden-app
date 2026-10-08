@@ -140,3 +140,21 @@ artefact, so it reads the coverage table out of two unit-pass job logs of one co
 directory row but `All files` and `lambda/daily-plan` on % Funcs and % Lines. Exit 0 `COVERAGE-SAME`, 1
 `COVERAGE-DIFFERS` with the rows, 2 `COVERAGE-UNREADABLE`. Tested in `scripts/test_coverage_rows.py` against the
 table of a real job log under `scripts/fixtures/coverage-rows/`.
+
+`coverage-v8-two-forms.mjs` is the unit run's coverage provider (`vitest.config.ts`, `coverage.customProviderModule`):
+the installed `@vitest/coverage-v8` provider, subclassed, with one thing changed. A module under `lambda/daily-plan/`
+reaches V8 in two forms under one URL, vite's text of it in a test file that imports it and the file's own text
+wherever `handler.js` or a `createRequire` loads it, and the stock provider converts both against vite's text at one
+start offset, taken from whichever per-test-file result it read last. One tree therefore read `engine.js` as 1,214
+or 1,257 covered items by draw where 1,325 were covered (the 59 test files that load it), and `handler.js` `run()` as
+never entered (BUG-ENGINECOVERAGETWOREADINGS-001). The module converts each form against the text it was compiled
+from, merges the two item for item, and fails the run (an `ERROR: coverage-v8-two-forms:` line and exit 1, like a
+missed threshold) on any negative hit count or on a file whose two conversions do not list the same items. It changes
+nothing in the workers and no test. It leans on vitest internals, listed in its header;
+`coverage-v8-two-forms.test.js` holds them to the installed package by asking it for each member and by running
+`scripts/fixtures/coverage-two-forms/` (one module loaded through vite, by Node, and both ways in one worker, and one
+that a worker leaves half loaded) through a real `vitest run --coverage` and reading every hit count back. Re-read
+the header on any vitest or `@vitest/coverage-v8` upgrade, and on a Node upgrade if that test goes red. To see what
+the stock provider makes of the same fixture, and whether an upgrade has fixed it upstream:
+`npx vitest run --config scripts/fixtures/coverage-two-forms/vitest.config.mjs --coverage --coverage.provider=v8`
+(the cases pass either way; read `coverage/coverage-final.json`, where stock gives `throughVite` 0 hits for 4 calls).

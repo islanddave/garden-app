@@ -124,7 +124,20 @@ export default defineConfig({
       VITE_API_VARIETIES:         'https://test-placeholder.lambda-url.us-east-1.on.aws/',
     },
     coverage: {
-      provider: 'v8',
+      // BUG-ENGINECOVERAGETWOREADINGS-001. Still v8 coverage, read by the installed @vitest/coverage-v8: the module
+      // named here subclasses that provider and changes one thing. A module under lambda/daily-plan/ reaches V8 in
+      // two forms under one URL: vite's text of it, in a test file that imports it, and the file's own text,
+      // wherever handler.js or a createRequire loads it. The stock provider keeps one start offset per URL (from
+      // whichever per-test-file result it happened to read last) and converts both forms against vite's text, so
+      // one tree read engine.js as 1,214 or 1,257 covered items by draw where 1,325 were covered (the 59 test files
+      // that load it), read handler.js run() as never entered, and left negative hit counts behind. The module
+      // converts each form against the text it was compiled from, and fails the run on any negative hit count.
+      // It leans on vitest internals: its header lists them and scripts/ci-telemetry/coverage-v8-two-forms.test.js
+      // holds them to the installed package. Re-read both on a vitest or @vitest/coverage-v8 upgrade. Not
+      // `provider: 'v8'` again without that module: the totals this file's thresholds are set against would go
+      // back to moving by draw.
+      provider: 'custom',
+      customProviderModule: './scripts/ci-telemetry/coverage-v8-two-forms.mjs',
       reporter: ['text', 'json-summary', 'lcov', 'html'],
       reportsDirectory: './coverage',
       thresholds: {
