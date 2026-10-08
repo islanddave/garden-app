@@ -44,7 +44,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter } from '../kitchen/sheetScroll.js'
-import { mintKey, sendPrint, noteSent, afterReplay, answerLost } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, answerLost, answeredNo, updateSent, holdsOwnUpdate } from '../kitchen/idempotencyKey.js'
 import TypePicker from './TypePicker.jsx'
 import {
   emptyDraft, draftFromRecipe, recipeBody, recipeHolds, exactAmountOpens, keepsKindChips, RECIPE_KIND_OPTIONS, STORAGE_KIND_WORDS,
@@ -102,8 +102,9 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   // Whether every body under the draft's key went out from THIS sheet: a draft restored with `sent` in it
   // was sent from an earlier one, and is never written onto the recipe it made.
   const mineRef = useRef(!(Array.isArray(initial.sent) && initial.sent.length))
-  // The recipe this sheet has sent its PATCH to (its id): a PATCH that landed with its answer lost has moved
-  // the recipe's updated_at, and Save again must still be able to finish it.
+  // The PATCH this sheet last sent that may have landed — the recipe's id and the draft it was built from
+  // (idempotencyKey.js updateSent). A PATCH that landed with its answer lost has moved the recipe's updated_at,
+  // and Save again must still be able to finish it — only while the recipe still holds that draft (recipeHolds).
   const patchedRef = useRef(null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
@@ -208,7 +209,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
         if (sent !== d.sent) setD(x => ({ ...x, sent }))
         answer = await fetch('/api/recipes', { method: 'POST', body: JSON.stringify(res.body) })
         const todo = afterReplay(answer, sent, print, {
-          row: answer?.recipe, mine: mineRef.current, updatedHere: answer?.recipe?.id != null && patchedRef.current === answer.recipe.id,
+          row: answer?.recipe, mine: mineRef.current, updatedHere: holdsOwnUpdate(answer?.recipe, patchedRef.current, recipeHolds),
           holds: recipeHolds(d, answer?.recipe),
         })
         if (todo === 'stale') {
@@ -226,8 +227,15 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
           // as an edit would send it. A failure lands in the catch below, said as what it is.
           onRow = answer?.recipe ?? null
           if (onRow?.id == null) throw new Error('replayed without a recipe')
-          patchedRef.current = onRow.id
-          answer = await fetch(`/api/recipes/${onRow.id}`, { method: 'PATCH', body: JSON.stringify(recipeBody(d, { mode: 'edit' }).body) })
+          const was = patchedRef.current
+          patchedRef.current = updateSent(onRow.id, d)
+          try {
+            answer = await fetch(`/api/recipes/${onRow.id}`, { method: 'PATCH', body: JSON.stringify(recipeBody(d, { mode: 'edit' }).body) })
+          } catch (e) {
+            // An ANSWERED 4xx did not land: the PATCH this sheet keeps is the one before it.
+            if (answeredNo(e)) patchedRef.current = was
+            throw e
+          }
         }
       }
       savedRef.current = true

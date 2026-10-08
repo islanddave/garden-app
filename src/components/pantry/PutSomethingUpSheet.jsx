@@ -75,7 +75,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome } from '../forms/formStyles.js'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
-import { mintKey, noteSent, afterReplay, whenChoice, answerLost } from '../kitchen/idempotencyKey.js'
+import { mintKey, noteSent, afterReplay, whenChoice, answerLost, answeredNo, updateSent, holdsOwnUpdate } from '../kitchen/idempotencyKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter, FOOTER_GAP_PX } from '../kitchen/sheetScroll.js'
 import { placeChips, estimateChips, TEXTURE_CHIPS } from '../putup/putItUp.js'
 import NameSearchField from './NameSearchField.jsx'
@@ -93,6 +93,7 @@ import {
   doorOptionsLabel, doorFromLabel, doorNotesPlaceholder, whereFromHeading, sizeEcho, sizeTotalError,
   SIZE_LINK_LABEL, AMOUNT_LINK_LABEL, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText,
   replayUnsavedText, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
+  JAR_PATCH_READS, ITEM_PATCH_READS,
 } from './putSomethingUp.js'
 
 const WHEN_CHIPS = [{ id: 'today', label: 'Today' }, { id: 'yesterday', label: 'Yesterday' }, { id: 'earlier', label: 'Earlier…' }]
@@ -224,8 +225,9 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   // Whether every body under `key` went out from THIS door. A draft restored with `sent` in it was sent from
   // an earlier one, and is never written onto the item it made; a key minted here is this door's.
   const mineRef = useRef(sent.length === 0)
-  // The item or jar this door has sent a PATCH to (its id): a PATCH that landed with its answer lost has
-  // moved the row's updated_at, and Save again must still be able to finish it.
+  // The PATCH this door last sent that may have landed — the row's id and the body as it went (idempotencyKey.js
+  // updateSent). A PATCH that landed with its answer lost has moved the row's updated_at, and Save again must
+  // still be able to finish it: the moved stamp is this door's own only while the row still holds that body.
   const patchedRef = useRef(null)
   const [what, setWhat] = useState(initial.what)
   const [place, setPlace] = useState(initial.place)
@@ -497,7 +499,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         const read = { whenMoved: jarWhenMoved(sentNow, print) }
         const part = jarFixedPart(body, saved, what, read)
         const todo = afterReplay(saved, sentNow, print, {
-          row: saved, mine: mineRef.current, updatedHere: saved?.id != null && patchedRef.current === saved.id,
+          row: saved, mine: mineRef.current, updatedHere: holdsOwnUpdate(saved, patchedRef.current, JAR_PATCH_READS),
           fixed: part != null, holds: jarHolds(body, saved, what, read), nullIsUntouched: true,
         })
         if (todo === 'stale' || todo === 'fixed') {
@@ -519,12 +521,13 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
           onRow = saved
           if (saved?.id == null) throw new Error('replayed without a jar')
           const was = patchedRef.current
-          patchedRef.current = saved.id
+          const patch = jarPatchOf(body)
+          patchedRef.current = updateSent(saved.id, patch)
           try {
-            saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(jarPatchOf(body)) })
+            saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(patch) })
           } catch (ex) {
-            // An ANSWERED 4xx did not land: if the jar's stamp has moved by the next Save, it was not this door.
-            if (typeof ex?.status === 'number' && ex.status >= 400 && ex.status < 500) patchedRef.current = was
+            // An ANSWERED 4xx did not land: the PATCH this door keeps is the one before it.
+            if (answeredNo(ex)) patchedRef.current = was
             throw ex
           }
         }
@@ -536,7 +539,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
         const todo = afterReplay(r, sentNow, print, {
-          row: saved, mine: mineRef.current, updatedHere: saved?.id != null && patchedRef.current === saved.id,
+          row: saved, mine: mineRef.current, updatedHere: holdsOwnUpdate(saved, patchedRef.current, ITEM_PATCH_READS),
           fixed: plantingDiffers(body, saved), holds: itemHolds(body, saved, what),
         })
         if (todo === 'stale' || todo === 'fixed') {
@@ -553,9 +556,16 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
           onRow = saved
           if (saved?.id == null) throw new Error('replayed without an item')
           const placeId = await ensurePlaceId(fetch, place)
-          patchedRef.current = saved.id
-          const u = await patchPantryItem(fetch, saved.id, itemPatchOf(body, placeId, saved))
-          saved = u?.item ?? u
+          const was = patchedRef.current
+          const patch = itemPatchOf(body, placeId, saved)
+          patchedRef.current = updateSent(saved.id, patch)
+          try {
+            const u = await patchPantryItem(fetch, saved.id, patch)
+            saved = u?.item ?? u
+          } catch (ex) {
+            if (answeredNo(ex)) patchedRef.current = was
+            throw ex
+          }
         }
       }
       savedRef.current = true

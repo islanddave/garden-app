@@ -19,7 +19,7 @@ import {
   putUpDateWords, shortDay, parseYmd, toYmd, discardWords, ESTIMATED_PRECISIONS, totalOfEach, qtyText,
 } from '../putup/jarWords.js'
 import { parseAmount } from './AmountField.jsx'
-import { sendPrint, payloadPrint, sameFact } from '../kitchen/idempotencyKey.js'
+import { sendPrint, payloadPrint, sameFact, rowHoldsFields } from '../kitchen/idempotencyKey.js'
 
 export const AS_IS = 'as_is'
 // The no-method choice in two lengths. On its CHIP it says what it covers — true for a typed name whatever
@@ -335,7 +335,16 @@ export function itemBody({ key, what, place, when, discard, notes = '', amount =
 // by id. The crop a typed name resolved to goes ONLY when it is not the item's already — so a change that
 // leaves the crop alone sends the body the PATCH has always taken — and never for a planting, whose crop is
 // the planting's (the Lambda refuses it there).
+// ITEM_PATCH_READS is how each field of that PATCH is read back off the item (idempotencyKey.js holdsOwnUpdate):
+// a date as its day, an amount as a number, and a date sent with no precision as the 'day' the route stores.
 export const ITEM_FIXED_KEYS = Object.freeze(['plant_id'])
+const dayRead = (v) => (v == null || v === '' ? null : String(v).slice(0, 10))
+export const ITEM_PATCH_READS = Object.freeze({
+  acquired_at: (v, item) => dayRead(v) === dayRead(item.acquired_at),
+  acquired_precision: (v, item, patch) => sameFact(v ?? (patch.acquired_at != null ? 'day' : null), item.acquired_precision),
+  use_by_target: (v, item) => dayRead(v) === dayRead(item.use_by_target),
+  quantity_value: (v, item) => sameFact(v, item.quantity_value, { numeric: true }),
+})
 export function itemPatchOf(body, storageLocationId, item = null) {
   const patch = {
     name: body.name, storage_location_id: String(storageLocationId),
@@ -432,8 +441,21 @@ export function jarWhenMoved(sent, print) {
   return (Array.isArray(sent) ? sent : []).some(s => typeof s === 'string' && s.startsWith('jar:') && when(s) !== when(print))
 }
 
-const dayOf = (v) => (v == null || v === '' ? null : String(v).slice(0, 10))
+const dayOf = dayRead
 const idOf = (v) => (v == null || v === '' ? null : String(v))
+// How each field of jarPatchOf is read back off the jar (idempotencyKey.js holdsOwnUpdate, and jarHolds below):
+// a count and a size as numbers, a flag never chosen as "not set", and the discard word with the jar's basis —
+// a date he set (or "no date") is `typed`; one left to be worked out ("clear") is anything else.
+export const JAR_PATCH_READS = Object.freeze({
+  package_count: (v, jar) => sameFact(v, jar.package_count, { numeric: true }),
+  quantity_value: (v, jar) => sameFact(v, jar.quantity_value, { numeric: true }),
+  discard_by: (v, jar) => {
+    const typed = jar.use_by_basis === 'typed'
+    return v === 'clear' ? !typed : typed && dayOf(v === 'none' ? null : v) === dayOf(jar.use_by_target)
+  },
+  is_raw: (v, jar) => (v === true) === (jar.is_raw === true),
+  in_oil: (v, jar) => (v === true) === (jar.in_oil === true),
+})
 // The part of this body the PATCH cannot put on the replayed jar — 'what' | 'place' | 'when' | 'size' — or
 // null. Read off the ROW, which says exactly what it holds, so putting that part back lets the next Save
 // through. Two parts are not his to choose, and are read as he chose them:
@@ -459,26 +481,12 @@ export function jarFixedPart(body, jar, what, { whenMoved = false } = {}) {
   return null
 }
 // Whether a replayed jar ALREADY HOLDS what this body would put on it (idempotencyKey.js `holds`): no part
-// the PATCH cannot carry differs, and every part it can is the row's. The discard date is read with its
-// basis: a date he set (or "no date") is `typed`; one left to be worked out is anything else. A removed jar
-// holds nothing.
+// the PATCH cannot carry differs, and every part it can is the row's — the body as its PATCH, read back field
+// by field (JAR_PATCH_READS). A removed jar holds nothing.
 export function jarHolds(body, jar, what, opts = {}) {
   if (!body || !jar || jar.deleted_at) return false
   if (jarFixedPart(body, jar, what, opts)) return false
-  const typed = jar.use_by_basis === 'typed'
-  const discard = hasKey(body, 'use_by_target') ? typed && dayOf(body.use_by_target) === dayOf(jar.use_by_target) : !typed
-  return discard
-    && sameFact(body.label, jar.label)
-    && sameFact(body.method, jar.method)
-    && sameFact(body.package_count, jar.package_count, { numeric: true })
-    && sameFact(body.quantity_value, jar.quantity_value, { numeric: true })
-    && sameFact(body.quantity_unit, jar.quantity_unit)
-    && (body.is_raw === true) === (jar.is_raw === true)
-    && (body.in_oil === true) === (jar.in_oil === true)
-    && sameFact(body.texture, jar.texture)
-    && sameFact(body.notes, jar.notes)
-    && sameFact(body.source_kind, jar.source_kind)
-    && sameFact(body.source_label, jar.source_label)
+  return rowHoldsFields(jar, jarPatchOf(body), JAR_PATCH_READS)
 }
 // Said when an earlier Save made the jar and this one differs from it in a part no PATCH carries: nothing is
 // written, and the form stays as it is. `jar` is the row the replay answered with; `part` is jarFixedPart's.

@@ -48,8 +48,9 @@ import PutSomethingUpSheet, { isDoorDraft } from '../components/pantry/PutSometh
 import PutUp from '../pages/PutUp.jsx'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 import {
-  DOOR_SHEET, ITEM_FIXED_KEYS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText, replayUnsavedText,
+  DOOR_SHEET, ITEM_FIXED_KEYS, ITEM_PATCH_READS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText, replayUnsavedText,
 } from '../components/pantry/putSomethingUp.js'
+import { rowHoldsFields } from '../components/kitchen/idempotencyKey.js'
 import { sheetDraftKey, readSheetDraft } from '../components/kitchen/sheetDraft.js'
 import { validateItemPatch } from '../../lambda/preservation/pantryItems.js'
 import { clearReloadBlocks } from '../lib/reloadGate.js'
@@ -203,6 +204,34 @@ describe('the item as its PATCH — putSomethingUp.js itemPatchOf', () => {
     expect(itemHolds({ ...BODY2, plant_id: 'p1' }, { ...FIRST, plant_id: 'p1', crop_type_slug: 'pepper' }, { source: 'planting', name: 'Oat milk', plant_id: 'p1' })).toBe(true)
     expect(itemHolds(BODY2, { ...FIRST, deleted_at: '2026-10-01T15:00:00.000Z' }, TYPED)).toBe(false)
     expect([itemHolds(BODY2, null, TYPED), itemHolds(null, FIRST, TYPED)]).toEqual([false, false])
+  })
+})
+
+describe('the item\'s PATCH read back off the item — putSomethingUp.js ITEM_PATCH_READS (QA I-2)', () => {
+  const BODY = { idempotency_key: 'k', name: 'Oat milk', storage_location_id: 'loc-3', acquired_at: '2026-10-01', acquired_precision: 'day', notes: 'the second carton', quantity_value: 2, quantity_unit: 'qt' }
+  const PATCH = itemPatchOf(BODY, 'loc-3', FIRST)
+  // The item as the route answers it after that PATCH: a numeric as text, a nothing as null.
+  const AFTER = { ...FIRST, notes: 'the second carton', quantity_value: '2.000', quantity_unit: 'qt', updated_at: new Date().toISOString() }
+  const holds = (patch, item) => rowHoldsFields(item, patch, ITEM_PATCH_READS)
+  it('the item a PATCH landed on holds every field it sent — an amount as a number, a date as its day', () => {
+    expect(holds(PATCH, AFTER)).toBe(true)
+    expect(holds(PATCH, { ...AFTER, acquired_at: '2026-10-01T00:00:00.000Z' })).toBe(true)
+    // A date sent with no precision is stored as 'day' (lambda/preservation/pantryItems.js acquiredOf); no date at all is nothing.
+    expect(holds({ ...PATCH, acquired_precision: null }, AFTER)).toBe(true)
+    expect(holds({ ...PATCH, acquired_at: null, acquired_precision: null }, { ...AFTER, acquired_at: null, acquired_precision: null })).toBe(true)
+    expect(holds({ ...PATCH, acquired_at: null, acquired_precision: 'unknown' }, { ...AFTER, acquired_at: null, acquired_precision: 'unknown' })).toBe(true)
+  })
+  it('one field of it changed since by anyone: it does not — each field the PATCH sends', () => {
+    for (const theirs of [{ name: 'Oat milk (Jen)' }, { storage_location_id: 'loc-1' }, { acquired_at: '2026-09-30' }, { acquired_precision: 'month' },
+      { use_by_target: '2026-11-01' }, { notes: 'Jen: door shelf' }, { notes: null }, { quantity_value: '3.000' }, { quantity_unit: 'gal' },
+      { source_kind: 'store' }, { source_label: 'Costco' }]) {
+      expect(`${JSON.stringify(theirs)}: ${holds(PATCH, { ...AFTER, ...theirs })}`).toBe(`${JSON.stringify(theirs)}: false`)
+    }
+    // The crop rides the PATCH only when it is not the item's already; then it is read like any other field.
+    const withCrop = itemPatchOf({ ...BODY, crop_type_slug: 'oat' }, 'loc-3', FIRST)
+    expect(withCrop.crop_type_slug).toBe('oat')
+    expect(holds(withCrop, { ...AFTER, crop_type_slug: 'oat' })).toBe(true)
+    expect(holds(withCrop, AFTER)).toBe(false)
   })
 })
 
@@ -393,6 +422,58 @@ describe('Put something up — the item route', () => {
     expect(door.onSaved).toHaveBeenCalledTimes(1)
     expect(new Set(keys()).size).toBe(1)
     expect(patches().map(c => [c.path, c.body.notes])).toEqual([[ROW, 'the second carton'], [ROW, 'the second carton, opened']])
+  })
+
+  // QA I-2. A PATCH whose answer was lost may never have reached the server; a stamp that has moved since is then
+  // somebody else's. The door knows its own PATCH by what it sent: the item must still hold it, field by field.
+  const otherWriter = (theirs, how = 'never') => {
+    const state = { row: FIRST }
+    let n = 0
+    let seen = 0
+    fake = pantryFetch({ rows: [], overrides: {
+      [`POST ${ITEMS}`]: () => { if (++n === 1) LOST(); return { item: state.row, replayed: true } },
+      [`PATCH ${ITEMS}/*`]: ({ body }) => {
+        seen += 1
+        if (how === 'never' && seen === 1) { state.row = { ...state.row, ...theirs, updated_at: new Date().toISOString() }; LOST() }   // it did not land; they wrote
+        state.row = { ...state.row, ...body, updated_at: new Date().toISOString() }
+        if (how === 'landed' && seen === 1) LOST()
+        return { item: state.row }
+      },
+    } })
+    stableFetch.fn = fake
+    return state
+  }
+  it('QA I-2 — the PATCH never reached the server and the item is renamed and noted by someone else meanwhile: Save again writes NOTHING over their change — the door says it was saved earlier', async () => {
+    const state = otherWriter({ name: 'Oat milk (Jen)', notes: 'Jen: door shelf' })
+    const door = await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'mine')
+    save()
+    await failed(MAYBE)
+    save()
+    await failed('“Oat milk (Jen)” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.')
+    expect(posts()).toHaveLength(3)
+    expect(patches()).toHaveLength(1)                                          // no second PATCH
+    expect(state.row).toMatchObject({ name: 'Oat milk (Jen)', notes: 'Jen: door shelf' })
+    expect(door.onSaved).not.toHaveBeenCalled()
+    expect(new Set(keys()).size).toBe(1)
+  })
+  it('QA I-2 — the PATCH LANDED with its answer lost, and someone else then changes the notes it sent: a further change is NOT written over theirs', async () => {
+    const state = otherWriter(null, 'landed')
+    const door = await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'the second carton')
+    save()
+    await failed(MAYBE)
+    state.row = { ...state.row, notes: 'Jen: door shelf', updated_at: new Date().toISOString() }
+    typeInto('door-notes', 'the second carton, opened')
+    save()
+    await failed('“Oat milk” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.')
+    expect(patches()).toHaveLength(1)
+    expect(state.row.notes).toBe('Jen: door shelf')
+    expect(door.onSaved).not.toHaveBeenCalled()
   })
 
   it('I3 — the PATCH is refused with a 4xx: its sentence is shown after "already in the Pantry" — and the key is NOT minted again (the item exists; a new key would make a second one)', async () => {

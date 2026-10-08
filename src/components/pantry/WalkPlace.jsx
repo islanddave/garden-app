@@ -39,7 +39,7 @@ import { createPantryItem, deletePantryItem, ensurePlaceId, listPantry, patchPan
 import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, requiredMarkChrome } from '../forms/formStyles.js'
-import { mintKey, noteSent, afterReplay, whenChoice, answerLost } from '../kitchen/idempotencyKey.js'
+import { mintKey, noteSent, afterReplay, whenChoice, answerLost, answeredNo, updateSent, holdsOwnUpdate } from '../kitchen/idempotencyKey.js'
 import { placeChips } from '../putup/putItUp.js'
 import NameSearchField from './NameSearchField.jsx'
 import Stepper, { stepperCount } from './Stepper.jsx'
@@ -51,6 +51,7 @@ import {
   AS_IS, METHOD_REQUIRED_TEXT, methodChoices, routeFor, walkWhen, walkWhenChips, previewLine, jarBody, itemBody,
   methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText,
   replayStaleText, replayUnsavedText, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
+  JAR_PATCH_READS, ITEM_PATCH_READS,
 } from './putSomethingUp.js'
 
 export const WALK_TITLE = 'Walk a place'
@@ -454,8 +455,9 @@ function WalkGroup({
   const [ownPicked, setOwnPicked] = useState(held?.ownPicked ?? '')
   const [key, setKey] = useState(held?.key ?? null)
   const [sent, setSent] = useState(held?.sent ?? [])
-  // The item or jar this group has sent a PATCH to (its id), held with the key: a PATCH that landed with its
-  // answer lost has moved the row's updated_at, and Save again must still be able to finish it.
+  // The PATCH this group last sent that may have landed — the row's id and the body as it went (idempotencyKey.js
+  // updateSent), held with the key: a PATCH that landed with its answer lost has moved the row's updated_at, and
+  // Save again must still be able to finish it — only while the row still holds that body.
   const [patched, setPatched] = useState(held?.patched ?? null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
@@ -525,7 +527,7 @@ function WalkGroup({
         const read = { whenMoved: jarWhenMoved(sentNow, print) }
         const part = jarFixedPart(body, saved, what, read)
         const todo = afterReplay(saved, sentNow, print, {
-          row: saved, updatedHere: saved?.id != null && patched === saved.id, fixed: part != null, holds: jarHolds(body, saved, what, read),
+          row: saved, updatedHere: holdsOwnUpdate(saved, patched, JAR_PATCH_READS), fixed: part != null, holds: jarHolds(body, saved, what, read),
           nullIsUntouched: true,
         })
         // Nothing is written — not the parts a PATCH could carry either — and the key is KEPT.
@@ -538,12 +540,13 @@ function WalkGroup({
         if (todo === 'update') {
           onRow = saved
           if (saved?.id == null) throw new Error('replayed without a jar')
-          setPatched(saved.id)
+          const patch = jarPatchOf(body)
+          setPatched(updateSent(saved.id, patch))
           try {
-            saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(jarPatchOf(body)) })
+            saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(patch) })
           } catch (e) {
-            // An ANSWERED 4xx did not land: if the jar's stamp has moved by the next Save, it was not this group.
-            if (typeof e?.status === 'number' && e.status >= 400 && e.status < 500) setPatched(patched)
+            // An ANSWERED 4xx did not land: the PATCH this group keeps is the one before it.
+            if (answeredNo(e)) setPatched(patched)
             throw e
           }
         }
@@ -555,7 +558,7 @@ function WalkGroup({
         const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
         const todo = afterReplay(r, sentNow, print, {
-          row: saved, updatedHere: saved?.id != null && patched === saved.id, fixed: plantingDiffers(body, saved),
+          row: saved, updatedHere: holdsOwnUpdate(saved, patched, ITEM_PATCH_READS), fixed: plantingDiffers(body, saved),
           holds: itemHolds(body, saved, what),
         })
         // Nothing is written and the key is KEPT: Save again is this refusal again, never a second item.
@@ -564,9 +567,15 @@ function WalkGroup({
         if (todo === 'update') {
           onRow = saved
           if (saved?.id == null) throw new Error('replayed without an item')
-          setPatched(saved.id)
-          const u = await patchPantryItem(fetch, saved.id, itemPatchOf(body, await ensurePlaceId(fetch, place), saved))
-          saved = u?.item ?? u
+          const patch = itemPatchOf(body, await ensurePlaceId(fetch, place), saved)
+          setPatched(updateSent(saved.id, patch))
+          try {
+            const u = await patchPantryItem(fetch, saved.id, patch)
+            saved = u?.item ?? u
+          } catch (e) {
+            if (answeredNo(e)) setPatched(patched)
+            throw e
+          }
         }
       }
       // The band's line is the row the server answered with (a replay's is the first Save's, a PATCH's the

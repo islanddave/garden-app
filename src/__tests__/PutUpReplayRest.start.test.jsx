@@ -381,6 +381,48 @@ describe('Start a batch — a replayed create', () => {
     expect(new Set(keys()).size).toBe(1)
   })
 
+  // QA I-2 (the sequence the review ran as ST2). A PUT whose answer was lost may never have reached the server.
+  // Someone else then renames the batch: its stamp has moved — by THEM, and the batch does not hold what the PUT sent.
+  it('QA I-2 — the PUT never reached the server and the batch is renamed by someone else meanwhile: Start it again writes NOTHING over their name — refused', async () => {
+    const table = batchTable({ onPut: () => {
+      table.row = { ...table.row, label: 'Jen’s mash', updated_at: new Date().toISOString() }
+      throw new TypeError('Failed to fetch')                                    // it did not land
+    } })
+    const sheet = open()
+    type('start-label', 'Pepper mash')
+    await startIt(); await said(GENERIC)
+    type('start-label', 'Pepper mash, red')
+    await startIt()
+    await said(START_CHANGE_MAYBE)
+    expect(table.row.label).toBe('Jen’s mash')
+    await startIt()
+    await answered(3)
+    await said(START_REPLAY_NOT_ON_IT)
+    expect(puts()).toHaveLength(1)                                             // no second PUT
+    expect(table.row.label).toBe('Jen’s mash')
+    expect(sheet.onStarted).not.toHaveBeenCalled()
+    expect(new Set(keys()).size).toBe(1)
+    await waitFor(() => expect(stored()).toBeNull())                           // the refusal ends the stored draft
+  })
+
+  it('QA I-2 — the PUT LANDED with its answer lost, and someone else then changes the kind it sent: a further change is NOT written over theirs', async () => {
+    const table = batchTable({ onPut: (n) => (n === 1 ? 'lost' : undefined) })
+    const sheet = open()
+    type('start-label', 'Pepper mash')
+    await startIt(); await said(GENERIC)
+    type('start-label', 'Pepper mash, red')
+    await startIt()
+    await said(START_CHANGE_MAYBE)
+    table.row = { ...table.row, kind: 'ferment', updated_at: new Date().toISOString() }
+    type('start-label', 'Pepper mash, red and hot')
+    await startIt()
+    await answered(3)
+    await said(START_REPLAY_NOT_ON_IT)
+    expect(puts()).toHaveLength(1)
+    expect(table.row).toMatchObject({ label: 'Pepper mash, red', kind: 'ferment' })
+    expect(sheet.onStarted).not.toHaveBeenCalled()
+  })
+
   it('the PUT LANDED and only its answer was lost: the sheet says the change MAY not have saved; a FURTHER change, Start it: it still goes onto that batch (the moved stamp is this sheet\'s own)', async () => {
     const table = batchTable({ onPut: (n) => (n === 1 ? 'lost' : undefined) })
     const sheet = open()

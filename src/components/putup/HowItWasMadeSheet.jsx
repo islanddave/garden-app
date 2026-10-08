@@ -52,7 +52,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, optionalMarkChrome, inputChrome } from '../forms/formStyles.js'
 import { SheetStartChips, resolveSheetStart } from '../kitchen/StartChips.jsx'
 import KindChips, { kindBody } from '../kitchen/KindChips.jsx'
-import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost, sameFact } from '../kitchen/idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost, sameFact, answeredNo, updateSent, holdsOwnUpdate } from '../kitchen/idempotencyKey.js'
 import { scrollClearOfFooter, useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
 import LineAdder, { addFirstWords } from './LineAdder.jsx'
 import LikeBatchPicker from './LikeBatchPicker.jsx'
@@ -92,7 +92,7 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   const { fetch } = useApiFetch()
   const [key] = useState(() => mintKey())
   const sentRef = useRef([])                           // what has gone out under `key` (idempotencyKey.js)
-  const putRef = useRef(null)                          // the batch this sheet has sent its PUT to (its id)
+  const putRef = useRef(null)                          // the PUT this sheet last sent that may have landed (updateSent)
   const [label, setLabel] = useState(() => jarName(jar))
   const [rows, setRows] = useState(null)
   // The jar's full record from the put-up list once it loads (a Pantry row carries no date words of its
@@ -198,7 +198,7 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
     try {
       let batch = await fetch(FROM_JARS_PATH, { method: 'POST', body: JSON.stringify(res.body) })
       const todo = afterReplay(batch, sent, print, {
-        row: batch, updatedHere: batch?.id != null && putRef.current === batch.id,
+        row: batch, updatedHere: holdsOwnUpdate(batch, putRef.current),
         // What the PUT could carry is all the batch has to hold; a difference in any other part is 'fixed'.
         holds: sameFact(batch?.label, res.body.label) && sameFact(batch?.kind, res.body.kind) && sameFact(batch?.kind_other, res.body.kind_other),
       })
@@ -213,10 +213,17 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
       if (todo === 'update') {
         onRow = batch
         if (batch?.id == null) throw new Error('replayed without a batch')
-        putRef.current = batch.id
-        const updated = await fetch(`/api/kitchen-batches/${batch.id}`, {
-          method: 'PUT', body: JSON.stringify({ label: res.body.label, kind: res.body.kind ?? null, kind_other: res.body.kind_other ?? null }),
-        })
+        const was = putRef.current
+        const put = { label: res.body.label, kind: res.body.kind ?? null, kind_other: res.body.kind_other ?? null }
+        putRef.current = updateSent(batch.id, put)
+        let updated
+        try {
+          updated = await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(put) })
+        } catch (e) {
+          // An ANSWERED 4xx did not land: the PUT this sheet keeps is the one before it.
+          if (answeredNo(e)) putRef.current = was
+          throw e
+        }
         batch = { ...batch, ...updated }
       }
       onClose?.()

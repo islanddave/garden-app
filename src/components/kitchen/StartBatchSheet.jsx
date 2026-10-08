@@ -75,7 +75,7 @@ import { readSheetDraft, writeSheetDraft, clearSheetDraft } from './sheetDraft.j
 import { useSheetDraftKey } from './useSheetDraftKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter } from './sheetScroll.js'
 import { readCaptureMeta } from '../../lib/imagePipeline.js'
-import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost, sameFact } from './idempotencyKey.js'
+import { mintKey, sendPrint, noteSent, afterReplay, whenChoice, answerLost, sameFact, answeredNo, updateSent, holdsOwnUpdate } from './idempotencyKey.js'
 import LikeBatchPicker from '../putup/LikeBatchPicker.jsx'
 // Put-Up release 4 — "Following a recipe?" (pick one of the household's recipes → recipe_id, or F's free text),
 // and Make this's prefill (a recipe's name, kind and process jar).
@@ -187,8 +187,9 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
   // Whether every body under `key` went out from THIS sheet: a draft restored with `sent` in it was sent from
   // an earlier one, and is never written onto the batch it made.
   const mineRef = useRef(sent.length === 0)
-  // The batch this sheet has sent its PUT to (its id): a PUT that landed with its answer lost has moved the
-  // batch's updated_at, and Start it again must still be able to finish it.
+  // The PUT this sheet last sent that may have landed — the batch's id and the body as it went (idempotencyKey.js
+  // updateSent): a PUT that landed with its answer lost has moved the batch's updated_at, and Start it again must
+  // still be able to finish it — only while the batch still holds that body.
   const putRef = useRef(null)
   // Set by a replay refusal: the first tap landed, so the STORED draft has done its job. It is taken out of
   // storage and not written back, while this sheet keeps its key and `sent`.
@@ -362,7 +363,7 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
       setSent(sentNow)
       let batch = await fetch('/api/kitchen-batches', { method: 'POST', body: JSON.stringify({ ...chose, ...when.start, idempotency_key: useKey }) })
       const todo = afterReplay(batch, sentNow, print, {
-        row: batch, mine: mineRef.current, updatedHere: batch?.id != null && putRef.current === batch.id,
+        row: batch, mine: mineRef.current, updatedHere: holdsOwnUpdate(batch, putRef.current),
         // What the PUT could carry is all the batch has to hold; a difference in any other part is 'fixed'.
         holds: sameFact(batch?.label, chose.label) && sameFact(batch?.kind, chose.kind) && sameFact(batch?.kind_other, chose.kind_other)
           && sameFact(batch?.recipe_ref, chose.recipe_ref),
@@ -381,15 +382,14 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
         onRow = batch
         if (batch?.id == null) throw new Error('replayed without a batch')
         const was = putRef.current
-        putRef.current = batch.id
+        const put = { label: chose.label, kind: chose.kind ?? null, kind_other: chose.kind_other ?? null, recipe_ref: chose.recipe_ref ?? null }
+        putRef.current = updateSent(batch.id, put)
         let updated
         try {
-          updated = await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify({
-            label: chose.label, kind: chose.kind ?? null, kind_other: chose.kind_other ?? null, recipe_ref: chose.recipe_ref ?? null,
-          }) })
+          updated = await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(put) })
         } catch (e) {
-          // An ANSWERED 4xx did not land: if the batch's stamp has moved by the next tap, it was not this sheet.
-          if (typeof e?.status === 'number' && e.status >= 400 && e.status < 500) putRef.current = was
+          // An ANSWERED 4xx did not land: the PUT this sheet keeps is the one before it.
+          if (answeredNo(e)) putRef.current = was
           throw e
         }
         batch = { ...batch, ...updated }
