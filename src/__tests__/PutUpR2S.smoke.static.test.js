@@ -182,6 +182,8 @@ describe('every R2a tag has exactly ONE check that can pass', () => {
     's12-place-rename', 's13-rekind-refused', 's13-date-by-hand', 's13-rekind-after', 's14-work-it-out', 's14-move',
     's15-rekind-allowed', 's16-all-remaining', 's16-undo', 's17-delete-refused', 's17-delete-clean',
     's18-jar-source', 's18-jar-source-garden', 's18-jar-source-pair',
+    // OPS-SMOKEWRITEGAPS-002: the door jar's two stamps on its replay, before and after a write.
+    's10-door-replay-untouched', 's18-door-replay-touched',
     's19-item-create', 's19-item-replay', 's19-item-listed', 's19-item-patch', 's19-item-clear']
 
   it.each(S_TAGS)('pantry:%s', (tag) => {

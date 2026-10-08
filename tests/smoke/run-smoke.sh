@@ -687,6 +687,31 @@ else
         FAIL=$((FAIL+1))
       fi
 
+      # ── C2) A watering POSTed WITH its depth: the metadata bag stored on CREATE (OPS-SMOKEWRITEGAPS-002, L-108) ──
+      # Snap and the mini-logger send a watering as ONE POST /api/events carrying metadata {water_depth: "normal",
+      # water_depth_source: "default"}. Block C's POST carries no metadata and block E writes the bag through the
+      # PUT, so nothing held the create half: the INSERT binds body.metadata to event_log.metadata and GET
+      # /api/events/:id projects that column. A dropped or renamed key answers 2xx and stores nothing, which is
+      # the class this read-back is for. Project-anchored and dated as C's event is, so the workflow's L-058 sweep
+      # takes the row and its entity_memory by project, exactly as it takes C's. Two round trips on C's token.
+      DEPTH_EV_BODY=$(mktemp)
+      DEPTH_EV_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+        -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        -o "$DEPTH_EV_BODY" -w "%{http_code}" "$STAGING_API_EVENTS" \
+        -d "{\"project_id\": \"$CREATED_PROJECT_ID\", \"event_type\": \"watering\", \"event_date\": \"$BARE_DATE\", \"notes\": \"CI smoke — safe to delete\", \"metadata\": {\"water_depth\": \"normal\", \"water_depth_source\": \"default\"}}") || DEPTH_EV_HTTP="000"
+      DEPTH_EV_ID=$(jq -r '.id // empty' "$DEPTH_EV_BODY" 2>/dev/null || echo "")
+      rm -f "$DEPTH_EV_BODY"
+      if [[ "${DEPTH_EV_HTTP:0:1}" == "2" && -n "$DEPTH_EV_ID" ]]; then
+        echo "✅ PASS [crud:POST /events (watering with default depth)] HTTP $DEPTH_EV_HTTP (id: $DEPTH_EV_ID)"
+        PASS=$((PASS+1))
+        assert_readback "write:event-create-default-depth" \
+          "${STAGING_API_EVENTS%/}/api/events/${DEPTH_EV_ID}" \
+          '("\(.event_type)|\(.metadata.water_depth)|\(.metadata.water_depth_source)")' "watering|normal|default"
+      else
+        echo "❌ FAIL [crud:POST /events (watering with default depth)] HTTP $DEPTH_EV_HTTP"
+        FAIL=$((FAIL+1))
+      fi
+
       # ── E) Events PUT metadata has-key round-trip (V4-WATERMATH-001 F0 edit half, L-108) ────
       # The PUT metadata arm landed 2026-08-12: an explicit object REPLACES the column, an ABSENT
       # key PRESERVES it (the stale-PWA-bundle clobber class, cf. BUG-EVENTEDITFIELDS-001), and
@@ -1996,15 +2021,20 @@ else
       # it threw a prod 42804 (two bare NULLs) once. POST a project-scoped batch (resolves the test
       # plant from D), assert it persisted (count + read-back in the batches list), then UNDO via the
       # batch DELETE route (also cleans the events it wrote). Gated on the test plant existing.
+      # The body carries the metadata voice and Log Many send (OPS-SMOKEWRITEGAPS-002, L-108): the route merges it
+      # into EVERY row with its own batch_id / batch_v last (buildBatchMetadataPlan), and before V4-WATERMATH-001
+      # it stored none of it and still answered 200. So one created row is read back by id, before the undo
+      # (which soft-deletes it): the three keys sent, and the batch_id the undo cascade keys on.
       if [[ -n "$CREATED_PLANT_ID" ]]; then
         CLERK_JWT=$(mint_session_token)
         BATCH_BODY=$(mktemp)
         BATCH_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
           -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
           -o "$BATCH_BODY" -w "%{http_code}" "${STAGING_API_EVENTS%/}/api/events/batch" \
-          -d "{\"idempotency_key\": \"smoke-batch-$TEST_RUN_ID\", \"event_type\": \"watering\", \"scope\": {\"type\": \"project\", \"project_id\": \"$CREATED_PROJECT_ID\"}}") || BATCH_HTTP="000"
+          -d "{\"idempotency_key\": \"smoke-batch-$TEST_RUN_ID\", \"event_type\": \"watering\", \"scope\": {\"type\": \"project\", \"project_id\": \"$CREATED_PROJECT_ID\"}, \"metadata\": {\"care_input_source\": \"voice\", \"water_depth\": \"normal\", \"water_depth_source\": \"default\"}}") || BATCH_HTTP="000"
         BATCH_ID=$(jq -r '.batch_id // empty' "$BATCH_BODY" 2>/dev/null || echo "")
         BATCH_COUNT=$(jq -r '.count // 0' "$BATCH_BODY" 2>/dev/null || echo "0")
+        BATCH_EVENT_ID=$(jq -r '.event_ids[0] // empty' "$BATCH_BODY" 2>/dev/null || echo "")
         rm -f "$BATCH_BODY"
         if [[ "${BATCH_HTTP:0:1}" == "2" && -n "$BATCH_ID" && "$BATCH_COUNT" -ge 1 ]]; then
           echo "✅ PASS [crud:POST /events/batch] HTTP $BATCH_HTTP (batch_id: $BATCH_ID, count: $BATCH_COUNT)"
@@ -2012,6 +2042,15 @@ else
           # read-back: the batch must appear in the recent-batches list under its id.
           assert_readback "write:batch-readback" \
             "${STAGING_API_EVENTS%/}/api/events/batches" "([.batches[] | select(.id==\"$BATCH_ID\")] | length | tostring)" "1"
+          # read-back: one row the batch wrote carries the metadata sent, and the server's batch_id.
+          if [[ -n "$BATCH_EVENT_ID" ]]; then
+            assert_readback "write:batch-row-metadata" \
+              "${STAGING_API_EVENTS%/}/api/events/${BATCH_EVENT_ID}" \
+              '("\(.metadata.care_input_source)|\(.metadata.water_depth)|\(.metadata.water_depth_source)|\(.metadata.batch_id)")' "voice|normal|default|$BATCH_ID"
+          else
+            echo "❌ FAIL [write:batch-row-metadata] POST /events/batch answered count $BATCH_COUNT and no event_ids — no row to read back"
+            FAIL=$((FAIL+1))
+          fi
           # undo (also cleans the batch's event_log rows) and assert it took.
           UNDO_BODY=$(mktemp)
           UNDO_HTTP=$(curl -s --max-time 30 --connect-timeout 10 -X DELETE \
@@ -2776,6 +2815,11 @@ SQL
 # One more, with batch detail's "Take it off this batch" (BUG-BATCHREMOVEDEADEND-001):
 #   P12) DELETE /api/kitchen-batches/:id/outputs/:plid on P11's jar → the jar is live and on no batch; POST
 #        /:id/outputs with it → linked 1, the jar is on that batch again.
+# Two more, the replays a sheet repairs itself from (OPS-SMOKEWRITEGAPS-002):
+#   P1, last) P1's put-up again under its key → 200 replayed, the one jar it made, with its name, count, container
+#        and place name as stored.
+#   P11b) POST /api/kitchen-batches again under its key → 200 replayed, one row, created_at equal to updated_at;
+#        the merge PUT of its name and kind, read back; the first body again → the new name and a moved updated_at.
 # Stock is read back through SQL (NEON_STAGING_URL + psql, as block D does): remaining_amount and consumed_at are
 # not on every API projection, and the ledger (pantry_use) has no read route in F.
 # GATED ON F BEING DEPLOYED: F's DDL and Lambda reach staging only at F's sitting. The probe is GET
@@ -2882,7 +2926,8 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       CLERK_JWT=$(mint_session_token)
       FE_B1=$(fe_batch "P1")
       FE_PU_KEY=$(fe_uuid)
-      fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B1/put-up" "{\"idempotency_key\": \"$FE_PU_KEY\", \"when\": {\"date\": \"$FE_DAY\", \"precision\": \"day\"}, \"method\": \"ferment\", \"rows\": [{\"count\": 2, \"container_label\": \"pint\", \"size_value\": 450, \"size_unit\": \"g\", \"place\": {\"id\": \"$FE_PLACE\"}, \"name\": \"$FE_TAG P1\", \"discard_by\": \"$FE_LATER\"}], \"made_g\": 900, \"finish\": false}"
+      FE_PU_BODY="{\"idempotency_key\": \"$FE_PU_KEY\", \"when\": {\"date\": \"$FE_DAY\", \"precision\": \"day\"}, \"method\": \"ferment\", \"rows\": [{\"count\": 2, \"container_label\": \"pint\", \"size_value\": 450, \"size_unit\": \"g\", \"place\": {\"id\": \"$FE_PLACE\"}, \"name\": \"$FE_TAG P1\", \"discard_by\": \"$FE_LATER\"}], \"made_g\": 900, \"finish\": false}"
+      fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B1/put-up" "$FE_PU_BODY"
       FE_J1=$(fe_jq '.jars[0].id // empty')
       if [[ "$FE_CODE" == "201" ]] && fe_id_ok "$FE_J1"; then
         fe_check "p1-putup-readback" "$(fe_row "SELECT preserved_at::text||'|'||coalesce(use_by_basis,'null')||'|'||coalesce(use_by_target::text,'null') FROM preservation_log WHERE id = '$FE_J1'")" "$FE_DAY|typed|$FE_LATER" "put-up → HTTP 201; the jar's date|basis|discard-by"
@@ -2893,6 +2938,13 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
         fe_check "p1-legacy-date-refused" "$FE_CODE $(fe_jq '.code // "-"') $(fe_row "SELECT use_by_target::text FROM preservation_log WHERE id = '$FE_J1'")" "409 client_stale $FE_LATER" "legacy PUT with a different discard-by; the stored one after"
         fe_req PUT "$FE_BASE/api/preservation/$FE_J1" "$FE_ROW"
         fe_check "p1-legacy-echo-noop" "$FE_CODE $(fe_row "SELECT preserved_at::text||'|'||coalesce(remaining_count::text,'null')||'|'||coalesce(notes,'null') FROM preservation_log WHERE id = '$FE_J1'")" "200 $FE_BEFORE" "untouched legacy echo; date|remaining|notes after"
+        # The sitting's replay (OPS-SMOKEWRITEGAPS-002): the same body under the same key answers 200 replayed with
+        # the sitting READ BACK (putUpReplay → readSitting), and a sheet whose first answer was lost draws its rows
+        # from that answer's jars. So the answer must carry the one jar P1 made, by id, with the four fields as
+        # stored: the name and the container sent, the count, and the place's name, which only the read's join
+        # supplies. The batch's live jars are counted through SQL as well: a replay that wrote would make two.
+        fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B1/put-up" "$FE_PU_BODY"
+        fe_check "p1-putup-replay" "$FE_CODE $(fe_jq '.replayed') $(fe_jq '.jars | length') $(fe_jq '.jars[0] | "\(.id)|\(.label)|\(.package_count)|\(.container_label)|\(.storage_label)"') $(fe_row "SELECT count(*) FROM preservation_log WHERE put_up_stage_id IS NOT NULL AND deleted_at IS NULL AND batch_id = (SELECT batch_id FROM preservation_log WHERE id = '$FE_J1')")" "200 true 1 $FE_J1|$FE_TAG P1|2|pint|$FE_TAG place 1" "the same put-up, same key; replayed, jars in the answer, the jar's id|name|count|container|place name, the batch's live jars"
       else
         fe_fail "p1-putup-readback" "POST /put-up → HTTP $FE_CODE: $(head -c 200 "$FE_OUT")"
       fi
@@ -3076,6 +3128,34 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
         fe_check "p11-replay" "$FE_CODE $(fe_jq '.replayed') $(fe_row "SELECT count(*) FROM kitchen_batch WHERE idempotency_key = '$FE_FJ_KEY'")" "200 true 1" "the same POST, same key; replayed, batches on the key"
       else
         fe_fail "p11-from-jars" "no jar id from POST /api/preservation (HTTP $FE_CODE)"
+      fi
+
+      # ── P11b) Start a batch: the plain create's replay, its two stamps, and the merge PUT that renames it ──
+      # OPS-SMOKEWRITEGAPS-002. P11 replays the from-jars route only, and no step here PUT a batch's name. Three
+      # things, each read back:
+      #   * the same POST /api/kitchen-batches under the same key → 200 replayed, the same id, one row on the key,
+      #     and created_at equal to updated_at in the answer: one statement makes the row, and "nothing has touched
+      #     it since" is read off exactly that pair;
+      #   * PUT /api/kitchen-batches/:id { label, kind, kind_other, recipe_ref } → 200; the four read back through SQL
+      #     (the route is a merge: the two nulls clear, nothing else moves);
+      #   * the first body again → still 200 replayed with that id, now carrying the NEW name (the answer is the
+      #     stored row, not the body sent) and updated_at past created_at, in the answer and in the row. The PUT
+      #     sets no stamp itself, so this is kitchen_batch's set_updated_at trigger on the deployed schema.
+      # Four requests on P10's token, no mint of its own. The label keeps $FE_TAG through the rename, so ferm_sweep
+      # takes the batch and its started row.
+      FE_SB_KEY=$(fe_uuid)
+      FE_SB_BODY="{\"idempotency_key\": \"$FE_SB_KEY\", \"label\": \"$FE_TAG start\", \"kind\": \"ferment\"}"
+      fe_req POST "$FE_BASE/api/kitchen-batches" "$FE_SB_BODY"
+      FE_SB=$(fe_jq '.id // empty')
+      if [[ "$FE_CODE" == "201" ]] && fe_id_ok "$FE_SB"; then
+        fe_req POST "$FE_BASE/api/kitchen-batches" "$FE_SB_BODY"
+        fe_check "p11b-start-replay" "$FE_CODE $(fe_jq '.replayed') $(fe_jq '.id') $(fe_jq '.created_at != null and .created_at == .updated_at') $(fe_row "SELECT count(*)::text||'|'||bool_and(updated_at = created_at)::text FROM kitchen_batch WHERE idempotency_key = '$FE_SB_KEY'")" "200 true $FE_SB true 1|true" "the same POST /api/kitchen-batches, same key; replayed, id, the answer's two stamps equal, then rows on the key|the row's stamps equal"
+        fe_req PUT "$FE_BASE/api/kitchen-batches/$FE_SB" "{\"label\": \"$FE_TAG start renamed\", \"kind\": \"dehydrate\", \"kind_other\": null, \"recipe_ref\": null}"
+        fe_check "p11b-start-merge" "$FE_CODE $(fe_row "SELECT label||'|'||kind||'|'||coalesce(kind_other,'null')||'|'||coalesce(recipe_ref,'null') FROM kitchen_batch WHERE id = '$FE_SB'")" "200 $FE_TAG start renamed|dehydrate|null|null" "PUT /api/kitchen-batches/:id { label, kind, kind_other, recipe_ref }; the row's name|kind|other kind|recipe"
+        fe_req POST "$FE_BASE/api/kitchen-batches" "$FE_SB_BODY"
+        fe_check "p11b-start-replay-touched" "$FE_CODE $(fe_jq '.replayed') $(fe_jq '.id') $(fe_jq '.label') $(fe_jq '.created_at == .updated_at') $(fe_row "SELECT (updated_at > created_at)::text FROM kitchen_batch WHERE id = '$FE_SB'")" "200 true $FE_SB $FE_TAG start renamed false true" "the first body again after the PUT; replayed, id, the stored name, the answer's two stamps equal, then the row's updated_at past created_at"
+      else
+        fe_fail "p11b-start-replay" "POST /api/kitchen-batches → HTTP $FE_CODE: $(head -c 200 "$FE_OUT")"
       fi
 
       CLERK_JWT=$(mint_session_token)
@@ -3403,7 +3483,8 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       # The place is a pantry shelf when they start, and S8's jar (whole_freeze, 3 of 3, no date on a shelf) is in it.
       #   S10) the door's create: a size as a TOTAL (3 containers of 1.5 qt → 4.5 qt), where it is from (a kind and a
       #        name), Raw and In oil → every column read back, and no date (Raw or In oil off a freezer); its replay
-      #        under the same key → 200 replayed, one row; a dried row's texture (dehydrate, bends → no date).
+      #        under the same key → 200 replayed, one row, and its updated_at null or its created_at (untouched); a
+      #        dried row's texture (dehydrate, bends → no date).
       #   S11) a hot sauce logged as ONE container in a mass unit: the engine's date (basis table, 12 months on a
       #        shelf), remaining_amount seeded in grams, and the Pantry lists it weighed with no count.
       #   S12) the shipped "Edit locations" form's rename: BOTH keys, the kind unchanged, at a place holding that
@@ -3417,7 +3498,8 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       #        left holding only undated put-ups, takes a re-kind: the refusal counts worked-out dates, not jars.
       #   S16) Went bad, ALL that is left of S8's jar: 0 left, consumed, unlisted; its Undo: 3 left, listed again.
       #   S18) where it's from, corrected in Edit: PATCH the pair on S10's jar → read back; our garden clears the
-      #        name; one of the pair alone → 400 and the row is as it was.
+      #        name; one of the pair alone → 400 and the row is as it was. Then S10's door body again → 200 replayed,
+      #        its updated_at now set and past created_at.
       #   S19) an as-is item with an amount and where it's from (the migration v5-pantryitemamount-001's four
       #        columns): created, replayed, listed (the amount is as logged: no count, no grams left), PATCHed pair
       #        by pair, cleared with null, null.
@@ -3446,6 +3528,10 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
           pn_check "s10-door-create" "$(pn_row "SELECT label||'|'||method||'|'||quantity_value::numeric(12,2)::text||'|'||quantity_unit||'|'||package_count::text||'|'||remaining_count::text||'|'||source_kind||'|'||source_label||'|'||is_raw::text||'|'||in_oil::text||'|'||preserved_at_precision||'|'||preserved_at_approx::text||'|'||use_by_basis||'|'||coalesce(use_by_target::text,'null')||'|'||crop_type_slug FROM preservation_log WHERE id = '$PN_DOOR'")" "$PN_TAG door sauce|hot_sauce|4.50|qt|3|3|farm_stand|$PN_TAG stand|true|true|day|false|none|null|tomato" "POST /api/preservation as the door sends it → HTTP 201; name|method|size total|unit|count|left|from kind|from name|raw|in oil|precision|approx|basis|discard-by|crop"
           pn_req POST "$PN_BASE/api/preservation" "$PN_DOOR_BODY"
           pn_check "s10-door-replay" "$PN_CODE $(pn_jq '.replayed') $(pn_jq '.id') $(pn_row "SELECT count(*) FROM preservation_log WHERE idempotency_key = '$key'")" "200 true $PN_DOOR 1" "the same POST, same key; replayed, id, rows on the key"
+          # The two stamps in that same answer (OPS-SMOKEWRITEGAPS-002): "nothing has touched this jar since it was
+          # made" is read off them. preservation_log.updated_at has no default, so an untouched jar's is NULL;
+          # equal to created_at is the other untouched reading. Either passes, a moved one does not. S18 looks again.
+          pn_check "s10-door-replay-untouched" "$(pn_jq '.created_at != null and (.updated_at == null or .updated_at == .created_at)') $(pn_row "SELECT (updated_at IS NULL OR updated_at = created_at)::text FROM preservation_log WHERE id = '$PN_DOOR'")" "true true" "that answer's updated_at is null or its created_at, then the same of the row"
         else
           PN_DOOR=""
           pn_fail "s10-door-create" "POST /api/preservation → HTTP $PN_CODE: $(head -c 200 "$PN_OUT")"
@@ -3538,6 +3624,12 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
         pn_check "s18-jar-source-garden" "$PN_CODE $(pn_row "$from_sql")" "200 own_garden|null" "our garden: the kind stored, the name cleared"
         pn_req PATCH "$PN_BASE/api/preservation/$PN_DOOR" '{"source_kind": "store"}'
         pn_check "s18-jar-source-pair" "$PN_CODE $(pn_row "$from_sql")" "400 own_garden|null" "one of the pair alone is refused; the row is as it was"
+        # S10's door body once more, now that two PATCHes have written to its jar (OPS-SMOKEWRITEGAPS-002): still
+        # 200 replayed with that id, and updated_at is set and past created_at, in the answer and in the row. The
+        # stamp is preservation_log's set_updated_at trigger on the deployed schema; without it nothing in a
+        # replay's answer tells an edited jar from the one S10 read as untouched.
+        pn_req POST "$PN_BASE/api/preservation" "$PN_DOOR_BODY"
+        pn_check "s18-door-replay-touched" "$PN_CODE $(pn_jq '.replayed') $(pn_jq '.id') $(pn_jq '.updated_at != null and .updated_at != .created_at') $(pn_row "SELECT (updated_at > created_at)::text FROM preservation_log WHERE id = '$PN_DOOR'")" "200 true $PN_DOOR true true" "the door's POST again after the PATCHes; replayed, id, the answer's updated_at set and not its created_at, then the row's updated_at past created_at"
       }
 
       # ── S19) an as-is item with an amount and where it's from: created, replayed, listed, PATCHed, cleared ──
