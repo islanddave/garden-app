@@ -161,19 +161,64 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
     expect(entries()[0].textContent).toContain('current')
   })
 
+  // The sentence for a lot whose stage has no entry in its history, whole. Asserted as a full
+  // literal: `toContain('Drying')` alone was satisfied by either of the panel's two sentences.
+  const NO_ENTRY = (label) => `This lot is marked ${label}, but its history has no entry for that stage.`
+
   it('says so when the current stage has no entry behind it — the repair case', async () => {
-    // inventory_items.seed_stage can be set without a log row: the wide PUT and the create INSERT
-    // both assign the column and append nothing, and only the /seed-stage CTE logs. That is the
-    // shape of all three live staged lots. The newest entry and where the lot is now then
-    // legitimately disagree, and leaving the user to notice that is how a correct record reads as a
-    // broken one. (The client's own non-logging writer, the <select> that used to sit on this page,
-    // was removed by V5-SEEDSTAGEONEPLACE-001 — the server-side two remain.)
+    // inventory_items.seed_stage could once be set without a log row: the wide PUT and the create
+    // INSERT both assigned the column and appended nothing, and so did the <select> that used to sit
+    // on this page. That was the shape of all three live staged lots. BUG-SEEDSTAGEHEADSHIP-001 left
+    // POST /seed-stage as the only writer, so no new lot gets here, but a lot staged before then
+    // still can be: the newest entry and where the lot is now disagree, and leaving the user to
+    // notice that is how a correct record reads as a broken one.
     itemRef.current = { ...LOT, seed_stage: 'drying' }
     historyRef.current = [HISTORY[0]]  // one `stored` entry, lot corrected back to drying
     await renderPage()
     await waitFor(() => expect(screen.getByTestId('seed-stage-off-log')).toBeTruthy())
-    expect(screen.getByTestId('seed-stage-off-log').textContent).toContain('Drying')
+    expect(screen.getByTestId('seed-stage-off-log').textContent).toBe(NO_ENTRY('Drying'))
     expect(screen.queryAllByTestId('seed-stage-entry-current')).toHaveLength(0)
+  })
+
+  it('…and with SEVERAL entries, none of them for the stage the lot is in', async () => {
+    // The multi-row form of the case above, and the shape the three live lots were filed in: the
+    // intake entries are there (fermenting, then drying) and the lot is stored, with no stored entry.
+    // A one-row fixture cannot tell "the lot's stage is not the newest entry" from "the lot's stage
+    // has no entry": here the history has a head, it is `drying`, and it is still not the lot's stage.
+    itemRef.current = { ...LOT, seed_stage: 'stored' }
+    historyRef.current = [HISTORY[1], HISTORY[2]]   // drying, fermenting
+    await renderPage()
+    await waitFor(() => expect(entries().length).toBe(2))
+    expect(entries().map(r => r.dataset.stage)).toEqual(['drying', 'fermenting'])
+    expect(screen.getByTestId('seed-stage-off-log').textContent).toBe(NO_ENTRY('Stored'))
+    // No row is the lot's stage, so no row is badged: the newest entry is not "current".
+    expect(screen.queryAllByTestId('seed-stage-entry-current')).toHaveLength(0)
+    expect(screen.queryByText(/No processing stages recorded yet/)).toBeNull()
+  })
+
+  it('…and with NO entries at all: a staged lot is not "none recorded yet"', async () => {
+    // BUG-SEEDSTAGEHEADSHIP-001. The predicate carried `rows.length > 0`, so a stored lot with an
+    // empty history rendered the never-staged sentence beside a stage. It has no date to count from
+    // (the list's stage_entered_at is NULL for it), which is why its card shows no "N days".
+    // Mutation that must turn this red: restoring `&& rows.length > 0`, or dropping
+    // `!stageNotLogged` from isEmpty (AsyncRegion's empty branch then hides the notice).
+    itemRef.current = { ...LOT, seed_stage: 'stored' }
+    historyRef.current = []
+    await renderPage()
+    await waitFor(() => expect(screen.getByTestId('seed-stage-off-log')).toBeTruthy())
+    expect(screen.getByTestId('seed-stage-off-log').textContent).toBe(NO_ENTRY('Stored'))
+    expect(entries()).toHaveLength(0)
+    expect(screen.queryByText(/No processing stages recorded yet/)).toBeNull()
+  })
+
+  it('…and the same beside a parent planting: the notice and the origin line, not "none yet"', async () => {
+    itemRef.current = { ...LOT, seed_stage: 'fermenting', source_plant_id: 'pl-melon' }
+    historyRef.current = []
+    await renderPage()
+    await waitFor(() => expect(screen.getByTestId('seed-stage-off-log')).toBeTruthy())
+    expect(screen.getByTestId('seed-stage-off-log').textContent).toBe(NO_ENTRY('Fermenting'))
+    expect(screen.getByTestId('seed-history-origin')).toBeTruthy()
+    expect(screen.queryByTestId('seed-stage-none-yet')).toBeNull()
   })
 
   it('says so when the current stage is LOGGED but not the newest entry — the set-back case', async () => {
@@ -201,7 +246,8 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
     expect(notice).toContain('Drying')
     expect(notice).toContain('newer entry')
     expect(notice).not.toContain('later entry')
-    expect(notice).not.toContain('no processing entry')
+    expect(notice).not.toContain('has no entry')
+    expect(notice).toBe('Set back to Drying here — there’s a newer entry above it.')
     // The badge still marks where the lot actually is — the notice explains it, it does not replace it.
     expect(screen.getAllByTestId('seed-stage-entry-current')).toHaveLength(1)
     expect(entries()[1].textContent).toContain('current')
@@ -269,11 +315,16 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
   })
 
   it('says "none recorded yet" for a lot that was never staged', async () => {
+    // NO STAGE and no entries. This fixture used to be the base LOT (`stored`) with an empty
+    // history, so it pinned "none recorded yet" beside a stored lot — the defect, not the rule.
+    itemRef.current = { ...LOT, seed_stage: null, seed_process: null }
     historyRef.current = []
     await renderPage()
     await waitFor(() => expect(screen.getByTestId('seed-stage-panel')).toBeTruthy())
     await waitFor(() => expect(screen.getByText(/No processing stages recorded yet/)).toBeTruthy())
     expect(entries()).toHaveLength(0)
+    // …and nothing is said about a stage the lot does not have.
+    expect(screen.queryByTestId('seed-stage-off-log')).toBeNull()
   })
 
   it('a FAILED request reads as a failure, never as an empty history', async () => {
@@ -286,6 +337,10 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
     expect(screen.getByRole('alert').textContent).toContain('Network unreachable')
     expect(entries()).toHaveLength(0)
     expect(screen.queryByText(/No processing stages recorded yet/)).toBeNull()
+    // Nor "no entry for that stage": the lot here IS stored, and a history that did not load is not
+    // a history without a stored entry.
+    expect(itemRef.current.seed_stage).toBe('stored')
+    expect(screen.queryByTestId('seed-stage-off-log')).toBeNull()
   })
 
   it('…including a failure whose message is EMPTY (api.js throws Error(\'\') on an empty statusText)', async () => {
