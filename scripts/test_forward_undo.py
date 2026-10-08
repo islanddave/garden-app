@@ -253,6 +253,45 @@ def test_a_switch_that_is_already_off_refuses(tmp_path, scratch, capsys):
     assert state(w, scratch) == before
 
 
+def test_a_second_switch_on_the_same_floor_level_is_undone_alone_and_only_by_its_own_promote(tmp_path, capsys):
+    """V5-SEEDLOTADDITION-001 (seed release 3), the shape scripts/revert-floors.json takes in its release
+    commit: release 2b's row (SEED_MULTI_PARENT) stays, and a NEW FIRST row at the SAME floor level names
+    SEED_ADD_TO_LOT, in force since release 3's own version. Undoing release 3 must turn off its switch
+    and not release 2b's; one release later the row is no longer what that promote shipped."""
+    flags_file = "src/lib/featureFlags.js"
+    w = World(tmp_path)
+    w.write(flags_file, "export const SEED_MULTI_PARENT = true\n")
+    w.add_floor({"floor": "v1.1.0", "since": "v1.1.0", "reason": "seed release 2b", "ledger": "V5-SEEDMULTIPARENT-001",
+                 "undo_instead": {"flag": "SEED_MULTI_PARENT", "file": flags_file}})
+    w.commit("feat(seed): several plantings behind SEED_MULTI_PARENT")
+    w.release("1.1.0", "Seed from several plants")
+    w.ship("v1.1.0")
+    w.write(flags_file, "export const SEED_MULTI_PARENT = true\nexport const SEED_ADD_TO_LOT = true\n")
+    r3 = {"floor": "v1.1.0", "since": "v1.2.0", "reason": "seed release 3", "ledger": "V5-SEEDLOTADDITION-001",
+          "undo_instead": {"flag": "SEED_ADD_TO_LOT", "file": flags_file}}
+    w.add_floor(r3)
+    w.commit("feat(seed): put seed in a lot already started, behind SEED_ADD_TO_LOT")
+    w.release("1.2.0", "Add seed to a lot")
+    w.ship("v1.2.0")
+
+    plan = fu.build_plan(w.work)
+    assert plan["n"] == "v1.2.0" and plan["prev"] == "v1.1.0"
+    assert plan["mode"] == "flag"
+    assert plan["flags"] == [{"file": flags_file, "flag": "SEED_ADD_TO_LOT", "floor": "v1.1.0",
+                              "ledger": "V5-SEEDLOTADDITION-001"}]
+    code, out, err = undo(capsys, w)
+    assert code == 0, err
+    assert "undo = FLAG OFF: SEED_ADD_TO_LOT true -> false" in out and "SEED_MULTI_PARENT" not in out
+
+    ship_plain(w, "1.3.0")
+    entries = fu.revert_floors.parse(w.show("HEAD", "scripts/revert-floors.json"), source="fixture")
+    assert fu.revert_floors.entries_shipped(entries, "v1.1.0", "v1.2.0") == [r3]
+    assert fu.revert_floors.entries_shipped(entries, "v1.2.0", "v1.3.0") == []
+    later = fu.build_plan(w.work)
+    assert later["n"] == "v1.3.0" and later["prev"] == "v1.2.0"
+    assert later["mode"] == "revert" and "flags" not in later
+
+
 # --- the revert path -----------------------------------------------------------------------------
 
 def test_revert_path_backs_out_a_release_with_a_merge(tmp_path, scratch, capsys):
