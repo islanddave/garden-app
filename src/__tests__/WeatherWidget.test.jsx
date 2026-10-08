@@ -75,10 +75,19 @@ describe('WeatherWidget — DRG-WX Phase 2 snapshot-volatility caveat', () => {
   })
 
   it('shows the showery caveat + softened ("could climb") note when the engine flags uncertainty', () => {
-    render(<WeatherWidget weather={weather} hydrology={uncertainHydro()} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+    // tomorrow kept under today so the note stands alone: beside tomorrow's line it takes its short form (below)
+    render(<WeatherWidget weather={weather} hydrology={uncertainHydro({ tomorrow_precip_in: 0.05, tomorrow_pop: 20 })} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
     expect(screen.getByText(/Showery pattern/i)).toBeTruthy()
     expect(screen.getByText(/could climb/i)).toBeTruthy()
     expect(screen.getByText(/plays it safe/i)).toBeTruthy()
+  })
+
+  it('beside tomorrow\'s line the softened note is short; the showery caveat still shows (BUG-RAINTOMORROWMISLABEL-001)', () => {
+    render(<WeatherWidget weather={weather} hydrology={uncertainHydro()} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
+    expect(screen.getByText(/Showery pattern/i)).toBeTruthy()
+    expect(screen.getByText(/~0\.21″ today · 88%/)).toBeTruthy()
+    expect(screen.queryByText(/could climb/i)).toBeNull()
+    expect(screen.getByTestId('weather-next-rain').textContent).toBe('0.74″ tomorrow · 63% chance')
   })
 
   it('shows the chance-forward note even when the snapshot has a trace amount (88% / 0")', () => {

@@ -138,6 +138,43 @@ describe('the measured line is short beside tomorrow\'s note and whole when it s
     expect(rs({ ...today, ...QUIET }).rainNote).toBe('0.50″ today · 80% chance')
   })
 
+  // The showery line (no live overlay) follows the same rule: its caveat is dropped only beside the next note.
+  describe('the showery line', () => {
+    const SHOWERY = { uncertain: true, showery: true }
+    const TOMORROW = '0.40″ tomorrow · 70% chance'
+
+    it('an amount: "~N″ today · P%" beside, "— could climb" alone', () => {
+      const amt = { today_precip_in: 0.21, today_pop: 40 }
+      expect(rs({ ...amt, ...WET }, SHOWERY)).toMatchObject({ rainNote: '~0.21″ today · 40%', nextNote: TOMORROW })
+      expect(rs({ ...amt, ...QUIET }, SHOWERY)).toMatchObject({ rainNote: '~0.21″ today · 40% — could climb', nextNote: null })
+      // no chance reported: the amount alone, no stray separator
+      expect(rs({ today_precip_in: 0.21, ...WET }, SHOWERY)).toMatchObject({ rainNote: '~0.21″ today', nextNote: TOMORROW })
+    })
+
+    it('a chance and little rain: "P% chance today" beside, the full line alone', () => {
+      const pop = { today_precip_in: 0.04, today_pop: 60 }
+      expect(rs({ ...pop, ...WET }, SHOWERY)).toMatchObject({ rainNote: '60% chance today', nextNote: TOMORROW })
+      expect(rs({ ...pop, ...QUIET }, SHOWERY)).toMatchObject({ rainNote: '60% chance today · little so far, could climb', nextNote: null })
+    })
+
+    it('neither: "Showers today" beside, the full line alone', () => {
+      const bare = { today_precip_in: 0.04 }
+      expect(rs({ ...bare, ...WET }, SHOWERY)).toMatchObject({ rainNote: 'Showers today', nextNote: TOMORROW })
+      expect(rs({ ...bare, ...QUIET }, SHOWERY)).toMatchObject({ rainNote: 'Showers today · little so far, could climb', nextNote: null })
+    })
+
+    it('the row and the weather card both print the short pair', () => {
+      const status = { ok: true, uncertainty: { flag: true } }
+      const plan = planFor({ today_precip_in: 0.21, today_pop: 40, ...WET, status })
+      expect(rowB(plan)).toEqual(['~0.21″ today · 40%', TOMORROW])
+      const w = widgetLines(plan)
+      expect(w.text).toContain('~0.21″ today · 40%')
+      expect(w.text).not.toContain('could climb')
+      expect(w.next).toBe(TOMORROW)
+      expect(rowB(planFor({ today_precip_in: 0.21, today_pop: 40, ...QUIET, status }))).toEqual(['~0.21″ today · 40% — could climb'])
+    })
+  })
+
   it('the row and the weather card print the same two lines', () => {
     for (const hy of [
       { today_observed_in: 0.45, today_remaining_in: 0, ...WET },

@@ -188,11 +188,14 @@ export function rainSentences({ hydrology, liveHydrology = null, live = false, u
         : (beside
             ? `${measuredToday.toFixed(2)}″ fallen today`
             : `${measuredToday.toFixed(2)}″ fallen${fallenSuffix || ' today'}${noForecast ? '' : ' · none more expected'}`))
+    // The showery line is short beside the next note too, by the same rule: the full line plus tomorrow's is
+    // 364–427 px against the row's 360. Beside, `~N″ today · P%` drops "— could climb" (the `~` already says the
+    // figure is soft) and the no-amount line keeps its lead alone (`P% chance today` / `Showers today`).
     : softenedNote
     ? (rainAmtKnown && rainIn >= 0.1
-        ? `~${rainIn.toFixed(2)}″ ${rainWhen}${chanceBit(rainPop, '%')} — could climb`
+        ? `~${rainIn.toFixed(2)}″ ${rainWhen}${chanceBit(rainPop, '%')}${beside ? '' : ' — could climb'}`
         // With no chance to lead it the line still names its day ("Showers today · …"), never a bare clause.
-        : `${rainPop != null ? `${rainPop}% chance ${rainWhen}` : `Showers ${rainWhen}`} · little so far, could climb`)
+        : `${rainPop != null ? `${rainPop}% chance ${rainWhen}` : `Showers ${rainWhen}`}${beside ? '' : ' · little so far, could climb'}`)
     : (!rainAmtKnown
         ? (rainPop != null ? `${rainPop}% chance of rain ${rainWhen}` : null)
         : `${rainIn.toFixed(2)}″ ${rainWhen}${chanceBit(rainPop)}`)

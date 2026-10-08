@@ -148,8 +148,14 @@ describe('a gauge measurement outranks a forecast', () => {
 describe('the card’s regime flags', () => {
   it('showery (not live) softens the note', () => {
     const f = { uncertain: true, showery: true }
-    expect(rs({ today_precip_in: 0.21, today_pop: 88, tomorrow_precip_in: 0.74, tomorrow_pop: 63 }, f).rainNote).toBe('~0.21″ today · 88% — could climb')
-    expect(rs({ today_precip_in: 0, today_pop: 88, tomorrow_precip_in: 0.74, tomorrow_pop: 63 }, f).rainNote).toBe('88% chance today · little so far, could climb')
+    expect(rs({ today_precip_in: 0.21, today_pop: 88, tomorrow_precip_in: 0.05, tomorrow_pop: 20 }, f).rainNote).toBe('~0.21″ today · 88% — could climb')
+    expect(rs({ today_precip_in: 0, today_pop: 88, tomorrow_precip_in: 0, tomorrow_pop: 20 }, f).rainNote).toBe('88% chance today · little so far, could climb')
+  })
+
+  it('showery beside tomorrow\'s note: softened and short', () => {
+    const f = { uncertain: true, showery: true }
+    expect(rs({ today_precip_in: 0.21, today_pop: 88, tomorrow_precip_in: 0.74, tomorrow_pop: 63 }, f)).toMatchObject({ rainNote: '~0.21″ today · 88%', nextNote: '0.74″ tomorrow · 63% chance' })
+    expect(rs({ today_precip_in: 0, today_pop: 88, tomorrow_precip_in: 0.74, tomorrow_pop: 63 }, f)).toMatchObject({ rainNote: '88% chance today', nextNote: '0.74″ tomorrow · 63% chance' })
   })
 
   it('showery opens the line on its own', () => {
