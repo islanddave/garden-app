@@ -45,6 +45,7 @@ import {
   replayStaleText, replayUnsavedText, printRoute, otherRouteSent, otherRouteText,
 } from '../components/pantry/putSomethingUp.js'
 import { putUpDateWords } from '../components/putup/jarWords.js'
+import { START_REPLAY_NOT_ON_IT } from '../components/kitchen/StartBatchSheet.jsx'
 import { sheetDraftKey, readSheetDraft } from '../components/kitchen/sheetDraft.js'
 import { validateJarPatch } from '../../lambda/preservation/jarRoutes.js'
 import { clearReloadBlocks } from '../lib/reloadGate.js'
@@ -458,10 +459,14 @@ describe('Put something up — the put-up route', () => {
     const before = { ...table.row }
     tap('door-more'); tap('door-when-yesterday')
     tap('door-from'); typeInto('door-notes', 'the second tray')
+    tap('door-more')                                                           // the options closed again: the date is out of sight
+    expect(screen.queryByTestId('door-when-yesterday')).toBeNull()
     on.length = 0
     save()
     await answered(door, 2)
     expect(errorText()).toBe(whenText('Corn', 'Oct 1'))
+    expect(screen.getByTestId('door-when-yesterday')).toBeTruthy()             // QA M-4: the refusal opens what it is about
+    expect(screen.getByTestId('door-more').getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByTestId('door-error').getAttribute('role')).toBe('alert')
     await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
     expect(otherWrites()).toEqual([])
@@ -624,6 +629,23 @@ describe('Put something up — the put-up route', () => {
     expect(table.row).toEqual(before)
     expect(door.onSaved).not.toHaveBeenCalled()
     expect(new Set(keys()).size).toBe(1)
+    await waitFor(() => expect(draft()).toBeNull())
+  })
+
+  // QA M-5 (the sequence the review ran as J7). The replay does not filter a removed jar, and an untouched retry
+  // never looked: the door completed and handed the page a removed row as a put-up.
+  it('QA M-5 — the put-up landed with its answer lost and the jar was REMOVED since; Save again untouched: not a save — the door says it was removed, tells the page, hands nothing on', async () => {
+    const table = jarTable({ first: { deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() } })
+    const door = await openDoor()
+    corn()
+    save(); await failed()
+    save()
+    await answered(door, 2)
+    expect(errorText()).toBe('“Corn” was saved earlier and has been removed since. This Save did not change that.')
+    expect(door.onSaved).not.toHaveBeenCalled()
+    expect(door.onExists).toHaveBeenCalledTimes(1)
+    expect(otherWrites()).toEqual([])
+    expect(table.row.deleted_at).not.toBeNull()
     await waitFor(() => expect(draft()).toBeNull())
   })
 
@@ -1080,10 +1102,13 @@ describe('the Walk — the put-up route', () => {
     save(); await failed()
     const before = { ...table.row }
     tap('walk-more'); tap('walk-own-unsure'); tap('walk-count-plus')
+    tap('walk-more')                                                           // the options closed again: this group's date is out of sight
+    expect(screen.queryByTestId('walk-own-unsure')).toBeNull()
     on.length = 0
     save()
     await answered(2)
     expect(errorText()).toBe(whenText('Corn', walkDay(table.row)))
+    expect(screen.getByTestId('walk-own-unsure')).toBeTruthy()                 // QA M-4: the refusal opens what it is about
     await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
     expect(otherWrites()).toEqual([])
     expect(table.row).toEqual(before)
@@ -1164,6 +1189,18 @@ describe('the Walk — the put-up route', () => {
     expect(band()).toBeNull()
   })
 
+  it('QA M-5 — in the walk: the jar was removed since, Save again untouched — the band does not tick a removed jar; the walk says it was removed', async () => {
+    jarTable({ first: { deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() } })
+    await startWalk()
+    corn()
+    save(); await failed()
+    save()
+    await answered(2)
+    expect(errorText()).toBe('“Corn” was saved earlier and has been removed since. This Save did not change that.')
+    expect(band()).toBeNull()
+    expect(otherWrites()).toEqual([])
+  })
+
   it('QA I-1 — the put-up landed with its answer lost, then As is, Save: REFUSED in the walk too, nothing sent; the method chosen again finishes the one jar. And once the jar is KNOWN, the walk says how to have both', async () => {
     const table = jarTable()
     await startWalk()
@@ -1224,5 +1261,45 @@ describe('the Walk — the put-up route', () => {
     expect(new Set(keys()).size).toBe(1)
     expect(patches().map(c => [c.body.label, c.body.package_count])).toEqual([['Corn, cut', 1], ['Corn, cut', 2]])
     expect(table.row).toMatchObject({ label: 'Corn, cut', package_count: 2 })
+  })
+})
+
+// QA M-3. The Start sheet's refusal says "close this and open the batch to see it" — the page it is on must have
+// that batch in the list behind it. The wiring is ONE prop on the page (src/pages/PutUp.jsx: onExists={loadGoing}),
+// and nothing else pinned it: with the prop gone every other test stayed green.
+describe('the Put-Up page behind the Start sheet is told the batch is there (QA M-3)', () => {
+  it('a refused Start it re-reads Going now, and the batch an earlier tap made is in the list behind the sheet', async () => {
+    const at = new Date(Date.now() - 30 * 1000).toISOString()
+    let row = null
+    let n = 0
+    fake = pantryFetch({ rows: [], overrides: {
+      'GET /api/kitchen-batches': ({ path }) => ({ state: 'going', batches: row && path.includes('state=going') ? [row] : [] }),
+      'POST /api/kitchen-batches': ({ body }) => {
+        if (++n === 1) {
+          row = { id: 'kb-first', user_id: 'user_dave', label: body.label, kind: null, kind_other: null, started_at: body.started_at ?? at, start_precision: body.start_precision ?? null,
+            recipe_id: null, recipe_ref: null, current_stage_kind: 'started', current_stage_entered_at: at, input_count: 0, output_count: 0, closed_at: null, suspended_at: null,
+            idempotency_key: body.idempotency_key, created_at: at, updated_at: at, deleted_at: null }
+          LOST()                                                                // it landed; its answer did not come back
+        }
+        return { ...row, replayed: true }
+      },
+    } })
+    stableFetch.fn = fake
+    const goingReads = () => fake.calls('GET').filter(c => c.path === '/api/kitchen-batches?state=going').length
+    render(<MemoryRouter initialEntries={['/put-up']}><PutUp /></MemoryRouter>)
+    await waitFor(() => expect(goingReads()).toBeGreaterThan(0))
+    fireEvent.click(await screen.findByRole('radio', { name: 'Going now' }))
+    fireEvent.click(await screen.findByTestId('start-a-batch'))
+    typeInto('start-label', 'Pepper mash')
+    tap('start-submit')
+    await waitFor(() => expect(screen.getByTestId('start-error').textContent).toMatch(/^Couldn't start it/))
+    expect(screen.queryByTestId('going-batch')).toBeNull()                     // the list behind does not know of it yet
+    tap('start-when-yesterday')
+    const before = goingReads()
+    tap('start-submit')
+    await waitFor(() => expect(screen.getByTestId('start-error').textContent).toBe(START_REPLAY_NOT_ON_IT))
+    await waitFor(() => expect(goingReads()).toBeGreaterThan(before))
+    await waitFor(() => expect(screen.getByTestId('going-batch-title').textContent).toMatch(/Pepper mash/))
+    expect(fake.calls('POST').filter(c => c.path === '/api/kitchen-batches')).toHaveLength(2)
   })
 })

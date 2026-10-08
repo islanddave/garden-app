@@ -738,9 +738,26 @@ describe('Put something up — the item route', () => {
     save()
     await waitFor(() => expect(posts()).toHaveLength(3))
     await waitFor(() => expect(screen.getByTestId('door-save').disabled).toBe(false))
+    // QA M-2: … and it is REFUSED again, in the same words — not handed on as a save.
+    expect(errorText()).toBe(STALE.replace('“Oat milk”', '“Oat milk, barista”'))
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(onExists).toHaveBeenCalledTimes(2)
     expect(new Set(keys()).size).toBe(1)
     expect(otherWrites()).toEqual([])
     expect(draft()).toBeNull()
+  })
+
+  // QA M-5, the item route: a removed item replays like any other, and an untouched retry never looked.
+  it('QA M-5 — the item landed with its answer lost and was REMOVED since; Save again untouched: not a save — the door says it was removed', async () => {
+    lostThenReplayed({}, { ...FIRST, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    const door = await openDoor()
+    asIs()
+    save(); await failed()
+    save()
+    await failed('“Oat milk” was saved earlier and has been removed since. This Save did not change that.')
+    expect(posts()).toHaveLength(2)
+    expect(door.onSaved).not.toHaveBeenCalled()
+    expect(otherWrites()).toEqual([])
   })
 
   it('B1 — the same door, but the item was made longer ago than the bound (the sheet sat open): NOTHING is written', async () => {

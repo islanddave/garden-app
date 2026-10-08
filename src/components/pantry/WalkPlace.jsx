@@ -540,7 +540,8 @@ function WalkGroup({
         if (saved?.replayed === true) existsRef.current = { route, row: saved }
         const read = { whenMoved: jarWhenMoved(sentNow, print) }
         const part = jarFixedPart(body, saved, what, read)
-        const todo = afterReplay(saved, sentNow, print, {
+        // A replayed row that was REMOVED since is not a save, whatever went out under the key (QA M-5).
+        const todo = saved?.replayed === true && saved.deleted_at ? 'stale' : afterReplay(saved, sentNow, print, {
           row: saved, updatedHere: holdsOwnUpdate(saved, patched, JAR_PATCH_READS), fixed: part != null, holds: jarHolds(body, saved, what, read),
           nullIsUntouched: true,
         })
@@ -573,7 +574,7 @@ function WalkGroup({
         const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
         if (r?.replayed === true) existsRef.current = { route, row: saved }
-        const todo = afterReplay(r, sentNow, print, {
+        const todo = r?.replayed === true && saved?.deleted_at ? 'stale' : afterReplay(r, sentNow, print, {
           row: saved, updatedHere: holdsOwnUpdate(saved, patched, ITEM_PATCH_READS), fixed: plantingDiffers(body, saved),
           holds: itemHolds(body, saved, what),
         })

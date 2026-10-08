@@ -524,7 +524,8 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         if (saved?.replayed === true) existsRef.current = { route, row: saved }
         const read = { whenMoved: jarWhenMoved(sentNow, print) }
         const part = jarFixedPart(body, saved, what, read)
-        const todo = afterReplay(saved, sentNow, print, {
+        // A replayed row that was REMOVED since is not a save, whatever went out under the key (QA M-5).
+        const todo = saved?.replayed === true && saved.deleted_at ? 'stale' : afterReplay(saved, sentNow, print, {
           row: saved, mine: mineRef.current, updatedHere: holdsOwnUpdate(saved, patchedRef.current, JAR_PATCH_READS),
           fixed: part != null, holds: jarHolds(body, saved, what, read), nullIsUntouched: true,
         })
@@ -567,7 +568,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         const r = await createPantryItem(fetch, body)
         saved = r?.item ?? r
         if (r?.replayed === true) existsRef.current = { route, row: saved }
-        const todo = afterReplay(r, sentNow, print, {
+        const todo = r?.replayed === true && saved?.deleted_at ? 'stale' : afterReplay(r, sentNow, print, {
           row: saved, mine: mineRef.current, updatedHere: holdsOwnUpdate(saved, patchedRef.current, ITEM_PATCH_READS),
           fixed: plantingDiffers(body, saved), holds: itemHolds(body, saved, what),
         })
