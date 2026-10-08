@@ -477,6 +477,23 @@ describe('the add form before the tap (rows 6-8)', () => {
     expect(counts()).toEqual({ add: 1, event: 1, open: 1 })
   })
 
+  it('row 8 — a lot whose only parent has no variety: one variety is not a mix, so nothing says it will be re-filed, and no filing is sent', async () => {
+    const bare = { ...ROW.source_plants[0], variety_id: null, variety_name: null }
+    const row = openLotRow({ variety_id: null, variety_name: null, source_plants: [bare], is_member: false, same_variety: false })
+    net.add = [additionReply()]
+    await openFromList([row])
+    expect(screen.queryByTestId('seed-add-refile')).toBeNull()
+    // The set's own notice stays: it claims a mixed set, not a re-file.
+    expect(text('seed-add-set-notice')).toBe(
+      `Mixed seed from ${V_B.name} and a plant with no variety recorded. Each seed came off one or the other, and some may be crosses. Expect more than one kind of plant from this lot.`)
+    expect(document.body.textContent).not.toMatch(/filed as a mix|renamed|different variety/)
+    await tap('save-seed-submit')
+    await waitFor(() => expect(calls('add').length).toBe(1))
+    expect(calls('blend').length).toBe(0)
+    expect(Object.keys(bodies('add')[0])).not.toContain('filing')
+    expect(bodies('add')[0].expected_source_plant_ids).toEqual([bare.id])
+  })
+
   // The contract's own cases: A, B and C are variety ids, and the mix route answers a set with the
   // contract's name for it, so `refile_to` is exactly the id the filing must carry.
   it.each(filingCases())('row 8 — $name: sentence only when same_variety is false, filing only when the mix is new', async (c) => {

@@ -405,6 +405,11 @@ export default function AddToLot({ planting, ownLots = [], startLot = null, Basi
   const typed = parseAddCount(count)
   const outcome = outcomeLine(lot, typed.error ? null : typed.value, estimated)
   const working = phase === 'sending'
+  // The re-file sentence is drawn on the rule the request is built on (submit, STEP 0): only a set that
+  // names two or more varieties is re-filed as a mix. A lot whose plant has no variety recorded is
+  // listed as "another variety" and gets no re-file, so it gets no sentence; the set's own notice,
+  // which is true of the set either way, still stands.
+  const refiles = !!refile && refile.varietyIds.length >= 2
   return (
     <div data-testid="seed-add-form">
       <div ref={goingRef} tabIndex={-1} data-testid="seed-add-going-into" style={goingStyle}>
@@ -419,11 +424,11 @@ export default function AddToLot({ planting, ownLots = [], startLot = null, Basi
         </button>
       </div>
 
-      {refile && (
-        <div data-testid="seed-add-refile" style={noteStyle}>
-          <span style={{ display: 'block' }}>{refile.sentence}</span>
-          {refile.notice.map((sentence) => (
-            <span key={sentence} style={{ display: 'block', marginTop: 6 }}>{sentence}</span>
+      {refile && (refiles || refile.notice.length > 0) && (
+        <div data-testid={refiles ? 'seed-add-refile' : 'seed-add-set-notice'} style={noteStyle}>
+          {refiles && <span style={{ display: 'block' }}>{refile.sentence}</span>}
+          {refile.notice.map((sentence, i) => (
+            <span key={sentence} style={{ display: 'block', marginTop: refiles || i > 0 ? 6 : 0 }}>{sentence}</span>
           ))}
         </div>
       )}

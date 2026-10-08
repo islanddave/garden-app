@@ -169,8 +169,9 @@ export function outcomeLine(lot, count = null, estimated = false) {
 
 export const STORED_LOT_LINE = 'This lot is marked stored. Seed that is not fully dry can spoil the rest.'
 
-// The re-file sentence, shown before the tap whenever adding this plant changes what the lot is filed
-// under. An automatic lot name follows the mix; a name he typed stays.
+// The re-file sentence, shown before the tap when adding this plant makes the set name two or more
+// varieties (the form decides that; one variety is not a mix and is not re-filed). An automatic lot
+// name follows the mix; a name he typed stays.
 export function refileSentence({ plantingName, mixName, newLotName = null }) {
   const who = String(plantingName ?? '').trim() || 'This planting'
   return newLotName
