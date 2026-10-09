@@ -9,7 +9,9 @@
 -- canonical, so md5(profile::text) returns to d5335984e4af2339fe6ee7b4f4946436, the value the gates.yml
 -- pre gate pins (lambda/daily-plan/crabappleprofile.test.js hashes this literal and fails if it stops
 -- matching). It is dollar-quoted because the text carries \" escapes, which a dollar-quoted body passes
--- through whatever standard_conforming_strings is set to.
+-- through whatever standard_conforming_strings is set to. The one non-ASCII character in the stored text,
+-- an em dash, is written as its JSON unicode escape (backslash, u, 2014), so the literal is pure ASCII and
+-- no client encoding can change what it restores; jsonb stores the character itself either way.
 -- HABIT: 'single' goes back to NULL.
 --
 -- WHAT ROLLING BACK COSTS, stated plainly: the tree goes back to the bundled 3-day watering default and
@@ -29,7 +31,7 @@
 BEGIN;
 
 UPDATE public.care_profile
-   SET profile = $placeholder${"notes": "Auto-created with the cultivar so its variety has a cadence profile row (DRG-CADENCEFLOOR-001). Carries NO watering keys, so cadence still resolves through the bundled fallback exactly as it did before. _basis:\"unresearched\" means NOBODY HAS DECIDED YET — the opposite of a deliberately watering-free row like Collards.", "_basis": "unresearched", "_source": "cultivar-create"}$placeholder$::jsonb,
+   SET profile = $placeholder${"notes": "Auto-created with the cultivar so its variety has a cadence profile row (DRG-CADENCEFLOOR-001). Carries NO watering keys, so cadence still resolves through the bundled fallback exactly as it did before. _basis:\"unresearched\" means NOBODY HAS DECIDED YET \u2014 the opposite of a deliberately watering-free row like Collards.", "_basis": "unresearched", "_source": "cultivar-create"}$placeholder$::jsonb,
        updated_at = now()
  WHERE id = 'c59f1b2f-fec6-4e17-aea5-5260700f1235'
    AND scope = 'cultivar' AND scope_id = '2680ddd1-9f6a-400b-9c3b-2645fb4a39a8'   -- Crabapple

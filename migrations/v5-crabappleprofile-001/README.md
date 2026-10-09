@@ -280,7 +280,7 @@ What was checked, offline:
   shown to do its own work; both suppressions holding with the flag off and with no interval keys; no cold card at
   any temperature; the frost alert not counting it. The same file binds 0r and `gates.yml` to 0a, and 0a's habit to
   the JSON and the seed row.
-- 38 mutations of 0a, 0r, `gates.yml`, `frostClass.js`, `engine.js`, the JSON, the seed row, `harvestTracked.js`
+- 39 mutations of 0a, 0r, `gates.yml`, `frostClass.js`, `engine.js`, the JSON, the seed row, `harvestTracked.js`
   and the `v4-harvhabitgap-001` gate list (a key set false, the md5 guard dropped, a merge instead of a replace, a
   `cold` block added, the standing gates weakened five ways, and others). Every one turned a test red; each file
   was restored and its hash checked. The list is in the test file's header.
@@ -299,7 +299,8 @@ What the reviewer and the rehearsal still have to check:
 2. Step 3 on staging: 0a runs clean and prints `UPDATE 0`, `UPDATE 0`, `INSERT 0 1`. Then run 0r on staging and
    confirm it also runs clean: its dollar-quoted placeholder literal contains `\"` and the sequence
    `:"unresearched"`, which psql must pass through untouched (it does not substitute variables inside a quoted
-   body, and none of that name is set).
+   body, and none of that name is set). Both data literals are pure ASCII (the placeholder's one em dash is
+   written as a JSON unicode escape), so the client encoding cannot change what is written.
 3. `care_profile` and `crop_types` carry no trigger that needs a session variable (`select tgname from pg_trigger
    where tgrelid = 'public.care_profile'::regclass and not tgisinternal`). `v5-baycold-001` and
    `v4-harvhabitgap-001` wrote the same two tables with plain UPDATEs.

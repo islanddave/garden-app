@@ -39,7 +39,7 @@
 //   C12 0a also writes loss_horizon_hours                                 -> 5 RED
 //   C13 0a stamps a different version                                     -> 1 RED
 //   C14 0a's note stops saying the cultivar is not identified             -> 3 RED
-//   C15 0r restores a placeholder one character off                       -> 1 RED
+//   C15 0r restores a placeholder one character off                       -> 2 RED
 //   C16 0r guards on a profile 0a did not write                           -> 1 RED
 //   C17 0r profile restore loses its stamp guard                          -> 4 RED
 //   C18 0r habit reset loses its value guard                              -> 1 RED
@@ -63,6 +63,7 @@
 //   C36 0b seed row: crabapple gains a loss horizon                       -> 1 RED
 //   C37 harvestTracked.js: crabapple copied onto the not-tracked list     -> 1 RED
 //   C38 v4-harvhabitgap-001 gate: crabapple excused on the NOT IN list    -> 1 RED
+//   C39 0r spells the placeholder's em dash raw instead of as an escape   -> 1 RED
 // C29 is 2 here; src/__tests__/slugUniverseConsistency.test.js and frostBands.parity.test.js go red on it
 // too (3 RED across the two, run separately).
 import { describe, it, expect } from 'vitest';
@@ -376,6 +377,12 @@ describe('the migration writes the decided profile, whole, on the one row (migra
     // 0r's placeholder literal is dollar-quoted because it does carry \" escapes; it must not carry the tag
     expect(JSON.stringify(PLACEHOLDER)).not.toContain('$placeholder$');
     expect(JSON.stringify(PLACEHOLDER)).not.toContain('--');
+    // Both literals are pure printable ASCII in the file, so no client encoding can change what is written.
+    // The placeholder's stored text does hold one em dash: it is spelled as a JSON unicode escape.
+    const printableAscii = /^[ -~\n]*$/;
+    expect(SQL_0A.match(/SET profile = '(\{[^']*\})'::jsonb/)[1]).toMatch(printableAscii);
+    expect(SQL_0R.match(/\$placeholder\$([\s\S]*?)\$placeholder\$/)[1]).toMatch(printableAscii);
+    expect(PLACEHOLDER.notes).toContain(` YET ${String.fromCharCode(0x2014)} the opposite`);
   });
 
   it('0a writes nothing else: the profile, the habit, the stamp, in one transaction', () => {
