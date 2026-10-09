@@ -32,6 +32,7 @@ import { P } from '../../lib/constants.js'
 import { T, inputChrome } from './formStyles.js'
 import { formatQty } from '../../lib/format.js'
 import { monthDayLabel } from '../../lib/harvestWatch.js'
+import { CALENDAR_DAY } from '../../lib/dateLocal.js'
 import { PROJECTS_HIDDEN } from '../../lib/featureFlags.js'
 import { useInOverlaySurface } from '../../context/OverlayContext.jsx'
 import FilterChipRow from './FilterChipRow.jsx'
@@ -257,7 +258,6 @@ function measurePlacement(inputEl, inOverlay = false, panelExtra = 0, forceFlip 
 // Lambda serialises the driver's Date ("2026-04-10T00:00:00.000Z"); both are a calendar day, and
 // `new Date()` reads either as UTC midnight, the evening before west of Greenwich. Those two shapes
 // are read as text; only a value with a real time of day is an instant and renders in local time.
-const CALENDAR_DAY = /^\d{4}-\d{2}-\d{2}(?:T00:00:00(?:\.0+)?(?:Z|[+-]00:?00))?$/
 
 function prettyDate(iso) {
   if (!iso) return null
