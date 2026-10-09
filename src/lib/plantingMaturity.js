@@ -88,6 +88,24 @@ function fmt(d) {
 
 const DAY_MS = 86400000
 
+// Days are counted on the CALENDAR, never as multiples of 24 hours: a local day is 23 or 25 hours
+// long when the clocks change, so `anchor + n * DAY_MS` lands at 11 pm the evening before once a
+// window crosses the fall change (sown Sep 1 + 70 printed Nov 9) and at 1 am across the spring one.
+// Same counting as the server twin's addDays/daysBetween (lambda/harvests/watch.js), which works on
+// Y-M-D text and so never had the defect.
+function addCalendarDays(d, n) {
+  const r = new Date(d.getTime())
+  r.setDate(r.getDate() + n)
+  return r
+}
+
+// Whole calendar days from the local day of `a` to the local day of `b`.
+function calendarDaysBetween(a, b) {
+  return Math.round(
+    (Date.UTC(b.getFullYear(), b.getMonth(), b.getDate()) - Date.UTC(a.getFullYear(), a.getMonth(), a.getDate())) / DAY_MS,
+  )
+}
+
 // computeMaturity(planting, today=new Date()) ->
 //   { ageDays, anchorField, anchorDate, anchorLabel,
 //     dtmMin, dtmMax, maturityMinDate, maturityMaxDate,
@@ -140,7 +158,7 @@ export function computeMaturity(planting, today = new Date()) {
 
   const now = parseDate(today) || new Date()
   if (out.anchorDate) {
-    out.ageDays = Math.max(0, Math.floor((now - out.anchorDate) / DAY_MS))
+    out.ageDays = Math.max(0, calendarDaysBetween(out.anchorDate, now))
   }
 
   // Maturity window: anchor per the crop's DTM basis (see header).
@@ -185,8 +203,8 @@ export function computeMaturity(planting, today = new Date()) {
 
     const lo = calib ? calib.loDays : (dtmMin != null ? dtmMin : dtmMax)
     const hi = calib ? calib.hiDays : (dtmMax != null ? dtmMax : dtmMin)
-    out.maturityMinDate = new Date(dtmAnchor.getTime() + lo * DAY_MS)
-    out.maturityMaxDate = new Date(dtmAnchor.getTime() + hi * DAY_MS)
+    out.maturityMinDate = addCalendarDays(dtmAnchor, lo)
+    out.maturityMaxDate = addCalendarDays(dtmAnchor, hi)
     out.isMature = now >= out.maturityMinDate
     // progress toward the EARLIEST maturity date (0..1), clamped. Uses the calibrated opening when
     // calibration applied, so the bar and the label agree.

@@ -112,6 +112,58 @@ describe('the life-story spine and the maturity card keep the stored day (run in
   })
 })
 
+// The clocks change on Nov 1 2026 and Mar 8 2026 in New York, and the local day they change on is
+// 25 or 23 hours long. Days are counted on the calendar, as lambda/harvests/watch.js counts them.
+describe('a window or an age that crosses a clock change counts calendar days (run in ET)', () => {
+  const crop = (sown_at, dtm) => ({ sown_at, variety_ref: { days_to_maturity_min: dtm, days_to_maturity_max: dtm } })
+  const hm = (d) => [d.getHours(), d.getMinutes()]
+
+  it('the instrument: both changes fall where these cases assume', () => {
+    expect(new Date(2026, 10, 2).getTime() - new Date(2026, 10, 1).getTime()).toBe(25 * 3600000)
+    expect(new Date(2026, 2, 9).getTime() - new Date(2026, 2, 8).getTime()).toBe(23 * 3600000)
+  })
+
+  it.each(['2026-09-01', '2026-09-01T00:00:00.000Z'])('sown %s + 70 days is Nov 10, across the fall change', (wire) => {
+    const m = computeMaturity(crop(wire, 70), new Date(2026, 8, 15, 9, 0))
+    expect(ymd(m.maturityMinDate)).toEqual([2026, 11, 10])
+    expect(hm(m.maturityMinDate)).toEqual([0, 0])
+    expect(m.harvestWindowLabel).toBe('Est. harvest ~Nov 10, 2026')
+  })
+
+  // Across the spring change the old sum landed on the right day at 1 am, so the label was right
+  // and the window opened an hour late.
+  it('sown Feb 20 + 60 days is Apr 21 from midnight, across the spring change', () => {
+    const p = crop('2026-02-20T00:00:00.000Z', 60)
+    const m = computeMaturity(p, new Date(2026, 2, 1, 9, 0))
+    expect(ymd(m.maturityMinDate)).toEqual([2026, 4, 21])
+    expect(hm(m.maturityMinDate)).toEqual([0, 0])
+    expect(m.harvestWindowLabel).toBe('Est. harvest ~Apr 21, 2026')
+    expect(computeMaturity(p, new Date(2026, 3, 20, 23, 30)).isMature).toBe(false)
+    expect(computeMaturity(p, new Date(2026, 3, 21, 0, 30)).isMature).toBe(true)
+  })
+
+  it('the age of a winter-time sowing turns over at midnight in summer time, not at 1 am', () => {
+    const p = { sown_at: '2026-03-01T00:00:00.000Z' }
+    expect(computeMaturity(p, new Date(2026, 2, 19, 23, 30)).ageDays).toBe(18)
+    expect(computeMaturity(p, new Date(2026, 2, 20, 0, 30)).ageDays).toBe(19)
+    expect(computeMaturity(p, new Date(2026, 2, 20, 12, 0)).ageDays).toBe(19)
+  })
+
+  it('the age of a summer-time sowing turns over at midnight in winter time, not at 11 pm', () => {
+    const p = { sown_at: '2026-09-01T00:00:00.000Z' }
+    expect(computeMaturity(p, new Date(2026, 10, 9, 23, 30)).ageDays).toBe(69)
+    expect(computeMaturity(p, new Date(2026, 10, 10, 0, 30)).ageDays).toBe(70)
+  })
+
+  it('a mid-summer window and age, inside one clock regime, are unchanged', () => {
+    const m = computeMaturity(crop('2026-06-01T00:00:00.000Z', 60), new Date(2026, 5, 11, 9, 0))
+    expect(m.ageDays).toBe(10)
+    expect(ymd(m.maturityMinDate)).toEqual([2026, 7, 31])
+    expect(m.maturityMinDate.getTime()).toBe(new Date(2026, 5, 1).getTime() + 60 * 86400000)
+    expect(m.harvestWindowLabel).toBe('Est. harvest ~Jul 31, 2026')
+  })
+})
+
 describe('PlantingDetail prints the day that is stored (run in ET)', () => {
   const planting = (sown_at, transplanted_at) => ({
     id: 'pl1', name: 'Dark Green Zucchini', project_id: 'proj1', project_name: 'Squash 2026',
