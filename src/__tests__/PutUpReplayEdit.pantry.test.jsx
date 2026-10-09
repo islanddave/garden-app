@@ -344,7 +344,7 @@ describe('Put something up — the item route', () => {
     expect(onSaved.mock.calls[0][0]).toMatchObject({ saved: { name: 'Oat milk, barista' }, place: { id: 'loc-1' } })
   })
 
-  it('I3 — the PATCH fails with no answer or a 5xx: the door says the item IS in the Pantry and this change did not save (never "Couldn\'t save it"), the page is told, the change is still in the form and the draft, nothing is handed on as saved — and Save again finishes it under the same key', async () => {
+  it('I3 — the PATCH fails with a 5xx: the door says the item IS in the Pantry and this change may not have saved (never "Couldn\'t save it"), the page is told, the change is still in the form and the draft, nothing is handed on as saved — and Save again finishes it under the same key', async () => {
     let fail = true
     lostThenReplayed({ [`PATCH ${ITEMS}/*`]: ({ path, body }) => { if (fail) throw apiError(503, { error: 'boom' }); return { item: { id: path.split('/').pop(), ...body } } } })
     const { onSaved, onExists } = await openDoor()
@@ -354,7 +354,7 @@ describe('Put something up — the item route', () => {
     tap('door-from'); typeInto('door-notes', 'the second carton')
     save()
     await waitFor(() => expect(patches()).toHaveLength(1))
-    await failed(UNSAVED)
+    await failed(MAYBE)                                                        // a 5xx is not a no: it may be on the item
     expect(onExists).toHaveBeenCalledTimes(1)                                  // the list behind re-reads: the item is there
     expect(onSaved).not.toHaveBeenCalled()
     expect(screen.getByTestId('door-notes').value).toBe('the second carton')
@@ -765,7 +765,7 @@ describe('Put something up — the item route', () => {
     tap('door-from'); typeInto('door-notes', 'the second carton')
     on.length = 0
     save()
-    await failed(UNSAVED)
+    await failed(MAYBE)
     await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
   })
 
@@ -1011,7 +1011,7 @@ describe('the pages behind the door are told the item is there', () => {
     const before = reads()
     tap('door-from'); typeInto('door-notes', 'the second carton')
     tap('door-save')
-    await waitFor(() => expect(errorText()).toBe(UNSAVED))
+    await waitFor(() => expect(errorText()).toBe(MAYBE))
     await waitFor(() => expect(reads()).toBeGreaterThan(before))
     expect(screen.getByTestId('door-notes').value).toBe('the second carton')
   })
@@ -1031,7 +1031,7 @@ describe('the pages behind the door are told the item is there', () => {
     const before = reads()
     typeInto('door-what-name', 'Megatron jalapeño, the red ones')
     tap('door-save')
-    await waitFor(() => expect(errorText()).toBe('“Megatron jalapeño” is already in the Pantry — an earlier Save went through. This change did not save — try again.'))
+    await waitFor(() => expect(errorText()).toBe('“Megatron jalapeño” is already in the Pantry — an earlier Save went through. This change may not have saved — try again.'))
     await waitFor(() => expect(reads()).toBeGreaterThan(before))
     expect(screen.getByTestId('door-what-name').value).toBe('Megatron jalapeño, the red ones')
   })
@@ -1087,7 +1087,7 @@ describe('the Walk — the item route', () => {
     expect(patches()[0].body).not.toHaveProperty('crop_type_slug')
   })
 
-  it('I3 — the PATCH fails: the walk says the item IS in the Pantry and this change did not save, and reads the place again (it is listed there); the name typed is still there — and Save again finishes it under the same key', async () => {
+  it('I3 — the PATCH fails (a 5xx): the walk says the item IS in the Pantry and this change may not have saved, and reads the place again (it is listed there); the name typed is still there — and Save again finishes it under the same key', async () => {
     let fail = true
     lostThenReplayed({ [`PATCH ${ITEMS}/*`]: ({ path, body }) => { if (fail) throw apiError(500, { error: 'boom' }); return { item: { id: path.split('/').pop(), ...body } } } })
     await startWalk()
@@ -1098,7 +1098,7 @@ describe('the Walk — the item route', () => {
     const before = reads()
     save()
     await waitFor(() => expect(patches()).toHaveLength(1))
-    await failed(UNSAVED)
+    await failed(MAYBE)
     await waitFor(() => expect(reads()).toBeGreaterThan(before))
     expect(screen.getByTestId('walk-what-name').value).toBe('Oat milk, barista')
     fail = false

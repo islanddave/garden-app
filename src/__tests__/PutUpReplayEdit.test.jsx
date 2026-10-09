@@ -192,9 +192,10 @@ describe('the rule — idempotencyKey.js', () => {
     expect(afterReplay({ replayed: true }, sent, 'b/x', { row: stamps(LONG_AGO, 10 * 1000), updatedHere: true })).toBe('stale')
     expect(afterReplay({ replayed: true }, sent, 'b/x', { row: touched, updatedHere: true, mine: false })).toBe('stale')
     expect(afterReplay({ replayed: true }, sent, 'b/x', { row: { created_at: touched.created_at }, updatedHere: true })).toBe('stale')
-    // No answer at all (no status, or 0) is a write that may have landed; an answered 4xx or 5xx did not.
+    // No answer at all (no status, or 0) is a write that may have landed, and so is a 5xx; an answered 4xx did not.
     expect([answerLost(new TypeError('Failed to fetch')), answerLost({ status: 0 }), answerLost(null)]).toEqual([true, true, true])
-    expect([answerLost({ status: 400 }), answerLost({ status: 503 })]).toEqual([false, false])
+    expect([answerLost({ status: 503 }), answerLost({ status: 500 })]).toEqual([true, true])
+    expect([answerLost({ status: 400 }), answerLost({ status: 409 }), answerLost({ status: 422 })]).toEqual([false, false, false])
   })
 
   it('B1 — the bound: ten minutes, read off created_at; updated_at must be the same instant; a stamp ahead of this clock by more than the slack is not judged', () => {
@@ -860,7 +861,7 @@ describe('Save as recipe — POST /api/recipes/from-batch/:id, then PATCH /api/r
     expect(sentTo('PATCH', ROW)).toEqual([{ name: 'Settlers, the hot one' }])
   })
 
-  it('I3 — the update fails: the row says the recipe IS saved under its first name and the new name did not save (never "Couldn\'t save it"), the page is told, the field is still open with the new name, nothing reads as saved — and Save again finishes it', async () => {
+  it('I3 — the update fails: the row says the recipe IS saved under its first name and the new name may not have saved — a 5xx (never "Couldn\'t save it"), the page is told, the field is still open with the new name, nothing reads as saved — and Save again finishes it', async () => {
     let fail = true
     lostThenReplayed((b) => { if (fail) throw apiError(500, { error: 'boom' }); return { recipe: { ...FIRST, ...b } } })
     mount()
@@ -870,7 +871,7 @@ describe('Save as recipe — POST /api/recipes/from-batch/:id, then PATCH /api/r
     type('batch-save-as-recipe-name', 'Settlers, the hot one')
     await save()
     await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
-    await waitFor(() => expect(errorText()).toBe('Already saved as a recipe: “Settlers of Cayenne” — an earlier Save went through. The new name did not save — try again.'))
+    await waitFor(() => expect(errorText()).toBe('Already saved as a recipe: “Settlers of Cayenne” — an earlier Save went through. The new name may not have saved — try again.'))
     expect(errorText()).not.toMatch(BANNED)
     expect(onChanged).toHaveBeenCalledTimes(1)                                 // batch detail re-reads: it follows the recipe now
     expect(screen.queryByTestId('batch-save-as-recipe-saved')).toBeNull()
@@ -1102,7 +1103,7 @@ describe('How it was made — POST /api/kitchen-batches/from-jars, then PUT /api
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('I3 — the update fails: the sheet says the batch IS saved and the change did not save, the page is told with the sheet still open (the batch is there, under its first name) — and Save again finishes it', async () => {
+  it('I3 — the update fails (a 5xx): the sheet says the batch IS saved and the change may not have saved, the page is told with the sheet still open (the batch is there, under its first name) — and Save again finishes it', async () => {
     let fail = true
     lostThenReplayed((b) => { if (fail) throw apiError(500, { error: 'boom' }); return { id: 'kb-first', label: b.label } })
     const { onClose, onSaved } = mount()
@@ -1112,8 +1113,8 @@ describe('How it was made — POST /api/kitchen-batches/from-jars, then PUT /api
     type('how-label', 'Megatron plain, 2026')
     await save()
     await waitFor(() => expect(sentTo('PUT', ROW)).toHaveLength(1))
-    await waitFor(() => expect(screen.getByTestId('how-error').textContent).toBe('This batch is already saved — an earlier Save went through. The change to its name or kind did not save. Try again, or close this and make it on the batch.'))
-    expect(screen.getByTestId('how-error').textContent).toBe(REPLAY_CHANGE_UNSAVED)
+    await waitFor(() => expect(screen.getByTestId('how-error').textContent).toBe(REPLAY_CHANGE_MAYBE))
+    expect(REPLAY_CHANGE_UNSAVED).toBe('This batch is already saved — an earlier Save went through. The change to its name or kind did not save. Try again, or close this and make it on the batch.')
     expect(REPLAY_CHANGE_UNSAVED).not.toMatch(BANNED)
     expect(REPLAY_CHANGE_MAYBE).toBe('This batch is already saved — an earlier Save went through. The change to its name or kind may not have saved. Try again, or close this and check it on the batch.')
     expect(REPLAY_CHANGE_MAYBE).not.toMatch(BANNED)

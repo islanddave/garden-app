@@ -381,7 +381,7 @@ describe('Start a batch — a replayed create', () => {
     expect(sheet.onStarted.mock.calls[0][0]).toMatchObject({ id: 'kb-first', label: 'Pepper mash, red' })
   })
 
-  it('the PUT fails (a 5xx): the sheet says the batch IS started and the change did not save, tells the page, keeps the form, the key and the draft — and Start it again finishes it on the one batch', async () => {
+  it('the PUT fails (a 5xx): the sheet says the batch IS started and the change may not have saved, tells the page, keeps the form, the key and the draft — and Start it again finishes it on the one batch', async () => {
     const on = watchScrolls()
     let fail = true
     const table = batchTable({ onPut: () => { if (fail) throw apiError(503, 'boom') } })
@@ -391,7 +391,7 @@ describe('Start a batch — a replayed create', () => {
     type('start-label', 'Pepper mash, red')
     on.length = 0
     await startIt()
-    await said(START_CHANGE_UNSAVED)
+    await said(START_CHANGE_MAYBE)
     await waitFor(() => expect(on).toContain(screen.getByTestId('start-error')))
     expect(sheet.onExists).toHaveBeenCalledTimes(1)
     expect(sheet.onStarted).not.toHaveBeenCalled()
@@ -709,14 +709,14 @@ describe('Start a batch — a replayed create', () => {
     expect(table.lines).toHaveLength(2)
   })
 
-  it('QA I-3 — the PUT of a changed name fails: the lines and the jar that would have followed it were not sent, and the sentence says so beside "did not save"', async () => {
+  it('QA I-3 — the PUT of a changed name fails: the lines and the jar that would have followed it were not sent, and the sentence says so beside "may not have saved" (a 5xx)', async () => {
     batchTable({ onPut: () => { throw apiError(503, 'boom') } })
     open({ recipe: JAR_RECIPE })
     await pickPast()
     await startIt(); await said(GENERIC)
     type('start-label', 'Roll for Initiative, hot')
     await startIt()
-    await said(startUnsavedText({ lines: 'not', jar: 'not' }))
+    await said(startUnsavedText({ lost: true, lines: 'not', jar: 'not' }))
     expect(linePosts()).toHaveLength(0)
     expect(puts()).toHaveLength(1)                                             // the one that failed
   })
@@ -869,7 +869,7 @@ describe('Start a batch — a replayed create', () => {
     table.row = { ...table.row, ...HIS_JAR, updated_at: new Date().toISOString() }
     type('start-label', 'Roll for Initiative, hotter')
     await startIt()
-    await said(START_CHANGE_UNSAVED)
+    await said(START_CHANGE_MAYBE)
     expect(table.row).toMatchObject(HIS_JAR)
     expect(sheet.onStarted).not.toHaveBeenCalled()
   })

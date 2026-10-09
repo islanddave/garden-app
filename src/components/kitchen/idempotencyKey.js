@@ -118,13 +118,15 @@ export function rowIsThisSittings(row, nowMs = Date.now(), updatedHere = false, 
   const age = nowMs - made
   return age >= -REPLAY_CLOCK_SLACK_MS && age <= REPLAY_FRESH_MS
 }
-// A failure with no status is an answer that never came: the write may have landed all the same.
-export function answerLost(err) {
-  return !(typeof err?.status === 'number' && err.status >= 400)
-}
 // A write the server ANSWERED with a 4xx: it did not land.
 export function answeredNo(err) {
   return typeof err?.status === 'number' && err.status >= 400 && err.status < 500
+}
+// Anything else is an answer that cannot be taken as a no — none came (no status, or 0), or a 5xx did: the
+// write may have landed all the same. It chooses a sheet's WORDS only ("may not have saved"); what a sheet
+// takes back, it takes back on `answeredNo`.
+export function answerLost(err) {
+  return !answeredNo(err)
 }
 
 // ── The sheet's own updates (QA I-2, re-review I-B) ─────────────────────────────────────────────────
