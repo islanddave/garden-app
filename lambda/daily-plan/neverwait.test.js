@@ -137,9 +137,10 @@ describe('young bed: 21 days from the transplant, else from the sow date', () =>
   });
 
   it('the sow date ages BEDS only: a 5 gal bag sown 4 days ago still waits below 85F', () => {
-    // The owner decision names beds. A young planting in a large vessel is a separate question,
-    // reported by the lane and not decided here.
+    // Sown in place in a vessel is the small-vessel rule's to cover or nobody's. A TRANSPLANT into
+    // that bag is the next describe.
     expect(verdict({ ...D, sow_at: d(4), transplant_at: null }, LATER_TODAY, COOL)).toBe('held:today');
+    expect(verdict({ ...D, sow_at: d(4), transplant_at: d(60) }, LATER_TODAY, COOL)).toBe('held:today');
   });
 
   it('the old small-vessel rule is untouched: a sow date alone does not make a cell tray a fresh transplant', () => {
@@ -153,6 +154,55 @@ describe('young bed: 21 days from the transplant, else from the sow date', () =>
     expect(sownOnly).toEqual(established);
     const fresh = tasks([{ ...tray, transplant_at: d(4) }], fell, COOL);
     expect(fresh.water_due.map((r) => r.rain_note)).toEqual(['Water — fresh transplant (no rain credit; small root ball dries fast)']);
+  });
+});
+
+// Dave, 2026-10-09: "new transplants … keep their watering card whatever the forecast" — said of no
+// vessel in particular. A planting transplanted or potted up in the last 21 days is exempt from the
+// forecast kinds in a large bag, pot, trough, barrel or basket too, below 85F.
+describe('new transplant: 21 days from the transplant, in any vessel', () => {
+  const BAG = { ...D, id: 'bag' };
+  const TROUGH = { ...E, id: 'trough', container_type: 'trough', container_size: '6x2 ft' };
+  const KINDS = [['today', LATER_TODAY, {}], ['incoming_dry', TOMORROW, { deferDryEnabled: true }], ['soon', NEXT_HOURS, { soonAwareEnabled: true }]];
+
+  for (const [name, vessel] of [['a 5 gal fabric bag', BAG], ['a trough', TROUGH]]) {
+    for (const [kind, hy, flags] of KINDS) {
+      it(`${kind}, 78F: ${name} transplanted 5 days ago is due; its established twin waits`, () => {
+        expect(verdict({ ...vessel, transplant_at: d(5) }, hy, COOL, flags)).toBe('due');
+        expect(verdict({ ...vessel, transplant_at: d(60) }, hy, COOL, flags)).toBe(`held:${kind}`);
+      });
+      it(`${kind}, 78F: ${name} transplanted 21 days ago is due, 22 days ago waits`, () => {
+        expect(verdict({ ...vessel, transplant_at: d(21) }, hy, COOL, flags)).toBe('due');
+        expect(verdict({ ...vessel, transplant_at: d(22) }, hy, COOL, flags)).toBe(`held:${kind}`);
+      });
+    }
+  }
+
+  it('whiskey barrel and hanging basket: the same', () => {
+    for (const container_type of ['whiskey_barrel', 'hanging_basket']) {
+      expect(verdict({ ...BAG, container_type, transplant_at: d(5) }, LATER_TODAY, COOL), container_type).toBe('due');
+      expect(verdict({ ...BAG, container_type, transplant_at: d(22) }, LATER_TODAY, COOL), container_type).toBe('held:today');
+    }
+  });
+
+  it('rain that FELL still suppresses it: soak, and wet media with more coming', () => {
+    const SOAKED = { ...dry, recent_precip_in: THRESHOLDS.SOAK_CAP_IN + 0.2 };
+    const WET_AND_MORE = { ...dry, recent_precip_in: THRESHOLDS.SOAK_WET_FLOOR_IN + 0.1, tomorrow_precip_in: 0.8, tomorrow_pop: 80 };
+    for (const vessel of [BAG, TROUGH]) {
+      expect(verdict({ ...vessel, transplant_at: d(5) }, SOAKED, COOL), vessel.id).toBe('held:soak');
+      expect(verdict({ ...vessel, transplant_at: d(5) }, WET_AND_MORE, COOL), vessel.id).toBe('held:incoming');
+    }
+  });
+
+  it('rain credit: a large vessel transplanted 5 days ago is credited exactly as its established twin is', () => {
+    // Refusing measured credit is freshTransplant's, and that is small vessels only.
+    const fell = { ...dry, recent_precip_in: 0.7 };
+    for (const vessel of [BAG, TROUGH]) {
+      const twin = (o) => ({ ...vessel, id: 'x', last_water: d(3), ...o });
+      const established = tasks([twin({ transplant_at: d(60) })], fell, COOL);
+      expect(established.rain_skipped.map((r) => r.credited_days != null), vessel.id).toEqual([true]);
+      expect(tasks([twin({ transplant_at: d(5) })], fell, COOL), vessel.id).toEqual(established);
+    }
   });
 });
 
@@ -262,12 +312,13 @@ describe('the water-ledger leg reads the same rule (CARE_WATER_LEDGER_ENABLED, o
   const plan = (high) => generatePlan({
     today: lf.TODAY, nowMs: lf.NOW, weather: { ...lf.WX, highToday: high }, hydrology: hy, ownerFallback: 'dave',
     weatherDaily: lf.weatherDaily({}),
-    eventsByPlant: Object.fromEntries(['old', 'sown', 'set', 'pot'].map((id, i) => [id, [lf.w(lf.ago(9), 12, null, `e${i}`)]])),
+    eventsByPlant: Object.fromEntries(['old', 'sown', 'set', 'pot', 'potset'].map((id, i) => [id, [lf.w(lf.ago(9), 12, null, `e${i}`)]])),
     plantings: [
       bed('old', {}),
       bed('sown', { transplant_at: null, sow_at: lf.ago(4) }),
       bed('set', { transplant_at: lf.ago(5) }),
       lf.P({ id: 'pot', container_type: 'plastic_pot', container_size: '2 gal', last_water: lf.ago(9) }),
+      lf.P({ id: 'potset', container_type: 'plastic_pot', container_size: '2 gal', last_water: lf.ago(9), transplant_at: lf.ago(5) }),
     ],
     cadence, fertModel, ...PROD, waterLedgerEnabled: true,
   });
@@ -278,11 +329,11 @@ describe('the water-ledger leg reads the same rule (CARE_WATER_LEDGER_ENABLED, o
     return Object.fromEntries(t);
   };
 
-  it('78F: the established bed and the pot wait; the seedbed and the new transplant are due', () => {
-    expect(v(plan(78))).toEqual({ old: 'held:today', sown: 'due', set: 'due', pot: 'held:today' });
+  it('78F: the established bed and the pot wait; the seedbed and both new transplants are due', () => {
+    expect(v(plan(78))).toEqual({ old: 'held:today', sown: 'due', set: 'due', pot: 'held:today', potset: 'due' });
   });
   it('92F: the pot is due as well', () => {
-    expect(v(plan(92))).toEqual({ old: 'held:today', sown: 'due', set: 'due', pot: 'due' });
+    expect(v(plan(92))).toEqual({ old: 'held:today', sown: 'due', set: 'due', pot: 'due', potset: 'due' });
   });
 });
 

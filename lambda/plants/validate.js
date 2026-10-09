@@ -15,8 +15,10 @@
 export const CLEARABLE_FIELDS = [
   // free text / json — no consumer branches on them
   'notes', 'metadata', 'lineage_note',
-  // lifecycle dates + their approx flags. sown_at and germinated_at are safe because nothing
-  // coalesces them into a care-engine basis; transplanted_at / planted_out_at are NOT (see below).
+  // lifecycle dates + their approx flags. germinated_at feeds no care-engine basis. sown_at DOES since
+  // 2026-10-09: daily-plan reads it as the sow date (sow_at) for the 21-day young-bed exemption from
+  // rain-forecast holds, so clearing it on a newly sown bed lets a forecast hold that bed's water card.
+  // It stays clearable (no behavior change here). transplanted_at / planted_out_at are NOT (see below).
   'sown_at', 'sown_at_approx', 'germinated_at', 'germinated_at_approx',
   'transplanted_at_approx', 'planted_out_at_approx',
   // attrition / provenance. qty_initial and qty_current have no arithmetic consumer anywhere in
