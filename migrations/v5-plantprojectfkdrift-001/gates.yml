@@ -15,7 +15,9 @@
 # pre:   deliberately NOT "the constraints are absent". The migration is idempotent and prod-safe by
 #        design, so every pre gate is true before the apply, after it, and after a rollback. What they
 #        check instead: the right database; no same-named object that means something else (0a would
-#        raise on it; this says so first, read-only); and, on prod only, that the apply will be a no-op.
+#        raise on it; this says so first, read-only); that row security does not hide rows from the role
+#        running this (the sweep and 0c's count would then be of the visible rows only); and, on prod
+#        only, that the apply will be a no-op.
 #
 # sweep: L-058. The one predicate VALIDATE enforces, counted over the WHOLE table with no deleted_at
 #        filter. ⚠ A FAIL here does NOT block 0a: 0a adds the constraint NOT VALID and reads no row. It
@@ -35,8 +37,9 @@
 #   * Standing invariant, prod only (continuous): prod carries no -created- row. That row is what lets
 #     0r-rollback.sql drop a constraint, and prod's constraints are not this migration's to drop.
 #   * Apply-window receipts (continuous: false): the two stamps.
-#   * No gate casts ::regclass (catalog joins instead), so every gate parses and runs on a database
-#     where nothing has been applied.
+#   * No gate casts ::regclass (catalog joins instead; to_regclass in the row-security gate, which is
+#     NULL for a missing table), so every gate parses and runs on a database where nothing has been
+#     applied.
 #
 # WHAT `--phase post` LOOKS LIKE WHEN 0c REFUSED (staging with rows in the way): post_validation_recorded
 #   FAIL, the two gates armed on that stamp PASS vacuously, everything else PASS. That FAIL is the honest
@@ -96,12 +99,28 @@ pre:
     expect: rowcount_eq
     value: 0
 
+  - name: pre_row_security_does_not_hide_rows_from_this_role
+    note: >
+      Both tables have row level security enabled. For a role it applies to, the sweep below and the count
+      in 0c-validate.sql see only the rows that role may see, and can read 0 while rows that break the rule
+      exist. One row here means row security is active on event_log or plants for the role this runner
+      connected as: run the gates and the apply under the owner DSN (false for a superuser, a BYPASSRLS
+      role, and the owner unless FORCE ROW LEVEL SECURITY is set). 0c asks the same question and refuses.
+      to_regclass, not a cast: on a database without the tables this is zero rows and the gate above is
+      the one that fails. True before and after the apply, on both environments.
+    sql: |
+      SELECT 1
+       WHERE row_security_active(to_regclass('public.event_log'))
+          OR row_security_active(to_regclass('public.plants'))
+    expect: rowcount_eq
+    value: 0
+
   - name: pre_prod_already_carries_both_and_the_apply_changes_nothing
     env: prod
     note: >
       PROD ONLY. The premise the prod apply rests on, read from the catalog on 2026-10-09: both constraints
       exist with exactly these definitions and the foreign key is validated. While this passes, 0a and 0c
-      issue no ALTER TABLE on prod and take no table lock; each writes one schema_version row. If it
+      issue no ALTER TABLE on prod and take no DDL lock; each writes one schema_version row. If it
       fails, prod is not what this migration was written against: do not apply, read the catalog.
       True before and after the apply.
     sql: |

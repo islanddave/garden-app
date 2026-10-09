@@ -19,6 +19,12 @@
 --   An event with NO project on a planting that has one is not counted and is not a violation: MATCH
 --   SIMPLE checks a row only when both columns are set.
 --
+-- ROW SECURITY. Both tables have row level security enabled. A role it applies to counts only the rows it
+--   may see, so its count can read 0 while rows that break the rule exist. Before counting, this file
+--   asks row_security_active() for both tables and refuses if either answers true. It answers false for
+--   a superuser, a BYPASSRLS role, and the tables' owner unless FORCE ROW LEVEL SECURITY is set; true for
+--   everyone else. Not asked on the already-validated path (prod), which takes no count.
+--
 -- WHAT A REFUSAL MEANS, AND WHAT THIS FILE WILL NOT DO. Staging's count was not measured at authoring. It
 --   holds smoke and test rows from before the 2026-08-20 writers derived the pair, so a count above zero
 --   there is plausible. This file never deletes or rewrites a row, and neither does anything else in this
@@ -77,6 +83,13 @@ BEGIN
   IF v_valid THEN
     RAISE NOTICE 'v5-plantprojectfkdrift-001 0c: event_log_plant_project_fk is already validated here. No VALIDATE issued, no lock taken.';
   ELSE
+    -- The count below is only the table's count if this role reads every row of both tables.
+    IF row_security_active('public.event_log'::regclass) OR row_security_active('public.plants'::regclass) THEN
+      RAISE EXCEPTION 'v5-plantprojectfkdrift-001 0c refused, nothing changed: row security is active on event_log or plants for role "%", so a count taken here is of the rows this role may see, not of the table. event_log_plant_project_fk stays NOT VALID: new writes are still refused.',
+        current_user
+        USING HINT = 'Run this file as a role row security does not apply to: the owner of both tables while neither has FORCE ROW LEVEL SECURITY, or a role with BYPASSRLS. Check: SELECT current_user, row_security_active(''public.event_log''::regclass), row_security_active(''public.plants''::regclass); -- gates.yml pre_row_security_does_not_hide_rows_from_this_role asks the same before the apply. Do not remove this check to get past it.';
+    END IF;
+
     -- Every row, soft-deleted included. This is what VALIDATE would refuse.
     SELECT count(*) INTO v_bad
       FROM public.event_log e

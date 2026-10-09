@@ -14,7 +14,8 @@
 // that nothing deletes a row, and that the rollback cannot reach an object it did not create.
 // Mutation arms: drop ON UPDATE CASCADE from 0a's ADD → "renders as prod's" reds; add a deleted_at
 // filter to 0c's count or to the sweep → "every row" reds; move a DROP outside its -created- branch →
-// "only what it created" reds; arm post_foreign_key_is_validated on 0a's stamp → the arming test reds.
+// "only what it created" reds; arm post_foreign_key_is_validated on 0a's stamp → the arming test reds;
+// drop one table from 0c's row-security check, or move it below the count → the row-security test reds.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -191,7 +192,7 @@ describe('v5-plantprojectfkdrift-001 — 0c: never validates blind, never touche
 
   it('refuses with the count and the listing query before the one VALIDATE, and only validates what is not validated', () => {
     expect(count(noStrings(zeroC), /VALIDATE CONSTRAINT/g)).toBe(1)
-    const order = ['IF v_valid THEN', 'ELSE', 'SELECT count(*) INTO v_bad', 'IF v_bad > 0 THEN', 'RAISE EXCEPTION',
+    const order = ['IF v_valid THEN', 'ELSE', 'IF row_security_active(', 'SELECT count(*) INTO v_bad', 'IF v_bad > 0 THEN', 'RAISE EXCEPTION',
       'END IF;', 'ALTER TABLE public.event_log VALIDATE CONSTRAINT event_log_plant_project_fk;']
     let from = zeroC.indexOf(order[0])
     for (const step of order) {
@@ -204,6 +205,25 @@ describe('v5-plantprojectfkdrift-001 — 0c: never validates blind, never touche
     expect(hint, 'the HINT carries the listing query').toBeTruthy()
     expect(hint[1]).toContain('NOT EXISTS (SELECT 1 FROM public.plants q WHERE q.id = e.plant_id AND q.project_id = e.project_id)')
     expect(hint[1]).not.toMatch(/WHERE[^;]*deleted_at/)
+  })
+
+  it('refuses to count as a role row security hides rows from: both tables asked, before the count', () => {
+    // Under row security the count is of the visible rows. rehearse_local.py section F: a non-superuser
+    // owner under FORCE counts 0 with three rows in the way, and without this check 0c VALIDATED.
+    const guard = "IF row_security_active('public.event_log'::regclass) OR row_security_active('public.plants'::regclass) THEN RAISE EXCEPTION 'v5-plantprojectfkdrift-001 0c refused, nothing changed: row security is active on event_log or plants for role"
+    expect(body).toContain(guard)
+    expect(count(noStrings(zeroC), /row_security_active\(/g)).toBe(2)
+    const at = zeroC.indexOf('IF row_security_active(')
+    const closed = zeroC.indexOf('END IF;', at)
+    // Inside the not-yet-validated branch, closed before the count: nothing between it and VALIDATE can skip it.
+    expect(at).toBeGreaterThan(zeroC.indexOf('\n  ELSE\n', zeroC.indexOf('IF v_valid THEN')))
+    expect(closed).toBeLessThan(zeroC.indexOf('SELECT count(*) INTO v_bad'))
+    expect(zeroC.slice(at, closed)).not.toMatch(/\bELSE\b|\bELSIF\b|RAISE (?:NOTICE|WARNING)/)
+    // gates.yml asks the same of the role the runner connects as, on both environments, before the apply.
+    const g = 'pre_row_security_does_not_hide_rows_from_this_role'
+    expect(flat(sqlOf(g))).toBe("SELECT 1 WHERE row_security_active(to_regclass('public.event_log')) OR row_security_active(to_regclass('public.plants'))")
+    expect(gate(g)).toMatch(/expect: rowcount_eq\n\s+value: 0\n/)
+    expect(gate(g)).not.toMatch(/\n\s+(?:env|manual|continuous): /)
   })
 
   it('refuses unless 0a ran here and the constraint is the one 0a records', () => {
@@ -276,6 +296,7 @@ describe('v5-plantprojectfkdrift-001 — gates.yml', () => {
   it('has the gates the README counts, in the phases it says', () => {
     expect(names('pre')).toEqual([
       'pre_the_three_tables_are_here', 'pre_no_same_named_object_with_another_definition',
+      'pre_row_security_does_not_hide_rows_from_this_role',
       'pre_prod_already_carries_both_and_the_apply_changes_nothing',
       'pre_staging_lambdas_derive_the_event_project_from_the_planting',
     ])
@@ -324,6 +345,28 @@ describe('v5-plantprojectfkdrift-001 — gates.yml', () => {
 
   it('reads the catalog by joins, never by ::regclass, so every gate runs on an unapplied database', () => {
     expect(gateSql).not.toMatch(/::regclass/)
+  })
+})
+
+describe('v5-plantprojectfkdrift-001 — README: what is known and tracked stays written down', () => {
+  const readme = read('README.md')
+
+  it('names the re-home cascade as known, tracked elsewhere, and not a reason to change the definition', () => {
+    const at = readme.indexOf('\n## Known: emptying a container')
+    expect(at).toBeGreaterThan(-1)
+    const section = readme.slice(at, readme.indexOf('\n## ', at + 4))
+    expect(section).toContain('BUG-PLANTPAIRCASCADENULLSHISTORY-001')
+    expect(section).toContain('UPDATE plants SET project_id = NULL')
+    expect(section).toContain('2026-08-21')
+    expect(read('rehearse_local.py')).toContain('BUG-PLANTPAIRCASCADENULLSHISTORY-001')
+  })
+
+  it('the apply sequence carries the promote-safety conditions as steps, not as advice', () => {
+    const apply = readme.slice(readme.indexOf('\n## Apply'), readme.indexOf('\n## If 0c refuses'))
+    for (const must of ['python3 scripts/staged-promote.py check', 'integration-test.yml', '0r-rollback.sql',
+      'pre_row_security_does_not_hide_rows_from_this_role', '10 passed', '5 skipped', '15 passed']) {
+      expect(apply, must).toContain(must)
+    }
   })
 })
 
