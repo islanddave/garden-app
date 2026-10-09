@@ -62,6 +62,18 @@ No file in this directory reads, changes or deletes an `event_log` or `plants` r
 "On prod it changes nothing" means exactly: no schema change and no application data. It does write two
 `schema_version` rows (`5.0.0-plantprojectfkdrift-001`, `-validate`), which is what arms the standing gates there.
 
+### Locks
+
+Every file sets `lock_timeout = '5s'`: behind a long transaction it fails fast and changes nothing. Run it again.
+
+| statement | where it runs | lock |
+|---|---|---|
+| `ADD CONSTRAINT ... UNIQUE` (0a) | staging | ACCESS EXCLUSIVE on `plants` while the index builds. Not built `CONCURRENTLY` (that cannot run in a transaction, and the table is small). |
+| `ADD CONSTRAINT ... FOREIGN KEY ... NOT VALID` (0a) | staging | SHARE ROW EXCLUSIVE on `event_log` and on `plants`. No scan. |
+| `VALIDATE CONSTRAINT` (0c) | staging, only when the count is 0 | SHARE UPDATE EXCLUSIVE on `event_log`, ROW SHARE on `plants`. Reads and ordinary writes continue. |
+| `DROP CONSTRAINT` x2 (0r) | staging | ACCESS EXCLUSIVE on `event_log` and on `plants`. |
+| anything | prod | none beyond the catalog reads and two single-row inserts into `schema_version`. |
+
 ### NOT VALID is not "off"
 
 `NOT VALID` skips the scan of rows already in the table. It does not skip enforcement: from the commit of 0a, every
