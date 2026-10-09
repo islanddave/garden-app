@@ -164,7 +164,14 @@ the stock module's own three functions from it.
 
 It fails the run (an `ERROR: coverage-v8-two-forms:` line and exit 1, like a missed threshold, and one `::error`
 annotation on a runner) in two cases. One: a file loaded both ways whose two conversions are not one list, item for
-item and in order; what Node ran of that file is then left out of the report. Two: any hit count below zero. That
+item, in order and each over the other's own place in the file; what Node ran of that file is then left out of the
+report. That check is a filter, not a proof. Of lists made wrong in the thirteen real pairs it refuses every item
+exchanged for one elsewhere (8,652; the order alone, which was the rule before OPS-COVPROVIDERMAPADOPT-001, took
+8,164 of them), 83.5% of one-item shifts in the case kindest to them (1.3% before; 87.2% against 2.0% by the seeded
+script the earlier figures came from) and all but five of 8,446 two-item shifts. It still takes an item exchanged
+for another that lies over its own place, and one item under its neighbour's number where one of the two lies
+inside the other: the comment above `whyNotSameItems` says why each cannot be closed without refusing correct
+files, and which two tighter ties were measured and not taken. Two: any hit count below zero. That
 second check is a tripwire for one symptom of a gross misreading (ranges read against the wrong text, or a
 wrapper's length off). It does not show that a conversion is right: in review, every Node script read one character
 off gave 16 more covered items on 59 test files and no negative count. So never read "0 negative counts" as proof
@@ -197,6 +204,26 @@ shape (ci.yml's `build-and-test`) was the one combination it had run on nowhere 
 shapes, the shadow legs Node 20.19.0 with two projects). That job's first run on dev is its acceptance: `Run unit
 tests with coverage` green with a `Coverage report from v8` table and no `ERROR: coverage-v8-two-forms:` line, and
 `Coverage ratchet — measured floor` green, read by head SHA.
+
+Those four cannot see a wrong reading in that one combination: the thresholds sit 9 to 18 points under the figures,
+the ERROR line needs a refused file or a count below zero, and `coverage-rows.py` leaves out exactly `All files` and
+`lambda/daily-plan`. So the
+acceptance has a fifth part, made by command and not by eye: every `lambda/**` row of `build-and-test`'s table
+equals the same row of ci-next's `unit-utc-cov` for the same head SHA. Take each job's raw log, where every line
+starts with its timestamp (`gh api repos/OWNER/REPO/actions/jobs/JOB_ID/logs > LOG`; `gh run view --log` puts the
+job and step names first and the command below then prints nothing), cut the rows out of each, and `diff` the two
+outputs. No line may differ:
+
+```sh
+rows() { sed -E $'s/^[0-9T:.Z-]+ //; s/\x1b\\[[0-9;]*m//g' "$1" | awk '/^-+\|/{p=0} /^ [^ ]/{p=($1 ~ /^lambda/)} p'; }
+rows BUILD-AND-TEST.log > a.rows && rows UNIT-UTC-COV.log > b.rows && test -s a.rows && diff a.rows b.rows && echo LAMBDA-ROWS-SAME
+```
+
+`test -s` is there because two empty outputs are equal too. Reference, ci-next run 37843185895 on `20097a1b`: 36
+rows; `lambda/daily-plan` 91.93, 88.76, 90.51, 92.81; `engine.js` 98.76, 95.21, 100, 100; `handler.js` 97.53, 94.97,
+100, 99.12; `rainLog.js` 92.72, 91.37, 87.5, 92.68. `All files` is not among the rows and may differ in the second
+decimal between two runs of one tree (`src/` files whose tests move with timing). The same holds for the first
+gating run of any later change to the module.
 
 `a3-exit.sh OUT_DIR` makes the A3 trial's two exit checks at the current checkout, the ones its header in
 `.github/workflows/ci-next.yml` says are to be made again at the last counted SHA. Its last line is the result:

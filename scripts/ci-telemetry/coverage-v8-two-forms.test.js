@@ -125,17 +125,26 @@ describe('the split of one per-test-file result', () => {
   })
 })
 
-// The istanbul data of one converted file. Item i of each map starts on line i + 1 unless `starts` places it
-// ([line, column] per item). `column` stands for what differs between a list parsed from the file and the same list
-// read through a source map: where on its line an item starts and ends.
-const loc = (line, column) => ({ start: { line, column }, end: { line, column: column + 9 } })
+// The istanbul data of one converted file. Item i of each map starts on line i + 1 unless `starts` places it:
+// [line, column] per item, which then ends nine columns on, or [line, column, last line, end column] for an item
+// whose end the case is about. `column` stands for what differs between a list parsed from the file and the same
+// list read through a source map: where on its line an item starts and ends. EOL is how the converter writes an end
+// with nothing after it on its line that the source map has an entry for. A function's name is where its body is
+// unless `decls` places it, by the function's number.
+const EOL = Infinity
+const loc = (line, column, lastLine = line, endColumn = column + 9) => ({
+  start: { line, column }, end: { line: lastLine, column: endColumn },
+})
 const converted = ({
   statements = 3, fns = ['outer', 'inner'], branches = [['if', 2], ['cond-expr', 2]], column = 0, hits = 1, starts = {},
+  decls = {},
 } = {}) => {
   const at = (map, i) => (starts[map]?.[i] ? loc(...starts[map][i]) : loc(i + 1, column))
   return {
     statementMap: Object.fromEntries(Array.from({ length: statements }, (_, i) => [i, at('statementMap', i)])),
-    fnMap: Object.fromEntries(fns.map((name, i) => [i, { name, decl: at('fnMap', i), loc: at('fnMap', i) }])),
+    fnMap: Object.fromEntries(fns.map((name, i) => [i, {
+      name, decl: decls[i] ? loc(...decls[i]) : at('fnMap', i), loc: at('fnMap', i),
+    }])),
     branchMap: Object.fromEntries(branches.map(([type, arms], i) => [i, {
       type, loc: at('branchMap', i), locations: Array.from({ length: arms }, () => at('branchMap', i)),
     }])),
@@ -157,21 +166,42 @@ describe('taking the vite conversion\'s item maps', () => {
     expect([node.s, node.f, node.b]).toEqual([{ 0: 5, 1: 5, 2: 5 }, { 0: 5, 1: 5 }, { 0: [5, 5], 1: [5, 5] }])
   })
 
-  // Each is a shape measured in lambda/daily-plan, where vite's source map starts an item somewhere other than
-  // the file does. The last is not measured: a comment between `const x =` and its value would do it.
+  // Each is a shape where vite's source map starts or ends an item somewhere other than the file does, and every
+  // one is one item read twice, so the rule must take it. The first six are in lambda/daily-plan; where a file is
+  // named the row has the extents the two conversions gave. The next six were measured in a scratch file of shapes
+  // those modules do not have, put through the same run, and are what a rule with a distance in it refuses: "a
+  // column late at most" the two late starts, "started together only on one line" the `if`, "ends on the line the
+  // file ends it" the two early ends. The last two are not measured: no two items of those modules that start
+  // together are both started early, and no start is ten lines early (the first of the six is three).
   it.each([
     ['a value on the line after its `const x =`, started a line early (handler.js:20-21)',
-      'statementMap', [[10, 0], [21, 2], [22, 0]], [[10, 0], [20, 6], [22, 0]]],
+      'statementMap', [[10, 0], [21, 2, 21, 91], [22, 0]], [[10, 0], [20, 6, 21, EOL], [22, 0]]],
     ['an `if` and the `(a || b) && c` it tests, started at one place (handler.js:29)',
-      'branchMap', [[29, 2], [29, 6]], [[29, 2], [29, 2]]],
+      'branchMap', [[29, 2, 33, EOL], [29, 6, 29, 63]], [[29, 2, 33, EOL], [29, 2, 29, 65]]],
     ['a start behind a bracket the reprint dropped, a column late',
       'statementMap', [[4, 2], [5, 10], [6, 2]], [[4, 2], [5, 11], [6, 2]]],
-    ['two items that start together in the file, both started early',
-      'branchMap', [[7, 4], [7, 4]], [[7, 0], [7, 0]]],
+    ['an item a column late where the item inside it starts (frostClass.js:415)',
+      'branchMap', [[415, 42, 415, 81], [415, 43, 415, 69]], [[415, 43, 415, 83], [415, 43, 415, 73]]],
     ['two items that start together in the file and in vite\'s text',
       'fnMap', [[7, 4], [7, 4]], [[7, 4], [7, 4]]],
+    ['a template literal of several lines, ended on the line it starts (handler.js:205-290)',
+      'statementMap', [[204, 2], [205, 2, 290, 30], [291, 2]], [[204, 2], [205, 2, 205, EOL], [291, 2]]],
+    ['a value three lines after its `const x =`, started three lines early',
+      'statementMap', [[10, 0], [14, 2, 14, EOL], [16, 12]], [[10, 0], [11, 6, 14, EOL], [16, 12]]],
+    ['a statement that starts with a function in brackets, started seven columns late where the function\'s body is',
+      'statementMap', [[94, 20, 94, 28], [95, 1, 95, EOL], [95, 8, 95, 9]], [[94, 20, 94, 29], [95, 8, 95, EOL], [95, 8, 95, 9]]],
+    ['a start a line late, behind a bracket the reprint dropped before a line break',
+      'statementMap', [[54, 12, 54, EOL], [55, 12, 57, EOL], [58, 12, 58, EOL]], [[54, 13, 54, EOL], [56, 4, 57, EOL], [58, 8, 58, EOL]]],
+    ['an `if` whose test starts on the next line, started where the `if` is',
+      'branchMap', [[33, 2, 38, EOL], [34, 4, 35, EOL]], [[33, 2, 38, EOL], [33, 2, 35, EOL]]],
+    ['an end a line early, behind a closing bracket the reprint dropped',
+      'statementMap', [[125, 47, 125, 53], [126, 2, 128, EOL], [132, 2, 132, EOL]], [[125, 47, 125, 54], [126, 2, 127, EOL], [132, 2, 132, EOL]]],
+    ['an end a line early, before a `;` on the next line',
+      'statementMap', [[91, 2, 91, EOL], [94, 1, 95, 1], [94, 20, 94, 28]], [[91, 2, 91, EOL], [94, 2, 94, EOL], [94, 20, 94, 29]]],
+    ['two items that start together in the file, both started early',
+      'branchMap', [[7, 4, 7, 40], [7, 4, 7, 20]], [[7, 0, 7, 42], [7, 0, 7, 22]]],
     ['a start many lines early that is still after the item before it',
-      'statementMap', [[10, 0], [30, 2], [31, 0]], [[10, 0], [20, 6], [31, 0]]],
+      'statementMap', [[10, 0], [30, 2, 30, 40], [31, 0]], [[10, 0], [20, 6, 30, EOL], [31, 0]]],
   ])('does, with %s', (_, map, inFile, inVite) => {
     const node = converted({ starts: { [map]: inFile } })
     const vite = converted({ starts: { [map]: inVite } })
@@ -232,6 +262,76 @@ describe('taking the vite conversion\'s item maps', () => {
     ['a statement its source map gives no place',
       {}, 'statementMap', lines(1, 2, 3), [[1, 0], [undefined, undefined], [3, 0]],
       /statementMap item 1 starts at 2:0 read from the file and at undefined:undefined read from vite's text/],
+    // From here on, lists that are in order, every start between its neighbours: the order alone took each of them
+    // (OPS-COVPROVIDERMAPADOPT-001). An item is held to its own place too, and a start shared with a neighbour to
+    // the two being one inside the other in the file.
+    // One item under the wrong number. Four values, each on the line after its `const x =` and started at the name
+    // (the handler.js:20-21 shape), so every moved start is early and still after the item before it.
+    ['lost its second statement and gained one after the third, so ONE statement sits under the number before',
+      { statements: 4 }, 'statementMap', [[2, 2, 2, 20], [4, 2, 4, 20], [6, 2, 6, 20], [8, 2, 8, 20]],
+      [[1, 6, 2, EOL], [5, 6, 6, EOL], [6, 22, 6, EOL], [7, 6, 8, EOL]],
+      /statementMap item 1 is at 4:2 to 4:20 read from the file and starts at 5:6 read from vite's text, which is past that item's own end in the file/],
+    ['lost its second statement and gained one after the seventh, so five such statements sit under the number before',
+      { statements: 8 }, 'statementMap', [2, 4, 6, 8, 10, 12, 14, 16].map((line) => [line, 2, line, 20]),
+      [[1, 6, 2, EOL], [5, 6, 6, EOL], [7, 6, 8, EOL], [9, 6, 10, EOL], [11, 6, 12, EOL], [13, 6, 14, EOL], [14, 30, 14, EOL], [15, 6, 16, EOL]],
+      /statementMap item 1 is at 4:2 to 4:20 read from the file and starts at 5:6 read from vite's text, which is past that item's own end in the file/],
+    ['lost a function and gained one of the same name further on, each started a line early',
+      { fns: ['cb', 'cb', 'cb', 'cb'] }, 'fnMap', [[2, 2, 2, 20], [4, 2, 4, 20], [6, 2, 6, 20], [8, 2, 8, 20]],
+      [[1, 6, 2, EOL], [5, 6, 6, EOL], [7, 6, 8, EOL], [8, 30, 8, EOL]],
+      /fnMap item 1 is at 4:2 to 4:20 read from the file and starts at 5:6 read from vite's text, which is past that item's own end in the file/],
+    // A start shared with a neighbour that the file does not have inside it.
+    ['gained a statement where its second starts and lost the third, so ONE statement sits under the number after',
+      { statements: 4 }, 'statementMap', lines(1, 2, 3, 4), [[1, 0], [2, 0], [2, 0], [4, 0]],
+      /statementMap item 2 starts at 3:0 read from the file and at 2:0 read from vite's text, which is not between the items before and after it in the file \(2:0 and 4:0\)/],
+    ['lost its second statement, gained one before the last, and the three between started at one token',
+      { statements: 6 }, 'statementMap', lines(1, 2, 3, 4, 5, 6), [[1, 0], [3, 0], [3, 0], [3, 0], [3, 0], [6, 0]],
+      /statementMap item 1 starts at 2:0 read from the file and at 3:0 read from vite's text, which is not between the items before and after it in the file \(1:0 and 3:0\)/],
+    ['every statement started at one place, whatever their order',
+      { statements: 6 }, 'statementMap', lines(1, 2, 3, 4, 5, 6), [[1, 0], [1, 0], [1, 0], [1, 0], [1, 0], [1, 0]],
+      /statementMap item 1 starts at 2:0 read from the file and at 1:0 read from vite's text, which is not between the items before and after it in the file \(1:0 and 3:0\)/],
+    ['its first statement started where the second is, which the file has two lines above it and not inside it',
+      { statements: 2 }, 'statementMap', [[5, 0, 5, 40], [3, 0, 3, 20]], [[5, 0, 5, EOL], [5, 0, 5, EOL]],
+      /statementMap item 0 starts at 5:0 read from the file and at 5:0 read from vite's text, which is not between the items before and after it in the file \(none and 3:0\)/],
+    ['a branch started where the branch after it on its line starts, which it does not hold',
+      { branches: [['if', 2], ['if', 2]] }, 'branchMap', [[29, 2, 29, 40], [29, 44, 29, 80]], [[29, 44, 29, EOL], [29, 44, 29, EOL]],
+      /branchMap item 0 starts at 29:2 read from the file and at 29:44 read from vite's text, which is not between the items before and after it in the file \(none and 29:44\)/],
+    ['a branch started where the branch before it on its line starts, which does not hold it',
+      { branches: [['if', 2], ['if', 2]] }, 'branchMap', [[29, 2, 29, 40], [29, 44, 29, 80]], [[29, 2, 29, 42], [29, 2, 29, EOL]],
+      /branchMap item 1 starts at 29:44 read from the file and at 29:2 read from vite's text, which is not between the items before and after it in the file \(29:2 and none\)/],
+    // One item exchanged for another in place: the list is the file's but for the one.
+    ['its first statement exchanged for one after it on its line',
+      {}, 'statementMap', [[12, 0, 12, 3], [13, 0], [14, 0]], [[12, 5, 12, EOL], [13, 0], [14, 0]],
+      /statementMap item 0 is at 12:0 to 12:3 read from the file and starts at 12:5 read from vite's text, which is past that item's own end in the file/],
+    ['its second statement exchanged for one after it on its line',
+      {}, 'statementMap', [[11, 0], [12, 0, 12, 3], [13, 0]], [[11, 0], [12, 5, 12, EOL], [13, 0]],
+      /statementMap item 1 is at 12:0 to 12:3 read from the file and starts at 12:5 read from vite's text, which is past that item's own end in the file/],
+    ['its second statement exchanged for one that starts where it ends',
+      {}, 'statementMap', [[11, 0], [12, 0, 12, 3], [13, 0]], [[11, 0], [12, 3, 12, EOL], [13, 0]],
+      /statementMap item 1 is at 12:0 to 12:3 read from the file and starts at 12:3 read from vite's text, which is past that item's own end in the file/],
+    ['its second statement exchanged for one many lines on',
+      {}, 'statementMap', [[10, 0], [12, 0], [40, 0]], [[10, 0], [39, 0], [40, 0]],
+      /statementMap item 1 is at 12:0 to 12:9 read from the file and starts at 39:0 read from vite's text, which is past that item's own end in the file/],
+    ['its second statement exchanged for one on the line before it (a `return` lost, a `void 0` gained after the `if` above)',
+      {}, 'statementMap', [[28, 37, 28, 70], [29, 2, 29, 18], [33, 2]], [[28, 37, 28, 71], [28, 71, 28, EOL], [33, 2]],
+      /statementMap item 1 is at 29:2 to 29:18 read from the file and ends at 28:Infinity read from vite's text, which is neither on that item's last line at or past its end nor the end of an earlier line of it/],
+    ['its second statement exchanged for one that starts there and runs on to the next line',
+      {}, 'statementMap', [[11, 0], [12, 0, 12, 30], [14, 0]], [[11, 0], [12, 0, 13, EOL], [14, 0]],
+      /statementMap item 1 is at 12:0 to 12:30 read from the file and ends at 13:Infinity read from vite's text, which is neither on that item's last line/],
+    ['its second statement exchanged for one that starts there and ends short of it',
+      {}, 'statementMap', [[11, 0], [12, 0, 12, 30], [14, 0]], [[11, 0], [12, 0, 12, 12], [14, 0]],
+      /statementMap item 1 is at 12:0 to 12:30 read from the file and ends at 12:12 read from vite's text, which is neither on that item's last line at or past its end/],
+    ['its second statement, of three lines, exchanged for one that ends inside its first line',
+      {}, 'statementMap', [[11, 0], [12, 0, 14, 1], [15, 0]], [[11, 0], [12, 0, 12, 12], [15, 0]],
+      /statementMap item 1 is at 12:0 to 14:1 read from the file and ends at 12:12 read from vite's text, which is neither on that item's last line at or past its end nor the end of an earlier line of it/],
+    ['a branch exchanged for one of its kind on the line before it',
+      { branches: [['if', 2], ['if', 2]] }, 'branchMap', [[5, 2, 5, 40], [9, 2, 12, 3]], [[5, 2, 5, 42], [8, 0, 8, EOL]],
+      /branchMap item 1 is at 9:2 to 12:3 read from the file and ends at 8:Infinity read from vite's text, which is neither on that item's last line/],
+    ['a statement whose end has a line and no column',
+      {}, 'statementMap', lines(1, 2, 3), [[1, 0], [2, 0, 2, null], [3, 0]],
+      /statementMap item 1 ends at 2:9 read from the file and at 2:null read from vite's text, and one of the two is no place in a file/],
+    ['every statement in its place, and the file\'s own list has one with no end',
+      {}, 'statementMap', [[1, 0], [2, 0, null, null], [3, 0]], lines(1, 2, 3),
+      /statementMap item 1 ends at null:null read from the file and at 2:9 read from vite's text, and one of the two is no place in a file/],
   ])('does not, and says which item, when vite\'s list has %s', (_, shape, map, inFile, inVite, why) => {
     const node = converted({ ...shape, starts: { [map]: inFile } })
     const kept = node[map]
@@ -240,6 +340,35 @@ describe('taking the vite conversion\'s item maps', () => {
     expect(whyNotSameItems(node, vite)).toMatch(why)
     expect(adoptMaps(node, vite)).toMatch(why)
     expect(node[map]).toBe(kept)
+  })
+
+  // What the rule cannot tell, held here so that the limit is in a test and not only in a comment. Each is a list
+  // with one item that is not the file's, and each is taken: the other item lies over the place the lost one has
+  // in the file, which is all that vite's place for the lost one itself is known to do (the rows of `does, with`).
+  // Node's hits on the lost item are then counted on the other. The order alone took these too.
+  it.each([
+    ['its second statement exchanged for one that starts inside it and ends past it',
+      'statementMap', [[11, 0], [12, 0, 12, 9], [13, 0]], [[11, 0], [12, 5, 12, EOL], [13, 0]]],
+    ['its second statement, of three lines, exchanged for one that ends with its first line',
+      'statementMap', [[11, 0], [12, 0, 14, 1], [15, 0]], [[11, 0], [12, 0, 12, EOL], [15, 0]]],
+    ['lost its second statement and holds the one inside it twice (ONE item under the number before, of two that end together)',
+      'statementMap', [[11, 0], [12, 0, 12, EOL], [12, 10, 12, EOL]], [[11, 0], [12, 10, 12, EOL], [12, 10, 12, EOL]]],
+  ])('does all the same (a known limit), when vite\'s list has %s', (_, map, inFile, inVite) => {
+    const node = converted({ starts: { [map]: inFile } })
+    const vite = converted({ starts: { [map]: inVite } })
+    expect(whyNotSameItems(node, vite)).toBeNull()
+  })
+
+  // A function has two places, its name's (`decl`) and its body's (`loc`), and vite's `decl` is often short of the
+  // file's: an arrow function's is its `(` in the file and the token before that in vite's text. The body's is the
+  // one held (engine.js:102).
+  it('reads a function where its body is, not where its name is', () => {
+    const bodies = { fnMap: [[1, 0], [102, 43, 102, 117]] }
+    const node = converted({ starts: bodies, decls: { 1: [102, 40, 102, 41] } })
+    const vite = converted({ starts: bodies, decls: { 1: [102, 35, 102, 40] } })
+    expect(whyNotSameItems(node, vite)).toBeNull()
+    expect(adoptMaps(node, vite)).toBeNull()
+    expect(node.fnMap[1].decl.end.column).toBe(40)
   })
 
   it('does not when the two lists number their items differently', () => {
