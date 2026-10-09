@@ -352,17 +352,16 @@ describe('taking the vite conversion\'s item maps', () => {
   // What the rule cannot tell, held here so that the limit is in a test and not only in a comment. Each is a list
   // with one item that is not the file's, and each is taken: the other item lies over the place the lost one has
   // in the file, which is all that vite's place for the lost one itself is known to do (the rows of `does, with`).
-  // Node's hits on the lost item are then counted on the other. The order alone took these too. The third holds one
-  // extent twice, which the converter never lists (it keys a statement by its extent): it pins the rule, not a list
-  // a real run can give. Not pinned here: the outer item standing for the inner, and an exchange for an item that
-  // starts before the lost one (the comment above `whyNotSameItems` has both).
+  // Node's hits on the lost item are then counted on the other. The order alone took these too. Both lists are built
+  // by hand. Three more are in `a real coverage run of scripts/fixtures/coverage-two-forms/limits` below, from lists
+  // the converter gave: an exchange for an item that starts before the lost one, an outer item read where the item
+  // inside it starts, and an item read where the item around it starts. A row that held the second of those here
+  // listed one extent twice, which the converter never does (it keys a statement by its extent).
   it.each([
     ['its second statement exchanged for one that starts inside it and ends past it',
       'statementMap', [[11, 0], [12, 0, 12, 9], [13, 0]], [[11, 0], [12, 5, 12, EOL], [13, 0]]],
     ['its second statement, of three lines, exchanged for one that ends with its first line',
       'statementMap', [[11, 0], [12, 0, 14, 1], [15, 0]], [[11, 0], [12, 0, 12, EOL], [15, 0]]],
-    ['lost its second statement and holds the one inside it twice (ONE item under the number before, of two that end together)',
-      'statementMap', [[11, 0], [12, 0, 12, EOL], [12, 10, 12, EOL]], [[11, 0], [12, 10, 12, EOL], [12, 10, 12, EOL]]],
   ])('does all the same (a known limit), when vite\'s list has %s', (_, map, inFile, inVite) => {
     const node = converted({ starts: { [map]: inFile } })
     const vite = converted({ starts: { [map]: inVite } })
@@ -959,6 +958,91 @@ describe.each([
     // script of it has no start offset. Read as Node's, at 0 against the file, that script adds a hit to every
     // line here: early 2, late 3.
     expect(read('late.mjs'), said).toEqual({ functions: { early: 1, late: 2 }, arms: {}, statements: { 5: [1], 9: [2], 12: [1] } })
+  })
+})
+
+// The known limits of whyNotSameItems, on lists the converter gave and not on lists built by hand: one run of
+// limits/limits.case.mjs under the real vitest.config.ts. It loads four correct modules both ways, which the rule
+// refuses, so the run FAILS by the provider's own ERROR lines; and three pairs of modules, one of each loaded by
+// Node alone and the other through vite alone, so that the report holds the file's list of the one and vite's list
+// of the other. Handed to the rule as one file's two lists, each pair is taken though one item of it is not the
+// same item. Every row asserts what the rule does TODAY: a change to the rule that takes a shape of the first
+// table, or refuses a pair of the second, reds its row and is then a deliberate edit of the row.
+describe('a real coverage run of scripts/fixtures/coverage-two-forms/limits (known limits)', () => {
+  let reports
+  let run
+  let said
+  let final
+  beforeAll(() => {
+    reports = mkdtempSync(join(tmpdir(), 'coverage-two-forms-limits-'))
+    run = spawnSync(process.execPath, [
+      resolve(process.cwd(), 'node_modules/vitest/vitest.mjs'), 'run', '--config', `${FIXTURE}/vitest.limits.config.mjs`,
+      '--coverage', `--coverage.reportsDirectory=${reports}`,
+    ], { cwd: process.cwd(), encoding: 'utf8', timeout: 240000, env: { PATH: process.env.PATH, HOME: process.env.HOME, NO_COLOR: '1' } })
+    said = `${REREAD}The run of ${FIXTURE}/vitest.limits.config.mjs said:\n${run.stdout}\n${run.stderr}`
+    try {
+      // The report is JSON, which has no Infinity: an end at the end of its line is written with a column of null.
+      final = Object.fromEntries(Object.entries(JSON.parse(readFileSync(join(reports, 'coverage-final.json'), 'utf8'),
+        (key, value) => (key === 'column' && value === null ? EOL : value)))
+        .map(([file, data]) => [relative(process.cwd(), file), data]))
+    } catch {
+      final = {}
+    }
+  }, 240000)
+  afterAll(() => rmSync(reports, { recursive: true, force: true }))
+  const ORDER = ['order-default-function.js', 'order-field-after-method.js', 'order-fields-only.js', 'order-static-after-method.js']
+  const refusals = () => [...new Set((run.stdout + run.stderr).split('\n').filter((line) => line.startsWith(ERROR_PREFIX)))]
+  const places = (map) => Object.values(map).map((item) => {
+    const { start, end } = item.loc || item
+    return [start.line, start.column, end.line, end.column]
+  })
+
+  it('fails with every test passed, on the four correct modules it loads both ways and on nothing else', () => {
+    expect(run.stdout, said).toMatch(/Tests +2 passed \(2\)/)
+    expect(run.status, said).toBe(1)
+    expect(refusals().map((line) => line.match(/limits\/([\w.-]+) was loaded both through vite and by Node/)?.[1]).sort(), said)
+      .toEqual(ORDER)
+    expect(Object.keys(final).sort(), said).toEqual([
+      'early-start.file.js', 'early-start.vite.js', 'late-start.file.js', 'late-start.vite.js', ...ORDER,
+      'shared-start.file.js', 'shared-start.vite.js',
+    ].map((name) => `${FIXTURE}/limits/${name}`))
+  })
+
+  // Correct modules, refused by ORDER (the provider's comment, WHAT IT REFUSES THAT IS RIGHT): the converter does
+  // not list these in the order of the file, in either form, so the file's own list fails the rule against itself.
+  // Both forms start the item at one place and it is still "not between". Loud, and never a wrong count.
+  it.each([
+    ['a class with a field that has a value, after a method', 'order-field-after-method.js',
+      /statementMap item 0 starts at 9:10 read from the file and at 9:10 read from vite's text, which is not between the items before and after it in the file \(none and 6:4\)/],
+    ['a class with a static field that has a value, after a method', 'order-static-after-method.js',
+      /statementMap item 0 starts at 8:15 read from the file and at 8:15 read from vite's text, which is not between the items before and after it in the file \(none and 5:4\)/],
+    ['a class with no method: a field whose value is a function with a body, then another with a value', 'order-fields-only.js',
+      /statementMap item 1 starts at 9:9 read from the file and at 9:9 read from vite's text, which is not between the items before and after it in the file \(5:8 and 6:4\)/],
+    ['a destructuring declaration with a default that is a function', 'order-default-function.js',
+      /statementMap item 0 starts at 5:54 read from the file and at 5:54 read from vite's text, which is not between the items before and after it in the file \(none and 5:39\)/],
+  ])('refuses (a known limit: a correct CommonJS module) %s', (_, name, why) => {
+    const line = refusals().find((refusal) => refusal.includes(`${FIXTURE}/limits/${name} was loaded both`))
+    expect(line, said).toMatch(why)
+  })
+
+  // Wrong pairs, taken. `inFile` is the list the converter gave for the *.file.js read from the file, `inVite` the
+  // list it gave for the *.vite.js read from vite's text; the two modules differ in the one item the row names.
+  it.each([
+    ['its second statement exchanged for one that starts three lines before it and ends on its line', 'early-start', 'statementMap',
+      [[4, 14, 4, EOL], [8, 15, 8, EOL], [9, 0, 9, EOL]],
+      [[4, 14, 4, EOL], [5, 15, 8, EOL], [9, 0, 9, EOL]]],
+    ['a statement exchanged for one read where the statement inside it starts (two that start together, of two ends)', 'late-start', 'statementMap',
+      [[4, 10, 4, EOL], [4, 17, 4, EOL], [5, 0, 5, EOL], [5, 8, 5, 9], [6, 0, 6, EOL]],
+      [[4, 6, 4, EOL], [4, 17, 4, EOL], [5, 8, 5, EOL], [5, 8, 5, 9], [6, 0, 6, EOL]]],
+    ['a branch exchanged for one read where the `if` around it starts (the outer item\'s place standing for the inner\'s)', 'shared-start', 'branchMap',
+      [[6, 0, 6, EOL], [6, 11, 6, 24]],
+      [[6, 0, 6, EOL], [6, 0, 6, 27]]],
+  ])('takes all the same (a known limit), when vite\'s list has %s', (_, pair, map, inFile, inVite) => {
+    const node = final[`${FIXTURE}/limits/${pair}.file.js`]
+    const vite = final[`${FIXTURE}/limits/${pair}.vite.js`]
+    expect(places(node[map]), said).toEqual(inFile)
+    expect(places(vite[map]), said).toEqual(inVite)
+    expect(whyNotSameItems(node, vite)).toBeNull()
   })
 })
 
