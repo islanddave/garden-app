@@ -160,6 +160,56 @@ describe('young bed: 21 days from the transplant, else from the sow date', () =>
 // Dave, 2026-10-09: "new transplants … keep their watering card whatever the forecast" — said of no
 // vessel in particular. A planting transplanted or potted up in the last 21 days is exempt from the
 // forecast kinds in a large bag, pot, trough, barrel or basket too, below 85F.
+// Owner ruling (review I2): a bed seeded in place in the last three weeks never waits for forecast rain,
+// and a planting with NO vessel type recorded is not known to be out of the ground. likelyInGround
+// guesses from the crop when container_type is NULL and calls only cucurbits and leeks beds, so before
+// this a carrot or lettuce row sown four days ago with no type recorded was held.
+describe('young bed, vessel not recorded: sown in place within 21 days never waits on a forecast', () => {
+  const CARROT = { ...B, id: 'carrot', container_type: null, container_size: null };
+  const LETTUCE = { ...B, id: 'lettuce', name: 'Direct-sown lettuce row', genus: 'Lactuca', crop_type_slug: 'lettuce', container_type: null, container_size: null };
+  // 'incoming_dry' reaches a planting the heuristic calls a vessel only with the container flag on.
+  const KINDS = [['today', LATER_TODAY, {}], ['incoming_dry', TOMORROW, { deferDryEnabled: true }]];
+
+  for (const [name, row] of [['carrot', CARROT], ['lettuce', LETTUCE]]) {
+    for (const [kind, hy, flags] of KINDS) {
+      it(`${kind}, 78F: a ${name} row with no vessel type, sown 4 days ago, is due; sown 22 days ago it waits`, () => {
+        expect(verdict({ ...row, sow_at: d(4) }, hy, COOL, flags)).toBe('due');
+        expect(verdict({ ...row, sow_at: d(21) }, hy, COOL, flags)).toBe('due');
+        expect(verdict({ ...row, sow_at: d(22) }, hy, COOL, flags)).toBe(`held:${kind}`);
+      });
+    }
+    it(`${name}: with no sow date and no vessel type it waits as before`, () => {
+      expect(verdict({ ...row, sow_at: null }, LATER_TODAY, COOL)).toBe('held:today');
+    });
+  }
+
+  it('an empty vessel type is unrecorded as well', () => {
+    expect(verdict({ ...CARROT, container_type: '', sow_at: d(4) }, LATER_TODAY, COOL)).toBe('due');
+  });
+
+  it('a DECLARED vessel is unchanged: a 5 gal bag, and a vessel typed "other", sown 4 days ago still wait', () => {
+    for (const [kind, hy, flags] of KINDS) {
+      expect(verdict({ ...D, sow_at: d(4), transplant_at: null }, hy, COOL, flags), kind).toBe(`held:${kind}`);
+      expect(verdict({ ...CARROT, container_type: 'other', sow_at: d(4) }, hy, COOL, flags), kind).toBe(`held:${kind}`);
+    }
+  });
+
+  it('rain that FELL still suppresses it: soak, wet media with more coming, and the measured credit', () => {
+    const SOAKED = { ...dry, recent_precip_in: THRESHOLDS.SOAK_CAP_IN + 0.2 };
+    const WET_AND_MORE = { ...dry, recent_precip_in: THRESHOLDS.SOAK_WET_FLOOR_IN + 0.1, tomorrow_precip_in: 0.8, tomorrow_pop: 80 };
+    for (const row of [CARROT, LETTUCE]) {
+      expect(verdict({ ...row, sow_at: d(4) }, SOAKED, COOL), row.id).toBe('held:soak');
+      expect(verdict({ ...row, sow_at: d(4) }, WET_AND_MORE, COOL), row.id).toBe('held:incoming');
+    }
+    // The carrot row 2 days from water: 0.6" that fell is one day's credit for it, young or not.
+    const fell = { ...dry, recent_precip_in: 0.6 };
+    const twin = (o) => ({ ...CARROT, id: 'x', status: 'vegetative', substrate_start: d(90), last_water: d(2), ...o });
+    const established = tasks([twin({ sow_at: d(60) })], fell, COOL);
+    expect(established.rain_skipped.map((r) => r.credited_days)).toEqual([1]);
+    expect(tasks([twin({ sow_at: d(4) })], fell, COOL)).toEqual(established);
+  });
+});
+
 describe('new transplant: 21 days from the transplant, in any vessel', () => {
   const BAG = { ...D, id: 'bag' };
   const TROUGH = { ...E, id: 'trough', container_type: 'trough', container_size: '6x2 ft' };

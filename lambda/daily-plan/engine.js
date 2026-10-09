@@ -1270,6 +1270,10 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     //    Aged from the transplant date when there is one, else from the sow date (p.sow_at): a planting
     //    started indoors and set out later is as old as its transplant, never as its indoor sowing.
     //    freshTransplant is small-vessel only, so it never covered a bed.
+    //    An UNDECLARED vessel (container_type NULL) counts as sown in place too: with no type recorded,
+    //    likelyInGround guesses from the crop and calls only cucurbits and leeks beds, so a carrot or
+    //    lettuce row sown four days ago was held. Unknown fails toward watering. A DECLARED vessel that
+    //    is not a bed is unchanged: a seed sown in a declared pot is freshTransplant's or nobody's.
     //  * newTransplant — a planting within TRANSPLANT_CARVEOUT_DAYS of its transplant or potting-up, in
     //    ANY vessel (Dave, same day: "new transplants … keep their watering card whatever the forecast",
     //    said of no vessel). The root ball is the size of the pot it left however big the one it went
@@ -1279,7 +1283,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     //    pot, basket, trough and barrel as well as fabric bag. None of them has soil below to draw on.
     //    It contains bagHeatGate, which stays fabric-only above because it also demotes MEASURED rain
     //    credit, and that is not this rule's to widen. No rcls test: _sat is null unless outdoor.
-    const youngBed = inGround && ((daysBetween(today, p.transplant_at ?? p.sow_at) ?? 999) <= TRANSPLANT_CARVEOUT_DAYS);
+    const youngBed = (inGround || !p.container_type) && ((daysBetween(today, p.transplant_at ?? p.sow_at) ?? 999) <= TRANSPLANT_CARVEOUT_DAYS);
     const newTransplant = (daysBetween(today, p.transplant_at) ?? 999) <= TRANSPLANT_CARVEOUT_DAYS;
     const vesselHeatGate = hotForBag && !inGround;
     const _satApplies = _sat && (!FORECAST_SAT_KINDS.has(_sat.kind) || !(freshTransplant || youngBed || newTransplant || vesselHeatGate));
