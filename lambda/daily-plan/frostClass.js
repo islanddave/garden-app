@@ -205,6 +205,12 @@ const SLUGS_BY_BAND = Object.freeze({
     // separate concern), same rationale as the existing peach/blueberry entries.
     'apple', 'apricot', 'cherry', 'sour_cherry', 'nectarine', 'pear', 'plum', 'grape', 'elderberry',
     'cranberry', 'raspberry',
+    // crabapple — DATA-CRABAPPLEPROFILE-001 (2026-10-09, Dave: mark it hardy, next to apple). Minted in
+    // the app that day for the mature Malus in the ground at the site, and unbanded until now, so the
+    // frost email counted it as "unclassified" at the tender trips. Same genus and the same answer as
+    // `apple`: first frost is not a risk to an established tree. Its one planting is LIVE, unlike the
+    // sixteen above, so this one does move an alert count.
+    'crabapple',
     // Hardy perennial crown.
     'rhubarb',
     // The overwintering greens — the crops that are SUPPOSED to be out in a frost. Alerting these at

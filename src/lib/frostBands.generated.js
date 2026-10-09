@@ -149,6 +149,7 @@ export const FROST_BAND_BY_SLUG = Object.freeze({
   elderberry: 'hardy',
   cranberry: 'hardy',
   raspberry: 'hardy',
+  crabapple: 'hardy',
   rhubarb: 'hardy',
   claytonia: 'hardy',
   mache: 'hardy',
