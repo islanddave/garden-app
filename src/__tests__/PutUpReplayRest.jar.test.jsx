@@ -721,7 +721,7 @@ describe('Put something up — the put-up route', () => {
     expect(told(door).saved).toMatchObject({ id: 'jar-first', notes: 'the second tray' })
   })
 
-  it('the PATCH fails (a 5xx): the door says the jar IS in the Pantry and this change did not save, tells the page, keeps the form and the key — and Save again finishes it, on the one jar', async () => {
+  it('the PATCH fails (a 5xx): the door says the jar IS in the Pantry and this change may not have saved, tells the page, keeps the form and the key — and Save again finishes it, on the one jar', async () => {
     let fail = true
     const table = jarTable({ onPatch: () => { if (fail) throw apiError(503, { error: 'boom' }) } })
     const door = await openDoor()
@@ -730,7 +730,7 @@ describe('Put something up — the put-up route', () => {
     tap('door-from'); typeInto('door-notes', 'the second tray')
     save()
     await waitFor(() => expect(patches()).toHaveLength(1))
-    await failed(UNSAVED)
+    await failed(MAYBE)
     expect(door.onExists).toHaveBeenCalledTimes(1)
     expect(door.onSaved).not.toHaveBeenCalled()
     expect(table.row.notes).toBeNull()
@@ -1258,7 +1258,7 @@ describe('the Walk — the put-up route', () => {
     expect(screen.getByTestId('walk-what-name').value).toBe('Peas')
   })
 
-  it('the PATCH fails: the walk says the jar IS in the Pantry and this change did not save, reads the place again — and Save again finishes it on the one jar', async () => {
+  it('the PATCH fails (a 5xx): the walk says the jar IS in the Pantry and this change may not have saved, reads the place again — and Save again finishes it on the one jar', async () => {
     let fail = true
     const table = jarTable({ onPatch: () => { if (fail) throw apiError(500, { error: 'boom' }) } })
     await startWalk()
@@ -1269,7 +1269,7 @@ describe('the Walk — the put-up route', () => {
     const before = reads()
     save()
     await waitFor(() => expect(patches()).toHaveLength(1))
-    await failed(UNSAVED)
+    await failed(MAYBE)
     await waitFor(() => expect(reads()).toBeGreaterThan(before))
     expect(band()).toBeNull()
     fail = false
