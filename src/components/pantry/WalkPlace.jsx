@@ -478,11 +478,12 @@ function WalkGroup({
   const existsRef = useRef(null)
   const methodRef = useRef(null)
   const whatRef = useRef(null)
-  const errRef = useRef(null)
-  // Counts the replay refusals and failed Saves: each is brought into view (its scroll-margin is the band's height, below).
+  const endRef = useRef(null)
+  // Counts the replay refusals and failed Saves: each is brought into view WITH the Save under it — the two are one
+  // box (its scroll-margin is the band's height, below), so a line of several rows does not leave Save under the band.
   const [refusedSeq, setRefusedSeq] = useState(0)
   useEffect(() => {
-    if (refusedSeq && typeof errRef.current?.scrollIntoView === 'function') errRef.current.scrollIntoView({ block: 'nearest' })
+    if (refusedSeq && typeof endRef.current?.scrollIntoView === 'function') endRef.current.scrollIntoView({ block: 'nearest' })
   }, [refusedSeq])
 
   const place = walk.place
@@ -518,12 +519,13 @@ function WalkGroup({
 
   async function save() {
     if (writingRef.current) return
-    if (!online) { setErr("You're offline — this can't be saved right now. What you entered is kept."); return }
-    if (!String(what?.name ?? '').trim()) { setErr('What is it? Type a name.'); setField('what'); whatRef.current?.focus?.(); return }
-    if (!method) { setErr(METHOD_REQUIRED_TEXT); setField('method'); focusFirstRadio(methodRef); return }
-    if (own?.error) { setErr(own.error); setField('when'); setMoreOpen(true); return }
+    // A refusal said before anything is sent is brought into view like one the server gives.
+    if (!online) { setErr("You're offline — this can't be saved right now. What you entered is kept."); setRefusedSeq(s => s + 1); return }
+    if (!String(what?.name ?? '').trim()) { setErr('What is it? Type a name.'); setField('what'); whatRef.current?.focus?.(); setRefusedSeq(s => s + 1); return }
+    if (!method) { setErr(METHOD_REQUIRED_TEXT); setField('method'); focusFirstRadio(methodRef); setRefusedSeq(s => s + 1); return }
+    if (own?.error) { setErr(own.error); setField('when'); setMoreOpen(true); setRefusedSeq(s => s + 1); return }
     const dErr = doorError({ what, place, method, discard })
-    if (dErr) { setErr(dErr.error); setField(dErr.field); setMoreOpen(true); return }
+    if (dErr) { setErr(dErr.error); setField(dErr.field); setMoreOpen(true); setRefusedSeq(s => s + 1); return }
     const route = routeFor(method)
     // ONE KEY, TWO TABLES (QA I-1; putSomethingUp.js): a Save has gone out under this group's key the other way.
     // Nothing is sent and no key is minted — this would be a second thing for one sitting.
@@ -537,7 +539,9 @@ function WalkGroup({
     const useKey = key || mintKey()
     if (!key) setKey(useKey)
     writingRef.current = true
-    setSaving(true); setErr(null); setField(null)
+    // This Save goes out: the group is spent only on what THIS answer refuses (refusal(), above) — not on a line
+    // an earlier Save left, or a change that then fails here would be left at the exit with no question (M-1).
+    setSaving(true); setErr(null); setField(null); setSpent(null)
     // The item or jar a replay answered with, once it is being written onto.
     let onRow = null
     // The date as he chose it: this group's own answer, or the walk's (stored once, at its start).
@@ -687,13 +691,16 @@ function WalkGroup({
         </div>
       )}
       {preview && <p role="status" data-testid="walk-preview" style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{preview}</p>}
-      <RefusalLine err={err} testId="walk-error" lineRef={errRef} style={{ scrollMarginBottom: bandH + 12 }} />
       {/* scroll-margin = the band's MEASURED height: anything scrolled into view (a focused field, the
-          button itself) stops above the fixed band rather than under it, at the band's tallest too. */}
-      <Button variant="primary" data-testid="walk-save" loading={saving} loadingLabel="Saving…" onClick={save}
-        style={{ width: '100%', scrollMarginBottom: bandH + 12 }}>
-        Save → next
-      </Button>
+          button itself, the refusal with its Save) stops above the fixed band rather than under it, at the
+          band's tallest too. */}
+      <div ref={endRef} data-testid="walk-end" style={{ display: 'flex', flexDirection: 'column', gap: T.space.md, scrollMarginBottom: bandH + 12 }}>
+        <RefusalLine err={err} testId="walk-error" style={{ scrollMarginBottom: bandH + 12 }} />
+        <Button variant="primary" data-testid="walk-save" loading={saving} loadingLabel="Saving…" onClick={save}
+          style={{ width: '100%', scrollMarginBottom: bandH + 12 }}>
+          Save → next
+        </Button>
+      </div>
     </div>
   )
 }

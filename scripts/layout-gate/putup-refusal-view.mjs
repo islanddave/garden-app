@@ -26,6 +26,7 @@
 //   · the line's box is inside the scroller's box and ends above the pinned footer's top;
 //   · the browser paints the LINE at nine points across it (elementFromPoint) — a point under the footer
 //     answers with the footer;
+//   · on the Walk (`saveScrolls`): the group's Save, under the line, is whole above the band as well;
 //   · the refusal text is the replay refusal, and exactly two creates went out (never a third);
 //   · BUG-PUTUPSAVEFAILHIDDEN-001: the ORDINARY failure line the first, lost Save leaves ("Couldn't save
 //     it…") passes the same two checks, and is not the refusal. Its own instrument check: the scroller put
@@ -340,6 +341,9 @@ function verdictOf(m) {
   if (m.line.bottom <= ceil || m.line.top >= floor || seen === 0) return 'off-screen'
   return 'partly covered'
 }
+// BUG-WALKSAVEUNDERBAND-001: where Save is the group's own button UNDER the line (`saveScrolls`), a refusal must
+// leave it whole above the band too — a line of several rows used to push it under, 15 px a row.
+const saveCovered = (m) => !m.save || !m.footer || m.save.top < -0.5 || m.save.bottom > Math.min(m.footer.top, m.vh) + 0.5
 const say = (m) => `line y${m.line?.top}–${m.line?.bottom} (h ${m.line?.height}) · footer top y${m.footer?.top} · Save y${m.save?.top}–${m.save?.bottom} · scroller y${m.panel?.top}–${m.panel?.bottom}, scrollTop ${m.scroll?.top} of ${m.scroll ? m.scroll.height - m.scroll.client : '?'} · painted as the line at ${m.hits.filter(h => h.line).length}/${m.hits.length} points (${m.hits.filter(h => h.footer).length} answer with the footer)`
 
 let harness, chrome, cdp
@@ -379,6 +383,7 @@ try {
         console.log(`[refusal] ${at}: first Save lost, its failure line ${JSON.stringify(lost.text)}: ${lv.toUpperCase()} — ${say(lost)}${lpng ? `\n            ${lpng}` : ''}`)
         if (!(s.failure ?? /^Couldn't save it/).test(lost.text ?? '') || s.refusal.test(lost.text ?? '')) fail(`${at}: the first Save's line is not the ordinary failure: ${JSON.stringify(lost.text)}`)
         if (lv !== 'fully visible') fail(`${at}: the first Save's failure line is ${lv} — ${say(lost)}`)
+        if (s.saveScrolls && saveCovered(lost)) fail(`${at}: after the first Save's failure line, Save is not whole above the footer — ${say(lost)}`)
         // Its instrument check: the scroller back where it stood when Save was tapped, then put back again.
         let lc = lost
         let lcv = 'not run (the filled sheet does not scroll: nothing can be under the fold)'
@@ -407,6 +412,7 @@ try {
         console.log(`[refusal] ${at}: ${v.toUpperCase()} — ${say(m)}${png ? `\n            ${png}` : ''}`)
         console.log(`            ${JSON.stringify(m.text)}`)
         if (v !== 'fully visible') fail(`${at}: the refusal line is ${v} — ${say(m)}`)
+        if (s.saveScrolls && saveCovered(m)) fail(`${at}: after the refusal line (h ${m.line?.height}), Save is not whole above the footer — ${say(m)}`)
         // The sheet's own header row, while it is on screen: the line is wholly below it.
         if (m.header && m.header.bottom > m.panel.top + 0.5 && m.line.top < m.header.bottom - 0.5) fail(`${at}: the refusal line starts above the sheet header's bottom (line y${m.line.top}, header bottom y${m.header.bottom})`)
         // What the refusal is ABOUT must be on the page (it opened its disclosure); whether it is on screen with

@@ -205,6 +205,55 @@ describe('the exit asks when a name is typed', () => {
     tap('putup-walk-exit')
     expect(screen.getByTestId('putup-walk-unsaved-text').textContent).toBe('"Blueberries, the late ones" isn\'t saved.')
   })
+
+  // BUG-PUTUPRETRYCOPYRESIDUE-001 (c), review 4 M-1. A refusal that says to end the walk leaves the group spent on
+  // the row it names, and the exit then does not ask. That must not outlive the refusal: a later Save that goes out
+  // and fails on the update leaves a CHANGE pending, and the question is the last offer to retry it.
+  it('BUG-PUTUPRETRYCOPYRESIDUE-001 (c) — spent on "end this walk", then a Save that goes out and whose change may not have saved: End the walk ASKS again', async () => {
+    const JARS = '/api/preservation'
+    const table = { row: null, patches: 0 }
+    const lost = () => { throw new TypeError('Failed to fetch') }
+    fake = pantryFetch({ places: LOCATIONS, overrides: {
+      // The first create LANDS with its answer lost; each one after is answered with the jar, replayed.
+      [`POST ${JARS}`]: ({ body }) => {
+        if (table.row) return { ...table.row, replayed: true }
+        table.row = {
+          id: 'jar-first', user_id: 'user_dave', label: body.label, method: body.method, method_other_text: null,
+          package_count: body.package_count, remaining_count: body.package_count, quantity_value: null, quantity_unit: null, remaining_amount: null,
+          storage_location_id: body.storage_location_id, plant_id: null, crop_type_slug: body.crop_type_slug ?? null, variety_id: null, harvest_log_id: null,
+          preserved_at: `${body.preserved_at}T00:00:00.000Z`, preserved_at_precision: body.preserved_at_precision, preserved_at_approx: body.preserved_at_approx,
+          use_by_target: '2027-10-01T00:00:00.000Z', use_by_basis: 'table', is_raw: null, in_oil: null, texture: null, notes: null,
+          source_kind: null, source_label: null, idempotency_key: body.idempotency_key,
+          created_at: new Date(Date.now() - 30 * 1000).toISOString(), updated_at: null, deleted_at: null,
+        }
+        return lost()
+      },
+      // No PATCH reaches the server: the jar stays as the first Save made it.
+      [`PATCH ${JARS}/*`]: () => { table.patches += 1; return lost() },
+    } })
+    stableFetch.fn = fake
+    const MAYBE = '“Corn” is already in the Pantry — an earlier Save went through. This change may not have saved — try again.'
+    const said = (text) => waitFor(() => expect([screen.queryByTestId('walk-error')?.textContent ?? null, screen.getByTestId('walk-save').disabled]).toEqual([text, false]))
+    const freeze = () => { if (!screen.queryByTestId('walk-method-whole_freeze')) tap('walk-method-more'); tap('walk-method-whole_freeze') }
+    await startWalk('Chest Freezer 1')
+    typeWhat('Corn'); freeze()
+    tap('walk-save'); await said("Couldn't save it — what you entered is kept. Try again.")
+    tap('walk-count-plus')
+    tap('walk-save'); await said(MAYBE)
+    expect(table.patches).toBe(1)
+    tap('walk-method-as_is')
+    tap('walk-save'); await said('“Corn” is already in the Pantry as a put-up — an earlier Save went through. It can\'t also be saved as “As is” from here. If you want both, end this walk and start another.')
+    freeze()
+    tap('walk-save')
+    await waitFor(() => expect(table.patches).toBe(2))
+    await said(MAYBE)
+    tap('putup-walk-exit')
+    expect(screen.getByTestId('putup-walk-unsaved-text').textContent).toBe('"Corn" isn\'t saved.')
+    expect(screen.getByTestId('putup-walk-group')).toBeTruthy()
+    expect(localStorage.getItem(STASH)).not.toBeNull()
+    expect(posts(JARS).map(c => c.body.idempotency_key).filter((k, i, a) => a.indexOf(k) === i)).toHaveLength(1)
+    expect(posts('/api/pantry/items')).toEqual([])
+  })
 })
 
 describe('"Change" keeps the typed item — hidden, never cleared', () => {

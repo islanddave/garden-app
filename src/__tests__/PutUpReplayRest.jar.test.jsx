@@ -42,7 +42,7 @@ import PutSomethingUpSheet, { isDoorDraft } from '../components/pantry/PutSometh
 import PutUp from '../pages/PutUp.jsx'
 import {
   DOOR_SHEET, completionWords, jarBody, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
-  replayStaleText, replayUnsavedText, printRoute, otherRouteSent, otherRouteText, WALK_NEXT_TEXT,
+  replayStaleText, replayUnsavedText, printRoute, otherRouteSent, otherRouteText, WALK_NEXT_TEXT, METHOD_REQUIRED_TEXT, DISCARD_DATE_TEXT,
 } from '../components/pantry/putSomethingUp.js'
 import { putUpDateWords } from '../components/putup/jarWords.js'
 import { START_REPLAY_NOT_ON_IT } from '../components/kitchen/StartBatchSheet.jsx'
@@ -1256,6 +1256,57 @@ describe('the Walk — the put-up route', () => {
     expect(errorText()).toBe(STALE + WALK_ON)
     expect(new Set(keys()).size).toBe(1)
     expect(screen.getByTestId('walk-what-name').value).toBe('Peas')
+  })
+
+  // BUG-WALKSAVEUNDERBAND-001. The line alone was brought clear of the band, and each row of it past the first
+  // left the group's Save 15 px further under (delta F-7). What is scrolled is the ONE box that holds both.
+  // jsdom lays nothing out: the pixels are scripts/layout-gate/putup-refusal-view.mjs --sheet walk.
+  it('BUG-WALKSAVEUNDERBAND-001 — a refused Save brings the line AND the group\'s Save into view as one box, above the band: a failed Save, then a replay refusal', async () => {
+    const on = watchScrolls()
+    jarTable({ first: { ...stamps(LONG_AGO) } })
+    await startWalk()
+    corn()
+    for (const [nth, text] of [[1, "Couldn't save it — what you entered is kept. Try again."], [2, STALE + WALK_ON]]) {
+      if (nth === 2) tap('walk-count-plus')
+      on.length = 0
+      save()
+      await answered(nth)
+      expect(errorText()).toBe(text)
+      await waitFor(() => expect(on).toHaveLength(1))
+      const box = on[0]
+      expect([box.contains(screen.getByTestId('walk-error')), box.contains(screen.getByTestId('walk-save'))]).toEqual([true, true])
+      // Only those two: not the group, whose top would then be what `nearest` works from.
+      expect([box === screen.getByTestId('putup-walk-group'), box.contains(screen.getByTestId('walk-what-name'))]).toEqual([false, false])
+      expect(parseInt(box.style.scrollMarginBottom, 10)).toBeGreaterThan(12)
+    }
+  })
+
+  // BUG-PUTUPRETRYCOPYRESIDUE-001 (b). The five refusals said before anything is sent set the line and returned;
+  // only a server's refusal was brought into view.
+  it('BUG-PUTUPRETRYCOPYRESIDUE-001 (b) — a refusal said before anything is sent is brought into view like any other: no name, no method, no date, no discard date, offline — and nothing goes out', async () => {
+    const on = watchScrolls()
+    await startWalk()
+    const refused = async (text) => {
+      on.length = 0
+      save()
+      expect(errorText()).toBe(text)
+      await waitFor(() => expect(on).toHaveLength(1))
+      expect([on[0].contains(screen.getByTestId('walk-error')), on[0].contains(screen.getByTestId('walk-save'))]).toEqual([true, true])
+    }
+    await refused('What is it? Type a name.')
+    expect(document.activeElement).toBe(screen.getByTestId('walk-what-name'))  // the focus moves as it did
+    typeWhat('Corn')
+    await refused(METHOD_REQUIRED_TEXT)
+    method('whole_freeze')
+    tap('walk-more'); tap('walk-own-pickdate')
+    await refused('Pick the date — or tap Not sure.')
+    tap('walk-own-pickdate')                                                   // back to the walk's own date
+    tap('walk-discard-date')
+    await refused(DISCARD_DATE_TEXT)
+    tap('walk-discard-auto')
+    fireEvent(window, new Event('offline'))
+    await refused("You're offline — this can't be saved right now. What you entered is kept.")
+    expect(fake.calls().filter(c => c.method !== 'GET')).toEqual([])
   })
 
   it('the PATCH fails (a 5xx): the walk says the jar IS in the Pantry and this change may not have saved, reads the place again — and Save again finishes it on the one jar', async () => {
