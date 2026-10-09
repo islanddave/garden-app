@@ -609,8 +609,8 @@ const SOAK_FCST_POP_PCT = SOAK_THRESHOLDS.SOAK_FCST_POP_PCT;     // min PoP for 
 const SOAK_TODAY_SMALL_IN = SOAK_THRESHOLDS.SOAK_TODAY_SMALL_IN; // today-forecast bar for small vessels (bags/pots/cells)
 const SOON_QPF_IN = SOAK_THRESHOLDS.SOON_QPF_IN;                 // near-term (next few hours) amount that counts — 'soon' branch
 // The sat_kinds that rest on a FORECAST rather than on measured water. Membership decides subordination to
-// the freshTransplant / bagHeatGate carve-outs (see _satApplies). A new forecast branch that forgets to
-// enrol here silently gains the right to starve a fresh transplant, so this is the one place to add it.
+// the carve-outs in _satApplies (freshTransplant, youngBed, vesselHeatGate). A new forecast branch that
+// forgets to enrol here silently gains the right to starve a fresh transplant, so this is the one place to add it.
 const FORECAST_SAT_KINDS = new Set(['today', 'incoming_dry', 'soon']);
 
 // ONE reason string per sat_kind, in one place. This ternary previously lived inline and IDENTICALLY in
@@ -1211,11 +1211,10 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // BUG-RAINBEDWAITCONFLICT-001 (Dave, 2026-09-28: "let beds wait") — satOpts.deferDryBeds arms the
     // 'incoming_dry' branch for IN-GROUND plantings only. A bed presents its whole area to the sky, so a
     // forecast half-inch reaches it; a bag's top catches too little of it (the widget's container
-    // exemption), so containers keep watering. A bed planted within TRANSPLANT_CARVEOUT_DAYS keeps its
-    // water too: its root ball is still the size of the pot it came from. That has to be said here — the
-    // freshTransplant carve-out below is small-vessel only, so it would not have exempted a bed.
-    const _bedDefer = !!satOpts.deferDryBeds && inGround
-      && !((daysBetween(today,p.transplant_at)??999)<=TRANSPLANT_CARVEOUT_DAYS);
+    // exemption), so containers keep watering. A YOUNG bed keeps its water too, but that is not said
+    // here any more: it is youngBed in _satApplies below, where it covers every forecast kind and where
+    // no arming flag (this one, or satOpts.deferDry) can switch it off.
+    const _bedDefer = !!satOpts.deferDryBeds && inGround;
     const _sat=saturationSuppressed(rcls, hydrology, { todayAware: todayAwareEnabled, smallVessel: isSmallVessel(p), deferDry: !!satOpts.deferDry || _bedDefer, soonAware: !!satOpts.soonAware });
     // DRG-WXWATER-001 coarse-v1 (flag-ON only): exposure eligibility. Flag-OFF uses the location-derived class
     // (rcls==='outdoor'); flag-ON derives exposure from the location, honoring a stored rain_exposed
@@ -1262,7 +1261,22 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // is a relaxation of 'incoming': what made 'incoming' safe to leave unsubordinated was its already-wet
     // prerequisite, and that is precisely the clause 'incoming_dry' drops. Inheriting its exemption along
     // with its bars would have carried over a guarantee that no longer holds.
-    const _satApplies = _sat && (!FORECAST_SAT_KINDS.has(_sat.kind) || !(freshTransplant || bagHeatGate));
+    //
+    // BUG-DEFERNOSTRESSOVERRIDE-001 (Dave, 2026-10-09: "never wait") — two more plantings a busted
+    // forecast costs, exempt from every FORECAST kind and from nothing else:
+    //  * youngBed — an in-ground planting within TRANSPLANT_CARVEOUT_DAYS of going into the bed. A
+    //    transplant's root ball is still the size of the pot it came from; a seedbed's top half inch
+    //    dries inside one summer day, and a dry day during germination is stand loss, not reduced yield.
+    //    Aged from the transplant date when there is one, else from the sow date (p.sow_at): a planting
+    //    started indoors and set out later is as old as its transplant, never as its indoor sowing.
+    //    freshTransplant is small-vessel only, so it never covered a bed.
+    //  * vesselHeatGate — at BAG_HEAT_GATE_F and above, every vessel that is not in the ground: rigid
+    //    pot, basket, trough and barrel as well as fabric bag. None of them has soil below to draw on.
+    //    It contains bagHeatGate, which stays fabric-only above because it also demotes MEASURED rain
+    //    credit, and that is not this rule's to widen. No rcls test: _sat is null unless outdoor.
+    const youngBed = inGround && ((daysBetween(today, p.transplant_at ?? p.sow_at) ?? 999) <= TRANSPLANT_CARVEOUT_DAYS);
+    const vesselHeatGate = hotForBag && !inGround;
+    const _satApplies = _sat && (!FORECAST_SAT_KINDS.has(_sat.kind) || !(freshTransplant || youngBed || vesselHeatGate));
     // ── V4-WATERMATH-001 F2 fork ──────────────────────────────────────────────────────────────────
     // Flag ON + watering history exists -> the continuous ledger replaces the dW>=wi chain below.
     // dW==null deliberately FALLS THROUGH to the legacy never:true push (canon: never-watered path

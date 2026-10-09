@@ -141,7 +141,7 @@ describe('reason strings — the user\'s only explanation for a skipped plant', 
 
 describe('subordination — a forecast busts, measured water does not', () => {
   it('both new kinds are enrolled as FORECAST kinds alongside today', () => {
-    // Membership is what makes them yield to freshTransplant / bagHeatGate in generatePlanForUser. A new
+    // Membership is what makes them yield to freshTransplant / youngBed / vesselHeatGate in generatePlanForUser. A new
     // forecast branch that forgets to enrol silently gains the right to starve a fresh transplant.
     for (const k of ['today', 'incoming_dry', 'soon']) expect(engine.FORECAST_SAT_KINDS.has(k)).toBe(true);
   });

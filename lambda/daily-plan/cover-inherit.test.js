@@ -88,8 +88,16 @@ async function plantingsSql(flagOverrides) {
 // UNCONDITIONAL, like the two above. Same procedure: captured with this file's harness before and
 // after and diffed. The whole flag-OFF diff is those 8 lines at the end of the WHERE, and the flag-ON
 // diff is the same 8 lines at the same position. No column, join or CTE moved, and no other predicate.
-const PRE_CHANGE_SHA256 = '524ae5607e2a96eaf164108701511ed3475fc3ee48832b756c600439ca95e965';
-const PRE_CHANGE_LENGTH = 15014;
+//
+// RE-BASELINED A FOURTH TIME, 2026-10-09 (lane-rainholdengine-20261009, BUG-DEFERNOSTRESSOVERRIDE-001),
+// from 524ae5607e2a96eaf164108701511ed3475fc3ee48832b756c600439ca95e965 / 15014. The SELECT gained a
+// last projection, `... as sow_at` (latest 'sowing' event, else p.sown_at, else p.planted_at), with its
+// 9-line SQL comment, directly after transplant_at, which gained the comma that separates them.
+// UNCONDITIONAL, like the three above. Same procedure: captured with this file's harness before and
+// after and diffed. The whole flag-OFF diff is that comma and those 12 lines, and the flag-ON diff is
+// the same at the same position. No join, CTE or predicate moved, and no other column.
+const PRE_CHANGE_SHA256 = '81ecfce6863bd0f862ffb6c6c3899e888f2f7635f6ef633827a31171e39b1606';
+const PRE_CHANGE_LENGTH = 16189;
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 
