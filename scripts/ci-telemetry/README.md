@@ -144,4 +144,147 @@ artefact, so it reads the coverage table out of two unit-pass job logs of one co
 (`gh api repos/islanddave/garden-app/actions/jobs/<job id>/logs`, or a local `npm test` log) and compares every
 directory row but `All files` and `lambda/daily-plan` on % Funcs and % Lines. Exit 0 `COVERAGE-SAME`, 1
 `COVERAGE-DIFFERS` with the rows, 2 `COVERAGE-UNREADABLE`. Tested in `scripts/test_coverage_rows.py` against the
-table of a real job log under `scripts/fixtures/coverage-rows/`.
+table of a real job log under `scripts/fixtures/coverage-rows/`. The two rows were left out because the stock
+provider did not read `lambda/daily-plan` the same way twice; with `coverage-v8-two-forms.mjs` (next) it does, so
+that reason is gone. They are still left out: the script does what it did, and putting them back in (its `EXCLUDED`,
+with the pin in the test) is the trial owner's call.
+
+`coverage-v8-two-forms.mjs` is the unit run's coverage provider (`vitest.config.ts`, `coverage.customProviderModule`):
+the installed `@vitest/coverage-v8` provider, subclassed, with one thing changed. A module under `lambda/daily-plan/`
+reaches V8 in two forms under one URL, vite's text of it in a test file that imports it and the file's own text
+wherever `handler.js` or a `createRequire` loads it, and the stock provider converts both against vite's text at one
+start offset, taken from whichever per-test-file result it read last. One tree therefore read `engine.js` as 1,214
+or 1,257 covered items by draw where 1,325 were covered (the 59 test files that load it), and `handler.js` `run()` as
+never entered (BUG-ENGINECOVERAGETWOREADINGS-001). A module only Node loads was misread too, the same way every
+time, and not always downwards: `rainLog.js` read 103 covered items in those files where this module reads 94 (93 by
+the review's hand count). The module converts each form against the text it was compiled from and merges the two
+item for item. It changes no test. Its worker side is the stock one: with one project the workers load
+`@vitest/coverage-v8` themselves; with the A3 trial's env key set every worker evaluates this module too and gets
+the stock module's own three functions from it.
+
+It fails the run (an `ERROR: coverage-v8-two-forms:` line and exit 1, like a missed threshold, and one `::error`
+annotation on a runner) in two cases. One: a file loaded both ways whose two conversions are not one list, item for
+item, in order and each over the other's own place in the file; what Node ran of that file is then left out of the
+report. That check is a filter, not a proof. Of lists made wrong in the thirteen real pairs it refuses every item
+exchanged for one elsewhere (8,652; the order alone, which was the rule before OPS-COVPROVIDERMAPADOPT-001, took
+8,164 of them), 83.5% of one-item shifts in the case kindest to them (1.3% before; 87.2% against 2.0% by the seeded
+script the earlier figures came from) and all but five of 8,446 two-item shifts. Those one-item shifts are an upper
+bound on what is open, not the exposure: 1,026 of the 1,405 still taken are statement lists that hold one extent
+twice, which the converter never emits. It still takes an item exchanged for another that lies over its own place
+(one that starts after the start of the item before it and before its own end, so before the item as well as
+inside it), and one item under its neighbour's number where one of the two lies inside the other: the comment above
+`whyNotSameItems` says why each cannot be closed without refusing correct files, and which two tighter ties were
+measured and not taken.
+
+It also refuses two kinds of correct file, loudly (the ERROR line and exit 1, never a wrong count), and no file
+loaded both ways is of either kind today. New with OPS-COVPROVIDERMAPADOPT-001: an ES module with an item that ends
+in a call of an imported binding (`const { a } = useThing()`), which vite's text ends a column short. The places
+were measured on CommonJS modules only. 34 files under `coverage.include` have the shape (`src/hooks` 21,
+`src/components` 9, `src/lib` 4) and none is loaded both ways: `lambda/daily-plan` is the only CommonJS directory,
+and the first test to load one of the 34 with `createRequire` reds the unit step. The test file pins that refusal
+as a known limit. As before that change: a class with a valued field after a method or with a function-valued
+field before another valued one, and a destructuring or parameter default that is a function
+(`{ now = () => Date.now() } = ctx`, as in `lambda/harvests/season-stats.js:150`). The comment above
+`whyNotSameItems` has both under WHAT IT REFUSES THAT IS RIGHT.
+
+Two: any hit count below zero. That
+second check is a tripwire for one symptom of a gross misreading (ranges read against the wrong text, or a
+wrapper's length off). It does not show that a conversion is right: in review, every Node script read one character
+off gave 16 more covered items on 59 test files and no negative count. So never read "0 negative counts" as proof
+of the figures. What holds
+the figures is `coverage-v8-two-forms.test.js`: it asks the installed package for its version and for each member
+the module leans on (its header lists them), and it runs `scripts/fixtures/coverage-two-forms/` (one module loaded
+through vite, by Node, and both ways in one worker; one a worker leaves half loaded; one only vite loads; one only
+Node loads) through a real `vitest run --coverage`, as one project and as two, and holds every hit count to the
+calls the cases make.
+
+When that ERROR appears on a commit that did not touch the module: the file it names has changed in a way the two
+conversions disagree on, or vite, `@vitejs/plugin-react` or Node has. Read the reason in the line, then the header.
+If the item it names is one of the two correct kinds above, the file is right and the rule is short: that is the
+rule owner's decision, not a pair that has come apart.
+To take the provider out, revert the whole commit that brought it in. The A3 exit tooling landed in the commit after
+it and names the module (`a3-exit.config.mjs`, and a test that holds that config to it), so revert that commit
+first: the two revert cleanly in that order, and the exit tooling can land again with `provider: 'v8'`. Putting
+`provider: 'v8'` back in `vitest.config.ts` alone does not recover: this module's own test holds the config to it
+and fails in the same unit step. And if a coverage threshold or `coverage-ratchet.json`'s `active_target` has since been raised above what the
+stock provider reads (branches read about one point lower on it), the revert fails the measured floor.
+
+Re-read the header on any vitest or `@vitest/coverage-v8` upgrade (the test pins the version, so an upgrade is one
+deliberate edit), and when the fixture run goes red after a vite or `@vitejs/plugin-react` upgrade or on another
+Node. To see what the stock provider makes of the same fixture, and whether an upgrade has fixed it upstream:
+`D=$(mktemp -d) && npx vitest run --config scripts/fixtures/coverage-two-forms/vitest.config.mjs --coverage
+--coverage.provider=v8 --coverage.reportsDirectory="$D"` (the directory is named so that the run does not replace
+`./coverage`; the cases pass either way; read `$D/coverage-final.json`, where stock gives `byNode` 0 hits for 3
+calls and reads `notCalled` of `only-node.js`, which nothing calls, as entered).
+
+What the first gating run had to show, for the record: when the provider landed, CI's Node with the one-project
+shape (ci.yml's `build-and-test`) was the one combination it had run on nowhere (local runs were Node 26 in both
+shapes, the shadow legs Node 20.19.0 with two projects). That job's first run on dev is its acceptance: `Run unit
+tests with coverage` green with a `Coverage report from v8` table and no `ERROR: coverage-v8-two-forms:` line, and
+`Coverage ratchet — measured floor` green, read by head SHA.
+
+Those four cannot see a wrong reading in that one combination: the thresholds sit 9 to 18 points under the figures,
+the ERROR line needs a refused file or a count below zero, and `coverage-rows.py` leaves out exactly `All files` and
+`lambda/daily-plan`. So the
+acceptance has a fifth part, made by command and not by eye: every `lambda/**` row of `build-and-test`'s table
+equals the same row of ci-next's `unit-utc-cov` for the same head SHA. Take each job's raw log, where every line
+starts with its timestamp (`gh api repos/OWNER/REPO/actions/jobs/JOB_ID/logs > LOG`; `gh run view --log` puts the
+job and step names first and the command below then prints nothing), cut the rows out of each, and `diff` the two
+outputs. No line may differ (bash, zsh or ksh: `$'…'` is not POSIX, and under `dash` the command prints nothing and
+exits 1):
+
+```bash
+rows() { sed -E $'s/^[0-9T:.Z-]+ //; s/\x1b\\[[0-9;]*m//g' "$1" | awk '/^-+\|/{p=0} /^ [^ ]/{p=($1 ~ /^lambda/)} p'; }
+rows BUILD-AND-TEST.log > a.rows && rows UNIT-UTC-COV.log > b.rows && test -s a.rows && diff a.rows b.rows && echo LAMBDA-ROWS-SAME
+```
+
+`test -s` is there because two empty outputs are equal too. No rows from a log (exit 1 in silence, or every row of
+the other printed as a deletion) means that job's unit step wrote no table, which is what a failed test leaves: no
+reading, not a difference, so run the job again. To find the table in a raw log search for `Coverage report from`;
+colour codes sit between that and `v8`. Reference, ci-next run 37843185895 on `20097a1b`: 36
+rows; `lambda/daily-plan` 91.93, 88.76, 90.51, 92.81; `engine.js` 98.76, 95.21, 100, 100; `handler.js` 97.53, 94.97,
+100, 99.12; `rainLog.js` 92.72, 91.37, 87.5, 92.68. `All files` is not among the rows and may differ in the second
+decimal between two runs of one tree (`src/` files whose tests move with timing). The same holds for the first
+gating run of any later change to the module.
+
+`a3-exit.sh OUT_DIR` makes the A3 trial's two exit checks at the current checkout, the ones its header in
+`.github/workflows/ci-next.yml` says are to be made again at the last counted SHA. Its last line is the result:
+`A3-EXIT-PASS (…)` and exit 0, or `A3-EXIT-FAIL (e1=…, e2=…, red=…, node=…, tree=…)` and exit 1. It refuses (exit 2)
+a Node other than the one `.nvmrc` names and a tree with uncommitted paths; `A3_EXIT_ANY_NODE=1` and
+`A3_EXIT_ANY_TREE=1` run it anyway and the result is then never a pass. It runs the node project's files under jsdom
+(with the repo setup file) and under node through `a3-exit.config.mjs`, a vitest config of its own that imports
+`vitest.config.ts` for everything outside the environment (what it carries and leaves behind is listed in
+`a3-exit-carry.mjs`, and an unlisted key stops it) and changes nothing about `npm test`; it leaves out
+`vitest-projects.test.js`, whose guard fails by design outside the trial's own two shapes.
+
+`a3-exit.py e1 JSDOM.jsonl NODE.jsonl` (E1, assertion parity) compares, test by test, the state and the number of
+`expect` assertions that `a3-exit-count.mjs` and `a3-exit-recorder.mjs` wrote: `E1-SAME` or `E1-DIFFER`. A test that
+asserts only through `node:assert` reads 0 on both sides. A side whose counter did not run (a test that ran with no
+count, or 0 assertions in all) is `E1-UNREADABLE`; two sides not shown to be two environments (each test line says
+whether its file had a `document`) are `E1-VACUOUS`.
+
+`a3-exit.py e2 JSDOM_A JSDOM_B NODE_A NODE_B --setup-loads CONTROL --root DIR` (E2, loaded-module coverage parity)
+reads four `coverage-final.json`. Two per environment, because one tree can give one file two whole readings:
+`lambda/daily-plan/engine.js` came back with 1,214 or 1,257 of its 1,374 items covered in both environments, each
+reading the same in jsdom and node hit for hit (ledger row `BUG-ENGINECOVERAGETWOREADINGS-001`). That was the stock
+coverage provider. `a3-exit.config.mjs` now reads coverage through `coverage-v8-two-forms.mjs`, as the unit run
+does, and in the one run made since (Node 26) the four files held `engine.js` hit for hit the same; the two runs
+per environment and the rule for readings are kept, and are what would show it if that stopped. A file whose two
+runs agree inside each environment is compared item by item (statement, function, branch arm; matched by source
+extent, then by kind and start line: `extent-only`, printed, not counted). A file whose runs disagree is compared
+reading to reading: `same under a shared reading` when one jsdom run and one node run agree item for item, `not
+compared` when none do. Limit: when both runs of each environment give one reading and the environments' readings
+are not the same one, that reads `E2-DIFFER`; four files cannot tell it from code that ran differently. Printed and
+not counted: `generated import glue` (the line-1 statements vite's client transform makes of `import { a } from
+'node:x'`, only when there are exactly as many as the source has such bindings), `hit count differs, covered-ness the
+same`, and an uncovered item only one map holds. A covered item or file that only one environment has counts, except
+what the control run (`a3-exit.control.mjs`) shows the setup file covering in a module it loads; the control's files
+also have to be in both jsdom runs and in neither node run, or the verdict is `E2-VACUOUS`. Last line `E2-SAME`,
+`E2-DIFFER (n differences in m files; k items in f files not compared)` or, with no difference and anything not
+compared, `E2-INCONCLUSIVE (k items in f files not compared)`.
+
+`a3-exit.py` exits 0 / 1, 2 when an input is missing, empty or not the reporter's shape (never a traceback) and 3
+for `E2-INCONCLUSIVE`. Seven vitest runs, no network, output outside the checkout. Tested in
+`scripts/test_a3_exit.py` (the comparers, on built inputs and on real output cut into `scripts/fixtures/a3-exit/`),
+`scripts/test_a3_exit_sh.py` (the wrapper, against a stand-in vitest) and `a3-exit-fixture.test.js` (the counter,
+the recorder and the config, by running `a3-exit.fixture.mjs` in both environments).

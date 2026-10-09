@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "description": "Fixture only. Makes forms.js CommonJS, as lambda/daily-plan/package.json makes engine.js: Node can require it, and vitest runs vite's text of it with module and require in scope. No dependencies, never installed.",
+  "type": "commonjs"
+}

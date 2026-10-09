@@ -10,8 +10,13 @@ project (THE A3 TRIAL in .github/workflows/ci-next.yml). Neither workflow upload
 two shapes covered exists only as the text table `vitest run --coverage` prints into each job's log. This reads
 that table out of both logs and compares the DIRECTORY rows:
 
-  - `All files` and `lambda/daily-plan` are left out. v8 does not measure lambda/daily-plan reproducibly in either
-    shape (one tree, same shape: 2,646 to 2,747 of 3,381 branches), and the total carries that directory's noise.
+  - `All files` and `lambda/daily-plan` are left out. When this was written the stock v8 provider did not read
+    lambda/daily-plan reproducibly in either shape (one tree, same shape: 2,646 to 2,747 of 3,381 branches;
+    BUG-ENGINECOVERAGETWOREADINGS-001), and the total carried that directory's noise. The unit run's provider is
+    now scripts/ci-telemetry/coverage-v8-two-forms.mjs, under which every lambda/** file reads the same run after
+    run and in both shapes, so that reason is gone. The two rows are STILL left out: this script does what it did,
+    and reads the same whichever provider wrote the two logs. Putting them back in (EXCLUDED below, with the pin
+    in scripts/test_coverage_rows.py) tightens the trial's criterion, which is its owner's call.
   - every other directory row must be in both logs with the same % Funcs and % Lines. Statements and branches are
     not compared: outside lambda/daily-plan they moved by up to 4 and 8 between runs of one tree in one shape,
     while covered lines and covered functions were equal in 11 of 11.

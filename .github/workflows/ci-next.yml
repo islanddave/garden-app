@@ -45,10 +45,14 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 # GATING unit pass when one reaches src/ and is not listed, and when a listed file no longer reaches src/.
 # What the trial has to show before the shape can become the gating one:
 #   - test IDs: TEST-IDS-EQUAL in both zones on every counted row.
-#   - coverage: NOT per-file equality, and NOT a bound on the four totals. All of the run-to-run movement is in
-#     lambda/daily-plan/**, which v8 does not measure reproducibly in either shape (one tree, key unset: 2,646 to
-#     2,747 of 3,381 branches; handler.js reads run() as never entered while 41 test files call it). A bound on a
-#     total would measure that directory's noise. What is held instead:
+#   - coverage: NOT per-file equality, and NOT a bound on the four totals. When the trial began all but a few
+#     items of the run-to-run movement were in lambda/daily-plan/**, which the stock v8 provider did not read
+#     reproducibly in either shape (one tree, key unset: 2,646 to 2,747 of 3,381 branches; handler.js read run() as
+#     never entered while 41 test files call it): BUG-ENGINECOVERAGETWOREADINGS-001, and a bound on a total would
+#     have measured that directory's noise. Since the third restart (below) the provider is
+#     scripts/ci-telemetry/coverage-v8-two-forms.mjs and every lambda/** file reads the same, run after run and in
+#     both shapes. What still moves is a few statements and branches of a few src/ components whose tests take a
+#     path or not by timing; covered lines and covered functions do not. The criterion is as it was written:
 #       1. unit-utc-cov's `Coverage ratchet — measured floor` step stays green;
 #       2. `python3 scripts/ci-telemetry/coverage-rows.py <build-and-test job log> <unit-utc-cov job log>` prints
 #          COVERAGE-SAME on the two jobs' logs of one commit (each from
@@ -56,6 +60,9 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 #          every directory row other than `All files` and `lambda/daily-plan` shows the same % Funcs and % Lines.
 #          Measured on 11 same-tree runs across both shapes: outside lambda/daily-plan the covered lines and
 #          covered functions were equal to the unit. A row that differs is a finding to explain, never noise.
+#          The two rows are still left out though the reason for it is gone, and the comparison reads the same
+#          whichever provider wrote the two logs. Putting them back in (EXCLUDED in that script, with the pin in
+#          scripts/test_coverage_rows.py) tightens the criterion, and that is the owner's.
 #   - the switch took: scripts/ci-telemetry/vitest-projects.test.js fails a leg whose key is set while that file
 #     still has a DOM, and each leg's test-ids notice carries node_files greater than 0 where ci.yml's carries 0.
 #     shadow-agree.py reads that token and gives no EQUAL without it: equal digests with the shadow's node_files 0
@@ -71,7 +78,9 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 #   - two one-off checks made when the trial was entered, to be made again at the last counted SHA: every
 #     node-project test makes the same number of assertions under jsdom as under node, and the statements, functions
 #     and branch arms covered in every module those tests load are the same (E1 and E2 of claude-ops
-#     token-diet/analysis-20261007/rereview/06-a3trial-qa/rereview-output.md, with their scripts beside it).
+#     token-diet/analysis-20261007/rereview/06-a3trial-qa/rereview-output.md). `scripts/ci-telemetry/a3-exit.sh
+#     OUT_DIR` makes both at the current checkout, on the Node of .nvmrc and a clean tree. They are met when its
+#     last line is `A3-EXIT-PASS` (exit 0), and not when it is `A3-EXIT-FAIL (e1=…, e2=…, red=…, node=…, tree=…)`.
 # Before the key can be removed and the two projects become the only shape (none of this blocks reading the trial):
 #   - the exit list, as commands, is "Exit" in gardening-docs
 #     project-state/_promotepath-20261002/review-a3trial-qa-20261007.md. The owner declares the exit on the output
@@ -87,9 +96,14 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 # so a new file added to LOADS_SRC with its test does not; a check mirrored step for step into one leg does not. A
 # row that blocks for TEST-IDS-DIFFER, or for DISAGREE with a failed unit step in a leg, is a result of the trial:
 # COUNT_FROM_SHA does not move past it until its cause is written in the commit that moves it.
-# Two commits are restarts so far: the one that began the trial, and the one that held the node project to tests
-# that load nothing under src/ (36 files went back to jsdom, so rows before it compare a different pair of shapes).
-# COUNT_FROM_SHA moves to the later one.
+# Three commits are restarts so far: the one that began the trial; the one that held the node project to tests
+# that load nothing under src/ (36 files went back to jsdom, so rows before it compare a different pair of shapes);
+# and the one that named scripts/ci-telemetry/coverage-v8-two-forms.mjs as vitest.config.ts's coverage provider
+# (BUG-ENGINECOVERAGETWOREADINGS-001). The third changes no test and no test ID, only how coverage is read: a
+# lambda/daily-plan module that reached V8 both as vite's text and as the file's own is converted one form at a
+# time, so the run-to-run movement in that directory described under "coverage" above is what the provider before
+# it did, in both shapes, and rows before it carry that provider's figures in their job logs.
+# COUNT_FROM_SHA moves to the latest restart, each time in a later commit that names the restart's pushed SHA.
 # Design and measurements: gardening-docs project-state/_promotepath-20261002/scout-a3-nodeproject-20261007.md,
 # review-a3trial-qa-20261007.md (the coverage criterion, and the exit list) and lane-a3srcsplit-20261007.log (the
 # src/ rule).
