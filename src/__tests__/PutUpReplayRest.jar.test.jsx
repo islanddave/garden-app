@@ -1258,6 +1258,29 @@ describe('the Walk — the put-up route', () => {
     expect(screen.getByTestId('walk-what-name').value).toBe('Peas')
   })
 
+  // BUG-WALKSAVEUNDERBAND-001. The line alone was brought clear of the band, and each row of it past the first
+  // left the group's Save 15 px further under (delta F-7). What is scrolled is the ONE box that holds both.
+  // jsdom lays nothing out: the pixels are scripts/layout-gate/putup-refusal-view.mjs --sheet walk.
+  it('BUG-WALKSAVEUNDERBAND-001 — a refused Save brings the line AND the group\'s Save into view as one box, above the band: a failed Save, then a replay refusal', async () => {
+    const on = watchScrolls()
+    jarTable({ first: { ...stamps(LONG_AGO) } })
+    await startWalk()
+    corn()
+    for (const [nth, text] of [[1, "Couldn't save it — what you entered is kept. Try again."], [2, STALE + WALK_ON]]) {
+      if (nth === 2) tap('walk-count-plus')
+      on.length = 0
+      save()
+      await answered(nth)
+      expect(errorText()).toBe(text)
+      await waitFor(() => expect(on).toHaveLength(1))
+      const box = on[0]
+      expect([box.contains(screen.getByTestId('walk-error')), box.contains(screen.getByTestId('walk-save'))]).toEqual([true, true])
+      // Only those two: not the group, whose top would then be what `nearest` works from.
+      expect([box === screen.getByTestId('putup-walk-group'), box.contains(screen.getByTestId('walk-what-name'))]).toEqual([false, false])
+      expect(parseInt(box.style.scrollMarginBottom, 10)).toBeGreaterThan(12)
+    }
+  })
+
   it('the PATCH fails: the walk says the jar IS in the Pantry and this change did not save, reads the place again — and Save again finishes it on the one jar', async () => {
     let fail = true
     const table = jarTable({ onPatch: () => { if (fail) throw apiError(500, { error: 'boom' }) } })
