@@ -5,5 +5,5 @@
 # require islanddave; this rehearsal is not that.) Push only when you mean to fire it.
 # PREREVERT_VERSION omitted on purpose -> harness defaults to a run-unique v0.0.<run_number>.
 MODE=abort
-TARGET_VERSION=v0.0.0
-# fire: abort-path rehearsal (run5, 2026-10-09; Dave first-hand: "revert rehearsal approved")
+TARGET_VERSION=v0.0.900
+# fire: abort-path rehearsal (run6, 2026-10-09, against the fresh v0.0.900 set from snap rehearsal run 37956222628; Dave first-hand: "revert rehearsal approved", "remake rehearsal snapshot")
