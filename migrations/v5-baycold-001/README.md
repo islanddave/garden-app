@@ -1,7 +1,9 @@
 # v5-baycold-001 — a bring-inside card and a named frost warning for the Sweet Bay Laurel
 
-**Status: WRITTEN, GATED, NOT REHEARSED, UNAPPLIED.** Nothing in this directory has run against staging or prod, and
-no gate in it has been run against any database. The apply is Dave's call.
+**Status: APPLIED 2026-10-09** on Dave's word (AskUserQuestion, first-hand: "Apply now"). Staging: pre 1 PASS / 6 n/a,
+0a `UPDATE 0` + stamp (staging has no such row), post 1 PASS / 4 n/a. Prod: pre 7/7 PASS, post dry run 4 FAIL / 1 PASS /
+0 ERROR as predicted, 0a `UPDATE 1` + stamp, post 5/5 PASS. Read first: the live `CARE_CADENCE_SCOPES_ENABLED` was
+"true" on garden-daily-plan, no frost email had been sent that day, `care_profile` carries no trigger.
 
 Dave's decision (2026-10-09): warn the Sweet Bay Laurel, with a bring-inside threshold of 32°F. No code half: the
 engine already reads the key this adds. `bay` stays an unbanded crop type (`frostClass.UNCERTAIN_SLUGS`).

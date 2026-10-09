@@ -108,7 +108,7 @@ pre:
       32" holds only while this row reaches exactly the one planting it was made for. Read on prod
       2026-10-09: it reaches 1 planting. A second Sweet Bay (one planted out, say) must stop the apply
       until someone decides whether it should inherit a bring-inside card. The live filter is the
-      daily-plan handler's.
+      daily-plan handler's, less its `pj.deleted_at is null`: a superset, so it can only fail closed.
     sql: |
       SELECT p.id, p.name, p.container_type
         FROM public.plants p

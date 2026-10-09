@@ -63,8 +63,9 @@
 -- "matched the row".
 --
 -- Keyed by care_profile row id AND its (scope, scope_id) pair, guarded on the key being absent: a
--- re-run matches nothing, and a cold block written later by anyone is never clobbered. care_profile has
--- no app write route (v5-coldshadow-002), so this file is the path, not a bypass of one.
+-- re-run matches nothing, and a cold block written later by anyone is never clobbered. No app route
+-- UPDATES an existing cultivar row (the three Lambda writers insert a new row with ON CONFLICT DO NOTHING or
+-- touch a leaf row's `overwintering` key only), so this file is the path, not a bypass of one.
 --
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- THE EMAIL CHANGES ITS WORDING, NOT ITS NIGHTS. The other reader of `cold` is handler.js's
