@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.178.0",
+    "date": "2026-10-09",
+    "highlights": [
+      "Sown and transplanted dates on a planting's page, its life story and its age no longer show a day early, and the estimated harvest date is right across the November clock change."
+    ]
+  },
+  {
     "version": "4.177.0",
     "date": "2026-10-09",
     "highlights": [
