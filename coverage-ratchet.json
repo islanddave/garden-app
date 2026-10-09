@@ -7,7 +7,7 @@
     "applies_to": "vitest.config.ts coverage thresholds (lines/functions/branches/statements minimum)",
     "how_to_advance": "When a milestone's completion criteria are met (and Dave agrees), set that milestone status=reached and set active_target to its target. Enforcement = vitest min threshold must be >= active_target."
   },
-  "active_target": 73,
+  "active_target": 80,
   "milestones": [
     {
       "name": "Path A baseline",
@@ -32,6 +32,11 @@
     {
       "name": "Wave 0 anti-regression floor (measured ~81 on include set, 8pt buffer)",
       "target": 73,
+      "status": "reached"
+    },
+    {
+      "name": "Corrected-reading floor (two-forms coverage provider; measured 85.93 branches on dev 8c96e353, ~6pt buffer)",
+      "target": 80,
       "status": "reached"
     }
   ]
