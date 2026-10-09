@@ -1,3 +1,16 @@
+-- ╔══════════════════════════════════════════════════════════════════════════════════════════════╗
+-- ║ ⛔ SUPERSEDED — DO NOT RUN THIS FILE, EVER. (2026-10-09, BUG-PRESERVUNITNOCHECK-001 closed)   ║
+-- ║                                                                                              ║
+-- ║ The phase it rolls back (0b in this directory) was never applied and is itself superseded,   ║
+-- ║ so there is nothing for it to undo. chk_preservation_log_quantity_unit is now OWNED by       ║
+-- ║ migrations/v5-putupmake-001 (Put-Up release 1b), whose 0a created it under the same name as  ║
+-- ║ the PERMISSIVE UNION, 35 values. Run today, the DROP + ADD below replaces that LIVE CHECK    ║
+-- ║ with this file's 22-value list; where every stored unit is inside the 22 the ADD succeeds    ║
+-- ║ silently, and every later write of g, kg, ml, l, tsp, tbsp, fl oz, gal, clove, head, bunch,  ║
+-- ║ pinch or other is a 23514. The union NEVER NARROWS (V4 "Units"). The only rollback of the    ║
+-- ║ live constraint is v5-putupmake-001/0r-rollback.sql. Kept for the record only.               ║
+-- ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+--
 -- V5-PRESERVUNIT-001 — 0r2: rollback of phase B (0b). Run this BEFORE 0r1.
 --
 -- ⚠ THE DATA NORMALISATION IS NOT REVERSIBLE, AND THIS FILE DOES NOT PRETEND OTHERWISE.

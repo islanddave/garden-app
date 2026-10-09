@@ -175,15 +175,7 @@ const HOUSE_ESTIMATE_CLAIM =
 // applied automatically: a bushel is a volume measure and its weight varies by fruit, so silently
 // storing an inferred poundage would be writing a guess into a column the UI shows as fact.
 //
-// STILL NO DB CHECK ON quantity_unit, and that is now a considered decision rather than an omission.
-// The original plan called for adding one. An audit of live data killed it: harvest_log stores
-// SINGULAR units ('cup', 'count', 'head', 'bunch' on prod) while this pick-list is PLURAL ('cups',
-// 'lbs'), so the two tables already disagree despite the preservation_log DDL claiming to mirror
-// harvest_log's convention — it mirrors the shape, not the vocabulary. A CHECK pinned to this list
-// would 400 any future harvest-to-put-up prefill that copies harvest_log.unit, and would also break
-// 31 integration writes of 'lb'. The column has no free-text path from the app anyway (every write
-// comes from this dropdown), so the CHECK would buy little and risk a lot. Reconciling the two
-// vocabularies is its own piece of work and must not be smuggled into a units addition.
+// quantity_unit IS bounded: by JAR_UNITS (lambda/preservation/jarRules.js) and chk_preservation_log_quantity_unit (v5-putupmake-001), the same 35 values.
 // EXPORTED for src/__tests__/putUpPrefill.test.js only. V4-PUTUPENGINE-001 slice 2 maps harvest
 // units into this vocabulary, and the guard that every mapped value is a REAL option here has to
 // read the real list — a hand-copied duplicate in the test would drift silently and certify nothing
@@ -201,11 +193,7 @@ const HOUSE_ESTIMATE_CLAIM =
 // documents itself as refusing to write. Matching the SOURCE vocabulary is worth more than matching
 // the local plural — the plural is cosmetic, the mapping is not.
 //
-// NO MIGRATION NEEDED, and that is verified rather than inherited from the paragraph above:
-// preservation_log.unit carries no CHECK on live Neon (queried 2026-09-08 — the only unit CHECKs
-// returned for these tables are inventory_items'). inventory_items.unit, by contrast, IS pinned to
-// an 11-value CHECK with no g/kg, so the same widening there needs a migration and is deliberately
-// NOT smuggled into this commit.
+// A NEW UNIT HERE NEEDS A MIGRATION FIRST: widen that CHECK and JAR_UNITS, deployed before this list offers it (inventory_items.unit has its own 11-value CHECK).
 export const UNIT_GROUPS = [
   { group: 'Weight',     options: ['g', 'kg', 'lbs', 'oz'] },
   { group: 'Count',      options: ['count'] },
