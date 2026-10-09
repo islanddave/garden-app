@@ -153,9 +153,11 @@ export default defineConfig({
         // Measured 2026-07-23 (dev 451fd56): lines 90.97 / funcs 83.21 / branches 81.32 / stmts 90.97.
         // Advancing the floor is a milestone decision (No-Date-Gating, gardening.md) — raise these
         // in lockstep with active_target and add tests to clear the new bar.
+        // Raised 2026-10-09 (Dave: "Raise to 80"), once the two-forms provider made the reading true: measured on
+        // dev 8c96e353, lines 94.76 / funcs 92.82 / branches 85.93 / stmts 91.64. Floor = 80 on the two that sat under it.
         lines:      82,
-        functions:  75,
-        branches:   73,
+        functions:  80,
+        branches:   80,
         statements: 82,
       },
       include: [
