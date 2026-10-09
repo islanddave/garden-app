@@ -132,7 +132,7 @@ describe('today-v2 contract table', () => {
     const frost = STATES.find((s) => s.name === 'v2-frost').checks
     const cu = frost.filter((c) => c.family === 'caught-up')
     expect(cu).toHaveLength(1)
-    expect(cu[0]).toMatchObject({ armedAt: 'S4g', title: 'Needs care · all caught up', summary: '5 logged today, 70 covered by rain' })
+    expect(cu[0]).toMatchObject({ armedAt: 'S4g', title: 'Needs care · all caught up', summary: '5 logged today, 70 watered by rain' })
     const s4g = Object.entries(MUTANTS_V2).filter(([, m]) => [].concat(m.armedAt).includes('S4g'))
     expect(s4g.map(([n]) => n)).toEqual(expect.arrayContaining(['dropSpotRetry', 'retryNewBatch', 'spotShareIsGroupTotal', 'noFilterAnnouncement', 'announceEveryRender', 'emptiedTitleStays', 'dropCaughtUpSummary']))
     for (const [n, m] of s4g) { expect(m.file && m.find, n).toBeTruthy(); expect(new Set(m.killers).size, n).toBeGreaterThanOrEqual(2) }

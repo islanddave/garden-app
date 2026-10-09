@@ -10,7 +10,7 @@ import { removeLogged } from './needsCareStore.js'
 // Design A; Dave 2026-10-09: a held plant he finds dry, he waters on the spot). Two lines, never one:
 //   "Waiting for rain · N"  [Show / Hide]   the plantings the engine holds on a FORECAST, each a PlantCareRow
 //                                           with the ordinary Water chip — no Skip, no Moist;
-//   "Rain covered M — it already fell."     the ones rain that fell took care of. No control.
+//   "Already watered by rain · M"           the ones rain that fell took care of. No control.
 // A line whose count is 0 is omitted (the waiting line stays while a row watered this visit keeps its done
 // line and Undo under it). The list shows itself at RAIN_HOLD_AUTO_SHOW or fewer; a Show / Hide tap is the
 // visit's from then on (record.rain.shown). Shown, it draws COHORT_CAP rows and the page's "Show N more" for

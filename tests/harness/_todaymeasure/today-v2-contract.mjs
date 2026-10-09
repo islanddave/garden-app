@@ -188,7 +188,7 @@ export const STATES = [
       // S4g (§2.5 + §5.5): Drive-Shade's Water all (5 logged), then Not today on every spot left — the header stays and
       // reads the emptied wording (logged today = done items + store = 5 here; rain = busyfull's 70 rain_skipped), no
       // count, focus on it. Runs LAST on this state (it leaves Needs care empty).
-      { family: 'caught-up', armedAt: 'S4g', water: 'Drive-Shade', title: 'Needs care · all caught up', summary: '5 logged today, 70 covered by rain', why: '§2.5: an emptied Needs care reads "Needs care · all caught up" with "N logged today, M covered by rain"; §5.5 focus to its header' },
+      { family: 'caught-up', armedAt: 'S4g', water: 'Drive-Shade', title: 'Needs care · all caught up', summary: '5 logged today, 70 watered by rain', why: '§2.5: an emptied Needs care reads "Needs care · all caught up" with "N logged today, M watered by rain"; §5.5 focus to its header' },
       // S6-scoped: busyfull carries a composable harvest batch AND the watch list, so Harvest exists between Needs care
       // and Resting; nothing opens it (never a trigger). Its header names, never counts; the Sow row is the door alone.
       { family: 'section-open-set', armedAt: ['S4', 'S6'], orderOf: ['care', 'harvest', 'resting'], closed: ['harvest', 'resting'], why: 'S6-scoped: Harvest between Needs care and Resting, closed by default' },

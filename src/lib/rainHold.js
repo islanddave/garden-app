@@ -45,13 +45,14 @@ function holdAmount(it) {
   return m ? m[1] : null
 }
 // The waiting row's reason: when, then how much. Never the engine's own sentence ("Skip — … @ 80%"): the
-// percentage is a share of models, not a chance of that amount.
+// percentage is a share of models, not a chance of that amount. The amount is written as the weather card
+// above the rows writes its own (rainSentences.js: two decimals and ″), so the screen has one notation.
 export function rainHoldReason(it) {
   const when = it ? WHEN[it.sat_kind] : null
   if (!when) return ''
   if (it.sat_kind === 'soon') return when
   const amt = holdAmount(it)
-  return amt ? when + ' · ' + amt + ' in' : when
+  return amt ? when + ' · ' + Number(amt).toFixed(2) + '″' : when
 }
 
 // The waiting plantings as care rows (careNeeded.js buildCareNeeded's row shape), so the page's own row and
@@ -78,7 +79,8 @@ export function waitingRows(plan) {
 
 const plantings = (n) => n + ' planting' + (n === 1 ? '' : 's')
 export const waitingLine = (n) => 'Waiting for rain · ' + n
-export const coveredLine = (n) => 'Rain covered ' + n + ' — it already fell.'
+// Parallel to the waiting line, and not "covered": that is this screen's word for a frost cover.
+export const coveredLine = (n) => 'Already watered by rain · ' + n
 // Today V1's note and DrG's rationale: sentences, no list. The rain-that-fell sentence is each surface's own,
 // unchanged — it was only ever false for the forecast holds, which now get the sentence before it.
 export function rainNoteSentences(plan) {

@@ -281,11 +281,11 @@ export function filterAnnouncement({ tasks, spots, n, spotCount, products }) {
 }
 
 // §2.5 (S4g): an emptied Needs care keeps its header, which reads "Needs care · all caught up" over "95 logged
-// today, 3 waiting for rain, 70 covered by rain". LOGGED = the plan's care items the read path marks `done`
+// today, 3 waiting for rain, 70 watered by rain". LOGGED = the plan's care items the read path marks `done`
 // today (logged anywhere: another device, V1, a rain event on a listed item — lambda/daily-plan-read/
 // doneEvents.js) ∪ this tab's today-logged store (logged here, not yet in a plan read), by key, care needs only
 // (a Protect key is not Needs care's). WAITING / RAIN = the plan's rain_skipped, split by lib/rainHold.js: held
-// on a forecast is never "covered by rain". None → no summary (the title already says it).
+// on a forecast is never "watered by rain". None → no summary (the title already says it).
 export const CAUGHT_UP_TITLE = 'Needs care · all caught up'
 export function loggedTodayCount(plan, storeKeys = []) {
   const keys = new Set()
@@ -294,7 +294,7 @@ export function loggedTodayCount(plan, storeKeys = []) {
   return keys.size
 }
 export function caughtUpSummary({ logged, waiting, rain }) {
-  return [logged ? `${logged} logged today` : null, waiting ? `${waiting} waiting for rain` : null, rain ? `${rain} covered by rain` : null].filter(Boolean).join(', ') || null
+  return [logged ? `${logged} logged today` : null, waiting ? `${waiting} waiting for rain` : null, rain ? `${rain} watered by rain` : null].filter(Boolean).join(', ') || null
 }
 
 // SF8: the Needs care summary carries REASONS and spots, never counts (the counts live on the chips and the

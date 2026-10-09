@@ -410,7 +410,7 @@ describe('S4g: an emptied Needs care reads "Needs care · all caught up" (§2.5)
     return { payload: { ...PAYLOAD, plan: { ...p, water_due, no_history: [], fertilize: [], pest: [], overwintering: [], rain_skipped: rain } }, stored: others[3].id + ':water_due', rain: rain.length }
   }
 
-  it('logging the last rows turns the header to "all caught up" with "11 logged today, 70 covered by rain", focus on it; an Undo brings the work back', async () => {
+  it('logging the last rows turns the header to "all caught up" with "11 logged today, 70 watered by rain", focus on it; an Undo brings the work back', async () => {
     const day = small()
     expect(day.rain).toBe(70)
     sessionStorage.setItem('today-logged:u:' + TODAY, JSON.stringify([day.stored]))
@@ -424,7 +424,7 @@ describe('S4g: an emptied Needs care reads "Needs care · all caught up" (§2.5)
     fireEvent.click(within(spot('House')).getByRole('button', { name: 'Water all 2 in House' }))
     await settle()
     expect(band().textContent).toContain('Needs care · all caught up')
-    expect(band().textContent).toContain('11 logged today, 70 covered by rain')
+    expect(band().textContent).toContain('11 logged today, 70 watered by rain')
     expect(screen.getByTestId('today-sec-care').getAttribute('data-count')).toBe(null)
     expect(document.activeElement).toBe(band())
     fireEvent.click(within(doneLine('House')).getByRole('button', { name: /^Undo/ }))
@@ -455,7 +455,7 @@ describe('S4g: an emptied Needs care reads "Needs care · all caught up" (§2.5)
     fireEvent.click(within(spot('House')).getByRole('button', { name: 'Water all 2 in House' }))
     await settle()
     expect(band().textContent).toContain('Needs care · all caught up')
-    expect(band().textContent).toContain('11 logged today, 70 covered by rain')
+    expect(band().textContent).toContain('11 logged today, 70 watered by rain')
   })
 })
 

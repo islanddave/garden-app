@@ -684,7 +684,7 @@ async function runInteractions(state, checks, at) {
 }
 
 // S4g (§2.5 + §5.5): empty Needs care the way Dave would — one spot's Water all, then Not today on every spot left
-// (no filter) — and read what its header became: the title, the summary (logged today + covered by rain), no count,
+// (no filter) — and read what its header became: the title, the summary (logged today + watered by rain), no count,
 // and focus on it (the action that emptied the section sends focus there). Files `header-text` (the title, the
 // count), `caught-up` (the summary), `empty-focus` (§5.5: the focused element is the header and reads the whole
 // emptied wording, as TalkBack would).

@@ -121,7 +121,7 @@ describe('the open card — two honest lines', () => {
     expect(rows.length).toBe(3)
     rows.forEach((row, i) => {
       expect(row.textContent).toContain(three[i].name)
-      expect(row.textContent).toContain('Rain expected tomorrow · 0.62 in')
+      expect(row.textContent).toContain('Rain expected tomorrow · 0.62″')
       expect(row.textContent).not.toMatch(/@|%|Skip|deferred|saturat/i)
       const buttons = within(row).getAllByRole('button')
       expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual(['Log Water for ' + three[i].name])
@@ -130,7 +130,7 @@ describe('the open card — two honest lines', () => {
     })
     // No held planting was rained on: nothing says rain fell.
     expect(screen.queryByTestId('rain-covered-line')).toBeNull()
-    expect(note().textContent).not.toMatch(/recent rain|covered|handled|already fell|counts/i)
+    expect(note().textContent).not.toMatch(/recent rain|covered|handled|already fell|watered by rain|counts/i)
     // The rows are siblings of the card's toggle, never inside it.
     expect(toggle().contains(rows[0])).toBe(false)
     expect(rows[0].closest('button')).toBeNull()
@@ -161,9 +161,9 @@ describe('the open card — two honest lines', () => {
     expect(waitRows().length).toBe(9)
   })
 
-  it('rain that fell: "Rain covered M — it already fell.", no control; a missing sat_kind is never a waiting row', async () => {
+  it('rain that fell: "Already watered by rain · M", no control; a missing sat_kind is never a waiting row', async () => {
     await mount(ALL.slice(0, 2).map(fell))
-    expect(screen.getByTestId('rain-covered-line').textContent).toBe('Rain covered 2 — it already fell.')
+    expect(screen.getByTestId('rain-covered-line').textContent).toBe('Already watered by rain · 2')
     expect(screen.queryByTestId('rain-waiting')).toBeNull()
     expect(waitRows().length).toBe(0)
     expect(within(note()).queryAllByRole('button').length).toBe(0)
@@ -174,7 +174,7 @@ describe('the open card — two honest lines', () => {
     expect(waitLineText()).toBe('Waiting for rain · 3')
     expect(waitRows().length).toBe(3)
     expect(note().textContent).not.toContain(ALL[3].name)
-    expect(screen.getByTestId('rain-covered-line').textContent).toBe('Rain covered 2 — it already fell.')
+    expect(screen.getByTestId('rain-covered-line').textContent).toBe('Already watered by rain · 2')
     expect(note().firstElementChild.getAttribute('data-testid')).toBe('rain-waiting')
   })
 

@@ -64,14 +64,14 @@ describe('THE SEAM — the real engine\'s rain_skipped item, through the read La
     expect(s.covered).toBe(0)
     expect(waitingRows(plan)).toEqual([{
       key: 'bed:rain_skipped', plantingId: 'bed', name: 'pepper bed', crop: 'pepper', project: 'Garden', projectId: 'pj1',
-      need: 'rain_skipped', eventType: 'watering', reason: 'Rain expected tomorrow · 0.74 in', tier: 'gold', interval: 2,
+      need: 'rain_skipped', eventType: 'watering', reason: 'Rain expected tomorrow · 0.74″', tier: 'gold', interval: 2,
       overdueBy: null, inGround: true, never: false, reasonRedundant: false,
     }])
   })
-  it('rain later today (today): both plantings wait — "Rain expected later today · 0.6 in"', () => {
+  it('rain later today (today): both plantings wait — "Rain expected later today · 0.60″"', () => {
     const rows = waitingRows(TODAY())
     expect(rows.map((r) => r.plantingId).sort()).toEqual(['bag', 'bed'])
-    for (const r of rows) expect(r.reason).toBe('Rain expected later today · 0.6 in')
+    for (const r of rows) expect(r.reason).toBe('Rain expected later today · 0.60″')
   })
   it('rain in the next few hours (soon): waiting, and the reason carries no amount', () => {
     const rows = waitingRows(SOON())
@@ -148,7 +148,7 @@ describe('the words — a forecast hold is never rain that fell', () => {
   const FELL = /recent rain|covered|handled|already fell|counted/i
   it('V2 lines', () => {
     expect(waitingLine(12)).toBe('Waiting for rain · 12')
-    expect(coveredLine(58)).toBe('Rain covered 58 — it already fell.')
+    expect(coveredLine(58)).toBe('Already watered by rain · 58')
     expect(waitingLine(3)).not.toMatch(FELL)
   })
   it('V1 note: holds only → one waiting sentence; fell only → the rain sentence; both → both, waiting first', () => {

@@ -289,12 +289,12 @@ describe('the emptied Needs care header (§2.5)', () => {
   })
   it('the plan\'s one wording; nothing to report is no summary (the title already says it)', () => {
     expect(CAUGHT_UP_TITLE).toBe('Needs care · all caught up')
-    expect(caughtUpSummary({ logged: 95, rain: 70 })).toBe('95 logged today, 70 covered by rain')
+    expect(caughtUpSummary({ logged: 95, rain: 70 })).toBe('95 logged today, 70 watered by rain')
     expect(caughtUpSummary({ logged: 5, rain: 0 })).toBe('5 logged today')
-    expect(caughtUpSummary({ logged: 0, rain: 70 })).toBe('70 covered by rain')
+    expect(caughtUpSummary({ logged: 0, rain: 70 })).toBe('70 watered by rain')
     expect(caughtUpSummary({ logged: 0, rain: 0 })).toBe(null)
-    // A forecast hold is never "covered by rain" (lib/rainHold.js).
-    expect(caughtUpSummary({ logged: 95, waiting: 3, rain: 70 })).toBe('95 logged today, 3 waiting for rain, 70 covered by rain')
+    // A forecast hold is never "watered by rain" (lib/rainHold.js).
+    expect(caughtUpSummary({ logged: 95, waiting: 3, rain: 70 })).toBe('95 logged today, 3 waiting for rain, 70 watered by rain')
     expect(caughtUpSummary({ logged: 0, waiting: 17, rain: 0 })).toBe('17 waiting for rain')
   })
 })

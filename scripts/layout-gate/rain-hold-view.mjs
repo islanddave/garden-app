@@ -237,7 +237,7 @@ try {
     if (r.inToggle || r.inButton) fail('a waiting row sits inside a button')
     if (r.buttons.length !== 1 || !/^Log Water for /.test(r.buttons[0].label || '')) fail(`a waiting row's controls: ${JSON.stringify(r.buttons.map((b) => b.label))}`)
     else if (r.buttons[0].box.height < 48 || r.buttons[0].box.width < 48) fail(`a Water chip is ${r.buttons[0].box.width}×${r.buttons[0].box.height}`)
-    if (!/Rain expected tomorrow · 0\.62 in/.test(r.text)) fail(`row reason: ${Q(r.text)}`)
+    if (!/Rain expected tomorrow · 0\.62″/.test(r.text)) fail(`row reason: ${Q(r.text)}`)
     if (/@|%|Skip/.test(r.text)) fail(`row prints the engine's sentence: ${Q(r.text)}`)
     if (r.box.right > VW + 0.5) fail('a waiting row overflows the viewport')
   }

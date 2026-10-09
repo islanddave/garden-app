@@ -85,7 +85,7 @@ export function useNeedsCare({ plan, planDate, userId, stale }) {
   }, [enrich, waitAll, actions.rows])
 
   // §2.5 (S4g): the emptied header — "Needs care · all caught up" over "95 logged today, 3 waiting for rain, 70
-  // covered by rain". The store is read live (a cheap sessionStorage read): every log and Undo re-renders the page anyway.
+  // watered by rain". The store is read live (a cheap sessionStorage read): every log and Undo re-renders the page anyway.
   const rainCovered = useMemo(() => rainSplit(plan).covered, [plan])
   const loggedToday = loggedTodayCount(plan, readLogged(logKey))
 
