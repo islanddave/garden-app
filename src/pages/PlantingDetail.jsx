@@ -77,13 +77,13 @@ import { PROJECTS_HIDDEN, SCROLL_MANAGER_ENABLED } from '../lib/featureFlags.js'
 import { describeHarvestWeight, sumHarvestWeights, serverWeightTotal, weightBasisLabel, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 import { vesselDataGaps } from '../lib/vesselData.js'
 import { eventTitle, reductionReasonText } from '../lib/eventDisplay.js'
+import { parseDayOrInstant } from '../lib/dateLocal.js'
 
 
 
 function fmtDate(value) {
-  if (!value) return null
-  const d = new Date(typeof value === 'string' && value.length === 10 ? value + 'T00:00:00' : value)
-  if (isNaN(d.getTime())) return null
+  const d = parseDayOrInstant(value)
+  if (!d) return null
   return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 

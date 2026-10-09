@@ -3,11 +3,7 @@
 // This is intentionally NOT the event ledger (the Event log section keeps that) — it's the
 // crop's lifecycle arc, so the full event-log contract is untouched.
 
-function parseDate(value) {
-  if (!value) return null
-  const d = new Date(typeof value === 'string' && value.length === 10 ? value + 'T00:00:00' : value)
-  return isNaN(d.getTime()) ? null : d
-}
+import { parseDayOrInstant as parseDate } from './dateLocal.js'
 
 // Ordered milestone definitions: [field, approxField, key, label, iconName].
 //

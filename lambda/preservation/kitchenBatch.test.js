@@ -27,8 +27,9 @@ import {
   parseKitchenRoute, parseBatchState, normalizeText, batchUpdatePatch,
   validateBatchCreate, validateBatchUpdate, validateStage, validateInputPayload,
   normalizeInputRows, harvestIdsIn, validateClose, outputIdsIn, kitchenErrorMessage,
-  validateOutputsPayload, outputLogIdsIn, predicateSpanDays,
+  validateOutputsPayload, outputLogIdsIn, predicateSpanDays, KITCHEN_UNITS,
 } from './kitchenBatch.js';
+import { JAR_UNITS } from './jarRules.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DDL = readFileSync(
@@ -75,6 +76,31 @@ describe('the vocabularies match the migration, not a memory of it', () => {
   it('stage_kind', () => expect(KITCHEN_STAGE_KINDS).toEqual(ddlArray('chk_ksl_stage_kind')));
   it('input_kind', () => expect(KITCHEN_INPUT_KINDS).toEqual(ddlArray('chk_kbi_kind')));
   it('qty_unit', () => expect(KITCHEN_QTY_UNITS).toEqual(ddlArray('chk_kbi_qty_unit')));
+
+  // THE LIVE UNIT CHECKS are the 1b ones (DROP + ADD under the same names), not the 14 above. Compared
+  // sorted: set equality is the contract, the order of a CHECK's list is not.
+  // Mutation: add 'quart' to JAR_UNITS, or drop 'pinch' from the 1b chk_preservation_log_quantity_unit.
+  it('1b: JAR_UNITS is chk_preservation_log_quantity_unit, the 35', () => {
+    const ddl = ddl1bIn('chk_preservation_log_quantity_unit');
+    expect(ddl).toHaveLength(35);
+    expect(new Set(ddl).size).toBe(35);
+    expect([...JAR_UNITS].sort()).toEqual([...ddl].sort());
+  });
+  // Mutation: add 'quart' to KITCHEN_UNITS, or drop 'pinch' from either 1b list.
+  it('1b: KITCHEN_UNITS is chk_kbi_qty_unit and chk_ksl_amount_unit as 1b widened them, the 25', () => {
+    for (const name of ['chk_kbi_qty_unit', 'chk_ksl_amount_unit']) {
+      const ddl = ddl1bIn(name);
+      expect(ddl, name).toHaveLength(25);
+      expect([...KITCHEN_UNITS].sort(), name).toEqual([...ddl].sort());
+    }
+  });
+  // Mutation: add a unit to KITCHEN_UNITS alone, or an eleventh plural to JAR_UNITS and the DDL together.
+  it('1b: the 35 are KITCHEN_UNITS plus the ten legacy plurals and nothing else', () => {
+    expect(KITCHEN_UNITS.filter((u) => !JAR_UNITS.includes(u))).toEqual([]);
+    expect(JAR_UNITS.filter((u) => !KITCHEN_UNITS.includes(u)).sort()).toEqual([
+      'bags', 'bushels', 'cups', 'flats', 'half-bushels', 'jars', 'lbs', 'pecks', 'pints', 'quarts',
+    ]);
+  });
 
   it('pins the six outcomes as literals as well, since four of them are load-bearing', () => {
     // A DDL-derived equality alone would silently follow a migration that dropped one. These four are
@@ -605,9 +631,7 @@ describe('validateStage — append-only, and order is NOT monotonic', () => {
   });
 
   it('holds the stage amount to the same unit vocabulary the input table has a CHECK for', () => {
-    // kitchen_stage_log.amount_unit has NO DB CHECK. preservation_log.quantity_unit is the one unit
-    // column in this family without one and it has ALREADY drifted — 'quarts' beside harvest_log's
-    // 'qt' (BUG-PRESERVUNITNOCHECK-001). An app-layer belt is the only place to stop that here.
+    // Since v5-putupmake-001 both kitchen_stage_log.amount_unit and preservation_log.quantity_unit carry a DB CHECK; this is the app-layer belt in front of it.
     expect(validateStage({ stage_kind: 'tended', amount: 2, amount_unit: 'cups' }))
       .toContain('amount_unit must be one of');
     expect(validateStage({ stage_kind: 'tended', amount: 2, amount_unit: 'cup' })).toBeNull();
