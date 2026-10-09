@@ -1,7 +1,9 @@
 {
-  "version": "4.178.0",
+  "version": "4.179.0",
   "date": "2026-10-09",
   "highlights": [
-    "Sown and transplanted dates on a planting's page, its life story and its age no longer show a day early, and the estimated harvest date is right across the November clock change."
+    "Seeded beds, new transplants and pots on hot days keep their watering card even when rain is forecast.",
+    "Plants that are waiting for rain are listed in the weather card on the newer Today screen, each with its Water button.",
+    "Today now says plainly when rain is forecast but has not fallen yet."
   ]
 }

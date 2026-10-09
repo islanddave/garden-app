@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.179.0",
+    "date": "2026-10-09",
+    "highlights": [
+      "Seeded beds, new transplants and pots on hot days keep their watering card even when rain is forecast.",
+      "Plants that are waiting for rain are listed in the weather card on the newer Today screen, each with its Water button.",
+      "Today now says plainly when rain is forecast but has not fallen yet."
+    ]
+  },
+  {
     "version": "4.178.0",
     "date": "2026-10-09",
     "highlights": [
