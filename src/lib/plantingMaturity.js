@@ -45,6 +45,7 @@
 
 import { calibrateFromTransplant, SITE_FACTOR } from './maturityCalibration.js'
 import { plantingIsHarvestTracked } from './harvestTracked.js'
+import { parseDayOrInstant as parseDate } from './dateLocal.js'
 
 export const DTM_BASIS_SOW = 'from-sow'
 export const DTM_BASIS_TRANSPLANT = 'from-transplant'
@@ -78,12 +79,6 @@ export const CONTINUOUS_HARVEST_HABITS = new Set(['repeat', 'cut_and_come_again'
 // newer server than this bundle) falls back to the legacy from-sow behaviour.
 function resolveBasis(value) {
   return value === DTM_BASIS_SOW || value === DTM_BASIS_TRANSPLANT ? value : null
-}
-
-function parseDate(value) {
-  if (!value) return null
-  const d = new Date(typeof value === 'string' && value.length === 10 ? value + 'T00:00:00' : value)
-  return isNaN(d.getTime()) ? null : d
 }
 
 function fmt(d) {
