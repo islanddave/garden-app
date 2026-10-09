@@ -1628,6 +1628,28 @@ def test_snapshot_tooling_steps_run_on_every_path_and_cannot_be_advisory():
     assert steps[PG_CACHE]["id"] == "pg17-cache" and str(steps[PG_CACHE]["uses"]).startswith("actions/cache@")
 
 
+def test_no_promote_gate_job_and_no_step_up_to_the_fast_forward_is_advisory():
+    jobs = _workflow(PROMOTE)["jobs"]
+    # Job level: an advisory `resolve` or `promote` reads as success to every `needs.<job>.result` below it, and an
+    # advisory job anywhere lets the run conclude green over a red leg.
+    advisory = [job for job, body in jobs.items() if "continue-on-error" in body]
+    assert not advisory, f"promote-gate.yml jobs carrying continue-on-error: {advisory} (of {list(jobs)})"
+    for job in ("resolve", "promote"):  # the two that every later job hangs off: nothing may skip them either
+        assert not {"if", "continue-on-error"} & set(jobs[job]), job
+    # Step level: every step of `resolve`, and every `promote` step down to and including the fast-forward, is a gate
+    # or feeds one. continue-on-error turns its refusal into a pass; an `if:` lets it not run at all. The one
+    # condition is the pg17 fetch, skipped on a cache hit (test_snapshot_tooling_steps_run_on_every_path_...).
+    steps, names = _promote_steps()
+    assert names.index(SKEW) < names.index(SMOKE) < names.index(FF)
+    gated = [("resolve", s) for s in jobs["resolve"]["steps"]] + [("promote", s) for s in steps[:names.index(FF) + 1]]
+    assert len(gated) == 16, [s.get("name") for _, s in gated]
+    soft = [f"{job}: {s.get('name')}" for job, s in gated if "continue-on-error" in s]
+    assert not soft, f"advisory steps before main moves: {soft}"
+    assert [s.get("name") for _, s in gated if "if" in s] == [PG_FETCH]
+    for name in (SKEW, SMOKE):
+        assert not {"if", "continue-on-error"} & set(steps[names.index(name)]), name
+
+
 def _snap_needs():
     """(third-party modules, pg binaries) scripts/snap.py uses, read from its own source."""
     import ast
