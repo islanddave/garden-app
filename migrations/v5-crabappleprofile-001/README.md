@@ -1,8 +1,13 @@
 # v5-crabappleprofile-001 — the site crabapple: no watering or feeding reminders, one harvest a season
 
-**Status: AUTHORED, NOT APPLIED** (2026-10-09, lane crabprofile, ledger `DATA-CRABAPPLEPROFILE-001`). No statement
-here has run against staging or prod, and no gate has been run against a database. Applying is a prod write and
-needs Dave's own yes.
+**Status: APPLIED on staging and prod, 2026-10-09** (ledger `DATA-CRABAPPLEPROFILE-001`; Dave, AskUserQuestion,
+first-hand: "Apply now"). Staging: pre 1 PASS / 7 n/a, 0a `UPDATE 0`, `UPDATE 0`, `INSERT 0 1`, post 1 PASS / 5 n/a,
+then 0r run once (`UPDATE 0`, `UPDATE 0`, `DELETE 1`) and 0a re-applied. Prod: pre 8/8 PASS, post dry run 0 ERROR
+(stamp and three receipts FAIL, both standing gates PASS), 0a `UPDATE 1`, `UPDATE 1`, `INSERT 0 1`, post 6/6 PASS;
+the whole standing corpus on prod afterwards read PASS=950, FAIL=0. Before the write the pre-apply review's first
+condition was cleared by a read: the cultivar has no days-to-maturity and the planting no dates, so `single` opens
+no harvest-watch row. The text below is the authoring record; where it says "not applied" or "has not run", read
+this paragraph instead.
 
 Dave's decisions, all first-hand on 2026-10-09:
 
