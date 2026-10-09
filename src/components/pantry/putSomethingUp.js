@@ -604,7 +604,7 @@ export function replayStaleText(item, { walk = false } = {}) {
 }
 // Said when an earlier Save made the item and the change could not be put on it just now: the item is there.
 // `why` is the server's own sentence when it refused the change in words; `lost` is true when no answer came
-// back at all (the change may be on it). "An earlier Save", never "the first": the first may never have arrived
+// back at all or the server answered with an error of its own, a 5xx (the change may be on it). "An earlier Save", never "the first": the first may never have arrived
 // and a later one landed (QA M-7).
 export function replayUnsavedText(item, { why = '', lost = false } = {}) {
   const name = quoted(item)
