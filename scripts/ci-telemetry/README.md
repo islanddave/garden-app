@@ -186,7 +186,10 @@ and the first test to load one of the 34 with `createRequire` reds the unit step
 as a known limit. As before that change: a class with a valued field after a method or with a function-valued
 field before another valued one, and a destructuring or parameter default that is a function
 (`{ now = () => Date.now() } = ctx`, as in `lambda/harvests/season-stats.js:150`). The comment above
-`whyNotSameItems` has both under WHAT IT REFUSES THAT IS RIGHT.
+`whyNotSameItems` has both under WHAT IT REFUSES THAT IS RIGHT. The test file holds each of those shapes, and three
+of the wrong pairs still taken, to what the rule does today, on lists the converter gave in a real run of
+`scripts/fixtures/coverage-two-forms/limits` (its `known limit` rows): a change to the rule that moves one reds its
+row.
 
 Two: any hit count below zero. That
 second check is a tripwire for one symptom of a gross misreading (ranges read against the wrong text, or a
