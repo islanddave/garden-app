@@ -1173,13 +1173,21 @@ def test_rehearsal_setup_that_cannot_read_dev_makes_and_names_nothing(tmp_path, 
     assert exported == [] and api.reads(NEW_REF) == api.reads(OLD_TAG) == 0
 
 
-# snap-rehearsal.yml's last step deletes the v0.0.0 tag snap.py made: the same ruleset lets only garden-bot delete a
-# v* tag, so one left behind could not be removed by hand. The step answers for the outcome, not the DELETE's status.
+# snap-rehearsal.yml's last step deletes the rehearsal tag snap.py made: the same ruleset lets only garden-bot delete
+# a v* tag, so one left behind could not be removed by hand. The step answers for the outcome, not the DELETE's status.
+# The tag is whatever the workflow's SNAP_VERSION says (v0.0.0 until 2026-10-09, v0.0.900 since), read here rather
+# than repeated, so renaming the rehearsal set cannot red these tests; it must stay a v0.0.* rehearsal tag.
 
 SNAP_TEARDOWN = ("snap-rehearsal.yml", "rehearse", "Teardown - delete the rehearsal tag")
-TAG_LOOKUP = r"^GET .*/git/ref/tags/v0\.0\.0$"
+SNAP_TAG = _workflow("snap-rehearsal.yml")["jobs"]["rehearse"]["env"]["SNAP_VERSION"]
+SNAP_OLD_TAG = rf"^DELETE .*/git/refs/tags/{re.escape(SNAP_TAG)}$"
+TAG_LOOKUP = rf"^GET .*/git/ref/tags/{re.escape(SNAP_TAG)}$"
 GONE = _json({"message": "Not Found"}, 404)
-STILL_THERE = _json({"ref": "refs/tags/v0.0.0", "object": {"type": "tag", "sha": "a" * 40}})
+STILL_THERE = _json({"ref": f"refs/tags/{SNAP_TAG}", "object": {"type": "tag", "sha": "a" * 40}})
+
+
+def test_snap_rehearsal_version_is_a_rehearsal_tag():
+    assert re.fullmatch(r"v0\.0\.\d+", SNAP_TAG), SNAP_TAG
 
 
 def _run_snap_teardown(tmp_path, api, **env_extra):
@@ -1192,10 +1200,10 @@ def _run_snap_teardown(tmp_path, api, **env_extra):
 @pytest.mark.parametrize("deleted", [DELETED, _json({"message": "Reference does not exist"}, 422), GONE],
                          ids=["deleted", "absent-422", "absent-404"])
 def test_snap_teardown_passes_when_the_rehearsal_tag_is_gone(tmp_path, github, deleted):
-    api = github({OLD_TAG: [deleted], TAG_LOOKUP: [GONE]})
+    api = github({SNAP_OLD_TAG: [deleted], TAG_LOOKUP: [GONE]})
     proc = _run_snap_teardown(tmp_path, api)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert _errors(proc) == [] and (api.reads(OLD_TAG), api.reads(TAG_LOOKUP)) == (1, 1)
+    assert _errors(proc) == [] and (api.reads(SNAP_OLD_TAG), api.reads(TAG_LOOKUP)) == (1, 1)
 
 
 @pytest.mark.parametrize("deleted,lookup", [
@@ -1204,12 +1212,12 @@ def test_snap_teardown_passes_when_the_rehearsal_tag_is_gone(tmp_path, github, d
     (_json({"message": "Bad credentials"}, 401), _json({"message": "Bad credentials"}, 401)),
 ], ids=["delete-refused", "delete-did-not-take", "dead-credential"])
 def test_snap_teardown_fails_when_it_cannot_show_the_rehearsal_tag_is_gone(tmp_path, github, deleted, lookup):
-    api = github({OLD_TAG: [deleted], TAG_LOOKUP: [lookup]})
+    api = github({SNAP_OLD_TAG: [deleted], TAG_LOOKUP: [lookup]})
     proc = _run_snap_teardown(tmp_path, api)
     assert proc.returncode == 1, proc.stdout + proc.stderr
     errors = _errors(proc)
     assert len(errors) == 1, errors
-    assert errors[0].startswith(f"::error::rehearsal tag v0.0.0 is not confirmed gone after teardown (lookup answered "
+    assert errors[0].startswith(f"::error::rehearsal tag {SNAP_TAG} is not confirmed gone after teardown (lookup answered "
                                 f"HTTP {lookup[0]};")
     if deleted[0] != 204:  # the refusal's own words are in the log, not thrown away
         said = json.loads(deleted[1])["message"]

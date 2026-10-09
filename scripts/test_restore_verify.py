@@ -135,6 +135,13 @@ def test_rehearsal_key_pattern_anchored():
     assert rv._is_rehearsal_key("db/snap-v0.0.0.dump", "v0.0.0")
     assert rv._is_rehearsal_key("db/snap-v0.0.0.globals.sql", "v0.0.0")
     assert not rv._is_rehearsal_key("db/snap-v0.0.01.dump", "v0.0.0")
+    # any v0.0.<n> set is a rehearsal set, whatever REHEARSAL_VERSION says (v0.0.900 since 2026-10-09)
+    assert rv._is_rehearsal_key("db/snap-v0.0.900.dump", "v0.0.0")
+    assert rv._is_rehearsal_key("db/snap-v0.0.900.globals.sql", "v0.0.0")
+    assert rv._is_rehearsal_key("db/snap-v0.0.7.dump", "v0.0.0")
+    assert not rv._is_rehearsal_key("db/snap-v0.1.0.dump", "v0.0.0")
+    assert not rv._is_rehearsal_key("db/snap-v4.0.0.900.dump", "v0.0.0")
+    assert not rv._is_rehearsal_key("db/snap-v4.178.0.dump", "v0.0.0")
     assert not rv._is_rehearsal_key("db/snap-v10.0.0.dump", "v0.0.0")
     assert not rv._is_rehearsal_key("db/garden-20260803.dump", "v0.0.0")
 
