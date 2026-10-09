@@ -313,6 +313,32 @@ describe('the migration and the code agree (migrations/v5-frostband-001)', () =>
 // engine reads here (crop "bay" and the 2-day container interval, both on the 09-24 plan row in
 // tests/harness/_todaymeasure/dailyplan.dave.json). Genus was not read and is left null; nothing keys on
 // it for bay (the instrument check shows 'Laurus' resolves the same).
+//
+// MUTATION LOG — 2026-10-09, lane-baycold-20261009. Each applied to ONE file, this file run (with
+// frostClass.test.js for B18-B20, counts across both), RED observed, the file restored byte-for-byte
+// (sha256 checked). Baseline 80 green here, 174 across the two.
+//   B1  0a writes 33 instead of 32                                        -> 9 RED
+//   B2  0a loses the `AND NOT (profile ? 'cold')` guard                   -> 19 RED
+//   B3  0a create_missing false (matches the row, writes nothing)         -> 1 RED
+//   B4  0a merges a whole object (profile || ...) instead of jsonb_set    -> 20 RED
+//   B5  0a keyed by row id only, (scope, scope_id) dropped                -> 19 RED
+//   B6  0a writes tender:false                                            -> 18 RED
+//   B7  0a stamps a different version                                     -> 1 RED
+//   B8  0a gains a second UPDATE on another key                           -> 1 RED
+//   B9  0r matches 33 instead of what 0a wrote                            -> 1 RED
+//   B10 0r loses its stamp guard                                          -> 1 RED
+//   B11 gates: the standing floor lowered to 30                           -> 1 RED
+//   B12 gates: the standing invariant demoted to continuous: false        -> 1 RED
+//   B13 gates: the standing invariant loses env: prod                     -> 1 RED
+//   B14 gates: the value receipt says 33                                  -> 1 RED
+//   B15 gates: the pre gate's md5 differs                                 -> 1 RED
+//   B16 gates: the premise gate stops requiring cadence_scopes {cultivar} -> 1 RED
+//   B17 gates: the standing invariant loses its self-arming stamp check   -> 1 RED
+//   B18 frostClass: bay dropped from UNCERTAIN_SLUGS                      -> 2 RED (1 here, 1 in frostClass.test.js)
+//   B19 frostClass: bay banded hardy                                      -> 14 RED
+//   B20 frostClass: the cadence promotion removed                         -> 13 RED
+//   B21 engine.coldFor: low < threshold instead of <=                     -> 7 RED
+//   B22 engine.resolveCadence never adopts the database profile           -> 22 RED
 const BAY_MIGRATION = join(here, '..', '..', 'migrations', 'v5-baycold-001');
 const BAY_SQL_0A = stripSqlComments(readFileSync(join(BAY_MIGRATION, '0a-data.sql'), 'utf8'));
 const BAY_SQL_0R = stripSqlComments(readFileSync(join(BAY_MIGRATION, '0r-rollback.sql'), 'utf8'));
