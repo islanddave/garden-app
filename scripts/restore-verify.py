@@ -135,7 +135,12 @@ class Config:
 def _is_rehearsal_key(key, rehearsal_version):
     """True for snap-rehearsal artifacts (STAGING dumps co-located in the snap
     bucket): matches snap-<rehearsal_version> as a whole version token
-    (anchored — snap-v0.0.0.dump yes, snap-v0.0.01.dump no)."""
+    (anchored — snap-v0.0.0.dump yes, snap-v0.0.01.dump no), and ANY v0.0.<n>
+    set: snap-rehearsal's version moved to v0.0.900 on 2026-10-09 and the
+    rehearsals only ever use v0.0.* (their teardown refuses anything else),
+    while a release is never v0.0.x, so the family is excluded, not one name."""
+    if re.search(r"(^|/)snap-v0\.0\.(0|[1-9][0-9]*)\.", key):
+        return True
     return re.search(rf"(^|/)snap-{re.escape(rehearsal_version)}\.", key) is not None
 
 
