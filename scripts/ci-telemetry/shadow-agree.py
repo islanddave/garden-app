@@ -180,9 +180,11 @@ LANDING_SLACK_S = 60            # one push creates both runs within a second or 
 # with itself and can never show shadow node_files > 0, so it is BEFORE-WINDOW: the rows counted under the window
 # this replaces (from 1564c5647f) and its two EXEMPT rows are in no tally now. Any later change to what a ci-next.yml
 # leg runs moves this to that change's pushed head SHA, in a commit after it (done once already: b6af3c36ff, the
-# first trial commit, to 788e8b17c5, where the node project was narrowed to tests that load nothing under src/). A constant and not a flag on purpose:
+# first trial commit, to 788e8b17c5, where the node project was narrowed to tests that load nothing under src/;
+# then to 234efd21b3, the pushed head after the two-forms coverage provider and the 80 floor entered
+# vitest.config.ts). A constant and not a flag on purpose:
 # moving it changes what the 10 pushes mean, and scripts/test_shadow_agree.py pins it.
-COUNT_FROM_SHA = "788e8b17c528e6288a108f54823cf81d3ab7c113"
+COUNT_FROM_SHA = "234efd21b3a57f705a4d0d15b76f184fdf31b348"
 # timeout-minutes of every job, as .github/workflows/ci.yml and ci-next.yml have them. The jobs API does not report
 # a job's timeout, so this is the bound a cancelled job's duration is held against; scripts/test_shadow_agree.py
 # keeps it equal to the two files.

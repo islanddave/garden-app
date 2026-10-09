@@ -67,8 +67,9 @@ or only the states. It prints the `runs-on` labels of each side, and lists each 
 runner against the plan's threshold (a job over 120 s in 3 of 10 runs).
 
 The counting window opens at `COUNT_FROM_SHA`, a constant in the script:
-`788e8b17c528e6288a108f54823cf81d3ab7c113`, the first dev SHA whose `ci-next.yml` unit legs run vitest's `node`
-project (the A3 trial). Every push before it prints as BEFORE-WINDOW and is in no tally, including every row that
+`234efd21b3a57f705a4d0d15b76f184fdf31b348`, the dev push after which `vitest.config.ts` carries the two-forms
+coverage provider and the 80 floor (before it: `788e8b17c5`, the first whose unit legs run vitest's `node` project
+in its final shape, the A3 trial). Every push before it prints as BEFORE-WINDOW and is in no tally, including every row that
 counted and the two that were EXEMPT under the window it replaces (from `1564c5647f`). Any later change to what a
 `ci-next.yml` leg runs moves the constant to that change's pushed head SHA, in a commit after it; the header of
 `.github/workflows/ci-next.yml` lists what counts as such a change.
