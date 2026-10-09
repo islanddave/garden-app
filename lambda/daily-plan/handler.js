@@ -1400,7 +1400,19 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            -- rain credit. Kept separate from substrate_start so the fert feed-phase clock is unchanged.
            to_char(coalesce(
              (select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='potting_up' and e.deleted_at is null),
-             p.transplanted_at, p.planted_out_at) at time zone 'UTC','YYYY-MM-DD') as transplant_at
+             p.transplanted_at, p.planted_out_at) at time zone 'UTC','YYYY-MM-DD') as transplant_at,
+           -- BUG-DEFERNOSTRESSOVERRIDE-001: sow_at is the SOW date, read by one rule only: the engine's
+           -- youngBed exemption from rain-FORECAST holds (a bed seeded in the last three weeks keeps its
+           -- water card). Its own column rather than a wider transplant_at, because transplant_at also
+           -- denies MEASURED rain credit to a small vessel and a sow date must not do that. The engine
+           -- uses it only when transplant_at is NULL: a planting started indoors and set out later is
+           -- aged from its transplant, never from its indoor sowing. Latest 'sowing' event first (a row
+           -- sown again is germinating again), else plants.sown_at, else the legacy planted_at.
+           -- DELIBERATELY excludes created_at (row creation is not a sowing: DRG-WATERCREDIT-002) and
+           -- seed_soak (a soak is not seed in soil). NULL => no sow date known => never young by sowing.
+           to_char(coalesce(
+             (select max(e.event_date) from event_log e where e.plant_id=p.id and e.event_type='sowing' and e.deleted_at is null),
+             p.sown_at, p.planted_at) at time zone 'UTC','YYYY-MM-DD') as sow_at
     from plants p
     left join plant_varieties pv on pv.id=p.variety_id
     left join plant_projects  pj on pj.id=p.project_id
@@ -1677,8 +1689,9 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   const soonAwareEnabled = _flag('CARE_RAIN_SOON_ENABLED', process.env.CARE_RAIN_SOON_ENABLED === 'true');
   // BUG-RAINBEDWAITCONFLICT-001 — Dave, 2026-09-28, asked which rule wins for a DRY in-ground bed when
   // at least 0.50" is forecast for tomorrow at 60%+: "let beds wait". So the 'incoming_dry' branch runs
-  // for established in-ground plantings (not a bed planted in the last 21 days; containers still need
-  // CARE_RAIN_DEFER_DRY_ENABLED above, OFF), and
+  // for established in-ground plantings (a bed transplanted or sown in the last 21 days keeps its card
+  // under every forecast kind and whatever these flags say: engine youngBed, 2026-10-09; containers
+  // still need CARE_RAIN_DEFER_DRY_ENABLED above, OFF), and
   // the rain callout moves to the same bars. Before this, Today's rain line said "let in-ground beds
   // wait" at a private 0.30"/50% while the list under it watered every dry bed. No env flag: the
   // decision is made, and the Today widget and CareNeeded mirror the rule client-side (wateringScale

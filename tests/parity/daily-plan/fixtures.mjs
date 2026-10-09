@@ -38,7 +38,8 @@ const INGROUND_TOMATO = { _seeded: true, crop: 'tomato', water_interval_days_con
 // not mutate plantings.
 // TODAY_MODERATE: 1.0" @ 80% forecast, 0.2" recent, 86°F (>= BAG_HEAT_GATE_F 85, < HOT_F 88).
 //   flag-OFF: windowPrecip 1.2 >= SOAK_CAP_IN -> ALL outdoor soak-suppressed (forecast counted in the basis).
-//   flag-ON: soak judges actuals (0.2) only -> solo_cup WATERS (1.0 < 2.0 small bar, rain-credit note),
+//   flag-ON: soak judges actuals (0.2) only -> solo_cup WATERS (86F: since BUG-DEFERNOSTRESSOVERRIDE-001 no
+//            vessel out of the ground waits on a forecast at 85F+; before that it skipped at the small bar),
 //            in_ground SKIPS kind 'today' (1.0 >= 0.5), fabric bag WATERS (heat gate outranks the forecast),
 //            covered lettuce waters under both flags.
 const TODAY_MODERATE = {
@@ -432,7 +433,7 @@ export const scenarios = [
   },
   {
     name: 'today-moderate-flagon',
-    desc: '1.0"@80% today forecast, flag ON: solo_cup NOW SKIPS (BUG-SOAKBAR-001 moved the small bar 2.0 -> 0.91, and 1.0" clears it — this is the one golden that changed), in_ground skips kind today, hot fabric bag waters (gate outranks forecast).',
+    desc: '1.0"@80% today forecast at 86F, flag ON: solo_cup WATERS (BUG-DEFERNOSTRESSOVERRIDE-001, 2026-10-09: at 85F+ no vessel out of the ground waits on a forecast — the one golden that change moved; it had skipped at the small bar since BUG-SOAKBAR-001), in_ground skips kind today, hot fabric bag waters (gate outranks forecast).',
     input: { ...TODAY_MODERATE, todayAwareEnabled: true },
   },
   {
