@@ -412,9 +412,10 @@ const CHECKERS = {
     for (const [key, n] of Object.entries(c.counts || {})) { const s = secOf(m, key); if (!s?.header) F(`section '${key}' has no header to read its count from`); else if (!new RegExp(`(^|\\D)${n}(\\D|$)`).test(s.header.text)) F(`the '${key}' header reads "${s.header.text}", expected the count ${n}`) }
     // Presence here; the LABEL is read by the group-water-all interaction check (it needs the element's name).
     for (const [target, label] of Object.entries(c.buttons || {})) { const [tid, arg] = target.split(':'); const els = (m.firstBoxes[tid + SUFFIX] || []); if (!els.length) F(`no '${tid}' (${arg}) to read "${label}" from`)
-      // S4: a group button's visible label, read (MF3 "Water all 135").
+      // S4: a group button's visible label, read (MF3 "Water all 137").
       else if (tid === 'care-group-bulk' && m.groupBulk[arg] !== label) F(`the '${arg}' group button reads "${m.groupBulk[arg]}", expected "${label}"`) }
     for (const spot of c.spotNoButton || []) { if (!(m.testidCounts['care-spot' + SUFFIX] > 0)) F(`no care-spot to check that '${spot}' carries no button`); else if (!m.spotCtl[spot]) F(`no care-spot '${spot}' on the page`); else if (m.spotCtl[spot].bulk) F(`spot '${spot}' carries a Water all although its beds wait for rain`) }
+    for (const spot of c.spotButton || []) { if (!m.spotCtl[spot]) F(`no care-spot '${spot}' on the page`); else if (!m.spotCtl[spot].bulk) F(`spot '${spot}' carries no Water all although the engine kept its beds on the list`) }
     // S4 (D6): every spot row carries its own Not today; SF8: the Needs care summary is reasons + spots.
     if (c.spotNotToday) for (const [spot, ctl] of Object.entries(m.spotCtl || {})) if (ctl.notToday !== 1) F(`spot '${spot}' carries ${ctl.notToday} Not today control(s), expected 1 (D6)`)
     if (c.careSummary && !(m.careSummary || '').includes(c.careSummary)) F(`the Needs care header reads "${m.careSummary}", expected its summary "${c.careSummary}" (SF8)`)

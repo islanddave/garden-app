@@ -308,13 +308,15 @@ export const STATES = [
   },
   {
     // SF4: rebuilt through the e6dbd74 gate (build-v2-grafts.mjs) — 17 beds moved to rain_skipped, 2 declared
-    // carve-outs stay. v2-grafts.json `bedwait.expect` carries the numbers the page must show (Outside Water all 135).
+    // carve-outs stay. v2-grafts.json `bedwait.expect` carries the numbers the page must show (Outside Water all 137).
+    // BUG-DEFERNOSTRESSOVERRIDE-001: the engine owns the hold, so the 2 beds it kept are watered with the rest —
+    // until then the client dropped them from Water all (135) and wrote "Beds wait for rain" over them.
     name: 'v2-bedwait', fixture: 'busy', grafts: ['bedwait'], clock: S924, prefs: 'prefs.default.json',
-    proves: 'In-Ground "Beds wait for rain", no button; Outside Water all 135',
+    proves: 'the 2 in-ground beds the engine kept are in Water all: In-Ground carries its button; Outside Water all 137',
     checks: [
       ...common(),
-      { family: 'header-text', armedAt: 'S4', buttons: { 'care-group-bulk:Outside': 'Water all 135' }, spotNoButton: ['In-Ground'] },
-      { family: 'group-water-all', armedAt: 'S4', group: 'Outside', expectN: 135, run: true },
+      { family: 'header-text', armedAt: 'S4', buttons: { 'care-group-bulk:Outside': 'Water all 137' }, spotButton: ['In-Ground'] },
+      { family: 'group-water-all', armedAt: 'S4', group: 'Outside', expectN: 137, run: true },
     ],
   },
   {

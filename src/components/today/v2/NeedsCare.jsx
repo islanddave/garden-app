@@ -14,7 +14,7 @@ import { removeLogged, readLogged, claimedKeys, runStart, runEnd, runGoing, runT
 
 // NeedsCare — the body of the redesigned Today's Needs care section (V5-TODAYREDESIGN-001 S4). Dave's
 // D3 (a spot is logged whole, then its exceptions), D6 (spot Not today), D7 (Outside, Stable and House are
-// separate groups, each with its own Water all; rain and bed-wait apply to Outside only), D9 (spot chips as a
+// separate groups, each with its own Water all), D9 (spot chips as a
 // filter row), D10 (a logged spot shrinks to a done line with Undo, held for the visit; the group version is
 // ONE line, one Undo), D11 (Skip / Moist on the few, then "Water the other N"; per-plant one-tap Water kept),
 // D12 (under the Feed filter, one row per product across the garden with "Feed all"), and the boss pass:
@@ -84,7 +84,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   // A failed row is retried only by a Retry (MF3), never folded into a fresh Water all: out of every bulk count.
   const failedMap = c?.failed
   const failedKeys = useMemo(() => new Set(Object.keys(failedMap || {})), [failedMap])
-  const model = useMemo(() => buildModel(care.rows, { held: heldOrder, tasks, spots: spotSel, bedWait: care.bedWait, exclude: failedKeys }), [care.rows, heldOrder, tasks, spotSel, care.bedWait, failedKeys])
+  const model = useMemo(() => buildModel(care.rows, { held: heldOrder, tasks, spots: spotSel, exclude: failedKeys }), [care.rows, heldOrder, tasks, spotSel, failedKeys])
   const feedOnly = tasks.length === 1 && tasks[0] === 'feed'
 
   // ── run bookkeeping ─────────────────────────────────────────────────────────────────────────────────────

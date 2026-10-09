@@ -59,6 +59,9 @@ export const NEED_LABEL = {
   pest: 'Check',
   cold: 'Protect',
   overwintering: 'Check',
+  // A planting waiting for rain (lib/rainHold.js) is offered the ordinary Water. A LABEL only: rain_skipped
+  // is not in NEED_ORDER or NEED_EVENT_TYPE, so buildCareNeeded never lists one.
+  rain_skipped: 'Water',
 }
 
 // Render/auto-expand order. Water needs lead (most time-sensitive), then never-watered, feed, pest, cold.
@@ -123,24 +126,23 @@ export function needTier(need, it) {
   return 'gold'
 }
 
-// Bed-wait exclusion signal: "water containers today, let in-ground beds wait". When active, in-ground
-// beds are excluded from the BULK watering pre-check (still individually loggable).
-// BUG-RAINBEDWAITCONFLICT-001 (Dave, 2026-09-28) — this used a private 0.30"/50% bar from 2026-06-30 while
-// the engine watered dry beds at any forecast, so Today said "let beds wait" over a list of beds to water.
-// It now reads the one client-side copy of the engine's dry-bed deferral (wateringScale.bedsWaitForRain,
-// 0.50"/60%, null PoP fails closed), so it fires exactly when the engine has moved dry beds to
-// rain_skipped. The in-ground rows still listed then are the engine's fast-dry carve-outs (fresh
-// transplants): shown, individually loggable, kept out of the bulk tap as before.
+// "Is the engine letting dry in-ground beds wait for tomorrow's rain?" — the one client-side copy of its
+// dry-bed deferral (wateringScale.bedsWaitForRain, 0.50"/60%, null PoP fails closed;
+// BUG-RAINBEDWAITCONFLICT-001, Dave 2026-09-28). A fact about the forecast, and NO LONGER a filter on any
+// list: until BUG-DEFERNOSTRESSOVERRIDE-001 it also kept every in-ground row out of the bulk watering tap,
+// a client rule from 2026-06-30 that predates the engine's own hold. The engine owns the hold now — the
+// beds that wait are in rain_skipped — so an in-ground row still on the list is one the engine decided
+// needs water (a fresh transplant), and the old exclusion skipped exactly those.
 export function bedWaitActive(plan) {
   const h = plan && plan.hydrology
   if (!h) return false
   return bedsWaitForRain(h)
 }
 
-// The BULK candidate set for one event_type: the rows of that type, MINUS in-ground beds while bed-wait
-// is active (watering only). ONE predicate for every bulk control — the global "Log all" pill, a
-// section's "Water all", and the V2 buttons after them — so no two can claim different work. Lifted
-// verbatim from CareNeeded's candidatesFor (V5-TODAYREDESIGN-001 S1); `bedWait` is bedWaitActive(plan).
+// The BULK candidate set for one event_type: the rows of that type — every one the engine listed, in-ground
+// beds included (see bedWaitActive above). ONE predicate for every bulk control — the global "Log all" pill,
+// a section's "Water all", and the V2 buttons after them — so no two can claim different work. Lifted from
+// CareNeeded's candidatesFor (V5-TODAYREDESIGN-001 S1).
 //
 // Keyed on the row's PRIMARY eventType, so the "Moist" check a water_due row offers is never a bulk
 // candidate (MOISTURE_CHECK_EVENT above: "none of these 500 need water" is a fabricated observation).
@@ -148,15 +150,11 @@ export function bedWaitActive(plan) {
 //
 // candidateRows keeps the rows, in list order (the chooser sheet renders them, the fan-out posts them);
 // candidateKeys is the same set as keys, which is what runBulk takes and what a button counts.
-export function candidateRows(rows, etype, { bedWait } = {}) {
-  return rows.filter(r => {
-    if (r.eventType !== etype) return false
-    if (etype === 'watering' && bedWait && r.inGround) return false
-    return true
-  })
+export function candidateRows(rows, etype) {
+  return rows.filter(r => r.eventType === etype)
 }
-export function candidateKeys(rows, etype, opts) {
-  return new Set(candidateRows(rows, etype, opts).map(r => r.key))
+export function candidateKeys(rows, etype) {
+  return new Set(candidateRows(rows, etype).map(r => r.key))
 }
 
 // The canonical flat row list. Excludes engine-marked `done` items (V3-TODAYDONE-001) — same set

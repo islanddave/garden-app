@@ -7,7 +7,7 @@
 //                    group is decided by its top-level ancestor: covered → that location, else Outside. So a
 //                    covered shelf under Stable is Stable, and "Yard > Yard - Stable" (Yard is uncovered) is
 //                    Outside. On Dave's locations (S0's read-only dump) this yields exactly Outside / Stable /
-//                    House. Rain and the bed-wait rule apply to Outside only.
+//                    House.
 //   SPOT (D3)        the planting's own location. Unplaced plantings share one "Unplaced" spot in Outside
 //                    (the gate's own reading, v2groups.mjs, puts them there too).
 //   TASKS            water (water_due + no_history), feed (fertilize), check (pest + overwintering). Cold rows
@@ -189,28 +189,27 @@ export function taskCounts(rows) {
   return c
 }
 
-// Bulk candidates for one spot's rows (§2.4 candidateKeys, careNeeded.js's predicate): watering rows, minus
-// in-ground beds while bed-wait is on — Outside only (D7). `bedsWaiting` = the beds that rule held back.
+// Bulk candidates for one spot's rows (§2.4 candidateKeys, careNeeded.js's predicate): its watering rows —
+// in-ground beds included. The engine owns the rain hold (BUG-DEFERNOSTRESSOVERRIDE-001): the beds that wait
+// are in rain_skipped, never on this list, so an in-ground row here is one the engine kept because it must
+// not wait. (Until then a client bed-wait rule, D7, dropped them from Water all and labeled them "wait for rain".)
 // `exclude` (S4g, MF3): keys a bulk never takes — rows whose write failed this visit, which only their Retry
 // re-posts (so a fresh Water all cannot split one run's failures into a second batch). Absent = none.
-export function waterCandidates(rows, group, bedWait, exclude) {
-  const wait = !!bedWait && (group == null || group === OUTSIDE)
+export function waterCandidates(rows, exclude) {
   const keys = new Set()
-  let bedsWaiting = 0
   for (const r of rows) {
     if (r.eventType !== 'watering') continue
-    if (wait && r.inGround) { bedsWaiting++; continue }
     if (exclude && exclude.has(r.key)) continue
     keys.add(r.key)
   }
-  return { keys, bedsWaiting }
+  return keys
 }
 
 // The page's model for one render. `rows` = the enriched rows ON THE LIST (logged and skipped removed);
 // `held` = the visit's order ({groups, spots}); `tasks` / `spots` = the filter selections (empty = all);
 // `exclude` = keys no bulk takes (waterCandidates). Filters hide, never re-sort (§2.6). New spots (a refetch)
 // are appended to their group in held order's tail.
-export function buildModel(rows, { held, tasks = [], spots = [], bedWait = false, exclude } = {}) {
+export function buildModel(rows, { held, tasks = [], spots = [], exclude } = {}) {
   const taskSet = new Set(tasks), spotSet = new Set(spots)
   const inTask = (r) => !taskSet.size || taskSet.has(r.task)
   const bySpot = new Map()
@@ -231,11 +230,10 @@ export function buildModel(rows, { held, tasks = [], spots = [], bedWait = false
       const s = bySpot.get(k)
       if (spotSet.size && !spotSet.has(k)) continue
       const view = s.all.filter(inTask)
-      const cand = waterCandidates(view, s.group, bedWait, exclude)
       list.push({
         ...s, rows: view, counts: taskCounts(view), allCounts: taskCounts(s.all),
         dryFastest: view.filter((r) => isWater(r) && SMALL_VESSEL_TYPES.has(r.containerType)).length,
-        candidates: cand.keys, bedsWaiting: cand.bedsWaiting,
+        candidates: waterCandidates(view, exclude),
       })
     }
     const keysAll = new Set()
@@ -283,10 +281,11 @@ export function filterAnnouncement({ tasks, spots, n, spotCount, products }) {
 }
 
 // §2.5 (S4g): an emptied Needs care keeps its header, which reads "Needs care · all caught up" over "95 logged
-// today, 70 covered by rain". LOGGED = the plan's care items the read path marks `done` today (logged anywhere:
-// another device, V1, a rain event on a listed item — lambda/daily-plan-read/doneEvents.js) ∪ this tab's
-// today-logged store (logged here, not yet in a plan read), by key, care needs only (a Protect key is not Needs
-// care's). RAIN = the plan's rain_skipped. Neither → no summary (the title already says it).
+// today, 3 waiting for rain, 70 covered by rain". LOGGED = the plan's care items the read path marks `done`
+// today (logged anywhere: another device, V1, a rain event on a listed item — lambda/daily-plan-read/
+// doneEvents.js) ∪ this tab's today-logged store (logged here, not yet in a plan read), by key, care needs only
+// (a Protect key is not Needs care's). WAITING / RAIN = the plan's rain_skipped, split by lib/rainHold.js: held
+// on a forecast is never "covered by rain". None → no summary (the title already says it).
 export const CAUGHT_UP_TITLE = 'Needs care · all caught up'
 export function loggedTodayCount(plan, storeKeys = []) {
   const keys = new Set()
@@ -294,8 +293,8 @@ export function loggedTodayCount(plan, storeKeys = []) {
   for (const k of storeKeys) if (Object.hasOwn(TASK_OF_NEED, String(k).split(':')[1])) keys.add(k)
   return keys.size
 }
-export function caughtUpSummary({ logged, rain }) {
-  return [logged ? `${logged} logged today` : null, rain ? `${rain} covered by rain` : null].filter(Boolean).join(', ') || null
+export function caughtUpSummary({ logged, waiting, rain }) {
+  return [logged ? `${logged} logged today` : null, waiting ? `${waiting} waiting for rain` : null, rain ? `${rain} covered by rain` : null].filter(Boolean).join(', ') || null
 }
 
 // SF8: the Needs care summary carries REASONS and spots, never counts (the counts live on the chips and the

@@ -12,11 +12,12 @@ import Icon from '../Icon.jsx'
 import PhotoView from '../photo/PhotoView.jsx'
 import { TIER } from '../../lib/photoModel.js'
 import {
-  buildCareNeeded, groupRows, bedWaitActive, autoExpandKeys, capStaleRows,
+  buildCareNeeded, groupRows, autoExpandKeys, capStaleRows,
   dormantRows, feedSuppressedRows, FEED_SUPPRESSED_LISTED, droughtRows,
   NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ROW_BUDGET, WATER_STALE_CAP, splitContainersBeds,
   canMoistureCheck, candidateKeys,
 } from '../../lib/careNeeded.js'
+import { rainNoteSentences } from '../../lib/rainHold.js'
 import { useCareActions } from './useCareActions.js'
 import { visitLayoutKey, readVisitLayout, writeVisitLayout } from './visitLayout.js'
 
@@ -284,7 +285,6 @@ export default function CareNeeded({ plan, planDate, list = 'own' }) {
   const announce = useCallback((msg) => { if (liveRef.current) liveRef.current.textContent = msg }, [])
   const closeBulk = useCallback(() => setBulkType(null), [])
   const allRows = useMemo(() => buildCareNeeded(plan), [plan])
-  const bedWait = useMemo(() => bedWaitActive(plan), [plan])
   // The care state and every write path — the fades (`logged`) and their new-day reset, the in-flight
   // guards, the page's one skip set and its mount-time server merge, Log / Moist / Skip / bulk and
   // their undo — live in useCareActions.js (V5-TODAYREDESIGN-001 S1), shared with the V2 Today.
@@ -292,7 +292,7 @@ export default function CareNeeded({ plan, planDate, list = 'own' }) {
   // `rows` is `allRows` minus what is logged and skipped: the list as it stands.
   const {
     skipped, rows, pendingKeys, bulkProgress, setBulkProgress, candidatesFor, logRow, moistRow, skipRow, runBulk,
-  } = useCareActions({ allRows, bedWait, planDate, fetch, getToken, toast, announce, onBulkEnd: closeBulk })
+  } = useCareActions({ allRows, planDate, fetch, getToken, toast, announce, onBulkEnd: closeBulk })
   const [overrides, setOverrides] = useState(() => ({}))  // explicit per-group expand/collapse
   const [bulkChecked, setBulkChecked] = useState(() => new Set())
 
@@ -580,11 +580,11 @@ export default function CareNeeded({ plan, planDate, list = 'own' }) {
     const src = Array.isArray(group.bulkRows) ? group.bulkRows : []
     for (const need of NEED_ORDER) {
       const et = NEED_EVENT_TYPE[need]
-      const keys = candidateKeys(src, et, { bedWait })
+      const keys = candidateKeys(src, et)
       if (keys.size > 1) return [{ eventType: et, verb: bulkVerb(et), keys }]
     }
     return []
-  }, [bedWait])
+  }, [])
 
   const openBulk = useCallback((etype) => {
     setBulkType(etype)
@@ -923,12 +923,17 @@ export function FeedSuppressedList({ plan }) {
 }
 
 // Ambient rain-credit note (DRG-WATERCREDIT-001) — quiet, never a card/interrupt.
+// BUG-DEFERNOSTRESSOVERRIDE-001 — two claims, never one: a planting held on a FORECAST is "waiting for
+// rain", and only rain that fell "covered" anything (lib/rainHold.js rainSplit). The old single sentence
+// said "recent rain counts" over beds held with nothing fallen.
 export function RainNote({ plan, center }) {
   const n = Array.isArray(plan && plan.rain_skipped) ? plan.rain_skipped.length : 0
   if (!n) return null
+  const lines = rainNoteSentences(plan)
+  if (!lines.length) return null
   return (
     <div data-testid="care-rain-note" style={{ fontSize: '0.78rem', color: P.light, padding: '4px 6px', textAlign: center ? 'center' : 'left' }}>
-      Rain handled watering for {n} planting{n > 1 ? 's' : ''} — recent rain counts.
+      {lines.map(t => <div key={t}>{t}</div>)}
     </div>
   )
 }

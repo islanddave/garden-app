@@ -232,14 +232,15 @@ describe('v2 grafts and the re-dating helper', () => {
     expect(payload.plan.water_due).toHaveLength(D.plan.water_due.length - 1)
     expect(payload.plan.no_history).toEqual([expect.objectContaining({ never: true, days_since: null, overdue_by: null })])
   })
-  it('bedwait (SF4) leaves Outside Water all at 135 with two carve-out beds still listed', () => {
+  it('bedwait (SF4) leaves Outside Water all at 137, the two carve-out beds still listed and in it', () => {
     const { payload } = applyGrafts(D, PLANTS, ['bedwait'], G)
     const beds = payload.plan.water_due.filter((r) => r.in_ground)
     expect(beds).toHaveLength(2)
     expect(payload.plan.rain_skipped).toHaveLength(17)
     expect(payload.plan.hydrology).toMatchObject({ tomorrow_precip_in: 0.62, tomorrow_pop: 70 })
     const g = groupsOfRows(payload.plan.water_due, PLANTS, read('locations.full.json'))
-    expect(g.Outside - 2).toBe(135)
+    expect(g.Outside).toBe(137)
+    expect(G.bedwait.expect.outside_water_all_after).toBe(137)
   })
   // BUG-RAINTOMORROWMISLABEL-001 (b): the one state with its own weather, held to v2-frost's own numbers.
   it('gaugerain moves the two measured-rain fields and nothing else, and v2-frost-rain carries v2-frost\'s ceilings', () => {

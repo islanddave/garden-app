@@ -47,6 +47,14 @@ export const DONE_EVENTS = {
   // vocabulary, and letting it satisfy here would make one pest tap silently clear a watering-adjacent
   // task, which is the exact cross-bucket leak moisture_check was minted as its own type to avoid.
   overwintering: ['moisture_check', 'watering', 'rain'],
+  // BUG-DEFERNOSTRESSOVERRIDE-001 (Design A) — a planting the engine held back for rain, watered anyway.
+  // Today lists the forecast-held ones with a Water button; without this entry the watered row is back on
+  // reload and on the other phone until the hourly run drops it, and invites a second log. `watering`
+  // ONLY. Not `rain`: a rain event is what this bucket is waiting for, and one logged against a held
+  // planting must not read as "somebody watered it". Not `moisture_check`: "still moist" on a held plant
+  // changes nothing the engine decided. The stamp lands on every rain_skipped item, the rain-covered ones
+  // included; the client reads `done` only on the forecast kinds (src/lib/rainHold.js rainSplit).
+  rain_skipped: ['watering'],
 };
 
 // Every plant id referenced by an actionable bucket, for the done-derivation query's = ANY($1).

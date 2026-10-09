@@ -5,7 +5,8 @@ import WeatherCueLine from '../WeatherCueLine.jsx'
 import FrostAlertLine from '../FrostAlertLine.jsx'
 import DroughtLine from '../DroughtLine.jsx'
 import LeafWetnessLine from '../LeafWetnessLine.jsx'
-import { DroughtList, RainNote } from '../CareNeeded.jsx'
+import { DroughtList } from '../CareNeeded.jsx'
+import RainHold from './RainHold.jsx'
 import { glanceHeadline, urgentPhrase, glanceRain } from '../../../lib/todayV2/verdict.js'
 import { P } from '../../../lib/constants.js'
 import { ICON_COLORS } from '../../../lib/tokens.js'
@@ -25,7 +26,9 @@ import { T } from '../../forms/formStyles.js'
 //
 // OPEN (MF2): the card's rows give way to the UNMODIFIED WeatherWidget, rendered ONCE — never beside rows A–C,
 // which would be two weather cards stacked — under a one-line "Weather" toggle. Then the cue and the frost line,
-// then the drought line, leaf wetness, the dry list, the rain note and the basis stamp, in V1's reading order.
+// then the drought line, leaf wetness, the dry list, the rain lines and the basis stamp, in V1's reading order.
+// The rain lines (RainHold) carry the plantings waiting for rain, each with its Water chip — under the details,
+// never inside the toggle button; they need the page's care state (`care`, the visit `record` / `update`).
 // The open state drops the card's own chrome: WeatherWidget is the card.
 //
 // The cue and frost line keep ONE place in the tree in both states, so a toggle never remounts them (the cue's
@@ -38,6 +41,7 @@ const CHEVRON = { closed: '▸', open: '▾' }
 export default function GlanceCard({
   plan, generatedAt = null, planDate = null, liveHydrology = null, refreshedAt = null,
   agreed = null, current = null, cueCallout = null, stale = null, open = false, onToggle,
+  care = null, record = null, update, announce, writesHeld = false,
 }) {
   const weather = plan.weather || {}
   const headline = useMemo(() => glanceHeadline(plan), [plan])
@@ -118,7 +122,7 @@ export default function GlanceCard({
           <DroughtLine plan={plan} />
           <LeafWetnessLine plan={plan} />
           <DroughtList plan={plan} />
-          <RainNote plan={plan} />
+          <RainHold plan={plan} care={care} record={record} update={update} announce={announce} writesHeld={writesHeld} />
           {basis && <p data-testid="today-basis-stamp" style={basisStyle}>Plan from overnight · as of {basis}</p>}
         </div>
       )}

@@ -1,11 +1,11 @@
 // V5-TODAYREDESIGN-001 S4 — useCareActions' V2 options (plan-v2 §6.7 as cut by §13 Simplify 1 + SF12).
 // S1 left `runBulk(etype, keys, opts)` reading no option; S4 builds them. What is pinned here:
-//   · opts ABSENT = the V1 run, unchanged: one POST at a time, the toast raised, bed-wait applied list-wide;
+//   · opts ABSENT = the V1 run: one POST at a time, the toast raised, an engine-kept in-ground row included;
 //   · `concurrency` caps the POSTs in flight (4) and every row posts exactly once, keepalive;
 //   · `excludeInFlight` leaves a key already being written out of the run, and reports it (the one-tap +
 //     bulk double log, BUG-BULKDOUBLELOGINFLIGHT-001, closed for V2);
 //   · `bodyEventType` posts that type (Moist on a water row);
-//   · the caller's keys are used as given — V2 decides bed-wait per group (D7), not list-wide;
+//   · the caller's keys are used as given;
 //   · failures stay on the list and are named; `undoMany` deletes exactly the successes, ≤ 4 in flight,
 //     and never un-fades a row whose delete it cannot confirm.
 // No jest-dom (L-182).
@@ -49,24 +49,25 @@ function server({ failAt = new Set(), deleteFail = new Set(), noId = new Set() }
   return s
 }
 
-function mount(p, { bedWait = false, fetch, toast } = {}) {
+function mount(p, { fetch, toast } = {}) {
   const t = toast || { show: vi.fn(), showUndo: vi.fn() }
   const allRows = buildCareNeeded(p)
-  const hook = renderHook(() => useCareActions({ allRows, bedWait, planDate: todayLocalISO(), fetch, getToken: async () => 't', toast: t, announce: vi.fn() }))
+  const hook = renderHook(() => useCareActions({ allRows, planDate: todayLocalISO(), fetch, getToken: async () => 't', toast: t, announce: vi.fn() }))
   return { hook, toast: t, allRows }
 }
 
 beforeEach(() => { localStorage.clear(); sessionStorage.clear() })
 
 describe('runBulk without opts is the V1 run (S1 behaviour, unchanged)', () => {
-  it('one POST at a time, a toast, and bed-wait applied list-wide', async () => {
+  it('one POST at a time, a toast, and the in-ground row the engine kept is watered with the rest', async () => {
     const s = server()
-    const p = { water_due: [water('a'), water('b'), water('bed', { in_ground: true })] }
-    const { hook, toast } = mount(p, { bedWait: true, fetch: s.fetch })
+    // Beds wait on this forecast: the engine moved those to rain_skipped, so `bed` here is one it kept.
+    const p = { hydrology: { recent_precip_in: 0.05, tomorrow_precip_in: 0.62, tomorrow_pop: 70 }, water_due: [water('a'), water('b'), water('bed', { in_ground: true })] }
+    const { hook, toast } = mount(p, { fetch: s.fetch })
     const keys = new Set(hook.result.current.rows.map(r => r.key))
     await act(async () => { await hook.result.current.runBulk('watering', keys) })
     expect(s.peak).toBe(1)
-    expect(s.posts.map(x => x.body.plant_id)).toEqual(['a', 'b'])
+    expect(s.posts.map(x => x.body.plant_id)).toEqual(['a', 'b', 'bed'])
     expect(toast.showUndo).toHaveBeenCalledTimes(1)
     expect(s.posts.every(x => x.init.keepalive === undefined)).toBe(true)
   })
@@ -146,10 +147,10 @@ describe('runBulk with V2 opts', () => {
     expect(s.posts[0].body.metadata).toBeNull()
   })
 
-  it('uses the caller\'s keys as given: a bed named by a covered group is logged even while bed-wait is on', async () => {
+  it('uses the caller\'s keys as given: only the named row is logged', async () => {
     const s = server()
     const p = { water_due: [water('bed', { in_ground: true }), water('pot')] }
-    const { hook } = mount(p, { bedWait: true, fetch: s.fetch })
+    const { hook } = mount(p, { fetch: s.fetch })
     await act(async () => { await hook.result.current.runBulk('watering', new Set(['bed:water_due']), { concurrency: 4 }) })
     expect(s.posts.map(x => x.body.plant_id)).toEqual(['bed'])
   })

@@ -354,14 +354,14 @@
    "fa0502b2-e5b4-4c24-9dd3-02cc89d45b30",
    "4b53ac2a-dfdd-41b0-abbb-ebf0cdbac2eb"
   ],
-  "provenance": "engine.saturationSuppressed('outdoor', hydrology{tomorrow 0.62″ @ 70%}, {deferDry:true}) = incoming_dry; 17 of 19 in-ground water rows moved to rain_skipped with engine.js's rain_skipped shape and satReason() text (\"Skip — 0.62\" rain expected tomorrow @ 70%; waiting for it beats watering twice\"). The last 2 in-ground rows (Zephyr Squash, Sugar Baby) are DECLARED fresh-transplant carve-outs (TRANSPLANT_CARVEOUT_DAYS = 21): the fixture carries no transplant_at to derive them from. They stay in water_due, and bedWaitActive(plan) keeps them out of Water all.",
+  "provenance": "engine.saturationSuppressed('outdoor', hydrology{tomorrow 0.62″ @ 70%}, {deferDry:true}) = incoming_dry; 17 of 19 in-ground water rows moved to rain_skipped with engine.js's rain_skipped shape and satReason() text (\"Skip — 0.62\" rain expected tomorrow @ 70%; waiting for it beats watering twice\"). The last 2 in-ground rows (Zephyr Squash, Sugar Baby) are DECLARED fresh-transplant carve-outs (TRANSPLANT_CARVEOUT_DAYS = 21): the fixture carries no transplant_at to derive them from. They stay in water_due, and Water all takes them with every other water row (BUG-DEFERNOSTRESSOVERRIDE-001: the engine owns the hold).",
   "expect": {
    "water_rows_by_group_after": {
     "House": 2,
     "Stable": 12,
     "Outside": 137
    },
-   "outside_water_all_after": 135
+   "outside_water_all_after": 137
   }
  },
  "freeze": {

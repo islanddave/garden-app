@@ -9,7 +9,7 @@ import { outlineBtn } from './PlantCareRow.jsx'
 // §5, Dave's D3 / D6 / D10, §13 SF7). A row card: the disclosure is an <h4><button> (never nested: Not today
 // and Water all are its siblings, 8 px of dead space before and between), line 1 "Pasture › Bag Area 97 ▸",
 // line 2 the counts with zeros dropped (SF7) and the fast-drying note. Water all logs the whole spot's
-// candidates (bed-wait held back on Outside, D7); "Water the other N" once a plant in it was handled.
+// candidates; "Water the other N" once a plant in it was handled.
 // The panel (SpotBody) mounts only while open. After a spot's Water all or Not today empties it, the row
 // shrinks to its done line in place — held for the visit, Undo on it (D10) — see SpotDoneLine.
 // MF3 (S4g): a write that failed stays on the SPOT, open or closed — one line under the header, "3 not logged"
@@ -21,7 +21,6 @@ export default function SpotRow({ spot, open, onToggle, children, busy, groupBus
   const n = spot.candidates.size
   const line2 = TASKS.filter((t) => spot.counts[t] > 0).map((t) => `${TASK_LABEL[t]} ${spot.counts[t]}`)
   if (spot.dryFastest > 0) line2.push(`${spot.dryFastest} dry fastest`)
-  if (spot.bedsWaiting > 0) line2.push(`${spot.bedsWaiting} bed${spot.bedsWaiting === 1 ? '' : 's'} wait for rain`)
   // Inert while the group runs, and while the page holds its writes (review 4160.2 IMPORTANT-2, TodayV2 writesHeld).
   const disabled = !!groupBusy || writesHeld
   const verb = handled || failedN > 0 ? 'Water the other' : 'Water all'
@@ -48,12 +47,10 @@ export default function SpotRow({ spot, open, onToggle, children, busy, groupBus
         </h4>
         <div style={zone}>
           <button type="button" onClick={disabled || busy ? undefined : onNotToday} aria-disabled={disabled || busy ? 'true' : undefined} aria-label={'Not today: ' + spot.name} style={outlineBtn}>Not today</button>
-          {n > 0 ? (
+          {n > 0 && (
             <button type="button" data-testid="care-spot-bulk" onClick={disabled || busy ? undefined : onWater} aria-disabled={disabled || busy ? 'true' : undefined}
               aria-label={running ? label : `${label} in ${spot.name}`} style={tinted}>{label}</button>
-          ) : spot.bedsWaiting > 0 && spot.counts.water > 0 ? (
-            <span style={waitText}>Beds wait for rain</span>
-          ) : null}
+          )}
         </div>
       </div>
       {failing && (
@@ -95,7 +92,6 @@ export const tinted = {
   flexShrink: 0, minHeight: T.tapMinHeight, padding: '0 12px', background: P.greenPale, border: 'none', borderRadius: T.radiusButton,
   color: P.green, fontWeight: 700, fontSize: T.type.sm, cursor: 'pointer', fontFamily: 'inherit', fontVariantNumeric: 'tabular-nums',
 }
-const waitText = { fontSize: T.type.xs, color: P.mid, maxWidth: 88, textAlign: 'right' }
 // One 48px line under the header, the done line's anatomy: the failure in words, then its Retry (§5.10 "Failed:
 // 'Not logged' text" — the words carry it, not the colour).
 const failLine = { display: 'flex', alignItems: 'center', gap: 8, minHeight: 48, padding: '0 6px 0 10px', borderTop: '1px solid ' + P.border }
