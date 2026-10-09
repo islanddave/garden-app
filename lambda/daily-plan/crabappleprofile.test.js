@@ -23,8 +23,48 @@
 // own gates do that (migrations/v5-crabappleprofile-001/gates.yml). The last three describe blocks bind
 // this file to 0a, 0r and that gates file.
 //
-// MUTATION LOG — see the end of this header once run; each applied to ONE file, this file run, RED
-// observed, the file restored byte-for-byte (sha256 checked).
+// MUTATION LOG — 2026-10-09, lane-crabprofile-20261009. Each applied to ONE file, this file run, RED
+// observed, the file restored byte-for-byte (sha256 checked). Baseline 37 green.
+//   C1  0a writes no_calendar_water false                                 -> 9 RED
+//   C2  0a writes no_calendar_feed false                                  -> 8 RED
+//   C3  0a drops both fallback interval keys                              -> 5 RED
+//   C4  0a writes an in-ground fallback of 7                              -> 5 RED
+//   C5  0a leaves _basis unresearched                                     -> 3 RED
+//   C6  0a adds a tender cold block at 32F                                -> 6 RED
+//   C7  0a loses the md5 guard                                            -> 16 RED
+//   C8  0a keyed by row id only, (scope, scope_id) dropped                -> 16 RED
+//   C9  0a merges (profile || ...) instead of replacing                   -> 17 RED
+//   C10 0a writes habit 'repeat'                                          -> 4 RED
+//   C11 0a habit UPDATE loses its IS NULL guard                           -> 4 RED
+//   C12 0a also writes loss_horizon_hours                                 -> 5 RED
+//   C13 0a stamps a different version                                     -> 1 RED
+//   C14 0a's note stops saying the cultivar is not identified             -> 3 RED
+//   C15 0r restores a placeholder one character off                       -> 1 RED
+//   C16 0r guards on a profile 0a did not write                           -> 1 RED
+//   C17 0r profile restore loses its stamp guard                          -> 4 RED
+//   C18 0r habit reset loses its value guard                              -> 1 RED
+//   C19 gates: the decision invariant demoted to continuous: false        -> 1 RED
+//   C20 gates: the decision invariant loses its self-arming stamp check   -> 1 RED
+//   C21 gates: the decision invariant loses env: prod                     -> 1 RED
+//   C22 gates: the decision invariant stops checking feed                 -> 1 RED
+//   C23 gates: the reach invariant stops excluding the tree itself        -> 1 RED
+//   C24 gates: the pre gate's md5 differs                                 -> 1 RED
+//   C25 gates: the value receipt holds a different profile                -> 1 RED
+//   C26 gates: the premise gate stops requiring an empty cadence_scopes   -> 1 RED
+//   C27 gates: the habit receipt says 'repeat'                            -> 1 RED
+//   C28 gates: the habit receipt loses env: prod                          -> 1 RED
+//   C29 frostClass: crabapple dropped from the hardy band                 -> 2 RED
+//   C30 frostClass: crabapple also filed as uncertain                     -> 1 RED
+//   C31 engine.waterSuppression ignores no_calendar_water                 -> 4 RED
+//   C32 engine.feedSuppression ignores no_calendar_feed                   -> 3 RED
+//   C33 engine.resolveCadence never adopts the database profile           -> 4 RED
+//   C34 engine.waterSuppression stops reading the raw profile             -> 1 RED
+//   C35 harvest-attributes-v1.json: crabapple authored as 'repeat'        -> 1 RED
+//   C36 0b seed row: crabapple gains a loss horizon                       -> 1 RED
+//   C37 harvestTracked.js: crabapple copied onto the not-tracked list     -> 1 RED
+//   C38 v4-harvhabitgap-001 gate: crabapple excused on the NOT IN list    -> 1 RED
+// C29 is 2 here; src/__tests__/slugUniverseConsistency.test.js and frostBands.parity.test.js go red on it
+// too (3 RED across the two, run separately).
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
