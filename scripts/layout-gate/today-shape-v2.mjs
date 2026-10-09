@@ -474,7 +474,7 @@ const CHECKERS = {
   // Interaction-driven families run in the interaction phase below; here they only have to exist.
   interaction: () => {}, 'region-headcount': () => {}, 'weather-once': () => {}, 'group-water-all': () => {}, 'chip-census': () => {},
   'spot-retry': () => {}, announce: () => {}, 'caught-up': () => {}, 'trusted-taps': () => {},
-  'owner-floors': () => {},
+  'owner-floors': () => {}, 'rain-wait-floors': () => {},
 }
 // S6: owner-floors runs FIRST, on the page as it first rendered (it opens each owner it measures and closes it again),
 // so what it records does not depend on what the other families leave open, pressed or scrolled.
@@ -483,7 +483,7 @@ const CHECKERS = {
 // leaves it empty.
 // trusted-taps (OPS-TODAYV2GATECOVERAGE-001) after everything: each of its flows loads the state afresh, so it reads
 // nothing the families above left behind — and nothing above reads what it leaves.
-const INTERACTION_FAMILIES = ['owner-floors', 'interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all', 'spot-retry', 'announce', 'caught-up', 'trusted-taps']
+const INTERACTION_FAMILIES = ['owner-floors', 'interaction', 'region-headcount', 'weather-once', 'rain-wait-floors', 'chip-census', 'group-water-all', 'spot-retry', 'announce', 'caught-up', 'trusted-taps']
 // S6: owner heights measured this run, per state — written into the v2 budget by --record, judged against it otherwise.
 const ownerRecord = {}
 
@@ -583,6 +583,42 @@ async function runInteractions(state, checks, at) {
         const seen = {}; for (const x of temps) seen[x] = (seen[x] || 0) + 1
         const rep = Object.entries(seen).filter(([, n]) => n > 1).map(([x]) => x)
         if (rep.length) F(`hi/lo text repeats inside the open glance card: ${rep.join(', ')} (MF2)`)
+      }
+      if (!wasOpen) await evalSettled(`window.__h.act({ tap: 'glance' })`)
+    } else if (c.family === 'rain-wait-floors') {
+      // BUG-DEFERNOSTRESSOVERRIDE-001: the "Waiting for rain" list in the OPEN glance card. Its region and the card's
+      // height floor cannot see a control shrink, so the tap sizes are read here: Show / Hide, every waiting row,
+      // and each row's Water, at the contract's floor; and no row is drawn inside a button (the card's toggle
+      // is one). The glance and the list are opened only if closed, and left as found (weather-once's rule).
+      const wasOpen = (await evalSettled(`window.__h.expanded('glance')`)) === 'true'
+      const r = wasOpen ? { void: null } : await evalSettled(`window.__h.act({ tap: 'glance' })`)
+      if (r.void) { F(`VOID — could not open the glance card: ${r.void}`); continue }
+      await evalSettled('new Promise(r => setTimeout(r, 150))')
+      const READ = `(() => { const q = (id) => '[data-testid="' + id + '${SUFFIX}"]'
+        const bx = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { w: +b.width.toFixed(2), h: +b.height.toFixed(2) } }
+        const card = document.querySelector(q('today-glance')), toggle = card && card.querySelector('h2 > button[aria-expanded]')
+        const show = document.querySelector(q('rain-waiting-toggle'))
+        return { show: show ? { text: show.textContent, expanded: show.getAttribute('aria-expanded'), ...bx(show) } : null,
+          rows: [...document.querySelectorAll(q('rain-wait-row'))].map(el => { const w = el.querySelector('button[aria-label^="Log Water for "]')
+            return { name: (el.querySelector('a')?.textContent || '').trim().slice(0, 40), ...bx(el), water: bx(w), inCard: !!(card && card.contains(el)), inToggle: !!(toggle && toggle.contains(el)), inButton: !!el.closest('button') } }) } })()`
+      const TAP_SHOW = `(() => { const b = document.querySelector('[data-testid="rain-waiting-toggle${SUFFIX}"]'); if (b) b.click(); return new Promise(r => setTimeout(() => r(!!b), 200)) })()`
+      const EPS = 0.5
+      let m = await evalSettled(READ)
+      if (!m.show) { F('the open glance card carries no Show / Hide control for the waiting list (rain-waiting-toggle)') }
+      else {
+        const sized = (s) => { if (s.h < c.floor - EPS || s.w < c.floor - EPS) F(`the waiting list's "${s.text}" is ${s.w}×${s.h}px, under the ${c.floor}px tap floor`) }
+        sized(m.show)
+        const wasShown = m.show.expanded === 'true'
+        if (!wasShown) { await evalSettled(TAP_SHOW); m = await evalSettled(READ); if (m.show) sized(m.show) }
+        if (m.rows.length < (c.minRows || 1)) F(`${m.rows.length} waiting row(s) drawn after Show, expected at least ${c.minRows || 1}`)
+        for (const row of m.rows) {
+          if (row.h < c.floor - EPS) F(`waiting row '${row.name}' is ${row.h}px tall, under the ${c.floor}px floor`)
+          if (!row.water) F(`waiting row '${row.name}' carries no Water button`)
+          else if (row.water.h < c.floor - EPS) F(`the Water button on waiting row '${row.name}' is ${row.water.h}px tall, under the ${c.floor}px floor`)
+          if (row.inToggle || row.inButton) F(`waiting row '${row.name}' is drawn inside ${row.inToggle ? "the card's toggle button" : 'a button'} — a tap on it would toggle, and a button cannot hold a button`)
+          if (!row.inCard) F(`waiting row '${row.name}' is drawn outside the glance card`)
+        }
+        if (!wasShown) await evalSettled(TAP_SHOW)
       }
       if (!wasOpen) await evalSettled(`window.__h.act({ tap: 'glance' })`)
     } else if (c.family === 'chip-census') {

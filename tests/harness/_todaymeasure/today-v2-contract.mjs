@@ -317,6 +317,8 @@ export const STATES = [
       ...common(),
       { family: 'header-text', armedAt: 'S4', buttons: { 'care-group-bulk:Outside': 'Water all 137' }, spotButton: ['In-Ground'] },
       { family: 'group-water-all', armedAt: 'S4', group: 'Outside', expectN: 137, run: true },
+      // Review I5: the 17 held beds, listed in the open glance card. jsdom cannot measure any of this.
+      { family: 'rain-wait-floors', armedAt: 'S6', floor: 48, minRows: 17, why: 'the waiting list: Show / Hide, each row and each row\'s Water are at least 48px; no row sits inside the card\'s toggle button' },
     ],
   },
   {
@@ -460,7 +462,9 @@ export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibi
   // S6: a section (or the glance) opened from the default render is at least its recorded height.
   'owner-floors',
   // Integration 2: no card inside a card (plan-v2 Visual, D8).
-  'card-nesting']
+  'card-nesting',
+  // BUG-DEFERNOSTRESSOVERRIDE-001: tap sizes of the "Waiting for rain" list in the open glance card.
+  'rain-wait-floors']
 
 // §13 Simplify 3: the trigger-predicate mutants (ignoreRemembered, rememberedBeatsUrgent, staleAutoOpens,
 // chillOpensEveryNight, headsupAlwaysOpen, householdAlwaysOpen, glanceOpenByDefault) are no longer real-Chrome

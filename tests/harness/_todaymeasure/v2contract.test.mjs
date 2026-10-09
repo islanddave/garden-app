@@ -258,7 +258,7 @@ describe('v2 grafts and the re-dating helper', () => {
     const B = read('today-shape-budget.v2.json').states
     for (const k of ['clock', 'contentBottomFloor', 'contentBottomCeiling', 'controlsFloor', 'scrollHeightCeiling']) expect(B['v2-frost-rain'][k], k).toBe(B['v2-frost'][k])
     expect(STATES).toHaveLength(21)
-    expect(STATES.reduce((a, x) => a + x.checks.filter((c) => isArmed(c)).length, 0)).toBe(265)
+    expect(STATES.reduce((a, x) => a + x.checks.filter((c) => isArmed(c)).length, 0)).toBe(266)
   })
   it('stale serves the plan one day back', () => {
     expect(applyGrafts(D, PLANTS, ['stale'], G).payload.plan_date).toBe('2026-09-23')
