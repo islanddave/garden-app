@@ -539,7 +539,9 @@ function WalkGroup({
     const useKey = key || mintKey()
     if (!key) setKey(useKey)
     writingRef.current = true
-    setSaving(true); setErr(null); setField(null)
+    // This Save goes out: the group is spent only on what THIS answer refuses (refusal(), above) — not on a line
+    // an earlier Save left, or a change that then fails here would be left at the exit with no question (M-1).
+    setSaving(true); setErr(null); setField(null); setSpent(null)
     // The item or jar a replay answered with, once it is being written onto.
     let onRow = null
     // The date as he chose it: this group's own answer, or the walk's (stored once, at its start).
