@@ -12,6 +12,8 @@ THE DATABASES IT BUILDS, each a copy of one small fixture:
   dirty      the fixture plus three rows that break the rule, one of them soft-deleted
   d_*        one per "same name, different definition", each of which 0a must refuse
   e_*        the rollback's mixed cases
+  f_*        row security enabled (and forced) on both tables, with a non-superuser owner and another role
+  g_*        the re-home UPDATE with and without the pair (BUG-PLANTPAIRCASCADENULLSHISTORY-001)
 
 WHAT IT CAN TOUCH. Only a cluster it creates in a fresh temp directory: unix socket in that directory,
 no TCP listener, stopped and deleted on exit. It never reads .env.local and accepts no DSN. Every child
@@ -20,7 +22,8 @@ pointed at the local socket, so nothing here can reach a real database even if t
 exports one.
 
 WHAT IT CANNOT PROVE. The fixture carries only the columns the migration and its gates read; the real
-tables' triggers, RLS and other constraints are absent. It proves what these files do to a catalog and
+tables' triggers, policies and other constraints are absent (section F enables row security with no
+policy; it does not reproduce the real policies or say whether either environment FORCEs it). It proves what these files do to a catalog and
 that the catalog's rendering on this server's major version is the string the files compare against.
 It does not prove what prod's or staging's catalog says today, how many staging rows break the rule,
 or which code staging's Lambdas run: README.md lists those as apply-time checks.
@@ -114,6 +117,22 @@ INSERT INTO public.event_log (id, plant_id, project_id, deleted_at) VALUES
   ('{BAD[2]}', '{P3}', '{X}', NULL);
 """
 
+# What 0c counts, as any role may run it.
+COUNT = ("SELECT count(*) FROM public.event_log e WHERE e.plant_id IS NOT NULL AND e.project_id IS NOT NULL "
+         "AND NOT EXISTS (SELECT 1 FROM public.plants p WHERE p.id = e.plant_id AND p.project_id = e.project_id)")
+
+# Row security as check-schema.sh expects it on both tables: ENABLED. ppf_owner owns them and is neither a
+# superuser nor BYPASSRLS; ppf_other is granted everything 0c touches and owns nothing. No policy is
+# created, so a role row security applies to sees no row at all: the plainest form of a short count.
+RLS_ON = """
+ALTER TABLE public.event_log OWNER TO ppf_owner;
+ALTER TABLE public.plants OWNER TO ppf_owner;
+GRANT SELECT, INSERT ON public.schema_version TO ppf_owner, ppf_other;
+GRANT SELECT ON public.event_log, public.plants TO ppf_other;
+ALTER TABLE public.event_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.plants ENABLE ROW LEVEL SECURITY;
+"""
+
 CATALOG = """
 SELECT c.conname, c.oid, t.relname, c.contype, c.convalidated, c.condeferrable, c.confupdtype,
        c.confdeltype, c.confmatchtype, pg_get_constraintdef(c.oid), coalesce(pg_get_indexdef(c.conindid), '')
@@ -151,13 +170,13 @@ class Cluster:
             self.stop()
             fault(f"could not start the throwaway cluster.\n{log}")
 
-    def dsn(self, db, options=None):
+    def dsn(self, db, options=None, user="rehearse"):
         extra = f" options='{options}'" if options else ""
-        return f"host={self.dir} port={PORT} dbname={db} user=rehearse{extra}"
+        return f"host={self.dir} port={PORT} dbname={db} user={user}{extra}"
 
-    def run(self, db, sql=None, file=None, options=None):
+    def run(self, db, sql=None, file=None, options=None, user="rehearse"):
         """Returns (exit code, stdout, stderr). Never faults: a refusal is a result here."""
-        args = ["psql", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", self.dsn(db, options)]
+        args = ["psql", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", self.dsn(db, options, user)]
         args += ["-f", str(file)] if file else ["-c", sql]
         r = subprocess.run(args, env=self.env, capture_output=True, text=True)
         return r.returncode, r.stdout.strip(), r.stderr.strip()
@@ -174,8 +193,8 @@ class Cluster:
             self.ok(db, sql)
         return db
 
-    def gates(self, db, gates_file, env, phase):
-        child = dict(self.env, NEON_DATABASE_URL=self.dsn(db), NEON_STAGING_URL=self.dsn(db))
+    def gates(self, db, gates_file, env, phase, user="rehearse"):
+        child = dict(self.env, NEON_DATABASE_URL=self.dsn(db, user=user), NEON_STAGING_URL=self.dsn(db, user=user))
         r = subprocess.run([sys.executable, str(RUNNER), "--migration", str(gates_file), "--env", env,
                             "--phase", phase, "--json"], env=child, capture_output=True, text=True)
         try:
@@ -229,8 +248,8 @@ def rehearse(cl, d):
     chk("del = RESTRICT, upd = CASCADE, MATCH SIMPLE, not deferrable",
         cat["event_log_plant_project_fk"][5:9] == ["f", "c", "r", "s"], str(cat["event_log_plant_project_fk"]))
     pre = cl.gates(db, g, "prod", "pre")
-    chk("pre on prod: 3 PASS and the manual gate MANUAL",
-        sorted(pre.values()) == ["MANUAL", "PASS", "PASS", "PASS"], str(pre))
+    chk("pre on prod: 4 PASS and the manual gate MANUAL",
+        sorted(pre.values()) == ["MANUAL", "PASS", "PASS", "PASS", "PASS"], str(pre))
     unapplied = cl.gates(db, g, "prod", "post")
     chk("post on prod BEFORE the apply: no ERROR; standing gates PASS; both receipts FAIL",
         "ERROR" not in unapplied.values()
@@ -280,8 +299,8 @@ def rehearse(cl, d):
     print("B. clean: neither object, no row that breaks the rule")
     db = cl.new("clean")
     pre = cl.gates(db, g, "staging", "pre")
-    chk("pre on staging: 2 PASS, the prod gate NOT_APPLICABLE, the manual gate MANUAL",
-        sorted(pre.values()) == ["MANUAL", "NOT_APPLICABLE", "PASS", "PASS"], str(pre))
+    chk("pre on staging: 3 PASS, the prod gate NOT_APPLICABLE, the manual gate MANUAL",
+        sorted(pre.values()) == ["MANUAL", "NOT_APPLICABLE", "PASS", "PASS", "PASS"], str(pre))
     chk("sweep PASS", list(cl.gates(db, g, "staging", "sweep").values()) == ["PASS"])
     unapplied = cl.gates(db, g, "staging", "post")
     chk("post on an unapplied staging: no ERROR, nothing red but the two receipts",
@@ -475,6 +494,83 @@ def rehearse(cl, d):
     before = state(db)
     chk("0c on a database 0a never ran on refuses", refused(cl.run(db, file=c)) and state(db) == before)
     chk("0r on a database 0a never ran on is a no-op", cl.run(db, file=r)[0] == 0 and state(db) == before)
+
+    # ── F. row security: a count taken under it is not the table's count. ────────────────────────
+    print("F. row security: 0c refuses to count as a role that cannot see every row")
+    cl.ok("postgres", "CREATE ROLE ppf_owner LOGIN NOSUPERUSER NOBYPASSRLS; CREATE ROLE ppf_other LOGIN NOSUPERUSER NOBYPASSRLS")
+    rls = lambda db: cl.ok(db, RLS_ON)  # noqa: E731
+    seen = lambda db, user: cl.run(db, sql="SELECT row_security_active('public.event_log'::regclass), (%s)" % COUNT, user=user)[1]  # noqa: E731
+    gate = "pre_row_security_does_not_hide_rows_from_this_role"
+    db = cl.new("f_rls", DIRTY, open(a).read())
+    rls(db)
+    before = state(db)
+    chk("control: enabled, not forced. The owner reads every row (3 in the way); another role reads none of them",
+        (seen(db, "ppf_owner"), seen(db, "ppf_other"), seen(db, "rehearse")) == ("f|3", "t|0", "f|3"),
+        str((seen(db, "ppf_owner"), seen(db, "ppf_other"), seen(db, "rehearse"))))
+    res = cl.run(db, file=c, user="ppf_owner")
+    chk("the owner is not stopped by the row-security check: 0c reaches the count and refuses with 3",
+        refused(res) and "3 event_log row(s)" in res[2] and "row security" not in res[2] and state(db) == before, res[2])
+    res = cl.run(db, file=c, user="ppf_other")
+    chk("a role under row security, whose own count is 0: 0c refuses on row security, names the role, changes nothing",
+        refused(res) and 'row security is active on event_log or plants for role "ppf_other"' in res[2]
+        and state(db) == before, res[2])
+    chk("the pre gate is PASS for the owner and FAIL for that role",
+        (cl.gates(db, g, "staging", "pre", user="ppf_owner")[gate],
+         cl.gates(db, g, "staging", "pre", user="ppf_other")[gate]) == ("PASS", "FAIL"))
+    chk("... while that role's sweep says PASS with three rows in the way: the blind spot the pre gate is for",
+        list(cl.gates(db, g, "staging", "sweep", user="ppf_other").values()) == ["PASS"]
+        and list(cl.gates(db, g, "staging", "sweep", user="ppf_owner").values()) == ["FAIL"])
+    cl.ok(db, "ALTER TABLE public.event_log FORCE ROW LEVEL SECURITY; ALTER TABLE public.plants FORCE ROW LEVEL SECURITY")
+    chk("control: FORCED. Now the owner's count is 0 too, with the same three rows in the table",
+        (seen(db, "ppf_owner"), seen(db, "rehearse")) == ("t|0", "f|3"), str((seen(db, "ppf_owner"), seen(db, "rehearse"))))
+    res = cl.run(db, file=c, user="ppf_owner")
+    chk("the owner under FORCE: 0c refuses on row security instead of validating on a count of 0; nothing changed",
+        refused(res) and 'row security is active on event_log or plants for role "ppf_owner"' in res[2]
+        and state(db) == before and VALIDATED not in stamps(db), res[2])
+    chk("the pre gate is FAIL for the owner under FORCE and PASS for a superuser",
+        (cl.gates(db, g, "staging", "pre", user="ppf_owner")[gate], cl.gates(db, g, "staging", "pre")[gate]) == ("FAIL", "PASS"))
+    res = cl.run(db, file=c)
+    chk("a superuser on that same database is not under row security: 0c counts all 3 and refuses on the count",
+        refused(res) and "3 event_log row(s)" in res[2] and state(db) == before, res[2])
+    cl.ok(db, "ALTER TABLE public.plants NO FORCE ROW LEVEL SECURITY")
+    res = cl.run(db, file=c, user="ppf_owner")
+    chk("FORCE on event_log alone is enough to refuse", refused(res) and "row security is active" in res[2], res[2])
+    cl.ok(db, "ALTER TABLE public.event_log NO FORCE ROW LEVEL SECURITY; ALTER TABLE public.plants FORCE ROW LEVEL SECURITY")
+    res = cl.run(db, file=c, user="ppf_owner")
+    chk("... and so is FORCE on plants alone", refused(res) and "row security is active" in res[2], res[2])
+    db = cl.new("f_rls_clean", open(a).read())
+    rls(db)
+    res = cl.run(db, file=c, user="ppf_owner")
+    chk("nothing in the way, row security enabled, run by the owner: 0c validates as before",
+        res[0] == 0 and defs(db)["event_log_plant_project_fk"][4] == "t" and VALIDATED in stamps(db), res[2])
+    db = cl.new("f_rls_prodlike", PROD_0821, open(a).read())
+    rls(db)
+    cl.ok(db, "ALTER TABLE public.event_log FORCE ROW LEVEL SECURITY")
+    res = cl.run(db, file=c, user="ppf_owner")
+    chk("already validated (prod): no count is taken, so the check is not asked and 0c still writes its stamp",
+        res[0] == 0 and "No VALIDATE issued" in res[2] and VALIDATED in stamps(db), res[2])
+
+    # ── G. KNOWN, not introduced here: BUG-PLANTPAIRCASCADENULLSHISTORY-001. ─────────────────────
+    # The documented way to empty a container (migrations/v4-plantrehomefk-001/README.md) is
+    # UPDATE plants SET project_id = NULL. With the pair, ON UPDATE CASCADE carries that NULL onto the
+    # planting's events, and the container delete event_log_project_id_fkey used to refuse goes through.
+    print("G. known behaviour (BUG-PLANTPAIRCASCADENULLSHISTORY-001): the re-home also strips the events' project")
+    rehome = f"UPDATE public.plants SET project_id = NULL WHERE project_id = '{Y}'"
+    drop_y = f"DELETE FROM public.plant_projects WHERE id = '{Y}'"
+    events = f"SELECT count(*) || ' event(s), project ' || coalesce(max(project_id::text), 'NULL') FROM public.event_log WHERE plant_id = '{P2}'"
+    db = cl.new("g_nopair")
+    cl.ok(db, rehome)
+    code, _, err = cl.run(db, sql=drop_y)
+    chk("without the pair (staging today): the re-homed planting's event keeps its project, and the container delete is refused by the history-axis RESTRICT",
+        cl.ok(db, events) == f"1 event(s), project {Y}" and code != 0 and "event_log_project_id_fkey" in err, err)
+    for db, how in (cl.new("g_prodlike", PROD_0821), "prod since 2026-08-21"), (cl.new("g_staging", open(a).read()), "staging from 0a, NOT VALID included"):
+        cl.ok(db, rehome)
+        after_rehome = cl.ok(db, events)
+        code, _, err = cl.run(db, sql=drop_y)
+        chk(f"with the pair ({how}): the same re-home sets the event's project to NULL, and the container delete then succeeds",
+            after_rehome == "1 event(s), project NULL" and code == 0
+            and cl.ok(db, f"SELECT count(*) FROM public.plant_projects WHERE id = '{Y}'") == "0"
+            and cl.ok(db, events) == "1 event(s), project NULL", f"{after_rehome} / {err}")
     return chk
 
 

@@ -40,8 +40,9 @@
 --   After a create, the object is read back and compared with the same strings, inside the transaction:
 --   this file cannot commit a constraint the catalog renders differently from prod's.
 --
---   PROD: both lookups find prod's definition. No ALTER TABLE runs and no table lock is taken; the one
---     write is the schema_version row at the end.
+--   PROD: both lookups find prod's definition. No ALTER TABLE runs and no DDL lock is taken; the one
+--     write is the schema_version row at the end. The only relation lock on either table is a momentary
+--     ACCESS SHARE on plants from pg_get_indexdef (the lock of any SELECT), released before commit.
 --   STAGING (first run): both are created. The foreign key is added NOT VALID.
 --   A SECOND RUN anywhere: finds what the first run left and writes nothing (the stamp is ON CONFLICT DO
 --     NOTHING and does not move applied_at).
