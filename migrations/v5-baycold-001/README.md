@@ -93,9 +93,10 @@ fetched 2026-10-09) carries a `lambda/daily-plan/` and a `scripts/gate_runner.py
 base, dev `526eb195`. The build actually running on prod was not read. Both readers are older than this: they are
 what `v5-frostband-001` and `v5-coldshadow-002` relied on in September.
 
-It does depend on one setting: `CARE_CADENCE_SCOPES_ENABLED` must be true, which is prod's value in
-`scripts/lambda-config-expected.json`. With it off the engine does not use the database profile, and bay has no
-bundled entry to fall back on, so it would be silent again.
+It does depend on one setting: `CARE_CADENCE_SCOPES_ENABLED` must be true. With it off the engine does not use the
+database profile, and bay has no bundled entry to fall back on, so it would be silent again. True is what
+`scripts/lambda-config-expected.json` expects on prod. The live Lambda setting was not read; the 2026-09-24 plan row
+shows the bay on this profile's 2-day watering interval, which only happens with the setting on.
 
 ## Apply
 

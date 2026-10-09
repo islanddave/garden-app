@@ -78,9 +78,10 @@
 -- migration's base, dev 526eb195. The build actually running was not read. Both readers are older than
 -- that: v5-frostband-001 (2026-09-18) was written against the email promotion and v5-coldshadow-002
 -- (2026-09-19, prod then on v4.139.0) against the card path.
--- It does depend on CARE_CADENCE_SCOPES_ENABLED being true (prod's value in
--- scripts/lambda-config-expected.json): with that flag off the engine does not adopt the database
--- profile, and bay has no bundled entry beneath it.
+-- It does depend on CARE_CADENCE_SCOPES_ENABLED being true: with that flag off the engine does not adopt
+-- the database profile, and bay has no bundled entry beneath it. True is what
+-- scripts/lambda-config-expected.json expects on prod; the live Lambda setting was not read (the
+-- 2026-09-24 plan row shows the bay on this profile's 2-day interval, which only happens with it on).
 --
 -- SAFETY: idempotent and non-clobbering. On a database without this row the UPDATE matches zero rows
 -- and only the stamp is written, the safe direction. STAGING WAS NOT READ: if the staging branch
