@@ -120,4 +120,5 @@ const waitLine = { display: 'flex', alignItems: 'center', gap: T.space.sm, minHe
 const textLink = { flexShrink: 0, minHeight: T.buttonMinHeight, minWidth: T.buttonMinHeight, padding: '0 10px', background: 'none', border: 'none', color: P.green, fontWeight: 600, fontSize: T.type.sm, cursor: 'pointer', fontFamily: 'inherit' }
 // One card around the rows (SpotRow's); the first row's own top hairline is tucked under its border.
 const listCard = { background: P.white, border: '1px solid ' + P.border, borderRadius: T.radiusCard, overflow: 'clip' }
-const coveredStyle = { margin: 0, fontSize: T.type.sm, color: P.mid }
+// The 4px above and below are the rain note's this line replaces (the open card's height floor is recorded over it).
+const coveredStyle = { margin: 0, padding: '4px 0', fontSize: T.type.sm, color: P.mid }
