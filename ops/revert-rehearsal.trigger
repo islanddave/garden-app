@@ -6,4 +6,4 @@
 # PREREVERT_VERSION omitted on purpose -> harness defaults to a run-unique v0.0.<run_number>.
 MODE=abort
 TARGET_VERSION=v0.0.0
-# fire: abort-path rehearsal (run4)
+# fire: abort-path rehearsal (run5, 2026-10-09; Dave first-hand: "revert rehearsal approved")
