@@ -168,10 +168,26 @@ item, in order and each over the other's own place in the file; what Node ran of
 report. That check is a filter, not a proof. Of lists made wrong in the thirteen real pairs it refuses every item
 exchanged for one elsewhere (8,652; the order alone, which was the rule before OPS-COVPROVIDERMAPADOPT-001, took
 8,164 of them), 83.5% of one-item shifts in the case kindest to them (1.3% before; 87.2% against 2.0% by the seeded
-script the earlier figures came from) and all but five of 8,446 two-item shifts. It still takes an item exchanged
-for another that lies over its own place, and one item under its neighbour's number where one of the two lies
-inside the other: the comment above `whyNotSameItems` says why each cannot be closed without refusing correct
-files, and which two tighter ties were measured and not taken. Two: any hit count below zero. That
+script the earlier figures came from) and all but five of 8,446 two-item shifts. Those one-item shifts are an upper
+bound on what is open, not the exposure: 1,026 of the 1,405 still taken are statement lists that hold one extent
+twice, which the converter never emits. It still takes an item exchanged for another that lies over its own place
+(one that starts after the start of the item before it and before its own end, so before the item as well as
+inside it), and one item under its neighbour's number where one of the two lies inside the other: the comment above
+`whyNotSameItems` says why each cannot be closed without refusing correct files, and which two tighter ties were
+measured and not taken.
+
+It also refuses two kinds of correct file, loudly (the ERROR line and exit 1, never a wrong count), and no file
+loaded both ways is of either kind today. New with OPS-COVPROVIDERMAPADOPT-001: an ES module with an item that ends
+in a call of an imported binding (`const { a } = useThing()`), which vite's text ends a column short. The places
+were measured on CommonJS modules only. 34 files under `coverage.include` have the shape (`src/hooks` 21,
+`src/components` 9, `src/lib` 4) and none is loaded both ways: `lambda/daily-plan` is the only CommonJS directory,
+and the first test to load one of the 34 with `createRequire` reds the unit step. The test file pins that refusal
+as a known limit. As before that change: a class with a valued field after a method or with a function-valued
+field before another valued one, and a destructuring or parameter default that is a function
+(`{ now = () => Date.now() } = ctx`, as in `lambda/harvests/season-stats.js:150`). The comment above
+`whyNotSameItems` has both under WHAT IT REFUSES THAT IS RIGHT.
+
+Two: any hit count below zero. That
 second check is a tripwire for one symptom of a gross misreading (ranges read against the wrong text, or a
 wrapper's length off). It does not show that a conversion is right: in review, every Node script read one character
 off gave 16 more covered items on 59 test files and no negative count. So never read "0 negative counts" as proof
@@ -184,6 +200,8 @@ calls the cases make.
 
 When that ERROR appears on a commit that did not touch the module: the file it names has changed in a way the two
 conversions disagree on, or vite, `@vitejs/plugin-react` or Node has. Read the reason in the line, then the header.
+If the item it names is one of the two correct kinds above, the file is right and the rule is short: that is the
+rule owner's decision, not a pair that has come apart.
 To take the provider out, revert the whole commit that brought it in. The A3 exit tooling landed in the commit after
 it and names the module (`a3-exit.config.mjs`, and a test that holds that config to it), so revert that commit
 first: the two revert cleanly in that order, and the exit tooling can land again with `provider: 'v8'`. Putting
@@ -212,14 +230,18 @@ acceptance has a fifth part, made by command and not by eye: every `lambda/**` r
 equals the same row of ci-next's `unit-utc-cov` for the same head SHA. Take each job's raw log, where every line
 starts with its timestamp (`gh api repos/OWNER/REPO/actions/jobs/JOB_ID/logs > LOG`; `gh run view --log` puts the
 job and step names first and the command below then prints nothing), cut the rows out of each, and `diff` the two
-outputs. No line may differ:
+outputs. No line may differ (bash, zsh or ksh: `$'…'` is not POSIX, and under `dash` the command prints nothing and
+exits 1):
 
-```sh
+```bash
 rows() { sed -E $'s/^[0-9T:.Z-]+ //; s/\x1b\\[[0-9;]*m//g' "$1" | awk '/^-+\|/{p=0} /^ [^ ]/{p=($1 ~ /^lambda/)} p'; }
 rows BUILD-AND-TEST.log > a.rows && rows UNIT-UTC-COV.log > b.rows && test -s a.rows && diff a.rows b.rows && echo LAMBDA-ROWS-SAME
 ```
 
-`test -s` is there because two empty outputs are equal too. Reference, ci-next run 37843185895 on `20097a1b`: 36
+`test -s` is there because two empty outputs are equal too. No rows from a log (exit 1 in silence, or every row of
+the other printed as a deletion) means that job's unit step wrote no table, which is what a failed test leaves: no
+reading, not a difference, so run the job again. To find the table in a raw log search for `Coverage report from`;
+colour codes sit between that and `v8`. Reference, ci-next run 37843185895 on `20097a1b`: 36
 rows; `lambda/daily-plan` 91.93, 88.76, 90.51, 92.81; `engine.js` 98.76, 95.21, 100, 100; `handler.js` 97.53, 94.97,
 100, 99.12; `rainLog.js` 92.72, 91.37, 87.5, 92.68. `All files` is not among the rows and may differ in the second
 decimal between two runs of one tree (`src/` files whose tests move with timing). The same holds for the first

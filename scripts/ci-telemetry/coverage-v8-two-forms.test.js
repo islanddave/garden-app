@@ -332,6 +332,13 @@ describe('taking the vite conversion\'s item maps', () => {
     ['every statement in its place, and the file\'s own list has one with no end',
       {}, 'statementMap', [[1, 0], [2, 0, null, null], [3, 0]], lines(1, 2, 3),
       /statementMap item 1 ends at null:null read from the file and at 2:9 read from vite's text, and one of the two is no place in a file/],
+    // A known limit the other way: this list is RIGHT and is refused. An ES module's statement that ends in a call
+    // of an imported binding (`const { a } = useThing()`), which vitest rewrites in vite's text, so that the map
+    // ends it at the call's closing bracket, a column short. The order alone took it. No file loaded both ways has
+    // one (34 files under coverage.include do). Held here so that taking it is a deliberate edit of the rule.
+    ['(a known limit: a correct ES module, refused) a statement ended at the closing bracket of the call it ends in, a column short',
+      {}, 'statementMap', [[6, 0], [7, 16, 7, EOL], [8, 2, 8, EOL]], [[6, 0], [7, 16, 7, 25], [8, 2, 8, EOL]],
+      /statementMap item 1 is at 7:16 to 7:Infinity read from the file and ends at 7:25 read from vite's text, which is neither on that item's last line at or past its end nor the end of an earlier line of it/],
   ])('does not, and says which item, when vite\'s list has %s', (_, shape, map, inFile, inVite, why) => {
     const node = converted({ ...shape, starts: { [map]: inFile } })
     const kept = node[map]
@@ -345,7 +352,10 @@ describe('taking the vite conversion\'s item maps', () => {
   // What the rule cannot tell, held here so that the limit is in a test and not only in a comment. Each is a list
   // with one item that is not the file's, and each is taken: the other item lies over the place the lost one has
   // in the file, which is all that vite's place for the lost one itself is known to do (the rows of `does, with`).
-  // Node's hits on the lost item are then counted on the other. The order alone took these too.
+  // Node's hits on the lost item are then counted on the other. The order alone took these too. The third holds one
+  // extent twice, which the converter never lists (it keys a statement by its extent): it pins the rule, not a list
+  // a real run can give. Not pinned here: the outer item standing for the inner, and an exchange for an item that
+  // starts before the lost one (the comment above `whyNotSameItems` has both).
   it.each([
     ['its second statement exchanged for one that starts inside it and ends past it',
       'statementMap', [[11, 0], [12, 0, 12, 9], [13, 0]], [[11, 0], [12, 5, 12, EOL], [13, 0]]],

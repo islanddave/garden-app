@@ -183,12 +183,17 @@ const itemMapsOf = ({ statementMap, fnMap, branchMap, b }) => ({ statementMap, f
 //   - every function with its opposite number's name, every branch with its opposite number's kind and number of
 //     arms;
 //   - every item in order, and over its opposite number's own place in the file.
+// Two of those hold less than they read. A function without a name is named `(anonymous_N)` by its number (105 of
+// the 278 real functions), so for those the name check cannot fail. And a branch's arms are counted, their places
+// never read: a branch whose arms are elsewhere, or exchanged, is taken. Neither can differ while both lists are one
+// walk of one syntax tree.
 // THE PLACES. Vite's place for an item is not the file's. The converter reads a start at the source map's entry at
 // or before the item's first character (when its line of vite's text has none there, at the next) and an end on
 // the line of the entry at or before its last character, at the next entry on that line or at the line's end; the
 // reprint keeps some brackets, which have no entry, and drops others. Measured on the thirteen files of
 // lambda/daily-plan converted both ways (4,298 items), and on a scratch module of shapes they do not have, put
-// through the same run (152 items, not in the repo):
+// through the same run (152 items, not in the repo). All of them are CommonJS modules, and the three lines below are
+// measured on that kind only; what an ES module does to an end is under WHAT IT REFUSES THAT IS RIGHT:
 //   starts  4,136 at the file's. 83 up to 21 columns early and four a line early: an item behind a bracket the
 //           reprint kept starts at the token before it (the name in `const x =\n  (value)`, handler.js:20-21; three
 //           lines early with blank lines in between). 75 one column late, behind a bracket the reprint dropped; a
@@ -221,20 +226,49 @@ const itemMapsOf = ({ statementMap, fnMap, branchMap, b }) => ({ statementMap, f
 //     starts the map sends to one place (in any order). PLACE refuses the first, ORDER the second.
 // WHAT IT STILL TAKES, each because the tie that closes it refuses correct lists (the tests name them `a known
 // limit`):
-//   - an item exchanged for one over its own place: one that starts inside it and ends at or past its end (so vite
-//     reads 75 real items, in eight of the thirteen files), or, for an item of several lines, one that ends with an
-//     earlier line of it (eight real items, handler.js);
+//   - an item exchanged for one over its own place: one that starts after the start of the item before it and
+//     before its own end, and ends at or past its end. That is a start inside it (so vite reads 75 real items, in
+//     eight of the thirteen files) and, the wider case, a start BEFORE it at any distance (so vite reads the early
+//     starts above): of 4,260 such exchanges made in the thirteen lists, each ending at the line end of the lost
+//     item's last line, 4,179 are taken, as many as by the order alone. No distance closes it, a start being read
+//     at the token before a kept bracket any number of comment lines back. Or, for an item of several lines, one
+//     that ends with an earlier line of it (eight real items, handler.js);
 //   - one item under its neighbour's number where one of the two lies inside the other and ends with it, on its
 //     last line or with an earlier line of it: the 1,405. In 745 the outer one stands for the inner, which is how
 //     vite reads 110 real pairs, at one start (nine of the thirteen files); in 660 the inner stands for the outer,
-//     which is a start late inside its item, as above.
+//     which is a start late inside its item, as above. The 1,405 is an upper bound, not the exposure: 1,026 of
+//     them are statement lists that hold one extent twice, and the converter keys a statement by its extent and
+//     lists each once (no extent is twice among the 4,298 real items, in either form). With a gained statement that
+//     is not a double (the same start, another end) 105 of 1,324 are taken; held to that for functions and branches
+//     too, which the converter keys by other places, so there it is an assumption, 189 of 8,520.
 // Two tighter ties were measured and NOT taken. Neither refuses any of the thirteen files; both refuse correct
 // lists of the scratch module. "A start at most one column late" refuses the statement `(() => 2)()` and a dropped
-// bracket with a line break after it (it would leave 757 of the 1,405). "A start shared only by two items the file
-// starts on one line" refuses an `if` whose test is on the next line.
-// And ORDER refuses one correct shape, as it always did: a class with a field that has a value, after a method. The
-// converter lists that value before the methods' statements in both forms, so the file's own list is not in order
-// there. No file converted both ways has one.
+// bracket with a line break after it (it would leave 757 of the 1,405, and 98 of the 189). "A start shared only by
+// two items the file starts on one line" refuses an `if` whose test is on the next line.
+// WHAT IT REFUSES THAT IS RIGHT. Both are loud, the ERROR line and exit 1 and never a wrong count, and neither is in
+// a file converted both ways today. When the ERROR names one of these the file is right and the rule is short: it
+// is not two forms that have come apart, and whether the rule should take the shape is its owner's decision.
+//   - PLACE's end, new with OPS-COVPROVIDERMAPADOPT-001 (the order alone took it, and merged it right): an ES
+//     module with an item that ends in a call of an imported binding, `const { a } = useThing()`. Vitest rewrites
+//     that call in vite's text and the map then ends the item AT its closing bracket, a column short of its end on
+//     its last line: `statementMap item 0 is at 7:16 to 7:Infinity read from the file and ends at 7:25 read from
+//     vite's text`, in a real run of a scratch ES module imported through vite and loaded by Node with
+//     `createRequire` (Node 26.4.0 and 20.19.0). Of the 290 plain-JS files under coverage.include, read both ways
+//     by the stock provider's own methods, 34 have the shape (51 items; src/hooks 21, src/components 9, src/lib 4;
+//     all ES modules, src/lib/api.js:351 for one). None is loaded both ways: lambda/daily-plan is the only CommonJS
+//     directory and the six test files that use `createRequire` load its modules only. The first test to load one
+//     of the 34 that way reds the unit step. The tests pin the refusal (`a known limit`), so that taking the shape
+//     is a deliberate edit;
+//   - ORDER, as it always did, before that change and after it. Not one shape but at least three, each seen in a
+//     real run of a CommonJS scratch module: (a) a class with a field that has a value, after a method, a plain
+//     `count = 0` and a `static X = 7` included (the converter lists that value before the methods' statements in
+//     both forms, so the file's own list is not in order there); (b) a class with no method, a field whose value
+//     is a function with a body and then another field with a value; (c) a destructuring declaration or a
+//     parameter pattern with a default that is a function, `const { sql, query = {}, now = () => Date.now() } =
+//     ctx`. (c) is this repo's own idiom: lambda/harvests/season-stats.js:150, src/hooks/useAppUpdate.js:40,
+//     src/lib/registerSW.js:39, src/lib/voiceResults.js:46. None of the four is converted both ways, and none of
+//     the sixteen files of lambda/daily-plan has (a), (b) or (c); the first of them to take an injectable clock
+//     that way reds the unit step.
 export function whyNotSameItems(node, vite) {
   for (const map of ITEM_MAPS) {
     const [inFile, inVite] = [Object.keys(node[map]), Object.keys(vite[map])]
