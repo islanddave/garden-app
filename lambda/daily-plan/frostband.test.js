@@ -15,6 +15,11 @@
 // migration's own gates do that (migrations/v5-frostband-001/gates.yml). The last describe block binds
 // this file to that migration, so the fixtures cannot drift from what it writes.
 //
+// V5-BAYCOLD-001 (2026-10-09) adds a tenth planting, Sweet Bay Laurel, in its own three describe blocks at
+// the end of this file: an UNCERTAIN slug (`bay`, unbanded on purpose) whose only frost signal is the cold
+// block migrations/v5-baycold-001 writes onto its cultivar care profile. Its fixture value is parsed out of
+// that migration's 0a too. The nine above are untouched by it.
+//
 // MUTATION LOG — 2026-09-18, lane-frostband-20260918. Each applied to ONE file, this file run, RED
 // observed, file restored byte-for-byte (sha256 checked). Baseline 47 green.
 //   M1  pineapple_sage dropped from the tender band                        -> 2 RED (band pin, migration binding)
@@ -294,5 +299,250 @@ describe('the migration and the code agree (migrations/v5-frostband-001)', () =>
   it("the cold block it writes is the bundled S. elegans value, and it is tender", () => {
     expect(PS_COLD_AFTER).toEqual(cad.by_genus_fallback.Salvia.cold);
     expect(PS_COLD_AFTER.tender).toBe(true);
+  });
+});
+
+// ── V5-BAYCOLD-001 — Sweet Bay Laurel (Dave, 2026-10-09: warn it, protect below 32F) ─────────────────────
+// `bay` is unbanded ON PURPOSE (frostClass.UNCERTAIN_SLUGS) and has no threshold on any source surface: no
+// crop-type entry, no bundled variety or genus entry. So before migrations/v5-baycold-001 the email counted
+// the planting inside "unclassified" without naming it, and the card never fired. The migration adds one
+// key, `cold`, to the cultivar care profile the engine adopts. No code moves, and `bay` stays uncertain.
+//
+// Fixture: the planting shape handler.js selects, as read on prod 2026-10-09 — potted, in the Trough (open
+// sky, unheated), cadence_scopes ['cultivar'], no brought_inside event. The profile keys are the two the
+// engine reads here (crop "bay" and the 2-day container interval, both on the 09-24 plan row in
+// tests/harness/_todaymeasure/dailyplan.dave.json). Genus was not read and is left null; nothing keys on
+// it for bay (the instrument check shows 'Laurus' resolves the same).
+const BAY_MIGRATION = join(here, '..', '..', 'migrations', 'v5-baycold-001');
+const BAY_SQL_0A = stripSqlComments(readFileSync(join(BAY_MIGRATION, '0a-data.sql'), 'utf8'));
+const BAY_SQL_0R = stripSqlComments(readFileSync(join(BAY_MIGRATION, '0r-rollback.sql'), 'utf8'));
+const BAY_GATES = readFileSync(join(BAY_MIGRATION, 'gates.yml'), 'utf8');
+const BAY_STAMP = '5.0.0-baycold-001';
+const BAY_ROW = 'd4c8c7e3-320c-4019-8827-b39894cf02b8';        // care_profile row
+const BAY_CULTIVAR = 'e890276d-43e6-41cd-9dfe-1fa8e05fcfc1';   // plant_varieties "Sweet Bay"
+const BAY_PLANTING = '0bf82c76-b7c2-4396-bc17-9f95f5138806';   // plants "Sweet Bay Laurel"
+const BAY_MD5_BEFORE = 'ae1f9608920cf706635dc726cdd44fe8';     // md5(profile::text), prod 2026-10-09
+const BAY_DECIDED = { tender: true, protect_below_F: 32 };     // the decision: there is no bundled entry to copy
+
+// Every care_profile UPDATE in 0a, in the coldcards.test.js shape. The id + (scope, scope_id) key, the
+// absent-key guard and the create_missing flag are part of the pattern: an UPDATE that loses any of them no
+// longer matches, the fixture below loses its cold block, and the binding and card tests go red together.
+const BAY_UPDATES = [...BAY_SQL_0A.matchAll(
+  /UPDATE public\.care_profile\s+SET profile = jsonb_set\(profile, '\{cold\}', '(\{[^']*\})'::jsonb, (true|false)\),\s*updated_at = now\(\)\s+WHERE id = '([0-9a-f-]{36})'\s+AND scope = 'cultivar' AND scope_id = '([0-9a-f-]{36})'\s+AND NOT \(profile \? 'cold'\);/g)]
+  .map((m) => ({ row: m[3], cultivar: m[4], cold: JSON.parse(m[1]), createMissing: m[2] }));
+// The cold block the fixture carries is the one 0a writes, parsed, never retyped.
+const BAY_COLD = BAY_UPDATES.length === 1 ? BAY_UPDATES[0].cold : undefined;
+
+const TROUGH = { frost_covered_resolved: false, heated_resolved: false };   // open sky, unheated
+const bayProfile = (cold) => ({ crop: 'bay', water_interval_days_container: 2, ...(cold ? { cold } : {}) });
+const BAY_BEFORE = pot(BAY_PLANTING, 'Sweet Bay Laurel', 'Sweet Bay', 'bay', null, TROUGH, bayProfile(null));
+const BAY = pot(BAY_PLANTING, 'Sweet Bay Laurel', 'Sweet Bay', 'bay', null, TROUGH, bayProfile(BAY_COLD));
+const BAY_NIGHTS = LOWS.filter((low) => low <= 32);   // [32, 31, 28, 20, 10]
+
+const BAY_GATE_NAMES = [...BAY_GATES.matchAll(/- name: (\S+)\n/g)].map((m) => m[1]);
+// One gate's text, from its `- name:` line to the next gate's.
+const bayGate = (name) => {
+  const i = BAY_GATES.indexOf(`- name: ${name}\n`);
+  if (i < 0) throw new Error(`gate ${name} not found`);
+  const j = BAY_GATES.indexOf('- name: ', i + 1);
+  return BAY_GATES.slice(i, j < 0 ? undefined : j);
+};
+
+describe('V5-BAYCOLD-001 EMAIL — the frost alert names the bay, on the nights it already fired', () => {
+  it('`bay` stays an UNCERTAIN slug: unbanded, no crop-type threshold, unknown without a cadence signal', () => {
+    expect(UNCERTAIN_SLUGS).toContain('bay');
+    expect(BAND_BY_SLUG.bay).toBeUndefined();
+    expect(fc.coldProfileForSlug('bay')).toBeNull();
+    expect(frostClassForSlug('bay')).toMatchObject({ class: 'unknown', countedAs: 'tender', source: 'unmapped' });
+  });
+
+  it('the adopted profile promotes it: class tender, source cadence, named "bays"', () => {
+    expect(cadenceTenderFor(BAY)).toBe(true);
+    expect(frostClassForSlug(BAY.crop_type_slug, { cadenceTender: cadenceTenderFor(BAY) }))
+      .toMatchObject({ slug: 'bay', class: 'tender', countedAs: 'tender', source: 'cadence', label: 'bays' });
+    const s = exposureOf([BAY]);
+    expect({ atRisk: s.atRisk, tender: s.tender, unknown: s.unknown }).toEqual({ atRisk: 1, tender: 1, unknown: 0 });
+    expect(s.byCropType.map((g) => [g.slug, g.label, g.count])).toEqual([['bay', 'bays', 1]]);
+    expect(s.tenderPlantings.map((x) => [x.name, x.class, x.source])).toEqual([['Sweet Bay Laurel', 'tender', 'cadence']]);
+    expect(s.unknownSlugs).toEqual([]);
+  });
+
+  it('BEFORE the apply (no `cold` key): counted at the tender trips, inside "unclassified", never named', () => {
+    expect(cadenceTenderFor(BAY_BEFORE)).toBe(false);
+    const s = exposureOf([BAY_BEFORE]);
+    expect({ atRisk: s.atRisk, tender: s.tender, unknown: s.unknown }).toEqual({ atRisk: 1, tender: 0, unknown: 1 });
+    expect(s.byCropType.map((g) => [g.slug, g.label, g.count])).toEqual([[null, 'unclassified', 1]]);
+    expect(s.unknownSlugs).toEqual(['bay']);
+  });
+
+  it('the trip points do not move: unclassified and cadence-promoted both sit on the tender baseline (40 / 38 / 33)', () => {
+    const before = exposureOf([BAY_BEFORE]).byCropType[0];
+    const after = exposureOf([BAY]).byCropType[0];
+    expect(after.thresholds).toEqual(before.thresholds);
+    expect(after.thresholds).toEqual(BAND_THRESHOLDS.tender);
+    expect(after.band).toBe(before.band);
+  });
+
+  it.each(LOWS)('a %i°F night: the alert fires or stays silent exactly as before, and only the wording names the bay', (low) => {
+    const before = frostEval({ tonightLow: low, exposure: exposureOf([BAY_BEFORE]) }, {});
+    const after = frostEval({ tonightLow: low, exposure: exposureOf([BAY]) }, {});
+    expect({ alert: after.alert, tier: after.tier, level: after.level })
+      .toEqual({ alert: before.alert, tier: before.tier, level: before.level });
+    expect(after.alert).toBe(low <= BAND_THRESHOLDS.tender.IMMINENT_LOW_F);
+    if (!after.alert) return;
+    expect(after.message).toContain('bays (1)');
+    expect(after.message).not.toContain('unclassified');
+    expect(before.message).toContain('1 unclassified (treated as tender)');
+    expect(before.message).not.toMatch(/\bbays?\b/i);
+  });
+
+  it('apply-day edge: on a night ALREADY alerted with the bay inside "unclassified", the newly named crop sends once more', () => {
+    // frostEval.escalatesBeyond reads a crop no earlier send tripped as worse, so an apply that lands between
+    // two evaluations of one alerted night costs one extra email naming the bay, and then it is quiet again.
+    const sent = frostEval({ tonightLow: 36, exposure: exposureOf([BAY_BEFORE]) }, {});
+    const now = frostEval({ tonightLow: 36, exposure: exposureOf([BAY]) }, {});
+    expect(sent.cropLevels).toEqual({ unclassified: 'protect' });
+    expect(now.cropLevels).toEqual({ bay: 'protect' });
+    expect(now.dedupKey).not.toBe(sent.dedupKey);
+    const stored = (d) => ({ tier: d.tier, level: d.level, crops: d.cropLevels });
+    expect(fe.escalatesBeyond([stored(sent)], { level: now.level, crops: now.cropLevels })).toBe(true);
+    expect(fe.escalatesBeyond([stored(sent), stored(now)], { level: now.level, crops: now.cropLevels })).toBe(false);
+  });
+});
+
+describe('V5-BAYCOLD-001 CARD — a bring-in card at 32°F and below, none at 33°F', () => {
+  it('generatePlan puts the card on tasks.cold at 32°F, and not one degree above', () => {
+    expect(card(BAY, 33)).toBeNull();
+    expect(card(BAY, 32)).toMatchObject({ name: 'Sweet Bay Laurel', level: 'protect' });
+    expect(card(BAY, 32).text).toContain('≤ 32°F');
+  });
+
+  it('carded on exactly the nights at or below 32°F', () => {
+    expect(carded(BAY)).toEqual(BAY_NIGHTS);
+    expect(BAY_NIGHTS).toEqual([32, 31, 28, 20, 10]);
+  });
+
+  it('coldFor itself: {level: protect} at 32°F, null at 33°F', () => {
+    expect(engine.coldFor(BAY, cad, 32, true, null)).toMatchObject({ level: 'protect' });
+    expect(engine.coldFor(BAY, cad, 33, true, null)).toBeNull();
+  });
+
+  it('BEFORE the apply (no `cold` key): never carded, the defect', () => {
+    expect(carded(BAY_BEFORE)).toEqual([]);
+  });
+
+  it('logged as brought inside: no card at any temperature', () => {
+    expect(carded({ ...BAY, last_brought_inside: '2026-09-18' })).toEqual([]);
+  });
+
+  it('instrument check: the fixture takes the ADOPTED DATABASE PROFILE, and nothing bundled stands behind it', () => {
+    expect(resolveCadence(BAY, cad)._via).toBe('db');
+    expect(resolveCadence(BAY_BEFORE, cad)._via).toBe('db');
+    for (const key of ['Sweet Bay', 'Sweet Bay Laurel']) expect(cad.by_variety[key], key).toBeUndefined();
+    expect(cad.by_genus_fallback.Laurus).toBeUndefined();
+    expect(cad.default.cold).toBeUndefined();
+    // So with CARE_CADENCE_SCOPES_ENABLED off (the handler nulls cadence_scopes) the engine falls to the
+    // bundled default and the bay is silent again: this fix lives in the database profile alone.
+    for (const genus of [null, 'Laurus']) {
+      expect(carded({ ...BAY, genus }), String(genus)).toEqual(BAY_NIGHTS);
+      const flagOff = { ...BAY, genus, cadence_scopes: null };
+      expect(resolveCadence(flagOff, cad)._via, String(genus)).toBe('default');
+      expect(carded(flagOff), String(genus)).toEqual([]);
+    }
+  });
+});
+
+describe('the migration writes the decided value, and only that key, on the one row (migrations/v5-baycold-001)', () => {
+  it('0a sets `cold` once: by row id AND (scope, scope_id), guarded on the key being absent, create_missing true', () => {
+    expect(BAY_UPDATES).toEqual([{ row: BAY_ROW, cultivar: BAY_CULTIVAR, cold: BAY_DECIDED, createMissing: 'true' }]);
+  });
+
+  it('the value is the decided 32°F, tender: pinned directly, because no bundled entry exists to copy it from', () => {
+    expect(BAY_COLD).toEqual({ tender: true, protect_below_F: 32 });
+    expect(BAY.db_cadence.cold).toBe(BAY_COLD);   // the card fixture above carries what 0a writes
+  });
+
+  it('0a writes nothing else: one UPDATE, one single-key jsonb_set, the stamp, in one transaction', () => {
+    expect(BAY_SQL_0A.match(/\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+public\.\w+/g))
+      .toEqual(['UPDATE public.care_profile', 'INSERT INTO public.schema_version']);
+    expect((BAY_SQL_0A.match(/jsonb_set\(/g) || []).length).toBe(1);
+    // never a whole-object replace or a merge: the only thing assigned to `profile` is the one-key jsonb_set
+    expect(BAY_SQL_0A).not.toMatch(/SET\s+profile\s*=(?!\s*jsonb_set\(profile, '\{cold\}', )/);
+    expect(BAY_SQL_0A).not.toContain('||');
+    expect(BAY_SQL_0A).not.toMatch(/\b(?:ALTER|DROP|CREATE|TRUNCATE)\s/);
+    expect(BAY_SQL_0A.trim()).toMatch(/^BEGIN;[\s\S]*COMMIT;$/);
+  });
+
+  it('the stamp is 5.0.0-baycold-001 in the house shape, and 0r deletes the same one', () => {
+    expect(BAY_SQL_0A).toMatch(new RegExp(
+      "INSERT INTO public\\.schema_version \\(version, description, applied_at\\)\\s+VALUES \\('5\\.0\\.0-baycold-001',"
+      + '[\\s\\S]*?now\\(\\)\\)\\s+ON CONFLICT \\(version\\) DO UPDATE\\s+SET applied_at = now\\(\\), description = EXCLUDED\\.description;'));
+    expect([...BAY_SQL_0A.matchAll(/'(\d+\.\d+\.\d+-[a-z0-9-]+)'/g)].map((m) => m[1])).toEqual([BAY_STAMP]);
+    expect(BAY_SQL_0R).toContain(`DELETE FROM public.schema_version WHERE version = '${BAY_STAMP}';`);
+  });
+
+  it('0r removes only what 0a wrote: the same row, only while the key still holds that value and the stamp exists', () => {
+    const rolledBack = [...BAY_SQL_0R.matchAll(
+      /UPDATE public\.care_profile\s+SET profile = profile - 'cold', updated_at = now\(\)\s+WHERE id = '([0-9a-f-]{36})'\s+AND scope = 'cultivar' AND scope_id = '([0-9a-f-]{36})'\s+AND profile->'cold' = '(\{[^']*\})'::jsonb\s+AND EXISTS \(SELECT 1 FROM public\.schema_version WHERE version = '([^']+)'\);/g)]
+      .map((m) => ({ row: m[1], cultivar: m[2], cold: JSON.parse(m[3]), stamp: m[4] }));
+    expect(rolledBack).toEqual([{ row: BAY_ROW, cultivar: BAY_CULTIVAR, cold: BAY_COLD, stamp: BAY_STAMP }]);
+    expect((BAY_SQL_0R.match(/UPDATE public\.care_profile/g) || []).length).toBe(1);
+    expect(BAY_SQL_0R).toContain(`'${BAY_MD5_BEFORE}'`);
+  });
+
+  it('gates.yml: the pre gates, one standing invariant and the receipts, in that order', () => {
+    expect(BAY_GATE_NAMES).toEqual([
+      'pre_not_already_applied', 'pre_cultivar_is_the_row_read_at_authoring',
+      'pre_profile_is_the_backfill_row_without_cold', 'pre_no_leaf_override_carries_cold',
+      'pre_no_other_live_planting_reaches_this_row', 'pre_the_planting_is_live_potted_and_unheated',
+      'pre_the_engine_adopts_a_profile_without_cold',
+      'post_schema_version_recorded', 'post_no_db_profile_leaves_the_potted_bay_unwarned',
+      'post_the_row_carries_the_decided_value', 'post_cold_fix_was_single_key_not_a_full_replace',
+      'post_engine_view_of_the_planting_carries_the_cold_block',
+    ]);
+    // Exactly one post gate is continuous (carries no `continuous: false` key): the standing invariant.
+    const post = BAY_GATE_NAMES.filter((n) => n.startsWith('post_'));
+    expect(post.filter((n) => !/\n {4}continuous: false\n/.test(bayGate(n))))
+      .toEqual(['post_no_db_profile_leaves_the_potted_bay_unwarned']);
+    // Every gate that names a prod id is env: prod; the two that name none run on both.
+    for (const name of BAY_GATE_NAMES) {
+      const namesAnId = /'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'/.test(bayGate(name));
+      expect(/\n {4}env: prod\n/.test(bayGate(name)), name).toBe(namesAnId);
+    }
+    expect(BAY_GATE_NAMES.filter((n) => !/\n {4}env: /.test(bayGate(n))))
+      .toEqual(['pre_not_already_applied', 'post_schema_version_recorded']);
+  });
+
+  it('gates.yml: the standing invariant is self-armed, reads the handler\'s view, and floors the cultivar at the decided value', () => {
+    const standing = bayGate('post_no_db_profile_leaves_the_potted_bay_unwarned');
+    expect(standing).toContain(`WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '${BAY_STAMP}')`);
+    expect(standing).toContain('JOIN public.v_resolved_care vrc ON vrc.leaf_id = p.id');
+    const floors = [...standing.matchAll(/\('([0-9a-f-]{36})'::uuid, (\d+)\)/g)].map((m) => ({ cultivar: m[1], floor: Number(m[2]) }));
+    expect(floors).toEqual([{ cultivar: BAY_CULTIVAR, floor: BAY_COLD.protect_below_F }]);
+    expect(standing).toContain("vrc.resolved_profile->'cold'->'tender' = 'true'::jsonb");
+    expect(standing).toContain(') IS NOT TRUE');
+    expect(standing).toMatch(/expect: rowcount_eq\n {4}value: 0\n/);
+  });
+
+  it('gates.yml: the receipts and the premise carry the same row, planting, value and md5 as 0a', () => {
+    const value = bayGate('post_the_row_carries_the_decided_value')
+      .match(/\('([0-9a-f-]{36})'::uuid, '([0-9a-f-]{36})'::uuid, '(\{[^']*\})'::jsonb\)/);
+    expect({ row: value[1], cultivar: value[2], cold: JSON.parse(value[3]) })
+      .toEqual({ row: BAY_ROW, cultivar: BAY_CULTIVAR, cold: BAY_COLD });
+    const view = bayGate('post_engine_view_of_the_planting_carries_the_cold_block')
+      .match(/\('([0-9a-f-]{36})'::uuid, '(\{[^']*\})'::jsonb, '(\d+)'\)/);
+    expect({ id: view[1], cold: JSON.parse(view[2]), wi: Number(view[3]) })
+      .toEqual({ id: BAY_PLANTING, cold: BAY_COLD, wi: BAY.db_cadence.water_interval_days_container });
+    for (const name of ['pre_profile_is_the_backfill_row_without_cold', 'post_cold_fix_was_single_key_not_a_full_replace']) {
+      expect(bayGate(name), name).toContain(`('${BAY_ROW}'::uuid, '${BAY_CULTIVAR}'::uuid, '${BAY_MD5_BEFORE}')`);
+    }
+    expect(bayGate('post_cold_fix_was_single_key_not_a_full_replace')).toContain("md5((cp.profile - 'cold')::text) = v.md5_before");
+    const premise = bayGate('pre_the_engine_adopts_a_profile_without_cold');
+    expect(premise).toContain(`vrc.leaf_id IN ('${BAY_PLANTING}')`);
+    expect(premise).toContain("vrc.cadence_scopes = ARRAY['cultivar']");
+    expect(premise).toContain("NOT (vrc.resolved_profile ? 'cold')");
+    // No gate names any id but these three.
+    const ids = new Set([...BAY_GATES.matchAll(/'([0-9a-f]{8}-[0-9a-f-]{27})'/g)].map((m) => m[1]));
+    expect([...ids].sort()).toEqual([BAY_ROW, BAY_CULTIVAR, BAY_PLANTING].sort());
   });
 });

@@ -1,0 +1,268 @@
+# gates.yml
+# v5-baycold-001 — adds the `cold` key (tender, protect below 32F) to the Sweet Bay cultivar care_profile
+# row so the potted Sweet Bay Laurel gets a bring-inside card and the frost email names it. Data-only, one
+# row. The row, its reach and what is left alone: 0a-data.sql header and README.md.
+#
+# STATUS AT AUTHORING (2026-10-09): AUTHORED, NOT APPLIED on staging or prod. No gate in this file has
+# been run against a database: the lane that wrote it was cleared to read neither. The prod values below
+# (ids, names, md5, reach, cadence_scopes) were read on prod 2026-10-09 by a read-only role and handed
+# to this lane.
+#
+# SEQUENCING — README.md. Per environment, staging first:
+#   --phase pre -> apply 0a -> --phase post
+# then `gate_runner.py --all --phase post --continuous-only` on BOTH envs.
+# Pushing this directory before the apply cannot red gate-invariants.yml: the one continuous post gate
+# self-arms on this migration's schema_version row.
+#
+# GATE CLASSIFICATION (decided at authoring, not after the first false red)
+#   * Standing invariant (continuous, self-armed): the failure shape this migration exists to undo — a
+#     database profile adopted by the engine for a POTTED planting of this cultivar that yields no card at
+#     the decided threshold (the key dropped again by a future whole-profile backfill, a hardy clone, a
+#     lowered threshold, or a leaf-scope override). ONE gate, read through v_resolved_care, because that
+#     view is what the daily-plan handler selects: judging the view covers the cultivar row AND any leaf
+#     override with one assertion. It holds both channels at once: the card needs the threshold, and the
+#     email names bay only while cold.tender is true (bay is unbanded, so the profile is the only thing
+#     that names it). A floor, not an equality: a higher threshold still cards (more protective), a lower
+#     one breaks Dave's decision. A planting in the ground or in a fixed planter (in_ground, raised_bed,
+#     trough, whiskey_barrel, window_box) is not judged, as in v5-coldshadow-002: it cannot be carried
+#     in, so a deliberate leaf override that silences one is not a regression of this decision.
+#   * Apply-window receipts (continuous: false): the exact value 0a wrote, the single-key method, and the
+#     engine's view of the planting. A later, deliberate edit of the profile is not a regression.
+#   * EVERY gate that names a prod id is env: prod — the standing invariant included. Its population is
+#     defined by a prod cultivar id, not by anything this migration mints, and 0a is keyed to a prod
+#     care_profile row id. Staging was not read: on a staging that lacks the row 0a stamps the version
+#     and nothing else, and a 'both' gate would judge a row this file never wrote (the v5-coldshadow-002
+#     precedent for prod-id-keyed data).
+#   * No gate names a column this migration adds (it adds none), and none casts ::regclass, so every gate
+#     parses and runs on an unapplied database.
+#
+# NO `sweep` PHASE: nothing is constrained, so there is no predicate that must hold before the apply.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-baycold-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_cultivar_is_the_row_read_at_authoring
+    env: prod
+    note: >
+      Identity receipt for the cultivar whose care profile 0a edits, read on prod 2026-10-09: name and
+      controlled crop type, live. The name is checked here once, as a receipt; the selector is always the
+      id. The crop type is why the profile matters to the email (bay is unbanded), so a retyped cultivar
+      must stop the apply.
+    sql: |
+      SELECT pv.id
+        FROM (VALUES
+               ('e890276d-43e6-41cd-9dfe-1fa8e05fcfc1'::uuid, 'Sweet Bay', 'bay')
+             ) AS v(variety_id, name, crop_type_slug)
+        JOIN public.plant_varieties pv
+          ON pv.id = v.variety_id AND pv.name = v.name AND pv.crop_type_slug = v.crop_type_slug
+         AND pv.deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_profile_is_the_backfill_row_without_cold
+    env: prod
+    note: >
+      The exact starting state 0a matches: the cultivar row written by cadence-backfill-20260823, with no
+      `cold` key, byte-identical to what was reviewed (md5 of the whole profile, read on prod 2026-10-09).
+      If this fails the row changed since authoring: re-read it before applying. A cold key already present
+      makes 0a match nothing; any other change would ride along under the post md5 receipt and turn it red.
+    sql: |
+      SELECT cp.id
+        FROM (VALUES
+               ('d4c8c7e3-320c-4019-8827-b39894cf02b8'::uuid, 'e890276d-43e6-41cd-9dfe-1fa8e05fcfc1'::uuid, 'ae1f9608920cf706635dc726cdd44fe8')
+             ) AS v(row_id, scope_id, md5_before)
+        JOIN public.care_profile cp
+          ON cp.id = v.row_id AND cp.scope = 'cultivar' AND cp.scope_id = v.scope_id
+       WHERE NOT (cp.profile ? 'cold')
+         AND cp.profile->>'_source' = 'cadence-backfill-20260823'
+         AND md5(cp.profile::text) = v.md5_before
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_no_leaf_override_carries_cold
+    env: prod
+    note: >
+      v_resolved_care merges system || cultivar || leaf, right wins. A leaf-scope row carrying its own
+      `cold` on a planting of this cultivar would override what 0a writes on the cultivar row, so the fix
+      would not reach that planting. None exists at authoring (the planting's resolved cold is null); if
+      one appears, stop and decide which value is meant before applying.
+    sql: |
+      SELECT lo.id, p.name
+        FROM public.care_profile lo
+        JOIN public.plants p ON p.id = lo.scope_id
+       WHERE lo.scope = 'leaf'
+         AND p.variety_id IN ('e890276d-43e6-41cd-9dfe-1fa8e05fcfc1')
+         AND p.deleted_at IS NULL
+         AND lo.profile ? 'cold'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_other_live_planting_reaches_this_row
+    env: prod
+    note: >
+      THE REACH GUARD. A cultivar row reaches every planting of its variety, so the decision "warn it, at
+      32" holds only while this row reaches exactly the one planting it was made for. Read on prod
+      2026-10-09: it reaches 1 planting. A second Sweet Bay (one planted out, say) must stop the apply
+      until someone decides whether it should inherit a bring-inside card. The live filter is the
+      daily-plan handler's.
+    sql: |
+      SELECT p.id, p.name, p.container_type
+        FROM public.plants p
+        LEFT JOIN public.plant_projects pj ON pj.id = p.project_id
+       WHERE p.variety_id IN ('e890276d-43e6-41cd-9dfe-1fa8e05fcfc1')
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND (pj.status IS NULL OR pj.status <> 'planning')
+         AND pj.archived_at IS NULL
+         AND p.id NOT IN ('0bf82c76-b7c2-4396-bc17-9f95f5138806')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_the_planting_is_live_potted_and_unheated
+    env: prod
+    note: >
+      The planting the decision covers: live, still of the cultivar the row belongs to, in a pot that can
+      be carried (plastic pot, terracotta, hanging basket), and not in a heated location (a heated one gets
+      no card, so it would not need this row). Trough, not heated, was read on prod 2026-10-09. The pot
+      type was not part of that read: plastic_pot is from the prod dump committed on dev
+      (tests/harness/_todaymeasure/plants.json, 2026-09-24), and this gate is where it is checked on prod.
+      It is also what keeps the standing invariant from being vacuous, since that gate does not judge a
+      fixed planter. If the plant has been planted out or moved into the House, re-decide before applying.
+    sql: |
+      SELECT p.id
+        FROM (VALUES
+               ('0bf82c76-b7c2-4396-bc17-9f95f5138806'::uuid, 'e890276d-43e6-41cd-9dfe-1fa8e05fcfc1'::uuid)
+             ) AS v(planting_id, variety_id)
+        JOIN public.plants p ON p.id = v.planting_id AND p.variety_id = v.variety_id
+        LEFT JOIN public.plant_projects pj ON pj.id = p.project_id
+        LEFT JOIN public.locations l ON l.id = coalesce(p.location_id, pj.location_id)
+       WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND p.container_type IN ('plastic_pot', 'terracotta', 'hanging_basket')
+         AND l.heated IS NOT TRUE
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_the_engine_adopts_a_profile_without_cold
+    env: prod
+    note: >
+      The premise, as the engine sees it: the planting adopts its cultivar profile (cadence_scopes
+      {cultivar}, so resolveCadence returns it whole) and it carries no `cold`. Read on prod 2026-10-09.
+      If this fails, the defect is gone or has changed shape — an empty cadence_scopes would mean the
+      engine no longer adopts the row and this data fix would not reach it — so find out why before
+      applying.
+    sql: |
+      SELECT vrc.leaf_id
+        FROM public.v_resolved_care vrc
+       WHERE vrc.leaf_id IN ('0bf82c76-b7c2-4396-bc17-9f95f5138806')
+         AND vrc.cadence_scopes = ARRAY['cultivar']
+         AND NOT (vrc.resolved_profile ? 'cold')
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-baycold-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANT (continuous, self-armed) ────────────────────────────────────────────────────
+
+  - name: post_no_db_profile_leaves_the_potted_bay_unwarned
+    env: prod
+    note: >
+      Dave's decision (2026-10-09, "warn it", at 32) as an invariant: every live, potted planting of the
+      Sweet Bay cultivar whose care comes from a database profile gets a bring-inside card at 32F or
+      warmer, and stays tender in the profile the frost email reads. Read through v_resolved_care, the view
+      the daily-plan handler selects, so a leaf-scope override is judged too. Only plantings with a
+      non-empty cadence_scopes are judged, because only those adopt the database profile whole.
+      Plantings in the ground or in a fixed planter are not judged (see the file header). Returns one row
+      per offending planting. `IS NOT TRUE` so an ABSENT cold block (NULL) is a finding, not a pass — that
+      absence is the defect this undoes. Numeric cast only under jsonb_typeof = number, so an odd value
+      cannot ERROR the gate. Self-armed: vacuous until the stamp exists.
+    sql: |
+      SELECT p.id, p.name, vrc.resolved_profile->'cold' AS cold, v.floor_f
+        FROM public.plants p
+        JOIN (VALUES
+               ('e890276d-43e6-41cd-9dfe-1fa8e05fcfc1'::uuid, 32)
+             ) AS v(variety_id, floor_f) ON v.variety_id = p.variety_id
+        JOIN public.v_resolved_care vrc ON vrc.leaf_id = p.id
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-baycold-001')
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND (p.container_type IS NULL
+              OR p.container_type NOT IN ('in_ground', 'raised_bed', 'trough', 'whiskey_barrel', 'window_box'))
+         AND cardinality(vrc.cadence_scopes) > 0
+         AND (    vrc.resolved_profile->'cold'->'tender' = 'true'::jsonb
+              AND CASE WHEN jsonb_typeof(vrc.resolved_profile->'cold'->'protect_below_F') = 'number'
+                       THEN (vrc.resolved_profile->'cold'->>'protect_below_F')::numeric >= v.floor_f
+                       ELSE false END
+             ) IS NOT TRUE
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPTS (continuous: false) ─────────────────────────────────────────────────────
+
+  - name: post_the_row_carries_the_decided_value
+    env: prod
+    continuous: false
+    note: >
+      The only positive gate that can tell "wrote the key" from "matched the row" (jsonb_set with
+      create_missing false would match and write nothing). The value is the decided one, tender / protect
+      below 32F; frostband.test.js fails if the literal in 0a drifts from it.
+    sql: |
+      SELECT cp.id
+        FROM (VALUES
+               ('d4c8c7e3-320c-4019-8827-b39894cf02b8'::uuid, 'e890276d-43e6-41cd-9dfe-1fa8e05fcfc1'::uuid, '{"tender": true, "protect_below_F": 32}'::jsonb)
+             ) AS v(row_id, scope_id, cold)
+        JOIN public.care_profile cp
+          ON cp.id = v.row_id AND cp.scope = 'cultivar' AND cp.scope_id = v.scope_id
+       WHERE cp.profile->'cold' = v.cold
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_cold_fix_was_single_key_not_a_full_replace
+    env: prod
+    continuous: false
+    note: >
+      THE METHOD GUARD (v5-coldshadow-001, v5-heatrespcabbage-001). The corrected row has exactly one key
+      more than before (9) and, with that key taken away, is byte-identical to the row reviewed at
+      authoring: md5 of the profile minus `cold` equals the pre gate's md5 of the whole profile. A
+      whole-object rewrite — even one that carries the same `cold` — changes that hash; so does dropping the
+      _source marker.
+    sql: |
+      SELECT cp.id
+        FROM (VALUES
+               ('d4c8c7e3-320c-4019-8827-b39894cf02b8'::uuid, 'e890276d-43e6-41cd-9dfe-1fa8e05fcfc1'::uuid, 'ae1f9608920cf706635dc726cdd44fe8')
+             ) AS v(row_id, scope_id, md5_before)
+        JOIN public.care_profile cp ON cp.id = v.row_id
+       WHERE (SELECT count(*) FROM jsonb_object_keys(cp.profile)) = 9
+         AND md5((cp.profile - 'cold')::text) = v.md5_before
+         AND cp.profile->>'_source' = 'cadence-backfill-20260823'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_engine_view_of_the_planting_carries_the_cold_block
+    env: prod
+    continuous: false
+    note: >
+      End to end, as the handler reads it: the planting still adopts its cultivar profile (cadence_scopes
+      {cultivar}, so the watering interval the engine computes is unchanged) and the resolved profile now
+      carries the cold block. The receipt that the fix reaches the engine rather than stopping at the row.
+    sql: |
+      SELECT vrc.leaf_id
+        FROM (VALUES
+               ('0bf82c76-b7c2-4396-bc17-9f95f5138806'::uuid, '{"tender": true, "protect_below_F": 32}'::jsonb, '2')
+             ) AS v(planting_id, cold, water_interval_days_container)
+        JOIN public.v_resolved_care vrc ON vrc.leaf_id = v.planting_id
+       WHERE vrc.cadence_scopes = ARRAY['cultivar']
+         AND vrc.resolved_profile->'cold' = v.cold
+         AND vrc.resolved_profile->>'water_interval_days_container' = v.water_interval_days_container
+    expect: rowcount_eq
+    value: 1
