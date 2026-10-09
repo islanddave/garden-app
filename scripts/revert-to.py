@@ -625,6 +625,115 @@ def _branch_direct_uri(cfg, branch_id):
     return uri
 
 
+# --- pg_restore stderr: say what it complained about, stop on real errors ------
+# The restore target is NOT empty: it is parented off prod, so --clean has to drop
+# a full database first. pg_restore runs without --exit-on-error, skips every
+# statement that fails, and exits non-zero with "errors ignored on restore: N".
+# The old check let that tail excuse everything and never printed stderr, so the
+# 2026-10-09 staging rehearsal (run 37956492157) could not drop `plants` (a
+# constraint that is on the target but not in the dump depended on it) and the
+# only trace was validate_branch's "archive 12 vs restored 324".
+PG_RESTORE_LOG_MAX_ERRORS = 20
+PG_RESTORE_LOG_MAX_CHARS = 400
+PG_RESTORE_RAISE_MAX_ERRORS = 3
+
+_PG_URI_RE = re.compile(r"postgres(?:ql)?://[^\s'\"]+", re.IGNORECASE)
+_PG_PASSWORD_RE = re.compile(r"(password\s*=\s*)('(?:[^'\\]|\\.)*'|[^\s'\"]+)", re.IGNORECASE)
+_PG_ERRORS_IGNORED_RE = re.compile(r"errors ignored on restore:\s*(\d+)")
+# The ONLY benign class: the server refused a DROP because the object was not
+# there. Nothing fails to land when an absent object stays absent. --if-exists
+# should turn these into notices, so they are rare; this is what the previous
+# code named as its benign case ("DROP of absent objects"). Both halves must
+# match: the message AND a DROP statement. Everything else, including any error
+# this does not recognise, is real. restore-verify.py's restore_dump records why
+# there is no wider list: into an empty database pg_restore has NO expected errors.
+_PG_ABSENT_RE = re.compile(r"ERROR:\s+.*\bdoes not exist\b")
+_PG_DROP_CMD_RE = re.compile(r"^\s*(DROP\s|ALTER\s.*\sDROP\s)", re.IGNORECASE | re.DOTALL)
+
+
+def _redact_conn(text):
+    """Strip anything that could carry the target's credentials. libpq can echo a
+    connection string (or a password= keyword) back in its error text."""
+    text = _PG_URI_RE.sub("postgresql://[REDACTED]", text or "")
+    return _PG_PASSWORD_RE.sub(r"\1[REDACTED]", text)
+
+
+def _pg_restore_errors(stderr):
+    """Split stderr into one dict per `pg_restore: error:` line, with the server's
+    DETAIL and the `Command was:` statement that follow it. CONTEXT lines are left
+    out on purpose: for a failed COPY they quote the row."""
+    errors, cur, field = [], None, None
+    for line in (stderr or "").splitlines():
+        if line.startswith("pg_restore:"):
+            cur, field = None, None
+            if line.startswith("pg_restore: error:"):
+                cur = {"message": line[len("pg_restore: error:"):].strip(), "detail": "", "command": ""}
+                errors.append(cur)
+            continue
+        if cur is None:
+            continue
+        if line.startswith("DETAIL:"):
+            field, line = "detail", line[len("DETAIL:"):]
+        elif line.startswith("Command was:"):
+            field, line = "command", line[len("Command was:"):]
+        elif line.startswith(("HINT:", "CONTEXT:", "LINE ", "QUERY:", "STATEMENT:")):
+            field = None
+        if field:
+            cur[field] = (cur[field] + " " + line.strip()).strip()
+    return errors
+
+
+def _pg_restore_error_is_benign(err):
+    return bool(_PG_ABSENT_RE.search(err["message"]) and _PG_DROP_CMD_RE.match(err["command"]))
+
+
+def _pg_restore_error_text(err):
+    parts = [err["message"]]
+    if err["detail"]:
+        parts.append(f"DETAIL: {err['detail']}")
+    if err["command"]:
+        parts.append(f"Command was: {err['command']}")
+    return _redact_conn(" | ".join(parts))[:PG_RESTORE_LOG_MAX_CHARS]
+
+
+def _check_pg_restore_result(returncode, stderr):
+    """Log a bounded summary of what pg_restore complained about, then raise
+    RevertError unless every error is a DROP of an absent object."""
+    errors = _pg_restore_errors(stderr)
+    real = [e for e in errors if not _pg_restore_error_is_benign(e)]
+    m = _PG_ERRORS_IGNORED_RE.search(stderr or "")
+    ignored = int(m.group(1)) if m else None
+    sys.stdout.write(
+        f"[revert] pg_restore: exit {returncode}; {len(errors)} error line(s), "
+        f"{len(real)} real, {len(errors) - len(real)} benign (DROP of an absent object); "
+        f"errors ignored on restore: {ignored if ignored is not None else 'not reported'}\n"
+    )
+    for i, e in enumerate(errors[:PG_RESTORE_LOG_MAX_ERRORS], 1):
+        kind = "benign" if _pg_restore_error_is_benign(e) else "REAL"
+        sys.stdout.write(f"[revert] pg_restore error {i}/{len(errors)} [{kind}]: {_pg_restore_error_text(e)}\n")
+    if len(errors) > PG_RESTORE_LOG_MAX_ERRORS:
+        sys.stdout.write(
+            f"[revert] pg_restore: {len(errors) - PG_RESTORE_LOG_MAX_ERRORS} more error line(s) not shown\n"
+        )
+    if real:
+        shown = "; ".join(_pg_restore_error_text(e) for e in real[:PG_RESTORE_RAISE_MAX_ERRORS])
+        raise RevertError(
+            f"pg_restore reported {len(real)} real error(s) — an object or its data did not land; "
+            f"refusing before validation. First {min(len(real), PG_RESTORE_RAISE_MAX_ERRORS)}: {shown}"
+        )
+    if ignored is not None and ignored > len(errors):
+        raise RevertError(
+            f"pg_restore ignored {ignored} error(s) but only {len(errors)} error line(s) are in its "
+            "output — unseen errors count as real; refusing before validation"
+        )
+    if returncode != 0 and ignored is None:
+        # Non-zero with no "errors ignored" tail is pg_restore giving up, not skipping.
+        raise RevertError(
+            f"pg_restore failed (exit {returncode}) with no error it could be excused for: "
+            f"{_redact_conn((stderr or '').strip())[:800] or 'no stderr'}"
+        )
+
+
 def restore_dump_into_branch(s3, cfg, manifest, target_uri):
     """Download the durable dump and pg_restore it into the fresh branch
     (NOT prod). --clean --if-exists so the fresh branch is overwritten cleanly.
@@ -651,12 +760,10 @@ def restore_dump_into_branch(s3, cfg, manifest, target_uri):
             ],
             capture_output=True, text=True,
         )
-        # pg_restore can emit benign warnings on --clean (DROP of absent objects);
-        # only a non-zero exit with no relation-restored signal is fatal.
-        if proc.returncode != 0 and "errors ignored on restore" not in (proc.stderr or ""):
-            # Tolerate the standard "WARNING: errors ignored" tail; fail otherwise.
-            if "pg_restore: error:" in (proc.stderr or ""):
-                raise RevertError(f"pg_restore failed: {proc.stderr.strip()[:800]}")
+        # Raises on any error that is not a DROP of an absent object, BEFORE validate_branch:
+        # the row-count comparison there stays the backstop, but it can only say THAT a
+        # table is wrong, never which statement pg_restore skipped.
+        _check_pg_restore_result(proc.returncode, proc.stderr)
         # OPS-REVERTVALIDATE-001: read the EXPECTED per-table row counts out of the archive
         # while the file is still on disk. Source is the dump, NOT the manifest — the manifest
         # (snapshots/vX.json) carries git_tag / main_sha / LSN / S3 keys / lambda versions and

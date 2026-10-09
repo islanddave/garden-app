@@ -242,15 +242,162 @@ def test_restore_dump_tolerates_benign_warnings(monkeypatch):
 
     class P:
         returncode = 1
-        stderr = "pg_restore: warning: errors ignored on restore: 3"
+        stderr = _restore_stderr(ABSENT_DROP, ABSENT_DROP, ABSENT_DROP)
         stdout = ""
     monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: P())
-    # benign-warning tail with no "pg_restore: error:" -> no raise.
+    # every error is a DROP of an absent object, and the tail accounts for all three -> no raise.
     # OPS-REVERTVALIDATE-001 changed the contract to (key, expected_counts); expected_counts is
     # None here because the stubbed pg_restore renders no archive, and None must mean UNKNOWN.
     key, expected = rt.restore_dump_into_branch(s3, cfg, good_manifest(), "postgresql://s")
     assert key == "db/snap-v2.5.0.dump"
     assert expected is None
+
+
+# --- pg_restore stderr: reported, and real errors stop the revert --------------
+# Staging rehearsal 2026-10-09 (run 37956492157): the target branch is a copy of prod, the dump is
+# older, and a constraint on the target that the dump does not know about kept --clean from dropping
+# `plants`. The "errors ignored on restore" tail excused it and stderr was never printed, so the only
+# trace was validate_branch's row-count mismatch. These are pg_restore 17's own line shapes.
+
+ABSENT_DROP = (
+    "pg_restore: from TOC entry 4012; 2606 16999 CONSTRAINT old_table old_table_pkey neondb_owner\n"
+    'pg_restore: error: could not execute query: ERROR:  relation "public.old_table" does not exist\n'
+    "Command was: ALTER TABLE ONLY public.old_table DROP CONSTRAINT old_table_pkey;\n"
+)
+DEPENDENT_DROP = (
+    "pg_restore: from TOC entry 3811; 2606 16710 CONSTRAINT plants plants_pkey neondb_owner\n"
+    "pg_restore: error: could not execute query: ERROR:  cannot drop constraint plants_pkey on table "
+    "public.plants because other objects depend on it\n"
+    "DETAIL:  constraint event_log_plant_project_fk on table public.event_log depends on index "
+    "public.plants_pkey\n"
+    "HINT:  Use DROP ... CASCADE to drop the dependent objects too.\n"
+    "Command was: ALTER TABLE IF EXISTS ONLY public.plants DROP CONSTRAINT IF EXISTS plants_pkey;\n"
+)
+ALREADY_EXISTS = (
+    'pg_restore: error: could not execute query: ERROR:  relation "plants" already exists\n'
+    "Command was: CREATE TABLE public.plants (\n    id uuid NOT NULL\n);\n"
+)
+COPY_FAILED = (
+    'pg_restore: error: COPY failed for table "plants": ERROR:  duplicate key value violates unique '
+    'constraint "plants_pkey"\n'
+    "DETAIL:  Key (id)=(a) already exists.\n"
+    "CONTEXT:  COPY plants, line 1: \"a\tSECRET-ROW-VALUE\"\n"
+)
+
+
+def _restore_stderr(*blocks, ignored=None):
+    n = len(blocks) if ignored is None else ignored
+    return "pg_restore: while PROCESSING TOC:\n" + "".join(blocks) + (
+        f"pg_restore: warning: errors ignored on restore: {n}\n" if n else "")
+
+
+def _restore_with(monkeypatch, stderr, returncode=1, uri="postgresql://s"):
+    cfg = rt.Config(env=base_env())
+    s3 = FakeS3({("garden-snapshots-prod", "db/snap-v2.5.0.dump"): b"DUMP"})
+
+    class P:
+        stdout = ""
+    P.returncode, P.stderr = returncode, stderr
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: P())
+    return rt.restore_dump_into_branch(s3, cfg, good_manifest(), uri)
+
+
+def test_restore_dump_dependency_error_raises_naming_it(monkeypatch):
+    """The 2026-10-09 shape: a refused DROP plus the tail that used to excuse it."""
+    with pytest.raises(rt.RevertError) as ei:
+        _restore_with(monkeypatch, _restore_stderr(ABSENT_DROP, DEPENDENT_DROP, ALREADY_EXISTS, COPY_FAILED))
+    msg = str(ei.value)
+    assert "3 real error(s)" in msg
+    assert "cannot drop constraint plants_pkey" in msg
+    assert "event_log_plant_project_fk" in msg  # the DETAIL line is what names the culprit
+    assert "old_table" not in msg  # the benign one is not part of the refusal
+
+
+@pytest.mark.parametrize("block", [ALREADY_EXISTS, COPY_FAILED])
+def test_restore_dump_object_or_data_not_landing_raises(monkeypatch, block):
+    with pytest.raises(rt.RevertError, match="1 real error"):
+        _restore_with(monkeypatch, _restore_stderr(block))
+
+
+def test_restore_dump_unknown_error_line_is_real(monkeypatch):
+    """Fail-closed: a line the classifier has never seen stops the revert."""
+    unknown = "pg_restore: error: something nobody has classified yet\n"
+    with pytest.raises(rt.RevertError, match="something nobody has classified yet"):
+        _restore_with(monkeypatch, _restore_stderr(ABSENT_DROP, unknown))
+
+
+def test_restore_dump_does_not_exist_is_benign_only_on_a_drop(monkeypatch):
+    """`does not exist` on a CREATE/ALTER/COPY means something did not land."""
+    block = ('pg_restore: error: could not execute query: ERROR:  relation "public.plants" does not exist\n'
+             "Command was: ALTER TABLE ONLY public.event_log ADD CONSTRAINT fk FOREIGN KEY (plant_id) "
+             "REFERENCES public.plants(id);\n")
+    with pytest.raises(rt.RevertError, match="1 real error"):
+        _restore_with(monkeypatch, _restore_stderr(block))
+
+
+def test_restore_dump_more_ignored_than_shown_raises(monkeypatch):
+    """The tail counts errors the output does not show: unseen is not benign."""
+    with pytest.raises(rt.RevertError, match="ignored 5 error"):
+        _restore_with(monkeypatch, _restore_stderr(ABSENT_DROP, ignored=5))
+
+
+def test_restore_dump_nonzero_exit_without_any_explanation_raises(monkeypatch):
+    with pytest.raises(rt.RevertError, match="exit 137"):
+        _restore_with(monkeypatch, "", returncode=137)
+
+
+def test_restore_dump_clean_restore_logs_and_proceeds(monkeypatch, capsys):
+    key, _ = _restore_with(monkeypatch, "", returncode=0)
+    assert key == "db/snap-v2.5.0.dump"
+    assert "[revert] pg_restore: exit 0; 0 error line(s), 0 real, 0 benign" in capsys.readouterr().out
+
+
+def test_restore_dump_logs_bounded_summary(monkeypatch, capsys):
+    blocks = [ABSENT_DROP] * 24 + [DEPENDENT_DROP]
+    with pytest.raises(rt.RevertError):
+        _restore_with(monkeypatch, _restore_stderr(*blocks))
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == ("[revert] pg_restore: exit 1; 25 error line(s), 1 real, 24 benign "
+                        "(DROP of an absent object); errors ignored on restore: 25")
+    shown = [l for l in lines if l.startswith("[revert] pg_restore error ")]
+    assert len(shown) == rt.PG_RESTORE_LOG_MAX_ERRORS
+    assert shown[0].startswith("[revert] pg_restore error 1/25 [benign]: ")
+    assert all(len(l) < rt.PG_RESTORE_LOG_MAX_CHARS + 60 for l in shown)
+    assert lines[-1] == "[revert] pg_restore: 5 more error line(s) not shown"
+
+
+def test_restore_dump_log_truncates_each_error_and_omits_copy_context(monkeypatch, capsys):
+    long_cmd = ('pg_restore: error: could not execute query: ERROR:  syntax error\n'
+                "Command was: CREATE TABLE public.t (" + "c int, " * 400 + ");\n")
+    with pytest.raises(rt.RevertError):
+        _restore_with(monkeypatch, _restore_stderr(long_cmd, COPY_FAILED))
+    out = capsys.readouterr().out
+    assert "[REAL]" in out and "COPY failed for table" in out
+    assert "SECRET-ROW-VALUE" not in out  # CONTEXT quotes the row
+    assert max(len(l) for l in out.splitlines()) < rt.PG_RESTORE_LOG_MAX_CHARS + 60
+
+
+def test_restore_dump_never_prints_the_target_uri(monkeypatch, capsys):
+    uri = "postgresql://neondb_owner:npg_S3cr3t@ep-stage-123.us-east-2.aws.neon.tech/neondb?sslmode=require"
+    stderr = (
+        f'pg_restore: error: invalid connection option in "{uri}"\n'
+        "pg_restore: error: connection failed for host=ep-stage-123 password=npg_S3cr3t user=neondb_owner\n"
+        f"pg_restore: error: could not execute query: ERROR:  boom\nCommand was: SELECT dblink('postgres://u:pw2@h/db');\n"
+    )
+    with pytest.raises(rt.RevertError) as ei:
+        _restore_with(monkeypatch, stderr, uri=uri)
+    seen = capsys.readouterr()
+    for text in (str(ei.value), seen.out, seen.err):
+        assert "npg_S3cr3t" not in text and "pw2" not in text
+        assert "ep-stage-123.us-east-2" not in text
+    assert "postgresql://[REDACTED]" in seen.out and "password=[REDACTED]" in seen.out
+
+
+def test_restore_dump_fatal_exit_redacts_uri_in_the_raise(monkeypatch):
+    """No `pg_restore: error:` line and no tail: the raw-stderr path is redacted too."""
+    with pytest.raises(rt.RevertError) as ei:
+        _restore_with(monkeypatch, "could not connect to postgresql://u:hunter2@h/db\n")
+    assert "hunter2" not in str(ei.value) and "postgresql://[REDACTED]" in str(ei.value)
 
 
 def test_validate_branch_no_tables(monkeypatch):
