@@ -625,7 +625,7 @@ def _branch_direct_uri(cfg, branch_id):
     return uri
 
 
-# --- pg_restore stderr: say what it complained about, stop on real errors ------
+# --- pg_restore stderr: say what it complained about; validate_branch judges ----
 # The restore target is NOT empty: it is parented off prod, so --clean has to drop
 # a full database first. pg_restore runs without --exit-on-error, skips every
 # statement that fails, and exits non-zero with "errors ignored on restore: N".
@@ -633,54 +633,109 @@ def _branch_direct_uri(cfg, branch_id):
 # 2026-10-09 staging rehearsal (run 37956492157) could not drop `plants` (a
 # constraint that is on the target but not in the dump depended on it) and the
 # only trace was validate_branch's "archive 12 vs restored 324".
+#
+# This step EXPLAINS; validate_branch JUDGES. Anything on today's prod that the
+# dump does not hold (a newer table, a newer gv function) makes pg_restore report
+# "cannot drop extension uuid-ossp", "cannot drop schema gv", "already exists"
+# even when every table and row landed (measured with pg_restore 17.10, review
+# 2026-10-09), so refusing on those would refuse every real revert. The only
+# refusals here are the two cases where the summary itself cannot be trusted:
+# pg_restore gave up, or it counted more errors than it printed.
 PG_RESTORE_LOG_MAX_ERRORS = 20
 PG_RESTORE_LOG_MAX_CHARS = 400
 PG_RESTORE_RAISE_MAX_ERRORS = 3
 
 _PG_URI_RE = re.compile(r"postgres(?:ql)?://[^\s'\"]+", re.IGNORECASE)
 _PG_PASSWORD_RE = re.compile(r"(password\s*=\s*)('(?:[^'\\]|\\.)*'|[^\s'\"]+)", re.IGNORECASE)
+_PG_NEON_HOST_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]*\.neon\.tech\b", re.IGNORECASE)
+# libpq: `connection to server at "host" (1.2.3.4), port 5432 failed: ...` and
+# `could not translate host name "host" to address: ...`.
+_PG_CONN_AT_RE = re.compile(
+    r'(connection to server (?:at|on socket) |could not translate host name )"[^"]*"(?:\s*\([^)]*\))?',
+    re.IGNORECASE)
 _PG_ERRORS_IGNORED_RE = re.compile(r"errors ignored on restore:\s*(\d+)")
-# The ONLY benign class: the server refused a DROP because the object was not
-# there. Nothing fails to land when an absent object stays absent. --if-exists
-# should turn these into notices, so they are rare; this is what the previous
-# code named as its benign case ("DROP of absent objects"). Both halves must
-# match: the message AND a DROP statement. Everything else, including any error
-# this does not recognise, is real. restore-verify.py's restore_dump records why
-# there is no wider list: into an empty database pg_restore has NO expected errors.
+# The benign TAG (a label in the log, no longer a gate): the server refused a DROP
+# because the object was not there. Both halves must match: the message AND one of
+# pg_restore's own drop statements. Expected to be EMPTY in practice: --if-exists
+# turns these into notices, and five real pg_restore 17.10 runs matched none.
 _PG_ABSENT_RE = re.compile(r"ERROR:\s+.*\bdoes not exist\b")
-_PG_DROP_CMD_RE = re.compile(r"^\s*(DROP\s|ALTER\s.*\sDROP\s)", re.IGNORECASE | re.DOTALL)
+_PG_DROP_CMD_RE = re.compile(
+    r"^\s*(DROP\s|ALTER\s+(?:FOREIGN\s+)?TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?\S+\s+"
+    r"(?:ALTER\s+(?:COLUMN\s+)?\S+\s+)?DROP\s)", re.IGNORECASE)
+# DETAIL is decided by pattern, fail-closed. A failed COPY prints `Failing row
+# contains (...)` and a unique / foreign-key failure prints `Key (cols)=(values)`:
+# on the real revert path those are prod rows in an Actions log. The lines kept are
+# the ones the server builds from catalog names only, which are the explanation
+# this summary exists for ("constraint X on table Y depends on table Z").
+_PG_DETAIL_KEY_RE = re.compile(r"^Key \((.*?)\)=\(.*\)([^()]*)$", re.DOTALL)
+_PG_DETAIL_SAFE_RE = re.compile(
+    r"^(?:(?:constraint|view|materialized view|default value|function|procedure|aggregate|extension|"
+    r"trigger|type|index|policy|column|sequence|table|foreign table|rule|schema|operator|publication|"
+    r"statistics object|collation|event trigger) \S.* depends on \S.*"
+    r"|and \d+ other objects? \(see server log for list\))$")
+# The server quotes the offending value in the message itself for a type failure.
+_PG_MSG_VALUE_RE = re.compile(r'(invalid input (?:syntax|value) for [^:"]*: )".*"', re.DOTALL)
 
 
 def _redact_conn(text):
-    """Strip anything that could carry the target's credentials. libpq can echo a
-    connection string (or a password= keyword) back in its error text."""
+    """Strip anything that could carry the target's credentials or address. libpq
+    can echo a connection string (or a password= keyword, or the host) back in
+    its error text."""
     text = _PG_URI_RE.sub("postgresql://[REDACTED]", text or "")
-    return _PG_PASSWORD_RE.sub(r"\1[REDACTED]", text)
+    text = _PG_PASSWORD_RE.sub(r"\1[REDACTED]", text)
+    text = _PG_CONN_AT_RE.sub(r'\1"[REDACTED]"', text)
+    return _PG_NEON_HOST_RE.sub("[REDACTED].neon.tech", text)
 
 
 def _pg_restore_errors(stderr):
     """Split stderr into one dict per `pg_restore: error:` line, with the server's
-    DETAIL and the `Command was:` statement that follow it. CONTEXT lines are left
-    out on purpose: for a failed COPY they quote the row."""
+    DETAIL lines and the `Command was:` statement that follow it. CONTEXT lines are
+    left out on purpose: for a failed COPY they quote the row. DETAIL is kept raw
+    here and filtered by _pg_restore_detail before anything is printed."""
     errors, cur, field = [], None, None
     for line in (stderr or "").splitlines():
         if line.startswith("pg_restore:"):
             cur, field = None, None
             if line.startswith("pg_restore: error:"):
-                cur = {"message": line[len("pg_restore: error:"):].strip(), "detail": "", "command": ""}
+                cur = {"message": line[len("pg_restore: error:"):].strip(), "detail": [], "command": ""}
                 errors.append(cur)
             continue
         if cur is None:
             continue
-        if line.startswith("DETAIL:"):
+        if cur["detail"] and cur["detail"][0].startswith("Failing row contains"):
+            # A row value can hold a newline, so every later line of this error may be
+            # row text, whatever it starts with (a failed COPY has no `Command was:`).
+            field = "detail"
+        elif line.startswith("DETAIL:"):
             field, line = "detail", line[len("DETAIL:"):]
         elif line.startswith("Command was:"):
             field, line = "command", line[len("Command was:"):]
         elif line.startswith(("HINT:", "CONTEXT:", "LINE ", "QUERY:", "STATEMENT:")):
             field = None
-        if field:
+        if field == "detail":
+            if line.strip():
+                cur["detail"].append(line.strip())
+        elif field:
             cur[field] = (cur[field] + " " + line.strip()).strip()
     return errors
+
+
+def _pg_restore_detail(err):
+    """(printable detail, lines withheld). Fail-closed: a DETAIL line that matches
+    no known-safe pattern is withheld, never printed."""
+    lines = err["detail"]
+    if not lines:
+        return "", 0
+    if lines[0].startswith("Key ("):
+        # One detail, possibly wrapped over lines by a value that holds a newline.
+        m = _PG_DETAIL_KEY_RE.match("\n".join(lines))
+        if m and "\n" not in m.group(1) and "\n" not in m.group(2):
+            return f"Key ({m.group(1)})=([REDACTED]){m.group(2)}", 0
+        return "", len(lines)
+    if lines[0].startswith("Failing row contains"):
+        return "", len(lines)
+    kept = [l for l in lines if _PG_DETAIL_SAFE_RE.match(l)]
+    return "; ".join(kept), len(lines) - len(kept)
 
 
 def _pg_restore_error_is_benign(err):
@@ -688,19 +743,22 @@ def _pg_restore_error_is_benign(err):
 
 
 def _pg_restore_error_text(err):
-    parts = [err["message"]]
-    if err["detail"]:
-        parts.append(f"DETAIL: {err['detail']}")
+    parts = [_PG_MSG_VALUE_RE.sub(r'\1"[REDACTED]"', err["message"])]
+    detail, _withheld = _pg_restore_detail(err)
+    if detail:
+        parts.append(f"DETAIL: {detail}")
     if err["command"]:
         parts.append(f"Command was: {err['command']}")
     return _redact_conn(" | ".join(parts))[:PG_RESTORE_LOG_MAX_CHARS]
 
 
 def _check_pg_restore_result(returncode, stderr):
-    """Log a bounded summary of what pg_restore complained about, then raise
-    RevertError unless every error is a DROP of an absent object."""
+    """Log a bounded, row-free summary of what pg_restore complained about. Raise
+    RevertError only when pg_restore gave up or counted errors it did not print;
+    errors it skipped past are logged and left to validate_branch."""
     errors = _pg_restore_errors(stderr)
     real = [e for e in errors if not _pg_restore_error_is_benign(e)]
+    withheld = sum(_pg_restore_detail(e)[1] for e in errors)
     m = _PG_ERRORS_IGNORED_RE.search(stderr or "")
     ignored = int(m.group(1)) if m else None
     sys.stdout.write(
@@ -715,22 +773,37 @@ def _check_pg_restore_result(returncode, stderr):
         sys.stdout.write(
             f"[revert] pg_restore: {len(errors) - PG_RESTORE_LOG_MAX_ERRORS} more error line(s) not shown\n"
         )
-    if real:
-        shown = "; ".join(_pg_restore_error_text(e) for e in real[:PG_RESTORE_RAISE_MAX_ERRORS])
-        raise RevertError(
-            f"pg_restore reported {len(real)} real error(s) — an object or its data did not land; "
-            f"refusing before validation. First {min(len(real), PG_RESTORE_RAISE_MAX_ERRORS)}: {shown}"
+    if withheld:
+        sys.stdout.write(
+            f"[revert] pg_restore: {withheld} detail line(s) withheld (they can quote row contents)\n"
         )
-    if ignored is not None and ignored > len(errors):
+    gave_up = returncode != 0 and ignored is None
+    unseen = ignored is not None and ignored > len(errors)
+    if real and not gave_up and not unseen:
+        sys.stdout.write(
+            f"[revert] pg_restore: WARNING: {len(real)} error(s) above mean objects or data may not have "
+            "landed. Not refusing here: the row-count validation that follows decides, and if it "
+            "refuses, these errors are the reason.\n"
+        )
+    # The summary is on stdout and the FAIL line (here or from validate_branch) is on
+    # stderr; piped, stdout is block-buffered and would land after it.
+    sys.stdout.flush()
+    if gave_up:
+        # Non-zero with no "errors ignored" tail is pg_restore giving up, not skipping.
+        if errors:
+            shown = "; ".join(_pg_restore_error_text(e) for e in errors[:PG_RESTORE_RAISE_MAX_ERRORS])
+        else:
+            raw = "\n".join(l for l in (stderr or "").splitlines()
+                            if not l.startswith(("DETAIL:", "CONTEXT:")))
+            shown = _redact_conn(raw.strip())[:800] or "no stderr"
+        raise RevertError(
+            f"pg_restore gave up (exit {returncode}, no 'errors ignored on restore' tail); "
+            f"refusing before validation: {shown}"
+        )
+    if unseen:
         raise RevertError(
             f"pg_restore ignored {ignored} error(s) but only {len(errors)} error line(s) are in its "
-            "output — unseen errors count as real; refusing before validation"
-        )
-    if returncode != 0 and ignored is None:
-        # Non-zero with no "errors ignored" tail is pg_restore giving up, not skipping.
-        raise RevertError(
-            f"pg_restore failed (exit {returncode}) with no error it could be excused for: "
-            f"{_redact_conn((stderr or '').strip())[:800] or 'no stderr'}"
+            "output — unseen errors cannot be explained; refusing before validation"
         )
 
 
@@ -760,9 +833,10 @@ def restore_dump_into_branch(s3, cfg, manifest, target_uri):
             ],
             capture_output=True, text=True,
         )
-        # Raises on any error that is not a DROP of an absent object, BEFORE validate_branch:
-        # the row-count comparison there stays the backstop, but it can only say THAT a
-        # table is wrong, never which statement pg_restore skipped.
+        # Prints what pg_restore skipped BEFORE validate_branch runs: the row-count
+        # comparison there is the judge, but it can only say THAT a table is wrong, never
+        # which statement pg_restore skipped. Raises only if pg_restore gave up or
+        # counted errors it did not print.
         _check_pg_restore_result(proc.returncode, proc.stderr)
         # OPS-REVERTVALIDATE-001: read the EXPECTED per-table row counts out of the archive
         # while the file is still on disk. Source is the dump, NOT the manifest — the manifest
