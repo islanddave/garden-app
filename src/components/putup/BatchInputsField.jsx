@@ -98,7 +98,7 @@ const OTHER_KINDS = KITCHEN_INPUT_KINDS.filter((k) => k !== 'harvest')
 
 // The units a pantry or purchased item plausibly arrives in, all drawn from KITCHEN_QTY_UNITS and
 // therefore all inside chk_kbi_qty_unit. Note what is NOT here: preservation_log.quantity_unit holds
-// the plural forms 'quarts' and 'cups' in prod and has no CHECK of its own, so a unit copied
+// the plural forms 'quarts' and 'cups' in prod (its own CHECK, chk_preservation_log_quantity_unit, admits them), so a unit copied
 // verbatim off an existing jar would be refused by the database (BUG-PRESERVUNITNOCHECK-001).
 const OTHER_UNITS = [...WEIGHT_UNITS, 'cup', 'qt', 'gal', 'count']
 

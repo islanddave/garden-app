@@ -1,3 +1,16 @@
+-- ╔══════════════════════════════════════════════════════════════════════════════════════════════╗
+-- ║ ⛔ SUPERSEDED — DO NOT RUN THIS FILE, EVER. (2026-10-09, BUG-PRESERVUNITNOCHECK-001 closed)   ║
+-- ║                                                                                              ║
+-- ║ The phase it rolls back (0a in this directory) was never applied to prod or staging, so      ║
+-- ║ there is nothing for it to undo. chk_preservation_log_quantity_unit is now OWNED by          ║
+-- ║ migrations/v5-putupmake-001 (Put-Up release 1b), whose 0a created it under the same name as  ║
+-- ║ the PERMISSIVE UNION, 35 values. Run today, the DROP CONSTRAINT below removes that LIVE      ║
+-- ║ CHECK and returns preservation_log.quantity_unit to unconstrained text; v5-putupmake-001's   ║
+-- ║ standing unit gates would go red on both databases. The header's "safe at any moment" was    ║
+-- ║ written before 1b and is no longer true. The only rollback of the live constraint is         ║
+-- ║ v5-putupmake-001/0r-rollback.sql. Kept for the record only.                                  ║
+-- ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+--
 -- V5-PRESERVUNIT-001 — 0r1: rollback of phase A (0a).
 --
 -- Drops chk_preservation_log_quantity_unit entirely, returning the column to the unconstrained
