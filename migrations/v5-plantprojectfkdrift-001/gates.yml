@@ -125,11 +125,12 @@ pre:
     note: >
       STAGING, before 0a. NOT VALID enforces new writes from the commit of 0a, so the question is what the
       Lambdas deployed to staging write (gardening-deploy "arming a CHECK is NOT backward-compatible": ask
-      it of the deployed artifact, not of a branch). Confirm the staging garden-events and garden-plants
-      functions were deployed from dev at or after 94926010 (2026-08-20, deriveEventProjectId and the
-      siblings-only merge). Every writer on dev 755099ce derives the pair from the planting (0a header).
-      An older artifact would answer 400 on a mismatched write instead of storing it. Prod needs no such
-      check: its constraint has been enforcing since 2026-08-21.
+      it of the deployed artifact, not of a branch). Confirm staging's events Lambda and plants Lambda
+      (the single-event POST and PUT, and the planting merge) were deployed from dev at or after 94926010
+      (2026-08-20, deriveEventProjectId and the siblings-only merge). Every writer on dev 755099ce derives
+      the pair from the planting (0a header). An older artifact would answer 400 on a mismatched write
+      instead of storing it. Prod needs no such check: its constraint has been enforcing since
+      2026-08-21.
 
 sweep:
   - name: sweep_no_event_names_a_project_its_planting_is_not_in
