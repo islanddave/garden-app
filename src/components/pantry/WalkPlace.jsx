@@ -519,12 +519,13 @@ function WalkGroup({
 
   async function save() {
     if (writingRef.current) return
-    if (!online) { setErr("You're offline — this can't be saved right now. What you entered is kept."); return }
-    if (!String(what?.name ?? '').trim()) { setErr('What is it? Type a name.'); setField('what'); whatRef.current?.focus?.(); return }
-    if (!method) { setErr(METHOD_REQUIRED_TEXT); setField('method'); focusFirstRadio(methodRef); return }
-    if (own?.error) { setErr(own.error); setField('when'); setMoreOpen(true); return }
+    // A refusal said before anything is sent is brought into view like one the server gives.
+    if (!online) { setErr("You're offline — this can't be saved right now. What you entered is kept."); setRefusedSeq(s => s + 1); return }
+    if (!String(what?.name ?? '').trim()) { setErr('What is it? Type a name.'); setField('what'); whatRef.current?.focus?.(); setRefusedSeq(s => s + 1); return }
+    if (!method) { setErr(METHOD_REQUIRED_TEXT); setField('method'); focusFirstRadio(methodRef); setRefusedSeq(s => s + 1); return }
+    if (own?.error) { setErr(own.error); setField('when'); setMoreOpen(true); setRefusedSeq(s => s + 1); return }
     const dErr = doorError({ what, place, method, discard })
-    if (dErr) { setErr(dErr.error); setField(dErr.field); setMoreOpen(true); return }
+    if (dErr) { setErr(dErr.error); setField(dErr.field); setMoreOpen(true); setRefusedSeq(s => s + 1); return }
     const route = routeFor(method)
     // ONE KEY, TWO TABLES (QA I-1; putSomethingUp.js): a Save has gone out under this group's key the other way.
     // Nothing is sent and no key is minted — this would be a second thing for one sitting.
