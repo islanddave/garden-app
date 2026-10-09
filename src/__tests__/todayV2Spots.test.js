@@ -3,11 +3,11 @@
 // grafts the gate serves (v2wire.js applyGrafts — the same function, so the page judged and the model tested
 // cannot describe different states). Plan-v2 §8 S4 tests: every planting accounted for once; group
 // assignment; exceptions (Bag Area 8 / cohort 89; House ≤ 5 → no split; Stable → no cohort line); chip ==
-// header == Σ spots; filters never re-sort; order held, new spots appended; bed-wait Outside only.
+// header == Σ spots; filters never re-sort; order held, new spots appended; an engine-kept bed is in Water all.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { buildCareNeeded } from '../lib/careNeeded.js'
+import { buildCareNeeded, bedWaitActive } from '../lib/careNeeded.js'
 import {
   OUTSIDE, SMALL_VESSEL_TYPES, locationIndex, enrichRows, takeOrder, buildModel, exceptionKeys, exceptionReason,
   sortCohort, cohortLine, cohortCapNote, productGroups, careSummary, waterCandidates, filterResult, filterAnnouncement,
@@ -59,7 +59,7 @@ describe('groups and spots on the busy plan (SF5, D7)', () => {
     expect(m.groups.flatMap((g) => g.spots).reduce((n, s) => n + s.counts.water, 0)).toBe(water)
     expect(rows.length).toBe(233)
   })
-  it('group Water all = the visible spots\' candidates: Outside 154 with bed-wait off', () => {
+  it('group Water all = the visible spots\' candidates: Outside 154', () => {
     expect(m.groups[0].candidates.size).toBe(154)
     expect(m.groups[1].candidates.size).toBe(12)
     expect(m.groups[2].candidates.size).toBe(2)
@@ -95,8 +95,8 @@ describe('groups and spots on the busy plan (SF5, D7)', () => {
     expect(x.groups[0].spotsWithWater).toBe(5)
     expect(spotByName(x, 'Bag Area').counts).toEqual(spotByName(m, 'Bag Area').counts)
     expect(x.groups.flatMap((g) => g.spots).reduce((n, s) => n + s.counts.water, 0)).toBe(168)
-    expect(waterCandidates(spotByName(m, 'Drive-Shade').rows, OUTSIDE, false, new Set(ds.slice(0, 1))).keys.size).toBe(4)
-    expect(waterCandidates(spotByName(m, 'Drive-Shade').rows, OUTSIDE, false).keys.size).toBe(5)
+    expect(waterCandidates(spotByName(m, 'Drive-Shade').rows, new Set(ds.slice(0, 1))).size).toBe(4)
+    expect(waterCandidates(spotByName(m, 'Drive-Shade').rows).size).toBe(5)
   })
 })
 
@@ -141,21 +141,26 @@ describe('exceptions and cohort (D11, §11.0 E8, SF2)', () => {
   })
 })
 
-describe('bed-wait applies to Outside only (D7, §2.4, SF4 graft)', () => {
+// BUG-DEFERNOSTRESSOVERRIDE-001: the engine holds the beds that wait (the graft moves 17 to rain_skipped); the
+// two it kept (fresh-transplant carve-outs) are ordinary water rows — in Water all, never labeled as waiting.
+describe('while beds wait for rain, an engine-kept in-ground row is in Water all (SF4 graft)', () => {
   const { rows, plan } = state(['bedwait'])
   const idx = locationIndex(LOCS)
-  it('Outside Water all 135; In-Ground has no candidates, 2 beds wait', () => {
-    const m = buildModel(rows, { held: takeOrder(rows, idx.groupOrder), bedWait: true })
-    expect(m.groups[0].candidates.size).toBe(G.bedwait.expect.outside_water_all_after)
-    const ig = spotByName(m, 'In-Ground')
-    expect(ig.candidates.size).toBe(0)
-    expect(ig.bedsWaiting).toBe(2)
+  it('Outside Water all 137 = every Outside water row; In-Ground offers its 2 kept beds, nothing "waits"', () => {
+    const m = buildModel(rows, { held: takeOrder(rows, idx.groupOrder) })
+    expect(bedWaitActive(plan)).toBe(true)
     expect(plan.hydrology.tomorrow_precip_in).toBe(0.62)
+    expect(G.bedwait.expect.outside_water_all_after).toBe(137)
+    expect(m.groups[0].candidates.size).toBe(G.bedwait.expect.outside_water_all_after)
+    expect(m.groups[0].candidates.size).toBe(G.bedwait.expect.water_rows_by_group_after.Outside)
+    const ig = spotByName(m, 'In-Ground')
+    expect(ig.rows.filter((r) => r.task === 'water').every((r) => r.inGround)).toBe(true)
+    expect([...ig.candidates].sort()).toEqual(G.bedwait.carve_outs.map((id) => id + ':water_due').sort())
+    expect('bedsWaiting' in ig).toBe(false)
   })
-  it('a covered group never excludes its beds', () => {
+  it('an in-ground row is a candidate in every group', () => {
     const bed = { key: 'b', eventType: 'watering', inGround: true }
-    expect(waterCandidates([bed], 'Stable', true).keys.size).toBe(1)
-    expect(waterCandidates([bed], OUTSIDE, true).keys.size).toBe(0)
+    expect(waterCandidates([bed]).size).toBe(1)
   })
 })
 
@@ -288,5 +293,8 @@ describe('the emptied Needs care header (§2.5)', () => {
     expect(caughtUpSummary({ logged: 5, rain: 0 })).toBe('5 logged today')
     expect(caughtUpSummary({ logged: 0, rain: 70 })).toBe('70 covered by rain')
     expect(caughtUpSummary({ logged: 0, rain: 0 })).toBe(null)
+    // A forecast hold is never "covered by rain" (lib/rainHold.js).
+    expect(caughtUpSummary({ logged: 95, waiting: 3, rain: 70 })).toBe('95 logged today, 3 waiting for rain, 70 covered by rain')
+    expect(caughtUpSummary({ logged: 0, waiting: 17, rain: 0 })).toBe('17 waiting for rain')
   })
 })

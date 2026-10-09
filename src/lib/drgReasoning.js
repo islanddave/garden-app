@@ -5,6 +5,8 @@
 // actionable list; DrG only explains). Locking this in a unit test guarantees DrG never narrates
 // data it doesn't have. data = useDailyPlan().data = { has_plan, plan, ... }.
 
+import { rainReasoningLines } from './rainHold.js'
+
 const NEED_CLAUSE = [
   ['water_due', n => n + (n === 1 ? ' to water' : ' to water')],
   ['no_history', n => n + ' never watered'],
@@ -38,8 +40,8 @@ export function buildReasoningLines(data) {
 
   if (plan.substrate && plan.substrate.msg) lines.push(plan.substrate.msg)
 
-  const rs = Array.isArray(plan.rain_skipped) ? plan.rain_skipped.length : 0
-  if (rs > 0) lines.push('Skipped watering ' + rs + ' planting' + (rs > 1 ? 's' : '') + ' — recent rain counted.')
+  // Two claims, never one (lib/rainHold.js): held on a forecast is not "rain counted".
+  lines.push(...rainReasoningLines(plan))
 
   if (lines.length === 0) return { state: 'steady', lines: [] }
   return { state: 'plan', lines }

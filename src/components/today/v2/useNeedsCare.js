@@ -1,7 +1,8 @@
 import { useMemo, useCallback } from 'react'
 import { useApiFetch } from '../../../lib/api.js'
 import { useCachedFetch } from '../../../hooks/useCachedFetch.js'
-import { buildCareNeeded, bedWaitActive } from '../../../lib/careNeeded.js'
+import { buildCareNeeded } from '../../../lib/careNeeded.js'
+import { waitingRows, rainSplit, RAIN_HOLD_NEED } from '../../../lib/rainHold.js'
 import { useCareActions } from '../useCareActions.js'
 import { locationIndex, enrichRows, takeOrder, exceptionKeys, careSummary, loggedTodayCount, caughtUpSummary, CAUGHT_UP_TITLE, OUTSIDE } from '../../../lib/todayV2/spots.js'
 import { careReasons, careTrigger } from '../../../lib/todayV2/triggers.js'
@@ -19,6 +20,12 @@ import { useTodayLogged } from './useTodayLogged.js'
 // the last good plan before the refetch — §6.3). The write paths and the optimistic fades are
 // useCareActions', with the V2 options (S4). /api/plants + /api/locations join the rows to spots and groups
 // (spots.js); both are read through useCachedFetch, so Protect and Heads-up (S5) share the one request.
+//
+// WAITING FOR RAIN (BUG-DEFERNOSTRESSOVERRIDE-001): the plantings the engine holds on a forecast
+// (lib/rainHold.js) ride the SAME useCareActions as the care rows — one write path, one set of in-flight
+// guards, one today-logged guard — so a Water tap on one posts what a Water tap on a list row posts. They are
+// never Needs care rows: `rows`, the count, the chips, the spots and every Water all read the care rows only.
+// The glance card's open state lists them (RainHold.jsx), from `rain` below.
 const CARE_NEEDS = new Set(['water_due', 'no_history', 'fertilize', 'pest', 'overwintering'])
 const SILENT = { show() {}, showUndo() {} }
 const NOOP = () => {}
@@ -33,15 +40,19 @@ export function useNeedsCare({ plan, planDate, userId, stale }) {
   const { held, claim } = useTodayLogged(logKey)
   const due = useMemo(() => buildCareNeeded(plan).filter((r) => CARE_NEEDS.has(r.need)), [plan])
   const allRows = useMemo(() => due.filter((r) => !held.has(r.key)), [due, held])
-  const bedWait = useMemo(() => bedWaitActive(plan), [plan])
-  const actions = useCareActions({ allRows, bedWait, planDate, fetch, getToken, toast: SILENT, announce: NOOP })
+  const waitDue = useMemo(() => waitingRows(plan), [plan])
+  const waitAll = useMemo(() => waitDue.filter((r) => !held.has(r.key)), [waitDue, held])
+  const actionRows = useMemo(() => (waitAll.length ? [...allRows, ...waitAll] : allRows), [allRows, waitAll])
+  const actions = useCareActions({ allRows: actionRows, planDate, fetch, getToken, toast: SILENT, announce: NOOP })
+  // The list as it stands, care rows only (the hook's own array when nothing waits, so no row rebuilds).
+  const active = useMemo(() => (waitAll.length ? actions.rows.filter((r) => r.need !== RAIN_HOLD_NEED) : actions.rows), [actions.rows, waitAll])
 
   // A failed read is no read, for either list (review 4160.2 IMPORTANT-3): an errored /api/plants may still carry a
   // body (an empty array), and read as "no plantings anywhere" it would put the whole garden in one Unplaced spot.
   const plantList = Array.isArray(plants.data) && !plants.error ? plants.data : null
   const locPayload = locations.data && !locations.error ? locations.data : null
   const enrich = useCallback((rows) => enrichRows(rows, { plan, plants: plantList, locations: locPayload }), [plan, plantList, locPayload])
-  const rows = useMemo(() => enrich(actions.rows), [enrich, actions.rows])
+  const rows = useMemo(() => enrich(active), [enrich, active])
   // Every row of the plan day, handled or not — a handled row keeps its place as a done line (§2.5).
   const allEnriched = useMemo(() => enrich(allRows), [enrich, allRows])
   const groupOrder = useMemo(() => locationIndex(locPayload).groupOrder, [locPayload])
@@ -65,15 +76,23 @@ export function useNeedsCare({ plan, planDate, userId, stale }) {
     return { order, exceptions, pinned, open: [], cohort: [], shown: {}, products: [], batches: {}, rowsDone: {} }
   }, [enrich, allRows, actions.skipped, groupOrder])
 
-  // §2.5 (S4g): the emptied header — "Needs care · all caught up" over "95 logged today, 70 covered by rain".
-  // The store is read live (a cheap sessionStorage read): every log and Undo re-renders the page anyway.
-  const rainCovered = Array.isArray(plan?.rain_skipped) ? plan.rain_skipped.length : 0
+  // Waiting for rain: every waiting row of the plan day (a watered one keeps its place as a done line), and the
+  // keys still waiting — not yet watered here.
+  const rain = useMemo(() => {
+    const rs = enrich(waitAll)
+    const on = new Set(actions.rows.map((r) => r.key))
+    return { rows: rs, live: new Set(rs.filter((r) => on.has(r.key)).map((r) => r.key)) }
+  }, [enrich, waitAll, actions.rows])
+
+  // §2.5 (S4g): the emptied header — "Needs care · all caught up" over "95 logged today, 3 waiting for rain, 70
+  // covered by rain". The store is read live (a cheap sessionStorage read): every log and Undo re-renders the page anyway.
+  const rainCovered = useMemo(() => rainSplit(plan).covered, [plan])
   const loggedToday = loggedTodayCount(plan, readLogged(logKey))
 
   return {
-    plan, settled, rows, allEnriched, count: rows.length, reasons, trigger, summary, spotCount, bedWait, actions, getToken, logKey, claim,
-    rainCovered, loggedToday,
-    caughtUp: { title: CAUGHT_UP_TITLE, summary: caughtUpSummary({ logged: loggedToday, rain: rainCovered }) },
+    plan, settled, rows, allEnriched, count: rows.length, reasons, trigger, summary, spotCount, actions, getToken, logKey, claim,
+    rain, rainCovered, loggedToday,
+    caughtUp: { title: CAUGHT_UP_TITLE, summary: caughtUpSummary({ logged: loggedToday, waiting: rain.live.size, rain: rainCovered }) },
     // Spots are LOCATIONS only when both reads answered (enrichRows); otherwise they are projects, with no group
     // header and no group Water all — the /api/locations fallback, now for a failed /api/plants too.
     snapshot, groupOrder, locationsOk: !!locPayload && !!plantList, outside: OUTSIDE,

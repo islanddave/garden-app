@@ -17,7 +17,8 @@
 //   bedwait  tomorrow 0.62″ @ 70%, run through the e6dbd74 gate (BUG-RAINBEDWAITCONFLICT-001): every
 //            in-ground row the gate defers is moved to rain_skipped with the engine's own item shape and
 //            satReason() wording; two are kept as fresh-transplant carve-outs (TRANSPLANT_CARVEOUT_DAYS),
-//            which the fixture cannot date, so they are declared, not derived.
+//            which the fixture cannot date, so they are declared, not derived. They stay on the list and in
+//            Water all (BUG-DEFERNOSTRESSOVERRIDE-001).
 //   freeze   tonightLow 36 + SYNTHETIC bring_in cards for the container nightshades, worded with the
 //            engine's `low<40` template (engine.js coldFor); the five real protect cards re-worded at 36°F.
 //   gaugerain the yard gauge has measured 0.45″ today and the hourly forecast has nothing left: SYNTHETIC
@@ -91,14 +92,13 @@ const bedwait = {
     reason: engine.satReason(sat),
   })),
   carve_outs: carve.map((r) => r.id),
-  provenance: `engine.saturationSuppressed('outdoor', hydrology{tomorrow 0.62″ @ 70%}, {deferDry:true}) = ${sat.kind}; ${deferred.length} of ${beds.length} in-ground water rows moved to rain_skipped with engine.js's rain_skipped shape and satReason() text ("${engine.satReason(sat)}"). The last ${CARVE_OUTS} in-ground rows (${carve.map((r) => r.name).join(', ')}) are DECLARED fresh-transplant carve-outs (TRANSPLANT_CARVEOUT_DAYS = ${engine.TRANSPLANT_CARVEOUT_DAYS}): the fixture carries no transplant_at to derive them from. They stay in water_due, and bedWaitActive(plan) keeps them out of Water all.`,
+  provenance: `engine.saturationSuppressed('outdoor', hydrology{tomorrow 0.62″ @ 70%}, {deferDry:true}) = ${sat.kind}; ${deferred.length} of ${beds.length} in-ground water rows moved to rain_skipped with engine.js's rain_skipped shape and satReason() text ("${engine.satReason(sat)}"). The last ${CARVE_OUTS} in-ground rows (${carve.map((r) => r.name).join(', ')}) are DECLARED fresh-transplant carve-outs (TRANSPLANT_CARVEOUT_DAYS = ${engine.TRANSPLANT_CARVEOUT_DAYS}): the fixture carries no transplant_at to derive them from. They stay in water_due, and Water all takes them with every other water row (BUG-DEFERNOSTRESSOVERRIDE-001: the engine owns the hold).`,
   // What the page should show, in D7's groups (v2groups.mjs, the gate's own reading, not the product's):
-  // Outside water rows after the move, and Water all = those minus the carve-outs bed-wait excludes.
+  // Outside water rows after the move, and Water all = all of them, the carve-out beds included.
   expect: (() => {
     const left = plan.water_due.filter((r) => !deferred.some((d) => d.id === r.id))
     const g = groupsOfRows(left, PLANTS, LOCS)
-    const outsideBeds = groupsOfRows(carve, PLANTS, LOCS).Outside || 0
-    return { water_rows_by_group_after: g, outside_water_all_after: (g.Outside || 0) - outsideBeds }
+    return { water_rows_by_group_after: g, outside_water_all_after: g.Outside || 0 }
   })(),
 }
 

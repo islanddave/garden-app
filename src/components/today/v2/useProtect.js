@@ -43,7 +43,7 @@ export function useProtect({ plan, planDate, userId, stale, householdPlans, care
     ? householdPlans.flatMap((hp) => coldRows(hp && hp.plan, memberFirstName(members, hp && hp.user_id)))
     : []), [showOthers, householdPlans, members])
   const allRows = useMemo(() => [...own, ...others].filter((r) => !held.has(r.key)), [own, others, held])
-  const actions = useCareActions({ allRows, bedWait: false, planDate, fetch, getToken, toast: SILENT, announce: NOOP })
+  const actions = useCareActions({ allRows, planDate, fetch, getToken, toast: SILENT, announce: NOOP })
 
   // As useNeedsCare: an errored /api/plants is no plant list (review 4160.2 IMPORTANT-3), so no Unplaced cover row.
   const plantList = Array.isArray(plants.data) && !plants.error ? plants.data : null

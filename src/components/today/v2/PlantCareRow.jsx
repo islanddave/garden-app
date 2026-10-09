@@ -16,6 +16,8 @@ import { T } from '../../forms/formStyles.js'
 // Differences, each from the plan: the name wraps (never an ellipsis); the reason line is the caller's
 // (an exception says why it differs); a handled row becomes its done line in place, with Undo, for the
 // visit (§2.5); a write that failed says "Not logged" with Retry on the row, never a toast (§6.6).
+// Skip and Moist render only where the caller hands them a handler: a planting waiting for rain (RainHold.jsx)
+// passes neither — it is not on today's list to skip, and "still moist" changes nothing about a hold.
 const ROW_TAP_MIN = 48
 const SKIP_W = 48
 const SKIP_GAP = 8
@@ -95,11 +97,13 @@ export default function PlantCareRow({ row, testid = 'care-row', reason, pending
         <button type="button" onClick={writesHeld ? undefined : () => onRetry(row)} disabled={pending} aria-disabled={writesHeld ? 'true' : undefined} aria-label={'Retry: ' + row.name} style={{ ...outlineBtn, margin: '2px 4px', minHeight: 44 }}>Retry</button>
       ) : (
         <>
-          <button type="button" onClick={writesHeld ? undefined : () => onSkip(row)} aria-disabled={writesHeld ? 'true' : undefined} aria-label={'Skip ' + row.name + ' today'}
-            style={{ flexShrink: 0, width: SKIP_W, marginRight: SKIP_GAP, minHeight: ROW_TAP_MIN, border: 'none', borderLeft: '1px solid ' + P.border, background: 'none', color: P.mid, cursor: 'pointer', fontSize: '0.7rem' }}>
-            Skip
-          </button>
-          {canMoistureCheck(row) && <MoistureButton row={row} pending={pending} onMoist={onMoist} held={writesHeld} />}
+          {onSkip && (
+            <button type="button" onClick={writesHeld ? undefined : () => onSkip(row)} aria-disabled={writesHeld ? 'true' : undefined} aria-label={'Skip ' + row.name + ' today'}
+              style={{ flexShrink: 0, width: SKIP_W, marginRight: SKIP_GAP, minHeight: ROW_TAP_MIN, border: 'none', borderLeft: '1px solid ' + P.border, background: 'none', color: P.mid, cursor: 'pointer', fontSize: '0.7rem' }}>
+              Skip
+            </button>
+          )}
+          {onMoist && canMoistureCheck(row) && <MoistureButton row={row} pending={pending} onMoist={onMoist} held={writesHeld} />}
           <CareChipButton row={row} pending={pending} onLog={onLog} held={writesHeld} />
         </>
       )}

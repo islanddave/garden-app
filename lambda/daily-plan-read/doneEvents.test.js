@@ -202,3 +202,35 @@ describe('applyDone / planItemIds — fold mechanics', () => {
     expect(input.water_due[0]).not.toHaveProperty('done');
   });
 });
+
+// BUG-DEFERNOSTRESSOVERRIDE-001 (Design A) — a planting the engine held back for rain, watered anyway. Today
+// lists the forecast-held ones with a Water button; the watering must check the held item off on the next read
+// (reload, the other phone), or the row comes back and invites a second log until the hourly run drops it.
+describe('rain_skipped — a watering checks a rain-held planting off', () => {
+  const held = (extra = {}) => plan({ rain_skipped: [{ id: 'r1', sat_kind: 'incoming_dry' }, { id: 'r2', sat_kind: 'today' }, { id: 'r3' }], ...extra });
+
+  it('a watering stamps exactly that held item done', () => {
+    const out = applyDone(held(), sat('r1|watering'));
+    expect(out.rain_skipped.map((it) => it.done)).toEqual([true, false, false]);
+    expect(out.rain_skipped[0]).toMatchObject({ id: 'r1', sat_kind: 'incoming_dry', done: true });
+  });
+
+  it('`watering` ONLY: a rain event, a moisture check and an observation leave it waiting', () => {
+    expect(DONE_EVENTS.rain_skipped).toEqual(['watering']);
+    for (const t of ['rain', 'moisture_check', 'observation', 'fertilizing']) {
+      expect(applyDone(held(), sat('r1|' + t)).rain_skipped[0].done, t).toBe(false);
+    }
+  });
+
+  it('its ids join the done query, so a plan holding ONLY rain-held plantings is still asked about', () => {
+    expect(planItemIds({ rain_skipped: [{ id: 'r1' }, { id: 'r2' }] })).toEqual(['r1', 'r2']);
+    expect(planItemIds(held())).toEqual(expect.arrayContaining(['r1', 'r2', 'r3']));
+  });
+
+  it('moves no other bucket: a watering on a held planting checks off nothing but its own rows', () => {
+    const before = applyDone(plan(), sat('p1|watering'));
+    const after = applyDone(held(), sat('p1|watering'));
+    for (const k of Object.keys(DONE_EVENTS).filter((b) => b !== 'rain_skipped')) expect(after[k], k).toEqual(before[k]);
+    expect(after.rain_skipped.every((it) => it.done === false)).toBe(true);
+  });
+});

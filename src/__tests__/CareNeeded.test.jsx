@@ -33,7 +33,7 @@ vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
   saveTodaySkipped: prefsMock.saveTodaySkipped,
 }))
 
-import CareNeeded from '../components/today/CareNeeded.jsx'
+import CareNeeded, { RainNote } from '../components/today/CareNeeded.jsx'
 
 const plan = () => ({
   hydrology: { tomorrow_precip_in: 0.05, tomorrow_pop: 10 },
@@ -473,15 +473,60 @@ describe('CareNeeded — Slice 7', () => {
       expect(screen.getByRole('button', { name: /Log Water for Alpha One/i })).toBeTruthy()
     })
 
-    it('excludes in-ground beds while bed-wait is active, exactly as the global pill does', async () => {
+    it('includes an in-ground bed the engine kept on the list while beds wait for rain, as the global pill does', async () => {
       const p = twoGroups()
-      // bedWaitActive: the engine's dry-bed deferral gate, which needs a rain history (recent_precip_in)
-      // like the engine does (BUG-RAINBEDWAITCONFLICT-001).
+      // The engine's dry-bed deferral is live on this forecast (BUG-RAINBEDWAITCONFLICT-001), so the beds that
+      // wait are in rain_skipped. A bed still in water_due is one it decided needs water, and until
+      // BUG-DEFERNOSTRESSOVERRIDE-001 the client dropped it from every bulk.
       p.hydrology = { recent_precip_in: 0.05, tomorrow_precip_in: 0.5, tomorrow_pop: 80 }
       p.water_due[1].in_ground = true                                // a2 becomes a bed
+      const n = p.water_due.length
       render(<CareNeeded plan={p} />)
-      // Only a1 remains a candidate, so the section bulk drops below two and disappears.
-      expect(screen.queryByRole('button', { name: /Water all .* in Alpha/i })).toBeNull()
+      expect(screen.getByRole('button', { name: /Water all .* in Alpha/i })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Log all watering (' + n + ')' })).toBeTruthy()
     })
+  })
+})
+
+// BUG-DEFERNOSTRESSOVERRIDE-001 — Today V1's rain note says two different things for two different facts.
+// A planting held on a FORECAST (engine sat_kind today / incoming_dry / soon) is waiting for rain; only rain
+// that fell "handled" anything. The single sentence it replaces said "recent rain counts" over both.
+describe('RainNote — a forecast hold is never rain that fell', () => {
+  const hold = (id, sat_kind) => ({ id, name: 'Bed ' + id, sat_kind, reason: 'Skip — 0.8" rain expected tomorrow @ 80%; waiting for it beats watering twice' })
+  const fell = (id) => ({ id, name: 'Pot ' + id, credited_days: 2, reason: 'Skip — 0.6" rain over the last few days counts as watering' })
+  const text = () => screen.queryByTestId('care-rain-note')?.textContent ?? null
+
+  it('forecast holds only: "Waiting for rain", and no word of rain having fallen', () => {
+    render(<RainNote plan={{ rain_skipped: [hold('a', 'incoming_dry'), hold('b', 'today'), hold('c', 'soon')] }} />)
+    expect(text()).toBe('Waiting for rain: 3 plantings — it is forecast, not fallen yet.')
+    expect(text()).not.toMatch(/recent rain|handled|covered|counts/i)
+  })
+
+  it('rain that fell only: the sentence it always printed (a missing sat_kind is rain that fell)', () => {
+    render(<RainNote plan={{ rain_skipped: [fell('a'), { ...fell('b'), sat_kind: 'soak' }] }} />)
+    expect(text()).toBe('Rain handled watering for 2 plantings — recent rain counts.')
+  })
+
+  it('both: two sentences, the waiting one first, each with its own count', () => {
+    render(<RainNote plan={{ rain_skipped: [fell('a'), hold('b', 'incoming_dry')] }} />)
+    const lines = [...screen.getByTestId('care-rain-note').children].map((el) => el.textContent)
+    expect(lines).toEqual(['Waiting for rain: 1 planting — it is forecast, not fallen yet.', 'Rain handled watering for 1 planting — recent rain counts.'])
+  })
+
+  it('a forecast hold already watered today (done) is no longer waiting; nothing left → no note', () => {
+    render(<RainNote plan={{ rain_skipped: [{ ...hold('a', 'today'), done: true }] }} />)
+    expect(text()).toBe(null)
+    cleanup()
+    render(<RainNote plan={{ rain_skipped: [] }} />)
+    expect(text()).toBe(null)
+  })
+
+  it('on the page: the note prints under the list, and V1 lists no waiting row (its rows answer with a toast)', () => {
+    const p = plan()
+    p.rain_skipped = [hold('h1', 'incoming_dry')]
+    render(<CareNeeded plan={p} />)
+    expect(text()).toBe('Waiting for rain: 1 planting — it is forecast, not fallen yet.')
+    expect(screen.queryByRole('button', { name: 'Log Water for Bed h1' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Log all watering (2)' })).toBeTruthy()
   })
 })

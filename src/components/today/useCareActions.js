@@ -20,7 +20,7 @@ import {
 // One-tap log goes through the IDENTICAL Log-form write path (POST /api/events) so the events Lambda
 // side effects (critter award + entity_memory.next_water_at) fire; undo soft-deletes.
 //
-// Arguments: `allRows` = buildCareNeeded(plan); `bedWait` = bedWaitActive(plan); `planDate` = the plan
+// Arguments: `allRows` = buildCareNeeded(plan); `planDate` = the plan
 // envelope's plan_date; `fetch`/`getToken` = useApiFetch()'s; `toast` = useOptionalToast(); `announce`
 // writes the caller's polite live region; `onBulkEnd` runs where a bulk run ends or finds nothing to
 // log (V1 closes its chooser sheet there).
@@ -45,7 +45,7 @@ export function eventBody(row, eventType) {
   }
 }
 
-export function useCareActions({ allRows, bedWait, planDate, fetch, getToken, toast, announce, onBulkEnd = NOOP }) {
+export function useCareActions({ allRows, planDate, fetch, getToken, toast, announce, onBulkEnd = NOOP }) {
   // Optimistic local drop (V3-TODAYDONE parity): row key -> event_date of the write that faded it.
   const [logged, setLogged] = useState(() => new Map())
   const [pendingKeys, setPendingKeys] = useState(() => new Set())
@@ -292,9 +292,8 @@ export function useCareActions({ allRows, bedWait, planDate, fetch, getToken, to
     })
   }, [announce, getToken, toast, unskipRow])
 
-  // Bulk: the candidate set for an event_type = visible rows of that type, MINUS in-ground beds when
-  // bed-wait is active (watering only) — careNeeded.js candidateRows. Client-side fan-out of single
-  // POSTs. Best-effort; aggregate undo.
+  // Bulk: the candidate set for an event_type = visible rows of that type (careNeeded.js candidateRows).
+  // Client-side fan-out of single POSTs. Best-effort; aggregate undo.
   //
   // WHY NOT POST /api/events/batch (re-checked 2026-09-24, BUG-RUNBULKPARTIALUNDO-001). This comment
   // used to say the batch endpoint "cannot name this id-subset"; that is stale — scope.type 'ids' names
@@ -304,7 +303,7 @@ export function useCareActions({ allRows, bedWait, planDate, fetch, getToken, to
   //     WHOLE tap and writes nothing, where this path logs the rest.
   //   · a batch is ONE reward action (lambda/events/batchSideEffects.js, Decision 1); this is N. Moving
   //     it changes what a Today bulk earns — Dave's call, not a transport swap.
-  const candidatesFor = useCallback((etype) => candidateRows(rows, etype, { bedWait }), [rows, bedWait])
+  const candidatesFor = useCallback((etype) => candidateRows(rows, etype), [rows])
 
   // BUG-RUNBULKPARTIALUNDO-001 — the whole fan-out's in-flight guard, as a REF for the reason
   // writeInFlightRef above spells out: `disabled={!!bulkProgress}` is applied by the render that has
@@ -315,8 +314,7 @@ export function useCareActions({ allRows, bedWait, planDate, fetch, getToken, to
   // V5-TODAYREDESIGN-001 S4 — the V2 run (plan-v2 §6.7 as cut by §13 Simplify 1 + SF12). Taken only when
   // the caller passes `opts`; V1 never does, so its run below is untouched. Differences, each on purpose:
   //   · `keys` are the caller's own candidate set, used as given (only rows still on the list, of this
-  //     type). V2 decides bed-wait PER GROUP (D7: Outside only), so re-filtering here by the list-wide
-  //     `bedWait` would drop a covered group's beds from its own Water all.
+  //     type).
   //   · `concurrency` POSTs in flight (4), each `keepalive` so a run survives the page going away.
   //   · `excludeInFlight`: keys already being written — a one-tap Water, another run — are left out
   //     and reported, instead of the V1 whole-run guard dropping the second tap (BUG-BULKDOUBLELOGINFLIGHT-001).
