@@ -1,7 +1,7 @@
 {
-  "version": "4.176.0",
-  "date": "2026-10-08",
+  "version": "4.177.0",
+  "date": "2026-10-09",
   "highlights": [
-    "A seed lot's stage now changes in one place only (Saved seeds). Saving a count or other details from an older screen can no longer put a lot back to an earlier stage or drop its wet/dry process."
+    "Put-Up saves after a lost connection: a change you make on the put-up, Start and Put it up sheets is now kept, or you are told plainly it was not. Re-opening a day-old Make this no longer puts the recipe's jar back over yours."
   ]
 }

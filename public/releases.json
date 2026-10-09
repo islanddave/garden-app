@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.177.0",
+    "date": "2026-10-09",
+    "highlights": [
+      "Put-Up saves after a lost connection: a change you make on the put-up, Start and Put it up sheets is now kept, or you are told plainly it was not. Re-opening a day-old Make this no longer puts the recipe's jar back over yours."
+    ]
+  },
+  {
     "version": "4.176.0",
     "date": "2026-10-08",
     "highlights": [
