@@ -29,9 +29,10 @@
 //      by exact position: left alone, engine.js came out as 2,281 items for 1,374. So the Node conversion takes
 //      the item maps of the vite one before the two merge (adoptMaps), which it may only when the two lists are
 //      one list (whyNotSameItems): as many statements, functions and branches under the same numbers, every
-//      function under the same name, every branch of the same kind with as many arms, and every item where its
-//      opposite number is, in order. A file that fails that is named, the run fails, and what Node ran of the file
-//      is left out of the report: nothing is merged on a guess;
+//      function under the same name, every branch of the same kind with as many arms, and every item in order
+//      and over its opposite number's own place in the file. A file that fails that is named, the run fails, and
+//      what Node ran of the file is left out of the report: nothing is merged on a guess. (What that check still
+//      cannot tell from one list is written above it);
 //   5. no hit count in the finished map may be negative (negativeHits), in any file, however it was loaded and
 //      whether or not every test file ran.
 // A failure of 4 or 5 is reported the way vitest reports a coverage threshold: an ERROR line and exit code 1, after
@@ -97,7 +98,8 @@
 //   - generateReports(coverageMap, allTestsRun) writes the reports and checks the thresholds, and this.ctx.logger
 //     prints.
 // And outside vitest, on what vite hands it: whyNotSameItems needs vite's text of a file to list the items the file
-// lists, in the file's order, with a source map that sends each back to where it is or to the token before it.
+// lists, in the file's order, with a source map that sends each back over its own place in the file (how far off a
+// start and an end may be read is written above that function, with the shapes it was measured on).
 // Re-read this file against all of that on any vitest or @vitest/coverage-v8 upgrade (the test's version pin makes
 // that one deliberate edit), and after a vite, @vitejs/plugin-react or Node (.nvmrc) upgrade when the fixture run
 // goes red or a full run names a file in an ERROR line: a reprint that changes can fail whyNotSameItems on a real
@@ -162,31 +164,77 @@ export function splitForms(coverage, lengthOf) {
 }
 
 const startOf = (item) => (item.loc || item).start
-const said = (start) => (start ? `${start.line}:${start.column}` : 'none')
-// Where `a` is against `b` in the file: below zero before it, zero at it, above zero after it. Not a number when
-// either has no line or column, and then no comparison below holds, so the item is refused.
-const order = (a, b) => (a.line === b.line ? a.column - b.column : a.line - b.line)
+// Where an item is: its start and its end. A statement is its own extent; a function and a branch carry one.
+const extentOf = (item) => item.loc || item
+const said = (at) => (at ? `${at.line}:${at.column}` : 'none')
+// A place in a file: a line, and a column that is a number or Infinity, which is how the converter writes "the end
+// of this line" (the end of an item with no token after it on its last line that the source map has an entry for).
+const placed = (at) => Number.isInteger(at?.line) && (Number.isInteger(at.column) || at.column === Infinity)
+// Where `a` is against `b` in the file: below zero before it, zero at it, above zero after it. Both are placed.
+const order = (a, b) => (a.line !== b.line ? a.line - b.line : a.column === b.column ? 0 : a.column - b.column)
+// Whether the extent `inner` lies inside the extent `outer`, their edges included.
+const holds = (outer, inner) => order(outer.start, inner.start) <= 0 && order(inner.end, outer.end) <= 0
 // The item maps of one converted file, and `b` for the number of arms each branch has.
 const itemMapsOf = ({ statementMap, fnMap, branchMap, b }) => ({ statementMap, fnMap, branchMap, b })
 
 // Why the Node conversion of a file cannot take the vite conversion's item maps, or null when it can. Both lists
-// are one walk of the same program in source order, and they are held to being one list:
+// are one walk of the same program, and they are held to being one list:
 //   - as many statements, functions and branches, under the same numbers;
 //   - every function with its opposite number's name, every branch with its opposite number's kind and number of
 //     arms;
-//   - every item where its opposite number is, in order. Vite's start of an item is not the file's: its source map
-//     sends a start back to the token it has an entry for, which is the item's own first token or one before it.
-//     Measured on the thirteen files of lambda/daily-plan converted both ways (4,298 items): 83 starts are up to
-//     21 columns early, 75 that sit behind an opening bracket the reprint dropped are one column late, and four (a
-//     value on the line after its `const x =`, handler.js:20-21) are a line early. What holds for all 4,298 is
-//     that vite's start of an item lies AFTER the file's start of the item before it and BEFORE the file's start
-//     of the item after it, or exactly where vite starts that neighbour too (two items that begin at one token:
-//     an `if` and the `(a || b) && c` it tests). So that is the rule, with no distance in it. A list that has lost
-//     one item and gained another has the same count and every item between the two under its neighbour's number:
-//     counts alone adopted it and gave each of those items a neighbour's hits. Of such shifts made in the real
-//     lists, the rule refuses 97% of those two items long, 99.8% of three, and every one of ten or more.
-// What it can miss: a shift so short and so placed that each moved start still falls between its neighbours, and
-// one item exchanged for another that starts where a neighbour starts.
+//   - every item in order, and over its opposite number's own place in the file.
+// THE PLACES. Vite's place for an item is not the file's. The converter reads a start at the source map's entry at
+// or before the item's first character (when its line of vite's text has none there, at the next) and an end on
+// the line of the entry at or before its last character, at the next entry on that line or at the line's end; the
+// reprint keeps some brackets, which have no entry, and drops others. Measured on the thirteen files of
+// lambda/daily-plan converted both ways (4,298 items), and on a scratch module of shapes they do not have, put
+// through the same run (152 items, not in the repo):
+//   starts  4,136 at the file's. 83 up to 21 columns early and four a line early: an item behind a bracket the
+//           reprint kept starts at the token before it (the name in `const x =\n  (value)`, handler.js:20-21; three
+//           lines early with blank lines in between). 75 one column late, behind a bracket the reprint dropped; a
+//           line late when the line breaks after that bracket, and seven columns late for a statement
+//           `(() => 2)()`, read at the first entry inside it. Never at or past the item's own end;
+//   ends    4,290 on the item's last line, at its end or past it. Eight at the END of an earlier line of the item:
+//           statements of handler.js that end in a template literal of several lines (205-290 reads as ending on
+//           205); so too before a closing bracket the reprint dropped and before a `;` on the next line. Never
+//           before the item's first line, never short of its end on its last line, never on a later line;
+//   shared  110 times, all branches, vite's start of an item is not after the file's start of the item before it or
+//           not before the file's start of the item after it. Vite then starts the two at one place, and in the
+//           file the later of the two lies inside the earlier (an `if` and the `(a || b) && c` it tests,
+//           handler.js:29; they are on two lines when the test is on the line after its `if`).
+// THE RULE, with no distance in it, in two passes over the three maps. ORDER: vite's start of an item lies AFTER the
+// file's start of the item before it and BEFORE the file's start of the item after it, or exactly where vite starts
+// that neighbour too, which it may only where the later of the two lies inside the earlier in the file. PLACE:
+// vite's start of an item is after the file's start of the SAME item only inside that item, and vite's end of it is
+// on its last line at or past its end, or at the end of an earlier line of it. A place without a line and a column
+// is refused.
+// WHAT THE ORDER ALONE TOOK. It was the whole rule until OPS-COVPROVIDERMAPADOPT-001, without the condition on a
+// shared start. A list that has lost one item and gained another has the same counts, and Node's hits then land on
+// other items. Made in the thirteen real lists:
+//   - one item exchanged for another that is after it on its line, on the next line, or on the line of the item
+//     before: 8,164 of 8,652 taken. PLACE refuses all 8,652;
+//   - a shift, the items between the lost and the gained one each under a neighbour's number. Of one item (the
+//     gained one being its neighbour twice, the kindest case) 8,411 of 8,520 taken, now 1,405; of two 278 of 8,446,
+//     now five; of three or more 56, now none. By the script the order rule's own figures came from (forty random
+//     shifts a list, one seed), refused at one item: 2.0% then, 87.2% now; at two: 97.1% then, all now;
+//   - any shift through items vite starts early (a run of `const x =\n  (value)`, 33 moved) and any list whose
+//     starts the map sends to one place (in any order). PLACE refuses the first, ORDER the second.
+// WHAT IT STILL TAKES, each because the tie that closes it refuses correct lists (the tests name them `a known
+// limit`):
+//   - an item exchanged for one over its own place: one that starts inside it and ends at or past its end (so vite
+//     reads 75 real items, in eight of the thirteen files), or, for an item of several lines, one that ends with an
+//     earlier line of it (eight real items, handler.js);
+//   - one item under its neighbour's number where one of the two lies inside the other and ends with it, on its
+//     last line or with an earlier line of it: the 1,405. In 745 the outer one stands for the inner, which is how
+//     vite reads 110 real pairs, at one start (nine of the thirteen files); in 660 the inner stands for the outer,
+//     which is a start late inside its item, as above.
+// Two tighter ties were measured and NOT taken. Neither refuses any of the thirteen files; both refuse correct
+// lists of the scratch module. "A start at most one column late" refuses the statement `(() => 2)()` and a dropped
+// bracket with a line break after it (it would leave 757 of the 1,405). "A start shared only by two items the file
+// starts on one line" refuses an `if` whose test is on the next line.
+// And ORDER refuses one correct shape, as it always did: a class with a field that has a value, after a method. The
+// converter lists that value before the methods' statements in both forms, so the file's own list is not in order
+// there. No file converted both ways has one.
 export function whyNotSameItems(node, vite) {
   for (const map of ITEM_MAPS) {
     const [inFile, inVite] = [Object.keys(node[map]), Object.keys(vite[map])]
@@ -210,18 +258,46 @@ export function whyNotSameItems(node, vite) {
         `from the file and ${other.type} with ${vite.b[key]?.length} read from vite's text`
     }
   }
-  for (const map of ITEM_MAPS) {
+  const lists = ITEM_MAPS.map((map) => {
     const keys = Object.keys(node[map])
-    const inFile = keys.map((key) => startOf(node[map][key]))
-    const inVite = keys.map((key) => startOf(vite[map][key]))
+    const [inFile, inVite] = [node, vite].map((read) => keys.map((key) => extentOf(read[map][key])))
+    return { map, keys, inFile, inVite }
+  })
+  for (const { map, keys, inFile, inVite } of lists) {
     for (let at = 0; at < keys.length; at++) {
-      const after = at === 0 || order(inVite[at], inFile[at - 1]) > 0 || order(inVite[at], inVite[at - 1]) === 0
-      const before = at === keys.length - 1 || order(inVite[at], inFile[at + 1]) < 0 ||
-        order(inVite[at], inVite[at + 1]) === 0
+      const edge = ['start', 'end'].find((side) => !placed(inFile[at][side]) || !placed(inVite[at][side]))
+      if (edge) {
+        return `${map} item ${keys[at]} ${edge}s at ${said(inFile[at][edge])} read from the file and at ` +
+          `${said(inVite[at][edge])} read from vite's text, and one of the two is no place in a file`
+      }
+    }
+    for (let at = 0; at < keys.length; at++) {
+      const start = inVite[at].start
+      const after = at === 0 || order(start, inFile[at - 1].start) > 0 ||
+        (order(start, inVite[at - 1].start) === 0 && holds(inFile[at - 1], inFile[at]))
+      const before = at === keys.length - 1 || order(start, inFile[at + 1].start) < 0 ||
+        (order(start, inVite[at + 1].start) === 0 && holds(inFile[at], inFile[at + 1]))
       if (!after || !before) {
-        return `${map} item ${keys[at]} starts at ${said(inFile[at])} read from the file and at ${said(inVite[at])} ` +
-          `read from vite's text, which is not between the items before and after it in the file (${said(inFile[at - 1])} ` +
-          `and ${said(inFile[at + 1])})`
+        return `${map} item ${keys[at]} starts at ${said(inFile[at].start)} read from the file and at ${said(start)} ` +
+          `read from vite's text, which is not between the items before and after it in the file ` +
+          `(${said(inFile[at - 1]?.start)} and ${said(inFile[at + 1]?.start)})`
+      }
+    }
+  }
+  for (const { map, keys, inFile, inVite } of lists) {
+    for (let at = 0; at < keys.length; at++) {
+      const [file, read] = [inFile[at], inVite[at]]
+      if (order(read.start, file.start) > 0 && order(read.start, file.end) >= 0) {
+        return `${map} item ${keys[at]} is at ${said(file.start)} to ${said(file.end)} read from the file and ` +
+          `starts at ${said(read.start)} read from vite's text, which is past that item's own end in the file`
+      }
+      const ended = read.end.line === file.end.line
+        ? order(read.end, file.end) >= 0
+        : read.end.line >= file.start.line && read.end.line < file.end.line && read.end.column === Infinity
+      if (!ended) {
+        return `${map} item ${keys[at]} is at ${said(file.start)} to ${said(file.end)} read from the file and ` +
+          `ends at ${said(read.end)} read from vite's text, which is neither on that item's last line at or past ` +
+          'its end nor the end of an earlier line of it'
       }
     }
   }
