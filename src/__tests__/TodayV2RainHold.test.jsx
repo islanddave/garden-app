@@ -49,6 +49,7 @@ import TodayV2 from '../pages/TodayV2.jsx'
 import * as store from '../components/today/v2/needsCareStore.js'
 import { applyGrafts } from '../../tests/harness/_todaymeasure/v2wire.js'
 import { FORECAST_SAT_KINDS } from '../lib/rainHold.js'
+import { COHORT_CAP } from '../lib/todayV2/spots.js'
 
 const PAYLOAD = F('dailyplan.dave.json')
 const PLANTS = (() => { const p = F('plants.json'); return Array.isArray(p) ? p : p.plants })()
@@ -181,6 +182,65 @@ describe('the open card — two honest lines', () => {
     await mount([])
     expect(toggle().getAttribute('aria-expanded')).toBe('true')
     expect(note()).toBeNull()
+  })
+})
+
+// A same-day forecast below 85F holds every due outdoor planting, pots included (review I2: ~150 on the busy
+// fixture). 150 of the plan's own water_due items, moved to rain_skipped as the engine's 'today' kind writes them.
+describe('150 waiting: the list is capped as a Needs care cohort is', () => {
+  const MOVED = HELD.payload.plan.water_due.slice(0, 150)
+  const MANY = MOVED.map((it) => ({ ...ALL[0], id: it.id, name: it.name, crop: it.crop, project: it.project, project_id: it.project_id, in_ground: it.in_ground, days_since: it.days_since, interval: it.interval, sat_kind: 'today', reason: 'Skip — 0.6" rain expected later today @ 70%; waiting for it beats watering twice' }))
+  async function mountMany() {
+    planState.current = { data: { ...HELD.payload, plan: { ...HELD.payload.plan, water_due: HELD.payload.plan.water_due.slice(150), rain_skipped: MANY } }, loading: false, error: null, reload: vi.fn() }
+    render(<MemoryRouter><TodayV2 /></MemoryRouter>)
+    await settle()
+    if (toggle().getAttribute('aria-expanded') !== 'true') { fireEvent.click(toggle()); await settle() }
+  }
+
+  it('behind Show; Show draws 20 and "Show 130 more"; that draws the rest; the heading says 150 throughout', async () => {
+    expect(MANY.length).toBe(150)
+    await mountMany()
+    expect(waitLineText()).toBe('Waiting for rain · 150')
+    expect(waitRows().length).toBe(0)
+    expect(screen.queryByTestId('rain-show-more')).toBeNull()
+    const t = screen.getByTestId('rain-waiting-toggle')
+    expect(t.textContent).toBe('Show')
+    expect(t.getAttribute('aria-label')).toBe('Show the 150 plantings waiting for rain')
+    fireEvent.click(t); await settle()
+    expect(waitRows().length).toBe(COHORT_CAP)
+    expect(COHORT_CAP).toBe(20)
+    expect(waitRows().map((r) => r.getAttribute('data-key'))).toEqual(MANY.slice(0, 20).map((it) => it.id + ':rain_skipped'))
+    expect(waitLineText()).toBe('Waiting for rain · 150')
+    const more = screen.getByTestId('rain-show-more')
+    expect(more.textContent).toBe('Show 130 more')
+    expect(more.closest('[data-testid="rain-wait-row"]')).toBeNull()
+    expect(screen.getByTestId('rain-cap-note').textContent).toBe('Showing 20 of 150.')
+    fireEvent.click(more); await settle()
+    expect(waitRows().length).toBe(150)
+    expect(screen.queryByTestId('rain-show-more')).toBeNull()
+    expect(screen.queryByTestId('rain-cap-note')).toBeNull()
+    expect(waitLineText()).toBe('Waiting for rain · 150')
+    // Hide and Show again: the visit keeps "all".
+    fireEvent.click(screen.getByTestId('rain-waiting-toggle')); await settle()
+    expect(waitRows().length).toBe(0)
+    fireEvent.click(screen.getByTestId('rain-waiting-toggle')); await settle()
+    expect(waitRows().length).toBe(150)
+  })
+
+  it('20 waiting is the whole list: no "Show more"; 21 is 20 and "Show 1 more"', async () => {
+    planState.current = { data: payloadWith(MANY.slice(0, 20)), loading: false, error: null, reload: vi.fn() }
+    render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    if (toggle().getAttribute('aria-expanded') !== 'true') { fireEvent.click(toggle()); await settle() }
+    fireEvent.click(screen.getByTestId('rain-waiting-toggle')); await settle()
+    expect(waitRows().length).toBe(20)
+    expect(screen.queryByTestId('rain-show-more')).toBeNull()
+    cleanup(); sessionStorage.clear()
+    planState.current = { data: payloadWith(MANY.slice(0, 21)), loading: false, error: null, reload: vi.fn() }
+    render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    if (toggle().getAttribute('aria-expanded') !== 'true') { fireEvent.click(toggle()); await settle() }
+    fireEvent.click(screen.getByTestId('rain-waiting-toggle')); await settle()
+    expect(waitRows().length).toBe(20)
+    expect(screen.getByTestId('rain-show-more').textContent).toBe('Show 1 more')
   })
 })
 

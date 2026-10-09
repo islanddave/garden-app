@@ -20,7 +20,10 @@
 //     them inside the card's toggle button; nothing overflows the viewport sideways;
 //   · 9 waiting: collapsed behind a ≥ 48 px Show; Show draws 9 rows;
 //   · Water on a row: one POST /api/events (watering), the row is its done line with Undo, the count drops;
-//   · a failed write: "Not logged" + Retry on the row, the count stays.
+//   · a failed write: "Not logged" + Retry on the row, the count stays;
+//   · 150 waiting (a same-day forecast holds every due outdoor planting: the state's 17 plus 133 of the plan's
+//     water_due rows moved over in the same item shape): behind Show; Show draws 20 rows and a ≥ 48 px
+//     "Show 130 more"; the line says 150 throughout; that tap draws all 150 and nothing scrolls sideways.
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -119,6 +122,12 @@ const TRIM = `(() => {
     if (!body || !body.plan || !Array.isArray(body.plan.rain_skipped)) return res
     let kept = 0
     body.plan.rain_skipped = body.plan.rain_skipped.filter((it) => !(it && KINDS.has(it.sat_kind)) || kept++ < n)
+    // More than the state holds: the plan's own water_due rows move over, in a held item's shape.
+    const like = body.plan.rain_skipped.find((it) => it && KINDS.has(it.sat_kind))
+    if (kept < n && like && Array.isArray(body.plan.water_due)) {
+      const moved = body.plan.water_due.splice(0, n - kept)
+      for (const it of moved) body.plan.rain_skipped.push({ ...like, id: it.id, name: it.name, crop: it.crop, project: it.project, project_id: it.project_id, in_ground: it.in_ground, days_since: it.days_since, interval: it.interval })
+    }
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
   }
   Object.defineProperty(window, 'fetch', { configurable: true, get: () => wrapped, set: (f) => { real = f } })
@@ -174,6 +183,9 @@ const READ = `(() => {
     line: document.querySelector('[data-testid="rain-waiting-line"]')?.textContent ?? null,
     covered: document.querySelector('[data-testid="rain-covered-line"]')?.textContent ?? null,
     show: show ? { text: show.textContent, expanded: show.getAttribute('aria-expanded'), box: box(show) } : null,
+    more: (() => { const b = document.querySelector('[data-testid="rain-show-more"]'); return b ? { text: b.textContent, box: box(b) } : null })(),
+    capNote: document.querySelector('[data-testid="rain-cap-note"]')?.textContent ?? null,
+    scrollH: document.documentElement.scrollHeight,
     rows: rows.map((r) => ({ box: box(r), text: r.textContent, inToggle: !!(toggle && toggle.contains(r)), inButton: !!r.closest('button'), buttons: [...r.querySelectorAll('button')].map((b) => ({ label: b.getAttribute('aria-label'), text: b.textContent, box: box(b) })) })),
     done: [...(note ? note.querySelectorAll('[data-testid="care-row-done"]') : [])].map((d) => ({ text: d.textContent, box: box(d), undo: box(d.querySelector('button')) })),
     posts: (window.__rainPosts || []).map((b) => b && { event_type: b.event_type, plant_id: b.plant_id, metadata: b.metadata }),
@@ -274,6 +286,35 @@ try {
   results.open9shown = { rows: m.rows.length, show: m.show }
   await shot(cdp, '2b-open-9-waiting-shown')
   if (m.rows.length !== 9) fail(`Show drew ${m.rows.length} rows, expected 9`)
+  if (m.more) fail('9 rows offer "Show more"')
+
+  // ── 150 waiting: capped at 20, the rest behind the page's "Show N more" ──
+  await fresh(150)
+  await tap(cdp, GL)
+  m = await cdp.evalIn(READ)
+  if (m.line !== 'Waiting for rain · 150') fail(`line reads ${Q(m.line)}`)
+  if (!m.show || m.show.text !== 'Show') fail(`150 waiting is not collapsed behind Show (${JSON.stringify(m.show)})`)
+  if (m.rows.length) fail(`${m.rows.length} rows drawn while collapsed`)
+  await tap(cdp, '[data-testid="rain-waiting-toggle"]')
+  m = await cdp.evalIn(READ)
+  results.open150capped = { line: m.line, rows: m.rows.length, more: m.more, capNote: m.capNote, scrollH: m.scrollH }
+  if (m.rows.length !== 20) fail(`Show drew ${m.rows.length} of 150 rows, expected the cap of 20`)
+  if (m.line !== 'Waiting for rain · 150') fail(`capped, the line reads ${Q(m.line)}`)
+  if (!m.more || m.more.text !== 'Show 130 more') fail(`the reveal control reads ${Q(m.more?.text)}`)
+  else if (m.more.box.height < 48) fail(`"Show 130 more" is ${m.more.box.height}px tall (< 48)`)
+  if (m.capNote !== 'Showing 20 of 150.') fail(`cap note reads ${Q(m.capNote)}`)
+  if (m.scrollW > m.vw) fail(`capped, the page scrolls sideways (${m.scrollW} > ${m.vw})`)
+  await cdp.evalIn(`document.querySelector('[data-testid="rain-show-more"]')?.scrollIntoView({ block: 'center' })`); await sleep(200)
+  await shot(cdp, '5-open-150-waiting-capped')
+  const tMore = Date.now()
+  await tap(cdp, '[data-testid="rain-show-more"]')
+  m = await cdp.evalIn(READ)
+  results.open150all = { line: m.line, rows: m.rows.length, more: m.more, scrollH: m.scrollH, msIncludingSettle: Date.now() - tMore }
+  if (m.rows.length !== 150) fail(`"Show 130 more" drew ${m.rows.length} rows, expected 150`)
+  if (m.more || m.capNote) fail('the reveal control or its note is still drawn with every row shown')
+  if (m.line !== 'Waiting for rain · 150') fail(`with all shown, the line reads ${Q(m.line)}`)
+  if (m.scrollW > m.vw) fail(`with all shown, the page scrolls sideways (${m.scrollW} > ${m.vw})`)
+  await shot(cdp, '5b-open-150-waiting-all')
 
   if (SHOTS) writeFileSync(join(SHOTS, 'measurements.json'), JSON.stringify(results, null, 2))
   console.log(`[rain-hold] closed card ${JSON.stringify(results.closed.with17)} with 17 held = with none · open/3: rows ${results.open3.rows.map((r) => r.box.height).join(', ')}px, Water ${results.open3.rows.map((r) => r.buttons[0]?.box.width + '×' + r.buttons[0]?.box.height).join(', ')}, toggle ${results.open3.show?.box.width}×${results.open3.show?.box.height}`)

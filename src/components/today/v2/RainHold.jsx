@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 
 import { P } from '../../../lib/constants.js'
 import { T } from '../../forms/formStyles.js'
 import { rainSplit, waitingLine, coveredLine, RAIN_HOLD_AUTO_SHOW } from '../../../lib/rainHold.js'
+import { cohortCapNote, COHORT_CAP } from '../../../lib/todayV2/spots.js'
 import PlantCareRow from './PlantCareRow.jsx'
 import { removeLogged } from './needsCareStore.js'
 
@@ -12,7 +13,9 @@ import { removeLogged } from './needsCareStore.js'
 //   "Rain covered M — it already fell."     the ones rain that fell took care of. No control.
 // A line whose count is 0 is omitted (the waiting line stays while a row watered this visit keeps its done
 // line and Undo under it). The list shows itself at RAIN_HOLD_AUTO_SHOW or fewer; a Show / Hide tap is the
-// visit's from then on (record.rain.shown).
+// visit's from then on (record.rain.shown). Shown, it draws COHORT_CAP rows and the page's "Show N more" for
+// the rest (SpotBody's cohort cap, record.rain.all): a same-day forecast can hold ~150 plantings at once, and
+// the heading's count stays the true N.
 //
 // The rows and the write path are the page's (useNeedsCare → useCareActions, V2 options): Water here is
 // NeedsCare.jsx's one-tap plantRun over the same hook, so it posts the same `watering` body, takes the same
@@ -54,6 +57,7 @@ export default function RainHold({ plan, care = null, record = null, update = NO
   // Until the visit has its record there is nowhere to keep a done line: the rows wait, inert.
   const held = writesHeld || !record
   const shown = typeof st?.shown === 'boolean' ? st.shown : (rain ? rain.rows.length : n) <= RAIN_HOLD_AUTO_SHOW
+  const cap = st?.all ? drawn.length : Math.min(COHORT_CAP, drawn.length)
 
   const water = async (row) => {
     if (held) return
@@ -100,13 +104,21 @@ export default function RainHold({ plan, care = null, record = null, update = NO
           {shown && drawn.length > 0 && (
             <div id={listId} style={listCard}>
               <div role="list" style={{ marginTop: -1 }}>
-                {drawn.map((r) => (
+                {drawn.slice(0, cap).map((r) => (
                   <PlantCareRow key={r.key} row={r} testid="rain-wait-row" reason={r.reason}
                     done={!rain.live.has(r.key) ? rowsDone[r.key] : null} failed={!!failed[r.key]}
                     pending={care.actions.pendingKeys.has(r.key)} undoBusy={!!undoing} writesHeld={held}
                     onLog={water} onRetry={water} onUndo={undo} />
                 ))}
               </div>
+              {cap < drawn.length && (
+                <>
+                  <button type="button" data-testid="rain-show-more" onClick={() => setRain((cc) => ({ ...cc, all: true }))} style={{ ...textLink, display: 'block', width: '100%', borderTop: '1px solid ' + P.border }}>
+                    {'Show ' + (drawn.length - cap) + ' more'}
+                  </button>
+                  <div data-testid="rain-cap-note" style={{ fontSize: T.type.xs, color: P.mid, padding: '0 10px 4px' }}>{cohortCapNote(drawn, cap)}</div>
+                </>
+              )}
             </div>
           )}
         </div>
