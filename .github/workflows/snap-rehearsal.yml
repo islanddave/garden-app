@@ -35,7 +35,11 @@ jobs:
     env:
       GITHUB_REPOSITORY: ${{ github.repository }}
       MAIN_SHA: "31e8673032bcb142e3accf6ae96fd45bd1830429"
-      SNAP_VERSION: v0.0.0
+      # v0.0.900 since 2026-10-09: the v0.0.0 set is a mismatched pair (a 2026-06-03 dump of a then prod-size
+      # staging under a 2026-10-02 manifest of today's small staging; snap.py skips objects that exist), and
+      # revert-to's validate rightly refused it (run 37946810153). A fresh version makes a matching set without
+      # deleting anything from the snapshot bucket. The stale v0.0.0 objects are left in place, unused.
+      SNAP_VERSION: v0.0.900
       NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
       NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
       NEON_PROD_BRANCH_ID: br-polished-art-am12o4ue

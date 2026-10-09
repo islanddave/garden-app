@@ -1,1 +1,1 @@
-rehearsal run 7 @ 2026-10-02 (garden-bot token)
+rehearsal run 8 @ 2026-10-09 (fresh set v0.0.900; Dave first-hand: "remake rehearsal snapshot")
