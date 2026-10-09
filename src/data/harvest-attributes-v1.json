@@ -433,6 +433,14 @@
       "set_to_first_pick_days": 100,
       "confidence": "low",
       "notes": "UNCERTAIN. A tree ripens over ~2 weeks, so 'repeat' with a 3d cadence rather than 'single'. set_to_first_pick ~100d (bloom-to-harvest is ~110-130d for mid-season varieties; measured from SET it is shorter and highly cultivar-dependent). Zone 5b peach cropping is bud-hardiness-limited and irregular year to year."
+    },
+    "crabapple": {
+      "harvest_habit": "single",
+      "repeat_interval_days": null,
+      "loss_horizon_hours": null,
+      "set_to_first_pick_days": null,
+      "confidence": "high",
+      "notes": "DATA-CRABAPPLEPROFILE-001 (2026-10-09) — Dave's decision, not a horticultural call: track the harvest, ONE gathering per season, so 'single'. He first said not to track it, then chose this when told a harvest event was already logged on the planting (the one mature in-ground tree at the site, cultivar not identified; the crop type was minted in the app on 2026-10-09 with a NULL habit and was on no recorded-NULL list, so post_every_null_habit_is_a_recorded_decision went red). Seeded rather than listed: it leaves that gate's population by acquiring a real habit, the snapdragon route, and 'single' is the value dogwood's flip condition already names for a landscape tree that ripens once. Picks are counted per grow year (Nov 1 - Oct 31), so one gathering a season is what the harvest watch sees. loss_horizon_hours and set_to_first_pick_days stay NULL DELIBERATELY, the bee_balm precedent: the decision named a habit and nothing else, NULL means UNKNOWN, and a number here would be invented for a tree nobody has identified. No DOY window (Dave: none). Applied to environments already seeded by migrations/v5-crabappleprofile-001."
     }
   },
   "not_harvest_tracked": {

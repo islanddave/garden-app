@@ -1,0 +1,323 @@
+# gates.yml
+# v5-crabappleprofile-001 — replaces the create-time placeholder on the Crabapple cultivar care_profile
+# row with a decided profile (no calendar watering, no calendar feeding, rainfall only, the Peach tree's
+# shape) and sets crop_types.harvest_habit for `crabapple` to 'single'. Data-only, two rows. The rows,
+# each key and what is left alone: 0a-data.sql header and README.md.
+#
+# STATUS AT AUTHORING (2026-10-09): AUTHORED, NOT APPLIED on staging or prod. No gate in this file has
+# been run against a database: the lane that wrote it was cleared to connect to neither. The prod values
+# below (ids, names, md5, container type, cadence_scopes, crop type columns) were read on prod
+# 2026-10-09 ~12:30 ET by a read-only role and handed to this lane.
+#
+# SEQUENCING — README.md. Per environment, staging first:
+#   --phase pre -> apply 0a -> --phase post
+# then `gate_runner.py --all --phase post --continuous-only` on BOTH envs.
+# Pushing this directory before the apply cannot red gate-invariants.yml: both continuous post gates
+# self-arm on this migration's schema_version row.
+#
+# GATE CLASSIFICATION (decided at authoring, not after the first false red)
+#   * Standing invariants (continuous, self-armed), two, both about the cadence half:
+#       - the DECISION, keyed on the planting: while the tree is live, the profile the daily-plan
+#         handler selects for it (v_resolved_care, so a leaf-scope override is judged too) says no
+#         calendar watering and no calendar feeding. Keyed on the planting and not on the cultivar,
+#         because the cultivar is a stand-in: when the tree is identified and re-pointed, the new
+#         cultivar gets a fresh placeholder and the tree would go back to the 3-day default.
+#       - the REACH, keyed on the cultivar: no OTHER live planting inherits "never water, never feed"
+#         from this row. That is the dangerous direction (silence about a plant that needs water), so it
+#         stands after the apply and not only as a pre gate.
+#   * No standing gate for the habit half. v4-harvhabitgap-001 post_every_null_habit_is_a_recorded_decision
+#     already goes red, on both environments, the moment crabapple's habit is NULL again, because the
+#     slug is on no recorded-NULL list. The value 'single' is a receipt: Dave may change it.
+#   * Apply-window receipts (continuous: false): the exact profile 0a wrote, the engine's view of the
+#     planting, and the habit row. A later, deliberate edit is not a regression.
+#   * EVERY gate that names a prod id, or the crop type slug `crabapple`, is env: prod. The ids are
+#     prod's, and the crop type was minted in the app on prod on 2026-10-09: staging has no such row, so
+#     0a stamps the version there and nothing else, and a 'both' gate would judge rows this file never
+#     wrote (the v5-coldshadow-002 / v5-baycold-001 precedent for prod-keyed data).
+#   * No gate names a column this migration adds (it adds none), and none casts ::regclass, so every gate
+#     parses and runs on an unapplied database.
+#
+# NO `sweep` PHASE: nothing is constrained, so there is no predicate that must hold before the apply.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-crabappleprofile-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_cultivar_is_the_row_read_at_authoring
+    env: prod
+    note: >
+      Identity receipt for the cultivar whose care profile 0a replaces, read on prod 2026-10-09: name and
+      controlled crop type, live. The name is checked here once, as a receipt; the selector is always the
+      id. "Crabapple" is a stand-in for an unidentified cultivar, so a renamed or retyped row means
+      someone has identified the tree: stop and decide where the profile belongs before applying.
+    sql: |
+      SELECT pv.id
+        FROM (VALUES
+               ('2680ddd1-9f6a-400b-9c3b-2645fb4a39a8'::uuid, 'Crabapple', 'crabapple')
+             ) AS v(variety_id, name, crop_type_slug)
+        JOIN public.plant_varieties pv
+          ON pv.id = v.variety_id AND pv.name = v.name AND pv.crop_type_slug = v.crop_type_slug
+         AND pv.deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_profile_is_the_untouched_create_placeholder
+    env: prod
+    note: >
+      The exact starting state 0a matches, and the reason a whole-object replace is safe: the cultivar row
+      is still the three-key placeholder the create path wrote (_basis unresearched, _source
+      cultivar-create), byte-identical to what was reviewed (md5 of the whole profile, read on prod
+      2026-10-09). 0a carries the same md5 in its WHERE. If this fails the row changed since authoring:
+      0a would match nothing and still stamp, so re-read the row before applying.
+    sql: |
+      SELECT cp.id
+        FROM (VALUES
+               ('c59f1b2f-fec6-4e17-aea5-5260700f1235'::uuid, '2680ddd1-9f6a-400b-9c3b-2645fb4a39a8'::uuid, 'd5335984e4af2339fe6ee7b4f4946436')
+             ) AS v(row_id, scope_id, md5_before)
+        JOIN public.care_profile cp
+          ON cp.id = v.row_id AND cp.scope = 'cultivar' AND cp.scope_id = v.scope_id
+       WHERE cp.profile->>'_basis' = 'unresearched'
+         AND cp.profile->>'_source' = 'cultivar-create'
+         AND md5(cp.profile::text) = v.md5_before
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_no_leaf_override_decides_water_or_feed
+    env: prod
+    note: >
+      v_resolved_care merges system || cultivar || leaf, right wins. A leaf-scope row on a planting of this
+      cultivar carrying its own watering or feeding key would override what 0a writes on the cultivar row,
+      so the decision would not reach that planting. None exists at authoring (no leaf row at all). A leaf
+      row carrying only `overwintering`, the one key the app writes at leaf scope, is not counted. If one
+      appears, stop and decide which value is meant before applying.
+    sql: |
+      SELECT lo.id, p.name
+        FROM public.care_profile lo
+        JOIN public.plants p ON p.id = lo.scope_id
+       WHERE lo.scope = 'leaf'
+         AND p.variety_id IN ('2680ddd1-9f6a-400b-9c3b-2645fb4a39a8')
+         AND p.deleted_at IS NULL
+         AND (   lo.profile ? 'no_calendar_water' OR lo.profile ? 'no_calendar_feed'
+              OR lo.profile ? 'water_rule' OR lo.profile ? 'water_interval_days'
+              OR lo.profile ? 'water_interval_days_container' OR lo.profile ? 'water_interval_days_inground'
+              OR lo.profile ? 'fertilize_interval_days')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_other_live_planting_reaches_this_row
+    env: prod
+    note: >
+      THE REACH GUARD. A cultivar row reaches every planting of its variety, so "never water, never feed"
+      holds only while this row reaches exactly the one tree it was decided for. Read on prod 2026-10-09:
+      it reaches 1 planting. A second planting filed under the stand-in "Crabapple" cultivar (a young tree
+      in a pot, say) must stop the apply: it would inherit silence. The live filter is the daily-plan
+      handler's, less its `pj.deleted_at is null`: a superset, so it can only fail closed.
+      post_no_other_planting_inherits_the_unmanaged_tree_profile holds the same line after the apply.
+    sql: |
+      SELECT p.id, p.name, p.container_type
+        FROM public.plants p
+        LEFT JOIN public.plant_projects pj ON pj.id = p.project_id
+       WHERE p.variety_id IN ('2680ddd1-9f6a-400b-9c3b-2645fb4a39a8')
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND (pj.status IS NULL OR pj.status <> 'planning')
+         AND pj.archived_at IS NULL
+         AND p.id NOT IN ('fbf317f9-20f8-4400-8523-f410d214a959')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_the_planting_is_live_in_the_ground_and_under_open_sky
+    env: prod
+    note: >
+      The planting the decision covers: live, still of the cultivar the row belongs to, in the ground, and
+      not under a cover (rainfall only means the rain has to reach it). in_ground, Drive, not covered, not
+      heated, status harvested were read on prod 2026-10-09. Only the location's own covered flag is
+      checked here, not the handler's inherited cover rule: this is a premise check, not the rule. If the
+      planting has been ended, moved under a roof or re-filed as a container, re-decide before applying.
+    sql: |
+      SELECT p.id
+        FROM (VALUES
+               ('fbf317f9-20f8-4400-8523-f410d214a959'::uuid, '2680ddd1-9f6a-400b-9c3b-2645fb4a39a8'::uuid)
+             ) AS v(planting_id, variety_id)
+        JOIN public.plants p ON p.id = v.planting_id AND p.variety_id = v.variety_id
+        LEFT JOIN public.plant_projects pj ON pj.id = p.project_id
+        LEFT JOIN public.locations l ON l.id = coalesce(p.location_id, pj.location_id)
+       WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND p.container_type = 'in_ground'
+         AND l.covered IS NOT TRUE
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_the_engine_resolves_no_database_cadence_for_the_planting
+    env: prod
+    note: >
+      The premise, as the engine sees it: nothing in the database supplies a cadence for the planting
+      (cadence_scopes is empty, so resolveCadence falls to the bundled default), the profile it resolves is
+      still the unresearched placeholder, and neither suppression key is set from any scope. Read on prod
+      2026-10-09. This is the state v4-cadencerefill-001's placeholder gate reports. If it fails, someone
+      has already decided the planting some other way: find out how before applying.
+    sql: |
+      SELECT vrc.leaf_id
+        FROM public.v_resolved_care vrc
+       WHERE vrc.leaf_id IN ('fbf317f9-20f8-4400-8523-f410d214a959')
+         AND cardinality(vrc.cadence_scopes) = 0
+         AND vrc.resolved_profile->>'_basis' = 'unresearched'
+         AND NOT (vrc.resolved_profile ? 'no_calendar_water')
+         AND NOT (vrc.resolved_profile ? 'no_calendar_feed')
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_crop_type_is_the_row_read_at_authoring_with_no_habit
+    env: prod
+    note: >
+      The habit half's starting state, read on prod 2026-10-09: the crop type the app minted that day,
+      category tree, perennial, with no harvest habit and no interval. 0a's UPDATE is guarded on the habit
+      being NULL, so a habit set by hand since would make it match nothing and still stamp. A non-NULL
+      repeat_interval_days would make 0a fail its CHECK (single forbids an interval) and roll back whole.
+    sql: |
+      SELECT c.slug
+        FROM public.crop_types c
+       WHERE c.slug = 'crabapple' AND c.deleted_at IS NULL
+         AND c.display_name = 'Crabapple' AND c.category = 'tree' AND c.default_lifecycle = 'perennial'
+         AND c.harvest_habit IS NULL AND c.repeat_interval_days IS NULL
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-crabappleprofile-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANTS (continuous, self-armed) ───────────────────────────────────────────────────
+
+  - name: post_the_crabapple_gets_no_calendar_watering_or_feeding
+    env: prod
+    note: >
+      Dave's decision (2026-10-09: no watering reminders, never feed, same as the Peach tree) as an
+      invariant on the tree itself: while the planting is live, the profile the daily-plan handler selects
+      for it says no_calendar_water and no_calendar_feed, both exactly true. Read through v_resolved_care,
+      so a leaf-scope override is judged too, and NOT filtered on cadence_scopes: the engine reads both
+      keys off the raw resolved profile whether or not it adopts it. Keyed on the planting, so it also
+      goes red if the tree is re-pointed to a cultivar whose profile lacks the keys (the remedy then is to
+      move the profile, not to retire this gate). `= 'true'::jsonb` and `IS NOT TRUE` so an absent key and
+      the string "true" are both findings, as they are to the engine (=== true). Returns the planting when
+      it offends. Self-armed: vacuous until the stamp exists. A deliberate later "start watering it" needs
+      this gate retired in the same change.
+    sql: |
+      SELECT p.id, p.name,
+             vrc.resolved_profile->'no_calendar_water' AS no_calendar_water,
+             vrc.resolved_profile->'no_calendar_feed'  AS no_calendar_feed
+        FROM public.plants p
+        JOIN public.v_resolved_care vrc ON vrc.leaf_id = p.id
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-crabappleprofile-001')
+         AND p.id IN ('fbf317f9-20f8-4400-8523-f410d214a959')
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND (    vrc.resolved_profile->'no_calendar_water' = 'true'::jsonb
+              AND vrc.resolved_profile->'no_calendar_feed'  = 'true'::jsonb
+             ) IS NOT TRUE
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_other_planting_inherits_the_unmanaged_tree_profile
+    env: prod
+    note: >
+      The reach guard, standing. The profile belongs to one mature tree; the cultivar it hangs on is the
+      stand-in name "Crabapple". Any OTHER live planting of that cultivar that resolves no_calendar_water
+      or no_calendar_feed true is being told never to water or feed by a decision that was not made about
+      it. Returns one row per such planting. Red here is the guard firing, not a defect in this file. The
+      remedy is to decide that planting: give it its own cultivar, or a leaf-scope profile that sets its
+      own cadence and the two keys false, or, if it really is a second unmanaged tree, add its id to the
+      NOT IN list in the same change. Same live filter as the pre reach guard. Self-armed.
+    sql: |
+      SELECT p.id, p.name, p.container_type
+        FROM public.plants p
+        LEFT JOIN public.plant_projects pj ON pj.id = p.project_id
+        JOIN public.v_resolved_care vrc ON vrc.leaf_id = p.id
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-crabappleprofile-001')
+         AND p.variety_id IN ('2680ddd1-9f6a-400b-9c3b-2645fb4a39a8')
+         AND p.id NOT IN ('fbf317f9-20f8-4400-8523-f410d214a959')
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND (pj.status IS NULL OR pj.status <> 'planning')
+         AND pj.archived_at IS NULL
+         AND (   vrc.resolved_profile->'no_calendar_water' = 'true'::jsonb
+              OR vrc.resolved_profile->'no_calendar_feed'  = 'true'::jsonb)
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPTS (continuous: false) ─────────────────────────────────────────────────────
+
+  - name: post_the_row_carries_exactly_the_decided_profile
+    env: prod
+    continuous: false
+    note: >
+      The only positive gate that can tell "wrote the profile" from "matched nothing and stamped". jsonb
+      equality with the whole object 0a writes, so it is also the method receipt: eleven keys, no `cold`,
+      nothing of the placeholder left. crabappleprofile.test.js fails if this literal and 0a's differ.
+    sql: |
+      SELECT cp.id
+        FROM public.care_profile cp
+       WHERE cp.id = 'c59f1b2f-fec6-4e17-aea5-5260700f1235'
+         AND cp.scope = 'cultivar' AND cp.scope_id = '2680ddd1-9f6a-400b-9c3b-2645fb4a39a8'
+         AND cp.profile = '{
+               "crop": "crabapple tree", "_tier": "P", "confidence": "low",
+               "_basis": "dave_decision", "_source": "v5-crabappleprofile-001",
+               "water_method": "rainfall_only",
+               "no_calendar_water": true, "no_calendar_feed": true,
+               "water_interval_days_inground": 14, "water_interval_days_container": 14,
+               "notes": "The mature in-ground crabapple at the site, cultivar not identified. This profile belongs to that one tree, not to crabapples in general. Deliberately unmanaged, rainfall only, the same class as the Peach tree: no_calendar_water suppresses routine watering tasks and no_calendar_feed suppresses routine feeding tasks. Both are decisions Dave made on 2026-10-09, not measurements. The 14-day interval is a fallback copied from the Peach tree row so that the engine adopts this profile. It is never expected to fire. If the tree is identified and re-pointed to a named cultivar, this profile has to move with it."
+             }'::jsonb
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_engine_view_of_the_planting_is_adopted_and_suppressed
+    env: prod
+    continuous: false
+    note: >
+      End to end, as the handler reads it: the planting now adopts its cultivar profile (cadence_scopes
+      {cultivar}, which is what the 14-day fallback interval is for), the resolved profile carries both
+      suppression keys, and it is no longer the unresearched placeholder, which is what clears
+      v4-cadencerefill-001's placeholder gate. The receipt that the fix reaches the engine rather than
+      stopping at the row.
+    sql: |
+      SELECT vrc.leaf_id
+        FROM (VALUES
+               ('fbf317f9-20f8-4400-8523-f410d214a959'::uuid, '14', 'dave_decision')
+             ) AS v(planting_id, water_interval_days_inground, basis)
+        JOIN public.v_resolved_care vrc ON vrc.leaf_id = v.planting_id
+       WHERE vrc.cadence_scopes = ARRAY['cultivar']
+         AND vrc.resolved_profile->'no_calendar_water' = 'true'::jsonb
+         AND vrc.resolved_profile->'no_calendar_feed' = 'true'::jsonb
+         AND vrc.resolved_profile->>'water_interval_days_inground' = v.water_interval_days_inground
+         AND vrc.resolved_profile->>'_basis' = v.basis
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_crabapple_habit_is_single_and_nothing_else_was_written
+    env: prod
+    continuous: false
+    note: >
+      The habit half: harvest_habit is 'single', and the attributes the decision did not name are still
+      NULL (interval, loss horizon, set-to-pick, both DOY bounds). NULL means UNKNOWN there, and no
+      readiness predicate may fire on it. A receipt, not an invariant: Dave may change the habit from the
+      variety editor, and v4-harvhabitgap-001 already guards against it going back to NULL unrecorded.
+    sql: |
+      SELECT c.slug
+        FROM public.crop_types c
+       WHERE c.slug = 'crabapple' AND c.deleted_at IS NULL
+         AND c.harvest_habit = 'single'
+         AND c.repeat_interval_days IS NULL
+         AND c.loss_horizon_hours IS NULL
+         AND c.set_to_first_pick_days IS NULL
+         AND c.harvest_season_start_doy IS NULL
+         AND c.harvest_season_end_doy IS NULL
+    expect: rowcount_eq
+    value: 1

@@ -64,11 +64,17 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 // paste the result, move any slug of category 'non_plant_food' into LIVE_NON_PLANT_FOOD as well, and
 // clear MINTED_NOT_YET_ON_PROD of anything that has landed. Mutation log for these guards:
 // lambda/daily-plan/slugbands.test.js (M4, M5, M13-M15, M19 are this file's).
+//
+// DATA-CRABAPPLEPROFILE-001 (2026-10-09) — `crabapple` ADDED BY ITSELF, NOT A RE-PIN. One row was read on
+// prod that day (read-only role): slug crabapple, category tree, minted in the app 2026-10-09 12:23:48Z,
+// not deleted. It is banded hardy in the same change, and the reverse guard below needs every banded
+// slug to be live. The other 163 are still the 2026-09-18 pull: whatever else has been minted since is
+// still invisible here until someone runs the query above.
 const LIVE_DOMAIN = ('aloe althaea apple apricot artichoke arugula asparagus avocado basil bay bean bee_balm beet begonia '
   + 'bitter_melon black_raspberry blackberry blackberry_lily blanketflower blueberry bok_choy borage bread '
   + 'broccoli brussels_sprouts bunching_onion butter cabbage cactus calibrachoa carnation carrot celery chamomile '
   + 'chard cheese cherry chervil chives christmas_cactus chrysanthemum cilantro claytonia cobaea coleus collard '
-  + 'columbine corn cosmos cranberry crown_of_thorns cucamelon cucumber culantro delphinium dianthus dill dogwood '
+  + 'columbine corn cosmos crabapple cranberry crown_of_thorns cucamelon cucumber culantro delphinium dianthus dill dogwood '
   + 'dracaena echeveria edelweiss eggplant elderberry endive fish fittonia flower_mix four_o_clock foxglove '
   + 'garlic geranium ginger goldenrod grape haworthia helichrysum hibiscus hollyhock horseweed hosta hoya jade '
   + 'japanese_maple kale kohlrabi lamb_s_ear lantana leek lemon_verbena lemongrass lettuce lithops luffa mache '
