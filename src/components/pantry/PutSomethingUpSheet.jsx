@@ -509,6 +509,8 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
     setSaving(true); setErr(null); setField(null)
     // The item a replay answered with, once it is being written onto: a failure after that is not a new key.
     let onRow = null
+    // Whether the change itself went out. Before it has, a failure is exact: the change did not save.
+    let patchSent = false
     try {
       let saved
       if (route === 'jar') {
@@ -548,6 +550,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         }
         if (todo === 'update') {
           onRow = saved
+          patchSent = true                                  // nothing else is asked first on this route: what it said stays
           if (saved?.id == null) throw new Error('replayed without a jar')
           const was = patchedRef.current
           const patch = jarPatchOf(body)
@@ -590,6 +593,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
           const patch = itemPatchOf(body, placeId, saved)
           patchedRef.current = updateSent(saved.id, patch, was)
           try {
+            patchSent = true
             const u = await patchPantryItem(fetch, saved.id, patch)
             saved = u?.item ?? u
           } catch (ex) {
@@ -610,7 +614,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         // It is in the Pantry; it is the change that did not go through. Said as that, the page told,
         // and the key kept whatever the status.
         const why = refusalOf(ex, '')
-        setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: answerLost(ex) }), refresh: why.refresh })
+        setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: patchSent && answerLost(ex) }), refresh: why.refresh })
         setRefusedSeq(s => s + 1)
         onExists?.()
         return

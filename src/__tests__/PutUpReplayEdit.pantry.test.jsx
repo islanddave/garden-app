@@ -368,6 +368,31 @@ describe('Put something up — the item route', () => {
     expect(onSaved.mock.calls[0][0].saved).toMatchObject({ id: 'item-first', notes: 'the second carton' })
   })
 
+  it('M-1 — a new place\'s create fails with a 5xx before the PATCH is sent: the item IS in the Pantry and this change did NOT save (never "may not have" — no PATCH went out), the page is told, the key kept — and Save again makes the place and finishes it', async () => {
+    let fail = true
+    lostThenReplayed({ 'POST /api/storage-locations': ({ body }) => { if (fail) throw apiError(503, { error: 'boom' }); return { id: 'loc-new-1', label: body.label, kind: body.kind } } })
+    const { onSaved, onExists } = await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-place-new:pantry:pantry shelf')
+    if (screen.getByTestId('door-method-as_is').getAttribute('aria-checked') !== 'true') tap('door-method-as_is')
+    save()
+    await waitFor(() => expect(posts('/api/storage-locations')).toHaveLength(1))
+    await failed(UNSAVED)                                                      // the PATCH never left: nothing of it can be on the item
+    expect(patches()).toHaveLength(0)
+    expect(onExists).toHaveBeenCalledTimes(1)
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(keys()).toHaveLength(2)
+    expect(keys()[1]).toBe(keys()[0])
+    expect(draft()).toMatchObject({ key: keys()[0] })
+    fail = false
+    save()
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+    expect(new Set(keys()).size).toBe(1)
+    expect(keys()).toHaveLength(3)
+    expect(patches().map(c => [c.path, c.body.storage_location_id])).toEqual([[ROW, 'loc-new-1']])
+  })
+
   // The first item POST's answer is lost; the PATCH LANDS (the row holds it, its updated_at moves) and its
   // first answer is lost too. `state.row` is what the Pantry holds.
   function patchLandsAnswerLost() {
