@@ -43,7 +43,7 @@ import {
 import RecipeSheet, { isRecipeDraft, recipeStaleText } from '../components/recipes/RecipeSheet.jsx'
 import { recipeHolds, emptyDraft } from '../components/recipes/recipes.js'
 import RecipesView from '../components/recipes/RecipesView.jsx'
-import BatchRecipeRow from '../components/recipes/BatchRecipeRow.jsx'
+import BatchRecipeRow, { saveAsRecipeUnsavedText } from '../components/recipes/BatchRecipeRow.jsx'
 import HowItWasMadeSheet, { REPLAY_NOT_ON_IT, REPLAY_CHANGE_UNSAVED, REPLAY_CHANGE_MAYBE } from '../components/putup/HowItWasMadeSheet.jsx'
 import { SHEET_DRAFT_PREFIX } from '../components/kitchen/sheetDraft.js'
 import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
@@ -895,6 +895,20 @@ describe('Save as recipe — POST /api/recipes/from-batch/:id, then PATCH /api/r
     expect(sentTo('PATCH', ROW)).toHaveLength(2)
   })
 
+  // RIA M-5 — the other branch of the same line: an ANSWERED no did not land, and is said so.
+  it('I3 — the update is ANSWERED with a no (a 4xx): the new name did not save — never "may not have"', async () => {
+    lostThenReplayed(() => { throw apiError(409, { error: 'boom' }) })
+    mount()
+    tap('batch-save-as-recipe')
+    await save(); await failed()
+    type('batch-save-as-recipe-name', 'Settlers, the hot one')
+    await save()
+    await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
+    await waitFor(() => expect(errorText()).toBe(saveAsRecipeUnsavedText(FIRST)))
+    expect(errorText()).toBe('Already saved as a recipe: “Settlers of Cayenne” — an earlier Save went through. The new name did not save — try again.')
+    expect(screen.getByTestId('batch-save-as-recipe-name').value).toBe('Settlers, the hot one')
+  })
+
   // QA Q1 — the own-rename memory (`held.patched`), and QA Q3 — a recipe that already has the name.
   const renameLandsAnswerLost = () => {
     let row = FIRST
@@ -1140,6 +1154,20 @@ describe('How it was made — POST /api/kitchen-batches/from-jars, then PUT /api
     expect(new Set(keys(PATH)).size).toBe(1)
     expect(onSaved).toHaveBeenCalledTimes(2)
     expect(onSaved.mock.calls[1][0]).toMatchObject({ id: 'kb-first', label: 'Megatron plain, 2026' })
+  })
+
+  // RIA M-5 — the other branch of the same line: an ANSWERED no did not land, and is said so.
+  it('I3 — the update is ANSWERED with a no (a 4xx): the change did not save — never "may not have" — and the sheet stays open', async () => {
+    lostThenReplayed(() => { throw apiError(409, { error: 'boom' }) })
+    const { onClose } = mount()
+    await loaded()
+    await save(); await failed()
+    type('how-label', 'Megatron plain, 2026')
+    await save()
+    await waitFor(() => expect(sentTo('PUT', ROW)).toHaveLength(1))
+    await waitFor(() => expect(screen.getByTestId('how-error').textContent).toBe(REPLAY_CHANGE_UNSAVED))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByTestId('how-label').value).toBe('Megatron plain, 2026')
   })
 
   // QA Q1 — the own-PUT memory (`putRef`), and QA Q3 — a batch that already has the name and kind.
