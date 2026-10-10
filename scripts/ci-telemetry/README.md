@@ -298,3 +298,32 @@ for `E2-INCONCLUSIVE`. Seven vitest runs, no network, output outside the checkou
 `scripts/test_a3_exit.py` (the comparers, on built inputs and on real output cut into `scripts/fixtures/a3-exit/`),
 `scripts/test_a3_exit_sh.py` (the wrapper, against a stand-in vitest) and `a3-exit-fixture.test.js` (the counter,
 the recorder and the config, by running `a3-exit.fixture.mjs` in both environments).
+
+### The exit run on a runner
+
+`.github/workflows/a3-exit-run.yml` runs `a3-exit.sh` on a runner (`ubuntu-24.04`, the Node the unit legs of
+`ci-next.yml` set up, `npm ci`, a clean checkout), so the result is one made on CI's Node and not on a laptop's. It
+gates nothing, holds no secret and has one trigger: a push to the branch `a3-exit-run`. Point that branch at the
+commit to measure:
+
+```
+git push origin <sha>:refs/heads/a3-exit-run
+```
+
+A push runs the workflow files of the pushed commit, so `<sha>` has to hold `a3-exit-run.yml`: a commit from before
+the file was added starts no run and gives no error. To repeat a run on the same commit, re-run the completed run. A
+second push while one is running waits for it.
+
+Reading it:
+
+- the run's summary carries one notice, `A3 exit run`: the script's last line (`A3-EXIT-PASS (…)` or
+  `A3-EXIT-FAIL (…)`), the SHA and the script's exit code. The job is green only on exit 0. Exit 2 is a refusal
+  (the notice then carries the refusal's one line), and a job that stopped at its 60-minute timeout has no result;
+- the artifact `a3-exit-<sha>` is the script's OUT_DIR: `meta.txt` (SHA, Node, the seven runs' exit codes and
+  seconds, the two verdict lines and the last line), `e1.txt`, `e2.txt`, each run's `.log`, `tests.jsonl` and
+  `coverage/coverage-final.json`, and `console.log`, what the step printed. Kept 90 days: download it for the record;
+- `meta.txt` names the SHA measured. Check it is the one meant.
+
+The owner declares the trial's exit on that output; the run does not. Afterwards delete the branch
+(`git push origin --delete a3-exit-run`): it exists only to start the run, and left behind it is a stale ref that the
+next push has to move with a force.
