@@ -25,11 +25,38 @@
 // ACTUALLY HOLDS. lambda/events/anchor-pair.test.js keeps the pure-function and source-scan halves,
 // which need no handler import.
 //
+// THE DATABASE NOW HOLDS THE INVARIANT TOO (BUG-PLANTPROJECTFKDRIFT-001). Prod has carried
+//   event_log_plant_project_fk  FOREIGN KEY (plant_id, project_id) REFERENCES plants(id, project_id)
+//                               ON UPDATE CASCADE ON DELETE RESTRICT   (MATCH SIMPLE)
+// since 2026-08-21. migrations/v5-plantprojectfkdrift-001 brings it to staging, which this suite
+// forks. Two rules for this file follow from that, and both are deliberate:
+//   * NOTHING HERE WRITES A PAIR THAT DISAGREES. The constraint refuses it (23503), so a fixture that
+//     needs one cannot be built on prod and, after the migration, cannot be built on the fork either.
+//     The one broken shape still writable is an event with NO project on a planting that has one:
+//     MATCH SIMPLE checks a row only when both columns are set.
+//   * THE FILE PASSES WITH THE CONSTRAINT AND WITHOUT IT. It has to reach dev BEFORE staging is
+//     migrated — the version it replaces wrote the refused row in a beforeAll — so the block that
+//     proves the database refuses the pair detects the constraint and is skipped where it is absent.
+//
 // TEARDOWN ORDER (BUG-EVTANCHORDEL-001), copied from reanchor-carecache.int.test.js:
 // harvest_log -> event_log -> entity -> entity_memory -> plants -> plant_projects.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
 import { handler } from '../../lambda/events/index.js'
+
+// Does the database this suite forked carry the constraint, and does it say the migration ran?
+// Read once, before any describe is collected, the way season-stats.int.test.js reads its views.
+const HAS_PAIR_FK = (await directSql`
+  SELECT EXISTS (SELECT 1
+                   FROM pg_constraint c
+                   JOIN pg_class t ON t.oid = c.conrelid
+                   JOIN pg_namespace n ON n.oid = t.relnamespace
+                  WHERE n.nspname = 'public' AND t.relname = 'event_log' AND c.contype = 'f'
+                    AND c.conname = 'event_log_plant_project_fk') AS ok`)[0].ok
+const HAS_PAIR_FK_STAMP = (await directSql`
+  SELECT (to_regclass('public.schema_version') IS NOT NULL
+    AND EXISTS (SELECT 1 FROM public.schema_version
+                 WHERE version = '5.0.0-plantprojectfkdrift-001')) AS ok`)[0].ok
 
 const RUN = testRunId()
 const USER = `user_int_anchorpair_${RUN}`
@@ -109,26 +136,48 @@ describe('POST /api/events — a request naming a disagreeing project cannot wri
   })
 })
 
-describe('PUT /api/events/:id — the derivation REPAIRS a stored disagreeing pair, and the cache follows', () => {
-  // This is the 39-live-rows shape. The row is manufactured with directSql because no writer can
-  // mint one any more — which is the point of the ticket.
-  let projTrue, projStale, plant, id
+describe('PUT /api/events/:id — the derivation REPAIRS a stored pair that lost its project, and the cache follows', () => {
+  // THE ONE BROKEN SHAPE THE DATABASE STILL ALLOWS: an event with NO project on a planting that HAS
+  // one. event_log_plant_project_fk is MATCH SIMPLE, so a NULL in either column is not checked and
+  // this row is writable on prod today. The derivation still has to repair it on the next edit.
+  //
+  // RETIRED 2026-10-09 (BUG-PLANTPROJECTFKDRIFT-001), AND WHY. This block used to build the
+  // "39 live rows" shape — an event carrying a DIFFERENT project from its planting's — with
+  //     UPDATE event_log SET project_id = <a second project> WHERE id = <the event>
+  // and assert three things about the next edit. That statement is a 23503 wherever the constraint
+  // exists: prod since 2026-08-21, and this suite's fork once staging is migrated. No writer and no
+  // direct SQL can produce the row, so there is nothing left for an edit to repair:
+  //   · "an edit re-derives project_id from the planting" — KEPT, re-seated on the NULL shape;
+  //   · "the container the event LEFT is vacated" — RETIRED. It needs a stale non-NULL project to
+  //     leave. The vacate arm itself is still run by the last describe in this file, where an event
+  //     really does leave a project (for a project-less planting);
+  //   · "the container the event ARRIVED at carries it" — KEPT, and now proves something: the
+  //     fixture empties that container's cache first, so the value can only have come from the PUT.
+  //     (Before, the POST in the fixture had already written it.)
+  // That the database refuses the old fixture is asserted in the describe after this one.
+  let projTrue, plant, id
 
   beforeAll(async () => {
     projTrue = await newProject('put-true')
-    projStale = await newProject('put-stale')
     plant = await newPlanting({ project: projTrue, tag: 'put' })
     const res = await post({ event_type: 'watering', event_date: T1, plant_id: plant, project_id: projTrue })
     expect(res.status, JSON.stringify(res.body)).toBe(201)
     id = res.body.id ?? res.body.eventId
-    // MANUFACTURE THE DISAGREEMENT, and give the stale container the cache row the old writer
-    // would have left behind. Without that row there is nothing to watch the vacate arm empty.
-    await directSql`UPDATE event_log SET project_id = ${projStale} WHERE id = ${id}`
+    // MANUFACTURE THE GAP with direct SQL, because no writer mints it: the event loses its project,
+    // and the container forgets the event, as if the write had never reached the project's cache
+    // row. Both statements are legal with the constraint in place — a NULL project is not checked.
+    await directSql`UPDATE event_log SET project_id = NULL WHERE id = ${id}`
     await directSql`
-      INSERT INTO entity_memory (project_id, last_event_at, last_watered_at)
-      VALUES (${projStale}, ${T1}::timestamptz, ${T1}::timestamptz)
-      ON CONFLICT (project_id) DO UPDATE SET last_event_at = EXCLUDED.last_event_at,
-                                             last_watered_at = EXCLUDED.last_watered_at`
+      UPDATE entity_memory SET last_event_at = NULL, last_watered_at = NULL
+       WHERE project_id = ${projTrue}`
+  })
+
+  it('PRECONDITION: the event has no project, its planting has one, and the container does not carry it', async () => {
+    const row = await eventRow(id)
+    expect(row.plant_id).toBe(plant)
+    expect(row.project_id).toBeNull()
+    expect((await directSql`SELECT project_id FROM plants WHERE id = ${plant}`)[0].project_id).toBe(projTrue)
+    expect((await projectCache(projTrue))?.last_event_at ?? null).toBeNull()
   })
 
   it('an edit that touches only the notes re-derives project_id from the planting', async () => {
@@ -137,16 +186,81 @@ describe('PUT /api/events/:id — the derivation REPAIRS a stored disagreeing pa
     expect((await eventRow(id)).project_id).toBe(projTrue)
   })
 
-  it('the container the event LEFT is vacated — the derivation counts as an anchor move', async () => {
+  it('the container the event ARRIVED at carries it — the derivation counts as an anchor move', async () => {
     // The whole reason projectChanged is computed from the DERIVED value and not from the request:
     // this move was never asked for by the body, and the cache still has to follow it.
-    const stale = await projectCache(projStale)
-    expect(stale.last_event_at, 'the stale container still claims an event it no longer holds').toBeNull()
-    expect(stale.last_watered_at).toBeNull()
+    const arrived = await projectCache(projTrue)
+    expect(ms(arrived?.last_event_at), 'the container does not know about the event it now holds').toBe(ms(T1))
+    expect(ms(arrived?.last_watered_at)).toBe(ms(T1))
+  })
+})
+
+// ── migrations/v5-plantprojectfkdrift-001 — THE DATABASE REFUSES THE PAIR ITSELF ─────────────────
+//
+// DETECTED, NOT HARDCODED, and that is the opposite call from the schema pins in
+// evt-anchor-delete.int.test.js on purpose. Those could be hardcoded because their migration was on
+// staging before the file landed. This file must land FIRST (see the header), so a hardcoded pin
+// would be red on every push between "this file is on dev" and "staging is migrated".
+// What keeps the detection from being a guard that cannot fail: the STAMP. Once a database says the
+// migration ran, the first case below requires the constraint, so dropping it from staging without
+// rolling the migration back reds here. The definition itself is held by the migration's standing
+// gates (post_foreign_key_is_prods), which compare it with prod's character for character.
+describe('the database itself refuses a disagreeing pair (migrations/v5-plantprojectfkdrift-001)', () => {
+  it.runIf(HAS_PAIR_FK_STAMP)('the 5.0.0-plantprojectfkdrift-001 stamp means event_log_plant_project_fk is there', () => {
+    expect(HAS_PAIR_FK, 'the fork says the migration ran but event_log has no event_log_plant_project_fk').toBe(true)
   })
 
-  it('the container the event ARRIVED at carries it', async () => {
-    expect(ms((await projectCache(projTrue)).last_event_at)).toBe(ms(T1))
+  describe.skipIf(!HAS_PAIR_FK)('with event_log_plant_project_fk on the fork', () => {
+    let projTrue, projOther, plant, id
+
+    beforeAll(async () => {
+      projTrue = await newProject('fk-true')
+      projOther = await newProject('fk-other')
+      plant = await newPlanting({ project: projTrue, tag: 'fk' })
+      const res = await post({ event_type: 'watering', event_date: T1, plant_id: plant, project_id: projTrue })
+      expect(res.status, JSON.stringify(res.body)).toBe(201)
+      id = res.body.id ?? res.body.eventId
+    })
+
+    it('it is the rule prod has: ON UPDATE CASCADE, ON DELETE RESTRICT, MATCH SIMPLE, onto plants', async () => {
+      const rows = await directSql`
+        SELECT c.confupdtype, c.confdeltype, c.confmatchtype, f.relname AS target
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          JOIN pg_class f ON f.oid = c.confrelid
+         WHERE n.nspname = 'public' AND t.relname = 'event_log'
+           AND c.conname = 'event_log_plant_project_fk'`
+      expect(rows).toHaveLength(1)
+      expect(`${rows[0].confupdtype}${rows[0].confdeltype}${rows[0].confmatchtype} ${rows[0].target}`).toBe('crs plants')
+    })
+
+    it('the retired fixture — another project written straight onto the event — is refused 23503, by name', async () => {
+      // The exact statement this file used to run in a beforeAll. NOT VALID or validated makes no
+      // difference: either way a write is checked.
+      let code = null
+      let said = ''
+      try {
+        await directSql`UPDATE event_log SET project_id = ${projOther} WHERE id = ${id}`
+      } catch (e) {
+        code = e.code ?? e.sourceError?.code ?? String(e.message)
+        said = `${e.message} ${e.constraint ?? ''} ${e.sourceError?.constraint ?? ''}`
+      }
+      expect(code, 'the write was accepted: the fork does not enforce the pair').toBe('23503')
+      expect(said).toMatch(/event_log_plant_project_fk/)
+    })
+
+    it('the refused write left the pair as it was', async () => {
+      const row = await eventRow(id)
+      expect(row.plant_id).toBe(plant)
+      expect(row.project_id).toBe(projTrue)
+    })
+
+    it('NO project on that same event is still accepted — MATCH SIMPLE, the shape the repair block relies on', async () => {
+      await directSql`UPDATE event_log SET project_id = NULL WHERE id = ${id}`
+      expect((await eventRow(id)).project_id).toBeNull()
+      await directSql`UPDATE event_log SET project_id = ${projTrue} WHERE id = ${id}`
+    })
   })
 })
 

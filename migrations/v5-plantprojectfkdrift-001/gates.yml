@@ -1,0 +1,292 @@
+# gates.yml
+# v5-plantprojectfkdrift-001 — BUG-PLANTPROJECTFKDRIFT-001. Records in the migrations the two objects
+# prod has carried since 2026-08-21 and staging never got: plants_id_project_uq and
+# event_log_plant_project_fk. What they are and why: 0a-additive-ddl.sql header and README.md.
+#
+# ONE MIGRATION, TWO ENVIRONMENTS, AND EVERY GATE HOLDS ON BOTH.
+#   prod     both objects already exist. 0a and 0c find them, change nothing and write one stamp each.
+#   staging  0a creates them (the foreign key NOT VALID); 0c validates, or refuses with a count.
+#
+# SEQUENCING — README.md. Per environment, staging first:
+#   --phase pre -> apply 0a -> --phase sweep -> apply 0c -> --phase post
+# staging additionally rehearses 0r and re-applies. Then `gate_runner.py --all --phase post
+# --continuous-only` on BOTH envs.
+#
+# pre:   deliberately NOT "the constraints are absent". The migration is idempotent and prod-safe by
+#        design, so every pre gate is true before the apply, after it, and after a rollback. What they
+#        check instead: the right database; no same-named object that means something else (0a would
+#        raise on it; this says so first, read-only); that row security does not hide rows from the role
+#        running this (the sweep and 0c's count would then be of the visible rows only); and, on prod
+#        only, that the apply will be a no-op.
+#
+# sweep: L-058. The one predicate VALIDATE enforces, counted over the WHOLE table with no deleted_at
+#        filter. ⚠ A FAIL here does NOT block 0a: 0a adds the constraint NOT VALID and reads no row. It
+#        says 0c will refuse, and the count is how many rows are in the way.
+#
+# GATE CLASSIFICATION (decided at authoring)
+#   * Standing invariants (continuous, self-armed on 0a's stamp 5.0.0-plantprojectfkdrift-001): each
+#     constraint exists under its name with exactly prod's definition, compared as the catalog renders it
+#     (pg_get_constraintdef; pg_get_indexdef for the key's index). A later migration that drops one,
+#     re-adds the foreign key without ON UPDATE CASCADE, or turns the key into a bare index reds here.
+#     The foreign-key gate accepts a trailing NOT VALID: on a staging where 0c refused that is the
+#     recorded state, and "validated" is the next gate's claim, not this one's.
+#   * Standing invariants (continuous, self-armed on 0c's stamp 5.0.0-plantprojectfkdrift-001-validate):
+#     the foreign key is validated, and no row disagrees. Armed by the file that makes them true, not by
+#     0a, so a staging left NOT VALID cannot red the weekly run (gardening-deploy "a gate asserting
+#     constraint is validated belongs to the step that validates").
+#   * Standing invariant, prod only (continuous): prod carries no -created- row. That row is what lets
+#     0r-rollback.sql drop a constraint, and prod's constraints are not this migration's to drop.
+#   * Apply-window receipts (continuous: false): the two stamps.
+#   * No gate casts ::regclass (catalog joins instead; to_regclass in the row-security gate, which is
+#     NULL for a missing table), so every gate parses and runs on a database where nothing has been
+#     applied.
+#
+# WHAT `--phase post` LOOKS LIKE WHEN 0c REFUSED (staging with rows in the way): post_validation_recorded
+#   FAIL, the two gates armed on that stamp PASS vacuously, everything else PASS. That FAIL is the honest
+#   state, it is not run by gate-invariants.yml (continuous: false), and it goes green when 0c does.
+
+pre:
+  - name: pre_the_three_tables_are_here
+    note: >
+      Wrong-database guard. plants and event_log are what the constraints sit on; schema_version is where
+      0a, 0c and 0r record what they did.
+    sql: |
+      SELECT c.relname
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relkind = 'r'
+         AND c.relname IN ('plants', 'event_log', 'schema_version')
+    expect: rowcount_eq
+    value: 3
+
+  - name: pre_no_same_named_object_with_another_definition
+    note: >
+      One row per thing 0a would raise on: a constraint named plants_id_project_uq or
+      event_log_plant_project_fk anywhere in public that is not exactly prod's definition (the foreign key
+      validated or NOT VALID), or a relation named plants_id_project_uq with no unique constraint behind
+      it. Zero rows on a database that has neither object, and zero on one that has prod's. A row here is
+      a decision for a person, never a reason to drop and re-add.
+    sql: |
+      SELECT 'constraint plants_id_project_uq: ' || coalesce(pg_get_constraintdef(c.oid), '?') AS finding
+        FROM pg_constraint c
+        JOIN pg_namespace n ON n.oid = c.connamespace
+        LEFT JOIN pg_class t ON t.oid = c.conrelid
+       WHERE n.nspname = 'public' AND c.conname = 'plants_id_project_uq'
+         AND (t.relname = 'plants' AND c.contype = 'u'
+              AND pg_get_constraintdef(c.oid) = 'UNIQUE (id, project_id)'
+              AND pg_get_indexdef(c.conindid) =
+                  'CREATE UNIQUE INDEX plants_id_project_uq ON public.plants USING btree (id, project_id)'
+             ) IS NOT TRUE
+      UNION ALL
+      SELECT 'relation plants_id_project_uq with no unique constraint of that name'
+        FROM pg_class r
+        JOIN pg_namespace n ON n.oid = r.relnamespace
+       WHERE n.nspname = 'public' AND r.relname = 'plants_id_project_uq'
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                          WHERE c.conindid = r.oid AND c.contype = 'u'
+                            AND c.conname = 'plants_id_project_uq')
+      UNION ALL
+      SELECT 'constraint event_log_plant_project_fk: ' || coalesce(pg_get_constraintdef(c.oid), '?')
+        FROM pg_constraint c
+        JOIN pg_namespace n ON n.oid = c.connamespace
+        LEFT JOIN pg_class t ON t.oid = c.conrelid
+       WHERE n.nspname = 'public' AND c.conname = 'event_log_plant_project_fk'
+         AND (t.relname = 'event_log' AND c.contype = 'f'
+              AND pg_get_constraintdef(c.oid) IN (
+                    'FOREIGN KEY (plant_id, project_id) REFERENCES plants(id, project_id) ON UPDATE CASCADE ON DELETE RESTRICT',
+                    'FOREIGN KEY (plant_id, project_id) REFERENCES plants(id, project_id) ON UPDATE CASCADE ON DELETE RESTRICT NOT VALID')
+             ) IS NOT TRUE
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_row_security_does_not_hide_rows_from_this_role
+    note: >
+      Both tables have row level security enabled. For a role it applies to, the sweep below and the count
+      in 0c-validate.sql see only the rows that role may see, and can read 0 while rows that break the rule
+      exist. One row here means row security is active on event_log or plants for the role this runner
+      connected as: run the gates and the apply under the owner DSN (false for a superuser, a BYPASSRLS
+      role, and the owner unless FORCE ROW LEVEL SECURITY is set). 0c asks the same question and refuses.
+      to_regclass, not a cast: on a database without the tables this is zero rows and the gate above is
+      the one that fails. True before and after the apply, on both environments.
+    sql: |
+      SELECT 1
+       WHERE row_security_active(to_regclass('public.event_log'))
+          OR row_security_active(to_regclass('public.plants'))
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_prod_already_carries_both_and_the_apply_changes_nothing
+    env: prod
+    note: >
+      PROD ONLY. The premise the prod apply rests on, read from the catalog on 2026-10-09: both constraints
+      exist with exactly these definitions and the foreign key is validated. While this passes, 0a and 0c
+      issue no ALTER TABLE on prod and take no DDL lock; each writes one schema_version row. If it
+      fails, prod is not what this migration was written against: do not apply, read the catalog.
+      True before and after the apply.
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = 'public' AND c.convalidated
+         AND ((t.relname = 'plants' AND c.conname = 'plants_id_project_uq' AND c.contype = 'u'
+               AND pg_get_constraintdef(c.oid) = 'UNIQUE (id, project_id)'
+               AND pg_get_indexdef(c.conindid) =
+                   'CREATE UNIQUE INDEX plants_id_project_uq ON public.plants USING btree (id, project_id)')
+           OR (t.relname = 'event_log' AND c.conname = 'event_log_plant_project_fk' AND c.contype = 'f'
+               AND pg_get_constraintdef(c.oid) =
+                   'FOREIGN KEY (plant_id, project_id) REFERENCES plants(id, project_id) ON UPDATE CASCADE ON DELETE RESTRICT'))
+    expect: rowcount_eq
+    value: 2
+
+  - name: pre_staging_lambdas_derive_the_event_project_from_the_planting
+    manual: true
+    note: >
+      STAGING, before 0a. NOT VALID enforces new writes from the commit of 0a, so the question is what the
+      Lambdas deployed to staging write (gardening-deploy "arming a CHECK is NOT backward-compatible": ask
+      it of the deployed artifact, not of a branch). Confirm staging's events Lambda and plants Lambda
+      (the single-event POST and PUT, and the planting merge) were deployed from dev at or after 94926010
+      (2026-08-20, deriveEventProjectId and the siblings-only merge). Every writer on dev 755099ce derives
+      the pair from the planting (0a header). An older artifact would answer 400 on a mismatched write
+      instead of storing it. Prod needs no such check: its constraint has been enforcing since
+      2026-08-21.
+
+sweep:
+  - name: sweep_no_event_names_a_project_its_planting_is_not_in
+    note: >
+      The rows VALIDATE would refuse, counted over the WHOLE table: no deleted_at filter (L-058; a
+      foreign key does not know deleted_at). An event with no project on a planting that has one is not
+      counted: MATCH SIMPLE checks a row only when both columns are set. 0 on prod by construction (its
+      constraint is validated). Staging was not measured at authoring. A FAIL does not block 0a; it means
+      0c-validate.sql will refuse with this number. Listing query: README.md, "If 0c refuses".
+    sql: |
+      SELECT count(*)
+        FROM public.event_log e
+       WHERE e.plant_id IS NOT NULL
+         AND e.project_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.plants p
+                          WHERE p.id = e.plant_id AND p.project_id = e.project_id)
+    expect: scalar_eq
+    value: 0
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-plantprojectfkdrift-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_unique_key_is_prods
+    note: >
+      Standing: plants_id_project_uq exists once in public, on plants, as a UNIQUE CONSTRAINT (not a bare
+      index: the drift check compares constraint names, and a bare index would leave one missing) with
+      prod's definition, and its index is prod's too. Self-armed: vacuous until 0a's stamp exists.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-plantprojectfkdrift-001')
+         AND (SELECT count(*) = 1
+                     AND count(*) FILTER (
+                           WHERE t.relname = 'plants' AND c.contype = 'u' AND c.convalidated
+                             AND pg_get_constraintdef(c.oid) = 'UNIQUE (id, project_id)'
+                             AND pg_get_indexdef(c.conindid) =
+                                 'CREATE UNIQUE INDEX plants_id_project_uq ON public.plants USING btree (id, project_id)'
+                         ) = 1
+                FROM pg_constraint c
+                JOIN pg_namespace n ON n.oid = c.connamespace
+                LEFT JOIN pg_class t ON t.oid = c.conrelid
+               WHERE n.nspname = 'public' AND c.conname = 'plants_id_project_uq'
+             ) IS NOT TRUE
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_foreign_key_is_prods
+    note: >
+      Standing: event_log_plant_project_fk exists once in public, on event_log, pointing at
+      plants(id, project_id), MATCH SIMPLE (pg_get_constraintdef prints nothing for it and MATCH FULL
+      otherwise), ON UPDATE CASCADE, ON DELETE RESTRICT, not deferrable. Compared as the catalog renders
+      it, under the search_path the runner pins. A trailing NOT VALID is accepted here; "validated" is
+      post_foreign_key_is_validated. Self-armed: vacuous until 0a's stamp exists.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-plantprojectfkdrift-001')
+         AND (SELECT count(*) = 1
+                     AND count(*) FILTER (
+                           WHERE t.relname = 'event_log' AND c.contype = 'f'
+                             AND pg_get_constraintdef(c.oid) IN (
+                                   'FOREIGN KEY (plant_id, project_id) REFERENCES plants(id, project_id) ON UPDATE CASCADE ON DELETE RESTRICT',
+                                   'FOREIGN KEY (plant_id, project_id) REFERENCES plants(id, project_id) ON UPDATE CASCADE ON DELETE RESTRICT NOT VALID')
+                         ) = 1
+                FROM pg_constraint c
+                JOIN pg_namespace n ON n.oid = c.connamespace
+                LEFT JOIN pg_class t ON t.oid = c.conrelid
+               WHERE n.nspname = 'public' AND c.conname = 'event_log_plant_project_fk'
+             ) IS NOT TRUE
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_validation_recorded
+    continuous: false
+    note: >
+      The receipt for 0c-validate.sql. FAIL on a database where 0c refused (rows in the way) or has not
+      been run: that is the true state, and it is why the two gates below are still vacuous there.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-plantprojectfkdrift-001-validate'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_foreign_key_is_validated
+    note: >
+      Standing: convalidated = true, not merely "the constraint exists", with the validated definition
+      (no trailing NOT VALID). Self-armed on 0c's stamp, which 0c writes only with the constraint
+      validated; vacuous until then. Red if a later change drops and re-adds it NOT VALID.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-plantprojectfkdrift-001-validate')
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_constraint c
+                 JOIN pg_class t ON t.oid = c.conrelid
+                 JOIN pg_namespace n ON n.oid = t.relnamespace
+                WHERE n.nspname = 'public' AND t.relname = 'event_log'
+                  AND c.conname = 'event_log_plant_project_fk' AND c.contype = 'f'
+                  AND c.convalidated
+                  AND pg_get_constraintdef(c.oid) =
+                      'FOREIGN KEY (plant_id, project_id) REFERENCES plants(id, project_id) ON UPDATE CASCADE ON DELETE RESTRICT')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_event_names_a_project_its_planting_is_not_in
+    note: >
+      Standing: the data form of the rule, over every row, soft-deleted included. With the constraint
+      validated a writer cannot produce such a row, so a row here means the constraint was bypassed (a
+      restore or bulk load with triggers off, session_replication_role = replica) or dropped. Self-armed
+      on 0c's stamp; vacuous until then, so staging rows that predate the constraint cannot red it.
+    sql: |
+      SELECT e.id
+        FROM public.event_log e
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-plantprojectfkdrift-001-validate')
+         AND e.plant_id IS NOT NULL
+         AND e.project_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.plants p
+                          WHERE p.id = e.plant_id AND p.project_id = e.project_id)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_prod_carries_no_created_row
+    env: prod
+    note: >
+      PROD ONLY, standing. A -created- row says "0a made this constraint here", and it is the only thing
+      that lets 0r-rollback.sql drop one. Prod's constraints date from 2026-08-21, so prod must have
+      neither row. Red means a constraint was missing from prod when 0a ran and 0a re-created it: find out
+      what dropped it, and do not run 0r on prod while this is red. Needs no stamp to be meaningful: true
+      on prod today.
+    sql: |
+      SELECT version
+        FROM public.schema_version
+       WHERE version IN ('5.0.0-plantprojectfkdrift-001-created-plants_id_project_uq',
+                         '5.0.0-plantprojectfkdrift-001-created-event_log_plant_project_fk')
+    expect: rowcount_eq
+    value: 0

@@ -242,15 +242,452 @@ def test_restore_dump_tolerates_benign_warnings(monkeypatch):
 
     class P:
         returncode = 1
-        stderr = "pg_restore: warning: errors ignored on restore: 3"
+        stderr = _restore_stderr(ABSENT_DROP, ABSENT_DROP, ABSENT_DROP)
         stdout = ""
     monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: P())
-    # benign-warning tail with no "pg_restore: error:" -> no raise.
+    # every error is a DROP of an absent object, and the tail accounts for all three -> no raise.
     # OPS-REVERTVALIDATE-001 changed the contract to (key, expected_counts); expected_counts is
     # None here because the stubbed pg_restore renders no archive, and None must mean UNKNOWN.
     key, expected = rt.restore_dump_into_branch(s3, cfg, good_manifest(), "postgresql://s")
     assert key == "db/snap-v2.5.0.dump"
     assert expected is None
+
+
+# --- pg_restore stderr: reported; validate_branch stays the judge --------------
+# Staging rehearsal 2026-10-09 (run 37956492157): the target branch is a copy of prod, the dump is
+# older, and a constraint on the target that the dump does not know about kept --clean from dropping
+# `plants`. The "errors ignored on restore" tail excused it and stderr was never printed, so the only
+# trace was validate_branch's row-count mismatch.
+#
+# Two kinds of fixture. The four short ones below are hand-written. Real pg_restore 17.10 at default
+# verbosity prints `pg_restore: error: ...`, un-prefixed DETAIL / HINT / `Command was:` (multi-line)
+# and the `errors ignored on restore: N` tail; it does NOT print `while PROCESSING TOC:` or
+# `from TOC entry` (kept here because the parser must ignore them), and ABSENT_DROP is not a statement
+# --clean --if-exists emits, so the benign tag is expected to match nothing in a real run
+# (review-plantprojectfk-preapply.md:90). The REAL_* ones are verbatim stderr from pg_restore 17.10
+# into a throwaway local cluster, 2026-10-09.
+
+ABSENT_DROP = (
+    "pg_restore: from TOC entry 4012; 2606 16999 CONSTRAINT old_table old_table_pkey neondb_owner\n"
+    'pg_restore: error: could not execute query: ERROR:  relation "public.old_table" does not exist\n'
+    "Command was: ALTER TABLE ONLY public.old_table DROP CONSTRAINT old_table_pkey;\n"
+)
+DEPENDENT_DROP = (
+    "pg_restore: from TOC entry 3811; 2606 16710 CONSTRAINT plants plants_pkey neondb_owner\n"
+    "pg_restore: error: could not execute query: ERROR:  cannot drop constraint plants_pkey on table "
+    "public.plants because other objects depend on it\n"
+    "DETAIL:  constraint event_log_plant_project_fk on table public.event_log depends on index "
+    "public.plants_pkey\n"
+    "HINT:  Use DROP ... CASCADE to drop the dependent objects too.\n"
+    "Command was: ALTER TABLE IF EXISTS ONLY public.plants DROP CONSTRAINT IF EXISTS plants_pkey;\n"
+)
+ALREADY_EXISTS = (
+    'pg_restore: error: could not execute query: ERROR:  relation "plants" already exists\n'
+    "Command was: CREATE TABLE public.plants (\n    id uuid NOT NULL\n);\n"
+)
+COPY_FAILED = (
+    'pg_restore: error: COPY failed for table "plants": ERROR:  duplicate key value violates unique '
+    'constraint "plants_pkey"\n'
+    "DETAIL:  Key (id)=(a) already exists.\n"
+    "CONTEXT:  COPY plants, line 1: \"a\tSECRET-ROW-VALUE\"\n"
+)
+
+# review-plantprojectfk-preapply.md:88, first case: target = the snapshot plus one unrelated newer
+# table and one newer gv function. Every table and row landed (plants 12 = archive 12).
+REAL_NEWER_OBJECTS_ALL_ROWS_LANDED = (
+    'pg_restore: error: could not execute query: ERROR:  cannot drop extension uuid-ossp because other objects depend on it\n'
+    'DETAIL:  default value for column id of table public.newer depends on function extensions.uuid_generate_v4()\n'
+    'HINT:  Use DROP ... CASCADE to drop the dependent objects too.\n'
+    'Command was: DROP EXTENSION IF EXISTS "uuid-ossp";\n'
+    'pg_restore: error: could not execute query: ERROR:  cannot drop schema gv because other objects depend on it\n'
+    'DETAIL:  function gv.newer() depends on schema gv\n'
+    'HINT:  Use DROP ... CASCADE to drop the dependent objects too.\n'
+    'Command was: DROP SCHEMA IF EXISTS gv;\n'
+    'pg_restore: error: could not execute query: ERROR:  cannot drop schema extensions because other objects depend on it\n'
+    'DETAIL:  extension uuid-ossp depends on schema extensions\n'
+    'default value for column id of table public.newer depends on function extensions.uuid_generate_v4()\n'
+    'HINT:  Use DROP ... CASCADE to drop the dependent objects too.\n'
+    'Command was: DROP SCHEMA IF EXISTS extensions;\n'
+    'pg_restore: error: could not execute query: ERROR:  schema "extensions" already exists\n'
+    'Command was: CREATE SCHEMA extensions;\n'
+    '\n'
+    '\n'
+    'pg_restore: error: could not execute query: ERROR:  schema "gv" already exists\n'
+    'Command was: CREATE SCHEMA gv;\n'
+    '\n'
+    '\n'
+    'pg_restore: warning: errors ignored on restore: 5\n'
+)
+# review-plantprojectfk-preapply.md:88, second case (the 2026-10-09 mechanism): a newer foreign key
+# on the target keeps `plants` from being dropped, so the dump's rows do not replace it.
+REAL_PLANTS_NOT_REPLACED = (
+    'pg_restore: error: could not execute query: ERROR:  cannot drop table public.plants because other objects depend on it\n'
+    'DETAIL:  constraint event_log_plant_project_fk on table public.event_log depends on table public.plants\n'
+    'HINT:  Use DROP ... CASCADE to drop the dependent objects too.\n'
+    'Command was: DROP TABLE IF EXISTS public.plants;\n'
+    'pg_restore: error: could not execute query: ERROR:  cannot drop extension uuid-ossp because other objects depend on it\n'
+    'DETAIL:  default value for column id of table public.plants depends on function extensions.uuid_generate_v4()\n'
+    'HINT:  Use DROP ... CASCADE to drop the dependent objects too.\n'
+    'Command was: DROP EXTENSION IF EXISTS "uuid-ossp";\n'
+    'pg_restore: error: could not execute query: ERROR:  cannot drop schema extensions because other objects depend on it\n'
+    'DETAIL:  extension uuid-ossp depends on schema extensions\n'
+    'default value for column id of table public.plants depends on function extensions.uuid_generate_v4()\n'
+    'HINT:  Use DROP ... CASCADE to drop the dependent objects too.\n'
+    'Command was: DROP SCHEMA IF EXISTS extensions;\n'
+    'pg_restore: error: could not execute query: ERROR:  schema "extensions" already exists\n'
+    'Command was: CREATE SCHEMA extensions;\n'
+    '\n'
+    '\n'
+    'pg_restore: error: could not execute query: ERROR:  relation "plants" already exists\n'
+    'Command was: CREATE TABLE public.plants (\n'
+    '    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,\n'
+    '    project_id uuid NOT NULL,\n'
+    '    note text\n'
+    ');\n'
+    '\n'
+    '\n'
+    'pg_restore: warning: errors ignored on restore: 5\n'
+)
+# review-plantprojectfk-preapply.md:86: a COPY refused by a CHECK prints the row in DETAIL (and in
+# CONTEXT), and a unique failure prints the key value. Synthetic rows; the shapes are the server's.
+REAL_ROW_QUOTING = (
+    'pg_restore: error: could not execute query: ERROR:  cannot drop table public.plants because other objects depend on it\n'
+    'DETAIL:  view public.newer_v depends on table public.plants\n'
+    'HINT:  Use DROP ... CASCADE to drop the dependent objects too.\n'
+    'Command was: DROP TABLE IF EXISTS public.plants;\n'
+    'pg_restore: error: could not execute query: ERROR:  cannot drop table public.notes because other objects depend on it\n'
+    'DETAIL:  view public.newer_n depends on table public.notes\n'
+    'HINT:  Use DROP ... CASCADE to drop the dependent objects too.\n'
+    'Command was: DROP TABLE IF EXISTS public.notes;\n'
+    'pg_restore: error: could not execute query: ERROR:  cannot drop extension uuid-ossp because other objects depend on it\n'
+    'DETAIL:  default value for column id of table public.plants depends on function extensions.uuid_generate_v4()\n'
+    'HINT:  Use DROP ... CASCADE to drop the dependent objects too.\n'
+    'Command was: DROP EXTENSION IF EXISTS "uuid-ossp";\n'
+    'pg_restore: error: could not execute query: ERROR:  cannot drop schema extensions because other objects depend on it\n'
+    'DETAIL:  extension uuid-ossp depends on schema extensions\n'
+    'default value for column id of table public.plants depends on function extensions.uuid_generate_v4()\n'
+    'HINT:  Use DROP ... CASCADE to drop the dependent objects too.\n'
+    'Command was: DROP SCHEMA IF EXISTS extensions;\n'
+    'pg_restore: error: could not execute query: ERROR:  schema "extensions" already exists\n'
+    'Command was: CREATE SCHEMA extensions;\n'
+    '\n'
+    '\n'
+    'pg_restore: error: could not execute query: ERROR:  relation "notes" already exists\n'
+    'Command was: CREATE TABLE public.notes (\n'
+    '    id integer,\n'
+    '    body text\n'
+    ');\n'
+    '\n'
+    '\n'
+    'pg_restore: error: could not execute query: ERROR:  relation "plants" already exists\n'
+    'Command was: CREATE TABLE public.plants (\n'
+    '    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,\n'
+    '    project_id uuid NOT NULL,\n'
+    '    note text\n'
+    ');\n'
+    '\n'
+    '\n'
+    'pg_restore: error: COPY failed for table "notes": ERROR:  new row for relation "notes" violates check constraint "notes_body_check"\n'
+    'DETAIL:  Failing row contains (1, Dave private note 1).\n'
+    'CONTEXT:  COPY notes, line 1: "1\tDave private note 1"\n'
+    'pg_restore: error: could not execute query: ERROR:  could not create unique index "plants_pkey"\n'
+    'DETAIL:  Key (id)=(b15f027c-0000-4000-8000-000000000001) is duplicated.\n'
+    'Command was: ALTER TABLE ONLY public.plants\n'
+    '    ADD CONSTRAINT plants_pkey PRIMARY KEY (id);\n'
+    '\n'
+    '\n'
+    'pg_restore: warning: errors ignored on restore: 9\n'
+)
+ROW_SECRETS = ("Dave private note", "b15f027c")
+
+
+def _restore_stderr(*blocks, ignored=None):
+    n = len(blocks) if ignored is None else ignored
+    return "pg_restore: while PROCESSING TOC:\n" + "".join(blocks) + (
+        f"pg_restore: warning: errors ignored on restore: {n}\n" if n else "")
+
+
+def _restore_with(monkeypatch, stderr, returncode=1, uri="postgresql://s"):
+    cfg = rt.Config(env=base_env())
+    s3 = FakeS3({("garden-snapshots-prod", "db/snap-v2.5.0.dump"): b"DUMP"})
+
+    class P:
+        stdout = ""
+    P.returncode, P.stderr = returncode, stderr
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: P())
+    return rt.restore_dump_into_branch(s3, cfg, good_manifest(), uri)
+
+
+WARNING_LINE = "error(s) above mean objects or data may not have landed"
+
+
+def test_restore_dump_dependency_error_is_named_and_left_to_validation(monkeypatch, capsys):
+    """The 2026-10-09 shape: a refused DROP plus the tail. Printed, tagged, not refused here."""
+    key, _ = _restore_with(monkeypatch, _restore_stderr(ABSENT_DROP, DEPENDENT_DROP, ALREADY_EXISTS, COPY_FAILED))
+    assert key == "db/snap-v2.5.0.dump"
+    out = capsys.readouterr().out
+    assert "4 error line(s), 3 real, 1 benign" in out
+    assert "cannot drop constraint plants_pkey" in out
+    assert "event_log_plant_project_fk" in out  # the DETAIL line is what names the culprit
+    assert f"[revert] pg_restore: WARNING: 3 {WARNING_LINE}" in out
+    assert "the row-count validation that follows decides" in out
+
+
+@pytest.mark.parametrize("block", [ALREADY_EXISTS, COPY_FAILED])
+def test_restore_dump_object_or_data_not_landing_is_tagged_real(monkeypatch, capsys, block):
+    _restore_with(monkeypatch, _restore_stderr(block))
+    out = capsys.readouterr().out
+    assert "1 error line(s), 1 real, 0 benign" in out and "error 1/1 [REAL]" in out
+
+
+def test_restore_dump_unknown_error_line_is_tagged_real(monkeypatch, capsys):
+    """A line the classifier has never seen is REAL, never benign."""
+    unknown = "pg_restore: error: something nobody has classified yet\n"
+    _restore_with(monkeypatch, _restore_stderr(ABSENT_DROP, unknown))
+    assert "error 2/2 [REAL]: something nobody has classified yet" in capsys.readouterr().out
+
+
+def test_restore_dump_does_not_exist_is_benign_only_on_a_drop(monkeypatch, capsys):
+    """`does not exist` on a CREATE/ALTER/COPY means something did not land."""
+    block = ('pg_restore: error: could not execute query: ERROR:  relation "public.plants" does not exist\n'
+             "Command was: ALTER TABLE ONLY public.event_log ADD CONSTRAINT fk FOREIGN KEY (plant_id) "
+             "REFERENCES public.plants(id);\n")
+    _restore_with(monkeypatch, _restore_stderr(block))
+    assert "1 real, 0 benign" in capsys.readouterr().out
+
+
+def test_restore_dump_benign_tag_needs_one_of_pg_restores_own_drop_statements(monkeypatch, capsys):
+    """An ALTER that merely contains the word DROP later on is not a drop statement
+    (review-plantprojectfk-preapply.md:96)."""
+    block = ('pg_restore: error: could not execute query: ERROR:  relation "public.t" does not exist\n'
+             "Command was: ALTER TABLE ONLY public.t ADD CONSTRAINT c CHECK (note <> ' DROP ');\n")
+    _restore_with(monkeypatch, _restore_stderr(block, ABSENT_DROP,
+                  'pg_restore: error: could not execute query: ERROR:  relation "public.t" does not exist\n'
+                  "Command was: ALTER TABLE IF EXISTS public.t ALTER COLUMN id DROP DEFAULT;\n"))
+    out = capsys.readouterr().out
+    assert "error 1/3 [REAL]" in out and "error 2/3 [benign]" in out and "error 3/3 [benign]" in out
+
+
+def test_restore_dump_more_ignored_than_shown_raises(monkeypatch):
+    """The tail counts errors the output does not show: unseen is not benign."""
+    with pytest.raises(rt.RevertError, match="ignored 5 error"):
+        _restore_with(monkeypatch, _restore_stderr(ABSENT_DROP, ignored=5))
+
+
+def test_restore_dump_nonzero_exit_without_any_explanation_raises(monkeypatch):
+    with pytest.raises(rt.RevertError, match="exit 137"):
+        _restore_with(monkeypatch, "", returncode=137)
+
+
+def test_restore_dump_gave_up_with_error_lines_raises_naming_them(monkeypatch, capsys):
+    """Error lines and a non-zero exit but NO tail: pg_restore stopped, it did not skip."""
+    with pytest.raises(rt.RevertError, match="gave up") as ei:
+        _restore_with(monkeypatch, _restore_stderr(DEPENDENT_DROP, ignored=0).replace(
+            "pg_restore: while PROCESSING TOC:\n", ""))
+    assert "event_log_plant_project_fk" in str(ei.value)
+    assert WARNING_LINE not in capsys.readouterr().out  # not handed to validation
+
+
+def test_restore_dump_clean_restore_logs_and_proceeds(monkeypatch, capsys):
+    key, _ = _restore_with(monkeypatch, "", returncode=0)
+    assert key == "db/snap-v2.5.0.dump"
+    out = capsys.readouterr().out
+    assert "[revert] pg_restore: exit 0; 0 error line(s), 0 real, 0 benign" in out
+    assert "WARNING" not in out and "withheld" not in out
+
+
+def test_restore_dump_logs_bounded_summary(monkeypatch, capsys):
+    blocks = [ABSENT_DROP] * 24 + [DEPENDENT_DROP]
+    _restore_with(monkeypatch, _restore_stderr(*blocks))
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == ("[revert] pg_restore: exit 1; 25 error line(s), 1 real, 24 benign "
+                        "(DROP of an absent object); errors ignored on restore: 25")
+    shown = [l for l in lines if l.startswith("[revert] pg_restore error ")]
+    assert len(shown) == rt.PG_RESTORE_LOG_MAX_ERRORS
+    assert shown[0].startswith("[revert] pg_restore error 1/25 [benign]: ")
+    assert all(len(l) < rt.PG_RESTORE_LOG_MAX_CHARS + 60 for l in shown)
+    assert lines[-2] == "[revert] pg_restore: 5 more error line(s) not shown"
+    assert lines[-1].startswith("[revert] pg_restore: WARNING: 1 error(s)")  # counted even when not shown
+
+
+def test_restore_dump_log_truncates_each_error_and_omits_copy_context(monkeypatch, capsys):
+    long_cmd = ('pg_restore: error: could not execute query: ERROR:  syntax error\n'
+                "Command was: CREATE TABLE public.t (" + "c int, " * 400 + ");\n")
+    _restore_with(monkeypatch, _restore_stderr(long_cmd, COPY_FAILED))
+    out = capsys.readouterr().out
+    assert "[REAL]" in out and "COPY failed for table" in out
+    assert "SECRET-ROW-VALUE" not in out  # CONTEXT quotes the row
+    assert max(len(l) for l in out.splitlines()) < rt.PG_RESTORE_LOG_MAX_CHARS + 60
+
+
+# --- real pg_restore 17.10 output ---------------------------------------------
+
+def test_real_newer_objects_on_the_target_do_not_refuse_the_revert(monkeypatch, capsys):
+    """review-plantprojectfk-preapply.md:88. Everything landed; pg_restore still reports five
+    errors because today's prod holds objects the dump does not. Refusing here would refuse
+    every real revert."""
+    key, _ = _restore_with(monkeypatch, REAL_NEWER_OBJECTS_ALL_ROWS_LANDED)
+    assert key == "db/snap-v2.5.0.dump"
+    out = capsys.readouterr().out
+    assert "exit 1; 5 error line(s), 5 real, 0 benign" in out and "errors ignored on restore: 5" in out
+    assert "cannot drop schema gv" in out and "function gv.newer() depends on schema gv" in out
+    assert f"WARNING: 5 {WARNING_LINE}" in out
+    assert "withheld" not in out  # dependency DETAIL lines are the explanation: all kept
+
+
+def test_real_plants_not_replaced_reaches_validation_with_the_reason_printed_first(monkeypatch):
+    """The 2026-10-09 run, end to end at this seam: the restore step explains, validate_branch
+    refuses, and the explanation is already in the log when the refusal is raised."""
+    log = []
+
+    class Out:
+        def write(self, s):
+            log.append(s)
+
+        def flush(self):
+            log.append("<flush>")
+    monkeypatch.setattr(rt.sys, "stdout", Out())
+    monkeypatch.setattr(rt, "_expected_row_counts", lambda path: {"public.plants": 12})
+    _key, expected = _restore_with(monkeypatch, REAL_PLANTS_NOT_REPLACED)
+    written = "".join(log)
+    assert ("cannot drop table public.plants because other objects depend on it | DETAIL: constraint "
+            "event_log_plant_project_fk on table public.event_log depends on table public.plants") in written
+    assert f"WARNING: 5 {WARNING_LINE}" in written
+    # flushed after the last summary line: stdout is block-buffered under `2>&1 | tee`, and the
+    # FAIL line goes to stderr (review-plantprojectfk-preapply.md:94)
+    assert log[-1] == "<flush>"
+    monkeypatch.setattr(rt, "_psql_scalar", _validate_fake(gv="11", ext="9"))
+    monkeypatch.setattr(rt, "_psql_query", _branch_counts({"public.plants": 336}))
+    with pytest.raises(rt.RevertError, match="does NOT match the snapshot archive") as ei:
+        rt.validate_branch(rt.Config(env=base_env()), "postgresql://s", expected_counts=expected)
+    assert "public.plants" in str(ei.value)  # the same table the summary named
+
+
+def test_restore_dump_flushes_the_summary_before_it_raises(monkeypatch):
+    log = []
+
+    class Out:
+        def write(self, s):
+            log.append(s)
+
+        def flush(self):
+            log.append("<flush>")
+    monkeypatch.setattr(rt.sys, "stdout", Out())
+    with pytest.raises(rt.RevertError):
+        _restore_with(monkeypatch, _restore_stderr(ABSENT_DROP, ignored=5))
+    assert log and log[-1] == "<flush>"
+
+
+# --- privacy: row contents never reach the log or the exception ----------------
+
+def test_real_failing_row_and_key_values_never_reach_the_log(monkeypatch, capsys):
+    """review-plantprojectfk-preapply.md:86. pg_restore finished (tail present): proceeds."""
+    _restore_with(monkeypatch, REAL_ROW_QUOTING)
+    seen = capsys.readouterr()
+    for secret in ROW_SECRETS:
+        assert secret not in seen.out and secret not in seen.err
+    assert "Failing row" not in seen.out
+    assert 'COPY failed for table "notes"' in seen.out and "notes_body_check" in seen.out  # still explained
+    assert "DETAIL: Key (id)=([REDACTED]) is duplicated." in seen.out  # column names kept
+    assert "view public.newer_v depends on table public.plants" in seen.out
+    assert "[revert] pg_restore: 2 detail line(s) withheld" in seen.out
+
+
+def test_real_failing_row_and_key_values_never_reach_the_exception(monkeypatch, capsys):
+    """Same output with the tail cut off, row-quoting errors first: the gave-up raise quotes the
+    first errors, so this is the path that would put a row in the RevertError text."""
+    blocks = REAL_ROW_QUOTING.split("pg_restore: error: ")
+    stderr = "".join("pg_restore: error: " + b for b in blocks[-2:] + blocks[1:3])
+    stderr = stderr.replace("pg_restore: warning: errors ignored on restore: 9\n", "")
+    assert all(s in stderr for s in ROW_SECRETS)
+    with pytest.raises(rt.RevertError, match="gave up") as ei:
+        _restore_with(monkeypatch, stderr)
+    seen = capsys.readouterr()
+    for text in (str(ei.value), seen.out, seen.err):
+        for secret in ROW_SECRETS:
+            assert secret not in text
+    assert "Key (id)=([REDACTED]) is duplicated." in str(ei.value)
+    assert "notes_body_check" in str(ei.value)
+
+
+@pytest.mark.parametrize("detail,kept", [
+    ('Key (plant_id, project_id)=(SECRET-A, SECRET-B) is not present in table "plants".',
+     'DETAIL: Key (plant_id, project_id)=([REDACTED]) is not present in table "plants".'),
+    ("Key (note)=(SECRET-A) with ) and (parens) already exists.",
+     "DETAIL: Key (note)=([REDACTED]) already exists."),  # everything up to the LAST paren is value
+    ("Failing row contains (1, SECRET-A, null).", None),
+    ("Some detail shape nobody has listed, quoting SECRET-A.", None),
+    ("view public.v depends on table public.t", "DETAIL: view public.v depends on table public.t"),
+])
+def test_detail_lines_are_kept_by_pattern_and_withheld_otherwise(monkeypatch, capsys, detail, kept):
+    """Fail-closed: a DETAIL line that matches no known-safe pattern is withheld and counted."""
+    block = f"pg_restore: error: could not execute query: ERROR:  boom\nDETAIL:  {detail}\n"
+    _restore_with(monkeypatch, _restore_stderr(block))
+    out = capsys.readouterr().out
+    assert "SECRET" not in out
+    if kept:
+        assert kept in out and "withheld" not in out
+    else:
+        assert "DETAIL" not in out and "[revert] pg_restore: 1 detail line(s) withheld" in out
+
+
+def test_a_failing_row_holding_a_newline_cannot_smuggle_itself_out_as_a_command(monkeypatch, capsys):
+    block = ('pg_restore: error: COPY failed for table "notes": ERROR:  new row violates check constraint "c"\n'
+             "DETAIL:  Failing row contains (1, first line\n"
+             "Command was: SECRET-A second line of the same value\n"
+             "view SECRET-B depends on table x).\n"
+             'CONTEXT:  COPY notes, line 1: "1\tSECRET-C"\n')
+    _restore_with(monkeypatch, _restore_stderr(block))
+    out = capsys.readouterr().out
+    assert "SECRET" not in out and "Command was" not in out
+    assert "4 detail line(s) withheld" in out
+
+
+def test_a_value_quoted_in_the_error_message_itself_is_redacted(monkeypatch, capsys):
+    block = ('pg_restore: error: COPY failed for table "plants": ERROR:  invalid input syntax for type uuid: '
+             '"SECRET-A"\nCONTEXT:  COPY plants, line 3, column id: "SECRET-A"\n')
+    _restore_with(monkeypatch, _restore_stderr(block))
+    out = capsys.readouterr().out
+    assert "SECRET" not in out and 'invalid input syntax for type uuid: "[REDACTED]"' in out
+
+
+def test_restore_dump_never_prints_the_target_uri(monkeypatch, capsys):
+    uri = "postgresql://neondb_owner:npg_S3cr3t@ep-stage-123.us-east-2.aws.neon.tech/neondb?sslmode=require"
+    stderr = (
+        f'pg_restore: error: invalid connection option in "{uri}"\n'
+        "pg_restore: error: connection failed for host=ep-stage-123 password=npg_S3cr3t user=neondb_owner\n"
+        f"pg_restore: error: could not execute query: ERROR:  boom\nCommand was: SELECT dblink('postgres://u:pw2@h/db');\n"
+    )
+    with pytest.raises(rt.RevertError) as ei:
+        _restore_with(monkeypatch, stderr, uri=uri)
+    seen = capsys.readouterr()
+    for text in (str(ei.value), seen.out, seen.err):
+        assert "npg_S3cr3t" not in text and "pw2" not in text
+        assert "ep-stage-123.us-east-2" not in text
+    assert "postgresql://[REDACTED]" in seen.out and "password=[REDACTED]" in seen.out
+
+
+def test_restore_dump_never_prints_the_target_host(monkeypatch, capsys):
+    """libpq names the host outside any URI when it cannot connect."""
+    stderr = ('pg_restore: error: connection to server at "ep-stage-123.us-east-2.aws.neon.tech" (3.130.1.2), '
+              "port 5432 failed: FATAL:  password authentication failed for user 'neondb_owner'\n"
+              'pg_restore: error: could not translate host name "db.internal.example" to address: unknown\n'
+              "pg_restore: error: endpoint ep-other-9.us-east-2.aws.neon.tech is disabled\n")
+    with pytest.raises(rt.RevertError, match="gave up") as ei:
+        _restore_with(monkeypatch, stderr)
+    seen = capsys.readouterr()
+    for text in (str(ei.value), seen.out):
+        assert "ep-stage-123" not in text and "ep-other-9" not in text
+        assert "3.130.1.2" not in text and "db.internal.example" not in text
+    assert 'connection to server at "[REDACTED]", port 5432 failed' in seen.out
+    assert "[REDACTED].neon.tech" in seen.out
+
+
+def test_restore_dump_fatal_exit_redacts_uri_in_the_raise(monkeypatch):
+    """No `pg_restore: error:` line and no tail: the raw-stderr path is redacted too."""
+    with pytest.raises(rt.RevertError) as ei:
+        _restore_with(monkeypatch, "could not connect to postgresql://u:hunter2@h/db\n")
+    assert "hunter2" not in str(ei.value) and "postgresql://[REDACTED]" in str(ei.value)
 
 
 def test_validate_branch_no_tables(monkeypatch):
