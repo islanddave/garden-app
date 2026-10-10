@@ -2,6 +2,15 @@
 
 Ledger: `BUG-PLANTPROJECTFKDRIFT-001`. Origin: `BUG-EVENTPROJPLANTPAIR-001` (done, 2026-08-21).
 
+**Status: APPLIED on staging and prod, 2026-10-10 03:49-03:54 UTC** (ledger `BUG-PLANTPROJECTFKDRIFT-001`; Dave,
+AskUserQuestion, first-hand: "Apply to staging" and "Yes, after staging"). Staging: pre 3 PASS / 1 n/a / 1 MANUAL
+(staging Lambdas were at 630e77c6 from the v4.180.0 promote), sweep PASS (0 rows in the way), 0a two CREATED notices,
+Integration on dev head 83a4ccc5 green under the constraint (run 38021916753, anchor-pair 15 of 15), 0c "0 rows would
+fail; VALIDATED", post 6 PASS / 1 n/a; 0r rehearsed (both DROPPED), 0a and 0c re-applied, post 6 PASS again. Prod: pre
+4 PASS / 1 MANUAL, sweep PASS, 0a two "is already here" notices and one stamp, 0c "No VALIDATE issued, no lock
+taken" and one stamp, post 7/7 PASS. Standing corpus afterwards: prod PASS=955 FAIL=0, staging PASS=926 FAIL=0.
+Where the text below says "applied nowhere" or "not yet run", read this paragraph instead.
+
 **Status: AUTHORED 2026-10-09. Applied nowhere.** Applying to staging and to prod are separate steps, each needing
 the owner's yes. See "Apply".
 
