@@ -11,14 +11,22 @@
 #
 #   BEFORE the promote:  python3 scripts/smoke-prod.py baseline --out /tmp/smoke-base.json
 #   AFTER  the promote:  python3 scripts/smoke-prod.py verify --version 4.45.0 --sha <dev SHA> \
-#                            --baseline /tmp/smoke-base.json
+#                            --baseline /tmp/smoke-base.json --promote-run <promote-gate run id>
+#
+# --promote-run (BUG-SMOKEPRODLAMBDAWINDOWSKIP-001). promote-gate skips its Lambda deploy when the
+# running functions are already proven current for the promoted SHA, which is every client-only
+# release. Without the run, "lambda redeploy window" cannot tell that skip from a missed deploy and
+# fails 26 of 26 (v4.181.0, run 38077462266). With it, the check reads the run's own jobs to learn
+# whether the deploy ran or was skipped, says which, and still checks AWS against that answer.
+# Omitted, the check is unchanged: it demands every function redeployed since the baseline.
 #
 # WHAT IT DOES NOT DO: it does not sign in. Check 6 asserts that an unauthenticated request to an
 # authed Lambda is REJECTED, which proves the auth path is live and enforcing. Proving a real login
 # works needs a browser and a credential, and a smoke script that carries a credential is a worse
 # problem than the one it solves.
 #
-# Requires: curl-free (urllib only) for the CDN surface, and the `aws` CLI for the Lambda checks.
+# Requires: curl-free (urllib only) for the CDN surface, the `aws` CLI for the Lambda checks, and
+# the `gh` CLI (signed in) for --promote-run.
 # --skip-aws runs the four CDN checks alone, for a machine with no AWS credentials.
 
 import argparse
@@ -34,6 +42,19 @@ from pathlib import Path
 PROD_ORIGIN = 'https://garden.futureishere.net'
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEPLOY_LAMBDA_WF = REPO_ROOT / '.github' / 'workflows' / 'deploy-lambda.yml'
+DEFAULT_REPO = 'islanddave/garden-app'
+PROMOTE_WF_PATH = '.github/workflows/promote-gate.yml'
+
+# The promote-gate step that decides the Lambda skip from the deploy markers on the RUNNING
+# functions. Its name is the only thing in the jobs API that says how a skip was decided, so it must
+# equal promote-gate.yml's (and verify-deploy.py's LAMBDA_DECISION_STEP) exactly —
+# test_smoke_prod.py pins it against the workflow. Rename all three together.
+LAMBDA_DECISION_STEP = 'Decide Lambda deploy from deploy markers on the running functions (pre-FF; fail-closed)'
+
+LAMBDAS_DEPLOYED = 'deployed'
+LAMBDAS_SKIPPED = 'skipped'
+JOBS_PER_PAGE = 100
+JOBS_MAX_PAGES = 10
 
 # Network calls are short and this runs right after a deploy — a hung probe reported as a failure is
 # better than a smoke run that never returns.
@@ -137,6 +158,123 @@ def parse_iso(s):
     return datetime.fromisoformat(s.replace('Z', '+00:00'))
 
 
+def gh_api(path):
+    """GET one GitHub API path through the `gh` CLI, so the operator's own sign-in is the auth and
+    this script still carries no credential."""
+    try:
+        out = subprocess.run(['gh', 'api', path], capture_output=True, text=True, timeout=60)
+    except FileNotFoundError:
+        raise CheckFailed('the `gh` CLI is not installed, so the promote run cannot be read')
+    if out.returncode != 0:
+        raise CheckFailed(f'gh api {path} failed: ' + (out.stderr or out.stdout or '').strip()[:200])
+    return json.loads(out.stdout)
+
+
+def promote_run_lambda_evidence(repo, run_id, sha, names):
+    """(LAMBDAS_DEPLOYED | LAMBDAS_SKIPPED, the evidence in words) for one promote-gate run.
+
+    Fails closed: anything short of a positive reading raises, and the caller reports that as a FAIL.
+    The run must be a promote-gate run of `sha` — promote-gate's `resolve` job refuses unless the
+    run's own commit is the dev_sha it promotes, so head_sha IS the promoted commit.
+
+    The two positive readings are the ones GitHub reports unambiguously (same reading as
+    verify-deploy.py's _lambda_job_state):
+      deployed — the called workflow ran, so there are 'deploy-lambdas / deploy (<function>)' jobs.
+                 Every matrix function must have one and every one must have succeeded.
+      skipped  — a bare 'deploy-lambdas' job with conclusion 'skipped', AND `promote` succeeded
+                 (deploy-lambdas is also skipped when promote FAILS), AND promote ran
+                 LAMBDA_DECISION_STEP to success (a skip decided any other way proves nothing
+                 about the running functions).
+    A job list shorter than its own total_count is unreadable, not "no Lambda jobs"."""
+    if len(sha) < 7:
+        raise CheckFailed(f'--sha {sha!r} is too short to bind a promote run to (need 7+ characters)')
+    try:
+        run = gh_api(f'repos/{repo}/actions/runs/{run_id}')
+        if run.get('path') != PROMOTE_WF_PATH:
+            raise CheckFailed(f"it is a {run.get('path')!r} run, not {PROMOTE_WF_PATH}")
+        head = run.get('head_sha') or ''
+        if not head.lower().startswith(sha.lower()):
+            raise CheckFailed(f'it promoted {head[:10] or "an unknown commit"}, not --sha {sha[:10]}')
+        jobs, total = [], None
+        for page in range(1, JOBS_MAX_PAGES + 1):
+            body = gh_api(f'repos/{repo}/actions/runs/{run_id}/jobs?per_page={JOBS_PER_PAGE}&page={page}')
+            batch = body.get('jobs') or []
+            total = body.get('total_count')
+            jobs.extend(batch)
+            if not batch or not isinstance(total, int) or len(jobs) >= total:
+                break
+        if not isinstance(total, int) or len(jobs) != total:
+            raise CheckFailed(f'read {len(jobs)} job(s) but the API reports total_count={total!r}')
+    except CheckFailed as e:
+        raise CheckFailed(f'promote run {run_id} is not usable as evidence: {e}')
+    except Exception as e:                          # noqa: BLE001 - a malformed answer is unreadable
+        raise CheckFailed(f'promote run {run_id} is not usable as evidence: {type(e).__name__}: {e}')
+
+    def named(n):
+        return next((j for j in jobs if (j.get('name') or '').strip() == n), None)
+
+    legs = {}
+    for j in jobs:
+        m = re.fullmatch(r'deploy-lambdas / deploy \((.+)\)', (j.get('name') or '').strip())
+        if m:
+            legs[m.group(1)] = j.get('conclusion') or j.get('status')
+    if legs:
+        bad = sorted(f'{n}={c}' for n, c in legs.items() if c != 'success')
+        missing = sorted(set(names) - set(legs))
+        if bad or missing:
+            raise CheckFailed(
+                f'promote run {run_id} ran the Lambda deploy but not cleanly: '
+                + '; '.join(x for x in (
+                    'legs not successful: ' + ', '.join(bad[:6]) + ('...' if len(bad) > 6 else '') if bad else '',
+                    'no leg for: ' + ', '.join(missing[:6]) + ('...' if len(missing) > 6 else '') if missing else '',
+                ) if x))
+        return LAMBDAS_DEPLOYED, f'promote run {run_id}: {len(legs)} deploy-lambdas legs succeeded'
+
+    caller, promote = named('deploy-lambdas'), named('promote')
+    c_caller = caller.get('conclusion') if caller else 'absent'
+    c_promote = promote.get('conclusion') if promote else 'absent'
+    decided = promote is not None and any(
+        s.get('name') == LAMBDA_DECISION_STEP and s.get('conclusion') == 'success'
+        for s in (promote.get('steps') or []))
+    if c_caller == 'skipped' and c_promote == 'success' and decided:
+        return LAMBDAS_SKIPPED, (f'promote run {run_id}: promote succeeded, deploy-lambdas job skipped, '
+                                 f'decided by step "{LAMBDA_DECISION_STEP}"')
+    raise CheckFailed(
+        f'promote run {run_id} shows neither a Lambda deploy nor a proven skip: promote={c_promote}, '
+        f'deploy-lambdas={c_caller}, marker decision step '
+        + ('succeeded' if decided else 'did not succeed'))
+
+
+def lambda_window_detail(mods, since, captured_at, evidence=None):
+    """The 'lambda redeploy window' verdict, from {function: LastModified} and what the promote run
+    said. Three cases, and the detail names which one it saw:
+      no evidence, or the run DEPLOYED — every function must be redeployed since the baseline.
+      the run SKIPPED the deploy       — pass, and hold the run to its word: NO function may have
+                                         been modified since the baseline, because the promote did
+                                         not deploy any, so one that moved was changed by something
+                                         else."""
+    state, why = evidence or (None, None)
+    if state == LAMBDAS_SKIPPED:
+        moved = sorted(n for n, t in mods.items() if t >= since)
+        if moved:
+            raise CheckFailed(
+                f'{why} — but {len(moved)} of {len(mods)} were modified since baseline by something '
+                'other than this promote: ' + ', '.join(moved[:6]) + ('...' if len(moved) > 6 else ''))
+        return (f'Lambda deploy SKIPPED by the promote (nothing changed) — evidence: {why}; '
+                f'verified none of {len(mods)} modified since {captured_at}')
+    stale = sorted(n for n, t in mods.items() if t < since)
+    if stale:
+        # The failure that matters: a re-dispatched promote after main moved skips ALL Lambdas
+        # unless force_lambda is set, and the SPA still updates — so the site looks deployed.
+        raise CheckFailed(
+            f'{len(stale)} of {len(mods)} not redeployed since baseline: ' + ', '.join(stale[:6])
+            + ('...' if len(stale) > 6 else '')
+            + (f' — although {why}' if why else
+               ' (if this promote skipped its Lambda deploy, pass --promote-run <run id> to prove it)'))
+    return (f'all {len(mods)} redeployed since {captured_at}'
+            + (f' — evidence: {why}' if why else ''))
+
+
 # ── modes ────────────────────────────────────────────────────────────────────────────────────────
 
 def do_baseline(args):
@@ -212,15 +350,11 @@ def do_verify(args):
     def c_lambdas():
         names = matrix_functions(DEPLOY_LAMBDA_WF.read_text())
         since = parse_iso(base['captured_at'])
+        # Read the run BEFORE AWS: an unreadable or wrong run is the failure, whatever AWS says.
+        evidence = (promote_run_lambda_evidence(args.repo, args.promote_run, args.sha, names)
+                    if args.promote_run else None)
         mods = aws_lambda_last_modified(names)
-        stale = sorted(n for n, t in mods.items() if t < since)
-        if stale:
-            # The failure that matters: a re-dispatched promote after main moved skips ALL Lambdas
-            # unless force_lambda is set, and the SPA still updates — so the site looks deployed.
-            raise CheckFailed(
-                f'{len(stale)} of {len(mods)} not redeployed since baseline: ' + ', '.join(stale[:6])
-                + ('...' if len(stale) > 6 else ''))
-        return f'all {len(mods)} redeployed since {base["captured_at"]}'
+        return lambda_window_detail(mods, since, base['captured_at'], evidence)
 
     def c_matrix_covers_dirs():
         names = set(matrix_functions(DEPLOY_LAMBDA_WF.read_text()))
@@ -293,6 +427,13 @@ def main():
     v.add_argument('--sha', required=True, help='promoted commit SHA (full or short)')
     v.add_argument('--baseline', required=True, help='baseline JSON from the baseline mode')
     v.add_argument('--skip-aws', action='store_true', help='skip the two checks needing AWS creds')
+    v.add_argument('--promote-run', metavar='RUN_ID',
+                   help='the promote-gate run id that shipped --sha. Lets "lambda redeploy window" '
+                        'tell a Lambda deploy the promote SKIPPED (nothing changed: pass, verified '
+                        'against AWS) from one it ran (all functions must be redeployed). Read with '
+                        '`gh api`; an unreadable run or one for another SHA fails the check. '
+                        'Omitted: every function must be redeployed since the baseline.')
+    v.add_argument('--repo', default=DEFAULT_REPO, help=f'owner/name for --promote-run (default {DEFAULT_REPO})')
 
     args = ap.parse_args()
     try:
