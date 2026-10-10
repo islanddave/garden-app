@@ -695,7 +695,7 @@ function WalkGroup({
           button itself, the refusal with its Save) stops above the fixed band rather than under it, at the
           band's tallest too. */}
       <div ref={endRef} data-testid="walk-end" style={{ display: 'flex', flexDirection: 'column', gap: T.space.md, scrollMarginBottom: bandH + 12 }}>
-        <RefusalLine err={err} testId="walk-error" style={{ scrollMarginBottom: bandH + 12 }} />
+        <RefusalLine err={err} testId="walk-error" />
         <Button variant="primary" data-testid="walk-save" loading={saving} loadingLabel="Saving…" onClick={save}
           style={{ width: '100%', scrollMarginBottom: bandH + 12 }}>
           Save → next
