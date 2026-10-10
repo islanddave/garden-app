@@ -92,6 +92,9 @@ describe('Put something up — a "saved earlier" refusal ends the stored draft',
   const DRAFT_KEY = sheetDraftKey('user_dave', DOOR_SHEET, 'new')
   const STALE = '“Oat milk” was already saved earlier — it is in the Pantry. This Save did not change it. To change it, open it in the Pantry.'
   const stored = () => record(DRAFT_KEY)
+  // The refusal's render and the effect that ends the stored draft are separate commits: wait for the second
+  // before reading storage (BUG-PUTUPSPENTKEYDRAFTRACE-001; on the CI runner a read once came between them).
+  const ended = () => waitFor(() => expect(stored()).toBeNull())
   const posts = (path = ITEMS) => fake.calls('POST').filter(c => c.path === path)
   const keys = (path = ITEMS) => posts(path).map(c => c.body.idempotency_key)
   // Every write that is not a create on one of the door's two routes: [method, path].
@@ -149,6 +152,7 @@ describe('Put something up — a "saved earlier" refusal ends the stored draft',
     tap('door-from'); typeInto('door-notes', 'the second carton')
     save(); await answered(door, 2)
     expect(errorText()).toBe(STALE)
+    await ended()
     return { items, door }
   }
 
@@ -221,6 +225,7 @@ describe('Put something up — a "saved earlier" refusal ends the stored draft',
     expect(errorText()).toBe(STALE)
     expect(keys()).toEqual([key, key])
     expect(items.rows().map(r => r.name)).toEqual(['Oat milk'])
+    await ended()
     expect(stored()).toBeNull()
     second.unmount()
     const third = await openDoor()
@@ -297,6 +302,7 @@ describe('Put something up — a "saved earlier" refusal ends the stored draft',
     typeInto('door-what-name', 'Rice')
     save(); await answered(second, 2)
     expect(errorText()).toBe(STALE)
+    await ended()
     expect(stored()).toBeNull()
     localStorage.setItem(DRAFT_KEY, otherTab)
     second.unmount()
@@ -307,6 +313,7 @@ describe('Put something up — a "saved earlier" refusal ends the stored draft',
     expect(errorText()).toBe(STALE)
     expect(new Set(keys()).size).toBe(1)
     expect(items.rows()).toHaveLength(1)
+    await ended()
     expect(stored()).toBeNull()
     third.unmount()
     await openDoor()
