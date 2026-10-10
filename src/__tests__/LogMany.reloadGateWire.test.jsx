@@ -240,7 +240,9 @@ describe('LogMany ↔ reloadGate wiring — release on save (V4-RELOADGATEWIRE-0
 
     // The rows are in the DB and the draft is cleared: there is nothing left for a reload to destroy,
     // and a backdrop tap on the "batch saved / Undo" screen must dismiss rather than no-op.
-    expect(isReloadBlocked()).toBe(false)
+    // The release runs in an effect after the result screen paints, so the text can be found a tick
+    // before the gate lets go (red once on CI, ci-next run 38013845038): wait for it.
+    await waitFor(() => expect(isReloadBlocked()).toBe(false))
     expect(onDirtyChange).toHaveBeenLastCalledWith(false)
   })
 })
