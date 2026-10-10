@@ -336,6 +336,52 @@ describe('§peek sheet — depth-1 and Android Back (real Sheet + registry + his
     expect(atFloor()).toBe(true)
   })
 
+  // BUG-PEEKBACKDOUBLETAP-001. Both clicks land inside ONE act, so the second runs before the first
+  // pop has landed and re-rendered — `location.state.peekPushed` is still true for it. Unguarded, that
+  // is a second navigate(-1): the first pop lands on `/search`, the second walks on to the floor entry
+  // and takes the whole sheet with it.
+  //
+  // STATED PLAINLY: jsdom cannot show the walk-off itself. Its SessionHistory.traverseByDelta resolves
+  // the target index in one queued task and moves in a second, so two synchronous back() calls both
+  // resolve against the SAME current index and land one entry back, with one popstate (measured: from
+  // index 2, back();back() lands on index 1; go(-2) lands on index 0). A browser runs them in turn and
+  // lands two back. So the three landing assertions below pass with or without the guard here, and the
+  // discriminating one is the count of traversals REQUESTED — the thing a browser would have honored.
+  it('a DOUBLE tap on Back-to-results pops ONCE — the sheet stays open on the results', async () => {
+    renderShell()
+    await openSearchThenPeek()
+    const control = screen.getByText('Back to results')
+    const goSpy = vi.spyOn(window.history, 'go')
+    try {
+      act(() => { fireEvent.click(control); fireEvent.click(control) })
+      expect(goSpy.mock.calls).toEqual([[-1]])
+    } finally {
+      goSpy.mockRestore()
+    }
+    await settle()
+    expect(window.location.pathname + window.location.search).toBe('/search')
+    expect(screen.getAllByRole('dialog').length).toBe(1)
+    expect(atFloor()).toBe(false)
+  })
+
+  // The guard is keyed to the entry the pop left, and must let go once the pop lands — a Forward
+  // back onto that same peek entry has to find a live control, not one that already spent its tap.
+  it('the double-tap guard re-arms: Forward onto the same peek entry can go Back to results again', async () => {
+    renderShell()
+    await openSearchThenPeek()
+    fireEvent.click(screen.getByText('Back to results'))
+    await settle()
+    act(() => { window.history.forward() })
+    await settle()
+    await screen.findByTestId('search-peek')
+    expect(window.location.pathname + window.location.search).toBe('/search?q=cherokee&peek=p1')
+    fireEvent.click(screen.getByText('Back to results'))
+    await settle()
+    expect(window.location.pathname + window.location.search).toBe('/search')
+    expect(screen.queryByTestId('search-peek')).toBe(null)
+    expect(screen.getAllByRole('dialog').length).toBe(1)
+  })
+
   it('Escape from the peek closes the WHOLE sheet once — not the peek, and not twice', async () => {
     renderShell()
     await openSearchThenPeek()

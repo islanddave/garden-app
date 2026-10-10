@@ -309,10 +309,21 @@ export default function Search() {
   const openPeek = useCallback(id => {
     swap(searchUrl(id), { replace: false, state: { peekPushed: true } })
   }, [swap, searchUrl])
+  // BUG-PEEKBACKDOUBLETAP-001: `peekPushed` stays true until the pop lands and re-renders, so a second
+  // tap in that window asked for a second navigate(-1) and walked off the sheet. One pop per entry —
+  // the same idempotence rule as useOverlayDismiss — re-armed whenever the entry changes, so a
+  // Forward back onto this peek finds a live control.
+  const poppingFromRef = useRef(null)
+  useEffect(() => { poppingFromRef.current = null }, [location.key])
   const closePeek = useCallback(() => {
-    if (location.state?.peekPushed) { navigate(-1); return }
+    if (location.state?.peekPushed) {
+      if (poppingFromRef.current === location.key) return
+      poppingFromRef.current = location.key
+      navigate(-1)
+      return
+    }
     swap(searchUrl(null), { replace: true })
-  }, [location.state, navigate, swap, searchUrl])
+  }, [location.state, location.key, navigate, swap, searchUrl])
 
   // V4-SEARCH-002: debounced server search. Abort-on-supersede prevents a slow
   // stale response landing over a newer one; any failure degrades to client-only.
