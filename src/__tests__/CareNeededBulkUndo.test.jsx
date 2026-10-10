@@ -130,3 +130,38 @@ describe('BUG-RUNBULKPARTIALUNDO-001 — one fan-out at a time', () => {
     expect(JSON.parse(posts()[2][1].body).event_type).toBe('fertilizing')
   })
 })
+
+describe('BUG-BULKDOUBLELOGINFLIGHT-001 — a bulk leaves out a row whose own write is in flight', () => {
+  // A row fades only once its POST answers, so for the length of the round trip it is still a bulk
+  // candidate, and the pills are disabled by a running BULK only — a single row's write does not
+  // disable them. No same-batch trick needed here: the taps are separate, as a thumb makes them.
+  // Only the FIRST p1 POST is held; a second one would answer, so the unfixed run finishes and is counted.
+  // Mutation: drop the writeInFlightRef check from the V1 targets filter -> p1 posted twice, red.
+  it('Water on one row, then the pill before it answers, logs that row once', async () => {
+    let release, held = false, n = 0
+    fetchMock.mockImplementation((path, opts) => {
+      if (path === '/api/plants' || path === '/api/locations/with-path') return Promise.resolve([])
+      if (path === '/api/events' && opts?.method === 'POST') {
+        if (!held && JSON.parse(opts.body).plant_id === 'p1') {
+          held = true
+          return new Promise(res => { release = () => res({ id: 'ev-own' }) })
+        }
+        return Promise.resolve({ id: 'ev-' + (++n) })
+      }
+      return Promise.resolve({ undone: true })
+    })
+    render(<CareNeeded plan={plan()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Log Water for Bhut Jolokia/i }))
+    await waitFor(() => expect(posts().length).toBe(1))
+    const pill = screen.getByRole('button', { name: /^Log all watering \(2\)$/i })
+    expect(pill.disabled).toBe(false)
+    fireEvent.click(pill)
+    // The bulk's own toast: it counts what the bulk logged, which is the other row only.
+    await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalledTimes(1))
+    expect(toastMock.showUndo.mock.calls[0][0].message).toBe('Logged 1')
+    await act(async () => { release() })
+    await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalledTimes(2))   // the row's own Undo
+    expect(posts().map(c => JSON.parse(c[1].body).plant_id).sort()).toEqual(['p1', 'p2'])
+    expect(toastMock.show).not.toHaveBeenCalled()
+  })
+})
