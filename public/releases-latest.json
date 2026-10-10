@@ -1,8 +1,9 @@
 {
-  "version": "4.180.0",
-  "date": "2026-10-09",
+  "version": "4.181.0",
+  "date": "2026-10-10",
   "highlights": [
-    "On a Pantry Walk the Save button stays in view after a refused save, and a refusal said before anything is sent is brought into view.",
-    "After a server error, a put-up change is said as \"may not have saved\" instead of \"did not save\"."
+    "On Today, Log all no longer logs a plant twice when its own Water or Still moist tap is still saving.",
+    "In Search, a double tap on Back to results no longer closes the whole Search sheet.",
+    "On the recipe sheet and the Start sheet, a Save refused before anything is sent is brought into view; the Pantry door says \"did not save\" when a new place could not be made."
   ]
 }
