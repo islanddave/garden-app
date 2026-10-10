@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.180.0",
+    "date": "2026-10-09",
+    "highlights": [
+      "On a Pantry Walk the Save button stays in view after a refused save, and a refusal said before anything is sent is brought into view.",
+      "After a server error, a put-up change is said as \"may not have saved\" instead of \"did not save\"."
+    ]
+  },
+  {
     "version": "4.179.0",
     "date": "2026-10-09",
     "highlights": [
