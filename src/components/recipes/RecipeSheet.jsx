@@ -130,8 +130,8 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   // and again when the keyboard resizes the viewport (kitchen/sheetScroll.js, as Put it up uses it).
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
-  // A replay refusal or a failed Save is the last line of the scroller, under the pinned Save: each is
-  // brought into view (counted, so the same failure twice is brought into view twice).
+  // A replay refusal, a failed Save or a refusal before any request is the last line of the scroller, under
+  // the pinned Save: each is brought into view (counted, so the same failure twice is brought into view twice).
   const errRef = useRef(null)
   const [refusedSeq, setRefusedSeq] = useState(0)
   useEffect(() => {
@@ -193,7 +193,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
   const save = async () => {
     if (writingRef.current) return
     const res = recipeBody(d, { mode: editing ? 'edit' : 'create' })
-    if (res.error) { setErr(res.error); return }
+    if (res.error) { setErr(res.error); setRefusedSeq(s => s + 1); return }
     writingRef.current = true
     setSaving(true); setErr(null)
     // The recipe a replay answered with, once it is being written onto.
