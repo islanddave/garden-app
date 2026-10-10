@@ -140,6 +140,12 @@ directions: it follows the imports of every node-project file and fails, with th
 and is not listed; and it fails when a listed file no longer does. When it asks for a file to be added, add the
 path to `LOADS_SRC` in sorted order.
 
+`vitest-side-config.mjs` is what the configs that build on `vitest.config.ts` use to stay right in both shapes
+(`vitest.stress.config.ts` and the three flag-off configs): with the key set, vitest does not hand `--dir` to a
+project, and a `setupFiles` beside `projects` loads in the `node` project too. `vitest-side-configs.test.js` holds
+each `test:flag-off*` script to one set of collected files with the key and without it, and the stress config to
+its setup file in the jsdom project only.
+
 `coverage-rows.py SERIAL_LOG SHADOW_LOG` is the A3 trial's coverage comparison. Neither workflow uploads a coverage
 artefact, so it reads the coverage table out of two unit-pass job logs of one commit
 (`gh api repos/islanddave/garden-app/actions/jobs/<job id>/logs`, or a local `npm test` log) and compares every

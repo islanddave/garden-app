@@ -86,7 +86,7 @@ TRIAL_RULE = ("the A3 trial admits ONE difference between the two files: env %s:
 # Every tracked file that names the key. `trial` reads the two workflow files; the key set anywhere else (the `test`
 # script of package.json is the short way) would switch ci.yml's passes too with nothing in a workflow changing.
 TRIAL_KEY_FILES = [".github/workflows/ci-next.yml", "scripts/ci-telemetry/vitest-projects.test.js",
-                   "scripts/test_ci_next.py", "vitest.config.ts"]
+                   "scripts/ci-telemetry/vitest-side-configs.test.js", "scripts/test_ci_next.py", "vitest.config.ts"]
 REPEATABLE =("checkout", "setup-node", "npm-ci", "chrome", "fetch-main")
 NODE_PIN = {"node-version": "20.19.0", "cache": "npm"}
 DRY_RUN = "npm install --dry-run --package-lock-only"
@@ -590,7 +590,7 @@ def test_the_trial_key_is_taken_off_only_where_it_is_exactly_the_admitted_differ
     assert [s["name"] for s in carrying] == list(TRIAL_STEPS.values())       # today it changes two steps, these
 
 
-def test_the_trial_key_is_named_by_four_tracked_files_and_not_by_package_json():
+def test_the_trial_key_is_named_by_five_tracked_files_and_not_by_package_json():
     """`trial` holds the key to two steps of one workflow file. This holds it out of everything else: an npm script
     that sets it (`"test": "VITEST_NODE_PROJECT=1 vitest run --coverage"`) switches ci.yml's own UTC pass, both
     sides of the shadow then run the two-project shape, and every test ID is equal for the wrong reason."""
@@ -603,8 +603,8 @@ def test_the_trial_key_is_named_by_four_tracked_files_and_not_by_package_json():
             "unit pass included, and the serial job stops being the jsdom-everything side of the comparison. Take "
             "it out: %s" % (TRIAL_KEY, TRIAL_RULE))
     assert sorted(named.stdout.split()) == TRIAL_KEY_FILES, (
-        "the tracked files that name %s are no longer the four the trial is made of (the config that reads it, the "
-        "workflow that sets it, and the two tests that hold it). A file that SETS or READS the key elsewhere "
+        "the tracked files that name %s are no longer the five the trial is made of (the config that reads it, the "
+        "workflow that sets it, and the three tests that hold it). A file that SETS or READS the key elsewhere "
         "changes which runs are two-project: take it out. A file that only mentions it: reword it, or add it to "
         "TRIAL_KEY_FILES in scripts/test_ci_next.py in the same commit: %s" % (TRIAL_KEY, TRIAL_RULE))
 

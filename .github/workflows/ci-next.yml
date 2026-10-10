@@ -85,8 +85,9 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 #   - the exit list, as commands, is "Exit" in gardening-docs
 #     project-state/_promotepath-20261002/review-a3trial-qa-20261007.md. The owner declares the exit on the output
 #     of those commands; a lane does not;
-#   - two other configs build on vitest.config.ts and are wrong with the key set: vitest.stress.config.ts fails its
-#     node-project files, and `npm run test:flag-off:seed` collects a different set of files. Both are fixed first.
+#   - the other configs that build on vitest.config.ts were wrong with the key set (vitest.stress.config.ts failed its
+#     node-project files; the `test:flag-off:seed*` scripts collected more files) and are fixed:
+#     scripts/ci-telemetry/vitest-side-config.mjs, held by vitest-side-configs.test.js beside it.
 # The count restarts (COUNT_FROM_SHA moves, in a later commit) when a commit changes what a unit pass runs:
 # vitest.config.ts, src/__tests__/setup.ts, scripts/ci-telemetry/vitest-test-ids-reporter.mjs,
 # scripts/ci-telemetry/coverage-v8-two-forms.mjs (the coverage provider: a unit pass fails on its ERROR line), .nvmrc,
