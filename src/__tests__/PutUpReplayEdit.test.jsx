@@ -700,6 +700,20 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     await waitFor(() => expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(true))
   })
 
+  // BUG-PUTUPRETRYCOPYRESIDUE-001: a refusal raised before any request is the same last line, under the same pinned Save.
+  it('a Save refused before any request (no name) is brought into view, and so is the same refusal again — nothing is sent', async () => {
+    const on = watchScrolls()
+    mount()
+    await save()
+    expect(errorText()).toBe('Give it a name.')
+    await waitFor(() => expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(true))
+    on.length = 0
+    await save()
+    expect(errorText()).toBe('Give it a name.')
+    await waitFor(() => expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(true))
+    expect(fetchSpy.mock.calls.filter(([, o]) => o?.method && o.method !== 'GET')).toEqual([])
+  })
+
   it('Q2 — a change that did not save is brought into view too', async () => {
     const on = watchScrolls()
     lostThenReplayed(() => { throw apiError(503, { error: 'boom' }) })

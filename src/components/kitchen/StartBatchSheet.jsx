@@ -292,8 +292,9 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
   // The focused field is kept clear of the pinned Start it (see sheetScroll.js).
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
-  // A failed start or a replay refusal is the last line of the scroller, under the pinned Start it: each is
-  // brought into view (counted, so the same failure twice is brought into view twice).
+  // A failed start, a replay refusal or a date refused before any request is the last line of the scroller,
+  // under the pinned Start it: each is brought into view (counted, so the same failure twice is brought into
+  // view twice). A blank name is not counted: it moves focus to the name instead.
   const errRef = useRef(null)
   const [failedSeq, setFailedSeq] = useState(0)
   useEffect(() => {
@@ -401,7 +402,7 @@ function StartBatchOpen({ onClose, onStarted, onExists, photo, photoPreview, pho
     const text = label.trim()
     if (!text) { setErr('Give it a name first.'); document.getElementById(labelId)?.focus(); return }
     const when = resolveSheetStart({ chip, earlier, pickedDate, now: new Date(now ?? Date.now()) })
-    if (when.error) { setErr(when.error); return }
+    if (when.error) { setErr(when.error); setFailedSeq(s => s + 1); return }
     const kindPart = kindBody(kind, kindOther)
     if (kindPart === null) { setErr('Give the kind a short name — or leave the kind unpicked.'); setKindOpen(true); return }
     const useKey = key || mintKey()

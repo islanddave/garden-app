@@ -367,6 +367,39 @@ describe('the Start sheet — the write', () => {
     }
   })
 
+  // BUG-PUTUPRETRYCOPYRESIDUE-001: a date refused before any request is the same last line, under the same pinned Start it.
+  it('a start refused before any request (Earlier… with nothing under it) is brought into view and scrolled clear of the pinned footer, and so is the same refusal again', async () => {
+    const on = []
+    Element.prototype.scrollIntoView = function scrollIntoView() { on.push(this) }
+    const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function rect() {
+      const box = (top, bottom) => ({ top, bottom, left: 0, right: 400, width: 400, height: bottom - top, x: 0, y: top })
+      if (this.getAttribute?.('data-testid') === 'start-footer') return box(700, 780)
+      if (this.getAttribute?.('data-testid') === 'start-error') return box(730, 745)
+      return box(0, 0)
+    })
+    try {
+      render(<Host />)
+      const panel = sheet().closest('[role=dialog]')
+      let top = 0
+      Object.defineProperty(panel, 'scrollTop', { configurable: true, get: () => top, set: (v) => { top = v } })
+      type('start-label', 'Pepper mash')
+      tap('start-when-earlier')
+      await startIt()
+      expect(screen.getByTestId('start-error').textContent).toBe(START_ERRORS.earlier)
+      await waitFor(() => expect(on).toContain(screen.getByTestId('start-error')))
+      expect(top).toBe(53)                                                     // 745 + the 8 px gap − 700
+      on.length = 0
+      await startIt()
+      expect(screen.getByTestId('start-error').textContent).toBe(START_ERRORS.earlier)
+      await waitFor(() => expect(on).toContain(screen.getByTestId('start-error')))
+      expect(kbPosts()).toHaveLength(0)
+      expect(uploadSpy).not.toHaveBeenCalled()
+    } finally {
+      rects.mockRestore()
+      delete Element.prototype.scrollIntoView
+    }
+  })
+
   it('the Going-now door can add its own photo', async () => {
     render(<Host />)
     expect(screen.getByTestId('start-photo-add').textContent).toBe('Add a photo')
