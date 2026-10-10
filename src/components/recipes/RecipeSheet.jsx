@@ -70,7 +70,8 @@ export function recipeStaleText(recipe) {
   return `${name ? `${name} was already saved earlier` : 'This recipe was already saved earlier'} — it is with your recipes. This Save did not change it. To change it, open the recipe.`
 }
 // The first Save made the recipe and the change could not be put on it just now. `why` is the server's own
-// sentence when it gave one; `lost` is true when no answer came back at all (the change may be on it).
+// sentence when it refused the change in words (a 4xx); `lost` is true when no answer came back at all or the
+// server answered with an error of its own, a 5xx (the change may be on it).
 export function recipeUnsavedText(recipe, { why = '', lost = false } = {}) {
   const name = quoted(recipe)
   const head = `${name ? `${name} is already saved` : 'This recipe is already saved'} — an earlier Save went through.`

@@ -89,7 +89,8 @@ export function MadeAsWrittenButton({ asWritten }) {
 // (kitchen/idempotencyKey.js). STALE: the recipe is not this sitting's to rename (made a while ago, or changed
 // since) — nothing is written, and the key is KEPT: a new one would make a second recipe of the same batch.
 // A recipe that already has the name typed is a save, with nothing written. Each refusal is brought into view.
-// UNSAVED: the rename was tried and did not go through (`lost`: no answer came back, so it may have).
+// UNSAVED: the rename was tried and did not go through (`lost`: no answer came back at all or the
+// server answered with an error of its own, a 5xx, so it may have).
 // Either way the recipe is there, and the sentence gives the name it answered with.
 export function saveAsRecipeStaleText(recipe) {
   const name = String(recipe?.name ?? '').trim()

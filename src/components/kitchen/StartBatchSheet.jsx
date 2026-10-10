@@ -150,8 +150,8 @@ export function startRefusalText(follow = null) {
       : 'Close this and open the batch to see it.')
   return parts.join(' ')
 }
-// The change to what the PUT carries did not go through (`lost`: no answer came back, so it may have) — and
-// what would have followed it was not sent.
+// The change to what the PUT carries did not go through (`lost`: no answer came back at all or the server
+// answered with an error of its own, a 5xx, so it may have) — and what would have followed it was not sent.
 export function startUnsavedText({ lost = false, lines = null, jar = null } = {}) {
   const not = followsIn({ lines, jar }, 'not')
   const also = not.length ? `, and ${not.join(' and ')} ${not.length > 1 ? 'were' : 'was'} not added` : ''
