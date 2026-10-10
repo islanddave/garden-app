@@ -211,4 +211,27 @@ describe('BUG-MOISTURECHECKNOBUTTON-001 — the in-flight guard', () => {
     expect(events().length).toBe(1)
     expect(JSON.parse(events()[0][1].body).event_type).toBe('moisture_check')
   })
+
+  // BUG-BULKDOUBLELOGINFLIGHT-001 — the same key must keep the row out of a bulk Water too. The check
+  // is held open; unfixed, "Log all watering" posts a watering for the row that was just called moist.
+  // Mutation: drop the writeInFlightRef check from the V1 bulk targets filter -> p1 gets a watering, red.
+  it('keeps the row out of a bulk Water while the check is in flight', async () => {
+    let release
+    fetchMock.mockImplementation((path, opts) => {
+      if (path === '/api/plants' || path === '/api/locations/with-path') return Promise.resolve([])
+      if (path === '/api/events' && JSON.parse(opts.body).event_type === 'moisture_check') {
+        return new Promise(res => { release = () => res({ id: 'ev-moist' }) })
+      }
+      return Promise.resolve({ id: 'ev-water' })
+    })
+    render(<CareNeeded plan={plan()} />)
+    fireEvent.click(moistBtn())
+    await waitFor(() => expect(events().length).toBe(1))
+    fireEvent.click(screen.getByRole('button', { name: /Log all watering \(2\)/i }))
+    await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalledTimes(1))   // the bulk's toast
+    await act(async () => { release() })
+    await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalledTimes(2))   // the check's own
+    expect(events().map(c => { const b = JSON.parse(c[1].body); return b.plant_id + ':' + b.event_type }))
+      .toEqual(['p1:moisture_check', 'p2:watering'])
+  })
 })

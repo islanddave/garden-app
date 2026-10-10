@@ -401,7 +401,9 @@ export function useCareActions({ allRows, planDate, fetch, getToken, toast, anno
   const runBulk = useCallback(async (etype, keys, opts) => {
     if (opts) return runBulkV2(etype, keys, opts)
     if (bulkInFlightRef.current) return
-    const targets = candidatesFor(etype).filter(r => keys.has(r.key))
+    // BUG-BULKDOUBLELOGINFLIGHT-001 — a row whose own Water or Moist is mid-request is left out (the V2
+    // rule above): it fades only when that POST answers, so until then it is still a candidate here.
+    const targets = candidatesFor(etype).filter(r => keys.has(r.key) && !writeInFlightRef.current.has(r.key))
     if (!targets.length) { onBulkEnd(); return }
     bulkInFlightRef.current = true
     try {
