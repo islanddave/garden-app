@@ -245,7 +245,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
       writingRef.current = false
       setSaving(false)
       if (onRow?.id != null) {
-        setErr(recipeUnsavedText(onRow, { why: e?.body?.error ?? '', lost: answerLost(e) }))
+        setErr(recipeUnsavedText(onRow, { why: answeredNo(e) ? (e?.body?.error ?? '') : '', lost: answerLost(e) }))
         setRefusedSeq(s => s + 1)
         onExists?.()
         return

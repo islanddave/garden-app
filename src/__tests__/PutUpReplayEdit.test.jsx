@@ -428,7 +428,7 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     expect(draft()).toBeNull()
   })
 
-  it('I3 — the update fails: the sheet says the recipe IS saved and this change did not save (never "Couldn\'t save it"), the page is told, the change is still in the form and the draft, nothing is handed on as saved — and Save again finishes it', async () => {
+  it('I3 — the update fails (a 5xx): the sheet says the recipe IS saved and this change may not have saved — the server\'s own error sentence is not passed on (never "Couldn\'t save it"), the page is told, the change is still in the form and the draft, nothing is handed on as saved — and Save again finishes it', async () => {
     let fail = true
     lostThenReplayed((b) => { if (fail) throw apiError(503, { error: 'boom' }); return { recipe: { ...FIRST, ...b } } })
     const { onSaved, onExists } = mount()
@@ -438,7 +438,7 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     type('recipe-name', 'Mojo verde')
     await save()
     await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
-    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: boom'))
+    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change may not have saved — try again. What you typed is still here.'))
     expect(errorText()).not.toMatch(BANNED)
     expect(onExists).toHaveBeenCalledTimes(1)                                  // the list behind re-reads: the recipe is there
     expect(onSaved).not.toHaveBeenCalled()
@@ -451,6 +451,19 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     expect(keys(PATH)).toHaveLength(3)
     expect(sentTo('PATCH', ROW).map(b => b.name)).toEqual(['Mojo verde', 'Mojo verde'])
     expect(onSaved.mock.calls[0][0]).toMatchObject({ id: 'r-first', name: 'Mojo verde' })
+  })
+
+  it('I3 — the update is ANSWERED with a no (a 4xx): the server\'s own sentence is passed on as why this change did not save', async () => {
+    lostThenReplayed(() => { throw apiError(422, { error: 'A recipe needs a name.' }) })
+    const { onSaved } = mount()
+    type('recipe-name', 'Mojo')
+    await save(); await failed()
+    type('recipe-name', 'Mojo verde')
+    await save()
+    await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
+    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: A recipe needs a name.'))
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(screen.getByTestId('recipe-name').value).toBe('Mojo verde')
   })
 
   it('I3 — a PATCH with no answer at all (the connection again): the same already-saved line, what was typed still here', async () => {
@@ -697,7 +710,7 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     on.length = 0
     type('recipe-name', 'Mojo verde')
     await save()
-    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: boom'))
+    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change may not have saved — try again. What you typed is still here.'))
     await waitFor(() => expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(true))
   })
 
@@ -804,7 +817,7 @@ describe('the recipes list behind the sheet is told the recipe is there', () => 
     expect(screen.queryAllByTestId('recipes-row')).toHaveLength(0)             // a lost answer: nothing is known yet
     type('recipe-name', 'Mojo verde')
     await act(async () => { tap('recipe-save') })
-    await waitFor(() => expect(screen.getByTestId('recipe-sheet-error').textContent).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: boom'))
+    await waitFor(() => expect(screen.getByTestId('recipe-sheet-error').textContent).toBe('“Mojo” is already saved — an earlier Save went through. This change may not have saved — try again. What you typed is still here.'))
     await waitFor(() => expect(screen.getAllByTestId('recipes-row')).toHaveLength(1))
     expect(screen.getByTestId('recipes-row').textContent).toMatch(/^Mojo/)
     expect(screen.getByTestId('recipe-name').value).toBe('Mojo verde')         // the sheet is still open, with what was typed
