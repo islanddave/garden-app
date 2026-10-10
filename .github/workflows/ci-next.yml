@@ -81,6 +81,7 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 #     token-diet/analysis-20261007/rereview/06-a3trial-qa/rereview-output.md). `scripts/ci-telemetry/a3-exit.sh
 #     OUT_DIR` makes both at the current checkout, on the Node of .nvmrc and a clean tree. They are met when its
 #     last line is `A3-EXIT-PASS` (exit 0), and not when it is `A3-EXIT-FAIL (e1=…, e2=…, red=…, node=…, tree=…)`.
+#     .github/workflows/a3-exit-run.yml makes that run on a runner, for a commit pushed to the branch `a3-exit-run`.
 # Before the key can be removed and the two projects become the only shape (none of this blocks reading the trial):
 #   - the exit list, as commands, is "Exit" in gardening-docs
 #     project-state/_promotepath-20261002/review-a3trial-qa-20261007.md. The owner declares the exit on the output

@@ -1,0 +1,83 @@
+name: A3 exit run — the trial's two exit checks on CI's Node (push to a3-exit-run only)
+
+# Makes the A3 trial's "exit run of record": `scripts/ci-telemetry/a3-exit.sh OUT_DIR` at the pushed SHA, on a
+# runner, on the Node of .nvmrc and a clean checkout (THE A3 TRIAL in ci-next.yml; "The exit run on a runner" in
+# scripts/ci-telemetry/README.md). It gates nothing: promote-gate.yml reads ci.yml's `build-and-test` only, and no
+# job here has that name. The owner declares the exit on the script's last line; this run only produces it.
+#
+# HOW A RUN STARTS. Only by pointing the branch `a3-exit-run` at a commit:
+#   git push origin <sha>:refs/heads/a3-exit-run
+# in the manner of ci-next.yml's `ci-next-soak`. There is no workflow_dispatch: a workflow is dispatchable only once
+# its file is on the default branch. A push runs the workflow files OF THE PUSHED COMMIT, so <sha> has to be a
+# commit that holds this file. Pushing a commit from before this file was added starts nothing, and says nothing.
+# The branch is deleted when the run has been read.
+#
+# NO ENV FROM HERE. a3-exit.sh sets what its seven vitest runs need itself, per run (TZ=UTC and its own A3_EXIT_*
+# keys), and runs its own vitest config. ci-next.yml's unit steps set a TZ on one leg and the trial's env key on
+# both; neither is mirrored, on purpose: the script fixes the zone, and its config compares the two environments
+# itself and is written for a run where the trial's key is unset (scripts/ci-telemetry/a3-exit.config.mjs).
+#
+# No secrets, no AWS, no Neon, no environment. The script uses no network once `npm ci` is done.
+
+on:
+  push:
+    branches: [a3-exit-run]
+
+permissions:
+  contents: read
+
+# Its own group (groups are repository-wide across workflow files; scripts/test_ci_next.py asserts no two files
+# share one). A second push while a run is in progress waits for it: a run of record is not cancelled half-made.
+concurrency:
+  group: a3-exit-run-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  a3-exit:
+    runs-on: ubuntu-24.04
+    # Seven vitest runs of the node project's files, one after another: two without coverage, four with, and a
+    # one-test control. Measured on the owner's Mac, 456 s to 715 s wall for all seven
+    # (gardening-docs project-state/_promotepath-20261002/lane-a3exit-20261008.log); NOT yet measured on a runner.
+    # For scale, the whole suite once without coverage is ~12 min on a runner (unit-ny in ci-next.yml), and these
+    # files are a part of it run six times. 60 leaves room for a runner several times slower than that Mac plus setup
+    # and `npm ci`; a run that reaches it is a finding to size from, not a result.
+    timeout-minutes: 60
+    steps:
+      # The pushed SHA (the default ref of a push run). The script prints it and refuses a tree with uncommitted paths.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # As ci-next.yml's unit legs (unit-utc-cov, unit-ny): the same action at the same pin, the same version, the
+      # same npm cache. The version is written out as it is there; a3-exit.sh refuses (exit 2) a `node` that is not
+      # the one .nvmrc names, so a literal here that fell behind .nvmrc is a red run, never a result on another Node.
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      # As ci-next.yml's unit legs, name and run.
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: A3 exit checks (scripts/ci-telemetry/a3-exit.sh)
+        run: |
+          set -uo pipefail
+          OUT="$RUNNER_TEMP/a3-exit"
+          CONSOLE="$RUNNER_TEMP/a3-exit-console.log"
+          RC=0
+          scripts/ci-telemetry/a3-exit.sh "$OUT" 2>&1 | tee "$CONSOLE" || RC=$?
+          # Into OUT_DIR only now: the script refuses one that is not empty. A refusal (exit 2) makes no OUT_DIR,
+          # and its one line is then all the artifact holds.
+          mkdir -p "$OUT"
+          cp "$CONSOLE" "$OUT/console.log"
+          LAST="$(tail -n 1 "$CONSOLE")"
+          echo "::notice title=A3 exit run::${LAST:-a3-exit.sh printed nothing} [sha ${GITHUB_SHA}, a3-exit.sh exit ${RC}]"
+          exit "$RC"
+
+      - name: Upload OUT_DIR
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: a3-exit-${{ github.sha }}
+          path: ${{ runner.temp }}/a3-exit
+          if-no-files-found: error
+          retention-days: 90
