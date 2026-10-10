@@ -450,8 +450,10 @@ def shape(ci, nxt):
         out.append("a job is named %s: promote-gate.yml reads that check-run name"
                    % sorted(RESERVED_JOB_IDS & set(jobs)))
     for job_id, job in jobs.items():
-        if job.get("runs-on") != "ubuntu-24.04":
-            out.append("%s runs on %r, want ubuntu-24.04" % (job_id, job.get("runs-on")))
+        # TRIAL-ONLY (branch lane-ubuntu26-20261010, the Ubuntu 26 runner-image trial): NOT to be merged to dev.
+        # dev pins ubuntu-24.04 here (OPS-RUNNERIMAGEPIN-001); the pin moves only after the CI and staging trials.
+        if job.get("runs-on") != "ubuntu-26.04":
+            out.append("%s runs on %r, want ubuntu-26.04 (TRIAL-ONLY pin)" % (job_id, job.get("runs-on")))
         minutes = job.get("timeout-minutes")
         if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes <= 0:
             out.append("%s has no timeout-minutes" % job_id)
