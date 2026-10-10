@@ -25,7 +25,8 @@
 // route that can carry it, and a batch that is not this sitting's is not written onto: nothing is written,
 // the sheet stays open and says the batch is already saved and this Save changed nothing
 // (REPLAY_NOT_ON_IT), and the page behind is told. A PUT that fails is said as that (REPLAY_CHANGE_UNSAVED;
-// REPLAY_CHANGE_MAYBE when no answer came back), and the page is told then too. The key is the sheet's one
+// REPLAY_CHANGE_MAYBE when no answer came back at all or the server answered with an error of its own, a
+// 5xx), and the page is told then too. The key is the sheet's one
 // key throughout: a refused Save is refused again, never a second batch. A batch that already has the name
 // and kind on screen (and no other part differs) is a save, with nothing written. Each of the three lines is
 // brought into view above the pinned Save.

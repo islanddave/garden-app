@@ -1138,8 +1138,9 @@ describe('the Walk — the item route', () => {
     expect(screen.getByTestId('walk-what-name').value).toBe('Eggs')
     expect(screen.getByTestId('walk-error').getAttribute('role')).toBe('alert')
     await waitFor(() => expect(broughtIntoView(on, 'walk-error')).toBe(true))
-    // The line stops above the walk's fixed band, as the button under it does.
-    expect(screen.getByTestId('walk-error').parentElement.style.scrollMarginBottom).toBe(screen.getByTestId('walk-save').style.scrollMarginBottom)
+    // The box that is scrolled — the line and Save together — stops above the walk's fixed band, as the button in it does.
+    expect(screen.getByTestId('walk-end').contains(screen.getByTestId('walk-error'))).toBe(true)
+    expect(screen.getByTestId('walk-end').style.scrollMarginBottom).toBe(screen.getByTestId('walk-save').style.scrollMarginBottom)
     expect(screen.getByTestId('walk-save').style.scrollMarginBottom).toMatch(/^\d+px$/)
     for (const nth of [3, 4]) {
       on.length = 0

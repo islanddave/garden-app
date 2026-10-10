@@ -43,7 +43,7 @@ import {
 import RecipeSheet, { isRecipeDraft, recipeStaleText } from '../components/recipes/RecipeSheet.jsx'
 import { recipeHolds, emptyDraft } from '../components/recipes/recipes.js'
 import RecipesView from '../components/recipes/RecipesView.jsx'
-import BatchRecipeRow from '../components/recipes/BatchRecipeRow.jsx'
+import BatchRecipeRow, { saveAsRecipeUnsavedText } from '../components/recipes/BatchRecipeRow.jsx'
 import HowItWasMadeSheet, { REPLAY_NOT_ON_IT, REPLAY_CHANGE_UNSAVED, REPLAY_CHANGE_MAYBE } from '../components/putup/HowItWasMadeSheet.jsx'
 import { SHEET_DRAFT_PREFIX } from '../components/kitchen/sheetDraft.js'
 import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
@@ -428,7 +428,7 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     expect(draft()).toBeNull()
   })
 
-  it('I3 — the update fails: the sheet says the recipe IS saved and this change did not save (never "Couldn\'t save it"), the page is told, the change is still in the form and the draft, nothing is handed on as saved — and Save again finishes it', async () => {
+  it('I3 — the update fails (a 5xx): the sheet says the recipe IS saved and this change may not have saved — the server\'s own error sentence is not passed on (never "Couldn\'t save it"), the page is told, the change is still in the form and the draft, nothing is handed on as saved — and Save again finishes it', async () => {
     let fail = true
     lostThenReplayed((b) => { if (fail) throw apiError(503, { error: 'boom' }); return { recipe: { ...FIRST, ...b } } })
     const { onSaved, onExists } = mount()
@@ -438,7 +438,7 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     type('recipe-name', 'Mojo verde')
     await save()
     await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
-    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: boom'))
+    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change may not have saved — try again. What you typed is still here.'))
     expect(errorText()).not.toMatch(BANNED)
     expect(onExists).toHaveBeenCalledTimes(1)                                  // the list behind re-reads: the recipe is there
     expect(onSaved).not.toHaveBeenCalled()
@@ -451,6 +451,19 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     expect(keys(PATH)).toHaveLength(3)
     expect(sentTo('PATCH', ROW).map(b => b.name)).toEqual(['Mojo verde', 'Mojo verde'])
     expect(onSaved.mock.calls[0][0]).toMatchObject({ id: 'r-first', name: 'Mojo verde' })
+  })
+
+  it('I3 — the update is ANSWERED with a no (a 4xx): the server\'s own sentence is passed on as why this change did not save', async () => {
+    lostThenReplayed(() => { throw apiError(422, { error: 'A recipe needs a name.' }) })
+    const { onSaved } = mount()
+    type('recipe-name', 'Mojo')
+    await save(); await failed()
+    type('recipe-name', 'Mojo verde')
+    await save()
+    await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
+    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: A recipe needs a name.'))
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(screen.getByTestId('recipe-name').value).toBe('Mojo verde')
   })
 
   it('I3 — a PATCH with no answer at all (the connection again): the same already-saved line, what was typed still here', async () => {
@@ -697,7 +710,7 @@ describe('the recipe sheet — POST /api/recipes, then PATCH /api/recipes/:id', 
     on.length = 0
     type('recipe-name', 'Mojo verde')
     await save()
-    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: boom'))
+    await waitFor(() => expect(errorText()).toBe('“Mojo” is already saved — an earlier Save went through. This change may not have saved — try again. What you typed is still here.'))
     await waitFor(() => expect(broughtIntoView(on, 'recipe-sheet-error')).toBe(true))
   })
 
@@ -804,7 +817,7 @@ describe('the recipes list behind the sheet is told the recipe is there', () => 
     expect(screen.queryAllByTestId('recipes-row')).toHaveLength(0)             // a lost answer: nothing is known yet
     type('recipe-name', 'Mojo verde')
     await act(async () => { tap('recipe-save') })
-    await waitFor(() => expect(screen.getByTestId('recipe-sheet-error').textContent).toBe('“Mojo” is already saved — an earlier Save went through. This change did not save: boom'))
+    await waitFor(() => expect(screen.getByTestId('recipe-sheet-error').textContent).toBe('“Mojo” is already saved — an earlier Save went through. This change may not have saved — try again. What you typed is still here.'))
     await waitFor(() => expect(screen.getAllByTestId('recipes-row')).toHaveLength(1))
     expect(screen.getByTestId('recipes-row').textContent).toMatch(/^Mojo/)
     expect(screen.getByTestId('recipe-name').value).toBe('Mojo verde')         // the sheet is still open, with what was typed
@@ -880,6 +893,20 @@ describe('Save as recipe — POST /api/recipes/from-batch/:id, then PATCH /api/r
     await save(); await saved('Settlers, the hot one')
     expect(new Set(keys(PATH)).size).toBe(1)
     expect(sentTo('PATCH', ROW)).toHaveLength(2)
+  })
+
+  // RIA M-5 — the other branch of the same line: an ANSWERED no did not land, and is said so.
+  it('I3 — the update is ANSWERED with a no (a 4xx): the new name did not save — never "may not have"', async () => {
+    lostThenReplayed(() => { throw apiError(409, { error: 'boom' }) })
+    mount()
+    tap('batch-save-as-recipe')
+    await save(); await failed()
+    type('batch-save-as-recipe-name', 'Settlers, the hot one')
+    await save()
+    await waitFor(() => expect(sentTo('PATCH', ROW)).toHaveLength(1))
+    await waitFor(() => expect(errorText()).toBe(saveAsRecipeUnsavedText(FIRST)))
+    expect(errorText()).toBe('Already saved as a recipe: “Settlers of Cayenne” — an earlier Save went through. The new name did not save — try again.')
+    expect(screen.getByTestId('batch-save-as-recipe-name').value).toBe('Settlers, the hot one')
   })
 
   // QA Q1 — the own-rename memory (`held.patched`), and QA Q3 — a recipe that already has the name.
@@ -1127,6 +1154,20 @@ describe('How it was made — POST /api/kitchen-batches/from-jars, then PUT /api
     expect(new Set(keys(PATH)).size).toBe(1)
     expect(onSaved).toHaveBeenCalledTimes(2)
     expect(onSaved.mock.calls[1][0]).toMatchObject({ id: 'kb-first', label: 'Megatron plain, 2026' })
+  })
+
+  // RIA M-5 — the other branch of the same line: an ANSWERED no did not land, and is said so.
+  it('I3 — the update is ANSWERED with a no (a 4xx): the change did not save — never "may not have" — and the sheet stays open', async () => {
+    lostThenReplayed(() => { throw apiError(409, { error: 'boom' }) })
+    const { onClose } = mount()
+    await loaded()
+    await save(); await failed()
+    type('how-label', 'Megatron plain, 2026')
+    await save()
+    await waitFor(() => expect(sentTo('PUT', ROW)).toHaveLength(1))
+    await waitFor(() => expect(screen.getByTestId('how-error').textContent).toBe(REPLAY_CHANGE_UNSAVED))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByTestId('how-label').value).toBe('Megatron plain, 2026')
   })
 
   // QA Q1 — the own-PUT memory (`putRef`), and QA Q3 — a batch that already has the name and kind.
