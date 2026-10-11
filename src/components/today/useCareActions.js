@@ -403,9 +403,16 @@ export function useCareActions({ allRows, planDate, fetch, getToken, toast, anno
     if (bulkInFlightRef.current) return
     // BUG-BULKDOUBLELOGINFLIGHT-001 — a row whose own Water or Moist is mid-request is left out (the V2
     // rule above): it fades only when that POST answers, so until then it is still a candidate here.
-    const targets = candidatesFor(etype).filter(r => keys.has(r.key) && !writeInFlightRef.current.has(r.key))
+    // `pendingKeys` too, as V2 reads it: the row's handler clears the ref in the tick its POST answers,
+    // and the fade commits a render later. In that gap this render's pendingKeys still holds the key.
+    const targets = candidatesFor(etype).filter(r => keys.has(r.key) && !writeInFlightRef.current.has(r.key) && !pendingKeys.has(r.key))
     if (!targets.length) { onBulkEnd(); return }
     bulkInFlightRef.current = true
+    // The reverse order: this run claims its rows, as V2's does, so logRow/moistRow refuse them. Held for
+    // the WHOLE run and not per row, because V1 fades at the end: a row released when its own POST landed
+    // would be live again, still on the list, until the last one answered.
+    for (const r of targets) writeInFlightRef.current.add(r.key)
+    setPendingKeys(prev => { const n = new Set(prev); for (const r of targets) n.add(r.key); return n })
     try {
       setBulkProgress({ done: 0, total: targets.length })
       const created = []   // { id, key, on } per successfully-created row (id known = undoable)
@@ -448,8 +455,11 @@ export function useCareActions({ allRows, planDate, fetch, getToken, toast, anno
       })
     } finally {
       bulkInFlightRef.current = false
+      // Same batch as the fade above, so no render shows a landed row live between the two.
+      for (const r of targets) writeInFlightRef.current.delete(r.key)
+      setPendingKeys(prev => { const n = new Set(prev); for (const r of targets) n.delete(r.key); return n })
     }
-  }, [fetch, toast, candidatesFor, announce, fade, unfade, onBulkEnd, runBulkV2])
+  }, [fetch, toast, candidatesFor, pendingKeys, announce, fade, unfade, onBulkEnd, runBulkV2])
 
   return {
     logged, skipped, rows, pendingKeys, writeInFlightRef, bulkInFlightRef, bulkProgress, setBulkProgress,

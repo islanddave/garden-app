@@ -44,6 +44,8 @@ const plan = () => ({
 })
 
 const posts = () => fetchMock.mock.calls.filter(c => c[0] === '/api/events' && c[1]?.method === 'POST')
+// The bulk's own toast ("Logged 2"), told apart from a row's ("Logged Water for X").
+const bulkToasts = () => toastMock.showUndo.mock.calls.map(c => c[0].message).filter(m => /^Logged \d/.test(m))
 const deletes = () => fetchMock.mock.calls.filter(c => String(c[0]).startsWith('/api/events/') && c[1]?.method === 'DELETE')
 // POSTs for the named plant ids reject; every other write succeeds with a fresh id.
 const failPostsFor = (...ids) => {
@@ -163,5 +165,116 @@ describe('BUG-BULKDOUBLELOGINFLIGHT-001 — a bulk leaves out a row whose own wr
     await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalledTimes(2))   // the row's own Undo
     expect(posts().map(c => JSON.parse(c[1].body).plant_id).sort()).toEqual(['p1', 'p2'])
     expect(toastMock.show).not.toHaveBeenCalled()
+  })
+
+  // The trailing edge of the same race. The row's handler clears its in-flight key in the tick the POST
+  // answers; the fade that takes the row off the candidates commits on the NEXT render. One act() held
+  // open keeps React from rendering, which is that gap: the POST has answered (the row's toast is up),
+  // the ref is clear, and the list the pill reads still has the row.
+  // Mutation: drop the pendingKeys check from the V1 targets filter -> posts p1, p1, p2, red.
+  it('the pill tapped after the row\'s POST answers but before it fades logs that row once', async () => {
+    let release, held = false, n = 0
+    fetchMock.mockImplementation((path, opts) => {
+      if (path === '/api/plants' || path === '/api/locations/with-path') return Promise.resolve([])
+      if (path === '/api/events' && opts?.method === 'POST') {
+        if (!held && JSON.parse(opts.body).plant_id === 'p1') {
+          held = true
+          return new Promise(res => { release = () => res({ id: 'ev-own' }) })
+        }
+        return Promise.resolve({ id: 'ev-' + (++n) })
+      }
+      return Promise.resolve({ undone: true })
+    })
+    render(<CareNeeded plan={plan()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Log Water for Bhut Jolokia/i }))
+    await waitFor(() => expect(posts().length).toBe(1))
+    const pill = screen.getByRole('button', { name: /^Log all watering \(2\)$/i })
+    await act(async () => {
+      release()
+      for (let i = 0; i < 20 && !toastMock.showUndo.mock.calls.length; i++) await Promise.resolve()
+      expect(toastMock.showUndo).toHaveBeenCalledTimes(1)   // the row's own write has answered
+      pill.click()
+    })
+    await waitFor(() => expect(bulkToasts().length).toBe(1))
+    expect(posts().map(c => JSON.parse(c[1].body).plant_id)).toEqual(['p1', 'p2'])
+    expect(bulkToasts()).toEqual(['Logged 1'])
+  })
+})
+
+describe('BUG-BULKDOUBLELOGINFLIGHT-001 — a row\'s own button cannot log a row a running bulk holds', () => {
+  // The reverse order. The bulk posts its rows one after another and fades them all at the end, so every
+  // row it has not finished is still on the list for the whole run. `holdBulk` holds the bulk's FIRST
+  // POST (p1), which leaves p2 claimed and not yet sent.
+  const holdBulk = () => {
+    let release, held = false, n = 0
+    fetchMock.mockImplementation((path, opts) => {
+      if (path === '/api/plants' || path === '/api/locations/with-path') return Promise.resolve([])
+      if (path === '/api/events' && opts?.method === 'POST') {
+        if (!held && JSON.parse(opts.body).plant_id === 'p1') {
+          held = true
+          return new Promise(res => { release = () => res({ id: 'ev-bulk' }) })
+        }
+        return Promise.resolve({ id: 'ev-' + (++n) })
+      }
+      return Promise.resolve({ undone: true })
+    })
+    return () => release()
+  }
+  const plantIds = () => posts().map(c => JSON.parse(c[1].body).plant_id)
+
+  // Separate, awaited taps, as a thumb makes them.
+  // Mutation: drop the claim from V1 runBulk -> posts p1, p2, p2 and a "Logged Water for Habanero" toast, red.
+  it('Water on a row the bulk has not reached yet logs that row once', async () => {
+    const release = holdBulk()
+    render(<CareNeeded plan={plan()} />)
+    fireEvent.click(screen.getByRole('button', { name: /^Log all watering \(2\)$/i }))
+    await waitFor(() => expect(posts().length).toBe(1))
+    fireEvent.click(screen.getByRole('button', { name: /Log Water for Habanero/i }))
+    await act(async () => { release() })
+    await waitFor(() => expect(bulkToasts()).toEqual(['Logged 2']))
+    expect(plantIds()).toEqual(['p1', 'p2'])
+    expect(toastMock.showUndo).toHaveBeenCalledTimes(1)   // no toast of the row's own
+    expect(toastMock.show).not.toHaveBeenCalled()
+  })
+
+  it('Still moist on a row the bulk has not reached yet writes nothing of its own', async () => {
+    const release = holdBulk()
+    render(<CareNeeded plan={plan()} />)
+    fireEvent.click(screen.getByRole('button', { name: /^Log all watering \(2\)$/i }))
+    await waitFor(() => expect(posts().length).toBe(1))
+    fireEvent.click(screen.getByRole('button', { name: /Habanero.*still moist/i }))
+    await act(async () => { release() })
+    await waitFor(() => expect(bulkToasts()).toEqual(['Logged 2']))
+    expect(plantIds()).toEqual(['p1', 'p2'])
+    expect(posts().map(c => JSON.parse(c[1].body).event_type)).toEqual(['watering', 'watering'])
+  })
+
+  // Both taps inside ONE act(): no render has run, so nothing is `disabled` yet and jsdom delivers both.
+  // This is the claim itself, not the button state. Mutation: claim in state only -> p2 posted twice, red.
+  it('the pill and a row\'s Water tapped in one React batch log that row once', async () => {
+    const release = holdBulk()
+    render(<CareNeeded plan={plan()} />)
+    const pill = screen.getByRole('button', { name: /^Log all watering \(2\)$/i })
+    const row = screen.getByRole('button', { name: /Log Water for Habanero/i })
+    await act(async () => { pill.click(); row.click() })
+    await act(async () => { release() })
+    await waitFor(() => expect(bulkToasts()).toEqual(['Logged 2']))
+    expect(plantIds()).toEqual(['p1', 'p2'])
+  })
+
+  // The claim must release: a row whose bulk POST failed stays on the list and its own button works.
+  // Mutation: never release the claim (drop it from the finally) -> the retry posts nothing, red.
+  it('releases after the run, so a row the bulk failed on can be logged from its own button', async () => {
+    failPostsFor('p2')
+    render(<CareNeeded plan={plan()} />)
+    fireEvent.click(screen.getByRole('button', { name: /^Log all watering \(2\)$/i }))
+    await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalledTimes(1))
+    expect(toastMock.showUndo.mock.calls[0][0].message).toBe('Logged 1 — 1 failed')
+    failPostsFor()
+    const row = screen.getByRole('button', { name: /Log Water for Habanero/i })
+    await waitFor(() => expect(row.disabled).toBe(false))
+    fireEvent.click(row)
+    await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalledTimes(2))
+    expect(plantIds()).toEqual(['p1', 'p2', 'p2'])   // p2: the bulk's failed try, then the row's own
   })
 })
