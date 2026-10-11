@@ -25,9 +25,9 @@
 // history traversal (history.back() in the frame: popstate, as the Android back gesture). Each flow opens in
 // a FRESH TAB, so its history, storage and module state are its own.
 //
-// THE FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides), except the five
-// slow ones (eventlog-slow, zones-slow, leave-during-load, reload-skeleton, deep25), which run at the first only:
-// they measure time, not layout, and each has a fast sibling at both. Every page a flow PUSHES onto must land at
+// THE FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides), except the six
+// slow ones (eventlog-slow, zones-slow, leave-during-load, reload-skeleton, deep25, garden-taggroup-late), which run
+// at the first only: they measure time, not layout, and each has a fast sibling at both. Every page a flow PUSHES onto must land at
 // scrollY 0 (within 1px, LAND_TOL_PX, counted) with its title inside the visible band; every Back
 // must land at the exact scrollY the page was left at, with the element tapped at the same viewport top (±1px) —
 // except Garden, whose own restore may end within LAND_TOL_PX of it (counted, as for garden-tab):
@@ -104,6 +104,15 @@
 //                 left. The shipped app painted the Type fallback (every group closed, one screen tall) as if it were
 //                 the user's grouping, spent its restore on that page, and regrouped under the lost spot when the map
 //                 landed. Back from a planting loses the place the same way (measured once, 4320 → 56; not a flow).
+//   garden-taggroup-late  garden-taggroup's first visit, then the tag map ALONE 4 s away (?tagsms=4000; the list in the
+//                 cache, everything else at its usual speed): later than Garden holds its list for (TAG_HOLD_MAX_MS,
+//                 2.5 s). Without that deadline the hold lasted as long as the tag request — on a connected but silent
+//                 radio the service worker's 12 s, "Loading…" on every visit over a list that was already in hand.
+//                 Two returns: Garden must show its list within 500 ms of the deadline, in the fallback grouping, and
+//                 regroup once the map lands. THE PLACE IS NOT ASSERTED: past the deadline Garden is what it was
+//                 before the hold, and that page loses it (printed). Then "+ → Add a planting" from Today, the map
+//                 still 4 s away: the form must be up within 1 s, over the held page, and stay up through the
+//                 deadline and the regroup — garden-add's door with the tags API on, which garden-add never has.
 //   putup         Put-Up's Going-now list, deep → a batch (?batch=, a same-page PUSH) → Back → the list's place.
 //                 A MUST-NOT-CHANGE guard: Chromium's own clamp carry restores it with or without the manager.
 //   putup-top     Put-Up's list at its TOP → the first batch (same page) → down → Back → the list at its top
@@ -209,6 +218,8 @@ function readOne(file, re, what) {
   return found[0]
 }
 const TOP_CHROME_PX = Number(readOne('src/components/TopChrome.jsx', /const BAR_H = (\d+)/g, 'BAR_H'))
+// How long Garden holds its list for the tag map (garden-taggroup-late).
+const TAG_HOLD_MAX_MS = Number(readOne('src/lib/gardenGroupBy.js', /export const TAG_HOLD_MAX_MS = (\d+)/g, 'TAG_HOLD_MAX_MS'))
 
 // DRIFT GUARD. The harness must mount the REAL manager exactly as AppShell does, host overlays exactly as
 // App.jsx's OverlayHost does, and model BottomNav's two doors (an armed sheet of SheetRowLinks, "Add a
@@ -305,6 +316,13 @@ const CHAIN_DEPTH = 25
 // followed may move once it is on screen — sub-pixel anchoring only; the defects this catches are 64px and 252.8px.
 const GARDEN_CYCLES = 3
 const NO_JUMP_PX = 4
+// garden-taggroup-late: its own two returns; how long after Garden's deadline for the tag map the list may take to
+// show (the timer firing and one render of a list of closed groups); how much later than the deadline the map has
+// to land for the flow to measure a late map at all; and how long "+ → Add a planting" may take to show its form.
+const TAG_LATE_CYCLES = 2
+const TAG_LATE_LIST_SLACK_MS = 500
+const TAG_LATE_MAP_MARGIN_MS = 750
+const ADD_FORM_MAX_MS = 1000
 
 // ── One tab ─────────────────────────────────────────────────────────────────────────────────────────
 // Everything below runs in the HOST page and reaches into the frame, same origin: `f` the iframe element,
@@ -408,6 +426,7 @@ const FLOWS = [
   { key: 'garden-groupby', prefs: 'status', label: `Garden with the prefs row on Lifecycle: Type picked, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}: still Type, the planting where it was left` },
   { key: 'garden-groupby-weak', prefs: 'status', prefsRadio: 'down', label: `garden-groupby with every prefs save lost to a dead zone: still Type on every return, and sent again each time` },
   { key: 'garden-taggroup', tags: 'heat', ms: 1500, label: `Garden grouped by Heat (a tag grouping), deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, the tag map landing 1.5 s after Garden each time: never another grouping, the planting where it was left` },
+  { key: 'garden-taggroup-late', tags: 'heat', tagsMs: 4000, once: true, label: `Garden grouped by Heat, deep → [Today tab → Garden tab] × ${TAG_LATE_CYCLES}, the tag map ALONE 4 s away: the list within ${TAG_LATE_LIST_SLACK_MS}ms of the ${TAG_HOLD_MAX_MS}ms deadline; then + → "Add a planting" from Today: the form within ${ADD_FORM_MAX_MS}ms, over the held page` },
   { key: 'putup', label: 'Put-Up\'s Going-now list, deep → a batch (same page) → Back (a must-not-change guard)' },
   { key: 'putup-top', label: 'Put-Up\'s Going-now list at its TOP → the first batch (same page) → down → Back' },
   { key: 'seeds-switch', label: 'My seeds, a little down → the switch to Saved seeds (same page)' },
@@ -686,13 +705,16 @@ async function runFlow(cdp, flow, vw, vh) {
     const token = flow.token ?? 0
     const roster = flow.roster ?? 'full'
     // A settle long enough to outlast the flow's own latency: the restore re-applies until the content lands.
-    const slowMax = Math.max(10000, (ms + token) * 3 + 6000) + auth
+    // (a tag map later than the rest, ?tagsms=, counts as the flow's latency too)
+    const slowMax = Math.max(10000, (Math.max(ms, flow.tagsMs ?? 0) + token) * 3 + 6000) + auth
     // The prefs knob only on the flows that ask for it: every other flow's URL is exactly what it was.
     const prefs = flow.prefs ?? null
     const prefsRadio = flow.prefsRadio ?? 'up'
     // The tags knob likewise (BUG-GARDENTAGGROUPREPAINT-001): the facet the harness tags every planting with.
     const tags = flow.tags ?? null
-    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}&token=${token}&roster=${roster}${prefs ? `&prefs=${prefs}&prefsradio=${prefsRadio}` : ''}${tags ? `&tags=${tags}` : ''}`
+    // …and its own latency, when the flow wants the tag map later than everything else (review I-1).
+    const tagsMs = tags ? flow.tagsMs ?? ms : null
+    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}&token=${token}&roster=${roster}${prefs ? `&prefs=${prefs}&prefsradio=${prefsRadio}` : ''}${tags ? `&tags=${tags}` : ''}${flow.tagsMs != null ? `&tagsms=${flow.tagsMs}` : ''}`
     const nav = await cdp.send('Page.navigate', { url }, sessionId)
     if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
     if (!await t.waitIn(`w.__h && w.__h.ready() && d.readyState === 'complete'`, 30000 + auth)) return fail(`${at}: the harness never came up in the frame — nothing to measure`)
@@ -722,6 +744,7 @@ async function runFlow(cdp, flow, vw, vh) {
     if (g.fixture.prefs !== prefs) geo.push(`the prefs client was pointed at ${g.fixture.prefs ? `a served row on '${g.fixture.prefs}'` : 'nothing'}, the flow asked for ${prefs ? `a row on '${prefs}'` : 'none'}`)
     if (prefs && g.fixture.prefsRadio !== prefsRadio) geo.push(`the harness's prefs radio is '${g.fixture.prefsRadio}', the flow asked for '${prefsRadio}'`)
     if (g.fixture.tags !== tags) geo.push(`the harness's tags API is ${g.fixture.tags ? `on, tagging '${g.fixture.tags}'` : 'off'}, the flow asked for ${tags ? `'${tags}'` : 'none'}`)
+    if (g.fixture.tagsMs !== tagsMs) geo.push(`the harness answers the tag map after ${g.fixture.tagsMs}ms, the flow asked for ${tagsMs}ms`)
     for (const [key, v] of Object.entries(FIXTURE)) if (g.fixture[key] !== v) geo.push(`the fixture's ${key} is ${g.fixture[key]}, the gate expects ${v}`)
     // The browser's restore mode is the one main.jsx sets for the flag this document was served: 'manual' with
     // the manager on. A harness in any other mode measures a browser prod does not run.
@@ -1290,6 +1313,87 @@ async function runFlow(cdp, flow, vw, vh) {
         note.push(`after the X y${R1(after.y)}`)
         if (after.path !== '/garden') return done(`the X left Garden for ${after.path}`)
         if (!st.settled || Math.round(after.y) !== Math.round(before.y) || Math.abs(after.top - before.top) > TOP_TOL_PX) return done(`after the editor's X Garden is at y${R1(after.y)} (tile top y${R1(after.top)}), it was at y${R1(before.y)} (tile top y${R1(before.top)}) — a same-page write moved it${await diag()}`)
+        return
+      }
+      if (k === 'garden-taggroup-late') {
+        // Review I-1 — the hold's own deadline. The tag map is `tagsMs` away on every visit, later than Garden holds
+        // its list for it, and nothing else is slow: the list is in the cache, so it must be on the page at the
+        // deadline, in the fallback grouping, and regroup when the map lands — Garden as it was before the hold.
+        // Without the deadline there is no list until the map. (That the hold HOLDS is garden-taggroup's, at 1.5 s.)
+        if (!(tagsMs >= TAG_HOLD_MAX_MS + 2 * TAG_LATE_MAP_MARGIN_MS)) return done(`the flow's tag map takes ${tagsMs}ms and Garden's deadline for it is ${TAG_HOLD_MAX_MS}ms — the map has to be at least ${2 * TAG_LATE_MAP_MARGIN_MS}ms later than that, or this flow measures no late tag map`)
+        const name = await t.read(`const el = ${tile}; const a = el && el.querySelector('${tid('planting-tile-link')}'); return a ? a.getAttribute('aria-label') : null`)
+        if (!name) return done(`the 34th tile carries no name (its link's aria-label) — the flow cannot follow the planting${await diag()}`)
+        const byName = `${tid('planting-tile')}:has([aria-label=${JSON.stringify(name)}])`
+        const reds = []
+        const trips = []
+        let tagsSeen = await t.read(`return w.__h.tagsAsked()`)
+        // THE INSTRUMENT, each time: this visit asked for the map again, and it was delivered well past the deadline.
+        const lateMap = async (samples, what) => {
+          const asked = await t.read(`return w.__h.tagsAsked()`)
+          const mapAt = (await t.read(`return w.__h.tagsDelivered()`)).pop()
+          const first = samples.find((s) => s.page === 'garden')
+          if (!first) return { why: `${what}: no sampled frame showed Garden — the sampler measured nothing${await diag()}` }
+          if (!(asked > tagsSeen) || mapAt == null || !(mapAt - first.t >= TAG_HOLD_MAX_MS + TAG_LATE_MAP_MARGIN_MS)) return { why: `${what}: the tag map was ${asked > tagsSeen ? `delivered @${mapAt}ms, Garden's first frame @${first.t}ms` : 'never asked for'} — it has to land at least ${TAG_HOLD_MAX_MS + TAG_LATE_MAP_MARGIN_MS}ms after Garden is on screen, or the flow measures no tag map past the deadline${await diag()}` }
+          tagsSeen = asked
+          return { first, mapAt }
+        }
+        for (let c = 1; c <= TAG_LATE_CYCLES; c++) {
+          const l = await land(SEL.tabToday, `the Today tab (round trip ${c})`, 'today', { chrome: true, name: `today-${c}` })
+          if (l.why) return done(`round trip ${c}: ${l.why}`)
+          await t.read(`w.__h.mark(); w.__h.sampleTop(${JSON.stringify(byName)}, 0); return 1`)
+          why = await t.tap(SEL.tabGarden, `the Garden tab (round trip ${c})`, { chrome: true })
+          if (why) return done(`round trip ${c}: ${why}`)
+          // The whole trip: the deadline, the fallback, the map, the regroup (every planting back on the page).
+          if (!await page('garden')) return done(`round trip ${c}: the Garden tab never brought Garden back with every planting${await diag()}`)
+          if (!await t.waitIn(`w.__h.inflight() === 0`, slowMax)) return done(`round trip ${c}: the harness never answered every request${await diag()}`)
+          const st = await t.settle(800, slowMax)
+          const samples = await t.read(`return w.__h.topSamples()`)
+          const after = await t.read(READ_HERE(`d.querySelector(${JSON.stringify(byName)})`))
+          const gb = await t.read(`return w.__h.groupBy()`)
+          await t.shoot(join(OUTDIR, `page-scroll-${k}-back-garden-${c}-${vw}x${vh}.png`))
+          if (!st.settled) return done(`round trip ${c}: Garden never held still for 800ms within ${slowMax}ms (last y${R1(st.y)})${await diag()}`)
+          const m = await lateMap(samples, `round trip ${c}`)
+          if (m.why) return done(m.why)
+          // The first frame with the grouping control on the page: the list is painted with it, never without.
+          const list = samples.find((s) => s.page === 'garden' && s.group != null)
+          trips.push(`#${c} Garden's first frame @${m.first.t}ms, the list ${list ? `@${list.t}ms in '${list.group}'` : 'never'}, tag map @${m.mapAt}ms, settled in '${gb}' · ${name} at y${R1(after.top)}, left at y${R1(before.top)} (not asserted past the deadline)`)
+          if (!list || list.t - m.first.t > TAG_HOLD_MAX_MS + TAG_LATE_LIST_SLACK_MS) reds.push(`round trip ${c}: Garden showed no list ${list ? `for ${list.t - m.first.t}ms` : 'at all'} (the tag map landed ${m.mapAt - m.first.t}ms after Garden) — the hold for the tag map has a ${TAG_HOLD_MAX_MS}ms deadline, and the list was in the cache all along`)
+          if (gb !== tags) reds.push(`round trip ${c}: Garden settled grouped by '${gb}', not '${tags}' — the late tag map never regrouped the list`)
+        }
+        // Review I-2, in Chrome — "+ → Add a planting" from another tab, the tag map still `tagsMs` away: the form goes
+        // up over the held page. The sampler follows the FORM here: `top` is the dialog's, `group` the list's control.
+        const l = await land(SEL.tabToday, 'the Today tab (before +)', 'today', { chrome: true, name: 'today-add' })
+        if (l.why) return done(l.why)
+        why = await t.tap(SEL.plus, '+', { chrome: true })
+        if (why) return done(why)
+        if (!await t.waitIn(`${SEL.createPlanting} && w.history.state && w.history.state.__backnav`, 8000)) return done('+ was tapped and the armed Create sheet never showed with its Back marker pushed')
+        await t.settle(300, 3000)
+        await t.read(`w.__h.mark(); w.__h.sampleTop('[role="dialog"][aria-label="Add planting"]', 0); return 1`)
+        why = await t.tap(SEL.createPlanting, '"Add a planting"', { chrome: true })
+        if (why) return done(why)
+        if (!await t.waitIn(`${SEL.addPlantingClose} && !/add=1/.test(w.location.search)`, slowMax)) return done(`"Add a planting" never opened the editor with its ?add stripped (on ${await t.read(`return w.location.pathname + w.location.search`)})${await diag()}`)
+        if (!await page('garden')) return done(`"Add a planting" opened the editor and Garden never showed every planting under it${await diag()}`)
+        if (!await t.waitIn(`w.__h.inflight() === 0`, slowMax)) return done(`after "Add a planting" the harness never answered every request${await diag()}`)
+        await t.settle(800, slowMax)
+        const addSamples = await t.read(`return w.__h.topSamples()`)
+        await t.shoot(join(OUTDIR, `page-scroll-${k}-add-${vw}x${vh}.png`))
+        const m = await lateMap(addSamples, '"Add a planting"')
+        if (m.why) return done(`${[...reds, m.why].join('; ')} · ${trips.join(' | ')}`)
+        const formAt = addSamples.findIndex((s) => s.page === 'garden' && s.top != null)
+        const form = formAt < 0 ? null : addSamples[formAt]
+        const listUnder = addSamples.find((s) => s.page === 'garden' && s.group != null)
+        note.push(`spot y${R1(before.y)}: ${trips.join(' | ')} | + → "Add a planting": Garden's first frame @${m.first.t}ms, the form ${form ? `@${form.t}ms` : 'never'}, the list under it ${listUnder ? `@${listUnder.t}ms` : 'never'}, tag map @${m.mapAt}ms`)
+        if (!form || form.t - m.first.t > ADD_FORM_MAX_MS) reds.push(`"Add a planting" showed its form ${form ? `${form.t - m.first.t}ms after Garden` : 'never, in any sampled frame'} (the list under it ${listUnder ? `@${listUnder.t}ms` : 'never'}, the tag map @${m.mapAt}ms) — the form waited for the list's hold; it must be up within ${ADD_FORM_MAX_MS}ms`)
+        // THE INSTRUMENT: a form that was up in time has to have been up over a HELD list, or no hold was measured.
+        else if (form.group != null) reds.push(`"Add a planting": the list was already on the page in '${form.group}' when the form showed (@${form.t}ms) — Garden was not holding for the tag map, so this measured an add with nothing to wait for`)
+        else {
+          const gone = addSamples.slice(formAt).find((s) => s.page === 'garden' && s.top == null)
+          if (gone) reds.push(`"Add a planting": the form left the page @${gone.t}ms, after showing @${form.t}ms — it was taken down when the hold ended, and whatever was typed with it`)
+        }
+        why = await t.tap(SEL.addPlantingClose, 'the editor\'s X', { chrome: true })
+        if (why) return done(why)
+        if (!await t.waitIn(`!${SEL.addPlantingDialog}`, 8000)) return done('the editor\'s X never closed it')
+        if (reds.length) return done(`${reds.join('; ')} · ${trips.join(' | ')}${await diag()}`)
         return
       }
       if (k === 'garden-cycles' || k === 'garden-cycles-grow' || k === 'garden-plantsgrow' || k === 'garden-plantsfixed' || k === 'garden-groupby' || k === 'garden-groupby-weak' || k === 'garden-taggroup') {

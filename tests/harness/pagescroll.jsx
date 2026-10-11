@@ -66,6 +66,9 @@
 //                    (VITE_API_TAGS is unset here) and no tag grouping can be picked, which is why no flow saw
 //                    Garden paint the Type fallback on every return and regroup once the map landed.
 //                    tagsOnTransform.mjs has the mechanism.
+//     tagsms=        with tags=, the ms the whole-garden tag map takes INSTEAD of ?ms= (everything else keeps
+//                    ?ms=): a tag map later than Garden will hold its list for (TAG_HOLD_MAX_MS,
+//                    src/lib/gardenGroupBy.js), with the list itself still in the cache.
 //
 // A FLOW'S FIRST LOAD IS A FIRST VISIT: sessionStorage and localStorage are cleared before anything
 // mounts (both scroll stores, every page's persisted filters), and Garden's crop groups are opened. The one
@@ -123,6 +126,9 @@ const TAGS_FACET = q.get('tags') || null
 if (TAGS_FACET && TAGS_FACET !== 'heat') throw new Error(`?tags=${TAGS_FACET} is not 'heat', the one facet the fixture tags`)
 // Read by useTags.js's tagsEnabled() on every call (tagsOnTransform.mjs), so before anything mounts is early enough.
 if (TAGS_FACET) globalThis.__harnessTagsOn = true
+// The whole-garden tag map's own latency: ?ms= like the rest, unless the flow asks for a map later than that.
+const TAGS_MS = q.get('tagsms') == null ? MS : Number(q.get('tagsms'))
+if (q.get('tagsms') != null && !TAGS_FACET) throw new Error('?tagsms= without ?tags=: there is no tag map to delay')
 
 // This page's own URL, before the router moves it: where a reload has to land.
 const HARNESS_URL = location.pathname + location.search
@@ -451,7 +457,7 @@ window.fetch = (url, opts = {}, ...rest) => {
     // One planting's own tags (its page's crop card), else the whole-garden map Garden groups by.
     if ((m = path.match(/[?&]entity_id=([^&]+)/))) return json(TAG_MAP[m[1]] || { direct: [], projected: [] }, MS)
     tagsAsked += 1
-    return json({ entities: TAG_MAP }, MS).then((res) => { tagsDeliveredAt.push(performance.now()); return res })
+    return json({ entities: TAG_MAP }, TAGS_MS).then((res) => { tagsDeliveredAt.push(performance.now()); return res })
   }
   unstubbed.push(`${method} ${path}`)
   return json([])
@@ -826,6 +832,6 @@ window.__h = {
   reloadedDoc: () => !!RELOAD_TO,
   // `token` is what the Clerk stub itself reports (tests/harness/stubs/clerk.jsx, ?token=), not this page's URL.
   // `prefs` is what the prefs client was actually pointed at — the knob reaching the module, not this page's URL.
-  fixture: () => ({ manager: SCROLL_MANAGER_ENABLED, ms: MS, auth: AUTH_MS, token: window.__harnessClerk ? window.__harnessClerk.tokenMs : null, roster: ROSTER, gardenPlants: GARDEN_PLANTS.length, going: GOING.length, locations: LOCATIONS.length, plantingEvents: PLANTING_EVENTS.length, chainRows: CHAIN_ROWS, members: MEMBERS.length, prefs: globalThis.__harnessPrefsBase === PREFS_ORIGIN ? PREFS_GROUP_BY : null, prefsRadio: PREFS_RADIO, tags: globalThis.__harnessTagsOn === true ? TAGS_FACET : null }),
+  fixture: () => ({ manager: SCROLL_MANAGER_ENABLED, ms: MS, auth: AUTH_MS, token: window.__harnessClerk ? window.__harnessClerk.tokenMs : null, roster: ROSTER, gardenPlants: GARDEN_PLANTS.length, going: GOING.length, locations: LOCATIONS.length, plantingEvents: PLANTING_EVENTS.length, chainRows: CHAIN_ROWS, members: MEMBERS.length, prefs: globalThis.__harnessPrefsBase === PREFS_ORIGIN ? PREFS_GROUP_BY : null, prefsRadio: PREFS_RADIO, tags: globalThis.__harnessTagsOn === true ? TAGS_FACET : null, tagsMs: TAGS_FACET ? TAGS_MS : null }),
   tokenCalls: () => (window.__harnessClerk ? window.__harnessClerk.calls : null),
 }
