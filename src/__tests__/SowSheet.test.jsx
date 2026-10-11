@@ -460,6 +460,38 @@ describe('the places are fetched on the first open, once', () => {
     expect(projectsCalls()).toBe(1)
   })
 
+  // review-v4182 R1 — a failed load used to be kept as "loaded, no places" for the whole page visit.
+  it('a failed load is not kept: the next open asks again and gets the places', async () => {
+    const packet = sowPacketFromItem(ITEM)
+    projectsResponse = () => Promise.reject(new Error('offline'))
+    let out
+    await act(async () => { out = render(sheet(packet)) })
+    await waitFor(() => expect(within(sowDialog()).getByRole('button', { name: /Add planting/i })).toBeTruthy())
+    expect(projectsCalls()).toBe(1)
+
+    projectsResponse = null
+    await act(async () => { out.rerender(sheet(null)) })
+    await waitFor(() => expect(sowDialog()).toBeNull())
+    await act(async () => { out.rerender(sheet(packet)) })
+    await waitFor(() => expect(within(sowDialog()).getByRole('button', { name: /Add planting/i })).toBeTruthy())
+    expect(projectsCalls()).toBe(2)
+  })
+
+  // review-v4182 R2 — closing (or opening) while the request is out must not drop its answer and ask again.
+  it('an open that beats the answer waits for that answer; one request', async () => {
+    const packet = sowPacketFromItem(ITEM)
+    let release
+    projectsResponse = () => new Promise((r) => { release = () => r(PROJECTS) })
+    let out
+    await act(async () => { out = render(sheet(packet)) })
+    await act(async () => { out.rerender(sheet(null)) })
+    await act(async () => { out.rerender(sheet(packet)) })
+    expect(projectsCalls()).toBe(1)
+    await act(async () => { release() })
+    await waitFor(() => expect(within(sowDialog()).getByRole('button', { name: /Add planting/i })).toBeTruthy())
+    expect(projectsCalls()).toBe(1)
+  })
+
   it('a packet page that is never sown from never asks for the places', async () => {
     await renderDetail()
     expect(projectsCalls()).toBe(0)

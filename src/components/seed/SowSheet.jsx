@@ -24,7 +24,7 @@
 //
 // PER-HOST DRAFT KEY. One shared key would let a sow interrupted on a packet's page reopen itself the
 // next time Sow now loads — on a page the user never left mid-sow — and the other way round.
-import React, { useState, useEffect, useCallback, useId } from 'react'
+import React, { useState, useEffect, useCallback, useId, useRef } from 'react'
 import { useApiFetch } from '../../lib/api.js'
 import { useToast } from '../../context/ToastContext.jsx'
 import { writeDraft, clearDraft } from '../../lib/draftStash.js'
@@ -89,14 +89,31 @@ export default function SowSheet({ packet, draftKey, todayISO = todayLocalISO(),
   // with every seed page, and most visits never sow. Once answered it is kept, so a reopen asks nothing;
   // the render guard below holds the editor until the answer is in. `eager` is for a host whose whole
   // job is sowing (Sow now): it asks at mount, so the first Sow tap there does not wait on a round trip.
+  // One request at a time, and it outlives an open/close: a tap that beats the answer waits for THAT
+  // answer instead of dropping it and asking again.
+  const placesLoad = useRef({ inFlight: false, failed: false })
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   useEffect(() => {
-    if ((!open && !eager) || projects) return
-    let alive = true
+    if ((!open && !eager) || projects || placesLoad.current.inFlight) return
+    placesLoad.current.inFlight = true
     fetch('/api/projects')
-      .then((data) => { if (alive) setProjects(Array.isArray(data) ? data : []) })
-      .catch(() => { if (alive) setProjects([]) })
-    return () => { alive = false }
+      .then((data) => {
+        placesLoad.current = { inFlight: false, failed: false }
+        if (mounted.current) setProjects(Array.isArray(data) ? data : [])
+      })
+      .catch(() => {
+        placesLoad.current = { inFlight: false, failed: true }
+        if (mounted.current) setProjects([])
+      })
   }, [fetch, open, eager, projects])
+  // A FAILED load is an empty list for the open that saw it only. Kept past the close it would make
+  // every later sow on this page post no place at all, so the next open asks again.
+  useEffect(() => {
+    if (open || !placesLoad.current.failed) return
+    placesLoad.current.failed = false
+    setProjects(null)
+  }, [open])
 
   // Persist while the sheet holds a packet — for ABNORMAL exits only (see `close`: a deliberate
   // dismissal clears it, unlike EventNew/LogMany).

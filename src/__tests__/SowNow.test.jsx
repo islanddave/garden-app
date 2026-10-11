@@ -144,6 +144,16 @@ beforeEach(() => {
   navigateSpy.mockReset()
 })
 
+// OPS-SOWSHEETPROJECTSLAZY-001 — Sow now is the eager host: the places are asked for with the page, so the
+// first Sow tap never waits on them. (A packet page asks on the first open instead.)
+describe('SowNow — the Sow sheet\'s places are asked for with the page', () => {
+  it('asks for /api/projects at mount, before any Sow tap', async () => {
+    routeFetch()
+    await renderSowNow()
+    expect(fetchSpy.mock.calls.filter(([u]) => u === '/api/projects').length).toBe(1)
+  })
+})
+
 describe('SowNow — bucket sections (real sowEngine, today=2026-07-10)', () => {
   it('renders populated bucket headers with counts, skips empty buckets', async () => {
     routeFetch()
