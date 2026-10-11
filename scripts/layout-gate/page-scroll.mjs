@@ -95,6 +95,14 @@
 //                 the list regrouped and the planting left on screen was gone.
 //   garden-groupby-weak  as garden-groupby with every prefs save lost to a dead zone (?prefsradio=down; the reads still
 //                 answer): the pick never reaches the row, so every return must keep Type AND send it again.
+//   garden-taggroup  BUG-GARDENTAGGROUPREPAINT-001. The tags API is ON (?tags=heat, the harness's knob — without it
+//                 the tags hook is inert and Garden offers no tag grouping, which is why no flow saw this) and every
+//                 GET is 1.5 s slow. First visit: Heat is picked and its groups opened ("Expand all", which closes the
+//                 crop groups: the control keeps one set of open groups); then garden-cycles' trips. On each return the
+//                 list is in the cache and the tag map is not, so it lands 1.5 s after Garden: the control must never
+//                 show another grouping in any frame, and the planting must come back where it was left. The shipped
+//                 app painted the Type fallback (every group closed, one screen tall) as if it were the user's
+//                 grouping, spent its restore on that page, and regrouped under the lost spot when the map landed.
 //   putup         Put-Up's Going-now list, deep → a batch (?batch=, a same-page PUSH) → Back → the list's place.
 //                 A MUST-NOT-CHANGE guard: Chromium's own clamp carry restores it with or without the manager.
 //   putup-top     Put-Up's list at its TOP → the first batch (same page) → down → Back → the list at its top
@@ -345,6 +353,7 @@ const SEL = {
   zoneRow: `d.querySelector('a[href="/locations/loc-bed-3"]')`,
   tile: (n) => `d.querySelectorAll('${tid('planting-tile')}')[${n}]`,
   tileLink: (n) => `d.querySelectorAll('${tid('planting-tile-link')}')[${n}]`,
+  expandAll: `d.querySelector('[data-harness-pages] button[aria-label="Expand all sections"]')`,
   addPlantingDialog: `d.querySelector('[role="dialog"][aria-label="Add planting"]')`,
   addPlantingClose: `d.querySelector('[role="dialog"][aria-label="Add planting"] [data-sheet-close]')`,
   batch: (id) => `d.querySelector('${tid('going-batch')}[data-batch-id="${id}"]')`,
@@ -397,6 +406,7 @@ const FLOWS = [
   { key: 'garden-plantsfixed', label: `Garden, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, garden-plantsgrow's control: the list unchanged` },
   { key: 'garden-groupby', prefs: 'status', label: `Garden with the prefs row on Lifecycle: Type picked, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}: still Type, the planting where it was left` },
   { key: 'garden-groupby-weak', prefs: 'status', prefsRadio: 'down', label: `garden-groupby with every prefs save lost to a dead zone: still Type on every return, and sent again each time` },
+  { key: 'garden-taggroup', tags: 'heat', ms: 1500, label: `Garden grouped by Heat (a tag grouping), deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, the tag map landing 1.5 s after Garden each time: never another grouping, the planting where it was left` },
   { key: 'putup', label: 'Put-Up\'s Going-now list, deep → a batch (same page) → Back (a must-not-change guard)' },
   { key: 'putup-top', label: 'Put-Up\'s Going-now list at its TOP → the first batch (same page) → down → Back' },
   { key: 'seeds-switch', label: 'My seeds, a little down → the switch to Saved seeds (same page)' },
@@ -679,7 +689,9 @@ async function runFlow(cdp, flow, vw, vh) {
     // The prefs knob only on the flows that ask for it: every other flow's URL is exactly what it was.
     const prefs = flow.prefs ?? null
     const prefsRadio = flow.prefsRadio ?? 'up'
-    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}&token=${token}&roster=${roster}${prefs ? `&prefs=${prefs}&prefsradio=${prefsRadio}` : ''}`
+    // The tags knob likewise (BUG-GARDENTAGGROUPREPAINT-001): the facet the harness tags every planting with.
+    const tags = flow.tags ?? null
+    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}&token=${token}&roster=${roster}${prefs ? `&prefs=${prefs}&prefsradio=${prefsRadio}` : ''}${tags ? `&tags=${tags}` : ''}`
     const nav = await cdp.send('Page.navigate', { url }, sessionId)
     if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
     if (!await t.waitIn(`w.__h && w.__h.ready() && d.readyState === 'complete'`, 30000 + auth)) return fail(`${at}: the harness never came up in the frame — nothing to measure`)
@@ -708,6 +720,7 @@ async function runFlow(cdp, flow, vw, vh) {
     if (g.fixture.roster !== roster) geo.push(`the harness answers /api/members as roster '${g.fixture.roster}', the flow asked for '${roster}'`)
     if (g.fixture.prefs !== prefs) geo.push(`the prefs client was pointed at ${g.fixture.prefs ? `a served row on '${g.fixture.prefs}'` : 'nothing'}, the flow asked for ${prefs ? `a row on '${prefs}'` : 'none'}`)
     if (prefs && g.fixture.prefsRadio !== prefsRadio) geo.push(`the harness's prefs radio is '${g.fixture.prefsRadio}', the flow asked for '${prefsRadio}'`)
+    if (g.fixture.tags !== tags) geo.push(`the harness's tags API is ${g.fixture.tags ? `on, tagging '${g.fixture.tags}'` : 'off'}, the flow asked for ${tags ? `'${tags}'` : 'none'}`)
     for (const [key, v] of Object.entries(FIXTURE)) if (g.fixture[key] !== v) geo.push(`the fixture's ${key} is ${g.fixture[key]}, the gate expects ${v}`)
     // The browser's restore mode is the one main.jsx sets for the flag this document was served: 'manual' with
     // the manager on. A harness in any other mode measures a browser prod does not run.
@@ -1222,6 +1235,27 @@ async function runFlow(cdp, flow, vw, vh) {
       if (roster === 'full' && (lens0 || []).join('|') !== 'Mine|Jen|Everyone') return done(`Garden's caretaker row shows ${lens0 ? `[${lens0.join(', ')}]` : 'nothing'} on the first visit, not [Mine, Jen, Everyone] — the household never reached the page, so this flow would measure a Garden with no row above its list${await diag()}`)
       if (roster === 'grow' && lens0) return done(`Garden's caretaker row is on the page on the first visit ([${lens0.join(', ')}]) — roster=grow is a household of one until the first return, so the late row this flow is about never happens${await diag()}`)
       note.push(`caretaker row ${lens0 ? lens0.join('/') : 'absent (a household of one)'}`)
+      if (tags) {
+        // BUG-GARDENTAGGROUPREPAINT-001's first visit: the tag grouping is picked and its groups opened, as a user
+        // does. The control OFFERING the facet is this flow's INSTRUMENT: it is offered only once the tag map has
+        // landed, so without it the ?tags= knob never reached the tags hook and no tag grouping can be stored.
+        if (!await t.waitIn(`w.__h.tagsAsked() >= 1 && w.__h.inflight() === 0 && (w.__h.groupOptions() || []).includes(${JSON.stringify(tags)})`, slowMax)) {
+          return done(`Garden's control never offered the '${tags}' grouping (it offers ${JSON.stringify(await t.read(`return w.__h.groupOptions()`))}; tag maps asked for: ${await t.read(`return w.__h.tagsAsked()`)}) — the ?tags= knob never reached the tags hook, so this flow would measure a Garden with no tag grouping to store${await diag()}`)
+        }
+        await t.settle(300, 3000)
+        // The pick, through the DOM as garden-groupby's is (a native <select>'s popup has no hit-testable surface).
+        await t.read(`const s = d.querySelector('[data-harness-pages] select#garden-groupby'); s.value = ${JSON.stringify(tags)}; s.dispatchEvent(new w.Event('change', { bubbles: true })); return 1`)
+        if (!await t.waitIn(`w.__h.groupBy() === ${JSON.stringify(tags)} && ${SEL.expandAll}`, slowMax)) return done(`picking '${tags}' never regrouped Garden (the control reads ${await t.read(`return w.__h.groupBy()`)})${await diag()}`)
+        await t.settle(300, 3000)
+        // A grouping's groups start closed, so the user opens them: "Expand all", a real tap. The control keeps ONE
+        // set of open groups, so this also closes the crop groups — the garden a tag-grouped user comes back to,
+        // where the Type fallback is every group closed and one screen tall.
+        why = await t.tap(SEL.expandAll, '"Expand all"')
+        if (why) return done(why)
+        if (!await page('garden')) return done(`"Expand all" never opened the '${tags}' groups (${await t.read(`return d.querySelectorAll('${tid('planting-tile')}').length`)} of ${FIXTURE.gardenPlants} plantings on the page)${await diag()}`)
+        await t.settle(400, slowMax)
+        note.push(`'${tags}' picked from [${(await t.read(`return w.__h.groupOptions()`)).join(', ')}], its groups opened`)
+      }
       const tile = SEL.tile(33)
       why = await t.wheelTo(tile, 'the 34th planting tile')
       if (why) return done(why)
@@ -1257,7 +1291,7 @@ async function runFlow(cdp, flow, vw, vh) {
         if (!st.settled || Math.round(after.y) !== Math.round(before.y) || Math.abs(after.top - before.top) > TOP_TOL_PX) return done(`after the editor's X Garden is at y${R1(after.y)} (tile top y${R1(after.top)}), it was at y${R1(before.y)} (tile top y${R1(before.top)}) — a same-page write moved it${await diag()}`)
         return
       }
-      if (k === 'garden-cycles' || k === 'garden-cycles-grow' || k === 'garden-plantsgrow' || k === 'garden-plantsfixed' || k === 'garden-groupby' || k === 'garden-groupby-weak') {
+      if (k === 'garden-cycles' || k === 'garden-cycles-grow' || k === 'garden-plantsgrow' || k === 'garden-plantsfixed' || k === 'garden-groupby' || k === 'garden-groupby-weak' || k === 'garden-taggroup') {
         // Dave's step 27: "Scroll well down Garden, tap Today, then Garden. Do this three times." Each return is a PUSH
         // that Garden restores itself, the list painting from the cache while the household and the list re-fetch.
         // THE CRITERION IS CONTENT (qa-gardencreep IMPORTANT 1): the planting the user left on screen — followed by
@@ -1283,7 +1317,9 @@ async function runFlow(cdp, flow, vw, vh) {
         // The prefs flows: reads answered and saves sent so far, so each trip can tell its own from the ones before.
         let prefsSeen = prefs ? await t.read(`return w.__h.prefsAnswered()`) : 0
         let savesSeen = prefs ? (await t.read(`return w.__h.prefsPatches()`)).length : 0
-        const trips = () => cycles.map((x) => `#${x.c} ${name} at y${R1(x.top)} (${x.dTop >= 0 ? '+' : ''}${R1(x.dTop)}px) · ${x.landed ? `on screen @${x.landed.t}ms at y${R1(x.landed.top)}, moved ${R1(x.excursion)}px after` : 'never on screen'} · raw y${R1(x.y)} · row ${x.row} · ${x.tiles} tiles`).join(' | ')
+        // The tags flow: tag maps asked for so far, so each trip can tell its own answer from the ones before.
+        let tagsSeen = tags ? await t.read(`return w.__h.tagsAsked()`) : 0
+        const trips = () => cycles.map((x) => `#${x.c} ${name} at y${R1(x.top)} (${x.dTop >= 0 ? '+' : ''}${R1(x.dTop)}px) · ${x.landed ? `on screen @${x.landed.t}ms at y${R1(x.landed.top)}, moved ${R1(x.excursion)}px after` : 'never on screen'} · raw y${R1(x.y)} · row ${x.row} · ${x.tiles} tiles${x.tagMap ? ` · ${x.tagMap}` : ''}`).join(' | ')
         for (let c = 1; c <= GARDEN_CYCLES; c++) {
           const l = await land(SEL.tabToday, `the Today tab (round trip ${c})`, 'today', { chrome: true, name: `today-${c}` })
           if (l.why) return done(`round trip ${c}: ${l.why}`)
@@ -1335,7 +1371,24 @@ async function runFlow(cdp, flow, vw, vh) {
           const excursion = landed ? Math.max(0, ...onGarden.slice(landAt).map((s) => Math.abs(s.top - landed.top))) : null
           const row = `${onGarden[0].lens ? 'on' : 'off'}→${onGarden[onGarden.length - 1].lens ? 'on' : 'off'}`
           const dTop = after.top - before.top
-          cycles.push({ c, y: after.y, top: after.top, dTop, landed, excursion, row, tiles, rowLate: !onGarden[0].lens && onGarden[onGarden.length - 1].lens })
+          let tagMap = null
+          if (tags) {
+            // THE INSTRUMENT: this return asked for the tag map again, and its answer was delivered well after
+            // Garden's first frame — or the flow measured a Garden that already had its tags, and passes over nothing.
+            const asked = await t.read(`return w.__h.tagsAsked()`)
+            const mapAt = (await t.read(`return w.__h.tagsDelivered()`)).pop()
+            const first = samples.find((s) => s.page === 'garden')
+            if (!(asked > tagsSeen) || mapAt == null || !(mapAt - first.t >= ms / 2)) return done(`round trip ${c}: the tag map was ${asked > tagsSeen ? `delivered @${mapAt}ms, Garden's first frame @${first.t}ms` : 'never asked for on the return'} — it has to land at least ${ms / 2}ms after Garden is on screen, or the flow measures no late tag map${await diag()}`)
+            tagsSeen = asked
+            tagMap = `tag map @${mapAt}ms, Garden's first frame @${first.t}ms, the list @${onGarden[0].t}ms`
+            // Every frame, not the settled page: the fallback grouping was on screen only until the map landed.
+            const wrong = samples.findIndex((s) => s.page === 'garden' && s.group != null && s.group !== tags)
+            if (wrong >= 0) {
+              const until = samples.slice(wrong).find((s) => s.group === tags)
+              reds.push(`round trip ${c}: Garden's grouping control showed '${samples[wrong].group}' from ${samples[wrong].t}ms${until ? ` to ${until.t}ms` : ' on'} (the tag map landed @${mapAt}ms), not '${tags}' as it was left — the fallback grouping was painted as the user's (the bug)`)
+            }
+          }
+          cycles.push({ c, y: after.y, top: after.top, dTop, landed, excursion, row, tiles, tagMap, rowLate: !onGarden[0].lens && onGarden[onGarden.length - 1].lens })
           // Garden's OWN restore, content-stable, is today's contract flag on or off (fix (a) is in both builds).
           if (Math.abs(dTop) > TOP_TOL_PX + LAND_TOL_PX) reds.push(`round trip ${c}: ${name} came back at y${R1(after.top)}, the user left it at y${R1(before.top)} — ${dTop < 0 ? `${R1(-dTop)}px up the screen, i.e. Garden came back further down the list` : `${R1(dTop)}px down the screen`}`)
           else if (Math.abs(dTop) > TOP_TOL_PX) nudges.push(`${k}@${vw}x${vh} trip-${c} ${name} y${R1(after.top)} for y${R1(before.top)}`)

@@ -15,6 +15,7 @@ import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import baselineFromGit from './baselinePlugin.mjs'
 import { harnessPrefsBase } from './prefsBaseTransform.mjs'
+import { harnessTagsOn } from './tagsOnTransform.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '../..')
@@ -56,7 +57,9 @@ export default defineConfig({
   // in-flight edits cannot contaminate a baseline run. Unset → the working tree, as normal.
   // harnessPrefsBase: inert unless a page sets globalThis.__harnessPrefsBase (the page-scroll ?prefs= knob,
   // tests/harness/prefsKnob.js) — BUG-GARDENGROUPBYRESET-001.
-  plugins: [baselineFromGit({ sha: process.env.HARNESS_BASELINE_SHA, repoRoot }), react(), appGlobalStyle(), harnessPrefsBase()],
+  // harnessTagsOn: inert unless a page sets globalThis.__harnessTagsOn (the page-scroll ?tags= knob,
+  // tests/harness/pagescroll.jsx) — BUG-GARDENTAGGROUPREPAINT-001.
+  plugins: [baselineFromGit({ sha: process.env.HARNESS_BASELINE_SHA, repoRoot }), react(), appGlobalStyle(), harnessPrefsBase(), harnessTagsOn()],
   resolve: {
     dedupe: ['react', 'react-dom'],
     alias: {

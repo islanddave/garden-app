@@ -60,6 +60,12 @@
 //                    mechanism; it must stay this entry's first import.
 //     prefsradio=up  with prefs=, 'down' makes every prefs PATCH fail as a dead zone does (the fetch rejects after
 //                    ?ms=) while the reads still answer: the weak radio Dave gardens on.
+//     tags=          (off by default) the tags API is ON and answers the whole-garden tag map after ?ms=, every
+//                    planting carrying one tag of this facet ('heat'; BUG-GARDENTAGGROUPREPAINT-001) — so Garden's
+//                    control offers that grouping, as prod's does. Off, src/hooks/useTags.js is inert
+//                    (VITE_API_TAGS is unset here) and no tag grouping can be picked, which is why no flow saw
+//                    Garden paint the Type fallback on every return and regroup once the map landed.
+//                    tagsOnTransform.mjs has the mechanism.
 //
 // A FLOW'S FIRST LOAD IS A FIRST VISIT: sessionStorage and localStorage are cleared before anything
 // mounts (both scroll stores, every page's persisted filters), and Garden's crop groups are opened. The one
@@ -113,6 +119,10 @@ const ROSTER = q.get('roster') || 'full'
 if (ROSTER !== 'full' && ROSTER !== 'grow') throw new Error(`?roster=${ROSTER} is not 'full' or 'grow'`)
 const PREFS_RADIO = q.get('prefsradio') || 'up'
 if (PREFS_RADIO !== 'up' && PREFS_RADIO !== 'down') throw new Error(`?prefsradio=${PREFS_RADIO} is not 'up' or 'down'`)
+const TAGS_FACET = q.get('tags') || null
+if (TAGS_FACET && TAGS_FACET !== 'heat') throw new Error(`?tags=${TAGS_FACET} is not 'heat', the one facet the fixture tags`)
+// Read by useTags.js's tagsEnabled() on every call (tagsOnTransform.mjs), so before anything mounts is early enough.
+if (TAGS_FACET) globalThis.__harnessTagsOn = true
 
 // This page's own URL, before the router moves it: where a reload has to land.
 const HARNESS_URL = location.pathname + location.search
@@ -244,6 +254,19 @@ const gardenPlanting = (p) => ({
   variety_ref: { id: null, name: p.variety_ref.name, species: null, crop_type_slug: p.variety_ref.crop_type_slug },
   crop_type_slug: p.variety_ref.crop_type_slug, notes: null,
 })
+// The whole-garden tag map (?tags=, BUG-GARDENTAGGROUPREPAINT-001; GET /api/entity-tags?entity_type=plant). Every
+// planting carries one Heat tag, projected from its cultivar as prod's are (lambda/tags: source 'derived'), dealt
+// round the three bands by its place in the list — so the Heat grouping's three groups (19, 19 and 18 plantings,
+// each under TileGrid's 24-tile window) cut ACROSS the four crop groups, and the list grouped one way is laid out
+// nothing like the list grouped the other.
+const HEAT_BANDS = [['mild', 'Mild'], ['medium', 'Medium'], ['hot', 'Hot']]
+const heatTag = ([slug, label]) => ({
+  id: `tag-heat-${slug}`, facet: 'heat', label, slug, source: 'derived', owner_id: 'system', visibility: 'shared',
+  created_by: 'system', created_at: iso(200), updated_at: iso(200),
+})
+const TAG_MAP = Object.fromEntries(GARDEN_PLANTS.map((p, i) => [p.id, { direct: [], projected: [heatTag(HEAT_BANDS[i % 3])] }]))
+let tagsAsked = 0
+const tagsDeliveredAt = []
 // The household (GET /api/members, useMembers' `d.members`). The first member is the signed-in user — the
 // Clerk stub's USER.id (tests/harness/stubs/clerk.jsx), which AuthContext's profile.id carries — so Garden's
 // lens reads Mine / Jen / Everyone. No planting is assigned, so no tile grows a caretaker badge: the row is the
@@ -424,6 +447,12 @@ window.fetch = (url, opts = {}, ...rest) => {
     return json({ members: ROSTER === 'grow' && membersAnswered === 1 ? MEMBERS.slice(0, 1) : MEMBERS }, MS)
   }
   if (path.startsWith('/api/projects') || path.startsWith('/api/favorites')) return json([])
+  if (TAGS_FACET && path.startsWith('/api/entity-tags')) {
+    // One planting's own tags (its page's crop card), else the whole-garden map Garden groups by.
+    if ((m = path.match(/[?&]entity_id=([^&]+)/))) return json(TAG_MAP[m[1]] || { direct: [], projected: [] }, MS)
+    tagsAsked += 1
+    return json({ entities: TAG_MAP }, MS).then((res) => { tagsDeliveredAt.push(performance.now()); return res })
+  }
   unstubbed.push(`${method} ${path}`)
   return json([])
 }
@@ -452,7 +481,10 @@ function sampleFrame() {
 }
 // Per-frame sampler of ONE element's viewport top — the `index`th match of `sel`, re-queried every frame, since
 // the page remounts under it — for the no-jump checks (BUG-GARDENSPOTCREEP-001). Same keep-on-change rule; `lens`
-// is whether Garden's caretaker row is on the page, so a jump can be told from the row that caused it.
+// is whether Garden's caretaker row is on the page, so a jump can be told from the row that caused it, and `group`
+// is the grouping Garden's control shows in that frame (null: no control on the page), so a grouping that was on
+// screen for a few frames only is still seen (BUG-GARDENTAGGROUPREPAINT-001).
+const GROUP_SEL = '[data-harness-pages] select#garden-groupby'
 let topSamples = null
 let topSampling = false
 let topT0 = 0
@@ -462,9 +494,9 @@ function topFrame() {
   if (!topSampling) return
   const el = document.querySelectorAll(topSel)[topIdx]
   const r = el ? el.getBoundingClientRect() : null
-  const s = { t: Math.round(performance.now() - topT0), y: Math.round(window.scrollY * 10) / 10, top: r ? Math.round(r.top * 10) / 10 : null, docH: document.documentElement.scrollHeight, page: pageKeyOf(pagePath()), lens: !!document.querySelector(LENS_SEL) }
+  const s = { t: Math.round(performance.now() - topT0), y: Math.round(window.scrollY * 10) / 10, top: r ? Math.round(r.top * 10) / 10 : null, docH: document.documentElement.scrollHeight, page: pageKeyOf(pagePath()), lens: !!document.querySelector(LENS_SEL), group: document.querySelector(GROUP_SEL)?.value ?? null }
   const p = topSamples[topSamples.length - 1]
-  if (!p || p.y !== s.y || p.top !== s.top || p.docH !== s.docH || p.page !== s.page || p.lens !== s.lens) topSamples.push(s)
+  if (!p || p.y !== s.y || p.top !== s.top || p.docH !== s.docH || p.page !== s.page || p.lens !== s.lens || p.group !== s.group) topSamples.push(s)
   if (topSamples.length < 3000) requestAnimationFrame(topFrame)
 }
 // The manager's decisions, as it reports them (observation only; App.jsx passes no onDecision).
@@ -769,7 +801,13 @@ window.__h = {
   prefsAnswered: () => prefsAnswered,
   prefsPatches: () => prefsPatches.map((b) => (b && typeof b === 'object' ? { ...b } : b)),
   prefsStored: () => prefsRow.garden_group_by,
-  groupBy: () => document.querySelector('[data-harness-pages] select#garden-groupby')?.value ?? null,
+  groupBy: () => document.querySelector(GROUP_SEL)?.value ?? null,
+  // The ?tags= knob (BUG-GARDENTAGGROUPREPAINT-001): the groupings Garden's control offers, how many times the
+  // whole-garden tag map has been asked for, and when each answer was DELIVERED, in ms on the top sampler's clock
+  // (sampleTop's `t`) — so a flow can show the map landed after Garden was already on screen.
+  groupOptions: () => { const s = document.querySelector(GROUP_SEL); return s ? [...s.options].map((o) => o.value) : null },
+  tagsAsked: () => tagsAsked,
+  tagsDelivered: () => tagsDeliveredAt.map((t) => Math.round(t - topT0)),
   // The manager's mirror, for failure messages only.
   store: () => { try { return JSON.parse(window.sessionStorage.getItem(PAGE_SCROLL_STORE_KEY)) } catch { return null } },
   // The page rendering shorter (and back) while a sheet covers it.
@@ -788,6 +826,6 @@ window.__h = {
   reloadedDoc: () => !!RELOAD_TO,
   // `token` is what the Clerk stub itself reports (tests/harness/stubs/clerk.jsx, ?token=), not this page's URL.
   // `prefs` is what the prefs client was actually pointed at — the knob reaching the module, not this page's URL.
-  fixture: () => ({ manager: SCROLL_MANAGER_ENABLED, ms: MS, auth: AUTH_MS, token: window.__harnessClerk ? window.__harnessClerk.tokenMs : null, roster: ROSTER, gardenPlants: GARDEN_PLANTS.length, going: GOING.length, locations: LOCATIONS.length, plantingEvents: PLANTING_EVENTS.length, chainRows: CHAIN_ROWS, members: MEMBERS.length, prefs: globalThis.__harnessPrefsBase === PREFS_ORIGIN ? PREFS_GROUP_BY : null, prefsRadio: PREFS_RADIO }),
+  fixture: () => ({ manager: SCROLL_MANAGER_ENABLED, ms: MS, auth: AUTH_MS, token: window.__harnessClerk ? window.__harnessClerk.tokenMs : null, roster: ROSTER, gardenPlants: GARDEN_PLANTS.length, going: GOING.length, locations: LOCATIONS.length, plantingEvents: PLANTING_EVENTS.length, chainRows: CHAIN_ROWS, members: MEMBERS.length, prefs: globalThis.__harnessPrefsBase === PREFS_ORIGIN ? PREFS_GROUP_BY : null, prefsRadio: PREFS_RADIO, tags: globalThis.__harnessTagsOn === true ? TAGS_FACET : null }),
   tokenCalls: () => (window.__harnessClerk ? window.__harnessClerk.calls : null),
 }
