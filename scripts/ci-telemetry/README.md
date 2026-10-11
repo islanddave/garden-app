@@ -59,9 +59,11 @@ python3 scripts/ci-telemetry/shadow-agree.py --json
 ```
 
 `shadow-agree.py` needs an authenticated `gh` and makes `gh api -X GET` calls only (each of two listings read
-twice, then up to five calls per SHA, two more for a run that was re-run). Per SHA it sets `ci.yml`'s
+twice, then up to five calls per SHA, two more for a run that was re-run, and one more for a row an entry of
+`SET_ASIDE` holds: the jobs of the attempt it names as green). Per SHA it sets `ci.yml`'s
 `build-and-test` verdict against `ci-next.yml`'s `build-and-test-next`: AGREE-GREEN, AGREE-RED, DISAGREE or
-NOT-COUNTED. A run that was re-run is judged on its FIRST attempt, and the row says what the latest one did. It
+NOT-COUNTED, or SET-ASIDE for a DISAGREE that is set aside by name (below). A run that was re-run is judged on its
+FIRST attempt, and the row says what the latest one did. It
 compares the test-ID digest of each unit pass and, when two differ, says whether it is the file set, the test names
 or only the states. It prints the `runs-on` labels of each side, and lists each `ci-next.yml` job's wait for a
 runner against the plan's threshold (a job over 120 s in 3 of 10 runs).
@@ -83,7 +85,7 @@ TEST-IDS-DIFFER whatever `node_files` reads.
 
 A SHA red on both sides is agreement only when both went red at the same step, which the script reads from the job
 steps of the attempt it judges: `ci.yml` failed exactly one step, a `ci-next.yml` leg failed that step, and no leg
-is red at a step `ci.yml` ran and passed. Each SHA with a verdict on both sides is then worth one of three things:
+is red at a step `ci.yml` ran and passed. Each SHA with a verdict on both sides is then worth one of four things:
 
 - **QUALIFIES**: one of the 10. Green on both sides, or red on both at the same step, with TEST-IDS-EQUAL in both
   passes.
@@ -102,24 +104,54 @@ is red at a step `ci.yml` ran and passed. Each SHA with a verdict on both sides 
   run with no leg) or is read and differs; a TEST-IDS-DIFFER; a TEST-IDS-VACUOUS; a digest absent for any other reason (the pass ran
   and left no usable notice, the shadow lacks what the serial job has, the format versions differ). The row prints
   why.
+- **SET-ASIDE**: not one of the 10 and not blocking, by name. This is the owner's amendment of 2026-10-10 to the
+  trial rule in the header of `.github/workflows/ci-next.yml` (decision row `shadow-flaky-row` in gardening-docs
+  `project-state/_promotepath-20261002/DECISIONS.md`): a row that reads DISAGREE because of a flaky test may be set
+  aside, only when its red side passed on a re-run of the same commit and the cause is written beside its entry.
+  The rows counted before it stay, and `COUNT_FROM_SHA` does not move. The only road is `SET_ASIDE`, a constant
+  list in the script: no flag, no file and no pattern sets a row aside. One entry is one SHA and one run: the full
+  dev SHA, the workflow whose run was red, that run's id, the attempt that was red and the attempt that was green,
+  the cause in one sentence, the full SHA of the fixing commit and the decision.
+
+  An entry holds only while GitHub still supports it, and every run of the script checks all of: the SHA is inside
+  the counting window; the row reads DISAGREE; the other side is GREEN; the run named is the one read for that
+  workflow on that SHA; the attempt judged is the one named as red; the run's latest attempt is the one named as
+  green and concluded success; no pass reads TEST-IDS-VACUOUS; and the jobs of that green attempt read GREEN (the
+  one extra call, made only when the rest holds). The row then prints as SET-ASIDE with its cause, its test-ID
+  columns stay (they are the red attempt's) and block nothing, and it is in no tally but its own. When any
+  condition fails the entry is REFUSED: the row blocks exactly as it would with no entry and its line says which
+  condition failed. An entry whose SHA is no dev push in the listings is STALE, and one that is not whole (a field
+  missing or extra, no cause, two entries for one SHA) is MALFORMED. Neither sets anything aside, and every entry
+  that sets nothing aside is printed under the table and named on the last line.
+
+  One entry so far: `fe89add37399f3d6d61ceabfb18cd6a753e93702`, `ci.yml` run 38056999803, red on attempt 1 and
+  green on attempt 2. The cause was a race in `src/__tests__/PutUpSpentKey.test.jsx`, which read storage before a
+  passive effect had taken the draft out of it (BUG-PUTUPSPENTKEYDRAFTRACE-001), fixed by `b18bbce89e`.
 
 The last line is `ACCEPTANCE: MET` or `NOT MET` with each thing still missing: at least 10 SHAs that qualify, none
-that blocks, queue threshold not tripped. It names every exempt SHA, and a MET line ends with what it does not
+that blocks, queue threshold not tripped. It names every exempt SHA and, met or not, every SET-ASIDE SHA with its
+cause, so the last line alone says the count leans on one. A MET line ends with what it does not
 cover: manifest conservation, the 10-green soak and the canary are not read here. Every SHA from the start of the
 counting window is read and tallied whatever `--limit` is; `--limit` only cuts the rows printed. That line is
 separate from the exit code: exit 0 = nothing disagrees, 1 = a DISAGREE or a TEST-IDS-DIFFER among the SHAs inside
-the window, 2 = a reply could not be read (or a listing changed between its two reads) and nothing is concluded.
+the window (a SET-ASIDE row is neither, and the `verdict:` line says how many rows are set aside), 2 = a reply
+could not be read (or a listing changed between its two reads) and nothing is concluded.
 How a cancelled run is read, and why that cannot hide a disagreement, is in the docstring at the top of the script.
 
-`--json` (`schema_version` 2) carries the same reading. Per SHA: `counted` (a verdict on both sides, inside the
-window), `acceptance` (`QUALIFIES`, `EXEMPT`, `BLOCKS`, or null when not counted) and `acceptance_why`; the facts
+`--json` (`schema_version` 3) carries the same reading. Per SHA: `counted` (a verdict on both sides, inside the
+window, and not set aside), `acceptance` (`QUALIFIES`, `EXEMPT`, `BLOCKS`, `SET-ASIDE`, or null when not counted
+for any other reason) and `acceptance_why`; `set_aside` (null, or the entry that names the SHA with its `status`,
+`APPLIED`, `REFUSED` or `MALFORMED`, the reasons in `why`, and `would_read`, the class the row has without it); the facts
 they rest on, `ci_failed_steps`, `ci_ran_steps`, `next_legs`, `next_red_legs`, `next_superseded_legs` (each leg the
 next push cancelled, with `superseded_by`, that run's id); and per pass in `test_ids`, `ci_step` and `next_step`, the conclusion of the step that runs the pass on each side, and `ci_node_files` and `next_node_files`, each side's
 `node_files` (a number, or null when that side has no usable notice or its notice has no such count). A pass's
 `class` is `EQUAL`, `DIFFER`, `VACUOUS` or `ABSENT`, and `summary.test_ids` counts each. `schema_version` stayed 2
-when `VACUOUS` and the two `node_files` fields were added: no field that was there changed what it means. `acceptance` holds `met`, `missing`,
+when `VACUOUS` and the two `node_files` fields were added: no field that was there changed what it means. It became
+3 with the set-aside list: a row's `class` and `acceptance` may read `SET-ASIDE`, such a row is not `counted`, and
+`summary.classes` counts it. `acceptance` holds `met`, `missing`,
 `counted`, `qualifying` (the number set against the 10), `counted_red` (qualifying SHAs red on both sides), `exempt`
-(SHAs) and `blocking` (`sha` and `why`). `summary.window_met` is `qualifying >= 10`.
+(SHAs), `set_aside` (the SHAs set aside) and `blocking` (`sha` and `why`). The top-level `set_aside` lists every
+entry of the constant with its `status` (`STALE` too) and `why`. `summary.window_met` is `qualifying >= 10`.
 Tested in `scripts/test_shadow_agree.py` against the replies recorded under `scripts/fixtures/shadow-agree/`.
 
 `vitest-test-ids-reporter.mjs` is where the test-ID digests come from. On a GitHub Actions runner (and nowhere

@@ -7,8 +7,9 @@ least 10 dev pushes, the same vitest test-ID set in both unit passes, and no leg
 this script nothing measured any of the three.
 
 WHAT IT READS. `gh api` GETs only, all through gh_api(): the dev push runs of both workflows since ci-next.yml's
-first, each completed run's jobs, and (for a SHA with a verdict on both sides) the annotations of the jobs that ran
-the unit suite. It never dispatches, re-runs, cancels or writes.
+first, each completed run's jobs, (for a SHA with a verdict on both sides) the annotations of the jobs that ran
+the unit suite, and (for a row an entry of SET_ASIDE holds) the jobs of the attempt that entry names as green. It
+never dispatches, re-runs, cancels or writes.
 
 THE VERDICT OF ONE SIDE, from the newest push run of that workflow for the SHA:
   GREEN       the verdict job (`build-and-test`, `build-and-test-next`) concluded success.
@@ -37,6 +38,9 @@ says what the latest attempt concluded.
 THE CLASS OF ONE SHA:
   AGREE-GREEN / AGREE-RED   both sides have a verdict and it is the same.
   DISAGREE                  both sides have a verdict and they differ.
+  SET-ASIDE                 it would read DISAGREE, and an entry of SET_ASIDE names it and still holds (SET ASIDE BY
+                            NAME below). Both sides have a verdict, so it is never NOT-COUNTED; it is not EXEMPT
+                            either, which is for rows red on both sides.
   NOT-COUNTED               either side is SUPERSEDED, NO-RUNNER, IN-FLIGHT or MISSING. It proves nothing and does
                             not count toward the 10.
 A cancelled side cannot hide a disagreement: NOT-COUNTED is reachable for a completed run by two roads only, and on
@@ -118,7 +122,7 @@ cancelled them. A cancelled leg with no newer push behind it, one that ran to it
 step are judged as before.
 
 WHAT ONE SHA IS WORTH TO ACCEPTANCE (`acceptance`, with `acceptance_why`). `counted` keeps its meaning: a verdict on
-both sides, inside the window.
+both sides, inside the window, and not set aside by name.
   QUALIFIES   one of the 10. AGREE-GREEN with every pass OK; or AGREE-RED with the same-step check holding and
               every pass OK.
   EXEMPT      not one of the 10 and not blocking. AGREE-RED, the same-step check holds, no pass is BLOCK and at
@@ -127,6 +131,32 @@ both sides, inside the window.
               printed with what that rests on, and the ACCEPTANCE line names every such SHA.
   BLOCKS      DISAGREE; a failed same-step check; any BLOCK pass. On a green row an EXEMPT pass is BLOCK too: a
               green job does not skip its unit pass.
+  SET-ASIDE   not one of the 10 and not blocking, by name and by nothing else: SET ASIDE BY NAME, next.
+
+SET ASIDE BY NAME (the owner's amendment of 2026-10-10 to the trial rule in the header of ci-next.yml; decision row
+`shadow-flaky-row` in gardening-docs project-state/_promotepath-20261002/DECISIONS.md). A row that reads DISAGREE
+because of a flaky test may be set aside: it is not one of the 10 and it does not block, and the rows counted
+before it stay. COUNT_FROM_SHA does not move for it. The only road is SET_ASIDE, a constant list in this file. One
+entry is one SHA and one run: the full dev SHA, the workflow whose run was red, that run's id, the attempt that was
+red and the attempt that was green, the cause in one sentence, the full SHA of the commit that fixed it, and the
+decision it rests on. No flag, no file, no pattern and no wording of a cause sets a row aside.
+An entry sets its row aside only while what GitHub says still supports it. Every run of this script checks all of:
+  - the SHA is inside the counting window;
+  - the row reads DISAGREE;
+  - the other side is GREEN, so the side the entry names is the red one;
+  - the run the entry names is the run read here for that workflow on that SHA;
+  - the attempt judged is the one the entry names as red;
+  - the run's LATEST attempt is the one the entry names as green, and it completed with conclusion success;
+  - no pass of the row reads TEST-IDS-VACUOUS, which is the shadow's own defect and is never set aside;
+  - the jobs of that green attempt read GREEN by the rule every side is read by (GET
+    .../runs/<id>/attempts/<n>/jobs). This is the one read an entry adds, made only when everything above holds;
+    a reply that cannot be read is exit 2 as anywhere else, never a set-aside.
+When all hold the row's class is SET-ASIDE: it is not `counted`, it is in no tally but its own, and its test-ID
+readings (DIFFER or ABSENT, off the red attempt) are still printed and block nothing. When any one fails the
+entry is REFUSED: the row is judged exactly as a row with no entry, and its line says each condition that failed.
+An entry whose SHA is in neither listing is STALE. An entry that is not whole (a field missing or extra, no cause
+written, a second entry for the same SHA) is MALFORMED. Neither sets anything aside. Every entry that sets nothing
+aside is printed under the table and named on the ACCEPTANCE line.
 
 RUNNER LABELS, per side: the `runs-on` labels of the jobs judged. The API does not give the image a label resolved
 to. ci.yml's job is on `ubuntu-latest`, which GitHub moves to another image on a date of its choosing, while the
@@ -134,8 +164,10 @@ legs are pinned; a DISAGREE or TEST-IDS-DIFFER row whose two sides ran on differ
 
 ACCEPTANCE, one line, separate from the exit code. MET only when at least 10 SHAs QUALIFY, none BLOCKS, and the
 queue threshold is not tripped. Otherwise NOT MET, naming each thing missing. It says how many of the qualifying
-SHAs were red on both sides and names every EXEMPT SHA. A MET line ends with what it does NOT cover: the plan's
-exit test also asks for manifest conservation, the 10-green soak and the canary, and none of those is read here.
+SHAs were red on both sides and names every EXEMPT SHA. MET or NOT MET, it names every SET-ASIDE SHA with its cause,
+so the last line alone says the count leans on one, and every entry of SET_ASIDE that sets nothing aside. A MET
+line ends with what it does NOT cover: the plan's exit test also asks for manifest conservation, the 10-green soak
+and the canary, and none of those is read here.
 
 EACH LISTING IS READ TWICE. The run listings have been seen to change between two consecutive calls (total_count
 and the newest row). If the second read's total or newest run id differs from the first, nothing is concluded.
@@ -149,7 +181,8 @@ cancelled sooner than that (a push superseded seconds after it was made) says no
 of the 10.
 
 Exit codes:
-  0   no DISAGREE and no TEST-IDS-DIFFER among the SHAs inside the window
+  0   no DISAGREE and no TEST-IDS-DIFFER among the SHAs inside the window. A SET-ASIDE row is neither: its class
+      is its own and its test IDs are in no tally. The `verdict:` line says how many rows are set aside
   1   at least one
   2   unreadable: an API error, a reply that is not what was asked for, a truncated listing, COUNT_FROM_SHA not
       in the listings. Nothing is concluded; an unreadable reply is never read as agreement
@@ -166,7 +199,7 @@ import subprocess
 import sys
 import urllib.parse
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3              # 3: `class` and `acceptance` may read SET-ASIDE, and such a row is not `counted`
 EXIT_AGREE, EXIT_DISAGREE, EXIT_UNREADABLE, EXIT_USAGE = 0, 1, 2, 64
 PER_PAGE = 100
 MAX_PAGES = 20
@@ -185,6 +218,27 @@ LANDING_SLACK_S = 60            # one push creates both runs within a second or 
 # vitest.config.ts). A constant and not a flag on purpose:
 # moving it changes what the 10 pushes mean, and scripts/test_shadow_agree.py pins it.
 COUNT_FROM_SHA = "234efd21b3a57f705a4d0d15b76f184fdf31b348"
+# Rows set aside BY NAME: the owner's amendment of 2026-10-10 to the trial rule in ci-next.yml's header (SET ASIDE BY
+# NAME above). A DISAGREE row whose red side passed on a re-run of the same commit, with its cause written here, is
+# not one of the 10 and does not block; the rows counted before it stay and COUNT_FROM_SHA does not move. One entry
+# is one SHA and one run, and every field is required (ENTRY_FIELDS; entry_defects()). An entry is held against live
+# GitHub on every run (set_aside_refusals(), then the green attempt's own jobs) and sets nothing aside the moment a
+# condition fails. A constant and not a flag or a file for the reason COUNT_FROM_SHA is one: an entry changes what
+# the 10 pushes mean, so it is added in a commit that says why, and scripts/test_shadow_agree.py pins the list.
+SET_ASIDE = (
+    {"sha": "fe89add37399f3d6d61ceabfb18cd6a753e93702",
+     "workflow": "ci.yml",          # the workflow whose run was red
+     "run_id": 38056999803,
+     "red_attempt": 1,
+     "green_attempt": 2,
+     "cause": "a test race, not a product one: src/__tests__/PutUpSpentKey.test.jsx read storage before a passive "
+              "effect had taken the draft out of it, an ordering that does not always hold on Node 20 "
+              "(BUG-PUTUPSPENTKEYDRAFTRACE-001)",
+     "fixed_by": "b18bbce89e8bf5d70a435a2669f4779113af5400",
+     "decision": "owner, 2026-10-10, row shadow-flaky-row of gardening-docs "
+                 "project-state/_promotepath-20261002/DECISIONS.md"},
+)
+ENTRY_FIELDS = ("sha", "workflow", "run_id", "red_attempt", "green_attempt", "cause", "fixed_by", "decision")
 # timeout-minutes of every job, as .github/workflows/ci.yml and ci-next.yml have them. The jobs API does not report
 # a job's timeout, so this is the bound a cancelled job's duration is held against; scripts/test_shadow_agree.py
 # keeps it equal to the two files.
@@ -203,7 +257,15 @@ PASSES = {"UTC": ("build-and-test", "unit-utc-cov"), "America/New_York": ("build
 PASS_STEPS = {"UTC": "Run unit tests with coverage",
               "America/New_York": "Unit tests under America/New_York TZ (date-fragility guard)"}
 OK, EXEMPT, BLOCK = "OK", "EXEMPT", "BLOCK"                          # one pass of one SHA
-QUALIFIES, BLOCKS = "QUALIFIES", "BLOCKS"                            # one SHA (or EXEMPT)
+QUALIFIES, BLOCKS = "QUALIFIES", "BLOCKS"                            # one SHA (or EXEMPT, or SET_ASIDE_CLASS)
+# A row set aside by name: its class and what it is worth to acceptance, one word for both so neither can be read as
+# EXEMPT or NOT-COUNTED. Then what became of one SET_ASIDE entry.
+SET_ASIDE_CLASS = "SET-ASIDE"
+APPLIED, REFUSED, STALE, MALFORMED = "APPLIED", "REFUSED", "STALE", "MALFORMED"
+# workflow -> (the row key of that side, how its verdict is read, the row key of the other side, the other workflow)
+SIDES = {SERIAL["workflow"]: ("ci", SERIAL, "next", SHADOW["workflow"]),
+         SHADOW["workflow"]: ("next", SHADOW, "ci", SERIAL["workflow"])}
+BEFORE_WINDOW_WHY = "the SHA is before the counting window, where a row is in no tally"
 # The same-step check of a row red on both sides: it holds, or the step cannot be told, or it is told and differs.
 HOLDS, STEP_UNREADABLE, STEP_DIFFERENT = "HOLDS", "STEP-UNREADABLE", "STEP-DIFFERENT"
 NOTICE_PREFIX = "test-ids "
@@ -577,6 +639,9 @@ STEP_MISSING = {STEP_UNREADABLE: "red on both sides and the failing step cannot 
 def judge(row):
     """(acceptance, acceptance_why, reasons) of one row. `reasons` is what a BLOCKS row blocks for, each one of
     DISAGREE, STEP-UNREADABLE, STEP-DIFFERENT, IDS-DIFFER, IDS-VACUOUS, IDS-ABSENT."""
+    aside = row.get("set_aside")
+    if aside and aside["status"] == APPLIED:
+        return SET_ASIDE_CLASS, set_aside_why(aside), []
     if not row["counted"]:
         return None, None, []
     red = row["class"] == "AGREE-RED"
@@ -625,6 +690,94 @@ def judge(row):
     return EXEMPT, why, []
 
 
+# ── rows set aside by name (SET_ASIDE) ──────────────────────────────────────────────────────────────────────────
+
+def entry_defects(entry):
+    """What is wrong with one SET_ASIDE entry as it is written, as reasons; [] when it is whole. Whole is exactly
+    the fields of ENTRY_FIELDS: two full SHAs, one of the two workflows, a run id, a red attempt and a later green
+    one, and a cause and a decision that are written."""
+    if not isinstance(entry, dict) or set(entry) != set(ENTRY_FIELDS):
+        return ["it does not carry exactly these fields: %s" % ", ".join(ENTRY_FIELDS)]
+    why = ["%s is not a full 40-hex SHA" % field for field in ("sha", "fixed_by")
+           if not re.fullmatch(r"[0-9a-f]{40}", str(entry[field]))]
+    if entry["workflow"] not in SIDES:
+        why.append("workflow is neither %s nor %s" % tuple(SIDES))
+    numbers = [entry[field] for field in ("run_id", "red_attempt", "green_attempt")]
+    if any(not isinstance(number, int) or isinstance(number, bool) or number < 1 for number in numbers):
+        why.append("run_id, red_attempt and green_attempt are not all positive integers")
+    elif entry["green_attempt"] <= entry["red_attempt"]:
+        why.append("green_attempt is not after red_attempt")
+    why += ["no %s is written beside it" % field for field in ("cause", "decision")
+            if not isinstance(entry[field], str) or not entry[field].strip()]
+    return why
+
+
+def set_aside_entries(first_seen):
+    """One report per entry of SET_ASIDE, in its order: the entry's fields, `status`, `why` (reasons, as a list) and
+    `would_read`. A status of None is an entry that is whole and names a SHA the listings hold: its row decides
+    (read()). MALFORMED and STALE are decided here, and neither sets anything aside."""
+    reports = []
+    for entry in SET_ASIDE:
+        report = {field: entry.get(field) if isinstance(entry, dict) else None for field in ENTRY_FIELDS}
+        why = entry_defects(entry)
+        same = sum(1 for other in SET_ASIDE if isinstance(other, dict) and other.get("sha") == report["sha"])
+        if not why and same != 1:
+            why = ["%d entries name this SHA: one entry is one SHA and one run" % same]
+        if why:
+            report.update(status=MALFORMED, why=why)
+        elif report["sha"] not in first_seen:
+            report.update(status=STALE, why=["its SHA is not among the %d dev push SHA(s) the two listings hold"
+                                            % len(first_seen)])
+        else:
+            report.update(status=None, why=[])
+        reports.append(dict(report, would_read=None))
+    return reports
+
+
+def set_aside_refusals(entry, row):
+    """Every condition of a set-aside that the row, as it is already read, does not meet, as reasons; [] when all
+    hold and only the green attempt's own jobs are left to read. Each condition is its own line here on purpose:
+    scripts/test_shadow_agree.py holds a case that only that line refuses."""
+    mine, _, other, other_workflow = SIDES[entry["workflow"]]
+    named, latest = row[mine], row[mine]["latest_attempt"]
+    why = []
+    if row["before_window"]:
+        why.append(BEFORE_WINDOW_WHY)
+    if row["class"] != "DISAGREE":
+        why.append("the row reads %s, not DISAGREE" % row["class"])
+    if row[other]["state"] != GREEN:
+        why.append("the other side, %s, is %s, not GREEN" % (other_workflow, row[other]["state"]))
+    if named["run_id"] != entry["run_id"]:
+        why.append("%s's run for this SHA is %s, not run %d, the one the entry names" % (
+            entry["workflow"], named["run_id"] or "missing", entry["run_id"]))
+    if named["run_attempt"] != entry["red_attempt"]:
+        why.append("the attempt judged is %s, not attempt %d, the one the entry names as red" % (
+            named["run_attempt"], entry["red_attempt"]))
+    newest_attempt = latest["run_attempt"] if latest else named["run_attempt"]
+    if newest_attempt != entry["green_attempt"]:
+        why.append("the run's latest attempt is %s, not attempt %d, the one the entry names as green" % (
+            newest_attempt, entry["green_attempt"]))
+    elif not latest or (latest["status"], latest["conclusion"]) != ("completed", "success"):
+        why.append("the re-run did not pass: attempt %d %s" % (entry["green_attempt"], (
+            "is not a re-run" if not latest else "concluded %s" % latest["conclusion"]
+            if latest["status"] == "completed" else "is %s" % latest["status"])))
+    vacuous = [zone for zone, one in row["test_ids"].items() if one["class"] == "VACUOUS"]
+    if vacuous:
+        why.append("its %s pass reads TEST-IDS-VACUOUS, which is never set aside" % ", ".join(vacuous))
+    return why
+
+
+def set_aside_why(aside):
+    """The line of a row that is set aside: what it would read, the run and the two attempts, the cause, the fix
+    and the decision, each as the entry has it."""
+    return ("%s by name, not one of the %d and not blocking: it would read %s. %s run %d was red on attempt %d and "
+            "passed on attempt %d, its latest, on this SHA. Cause: %s. Fixed by %s. Decision: %s. Its test-ID "
+            "readings are the red attempt's and block nothing" % (
+                SET_ASIDE_CLASS, WINDOW, aside["would_read"], aside["workflow"], aside["run_id"],
+                aside["red_attempt"], aside["green_attempt"], aside["cause"], aside["fixed_by"][:10],
+                aside["decision"]))
+
+
 # ── queue times ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 def started(job):
@@ -667,7 +820,7 @@ def queue_summary(rows):
 def read(repo, limit, timeout):
     shadow_runs = push_runs(repo, SHADOW["workflow"], None, timeout)
     if not shadow_runs:
-        return {"landed_at": None, "shas": [], "shown": limit, "queue_runs": []}
+        return {"landed_at": None, "shas": [], "shown": limit, "queue_runs": [], "set_aside": set_aside_entries({})}
     landed = min(parse_time(run["created_at"], "created_at") for run in shadow_runs)
     serial_runs = push_runs(repo, SERIAL["workflow"], landed - datetime.timedelta(seconds=LANDING_SLACK_S), timeout)
     first_seen = {}
@@ -682,6 +835,7 @@ def read(repo, limit, timeout):
     # Newest first, so every SHA inside the window comes before every SHA before it: all of the former are read,
     # and --limit only cuts what is printed.
     order = order[:max(limit, sum(1 for sha in order if first_seen[sha] >= first_seen[COUNT_FROM_SHA]))]
+    entries, listed = set_aside_entries(first_seen), {"ci": serial_runs, "next": shadow_runs}
     read_once = {}
 
     def judged(run):
@@ -732,16 +886,35 @@ def read(repo, limit, timeout):
             row.update(step_facts(
                 next((j for j in judged(picked["ci"])[1] if j["name"] == SERIAL["verdict_job"]), None),
                 judged(picked["next"])[1], judged(picked["next"])[0], shadow_runs))
+        # The entry of SET_ASIDE that names this SHA, if one does. A whole one is held against the row as read, and
+        # only when nothing refuses it are the jobs of its green attempt asked for.
+        aside = row["set_aside"] = next((entry for entry in entries if entry["sha"] == sha), None)
+        if aside is not None and aside["status"] is None:
+            why = set_aside_refusals(aside, row)
+            if not why:
+                mine, spec = SIDES[aside["workflow"]][:2]
+                rerun = side(spec, picked[mine], run_jobs(repo, picked[mine]["id"], timeout, aside["green_attempt"]),
+                             listed[mine])
+                if rerun["state"] != GREEN:
+                    why.append("the jobs of attempt %d read %s (%s), not GREEN" % (
+                        aside["green_attempt"], rerun["state"], rerun["why"]))
+            aside.update(status=REFUSED if why else APPLIED, why=why, would_read=row["class"])
+            if not why:
+                row.update({"class": SET_ASIDE_CLASS, "counted": False})
         row["acceptance"], row["acceptance_why"] = judge(row)[:2]
         rows.append(row)
+    for entry in entries:  # whole, in the listings, and its row not read: a SHA before the window and past --limit
+        if entry["status"] is None:
+            entry.update(status=REFUSED, why=[BEFORE_WINDOW_WHY])
     newest_first = sorted(shadow_runs, key=lambda run: (run["created_at"], run["id"]), reverse=True)
-    return {"landed_at": stamp(landed), "shas": rows, "shown": limit,
+    return {"landed_at": stamp(landed), "shas": rows, "shown": limit, "set_aside": entries,
             "queue_runs": [timings(*judged(run)) for run in newest_first if judged(run)[0]["status"] == "completed"]}
 
 
-def acceptance(counted, queue):
+def acceptance(counted, queue, aside=()):
     """Three clauses of the plan's exit test for the shadow (agreement over the window, test IDs, queue times), as
-    one verdict and the list of what is still missing. Manifest conservation, the soak and the canary are not here."""
+    one verdict and the list of what is still missing. Manifest conservation, the soak and the canary are not here.
+    `aside`: the rows set aside by name. They are not among `counted`; they are named, and change nothing else."""
     reasons = {row["sha"]: judge(row)[2] for row in counted}
     qualifying = [row for row in counted if row["acceptance"] == QUALIFIES]
     blocking = [row for row in counted if row["acceptance"] == BLOCKS]
@@ -769,6 +942,7 @@ def acceptance(counted, queue):
             "qualifying": len(qualifying),
             "counted_red": sum(1 for row in qualifying if row["class"] == "AGREE-RED"),
             "exempt": [row["sha"] for row in counted if row["acceptance"] == EXEMPT],
+            "set_aside": [row["sha"] for row in aside],
             "blocking": [{"sha": row["sha"], "why": row["acceptance_why"]} for row in blocking]}
 
 
@@ -777,17 +951,17 @@ def report(repo, reading):
     inside = [row for row in rows if not row["before_window"]]
     counted = [row for row in rows if row["counted"]]
     classes = {name: sum(1 for row in inside if row["class"] == name)
-               for name in ("AGREE-GREEN", "AGREE-RED", "DISAGREE", "NOT-COUNTED")}
+               for name in ("AGREE-GREEN", "AGREE-RED", "DISAGREE", SET_ASIDE_CLASS, "NOT-COUNTED")}
     ids = {name: sum(1 for row in counted for one in row["test_ids"].values() if one["class"] == name)
            for name in ("EQUAL", "DIFFER", "VACUOUS", "ABSENT")}
     both_equal = sum(1 for row in counted if row["test_ids"]
                      and all(one["class"] == "EQUAL" for one in row["test_ids"].values()))
     bad = classes["DISAGREE"] > 0 or ids["DIFFER"] > 0
     queue = dict(queue_summary(reading["queue_runs"]), runs=reading["queue_runs"])
-    accepted = acceptance(counted, queue)
+    accepted = acceptance(counted, queue, [row for row in inside if row["acceptance"] == SET_ASIDE_CLASS])
     return {
         "schema_version": SCHEMA_VERSION, "repo": repo, "landed_at": reading["landed_at"],
-        "count_from_sha": COUNT_FROM_SHA,
+        "count_from_sha": COUNT_FROM_SHA, "set_aside": reading["set_aside"],
         "serial": "%s %s" % (SERIAL["workflow"], SERIAL["verdict_job"]),
         "shadow": "%s %s" % (SHADOW["workflow"], SHADOW["verdict_job"]),
         "shas": rows[:reading["shown"]],
@@ -823,10 +997,14 @@ def human(doc):
                        "no tally" % (doc["count_from_sha"][:10], row["class"]))
         differs = [(zone, row["test_ids"][zone]["differs"]) for zone in zones
                    if zone in row["test_ids"] and row["test_ids"][zone]["class"] == "DIFFER"]
-        if row["class"] in ("DISAGREE", "NOT-COUNTED", "AGREE-RED"):
+        if row["class"] in ("DISAGREE", SET_ASIDE_CLASS, "NOT-COUNTED", "AGREE-RED"):
             out.append("           ci.yml: %s | ci-next.yml: %s" % (row["ci"]["why"], row["next"]["why"]))
-        if row["acceptance"] in (EXEMPT, BLOCKS):
+        if row["acceptance"] in (EXEMPT, BLOCKS, SET_ASIDE_CLASS):
             out.append("           " + row["acceptance_why"])
+        if row["set_aside"] and row["set_aside"]["status"] != APPLIED:
+            out.append("           %s %s: an entry of SET_ASIDE names this SHA and sets nothing aside, so the row is "
+                       "judged as any other: %s" % (SET_ASIDE_CLASS, row["set_aside"]["status"],
+                                                    "; ".join(row["set_aside"]["why"])))
         for zone, what in differs:
             out.append("           test IDs of the %s pass differ in: %s" % (zone, what))
         for name, workflow in names:
@@ -836,19 +1014,26 @@ def human(doc):
                     workflow, latest["run_attempt"],
                     "concluded %s" % latest["conclusion"] if latest["status"] == "completed"
                     else "is %s" % latest["status"]))
-        if (row["class"] == "DISAGREE" or differs) and row["ci"]["runs_on"] != row["next"]["runs_on"]:
+        apart = row["class"] in ("DISAGREE", SET_ASIDE_CLASS) or differs
+        if apart and row["ci"]["runs_on"] != row["next"]["runs_on"]:
             out.append("           the two sides ran on different runner labels (%s, %s): a label such as "
                        "ubuntu-latest is whatever image GitHub points it at that day, so compare the `Image:` lines "
                        "of the two job logs before reading this row as a difference in the code" % tuple(labels))
     s, a = doc["summary"], doc["acceptance"]
+    aside = [entry for entry in doc["set_aside"] if entry["status"] == APPLIED]
+    unused = [entry for entry in doc["set_aside"] if entry["status"] != APPLIED]
+    for entry in unused:  # loud, and under the table because a STALE entry has no row to hang it on
+        out.append("SET_ASIDE ENTRY %s: %s (%s run %s) sets nothing aside: %s" % (
+            entry["status"], str(entry["sha"])[:10], entry["workflow"], entry["run_id"], "; ".join(entry["why"])))
     out.append("%d SHA(s): %s" % (s["shas"], ", ".join(
         "%s %d" % pair for pair in list(s["classes"].items()) + [("BEFORE-WINDOW", s["before_window"])])))
     if len(doc["shas"]) < s["shas"]:
         out.append("the table shows the newest %d of them (--limit); every tally here, ACCEPTANCE and the exit code "
                    "are over all %d" % (len(doc["shas"]), s["shas"]))
-    out.append("verdict on both sides: %d; counted toward the %d-push window: %d (%s). With TEST-IDS-EQUAL in both "
+    out.append("verdict on both sides: %d%s; counted toward the %d-push window: %d (%s). With TEST-IDS-EQUAL in both "
                "passes: %d. Test-ID passes among the SHAs with a verdict on both sides: %s" % (
-                   s["counted"], s["window"], a["qualifying"], "met" if s["window_met"] else "not met yet",
+                   s["counted"], " (and %d more set aside by name, in no tally)" % len(aside) if aside else "",
+                   s["window"], a["qualifying"], "met" if s["window_met"] else "not met yet",
                    s["counted_with_test_ids_equal_in_both_passes"],
                    ", ".join("%s %d" % pair for pair in s["test_ids"].items())))
     q = doc["queue"]
@@ -867,19 +1052,28 @@ def human(doc):
                % (q["runs_over"], q["runs_in_window"], q["threshold_s"], q["runs_over_to_trip"], q["window"],
                   {True: "TRIPPED", False: "not tripped",
                    None: "not tripped so far (fewer than %d runs)" % q["window"]}[q["tripped"]]))
-    out.append("verdict: %s" % ("DISAGREE or TEST-IDS-DIFFER among the SHAs inside the window: look at the rows above"
-                               if doc["verdict"] == "disagree" else
-                               "no DISAGREE and no TEST-IDS-DIFFER among the SHAs inside the window"))
+    out.append("verdict: %s%s" % (
+        "DISAGREE or TEST-IDS-DIFFER among the SHAs inside the window: look at the rows above"
+        if doc["verdict"] == "disagree" else "no DISAGREE and no TEST-IDS-DIFFER among the SHAs inside the window",
+        " (%d row(s) set aside by name and in neither count: %s)" % (
+            len(aside), ", ".join(entry["sha"][:10] for entry in aside)) if aside else ""))
     red = " (%d of them red on both sides)" % a["counted_red"] if a["counted_red"] else ""
-    exempt = (". Exempt (red on both sides at the same step, serial pass never ran): %d: %s" % (
+    named = (". Exempt (red on both sides at the same step, serial pass never ran): %d: %s" % (
         len(a["exempt"]), ", ".join(sha[:10] for sha in a["exempt"])) if a["exempt"] else "")
+    # Every set-aside SHA with its cause, on the MET line and on the NOT MET one: the count leans on each of them.
+    named += (". Set aside by name (a DISAGREE that is not one of the %d and does not block): %d: %s" % (
+        WINDOW, len(aside), "; ".join("%s, cause: %s" % (entry["sha"][:10], entry["cause"]) for entry in aside))
+        if aside else "")
+    named += (". SET_ASIDE entries that set nothing aside: %d: %s" % (
+        len(unused), ", ".join("%s %s" % (str(entry["sha"])[:10], entry["status"]) for entry in unused))
+        if unused else "")
     out.append("ACCEPTANCE: %s" % (
         "MET: %d SHAs counted%s, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, queue threshold not "
         "tripped%s. Not checked here: manifest conservation, the 10-green soak, the canary" % (
-            a["qualifying"], red, exempt) if a["met"] else
+            a["qualifying"], red, named) if a["met"] else
         "NOT MET: %s%s%s" % ("; ".join(a["missing"]),
                              ". Of the %d counted, %d red on both sides" % (a["qualifying"], a["counted_red"])
-                             if a["counted_red"] else "", exempt)))
+                             if a["counted_red"] else "", named)))
     return "\n".join(out) + "\n"
 
 

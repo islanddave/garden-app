@@ -26,6 +26,10 @@ were cancelled by the next push, with the ci-next.yml run that cancelled them.
 
 The script counts from COUNT_FROM_SHA, which none of these pushes is: an autouse fixture opens the window at the
 oldest recorded push instead, and the tests of the bound move it or put the shipped value back.
+
+SET_ASIDE, the list of rows set aside by name, is emptied for every test by the same fixture: the SHA it ships
+with is in none of these recordings, so as shipped every reading here would carry a STALE entry. The tests of the
+list install their own entries, written against a push MADE flaky (flaky()), or put the shipped list back.
 """
 import copy
 import datetime
@@ -53,6 +57,7 @@ LEGS = ("static", "pytest", "unit-utc-cov", "unit-ny", "gates-a", "gates-b", "ga
 NY = "America/New_York"
 A, B, C, D = "a" * 64, "b" * 64, "c" * 64, "d" * 64
 COUNT_FROM = sa.COUNT_FROM_SHA  # as the script ships it, read before any test moves it
+SHIPPED_SET_ASIDE = sa.SET_ASIDE  # likewise: the list as shipped, read before the fixture below empties it
 NODE_FILES = 529                # what a ci-next.yml unit leg's notice carries as node_files; ci.yml's carries 0
 
 GH_STAND_IN = r'''#!{python}
@@ -245,8 +250,10 @@ def routes(replies, per_page=100):
 @pytest.fixture(autouse=True)
 def window_opens_at_the_first_recorded_push(monkeypatch):
     """Every recorded and made push here is older than, or unrelated to, the real COUNT_FROM_SHA. So the window is
-    opened at the oldest recorded push for every test; the tests of the bound itself move it somewhere else."""
+    opened at the oldest recorded push for every test; the tests of the bound itself move it somewhere else. No
+    recorded or made push is the SHA the shipped SET_ASIDE names either, so the list starts empty."""
     monkeypatch.setattr(sa, "COUNT_FROM_SHA", OLD)
+    monkeypatch.setattr(sa, "SET_ASIDE", ())
 
 
 @pytest.fixture
@@ -331,7 +338,7 @@ def test_the_two_real_pushes_agree_green_and_carry_no_test_ids_yet(gh):
     assert doc["landed_at"] == "2026-10-03T05:04:03Z"
     assert doc["summary"] == {
         "shas": 2, "before_window": 0, "counted": 2, "window": 10, "window_met": False,
-        "classes": {"AGREE-GREEN": 2, "AGREE-RED": 0, "DISAGREE": 0, "NOT-COUNTED": 0},
+        "classes": {"AGREE-GREEN": 2, "AGREE-RED": 0, "DISAGREE": 0, "SET-ASIDE": 0, "NOT-COUNTED": 0},
         "test_ids": {"EQUAL": 0, "DIFFER": 0, "VACUOUS": 0, "ABSENT": 4},
         "counted_with_test_ids_equal_in_both_passes": 0}
 
@@ -357,7 +364,7 @@ def test_the_table_names_the_classes_the_window_and_the_queue_threshold(gh):
     assert "longest wait 3 s (gates-b)" in out and "unit-utc-cov 973 s" in out
     assert "0 of the newest 2 measured run(s) had a job wait over 120 s" in out and "fewer than 10 runs" in out
     assert "\nverdict: no DISAGREE and no TEST-IDS-DIFFER among the SHAs inside the window\n" in out
-    assert "\n2 SHA(s): AGREE-GREEN 2, AGREE-RED 0, DISAGREE 0, NOT-COUNTED 0, BEFORE-WINDOW 0\n" in out
+    assert "\n2 SHA(s): AGREE-GREEN 2, AGREE-RED 0, DISAGREE 0, SET-ASIDE 0, NOT-COUNTED 0, BEFORE-WINDOW 0\n" in out
 
 
 # ── verdicts ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1127,7 +1134,7 @@ def test_acceptance_is_not_met_on_the_real_repository_and_says_what_is_missing(g
     code, verdict, line = acceptance(gh, recorded())
     assert code == 0  # the exit code is another matter: nothing disagrees
     assert verdict == {"met": False, "missing": ["0 of 10 counted", "test IDs absent on 2 row(s)"], "counted": 2,
-                       "counted_red": 0, "qualifying": 0, "exempt": [],
+                       "counted_red": 0, "qualifying": 0, "exempt": [], "set_aside": [],
                        "blocking": [{"sha": NEW, "why": NO_NOTICE_NO_STEPS}, {"sha": OLD, "why": NO_NOTICE_NO_STEPS}]}
     assert line == "ACCEPTANCE: NOT MET: 0 of 10 counted; test IDs absent on 2 row(s)"
 
@@ -1137,7 +1144,7 @@ def test_acceptance_is_met_at_ten_counted_with_equal_test_ids_and_quiet_queues(g
     ten(replies)
     code, verdict, line = acceptance(gh, replies)
     assert code == 0 and verdict == {"met": True, "missing": [], "counted": 10, "counted_red": 0, "qualifying": 10,
-                                     "exempt": [], "blocking": []}
+                                     "exempt": [], "set_aside": [], "blocking": []}
     assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, "
                     "queue threshold not tripped" + NOT_COVERED)
 
@@ -1364,7 +1371,7 @@ def test_ten_qualifying_beside_the_exempt_pair_is_met_and_the_met_line_names_the
     real_red_push(replies)
     code, verdict, line = acceptance(gh, replies)
     assert code == 0 and verdict == {"met": True, "missing": [], "counted": 11, "counted_red": 0, "qualifying": 10,
-                                     "exempt": [REAL_RED], "blocking": []}
+                                     "exempt": [REAL_RED], "set_aside": [], "blocking": []}
     assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, "
                     "queue threshold not tripped" + EXEMPT_TAIL + NOT_COVERED)
 
@@ -1376,7 +1383,7 @@ def test_nine_qualifying_beside_the_exempt_pair_is_nine_of_ten_and_the_window_is
     code, doc = doc_of(gh, replies)
     assert code == 0 and doc["summary"]["counted"] == 10 and doc["summary"]["window_met"] is False
     assert doc["acceptance"] == {"met": False, "missing": ["9 of 10 counted"], "counted": 10, "counted_red": 0,
-                                 "qualifying": 9, "exempt": [REAL_RED], "blocking": []}
+                                 "qualifying": 9, "exempt": [REAL_RED], "set_aside": [], "blocking": []}
     out = gh(replies)[1]
     assert "\nverdict on both sides: 10; counted toward the 10-push window: 9 (not met yet). With" in out
     assert out.rstrip().split("\n")[-1] == "ACCEPTANCE: NOT MET: 9 of 10 counted" + EXEMPT_TAIL
@@ -1688,12 +1695,13 @@ def test_the_pass_step_names_are_the_two_workflow_files():
                              NY: "Unit tests under America/New_York TZ (date-fragility guard)"}
 
 
-def test_the_json_document_is_schema_2_and_carries_what_each_row_is_worth(gh):
+def test_the_json_document_is_schema_3_and_carries_what_each_row_is_worth(gh):
     replies = recorded()
     real_red_push(replies)
     code, doc = doc_of(gh, replies)
-    assert doc["schema_version"] == sa.SCHEMA_VERSION == 2
-    assert set(doc["acceptance"]) == {"met", "missing", "counted", "counted_red", "qualifying", "exempt", "blocking"}
+    assert doc["schema_version"] == sa.SCHEMA_VERSION == 3
+    assert set(doc["acceptance"]) == {"met", "missing", "counted", "counted_red", "qualifying", "exempt",
+                                      "set_aside", "blocking"}
     assert isinstance(doc["acceptance"]["qualifying"], int) and doc["acceptance"]["exempt"] == [REAL_RED]
     assert [set(one) for one in doc["acceptance"]["blocking"]] == [{"sha", "why"}, {"sha", "why"}]
     assert all({"acceptance", "acceptance_why", "ci_failed_steps", "ci_ran_steps", "next_legs", "next_red_legs"}
@@ -1705,7 +1713,7 @@ def test_the_json_document_is_schema_2_and_carries_what_each_row_is_worth(gh):
     assert (mine["acceptance"], mine["acceptance_why"], mine["ci_failed_steps"], mine["next_red_legs"]) == (
         None, None, None, None)
     code, out, _ = gh({}, "--json")
-    assert code == 2 and json.loads(out)["schema_version"] == 2
+    assert code == 2 and json.loads(out)["schema_version"] == 3
 
 
 def test_a_row_that_blocks_and_is_older_than_the_limit_still_blocks(gh):
@@ -1722,8 +1730,9 @@ def test_a_row_that_blocks_and_is_older_than_the_limit_still_blocks(gh):
     assert doc["acceptance"]["blocking"] == [{"sha": pushes[2].sha, "why": "BLOCKS acceptance: the two sides disagree"}]
     code, out, _ = gh(replies, "--limit", "3")
     assert code == 1 and out.rstrip().endswith("ACCEPTANCE: NOT MET: 9 of 10 counted; 1 DISAGREE")
-    assert ("\n10 SHA(s): AGREE-GREEN 9, AGREE-RED 0, DISAGREE 1, NOT-COUNTED 0, BEFORE-WINDOW 0\nthe table shows the "
-            "newest 3 of them (--limit); every tally here, ACCEPTANCE and the exit code are over all 10\n") in out
+    assert ("\n10 SHA(s): AGREE-GREEN 9, AGREE-RED 0, DISAGREE 1, SET-ASIDE 0, NOT-COUNTED 0, BEFORE-WINDOW 0\n"
+            "the table shows the newest 3 of them (--limit); every tally here, ACCEPTANCE and the exit code are over "
+            "all 10\n") in out
     assert "DISAGREE   " not in out and "the table shows" not in gh(replies)[1]
 
 
@@ -1861,7 +1870,7 @@ def test_the_recorded_pair_beside_the_earlier_one_is_two_exempt_rows_and_ten_oth
     real_cut_push(replies)
     code, verdict, line = acceptance(gh, replies)
     assert code == 0 and verdict == {"met": True, "missing": [], "counted": 12, "counted_red": 0, "qualifying": 10,
-                                     "exempt": [REAL_CUT, REAL_RED], "blocking": []}
+                                     "exempt": [REAL_CUT, REAL_RED], "set_aside": [], "blocking": []}
     assert ". Exempt (red on both sides at the same step, serial pass never ran): 2: 5982e7b2cc, 6662e76e4e" in line
 
 
@@ -2086,7 +2095,8 @@ def test_the_real_run_is_not_counted_and_its_wait_is_in_the_queue_times(gh):
     assert code == 0 and doc["verdict"] == "agree"
     assert (mine["class"], mine["counted"], mine["test_ids"]) == ("NOT-COUNTED", False, {})
     assert (mine["ci"]["state"], mine["next"]["state"], mine["next"]["run_id"]) == ("GREEN", "NO-RUNNER", NO_RUNNER_RUN)
-    assert doc["summary"]["classes"] == {"AGREE-GREEN": 2, "AGREE-RED": 0, "DISAGREE": 0, "NOT-COUNTED": 1}
+    assert doc["summary"]["classes"] == {"AGREE-GREEN": 2, "AGREE-RED": 0, "DISAGREE": 0, "SET-ASIDE": 0,
+                                         "NOT-COUNTED": 1}
     assert doc["summary"]["counted"] == 2
     timed = doc["queue"]["runs"][0]
     assert (timed["run_id"], timed["max_queue_s"], timed["max_queue_job"], timed["max_queue_never_got_a_runner"],
@@ -2098,7 +2108,7 @@ def test_the_real_run_is_not_counted_and_its_wait_is_in_the_queue_times(gh):
         "unit-utc-cov": (10, 1098, False), "unit-ny": (27, 911, False), "build-and-test-next": (901, None, True)}
     assert (doc["queue"]["runs_in_window"], doc["queue"]["runs_over"], doc["queue"]["tripped"]) == (3, 1, None)
     code, out, calls = gh(replies)
-    assert code == 0 and "DISAGREE 0, NOT-COUNTED 1, BEFORE-WINDOW 0" in out
+    assert code == 0 and "DISAGREE 0, SET-ASIDE 0, NOT-COUNTED 1, BEFORE-WINDOW 0" in out
     assert "a25b369057 NOT-COUNTED   GREEN %d" % mine["ci"]["run_id"] in out and "NO-RUNNER 37362246327" in out
     assert "ci.yml: build-and-test=success | ci-next.yml: never got a runner: build-and-test-next (cancelled" in out
     assert ("run 37362246327 a25b369057  longest wait 901 s (build-and-test-next, never got a runner)  over 120 s: "
@@ -2237,7 +2247,8 @@ def test_a_reading_that_does_not_hold_the_opening_sha_is_unreadable_not_a_count_
     code, doc = doc_of(gh, replies)
     assert code == 1 and doc["count_from_sha"] == COUNT_FROM
     assert (doc["summary"]["shas"], doc["summary"]["before_window"], doc["summary"]["counted"]) == (4, 3, 1)
-    assert doc["summary"]["classes"] == {"AGREE-GREEN": 0, "AGREE-RED": 0, "DISAGREE": 1, "NOT-COUNTED": 0}
+    assert doc["summary"]["classes"] == {"AGREE-GREEN": 0, "AGREE-RED": 0, "DISAGREE": 1, "SET-ASIDE": 0,
+                                         "NOT-COUNTED": 0}
 
 
 def _five(replies, opens_at, monkeypatch):
@@ -2259,11 +2270,11 @@ def test_rows_before_the_opening_sha_are_printed_and_are_in_no_tally(gh, monkeyp
     assert all(r["test_ids"] == {} for r in doc["shas"] if r["before_window"])
     assert doc["summary"] == {
         "shas": 7, "before_window": 4, "counted": 3, "window": 10, "window_met": False,
-        "classes": {"AGREE-GREEN": 3, "AGREE-RED": 0, "DISAGREE": 0, "NOT-COUNTED": 0},
+        "classes": {"AGREE-GREEN": 3, "AGREE-RED": 0, "DISAGREE": 0, "SET-ASIDE": 0, "NOT-COUNTED": 0},
         "test_ids": {"EQUAL": 6, "DIFFER": 0, "VACUOUS": 0, "ABSENT": 0},
         "counted_with_test_ids_equal_in_both_passes": 3}
     assert doc["acceptance"] == {"met": False, "missing": ["3 of 10 counted"], "counted": 3, "counted_red": 0,
-                                 "qualifying": 3, "exempt": [], "blocking": []}
+                                 "qualifying": 3, "exempt": [], "set_aside": [], "blocking": []}
     code, out, calls = gh(replies)
     asked = {c[4] for c in calls if "/check-runs/" in c[4]}
     assert asked == {annotations_path(p.job(side, name)["id"]) for p in pushes[2:] for side, name in (
@@ -2277,7 +2288,7 @@ def test_rows_before_the_opening_sha_are_printed_and_are_in_no_tally(gh, monkeyp
     assert lines[at - 1].startswith("%s AGREE-GREEN   GREEN %d" % (sha(3)[:10], pushes[2].ci["id"]))
     assert "TEST-IDS-EQUAL   TEST-IDS-EQUAL" in lines[at - 1]
     assert out.count("BEFORE-WINDOW GREEN") == 4 and out.count("first seen before") == 4
-    assert "7 SHA(s): AGREE-GREEN 3, AGREE-RED 0, DISAGREE 0, NOT-COUNTED 0, BEFORE-WINDOW 4\n" in out
+    assert "7 SHA(s): AGREE-GREEN 3, AGREE-RED 0, DISAGREE 0, SET-ASIDE 0, NOT-COUNTED 0, BEFORE-WINDOW 4\n" in out
     assert ("verdict on both sides: 3; counted toward the 10-push window: 3 (not met yet). With TEST-IDS-EQUAL in "
             "both passes: 3.") in out
     assert out.rstrip().endswith("ACCEPTANCE: NOT MET: 3 of 10 counted")
@@ -2321,7 +2332,7 @@ def test_ten_pushes_of_which_two_are_before_the_opening_sha_are_not_acceptance(g
     monkeypatch.setattr(sa, "COUNT_FROM_SHA", sha(1))
     code, verdict, line = acceptance(gh, replies)
     assert code == 0 and verdict == {"met": False, "missing": ["8 of 10 counted"], "counted": 8, "counted_red": 0,
-                                     "qualifying": 8, "exempt": [], "blocking": []}
+                                     "qualifying": 8, "exempt": [], "set_aside": [], "blocking": []}
     assert line == "ACCEPTANCE: NOT MET: 8 of 10 counted"
 
 
@@ -2724,7 +2735,7 @@ def test_rows_before_the_window_need_no_node_files_and_are_in_no_tally(gh, monke
     assert [r["sha"] for r in doc["shas"] if not r["before_window"]] == [sha(5), sha(4)]
     assert doc["summary"]["test_ids"] == {"EQUAL": 4, "DIFFER": 0, "VACUOUS": 0, "ABSENT": 0}
     assert doc["acceptance"] == {"met": False, "missing": ["2 of 10 counted"], "counted": 2, "counted_red": 0,
-                                 "qualifying": 2, "exempt": [], "blocking": []}
+                                 "qualifying": 2, "exempt": [], "set_aside": [], "blocking": []}
     monkeypatch.setattr(sa, "COUNT_FROM_SHA", sha(3))            # the same pushes, one of them now inside
     code, doc = doc_of(gh, replies)
     assert row(doc, sha(3))["test_ids"]["UTC"]["class"] == "VACUOUS" and row(doc, sha(3))["acceptance"] == "BLOCKS"
@@ -2752,3 +2763,515 @@ def test_the_documented_exit_codes_are_the_ones_returned():
         assert code in sa.__doc__.split("Exit codes:")[1]
     assert (sa.WINDOW, sa.QUEUE_THRESHOLD_S, sa.QUEUE_RUNS_OVER) == (10, 120, 3)
     assert sa.PASSES == {"UTC": ("build-and-test", "unit-utc-cov"), NY: ("build-and-test", "unit-ny")}
+
+
+# ── rows set aside by name ──────────────────────────────────────────────────────────────────────────────────────
+
+FLAKE = "a test race: the test read storage before a passive effect had taken the draft out of it"
+DECISION = "owner, a date, a decision row"
+WORKFLOWS = {"ci": "ci.yml", "next": "ci-next.yml"}
+ASIDE_TAIL = ". Set aside by name (a DISAGREE that is not one of the 10 and does not block): 1: %s, cause: " + FLAKE
+UNUSED_TAIL = ". SET_ASIDE entries that set nothing aside: 1: %s %s"
+BEFORE_WINDOW = "the SHA is before the counting window, where a row is in no tally"
+NOT_COUNTS = "run_id, red_attempt and green_attempt are not all positive integers"
+
+
+def green_attempt_jobs_path(run_id, attempt=2):
+    return "repos/islanddave/garden-app/actions/runs/%d/attempts/%d/jobs?per_page=100&page=1" % (run_id, attempt)
+
+
+def serve_green_attempt(p, side="ci", attempt=2):
+    """The re-run's jobs at that attempt's own endpoint: a copy of what rerun() left as the run's latest jobs."""
+    run = getattr(p, side)
+    p.replies[green_attempt_jobs_path(run["id"], attempt)] = copy.deepcopy(p.replies[jobs_path(run["id"])])
+    return p.replies[green_attempt_jobs_path(run["id"], attempt)]["jobs"]
+
+
+def make_flaky(p, side="ci", to="success"):
+    """A push as a flaky unit test leaves it, in the shape of the real fe89add373: `side` red at its UTC pass on
+    attempt 1 and re-run on the same commit, the other side green. The red attempt printed a UTC digest that
+    differs from the other side's in states only; a red ci.yml job never reached its New York pass. `p` must be a
+    plain push: a push() made after this one would copy the re-run without its first attempt."""
+    if side == "ci":
+        red_serial(p)
+        fail_step(p, "build-and-test", UTC_PASS, side="ci")
+        p.notice("ci", "build-and-test", "UTC", A, reason="failed", failed=1)
+        p.notice("next", "unit-utc-cov", "UTC", C)
+    else:
+        red_leg(p, "unit-utc-cov")
+        fail_step(p, "unit-utc-cov", UTC_PASS)
+        p.notice("ci", "build-and-test", "UTC", C)
+        p.notice("ci", "build-and-test", NY, B)
+        p.notice("next", "unit-utc-cov", "UTC", A, reason="failed", failed=1)
+    p.notice("next", "unit-ny", NY, B)
+    p.rerun(side, to=to)
+    serve_green_attempt(p, side)
+    return p
+
+
+def entry_for(p, side="ci", **fields):
+    return dict({"sha": p.sha, "workflow": WORKFLOWS[side], "run_id": getattr(p, side)["id"], "red_attempt": 1,
+                 "green_attempt": 2, "cause": FLAKE, "fixed_by": sha(99), "decision": DECISION}, **fields)
+
+
+def asked_for_green(calls, p, side="ci"):
+    """How often the jobs of an attempt after the first were asked for: the read only a set-aside entry makes."""
+    stem = "/actions/runs/%d/attempts/" % getattr(p, side)["id"]
+    return sum(1 for call in calls if stem in call[4] and "/jobs?" in call[4] and stem + "1/" not in call[4])
+
+
+def nothing_set_aside(gh, monkeypatch, replies, p, entries, status, why, reads=0, side="ci"):
+    """The entry (the first of `entries`) sets nothing aside: the reading is the one with no list at all, row for
+    row and line for line, plus the entry's own report, its line on the row, its line under the table and its
+    words on the ACCEPTANCE line. `reads`: how often the green attempt's jobs were asked for."""
+    monkeypatch.setattr(sa, "SET_ASIDE", ())
+    plain_code, plain = doc_of(gh, replies)
+    plain_out = gh(replies)[1].rstrip().split("\n")
+    monkeypatch.setattr(sa, "SET_ASIDE", tuple(entries))
+    code, doc = doc_of(gh, replies)
+    _, out, calls = gh(replies)
+    mine, was = row(doc, p.sha), row(plain, p.sha)
+    report = dict({field: entries[0].get(field) for field in sa.ENTRY_FIELDS}, status=status, why=why,
+                  would_read=was["class"] if status == "REFUSED" else None)
+    assert doc["set_aside"][0] == report and mine["set_aside"] == report
+    assert all(one["status"] != "APPLIED" for one in doc["set_aside"]) and len(doc["set_aside"]) == len(entries)
+    assert dict(mine, set_aside=None) == was and [r for r in doc["shas"] if r is not mine] == [
+        r for r in plain["shas"] if r is not was]
+    assert (code, doc["verdict"], doc["summary"], doc["acceptance"], doc["queue"]) == (
+        plain_code, plain["verdict"], plain["summary"], plain["acceptance"], plain["queue"])
+    assert doc["acceptance"]["set_aside"] == [] and doc["summary"]["classes"]["SET-ASIDE"] == 0
+    assert asked_for_green(calls, p, side) == reads
+    new = [line for line in out.rstrip().split("\n") if line not in plain_out]
+    assert new[0] == ("           SET-ASIDE %s: an entry of SET_ASIDE names this SHA and sets nothing aside, so the "
+                      "row is judged as any other: %s" % (status, "; ".join(why)))
+    assert new[1] == "SET_ASIDE ENTRY %s: %s (%s run %s) sets nothing aside: %s" % (
+        status, p.sha[:10], entries[0].get("workflow"), entries[0].get("run_id"), "; ".join(why))
+    assert new[-1].startswith(plain_out[-1] + ". SET_ASIDE entries that set nothing aside: %d: %s %s" % (
+        len(entries), p.sha[:10], status)) and len(new) == 2 + len(entries)
+    return doc, out
+
+
+def test_the_shipped_list_is_the_one_row_the_owner_set_aside_and_no_flag_adds_to_it(gh):
+    assert len(SHIPPED_SET_ASIDE) == 1 and isinstance(SHIPPED_SET_ASIDE, tuple)
+    only = SHIPPED_SET_ASIDE[0]
+    assert {field: only[field] for field in ("sha", "workflow", "run_id", "red_attempt", "green_attempt",
+                                             "fixed_by")} == {
+        "sha": "fe89add37399f3d6d61ceabfb18cd6a753e93702", "workflow": "ci.yml", "run_id": 38056999803,
+        "red_attempt": 1, "green_attempt": 2, "fixed_by": "b18bbce89e8bf5d70a435a2669f4779113af5400"}
+    assert tuple(only) == sa.ENTRY_FIELDS and sa.entry_defects(only) == []
+    assert "PutUpSpentKey.test.jsx" in only["cause"] and "a test race" in only["cause"]
+    assert ". " not in only["cause"] and not only["cause"].endswith(".")           # one sentence, as a clause
+    assert "owner, 2026-10-10" in only["decision"] and "shadow-flaky-row" in only["decision"]
+    source = open(SCRIPT, encoding="utf-8").read()
+    assert source.count("\nSET_ASIDE = (\n") == 1 and source.count("SET_ASIDE = ") == 1
+    assert "SET ASIDE BY NAME" in sa.__doc__ and "shadow-flaky-row" in sa.__doc__
+    assert COUNT_FROM == "234efd21b3a57f705a4d0d15b76f184fdf31b348"  # the window did not move for it
+    for argv in (["--set-aside", sha(1)], ["--aside", sha(1)], ["--exempt", sha(1)], ["--ignore", sha(1)],
+                 ["--set-aside-file", "x.json"]):
+        code, out, calls = gh(recorded(), *argv)
+        assert code == 64 and out == "" and calls == []
+
+
+def test_the_set_aside_is_written_where_the_trial_rule_and_the_readme_are():
+    with open(os.path.join(HERE, "..", ".github", "workflows", "ci-next.yml"), encoding="utf-8") as fh:
+        header = fh.read().split("\non:\n")[0].split("\n")[1:]  # between `name:` and `on:`
+    assert all(line.startswith("#") or not line for line in header)  # comment and nothing else: no job, no step
+    rule = "\n".join(header).split("# The count restarts")[1].split("# Three commits are restarts so far")[0]
+    assert "COUNT_FROM_SHA does not move past it until its cause is written in the commit that moves it." in rule
+    assert "amendment of 2026-10-10" in rule and "shadow-flaky-row" in rule and "SET_ASIDE" in rule
+    assert "COUNT_FROM_SHA\n# does not move" in rule and "a row with no entry blocks as before" in rule
+    with open(os.path.join(HERE, "ci-telemetry", "README.md"), encoding="utf-8") as fh:
+        readme = fh.read()
+    assert "**SET-ASIDE**" in readme and "shadow-flaky-row" in readme and "`schema_version` 3" in readme
+    assert only_sha() in readme
+
+
+def only_sha():
+    return SHIPPED_SET_ASIDE[0]["sha"]
+
+
+@pytest.mark.parametrize("road", ["gh", "gh_on_path"])
+@pytest.mark.parametrize("side", ["ci", "next"])
+def test_a_flaky_red_side_that_passed_on_its_rerun_is_set_aside_by_its_entry(road, side, request, monkeypatch):
+    gh = request.getfixturevalue(road)
+    replies = recorded()
+    p = make_flaky(push(replies, sha(1)), side)
+    code, before = doc_of(gh, replies)                  # no entry names it: it blocks, as it did
+    was = row(before, p.sha)
+    assert code == 1 and (was["class"], was["counted"], was["acceptance"], was["set_aside"]) == (
+        "DISAGREE", True, "BLOCKS", None)
+    assert before["set_aside"] == [] and before["summary"]["classes"]["DISAGREE"] == 1
+    assert {"1 DISAGREE", "TEST-IDS-DIFFER on 1 row(s)"} <= set(before["acceptance"]["missing"])
+    assert asked_for_green(gh(replies)[2], p, side) == 0
+
+    monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p, side),))
+    code, doc = doc_of(gh, replies)
+    mine = row(doc, p.sha)
+    assert code == 0 and doc["verdict"] == "agree"
+    assert (mine["class"], mine["counted"], mine["acceptance"]) == ("SET-ASIDE", False, "SET-ASIDE")
+    assert mine["set_aside"] == dict(entry_for(p, side), status="APPLIED", why=[], would_read="DISAGREE")
+    assert doc["set_aside"] == [mine["set_aside"]]
+    # Its test-ID readings are the red attempt's: still read, still on the row, in no tally.
+    assert mine["test_ids"] == was["test_ids"] and {z: one["class"] for z, one in mine["test_ids"].items()} == {
+        "UTC": "DIFFER", NY: "ABSENT" if side == "ci" else "EQUAL"}
+    assert doc["summary"] == {
+        "shas": 3, "before_window": 0, "counted": 2, "window": 10, "window_met": False,
+        "classes": {"AGREE-GREEN": 2, "AGREE-RED": 0, "DISAGREE": 0, "SET-ASIDE": 1, "NOT-COUNTED": 0},
+        "test_ids": {"EQUAL": 0, "DIFFER": 0, "VACUOUS": 0, "ABSENT": 4},
+        "counted_with_test_ids_equal_in_both_passes": 0}
+    assert doc["acceptance"] == dict(before["acceptance"], counted=2, set_aside=[p.sha], missing=[
+        "0 of 10 counted", "test IDs absent on 2 row(s)"], blocking=[
+            one for one in before["acceptance"]["blocking"] if one["sha"] != p.sha])
+    assert len(doc["acceptance"]["blocking"]) == 2 == len(before["acceptance"]["blocking"]) - 1
+
+    code, out, calls = gh(replies)
+    assert code == 0 and asked_for_green(calls, p, side) == 1
+    assert [call[4] for call in calls].count(green_attempt_jobs_path(getattr(p, side)["id"])) == 1
+    assert all(call[:4] == ["api", "-i", "-X", "GET"] for call in calls)
+    lines = out.rstrip().split("\n")
+    at = next(n for n, line in enumerate(lines) if line.startswith(p.sha[:10]))
+    workflow, run_id = WORKFLOWS[side], getattr(p, side)["id"]
+    assert lines[at].startswith("%s SET-ASIDE     %s %d" % (p.sha[:10], "RED" if side == "ci" else "GREEN",
+                                                           p.ci["id"]))
+    assert ("TEST-IDS-DIFFER  TEST-IDS-%s" % ("ABSENT" if side == "ci" else "EQUAL")) in lines[at]
+    assert lines[at + 1] == "           ci.yml: %s | ci-next.yml: %s" % (
+        ("failed: build-and-test", "build-and-test-next=success") if side == "ci" else
+        ("build-and-test=success", "failed: unit-utc-cov"))
+    assert lines[at + 2] == (
+        "           SET-ASIDE by name, not one of the 10 and not blocking: it would read DISAGREE. %s run %d was red "
+        "on attempt 1 and passed on attempt 2, its latest, on this SHA. Cause: %s. Fixed by %s. Decision: %s. Its "
+        "test-ID readings are the red attempt's and block nothing" % (workflow, run_id, FLAKE, sha(99)[:10],
+                                                                      DECISION))
+    assert lines[at + 3] == "           test IDs of the UTC pass differ in: states only"
+    assert lines[at + 4] == ("           %s was re-run: attempt 1 is the one judged; its latest attempt, 2, "
+                             "concluded success" % workflow)
+    assert LABEL_NOTE in lines[at + 5] and "BLOCKS" not in "\n".join(lines[at:at + 6])
+    assert "EXEMPT" not in out and "SET_ASIDE ENTRY" not in out
+    assert "3 SHA(s): AGREE-GREEN 2, AGREE-RED 0, DISAGREE 0, SET-ASIDE 1, NOT-COUNTED 0, BEFORE-WINDOW 0" in lines
+    assert ("verdict on both sides: 2 (and 1 more set aside by name, in no tally); counted toward the 10-push "
+            "window: 0 (not met yet). With TEST-IDS-EQUAL in both passes: 0.") in out
+    assert lines[-2] == ("verdict: no DISAGREE and no TEST-IDS-DIFFER among the SHAs inside the window (1 row(s) set "
+                         "aside by name and in neither count: %s)" % p.sha[:10])
+    assert lines[-1] == ("ACCEPTANCE: NOT MET: 0 of 10 counted; test IDs absent on 2 row(s)"
+                         + ASIDE_TAIL % p.sha[:10])
+
+
+def test_the_acceptance_line_names_the_set_aside_sha_and_its_cause_when_it_is_met_and_when_it_is_not(gh, monkeypatch):
+    replies = recorded()
+    pushes = ten(replies)
+    p = make_flaky(push(replies, sha(20)))
+    code, verdict, line = acceptance(gh, replies)
+    assert code == 1 and verdict["met"] is False and verdict["qualifying"] == 10 and verdict["missing"] == [
+        "1 DISAGREE", "TEST-IDS-DIFFER on 1 row(s)", "test IDs absent on 1 row(s)"]  # all three from the one row
+    assert line == "ACCEPTANCE: NOT MET: " + "; ".join(verdict["missing"])
+    monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p),))
+    code, verdict, line = acceptance(gh, replies)
+    assert code == 0 and verdict == {"met": True, "missing": [], "counted": 10, "counted_red": 0, "qualifying": 10,
+                                     "exempt": [], "set_aside": [p.sha], "blocking": []}
+    assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, "
+                    "queue threshold not tripped" + ASIDE_TAIL % p.sha[:10] + NOT_COVERED)
+    _nine(pushes)
+    code, verdict, line = acceptance(gh, replies)
+    assert code == 0 and verdict["met"] is False and verdict["set_aside"] == [p.sha]
+    assert line == "ACCEPTANCE: NOT MET: 9 of 10 counted" + ASIDE_TAIL % p.sha[:10]
+    # Beside an exempt row, each is named in its own words and the set-aside is not called exempt.
+    real_red_push(replies)
+    line = acceptance(gh, replies)[2]
+    assert line == "ACCEPTANCE: NOT MET: 9 of 10 counted" + EXEMPT_TAIL + ASIDE_TAIL % p.sha[:10]
+    # And under a --limit that prints neither row.
+    code, out, _ = gh(replies, "--limit", "1")
+    assert code == 0 and out.rstrip().split("\n")[-1] == line and " SET-ASIDE  " not in out
+    assert "SET-ASIDE 1, NOT-COUNTED 1, BEFORE-WINDOW 0" in out
+
+
+def test_one_entry_sets_one_sha_aside_and_a_second_row_with_the_same_cause_still_blocks(gh, monkeypatch):
+    """Nothing is set aside by pattern or by the wording of a cause: one entry, one SHA, one run."""
+    replies = recorded()
+    first, second = push(replies, sha(1)), push(replies, sha(2))
+    make_flaky(first)
+    make_flaky(second)
+    monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(first),))
+    code, doc = doc_of(gh, replies)
+    assert code == 1 and doc["verdict"] == "disagree"
+    assert (row(doc, first.sha)["class"], row(doc, second.sha)["class"]) == ("SET-ASIDE", "DISAGREE")
+    assert row(doc, second.sha)["acceptance"] == "BLOCKS" and row(doc, second.sha)["set_aside"] is None
+    assert doc["summary"]["classes"] == {"AGREE-GREEN": 2, "AGREE-RED": 0, "DISAGREE": 1, "SET-ASIDE": 1,
+                                         "NOT-COUNTED": 0}
+    assert doc["acceptance"]["set_aside"] == [first.sha]
+    assert [one["sha"] for one in doc["acceptance"]["blocking"]][0] == second.sha
+    assert doc["acceptance"]["missing"] == ["0 of 10 counted", "1 DISAGREE", "TEST-IDS-DIFFER on 1 row(s)",
+                                            "test IDs absent on 3 row(s)"]
+    _, out, calls = gh(replies)
+    assert (asked_for_green(calls, first), asked_for_green(calls, second)) == (1, 0)
+    assert "(1 row(s) set aside by name and in neither count: %s)" % first.sha[:10] in out
+    assert out.rstrip().endswith(ASIDE_TAIL % first.sha[:10])
+
+
+# Each refusal: a row that an entry names and that one condition (or, where two cannot come apart, two) refuses.
+# The row then reads exactly as it does with no entry. Every case but the last two is refused on what is already
+# read, so the green attempt's jobs are not asked for.
+
+def _another_run(p):
+    return entry_for(p, run_id=p.ci["id"] + 1), [
+        "ci.yml's run for this SHA is %d, not run %d, the one the entry names" % (p.ci["id"], p.ci["id"] + 1)]
+
+
+def _the_green_side_named(p):
+    """The entry names ci-next.yml, the side that was green, and that run was re-run to green as well: nothing but
+    the other side's RED stands between the entry and a set-aside."""
+    p.rerun("next", to="success")
+    serve_green_attempt(p, "next")
+    return entry_for(p, "next"), ["the other side, ci.yml, is RED, not GREEN"]
+
+
+def _red_on_both_sides(p):
+    red_leg(p, "unit-utc-cov")
+    return entry_for(p), ["the row reads AGREE-RED, not DISAGREE", "the other side, ci-next.yml, is RED, not GREEN"]
+
+
+def _rerun_red_too(p):
+    p.ci.update(conclusion="failure")  # the listing's word on attempt 2, whatever that attempt's jobs are served as
+    return entry_for(p), ["the re-run did not pass: attempt 2 concluded failure"]
+
+
+def _rerun_cancelled(p):
+    p.ci.update(conclusion="cancelled")
+    return entry_for(p), ["the re-run did not pass: attempt 2 concluded cancelled"]
+
+
+def _rerun_in_flight(p):
+    p.ci.update(status="in_progress", conclusion=None)
+    return entry_for(p), ["the re-run did not pass: attempt 2 is in_progress"]
+
+
+def _a_third_attempt(p):
+    p.ci.update(run_attempt=3)
+    serve_green_attempt(p, attempt=3)
+    return entry_for(p), ["the run's latest attempt is 3, not attempt 2, the one the entry names as green"]
+
+
+def _another_red_attempt(p):
+    """The entry says attempt 2 was the red one and 3 the green; attempt 3 is the latest and passed. What is judged
+    is attempt 1."""
+    p.ci.update(run_attempt=3)
+    serve_green_attempt(p, attempt=3)
+    return entry_for(p, red_attempt=2, green_attempt=3), [
+        "the attempt judged is 1, not attempt 2, the one the entry names as red"]
+
+
+REFUSED_ON_WHAT_IS_READ = [_another_run, _the_green_side_named, _red_on_both_sides, _rerun_red_too, _rerun_cancelled,
+                           _rerun_in_flight, _a_third_attempt, _another_red_attempt]
+
+
+@pytest.mark.parametrize("spoil", REFUSED_ON_WHAT_IS_READ)
+def test_an_entry_the_live_reading_no_longer_supports_sets_nothing_aside_and_says_which_condition_failed(
+        gh, monkeypatch, spoil):
+    replies = recorded()
+    p = make_flaky(push(replies, sha(1)))
+    entry, why = spoil(p)
+    side = "next" if entry["workflow"] == "ci-next.yml" else "ci"
+    doc, _ = nothing_set_aside(gh, monkeypatch, replies, p, [entry], "REFUSED", why, side=side)
+    assert row(doc, p.sha)["acceptance"] == "BLOCKS" and row(doc, p.sha)["counted"] is True
+
+
+@pytest.mark.parametrize("shadow_nodes", [NODE_FILES, 0])
+def test_a_row_with_a_vacuous_pass_is_never_set_aside(gh, monkeypatch, shadow_nodes):
+    """Made red after the passes ran (ci.yml at the measured floor), so both passes printed on both sides, with
+    equal digests. With the shadow's New York notice showing files in the node project the row is set aside; with
+    it showing none the pass is VACUOUS, the shadow's own defect, and the same entry sets nothing aside."""
+    replies = recorded()
+    p = push(replies, sha(1))
+    red_serial(p)
+    fail_step(p, "build-and-test", MEASURED_FLOOR, side="ci")
+    p.ids(ny=(None, None))
+    p.notice("ci", "build-and-test", NY, B)
+    p.notice("next", "unit-ny", NY, B, node_files=shadow_nodes)
+    p.rerun("ci", to="success")
+    serve_green_attempt(p)
+    if shadow_nodes:
+        monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p),))
+        code, doc = doc_of(gh, replies)
+        assert code == 0 and row(doc, p.sha)["class"] == "SET-ASIDE"
+        assert {z: one["class"] for z, one in row(doc, p.sha)["test_ids"].items()} == {"UTC": "EQUAL", NY: "EQUAL"}
+        return
+    doc, _ = nothing_set_aside(gh, monkeypatch, replies, p, [entry_for(p)], "REFUSED", [
+        "its America/New_York pass reads TEST-IDS-VACUOUS, which is never set aside"])
+    mine = row(doc, p.sha)
+    assert mine["test_ids"][NY]["class"] == "VACUOUS" and mine["acceptance"] == "BLOCKS"
+    assert "1 DISAGREE" in doc["acceptance"]["missing"] and VACUOUS_MISSING % 1 in doc["acceptance"]["missing"]
+
+
+def test_an_entry_on_a_row_that_does_not_disagree_sets_nothing_aside(gh, monkeypatch):
+    """Green on attempt 1 on both sides, then re-run to green: every condition but the row's own class holds."""
+    replies = recorded()
+    p = push(replies, sha(1))
+    p.ids()
+    p.rerun("ci", to="success")
+    serve_green_attempt(p)
+    doc, _ = nothing_set_aside(gh, monkeypatch, replies, p, [entry_for(p)], "REFUSED",
+                               ["the row reads AGREE-GREEN, not DISAGREE"])
+    assert row(doc, p.sha)["acceptance"] == "QUALIFIES" and doc["acceptance"]["qualifying"] == 1
+
+
+def test_a_red_side_that_was_never_rerun_is_not_set_aside(gh, monkeypatch):
+    replies = recorded()
+    p = push(replies, sha(1))
+    red_serial(p)
+    nothing_set_aside(gh, monkeypatch, replies, p, [entry_for(p)], "REFUSED", [
+        "the run's latest attempt is 1, not attempt 2, the one the entry names as green"])
+
+
+@pytest.mark.parametrize("verdict_job,reads_as", [
+    ({"conclusion": "failure"}, "RED (failed: build-and-test)"),
+    ({"conclusion": "skipped"}, "RED (build-and-test=skipped in a run that concluded success with no failed job)"),
+    ({"conclusion": "cancelled"}, "RED (cancelled with no newer push behind it (a job timeout or a hand cancel))"),
+    (None, "RED (build-and-test=absent in a run that concluded success with no failed job)"),
+])
+def test_a_rerun_the_listing_calls_a_success_whose_own_jobs_do_not_read_green_is_not_set_aside(
+        gh, monkeypatch, verdict_job, reads_as):
+    """The one read an entry adds, and the only refusal that needs it: the run row says attempt 2 concluded
+    success, and the jobs of attempt 2 do not read GREEN by the rule every side is read by."""
+    replies = recorded()
+    p = make_flaky(push(replies, sha(1)))
+    served = replies[green_attempt_jobs_path(p.ci["id"])]
+    if verdict_job is None:
+        served.update(total_count=0, jobs=[])
+    else:
+        served["jobs"][0].update(verdict_job)
+    nothing_set_aside(gh, monkeypatch, replies, p, [entry_for(p)], "REFUSED",
+                      ["the jobs of attempt 2 read %s, not GREEN" % reads_as], reads=1)
+
+
+def test_an_entry_for_a_sha_before_the_counting_window_sets_nothing_aside_and_its_row_stays_before_window(
+        gh, monkeypatch):
+    replies = recorded()
+    p, later = push(replies, sha(1)), push(replies, sha(2))
+    make_flaky(p)
+    monkeypatch.setattr(sa, "COUNT_FROM_SHA", later.sha)
+    doc, out = nothing_set_aside(gh, monkeypatch, replies, p, [entry_for(p)], "REFUSED", [BEFORE_WINDOW])
+    mine = row(doc, p.sha)
+    assert (mine["before_window"], mine["counted"], mine["class"], mine["acceptance"]) == (True, False, "DISAGREE",
+                                                                                           None)
+    assert "%s BEFORE-WINDOW RED %d" % (p.sha[:10], p.ci["id"]) in out and "it would read DISAGREE" in out
+    # Past --limit its row is not read at all, and the entry is reported all the same.
+    code, out, _ = gh(replies, "--json", "--limit", "1")
+    doc = json.loads(out)
+    assert code == 0 and [r["sha"] for r in doc["shas"]] == [later.sha]
+    assert doc["set_aside"] == [dict(entry_for(p), status="REFUSED", why=[BEFORE_WINDOW], would_read=None)]
+    out = gh(replies, "--limit", "1")[1]
+    assert "SET_ASIDE ENTRY REFUSED: %s (ci.yml run %d) sets nothing aside: %s" % (
+        p.sha[:10], p.ci["id"], BEFORE_WINDOW) in out
+    assert out.rstrip().endswith(UNUSED_TAIL % (p.sha[:10], "REFUSED"))
+
+
+@pytest.mark.parametrize("spoil,why", [
+    (lambda e: e.update(cause="   "), "no cause is written beside it"),
+    (lambda e: e.update(cause=None), "no cause is written beside it"),
+    (lambda e: e.update(decision=""), "no decision is written beside it"),
+    (lambda e: e.pop("cause"), "it does not carry exactly these fields: " + ", ".join(sa.ENTRY_FIELDS)),
+    (lambda e: e.pop("fixed_by"), "it does not carry exactly these fields: " + ", ".join(sa.ENTRY_FIELDS)),
+    (lambda e: e.update(pattern="PutUp*"), "it does not carry exactly these fields: " + ", ".join(sa.ENTRY_FIELDS)),
+    (lambda e: e.update(fixed_by="b18bbce8"), "fixed_by is not a full 40-hex SHA"),
+    (lambda e: e.update(workflow="integration-test.yml"), "workflow is neither ci.yml nor ci-next.yml"),
+    (lambda e: e.update(run_id=str(e["run_id"])), NOT_COUNTS),
+    (lambda e: e.update(green_attempt=True), NOT_COUNTS),
+    (lambda e: e.update(red_attempt=0), NOT_COUNTS),
+    (lambda e: e.update(red_attempt=2), "green_attempt is not after red_attempt"),
+])
+def test_an_entry_that_is_not_whole_sets_nothing_aside(gh, monkeypatch, spoil, why):
+    """Every field is required, the cause above all: the decision is a set-aside WITH its cause written."""
+    replies = recorded()
+    p = make_flaky(push(replies, sha(1)))
+    entry = entry_for(p)
+    spoil(entry)
+    assert sa.entry_defects(entry) == [why] and sa.entry_defects(entry_for(p)) == []
+    nothing_set_aside(gh, monkeypatch, replies, p, [entry], "MALFORMED", [why])
+
+
+def test_an_entry_with_a_short_sha_names_no_row_and_is_reported(gh, monkeypatch):
+    replies = recorded()
+    p = make_flaky(push(replies, sha(1)))
+    monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p, sha=p.sha[:10]), "fe89add373", None))
+    code, doc = doc_of(gh, replies)
+    assert code == 1 and row(doc, p.sha)["class"] == "DISAGREE" and row(doc, p.sha)["set_aside"] is None
+    assert [(one["sha"], one["status"], one["why"]) for one in doc["set_aside"]] == [
+        (p.sha[:10], "MALFORMED", ["sha is not a full 40-hex SHA"]),
+        (None, "MALFORMED", ["it does not carry exactly these fields: " + ", ".join(sa.ENTRY_FIELDS)]),
+        (None, "MALFORMED", ["it does not carry exactly these fields: " + ", ".join(sa.ENTRY_FIELDS)])]
+    out = gh(replies)[1]
+    assert out.count("SET_ASIDE ENTRY MALFORMED: ") == 3
+    assert out.rstrip().endswith(". SET_ASIDE entries that set nothing aside: 3: %s MALFORMED, None MALFORMED, "
+                                 "None MALFORMED" % p.sha[:10])
+
+
+def test_two_entries_for_one_sha_set_nothing_aside(gh, monkeypatch):
+    replies = recorded()
+    p = make_flaky(push(replies, sha(1)))
+    why = ["2 entries name this SHA: one entry is one SHA and one run"]
+    doc, _ = nothing_set_aside(gh, monkeypatch, replies, p, [entry_for(p), entry_for(p, cause="another cause")],
+                               "MALFORMED", why)
+    assert [(one["status"], one["why"]) for one in doc["set_aside"]] == [("MALFORMED", why)] * 2
+
+
+def test_a_stale_entry_whose_sha_is_no_dev_push_is_loud_and_changes_nothing_else(gh, monkeypatch):
+    replies = recorded()
+    p = make_flaky(push(replies, sha(1)))
+    plain_code, plain = doc_of(gh, replies)
+    _, plain_out, plain_calls = gh(replies)
+    stale = entry_for(p, sha=sha(77))
+    monkeypatch.setattr(sa, "SET_ASIDE", (stale,))
+    code, doc = doc_of(gh, replies)
+    why = ["its SHA is not among the 3 dev push SHA(s) the two listings hold"]
+    assert doc["set_aside"] == [dict(stale, status="STALE", why=why, would_read=None)]
+    assert (code, doc["shas"], doc["summary"], doc["acceptance"]) == (plain_code, plain["shas"], plain["summary"],
+                                                                      plain["acceptance"])
+    assert code == 1 and row(doc, p.sha)["class"] == "DISAGREE" and all(r["set_aside"] is None for r in doc["shas"])
+    _, out, calls = gh(replies)
+    assert calls == plain_calls                                  # nothing is asked of GitHub for it
+    new = [line for line in out.rstrip().split("\n") if line not in plain_out.rstrip().split("\n")]
+    assert new == [
+        "SET_ASIDE ENTRY STALE: %s (ci.yml run %d) sets nothing aside: %s" % (sha(77)[:10], p.ci["id"], why[0]),
+        plain_out.rstrip().split("\n")[-1] + UNUSED_TAIL % (sha(77)[:10], "STALE")]
+
+
+def test_the_shipped_list_against_these_recordings_is_one_stale_entry_and_says_so_on_the_last_line(gh, monkeypatch):
+    """Why the fixture empties the list: fe89add373 is in no recording here. Met or not, the last line names it."""
+    monkeypatch.setattr(sa, "SET_ASIDE", SHIPPED_SET_ASIDE)
+    replies = recorded()
+    code, out, _ = gh(replies)
+    assert code == 0 and out.rstrip().endswith(
+        "ACCEPTANCE: NOT MET: 0 of 10 counted; test IDs absent on 2 row(s)" + UNUSED_TAIL % ("fe89add373", "STALE"))
+    assert "SET_ASIDE ENTRY STALE: fe89add373 (ci.yml run 38056999803) sets nothing aside: " in out
+    ten(replies)
+    code, verdict, line = acceptance(gh, replies)
+    assert code == 0 and verdict["met"] is True and verdict["set_aside"] == []
+    assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, "
+                    "queue threshold not tripped" + UNUSED_TAIL % ("fe89add373", "STALE") + NOT_COVERED)
+    code, doc = doc_of(gh, {next(p for p in recorded() if "/workflows/ci-next.yml/runs?" in p): {
+        "total_count": 0, "workflow_runs": []}})
+    assert code == 0 and [(one["sha"], one["status"]) for one in doc["set_aside"]] == [(only_sha(), "STALE")]
+
+
+@pytest.mark.parametrize("bad", list(BAD) + ["gone", "truncated", "a job with no name"])
+def test_a_green_attempt_whose_jobs_cannot_be_read_is_exit_2_and_never_a_set_aside(gh, monkeypatch, bad):
+    replies = recorded()
+    p = make_flaky(push(replies, sha(1)))
+    monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p),))
+    assert gh(replies)[0] == 0                                    # readable: the row is set aside, exit 0
+    path = green_attempt_jobs_path(p.ci["id"])
+    if bad == "gone":
+        del replies[path]
+    elif bad == "truncated":
+        replies[path]["total_count"] += 1
+    elif bad == "a job with no name":
+        replies[path]["jobs"][0].pop("name")
+    else:
+        replies[path] = {"_raw": BAD[bad]}
+    code, out, calls = gh(replies)
+    assert code == 2 and out.startswith("shadow-agree: UNREADABLE.") and "this is not agreement" in out
+    assert "SET-ASIDE" not in out and "ACCEPTANCE" not in out and "AGREE" not in out
+    assert asked_for_green(calls, p) == 1
+    code, out, _ = gh(replies, "--json")
+    doc = json.loads(out)
+    assert code == 2 and doc["verdict"] == "unreadable" and set(doc) == {"schema_version", "repo", "verdict", "error"}
+    assert "/attempts/2" in doc["error"] or "run %d" % p.ci["id"] in doc["error"]

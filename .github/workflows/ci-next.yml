@@ -99,6 +99,13 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 # so a new file added to LOADS_SRC with its test does not; a check mirrored step for step into one leg does not. A
 # row that blocks for TEST-IDS-DIFFER, or for DISAGREE with a failed unit step in a leg, is a result of the trial:
 # COUNT_FROM_SHA does not move past it until its cause is written in the commit that moves it.
+# The owner's amendment of 2026-10-10 (decision row `shadow-flaky-row` in gardening-docs
+# project-state/_promotepath-20261002/DECISIONS.md): a row that reads DISAGREE because of a flaky test may instead be
+# SET ASIDE by name, only when its red side passed on a re-run of the same commit and the cause is written beside
+# its entry. It is then not one of the 10 and does not block; the rows counted before it stay and COUNT_FROM_SHA
+# does not move. The only road is an entry in SET_ASIDE, a constant list in scripts/ci-telemetry/shadow-agree.py:
+# one SHA and one run, held against GitHub on every run of the script (its header lists what is checked), and
+# refused the moment a condition fails. Nothing else sets a row aside, and a row with no entry blocks as before.
 # Three commits are restarts so far: the one that began the trial; the one that held the node project to tests
 # that load nothing under src/ (36 files went back to jsdom, so rows before it compare a different pair of shapes);
 # and the one that named scripts/ci-telemetry/coverage-v8-two-forms.mjs as vitest.config.ts's coverage provider
