@@ -852,8 +852,84 @@ export default function Garden() {
     showBadges ? (caretakerMap.get(effectiveAssignee(pl, projectsById)) || null) : null
   ), [showBadges, caretakerMap, projectsById])
 
+  // V4-OVERLAYSLICE3-001 (BD-043) — slice 3, the last in-DOM inline form. V4-OVERLAY-001's own
+  // note said "only slice 3 add-planting remains", and Dave re-raised it unprompted: Add
+  // Planting was "just a form that sits at the top of the Garden tab", i.e. part of the
+  // underlying tab rather than a flyover over it.
+  //
+  // A <Sheet>, exactly as PlantingDetail wraps this SAME component for V4-EDITINPLACE-001 — so
+  // the dismissal contract (Escape, Android hardware Back via `armsBack`, stack ordering, the
+  // dirty confirm) is DismissRegistry's rather than hand-rolled, and this page adds no second
+  // grammar. size="full" matches /log and that precedent: the form is far too tall for a peek.
+  //
+  // NOT a route and NOT a query param, deliberately, for the reason PlantingDetail records: a
+  // param would put the open editor in the URL, so a reload would silently reopen it. Note the
+  // page ALREADY strips `add`/`source_inventory_item_id`/`variety_id` from the query above.
+  //
+  // `editor &&` is kept inside rather than replaced by Sheet's `open`: Sheet still renders its
+  // chrome when closed, and PlantingEditor must not stay mounted holding field state (and its
+  // dirty report) behind a dismissed sheet.
+  //
+  // ariaLabel, NOT title — deliberate, and it differs from PlantingDetail's call on purpose.
+  // PlantingEditor renders its OWN heading ("Add planting", or "Edit {plant name}"), so a
+  // Sheet `title` here prints a second one. On the edit path PlantingDetail gets away with it
+  // because the two strings differ ("Edit planting" over "Edit Sungold") and read as
+  // title-over-subtitle; on the ADD path both are the literal string "Add planting", which is
+  // just a duplicated heading. Sheet's header row renders the mandatory Close button whether
+  // or not a title is passed (Sheet.jsx:204-206) and takes its accessible name from
+  // `title || ariaLabel`, so dropping the visible title costs no a11y and no affordance.
+  //
+  // BUG-GARDENTAGGROUPREPAINT-001 (review I-2) — built HERE, above the early returns, because it is rendered from
+  // two places: in the list, and beside the spinner while a remembered tag grouping holds the list for the tag
+  // map, so "+ → Add a planting" never waits on tags. ONE element, and KEYED: the two renders put it at different
+  // places among Shell's children, and without the key React unmounts the open sheet when the hold ends and mounts
+  // another — the typed fields gone, the sheet's place in the dismiss registry given up and taken again.
+  const editorSheet = (
+    <Sheet
+      key="planting-editor-sheet"
+      open={!!editor}
+      ariaLabel={editor?.mode === 'add' ? 'Add planting' : 'Edit planting'}
+      onClose={closeEditor}
+      dirty={editorDirty}
+      // BUG-DIRTYDISMISSGAP-001 — the opt-in that replaces this page's window.confirm patch. Copy
+      // is per-surface: this is the ADD path, so what is lost is a re-enterable new entry rather
+      // than edits to a record that already exists.
+      confirmOnDirty
+      confirmTitle="Discard this planting?"
+      confirmBody="This planting has not been added yet. What you typed will be lost."
+      busy={editorBusy}
+      armsBack
+      size="full"
+    >
+    {editor && (
+      <PlantingEditor
+        mode={editor.mode}
+        plant={editor.plant ?? null}
+        plants={plants}
+        projects={projects.filter(p => !p.archived_at)}
+        fetch={fetch}
+        sourceInventoryItemId={editor.mode === 'add' ? sourceInventoryItemId : null}
+        varietyId={editor.mode === 'add' ? queryVarietyId : null}
+        onCreated={onPlantCreated}
+        onUpdated={onPlantUpdated}
+        onDeleted={onPlantDeleted}
+        onArchived={onPlantArchived}
+        onClose={closeEditor}
+        // V4-PLANTEDITORWIRE-001. The setter itself, NOT an inline arrow: PlantingEditor keeps
+        // `onDirty` out of its effect deps behind a ref precisely so an unstable prop cannot fire
+        // a spurious release, and a stable identity means this page never depends on that.
+        onDirty={setEditorDirty}
+        // The setter itself, NOT an inline arrow — same reason as onDirty above: PlantingEditor
+        // holds it behind a ref, and a stable identity means this page never relies on that.
+        onBusy={setEditorBusy}
+      />
+    )}
+    </Sheet>
+  )
+
   // awaitingTags: the remembered tag grouping cannot be shown yet, and the fallback is not painted in its place.
-  if (loading || awaitingTags) return <Shell><Spinner block /></Shell>
+  // The editor sheet is not held with the list: once the list is in hand, an add never waits on the tag map.
+  if (loading || awaitingTags) return <Shell><Spinner block />{!loading && editorSheet}</Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
   // V4-PROJHIDE-001: 'none' (the by-project tree) is not a valid view when projects are hidden, so a
@@ -947,70 +1023,7 @@ export default function Garden() {
         </div>
       )}
 
-      {/* V4-OVERLAYSLICE3-001 (BD-043) — slice 3, the last in-DOM inline form. V4-OVERLAY-001's own
-          note said "only slice 3 add-planting remains", and Dave re-raised it unprompted: Add
-          Planting was "just a form that sits at the top of the Garden tab", i.e. part of the
-          underlying tab rather than a flyover over it.
-
-          A <Sheet>, exactly as PlantingDetail wraps this SAME component for V4-EDITINPLACE-001 — so
-          the dismissal contract (Escape, Android hardware Back via `armsBack`, stack ordering, the
-          dirty confirm) is DismissRegistry's rather than hand-rolled, and this page adds no second
-          grammar. size="full" matches /log and that precedent: the form is far too tall for a peek.
-
-          NOT a route and NOT a query param, deliberately, for the reason PlantingDetail records: a
-          param would put the open editor in the URL, so a reload would silently reopen it. Note the
-          page ALREADY strips `add`/`source_inventory_item_id`/`variety_id` from the query above.
-
-          `editor &&` is kept inside rather than replaced by Sheet's `open`: Sheet still renders its
-          chrome when closed, and PlantingEditor must not stay mounted holding field state (and its
-          dirty report) behind a dismissed sheet. */}
-      {/* ariaLabel, NOT title — deliberate, and it differs from PlantingDetail's call on purpose.
-          PlantingEditor renders its OWN heading ("Add planting", or "Edit {plant name}"), so a
-          Sheet `title` here prints a second one. On the edit path PlantingDetail gets away with it
-          because the two strings differ ("Edit planting" over "Edit Sungold") and read as
-          title-over-subtitle; on the ADD path both are the literal string "Add planting", which is
-          just a duplicated heading. Sheet's header row renders the mandatory Close button whether
-          or not a title is passed (Sheet.jsx:204-206) and takes its accessible name from
-          `title || ariaLabel`, so dropping the visible title costs no a11y and no affordance. */}
-      <Sheet
-        open={!!editor}
-        ariaLabel={editor?.mode === 'add' ? 'Add planting' : 'Edit planting'}
-        onClose={closeEditor}
-        dirty={editorDirty}
-        // BUG-DIRTYDISMISSGAP-001 — the opt-in that replaces this page's window.confirm patch. Copy
-        // is per-surface: this is the ADD path, so what is lost is a re-enterable new entry rather
-        // than edits to a record that already exists.
-        confirmOnDirty
-        confirmTitle="Discard this planting?"
-        confirmBody="This planting has not been added yet. What you typed will be lost."
-        busy={editorBusy}
-        armsBack
-        size="full"
-      >
-      {editor && (
-        <PlantingEditor
-          mode={editor.mode}
-          plant={editor.plant ?? null}
-          plants={plants}
-          projects={projects.filter(p => !p.archived_at)}
-          fetch={fetch}
-          sourceInventoryItemId={editor.mode === 'add' ? sourceInventoryItemId : null}
-          varietyId={editor.mode === 'add' ? queryVarietyId : null}
-          onCreated={onPlantCreated}
-          onUpdated={onPlantUpdated}
-          onDeleted={onPlantDeleted}
-          onArchived={onPlantArchived}
-          onClose={closeEditor}
-          // V4-PLANTEDITORWIRE-001. The setter itself, NOT an inline arrow: PlantingEditor keeps
-          // `onDirty` out of its effect deps behind a ref precisely so an unstable prop cannot fire
-          // a spurious release, and a stable identity means this page never depends on that.
-          onDirty={setEditorDirty}
-          // The setter itself, NOT an inline arrow — same reason as onDirty above: PlantingEditor
-          // holds it behind a ref, and a stable identity means this page never relies on that.
-          onBusy={setEditorBusy}
-        />
-      )}
-      </Sheet>
+      {editorSheet}
 
       {(effectiveGroupBy !== 'none' ? (
         <FacetedGarden
