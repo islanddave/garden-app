@@ -49,6 +49,7 @@ import PutUp from '../pages/PutUp.jsx'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 import {
   DISCARD_DATE_TEXT, DOOR_SHEET, ITEM_FIXED_KEYS, ITEM_PATCH_READS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText, replayUnsavedText,
+  WHERE_REQUIRED_TEXT,
 } from '../components/pantry/putSomethingUp.js'
 import { rowHoldsFields } from '../components/kitchen/idempotencyKey.js'
 import { sheetDraftKey, readSheetDraft } from '../components/kitchen/sheetDraft.js'
@@ -850,6 +851,21 @@ describe('Put something up — the item route', () => {
       expect(errorText()).not.toBeNull()
       expect(`again ${again}: ${screen.queryByTestId('door-more-panel') != null}`).toBe(`again ${again}: true`)
     }
+    expect(posts()).toHaveLength(0)
+  })
+
+  // The place row marks itself and draws no line of its own; no focus moves here either.
+  it('a Save refused for no place picked sends nothing and is brought into view — and so is the same refusal again', async () => {
+    const on = watchScrolls()
+    await openDoor()
+    typeInto('door-what-name', 'Oat milk'); tap('door-method-as_is')
+    for (const again of [false, true]) {
+      on.length = 0
+      save()
+      await failed(WHERE_REQUIRED_TEXT)
+      await waitFor(() => expect(`again ${again}: ${broughtIntoView(on, 'door-error')}`).toBe(`again ${again}: true`))
+    }
+    expect(screen.getByTestId('door-places').getAttribute('aria-invalid')).toBe('true')
     expect(posts()).toHaveLength(0)
   })
 

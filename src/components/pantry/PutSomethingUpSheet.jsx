@@ -473,6 +473,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
       if (e.field === 'method') focusFirstRadio(methodRef)
       else if (e.field === 'what') whatRef.current?.focus?.()
       else if (e.field === 'discard') { setMoreOpen(true); setRefusedSeq(s => s + 1) }   // no focus moves: the line is brought into view
+      else if (e.field === 'where') setRefusedSeq(s => s + 1)                            // nor here, and the place row draws no line
       return
     }
     if (w.error) { setErr(w.error); setField('when'); setMoreOpen(true); setRefusedSeq(s => s + 1); return }
