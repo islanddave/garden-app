@@ -84,7 +84,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome } from '../forms/formStyles.js'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
-import { mintKey, noteSent, afterReplay, whenChoice, answerLost, answeredNo, updateSent, holdsOwnUpdate } from '../kitchen/idempotencyKey.js'
+import { mintKey, noteSent, afterReplay, whenChoice, answerLost, answeredNo, updateSent, holdsOwnUpdate, keepsUpdateFor } from '../kitchen/idempotencyKey.js'
 import { useFieldsClearOfFooter, scrollClearOfFooter, FOOTER_GAP_PX } from '../kitchen/sheetScroll.js'
 import { placeChips, estimateChips, TEXTURE_CHIPS } from '../putup/putItUp.js'
 import NameSearchField from './NameSearchField.jsx'
@@ -290,7 +290,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
   const whenRef = useRef(null)
   const slotRef = useRef(null)
   const errRef = useRef(null)
-  // Counts the replay refusals (saved earlier / a part no PATCH carries / the change did not save) and failed Saves: each is brought into view.
+  // Counts the replay refusals (saved earlier / a part no PATCH carries / the change did not save), failed Saves, and a Save refused before it is sent that moves no focus (the discard date, the day): each is brought into view.
   const [refusedSeq, setRefusedSeq] = useState(0)
   // Set by the preview's Change: once the options are open, focus goes to the When chips it opened them for.
   const [toWhen, setToWhen] = useState(false)
@@ -472,10 +472,10 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
       setErr(e.error); setField(e.field)
       if (e.field === 'method') focusFirstRadio(methodRef)
       else if (e.field === 'what') whatRef.current?.focus?.()
-      else if (e.field === 'discard') setMoreOpen(true)
+      else if (e.field === 'discard') { setMoreOpen(true); setRefusedSeq(s => s + 1) }   // no focus moves: the line is brought into view
       return
     }
-    if (w.error) { setErr(w.error); setField('when'); setMoreOpen(true); return }
+    if (w.error) { setErr(w.error); setField('when'); setMoreOpen(true); setRefusedSeq(s => s + 1); return }
     const route = routeFor(method)
     const size = { value: sizeValue, unit: sizeUnit }
     const amount = { value: amountValue, unit: amountUnit }
@@ -550,12 +550,12 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
         }
         if (todo === 'update') {
           onRow = saved
-          patchSent = true                                  // nothing else is asked first on this route: what it said stays
           if (saved?.id == null) throw new Error('replayed without a jar')
           const was = patchedRef.current
           const patch = jarPatchOf(body)
           patchedRef.current = updateSent(saved.id, patch, was)
           try {
+            patchSent = true
             saved = await fetch(`/api/preservation/${encodeURIComponent(saved.id)}`, { method: 'PATCH', body: JSON.stringify(patch) })
           } catch (ex) {
             // An ANSWERED 4xx did not land: what this door keeps is what it kept before it.
@@ -613,8 +613,9 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
       if (onRow) {
         // It is in the Pantry; it is the change that did not go through. Said as that, the page told,
         // and the key kept whatever the status.
+        // "May not have" also when an EARLIER Save's update for it went out and is still unanswered.
         const why = refusalOf(ex, '')
-        setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: patchSent && answerLost(ex) }), refresh: why.refresh })
+        setErr({ text: replayUnsavedText(onRow, { why: why.text, lost: (patchSent || keepsUpdateFor(onRow.id, patchedRef.current)) && answerLost(ex) }), refresh: why.refresh })
         setRefusedSeq(s => s + 1)
         onExists?.()
         return

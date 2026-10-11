@@ -48,7 +48,7 @@ import PutSomethingUpSheet, { isDoorDraft } from '../components/pantry/PutSometh
 import PutUp from '../pages/PutUp.jsx'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 import {
-  DOOR_SHEET, ITEM_FIXED_KEYS, ITEM_PATCH_READS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText, replayUnsavedText,
+  DISCARD_DATE_TEXT, DOOR_SHEET, ITEM_FIXED_KEYS, ITEM_PATCH_READS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText, replayUnsavedText,
 } from '../components/pantry/putSomethingUp.js'
 import { rowHoldsFields } from '../components/kitchen/idempotencyKey.js'
 import { sheetDraftKey, readSheetDraft } from '../components/kitchen/sheetDraft.js'
@@ -391,6 +391,66 @@ describe('Put something up — the item route', () => {
     expect(new Set(keys()).size).toBe(1)
     expect(keys()).toHaveLength(3)
     expect(patches().map(c => [c.path, c.body.storage_location_id])).toEqual([[ROW, 'loc-new-1']])
+  })
+
+  // Review R1 (v4.181.0). The new place is made again on every Save (it has no id in the form), so a later
+  // Save can fail BEFORE its own PATCH although an earlier Save's PATCH for this item went out unanswered.
+  const newPlaceThenPatch = (patchStatus) => {
+    let places = 0
+    lostThenReplayed({
+      'POST /api/storage-locations': ({ body }) => { if (++places > 1) throw apiError(503, { error: 'boom' }); return { id: 'loc-new-1', label: body.label, kind: body.kind } },
+      [`PATCH ${ITEMS}/*`]: () => { throw apiError(patchStatus, { error: 'boom' }) },
+    })
+  }
+
+  it('R1 — a PATCH went out unanswered (a 5xx) on one Save, and the NEXT Save fails at the new place before its own PATCH: the change still MAY not have saved (never "did not save" — the earlier PATCH may be on the item), the key kept', async () => {
+    newPlaceThenPatch(503)
+    const { onSaved } = await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-place-new:pantry:pantry shelf')
+    if (screen.getByTestId('door-method-as_is').getAttribute('aria-checked') !== 'true') tap('door-method-as_is')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    await failed(MAYBE)
+    save()
+    await waitFor(() => expect(posts('/api/storage-locations')).toHaveLength(2))
+    await waitFor(() => expect(posts()).toHaveLength(3))
+    await failed(MAYBE)
+    expect(patches()).toHaveLength(1)                                          // this Save sent none of its own
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(new Set(keys()).size).toBe(1)
+  })
+
+  it('R1 — … but an earlier PATCH the server ANSWERED with a 4xx did not land: the next Save, failing at the new place, says the change did NOT save', async () => {
+    newPlaceThenPatch(409)
+    await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-place-new:pantry:pantry shelf')
+    if (screen.getByTestId('door-method-as_is').getAttribute('aria-checked') !== 'true') tap('door-method-as_is')
+    save()
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    await failed(replayUnsavedText(FIRST, { why: 'boom' }))
+    save()
+    await waitFor(() => expect(posts('/api/storage-locations')).toHaveLength(2))
+    await failed(UNSAVED)
+    expect(patches()).toHaveLength(1)
+  })
+
+  // Review R2: the replay answered with no id to write onto. Nothing is sent, so the sentence is exact.
+  it('R2 — a replayed item that carries no id: no PATCH is sent, and the change did NOT save (never "may not have")', async () => {
+    lostThenReplayed({}, { ...FIRST, id: null })
+    const { onSaved, onExists } = await openDoor()
+    asIs()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'the second carton')
+    save()
+    await failed(UNSAVED)
+    expect(otherWrites()).toEqual([])
+    expect(onExists).toHaveBeenCalledTimes(1)
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(keys()[1]).toBe(keys()[0])
   })
 
   // The first item POST's answer is lost; the PATCH LANDS (the row holds it, its updated_at moves) and its
@@ -766,6 +826,31 @@ describe('Put something up — the item route', () => {
     await waitFor(() => expect(posts()).toHaveLength(2))
     await failed()
     await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+  })
+
+  // A Save refused before anything is sent, where no focus moves: the options open and the line — the only
+  // one there is; neither part draws one of its own — is the last of the scroller, under the pinned Save.
+  it('a Save refused for a discard date not picked, or for the day not picked, sends nothing and is brought into view — and so is the same refusal again', async () => {
+    const on = watchScrolls()
+    await openDoor()
+    asIs()
+    tap('door-more'); tap('door-discard-date'); tap('door-more')              // From the label, no date typed; the options closed again
+    for (const again of [false, true]) {
+      on.length = 0
+      save()
+      await failed(DISCARD_DATE_TEXT)
+      await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+      expect(`again ${again}: ${screen.queryByTestId('door-more-panel') != null}`).toBe(`again ${again}: true`)
+    }
+    tap('door-discard-auto'); tap('door-when-earlier'); tap('door-when-pickdate'); tap('door-more')
+    for (const again of [false, true]) {
+      on.length = 0
+      save()
+      await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
+      expect(errorText()).not.toBeNull()
+      expect(`again ${again}: ${screen.queryByTestId('door-more-panel') != null}`).toBe(`again ${again}: true`)
+    }
+    expect(posts()).toHaveLength(0)
   })
 
   it('Q2 — the planting refusal and a change that did not save are brought into view too', async () => {

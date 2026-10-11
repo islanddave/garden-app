@@ -744,6 +744,21 @@ describe('Put something up — the put-up route', () => {
     expect(table.row.notes).toBe('the second tray')
   })
 
+  // Review R2 (v4.181.0): the replay answered with no id to write onto. Nothing is sent, so the sentence is exact.
+  it('R2 — a replayed jar that carries no id: no PATCH is sent, and the change did NOT save (never "may not have")', async () => {
+    const table = jarTable({ onPost: (n) => (n > 1 ? { ...table.row, id: null, replayed: true } : undefined) })
+    const door = await openDoor()
+    corn()
+    save(); await failed()
+    tap('door-from'); typeInto('door-notes', 'the second tray')
+    save()
+    await failed(UNSAVED)
+    expect(otherWrites()).toEqual([])
+    expect(door.onExists).toHaveBeenCalledTimes(1)
+    expect(door.onSaved).not.toHaveBeenCalled()
+    expect(keys()[1]).toBe(keys()[0])
+  })
+
   it('the PATCH is refused with a 4xx: its sentence follows "already in the Pantry" — and the key is NOT minted again (the jar exists)', async () => {
     jarTable({ onPatch: () => { throw apiError(409, { error: 'This was changed somewhere else — close and open it again.' }) } })
     const door = await openDoor()

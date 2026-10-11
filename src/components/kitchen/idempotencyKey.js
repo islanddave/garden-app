@@ -145,6 +145,11 @@ export function updateSent(id, body, before = null) {
   const text = canonText(next.body)
   return [...list.filter(u => !(String(u.id) === next.id && canonText(u.body) === text)), next].slice(-UPDATES_KEPT)
 }
+// Whether a sheet still keeps an update it sent to this row: one that went out and was not answered with a
+// 4xx (a sheet takes that one back). It chooses a sheet's WORDS only, across Saves ("may not have saved").
+export function keepsUpdateFor(id, kept) {
+  return id != null && ownUpdates(kept).some(u => String(u.id) === String(id))
+}
 // Whether a row holds every field of `body`, field by field. `reads` names the fields that are not "the same
 // key holding the same value" on the row: field → (sent value, row, body) => boolean. Any other field is one
 // fact under one name (sameFact). A body with no field at all is held by nothing.
