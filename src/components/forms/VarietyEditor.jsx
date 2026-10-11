@@ -9,7 +9,8 @@
 // Per Dave's global rule this exposes ALL 36 user-owned columns the PUT can write, not just the 4
 // the create path happens to set (31 until V5-VARIETYFACTSEDIT-001 added origin country/region,
 // breeding and the two "info from" sources). Deliberately absent: photo_id (needs the photo-picker
-// surface, a different lane) and dtm_basis (no read path or consumer yet — V4-MATURITYBASIS-001).
+// surface, a different lane) and dtm_basis (V4-MATURITYBASIS-001: the PUT does not write it. It IS
+// read — seedFacts.js words it after a seed's days to maturity, on My seeds and the seed's page).
 // breeding_confidence and variety_rank are not PUT-writable, so there is no rank field here. The
 // server decides Open-pollinated against variety_rank (chk_plant_varieties_op_requires_cultivar):
 // on a variety whose rank was never recorded it saves and records the variety as a single named
