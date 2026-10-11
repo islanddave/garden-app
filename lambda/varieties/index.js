@@ -66,7 +66,7 @@ import {
 import { applyDerive } from './crop-derive.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { loadOwnedProject } from './authz-parents.js';
-import { managedPrincipalPatterns, canEditSource } from './authz.js';
+import { managedPrincipalPatterns, canEditSource, canEditVariety } from './authz.js';
 import { blendRoute, restoreConflictMessage } from './blend.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -940,7 +940,17 @@ export const handler = async (event) => {
             AND deleted_at IS NULL
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
-        return resp(200, rows[0]);
+        // BUG-VARIETYEDITHOUSEHOLDMIRROR-001 — can_edit: would the PUT/DELETE below take this row
+        // from THIS caller. VarietyEditor used to guess from created_by alone and, having no view
+        // of GARDEN_HOUSEHOLD_IDS, showed the other household member's rows read-only although the
+        // PUT saves them (472 of 497 live cultivars from the second member's side, 2026-09-23).
+        // Computed, never stored and never read back: no PUT/POST body carries it. It is the write
+        // predicate in JS over the SAME `household` those statements bind (./authz.js
+        // canEditVariety), so the two change together or not at all. The read itself stays global —
+        // a non-member still gets the row, with false unless they created it. Only this read carries
+        // it: it is the one that seeds the edit form (src/pages/VarietyEdit.jsx); the list feeds
+        // pickers and search.
+        return resp(200, { ...rows[0], can_edit: canEditVariety(household, rows[0].created_by) });
       }
 
       if (method === 'PUT') {

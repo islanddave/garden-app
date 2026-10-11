@@ -56,6 +56,80 @@ export function managedPrincipalPatterns(household) {
   return Array.isArray(household) && household.length > 1 ? MANAGED_PRINCIPAL_PATTERNS : [];
 }
 
+// BUG-VARIETYEDITHOUSEHOLDMIRROR-001 — Postgres `text LIKE pattern`, default escape, in JS.
+//
+// WHY A REAL LIKE AND NOT startsWith. Today's four patterns are plain text plus at most one trailing
+// `%`, for which prefix/equality is exact. But canEditVariety below answers for whatever
+// managedPrincipalPatterns returns, and a pattern the next lane adds may not keep that shape: `_` is
+// a one-character wildcard, `%` may sit mid-pattern, and `\` escapes the character after it. A
+// prefix check reads `data\_fix-%` as the literal text `data\_fix-`, so it would answer TRUE for a
+// value Postgres refuses — the one direction can_edit must never be wrong in.
+//
+// Semantics, from the manual (9.7.1) and src/backend/utils/adt/like_match.c:
+//   · the pattern covers the WHOLE string;  `%` = zero or more characters, line breaks included;
+//   · `_` = exactly one character (a code point — hence Array.from and the `u` flag, so an astral
+//     character is one, as it is in a UTF-8 database);
+//   · `\x` = the literal character x, for any x (`\%`, `\_`, `\\`, and equally `\a`);
+//   · case-sensitive, and nothing else is special.
+// A pattern ENDING in a lone `\` makes Postgres raise ("LIKE pattern must not end with escape
+// character") once the match reaches it, and answer false when it does not. Either way the
+// statement admits no row, so this returns false.
+//
+// NOT MODELED: collation. This is code-point equality, which is what LIKE and `=` are on a text
+// column under a deterministic collation. Under a case-insensitive one Postgres could match where
+// this does not — the safe direction (a read-only form over a row the PUT would take).
+export function sqlLike(text, pattern) {
+  if (typeof text !== 'string' || typeof pattern !== 'string') return false;
+  const chars = Array.from(pattern);
+  let source = '';
+  for (let i = 0; i < chars.length; i += 1) {
+    let c = chars[i];
+    if (c === '%') { source += '[\\s\\S]*'; continue; }
+    if (c === '_') { source += '[\\s\\S]'; continue; }
+    if (c === '\\') {
+      i += 1;
+      if (i >= chars.length) return false;
+      c = chars[i];
+    }
+    source += c.replace(/[\\^$.*+?()[\]{}|/]/, '\\$&');
+  }
+  return new RegExp(`^${source}$`, 'u').test(text);
+}
+
+// BUG-VARIETYEDITHOUSEHOLDMIRROR-001 — would PUT/DELETE /api/varieties/:id take this row?
+//
+// THE PROBLEM. VarietyEditor grayed the form out unless created_by was the caller's own id (or a
+// managed principal), because GARDEN_HOUSEHOLD_IDS is Lambda-side config the client cannot see. The
+// PUT accepts the whole household, so the second member saw 472 of 497 live cultivars read-only
+// (2026-09-23) that the server would have saved. GET /api/varieties/:id now carries this answer as
+// `can_edit`, and the form trusts it over its own guess.
+//
+// THE CONTRACT. This is the row predicate both writes carry, arm for arm:
+//     created_by = ANY(${household})                   ->  household.includes(createdBy)
+//     OR created_by LIKE ANY(${managedPatterns}::text[])  ->  managedPrincipalPatterns(household).some(sqlLike)
+// `household` must be the handler's own householdScope(userId) — the value the SQL binds — and the
+// patterns come from the same helper index.js derives `managedPatterns` from, so there is one
+// membership rule, not two. The writes' other two terms (`id = …`, `deleted_at IS NULL`) are the
+// by-id read's own WHERE, so a row that reached this function already satisfies them.
+// It must NEVER answer true where the PUT would refuse: that is a form that opens, takes the
+// typing, and loses it. Change a write predicate and this changes with it, in the same commit;
+// authz-household.test.js pins the two together and can-edit-route.test.js runs them side by side.
+//
+// What it does not speak for: validation, the rate limit, the breeding pairing rule — refusals about
+// the BODY, which the form reports in its error banner. This is only "is the row yours to edit".
+//
+// Refusals above the two arms:
+//   · a missing/non-string created_by — SQL NULL makes both arms NULL, and NULL admits no row;
+//   · an EMPTY created_by — the one place this is stricter than the SQL text ('' = ANY(ARRAY[''])
+//     is TRUE). The handler 401s an empty subject before householdScope runs, so [''] is never
+//     bound; same fail-closed stance as canEditSource's `userId !== ''`.
+export function canEditVariety(household, createdBy) {
+  if (!Array.isArray(household)) return false;
+  if (typeof createdBy !== 'string' || createdBy === '') return false;
+  return household.includes(createdBy)
+    || managedPrincipalPatterns(household).some((p) => sqlLike(createdBy, p));
+}
+
 // V5-SOURCECONTACT-001 — who may PATCH /api/varieties/sources/:id.
 //
 // public.source is a SHARED catalogue (globally readable, RLS off, no ownership trigger — see
