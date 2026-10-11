@@ -8,8 +8,8 @@ this script nothing measured any of the three.
 
 WHAT IT READS. `gh api` GETs only, all through gh_api(): the dev push runs of both workflows since ci-next.yml's
 first, each completed run's jobs, (for a SHA with a verdict on both sides) the annotations of the jobs that ran
-the unit suite, and (for a row an entry of SET_ASIDE holds) the jobs of the attempt that entry names as green. It
-never dispatches, re-runs, cancels or writes.
+the unit suite, and (for a row an entry of SET_ASIDE holds) the jobs of the attempt that entry names as green and
+the annotations of that attempt's unit jobs. It never dispatches, re-runs, cancels or writes.
 
 THE VERDICT OF ONE SIDE, from the newest push run of that workflow for the SHA:
   GREEN       the verdict job (`build-and-test`, `build-and-test-next`) concluded success.
@@ -140,20 +140,39 @@ before it stay. COUNT_FROM_SHA does not move for it. The only road is SET_ASIDE,
 entry is one SHA and one run: the full dev SHA, the workflow whose run was red, that run's id, the attempt that was
 red and the attempt that was green, the cause in one sentence, the full SHA of the commit that fixed it, and the
 decision it rests on. No flag, no file, no pattern and no wording of a cause sets a row aside.
-An entry sets its row aside only while what GitHub says still supports it. Every run of this script checks all of:
+An entry sets its row aside only while what GitHub says still supports it, and "because of a flaky test" is held on
+the row's own evidence, never on the cause as it is written. Every run of this script checks all of:
   - the SHA is inside the counting window;
   - the row reads DISAGREE;
   - the other side is GREEN, so the side the entry names is the red one;
   - the run the entry names is the run read here for that workflow on that SHA;
   - the attempt judged is the one the entry names as red;
   - the run's LATEST attempt is the one the entry names as green, and it completed with conclusion success;
-  - no pass of the row reads TEST-IDS-VACUOUS, which is the shadow's own defect and is never set aside;
+  - the red attempt went red at a unit test step and at nothing else: every job of it that did not succeed
+    concluded `failure`, is a job that runs a unit pass (PASSES), and failed the step of a pass it runs (PASS_STEPS)
+    and no other step. A cancel, a job cut at its timeout, a red with no failed step and a red at any other step
+    (an install, a ratchet, the coverage measured floor) are not a failed test and are never set aside;
+  - the red attempt's test IDs, which are the row's own TEST-IDS columns, read pass by pass as a flaky test leaves
+    them: DIFFER in states only where the pass step failed (the failed test itself), EQUAL where it passed, and
+    ABSENT only for a pass the red job stopped before (its step reads `skipped` in the job that failed, it printed
+    no digest and the other side printed its own). Every other reading refuses: VACUOUS, a DIFFER in the file set
+    or in the test names, a digest one side printed and the other did not, a failed pass that reads EQUAL (no
+    failed test is shown). Each of those is a defect of the shadow or of the reporter by TEST IDS above, or a red
+    that was not a test, and none is ever set aside;
   - the jobs of that green attempt read GREEN by the rule every side is read by (GET
-    .../runs/<id>/attempts/<n>/jobs). This is the one read an entry adds, made only when everything above holds;
-    a reply that cannot be read is exit 2 as anywhere else, never a set-aside.
-When all hold the row's class is SET-ASIDE: it is not `counted`, it is in no tally but its own, and its test-ID
-readings (DIFFER or ABSENT, off the red attempt) are still printed and block nothing. When any one fails the
-entry is REFUSED: the row is judged exactly as a row with no entry, and its line says each condition that failed.
+    .../runs/<id>/attempts/<n>/jobs), each of them a job of that run, that attempt and that SHA;
+  - the green attempt's test IDs read EQUAL against the other side's in BOTH passes (GET
+    .../check-runs/<job>/annotations for the job of that attempt that runs each pass: one read for ci.yml, two for
+    ci-next.yml). The commit that went red, run again, ran the tests the other side ran and left every one in the
+    same state. A DIFFER of any kind, VACUOUS, or a digest missing on either side refuses. A leg that "Re-run failed
+    jobs" carried over without running it has no notice on its copy, so an entry that names ci-next.yml holds only
+    after a re-run of all jobs.
+The last two are the reads an entry adds, made only when everything above them holds; a reply that cannot be read,
+or that is not the attempt asked for, is exit 2 as anywhere else, never a set-aside.
+When all hold the row's class is SET-ASIDE: it is not `counted`, and it is in no tally but its own; its ci-next.yml
+run stays in the queue times, where a runner's wait counts whatever the row reads. Its test-ID columns (DIFFER or
+ABSENT, off the red attempt) are still printed and block nothing. When any one fails the entry is REFUSED: the row
+is judged exactly as a row with no entry, and its line says each condition that failed.
 An entry whose SHA is in neither listing is STALE. An entry that is not whole (a field missing or extra, no cause
 written, a second entry for the same SHA) is MALFORMED. Neither sets anything aside. Every entry that sets nothing
 aside is printed under the table and named on the ACCEPTANCE line.
@@ -164,8 +183,9 @@ legs are pinned; a DISAGREE or TEST-IDS-DIFFER row whose two sides ran on differ
 
 ACCEPTANCE, one line, separate from the exit code. MET only when at least 10 SHAs QUALIFY, none BLOCKS, and the
 queue threshold is not tripped. Otherwise NOT MET, naming each thing missing. It says how many of the qualifying
-SHAs were red on both sides and names every EXEMPT SHA. MET or NOT MET, it names every SET-ASIDE SHA with its cause,
-so the last line alone says the count leans on one, and every entry of SET_ASIDE that sets nothing aside. A MET
+SHAs were red on both sides and names every EXEMPT SHA. MET or NOT MET, it names every SET-ASIDE SHA with its cause
+and the decision it rests on, so the last line alone says the count leans on one and on whose word, and every entry
+of SET_ASIDE that sets nothing aside. A MET
 line ends with what it does NOT cover: the plan's exit test also asks for manifest conservation, the 10-green soak
 and the canary, and none of those is read here.
 
@@ -222,9 +242,11 @@ COUNT_FROM_SHA = "234efd21b3a57f705a4d0d15b76f184fdf31b348"
 # NAME above). A DISAGREE row whose red side passed on a re-run of the same commit, with its cause written here, is
 # not one of the 10 and does not block; the rows counted before it stay and COUNT_FROM_SHA does not move. One entry
 # is one SHA and one run, and every field is required (ENTRY_FIELDS; entry_defects()). An entry is held against live
-# GitHub on every run (set_aside_refusals(), then the green attempt's own jobs) and sets nothing aside the moment a
+# GitHub on every run (set_aside_refusals(), then green_attempt_refusals()) and sets nothing aside the moment a
 # condition fails. A constant and not a flag or a file for the reason COUNT_FROM_SHA is one: an entry changes what
 # the 10 pushes mean, so it is added in a commit that says why, and scripts/test_shadow_agree.py pins the list.
+# An entry is deleted in the commit that moves COUNT_FROM_SHA past its SHA: left in, it reads REFUSED (before the
+# window) on every ACCEPTANCE line from then on.
 SET_ASIDE = (
     {"sha": "fe89add37399f3d6d61ceabfb18cd6a753e93702",
      "workflow": "ci.yml",          # the workflow whose run was red
@@ -266,6 +288,12 @@ APPLIED, REFUSED, STALE, MALFORMED = "APPLIED", "REFUSED", "STALE", "MALFORMED"
 SIDES = {SERIAL["workflow"]: ("ci", SERIAL, "next", SHADOW["workflow"]),
          SHADOW["workflow"]: ("next", SHADOW, "ci", SERIAL["workflow"])}
 BEFORE_WINDOW_WHY = "the SHA is before the counting window, where a row is in no tally"
+RED_NOT_A_TEST = "the red attempt did not go red at a unit test step and nothing else: %s"
+# What a flaky test leaves in one pass of the red attempt, by what that pass's own step concluded on the red side.
+RED_LEAVES = {"failure": "a failed test leaves TEST-IDS-DIFFER in states only",
+              "success": "a pass that passed leaves TEST-IDS-EQUAL",
+              "skipped": "a pass the red job stopped before leaves TEST-IDS-ABSENT with no digest of its own and the "
+                         "other side's printed"}
 # The same-step check of a row red on both sides: it holds, or the step cannot be told, or it is told and differs.
 HOLDS, STEP_UNREADABLE, STEP_DIFFERENT = "HOLDS", "STEP-UNREADABLE", "STEP-DIFFERENT"
 NOTICE_PREFIX = "test-ids "
@@ -386,6 +414,18 @@ def run_jobs(repo, run_id, timeout, attempt=None):
     for job in jobs:
         if not job.get("name") or not job.get("status") or not isinstance(job.get("id"), int):
             raise Unreadable("the job listing of run %s holds an entry with no id/name/status" % run_id)
+    return jobs
+
+
+def attempt_jobs(repo, run, attempt, verdict_job, timeout):
+    """The jobs of one named attempt of a run, held to being what was asked for the way attempt_one() holds a run:
+    every job says it is of that run, that attempt and that SHA, and the verdict job is not listed twice."""
+    jobs = run_jobs(repo, run["id"], timeout, attempt)
+    asked = (run["id"], attempt, run["head_sha"])
+    if any((job.get("run_id"), job.get("run_attempt"), job.get("head_sha")) != asked for job in jobs) \
+            or sum(1 for job in jobs if job["name"] == verdict_job) > 1:
+        raise Unreadable("the job listing of attempt %d of run %s is not that attempt's: a job of another run, "
+                         "attempt or SHA, or %s listed twice" % (attempt, run["id"], verdict_job))
     return jobs
 
 
@@ -529,6 +569,27 @@ def compare_ids(serial, shadow):
     if serial["files"] != shadow["files"]:
         return "DIFFER", "the file set"
     return "DIFFER", "test names" if serial["names"] != shadow["names"] else "states only"
+
+
+def zone_reading(serial, shadow):
+    """One pass as compare_ids() reads the two notices: its class, what a DIFFER differs in, and each side's digest
+    and node_files."""
+    verdict, differs = compare_ids(serial, shadow)
+    return {"class": verdict, "differs": differs if verdict == "DIFFER" else None,
+            "ci": serial["sha256"] if serial else None, "next": shadow["sha256"] if shadow else None,
+            "ci_node_files": serial["node_files"] if serial else None,
+            "next_node_files": shadow["node_files"] if shadow else None}
+
+
+def reading_words(one):
+    """One pass's class as a refusal says it: what a DIFFER differs in, and which side an ABSENT has no digest from."""
+    if one["class"] == "DIFFER":
+        return "TEST-IDS-DIFFER in %s" % one["differs"]
+    if one["class"] == "ABSENT":
+        lacks = [spec["workflow"] for key, spec in (("ci", SERIAL), ("next", SHADOW)) if one[key] is None]
+        return "TEST-IDS-ABSENT (%s)" % ("no usable digest from %s" % " or ".join(lacks) if lacks
+                                         else "the two notices are of different format versions")
+    return "TEST-IDS-" + one["class"]
 
 
 # ── job steps, and what one SHA is worth to acceptance ──────────────────────────────────────────────────────────
@@ -700,7 +761,7 @@ def entry_defects(entry):
         return ["it does not carry exactly these fields: %s" % ", ".join(ENTRY_FIELDS)]
     why = ["%s is not a full 40-hex SHA" % field for field in ("sha", "fixed_by")
            if not re.fullmatch(r"[0-9a-f]{40}", str(entry[field]))]
-    if entry["workflow"] not in SIDES:
+    if not isinstance(entry["workflow"], str) or entry["workflow"] not in SIDES:
         why.append("workflow is neither %s nor %s" % tuple(SIDES))
     numbers = [entry[field] for field in ("run_id", "red_attempt", "green_attempt")]
     if any(not isinstance(number, int) or isinstance(number, bool) or number < 1 for number in numbers):
@@ -734,9 +795,84 @@ def set_aside_entries(first_seen):
     return reports
 
 
-def set_aside_refusals(entry, row):
+def pass_jobs(workflow):
+    """{job: the passes it runs} for one workflow, from PASSES: `build-and-test` runs both in ci.yml, and each of
+    the two unit legs runs one in ci-next.yml."""
+    column = (SERIAL["workflow"], SHADOW["workflow"]).index(workflow)
+    found = {}
+    for zone, names in PASSES.items():
+        found.setdefault(names[column], []).append(zone)
+    return found
+
+
+def red_at_a_unit_pass(workflow, jobs):
+    """Did one side's judged attempt go red at a unit test step and at nothing else? (the passes whose step failed,
+    why it did not). Every job of it that did not succeed has to have concluded `failure`, be a job that runs a
+    unit pass, and have failed the step of a pass it runs and no other step. The aggregator's `failure` is the
+    summary of its legs that it is in side(), and is not a red of its own; any other conclusion of it is. Each
+    reason is its own line: a cancel, a job cut at its timeout, a job with no steps, a red with no failed step and
+    a red at any other step are each something other than a failed test."""
+    spec, mine = SIDES[workflow][1], pass_jobs(workflow)
+    red = [job for job in jobs if job.get("conclusion") != "success" and not (
+        spec["aggregates"] and job["name"] == spec["verdict_job"] and job.get("conclusion") == "failure")]
+    zones, why = [], []
+    if not red:
+        why.append("no job of %s failed" % workflow)
+    for job in red:
+        name, failed = job["name"], step_names(job, ("failure",))
+        if job.get("conclusion") != "failure":
+            why.append("%s concluded %s, not failure" % (name, job.get("conclusion")))
+        elif name not in mine:
+            why.append("%s failed, and it runs no unit pass" % name)
+        elif failed is None:
+            why.append("%s carries no steps" % name)
+        elif not failed:
+            why.append("%s failed with no failed step" % name)
+        else:
+            own = [PASS_STEPS[zone] for zone in mine[name]]
+            other = [step for step in failed if step not in own]
+            if other:
+                why.append('%s failed "%s", which is not the step of a unit pass it runs' % (
+                    name, '", "'.join(other)))
+            zones += [zone for zone in mine[name] if PASS_STEPS[zone] in failed]
+    return zones, why
+
+
+def red_reading_refusals(workflow, row, failed):
+    """Each pass of the row (the red attempt's test IDs against the other side's) that does not read as a flaky test
+    leaves it, as reasons. What it has to read is decided by what the pass's own step concluded on the red side
+    (RED_LEAVES): `failure`, DIFFER in states only; `success`, EQUAL; `skipped` in a job that failed another pass
+    (`failed`: the passes whose step failed, red_at_a_unit_pass()), ABSENT with no digest of its own and the other
+    side's printed. A step that reads anything else, or cannot be read, fits nothing."""
+    mine, _, other, _ = SIDES[workflow]
+    jobs = pass_jobs(workflow)
+    why = []
+    for zone in PASSES:
+        one = row["test_ids"].get(zone)
+        if one is None:
+            why.append("the red attempt's %s pass was not read" % zone)
+            continue
+        step = one[mine + "_step"]
+        job = next(name for name, zones in jobs.items() if zone in zones)
+        if step == "failure":
+            fits = (one["class"], one["differs"]) == ("DIFFER", "states only")
+        elif step == "success":
+            fits = one["class"] == "EQUAL"
+        elif step == "skipped" and any(z in failed for z in jobs[job]):
+            fits = one["class"] == "ABSENT" and one[mine] is None and one[other] is not None
+        else:
+            why.append("the red attempt's %s pass step in %s %s, which is not failed, passed or skipped behind a "
+                       "failed pass" % (zone, job, "cannot be read" if step is None else "concluded %s" % step))
+            continue
+        if not fits:
+            why.append("the red attempt's %s pass reads %s, and %s" % (zone, reading_words(one), RED_LEAVES[step]))
+    return why
+
+
+def set_aside_refusals(entry, row, jobs):
     """Every condition of a set-aside that the row, as it is already read, does not meet, as reasons; [] when all
-    hold and only the green attempt's own jobs are left to read. Each condition is its own line here on purpose:
+    hold and only the green attempt is left to read (green_attempt_refusals()). `jobs`: the jobs of the attempt
+    judged on the side the entry names. Each condition is its own line here on purpose:
     scripts/test_shadow_agree.py holds a case that only that line refuses."""
     mine, _, other, other_workflow = SIDES[entry["workflow"]]
     named, latest = row[mine], row[mine]["latest_attempt"]
@@ -761,21 +897,54 @@ def set_aside_refusals(entry, row):
         why.append("the re-run did not pass: attempt %d %s" % (entry["green_attempt"], (
             "is not a re-run" if not latest else "concluded %s" % latest["conclusion"]
             if latest["status"] == "completed" else "is %s" % latest["status"])))
-    vacuous = [zone for zone, one in row["test_ids"].items() if one["class"] == "VACUOUS"]
-    if vacuous:
-        why.append("its %s pass reads TEST-IDS-VACUOUS, which is never set aside" % ", ".join(vacuous))
+    # What follows is about the red attempt of the side the entry names, so it is asked only of a row that has one:
+    # a DISAGREE inside the window whose other side is GREEN. Any other row is refused above, for that.
+    if not row["before_window"] and row["class"] == "DISAGREE" and row[other]["state"] == GREEN:
+        failed, not_a_test = red_at_a_unit_pass(entry["workflow"], jobs)
+        why += [RED_NOT_A_TEST % reason for reason in not_a_test]
+        why += red_reading_refusals(entry["workflow"], row, failed)
+    return why
+
+
+def green_attempt_refusals(repo, entry, run, siblings, notices, timeout):
+    """The reads an entry adds, made only when nothing already read refuses it, as reasons; [] when the attempt the
+    entry names as green holds. `run`: the listing's row of the run it names. First that attempt's jobs
+    (attempt_jobs()), which have to read GREEN by side(). Then, only when they do, the test-ids notices of the job
+    of that attempt that runs each pass, compared with the other side's notice as the row was read with it
+    (`notices`: {zone: [ci.yml's, ci-next.yml's]}): EQUAL in both passes, or refused. A pass whose job is not there
+    exactly once has no notice. Any reply that cannot be read raises Unreadable."""
+    mine, spec, _, other_workflow = SIDES[entry["workflow"]]
+    jobs = attempt_jobs(repo, run, entry["green_attempt"], spec["verdict_job"], timeout)
+    rerun = side(spec, run, jobs, siblings)
+    if rerun["state"] != GREEN:
+        return ["the jobs of attempt %d read %s (%s), not GREEN" % (entry["green_attempt"], rerun["state"],
+                                                                    rerun["why"])]
+    column, found, why = ("ci", "next").index(mine), {}, []
+    for zone in PASSES:
+        named = [job for job in jobs if job["name"] == PASSES[zone][column]]
+        if len(named) == 1 and named[0]["id"] not in found:
+            found[named[0]["id"]] = digests(job_annotations(repo, named[0]["id"], timeout))
+        pair = list(notices.get(zone) or (None, None))
+        pair[column] = found[named[0]["id"]].get(zone) if len(named) == 1 else None
+        one = zone_reading(*pair)
+        if one["class"] != "EQUAL":
+            why.append("the green attempt's %s pass reads %s%s against %s's, not TEST-IDS-EQUAL" % (
+                zone, reading_words(one),
+                " (%s)" % vacuous(one["ci_node_files"], one["next_node_files"]) if one["class"] == "VACUOUS" else "",
+                other_workflow))
     return why
 
 
 def set_aside_why(aside):
-    """The line of a row that is set aside: what it would read, the run and the two attempts, the cause, the fix
-    and the decision, each as the entry has it."""
-    return ("%s by name, not one of the %d and not blocking: it would read %s. %s run %d was red on attempt %d and "
-            "passed on attempt %d, its latest, on this SHA. Cause: %s. Fixed by %s. Decision: %s. Its test-ID "
-            "readings are the red attempt's and block nothing" % (
+    """The line of a row that is set aside: what it would read, the run and the two attempts with what was held of
+    each, the cause, the fix and the decision, each as the entry has it."""
+    return ("%s by name, not one of the %d and not blocking: it would read %s. %s run %d was red on attempt %d, at a "
+            "unit test step and nothing else, and passed on attempt %d, its latest, on this SHA. Cause: %s. Fixed by "
+            "%s. Decision: %s. The test-ID columns of this row are the red attempt's and block nothing; attempt %d's "
+            "test IDs read TEST-IDS-EQUAL against %s's in both passes" % (
                 SET_ASIDE_CLASS, WINDOW, aside["would_read"], aside["workflow"], aside["run_id"],
                 aside["red_attempt"], aside["green_attempt"], aside["cause"], aside["fixed_by"][:10],
-                aside["decision"]))
+                aside["decision"], aside["green_attempt"], SIDES[aside["workflow"]][3]))
 
 
 # ── queue times ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -866,6 +1035,7 @@ def read(repo, limit, timeout):
                "next_red_legs": None, "next_superseded_legs": None}
         row["before_window"] = first_seen[sha] < first_seen[COUNT_FROM_SHA]
         row["counted"] = row["class"] != "NOT-COUNTED" and not row["before_window"]
+        notices = {}  # zone -> [ci.yml's notice, ci-next.yml's], as this row's test IDs are read from them
         if row["counted"]:
             found = {}
             for zone, (serial_job, shadow_job) in PASSES.items():
@@ -876,28 +1046,19 @@ def read(repo, limit, timeout):
                         found[job["id"]] = digests(job_annotations(repo, job["id"], timeout))
                     pair.append(found[job["id"]].get(zone) if job is not None else None)
                     ran.append(step_conclusion(job, PASS_STEPS[zone]))
-                verdict, differs = compare_ids(*pair)
-                row["test_ids"][zone] = {"class": verdict, "differs": differs if verdict == "DIFFER" else None,
-                                         "ci": pair[0]["sha256"] if pair[0] else None,
-                                         "next": pair[1]["sha256"] if pair[1] else None,
-                                         "ci_node_files": pair[0]["node_files"] if pair[0] else None,
-                                         "next_node_files": pair[1]["node_files"] if pair[1] else None,
-                                         "ci_step": ran[0], "next_step": ran[1]}
+                notices[zone] = pair
+                row["test_ids"][zone] = dict(zone_reading(*pair), ci_step=ran[0], next_step=ran[1])
             row.update(step_facts(
                 next((j for j in judged(picked["ci"])[1] if j["name"] == SERIAL["verdict_job"]), None),
                 judged(picked["next"])[1], judged(picked["next"])[0], shadow_runs))
         # The entry of SET_ASIDE that names this SHA, if one does. A whole one is held against the row as read, and
-        # only when nothing refuses it are the jobs of its green attempt asked for.
+        # only when nothing refuses it are the jobs and the notices of its green attempt asked for.
         aside = row["set_aside"] = next((entry for entry in entries if entry["sha"] == sha), None)
         if aside is not None and aside["status"] is None:
-            why = set_aside_refusals(aside, row)
+            mine = SIDES[aside["workflow"]][0]
+            why = set_aside_refusals(aside, row, judged(picked[mine])[1])
             if not why:
-                mine, spec = SIDES[aside["workflow"]][:2]
-                rerun = side(spec, picked[mine], run_jobs(repo, picked[mine]["id"], timeout, aside["green_attempt"]),
-                             listed[mine])
-                if rerun["state"] != GREEN:
-                    why.append("the jobs of attempt %d read %s (%s), not GREEN" % (
-                        aside["green_attempt"], rerun["state"], rerun["why"]))
+                why = green_attempt_refusals(repo, aside, picked[mine], listed[mine], notices, timeout)
             aside.update(status=REFUSED if why else APPLIED, why=why, would_read=row["class"])
             if not why:
                 row.update({"class": SET_ASIDE_CLASS, "counted": False})
@@ -1060,16 +1221,18 @@ def human(doc):
     red = " (%d of them red on both sides)" % a["counted_red"] if a["counted_red"] else ""
     named = (". Exempt (red on both sides at the same step, serial pass never ran): %d: %s" % (
         len(a["exempt"]), ", ".join(sha[:10] for sha in a["exempt"])) if a["exempt"] else "")
-    # Every set-aside SHA with its cause, on the MET line and on the NOT MET one: the count leans on each of them.
+    # Every set-aside SHA with its cause and the decision it rests on, on the MET line and on the NOT MET one: the
+    # count leans on each of them, and the last line alone has to say on whose word.
     named += (". Set aside by name (a DISAGREE that is not one of the %d and does not block): %d: %s" % (
-        WINDOW, len(aside), "; ".join("%s, cause: %s" % (entry["sha"][:10], entry["cause"]) for entry in aside))
+        WINDOW, len(aside), "; ".join("%s, cause: %s, decision: %s" % (entry["sha"][:10], entry["cause"],
+                                                                      entry["decision"]) for entry in aside))
         if aside else "")
     named += (". SET_ASIDE entries that set nothing aside: %d: %s" % (
         len(unused), ", ".join("%s %s" % (str(entry["sha"])[:10], entry["status"]) for entry in unused))
         if unused else "")
     out.append("ACCEPTANCE: %s" % (
-        "MET: %d SHAs counted%s, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, queue threshold not "
-        "tripped%s. Not checked here: manifest conservation, the 10-green soak, the canary" % (
+        "MET: %d SHAs counted%s, none of them DISAGREE, TEST-IDS-EQUAL in both passes on every one, queue threshold "
+        "not tripped%s. Not checked here: manifest conservation, the 10-green soak, the canary" % (
             a["qualifying"], red, named) if a["met"] else
         "NOT MET: %s%s%s" % ("; ".join(a["missing"]),
                              ". Of the %d counted, %d red on both sides" % (a["qualifying"], a["counted_red"])
@@ -1113,7 +1276,8 @@ def main(argv=None, stdout=None, stderr=None):
     except Unreadable as exc:
         doc = {"schema_version": SCHEMA_VERSION, "repo": args.repo, "verdict": "unreadable", "error": str(exc)}
         code = EXIT_UNREADABLE
-    stdout.write(json.dumps(doc) + "\n" if args.json else human(doc))
+    # default=str: a MALFORMED entry is reported with its fields as they are written, whatever they are.
+    stdout.write(json.dumps(doc, default=str) + "\n" if args.json else human(doc))
     stdout.flush()
     return code
 

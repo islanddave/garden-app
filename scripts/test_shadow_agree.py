@@ -23,13 +23,16 @@ carry their `steps`: the recorded pushes have none, so a row MADE red is given s
 shows (red_at()), and a row left without them is the fail-closed case.
 both-red-superseded-legs-5982e7b2cc.json is a real push red on both sides at one step whose three legs still running
 were cancelled by the next push, with the ci-next.yml run that cancelled them.
+flaky-rerun-fe89add373.json is the real push SET_ASIDE names: ci.yml red on attempt 1 at one failed unit test and
+green on attempt 2, ci-next.yml green, with both attempts' jobs, steps and notices as GitHub served them.
 
 The script counts from COUNT_FROM_SHA, which none of these pushes is: an autouse fixture opens the window at the
 oldest recorded push instead, and the tests of the bound move it or put the shipped value back.
 
 SET_ASIDE, the list of rows set aside by name, is emptied for every test by the same fixture: the SHA it ships
-with is in none of these recordings, so as shipped every reading here would carry a STALE entry. The tests of the
-list install their own entries, written against a push MADE flaky (flaky()), or put the shipped list back.
+with is in one recording only, which no other test loads, so as shipped every other reading here would carry a
+STALE entry. The tests of the list install their own entries, written against a push MADE flaky (make_flaky()), or
+put the shipped list back, against the recordings (STALE) and against the real push it names (APPLIED).
 """
 import copy
 import datetime
@@ -1145,8 +1148,8 @@ def test_acceptance_is_met_at_ten_counted_with_equal_test_ids_and_quiet_queues(g
     code, verdict, line = acceptance(gh, replies)
     assert code == 0 and verdict == {"met": True, "missing": [], "counted": 10, "counted_red": 0, "qualifying": 10,
                                      "exempt": [], "set_aside": [], "blocking": []}
-    assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, "
-                    "queue threshold not tripped" + NOT_COVERED)
+    assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none of them DISAGREE, TEST-IDS-EQUAL in both passes on every "
+                    "one, queue threshold not tripped" + NOT_COVERED)
 
 
 def test_acceptance_says_how_many_of_the_counted_were_red_on_both_sides(gh):
@@ -1156,7 +1159,7 @@ def test_acceptance_says_how_many_of_the_counted_were_red_on_both_sides(gh):
         assert red_at(p, MEASURED_FLOOR) == "unit-utc-cov"  # after both passes: each printed its notice
     code, verdict, line = acceptance(gh, replies)
     assert code == 0 and verdict["met"] and verdict["counted_red"] == 2
-    assert line.startswith("ACCEPTANCE: MET: 10 SHAs counted (2 of them red on both sides), none DISAGREE")
+    assert line.startswith("ACCEPTANCE: MET: 10 SHAs counted (2 of them red on both sides), none of them DISAGREE")
     assert line.endswith("queue threshold not tripped" + NOT_COVERED)
 
 
@@ -1372,8 +1375,8 @@ def test_ten_qualifying_beside_the_exempt_pair_is_met_and_the_met_line_names_the
     code, verdict, line = acceptance(gh, replies)
     assert code == 0 and verdict == {"met": True, "missing": [], "counted": 11, "counted_red": 0, "qualifying": 10,
                                      "exempt": [REAL_RED], "set_aside": [], "blocking": []}
-    assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, "
-                    "queue threshold not tripped" + EXEMPT_TAIL + NOT_COVERED)
+    assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none of them DISAGREE, TEST-IDS-EQUAL in both passes on every "
+                    "one, queue threshold not tripped" + EXEMPT_TAIL + NOT_COVERED)
 
 
 def test_nine_qualifying_beside_the_exempt_pair_is_nine_of_ten_and_the_window_is_not_met(gh):
@@ -2770,7 +2773,8 @@ def test_the_documented_exit_codes_are_the_ones_returned():
 FLAKE = "a test race: the test read storage before a passive effect had taken the draft out of it"
 DECISION = "owner, a date, a decision row"
 WORKFLOWS = {"ci": "ci.yml", "next": "ci-next.yml"}
-ASIDE_TAIL = ". Set aside by name (a DISAGREE that is not one of the 10 and does not block): 1: %s, cause: " + FLAKE
+ASIDE_TAIL = (". Set aside by name (a DISAGREE that is not one of the 10 and does not block): 1: %s, cause: " + FLAKE
+              + ", decision: " + DECISION)
 UNUSED_TAIL = ". SET_ASIDE entries that set nothing aside: 1: %s %s"
 BEFORE_WINDOW = "the SHA is before the counting window, where a row is in no tally"
 NOT_COUNTS = "run_id, red_attempt and green_attempt are not all positive integers"
@@ -2787,26 +2791,61 @@ def serve_green_attempt(p, side="ci", attempt=2):
     return p.replies[green_attempt_jobs_path(run["id"], attempt)]["jobs"]
 
 
-def make_flaky(p, side="ci", to="success"):
-    """A push as a flaky unit test leaves it, in the shape of the real fe89add373: `side` red at its UTC pass on
-    attempt 1 and re-run on the same commit, the other side green. The red attempt printed a UTC digest that
-    differs from the other side's in states only; a red ci.yml job never reached its New York pass. `p` must be a
-    plain push: a push() made after this one would copy the re-run without its first attempt."""
+GREEN_IDS = {"UTC": C, NY: B}          # what every pass that passed prints here, on either side
+UNIT_LEGS = {"UTC": "unit-utc-cov", NY: "unit-ny"}
+
+
+def flaky_red(p, side="ci", zone="UTC", **red_notice):
+    """Attempt 1 of a push as a flaky unit test leaves it, in the shape of the real fe89add373: `side` red at the
+    step of its `zone` pass and at nothing else, the other side green with both passes printed. The red pass
+    printed a digest that differs from the other side's in states only (`red_notice` overrides that notice); a red
+    ci.yml job never reaches a pass after the one it failed."""
     if side == "ci":
         red_serial(p)
-        fail_step(p, "build-and-test", UTC_PASS, side="ci")
-        p.notice("ci", "build-and-test", "UTC", A, reason="failed", failed=1)
-        p.notice("next", "unit-utc-cov", "UTC", C)
+        fail_step(p, "build-and-test", sa.PASS_STEPS[zone], side="ci")
+        ran = ["UTC"] if zone == "UTC" else ["UTC", NY]
     else:
-        red_leg(p, "unit-utc-cov")
-        fail_step(p, "unit-utc-cov", UTC_PASS)
-        p.notice("ci", "build-and-test", "UTC", C)
-        p.notice("ci", "build-and-test", NY, B)
-        p.notice("next", "unit-utc-cov", "UTC", A, reason="failed", failed=1)
-    p.notice("next", "unit-ny", NY, B)
-    p.rerun(side, to=to)
-    serve_green_attempt(p, side)
+        for leg in UNIT_LEGS.values():
+            green_leg(p, leg)
+        red_leg(p, UNIT_LEGS[zone])
+        fail_step(p, UNIT_LEGS[zone], sa.PASS_STEPS[zone])
+        ran = ["UTC", NY]
+    red_job = "build-and-test" if side == "ci" else UNIT_LEGS[zone]
+    for one in ("UTC", NY):
+        mine, other = (("build-and-test", UNIT_LEGS[one]) if side == "ci" else (UNIT_LEGS[one], "build-and-test"))
+        p.notice("next" if side == "ci" else "ci", other, one, GREEN_IDS[one])
+        if one == zone:
+            p.notice(side, red_job, one, **dict({"sha256": A, "reason": "failed", "failed": 1}, **red_notice))
+        elif one in ran:
+            p.notice(side, mine, one, GREEN_IDS[one])
     return p
+
+
+def rerun_green(p, side="ci", attempt=2):
+    """The red side re-run to green on the same commit: the green attempt's jobs at that attempt's own endpoint,
+    and its unit jobs' notices, equal to the other side's in both passes. `p` must be a plain push: a push() made
+    after this would copy the re-run without its first attempt."""
+    p.rerun(side)
+    for zone in ("UTC", NY):
+        p.notice(side, "build-and-test" if side == "ci" else UNIT_LEGS[zone], zone, GREEN_IDS[zone])
+    jobs = serve_green_attempt(p, side, attempt)
+    for job in jobs:
+        job.update(run_attempt=attempt)
+    return p
+
+
+def make_flaky(p, side="ci", zone="UTC"):
+    """A push a flaky unit test made red on attempt 1 and that passed on its re-run: flaky_red(), rerun_green()."""
+    return rerun_green(flaky_red(p, side, zone), side)
+
+
+def green_notices(p, side, zone):
+    """The annotation list that holds the green attempt's notice of one pass (after rerun_green())."""
+    return p.annotations(side, "build-and-test" if side == "ci" else UNIT_LEGS[zone])
+
+
+def drop_notice(notes, zone):
+    notes[:] = [note for note in notes if note["title"] != "test-ids " + zone]
 
 
 def entry_for(p, side="ci", **fields):
@@ -2820,10 +2859,19 @@ def asked_for_green(calls, p, side="ci"):
     return sum(1 for call in calls if stem in call[4] and "/jobs?" in call[4] and stem + "1/" not in call[4])
 
 
-def nothing_set_aside(gh, monkeypatch, replies, p, entries, status, why, reads=0, side="ci"):
+def asked_for_green_notices(calls, p, side="ci"):
+    """How often the annotations of a job of a later attempt were asked for: the other read only an entry makes.
+    Those jobs are the ones in the run's latest job listing that attempt 1 does not hold; none when never re-run."""
+    first = p.replies.get(attempt_jobs_path(getattr(p, side)["id"]))
+    later = {job["id"] for job in p.jobs(side)} - {job["id"] for job in first["jobs"]} if first else set()
+    return sum(1 for call in calls if call[4] in {annotations_path(job_id) for job_id in later})
+
+
+def nothing_set_aside(gh, monkeypatch, replies, p, entries, status, why, reads=0, side="ci", notices=0):
     """The entry (the first of `entries`) sets nothing aside: the reading is the one with no list at all, row for
     row and line for line, plus the entry's own report, its line on the row, its line under the table and its
-    words on the ACCEPTANCE line. `reads`: how often the green attempt's jobs were asked for."""
+    words on the ACCEPTANCE line. `reads`: how often the green attempt's jobs were asked for; `notices`: how often
+    the annotations of one of its jobs were."""
     monkeypatch.setattr(sa, "SET_ASIDE", ())
     plain_code, plain = doc_of(gh, replies)
     plain_out = gh(replies)[1].rstrip().split("\n")
@@ -2840,7 +2888,7 @@ def nothing_set_aside(gh, monkeypatch, replies, p, entries, status, why, reads=0
     assert (code, doc["verdict"], doc["summary"], doc["acceptance"], doc["queue"]) == (
         plain_code, plain["verdict"], plain["summary"], plain["acceptance"], plain["queue"])
     assert doc["acceptance"]["set_aside"] == [] and doc["summary"]["classes"]["SET-ASIDE"] == 0
-    assert asked_for_green(calls, p, side) == reads
+    assert (asked_for_green(calls, p, side), asked_for_green_notices(calls, p, side)) == (reads, notices)
     new = [line for line in out.rstrip().split("\n") if line not in plain_out]
     assert new[0] == ("           SET-ASIDE %s: an entry of SET_ASIDE names this SHA and sets nothing aside, so the "
                       "row is judged as any other: %s" % (status, "; ".join(why)))
@@ -2902,12 +2950,15 @@ def test_a_flaky_red_side_that_passed_on_its_rerun_is_set_aside_by_its_entry(roa
         "DISAGREE", True, "BLOCKS", None)
     assert before["set_aside"] == [] and before["summary"]["classes"]["DISAGREE"] == 1
     assert {"1 DISAGREE", "TEST-IDS-DIFFER on 1 row(s)"} <= set(before["acceptance"]["missing"])
-    assert asked_for_green(gh(replies)[2], p, side) == 0
+    calls = gh(replies)[2]
+    assert (asked_for_green(calls, p, side), asked_for_green_notices(calls, p, side)) == (0, 0)
 
     monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p, side),))
     code, doc = doc_of(gh, replies)
     mine = row(doc, p.sha)
     assert code == 0 and doc["verdict"] == "agree"
+    assert doc["queue"] == before["queue"]              # in no tally but its own; its run stays in the queue times
+    assert p.next["id"] in [run["run_id"] for run in doc["queue"]["runs"]]
     assert (mine["class"], mine["counted"], mine["acceptance"]) == ("SET-ASIDE", False, "SET-ASIDE")
     assert mine["set_aside"] == dict(entry_for(p, side), status="APPLIED", why=[], would_read="DISAGREE")
     assert doc["set_aside"] == [mine["set_aside"]]
@@ -2927,6 +2978,8 @@ def test_a_flaky_red_side_that_passed_on_its_rerun_is_set_aside_by_its_entry(roa
     code, out, calls = gh(replies)
     assert code == 0 and asked_for_green(calls, p, side) == 1
     assert [call[4] for call in calls].count(green_attempt_jobs_path(getattr(p, side)["id"])) == 1
+    # The green attempt's notices: one job holds both passes in ci.yml, each unit leg holds one in ci-next.yml.
+    assert asked_for_green_notices(calls, p, side) == (1 if side == "ci" else 2)
     assert all(call[:4] == ["api", "-i", "-X", "GET"] for call in calls)
     lines = out.rstrip().split("\n")
     at = next(n for n, line in enumerate(lines) if line.startswith(p.sha[:10]))
@@ -2939,9 +2992,10 @@ def test_a_flaky_red_side_that_passed_on_its_rerun_is_set_aside_by_its_entry(roa
         ("build-and-test=success", "failed: unit-utc-cov"))
     assert lines[at + 2] == (
         "           SET-ASIDE by name, not one of the 10 and not blocking: it would read DISAGREE. %s run %d was red "
-        "on attempt 1 and passed on attempt 2, its latest, on this SHA. Cause: %s. Fixed by %s. Decision: %s. Its "
-        "test-ID readings are the red attempt's and block nothing" % (workflow, run_id, FLAKE, sha(99)[:10],
-                                                                      DECISION))
+        "on attempt 1, at a unit test step and nothing else, and passed on attempt 2, its latest, on this SHA. "
+        "Cause: %s. Fixed by %s. Decision: %s. The test-ID columns of this row are the red attempt's and block "
+        "nothing; attempt 2's test IDs read TEST-IDS-EQUAL against %s's in both passes" % (
+            workflow, run_id, FLAKE, sha(99)[:10], DECISION, WORKFLOWS["next" if side == "ci" else "ci"]))
     assert lines[at + 3] == "           test IDs of the UTC pass differ in: states only"
     assert lines[at + 4] == ("           %s was re-run: attempt 1 is the one judged; its latest attempt, 2, "
                              "concluded success" % workflow)
@@ -2968,8 +3022,8 @@ def test_the_acceptance_line_names_the_set_aside_sha_and_its_cause_when_it_is_me
     code, verdict, line = acceptance(gh, replies)
     assert code == 0 and verdict == {"met": True, "missing": [], "counted": 10, "counted_red": 0, "qualifying": 10,
                                      "exempt": [], "set_aside": [p.sha], "blocking": []}
-    assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, "
-                    "queue threshold not tripped" + ASIDE_TAIL % p.sha[:10] + NOT_COVERED)
+    assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none of them DISAGREE, TEST-IDS-EQUAL in both passes on every "
+                    "one, queue threshold not tripped" + ASIDE_TAIL % p.sha[:10] + NOT_COVERED)
     _nine(pushes)
     code, verdict, line = acceptance(gh, replies)
     assert code == 0 and verdict["met"] is False and verdict["set_aside"] == [p.sha]
@@ -3074,31 +3128,339 @@ def test_an_entry_the_live_reading_no_longer_supports_sets_nothing_aside_and_say
     assert row(doc, p.sha)["acceptance"] == "BLOCKS" and row(doc, p.sha)["counted"] is True
 
 
-@pytest.mark.parametrize("shadow_nodes", [NODE_FILES, 0])
-def test_a_row_with_a_vacuous_pass_is_never_set_aside(gh, monkeypatch, shadow_nodes):
-    """Made red after the passes ran (ci.yml at the measured floor), so both passes printed on both sides, with
-    equal digests. With the shadow's New York notice showing files in the node project the row is set aside; with
-    it showing none the pass is VACUOUS, the shadow's own defect, and the same entry sets nothing aside."""
-    replies = recorded()
-    p = push(replies, sha(1))
+# "Because of a flaky test" is held on the row's own evidence. Each case below is a DISAGREE whose red side passed
+# on its re-run, with the green attempt's test IDs equal to the other side's in both passes, and an entry that
+# names it: every condition of the first commit holds. What refuses it is what the red attempt itself shows.
+
+NOT_A_TEST = "the red attempt did not go red at a unit test step and nothing else: %s"
+NOT_ITS_PASS = 'build-and-test failed "%s", which is not the step of a unit pass it runs'
+NOT_A_STEP = "the red attempt's %s pass step in %s %s, which is not failed, passed or skipped behind a failed pass"
+FAILED_LEAVES = "a failed test leaves TEST-IDS-DIFFER in states only"
+PASSED_LEAVES = "a pass that passed leaves TEST-IDS-EQUAL"
+STOPPED_LEAVES = ("a pass the red job stopped before leaves TEST-IDS-ABSENT with no digest of its own and the other "
+                  "side's printed")
+RED_READS = "the red attempt's %s pass reads %s, and %s"
+
+
+def _both_passes_equal(p):
+    p.ids(utc=(GREEN_IDS["UTC"],) * 2, ny=(GREEN_IDS[NY],) * 2)
+
+
+def _red_at_the_measured_floor(p):
+    """ci.yml red after both passes ran, at the coverage measured floor: a step, and not a test. Both passes
+    printed on both sides, equal. (The first commit's suite asserted this row IS set aside.)"""
     red_serial(p)
     fail_step(p, "build-and-test", MEASURED_FLOOR, side="ci")
-    p.ids(ny=(None, None))
-    p.notice("ci", "build-and-test", NY, B)
-    p.notice("next", "unit-ny", NY, B, node_files=shadow_nodes)
-    p.rerun("ci", to="success")
-    serve_green_attempt(p)
-    if shadow_nodes:
-        monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p),))
-        code, doc = doc_of(gh, replies)
-        assert code == 0 and row(doc, p.sha)["class"] == "SET-ASIDE"
-        assert {z: one["class"] for z, one in row(doc, p.sha)["test_ids"].items()} == {"UTC": "EQUAL", NY: "EQUAL"}
-        return
-    doc, _ = nothing_set_aside(gh, monkeypatch, replies, p, [entry_for(p)], "REFUSED", [
-        "its America/New_York pass reads TEST-IDS-VACUOUS, which is never set aside"])
+    _both_passes_equal(p)
+    return "ci", [NOT_A_TEST % (NOT_ITS_PASS % MEASURED_FLOOR)]
+
+
+def _red_at_the_ratchet(p):
+    """ci.yml red at the ratchet step, before either pass: neither ran there, and a skipped pass is what a flaky
+    test leaves only behind a FAILED pass."""
+    red_serial(p)
+    fail_step(p, "build-and-test", RATCHET, side="ci")
+    p.ids(utc=(None, GREEN_IDS["UTC"]), ny=(None, GREEN_IDS[NY]))
+    return "ci", [NOT_A_TEST % (NOT_ITS_PASS % RATCHET),
+                  NOT_A_STEP % ("UTC", "build-and-test", "concluded skipped"),
+                  NOT_A_STEP % (NY, "build-and-test", "concluded skipped")]
+
+
+def _cancelled(p, ended_after_s):
+    names = step_names()["build-and-test"]
+    p.steps("ci", "build-and-test", dict(_stopped_at(names, names.index(MEASURED_FLOOR)),
+                                         **{MEASURED_FLOOR: "cancelled"}))
+    _both_passes_equal(p)
+    p.cancel("ci", ended_after_s=ended_after_s, hung=True)
+    return "ci", [NOT_A_TEST % "build-and-test concluded cancelled, not failure"]
+
+
+def _cancelled_by_hand_with_no_failed_step(p):
+    """Both passes ran and printed, then the job was cancelled with nothing pushed behind it: RED, and no test."""
+    return _cancelled(p, 300)
+
+
+def _cut_at_its_timeout_with_no_failed_step(p):
+    return _cancelled(p, 91 * 60)
+
+
+def _failed_with_no_failed_step(p):
+    red_serial(p)
+    names = step_names()["build-and-test"]
+    p.steps("ci", "build-and-test", _stopped_at(names, len(names)))
+    _both_passes_equal(p)
+    return "ci", [NOT_A_TEST % "build-and-test failed with no failed step"]
+
+
+def _failed_with_no_steps_to_read(p):
+    red_serial(p)
+    _both_passes_equal(p)
+    return "ci", [NOT_A_TEST % "build-and-test carries no steps",
+                  NOT_A_STEP % ("UTC", "build-and-test", "cannot be read"),
+                  NOT_A_STEP % (NY, "build-and-test", "cannot be read")]
+
+
+def _a_leg_that_runs_no_pass_failed(p):
+    """The shadow red in gates-a, its two unit legs green with both passes equal."""
+    for leg in UNIT_LEGS.values():
+        green_leg(p, leg)
+    red_leg(p, "gates-a")
+    fail_step(p, "gates-a", "Install dependencies")
+    _both_passes_equal(p)
+    return "next", [NOT_A_TEST % "gates-a failed, and it runs no unit pass"]
+
+
+def _a_unit_leg_failed_and_so_did_another_leg(p):
+    """A flaky test in unit-utc-cov, and gates-a red beside it: more than a flaky test."""
+    flaky_red(p, "next")
+    red_leg(p, "gates-a")
+    fail_step(p, "gates-a", "Install dependencies")
+    return "next", [NOT_A_TEST % "gates-a failed, and it runs no unit pass"]
+
+
+def _the_failed_pass_differs_in_the_file_set(p):
+    flaky_red(p, files_sha256=A)
+    return "ci", [RED_READS % ("UTC", "TEST-IDS-DIFFER in the file set", FAILED_LEAVES)]
+
+
+def _the_failed_pass_differs_in_test_names(p):
+    flaky_red(p, names_sha256=A)
+    return "ci", [RED_READS % ("UTC", "TEST-IDS-DIFFER in test names", FAILED_LEAVES)]
+
+
+def _the_failed_pass_shows_no_failed_test(p):
+    """The pass step failed and its test IDs equal the other side's: every test passed, so it was not a test that
+    failed it (a coverage threshold inside the same step looks like this)."""
+    flaky_red(p, sha256=GREEN_IDS["UTC"], reason="passed", failed=0)
+    return "ci", [RED_READS % ("UTC", "TEST-IDS-EQUAL", FAILED_LEAVES)]
+
+
+def _the_shadow_printed_no_digest_where_ci_printed_one(p):
+    """ci.yml red at its New York pass, which printed; the green shadow printed none for that pass."""
+    flaky_red(p, zone=NY)
+    drop_notice(p.annotations("next", "unit-ny"), NY)
+    return "ci", [RED_READS % (NY, "TEST-IDS-ABSENT (no usable digest from ci-next.yml)", FAILED_LEAVES)]
+
+
+def _the_shadow_printed_no_digest_for_the_pass_ci_never_reached(p):
+    flaky_red(p)
+    drop_notice(p.annotations("next", "unit-ny"), NY)
+    return "ci", [RED_READS % (NY, "TEST-IDS-ABSENT (no usable digest from ci.yml or ci-next.yml)", STOPPED_LEAVES)]
+
+
+def _a_pass_that_passed_printed_no_digest_on_the_red_side(p):
+    flaky_red(p, zone=NY)
+    drop_notice(p.annotations("ci", "build-and-test"), "UTC")
+    return "ci", [RED_READS % ("UTC", "TEST-IDS-ABSENT (no usable digest from ci.yml)", PASSED_LEAVES)]
+
+
+def _a_pass_that_passed_differs(p):
+    """The shadow red at its UTC pass; its New York pass passed there and differs from ci.yml's all the same."""
+    flaky_red(p, "next")
+    drop_notice(p.annotations("next", "unit-ny"), NY)
+    p.notice("next", "unit-ny", NY, D)
+    return "next", [RED_READS % (NY, "TEST-IDS-DIFFER in states only", PASSED_LEAVES)]
+
+
+def _a_green_leg_skipped_its_pass(p):
+    """The shadow red at its UTC pass, and unit-ny green with its pass step skipped: not behind a failed pass."""
+    flaky_red(p, "next")
+    drop_notice(p.annotations("next", "unit-ny"), NY)
+    p.steps("next", "unit-ny", dict(_stopped_at(step_names()["unit-ny"], 99), **{NY_PASS: "skipped"}))
+    return "next", [NOT_A_STEP % (NY, "unit-ny", "concluded skipped")]
+
+
+NOT_A_FLAKY_TEST = [
+    _red_at_the_measured_floor, _red_at_the_ratchet, _cancelled_by_hand_with_no_failed_step,
+    _cut_at_its_timeout_with_no_failed_step, _failed_with_no_failed_step, _failed_with_no_steps_to_read,
+    _a_leg_that_runs_no_pass_failed, _a_unit_leg_failed_and_so_did_another_leg,
+    _the_failed_pass_differs_in_the_file_set, _the_failed_pass_differs_in_test_names,
+    _the_failed_pass_shows_no_failed_test, _the_shadow_printed_no_digest_where_ci_printed_one,
+    _the_shadow_printed_no_digest_for_the_pass_ci_never_reached, _a_pass_that_passed_printed_no_digest_on_the_red_side,
+    _a_pass_that_passed_differs, _a_green_leg_skipped_its_pass]
+
+
+@pytest.mark.parametrize("red", NOT_A_FLAKY_TEST)
+def test_a_red_attempt_that_is_not_a_flaky_tests_is_never_set_aside_and_the_row_says_what_it_shows(
+        gh, monkeypatch, red):
+    """Refused on what is already read: neither the green attempt's jobs nor its notices are asked for."""
+    replies = recorded()
+    p = push(replies, sha(1))
+    side, why = red(p)
+    rerun_green(p, side)
+    doc, _ = nothing_set_aside(gh, monkeypatch, replies, p, [entry_for(p, side)], "REFUSED", why, side=side)
     mine = row(doc, p.sha)
-    assert mine["test_ids"][NY]["class"] == "VACUOUS" and mine["acceptance"] == "BLOCKS"
+    assert (mine["class"], mine["acceptance"], mine["counted"]) == ("DISAGREE", "BLOCKS", True)
+    assert mine[side]["state"] == "RED" and mine["next" if side == "ci" else "ci"]["state"] == "GREEN"
+    assert mine[side]["latest_attempt"] == {"run_attempt": 2, "status": "completed", "conclusion": "success"}
+
+
+def test_each_of_those_reds_is_set_aside_by_the_same_entry_once_it_is_a_flaky_tests(gh, monkeypatch):
+    """The control for the cases above: the same build with the red attempt left as a flaky test leaves it, on
+    either side and in either pass, is set aside. So each case above is refused for what it changes."""
+    for side in ("ci", "next"):
+        for zone in ("UTC", NY):
+            replies = recorded()
+            p = make_flaky(push(replies, sha(1)), side, zone)
+            monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p, side),))
+            code, doc = doc_of(gh, replies)
+            assert code == 0 and row(doc, p.sha)["class"] == "SET-ASIDE", (side, zone)
+            assert row(doc, p.sha)["set_aside"]["why"] == []
+            classes = {z: one["class"] for z, one in row(doc, p.sha)["test_ids"].items()}
+            assert classes[zone] == "DIFFER" and row(doc, p.sha)["test_ids"][zone]["differs"] == "states only"
+            assert set(classes.values()) == ({"DIFFER", "ABSENT"} if (side, zone) == ("ci", "UTC") else
+                                             {"DIFFER", "EQUAL"})
+
+
+def test_a_row_with_a_vacuous_pass_is_never_set_aside(gh, monkeypatch):
+    """ci.yml red at its New York pass, so its UTC pass ran and printed, equal to the shadow's. With the shadow's
+    UTC notice showing files in the node project the row is set aside; with it showing none that pass is VACUOUS,
+    the shadow's own defect, and the same entry sets nothing aside."""
+    replies = recorded()
+    p = make_flaky(push(replies, sha(1)), zone=NY)
+    monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p),))
+    code, doc = doc_of(gh, replies)
+    assert code == 0 and row(doc, p.sha)["class"] == "SET-ASIDE"
+    assert {z: one["class"] for z, one in row(doc, p.sha)["test_ids"].items()} == {"UTC": "EQUAL", NY: "DIFFER"}
+    drop_notice(p.annotations("next", "unit-utc-cov"), "UTC")
+    p.notice("next", "unit-utc-cov", "UTC", GREEN_IDS["UTC"], node_files=0)
+    doc, _ = nothing_set_aside(gh, monkeypatch, replies, p, [entry_for(p)], "REFUSED", [
+        RED_READS % ("UTC", "TEST-IDS-VACUOUS", PASSED_LEAVES)])
+    mine = row(doc, p.sha)
+    assert mine["test_ids"]["UTC"]["class"] == "VACUOUS" and mine["acceptance"] == "BLOCKS"
     assert "1 DISAGREE" in doc["acceptance"]["missing"] and VACUOUS_MISSING % 1 in doc["acceptance"]["missing"]
+
+
+@pytest.mark.parametrize("jobs,zones,why", [
+    ([], [], ["no job of ci.yml failed"]),
+    ([{"name": "build-and-test", "conclusion": "skipped"}], [], ["build-and-test concluded skipped, not failure"]),
+    ([{"name": "build-and-test", "conclusion": "failure", "steps": [
+        {"name": UTC_PASS, "conclusion": "success"}, {"name": NY_PASS, "conclusion": "failure"}]}], [NY], []),
+    ([{"name": "build-and-test", "conclusion": "failure", "steps": [
+        {"name": UTC_PASS, "conclusion": "failure"}, {"name": MEASURED_FLOOR, "conclusion": "failure"}]}], ["UTC"],
+     ['build-and-test failed "%s", which is not the step of a unit pass it runs' % MEASURED_FLOOR]),
+    ([{"name": "lint", "conclusion": "failure", "steps": [{"name": UTC_PASS, "conclusion": "failure"}]}], [],
+     ["lint failed, and it runs no unit pass"]),
+])
+def test_what_makes_one_side_red_at_a_unit_test_step_and_nothing_else_in_ci_yml(jobs, zones, why):
+    assert sa.red_at_a_unit_pass("ci.yml", jobs) == (zones, why)
+
+
+@pytest.mark.parametrize("jobs,zones,why", [
+    # The aggregator's failure is the summary of its legs; any other conclusion of it is a red of its own.
+    ([{"name": "unit-ny", "conclusion": "failure", "steps": [{"name": NY_PASS, "conclusion": "failure"}]},
+      {"name": "build-and-test-next", "conclusion": "failure"}], [NY], []),
+    ([{"name": "unit-ny", "conclusion": "failure", "steps": [{"name": NY_PASS, "conclusion": "failure"}]},
+      {"name": "build-and-test-next", "conclusion": "cancelled"}], [NY],
+     ["build-and-test-next concluded cancelled, not failure"]),
+    ([{"name": "build-and-test-next", "conclusion": "failure"}], [], ["no job of ci-next.yml failed"]),
+    # A unit leg runs ONE pass: the other pass's step is not its own, whatever it is called.
+    ([{"name": "unit-ny", "conclusion": "failure", "steps": [{"name": UTC_PASS, "conclusion": "failure"}]}], [],
+     ['unit-ny failed "%s", which is not the step of a unit pass it runs' % UTC_PASS]),
+    ([{"name": "unit-utc-cov", "conclusion": "failure", "steps": [{"name": UTC_PASS, "conclusion": "failure"}]},
+      {"name": "unit-ny", "conclusion": "failure", "steps": [{"name": NY_PASS, "conclusion": "failure"}]},
+      {"name": "static", "conclusion": "success"}], ["UTC", NY], []),
+])
+def test_what_makes_one_side_red_at_a_unit_test_step_and_nothing_else_in_ci_next_yml(jobs, zones, why):
+    assert sa.red_at_a_unit_pass("ci-next.yml", jobs) == (zones, why)
+
+
+def test_a_pass_that_was_not_read_fits_nothing():
+    assert sa.red_reading_refusals("ci.yml", {"test_ids": {}}, ["UTC"]) == [
+        "the red attempt's UTC pass was not read", "the red attempt's America/New_York pass was not read"]
+    assert sa.pass_jobs("ci.yml") == {"build-and-test": ["UTC", NY]}
+    assert sa.pass_jobs("ci-next.yml") == {"unit-utc-cov": ["UTC"], "unit-ny": [NY]}
+
+
+# The green attempt: its jobs, then its own test IDs against the other side's. EQUAL in both passes, or refused.
+
+GREEN_READS = "the green attempt's %s pass reads %s against %s's, not TEST-IDS-EQUAL"
+
+
+def _green_differs_in_the_file_set(p):
+    drop_notice(green_notices(p, "ci", "UTC"), "UTC")
+    p.notice("ci", "build-and-test", "UTC", A, files_sha256=A)
+    return [GREEN_READS % ("UTC", "TEST-IDS-DIFFER in the file set", "ci-next.yml")], 1
+
+
+def _green_differs_in_test_names(p):
+    drop_notice(green_notices(p, "ci", "UTC"), "UTC")
+    p.notice("ci", "build-and-test", "UTC", A, names_sha256=A)
+    return [GREEN_READS % ("UTC", "TEST-IDS-DIFFER in test names", "ci-next.yml")], 1
+
+
+def _green_differs_in_states(p):
+    """A states-only difference is what the RED attempt of a flaky test shows. On the attempt that passed, it is a
+    difference."""
+    drop_notice(green_notices(p, "ci", NY), NY)
+    p.notice("ci", "build-and-test", NY, A)
+    return [GREEN_READS % (NY, "TEST-IDS-DIFFER in states only", "ci-next.yml")], 1
+
+
+def _green_printed_no_digest(p):
+    drop_notice(green_notices(p, "ci", NY), NY)
+    return [GREEN_READS % (NY, "TEST-IDS-ABSENT (no usable digest from ci.yml)", "ci-next.yml")], 1
+
+
+def _green_is_vacuous(p):
+    drop_notice(green_notices(p, "ci", "UTC"), "UTC")
+    p.notice("ci", "build-and-test", "UTC", GREEN_IDS["UTC"], node_files=5)
+    return [GREEN_READS % (
+        "UTC", "TEST-IDS-VACUOUS (ci.yml ran the node project too (node_files=5): both sides switched, the "
+        "comparison proves nothing)", "ci-next.yml")], 1
+
+
+def _both_green_passes_differ(p):
+    for zone in ("UTC", NY):
+        drop_notice(green_notices(p, "ci", zone), zone)
+        p.notice("ci", "build-and-test", zone, A)
+    return [GREEN_READS % (zone, "TEST-IDS-DIFFER in states only", "ci-next.yml") for zone in ("UTC", NY)], 1
+
+
+def _the_shadows_green_leg_printed_no_digest_where_ci_printed_one(p):
+    """What "Re-run failed jobs" leaves: the leg that was carried over has no notice on its copy."""
+    drop_notice(green_notices(p, "next", NY), NY)
+    return [GREEN_READS % (NY, "TEST-IDS-ABSENT (no usable digest from ci-next.yml)", "ci.yml")], 2
+
+
+def _the_green_attempt_has_no_job_for_a_pass(p):
+    served = p.replies[green_attempt_jobs_path(p.next["id"])]
+    served["jobs"] = [job for job in served["jobs"] if job["name"] != "unit-ny"]
+    served["total_count"] -= 1
+    return [GREEN_READS % (NY, "TEST-IDS-ABSENT (no usable digest from ci-next.yml)", "ci.yml")], 1
+
+
+def _the_green_attempt_lists_a_pass_job_twice(p):
+    served = p.replies[green_attempt_jobs_path(p.next["id"])]
+    twin = dict(copy.deepcopy(next(job for job in served["jobs"] if job["name"] == "unit-ny")), id=7)
+    p.replies[annotations_path(7)] = copy.deepcopy(green_notices(p, "next", NY))
+    served["jobs"].append(twin)
+    served["total_count"] += 1
+    return [GREEN_READS % (NY, "TEST-IDS-ABSENT (no usable digest from ci-next.yml)", "ci.yml")], 1
+
+
+GREEN_NOT_EQUAL = [
+    ("ci", _green_differs_in_the_file_set), ("ci", _green_differs_in_test_names), ("ci", _green_differs_in_states),
+    ("ci", _green_printed_no_digest), ("ci", _green_is_vacuous), ("ci", _both_green_passes_differ),
+    ("next", _the_shadows_green_leg_printed_no_digest_where_ci_printed_one),
+    ("next", _the_green_attempt_has_no_job_for_a_pass), ("next", _the_green_attempt_lists_a_pass_job_twice)]
+
+
+@pytest.mark.parametrize("side,spoil", GREEN_NOT_EQUAL)
+def test_a_green_attempt_whose_test_ids_are_not_equal_to_the_other_sides_in_both_passes_is_not_set_aside(
+        gh, monkeypatch, side, spoil):
+    """The red attempt is a flaky test's on every count, the re-run passed and its jobs read GREEN. What is
+    compared for the set-aside is the GREEN attempt's notices against the other side's, and each case differs
+    there alone. `notices`: how many of that attempt's jobs had their annotations asked for."""
+    replies = recorded()
+    p = push(replies, sha(1))
+    make_flaky(p, side)
+    monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p, side),))
+    assert gh(replies)[0] == 0                                    # as built: set aside
+    why, notices = spoil(p)
+    doc, _ = nothing_set_aside(gh, monkeypatch, replies, p, [entry_for(p, side)], "REFUSED", why, reads=1, side=side,
+                               notices=notices)
+    assert row(doc, p.sha)["acceptance"] == "BLOCKS" and row(doc, p.sha)["counted"] is True
 
 
 def test_an_entry_on_a_row_that_does_not_disagree_sets_nothing_aside(gh, monkeypatch):
@@ -3115,8 +3477,7 @@ def test_an_entry_on_a_row_that_does_not_disagree_sets_nothing_aside(gh, monkeyp
 
 def test_a_red_side_that_was_never_rerun_is_not_set_aside(gh, monkeypatch):
     replies = recorded()
-    p = push(replies, sha(1))
-    red_serial(p)
+    p = flaky_red(push(replies, sha(1)))
     nothing_set_aside(gh, monkeypatch, replies, p, [entry_for(p)], "REFUSED", [
         "the run's latest attempt is 1, not attempt 2, the one the entry names as green"])
 
@@ -3245,11 +3606,71 @@ def test_the_shipped_list_against_these_recordings_is_one_stale_entry_and_says_s
     ten(replies)
     code, verdict, line = acceptance(gh, replies)
     assert code == 0 and verdict["met"] is True and verdict["set_aside"] == []
-    assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none DISAGREE, TEST-IDS-EQUAL in both passes on every one, "
-                    "queue threshold not tripped" + UNUSED_TAIL % ("fe89add373", "STALE") + NOT_COVERED)
+    assert line == ("ACCEPTANCE: MET: 10 SHAs counted, none of them DISAGREE, TEST-IDS-EQUAL in both passes on every "
+                    "one, queue threshold not tripped" + UNUSED_TAIL % ("fe89add373", "STALE") + NOT_COVERED)
     code, doc = doc_of(gh, {next(p for p in recorded() if "/workflows/ci-next.yml/runs?" in p): {
         "total_count": 0, "workflow_runs": []}})
     assert code == 0 and [(one["sha"], one["status"]) for one in doc["set_aside"]] == [(only_sha(), "STALE")]
+
+
+FLAKY_REAL = "flaky-rerun-fe89add373.json"
+
+
+def real_flaky_push(replies):
+    """The recorded fe89add373 as a push beside whatever `replies` holds, every reply as GitHub served it: both
+    listing rows (ci.yml's is its latest attempt, 2), attempt 1 of the ci.yml run and its jobs, attempt 2's jobs
+    (also what the run's latest job listing returns), the ci-next.yml jobs, and the annotations of the four jobs
+    that ran a unit pass."""
+    real = copy.deepcopy(_fixture(FLAKY_REAL))["runs"]
+    for side, workflow in (("ci", "ci.yml"), ("next", "ci-next.yml")):
+        listing(replies, workflow)["workflow_runs"].insert(0, real[side]["run"])
+        listing(replies, workflow)["total_count"] += 1
+        for job_id, notes in real[side]["annotations"].items():
+            replies[annotations_path(int(job_id))] = notes
+    ci = real["ci"]["run"]["id"]
+    replies[jobs_path(real["next"]["run"]["id"])] = real["next"]["jobs"]
+    replies[jobs_path(ci)] = copy.deepcopy(real["ci"]["attempt_2_jobs"])
+    replies[attempt_path(ci)] = real["ci"]["attempt_1"]
+    replies[attempt_jobs_path(ci)] = real["ci"]["attempt_1_jobs"]
+    replies[green_attempt_jobs_path(ci, 2)] = real["ci"]["attempt_2_jobs"]
+    return Push(replies, only_sha())
+
+
+def test_the_shipped_entry_is_applied_on_the_real_push_it_names_as_github_served_it(gh, monkeypatch):
+    """Every other applied row here is MADE. This is the one real set-aside, on recorded replies: with no list it
+    blocks, and with the list as shipped every condition holds on what GitHub itself returned."""
+    replies = recorded()
+    p = real_flaky_push(replies)
+    code, before = doc_of(gh, replies)
+    was = row(before, p.sha)
+    assert code == 1 and (was["class"], was["acceptance"], was["set_aside"]) == ("DISAGREE", "BLOCKS", None)
+    assert was["ci"]["why"] == "failed: build-and-test" and was["ci_failed_steps"] == [UTC_PASS]
+    assert {z: (one["class"], one["differs"], one["ci_step"], one["next_step"], one["ci_node_files"],
+                one["next_node_files"]) for z, one in was["test_ids"].items()} == {
+        "UTC": ("DIFFER", "states only", "failure", "success", 0, 503),
+        NY: ("ABSENT", None, "skipped", "success", None, 503)}
+
+    monkeypatch.setattr(sa, "SET_ASIDE", SHIPPED_SET_ASIDE)
+    code, doc = doc_of(gh, replies)
+    mine = row(doc, p.sha)
+    assert code == 0 and (mine["class"], mine["counted"], mine["acceptance"]) == ("SET-ASIDE", False, "SET-ASIDE")
+    assert mine["set_aside"] == dict(SHIPPED_SET_ASIDE[0], status="APPLIED", why=[], would_read="DISAGREE")
+    assert doc["set_aside"] == [mine["set_aside"]] and doc["acceptance"]["set_aside"] == [only_sha()]
+    assert mine["test_ids"] == was["test_ids"] and doc["queue"] == before["queue"]
+    code, out, calls = gh(replies)
+    asked = [call[4] for call in calls]
+    assert code == 0 and asked.count(green_attempt_jobs_path(38056999803, 2)) == 1
+    assert asked.count(annotations_path(114236735476)) == 1 == asked.count(annotations_path(114227408794))
+    assert "fe89add373 SET-ASIDE     RED 38056999803          GREEN 38056999812        TEST-IDS-DIFFER  " \
+        "TEST-IDS-ABSENT  ubuntu-24.04 / ubuntu-24.04" in out
+    assert out.rstrip().endswith(
+        ". Set aside by name (a DISAGREE that is not one of the 10 and does not block): 1: fe89add373, cause: %s, "
+        "decision: %s" % (SHIPPED_SET_ASIDE[0]["cause"], SHIPPED_SET_ASIDE[0]["decision"]))
+    # The green attempt's notices are what holds it: without them on the re-run's job, the same entry is refused.
+    drop_notice(replies[annotations_path(114236735476)], NY)
+    code, doc = doc_of(gh, replies)
+    assert code == 1 and row(doc, p.sha)["class"] == "DISAGREE" and row(doc, p.sha)["set_aside"]["why"] == [
+        GREEN_READS % (NY, "TEST-IDS-ABSENT (no usable digest from ci.yml)", "ci-next.yml")]
 
 
 @pytest.mark.parametrize("bad", list(BAD) + ["gone", "truncated", "a job with no name"])
@@ -3275,3 +3696,151 @@ def test_a_green_attempt_whose_jobs_cannot_be_read_is_exit_2_and_never_a_set_asi
     doc = json.loads(out)
     assert code == 2 and doc["verdict"] == "unreadable" and set(doc) == {"schema_version", "repo", "verdict", "error"}
     assert "/attempts/2" in doc["error"] or "run %d" % p.ci["id"] in doc["error"]
+
+
+@pytest.mark.parametrize("side", ["ci", "next"])
+@pytest.mark.parametrize("bad", list(BAD) + ["gone", "a list of strings"])
+def test_a_green_attempt_whose_notices_cannot_be_read_is_exit_2_and_never_a_set_aside(gh, monkeypatch, side, bad):
+    """The other read an entry adds: the annotations of the green attempt's unit jobs. The jobs read GREEN and the
+    notices cannot be read, so nothing is concluded: not a set-aside, and not a refusal either."""
+    replies = recorded()
+    p = make_flaky(push(replies, sha(1)), side)
+    monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p, side),))
+    assert gh(replies)[0] == 0                                    # readable: the row is set aside, exit 0
+    job = p.job(side, "build-and-test" if side == "ci" else "unit-ny")
+    path = annotations_path(job["id"])
+    if bad == "gone":
+        del replies[path]
+    elif bad == "a list of strings":
+        replies[path] = ["test-ids UTC"]
+    else:
+        replies[path] = {"_raw": BAD[bad]}
+    code, out, calls = gh(replies)
+    assert code == 2 and out.startswith("shadow-agree: UNREADABLE.") and "this is not agreement" in out
+    assert "SET-ASIDE" not in out and "ACCEPTANCE" not in out and "AGREE" not in out
+    assert asked_for_green(calls, p, side) == 1 and [call[4] for call in calls].count(path) == 1
+    code, out, _ = gh(replies, "--json")
+    doc = json.loads(out)
+    assert code == 2 and doc["verdict"] == "unreadable" and set(doc) == {"schema_version", "repo", "verdict", "error"}
+    assert "check-runs/%d/annotations" % job["id"] in doc["error"] or "job %d" % job["id"] in doc["error"]
+
+
+def _of_another_run(jobs):
+    jobs[0].update(run_id=jobs[0]["run_id"] + 1)
+
+
+def _of_the_first_attempt(jobs):
+    jobs[0].update(run_attempt=1)
+
+
+def _of_another_sha(jobs):
+    jobs[0].update(head_sha=sha(98))
+
+
+def _with_no_attempt_number(jobs):
+    jobs[0].pop("run_attempt")
+
+
+def _the_verdict_job_twice(jobs):
+    """A failure and then a success under the one name: side() would keep the last."""
+    jobs.insert(0, dict(copy.deepcopy(jobs[0]), id=7, conclusion="failure"))
+
+
+@pytest.mark.parametrize("spoil", [_of_another_run, _of_the_first_attempt, _of_another_sha, _with_no_attempt_number,
+                                   _the_verdict_job_twice])
+def test_a_reply_that_is_not_the_green_attempt_asked_for_is_exit_2_and_never_a_set_aside(gh, monkeypatch, spoil):
+    """HTTP 200 and a readable job list that reads GREEN, of something other than that run, that attempt and that
+    SHA: the green attempt's notices would be read off these jobs, so the reply is held to being what was asked."""
+    replies = recorded()
+    p = make_flaky(push(replies, sha(1)))
+    monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p),))
+    assert gh(replies)[0] == 0
+    served = replies[green_attempt_jobs_path(p.ci["id"])]
+    spoil(served["jobs"])
+    served["total_count"] = len(served["jobs"])
+    code, out, calls = gh(replies)
+    assert code == 2 and out.startswith("shadow-agree: UNREADABLE.") and "SET-ASIDE" not in out
+    assert "the job listing of attempt 2 of run %d is not that attempt's" % p.ci["id"] in out
+    assert (asked_for_green(calls, p), asked_for_green_notices(calls, p)) == (1, 0)   # no notice is read off it
+
+
+def test_a_red_attempt_that_passed_on_a_third_attempt_is_set_aside_when_the_entry_names_that_attempt(
+        gh, monkeypatch):
+    """"Passed on a re-run of the same commit" does not say the first re-run. With red_attempt 1 and green_attempt
+    3 the entry holds while attempt 3 is the latest and green; attempt 2 is named by nothing and is never read."""
+    replies = recorded()
+    p = flaky_red(push(replies, sha(1)))
+    rerun_green(p, attempt=3)
+    p.ci.update(run_attempt=3)
+    assert green_attempt_jobs_path(p.ci["id"], 2) not in replies
+    monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p, green_attempt=3),))
+    code, out, calls = gh(replies)
+    assert code == 0 and "%s SET-ASIDE " % p.sha[:10] in out
+    assert ("ci.yml run %d was red on attempt 1, at a unit test step and nothing else, and passed on attempt 3, its "
+            "latest, on this SHA." % p.ci["id"]) in out
+    assert "attempt 3's test IDs read TEST-IDS-EQUAL against ci-next.yml's in both passes" in out
+    assert "ci.yml was re-run: attempt 1 is the one judged; its latest attempt, 3, concluded success" in out
+    asked = [call[4] for call in calls if "/runs/%d/attempts/" % p.ci["id"] in call[4]]
+    assert sorted(asked) == sorted([attempt_path(p.ci["id"]), attempt_jobs_path(p.ci["id"]),
+                                    green_attempt_jobs_path(p.ci["id"], 3)])
+    doc = doc_of(gh, replies)[1]
+    assert row(doc, p.sha)["set_aside"] == dict(entry_for(p, green_attempt=3), status="APPLIED", why=[],
+                                                would_read="DISAGREE")
+
+
+def test_a_set_aside_rows_own_shadow_run_stays_in_the_queue_times_and_can_trip_the_threshold(gh, monkeypatch):
+    """In no tally but its own, and its ci-next.yml run is still one of the runs the queue threshold is taken over:
+    how long a leg waited for a runner is not the row's verdict. Two other runs over 120 s leave the threshold
+    untripped and ACCEPTANCE MET; the set-aside row's own run is the third, and the line reads NOT MET."""
+    replies = recorded()
+    pushes = ten(replies)
+    p = make_flaky(push(replies, sha(20)))
+    monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p),))
+    for other in pushes[2:4]:
+        _waits(other.job("next", "gates-a"), 300)
+    code, doc = doc_of(gh, replies)
+    assert code == 0 and row(doc, p.sha)["class"] == "SET-ASIDE" and doc["acceptance"]["met"] is True
+    assert (doc["queue"]["runs_in_window"], doc["queue"]["runs_over"], doc["queue"]["tripped"]) == (10, 2, False)
+    assert (doc["queue"]["runs"][0]["run_id"], doc["queue"]["runs"][0]["over"]) == (p.next["id"], [])
+
+    _waits(p.job("next", "gates-a"), 300)
+    code, verdict, line = acceptance(gh, replies)
+    tripped = "queue threshold tripped (3 of the newest 10 run(s) had a job wait over 120 s)"
+    assert code == 0 and verdict == {"met": False, "missing": [tripped], "counted": 10, "counted_red": 0,
+                                     "qualifying": 10, "exempt": [], "set_aside": [p.sha], "blocking": []}
+    assert line == "ACCEPTANCE: NOT MET: " + tripped + ASIDE_TAIL % p.sha[:10]
+    doc = doc_of(gh, replies)[1]
+    assert row(doc, p.sha)["class"] == "SET-ASIDE" and row(doc, p.sha)["counted"] is False
+    assert (doc["queue"]["runs"][0]["run_id"], doc["queue"]["runs"][0]["over"]) == (p.next["id"], ["gates-a"])
+    assert (doc["queue"]["runs_over"], doc["queue"]["tripped"]) == (3, True)
+    monkeypatch.setattr(sa, "SET_ASIDE", ())            # and the queue reads the same with no entry at all
+    assert doc_of(gh, replies)[1]["queue"] == doc["queue"]
+
+
+def test_the_queue_times_of_a_set_aside_row_are_said_where_the_tally_is():
+    """The docs once said "in no tally but its own" and stopped there; the queue times are the one place its run
+    still counts."""
+    assert "in no tally but its own; its ci-next.yml run stays in the queue times" in " ".join(sa.__doc__.split())
+    with open(os.path.join(HERE, "ci-telemetry", "README.md"), encoding="utf-8") as fh:
+        readme = " ".join(fh.read().split())
+    assert "in no tally but its own; its `ci-next.yml` run stays in the queue times" in readme
+    source = open(SCRIPT, encoding="utf-8").read()
+    assert "An entry is deleted in the commit that moves COUNT_FROM_SHA past its SHA" in " ".join(
+        source.replace("#", " ").split())
+
+
+def test_an_entry_whose_fields_are_not_even_the_right_kind_is_malformed_and_never_a_crash(gh, monkeypatch):
+    """An uncaught exception would exit 1, which is the exit code of a DISAGREE. A workflow that is a list and a
+    cause that is a set are both written wrong, and both are reported as that, in the table and in --json."""
+    replies = recorded()
+    p = make_flaky(push(replies, sha(1)))
+    assert sa.entry_defects(entry_for(p, workflow=["ci.yml"])) == ["workflow is neither ci.yml nor ci-next.yml"]
+    assert sa.entry_defects(entry_for(p, workflow={"ci.yml": 1})) == ["workflow is neither ci.yml nor ci-next.yml"]
+    monkeypatch.setattr(sa, "SET_ASIDE", (entry_for(p, cause={"a set"}),))
+    code, out, _ = gh(replies)
+    assert code == 1 and "SET_ASIDE ENTRY MALFORMED: %s (ci.yml run %d) sets nothing aside: no cause is written " \
+        "beside it" % (p.sha[:10], p.ci["id"]) in out
+    code, doc = doc_of(gh, replies)
+    assert code == 1 and row(doc, p.sha)["class"] == "DISAGREE"
+    assert [(one["status"], one["why"], one["cause"]) for one in doc["set_aside"]] == [
+        ("MALFORMED", ["no cause is written beside it"], "{'a set'}")]

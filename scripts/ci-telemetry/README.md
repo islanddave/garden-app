@@ -113,16 +113,29 @@ is red at a step `ci.yml` ran and passed. Each SHA with a verdict on both sides 
   dev SHA, the workflow whose run was red, that run's id, the attempt that was red and the attempt that was green,
   the cause in one sentence, the full SHA of the fixing commit and the decision.
 
-  An entry holds only while GitHub still supports it, and every run of the script checks all of: the SHA is inside
-  the counting window; the row reads DISAGREE; the other side is GREEN; the run named is the one read for that
-  workflow on that SHA; the attempt judged is the one named as red; the run's latest attempt is the one named as
-  green and concluded success; no pass reads TEST-IDS-VACUOUS; and the jobs of that green attempt read GREEN (the
-  one extra call, made only when the rest holds). The row then prints as SET-ASIDE with its cause, its test-ID
-  columns stay (they are the red attempt's) and block nothing, and it is in no tally but its own. When any
-  condition fails the entry is REFUSED: the row blocks exactly as it would with no entry and its line says which
-  condition failed. An entry whose SHA is no dev push in the listings is STALE, and one that is not whole (a field
-  missing or extra, no cause, two entries for one SHA) is MALFORMED. Neither sets anything aside, and every entry
-  that sets nothing aside is printed under the table and named on the last line.
+  An entry holds only while GitHub still supports it, and "because of a flaky test" is held on the row's own
+  evidence, never on the cause as written. Every run of the script checks all of: the SHA is inside the counting
+  window; the row reads DISAGREE; the other side is GREEN; the run named is the one read for that workflow on that
+  SHA; the attempt judged is the one named as red; the run's latest attempt is the one named as green and concluded
+  success. Then, of the red attempt: every job that did not succeed concluded `failure`, runs a unit pass and
+  failed that pass's step and no other (a cancel, a timeout, a red with no failed step and a red at any other step,
+  such as a ratchet or the coverage measured floor, are not a failed test); and its test IDs, which are the row's
+  own columns, read as a flaky test leaves them: TEST-IDS-DIFFER in states only where the pass step failed,
+  TEST-IDS-EQUAL where it passed, TEST-IDS-ABSENT only for a pass the red job stopped before. A TEST-IDS-VACUOUS, a
+  difference in the file set or in the test names, a digest one side printed and the other did not, and a failed
+  pass that shows no failed test each refuse. Then, of the green attempt, in the two kinds of call an entry adds
+  (made only when the rest holds): its jobs read GREEN and are jobs of that run, attempt and SHA; and its own test
+  IDs read TEST-IDS-EQUAL against the other side's in both passes (the annotations of that attempt's unit jobs: one
+  call for `ci.yml`, two for `ci-next.yml`). A leg that "Re-run failed jobs" carried over has no notice on its
+  copy, so an entry that names `ci-next.yml` holds only after a re-run of all jobs.
+
+  The row then prints as SET-ASIDE with its cause, its test-ID columns stay (they are the red attempt's) and block
+  nothing, and it is in no tally but its own; its `ci-next.yml` run stays in the queue times. When any condition
+  fails the entry is REFUSED: the row blocks exactly as it would with no entry and its line says which condition
+  failed. An entry whose SHA is no dev push in the listings is STALE, and one that is not whole (a field missing or
+  extra, no cause, two entries for one SHA) is MALFORMED. Neither sets anything aside, and every entry that sets
+  nothing aside is printed under the table and named on the last line. An entry is deleted in the commit that moves
+  `COUNT_FROM_SHA` past its SHA.
 
   One entry so far: `fe89add37399f3d6d61ceabfb18cd6a753e93702`, `ci.yml` run 38056999803, red on attempt 1 and
   green on attempt 2. The cause was a race in `src/__tests__/PutUpSpentKey.test.jsx`, which read storage before a
@@ -130,13 +143,13 @@ is red at a step `ci.yml` ran and passed. Each SHA with a verdict on both sides 
 
 The last line is `ACCEPTANCE: MET` or `NOT MET` with each thing still missing: at least 10 SHAs that qualify, none
 that blocks, queue threshold not tripped. It names every exempt SHA and, met or not, every SET-ASIDE SHA with its
-cause, so the last line alone says the count leans on one. A MET line ends with what it does not
-cover: manifest conservation, the 10-green soak and the canary are not read here. Every SHA from the start of the
-counting window is read and tallied whatever `--limit` is; `--limit` only cuts the rows printed. That line is
+cause and the decision it rests on, so the last line alone says the count leans on one. A MET line ends with what it
+does not cover: manifest conservation, the 10-green soak and the canary are not read here. Every SHA from the start
+of the counting window is read and tallied whatever `--limit` is; `--limit` only cuts the rows printed. That line is
 separate from the exit code: exit 0 = nothing disagrees, 1 = a DISAGREE or a TEST-IDS-DIFFER among the SHAs inside
-the window (a SET-ASIDE row is neither, and the `verdict:` line says how many rows are set aside), 2 = a reply
-could not be read (or a listing changed between its two reads) and nothing is concluded.
-How a cancelled run is read, and why that cannot hide a disagreement, is in the docstring at the top of the script.
+the window (a SET-ASIDE row is neither, and the `verdict:` line says how many rows are set aside), 2 = a reply could
+not be read (or a listing changed between its two reads) and nothing is concluded. How a cancelled run is read, and
+why that cannot hide a disagreement, is in the docstring at the top of the script.
 
 `--json` (`schema_version` 3) carries the same reading. Per SHA: `counted` (a verdict on both sides, inside the
 window, and not set aside), `acceptance` (`QUALIFIES`, `EXEMPT`, `BLOCKS`, `SET-ASIDE`, or null when not counted
