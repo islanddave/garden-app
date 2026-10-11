@@ -66,12 +66,20 @@ export function buildGardenFacetOptions(tagMap, projectsHidden) {
 // failed has settled too, and Garden then falls back as before). Both halves are read off the real option builder,
 // so this cannot drift from what the control offers: the structural groupings (Type or Projects, Location,
 // Lifecycle) are offered with an empty map and never wait, and a value no map could add — the tag 'type' facet
-// while projects are hidden, a stale or unknown value — falls back at once, as it always has.
+// while projects are hidden, a stale or unknown value — falls back at once, as it always has. `holdExpired`: the
+// hold is past its own deadline (TAG_HOLD_MAX_MS, below) and nothing waits any longer.
 const EVERY_TAG_FACET = { any: { direct: GARDEN_TAG_FACETS.map(facet => ({ facet })) } }
 const offered = (tagMap, projectsHidden, value) => buildGardenFacetOptions(tagMap, projectsHidden).some(o => o.value === value)
-export function groupByAwaitsTags({ groupBy, tagsPending, projectsHidden }) {
-  return !!tagsPending && !offered(null, projectsHidden, groupBy) && offered(EVERY_TAG_FACET, projectsHidden, groupBy)
+export function groupByAwaitsTags({ groupBy, tagsPending, holdExpired = false, projectsHidden }) {
+  return !!tagsPending && !holdExpired && !offered(null, projectsHidden, groupBy) && offered(EVERY_TAG_FACET, projectsHidden, groupBy)
 }
+// The hold's own deadline, from Garden's mount. Without one the hold ends only when the tag request settles, and on
+// a radio that is connected but not answering nothing settles it before the service worker's 12 s timeout or the
+// API's 15 s abort: a tag-grouped Garden, its list in the cache all along, would read "Loading…" for that long on
+// every visit and then paint the Type fallback anyway. Past this Garden stops holding and is what it was before the
+// hold — the cached list in the fallback grouping, the restore spent on that page, a regroup when the map lands.
+// 2.5 s is a chosen bound, not a measured one: the tag endpoint's own latency has not been measured.
+export const TAG_HOLD_MAX_MS = 2500
 
 // ── Keeping the choice ────────────────────────────────────────────────────────────────────────────────
 //

@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   buildGardenFacetOptions, GARDEN_TAG_FACETS, decideGroupByHydrate, sendGroupByChoice, servedFromCache, predatesGroupBySave,
-  __resetGroupBySends, GROUPBY_PENDING_MAX_AGE_MS, groupByAwaitsTags,
+  __resetGroupBySends, GROUPBY_PENDING_MAX_AGE_MS, groupByAwaitsTags, TAG_HOLD_MAX_MS,
 } from '../lib/gardenGroupBy.js'
 import { FROM_CACHE } from '../lib/api.js'
 import { PREDATES_GROUP_BY_SAVE } from '../lib/notificationPrefsClient.js'
@@ -75,6 +75,19 @@ describe('groupByAwaitsTags — a remembered tag grouping holds Garden until the
         expect(groupByAwaitsTags({ groupBy: value, tagsPending: true, projectsHidden: hidden })).toBe(!structural.includes(value))
       }
     }
+  })
+  // The hold's own deadline (review I-1): past it nothing waits, whatever the tag load is doing.
+  it('past its deadline the hold is over, with the tag load still out', () => {
+    for (const hidden of [true, false]) {
+      const everyFacet = { p1: { direct: GARDEN_TAG_FACETS.map(facet => ({ facet })) } }
+      for (const value of values(buildGardenFacetOptions(everyFacet, hidden))) {
+        expect(groupByAwaitsTags({ groupBy: value, tagsPending: true, holdExpired: true, projectsHidden: hidden })).toBe(false)
+      }
+    }
+    expect(groupByAwaitsTags({ groupBy: 'heat', tagsPending: true, holdExpired: false, projectsHidden: true })).toBe(true)
+  })
+  it('the deadline is 2.5 s: far short of the 12 s a silent radio takes to fail the tag request', () => {
+    expect(TAG_HOLD_MAX_MS).toBe(2500)
   })
 })
 

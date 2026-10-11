@@ -19,7 +19,7 @@ import { useClaimPageScroll, currentPageEntry } from '../hooks/usePageScrollMana
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA, loadGroupByPendingRecord, saveGroupByPending, clearGroupByPending, markLegacyGroupByPending } from '../lib/projectTree.js'
 import GroupBySlugSelect from '../components/GroupBySlugSelect.jsx'
-import { buildGardenFacetOptions, decideGroupByHydrate, sendGroupByChoice, servedFromCache, predatesGroupBySave, groupByAwaitsTags } from '../lib/gardenGroupBy.js'
+import { buildGardenFacetOptions, decideGroupByHydrate, sendGroupByChoice, servedFromCache, predatesGroupBySave, groupByAwaitsTags, TAG_HOLD_MAX_MS } from '../lib/gardenGroupBy.js'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import TileGrid from '../components/forms/TileGrid.jsx'
@@ -161,7 +161,18 @@ export default function Garden() {
   // hook's effect) can never swap a list someone is reading for the spinner.
   const tagsSettledRef = useRef(false)
   if (!tagsLoading) tagsSettledRef.current = true
-  const awaitingTags = groupByAwaitsTags({ groupBy, tagsPending: !tagsSettledRef.current, projectsHidden: PROJECTS_HIDDEN })
+  // The hold has its own deadline (TAG_HOLD_MAX_MS, and why, in gardenGroupBy.js): one timer, armed while the hold
+  // is on and cleared the moment it ends (the map settled, another grouping was adopted, the page was left). Once
+  // it has fired the visit never holds again, so a later reload of the map can neither bring the spinner back nor
+  // start the clock again, and Garden is what it was before the hold: the fallback painted, the restore spent on
+  // it, a regroup when the map lands.
+  const [tagHoldExpired, setTagHoldExpired] = useState(false)
+  const awaitingTags = groupByAwaitsTags({ groupBy, tagsPending: !tagsSettledRef.current, holdExpired: tagHoldExpired, projectsHidden: PROJECTS_HIDDEN })
+  useEffect(() => {
+    if (!awaitingTags) return
+    const t = setTimeout(() => setTagHoldExpired(true), TAG_HOLD_MAX_MS)
+    return () => clearTimeout(t)
+  }, [awaitingTags])
   // V4-NAVSTATE-002 — restore ACROSS FRAMES, and latch only once we have actually landed.
   //
   // The v1 restore fired one rAF and latched a one-shot BEFORE the attempt. Both halves failed on

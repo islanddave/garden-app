@@ -49,6 +49,7 @@ vi.mock('../components/LoveMehPopover.jsx', () => ({ default: () => null }))
 import Garden from '../pages/Garden.jsx'
 import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
 import { saveGroupBy, saveGroupsExpanded } from '../lib/projectTree.js'
+import { TAG_HOLD_MAX_MS } from '../lib/gardenGroupBy.js'
 import { __resetDataCache } from '../lib/dataCache.js'
 
 const PLANTS = [
@@ -170,6 +171,136 @@ describe('a remembered tag grouping, the tag map still out', () => {
     await answerTags()
     expect(control().value).toBe('heat')
     expect(screen.getByText('Sungold')).toBeTruthy()
+  })
+})
+
+// Review I-1 — the hold has its own deadline. Without one it ended only when the tag request settled, which on a
+// radio that is connected but silent is the service worker's 12 s or the API's 15 s: "Loading…" for that long on
+// every visit, over a list that was in the cache all along, and then the Type fallback anyway. Past
+// TAG_HOLD_MAX_MS Garden is what it was before the hold: the fallback painted, the restore spent on it, a regroup
+// when the map lands.
+//
+// THE CLOCK IS FAKED, setTimeout and clearTimeout ONLY. Garden.resumeGate.test.jsx avoids fake timers because this
+// page's mount awaits real promises; those are microtasks and stay real here, as do setImmediate (React's act),
+// Date and the frames (stubbed by hand above). So "2499 ms: held, 2500 ms: the list" is the timer itself firing with
+// nothing else changing, and `vi.getTimerCount()` is whether it is still armed.
+describe('the hold has its own deadline', () => {
+  let armed          // how many times the deadline has been armed
+  let timeouts
+  beforeEach(() => {
+    saveGroupBy('heat')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    timeouts = vi.spyOn(globalThis, 'setTimeout')
+    armed = () => timeouts.mock.calls.filter(([, ms]) => ms === TAG_HOLD_MAX_MS).length
+  })
+  afterEach(() => {
+    timeouts.mockRestore()
+    vi.useRealTimers()
+  })
+  const pass = (ms) => act(async () => { vi.advanceTimersByTime(ms) })
+  // Every grouping the control has shown, in order, read after each commit: a fallback on the page for one commit
+  // only is still in the list.
+  const watchGroupings = () => {
+    const shown = []
+    const note = () => { const c = control(); if (c && shown[shown.length - 1] !== c.value) shown.push(c.value) }
+    const mo = new MutationObserver(note)
+    mo.observe(document.body, { childList: true, subtree: true })
+    return { shown, stop: () => { note(); mo.disconnect() } }
+  }
+
+  it('a tag load that never settles: at the deadline the list paints in the Type fallback and the restore is attempted', async () => {
+    await setSpot(900)
+    scrollCalls = []
+    await mountGarden()
+    expect(armed()).toBe(2)             // one per visit: setSpot's, and this one
+    await pass(TAG_HOLD_MAX_MS - 1)
+    runFrames(25)
+    expect(screen.getByText('Loading…')).toBeTruthy()
+    expect(control()).toBeNull()
+    expect(scrollCalls).toEqual([])
+
+    await pass(1)                       // nothing else changes: the tag request is still out
+    expect(tagMaps.length).toBe(2)
+    expect(control().value).toBe('crop_type')
+    expect([...control().options].map((o) => o.value)).toEqual(['crop_type', 'location', 'status'])
+    expect(screen.getByText('Sungold')).toBeTruthy()
+    expect(screen.getByText(/Log many/)).toBeTruthy()
+    expect(screen.queryByText('Loading…')).toBeNull()
+    runFrames(3)
+    expect(scrollCalls[0]).toBe(900)
+  })
+
+  it('a tag load that settles at 1 s: the fallback is never painted, and the deadline is cleared', async () => {
+    const groupings = watchGroupings()
+    await mountGarden()
+    expect(vi.getTimerCount()).toBe(1)
+    await pass(1000)
+    expect(screen.getByText('Loading…')).toBeTruthy()
+    await answerTags()
+    expect(control().value).toBe('heat')
+    expect(vi.getTimerCount()).toBe(0)
+    await pass(TAG_HOLD_MAX_MS * 4)     // well past where it would have fired
+    groupings.stop()
+    expect(groupings.shown).toEqual(['heat'])
+    expect(screen.getByText('Mild')).toBeTruthy()
+  })
+
+  it('a tag load that settles after the deadline: Garden regroups under the restored list, as it did before the hold', async () => {
+    await setSpot(900)
+    scrollCalls = []
+    const groupings = watchGroupings()
+    await mountGarden()
+    await pass(TAG_HOLD_MAX_MS)
+    runFrames(25)                       // the restore resolves on the fallback's page
+    expect(scrollCalls[0]).toBe(900)
+    const spent = scrollCalls.length
+
+    await answerTags()
+    runFrames(25)
+    groupings.stop()
+    expect(groupings.shown).toEqual(['crop_type', 'heat'])
+    expect(screen.getByText('Mild')).toBeTruthy()
+    expect(screen.getByText('Hot')).toBeTruthy()
+    expect(scrollCalls.length).toBe(spent)   // the one restore went on the fallback: none for the regrouped list
+  })
+
+  it('one deadline per visit: a re-render does not start it again, nor does a later reload of the map', async () => {
+    const v = await mountGarden()
+    expect(armed()).toBe(1)
+    await pass(1000)
+    await act(async () => { v.rerender(tree()) })
+    expect(armed()).toBe(1)
+    await pass(TAG_HOLD_MAX_MS - 1001)  // 2499 ms after the mount, not after the re-render
+    expect(screen.getByText('Loading…')).toBeTruthy()
+    await pass(1)
+    expect(control().value).toBe('crop_type')
+    // The first load is STILL out and a new fetch identity starts another (review M-3): no spinner, no new clock.
+    api.fetch = (...a) => fetchMock(...a)
+    await act(async () => { v.rerender(tree()) })
+    await act(async () => {})
+    expect(tagMaps.length).toBe(2)
+    expect(armed()).toBe(1)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(control().value).toBe('crop_type')
+    expect(screen.queryByText('Loading…')).toBeNull()
+    await answerTags()
+    expect(control().value).toBe('heat')
+  })
+
+  it('leaving during the hold clears the deadline', async () => {
+    const v = await mountGarden()
+    expect(vi.getTimerCount()).toBe(1)
+    v.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each([['Type', 'crop_type'], ['Lifecycle', 'status'], ['Location', 'location']])('%s remembered: no deadline is armed, there is no hold to end', async (_name, stored) => {
+    saveGroupBy(stored)
+    await mountGarden()
+    expect(armed()).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+    await pass(TAG_HOLD_MAX_MS * 2)
+    expect(control().value).toBe(stored)
   })
 })
 
