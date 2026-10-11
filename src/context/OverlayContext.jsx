@@ -50,7 +50,7 @@ const MAX_CLOSE_STEPS = 10
 // How long a started walk may take to land before a second close stops waiting for it and replaces.
 // A same-document traversal lands in a frame or two; this only bounds a walk that never lands (a
 // cancelled traversal, a truncated restored stack), which would otherwise leave X, Escape and Done dead.
-const WALK_LANDS_WITHIN_MS = 1500
+export const WALK_LANDS_WITHIN_MS = 1500
 
 function historyState() {
   try { return window.history.state } catch { return null }

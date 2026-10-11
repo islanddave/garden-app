@@ -382,6 +382,42 @@ describe('§peek sheet — depth-1 and Android Back (real Sheet + registry + his
     expect(screen.getAllByRole('dialog').length).toBe(1)
   })
 
+  // The other half of the useOverlayDismiss rule: the guard waits for a pop, and a pop that never
+  // lands (history.go a no-op here) must not leave the control dead. Inside the window a second tap
+  // is still ignored; past it, the tap stops waiting and replace-navigates, which needs no history.
+  it('a pop that never lands does not leave Back-to-results dead — past the wait it replaces', async () => {
+    renderShell()
+    await openSearchThenPeek()
+    const control = screen.getByText('Back to results')
+    const t0 = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(t0)
+    const goSpy = vi.spyOn(window.history, 'go').mockImplementation(() => {})
+    try {
+      fireEvent.click(control)
+      await settle()
+      expect(goSpy.mock.calls).toEqual([[-1]])
+      expect(window.location.search).toContain('peek=p1')
+
+      nowSpy.mockReturnValue(t0 + 1499)
+      fireEvent.click(control)
+      await settle()
+      expect(goSpy.mock.calls).toEqual([[-1]])
+      expect(window.location.search).toContain('peek=p1')
+      expect(screen.getByTestId('search-peek')).toBeTruthy()
+
+      nowSpy.mockReturnValue(t0 + 1501)
+      fireEvent.click(control)
+      await settle()
+      expect(goSpy.mock.calls).toEqual([[-1]])
+      expect(window.location.pathname + window.location.search).toBe('/search?q=cherokee')
+      expect(screen.queryByTestId('search-peek')).toBe(null)
+      expect(screen.getAllByRole('dialog').length).toBe(1)
+    } finally {
+      goSpy.mockRestore()
+      nowSpy.mockRestore()
+    }
+  })
+
   it('Escape from the peek closes the WHOLE sheet once — not the peek, and not twice', async () => {
     renderShell()
     await openSearchThenPeek()

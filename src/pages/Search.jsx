@@ -12,7 +12,7 @@
 // content swaps results <-> peek at `/search?q=<query>&peek=<plantId>`. See §peek below.
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom'
-import { useInOverlaySurface, useOverlaySwap } from '../context/OverlayContext.jsx'
+import { useInOverlaySurface, useOverlaySwap, WALK_LANDS_WITHIN_MS } from '../context/OverlayContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { startLiveTranscription, isTranscriptionSupported } from '../lib/transcribe.js'
 import { looseIncludesCropType } from '../lib/comboboxInput.js'
@@ -312,15 +312,21 @@ export default function Search() {
   // BUG-PEEKBACKDOUBLETAP-001: `peekPushed` stays true until the pop lands and re-renders, so a second
   // tap in that window asked for a second navigate(-1) and walked off the sheet. One pop per entry —
   // the same idempotence rule as useOverlayDismiss — re-armed whenever the entry changes, so a
-  // Forward back onto this peek finds a live control.
+  // Forward back onto this peek finds a live control. And the rule's other half: a pop that has not
+  // landed within WALK_LANDS_WITHIN_MS never will, so the next tap stops waiting and replaces.
   const poppingFromRef = useRef(null)
   useEffect(() => { poppingFromRef.current = null }, [location.key])
   const closePeek = useCallback(() => {
     if (location.state?.peekPushed) {
-      if (poppingFromRef.current === location.key) return
-      poppingFromRef.current = location.key
-      navigate(-1)
-      return
+      const popping = poppingFromRef.current
+      const inFlight = popping && popping.key === location.key
+      if (inFlight && Date.now() - popping.at < WALK_LANDS_WITHIN_MS) return
+      if (!inFlight) {
+        poppingFromRef.current = { key: location.key, at: Date.now() }
+        navigate(-1)
+        return
+      }
+      poppingFromRef.current = null
     }
     swap(searchUrl(null), { replace: true })
   }, [location.state, location.key, navigate, swap, searchUrl])
