@@ -160,6 +160,12 @@ async function loadOwnedPhotoForDelete(sql, photoId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
+// BUG-PHOTODELETEDEADLOCK500-001 — what the delete sheet prints when this delete lost a deadlock.
+// The client shows the server's `error` verbatim (src/lib/api.js -> PhotoLibrary's delete sheet), so
+// this sentence IS the on-screen sentence.
+export const PHOTO_DELETE_RETRY_COPY =
+  'That photo was being changed by something else just then. It was not deleted. Try again.';
+
 /**
  * DELETE /api/photos/:id — soft delete + display-pointer nulling, atomically.
  *
@@ -214,7 +220,25 @@ export async function softDeletePhoto(sql, { photoId, householdIds, userId, spac
     ...pointers.map((p) => pointerNullStatement(sql, p, photoId)),
   ];
 
-  const results = await sql.transaction(statements);
+  let results;
+  try {
+    results = await sql.transaction(statements);
+  } catch (err) {
+    // 40P01 — Postgres picked this transaction as a deadlock victim and rolled it back WHOLE: the
+    // photo is not deleted and no pointer was nulled, so "try again" is true. Reproduced on real
+    // Postgres against a planting merge (tests/integration/seed-lot-parents.int.test.js, D-3): this
+    // takes the photo row and then the rows that feature it, where a merge and a seed-lot parents
+    // save take their lots first. The statement order stays where it is, so the pair that remains
+    // is answered rather than chased — a 409 the user can act on, not the route's 500.
+    // Keyed on the SQLSTATE and not the wording — the message is only "deadlock detected".
+    // Logged, because a 409 that used to be a 500 is otherwise invisible: a lock-order regression
+    // would show up only as people being asked to retry.
+    if (err?.code === '40P01') {
+      console.warn(JSON.stringify({ tag: 'photo-delete-retry', photo: photoId, code: err.code }));
+      return { status: 409, body: { error: PHOTO_DELETE_RETRY_COPY } };
+    }
+    throw err;
+  }
   const deleted = results[1]?.[0] ?? null;
   // Lost a race with a concurrent delete of the same photo. The pointer nulls in this transaction
   // were then no-ops against already-null columns, so the end state is still correct — report it as

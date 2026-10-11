@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  PHOTO_POINTERS, softDeletePhoto, restorePhoto,
+  PHOTO_POINTERS, PHOTO_DELETE_RETRY_COPY, softDeletePhoto, restorePhoto,
   listDeletedPhotos, clampDeletedLimit, DELETED_LIST_LIMIT_DEFAULT, DELETED_LIST_LIMIT_MAX,
 } from './photoDelete.js';
 
@@ -244,6 +244,46 @@ describe('W-DEL — the delete transaction', () => {
     expect(status).toBe(200);
     expect(body.already_deleted).toBe(true);
     expect(body.affected).toEqual([]);
+  });
+
+  // BUG-PHOTODELETEDEADLOCK500-001. A planting merge and a seed-lot parents save take the same rows
+  // in another order, so Postgres can pick this transaction as the deadlock victim. It rolls back
+  // WHOLE — the photo is not deleted and no pointer was nulled — and the route's catch used to
+  // answer that with a 500 the user could do nothing with.
+  const txRejects = (err) => {
+    const sql = fakeSql(responderFor(LIVE_PHOTO));
+    sql.transaction = async (stmts) => {
+      sql.transactions.push(stmts.map((s) => s.call));
+      throw err;
+    };
+    return sql;
+  };
+
+  it('answers a deadlock victim (40P01) with a retryable 409, logged once, not a throw', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // The message is deliberately NOT "deadlock detected": the mapping is keyed on the SQLSTATE.
+    const sql = txRejects(Object.assign(new Error('something the driver worded'), { code: '40P01' }));
+    const { status, body } = await softDeletePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, userId: 'user_a' });
+
+    expect(status).toBe(409);
+    expect(body).toEqual({ error: PHOTO_DELETE_RETRY_COPY });
+    expect(PHOTO_DELETE_RETRY_COPY)
+      .toBe('That photo was being changed by something else just then. It was not deleted. Try again.');
+    // One attempt: the retry is the user's second tap, not a loop in here.
+    expect(sql.transactions).toHaveLength(1);
+    // A 409 that used to be a 500 is otherwise invisible — a lock-order regression would show up
+    // only as people being asked to retry.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(warn.mock.calls[0][0])).toEqual({ tag: 'photo-delete-retry', photo: PHOTO, code: '40P01' });
+  });
+
+  it('re-throws any other transaction failure rather than masking it as a 409', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Worded like a deadlock, coded like a dropped connection: the wording must not be what matches.
+    const sql = txRejects(Object.assign(new Error('deadlock detected'), { code: '08006' }));
+    await expect(softDeletePhoto(sql, { photoId: PHOTO, householdIds: HOUSE, userId: 'user_a' }))
+      .rejects.toThrow('deadlock detected');
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

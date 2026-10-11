@@ -2458,10 +2458,11 @@ describe.skipIf(!HAS_TABLE || !HAS_PSQL)('concurrency — D-3: the merge against
       expect(await onLoser(g)).toBe(0)
       await expectCacheRule(lot)
       // What the photo delete itself answers is lambda/photos' business and is NOT held still here.
-      // OBSERVED on Neon 2026-10-05: softDeletePhoto rejects with 40P01, which lambda/photos/index.js
-      // does not map — its route answers 500, with the photo not deleted. Open, and outside this file's
-      // two Lambdas; the assertion only says it was one of the two things it can be.
-      expect([{ answered: 200 }, { threw: '40P01' }]).toContainEqual(del)
+      // OBSERVED on Neon 2026-10-05: its transaction is rejected with 40P01, the photo not deleted.
+      // softDeletePhoto now maps that SQLSTATE to a retryable 409 (BUG-PHOTODELETEDEADLOCK500-001)
+      // where it used to rethrow into the route's 500, so a resolved 409 is the victim's answer and a
+      // throw is no longer one of the two things it can be.
+      expect([{ answered: 200 }, { answered: 409 }]).toContainEqual(del)
     } finally {
       await blocker.end()
     }
