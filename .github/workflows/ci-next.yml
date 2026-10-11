@@ -564,7 +564,8 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:save-band-stability
 
-  # Page scroll alone: at ~539 s it is longer than either group above, and it is the gate that grows.
+  # Page scroll alone: at ~539 s in that run (42 flows, 78 flow-runs today: ~570 s locally) it is longer
+  # than either group above, and it is the gate that grows.
   gates-c:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

@@ -167,12 +167,12 @@ export default defineConfig({
         'src/context/**',
         // A0.4: instrument the daily-plan Lambda (engine/handler/station are heavily unit-tested but
         // lambda/** was entirely absent from coverage; index.js is the AWS entrypoint, currently 0%).
-        // Ratchet stays at active_target: 0 — this only adds measurement, no new gate.
+        // The ratchet (active_target 80 today) does not move — this only adds measurement, no new gate.
         'lambda/daily-plan/**',
         // V4-COMPOSEPOST-002: instrument the harvests read model. The compose surface reads its wire
         // shape, and the 2026-08-10 audit found aggregate.js's projector was outside every coverage
         // measurement while the L-081 schema audit was simultaneously blind to its SELECT columns —
-        // so nothing measured it from either direction. Ratchet stays at active_target: 0, same as
+        // so nothing measured it from either direction. The ratchet does not move (80 today), same as
         // the daily-plan precedent: this adds measurement, not a new gate.
         'lambda/harvests/**',
         // V5-SHAREHARDENING-001: instrument the social publish path. Until 2026-08-28 index.js could
@@ -187,7 +187,7 @@ export default defineConfig({
         // 92 funcs, orphans.js and exif.js 100. The laggard is household.js (14.28 funcs), a shared
         // module whose unused exports this path does not reach; it is included honestly rather than
         // excluded to flatter the number.
-        // Ratchet untouched at active_target 73 — advancing it is a milestone decision needing
+        // Ratchet untouched (active_target 80 today) — advancing it is a milestone decision needing
         // Dave, per No-Date-Based-Gating.
         'lambda/facebook-share/**',
         // OPS-VOICEHARVESTCOVERAGE-001: instrument the voice harvest page. src/pages/** is outside this

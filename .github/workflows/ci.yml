@@ -585,10 +585,11 @@ jobs:
         # Flows (d) to (g) close an overlay over Seeds (BUG-OVERLAYDISMISSREKEY-001: header Search, the
         # +LOG door, a double-tapped X) and (h) to (k) re-mount Seeds UNDER a re-opened Search
         # (BUG-OVERLAYRELOADKEY-001: a result and Back, an app reload with Search open, My seeds' view
-        # state, the system Back as the close). Flows (l) to (n) take a page a Seeds view pushed (the
-        # lot page, the add form) through the same re-mount under Search and then its own Cancel
+        # state, the system Back as the close). Flows (l) to (p) take a page a Seeds view pushed (the
+        # lot page, the add form) through the same re-mount under Search and then its own Cancel, or the
+        # lot page's Remove (o), with the system Back as the close in (p)
         # (BUG-SEEDSRETURNUNDEROVERLAY-001: Back onto Seeds' own entry after a walk-close, never Back
-        # after a replace-close). The script's header lists all fourteen and their non-vacuity
+        # after a replace-close). The script's header lists all sixteen and their non-vacuity
         # records (Projects/Gardening/_seedstab11_20260925/ and _seedstab12_20260925/).
         # It refuses a frame whose viewport or chrome is not the one asked for, a list less than 300px
         # down (a clobbered offset could equal it), a tap that pushed no new history entry, and a Back
@@ -604,7 +605,7 @@ jobs:
         # with its tabs' CPU throttled 6x (GATE_CPU_THROTTLE, a slow-runner rehearsal), with the same
         # numbers; the pre-fix tree fails the same 20 checks at 6x too. A frame that reloads mid-flow
         # (Vite re-optimizing a dependency) is named as such rather than measured.
-        # NO continue-on-error, per the policy note above. ~2.5 min locally (fourteen flows, two viewports).
+        # NO continue-on-error, per the policy note above. ~2.8 min locally (sixteen flows, two viewports).
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-scroll
@@ -652,7 +653,7 @@ jobs:
         #   at a lot then Back (no
         #   second jump to the lot), Back into Saved seeds and into Harvests at the top, a list blanked behind
         #   Search / a Back marker and still short at the close, the variety-editor round trip, 25 pages deep.
-        #   The five slow flows run at 426x836 only (they measure time, not layout).
+        #   The six slow flows run at 426x836 only (they measure time, not layout).
         # FLAG-AWARE, for the rollback: it reads SCROLL_MANAGER_ENABLED as the harness serves it. With the flag
         # off it prints "manager OFF" and asserts today's contract only (mode 'auto', same-page writes and
         # overlays never moving the page, Garden's and the hook pages' own restores, the pages that reset
@@ -693,8 +694,8 @@ jobs:
         # OFF". The "entry still current" write rule has no flow (its window is timing-dependent under
         # 'manual') and is pinned by usePageScrollManager.test.jsx; the reload flow proves one of the hidden and
         # pagehide flushes (location.reload() fires both), and the discard path (hidden only) is unit-pinned.
-        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~8.5 min locally (40 flows, 75
-        # flow-runs: the five slow ones at 426x836 only).
+        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~9.5 min locally (42 flows, 78
+        # flow-runs: the six slow ones at 426x836 only).
         # NO continue-on-error, per the policy note above.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
