@@ -40,7 +40,7 @@ import { householdScope } from './household.js';
 import { isJpeg, stripJpegExif } from './exif.js';
 import {
   GRAPH_VERSION, MAX_PHOTOS, photoUploadUrl, feedUrl, nodeUrl,
-  attachedMediaFields, validateShareRequest, classifyGraphError,
+  attachedMediaFields, validateShareRequest, classifyGraphError, dataAccessStatus,
 } from './graph.js';
 import {
   IG_GRAPH_VERSION, IG_MIN_CAROUSEL, POLL_INTERVAL_MS, POLL_CEILING_MS, STAGING_URL_TTL_SECONDS,
@@ -194,6 +194,7 @@ class GraphError extends Error {
     this.name = 'GraphError';
     this.graph = c;
     this.httpStatus = res.status;
+    this.body = res.json;
   }
 }
 
@@ -311,7 +312,10 @@ export const handler = async (event, context) => {
     if (err instanceof GraphError) {
       if (err.graph.tokenInvalid) return resp(502, { error: 'facebook_token_invalid', message: 'The Facebook Page token is invalid or expired. Run the health check / re-auth runbook.' });
       if (err.graph.rateLimited) return resp(429, { error: 'facebook_rate_limited', message: 'Facebook is rate-limiting posts right now. Try again shortly.', code: err.graph.code });
-      console.error('Graph error:', err.graph);
+      // The FULL body, not just the classified fields: type, error_subcode, fbtrace_id and
+      // error_user_msg are what tell a lapsed data-access grant from any other permissions error,
+      // and classifyGraphError drops them. A Graph error body never carries the token.
+      console.error('Graph error:', JSON.stringify({ ...err.graph, httpStatus: err.httpStatus, body: err.body }).slice(0, 4000));
       return resp(502, { error: 'facebook_error', message: err.graph.message, code: err.graph.code });
     }
     if (err?.userFacing) return resp(422, { error: 'unshareable_photo', message: err.message });
@@ -322,7 +326,8 @@ export const handler = async (event, context) => {
 };
 
 // GET /api/share/facebook/health — is the Page token alive? Uses debug_token when app creds are
-// present (gives expiry), else a lightweight page probe. Read-only; never posts.
+// present (gives both expiries: the token's and the data-access grant's), else a lightweight page
+// probe. Read-only; never posts.
 async function health() {
   const fb = await getFbSecret();
   if (!fb?.page_id || !fb?.page_token) return resp(500, { error: 'fb_secret_incomplete', message: 'facebook-page-token secret missing page_id/page_token.' });
@@ -333,7 +338,9 @@ async function health() {
     const r = await graphGet(url);
     if (r.ok && r.json?.data) {
       const d = r.json.data;
-      return resp(200, { healthy: !!d.is_valid, page_id: fb.page_id, is_valid: !!d.is_valid, expires_at: d.expires_at ?? 0, scopes: d.scopes ?? [], graph_version: GRAPH_VERSION });
+      // healthy needs BOTH clocks: is_valid stays true after the data-access grant lapses.
+      const da = dataAccessStatus(d.data_access_expires_at);
+      return resp(200, { healthy: !!d.is_valid && !da.data_access_lapsed, page_id: fb.page_id, is_valid: !!d.is_valid, expires_at: d.expires_at ?? 0, ...da, scopes: d.scopes ?? [], graph_version: GRAPH_VERSION });
     }
     return resp(200, { healthy: false, page_id: fb.page_id, detail: classifyGraphError(r.json, r.status) });
   }

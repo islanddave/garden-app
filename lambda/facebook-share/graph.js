@@ -69,3 +69,18 @@ export function classifyGraphError(json, httpStatus = 0) {
 
   return { code, subcode, message, tokenInvalid, rateLimited, retryable };
 }
+
+// debug_token carries TWO clocks. `expires_at` is the token (0 = never, and it is 0 here).
+// `data_access_expires_at` is the app's access to the granting user's data: 90 days from their last
+// authorization, renewed only by an interactive re-auth. When it lapses `is_valid` STAYS TRUE, so a
+// health probe that reads only is_valid/expires_at stays green through the outage
+// (OPS-FBDATAACCESSEXPIRY-001). 0 or absent means Meta reported no data-access clock: not lapsed.
+export function dataAccessStatus(dataAccessExpiresAt, nowSec = Math.floor(Date.now() / 1000)) {
+  const at = Number.isFinite(dataAccessExpiresAt) && dataAccessExpiresAt > 0 ? dataAccessExpiresAt : 0;
+  if (!at) return { data_access_expires_at: 0, data_access_days_remaining: null, data_access_lapsed: false };
+  return {
+    data_access_expires_at: at,
+    data_access_days_remaining: Math.round(((at - nowSec) / 86400) * 10) / 10,
+    data_access_lapsed: at <= nowSec,
+  };
+}
