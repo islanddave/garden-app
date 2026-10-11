@@ -6,7 +6,7 @@
 // return the remembered grouping was not offerable for the first paint: Garden fell back to Type, painted that as
 // the user's grouping, ran its scroll restore on that page, and regrouped when the map arrived. Now a remembered
 // tag grouping HOLDS the list and the restore — the page is its loading state — until the visit's first tag load
-// settles (the rule and its table: groupByAwaitsTags, gardenGroupBy.test.js).
+// settles or the hold's own deadline passes (the rule and its table: groupByAwaitsTags, gardenGroupBy.test.js).
 //
 // THE REAL TAGS HOOK RUNS: only `fetch` is faked, and the tag map is a request each test answers when it chooses,
 // so "the map is still out" is a state the test holds open rather than a race. jsdom has no layout, so what the
