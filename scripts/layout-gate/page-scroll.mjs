@@ -93,6 +93,10 @@
 //                 picked and its save must reach the row; then garden-cycles' trips, each one also required to come
 //                 back on Type. The shipped app sent nothing for Type and re-adopted Lifecycle after every restore:
 //                 the list regrouped and the planting left on screen was gone.
+//                 It also runs with the tags API ON (`tagsOn`: ?tags=heat with NO tag grouping picked), as prod does
+//                 (review-taggroup M-1): the control must offer Heat on the first visit and on every return (the
+//                 instrument: the tag map reached the page), and Lifecycle, then Type, must behave exactly as above,
+//                 the control never showing Heat in any frame.
 //   garden-groupby-weak  as garden-groupby with every prefs save lost to a dead zone (?prefsradio=down; the reads still
 //                 answer): the pick never reaches the row, so every return must keep Type AND send it again.
 //   garden-taggroup  BUG-GARDENTAGGROUPREPAINT-001. The tags API is ON (?tags=heat, the harness's knob — without it
@@ -423,7 +427,7 @@ const FLOWS = [
   { key: 'garden-cycles-grow', label: `Garden, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, the household growing on the first return (the caretaker row arriving late), every GET 1.5 s slow`, roster: 'grow', ms: 1500 },
   { key: 'garden-plantsgrow', label: `Garden, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, the first return's revalidate revealing a planting ABOVE the one left on screen` },
   { key: 'garden-plantsfixed', label: `Garden, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, garden-plantsgrow's control: the list unchanged` },
-  { key: 'garden-groupby', prefs: 'status', label: `Garden with the prefs row on Lifecycle: Type picked, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}: still Type, the planting where it was left` },
+  { key: 'garden-groupby', prefs: 'status', tagsOn: 'heat', label: `Garden with the prefs row on Lifecycle: Type picked, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}: still Type, the planting where it was left` },
   { key: 'garden-groupby-weak', prefs: 'status', prefsRadio: 'down', label: `garden-groupby with every prefs save lost to a dead zone: still Type on every return, and sent again each time` },
   { key: 'garden-taggroup', tags: 'heat', ms: 1500, label: `Garden grouped by Heat (a tag grouping), deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, the tag map landing 1.5 s after Garden each time: never another grouping, the planting where it was left` },
   { key: 'garden-taggroup-late', tags: 'heat', tagsMs: 4000, once: true, label: `Garden grouped by Heat, deep → [Today tab → Garden tab] × ${TAG_LATE_CYCLES}, the tag map ALONE 4 s away: the list within ${TAG_LATE_LIST_SLACK_MS}ms of the ${TAG_HOLD_MAX_MS}ms deadline; then + → "Add a planting" from Today: the form within ${ADD_FORM_MAX_MS}ms, over the held page` },
@@ -712,9 +716,12 @@ async function runFlow(cdp, flow, vw, vh) {
     const prefsRadio = flow.prefsRadio ?? 'up'
     // The tags knob likewise (BUG-GARDENTAGGROUPREPAINT-001): the facet the harness tags every planting with.
     const tags = flow.tags ?? null
+    // `tagsOn` (garden-groupby): the tags API on with NO tag grouping picked — the same knob, none of the steps
+    // below that `tags` drives.
+    const tagsApi = tags ?? flow.tagsOn ?? null
     // …and its own latency, when the flow wants the tag map later than everything else (review I-1).
-    const tagsMs = tags ? flow.tagsMs ?? ms : null
-    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}&token=${token}&roster=${roster}${prefs ? `&prefs=${prefs}&prefsradio=${prefsRadio}` : ''}${tags ? `&tags=${tags}` : ''}${flow.tagsMs != null ? `&tagsms=${flow.tagsMs}` : ''}`
+    const tagsMs = tagsApi ? flow.tagsMs ?? ms : null
+    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}&token=${token}&roster=${roster}${prefs ? `&prefs=${prefs}&prefsradio=${prefsRadio}` : ''}${tagsApi ? `&tags=${tagsApi}` : ''}${flow.tagsMs != null ? `&tagsms=${flow.tagsMs}` : ''}`
     const nav = await cdp.send('Page.navigate', { url }, sessionId)
     if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
     if (!await t.waitIn(`w.__h && w.__h.ready() && d.readyState === 'complete'`, 30000 + auth)) return fail(`${at}: the harness never came up in the frame — nothing to measure`)
@@ -743,7 +750,7 @@ async function runFlow(cdp, flow, vw, vh) {
     if (g.fixture.roster !== roster) geo.push(`the harness answers /api/members as roster '${g.fixture.roster}', the flow asked for '${roster}'`)
     if (g.fixture.prefs !== prefs) geo.push(`the prefs client was pointed at ${g.fixture.prefs ? `a served row on '${g.fixture.prefs}'` : 'nothing'}, the flow asked for ${prefs ? `a row on '${prefs}'` : 'none'}`)
     if (prefs && g.fixture.prefsRadio !== prefsRadio) geo.push(`the harness's prefs radio is '${g.fixture.prefsRadio}', the flow asked for '${prefsRadio}'`)
-    if (g.fixture.tags !== tags) geo.push(`the harness's tags API is ${g.fixture.tags ? `on, tagging '${g.fixture.tags}'` : 'off'}, the flow asked for ${tags ? `'${tags}'` : 'none'}`)
+    if (g.fixture.tags !== tagsApi) geo.push(`the harness's tags API is ${g.fixture.tags ? `on, tagging '${g.fixture.tags}'` : 'off'}, the flow asked for ${tagsApi ? `'${tagsApi}'` : 'none'}`)
     if (g.fixture.tagsMs !== tagsMs) geo.push(`the harness answers the tag map after ${g.fixture.tagsMs}ms, the flow asked for ${tagsMs}ms`)
     for (const [key, v] of Object.entries(FIXTURE)) if (g.fixture[key] !== v) geo.push(`the fixture's ${key} is ${g.fixture[key]}, the gate expects ${v}`)
     // The browser's restore mode is the one main.jsx sets for the flag this document was served: 'manual' with
@@ -1259,6 +1266,19 @@ async function runFlow(cdp, flow, vw, vh) {
       if (roster === 'full' && (lens0 || []).join('|') !== 'Mine|Jen|Everyone') return done(`Garden's caretaker row shows ${lens0 ? `[${lens0.join(', ')}]` : 'nothing'} on the first visit, not [Mine, Jen, Everyone] — the household never reached the page, so this flow would measure a Garden with no row above its list${await diag()}`)
       if (roster === 'grow' && lens0) return done(`Garden's caretaker row is on the page on the first visit ([${lens0.join(', ')}]) — roster=grow is a household of one until the first return, so the late row this flow is about never happens${await diag()}`)
       note.push(`caretaker row ${lens0 ? lens0.join('/') : 'absent (a household of one)'}`)
+      // `tagsOn` (review-taggroup M-1): the tags API on, a STRUCTURAL grouping kept. The control offering the facet is
+      // the INSTRUMENT, as below — without it the knob never reached the tags hook and the flow is what it was with
+      // the API off. Nothing is picked: the grouping must be the one the steps above left.
+      let structural = null
+      if (tagsApi && !tags) {
+        if (!await t.waitIn(`w.__h.tagsAsked() >= 1 && w.__h.inflight() === 0 && (w.__h.groupOptions() || []).includes(${JSON.stringify(tagsApi)})`, slowMax)) {
+          return done(`Garden's control never offered the '${tagsApi}' grouping (it offers ${JSON.stringify(await t.read(`return w.__h.groupOptions()`))}; tag maps asked for: ${await t.read(`return w.__h.tagsAsked()`)}) — the ?tags= knob never reached the tags hook, so this flow would measure Garden with the tags API off${await diag()}`)
+        }
+        await t.settle(300, 3000)
+        structural = await t.read(`return w.__h.groupBy()`)
+        if (structural == null || structural === tagsApi || (prefs && structural !== 'crop_type')) return done(`with the tags API on and nothing picked from it, Garden's control reads '${structural}'${prefs ? ', not Type (crop_type) as it was just picked' : ''} — the tag map landing changed a structural grouping${await diag()}`)
+        note.push(`tags API on: '${tagsApi}' offered in [${(await t.read(`return w.__h.groupOptions()`)).join(', ')}], grouping still '${structural}'`)
+      }
       if (tags) {
         // BUG-GARDENTAGGROUPREPAINT-001's first visit: the tag grouping is picked and its groups opened, as a user
         // does. The control OFFERING the facet is this flow's INSTRUMENT: it is offered only once the tag map has
@@ -1423,7 +1443,7 @@ async function runFlow(cdp, flow, vw, vh) {
         let prefsSeen = prefs ? await t.read(`return w.__h.prefsAnswered()`) : 0
         let savesSeen = prefs ? (await t.read(`return w.__h.prefsPatches()`)).length : 0
         // The tags flow: tag maps asked for so far, so each trip can tell its own answer from the ones before.
-        let tagsSeen = tags ? await t.read(`return w.__h.tagsAsked()`) : 0
+        let tagsSeen = tagsApi ? await t.read(`return w.__h.tagsAsked()`) : 0
         const trips = () => cycles.map((x) => `#${x.c} ${name} at y${R1(x.top)} (${x.dTop >= 0 ? '+' : ''}${R1(x.dTop)}px) · ${x.landed ? `on screen @${x.landed.t}ms at y${R1(x.landed.top)}, moved ${R1(x.excursion)}px after` : 'never on screen'} · raw y${R1(x.y)} · row ${x.row} · ${x.tiles} tiles${x.tagMap ? ` · ${x.tagMap}` : ''}`).join(' | ')
         for (let c = 1; c <= GARDEN_CYCLES; c++) {
           const l = await land(SEL.tabToday, `the Today tab (round trip ${c})`, 'today', { chrome: true, name: `today-${c}` })
@@ -1492,6 +1512,20 @@ async function runFlow(cdp, flow, vw, vh) {
               const until = samples.slice(wrong).find((s) => s.group === tags)
               reds.push(`round trip ${c}: Garden's grouping control showed '${samples[wrong].group}' from ${samples[wrong].t}ms${until ? ` to ${until.t}ms` : ' on'} (the tag map landed @${mapAt}ms), not '${tags}' as it was left — the fallback grouping was painted as the user's (the bug)`)
             }
+          }
+          if (tagsApi && !tags) {
+            // `tagsOn`, each return. THE INSTRUMENT: this return asked for the tag map again and the control offers
+            // the facet once settled — or the trip measured Garden with the tags API off. Then no frame may show it,
+            // and the settled grouping is the structural one the user left.
+            const asked = await t.read(`return w.__h.tagsAsked()`)
+            const offered = await t.read(`return w.__h.groupOptions()`)
+            if (!(asked > tagsSeen) || !(offered || []).includes(tagsApi)) return done(`round trip ${c}: the tag map was ${asked > tagsSeen ? 'asked for' : 'never asked for'} on the return and the control offers ${JSON.stringify(offered)} — '${tagsApi}' has to be on offer, or the trip measured Garden with the tags API off${await diag()}`)
+            tagsSeen = asked
+            const gbT = await t.read(`return w.__h.groupBy()`)
+            const tagFrame = samples.find((s) => s.page === 'garden' && s.group === tagsApi)
+            tagMap = `tags API on (map asked ${asked}×), grouping '${gbT}'`
+            if (tagFrame) reds.push(`round trip ${c}: Garden's grouping control showed '${tagsApi}' @${tagFrame.t}ms — nobody picked a tag grouping`)
+            if (gbT !== structural) reds.push(`round trip ${c}: Garden settled grouped by '${gbT}', not '${structural}' as it was left, with the tags API on`)
           }
           cycles.push({ c, y: after.y, top: after.top, dTop, landed, excursion, row, tiles, tagMap, rowLate: !onGarden[0].lens && onGarden[onGarden.length - 1].lens })
           // Garden's OWN restore, content-stable, is today's contract flag on or off (fix (a) is in both builds).
