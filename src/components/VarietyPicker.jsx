@@ -22,7 +22,7 @@
 // Schema field reference (plant_varieties): id, name, species, common_name, source, notes.
 // CHECK constraint chk_inventory_seed_requires_variety enforces inventory category=seeds → variety_id NOT NULL.
 
-import React, { useState, useEffect, useCallback, useRef, useMemo, useId } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, useId } from 'react'
 import { useVarieties } from '../hooks/useVarieties.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P } from '../lib/constants.js'
@@ -184,7 +184,10 @@ export default function VarietyPicker({
   // V4-CROPTYPEREACH-001: the crop stage lands on "No crop type", NOT on row 0 — row 0 is now the
   // MINT row, and a blanket reset to 0 would arm a stray Enter to start creating a crop type the
   // user never asked for. This effect is the authority; it runs after beginCreate's own setHighlight.
-  useEffect(() => {
+  // BUG-VARIETYPICKERKEYEATEN-001: a LAYOUT effect, so the reset is part of the render that brought
+  // the rows. As a passive effect it ran a tick later, and an Arrow Down pressed inside that tick was
+  // overwritten — the highlight went 0 -> 1 -> 0.
+  useLayoutEffect(() => {
     setHighlight(createStage === 'crop' ? NO_CROP_ROW : 0)
   }, [varieties, query, createStage])
 

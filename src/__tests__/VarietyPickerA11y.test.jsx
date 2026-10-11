@@ -78,11 +78,6 @@ async function openPicker(props = {}) {
   fireEvent.focus(field())
   await waitFor(() => expect(listbox()).toBeTruthy())
   await screen.findAllByRole('option')   // the listbox opens first; its rows are the fetch's answer
-  // Let the open SETTLE before a case presses a key. The rows arrive with the fetch's answer, at default
-  // priority (OPS-RTLEVENTPRIORITY-001: as in a browser), and the picker's reset-highlight-on-new-results
-  // effect runs a tick after that render. A key fired inside that tick is overwritten by the reset —
-  // measured: aria-activedescendant 0 -> 1 -> 0 — which is the reset doing its job, not what these cases pin.
-  await act(async () => {})
   return utils
 }
 
@@ -200,6 +195,34 @@ describe('claim 3 — aria-activedescendant tracks the visual highlight', () => 
 
     fireEvent.keyDown(field(), { key: 'ArrowUp' })
     expect(activeDescendant()).toBe(ids[0])
+    expectNoDanglingRefs()
+  })
+
+  it('keeps an ArrowDown pressed in the tick the rows arrive (BUG-VARIETYPICKERKEYEATEN-001)', async () => {
+    // No openPicker, and so no settle: this case presses the key INSIDE the tick openPicker waits out.
+    // React hands a render that came from a fetch's answer to its scheduler, which runs the render and
+    // then that render's passive effects — in one task when it has time left, in two when it does not.
+    // A key can only land between the two, so the clock is stepped 10ms a read: the scheduler finds its
+    // 5ms slice spent after every task and yields, as a busy phone does. (Unstepped, this case is red
+    // only when the machine happens to be slow enough — measured 5 runs in 6 alone, 0 in 6 in the file.)
+    // The key is pressed from a MutationObserver, which runs right after the render that brought the
+    // rows. The highlight reset must already be in that render; a tick later it lands on top of the key.
+    render(<VarietyPicker value={null} onChange={() => {}} />)
+    fireEvent.focus(field())
+    let now = performance.now()
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => (now += 10))
+    let pressed = false
+    const observer = new MutationObserver(() => {
+      if (pressed || screen.queryAllByRole('option').length < 2) return
+      pressed = true
+      fireEvent.keyDown(field(), { key: 'ArrowDown' })
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    await waitFor(() => expect(pressed).toBe(true))
+    observer.disconnect()
+    clock.mockRestore()
+    await act(async () => {})
+    expect(activeDescendant()).toBe(options()[1].id)
     expectNoDanglingRefs()
   })
 
