@@ -21,7 +21,7 @@
 // No jest-dom (L-182): attributes + toBe/toBeTruthy only.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, act, cleanup, within } from '@testing-library/react'
 import { MemoryRouter, BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 
 // A wide row (what /api/plants really returns) for p1, a THIN server-slice shape for p9 — p9 exists
@@ -149,9 +149,10 @@ describe('§peek pane — one sheet, content swaps results <-> peek', () => {
     await typeQuery('blistered')     // matches only via the server notes slice
     const btn = await screen.findByLabelText('Peek at Shishito', {}, { timeout: 2000 })
     fireEvent.click(btn)
-    await screen.findByTestId('search-peek')
+    const peek = await screen.findByTestId('search-peek')
     expect(screen.getByText('Pepper')).toBeTruthy()          // from /api/plants, not from the slice
     expect(screen.getByText('Pasture Bed')).toBeTruthy()
+    expect(within(peek).queryByText('Sun')).toBeNull()       // no sun on the row: no Sun field, no placeholder
   })
 
   it('an unknown peek id renders a plain explanation, not a blank sheet', async () => {

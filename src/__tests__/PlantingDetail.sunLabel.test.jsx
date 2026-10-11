@@ -24,6 +24,7 @@ vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => null }))
 vi.mock('../lib/harvestWindows.js', () => import('./helpers/harvestWindowsSyncStub.js'))
 
 import PlantingDetail from '../pages/PlantingDetail.jsx'
+import { P } from '../lib/constants.js'
 
 const NAME = 'Fairway Orange Coleus Clone 1'
 const planting = (sun) => ({
@@ -49,6 +50,17 @@ function renderPage(sun) {
   )
 }
 
+// The key-fact pill is the one child of the hero's pill row painted P.warn (HeroPhoto.jsx). jsdom
+// normalises colours, so read the expected value back through a style declaration.
+const probe = document.createElement('span')
+probe.style.backgroundColor = P.warn
+const GOLD = probe.style.backgroundColor
+
+function heroGoldPills(name) {
+  const row = screen.getByRole('heading', { level: 1, name }).nextElementSibling
+  return [...row.children].filter(el => el.style.backgroundColor === GOLD).map(el => el.textContent)
+}
+
 function openTab(name) {
   fireEvent.click(screen.getByRole('button', { name: /Details/ }))
   fireEvent.click(screen.getByRole('radio', { name }))
@@ -63,6 +75,7 @@ describe('PlantingDetail — the Sun value reads as words on every curated surfa
   it('hero pill and crop card say Part shade; the page never shows the code', async () => {
     renderPage('part_shade')
     await screen.findByRole('heading', { name: NAME })
+    expect(heroGoldPills(NAME)).toEqual(['Part shade'])        // the pill reader finds a pill when there is one
     expect(screen.getAllByText('Part shade')).toHaveLength(2) // hero key-fact pill + CropCard Sun row
     expect(screen.getByText('Sun').parentElement.textContent).toBe('SunPart shade')
     expect(document.body.textContent).not.toContain('part_shade')
@@ -90,6 +103,7 @@ describe('PlantingDetail — the Sun value reads as words on every curated surfa
   it('no sun value: no pill, no Sun row, no Light row (unchanged)', async () => {
     renderPage(null)
     await screen.findByRole('heading', { name: NAME })
+    expect(heroGoldPills(NAME)).toEqual([])
     expect(screen.queryByText('Sun')).toBeNull()
     openTab('Care')
     const care = screen.getByRole('group', { name: 'Care' })

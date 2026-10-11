@@ -29,7 +29,16 @@ const PL = {
   id: 'pl1', project_id: 'pr1', name: 'Cherokee Purple', status: 'seedling',
   crop_type: 'Tomato', crop_type_slug: 'tomato', variety_name: 'Cherokee Purple', planted_date: '2026-04-01',
   // Both pills read the cultivar join, not the flat columns (keyFact.js selectCropType/selectKeyFact).
-  variety_ref: { type: 'Tomato', crop_type_slug: 'tomato', growth_habit: 'indeterminate' },
+  // Only keys the plants Lambda's variety_ref blocks emit (lambda/plants/index.js). Until 2026-10-11 this
+  // carried `type: 'Tomato'`, which no block sends, so the chip below was asserted through
+  // selectCropType's explicit-field branch, one prod never takes (BUG-HEROPHOTOPHANTOMFIXTURE-001).
+  variety_ref: { name: 'Cherokee Purple', crop_type_slug: 'tomato', growth_habit: 'indeterminate' },
+}
+// The chip shows only when the NAME says pepper/tomato; its words are the cultivar's crop type.
+const PL_NAMED = {
+  ...PL, id: 'pl2', name: 'Purple Blush Tomatillo', variety_name: 'Purple Blush',
+  crop_type: 'Tomatillo', crop_type_slug: 'tomatillo',
+  variety_ref: { name: 'Purple Blush', crop_type_slug: 'tomatillo', growth_habit: null },
 }
 const scrims = (c) => [...c.querySelectorAll('div')].filter(d =>
   d.style.pointerEvents === 'none' && d.style.background.includes('linear-gradient'))
@@ -107,13 +116,27 @@ describe('HeroPhoto — planting chrome in the overlay', () => {
     expect(h1.textContent).toBe('Cherokee Purple')
   })
 
-  it('renders the StatusPicker, crop-type pill, key-fact pill and Details pill', () => {
+  it('renders the StatusPicker, key-fact pill and Details pill', () => {
     mount()
     expect(screen.getByRole('combobox', { name: /change planting status/i })).toBeTruthy()
-    expect(screen.getByText('Tomato')).toBeTruthy()              // crop-type pill
     expect(screen.getByText('Indeterminate')).toBeTruthy()       // gold key-fact pill
     const details = screen.getByRole('button', { name: /details/i })
     expect(details.getAttribute('aria-haspopup')).toBe('dialog')
+  })
+
+  // What prod does with the shape the Lambda sends: a tomato whose name never says "tomato" wears no
+  // crop-type chip (keyFact.js selectCropType; PlantingDetail.heroCropChip.test.jsx owns the page level).
+  it('a tomato named by cultivar alone wears no crop-type pill', () => {
+    mount()
+    expect(screen.queryByText('Tomato')).toBeNull()
+  })
+
+  it('renders the crop-type pill, worded from crop_type_slug, when the name carries the crop', () => {
+    mount({ planting: PL_NAMED })
+    const chip = screen.getByText('Tomatillo')
+    expect(chip.tagName).toBe('SPAN')
+    expect(screen.getByRole('heading', { level: 1 }).nextElementSibling.contains(chip)).toBe(true)
+    expect(screen.queryByText('Tomato')).toBeNull()              // the name heuristic never words it
   })
 
   it('the Details pill calls onOpenDetails', () => {
