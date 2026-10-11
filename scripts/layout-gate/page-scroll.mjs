@@ -98,11 +98,12 @@
 //   garden-taggroup  BUG-GARDENTAGGROUPREPAINT-001. The tags API is ON (?tags=heat, the harness's knob — without it
 //                 the tags hook is inert and Garden offers no tag grouping, which is why no flow saw this) and every
 //                 GET is 1.5 s slow. First visit: Heat is picked and its groups opened ("Expand all", which closes the
-//                 crop groups: the control keeps one set of open groups); then garden-cycles' trips. On each return the
-//                 list is in the cache and the tag map is not, so it lands 1.5 s after Garden: the control must never
-//                 show another grouping in any frame, and the planting must come back where it was left. The shipped
-//                 app painted the Type fallback (every group closed, one screen tall) as if it were the user's
-//                 grouping, spent its restore on that page, and regrouped under the lost spot when the map landed.
+//                 crop groups: Garden keeps ONE set of open groups, whatever the grouping); then garden-cycles' trips.
+//                 On each return the list is in the cache and the tag map is not, so it lands 1.5 s after Garden: the
+//                 control must never show another grouping in any frame, and the planting must come back where it was
+//                 left. The shipped app painted the Type fallback (every group closed, one screen tall) as if it were
+//                 the user's grouping, spent its restore on that page, and regrouped under the lost spot when the map
+//                 landed. Back from a planting loses the place the same way (measured once, 4320 → 56; not a flow).
 //   putup         Put-Up's Going-now list, deep → a batch (?batch=, a same-page PUSH) → Back → the list's place.
 //                 A MUST-NOT-CHANGE guard: Chromium's own clamp carry restores it with or without the manager.
 //   putup-top     Put-Up's list at its TOP → the first batch (same page) → down → Back → the list at its top
@@ -1247,9 +1248,9 @@ async function runFlow(cdp, flow, vw, vh) {
         await t.read(`const s = d.querySelector('[data-harness-pages] select#garden-groupby'); s.value = ${JSON.stringify(tags)}; s.dispatchEvent(new w.Event('change', { bubbles: true })); return 1`)
         if (!await t.waitIn(`w.__h.groupBy() === ${JSON.stringify(tags)} && ${SEL.expandAll}`, slowMax)) return done(`picking '${tags}' never regrouped Garden (the control reads ${await t.read(`return w.__h.groupBy()`)})${await diag()}`)
         await t.settle(300, 3000)
-        // A grouping's groups start closed, so the user opens them: "Expand all", a real tap. The control keeps ONE
-        // set of open groups, so this also closes the crop groups — the garden a tag-grouped user comes back to,
-        // where the Type fallback is every group closed and one screen tall.
+        // A grouping's groups start closed, so the user opens them: "Expand all", a real tap. Garden keeps ONE set
+        // of open groups, whatever the grouping, so this also closes the crop groups — the garden a tag-grouped user
+        // comes back to, where the Type fallback is every group closed and one screen tall.
         why = await t.tap(SEL.expandAll, '"Expand all"')
         if (why) return done(why)
         if (!await page('garden')) return done(`"Expand all" never opened the '${tags}' groups (${await t.read(`return d.querySelectorAll('${tid('planting-tile')}').length`)} of ${FIXTURE.gardenPlants} plantings on the page)${await diag()}`)
