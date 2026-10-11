@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.183.0",
+    "date": "2026-10-11",
+    "highlights": [
+      "In Seeds, Cancel on a seed lot page or the add form goes back to Seeds after you have been through Search, instead of stacking a second Seeds page.",
+      "In Garden, a grouping by Heat, Determinacy or another tag keeps your place when you come back, instead of regrouping and losing it.",
+      "On a seed packet page, the first Sow this puts the cursor in the Name field again."
+    ]
+  },
+  {
     "version": "4.182.0",
     "date": "2026-10-11",
     "highlights": [

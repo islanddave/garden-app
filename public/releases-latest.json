@@ -1,10 +1,9 @@
 {
-  "version": "4.182.0",
+  "version": "4.183.0",
   "date": "2026-10-11",
   "highlights": [
-    "On the older Today list, Log all and a row's own Water or Still moist can no longer log the same plant twice.",
-    "In Search, Back to results no longer goes dead when the first tap did not take.",
-    "In the Pantry's Put something up, a refused Save says exactly whether anything was sent, and a discard or date refusal is brought into view.",
-    "Seed pages ask for one less thing when they open, and the variety picker keeps an arrow key pressed as results arrive."
+    "In Seeds, Cancel on a seed lot page or the add form goes back to Seeds after you have been through Search, instead of stacking a second Seeds page.",
+    "In Garden, a grouping by Heat, Determinacy or another tag keeps your place when you come back, instead of regrouping and losing it.",
+    "On a seed packet page, the first Sow this puts the cursor in the Name field again."
   ]
 }
