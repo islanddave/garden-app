@@ -53,6 +53,26 @@ export function buildGardenFacetOptions(tagMap, projectsHidden) {
   return opts
 }
 
+// ── Waiting for the tag map ───────────────────────────────────────────────────────────────────────────
+//
+// BUG-GARDENTAGGROUPREPAINT-001. A tag grouping (Heat, Determinacy, Day Length, Bean Use, …) is offered only once
+// the whole-garden tag map has landed, and that map is fetched fresh on every Garden mount while the list paints
+// from the cache. So on every return a remembered tag grouping was not offerable yet: Garden fell back to Type,
+// painted that as if it were the user's grouping, spent its scroll restore on that page (every group closed, one
+// screen tall — measured 4264px from the spot at 426x836) and regrouped under the lost spot when the map landed.
+//
+// True while Garden must HOLD its list and its scroll restore for the map: the remembered grouping is one ONLY the
+// tag map can put in the control, and the visit's first tag load has not settled (`tagsPending`; a load that
+// failed has settled too, and Garden then falls back as before). Both halves are read off the real option builder,
+// so this cannot drift from what the control offers: the structural groupings (Type or Projects, Location,
+// Lifecycle) are offered with an empty map and never wait, and a value no map could add — the tag 'type' facet
+// while projects are hidden, a stale or unknown value — falls back at once, as it always has.
+const EVERY_TAG_FACET = { any: { direct: GARDEN_TAG_FACETS.map(facet => ({ facet })) } }
+const offered = (tagMap, projectsHidden, value) => buildGardenFacetOptions(tagMap, projectsHidden).some(o => o.value === value)
+export function groupByAwaitsTags({ groupBy, tagsPending, projectsHidden }) {
+  return !!tagsPending && !offered(null, projectsHidden, groupBy) && offered(EVERY_TAG_FACET, projectsHidden, groupBy)
+}
+
 // ── Keeping the choice ────────────────────────────────────────────────────────────────────────────────
 //
 // Dave, 2026-09-29: "It should ALWAYS remember my last grouping." Two copies carry a choice: the local one
@@ -105,8 +125,11 @@ export const GROUPBY_PENDING_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 //                                 under a user already looking at the list.
 // `offerable` is the control's current option values. A tag facet is offerable only once the tag map has
 // landed, so a server tag-facet choice that arrives first is kept out — and, since only the mount-time read may
-// adopt, DROPPED for the visit rather than deferred (QA MINOR 7 / rimpact #1, a recorded decision: tag groupings
-// are BUG-GARDENTAGGROUPREPAINT-001's, whose cached tag map removes the race).
+// adopt, DROPPED for the visit rather than deferred (QA MINOR 7 / rimpact #1, a recorded decision). STILL OPEN:
+// BUG-GARDENTAGGROUPREPAINT-001 shipped the hold above (groupByAwaitsTags), which covers a tag grouping remembered
+// on THIS device; it does not make a tag facet offerable any sooner, so another device's tag grouping is adopted
+// only on a visit whose tag map beats the prefs read. A cached tag map (that row's recorded follow-up) removes
+// the race.
 export function decideGroupByHydrate({
   local, pending, pendingAt = null, now = Date.now(), server,
   fromCache = false, predatesSave = false, offerable = [], mayAdopt = true,

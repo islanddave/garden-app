@@ -19,7 +19,7 @@ import { useClaimPageScroll, currentPageEntry } from '../hooks/usePageScrollMana
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA, loadGroupByPendingRecord, saveGroupByPending, clearGroupByPending, markLegacyGroupByPending } from '../lib/projectTree.js'
 import GroupBySlugSelect from '../components/GroupBySlugSelect.jsx'
-import { buildGardenFacetOptions, decideGroupByHydrate, sendGroupByChoice, servedFromCache, predatesGroupBySave } from '../lib/gardenGroupBy.js'
+import { buildGardenFacetOptions, decideGroupByHydrate, sendGroupByChoice, servedFromCache, predatesGroupBySave, groupByAwaitsTags } from '../lib/gardenGroupBy.js'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import TileGrid from '../components/forms/TileGrid.jsx'
@@ -147,6 +147,21 @@ export default function Garden() {
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
+  // V4-GARDENIA-001: faceted group-by overlay. tagMap = whole-garden plant->tags map; inert/empty
+  // until VITE_API_TAGS is wired, so the control stays hidden and the legacy tree is unchanged.
+  // Declared up here because the restore below waits on both.
+  const [groupBy, setGroupBy] = useState(() => loadGroupBy())
+  const { entities: tagMap, loading: tagsLoading } = useEntityTagsBulk('plant')
+  // BUG-GARDENTAGGROUPREPAINT-001 — a remembered TAG grouping (Heat, Determinacy, …) holds the list and the
+  // restore until the tag map lands. On a return the list paints from the cache and the map does not, so Garden
+  // painted the Type fallback as if it were the user's grouping, spent the restore on that page (every group
+  // closed, one screen tall) and regrouped under the lost spot once the map arrived. The rule is
+  // groupByAwaitsTags (src/lib/gardenGroupBy.js); while it holds, the page is its loading state. Only the
+  // visit's FIRST tag load holds: the ref latches, so a later reload of the map (a new getToken re-runs the
+  // hook's effect) can never swap a list someone is reading for the spinner.
+  const tagsSettledRef = useRef(false)
+  if (!tagsLoading) tagsSettledRef.current = true
+  const awaitingTags = groupByAwaitsTags({ groupBy, tagsPending: !tagsSettledRef.current, projectsHidden: PROJECTS_HIDDEN })
   // V4-NAVSTATE-002 — restore ACROSS FRAMES, and latch only once we have actually landed.
   //
   // The v1 restore fired one rAF and latched a one-shot BEFORE the attempt. Both halves failed on
@@ -165,7 +180,7 @@ export default function Garden() {
   // coverage.include; this is only the driver. See backNav.js for the same split.
   const scrollRestoredRef = useRef(false)
   useEffect(() => {
-    if (loading || scrollRestoredRef.current) return
+    if (loading || awaitingTags || scrollRestoredRef.current) return
     const targetY = SCROLL_MANAGER_ENABLED ? spotY : lastGardenScrollY
     // Checked BEFORE the latch, unlike v1 — an inert mount must not consume the one-shot, or an
     // offset that arrives late can never be applied.
@@ -201,7 +216,7 @@ export default function Garden() {
       window.removeEventListener('touchstart', yield_, opts)
       window.removeEventListener('keydown', yield_, opts)
     }
-  }, [loading])
+  }, [loading, awaitingTags])
   const [expanded, setExpanded] = useState(() => loadExpanded())
   // V4 cross-device disclosure: localStorage paints instantly; server pref is source of truth,
   // hydrated once below. persistExpanded wraps the local save + fire-and-forget server push; an
@@ -211,11 +226,9 @@ export default function Garden() {
     saveExpanded(set); expandedHydratedRef.current = true
     saveGardenExpanded({ getToken, ids: [...set] })
   }, [getToken])
-  // V4-GARDENIA-001: faceted group-by overlay. tagMap = whole-garden plant->tags map; inert/empty
-  // until VITE_API_TAGS is wired, so the control stays hidden and the legacy tree is unchanged.
-  const [groupBy, setGroupBy] = useState(() => loadGroupBy())
-  // V4 cross-device: localStorage paints instantly; the server pref (user_notification_prefs.garden_group_by)
-  // carries the choice to another device and is read by the prefs hydrate below, at mount and on resumes.
+  // V4 cross-device (groupBy, declared above the restore): localStorage paints instantly; the server pref
+  // (user_notification_prefs.garden_group_by) carries the choice to another device and is read by the prefs
+  // hydrate below, at mount and on resumes.
   //
   // BUG-GARDENGROUPBYRESET-001: that hydrate used to ADOPT the server value outright, after the scroll
   // restore — so a choice whose save had not landed was overwritten on every return and the list regrouped
@@ -233,7 +246,6 @@ export default function Garden() {
     setGroupBy(v); saveGroupBy(v); saveGroupByPending(groupByUser, v); groupByPickedRef.current = true
     sendGroupBy(v)
   }, [sendGroupBy, groupByUser])
-  const { entities: tagMap } = useEntityTagsBulk('plant')
   // The option set and its order (V4-PROJHIDE-001, V4-FACETSLUG-001) live in src/lib/gardenGroupBy.js.
   const facetOptions = useMemo(() => buildGardenFacetOptions(tagMap, PROJECTS_HIDDEN), [tagMap])
   // What the prefs hydrate decides against, read at the moment the body lands. A ref, because that effect is
@@ -829,7 +841,8 @@ export default function Garden() {
     showBadges ? (caretakerMap.get(effectiveAssignee(pl, projectsById)) || null) : null
   ), [showBadges, caretakerMap, projectsById])
 
-  if (loading) return <Shell><Spinner block /></Shell>
+  // awaitingTags: the remembered tag grouping cannot be shown yet, and the fallback is not painted in its place.
+  if (loading || awaitingTags) return <Shell><Spinner block /></Shell>
   if (error)   return <Shell><ErrMsg msg={error} /></Shell>
 
   // V4-PROJHIDE-001: 'none' (the by-project tree) is not a valid view when projects are hidden, so a

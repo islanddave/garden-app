@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   buildGardenFacetOptions, GARDEN_TAG_FACETS, decideGroupByHydrate, sendGroupByChoice, servedFromCache, predatesGroupBySave,
-  __resetGroupBySends, GROUPBY_PENDING_MAX_AGE_MS,
+  __resetGroupBySends, GROUPBY_PENDING_MAX_AGE_MS, groupByAwaitsTags,
 } from '../lib/gardenGroupBy.js'
 import { FROM_CACHE } from '../lib/api.js'
 import { PREDATES_GROUP_BY_SAVE } from '../lib/notificationPrefsClient.js'
@@ -42,6 +42,38 @@ describe('buildGardenFacetOptions — the options Garden\'s group-by control off
       expect(opts.every(o => typeof o.label === 'string' && o.label.length > 0)).toBe(true)
       // 11 tag facets (13 less 'type' and 'location', which sit in the head) + the head.
       expect(opts.length).toBe(hidden ? 3 + 11 : 4 + 11)
+    }
+  })
+})
+
+// BUG-GARDENTAGGROUPREPAINT-001 — when Garden holds its list and its scroll restore for the tag map. Columns: the
+// remembered grouping, whether the visit's first tag load is still out, whether projects are hidden.
+const AWAITS = [
+  // name                                                             groupBy        pending  hidden → held
+  ['the bug: Heat remembered, the map not landed yet',                'heat',        true,    true,    true],
+  ['the map has landed (or failed): nothing to wait for',             'heat',        false,   true,    false],
+  ['Type is structural: offered with an empty map',                   'crop_type',   true,    true,    false],
+  ['Lifecycle is structural',                                         'status',      true,    true,    false],
+  ['Location is structural, though it is also a tag facet',           'location',    true,    true,    false],
+  ['the tag "type" facet is never offered while projects are hidden', 'type',        true,    true,    false],
+  ['…and is a tag grouping like any other when they are shown',       'type',        true,    false,   true],
+  ['Projects is structural when shown',                               'none',        true,    false,   false],
+  ['…and not a grouping at all when hidden: falls back at once',      'none',        true,    true,    false],
+  ['a stale or unknown value falls back at once',                     'bogus',       true,    true,    false],
+  ['no stored value',                                                 null,          true,    true,    false],
+  ['tags not wired: the hook never loads, so nothing ever waits',     'heat',        undefined, true,  false],
+]
+describe('groupByAwaitsTags — a remembered tag grouping holds Garden until the tag map lands', () => {
+  it.each(AWAITS)('%s', (_name, groupBy, tagsPending, projectsHidden, held) => {
+    expect(groupByAwaitsTags({ groupBy, tagsPending, projectsHidden })).toBe(held)
+  })
+  it('every facet only the tag map can offer is held, and nothing the control offers without it', () => {
+    for (const hidden of [true, false]) {
+      const structural = values(buildGardenFacetOptions(null, hidden))
+      const everyFacet = { p1: { direct: GARDEN_TAG_FACETS.map(facet => ({ facet })) } }
+      for (const value of values(buildGardenFacetOptions(everyFacet, hidden))) {
+        expect(groupByAwaitsTags({ groupBy: value, tagsPending: true, projectsHidden: hidden })).toBe(!structural.includes(value))
+      }
     }
   })
 })
