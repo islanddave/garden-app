@@ -25,7 +25,7 @@
 // Back is a real history traversal (history.back() in the frame: popstate, as the Android back gesture).
 // Each flow opens in a FRESH TAB, so its history, sessionStorage and module state are its own.
 //
-// FOURTEEN FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides):
+// SIXTEEN FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides):
 //   (a) Saved seeds, scrolled deep (the Ristra card wheeled to the middle of the visible band) → tap the
 //       card's title → the lot page lands at scrollY 0 with its h1 inside the visible band; then Back →
 //       scrollY equals the pre-tap value exactly and the card's viewport top is unchanged (±1px).
@@ -75,6 +75,12 @@
 //   (n) As (l) for the add form: My seeds → the Seeds header's "+ Add seeds" → header Search → a result →
 //       Back → the X → the form's Cancel → Seeds' own entry → one Back leaves Seeds. The form used to
 //       REPLACE its entry with a second Seeds page, so that Back stayed on Seeds: a dead press.
+//   (o) As (l), leaving by the lot page's REMOVE ("Remove item" → the dialog's Remove) instead of its Cancel:
+//       the same Back onto Seeds' own entry, and one Back then leaves Seeds. A Remove that replaces there
+//       leaves Seeds in the stack twice. (l)'s walk path only: after a REPLACE-close Remove still leaves the
+//       removed lot's own entry under Seeds (review-v4183 M-4, pre-existing), and no flow here drives that.
+//   (p) As (l), with the SYSTEM Back closing Search instead of the X (as (k) is to (h)): a traversal the app
+//       did not start, onto the lot page's own entry, and then (l)'s Cancel and Back.
 // Every number is printed on pass as well as fail.
 //
 // THE INSTRUMENT CHECK comes first in every flow, and a mismatch stops that flow before any invariant is
@@ -259,8 +265,11 @@ const SEL = {
   createRow: `d.querySelector('[role="dialog"][aria-label="Create new"] [data-testid="harness-create-log"]')`,
   // Search's one result (flow h): a plain link to the planting, inside the sheet.
   searchResult: `d.querySelector('[role="dialog"][aria-label="Search your garden"] [data-testid="harness-search-result"]')`,
-  // The lot page's own Cancel (flows l, m); the Seeds header's "+ Add seeds" and the add form's Cancel (n).
+  // The lot page's own Cancel (flows l, m, p); the Seeds header's "+ Add seeds" and the add form's Cancel (n).
   lotCancel: `d.querySelector('${tid('inventory-detail-cancel')}')`,
+  // The lot page's "Remove item" and its dialog's Remove (flow o).
+  lotRemove: `d.querySelector('${tid('inventory-remove')}')`,
+  lotRemoveConfirm: `d.querySelector('${tid('inventory-remove-dialog')} ${tid('inventory-remove-confirm')}')`,
   seedsAdd: `d.querySelector('${tid('seeds-add')}')`,
   addCancel: `d.querySelector('${tid('inventory-add-cancel')}')`,
 }
@@ -284,6 +293,8 @@ const FLOWS = [
   { key: 'l', name: 'lot-result-back-x-cancel', label: 'My seeds → "Open details →" → header Search → a result → Back → its X → the lot page\'s Cancel → Back leaves Seeds', entry: 'toMine', view: 'mine', dest: 'lot', lotCancel: true },
   { key: 'm', name: 'lot-reload-x-cancel', label: 'My seeds → "Open details →" → header Search → the app reloads under it → its X → the lot page\'s Cancel leaves for My seeds', entry: 'toMine', view: 'mine', dest: 'lot', lotCancel: true, lotReload: true },
   { key: 'n', name: 'add-result-back-x-cancel', label: 'My seeds → "+ Add seeds" → header Search → a result → Back → its X → the form\'s Cancel → Back leaves Seeds', entry: 'toMine', view: 'mine', dest: 'leave', addForm: true },
+  { key: 'o', name: 'lot-result-back-x-remove', label: 'My seeds → "Open details →" → header Search → a result → Back → its X → the lot page\'s Remove → Back leaves Seeds', entry: 'toMine', view: 'mine', dest: 'lot', lotCancel: true, lotRemove: true },
+  { key: 'p', name: 'lot-result-back-sysback-cancel', label: 'My seeds → "Open details →" → header Search → a result → Back → the system Back closes Search → the lot page\'s Cancel → Back leaves Seeds', entry: 'toMine', view: 'mine', dest: 'lot', lotCancel: true, closeByBack: true },
   { key: 'i', name: 'search-reload-x', label: 'Saved seeds deep → header Search → the app reloads under it → its X → scrolled on → the card\'s title → Back', entry: 'toSaved', view: 'saved', dest: 'lot', search: 'header', searchAtDepth: true, reloadUnder: true, nudge: true },
 ]
 
@@ -577,7 +588,10 @@ async function runFlow(cdp, flow, vw, vh) {
     // form) MOUNTS under Search, and Search closes. (l), (n) The X walks it home onto its own entry: its
     // Cancel must go BACK to the Seeds entry that opened it, as it does when Search was never opened. (m) The
     // X replaces: Cancel must not go Back. Called standing on the page's own entry; instrument checks first.
+    // (o) leaves by the lot page's Remove instead of its Cancel; (p) closes Search by the system Back.
     const cancelAfterSearch = async (page, seedsEntry) => {
+      const exitWhat = flow.lotRemove ? 'Remove' : 'Cancel'
+      const closeWhat = flow.closeByBack ? 'the system Back' : 'the X'
       const own = await t.read(READ_ENTRY)
       if (own.seedsReturn !== '/seeds?view=mine') return fail(`${at}: the entry of ${page.what} carries seedsReturn ${own.seedsReturn}, not My seeds' — it was not opened by the Seeds door under test`)
       const whyS = await t.tap(SEL.openSearch, 'header Search', { chrome: true })
@@ -613,19 +627,38 @@ async function runFlow(cdp, flow, vw, vh) {
       if (under.key !== kOpen) return fail(`${at}: under Search the frame is on key ${under.key}, not Search's own ${kOpen}`)
       if (under.seedsReturn != null || under.bgSeedsReturn !== own.seedsReturn) return fail(`${at}: under Search the entry reads seedsReturn ${under.seedsReturn} and its background ${under.bgSeedsReturn} — expected none on the overlay's own entry and the page's on its background, the shape the bug turns on`)
       await t.settle(300, 5000)
-      const whyC = await t.tap(SEL.sheetClose, 'the overlay sheet\'s X', { chrome: true })
-      if (whyC) return fail(`${at}: ${whyC}`)
-      if (!await t.waitIn(`w.location.pathname === '${page.path}' && !${SEL.searchSheet} && ${page.up}`, 8000)) return fail(`${at}: the X was tapped and the sheet never closed back onto ${page.what}${await reloaded()}`)
+      if (flow.closeByBack) {
+        // (p) The system Back closes it instead (the Android gesture): a traversal the app did not start.
+        await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
+      } else {
+        const whyC = await t.tap(SEL.sheetClose, 'the overlay sheet\'s X', { chrome: true })
+        if (whyC) return fail(`${at}: ${whyC}`)
+      }
+      if (!await t.waitIn(`w.location.pathname === '${page.path}' && !${SEL.searchSheet} && ${page.up}`, 8000)) return fail(`${at}: ${closeWhat} was used and the sheet never closed back onto ${page.what}${await reloaded()}`)
       await t.settle(300, 5000)
       const home = await t.read(READ_ENTRY)
-      // The precondition of each: (l), (n) the close WALKED onto the page's own entry; (m) it REPLACED.
-      if (!flow.lotReload && home.key !== own.key) return fail(`${at}: the X closed onto ${entryLine(home)}, not the own entry of ${page.what}, ${entryLine(own)} — the close did not WALK, so this is not the path under test`)
+      // The precondition of each: (l), (n), (o), (p) the close WALKED onto the page's own entry; (m) it REPLACED.
+      if (!flow.lotReload && home.key !== own.key) return fail(`${at}: ${closeWhat} closed onto ${entryLine(home)}, not the own entry of ${page.what}, ${entryLine(own)} — the close did not WALK, so this is not the path under test`)
       if (flow.lotReload && home.key === own.key) return fail(`${at}: after the reload the X walked back onto the own entry of ${page.what}, ${entryLine(own)}, instead of replacing — not the path under test`)
-      const whyW = await t.wheelTo(page.cancel, `the Cancel of ${page.what}`)
-      if (whyW) return fail(`${at}: ${whyW}`)
-      await t.settle(300, 5000)
-      const whyX = await t.tap(page.cancel, `the Cancel of ${page.what}`)
-      if (whyX) return fail(`${at}: ${whyX}`)
+      if (flow.lotRemove) {
+        // (o) "Remove item", then the dialog's own Remove (a fixed layer over the page, hence `chrome`). The
+        // harness answers the DELETE as it does every write.
+        const whyW = await t.wheelTo(SEL.lotRemove, `the "Remove item" of ${page.what}`)
+        if (whyW) return fail(`${at}: ${whyW}`)
+        await t.settle(300, 5000)
+        const whyR = await t.tap(SEL.lotRemove, `the "Remove item" of ${page.what}`)
+        if (whyR) return fail(`${at}: ${whyR}`)
+        if (!await t.waitIn(SEL.lotRemoveConfirm, 8000)) return fail(`${at}: "Remove item" was tapped and the "Remove item?" dialog never showed${await reloaded()}`)
+        await t.settle(200, 3000)
+        const whyX = await t.tap(SEL.lotRemoveConfirm, 'the dialog\'s Remove', { chrome: true })
+        if (whyX) return fail(`${at}: ${whyX}`)
+      } else {
+        const whyW = await t.wheelTo(page.cancel, `the Cancel of ${page.what}`)
+        if (whyW) return fail(`${at}: ${whyW}`)
+        await t.settle(300, 5000)
+        const whyX = await t.tap(page.cancel, `the Cancel of ${page.what}`)
+        if (whyX) return fail(`${at}: ${whyX}`)
+      }
       const onSeeds = await t.waitIn(`w.location.pathname === '/seeds' && ${SEL.mineView}`, flow.lotReload ? 8000 : 15000)
       if (flow.lotReload) {
         // ── THE INVARIANT of (m): the stack holds the page twice now, so Cancel must not go Back — that
@@ -639,12 +672,13 @@ async function runFlow(cdp, flow, vw, vh) {
         console.log(`[seeds-scroll] ${at} ${flow.label}: Seeds ${entryLine(seedsEntry)} · ${page.what} ${entryLine(own)} · the app reloaded under Search ${entryLine(under)}, its background's seedsReturn ${under.bgSeedsReturn} · the X REPLACED onto ${entryLine(home)} · Cancel left for ${entryLine(there)}`)
         return
       }
-      if (!onSeeds) return fail(`${at}: Cancel was tapped and My seeds never showed (on ${await t.read(`return w.location.pathname + w.location.search`)})${await reloaded()}`)
+      if (!onSeeds) return fail(`${at}: ${exitWhat} was tapped and My seeds never showed (on ${await t.read(`return w.location.pathname + w.location.search`)})${await reloaded()}`)
       await t.settle(400, 6000)
       const after = await t.read(READ_ENTRY)
-      // ── THE INVARIANTS of (l), (n): Cancel went BACK onto Seeds' own entry, and one Back from there leaves Seeds.
+      // ── THE INVARIANTS of (l), (n), (o), (p): the exit went BACK onto Seeds' own entry, and one Back from
+      // there leaves Seeds.
       const wentBack = after.key === seedsEntry.key
-      if (!wentBack) fail(`${at}: ${flow.label}: Cancel did not go Back to the Seeds entry that opened ${page.what}, ${entryLine(seedsEntry)}: it landed on a NEW one, ${entryLine(after)} — ${page.what} mounted under Search and read the overlay's entry, which carries no seedsReturn (BUG-SEEDSRETURNUNDEROVERLAY-001)`)
+      if (!wentBack) fail(`${at}: ${flow.label}: ${exitWhat} did not go Back to the Seeds entry that opened ${page.what}, ${entryLine(seedsEntry)}: it landed on a NEW one, ${entryLine(after)} — ${page.what} mounted under Search and read the overlay's entry, which carries no seedsReturn (BUG-SEEDSRETURNUNDEROVERLAY-001)`)
       await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
       const left = await t.waitIn(`w.location.pathname === '/today' && d.querySelector('[data-testid="harness-to-saved"]')`, 5000)
       const where = await t.read(READ_ENTRY)
@@ -652,8 +686,8 @@ async function runFlow(cdp, flow, vw, vh) {
       const rlL = await reloaded()
       if (rlL) return fail(`${at}: the flow ran across two documents${rlL}`)
       if (dgL.errors.length) return fail(`${at}: the page raised ${dgL.errors.length} error(s): ${dgL.errors.join(' | ')}`)
-      if (!left) fail(`${at}: ${flow.label}: the first Back after Cancel landed on ${entryLine(where)}, not /today — Seeds is in the stack twice`)
-      console.log(`[seeds-scroll] ${at} ${flow.label}: Seeds ${entryLine(seedsEntry)} · ${page.what} ${entryLine(own)} · re-mounted under Search ${entryLine(under)}, its background's seedsReturn ${under.bgSeedsReturn} · the X walked onto ${entryLine(home)} · Cancel ${wentBack ? 'went BACK onto' : 'landed on a NEW entry,'} ${entryLine(after)} · Back then landed on ${entryLine(where)}`)
+      if (!left) fail(`${at}: ${flow.label}: the first Back after ${exitWhat} landed on ${entryLine(where)}, not /today — Seeds is in the stack twice`)
+      console.log(`[seeds-scroll] ${at} ${flow.label}: Seeds ${entryLine(seedsEntry)} · ${page.what} ${entryLine(own)} · re-mounted under Search ${entryLine(under)}, its background's seedsReturn ${under.bgSeedsReturn} · ${closeWhat} walked onto ${entryLine(home)} · ${exitWhat} ${wentBack ? 'went BACK onto' : 'landed on a NEW entry,'} ${entryLine(after)} · Back then landed on ${entryLine(where)}`)
     }
     if (flow.addForm) {
       // (n) The add form, from the Seeds header's own door: a PUSH carrying the view to return to.
