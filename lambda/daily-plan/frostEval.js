@@ -612,6 +612,8 @@ function isFrostSeason(planDate, opts = {}) {
 // alerts: the in-invocation dedup store forgets between runs, so a condition that holds all afternoon would
 // otherwise send once per evaluating run. Derived HERE, from the same window as `evaluate`, so the cap hour
 // cannot drift out of the window if FROST_RUN_START_HOUR moves. False for a forced or suppressed run.
+// BUG-DEGRADEDALERTDEDUPE-001 — the two frost-degrade ops emails (frost_eval_degraded, frost_advisory_degraded)
+// take the same cap. The frost warning itself does not read this field.
 //
 // BUG-INGROUNDPOSTWINDOW-001 — `beforeWindow` marks a run EARLIER in the ET day than the window: the evaluating
 // runs still follow it on the same plan date and re-decide, so its in-ground coverage may stay a prediction

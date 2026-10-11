@@ -1850,9 +1850,19 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
         space_sent: frostAlertEnabled ? spaceSent.length : null, ...frostDecision.observability }));
       // §3-7 loud degradation: inside frost season, a missing tonightLow is NOT "no frost tonight". Silence
       // must never be indistinguishable from safety. Routed to garden-ops-alerts, not the frost topic.
+      // BUG-DEGRADEDALERTDEDUPE-001 — this email and its advisory twin below send ONLY from the first evaluating
+      // run of the ET day (frostRun.firstOfDay, 14:00 ET), the stateless once-per-day cap the station alerts use:
+      // frostPublished forgets between runs, so a fetch that stayed down all afternoon sent from each of the four
+      // evaluating runs. Owner decision 2026-10-11, cost accepted: a failure that starts after the 14:00 run sends
+      // no email that day. The later runs log the skip (and frost-eval above still carries `degraded`), so it is
+      // in the logs. The cap is on these two emails only: the frost warning itself is published in the per-user
+      // loop below and never reads firstOfDay.
       if (frostDecision.degradedAlert && frostAlertEnabled && !dryRun && publishAlert) {
         const dk = `${spaceId}|${today}|frost_eval_degraded`;
-        if (!frostPublished.has(dk)) {
+        if (!frostRun.firstOfDay) {
+          console.log(JSON.stringify({ msg: 'frost degraded-alert SKIPPED — not the first evaluating run of the day',
+            space: spaceId, plan_date: today, run: frostRun.slot, dedup_key: dk }));
+        } else if (!frostPublished.has(dk)) {
           try {
             // ASCII-only Subject, same constraint frostSubject enforces (SNS rejects non-printable/non-ASCII).
             await publishAlert({ topic: 'ops', subject: 'Garden ops - frost evaluation DEGRADED',
@@ -1867,10 +1877,14 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       }
       // BUG-HYDROLOGYNULLSILENT-001 — the advisory tier's twin of the block above: no usable D1..D3 lows in
       // season means the 48-72 h warning could not be evaluated, which must not read as "no frost ahead".
-      // Same gate, same dedup store, per Space like frost_eval_degraded, own key so each tier is named.
+      // Same gate (the once-a-day cap included), same dedup store, per Space like frost_eval_degraded, own key so
+      // each tier is named.
       if (frostDecision.advisoryDegradedAlert && frostAlertEnabled && !dryRun && publishAlert) {
         const dk = `${spaceId}|${today}|frost_advisory_degraded`;
-        if (!frostPublished.has(dk)) {
+        if (!frostRun.firstOfDay) {
+          console.log(JSON.stringify({ msg: 'frost-advisory-degraded alert SKIPPED — not the first evaluating run of the day',
+            space: spaceId, plan_date: today, run: frostRun.slot, dedup_key: dk }));
+        } else if (!frostPublished.has(dk)) {
           const why = !hy ? 'the Open-Meteo hydrology fetch returned nothing'
             : 'the Open-Meteo response carried no temperature_2m_min for those nights';
           try {
@@ -1896,7 +1910,8 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       // first evaluating run of the ET day (frostRun.firstOfDay, 14:00 ET). That is the stateless once-per-day
       // cap: frostPublished forgets between runs, so a fault that holds all afternoon used to send from each of
       // the four evaluating runs (BUG-DEGRADEDALERTDEDUPE-001), and year-round that would have been a winter of
-      // them. The frost-degrade blocks above are unchanged: still frost-season, still per evaluating run.
+      // them. The frost-degrade blocks above take the same cap since 2026-10-11 and are otherwise unchanged: still
+      // frost-season, still behind FROST_ALERT_ENABLED, still per Space.
       if (stationUnbound && frostRun.firstOfDay && !dryRun && publishAlert) {
         const dk = `station|${today}|station_unbound`;
         if (!frostPublished.has(dk)) {

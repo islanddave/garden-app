@@ -14,7 +14,7 @@ const { run } = h;
 
 const USER = 'user_dave';
 const DATE = '2026-09-20';        // inside the §3-7 Sep 1 – Nov 15 frost season
-const PM_HOUR = 15;               // an evaluating run (G3 window 14:00-17:59 ET)
+const PM_HOUR = 14;               // the first evaluating run of the ET day: the only one that sends (BUG-DEGRADEDALERTDEDUPE-001)
 const HOME = { id: 'sp1', postal_code: null, weather_lat: 42.5, weather_lng: -72.6 };
 const SHED = { id: 'sp2', postal_code: null, weather_lat: 41.0, weather_lng: -70.0 };
 const DEDUP_KEY = `sp1|${DATE}|frost_advisory_degraded`;
@@ -153,6 +153,15 @@ describe('BUG-HYDROLOGYNULLSILENT-001 — the gate is frost_eval_degraded\'s gat
     quiet();
     const { publishAlert } = await drive({ etHour: 2 });
     expect(publishAlert).not.toHaveBeenCalled();
+  });
+
+  it('the later evaluating runs (15, 16, 17 ET) -> no alert: once a day, like the station alerts', async () => {
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    quiet();
+    for (const etHour of [15, 16, 17]) {
+      const { publishAlert } = await drive({ etHour });
+      expect(publishAlert).not.toHaveBeenCalled();
+    }
   });
 
   it('FROST_ALERT_ENABLED unset -> no alert', async () => {

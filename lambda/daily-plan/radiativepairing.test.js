@@ -363,7 +363,7 @@ const hydrology = ({ hourlyTemp, frost }) => ({
   tomorrow_pop: 0, yesterday_precip_actual_in: 0,
 });
 
-async function drive({ hy, tonightLow = 55 }) {
+async function drive({ hy, tonightLow = 55, etHour = 15 }) {
   vi.stubEnv('FROST_ALERT_ENABLED', 'true');
   vi.stubEnv('FROST_RADIATIVE_ENABLED', 'true');
   const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -379,7 +379,7 @@ async function drive({ hy, tonightLow = 55 }) {
   await run({
     pg, today: PLAN, dryRun: false, geocodeZip: async () => ({ lat: 42.5, lng: -72.6 }),
     fetchNWS: async () => ({ tonightLow, highToday: 60, code: 1, unit: 'F', short: 'Clear' }),
-    fetchPrecip: async () => hy, fetchStation: async () => null, publishAlert, etHour: 15, event: {},
+    fetchPrecip: async () => hy, fetchStation: async () => null, publishAlert, etHour, event: {},
   });
   const published = publishAlert.mock.calls.map(([a]) => a);
   const evalLine = logs.mock.calls.map(([l]) => { try { return JSON.parse(l); } catch { return null; } })
@@ -417,11 +417,17 @@ describe('END TO END — real run(), radiative ON: the published text, the store
 
   it('Open-Meteo down (hydrology null) at an evaluating hour: the run completes, the NWS imminent alert and the degraded notice go out', async () => {
     // At base 10452156 this run THREW (TypeError reading 'split'): no plan row, no frost alert of any tier.
-    const { frost, ops, row, evalLine } = await drive({ hy: null, tonightLow: 36 });
+    // BUG-DEGRADEDALERTDEDUPE-001 — the degraded notice is once a day, from the 14:00 ET run; the frost alert is not.
+    const { frost, ops, row, evalLine } = await drive({ hy: null, tonightLow: 36, etHour: 14 });
     expect(row).toBeTruthy();
     expect(frost).toHaveLength(1);
     expect(frost[0].message).toMatch(/^FROST PROTECT TONIGHT — low 36°F\./);
     expect(ops.map((a) => a.subject)).toContain('Garden ops - frost advisory DEGRADED');
     expect(evalLine).toMatchObject({ radiativeEnabled: true, radiativeNightsAvailable: 0, radiativeAdvisoryNightBasis: null });
+    const later = await drive({ hy: null, tonightLow: 36 });
+    expect(later.row).toBeTruthy();
+    expect(later.frost).toHaveLength(1);
+    expect(later.frost[0].message).toMatch(/^FROST PROTECT TONIGHT — low 36°F\./);
+    expect(later.ops).toEqual([]);
   });
 });

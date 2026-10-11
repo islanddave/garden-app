@@ -16,6 +16,7 @@ const USER = 'user_dave';
 const SPACE = 'sp1';
 const DATE = '2026-09-20';        // inside the §3-7 Sep 1 – Nov 15 frost season
 const PM_HOUR = 15;               // the 15:30 ET intraday-pm run (G3)
+const FIRST_PM_HOUR = 14;         // the first evaluating run of the ET day: the only one the degraded ops alerts send from
 
 const planting = (id, slug, extra = {}) => withCoverFlags({
   id, name: `${slug} ${id}`, project_id: 'pj1', status: 'fruiting', container_type: 'pot',
@@ -378,10 +379,12 @@ describe('§3-7 fail LOUD — a swallowed frost alert is the failure this featur
     expect(pg.writes[0].alerts_sent).toEqual([]);
   });
 
+  // BUG-DEGRADEDALERTDEDUPE-001 — the degraded ops alert sends from the first evaluating run of the day (14:00 ET)
+  // only, so the cases that expect it run at FIRST_PM_HOUR. The frost alert itself is not capped (PM_HOUR above).
   it('a missing tonightLow INSIDE frost season raises a degraded ops alert on the OPS topic', async () => {
     vi.stubEnv('FROST_ALERT_ENABLED', 'true');
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    const { publishAlert } = await drive({ tonightLow: null });
+    const { publishAlert } = await drive({ tonightLow: null, etHour: FIRST_PM_HOUR });
     expect(publishAlert).toHaveBeenCalledTimes(1);
     const call = publishAlert.mock.calls[0][0];
     expect(call.topic).toBe('ops');
@@ -392,7 +395,7 @@ describe('§3-7 fail LOUD — a swallowed frost alert is the failure this featur
   it('the same missing low OUTSIDE frost season does not page', async () => {
     vi.stubEnv('FROST_ALERT_ENABLED', 'true');
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    const { publishAlert } = await drive({ tonightLow: null, today: '2026-07-04' });
+    const { publishAlert } = await drive({ tonightLow: null, today: '2026-07-04', etHour: FIRST_PM_HOUR });
     expect(publishAlert).not.toHaveBeenCalled();
   });
 
@@ -478,7 +481,7 @@ describe('weather-seam failures degrade loudly and never empty the plan', () => 
     // index.js:fetchNWS catches everything and returns null, so this is production's real failure shape.
     // The row suspected a silent all-clear; the wiring says otherwise and now a test holds it there.
     vi.stubEnv('FROST_ALERT_ENABLED', 'true');
-    const { pg, publishAlert } = await drive({ fetchNWS: async () => null });
+    const { pg, publishAlert } = await drive({ fetchNWS: async () => null, etHour: FIRST_PM_HOUR });
     expect(pg.writes.length).toBeGreaterThan(0);
     const sent = publishAlert.mock.calls.map(([a]) => `${a.subject || ''} ${a.message || ''}`).join('\n');
     expect(sent).toMatch(/frost_eval_degraded/);
@@ -487,7 +490,7 @@ describe('weather-seam failures degrade loudly and never empty the plan', () => 
   it('a weather fetcher that THROWS degrades that Space instead of taking the whole run down with it', async () => {
     vi.stubEnv('FROST_ALERT_ENABLED', 'true');
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { pg, publishAlert } = await drive({ fetchNWS: async () => { throw new Error('nws 503'); } });
+    const { pg, publishAlert } = await drive({ fetchNWS: async () => { throw new Error('nws 503'); }, etHour: FIRST_PM_HOUR });
     expect(pg.writes.length).toBeGreaterThan(0);
     expect(logLines(err).some((l) => l.degraded === 'weather_fetch_failed')).toBe(true);
     const sent = publishAlert.mock.calls.map(([a]) => `${a.subject || ''} ${a.message || ''}`).join('\n');

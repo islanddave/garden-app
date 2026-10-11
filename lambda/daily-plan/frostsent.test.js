@@ -477,9 +477,9 @@ describe('resolveFrostRun.beforeWindow — which non-evaluating runs may keep th
 // ── 4 ── the kinds that do NOT dedup through alerts_sent ─────────────────────────────────────────────────────
 // Checked, not assumed (brief: "if the year-round station alerts share the per-user dedup they duplicate every
 // day"). They do not: they sit in the per-Space block, outside the per-user loop. The station trio is capped at
-// the 14 ET run (firstOfDay, V5-STATIONHEALTHYEAR-001); the two frost-degrade alerts send once per EVALUATING run,
-// which is BUG-DEGRADEDALERTDEDUPE-001 (filed, SOMEDAY) and not this row. Pinned here: two users send exactly
-// what one user sends.
+// the 14 ET run (firstOfDay, V5-STATIONHEALTHYEAR-001), and since BUG-DEGRADEDALERTDEDUPE-001 so are the two
+// frost-degrade alerts (they sent once per EVALUATING run before it). Pinned here: two users send exactly what
+// one user sends.
 describe('station and frost-degrade alerts are per Space, never per user', () => {
   const MAC = 'AA:BB:CC:DD:EE:FF';
   const CFG = JSON.stringify([{ mac: MAC, tz: 'America/New_York', lat: 42.5, lng: -72.6 }]);
@@ -521,7 +521,7 @@ describe('station and frost-degrade alerts are per Space, never per user', () =>
   };
 
   for (const [kind, expected] of [['station_unbound', [14]], ['station_stale', [14]], ['station_array_silent', [14]],
-    ['frost_eval_degraded', EVALUATING], ['frost_advisory_degraded', EVALUATING]]) {
+    ['frost_eval_degraded', [14]], ['frost_advisory_degraded', [14]]]) {
     it(`${kind}: two users send exactly what one user sends (${expected.join('/')} ET)`, async () => {
       vi.stubEnv('FROST_ALERT_ENABLED', 'true');
       if (kind.startsWith('station')) vi.stubEnv('AWN_STATIONS_JSON', CFG);
