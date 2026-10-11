@@ -498,6 +498,61 @@ describe('the places are fetched on the first open, once', () => {
   })
 })
 
+// review-v4182 R3 — a sheet's focus is placed once, as it opens. A first open lands on the loading state,
+// where Close is the only control, so the editor used to arrive with focus still parked on Close.
+describe('focus when the editor arrives after the sheet opened', () => {
+  const sheet = (packet) => (
+    <ToastProvider>
+      <button type="button">Elsewhere</button>
+      <SowSheet packet={packet} draftKey="sow-focus" onClose={() => {}} />
+    </ToastProvider>
+  )
+  const closeButton = () => within(sowDialog()).getByRole('button', { name: 'Close' })
+  const nameField = () => within(sowDialog()).getByLabelText(/Name/i)
+  const editorIn = () => waitFor(() => expect(within(sowDialog()).getByRole('button', { name: /Add planting/i })).toBeTruthy())
+
+  it('opened on the loading state: focus is on Close, then on the Name field once the editor is in', async () => {
+    let release
+    projectsResponse = () => new Promise((r) => { release = () => r(PROJECTS) })
+    await act(async () => { render(sheet(sowPacketFromItem(ITEM))) })
+    expect(within(sowDialog()).getByText('Loading places…')).toBeTruthy()
+    expect(document.activeElement).toBe(closeButton())
+
+    await act(async () => { release() })
+    await editorIn()
+    expect(document.activeElement).toBe(nameField())
+  })
+
+  it('focus the user moved while the places loaded is left where they put it', async () => {
+    let release
+    projectsResponse = () => new Promise((r) => { release = () => r(PROJECTS) })
+    await act(async () => { render(sheet(sowPacketFromItem(ITEM))) })
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' })
+    act(() => { elsewhere.focus() })
+
+    await act(async () => { release() })
+    await editorIn()
+    expect(document.activeElement).toBe(elsewhere)
+  })
+
+  it('a reopen with the places already in opens on the Name field, and later renders do not pull focus back', async () => {
+    const packet = sowPacketFromItem(ITEM)
+    let out
+    await act(async () => { out = render(sheet(packet)) })
+    await editorIn()
+    await act(async () => { out.rerender(sheet(null)) })
+    await waitFor(() => expect(sowDialog()).toBeNull())
+
+    await act(async () => { out.rerender(sheet(packet)) })
+    await editorIn()
+    expect(document.activeElement).toBe(nameField())
+
+    act(() => { closeButton().focus() })
+    await act(async () => { out.rerender(sheet(packet)) })
+    expect(document.activeElement).toBe(closeButton())
+  })
+})
+
 describe('Edit sow details — the variety editor, from the packet\'s page', () => {
   it('links a seed row to its cultivar\'s editor, on the 44px floor', async () => {
     await renderDetail()

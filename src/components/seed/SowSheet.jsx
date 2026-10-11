@@ -188,6 +188,9 @@ export default function SowSheet({ packet, draftKey, todayISO = todayLocalISO(),
       confirmTitle="Discard this sowing?"
       confirmBody="This packet has not been sown yet. What you typed will be lost, and the sheet will not reopen on this packet."
       busy={editorBusy}
+      // review-v4182 R3 — a first open lands on the loading state, where Close is the only control. When
+      // the editor replaces it the Sheet places focus again, on the Name field as on every other open.
+      refocusKey={projects ? 'editor' : 'loading'}
       title={open ? `Sow ${packet.title}` : undefined}
     >
       {open && (projects ? (

@@ -92,9 +92,18 @@ function focusablesIn(panel) {
 // right now ({ title, body, confirmLabel, cancelLabel }, any of them), passed straight to the registry,
 // which reads it only when the question is raised. Additive: absent, the question is the registered
 // confirmTitle / confirmBody with the registry's own buttons, as at every other render site.
-export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, busy = false, closeLabel = 'Close', kind = 'modal', armsBack = false, backIntercept = null, confirmOnDirty = false, confirmTitle = null, confirmBody = null, confirmCopy = null, headerStart = null }) {
+// OPS-SOWSHEETPROJECTSLAZY-001 — `refocusKey` is for a sheet that can open BEFORE its form is in (the Sow
+// sheet's "Loading places…"): focus is placed once, at open, so it lands on Close and would stay there.
+// When the key changes WHILE the sheet is open, the open-time choice is made again — only if focus is
+// still where that choice left it (or nowhere), so focus the user has moved is never taken back.
+// Additive: absent, or unchanged since the open, nothing happens.
+export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, busy = false, closeLabel = 'Close', kind = 'modal', armsBack = false, backIntercept = null, confirmOnDirty = false, confirmTitle = null, confirmBody = null, confirmCopy = null, headerStart = null, refocusKey }) {
   const panelRef = useRef(null)
   const restoreRef = useRef(null)
+  const initialFocusRef = useRef(null)
+  const refocusKeyRef = useRef(refocusKey)
+  const focusedForKeyRef = useRef(refocusKey)
+  useEffect(() => { refocusKeyRef.current = refocusKey }, [refocusKey])
   const { registered, isTopmost, requestDismiss } = useDismissable({
     open, onDismiss: onClose, dirty, busy, layer: LAYER.SHEET, kind, armsBack, backIntercept,
     confirmOnDirty, confirmTitle, confirmBody, confirmCopy,
@@ -128,6 +137,8 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
     const items = focusablesIn(panel)
     const initial = items.find((el) => !el.hasAttribute('data-sheet-close')) || items[0] || panel
     initial?.focus()
+    initialFocusRef.current = initial
+    focusedForKeyRef.current = refocusKeyRef.current
 
     function onKey(e) {
       // Topmost gate. When registered, the REGISTRY is the authority (it can see Lightbox and the
@@ -174,6 +185,20 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
     // Deps = [open] ONLY (onClose/dirty read via ref): fire on open transitions, never on incidental
     // parent re-renders — the fix for the "keystroke steals focus back to Name" bug.
   }, [open])
+
+  // Declared AFTER the open effect on purpose: on the commit that opens the sheet the key was just
+  // recorded above, so this is a no-op there and only a change made while open gets past the guard.
+  useEffect(() => {
+    if (!open || refocusKey === focusedForKeyRef.current) return
+    focusedForKeyRef.current = refocusKey
+    const panel = panelRef.current
+    const active = document.activeElement
+    if (active !== initialFocusRef.current && active !== panel && active !== document.body) return
+    const items = focusablesIn(panel)
+    const initial = items.find((el) => !el.hasAttribute('data-sheet-close')) || items[0] || panel
+    initial?.focus()
+    initialFocusRef.current = initial
+  }, [open, refocusKey])
 
   if (!open) return null
 
