@@ -17,6 +17,7 @@ vi.mock('react-router-dom', () => ({
 }))
 
 import CaptureFlow from '../pages/CaptureFlow.jsx'
+import { T } from '../components/forms/formStyles.js'
 
 beforeEach(() => {
   fetchSpy.mockReset(); uploadSpy.mockReset(); navigateSpy.mockReset()
@@ -77,6 +78,11 @@ describe('CaptureFlow — V3-CAPTURE-001', () => {
     await act(async () => { fireEvent.change(plantName(), { target: { value: 'Charentais' } }) })
     await act(async () => { fireEvent.click(plantSave()) })
     await waitFor(() => expect(screen.getByTestId('cap-undo')).toBeDefined())
+    // BUG-OTHERUNDOTARGETS-001 — a STYLE PIN, not a measurement (jsdom has no layout): the saved
+    // card's Undo must not carry an inline min-height below the house Button's frozen minimum. It
+    // used to pass `minHeight: 34`, which overrode the token and painted a 34px pill.
+    const undoMin = screen.getByTestId('cap-undo').style.minHeight
+    expect(undoMin === '' || parseFloat(undoMin) >= T.buttonMinHeight).toBe(true)
     await act(async () => { fireEvent.click(screen.getByTestId('cap-next')) })
     // BUG-SNAPRETAKE-001: this used to assert on `capture-input`, which is now mounted in EVERY
     // step, so that assertion could no longer fail and stopped meaning "back to photo step".

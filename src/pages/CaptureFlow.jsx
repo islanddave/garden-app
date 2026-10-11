@@ -863,7 +863,7 @@ export default function CaptureFlow() {
             <span style={{ fontWeight: 600, color: undone ? P.light : P.green, textDecoration: undone ? 'line-through' : 'none' }}>
               {undone ? 'Undone' : result.label}
             </span>
-            {!undone && <Button data-testid="cap-undo" variant="secondary" disabled={saving} onClick={doUndo} style={{ minHeight: 34, padding: '5px 12px' }}>Undo</Button>}
+            {!undone && <Button data-testid="cap-undo" variant="secondary" disabled={saving} onClick={doUndo} style={{ padding: '5px 12px' }}>Undo</Button>}
           </div>
           {/* BUG-INVREFSTRAND-001 — a failed Undo says why, on this card. doUndo always set `err`, but
               the only place `err` rendered was the form step, so a refused or failed Undo changed
