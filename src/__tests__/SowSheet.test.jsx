@@ -422,6 +422,37 @@ describe('the editor waits for the places', () => {
   })
 })
 
+// OPS-SOWSHEETPROJECTSLAZY-001 — the sheet mounts with its host, closed, on every seed page; the places
+// are only needed by a sow. One request on the first open, none before it and none on a reopen.
+describe('the places are fetched on the first open, once', () => {
+  const projectsCalls = () => fetchSpy.mock.calls.filter(([u]) => u === '/api/projects').length
+  const sheet = (packet) => (
+    <ToastProvider><SowSheet packet={packet} draftKey="sow-lazy" onClose={() => {}} /></ToastProvider>
+  )
+
+  it('mounted closed asks for nothing; opened asks once; closed and reopened still once', async () => {
+    const packet = sowPacketFromItem(ITEM)
+    let out
+    await act(async () => { out = render(sheet(null)) })
+    expect(projectsCalls()).toBe(0)
+
+    await act(async () => { out.rerender(sheet(packet)) })
+    expect(projectsCalls()).toBe(1)
+    await waitFor(() => expect(within(sowDialog()).getByRole('button', { name: /Add planting/i })).toBeTruthy())
+
+    await act(async () => { out.rerender(sheet(null)) })
+    await waitFor(() => expect(sowDialog()).toBeNull())
+    await act(async () => { out.rerender(sheet(packet)) })
+    await waitFor(() => expect(within(sowDialog()).getByRole('button', { name: /Add planting/i })).toBeTruthy())
+    expect(projectsCalls()).toBe(1)
+  })
+
+  it('a packet page that is never sown from never asks for the places', async () => {
+    await renderDetail()
+    expect(projectsCalls()).toBe(0)
+  })
+})
+
 describe('Edit sow details — the variety editor, from the packet\'s page', () => {
   it('links a seed row to its cultivar\'s editor, on the 44px floor', async () => {
     await renderDetail()

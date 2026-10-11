@@ -85,13 +85,17 @@ export default function SowSheet({ packet, draftKey, todayISO = todayLocalISO(),
   // one that succeeded.
   const [editorBusy, setEditorBusy] = useState(false)
 
+  // OPS-SOWSHEETPROJECTSLAZY-001 — asked for on the FIRST OPEN, not at mount: the sheet mounts closed
+  // with every seed page, and most visits never sow. Once answered it is kept, so a reopen asks nothing;
+  // the render guard below holds the editor until the answer is in.
   useEffect(() => {
+    if (!open || projects) return
     let alive = true
     fetch('/api/projects')
       .then((data) => { if (alive) setProjects(Array.isArray(data) ? data : []) })
       .catch(() => { if (alive) setProjects([]) })
     return () => { alive = false }
-  }, [fetch])
+  }, [fetch, open, projects])
 
   // Persist while the sheet holds a packet — for ABNORMAL exits only (see `close`: a deliberate
   // dismissal clears it, unlike EventNew/LogMany).
