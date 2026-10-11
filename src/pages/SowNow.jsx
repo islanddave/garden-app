@@ -710,7 +710,7 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
   // dirty dismiss, BLOCKED mid-POST, the reload hold and the stash) live in SowSheet.jsx, which the
   // seed's detail page opens too.
   const sheet = (
-    <SowSheet packet={sowPacket} draftKey={DRAFT_KEY} todayISO={todayISO} onSown={handleSown} onClose={closeSowSheet} />
+    <SowSheet packet={sowPacket} draftKey={DRAFT_KEY} todayISO={todayISO} onSown={handleSown} onClose={closeSowSheet} eager />
   )
 
   // V5-SEEDSTAB-001 — embedded, the Seeds shell supplies the page and its frame (one max-width and

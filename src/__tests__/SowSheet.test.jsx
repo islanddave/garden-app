@@ -447,6 +447,19 @@ describe('the places are fetched on the first open, once', () => {
     expect(projectsCalls()).toBe(1)
   })
 
+  // Sow now's whole job is sowing, so it keeps the old timing: its first Sow tap never waits on the places.
+  it('an eager host asks at mount, once, and not again on open', async () => {
+    const eagerSheet = (packet) => (
+      <ToastProvider><SowSheet packet={packet} draftKey="sow-eager" onClose={() => {}} eager /></ToastProvider>
+    )
+    let out
+    await act(async () => { out = render(eagerSheet(null)) })
+    expect(projectsCalls()).toBe(1)
+    await act(async () => { out.rerender(eagerSheet(sowPacketFromItem(ITEM))) })
+    await waitFor(() => expect(within(sowDialog()).getByRole('button', { name: /Add planting/i })).toBeTruthy())
+    expect(projectsCalls()).toBe(1)
+  })
+
   it('a packet page that is never sown from never asks for the places', async () => {
     await renderDetail()
     expect(projectsCalls()).toBe(0)
