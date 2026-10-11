@@ -28,8 +28,11 @@ export const ORIGIN_TEXT_FIELDS = ['origin_country', 'origin_region'];
 // picker row renders, and validateBody already refuses a blank one — a "clear the name" path
 // would be a data-loss affordance, not an edit affordance. Also excludes the system columns
 // (id/created_by/created_at/updated_at/deleted_at/model_version/source_proj_rescope_project_id),
-// which no edit surface owns, and dtm_basis, which has no read path or consumer yet
-// (V4-MATURITYBASIS-001) — exposing a clear for a field nothing renders would be its own trap.
+// which no edit surface owns, and dtm_basis (V4-MATURITYBASIS-001). dtm_basis IS read — the harvest
+// watch anchors on COALESCE(cultivar's, crop's) (lambda/harvests/watch-route.js) and the seed card
+// words it after days to maturity (lambda/inventory-items -> src/components/seed/seedFacts.js) —
+// but this PUT has no arm that writes it and no edit surface offers it. A clear alone would be half
+// a channel: a way to NULL a value those readers use, with no way to put it back.
 export const CLEARABLE_FIELDS = [
   'species', 'genus', 'days_to_maturity_min', 'days_to_maturity_max',
   'care_notes', 'soil_notes', 'sun_requirements', 'common_diseases', 'expected_yield_notes',
