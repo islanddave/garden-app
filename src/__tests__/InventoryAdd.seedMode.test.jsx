@@ -15,6 +15,8 @@
 //     ('seeds.justAdded.v1') for the Seeds page to outline once.
 //   • DONE. The submit stays disabled after a successful save, in every category.
 // Cancel in seed mode follows the same leave rule; every other category keeps its /inventory link.
+// A form that mounted UNDER an open overlay applies the rule to the entry it stands on when it leaves
+// (BUG-SEEDSRETURNUNDEROVERLAY-001, the last describe but one).
 // Harness shape follows InventoryAdd.seedDoor.test.jsx (same router, api and hook doubles, same
 // reasons). No jest-dom (L-182).
 import React from 'react'
@@ -305,6 +307,52 @@ describe('Cancel in seed mode follows the leave rule', () => {
     expect(navigateSpy.mock.calls).toEqual([[-1]])
     expect(createItemSpy).not.toHaveBeenCalled()
     expect(sessionStorage.getItem(NOTE_KEY)).toBeNull()
+  })
+})
+
+// BUG-SEEDSRETURNUNDEROVERLAY-001 — Search -> a result -> Back re-opens Search over a form that has
+// re-MOUNTED under it, with history standing on the OVERLAY's entry, which no Seeds door wrote. The form
+// read "nothing underneath" and kept it after the X had walked it home, so it left by REPLACE: Seeds twice
+// in a row, and a Back that did nothing. jsdom holds one history entry, so each close is modelled by
+// rewriting it to the state the entry landed on carries; the real traversals are gate:seeds-scroll's.
+describe('a seed-mode form that mounted under an overlay leaves by the entry it stands on', () => {
+  // [Seeds, k2: this form, pushed by a Seeds door, k3: Search over it].
+  const own = (seedsUrl) => ({ usr: seedsReturnState(seedsUrl), key: 'k2', idx: 2 })
+  const mountUnderSearch = async (seedsUrl, returnTo = seedsUrl) => {
+    const background = { pathname: '/inventory/add', search: `?${doorQuery(returnTo)}`, hash: '', state: seedsReturnState(seedsUrl), key: 'k2', historyEntry: { idx: 2, doc: 'd' } }
+    window.history.replaceState({ usr: { background }, key: 'k3', idx: 3 }, '')
+    await renderAdd(doorQuery(returnTo))
+  }
+  const closeByWalk = (seedsUrl) => window.history.replaceState(own(seedsUrl), '')
+  const closeByReplace = () => window.history.replaceState({ usr: { continuesEntry: 'k2' }, key: 'k4', idx: 3 }, '')
+
+  it('the close walked home: Cancel goes Back to the Seeds view underneath', async () => {
+    await mountUnderSearch(MINE)
+    closeByWalk(MINE)
+    await act(async () => { fireEvent.click(seedCancel()) })
+    expect(navigateSpy.mock.calls).toEqual([[-1]])
+  })
+
+  it('…and a saved packet goes Back, exactly once', async () => {
+    await mountUnderSearch(MINE)
+    closeByWalk(MINE)
+    await saveSeedPacket()
+    expect(createItemSpy).toHaveBeenCalledTimes(1)
+    expect(navigateSpy.mock.calls).toEqual([[-1]])
+  })
+
+  it('…but still only when the view underneath IS the target', async () => {
+    await mountUnderSearch(MINE, SAVED)
+    closeByWalk(MINE)
+    await act(async () => { fireEvent.click(seedCancel()) })
+    expect(navigateSpy.mock.calls).toEqual([[SAVED, { replace: true }]])
+  })
+
+  it('the close REPLACED: replaces to the target, as before — Back from that entry is this form again', async () => {
+    await mountUnderSearch(MINE)
+    closeByReplace()
+    await act(async () => { fireEvent.click(seedCancel()) })
+    expect(navigateSpy.mock.calls).toEqual([[MINE, { replace: true }]])
   })
 })
 

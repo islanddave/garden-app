@@ -309,6 +309,13 @@ function SeedsCounted() {
   useEffect(() => { seedsMounts += 1 }, [])
   return <Seeds />
 }
+// The lot page, counted the same way: flow l has to know IT re-mounted under Search
+// (BUG-SEEDSRETURNUNDEROVERLAY-001).
+let lotMounts = 0
+function LotCounted() {
+  useEffect(() => { lotMounts += 1 }, [])
+  return <InventoryDetail />
+}
 
 // AppShell's shape: the top bar (with header Search), the page tree at pageLocation, the overlay tree at the
 // real location only while an overlay has a background, and the bottom nav.
@@ -330,7 +337,7 @@ function Shell() {
           <Routes location={pageLocation}>
             <Route path="/today" element={routeEl(<TodayStandIn />)} />
             <Route path="/seeds" element={routeEl(<SeedsCounted />)} />
-            <Route path="/inventory/:id" element={routeEl(<InventoryDetail />)} />
+            <Route path="/inventory/:id" element={routeEl(<LotCounted />)} />
             <Route path="/plantings/:plantingId" element={routeEl(<PlantingStandIn />)} />
             <Route path="*" element={<LeftThePage />} />
           </Routes>
@@ -379,6 +386,8 @@ window.__h = {
   store: () => { try { return JSON.parse(window.sessionStorage.getItem('garden.scrollRestore.v1')) } catch { return null } },
   // How many times the Seeds page has mounted in this document (flow h's precondition).
   seedsMounts: () => seedsMounts,
+  // The same count for the lot page (flow l's precondition).
+  lotMounts: () => lotMounts,
   // Flow i: reload this document on the current history entry (see the header), and whether this
   // document IS such a reload.
   reloadHere: () => {

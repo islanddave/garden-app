@@ -3,7 +3,7 @@
 // consequences (a page that mounts under an overlay keeps its place) are in
 // useScrollRestore.underOverlay.test.jsx and gate:seeds-scroll flow h.
 import { describe, it, expect } from 'vitest'
-import { pageEntryKey, locationEntryKey, CONTINUES_ENTRY_KEY } from '../lib/pageEntry.js'
+import { pageEntryKey, overlayBackgroundOf, locationEntryKey, CONTINUES_ENTRY_KEY } from '../lib/pageEntry.js'
 
 // A background as OverlayContext stores it: the page's location, historyEntry included.
 const bg = (extra = {}) => ({ pathname: '/seeds', search: '?view=saved', hash: '', state: null, key: 'kPage', historyEntry: { idx: 1, doc: 'd' }, ...extra })
@@ -69,6 +69,36 @@ describe('pageEntryKey — the entry the page tree shows', () => {
     expect(pageEntryKey(st({ [CONTINUES_ENTRY_KEY]: 42 }, 'kReplaced'))).toBe('kReplaced')
     expect(pageEntryKey(st({ [CONTINUES_ENTRY_KEY]: '' }, 'kReplaced'))).toBe('kReplaced')
     expect(pageEntryKey(st({ background: bg({ state: { [CONTINUES_ENTRY_KEY]: {} } }) }))).toBe('kPage')
+  })
+})
+
+// BUG-SEEDSRETURNUNDEROVERLAY-001 — the test pageEntryKey applies, on its own: is the page tree showing
+// this entry's background rather than the entry?
+describe('overlayBackgroundOf — the background the page tree shows, or null', () => {
+  it('the overlay\'s background, as stored', () => {
+    const b = bg()
+    expect(overlayBackgroundOf(st({ background: b }))).toBe(b)
+    expect(overlayBackgroundOf({ ...st({ background: b }), __backnav: { v: 2, seq: 1 } })).toBe(b)
+  })
+
+  it('null for an entry the page tree shows as itself', () => {
+    expect(overlayBackgroundOf(st(null, 'kPage', 1))).toBe(null)
+    expect(overlayBackgroundOf(st({ seedsReturn: '/seeds' }, 'kPage', 1))).toBe(null)
+    expect(overlayBackgroundOf(st({ [CONTINUES_ENTRY_KEY]: 'kPage' }, 'kReplaced', 2))).toBe(null)
+  })
+
+  it('honors a background only as OverlayProvider does: flag on, and shaped like a location', () => {
+    expect(overlayBackgroundOf(st({ background: bg() }), false)).toBe(null)
+    expect(overlayBackgroundOf(st({ background: 'nope' }))).toBe(null)
+    expect(overlayBackgroundOf(st({ background: { key: 'kPage' } }))).toBe(null)   // no pathname
+    expect(overlayBackgroundOf(st({ background: null }))).toBe(null)
+  })
+
+  it('null for no state at all, and for a usr that is not an object', () => {
+    expect(overlayBackgroundOf(null)).toBe(null)
+    expect(overlayBackgroundOf(undefined)).toBe(null)
+    expect(overlayBackgroundOf('state')).toBe(null)
+    expect(overlayBackgroundOf({ usr: 'background', key: 'k', idx: 1 })).toBe(null)
   })
 })
 

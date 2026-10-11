@@ -1,9 +1,10 @@
 // V5-SEEDSTAB-001 — the one spelling of every URL into the Seeds page (src/lib/seedsRoutes.js).
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   SEEDS_PATH, SEEDS_VIEWS, resolveView, seedsHref, addPacketHref, seedsReturnState, seedsReturnOf,
-  seedsReturnFromHistory, noteSeedAdded, peekSeedAdded, clearSeedAdded,
+  seedsReturnFromHistory, seedsReturnReader, noteSeedAdded, peekSeedAdded, clearSeedAdded,
 } from '../lib/seedsRoutes.js'
+import { CONTINUES_ENTRY_KEY } from '../lib/pageEntry.js'
 
 describe('resolveView — exact, case-sensitive, first value wins', () => {
   it('accepts exactly mine / saved / sow', () => {
@@ -47,6 +48,81 @@ describe('the Seeds return marker', () => {
     expect(seedsReturnFromHistory()).toBe('/seeds?view=sow')
     window.history.replaceState(null, '')
     expect(seedsReturnFromHistory()).toBeNull()
+  })
+})
+
+// BUG-SEEDSRETURNUNDEROVERLAY-001 — the answer for a page's whole visit. jsdom holds one history entry,
+// so a traversal is modelled by rewriting it to the state the entry landed on carries; the traversals
+// themselves are gate:seeds-scroll flows l and m, in real Chrome.
+describe('seedsReturnReader — asked when the page leaves', () => {
+  const MINE = '/seeds?view=mine'
+  // The entries of [Seeds, k2: the page a Seeds door pushed, k3: Search over it], as BrowserRouter and
+  // OverlayContext write them.
+  const own = { usr: seedsReturnState(MINE), key: 'k2', idx: 2 }
+  const background = { pathname: '/inventory/inv-1', search: '', hash: '', state: seedsReturnState(MINE), key: 'k2', historyEntry: { idx: 2, doc: 'd' } }
+  const overlay = { usr: { background }, key: 'k3', idx: 3 }
+  // What an overlay's replace-close leaves where the overlay's entry was (useOverlayDismiss).
+  const replaced = { usr: { [CONTINUES_ENTRY_KEY]: 'k2' }, key: 'k4', idx: 3 }
+  const stand = (state) => window.history.replaceState(state, '')
+
+  afterEach(() => { vi.restoreAllMocks(); stand(null) })
+
+  it('a page that mounts on its own entry is answered ONCE, at mount — both ways', () => {
+    stand(own)
+    const pushed = seedsReturnReader()
+    stand(null)
+    expect(pushed()).toBe(MINE)
+
+    const notPushed = seedsReturnReader()
+    stand(own)
+    expect(notPushed()).toBeNull()
+  })
+
+  it('a page that mounts UNDER an overlay is answered by the entry it stands on when it leaves', () => {
+    stand(overlay)
+    const read = seedsReturnReader()
+    // Still under Search: the overlay's entry is no Seeds door's. The background is NOT read through —
+    // how the overlay will close is not decided yet.
+    expect(read()).toBeNull()
+    // The X walked (or the system Back popped) onto the page's own entry.
+    stand(own)
+    expect(read()).toBe(MINE)
+  })
+
+  it('…and by nothing after a REPLACE-close: Back from that entry is the same page again', () => {
+    stand(overlay)
+    const read = seedsReturnReader()
+    stand(replaced)
+    expect(read()).toBeNull()
+  })
+
+  it('…each time it is asked, so a later overlay closed the other way is seen too', () => {
+    stand(overlay)
+    const read = seedsReturnReader()
+    stand(own)
+    expect(read()).toBe(MINE)
+    stand(replaced)
+    expect(read()).toBeNull()
+  })
+
+  it('a Back marker over the page\'s own entry copies its state, so it answers the same', () => {
+    stand(overlay)
+    const read = seedsReturnReader()
+    stand({ ...own, __backnav: { v: 2, seq: 1 } })
+    expect(read()).toBe(MINE)
+  })
+
+  it('a background that is not a location is no overlay: read once, as on any own entry', () => {
+    stand({ usr: { ...seedsReturnState(MINE), background: 'nope' }, key: 'k2', idx: 2 })
+    const read = seedsReturnReader()
+    stand(null)
+    expect(read()).toBe(MINE)
+  })
+
+  it('a history state that cannot be read is no Seeds door', () => {
+    vi.spyOn(window.history, 'state', 'get').mockImplementation(() => { throw new Error('SecurityError') })
+    expect(() => window.history.state).toThrow('SecurityError')
+    expect(seedsReturnReader()()).toBeNull()
   })
 })
 

@@ -34,7 +34,7 @@ import { SeedCountBasis, parseSeedWeight } from '../components/planting/SaveSeed
 // canonical; the migration's post_vocabulary_exact gate pins the DB against it.
 import { PUTUP_SOURCE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { formatQtyExact, formatDate } from '../lib/format.js'
-import { seedsHref, seedsReturnFromHistory, lotSectionFromHistory, LOT_SECTION_SOURCE_PLANT } from '../lib/seedsRoutes.js'
+import { seedsHref, seedsReturnReader, lotSectionFromHistory, LOT_SECTION_SOURCE_PLANT } from '../lib/seedsRoutes.js'
 import { readDraft } from '../lib/draftStash.js'
 import { T, helpChrome } from '../components/forms/formStyles.js'
 import SowSheet, { sowPacketFromItem } from '../components/seed/SowSheet.jsx'
@@ -77,9 +77,10 @@ const STALE_JAR_CODES = new Set(['multi_parent_lot', 'lot_changed', 'parents_cha
 export default function InventoryDetail() {
   const { id }       = useParams()
   const navigate     = useNavigate()
-  // V5-SEEDSTAB-001 — set when a Seeds view pushed this page; Cancel then goes BACK to that view
-  // (same filters, same scroll) instead of pushing a fresh copy of it.
-  const [pushedFromSeeds] = useState(seedsReturnFromHistory)
+  // V5-SEEDSTAB-001 — answers with the Seeds view that pushed this page, when one did; Cancel then goes
+  // BACK to that view (same filters, same scroll) instead of pushing a fresh copy of it. Asked when the
+  // page leaves (seedsReturnReader, BUG-SEEDSRETURNUNDEROVERLAY-001).
+  const [pushedFromSeeds] = useState(seedsReturnReader)
   const { updateItem, deleteItem } = useInventory()
   const { fetch } = useApiFetch()
   const { show } = useToast()
@@ -625,7 +626,7 @@ export default function InventoryDetail() {
       // it (Seeds remounts and refetches, so the row is gone). A replace there left two identical
       // Seeds entries in a row, and the next Back was a press that did nothing (pre-promote review).
       // Any other arrival has nothing under it to go back to: REPLACE onto My seeds.
-      if (pushedFromSeeds) navigate(-1)
+      if (pushedFromSeeds()) navigate(-1)
       else navigate(SEEDS_MINE, { replace: true })
     } else {
       navigate('/inventory')
@@ -1469,7 +1470,7 @@ export default function InventoryDetail() {
                 <button
                   type="button"
                   data-testid="inventory-detail-cancel"
-                  onClick={() => (pushedFromSeeds ? navigate(-1) : navigate(SEEDS_MINE))}
+                  onClick={() => (pushedFromSeeds() ? navigate(-1) : navigate(SEEDS_MINE))}
                   style={{ color: P.mid, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '0.88rem', fontFamily: 'inherit', minHeight: 44 }}
                 >
                   Cancel

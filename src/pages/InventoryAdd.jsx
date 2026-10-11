@@ -12,7 +12,7 @@ import { setReloadBlocked } from '../lib/reloadGate.js'
 import { INVENTORY_TYPES as TYPES, INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS } from '../lib/inventoryEnums.js'
 import { EnumSelect, Field, Input, Textarea, Button, SourcePicker } from '../components/forms'
 import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
-import { seedsHref, seedsReturnFromHistory, noteSeedAdded } from '../lib/seedsRoutes.js'
+import { seedsHref, seedsReturnReader, noteSeedAdded } from '../lib/seedsRoutes.js'
 
 // V5-SEEDSTAB-001 — seed left the Inventory list, so a seed packet saved here goes home to
 // Seeds › My seeds unless the door that opened this form named somewhere else.
@@ -81,8 +81,8 @@ export default function InventoryAdd() {
   // V5-SEEDSTAB-001 — the Seeds URL that PUSHED this form, when a Seeds door did. If it is also the
   // return target, leaving is a Back (navigate(-1)) rather than a fresh push of the page underneath,
   // so N packets added from My seeds and then one Back leaves Seeds instead of walking through N
-  // copies of it. Read once: it describes the entry this form arrived on.
-  const [pushedFromSeeds] = useState(seedsReturnFromHistory)
+  // copies of it. Asked when the form leaves (seedsReturnReader, BUG-SEEDSRETURNUNDEROVERLAY-001).
+  const [pushedFromSeeds] = useState(seedsReturnReader)
   // Set on a successful save and never cleared: the submit stays disabled from success until the
   // page is gone. The old 2.5 s toast window let a second tap create a duplicate row.
   const [done, setDone] = useState(false)
@@ -327,7 +327,7 @@ export default function InventoryAdd() {
   // page it returned to.
   function leaveSeedMode() {
     const target = safeReturnTo(returnTo, SEEDS_MINE)
-    if (pushedFromSeeds && pushedFromSeeds === target) navigate(-1)
+    if (pushedFromSeeds() === target) navigate(-1)
     else navigate(target, { replace: true })
   }
 

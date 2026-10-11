@@ -33,13 +33,21 @@ export function locationEntryKey(loc) {
   return keyOf(loc.state && loc.state[CONTINUES_ENTRY_KEY]) || keyOf(loc.key)
 }
 
-// The entry the page tree shows for a history state ({usr, key, idx}): the overlay's background when
-// one is honored — OverlayProvider's own test, flag and shape (validBackground) — else the entry this
-// one continues, else the entry's own key. null for an entry react-router has not keyed (its 'default').
+// The overlay background the page tree shows for a history state ({usr, key, idx}), or null when it shows
+// the entry itself: OverlayProvider's own test, flag and shape (validBackground).
+export function overlayBackgroundOf(state, overlays = OVERLAY_ROUTES_ENABLED) {
+  const usr = state && typeof state === 'object' && state.usr && typeof state.usr === 'object' ? state.usr : null
+  const bg = usr && usr.background
+  return overlays && bg && typeof bg === 'object' && typeof bg.pathname === 'string' ? bg : null
+}
+
+// The entry the page tree shows for a history state: the overlay's background when one is honored, else
+// the entry this one continues, else the entry's own key. null for an entry react-router has not keyed
+// (its 'default').
 export function pageEntryKey(state, overlays = OVERLAY_ROUTES_ENABLED) {
   if (!state || typeof state !== 'object') return null
+  const bg = overlayBackgroundOf(state, overlays)
+  if (bg) return locationEntryKey(bg)
   const usr = state.usr && typeof state.usr === 'object' ? state.usr : null
-  const bg = usr && usr.background
-  if (overlays && bg && typeof bg === 'object' && typeof bg.pathname === 'string') return locationEntryKey(bg)
   return keyOf(usr && usr[CONTINUES_ENTRY_KEY]) || keyOf(state.key)
 }

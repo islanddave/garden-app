@@ -8,6 +8,7 @@
 // in the shell imports it; this one is imported by BottomNav, Today's lead, SaveSeedSheet and the
 // inventory pages, so it is a LEAF (no React, no page import) to keep the Seeds page out of their
 // modules.
+import { overlayBackgroundOf } from './pageEntry.js'
 
 export const SEEDS_PATH = '/seeds'
 
@@ -65,10 +66,30 @@ export function seedsReturnOf(state) {
 
 // The same answer read straight off the history entry, where BrowserRouter keeps location.state
 // ({usr, key, idx}). For pages whose suites stub the router without useLocation — the value read is
-// the one react-router wrote, as useScrollRestore also relies on. Read it once, at mount: it describes
-// the entry the page arrived on.
+// the one react-router wrote, as useScrollRestore also relies on. It describes the entry history is
+// standing on; a page asks through seedsReturnReader, below.
 export function seedsReturnFromHistory() {
   try { return seedsReturnOf(window.history?.state?.usr) } catch { return null }
+}
+
+// BUG-SEEDSRETURNUNDEROVERLAY-001 — that answer for a page's whole visit, as a function the page calls
+// when it LEAVES. A page that mounts on its own entry gets what was read at mount, for good.
+//
+// A page that mounts UNDER a route overlay has not arrived on its own entry: Search -> a result -> Back
+// re-opens Search over a re-mounted page (as does a reload with an overlay up), and history is standing
+// on the OVERLAY's entry, which no Seeds door wrote. Read there, the answer was always null, so Cancel
+// pushed a second Seeds page above the one that opened this one. Whether Back leads to Seeds depends on
+// how that overlay closes, and that is not decided until it does (planOverlayClose, OverlayContext.jsx):
+// a walk — the X, or the system Back — lands on the page's own entry; a replace puts a NEW entry above
+// it, and Back from that one is this same page again. So such a page reads the entry it is standing on
+// when it leaves: its own carries what the Seeds door attached, the replace's carries none (unchanged
+// from before), and nothing here has to predict the close.
+export function seedsReturnReader() {
+  let state = null
+  try { state = window.history.state } catch { /* an opaque origin: no entry to read */ }
+  if (overlayBackgroundOf(state)) return seedsReturnFromHistory
+  const arrivedFrom = seedsReturnFromHistory()
+  return () => arrivedFrom
 }
 
 // BUG-SEEDLOTOPENSATFORM-001 — an EDIT door's arrival hint for a lot's page, carried beside

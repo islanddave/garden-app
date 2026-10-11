@@ -6,7 +6,8 @@
 //   • CANCEL goes BACK (navigate(-1)) when a Seeds view pushed this page — read once, at mount, off
 //     window.history.state.usr.seedsReturn — so the view comes back with its filters and scroll. Any
 //     other arrival (a bookmark, Search, a reload that dropped state) has nothing to go back TO, and
-//     pushes My seeds instead.
+//     pushes My seeds instead. A page that mounted UNDER an open overlay is answered by the entry it
+//     stands on when it leaves (BUG-SEEDSRETURNUNDEROVERLAY-001, the last describe but one).
 //   • DELETE never leaves a way Back onto the lot just removed: pushed by a Seeds view it goes BACK
 //     (a replace there left two identical Seeds entries, so the next Back did nothing); any other
 //     arrival REPLACES onto My seeds.
@@ -173,6 +174,63 @@ describe('deleting a seed row never leaves Back pointing at the dead page', () =
     await removeItem()
     await waitFor(() => expect(screen.getByText(/Server said no/)).toBeTruthy())
     expect(navigateSpy).not.toHaveBeenCalled()
+  })
+})
+
+// BUG-SEEDSRETURNUNDEROVERLAY-001 — Search -> a result -> Back re-opens Search over a lot page that has
+// re-MOUNTED under it, with history standing on the OVERLAY's entry: no Seeds door wrote that one, so the
+// page read "not pushed by Seeds" and kept it after the X had walked it home. jsdom holds one history
+// entry, so each close is modelled by rewriting it to the state the entry landed on carries; the real
+// traversals are gate:seeds-scroll flows l and m.
+describe('a lot page that mounted under an overlay leaves by the entry it stands on', () => {
+  // [Seeds, k2: this page, pushed by a Seeds view, k3: Search over it], as BrowserRouter and
+  // OverlayContext write them.
+  const own = (seedsUrl) => ({ usr: seedsReturnState(seedsUrl), key: 'k2', idx: 2 })
+  const mountUnderSearch = async (seedsUrl) => {
+    const background = { pathname: '/inventory/inv-1', search: '', hash: '', state: seedsReturnState(seedsUrl), key: 'k2', historyEntry: { idx: 2, doc: 'd' } }
+    window.history.replaceState({ usr: { background }, key: 'k3', idx: 3 }, '')
+    await renderPage()
+  }
+  // The X walked, or the system Back popped, onto the page's own entry.
+  const closeByWalk = (seedsUrl) => window.history.replaceState(own(seedsUrl), '')
+  // The X could not prove where that entry is and REPLACED: a new entry above it (useOverlayDismiss).
+  const closeByReplace = () => window.history.replaceState({ usr: { continuesEntry: 'k2' }, key: 'k4', idx: 3 }, '')
+
+  it('the close walked home: Cancel goes BACK to the Seeds view that opened the page', async () => {
+    await mountUnderSearch(SAVED)
+    closeByWalk(SAVED)
+    fireEvent.click(seedCancel())
+    expect(navigateSpy.mock.calls).toEqual([[-1]])
+  })
+
+  it('…and delete goes BACK to it', async () => {
+    await mountUnderSearch(SAVED)
+    closeByWalk(SAVED)
+    await removeItem()
+    expect(navigateSpy.mock.calls).toEqual([[-1]])
+  })
+
+  it('the close REPLACED: Cancel pushes My seeds, as before — Back from that entry is this page again', async () => {
+    await mountUnderSearch(SAVED)
+    closeByReplace()
+    fireEvent.click(seedCancel())
+    expect(navigateSpy.mock.calls).toEqual([[MINE]])
+  })
+
+  it('…and delete replaces onto My seeds — Back there is the page of the lot just removed', async () => {
+    await mountUnderSearch(SAVED)
+    closeByReplace()
+    await removeItem()
+    expect(navigateSpy.mock.calls).toEqual([[MINE, { replace: true }]])
+  })
+
+  it('a page no Seeds view pushed stays that way through the same round trip', async () => {
+    const background = { pathname: '/inventory/inv-1', search: '', hash: '', state: null, key: 'k2', historyEntry: { idx: 2, doc: 'd' } }
+    window.history.replaceState({ usr: { background }, key: 'k3', idx: 3 }, '')
+    await renderPage()
+    window.history.replaceState({ usr: null, key: 'k2', idx: 2 }, '')
+    fireEvent.click(seedCancel())
+    expect(navigateSpy.mock.calls).toEqual([[MINE]])
   })
 })
 
