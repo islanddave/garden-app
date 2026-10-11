@@ -123,3 +123,44 @@ describe('VarietyEdit — the wire contract', () => {
     expect(putCall()).toBeUndefined()
   })
 })
+
+// BUG-VARIETYEDITHOUSEHOLDMIRROR-001 — GET /api/varieties/:id now answers can_edit (the PUT's own
+// row predicate, computed by the Lambda for this caller). This page is the one place the form is
+// seeded, so it is where two things have to hold on the real request path: the flag reaches the
+// form, and it never travels back on the PUT. No auth provider is mounted here, so the form's own
+// predicate would call every row editable — a read-only form below can only be the flag's doing.
+describe('VarietyEdit — can_edit from the GET', () => {
+  const withFlag = (can_edit) => (path, opts) => (
+    !opts?.method && path === '/api/varieties/var-9'
+      ? Promise.resolve({ ...VARIETY, can_edit })
+      : routeFetch()(path, opts)
+  )
+
+  it('false: the form is read-only and nothing is PUT', async () => {
+    fetchSpy.mockImplementation(withFlag(false))
+    const { container } = renderPage()
+    await waitFor(() => expect(container.querySelector('#variety-edit-name')).toBeTruthy())
+
+    expect(screen.getByTestId('variety-readonly-notice')).toBeTruthy()
+    expect(container.querySelector('#variety-edit-name').disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(true)
+    fireEvent.submit(container.querySelector('form'))
+    await Promise.resolve()
+    expect(putCall()).toBeUndefined()
+  })
+
+  it('true: the edit saves, and the PUT body is the changed field alone — the flag does not ride back', async () => {
+    fetchSpy.mockImplementation(withFlag(true))
+    const { container } = renderPage()
+    await waitFor(() => expect(container.querySelector('#variety-edit-name')).toBeTruthy())
+    expect(screen.queryByTestId('variety-readonly-notice')).toBeNull()
+
+    fireEvent.change(container.querySelector('#variety-edit-name'), { target: { value: 'Black Krym' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(putCall()).toBeTruthy())
+    const [path, opts] = putCall()
+    expect(path).toBe('/api/varieties/var-9')
+    expect(JSON.parse(opts.body)).toEqual({ name: 'Black Krym' })
+  })
+})

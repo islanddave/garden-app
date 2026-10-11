@@ -22,8 +22,9 @@ import { SUN_OPTIONS } from '../lib/varietySpec.js'
 
 const OWNER = 'user_owner_1'
 // The other household member's sub. The server accepts Dave's edits to this row
-// (created_by = ANY(household)); the editor consumes no household roster, so the form still gates
-// it. Named so the residual is visible in the test file, not just in a source comment.
+// (created_by = ANY(household)); the editor consumes no household roster, so on its own predicate
+// the form gates it — which is why the GET now says can_edit (BUG-VARIETYEDITHOUSEHOLDMIRROR-001).
+// A fixture built on this id WITHOUT that flag is a response from a Lambda that predates it.
 const OTHER_HUMAN = 'user_household_member_2'
 
 // Ancestor-aware visibility, because `offsetParent` has already misled a lane on this codebase and
@@ -427,6 +428,8 @@ describe('VarietyEditor — the ownership predicate mirrors the API', () => {
     // the editor does not consume GET /api/members, so it cannot tell a household member from a
     // stranger. Live prod 2026-09-23: 1 row from Dave's side ("Baby Spinach"), 472 from the other
     // member's side. Closing it means feeding the members roster in, or a can_edit flag on the GET.
+    // CLOSED by the second (BUG-VARIETYEDITHOUSEHOLDMIRROR-001, the block below). This assertion
+    // now holds the FALLBACK — a row with no flag — to the behavior it had before.
     expect(canEditVariety({ created_by: OTHER_HUMAN }, OWNER)).toBe(false)
   })
 
@@ -451,6 +454,135 @@ describe('VarietyEditor — the ownership predicate mirrors the API', () => {
     const { container } = renderEditor()
     expect(screen.queryByRole('status')).toBeNull()
     expect(container.querySelector('#variety-edit-name').disabled).toBe(false)
+  })
+})
+
+// ── BUG-VARIETYEDITHOUSEHOLDMIRROR-001 — the server's answer outranks the client's guess ────────
+// The residual the block above records ("a row owned by another human is still gated") was 472 of
+// 497 live cultivars from the second household member's side (2026-09-23): the PUT accepts
+// `created_by = ANY(household)` and the form had no roster to mirror it with. GET /api/varieties/:id
+// now carries can_edit — that predicate, evaluated by the Lambda for this caller
+// (lambda/varieties/authz.js canEditVariety) — and the form trusts it whenever it is a boolean.
+// Every fixture ABOVE this block carries no flag, so those tests are now the fallback's: a response
+// from a Lambda that predates the flag must behave exactly as it did.
+describe('VarietyEditor — can_edit from the GET outranks the client predicate', () => {
+  it('TRUE on a row the other household member created: the form is live and Save posts', async () => {
+    // Instrument check: without the flag this exact row is gated, so the flag is what opens it.
+    expect(canEditVariety({ created_by: OTHER_HUMAN }, OWNER)).toBe(false)
+
+    const { container, onSave, onSaved } = renderEditor({ created_by: OTHER_HUMAN, can_edit: true, genus: null })
+    expect(screen.queryByTestId('variety-readonly-notice')).toBeNull()
+    expect(container.querySelector('#variety-edit-name').disabled).toBe(false)
+    const genus = container.querySelector('#variety-edit-genus')
+    expect(genus.disabled).toBe(false)
+
+    fireEvent.change(genus, { target: { value: 'Cornus' } })
+    const save = screen.getByRole('button', { name: 'Save' })
+    expect(save.disabled).toBe(false)
+    fireEvent.click(save)
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    // The whole call: the id, and a body holding the one changed field — nothing of the flag.
+    expect(onSave.mock.calls[0]).toEqual(['v-1', { genus: 'Cornus' }])
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+  })
+
+  it('FALSE on a row the caller created: read-only, and a submit posts nothing', async () => {
+    expect(canEditVariety({ created_by: OWNER }, OWNER)).toBe(true)
+
+    const { container, onSave } = renderEditor({ can_edit: false })
+    expect(screen.getByTestId('variety-readonly-notice')).toBeTruthy()
+    expect(container.querySelector('#variety-edit-name').disabled).toBe(true)
+    expect(container.querySelector('#variety-edit-genus').disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Save' }).disabled).toBe(true)
+
+    // A disabled button is not the only door to onSubmit (Enter in a field submits a form).
+    fireEvent.submit(container.querySelector('form'))
+    await Promise.resolve()
+    expect(onSave).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  // What a signed-in NON-member now sees on a script-created row. The fallback opens these (it
+  // cannot tell a member from a stranger) and the PUT then 404s; the server knows, and says false.
+  it('FALSE on a managed-principal row: read-only, naming the principal', () => {
+    expect(canEditVariety({ created_by: 'system' }, OWNER)).toBe(true)
+
+    const { container } = renderEditor({ created_by: 'system', can_edit: false })
+    const notice = screen.getByTestId('variety-readonly-notice')
+    expect(notice.textContent).toContain("you can't edit this variety")
+    expect(notice.textContent).toContain('system')
+    expect(container.querySelector('#variety-edit-name').disabled).toBe(true)
+  })
+
+  it('TRUE with nobody signed in and no created_by is still true; FALSE is still false', () => {
+    // The fallback answers true for both of these shapes — false has to beat that too.
+    expect(canEditVariety({ created_by: OTHER_HUMAN, can_edit: false }, null)).toBe(false)
+    expect(canEditVariety({ created_by: null, can_edit: false }, OWNER)).toBe(false)
+    expect(canEditVariety({ can_edit: false }, undefined)).toBe(false)
+    expect(canEditVariety({ created_by: null, can_edit: true }, null)).toBe(true)
+  })
+
+  // ABSENT is the old Lambda. `null`, a string and a number are not answers either: only a real
+  // boolean is the server speaking, so a mangled value falls back instead of being coerced.
+  it.each([
+    ['absent', {}],
+    ['undefined', { can_edit: undefined }],
+    ['null', { can_edit: null }],
+    ['the string "true"', { can_edit: 'true' }],
+    ['the string "false"', { can_edit: 'false' }],
+    ['1', { can_edit: 1 }],
+    ['0', { can_edit: 0 }],
+  ])('can_edit %s -> the predicate decides, exactly as before', (_label, flag) => {
+    expect(canEditVariety({ created_by: OWNER, ...flag }, OWNER)).toBe(true)
+    expect(canEditVariety({ created_by: 'data-audit-20260706', ...flag }, OWNER)).toBe(true)
+    expect(canEditVariety({ created_by: OTHER_HUMAN, ...flag }, OWNER)).toBe(false)
+    expect(canEditVariety({ created_by: 'systematic-scraper', ...flag }, OWNER)).toBe(false)
+    expect(canEditVariety({ created_by: OTHER_HUMAN, ...flag }, null)).toBe(true)
+    expect(canEditVariety({ created_by: null, ...flag }, OWNER)).toBe(true)
+  })
+
+  it('ABSENT through a render: the other member\'s row is read-only and the caller\'s own is live', () => {
+    const gated = renderEditor({ created_by: OTHER_HUMAN })
+    expect(screen.getByTestId('variety-readonly-notice')).toBeTruthy()
+    expect(gated.container.querySelector('#variety-edit-name').disabled).toBe(true)
+    cleanup()
+    const own = renderEditor()
+    expect(screen.queryByTestId('variety-readonly-notice')).toBeNull()
+    expect(own.container.querySelector('#variety-edit-name').disabled).toBe(false)
+  })
+
+  // The flag is the server's to compute and must never come back to it. The PUT body is built from
+  // the field table, not from the row, so there is no path for a key the table does not name.
+  it('never rides the PUT body: not a field, not in the form seed, not in any patch', () => {
+    expect(FIELDS.map(f => f.key)).not.toContain('can_edit')
+    const variety = makeVariety({ created_by: OTHER_HUMAN, can_edit: true })
+    const form = formFromVariety(variety)
+    expect(form).not.toHaveProperty('can_edit')
+
+    const allowed = new Set(['name', 'crop_type_slug', 'clear', ...FIELDS.map(f => f.key)])
+    // Every field changed, then every field emptied: the two patches that carry the most keys.
+    const changed = { name: 'x', crop_type_slug: 'tomato' }
+    const emptied = { name: 'x', crop_type_slug: '' }
+    for (const { key, kind } of FIELDS) {
+      changed[key] = kind === 'bool' ? 'true' : kind === 'int' || kind === 'num' ? '999' : 'changed'
+      emptied[key] = ''
+    }
+    // Even a form state that somehow held the key (it cannot — see formFromVariety) emits nothing.
+    for (const state of [changed, emptied, { ...changed, can_edit: 'true' }]) {
+      const patch = buildVarietyPatch(state, variety)
+      expect(Object.keys(patch).length).toBeGreaterThan(1)
+      for (const k of Object.keys(patch)) expect(allowed.has(k), `unexpected key ${k}`).toBe(true)
+      expect(patch).not.toHaveProperty('can_edit')
+      expect(patch.clear ?? []).not.toContain('can_edit')
+    }
+  })
+
+  // INSTRUMENT CHECK on the other side of the wire, read off disk like the pattern list above: the
+  // key this file feeds the form is the key the Lambda's by-id read actually sends.
+  it('is the key the Lambda\'s by-id GET sends — read from index.js', () => {
+    expect(readLambda('index.js')).toMatch(
+      /return resp\(200, \{ \.\.\.rows\[0\], can_edit: canEditVariety\(household, rows\[0\]\.created_by\) \}\);/)
   })
 })
 
@@ -486,7 +618,9 @@ describe('VarietyEditor — the read-only state says so', () => {
     // Nor may it predict the server at all. This fixture IS the live case — a row the other
     // household member created — and the server would SAVE it, so "the server will refuse" is as
     // false as the sentence it replaced. The notice says what this screen does; the server is not
-    // something the client can speak for here.
+    // something the client can speak for here. (Since BUG-VARIETYEDITHOUSEHOLDMIRROR-001 the live
+    // response carries can_edit and that row is editable; this flagless fixture is the older-Lambda
+    // fallback, where the sentence above is still exactly the situation.)
     expect(notice.textContent).not.toMatch(/server/i)
   })
 

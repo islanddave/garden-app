@@ -29,19 +29,26 @@
 // set for either household member, and the old gate locked Dave out of 25 — 24 managed-principal
 // rows (rescue-intake 15 / data-audit 5 / system 3 / data-correction 1) plus 1 row the other
 // household member created.
-// `canEditVariety` below now mirrors the managed-principal arm exactly. The household arm is NOT
-// mirrored: GARDEN_HOUSEHOLD_IDS is Lambda-side config with no VITE_ counterpart, and this
-// component does not consume the one client view of that roster (GET /api/members, useMembers).
-// So a row the OTHER household member created stays read-only here although the server would save
-// it — 1 row from Dave's side, 472 from the other member's side (2026-09-23). That residual is
-// recorded, not guessed at: an "any user_* sub is fine" predicate would be a DIFFERENT rule from
-// the server's that only coincides while the household has two members. Closing it means feeding
-// the members roster in here, or a `can_edit` flag on the GET.
+// `canEditVariety` below mirrors the managed-principal arm exactly. It CANNOT mirror the household
+// arm: GARDEN_HOUSEHOLD_IDS is Lambda-side config with no VITE_ counterpart, and an "any user_* sub
+// is fine" predicate would be a DIFFERENT rule from the server's that only coincides while the
+// household has two members. So a row the OTHER household member created stayed read-only here
+// although the server would save it — 1 row from Dave's side, 472 of 497 from the other member's
+// side (2026-09-23).
 //
-// The mirror is LOOSER than the server in one place, knowingly: the server hands the managed arm
-// only to a proven household member (managedPrincipalPatterns in lambda/varieties/authz.js), and
-// the client cannot tell a member from a signed-in stranger either. A stranger sees a managed row
-// as editable and gets the server's 404 in the error banner — a refused save, never a bad row.
+// BUG-VARIETYEDITHOUSEHOLDMIRROR-001 — closed from the server's side: GET /api/varieties/:id now
+// answers `can_edit`, the PUT/DELETE row predicate evaluated by the Lambda for THIS caller
+// (canEditVariety in lambda/varieties/authz.js, over the same household the SQL binds). When the
+// row carries that boolean the form takes it as the answer and predicts nothing. It arrives on the
+// request that seeds the form, so there is no "roster still loading" state to design.
+//
+// The client mirror stays as the FALLBACK for a row without the flag — a Lambda that predates it
+// (the client and the Lambda deploy separately), or a cached response from before it. On that path
+// only, the two old imprecisions remain: the other member's rows read-only (above), and LOOSER
+// than the server in one place — the server hands the managed arm only to a proven household
+// member (managedPrincipalPatterns in authz.js) and the client cannot tell a member from a
+// signed-in stranger, so a stranger sees a managed row as editable and gets the server's 404 in
+// the error banner. A refused save, never a bad row; with the flag, that row is read-only instead.
 
 import React, { useMemo, useState } from 'react'
 import { P } from '../../lib/constants.js'
@@ -109,9 +116,15 @@ function matchesManagedPrincipal(createdBy) {
     p.endsWith('%') ? createdBy.startsWith(p.slice(0, -1)) : createdBy === p)
 }
 
-// The form's prediction of what the server will accept. Exported so the guard test can drive the
-// predicate directly against real prod-shaped created_by values instead of only through a render.
+// What the server will accept. Exported so the guard test can drive the predicate directly against
+// real prod-shaped created_by values instead of only through a render.
+//
+// BUG-VARIETYEDITHOUSEHOLDMIRROR-001 — the server's own answer first. Only a real boolean counts:
+// absent, null or a mangled value means "the server did not say" (an older Lambda) and falls to
+// the prediction below, unchanged. `can_edit` is read here and nowhere else — buildVarietyPatch
+// builds the PUT body from FIELDS, so the flag cannot ride back.
 export function canEditVariety(variety, currentUserId) {
+  if (typeof variety?.can_edit === 'boolean') return variety.can_edit
   const createdBy = variety?.created_by
   if (!currentUserId || !createdBy) return true
   return createdBy === currentUserId || matchesManagedPrincipal(createdBy)
