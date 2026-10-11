@@ -183,18 +183,26 @@ describe('a remembered tag grouping, the tag map still out', () => {
 // THE CLOCK IS FAKED, setTimeout and clearTimeout ONLY. Garden.resumeGate.test.jsx avoids fake timers because this
 // page's mount awaits real promises; those are microtasks and stay real here, as do setImmediate (React's act),
 // Date and the frames (stubbed by hand above). So "2499 ms: held, 2500 ms: the list" is the timer itself firing with
-// nothing else changing, and `vi.getTimerCount()` is whether it is still armed.
+// nothing else changing.
+//
+// THE DEADLINE'S OWN TIMERS ARE COUNTED, by their delay and their ids — never `vi.getTimerCount()`. Under Node 20
+// (CI's) jsdom's localStorage posts its storage event on a zero-delay timer, so a test that saves a grouping in its
+// body has one more timer pending than the same test under a Node that brings its own localStorage.
 describe('the hold has its own deadline', () => {
-  let armed          // how many times the deadline has been armed
   let timeouts
+  let clears
+  const ids = () => timeouts.mock.calls.map(([, ms], i) => (ms === TAG_HOLD_MAX_MS ? timeouts.mock.results[i].value : null)).filter((id) => id != null)
+  const armed = () => ids().length                 // how many times the deadline has been armed
+  const cleared = () => ids().filter((id) => clears.mock.calls.some(([c]) => c === id)).length
   beforeEach(() => {
     saveGroupBy('heat')
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     timeouts = vi.spyOn(globalThis, 'setTimeout')
-    armed = () => timeouts.mock.calls.filter(([, ms]) => ms === TAG_HOLD_MAX_MS).length
+    clears = vi.spyOn(globalThis, 'clearTimeout')
   })
   afterEach(() => {
     timeouts.mockRestore()
+    clears.mockRestore()
     vi.useRealTimers()
   })
   const pass = (ms) => act(async () => { vi.advanceTimersByTime(ms) })
@@ -233,12 +241,12 @@ describe('the hold has its own deadline', () => {
   it('a tag load that settles at 1 s: the fallback is never painted, and the deadline is cleared', async () => {
     const groupings = watchGroupings()
     await mountGarden()
-    expect(vi.getTimerCount()).toBe(1)
+    expect([armed(), cleared()]).toEqual([1, 0])
     await pass(1000)
     expect(screen.getByText('Loading…')).toBeTruthy()
     await answerTags()
     expect(control().value).toBe('heat')
-    expect(vi.getTimerCount()).toBe(0)
+    expect([armed(), cleared()]).toEqual([1, 1])
     await pass(TAG_HOLD_MAX_MS * 4)     // well past where it would have fired
     groupings.stop()
     expect(groupings.shown).toEqual(['heat'])
@@ -280,7 +288,6 @@ describe('the hold has its own deadline', () => {
     await act(async () => {})
     expect(tagMaps.length).toBe(2)
     expect(armed()).toBe(1)
-    expect(vi.getTimerCount()).toBe(0)
     expect(control().value).toBe('crop_type')
     expect(screen.queryByText('Loading…')).toBeNull()
     await answerTags()
@@ -289,17 +296,18 @@ describe('the hold has its own deadline', () => {
 
   it('leaving during the hold clears the deadline', async () => {
     const v = await mountGarden()
-    expect(vi.getTimerCount()).toBe(1)
+    expect([armed(), cleared()]).toEqual([1, 0])
     v.unmount()
-    expect(vi.getTimerCount()).toBe(0)
+    expect([armed(), cleared()]).toEqual([1, 1])
+    await pass(TAG_HOLD_MAX_MS * 2)     // and it does not fire into the page that was left
   })
 
   it.each([['Type', 'crop_type'], ['Lifecycle', 'status'], ['Location', 'location']])('%s remembered: no deadline is armed, there is no hold to end', async (_name, stored) => {
     saveGroupBy(stored)
     await mountGarden()
     expect(armed()).toBe(0)
-    expect(vi.getTimerCount()).toBe(0)
     await pass(TAG_HOLD_MAX_MS * 2)
+    expect(armed()).toBe(0)
     expect(control().value).toBe(stored)
   })
 })
