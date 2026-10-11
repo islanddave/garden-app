@@ -1,9 +1,10 @@
 {
-  "version": "4.183.0",
+  "version": "4.184.0",
   "date": "2026-10-11",
   "highlights": [
-    "In Seeds, Cancel on a seed lot page or the add form goes back to Seeds after you have been through Search, instead of stacking a second Seeds page.",
-    "In Garden, a grouping by Heat, Determinacy or another tag keeps your place when you come back, instead of regrouping and losing it.",
-    "On a seed packet page, the first Sow this puts the cursor in the Name field again."
+    "The other member of the household can now edit varieties she did not create; before, the form was greyed out although a save would have worked.",
+    "A photo delete that collides with another save now says so and asks you to try again, instead of Internal server error.",
+    "When the frost check itself cannot run, the ops email about it now comes once a day instead of from every afternoon run. A real frost warning is unchanged.",
+    "On Snap, the Undo button on the saved card is full height."
   ]
 }
