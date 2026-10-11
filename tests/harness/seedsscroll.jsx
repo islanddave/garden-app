@@ -94,6 +94,7 @@ import SheetRowLink from '../../src/components/SheetRowLink.jsx'
 import ErrorBoundary from '../../src/components/ErrorBoundary.jsx'
 import Seeds from '../../src/pages/Seeds.jsx'
 import InventoryDetail from '../../src/pages/InventoryDetail.jsx'
+import InventoryAdd from '../../src/pages/InventoryAdd.jsx'
 import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
 
 // main.jsx's boot line, the real function: the browser's own scroll restoration as prod sets it ('manual' with
@@ -309,12 +310,18 @@ function SeedsCounted() {
   useEffect(() => { seedsMounts += 1 }, [])
   return <Seeds />
 }
-// The lot page, counted the same way: flow l has to know IT re-mounted under Search
-// (BUG-SEEDSRETURNUNDEROVERLAY-001).
+// The lot page and the add form, counted the same way: flows l to n have to know THEY re-mounted under
+// Search (BUG-SEEDSRETURNUNDEROVERLAY-001). The add form is the real page, reached by the Seeds header's
+// own "+ Add seeds"; only its leaving is under test, so nothing is typed into it.
 let lotMounts = 0
 function LotCounted() {
   useEffect(() => { lotMounts += 1 }, [])
   return <InventoryDetail />
+}
+let addMounts = 0
+function AddCounted() {
+  useEffect(() => { addMounts += 1 }, [])
+  return <InventoryAdd />
 }
 
 // AppShell's shape: the top bar (with header Search), the page tree at pageLocation, the overlay tree at the
@@ -337,6 +344,7 @@ function Shell() {
           <Routes location={pageLocation}>
             <Route path="/today" element={routeEl(<TodayStandIn />)} />
             <Route path="/seeds" element={routeEl(<SeedsCounted />)} />
+            <Route path="/inventory/add" element={routeEl(<AddCounted />)} />
             <Route path="/inventory/:id" element={routeEl(<LotCounted />)} />
             <Route path="/plantings/:plantingId" element={routeEl(<PlantingStandIn />)} />
             <Route path="*" element={<LeftThePage />} />
@@ -386,8 +394,9 @@ window.__h = {
   store: () => { try { return JSON.parse(window.sessionStorage.getItem('garden.scrollRestore.v1')) } catch { return null } },
   // How many times the Seeds page has mounted in this document (flow h's precondition).
   seedsMounts: () => seedsMounts,
-  // The same count for the lot page (flow l's precondition).
+  // The same counts for the lot page and the add form (the precondition of flows l to n).
   lotMounts: () => lotMounts,
+  addMounts: () => addMounts,
   // Flow i: reload this document on the current history entry (see the header), and whether this
   // document IS such a reload.
   reloadHere: () => {

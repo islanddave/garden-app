@@ -25,7 +25,7 @@
 // Back is a real history traversal (history.back() in the frame: popstate, as the Android back gesture).
 // Each flow opens in a FRESH TAB, so its history, sessionStorage and module state are its own.
 //
-// THIRTEEN FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides):
+// FOURTEEN FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides):
 //   (a) Saved seeds, scrolled deep (the Ristra card wheeled to the middle of the visible band) → tap the
 //       card's title → the lot page lands at scrollY 0 with its h1 inside the visible band; then Back →
 //       scrollY equals the pre-tap value exactly and the card's viewport top is unchanged (±1px).
@@ -72,6 +72,9 @@
 //   (m) The same lot page with the app RELOADING under Search, so the X must REPLACE: the stack then holds
 //       the lot page twice, and Cancel must still leave for My seeds — a Cancel that goes Back there lands on
 //       the same page again. This is the half a fix that reads through the overlay's background gets wrong.
+//   (n) As (l) for the add form: My seeds → the Seeds header's "+ Add seeds" → header Search → a result →
+//       Back → the X → the form's Cancel → Seeds' own entry → one Back leaves Seeds. The form used to
+//       REPLACE its entry with a second Seeds page, so that Back stayed on Seeds: a dead press.
 // Every number is printed on pass as well as fail.
 //
 // THE INSTRUMENT CHECK comes first in every flow, and a mismatch stops that flow before any invariant is
@@ -95,10 +98,10 @@
 // Projects/Gardening/_seedstab11_20260925/ in the gardening-docs repo for the recorded runs. Flows (h) and
 // (i) against the tree before BUG-OVERLAYRELOADKEY-001 (HARNESS_BASELINE_SHA=73686a22…) and with each half
 // of that fix reverted alone (h reds without the page-entry key and passes without the replace stamp; i
-// reds without either): Projects/Gardening/_seedstab12_20260925/gate-flowi-*.txt. Flow (l) reds against the
-// tree before BUG-SEEDSRETURNUNDEROVERLAY-001 (HARNESS_BASELINE_SHA=be4593a5…) and (m) passes there; (m) reds
-// with the page reading its return through the overlay's background at mount (Cancel lands back on the lot
-// page): garden-app/_lane_reports/seedsreturn-20261011.log.
+// reds without either): Projects/Gardening/_seedstab12_20260925/gate-flowi-*.txt. Flows (l) and (n) red against
+// the tree before BUG-SEEDSRETURNUNDEROVERLAY-001 (HARNESS_BASELINE_SHA=be4593a5…) and (m) passes there; (m)
+// reds with the page reading its return through the overlay's background at mount (Cancel lands back on the
+// lot page): garden-app/_lane_reports/seedsreturn-20261011.log.
 //
 // SEAMS (never set in CI; a run with any of them set says so in its first lines, so it cannot pass for
 // clean):
@@ -256,9 +259,16 @@ const SEL = {
   createRow: `d.querySelector('[role="dialog"][aria-label="Create new"] [data-testid="harness-create-log"]')`,
   // Search's one result (flow h): a plain link to the planting, inside the sheet.
   searchResult: `d.querySelector('[role="dialog"][aria-label="Search your garden"] [data-testid="harness-search-result"]')`,
-  // The lot page's own Cancel (flow l).
+  // The lot page's own Cancel (flows l, m); the Seeds header's "+ Add seeds" and the add form's Cancel (n).
   lotCancel: `d.querySelector('${tid('inventory-detail-cancel')}')`,
+  seedsAdd: `d.querySelector('${tid('seeds-add')}')`,
+  addCancel: `d.querySelector('${tid('inventory-add-cancel')}')`,
 }
+// The two pages a Seeds door pushes with the view to return to (flows l to n): where each lives, what
+// proves it is up, the harness's mount count for it, and its own Cancel.
+const ADD_PATH = '/inventory/add'
+const LOT_PAGE = { path: LOT_PATH, what: 'the lot page', up: `d.querySelector('form') && ${SEL.stageHistory}`, mounts: 'w.__h.lotMounts()', cancel: SEL.lotCancel }
+const ADD_PAGE = { path: ADD_PATH, what: 'the add form', up: SEL.addCancel, mounts: 'w.__h.addMounts()', cancel: SEL.addCancel }
 
 const FLOWS = [
   { key: 'a', name: 'saved-title', label: 'Saved seeds → the card\'s title → Back', entry: 'toSaved', view: 'saved', dest: 'lot' },
@@ -273,6 +283,7 @@ const FLOWS = [
   { key: 'k', name: 'search-result-back-sysback', label: 'Saved seeds deep → header Search → a result → Back → the system Back closes Search → scrolled on → the card\'s title → Back', entry: 'toSaved', view: 'saved', dest: 'lot', search: 'header', searchAtDepth: true, viaResult: true, nudge: true, closeByBack: true },
   { key: 'l', name: 'lot-result-back-x-cancel', label: 'My seeds → "Open details →" → header Search → a result → Back → its X → the lot page\'s Cancel → Back leaves Seeds', entry: 'toMine', view: 'mine', dest: 'lot', lotCancel: true },
   { key: 'm', name: 'lot-reload-x-cancel', label: 'My seeds → "Open details →" → header Search → the app reloads under it → its X → the lot page\'s Cancel leaves for My seeds', entry: 'toMine', view: 'mine', dest: 'lot', lotCancel: true, lotReload: true },
+  { key: 'n', name: 'add-result-back-x-cancel', label: 'My seeds → "+ Add seeds" → header Search → a result → Back → its X → the form\'s Cancel → Back leaves Seeds', entry: 'toMine', view: 'mine', dest: 'leave', addForm: true },
   { key: 'i', name: 'search-reload-x', label: 'Saved seeds deep → header Search → the app reloads under it → its X → scrolled on → the card\'s title → Back', entry: 'toSaved', view: 'saved', dest: 'lot', search: 'header', searchAtDepth: true, reloadUnder: true, nudge: true },
 ]
 
@@ -562,6 +573,102 @@ async function runFlow(cdp, flow, vw, vh) {
     }
     await t.settle(300, 5000)
 
+    // ── (l) to (n) BUG-SEEDSRETURNUNDEROVERLAY-001. A page a Seeds door pushed (`page`: the lot page, the add
+    // form) MOUNTS under Search, and Search closes. (l), (n) The X walks it home onto its own entry: its
+    // Cancel must go BACK to the Seeds entry that opened it, as it does when Search was never opened. (m) The
+    // X replaces: Cancel must not go Back. Called standing on the page's own entry; instrument checks first.
+    const cancelAfterSearch = async (page, seedsEntry) => {
+      const own = await t.read(READ_ENTRY)
+      if (own.seedsReturn !== '/seeds?view=mine') return fail(`${at}: the entry of ${page.what} carries seedsReturn ${own.seedsReturn}, not My seeds' — it was not opened by the Seeds door under test`)
+      const whyS = await t.tap(SEL.openSearch, 'header Search', { chrome: true })
+      if (whyS) return fail(`${at}: ${whyS}`)
+      if (!await t.waitIn(`w.location.pathname === '/search' && ${SEL.sheetClose}`, 8000)) return fail(`${at}: the overlay never opened on /search over ${page.what}${await reloaded()}`)
+      await t.settle(200, 3000)
+      const kOpen = await t.read(`return w.__h.key()`)
+      const pageUnder = `w.location.pathname === '/search' && ${SEL.sheetClose} && ${page.up}`
+      if (flow.lotReload) {
+        // (m) The app reloads with Search open: a new document on Search's own entry, the page mounting
+        // under the sheet. The X cannot walk back across documents, so it must REPLACE.
+        const bootA = await t.read(`return w.__h.boot()`)
+        await t.ev(`(() => { ${FRAME_VARS}; w.__h.reloadHere(); return 1 })()`)
+        if (!await t.waitIn(`w.__h && w.__h.boot() !== '${bootA}' && w.__h.reloadedDoc() && ${pageUnder}`, 30000)) {
+          return fail(`${at}: the reload under Search never came back with Search open over ${page.what} (on ${await t.read(`return w.location.pathname`).catch(() => 'an unreadable frame')})`)
+        }
+        boot0 = await t.read(`return w.__h.boot()`)   // this reload is the one under test, not a Vite one
+        if (!((await t.read(`return ${page.mounts}`)) >= 1)) return fail(`${at}: ${page.what} did not mount under Search in the reloaded document — this is not the path under test`)
+      } else {
+        // Out to a result and Back: Search re-opens on its own entry over a page that has just re-MOUNTED
+        // under the sheet — checked by the harness's mount count, not assumed.
+        const m0 = await t.read(`return ${page.mounts}`)
+        const whyR = await t.tap(SEL.searchResult, 'Search\'s result', { chrome: true })
+        if (whyR) return fail(`${at}: ${whyR}`)
+        if (!await t.waitIn(`w.location.pathname === '${PLANTING_PATH}' && d.querySelector('[data-testid="harness-planting"]')`, 15000)) return fail(`${at}: Search's result was tapped and the planting (${PLANTING_PATH}) never arrived${await reloaded()}`)
+        await t.settle(300, 5000)
+        await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
+        if (!await t.waitIn(pageUnder, 15000)) return fail(`${at}: Back from the result never re-opened Search over ${page.what}${await reloaded()}`)
+        const m1 = await t.read(`return ${page.mounts}`)
+        if (!(m1 > m0)) return fail(`${at}: ${page.what} did not re-mount under Search after Back (mounts ${m0} → ${m1}) — this is not the path under test`)
+      }
+      const under = await t.read(READ_ENTRY)
+      if (under.key !== kOpen) return fail(`${at}: under Search the frame is on key ${under.key}, not Search's own ${kOpen}`)
+      if (under.seedsReturn != null || under.bgSeedsReturn !== own.seedsReturn) return fail(`${at}: under Search the entry reads seedsReturn ${under.seedsReturn} and its background ${under.bgSeedsReturn} — expected none on the overlay's own entry and the page's on its background, the shape the bug turns on`)
+      await t.settle(300, 5000)
+      const whyC = await t.tap(SEL.sheetClose, 'the overlay sheet\'s X', { chrome: true })
+      if (whyC) return fail(`${at}: ${whyC}`)
+      if (!await t.waitIn(`w.location.pathname === '${page.path}' && !${SEL.searchSheet} && ${page.up}`, 8000)) return fail(`${at}: the X was tapped and the sheet never closed back onto ${page.what}${await reloaded()}`)
+      await t.settle(300, 5000)
+      const home = await t.read(READ_ENTRY)
+      // The precondition of each: (l), (n) the close WALKED onto the page's own entry; (m) it REPLACED.
+      if (!flow.lotReload && home.key !== own.key) return fail(`${at}: the X closed onto ${entryLine(home)}, not the own entry of ${page.what}, ${entryLine(own)} — the close did not WALK, so this is not the path under test`)
+      if (flow.lotReload && home.key === own.key) return fail(`${at}: after the reload the X walked back onto the own entry of ${page.what}, ${entryLine(own)}, instead of replacing — not the path under test`)
+      const whyW = await t.wheelTo(page.cancel, `the Cancel of ${page.what}`)
+      if (whyW) return fail(`${at}: ${whyW}`)
+      await t.settle(300, 5000)
+      const whyX = await t.tap(page.cancel, `the Cancel of ${page.what}`)
+      if (whyX) return fail(`${at}: ${whyX}`)
+      const onSeeds = await t.waitIn(`w.location.pathname === '/seeds' && ${SEL.mineView}`, flow.lotReload ? 8000 : 15000)
+      if (flow.lotReload) {
+        // ── THE INVARIANT of (m): the stack holds the page twice now, so Cancel must not go Back — that
+        // lands on the same page again (after a delete, on the page of the lot just removed).
+        const there = await t.read(READ_ENTRY).catch(() => null)
+        if (!onSeeds) return fail(`${at}: ${flow.label}: Cancel did not leave ${page.what} for My seeds — the frame is on ${entryLine(there)}. After a replace-close the entry behind this one is the same page again, so Cancel must not go Back (BUG-SEEDSRETURNUNDEROVERLAY-001: answer from the page's own entry only when the close walked)`)
+        const dgM = await t.read(DIAG)
+        const rlM = await reloaded()
+        if (rlM) return fail(`${at}: the flow ran across two documents after the reload under test${rlM}`)
+        if (dgM.errors.length) return fail(`${at}: the page raised ${dgM.errors.length} error(s): ${dgM.errors.join(' | ')}`)
+        console.log(`[seeds-scroll] ${at} ${flow.label}: Seeds ${entryLine(seedsEntry)} · ${page.what} ${entryLine(own)} · the app reloaded under Search ${entryLine(under)}, its background's seedsReturn ${under.bgSeedsReturn} · the X REPLACED onto ${entryLine(home)} · Cancel left for ${entryLine(there)}`)
+        return
+      }
+      if (!onSeeds) return fail(`${at}: Cancel was tapped and My seeds never showed (on ${await t.read(`return w.location.pathname + w.location.search`)})${await reloaded()}`)
+      await t.settle(400, 6000)
+      const after = await t.read(READ_ENTRY)
+      // ── THE INVARIANTS of (l), (n): Cancel went BACK onto Seeds' own entry, and one Back from there leaves Seeds.
+      const wentBack = after.key === seedsEntry.key
+      if (!wentBack) fail(`${at}: ${flow.label}: Cancel did not go Back to the Seeds entry that opened ${page.what}, ${entryLine(seedsEntry)}: it landed on a NEW one, ${entryLine(after)} — ${page.what} mounted under Search and read the overlay's entry, which carries no seedsReturn (BUG-SEEDSRETURNUNDEROVERLAY-001)`)
+      await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
+      const left = await t.waitIn(`w.location.pathname === '/today' && d.querySelector('[data-testid="harness-to-saved"]')`, 5000)
+      const where = await t.read(READ_ENTRY)
+      const dgL = await t.read(DIAG)
+      const rlL = await reloaded()
+      if (rlL) return fail(`${at}: the flow ran across two documents${rlL}`)
+      if (dgL.errors.length) return fail(`${at}: the page raised ${dgL.errors.length} error(s): ${dgL.errors.join(' | ')}`)
+      if (!left) fail(`${at}: ${flow.label}: the first Back after Cancel landed on ${entryLine(where)}, not /today — Seeds is in the stack twice`)
+      console.log(`[seeds-scroll] ${at} ${flow.label}: Seeds ${entryLine(seedsEntry)} · ${page.what} ${entryLine(own)} · re-mounted under Search ${entryLine(under)}, its background's seedsReturn ${under.bgSeedsReturn} · the X walked onto ${entryLine(home)} · Cancel ${wentBack ? 'went BACK onto' : 'landed on a NEW entry,'} ${entryLine(after)} · Back then landed on ${entryLine(where)}`)
+    }
+    if (flow.addForm) {
+      // (n) The add form, from the Seeds header's own door: a PUSH carrying the view to return to.
+      const seedsEntry = await t.read(READ_ENTRY)
+      const whyA = await t.tap(SEL.seedsAdd, 'the Seeds header\'s "+ Add seeds"')
+      if (whyA) return fail(`${at}: ${whyA}`)
+      if (!await t.waitIn(`w.location.pathname === '${ADD_PATH}' && ${SEL.addCancel}`, 15000)) {
+        const dg = await t.read(DIAG)
+        return fail(`${at}: "+ Add seeds" was tapped and the add form never arrived in seed mode${dg?.leftPage ? ' — the router LEFT for an unexpected route' : ''}${dg?.errors?.length ? ` · errors: ${dg.errors.join(' | ')}` : ''}${await reloaded()}`)
+      }
+      await t.settle(300, 5000)
+      if ((await t.read(`return w.__h.key()`)) === seedsEntry.key) return fail(`${at}: "+ Add seeds" did not PUSH a new entry — Back has nothing to return from`)
+      return await cancelAfterSearch(ADD_PAGE, seedsEntry)   // awaited: the `finally` below closes the tab
+    }
+
     // ── An overlay over Seeds, opened and closed by its X (flows d to h): real taps on a real OverlayLink or
     // the real +LOG door, and the real Sheet's close. Instrument checks only — the close's consequences are
     // read by the invariants. Returns a failure message, or null.
@@ -790,89 +897,8 @@ async function runFlow(cdp, flow, vw, vh) {
       if (rl) return fail(`${at}: the lot page is not the document the list was on${rl}`)
       if (lot.key == null || lot.key === before.key) return fail(`${at}: the lot page is on history key ${lot.key}, the list was on ${before.key} — the tap did not PUSH a new entry, so Back has nothing to return from`)
       if (!lot.h1 || !lot.h1.text.includes(LOT_TITLE)) return fail(`${at}: the lot page's h1 reads "${lot.h1?.text}", expected it to name "${LOT_TITLE}" — the wrong lot opened`)
-      if (flow.lotCancel) {
-        // ── (l), (m) BUG-SEEDSRETURNUNDEROVERLAY-001. The lot page a Seeds view pushed MOUNTS under Search,
-        // and Search closes. (l) The X walks it home onto its own entry: Cancel must go BACK to the Seeds
-        // entry that opened it, as it does when Search was never opened. (m) The X replaces: Cancel must
-        // not go Back. Instrument checks first.
-        const onLot = await t.read(READ_ENTRY)
-        if (onLot.seedsReturn !== '/seeds?view=mine') return fail(`${at}: the lot page's entry carries seedsReturn ${onLot.seedsReturn}, not My seeds' — "Open details →" is not the Seeds door under test`)
-        const whyS = await t.tap(SEL.openSearch, 'header Search', { chrome: true })
-        if (whyS) return fail(`${at}: ${whyS}`)
-        if (!await t.waitIn(`w.location.pathname === '/search' && ${SEL.sheetClose}`, 8000)) return fail(`${at}: the overlay never opened on /search over the lot page${await reloaded()}`)
-        await t.settle(200, 3000)
-        const kOpen = await t.read(`return w.__h.key()`)
-        const lotUnder = `w.location.pathname === '/search' && ${SEL.sheetClose} && d.querySelector('form') && ${SEL.stageHistory}`
-        if (flow.lotReload) {
-          // (m) The app reloads with Search open: a new document on Search's own entry, the lot page
-          // mounting under the sheet. The X cannot walk back across documents, so it must REPLACE.
-          const bootA = await t.read(`return w.__h.boot()`)
-          await t.ev(`(() => { ${FRAME_VARS}; w.__h.reloadHere(); return 1 })()`)
-          if (!await t.waitIn(`w.__h && w.__h.boot() !== '${bootA}' && w.__h.reloadedDoc() && ${lotUnder}`, 30000)) {
-            return fail(`${at}: the reload under Search never came back with Search open over the lot page (on ${await t.read(`return w.location.pathname`).catch(() => 'an unreadable frame')})`)
-          }
-          boot0 = await t.read(`return w.__h.boot()`)   // this reload is the one under test, not a Vite one
-          if (!((await t.read(`return w.__h.lotMounts()`)) >= 1)) return fail(`${at}: the lot page did not mount under Search in the reloaded document — this is not the path under test`)
-        } else {
-          // (l) Out to a result and Back: Search re-opens on its own entry over a lot page that has just
-          // re-MOUNTED under the sheet — checked by the harness's mount count, not assumed.
-          const m0 = await t.read(`return w.__h.lotMounts()`)
-          const whyR = await t.tap(SEL.searchResult, 'Search\'s result', { chrome: true })
-          if (whyR) return fail(`${at}: ${whyR}`)
-          if (!await t.waitIn(`w.location.pathname === '${PLANTING_PATH}' && d.querySelector('[data-testid="harness-planting"]')`, 15000)) return fail(`${at}: Search's result was tapped and the planting (${PLANTING_PATH}) never arrived${await reloaded()}`)
-          await t.settle(300, 5000)
-          await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
-          if (!await t.waitIn(lotUnder, 15000)) return fail(`${at}: Back from the result never re-opened Search over the lot page${await reloaded()}`)
-          const m1 = await t.read(`return w.__h.lotMounts()`)
-          if (!(m1 > m0)) return fail(`${at}: the lot page did not re-mount under Search after Back (mounts ${m0} → ${m1}) — this is not the path under test`)
-        }
-        const under = await t.read(READ_ENTRY)
-        if (under.key !== kOpen) return fail(`${at}: under Search the frame is on key ${under.key}, not Search's own ${kOpen}`)
-        if (under.seedsReturn != null || under.bgSeedsReturn !== onLot.seedsReturn) return fail(`${at}: under Search the entry reads seedsReturn ${under.seedsReturn} and its background ${under.bgSeedsReturn} — expected none on the overlay's own entry and the lot's on its background, the shape the bug turns on`)
-        await t.settle(300, 5000)
-        const whyC = await t.tap(SEL.sheetClose, 'the overlay sheet\'s X', { chrome: true })
-        if (whyC) return fail(`${at}: ${whyC}`)
-        if (!await t.waitIn(`w.location.pathname === '${LOT_PATH}' && !${SEL.searchSheet} && d.querySelector('form')`, 8000)) return fail(`${at}: the X was tapped and the sheet never closed back onto the lot page${await reloaded()}`)
-        await t.settle(300, 5000)
-        const home = await t.read(READ_ENTRY)
-        // The precondition of each: (l) the close WALKED onto the lot page's own entry; (m) it REPLACED.
-        if (!flow.lotReload && home.key !== onLot.key) return fail(`${at}: the X closed onto ${entryLine(home)}, not the lot page's own entry ${entryLine(onLot)} — the close did not WALK, so this is not the path under test`)
-        if (flow.lotReload && home.key === onLot.key) return fail(`${at}: after the reload the X walked back onto the lot page's own entry ${entryLine(onLot)} instead of replacing — not the path under test`)
-        const whyW = await t.wheelTo(SEL.lotCancel, 'the lot page\'s Cancel')
-        if (whyW) return fail(`${at}: ${whyW}`)
-        await t.settle(300, 5000)
-        const whyX = await t.tap(SEL.lotCancel, 'the lot page\'s Cancel')
-        if (whyX) return fail(`${at}: ${whyX}`)
-        const onSeeds = await t.waitIn(`w.location.pathname === '/seeds' && ${SEL.mineView}`, flow.lotReload ? 8000 : 15000)
-        if (flow.lotReload) {
-          // ── THE INVARIANT of (m): the stack holds the lot page twice now, so Cancel must not go Back —
-          // that lands on the same page again (after a delete, on the page of the lot just removed).
-          const there = await t.read(READ_ENTRY).catch(() => null)
-          if (!onSeeds) return fail(`${at}: ${flow.label}: Cancel did not leave the lot page for My seeds — the frame is on ${entryLine(there)}. After a replace-close the entry behind this one is the lot page again, so Cancel must not go Back (BUG-SEEDSRETURNUNDEROVERLAY-001: resolve through the page's own entry only when the close walked)`)
-          const dgM = await t.read(DIAG)
-          const rlM = await reloaded()
-          if (rlM) return fail(`${at}: the flow ran across two documents after the reload under test${rlM}`)
-          if (dgM.errors.length) return fail(`${at}: the page raised ${dgM.errors.length} error(s): ${dgM.errors.join(' | ')}`)
-          console.log(`[seeds-scroll] ${at} ${flow.label}: Seeds ${entryLine(seedsEntry)} · lot ${entryLine(onLot)} · the app reloaded under Search ${entryLine(under)}, its background's seedsReturn ${under.bgSeedsReturn} · the X REPLACED onto ${entryLine(home)} · Cancel left for ${entryLine(there)}`)
-          return
-        }
-        if (!onSeeds) return fail(`${at}: Cancel was tapped and My seeds never showed (on ${await t.read(`return w.location.pathname + w.location.search`)})${await reloaded()}`)
-        await t.settle(400, 6000)
-        const after = await t.read(READ_ENTRY)
-        // ── THE INVARIANTS of (l): Cancel went BACK onto Seeds' own entry, and one Back from there leaves Seeds.
-        const wentBack = after.key === seedsEntry.key
-        if (!wentBack) fail(`${at}: ${flow.label}: Cancel PUSHED a fresh Seeds page, ${entryLine(after)}, instead of going Back to the one that opened the lot, ${entryLine(seedsEntry)} — the lot page that mounted under Search read the overlay's entry, which carries no seedsReturn (BUG-SEEDSRETURNUNDEROVERLAY-001)`)
-        await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
-        const left = await t.waitIn(`w.location.pathname === '/today' && d.querySelector('[data-testid="harness-to-saved"]')`, 5000)
-        const where = await t.read(READ_ENTRY)
-        const dgL = await t.read(DIAG)
-        const rlL = await reloaded()
-        if (rlL) return fail(`${at}: the flow ran across two documents${rlL}`)
-        if (dgL.errors.length) return fail(`${at}: the page raised ${dgL.errors.length} error(s): ${dgL.errors.join(' | ')}`)
-        if (!left) fail(`${at}: ${flow.label}: the first Back after Cancel landed on ${entryLine(where)}, not /today — Seeds is in the stack twice with the lot page between`)
-        console.log(`[seeds-scroll] ${at} ${flow.label}: Seeds ${entryLine(seedsEntry)} · lot ${entryLine(onLot)} · re-mounted under Search ${entryLine(under)}, its background's seedsReturn ${under.bgSeedsReturn} · the X walked onto ${entryLine(home)} · Cancel ${wentBack ? 'went BACK onto' : 'PUSHED'} ${entryLine(after)} · Back then landed on ${entryLine(where)}`)
-        return
-      }
+      // Awaited: the `finally` below closes the tab.
+      if (flow.lotCancel) return await cancelAfterSearch(LOT_PAGE, seedsEntry)
     } else {
       const ok = await t.waitIn(`w.location.pathname === '${PLANTING_PATH}' && d.querySelector('[data-testid="harness-planting"]')`, 15000)
       if (!ok) return fail(`${at}: ${tapWhat} was tapped and the planting (${PLANTING_PATH}) never arrived${await reloaded()}`)

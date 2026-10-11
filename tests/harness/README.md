@@ -265,7 +265,9 @@ fixes key on react-router's per-entry `window.history.state.key` and Back must b
 in App.jsx's shell (top bar and bottom nav stand-ins at their real heights, the flex column whose
 padding reserves the nav). It starts on a `/today` stand-in, so `/seeds` is a push; `/plantings/:id` is
 a stand-in with PlantingDetail's loading Shell and its mount-time scroll reset. The network answers
-after a loading phase (300ms for the lot and the seed list), because both bugs need one.
+after a loading phase (300ms for the lot and the seed list), because both bugs need one. The real
+`<InventoryAdd />` is mounted too, at `/inventory/add`, for the flows that leave a page a Seeds view
+pushed after Search has been opened over it (BUG-SEEDSRETURNUNDEROVERLAY-001).
 
 ```
 http://localhost:5311/tests/harness/viewport.html?page=seedsscroll.html&vw=426&vh=836

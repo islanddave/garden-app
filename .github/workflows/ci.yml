@@ -585,8 +585,11 @@ jobs:
         # Flows (d) to (g) close an overlay over Seeds (BUG-OVERLAYDISMISSREKEY-001: header Search, the
         # +LOG door, a double-tapped X) and (h) to (k) re-mount Seeds UNDER a re-opened Search
         # (BUG-OVERLAYRELOADKEY-001: a result and Back, an app reload with Search open, My seeds' view
-        # state, the system Back as the close); the script's header lists all eleven and their
-        # non-vacuity records (Projects/Gardening/_seedstab11_20260925/ and _seedstab12_20260925/).
+        # state, the system Back as the close). Flows (l) to (n) take a page a Seeds view pushed (the
+        # lot page, the add form) through the same re-mount under Search and then its own Cancel
+        # (BUG-SEEDSRETURNUNDEROVERLAY-001: Back onto Seeds' own entry after a walk-close, never Back
+        # after a replace-close). The script's header lists all fourteen and their non-vacuity
+        # records (Projects/Gardening/_seedstab11_20260925/ and _seedstab12_20260925/).
         # It refuses a frame whose viewport or chrome is not the one asked for, a list less than 300px
         # down (a clobbered offset could equal it), a tap that pushed no new history entry, and a Back
         # onto any entry but the list's own.
@@ -601,7 +604,7 @@ jobs:
         # with its tabs' CPU throttled 6x (GATE_CPU_THROTTLE, a slow-runner rehearsal), with the same
         # numbers; the pre-fix tree fails the same 20 checks at 6x too. A frame that reloads mid-flow
         # (Vite re-optimizing a dependency) is named as such rather than measured.
-        # NO continue-on-error, per the policy note above. ~95 s locally (eleven flows, two viewports).
+        # NO continue-on-error, per the policy note above. ~2.5 min locally (fourteen flows, two viewports).
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-scroll
