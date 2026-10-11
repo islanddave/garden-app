@@ -190,6 +190,14 @@ export default defineConfig({
         // Ratchet untouched at active_target 73 — advancing it is a milestone decision needing
         // Dave, per No-Date-Based-Gating.
         'lambda/facebook-share/**',
+        // OPS-VOICEHARVESTCOVERAGE-001: instrument the voice harvest page. src/pages/** is outside this
+        // list, so the ten VoiceHarvest.*.test.jsx files could be deleted without moving a CI number.
+        // One file, not the directory: measurement for the page that has the tests, no new gate.
+        // MEASURED 2026-10-11 on dev be4593a5, full suite, without / with this line: statements 91.72 / 91.81,
+        // branches 86.01 / 86.08, functions 92.89 / 93.00, lines 94.79 / 94.81. The file itself: statements
+        // 94.49 / branches 88.65 / functions 97.46 / lines 95.22, so it lifts every global figure and moves
+        // no floor. Ratchet untouched at active_target 80.
+        'src/pages/VoiceHarvest.jsx',
       ],
       exclude: [
         'src/__tests__/**',
