@@ -86,7 +86,15 @@ beforeEach(() => {
 
 afterEach(() => { Date.now = realNow; cleanup() })
 
+// OPS-RESUMEGATETESTCLOCK-001 — the clock is pinned BEFORE render, so the stamp the gate takes at
+// mount and the age a resume reports are measured from the same instant. Taking t0 at resume time
+// instead added the real mount-to-resume gap to every age, and a loaded runner that took over a
+// second to get there pushed the "inside the window" cases past the threshold.
+let t0
+
 async function renderGarden() {
+  t0 = realNow()
+  Date.now = () => t0
   await act(async () => { render(<Garden />) })
   await screen.findByText(/Log many/)
   await act(async () => { await Promise.resolve(); await Promise.resolve() })
@@ -94,8 +102,8 @@ async function renderGarden() {
 
 // The gate reads wall-clock Date.now, so a resume is simulated by moving the clock rather than by
 // waiting. Fake timers are avoided on purpose: this component's mount path awaits real promises.
+// `ms` is the age since MOUNT, not since the previous resume.
 async function resumeAfter(ms) {
-  const t0 = realNow()
   Date.now = () => t0 + ms
   await act(async () => {
     document.dispatchEvent(new Event('visibilitychange'))
