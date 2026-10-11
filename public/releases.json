@@ -1,5 +1,15 @@
 [
   {
+    "version": "4.182.0",
+    "date": "2026-10-11",
+    "highlights": [
+      "On the older Today list, Log all and a row's own Water or Still moist can no longer log the same plant twice.",
+      "In Search, Back to results no longer goes dead when the first tap did not take.",
+      "In the Pantry's Put something up, a refused Save says exactly whether anything was sent, and a discard or date refusal is brought into view.",
+      "Seed pages ask for one less thing when they open, and the variety picker keeps an arrow key pressed as results arrive."
+    ]
+  },
+  {
     "version": "4.181.0",
     "date": "2026-10-10",
     "highlights": [
