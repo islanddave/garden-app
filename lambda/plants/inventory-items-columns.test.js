@@ -137,6 +137,10 @@ const UNALIASED_ARMS = [
   },
 ];
 
+// index.js binds the table twice since BUG-PLANTRESTORESTRAND-001 (the restore guard comes first in
+// the file), so the seed-lots read is picked by what only it does: the parent-link table.
+const isSeedLotsRead = (s) => s.file === 'index.js' && /\bseed_lot_parent_planting\b/.test(s.sql);
+
 describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants inventory_items column contract', () => {
   it('finds the inventory_items statements, so the assertions below are not vacuous', () => {
     expect(HANDLERS.length).toBeGreaterThan(0);
@@ -146,7 +150,12 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants inventory_items column contr
     // 3 -> 4: merge.js's lot lock, the cutover's `SELECT i.id FROM inventory_items i ... FOR UPDATE`
     // over every lot the merge can touch. Aliased `i`, and it names `i.id` and `i.source_plant_id`
     // only — both already in the contract — so this count is the whole of the edit.
-    expect(STATEMENTS).toHaveLength(4);
+    // 4 -> 5: BUG-PLANTRESTORESTRAND-001's guard in the restore route's planting UPDATE, a
+    // `NOT EXISTS (SELECT 1 FROM public.inventory_items i ...)` naming `i.id`, `i.deleted_at` and
+    // `i.created_by` — all three already in the contract. The packet UPDATE beside it
+    // (restorePacketOfLivePlanting) binds the table by UPDATE, which this scan does not read; it
+    // names the same three columns.
+    expect(STATEMENTS).toHaveLength(5);
     expect([...new Set(STATEMENTS.map((s) => s.file))].sort())
       .toEqual(['household.js', 'index.js', 'merge.js']);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
@@ -168,7 +177,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants inventory_items column contr
     // That the two sit in one parenthesised OR under the household and live-lot filters, and so
     // return a lot matching both once, is held in seed-lot-parent-planting-columns.test.js beside
     // the link's own columns.
-    const stmt = STATEMENTS.find((s) => s.file === 'index.js');
+    const stmt = STATEMENTS.find(isSeedLotsRead);
     expect(stmt, 'lambda/plants/index.js no longer reads inventory_items').toBeDefined();
     expect(stmt.sql).toMatch(
       /EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+public\.seed_lot_parent_planting\s+sl\s+WHERE\s+sl\.inventory_item_id\s*=\s*i\.id\s+AND\s+sl\.plant_id\s*=\s*\$\{plantId\}/,
@@ -187,7 +196,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants inventory_items column contr
     // lots on prod were estimates). The tightness check below cannot see a revert that drops the column
     // from BOTH the SELECT and the contract; this can. The pair is one fact in two columns
     // (chk_inventory_seed_count_basis_pairing), so one without the other is the defect.
-    const stmt = STATEMENTS.find((s) => s.file === 'index.js');
+    const stmt = STATEMENTS.find(isSeedLotsRead);
     expect(stmt, 'lambda/plants/index.js no longer reads inventory_items').toBeDefined();
     expect(stmt.sql).toMatch(/\bi\.seed_count\b(?!_)/);
     expect(stmt.sql).toMatch(/\bi\.seed_count_estimated\b/);

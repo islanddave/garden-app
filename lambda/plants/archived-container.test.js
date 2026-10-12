@@ -128,11 +128,13 @@ function splitTop(tokens) {
   return out;
 }
 
-// The two fixture tables, by the names the statements use.
+// The fixture tables, by the names the statements use. `packets` is the restore route's third table
+// (BUG-PLANTRESTORESTRAND-001); a fixture that declares none has none.
 function rowsOf(db, table) {
   const name = String(table).replace(/^public\./, '');
   if (name === 'garden_node') return db.plantings;
   if (name === 'container') return db.containers;
+  if (name === 'inventory_items') return db.packets ?? [];
   throw new Error(`the model has no table ${table}`);
 }
 
@@ -444,9 +446,9 @@ const container = (id, { deleted = false, archived = false, owner = JEN, parent 
   id, created_by: owner, deleted_at: deleted ? T : null, archived_at: archived ? T : null,
   display_name: `container ${id}`, parent_id: parent,
 });
-const planting = (id, containerId, { deleted = false, archived = false, owner = DAVE } = {}) => ({
+const planting = (id, containerId, { deleted = false, archived = false, owner = DAVE, packet = null } = {}) => ({
   id, display_name: `planting ${id}`, container_id: containerId, created_by: owner,
-  deleted_at: deleted ? T : null, archived_at: archived ? T : null,
+  deleted_at: deleted ? T : null, archived_at: archived ? T : null, source_inventory_item_id: packet,
 });
 
 const C = {
@@ -533,7 +535,11 @@ async function list(query) {
 
 const byState = (ids) => Object.fromEntries(STATES.map((s) => [s, ids.has(P[s])]));
 // Rows are flat, so a per-row copy is a full copy.
-const cloneDb = (d) => ({ containers: d.containers.map((r) => ({ ...r })), plantings: d.plantings.map((r) => ({ ...r })) });
+const cloneDb = (d) => ({
+  containers: d.containers.map((r) => ({ ...r })),
+  plantings: d.plantings.map((r) => ({ ...r })),
+  packets: (d.packets ?? []).map((r) => ({ ...r })),
+});
 
 beforeEach(() => {
   resetStubs();
@@ -878,7 +884,8 @@ describe('BUG-PLANTSLISTARCHIVEDCONTAINER-001 — bringing a planting back bring
     const { status, body, calls } = await restore(Q.deletedInArchived);
     expect(status).toBe(200);
     expect(body).toEqual({ id: Q.deletedInArchived, name: `planting ${Q.deletedInArchived}`, deleted_at: null });
-    expect(calls.map(kindOf)).toEqual(['select', 'update garden_node', 'update container']);
+    // The third UPDATE is BUG-PLANTRESTORESTRAND-001's packet statement (its own describe is below).
+    expect(calls.map(kindOf)).toEqual(['select', 'update garden_node', 'update container', 'update inventory_items']);
     expect(calls[0].tx).toBeNull();
     expect(calls[1].tx, 'the restore UPDATE ran outside a transaction').not.toBeNull();
     expect(calls[2].tx, 'the container UPDATE ran outside the restore UPDATE\'s transaction').toBe(calls[1].tx);
@@ -925,5 +932,120 @@ describe('BUG-PLANTSLISTARCHIVEDCONTAINER-001 — bringing a planting back bring
     // The correlation dropped: every archived container this household owns comes back at once.
     expect(run(`${OWNED} AND EXISTS (SELECT 1 FROM public.garden_node gn WHERE gn.id = $2 AND ${LIVE_PLANTING})`))
       .toEqual([K.neighbour, K.parent, K.restoreBoth, K.restoreHome, K.siblings, K.trap].sort());
+  });
+});
+
+// ── part 3: the packet comes back too ──────────────────────────────────────────────────────────────
+// BUG-PLANTRESTORESTRAND-001. A soft-deleted planting does not block its packet's delete, so the
+// packet can go while the planting sits in Recently deleted; restoring the planting then left a live
+// planting on a deleted packet (the BUG-INVREFSTRAND-001 strand). Here because the restore route's
+// transaction is this file's subject and its statements are run, not read: the model above evaluates
+// the planting UPDATE's new NOT EXISTS and the packet UPDATE against the rows below.
+// tests/integration/plants-restore-packet.int.test.js runs the same walk on Postgres.
+const PK = {
+  live: 'e1000000-0000-4000-8000-000000000001',
+  deleted: 'e1000000-0000-4000-8000-000000000002',
+  bystander: 'e1000000-0000-4000-8000-000000000003',   // deleted, this household's, nothing restored points at it
+  foreign: 'e1000000-0000-4000-8000-000000000004',     // deleted, another household's
+  unowned: 'e1000000-0000-4000-8000-000000000005',     // deleted, created_by NULL
+  ofArchived: 'e1000000-0000-4000-8000-000000000006',  // deleted — its planting is deleted AND archived
+};
+const R = {
+  onLive: 'f1000000-0000-4000-8000-000000000001',
+  onDeleted: 'f1000000-0000-4000-8000-000000000002',
+  onForeign: 'f1000000-0000-4000-8000-000000000003',
+  onUnowned: 'f1000000-0000-4000-8000-000000000004',
+  archivedOnDeleted: 'f1000000-0000-4000-8000-000000000005',
+  projectless: 'f1000000-0000-4000-8000-000000000006',
+};
+// Owned by the OTHER household member, as the containers are: ownership runs through ANY().
+const packet = (id, { deleted = false, owner = JEN } = {}) => ({ id, created_by: owner, deleted_at: deleted ? T : null });
+const packetDb = () => ({
+  containers: [container(K.live)],
+  plantings: [
+    planting(R.onLive, K.live, { deleted: true, packet: PK.live }),
+    planting(R.onDeleted, K.live, { deleted: true, packet: PK.deleted }),
+    planting(R.onForeign, K.live, { deleted: true, packet: PK.foreign }),
+    planting(R.onUnowned, K.live, { deleted: true, packet: PK.unowned }),
+    planting(R.archivedOnDeleted, K.live, { deleted: true, archived: true, packet: PK.ofArchived }),
+    planting(R.projectless, null, { deleted: true, packet: PK.deleted }),
+  ],
+  packets: [
+    packet(PK.live),
+    packet(PK.deleted, { deleted: true }),
+    packet(PK.bystander, { deleted: true }),
+    packet(PK.foreign, { deleted: true, owner: STRANGER }),
+    packet(PK.unowned, { deleted: true, owner: null }),
+    packet(PK.ofArchived, { deleted: true }),
+  ],
+});
+const packetRow = (id) => db.packets.find((r) => r.id === id);
+const deletedPackets = () => db.packets.filter((r) => r.deleted_at !== null).map((r) => r.id).sort();
+const RESTORE_KINDS = ['select', 'update garden_node', 'update container', 'update inventory_items'];
+
+describe('BUG-PLANTRESTORESTRAND-001 — restoring a planting brings its deleted seed packet back', () => {
+  beforeEach(() => { db = packetDb(); });
+
+  it('a live packet is untouched: the packet statement matches nothing and the answer is unchanged', async () => {
+    const before = deletedPackets();
+    const { status, body, calls } = await restore(R.onLive);
+    expect(status).toBe(200);
+    expect(body).toEqual({ id: R.onLive, name: `planting ${R.onLive}`, deleted_at: null });
+    expect(calls.map(kindOf)).toEqual(RESTORE_KINDS);
+    expect(calls[3].rowCount, 'the packet statement matched a packet it had nothing to bring back').toBe(0);
+    expect(packetRow(PK.live)).toEqual(packet(PK.live));
+    expect(deletedPackets()).toEqual(before);
+  });
+
+  it('a deleted packet comes back in the planting\'s own transaction, and the answer names it', async () => {
+    const before = deletedPackets();
+    const { status, body, calls } = await restore(R.onDeleted);
+    expect(status).toBe(200);
+    expect(body).toEqual({ id: R.onDeleted, name: `planting ${R.onDeleted}`, deleted_at: null, restored_packet_id: PK.deleted });
+    expect(calls.map(kindOf)).toEqual(RESTORE_KINDS);
+    expect(calls[1].tx, 'the restore UPDATE ran outside a transaction').not.toBeNull();
+    expect(calls[3].tx, 'the packet UPDATE ran outside the restore UPDATE\'s transaction').toBe(calls[1].tx);
+    // After the planting's own UPDATE: the packet statement reads the row that UPDATE just wrote.
+    expect(calls[3].rowCount, 'the packet statement did not match exactly the planting\'s own packet').toBe(1);
+    expect(plantRow(R.onDeleted).deleted_at).toBeNull();
+    expect(packetRow(PK.deleted).deleted_at, 'the packet stayed deleted — the strand').toBeNull();
+    expect(deletedPackets(), 'a packet other than the planting\'s own was touched')
+      .toEqual(before.filter((id) => id !== PK.deleted));
+  });
+
+  it('writes the packet\'s deleted_at and nothing else', async () => {
+    const { calls } = await restore(R.onDeleted);
+    expect(updateOf(calls[3].text).set).toEqual([['deleted_at', { kind: 'lit', value: null }]]);
+    expect(packetRow(PK.deleted)).toEqual(packet(PK.deleted));
+  });
+
+  it('a project-less planting brings its packet back as well', async () => {
+    const { status, body } = await restore(R.projectless);
+    expect(status).toBe(200);
+    expect(body.restored_packet_id).toBe(PK.deleted);
+    expect(packetRow(PK.deleted).deleted_at).toBeNull();
+  });
+
+  it('a planting that comes back still archived brings its packet back — archived plantings count for the packet', async () => {
+    const { status, body } = await restore(R.archivedOnDeleted);
+    expect(status).toBe(200);
+    expect(body.restored_packet_id).toBe(PK.ofArchived);
+    expect(plantRow(R.archivedOnDeleted).archived_at).not.toBeNull();
+    expect(packetRow(PK.ofArchived).deleted_at).toBeNull();
+  });
+
+  it('a deleted packet the caller could not bring back refuses the planting too — nothing half-applies', async () => {
+    for (const [plantId, packetId] of [[R.onForeign, PK.foreign], [R.onUnowned, PK.unowned]]) {
+      const before = deletedPackets();
+      const { status, body, calls } = await restore(plantId);
+      expect(status).toBe(404);
+      expect(body).toEqual({ error: 'Not found' });
+      expect(calls.map(kindOf)).toEqual(RESTORE_KINDS);
+      expect(calls[1].rowCount, 'the planting was restored onto a packet that stayed deleted').toBe(0);
+      expect(calls[3].rowCount).toBe(0);
+      expect(plantRow(plantId).deleted_at, 'the planting came back onto a deleted packet — the strand').not.toBeNull();
+      expect(packetRow(packetId).deleted_at).not.toBeNull();
+      expect(deletedPackets()).toEqual(before);
+    }
   });
 });

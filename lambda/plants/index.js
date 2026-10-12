@@ -194,6 +194,35 @@ function unarchiveContainerOfLivePlanting(sql, plantId, householdIds) {
   `;
 }
 
+// BUG-PLANTRESTORESTRAND-001 — restoring a planting brings its seed packet back (Dave, 2026-10-12).
+//
+// A soft-deleted planting does not block its packet's delete (lambda/inventory-items/delete-guard.js:
+// it is retracted, and blocking on it would protect a row nobody can see), so the packet can be
+// deleted while the planting sits in Recently deleted. Restoring the planting then left a live
+// planting pointing at a deleted packet — the BUG-INVREFSTRAND-001 strand, made through the app.
+//
+// Sent in the SAME sql.transaction as the planting's own UPDATE and after it, so it reads the row that
+// UPDATE just wrote: it fires only when the planting is now live (archived or not — an archived
+// planting counts for the packet's delete guard, so it counts here), and only for the packet that
+// planting was sown from. Household-scoped exactly as the packet's own DELETE is
+// (created_by = ANY(householdIds)); inventory has no restore route to borrow a rule from, so this is
+// the mirror of the one that deleted it. It writes deleted_at and nothing else. The packet's own
+// photos, stage rows and parent links kept their pointers and come back with it (FOLLOWING_RELATIONS
+// in delete-guard.js). A live packet matches nothing.
+function restorePacketOfLivePlanting(sql, plantId, householdIds) {
+  return sql`
+    UPDATE public.inventory_items si
+       SET deleted_at = NULL
+     WHERE si.deleted_at IS NOT NULL
+       AND si.created_by = ANY(${householdIds})
+       AND EXISTS (SELECT 1 FROM public.garden_node gn
+                    WHERE gn.id = ${plantId}
+                      AND gn.source_inventory_item_id = si.id
+                      AND gn.deleted_at IS NULL)
+    RETURNING si.id
+  `;
+}
+
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
 export const handler = async (event) => {
@@ -531,7 +560,13 @@ export const handler = async (event) => {
       // its header), which runs second and reads the row restored here. A planting that comes back
       // still archived on its own goes to the Archived page and leaves its container alone — the
       // statement requires it LIVE. The already_restored arm above sends neither statement.
-      const [rows] = await sql.transaction([
+      //
+      // BUG-PLANTRESTORESTRAND-001: and with restorePacketOfLivePlanting (see its header), which runs
+      // third. The NOT EXISTS below is the other half of that statement: a deleted packet it could
+      // NOT bring back (not this household's — unreachable through the app, whose writers all pass
+      // loadOwnedInventoryItem) refuses the planting too, so the two never half-apply and the route
+      // cannot make the strand. Its ownership test is the exact negation of the packet statement's.
+      const [rows, , packets] = await sql.transaction([
         sql`
         UPDATE public.garden_node p
            SET deleted_at = NULL
@@ -543,16 +578,22 @@ export const handler = async (event) => {
                         AND pp.deleted_at IS NULL)
              OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
            )
+           AND NOT EXISTS (SELECT 1 FROM public.inventory_items i
+                            WHERE i.id = p.source_inventory_item_id
+                              AND i.deleted_at IS NOT NULL
+                              AND (i.created_by IS NULL OR NOT (i.created_by = ANY(${householdIds}))))
         RETURNING p.id, p.display_name AS name, p.deleted_at
       `,
         unarchiveContainerOfLivePlanting(sql, plantId, householdIds),
+        restorePacketOfLivePlanting(sql, plantId, householdIds),
       ]);
       // The `plants_entity_softdel` trigger mirrors deleted_at onto the entity registry row in BOTH
       // directions (it assigns NEW.deleted_at rather than a literal), so the planting comes back
       // visible to search and the registry with no extra statement here. Verified on the live
       // trigger body, not assumed.
       if (!rows.length) return resp(404, { error: 'Not found' });
-      return resp(200, rows[0]);
+      // `restored_packet_id` only when a packet came back, so the answer is unchanged otherwise.
+      return resp(200, packets?.length ? { ...rows[0], restored_packet_id: packets[0].id } : rows[0]);
     }
 
     if (seenMatch) {
