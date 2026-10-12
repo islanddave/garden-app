@@ -71,10 +71,12 @@ describe('CLEARABLE_FIELDS', () => {
     expect(new Set(CLEARABLE_FIELDS).size).toBe(CLEARABLE_FIELDS.length);
   });
 
-  // dtm_basis is on public.cultivar with a live CHECK, but the Lambda neither reads nor writes it
-  // and nothing renders it (V4-MATURITYBASIS-001). Offering a clear for an invisible field would be
-  // its own trap, so its absence here is deliberate rather than an oversight.
-  it('excludes dtm_basis until it has a read path', () => {
+  // dtm_basis is on public.cultivar with a live CHECK, and it IS read (V4-MATURITYBASIS-001): the
+  // harvest watch anchors on it (lambda/harvests/watch-route.js) and the seed card words it
+  // (src/components/seed/seedFacts.js). What is missing is a WRITE: this PUT has no arm that sets it
+  // and no edit surface offers it. A clear alone would be half a channel, a way to NULL a value
+  // those readers use with no way to put it back, so its absence here is deliberate (validate.js).
+  it('excludes dtm_basis while the PUT has no arm that writes it', () => {
     expect(CLEARABLE_FIELDS).not.toContain('dtm_basis');
   });
 
