@@ -110,8 +110,9 @@ describe('App route table (single source of truth)', () => {
     // (an installed PWA has no address bar), so the row and the route ship together.
     // 61 -> 63: V5-SEASONSTATS-001 adds /season-stats (door: the Season stats More row) and
     // V5-SOURCECONTACT-001 adds /sources/:id (door: a saved-seed lot's "Edit source" chip on it).
-    expect(paths).toHaveLength(63)
-    expect(new Set(paths).size).toBe(63)
+    // 63 -> 64: V4-CROPTYPERETIRE-001 adds /admin/crop-types (door: its Debug & smoke row).
+    expect(paths).toHaveLength(64)
+    expect(new Set(paths).size).toBe(64)
   })
 
   it('/log/voice is a PAGE, never an overlay — a live mic must not mount over another surface', () => {

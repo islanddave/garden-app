@@ -21,7 +21,7 @@
 // admin list. Inventing one here to hide a menu row would contradict a documented call and buy
 // nothing — the row is discoverability, not authorisation. What each destination shows is already
 // gated at its own level: voice-debug reads only this browser's own localStorage, garden-activity
-// renders a 403 placard for a non-admin, classify writes through an admin-gated route.
+// and crop-types render a 403 placard for a non-admin, classify writes through an admin-gated route.
 // Dave 2026-08-27: "this is still only me using it right now." If Jen ever finds the row noisy the
 // clean fix is a server-gated owner signal, NOT a hardcoded client list.
 //
@@ -70,6 +70,13 @@ const LINKS = [
     icon: 'facet.type',
     label: 'Project classify',
     blurb: 'Bulk crop-type classification for projects',
+  },
+  // V4-CROPTYPERETIRE-001 — same commit as the route, per the header note.
+  {
+    to: '/admin/crop-types',
+    icon: 'action.archive',
+    label: 'Crop types',
+    blurb: 'Retire a crop type nothing uses, or bring one back (server-gated — shows a placard if not admin)',
   },
   {
     to: '/releases',

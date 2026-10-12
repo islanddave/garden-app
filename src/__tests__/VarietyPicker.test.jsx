@@ -657,6 +657,29 @@ describe('VarietyPicker — inline crop-type creation (CROPTYPE)', () => {
     expect((await screen.findByLabelText('Name')).value).toBe('')
   })
 
+  it('a name that matches a retired crop type shows the one plain line, and creates nothing (V4-CROPTYPERETIRE-001)', async () => {
+    // The server refuses a non-admin with 403 and the distinct code; its own message is deliberately
+    // different here, so the line on screen is proven to come from the code and not the message.
+    const err = new Error('Admin only')
+    err.status = 403
+    err.body = { error: 'Admin only', code: 'crop_type_retired' }
+    fetchSpy.mockImplementation((path, opts) => {
+      if (path === '/api/varieties/crop-types' && opts?.method === 'POST') return Promise.reject(err)
+      if (path === '/api/varieties/crop-types') return Promise.resolve(CROPS)
+      return Promise.resolve([])
+    })
+    await toCropStage()
+    await act(async () => { fireEvent.click(screen.getByText(/New crop type/).closest('li')) })
+    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'Tatsoi' } })
+    await act(async () => { fireEvent.click(screen.getByText('Create crop type')) })
+
+    await waitFor(() => screen.getByText("That crop type was retired. Ask the garden's admin to bring it back."))
+    expect(screen.queryByText(/Admin only/)).toBeNull()
+    // No "Use ..." adopt button: there is nothing to adopt, and no variety was created.
+    expect(screen.queryByText(/^Use "/)).toBeNull()
+    expect(fetchSpy.mock.calls.some(c => c[0] === '/api/varieties' && c[1]?.method === 'POST')).toBe(false)
+  })
+
   it('surfaces the steer and adopts the existing type on confirm', async () => {
     const err = new Error('"Chili" is another name for the existing "Pepper" crop type')
     err.body = { reason: 'coupled_synonym', existing: { slug: 'pepper', display_name: 'Pepper', default_lifecycle: 'tender_perennial' } }

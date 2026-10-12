@@ -45,6 +45,7 @@ import Achievements from './pages/Achievements.jsx'
 import InactiveProjects from './pages/InactiveProjects.jsx'
 import ProjectsAdminClassify from './pages/ProjectsAdminClassify.jsx'
 import GardenActivity from './pages/GardenActivity.jsx'
+import CropTypesAdmin from './pages/CropTypesAdmin.jsx'
 import VoiceDebug from './pages/VoiceDebug.jsx'
 import DebugMenu from './pages/DebugMenu.jsx'
 import AdminConfig from './pages/AdminConfig.jsx'
@@ -417,6 +418,9 @@ export function renderRoutes({ overlay, user, loading }) {
     { path: '/collection',    element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><CollectionRoute /></ErrorBoundary></Protected> },
     { path: '/admin/classify', element: <Protected><ProjectsAdminClassify /></Protected> },
     { path: '/admin/garden-activity', element: <Protected><GardenActivity /></Protected> },
+    // V4-CROPTYPERETIRE-001 — retire and bring back crop types. Server-gated (ADMIN_CLERK_SUBS on the
+    // varieties Lambda); a non-admin sees the same neutral placard as garden-activity.
+    { path: '/admin/crop-types', element: <Protected><CropTypesAdmin /></Protected> },
     // BUG-VOICEDUPE-002 raw Web Speech capture. Unlinked + Jen-invisible, same convention as
     // /admin/garden-activity. Shows only this browser's own localStorage — no server call.
     { path: '/admin/voice-debug', element: <Protected><VoiceDebug /></Protected> },

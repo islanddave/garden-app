@@ -32,11 +32,12 @@
 //
 // Contract: { cropTypes: [{ slug, display_name, default_lifecycle, category, sort_order, dtm_basis,
 //                           search_aliases }], loading,
-//             createCropType(payload) -> { cropType } | { error, existing, reason } }
+//             createCropType(payload) -> { cropType } | { error, existing, reason, code } }
 // Options:  { scope: 'garden' | 'all', enabled: boolean }
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useApiFetch } from '../lib/api.js'
+import { CROP_TYPE_RETIRED_CODE, CROP_TYPE_RETIRED_LINE } from '../lib/cropTypeRetired.js'
 
 // The gating category, seeded by migrations/v4-putupfood-001. Exported so the parity test can bind
 // this constant to the migration's own VALUES tuples rather than re-typing the string.
@@ -74,6 +75,8 @@ export function useCropTypes({ scope = 'garden', enabled = true } = {}) {
   // another word for a crop whose DERIVED facets a duplicate type would silently lose, so the UI
   // should present adopting the existing type as the correct action rather than as a failure.
   // Inserts locally in sort order so the picker reflects it without a refetch.
+  // V4-CROPTYPERETIRE-001 — `code` is 'crop_type_retired' when the name matches a type the admin
+  // retired and the caller is not the admin; `error` is then the one plain line both inline forms print.
   const createCropType = useCallback(async (payload) => {
     try {
       const created = await fetch('/api/varieties/crop-types', {
@@ -84,10 +87,12 @@ export function useCropTypes({ scope = 'garden', enabled = true } = {}) {
         (a.sort_order - b.sort_order) || String(a.display_name).localeCompare(String(b.display_name))))
       return { cropType: created }
     } catch (err) {
+      const code = err?.body?.code ?? null
       return {
-        error: err?.message ?? 'Failed to create crop type',
+        error: code === CROP_TYPE_RETIRED_CODE ? CROP_TYPE_RETIRED_LINE : (err?.message ?? 'Failed to create crop type'),
         existing: err?.body?.existing ?? null,
         reason: err?.body?.reason ?? null,
+        code,
       }
     }
   }, [fetch])
