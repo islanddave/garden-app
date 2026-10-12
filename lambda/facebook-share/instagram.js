@@ -23,7 +23,7 @@
 // must NOT silently inherit a version bumped for Facebook's sake — attached_media and IG publishing
 // deprecate on independent schedules. Split the knob, fall back for continuity.
 export const IG_GRAPH_VERSION =
-  process.env.IG_GRAPH_VERSION || process.env.FB_GRAPH_VERSION || 'v21.0';
+  process.env.IG_GRAPH_VERSION || process.env.FB_GRAPH_VERSION || 'v25.0';
 
 // Instagram's documented limits. These are IG's, NOT Facebook's — graph.js MAX_CAPTION is 5000,
 // which would sail past IG's 2200 and fail at container creation, consuming quota for nothing.

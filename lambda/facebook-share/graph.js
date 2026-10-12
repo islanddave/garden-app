@@ -4,7 +4,10 @@
 // fetch()/FormData I/O; this module owns everything decidable without a network call.
 
 // Graph version is env-overridable so a version deprecation is a config bump, not a redeploy.
-export const GRAPH_VERSION = process.env.FB_GRAPH_VERSION || 'v21.0';
+// v25.0 is available until 2028-07-29 (v21.0 ends 2027-01-21). The same default is pinned in
+// instagram.js and scripts/meta-token-check.sh; graphVersion.test.js holds the three together.
+// Roll back without a deploy: FB_GRAPH_VERSION and IG_GRAPH_VERSION on the function.
+export const GRAPH_VERSION = process.env.FB_GRAPH_VERSION || 'v25.0';
 export const MAX_PHOTOS = 10;      // attached_media practical ceiling; enforced at selection + here
 export const MAX_CAPTION = 5000;   // app-side sanity cap (FB allows more); avoids accidental huge posts
 

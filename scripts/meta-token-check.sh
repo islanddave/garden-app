@@ -44,7 +44,7 @@ set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
 SECRET_ID="${FB_SECRET_NAME:-garden-app/facebook-page-token}"
-GRAPH_VERSION="${FB_GRAPH_VERSION:-v21.0}"
+GRAPH_VERSION="${FB_GRAPH_VERSION:-v25.0}"
 NS="Garden/Share"
 SNS_TOPIC="${SNS_TOPIC:-arn:aws:sns:us-east-1:769788341849:garden-ops-alerts}"
 OUT="${OUT:-meta-token-report.json}"
