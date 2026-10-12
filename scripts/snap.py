@@ -37,7 +37,10 @@ ENV CONTRACT (read at runtime; no secrets are hardcoded):
   APP_VERSION         human/app version label recorded in the manifest.
 
 Dependencies: boto3 (S3/Lambda), requests (Neon + GitHub REST), pg_dump +
-pg_dumpall (pg17 client) via subprocess.
+pg_dumpall (pg17 client) via subprocess. psql (same pg17 bin directory) is used
+ONLY for the table list beside the dump, and that write can never fail the ship
+(see write_table_list_or_warn), so promote-gate's pre-FF tooling proof does not
+cover it.
 
 Idempotency: every artifact is create-if-missing. If it already exists it is
 SKIPPED, not errored, so a partial snap completes cleanly on re-run. BUT if a
@@ -155,6 +158,7 @@ def s3_key_for(kind, cfg):
     return {
         "dump": f"db/snap-{v}.dump",
         "globals": f"db/snap-{v}.globals.sql",
+        "tables": f"db/snap-{v}.tables.json",
         "photo_versionids": f"photos/snap-{v}.versionids.json",
         "manifest": f"snapshots/{v}.json",
     }[kind]
@@ -402,10 +406,111 @@ def _branch_lsn(cfg, branch):
 
 # --- (c) durable pg_dump → S3 ------------------------------------------------
 
+# The tables that exist in prod when the dump is taken (OPS-RESTOREVERIFYRED-001).
+# restore-verify.py compares its restore with THIS list, not with live prod, so a
+# table prod gains after the snap no longer reads as "MISSING from restore". Same
+# read as restore-verify.py qualified_table_set() and backup.yml's daily list.
+TABLE_LIST_FORMAT = 1
+TABLE_LIST_TIMEOUT = 60
+TABLE_LIST_SQL = (
+    "SELECT table_schema||'.'||table_name FROM information_schema.tables "
+    "WHERE table_type='BASE TABLE' "
+    "AND table_schema NOT IN ('pg_catalog','information_schema') "
+    "AND table_schema NOT LIKE 'pg_%' ORDER BY 1;"
+)
+
+
+def read_table_list(cfg):
+    """schema.table for every base table outside the system schemas, read over
+    the same DIRECT connection string pg_dump uses. Raises SnapError; the
+    message never carries the command line (it holds the connection string)."""
+    try:
+        proc = subprocess.run(
+            ["psql", cfg.neon_backup_url, "-X", "-tA", "-v", "ON_ERROR_STOP=1",
+             "-c", TABLE_LIST_SQL],
+            capture_output=True, text=True, timeout=TABLE_LIST_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise SnapError(f"psql table-list read timed out after {TABLE_LIST_TIMEOUT}s")
+    except OSError as e:
+        raise SnapError(f"psql could not be run ({type(e).__name__}: {e.strerror})")
+    if proc.returncode != 0:
+        raise SnapError(f"psql table-list read failed (rc={proc.returncode}): {(proc.stderr or '').strip()[:300]}")
+    tables = sorted({ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()})
+    if not any(t.startswith("public.") for t in tables):
+        raise SnapError(f"table-list read returned no public.* table ({len(tables)} rows)")
+    return tables
+
+
+def _table_list_warn(cfg, why):
+    key = s3_key_for("tables", cfg)
+    msg = (f"snap: table list s3://{cfg.snap_bucket}/{key} NOT written ({why}) — the snap "
+           f"itself is complete; restore-verify will compare this dump with LIVE prod's table "
+           f"list instead (its fallback, and it says so)")
+    gha_warning(msg)
+    gha_step_summary(["### snap: table list NOT written", f"- {msg}"])
+
+
+def read_table_list_or_warn(cfg):
+    """(tables, taken_at) or (None, None). NEVER raises: see write_table_list_or_warn."""
+    try:
+        return read_table_list(cfg), utc_now_iso()
+    except SnapError as e:
+        _table_list_warn(cfg, str(e))
+    except Exception as e:  # noqa: BLE001 — type only: an arbitrary message may carry the URL
+        _table_list_warn(cfg, f"unexpected {type(e).__name__} reading it")
+    return None, None
+
+
+def write_table_list_or_warn(s3, cfg, dump_key, tables, taken_at):
+    """Put the table list beside the dump it was read for. Returns the key, or
+    None when nothing was written.
+
+    WARNS, NEVER FAILS THE SHIP. This runs inside promote-gate AFTER main has
+    fast-forwarded, where a raise strands main advanced with nothing deployed
+    (the reason publish_lambda_versions records instead of raising). The list is
+    not part of what a revert restores: its only reader is restore-verify, which
+    falls back to the live comparison for a dump with no list and says so. So a
+    lost list costs one possible false red there, announced here by a
+    ::warning:: and by manifest.tables_s3_key = null; failing would cost a
+    release. The daily backup, which has nothing downstream to strand, fails."""
+    if tables is None:
+        return None
+    key = s3_key_for("tables", cfg)
+    try:
+        body = json.dumps(
+            {"format": TABLE_LIST_FORMAT, "dump_key": dump_key, "taken_at": taken_at,
+             "tables": tables},
+            sort_keys=True,
+        ).encode()
+        s3.put_object(Bucket=cfg.snap_bucket, Key=key, Body=body, ContentType="application/json")
+    except Exception as e:  # noqa: BLE001 — see docstring
+        _table_list_warn(cfg, f"{type(e).__name__} writing it")
+        return None
+    return key
+
+
+def table_list_key_if_present(s3, cfg):
+    """The table-list key for the manifest, or None. Never raises (post-FF)."""
+    key = s3_key_for("tables", cfg)
+    try:
+        return key if s3_object_exists(s3, cfg.snap_bucket, key) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def dump_to_s3(s3, cfg):
     """Fresh pg_dump (pg17, DIRECT endpoint, -Fc) at snap time → S3. Idempotent:
     skip if the dump object already exists. Returns the S3 key.
     Does NOT reuse the daily dump.
+
+    Also writes the table list beside the dump (read_table_list): read
+    IMMEDIATELY BEFORE pg_dump, on its own connection (pg_dump takes its own
+    snapshot; sharing one would put a second session's lifetime on the dump's
+    critical path). Before, not after, so a table created in the gap is in the
+    dump but not the list (a restore-verify warning), never the reverse. Put
+    AFTER the dump upload, and only when THIS call took the dump: an existing
+    dump is never given a list read later than it.
 
     FULL-DATABASE scope (no -n/--schema): prod has THREE schemas — public,
     extensions (relocated uuid-ossp functions; 14 columns default to
@@ -417,6 +522,7 @@ def dump_to_s3(s3, cfg):
     if s3_object_exists(s3, cfg.snap_bucket, key):
         return key  # idempotent skip
 
+    tables, tables_taken_at = read_table_list_or_warn(cfg)
     with tempfile.TemporaryDirectory() as td:
         dump_path = os.path.join(td, f"snap-{cfg.version}.dump")
         cmd = [
@@ -436,6 +542,7 @@ def dump_to_s3(s3, cfg):
         if not os.path.exists(dump_path) or os.path.getsize(dump_path) == 0:
             raise SnapError("pg_dump produced no output / empty dump")
         s3.upload_file(dump_path, cfg.snap_bucket, key)
+    write_table_list_or_warn(s3, cfg, key, tables, tables_taken_at)
     return key
 
 
@@ -797,6 +904,8 @@ def run(cfg, s3=None, lambda_client=None, prune=True):
         "neon_lsn": neon_lsn,
         "dump_s3_key": dump_key,
         "globals_s3_key": globals_key,
+        # null = no list beside this dump; restore-verify falls back to live prod
+        "tables_s3_key": table_list_key_if_present(s3, cfg),
         "photo_versionids_key": photo_key,
         "lambda_versions": lambda_versions,
         "lambda_uncaptured": lambda_uncaptured,

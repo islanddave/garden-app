@@ -241,6 +241,30 @@ def test_ensure_neon_branch_uses_prefix(monkeypatch):
 
 # --- dump idempotent skip ----------------------------------------------------
 
+PSQL_TABLES = "public.plants\ngv.audit\npublic.event_log\n"
+
+
+def _fake_pg(cmds, psql_rc=0, psql_out=PSQL_TABLES, psql_raises=None, dump_rc=0):
+    """subprocess.run for dump_to_s3: psql answers the table-list read, pg_dump
+    (args, no shell) writes a non-empty file at its -f path."""
+    def fake_run(cmd, **kw):
+        cmds.append(cmd)
+        r = mock.Mock(); r.stderr = ""
+        if cmd[0] == "psql":
+            if psql_raises:
+                raise psql_raises(cmd, kw.get("timeout")) if psql_raises is snap.subprocess.TimeoutExpired \
+                    else psql_raises(2, "No such file or directory", "psql")
+            r.returncode, r.stdout = psql_rc, psql_out
+            r.stderr = "psql: error: boom" if psql_rc else ""
+            return r
+        r.returncode = dump_rc
+        if dump_rc == 0:
+            with open(cmd[cmd.index("-f") + 1], "wb") as fh:
+                fh.write(b"PGDMP\x00data")
+        return r
+    return fake_run
+
+
 def test_dump_to_s3_skip_if_exists(monkeypatch):
     cfg = make_cfg()
     s3 = mock.Mock()
@@ -259,22 +283,14 @@ def test_dump_to_s3_runs_pg_dump(monkeypatch, tmp_path):
     monkeypatch.setattr(snap, "s3_object_exists", lambda *a, **k: False)
     cmds = []
 
-    def fake_run(cmd, **kw):
-        # pg_dump is passed args (no shell); write a non-empty file at -f path
-        cmds.append(cmd)
-        fpath = cmd[cmd.index("-f") + 1]
-        with open(fpath, "wb") as fh:
-            fh.write(b"PGDMP\x00data")
-        r = mock.Mock(); r.returncode = 0; r.stderr = ""
-        return r
-
-    monkeypatch.setattr(snap.subprocess, "run", fake_run)
+    monkeypatch.setattr(snap.subprocess, "run", _fake_pg(cmds))
     key = snap.dump_to_s3(s3, cfg)
     assert key == "db/snap-v1.2.3.dump"
     s3.upload_file.assert_called_once()
     # Gate 0.1: FULL-database dump — any schema filter would silently drop the
     # extensions + gv schemas the restore-from-empty path needs.
-    assert not any("--schema" in arg or arg == "-n" for arg in cmds[0])
+    (pg_dump,) = [c for c in cmds if c[0] == "pg_dump"]
+    assert not any("--schema" in arg or arg == "-n" for arg in pg_dump)
 
 
 def test_dump_globals_runs_pg_dumpall(monkeypatch):
@@ -747,6 +763,120 @@ def test_prune_writes_step_summary(monkeypatch, tmp_path):
     text = summary.read_text()
     assert "snap prune" in text
     assert "snap-v1" in text
+
+
+# --- table list beside the dump (OPS-RESTOREVERIFYRED-001) --------------------
+
+def _dump_with(monkeypatch, s3=None, **fake):
+    cfg = make_cfg()
+    s3 = s3 or mock.Mock()
+    monkeypatch.setattr(snap, "s3_object_exists", lambda *a, **k: False)
+    cmds = []
+    monkeypatch.setattr(snap.subprocess, "run", _fake_pg(cmds, **fake))
+    return cfg, s3, cmds
+
+
+def test_s3_key_for_tables_sits_beside_the_dump():
+    cfg = make_cfg()
+    assert snap.s3_key_for("tables", cfg) == "db/snap-v1.2.3.tables.json"
+    assert snap.s3_key_for("dump", cfg)[: -len(".dump")] + ".tables.json" == snap.s3_key_for("tables", cfg)
+
+
+def test_dump_to_s3_writes_the_table_list_beside_the_dump(monkeypatch):
+    cfg, s3, cmds = _dump_with(monkeypatch)
+    monkeypatch.setattr(snap, "utc_now_iso", lambda: "2026-10-12T16:53:00Z")
+    assert snap.dump_to_s3(s3, cfg) == "db/snap-v1.2.3.dump"
+    # read BEFORE pg_dump: a table created in the gap is then in the dump, not the list
+    assert [c[0] for c in cmds] == ["psql", "pg_dump"]
+    assert cmds[0][1] == cfg.neon_backup_url and snap.TABLE_LIST_SQL in cmds[0]
+    # put AFTER the dump upload: a list never sits beside a dump that is not there
+    assert [c[0] for c in s3.method_calls] == ["upload_file", "put_object"]
+    kw = s3.put_object.call_args.kwargs
+    assert kw["Bucket"] == "garden-snapshots-prod" and kw["Key"] == "db/snap-v1.2.3.tables.json"
+    assert json.loads(kw["Body"]) == {
+        "format": 1, "dump_key": "db/snap-v1.2.3.dump", "taken_at": "2026-10-12T16:53:00Z",
+        "tables": ["gv.audit", "public.event_log", "public.plants"]}
+
+
+def test_table_list_document_is_what_restore_verify_accepts(monkeypatch):
+    """The writer and the reader are separate files; pin them to one contract."""
+    import importlib.util
+    import os
+    spec = importlib.util.spec_from_file_location(
+        "restore_verify", os.path.join(os.path.dirname(os.path.abspath(snap.__file__)), "restore-verify.py"))
+    rv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rv)
+    cfg, s3, _ = _dump_with(monkeypatch)
+    dump_key = snap.dump_to_s3(s3, cfg)
+    kw = s3.put_object.call_args.kwargs
+    assert kw["Key"] == rv.tablelist_key_for(dump_key)
+    assert rv._tablelist_problem(json.loads(kw["Body"]), dump_key) is None
+    assert snap.TABLE_LIST_FORMAT == rv.TABLELIST_FORMAT
+
+
+def test_dump_skip_never_writes_a_list_read_later_than_the_dump(monkeypatch):
+    cfg = make_cfg()
+    s3 = mock.Mock()
+    monkeypatch.setattr(snap, "s3_object_exists", lambda *a, **k: True)
+    sub = mock.Mock()
+    monkeypatch.setattr(snap.subprocess, "run", sub)
+    snap.dump_to_s3(s3, cfg)
+    sub.assert_not_called()
+    s3.put_object.assert_not_called()
+
+
+@pytest.mark.parametrize("fake, why", [
+    (dict(psql_rc=1), "psql table-list read failed"),
+    (dict(psql_out=""), "no public.* table"),
+    (dict(psql_out="gv.audit\n"), "no public.* table"),
+    (dict(psql_raises=FileNotFoundError), "psql could not be run"),
+    (dict(psql_raises=snap.subprocess.TimeoutExpired), "timed out"),
+], ids=["psql-fails", "empty", "no-public", "no-psql", "timeout"])
+def test_table_list_read_failure_warns_and_the_dump_still_ships(monkeypatch, capsys, fake, why):
+    """Post-FF: a lost list must not fail the ship, and must not be silent or written empty."""
+    cfg, s3, cmds = _dump_with(monkeypatch, **fake)
+    assert snap.dump_to_s3(s3, cfg) == "db/snap-v1.2.3.dump"
+    s3.upload_file.assert_called_once()
+    s3.put_object.assert_not_called()
+    out = capsys.readouterr().out
+    assert out.count("::warning::") == 1 and "table list" in out and "NOT written" in out and why in out
+    # the connection string (and so the password) is in the psql argv: never in the message
+    assert cfg.neon_backup_url not in out and "u:p@" not in out
+
+
+def test_table_list_put_failure_warns_and_the_dump_still_ships(monkeypatch, capsys):
+    s3 = mock.Mock()
+    s3.put_object.side_effect = RuntimeError("AccessDenied")
+    cfg, s3, _ = _dump_with(monkeypatch, s3=s3)
+    assert snap.dump_to_s3(s3, cfg) == "db/snap-v1.2.3.dump"
+    s3.upload_file.assert_called_once()
+    out = capsys.readouterr().out
+    assert out.count("::warning::") == 1 and "NOT written (RuntimeError writing it)" in out
+
+
+def test_no_table_list_when_pg_dump_fails(monkeypatch):
+    cfg, s3, _ = _dump_with(monkeypatch, dump_rc=1)
+    with pytest.raises(snap.SnapError):
+        snap.dump_to_s3(s3, cfg)
+    s3.put_object.assert_not_called()
+
+
+@pytest.mark.parametrize("present, expected", [(True, "db/snap-v1.2.3.tables.json"), (False, None)])
+def test_run_records_the_table_list_key_or_null_in_the_manifest(monkeypatch, present, expected):
+    cfg = make_cfg()
+    _patch_run_steps(monkeypatch, [])
+    monkeypatch.setattr(snap, "s3_object_exists", lambda s, b, k: present)
+    monkeypatch.setattr(snap, "write_manifest", lambda s, c, m: "snapshots/v1.2.3.json")
+    monkeypatch.setattr(snap, "prune_old_branches", lambda c: {"pruned": [], "skipped": []})
+    result = snap.run(cfg, s3=mock.Mock(), lambda_client=mock.Mock())
+    assert result["manifest"]["tables_s3_key"] == expected
+
+
+def test_table_list_key_lookup_never_raises(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("500")
+    monkeypatch.setattr(snap, "s3_object_exists", boom)
+    assert snap.table_list_key_if_present(mock.Mock(), make_cfg()) is None
 
 
 # --- manifest written LAST ---------------------------------------------------
