@@ -28,12 +28,14 @@ const fullNumber = (n) => Number(n).toLocaleString('en-US')
 // words say "saved seed may have crossed" instead of the figure's source: home-saved pepper seed
 // crosses readily and F1 seed segregates, so the cultivar's range is what it SHOULD be, not what this
 // jar will do. With no provenance column on the row at all, no words; with the column present and
-// empty, "source not recorded".
+// empty, "source not recorded". Only the bottom of the range known is a floor, "5,000+ SHU", as on the
+// chip (varietySpec.shuLabel); heatOf folds the two ends together for sorting, so the raw top is read here.
 export function heatFact(i, { compact = false } = {}) {
   const h = heatOf(i)
   if (!h) return i?.crop_slug === 'pepper' ? 'not recorded' : ''
   const num = compact ? fmtShu : fullNumber
   const range = h.min === 0 && h.max === 0 ? 'Sweet · 0 SHU'
+    : i?.scoville_max == null ? `${num(h.min)}+ SHU`
     : h.min === h.max ? `${num(h.max)} SHU` : `${num(h.min)}–${num(h.max)} SHU`
   const src = i?.scoville_source
   const words = isSavedLot(i) ? 'saved seed may have crossed'

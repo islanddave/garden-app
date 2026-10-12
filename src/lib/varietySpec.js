@@ -16,6 +16,8 @@ export function fmtShu(n) {
 }
 
 // Returns a display label like "50K–100K SHU", "800K–1.04M SHU", "Sweet · 0 SHU", or null.
+// Only the bottom known ("at least 5,000") is a floor and says so: "5K+ SHU" (V5-PLANTPAGEDESIGNQS-001,
+// Dave 2026-10-11). Only the top known reads as the one number, as before.
 // An estimate (scoville_source === 'inference') gains the WORD "est. " in front: "est. 100K–350K SHU".
 // A word, not ≈: the chip is 0.75rem, and at that size a leading glyph reads as a smudge (house rule
 // from commit 4382da4). Strict equality on purpose — only the one value the DB CHECK defines as a
@@ -25,6 +27,7 @@ export function shuLabel(v) {
   if (mn == null && mx == null) return null
   const lo = mn ?? mx, hi = mx ?? mn
   const label = lo === 0 && hi === 0 ? 'Sweet · 0 SHU'
+    : mx == null ? `${fmtShu(lo)}+ SHU`
     : lo === hi ? `${fmtShu(lo)} SHU` : `${fmtShu(lo)}–${fmtShu(hi)} SHU`
   return v?.scoville_source === 'inference' ? `est. ${label}` : label
 }
