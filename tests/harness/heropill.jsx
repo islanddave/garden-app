@@ -18,6 +18,9 @@
 // (ghost and cherokee now carry it), and a bottom-only heat range is a floor:
 // ?case=sprouts   Long Island Improved — "Brussels Sprouts", the longest crop label in the fixtures, with ×12.
 // ?case=floor     Aji Charapita — scoville_min 30000, no max: "30K+ SHU".
+// Lane growthonce (2026-10-12, V5-PLANTPAGEDESIGNQS-001 part 1) — the growth type shows once, as the crop
+// card's green pill: cherokee's gold pill is its days again, and with VITE_API_TAGS set its card's chip
+// row (this case answers /api/entity-tags) no longer carries the Indeterminate facet chip.
 // census() also reports the chip, pill and Details rects, whether any two overlap, and their lines.
 //
 //   node node_modules/vite/bin/vite.js --config tests/harness/vite.harness.config.mjs --port <p> --strictPort
@@ -61,7 +64,14 @@ const CASES = {
       lifecycle: 'tender_perennial', dtm_basis: 'from-transplant', default_unit: 'count', harvest_habit: 'repeat',
       growth_habit: 'indeterminate vine; 6-8 ft; stake or cage required', breeding_system: 'open_pollinated',
       sun_requirements: 'full_sun', days_to_maturity_min: 75, days_to_maturity_max: 85,
-      expected_yield_notes: '225-340 g fruits; green to yellow-green skin when ripe with amber blossom end; bold acidic complex flavor' } },
+      expected_yield_notes: '225-340 g fruits; green to yellow-green skin when ripe with amber blossom end; bold acidic complex flavor' },
+    // The derived tags the tags Lambda projects for a tomato cultivar (lambda/varieties/crop-derive.js;
+    // same rows as cropcardhabit's 1884). Shown only when the harness runs with VITE_API_TAGS set.
+    projected: [
+      { facet: 'determinacy', slug: 'indeterminate', label: 'Indeterminate' },
+      { facet: 'type', slug: 'tomato', label: 'Tomato' },
+      { facet: 'lifecycle', slug: 'tender_perennial', label: 'Tender Perennial' },
+    ] },
   // Prod rows, 2026-09-25 (read-only), in the plants Lambda's variety_ref shape.
   jalapeno: { ...base, id: 'pl-jalapeno', name: 'Jalapeno', status: 'fruiting', quantity: 1,
     variety_ref: { name: 'Jalapeno', genus: 'Capsicum', species: 'annuum', crop_type_slug: 'pepper', lifecycle: 'tender_perennial',
@@ -112,6 +122,7 @@ window.fetch = async (input, init = {}) => {
   if (!path.startsWith('/api/')) return realFetch(input, init)
   let body = []
   if (path === '/api/plants/' + PL.id) body = PL
+  else if (path.startsWith('/api/entity-tags?')) body = { direct: [], projected: (PL.projected ?? []).map(t => ({ ...t, id: `${t.facet}:${t.slug}`, source: 'derived', owner_id: 'system', visibility: 'shared' })) }
   else if (path.startsWith('/api/plants/' + PL.id + '/seed-lots')) body = { plant_id: PL.id, seed_lots: [] }
   await new Promise(r => setTimeout(r, 30))
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })

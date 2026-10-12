@@ -12,6 +12,7 @@
 // ?case=tomato  1884 — one of the 41/46 live tomato cards that show determinacy TWICE: the green
 //               V4-VARSLUG-001 spec chip (determinacyLabel over growth_habit prose) AND the
 //               V4-CLASSIFY-001 derived determinacy facet chip. That is the "parity" the brief named.
+//               Since 2026-10-12 (V5-PLANTPAGEDESIGNQS-001 part 1) the card drops that facet chip: once.
 // ?case=rosso   Rosso Sicilian (lane D, same day) — the one live tomato whose pill was WRONG: prose
 //               "indeterminate vine (semi-determinate per some sources)" painted a green
 //               Semi-determinate pill over an Indeterminate facet chip, because bare `semi` was tested
