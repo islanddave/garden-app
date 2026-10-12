@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.185.1",
+    "date": "2026-10-12",
+    "highlights": [
+      "Fixed: deleting a seed or supply lot no longer yanks you to another page if the delete finishes after you've already left",
+      "Facebook sharing: the health check reads the right clock, and the connection moved to the current Facebook version"
+    ]
+  },
+  {
     "version": "4.185.0",
     "date": "2026-10-12",
     "highlights": [
