@@ -443,12 +443,17 @@ def read_table_list(cfg):
 
 
 def _table_list_warn(cfg, why):
-    key = s3_key_for("tables", cfg)
-    msg = (f"snap: table list s3://{cfg.snap_bucket}/{key} NOT written ({why}) — the snap "
-           f"itself is complete; restore-verify will compare this dump with LIVE prod's table "
-           f"list instead (its fallback, and it says so)")
-    gha_warning(msg)
-    gha_step_summary(["### snap: table list NOT written", f"- {msg}"])
+    """NEVER raises: it is called from the handlers that promise not to (an
+    stdout that cannot encode the message must not fail the ship)."""
+    try:
+        key = s3_key_for("tables", cfg)
+        msg = (f"snap: table list s3://{cfg.snap_bucket}/{key} NOT written ({why}) -- the snap "
+               f"itself is complete; restore-verify will compare this dump with LIVE prod's table "
+               f"list instead (its fallback, and it says so)")
+        gha_warning(msg)
+        gha_step_summary(["### snap: table list NOT written", f"- {msg}"])
+    except Exception:  # noqa: BLE001 — see docstring
+        pass
 
 
 def read_table_list_or_warn(cfg):

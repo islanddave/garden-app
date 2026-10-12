@@ -487,12 +487,12 @@ def _pub(names):
     return {f"public.{n}" for n in names}
 
 
-def _s3_with_list(body=None, denied=()):
+def _s3_with_list(body=None, denied=(), list_at=None):
     """One dump under the prefix; body=None means no list object beside it."""
     contents = [{"Key": DUMP, "LastModified": D(2026, 10, 8), "Size": 7901527}]
     objects = {(BUCKET, DUMP): b"D"}
     if body is not None:
-        contents.append({"Key": LIST, "LastModified": D(2026, 10, 8), "Size": len(body)})
+        contents.append({"Key": LIST, "LastModified": list_at or D(2026, 10, 8), "Size": len(body)})
         objects[(BUCKET, LIST)] = body
     return FakeS3([{"Contents": contents}], objects, denied=denied)
 
@@ -524,6 +524,29 @@ def test_load_tablelist_unreadable_is_red_not_absent():
     assert "cannot be read" in str(e.value)
 
 
+def test_load_tablelist_older_than_its_dump_is_not_used(capsys):
+    # I2: the daily key is per-day, so an earlier run's list can sit beside a
+    # re-run's dump with the right dump_key. Fall back to live, loudly.
+    s3 = _s3_with_list(_list_body(_pub(CORE)), list_at=D(2026, 10, 8) - dt.timedelta(seconds=1))
+    assert rv.load_tablelist(s3, rv.Config(env=env()), DUMP) is None
+    out = capsys.readouterr().out
+    assert out.startswith("::warning::") and "is OLDER than its dump" in out and LIST in out
+    assert s3.gets == []
+
+
+@pytest.mark.parametrize("delta", [0, 1, 3600], ids=["same-second", "1s-later", "1h-later"])
+def test_load_tablelist_not_older_than_its_dump_is_used(delta):
+    s3 = _s3_with_list(_list_body(_pub(CORE)), list_at=D(2026, 10, 8) + dt.timedelta(seconds=delta))
+    assert rv.load_tablelist(s3, rv.Config(env=env()), DUMP)["tables"] == _pub(CORE)
+
+
+def test_tablelist_missing_any_one_core_table_is_malformed():
+    assert CORE == set(rv.SANITY_TABLES)
+    for t in rv.SANITY_TABLES:
+        doc = json.loads(_list_body(_pub(CORE - {t}) | {"public.seed_lots"}))
+        assert f"public.{t}" in rv._tablelist_problem(doc, DUMP)
+
+
 @pytest.mark.parametrize("body", [
     b"", b"not json", b"[]", b"null",
     _list_body([]),                                  # empty is never "prod had no tables"
@@ -533,8 +556,9 @@ def test_load_tablelist_unreadable_is_red_not_absent():
     _list_body(_pub(CORE), taken_at=""),
     _list_body(CORE),                                # not schema-qualified
     _list_body({"gv.audit"}),                        # no public table at all
+    _list_body({"public.plants"}),                   # M7: every other table would read "prod is ahead"
 ], ids=["empty-file", "not-json", "array", "null", "no-tables", "tables-not-list", "format",
-        "other-dump", "no-taken-at", "unqualified", "no-public"])
+        "other-dump", "no-taken-at", "unqualified", "no-public", "one-table"])
 def test_load_tablelist_malformed_is_red_never_empty(body):
     with pytest.raises(rv.VerifyError) as e:
         rv.load_tablelist(_s3_with_list(body), rv.Config(env=env()), DUMP)
@@ -630,17 +654,71 @@ def test_classify_other(monkeypatch):
     assert not ok and rv.classify_failure(rep)[0] == "OTHER"
 
 
-def test_trigger_on_a_prod_ahead_table_still_reds_and_says_why(monkeypatch):
-    # Triggers are still compared with LIVE prod (behaviour kept). The verdict names it.
+def _prod_trg(monkeypatch, extra):
+    monkeypatch.setattr(rv, "trigger_set", lambda url: TRG | extra if "prod" in url else TRG)
+
+
+def test_trigger_on_a_table_prod_gained_after_the_dump_is_information_with_a_list(monkeypatch):
+    # I1 / R2: a new prod table WITH a trigger (the usual additive-DDL shape). The
+    # list proves the table was not there at dump time, so its trigger was not either.
     cfg = rv.Config(env=env())
     counts = {t: 100 for t in CORE}
-    _patch_introspect(monkeypatch, CORE | {"seed_lot_addition"}, CORE, counts, dict(counts))
-    monkeypatch.setattr(rv, "trigger_set", lambda url: (
-        TRG | {"seed_lot_addition:bump:bump_version"} if "prod" in url else TRG))
+    _patch_introspect(monkeypatch, CORE | {"pantry_item"}, CORE, counts, dict(counts))
+    _prod_trg(monkeypatch, {"pantry_item:set_updated_at:set_updated_at"})
+    ok, rep = rv.assess(cfg, "postgresql://scratch", full_scope=True, tablelist=_tl(CORE))
+    assert ok and not rep["hard_failures"]
+    assert rep["info"][1] == (
+        "triggers on tables added to prod after the dump was taken: "
+        "['pantry_item:set_updated_at:set_updated_at'] (not a failure)")
+
+
+def test_trigger_on_a_table_prod_gained_still_reds_without_a_list(monkeypatch):
+    cfg = rv.Config(env=env())
+    counts = {t: 100 for t in CORE}
+    _patch_introspect(monkeypatch, CORE | {"pantry_item"}, CORE, counts, dict(counts))
+    _prod_trg(monkeypatch, {"pantry_item:set_updated_at:set_updated_at"})
+    ok, rep = rv.assess(cfg, "postgresql://scratch", full_scope=True)
+    assert not ok and len(rep["hard_failures"]) == 2 and not rep["info"]
+    assert rv.classify_failure(rep)[0] == "PROD AHEAD OF DUMP"
+
+
+def test_listed_table_lost_with_its_trigger_stays_red_with_a_list(monkeypatch):
+    # R4: seed_lots was in prod at dump time and is not in the restore. Neither the
+    # table nor its trigger is excused.
+    cfg = rv.Config(env=env())
+    counts = {t: 100 for t in CORE}
+    listed = CORE | {"seed_lots"}
+    _patch_introspect(monkeypatch, listed, CORE, counts, dict(counts))
+    _prod_trg(monkeypatch, {"seed_lots:set_updated_at:set_updated_at"})
+    ok, rep = rv.assess(cfg, "postgresql://scratch", full_scope=True, tablelist=_tl(listed))
+    assert not ok and len(rep["hard_failures"]) == 2 and not rep["info"]
+    assert "MISSING from restore: ['seed_lots']" in rep["hard_failures"][0]
+    assert "seed_lots:set_updated_at:set_updated_at" in rep["hard_failures"][1]
+    assert rv.classify_failure(rep)[0] == "TABLES LOST BY RESTORE"
+
+
+def test_new_trigger_on_an_existing_table_stays_red_with_a_list(monkeypatch):
+    # R3: the list says nothing about triggers on tables the dump did hold.
+    cfg = rv.Config(env=env())
+    counts = {t: 100 for t in CORE}
+    _patch_introspect(monkeypatch, CORE | {"pantry_item"}, CORE, counts, dict(counts))
+    _prod_trg(monkeypatch, {"plants:audit_stmt_update:audit_stmt_update",
+                            "pantry_item:set_updated_at:set_updated_at"})
     ok, rep = rv.assess(cfg, "postgresql://scratch", full_scope=True, tablelist=_tl(CORE))
     assert not ok and len(rep["hard_failures"]) == 1
-    klass, detail = rv.classify_failure(rep)
-    assert klass == "PROD AHEAD OF DUMP" and "triggers are still compared with live prod" in detail
+    assert "['plants:audit_stmt_update:audit_stmt_update']" in rep["hard_failures"][0]
+    assert rv.classify_failure(rep)[0] == "OTHER"
+
+
+def test_trigger_on_an_unlisted_table_that_IS_restored_is_not_excused(monkeypatch):
+    # In the dump (created between the list read and pg_dump), so its trigger must restore.
+    cfg = rv.Config(env=env())
+    counts = {t: 100 for t in CORE}
+    both = CORE | {"made_mid_dump"}
+    _patch_introspect(monkeypatch, both, both, counts, dict(counts))
+    _prod_trg(monkeypatch, {"made_mid_dump:set_updated_at:set_updated_at"})
+    ok, rep = rv.assess(cfg, "postgresql://scratch", full_scope=True, tablelist=_tl(CORE))
+    assert not ok and len(rep["hard_failures"]) == 1
 
 
 def test_trigger_lost_on_a_dumped_table_is_not_excused_as_prod_ahead(monkeypatch):
@@ -681,6 +759,17 @@ def test_run_with_list_prod_ahead_is_green_and_reported(monkeypatch, capsys):
     assert "FELL BACK" not in out
 
 
+def test_run_with_list_new_table_and_its_trigger_is_green_with_info(monkeypatch, capsys):
+    s3 = _s3_with_list(_list_body(_pub(CORE)))
+    cfg = _run_real(monkeypatch, s3, CORE | {"pantry_item"}, CORE)
+    _prod_trg(monkeypatch, {"pantry_item:set_updated_at:set_updated_at"})
+    rep = rv.run(cfg, s3=s3)
+    out, err = capsys.readouterr()
+    assert not rep["hard_failures"] and not _verdicts(err)
+    assert ("INFO: triggers on tables added to prod after the dump was taken: "
+            "['pantry_item:set_updated_at:set_updated_at']") in out
+
+
 def test_run_without_list_says_it_fell_back(monkeypatch, capsys):
     s3 = _s3_with_list()
     cfg = _run_real(monkeypatch, s3, CORE, CORE)
@@ -688,6 +777,22 @@ def test_run_without_list_says_it_fell_back(monkeypatch, capsys):
     out, err = capsys.readouterr()
     assert out.count("FELL BACK to live prod's table list") == 1
     assert f"{LIST} absent" in out and not _verdicts(err)
+    # M6: an annotation on a GREEN run too, not one plain log line
+    (line,) = [ln for ln in out.splitlines() if "FELL BACK" in ln]
+    assert line.startswith("::notice::[restore-verify] ")
+
+
+def test_run_with_a_stale_list_reds_a_table_the_newer_dump_lost(monkeypatch, capsys):
+    # I2 / R5: the list was taken before seed_lots existed; the newer dump beside it
+    # lost seed_lots. Used, the list would call that "prod is ahead" and pass.
+    s3 = _s3_with_list(_list_body(_pub(CORE)), list_at=D(2026, 10, 7))
+    cfg = _run_real(monkeypatch, s3, CORE | {"seed_lots"}, CORE)
+    with pytest.raises(rv.VerifyError):
+        rv.run(cfg, s3=s3)
+    out, err = capsys.readouterr()
+    assert "is OLDER than its dump" in out and out.count("FELL BACK") == 1
+    v = _verdicts(err)
+    assert len(v) == 1 and "seed_lots" in v[0] and "LIVE prod (fallback" in v[0]
 
 
 def test_run_without_list_prod_ahead_reds_with_one_verdict_before_the_fail_lines(monkeypatch, capsys):
@@ -763,15 +868,23 @@ def test_age_format():
 BACKUP_YML = os.path.join(HERE, "..", ".github", "workflows", "backup.yml")
 DUMP_STEP, UPLOAD_STEP, VERIFY_STEP = (
     "pg_dump from Neon (prod)", "Upload to S3", "Verify upload (restorability floor)")
+STUB_LISTED = ["gv.audit"] + sorted(f"public.{t}" for t in rv.SANITY_TABLES)
 
 STUBS = {
-    "timeout": '#!/bin/bash\nshift\nexec "$@"\n',
+    # Runs the command unbounded, but records what it was asked to bound it with.
+    "timeout": r'''#!/bin/bash
+k=none
+[ "$1" = "-k" ] && { k="$2"; shift 2; }
+printf 'k=%s duration=%s cmd=%s\n' "$k" "$1" "$2" >> "$STUB_TIMEOUT_LOG"
+shift
+exec "$@"
+''',
     "psql": r'''#!/bin/bash
 [ -n "$STUB_PSQL_FAIL" ] && { echo "psql: error: connection refused" >&2; exit 2; }
 sql="${@: -1}"
 key=$(printf '%s' "$sql" | sed -n "s/.*'dump_key', '\([^']*\)'.*/\1/p")
 at=$(printf '%s' "$sql" | sed -n "s/.*'taken_at', '\([^']*\)'.*/\1/p")
-printf '{"format" : 1, "dump_key" : "%s", "taken_at" : "%s", "tables" : %s}\n' "$key" "$at" "${STUB_TABLES:-[\"gv.audit\", \"public.plants\"]}"
+printf '{"format" : 1, "dump_key" : "%s", "taken_at" : "%s", "tables" : %s}\n' "$key" "$at" "${STUB_TABLES:-$STUB_TABLES_DEFAULT}"
 ''',
     "pg_dump": '#!/bin/bash\nprintf "PGDMP-stub"\n',
     "pg_dumpall": '#!/bin/bash\nwhile [ "$1" != "-f" ]; do shift; done\necho "CREATE ROLE neondb_owner;" > "$2"\n',
@@ -801,7 +914,7 @@ def _backup_bodies(tmp_path):
         (bindir / name).write_text(text)
         (bindir / name).chmod(0o755)
     work = tmp_path / "work"
-    work.mkdir()
+    work.mkdir(exist_ok=True)
 
     def body(name):
         return (steps[name]["run"]
@@ -820,7 +933,8 @@ def _run_backup(tmp_path, **stub_env):
     s3dir = tmp_path / "s3"
     s3dir.mkdir(exist_ok=True)
     e = dict(os.environ, PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}", STUB_S3=str(s3dir),
-             GITHUB_ENV=str(tmp_path / "github_env"), **stub_env)
+             GITHUB_ENV=str(tmp_path / "github_env"), STUB_TABLES_DEFAULT=json.dumps(STUB_LISTED),
+             STUB_TIMEOUT_LOG=str(tmp_path / "timeout.log"), **stub_env)
     results = []
     for name in (DUMP_STEP, UPLOAD_STEP, VERIFY_STEP):
         p = subprocess.run(["bash", "-e", "-c", body(name)], env=e, capture_output=True, text=True)
@@ -837,14 +951,41 @@ def test_daily_backup_writes_a_table_list_the_reader_accepts(tmp_path):
     listed = s3dir / rv.tablelist_key_for(dump_key)
     doc = json.loads(listed.read_text())
     assert rv._tablelist_problem(doc, dump_key) is None
-    assert doc["tables"] == ["gv.audit", "public.plants"]
+    assert doc["tables"] == STUB_LISTED
     assert _is_utc_stamp(doc["taken_at"])
     assert f"Table list verified: db/garden-{day}.tables.json" in results[2][2]
     # and through the reader's own S3 path
     pages = [{"Contents": [{"Key": dump_key, "LastModified": D(2026, 10, 12), "Size": 7998970},
                            {"Key": f"db/garden-{day}.tables.json", "LastModified": D(2026, 10, 12), "Size": 1}]}]
     s3 = FakeS3(pages, {(BUCKET, f"db/garden-{day}.tables.json"): listed.read_bytes()})
-    assert rv.load_tablelist(s3, rv.Config(env=env()), dump_key)["tables"] == {"gv.audit", "public.plants"}
+    assert rv.load_tablelist(s3, rv.Config(env=env()), dump_key)["tables"] == set(STUB_LISTED)
+
+
+def test_daily_backup_bounds_the_table_list_read(tmp_path):
+    # I4 / M2: a hung psql must not hold the dump. The stub records the bound it was
+    # given, so dropping `timeout`, its duration or its -k reds here.
+    import re
+    results, _, _ = _run_backup(tmp_path)
+    assert [rc for _, rc, _ in results] == [0, 0, 0], results
+    calls = (tmp_path / "timeout.log").read_text().splitlines()
+    assert len(calls) == 1 and re.fullmatch(r"k=[1-9]\d* duration=[1-9]\d* cmd=psql", calls[0]), calls
+
+
+def test_daily_backup_still_dumps_when_the_failed_list_cannot_be_removed(tmp_path):
+    # M1: under `bash -e` a failing `rm` in the failed-read branch would end the step
+    # BEFORE pg_dump. A directory at the list's path makes both the read and the rm fail.
+    day = dt.datetime.now().strftime("%Y%m%d")
+    (tmp_path / "work" / f"garden-{day}.tables.json").mkdir(parents=True)
+    results, s3dir, _ = _run_backup(tmp_path)
+    assert [(n, rc) for n, rc, _ in results] == [(DUMP_STEP, 0), (UPLOAD_STEP, 0), (VERIFY_STEP, 1)], results
+    assert (s3dir / "db" / f"garden-{day}.dump").exists()
+    assert "::error::Table list FAILED" in results[2][2]
+
+
+def test_daily_backup_requires_the_same_core_tables_as_the_reader(tmp_path):
+    body, _ = _backup_bodies(tmp_path)
+    for t in rv.SANITY_TABLES:
+        assert f'"public.{t}"' in body(VERIFY_STEP)
 
 
 def _is_utc_stamp(s):
@@ -857,16 +998,27 @@ def _is_utc_stamp(s):
     (dict(STUB_PSQL_FAIL="1"), True),              # an earlier run's list is still in S3
     (dict(STUB_AWS_FAIL_SUFFIX=".tables.json"), False),
     (dict(STUB_AWS_FAIL_SUFFIX=".tables.json"), True),
+    # I2 / S5b: the earlier run's list differs in taken_at only, so it is the SAME LENGTH
+    (dict(STUB_AWS_FAIL_SUFFIX=".tables.json"), "same-length"),
     (dict(STUB_TABLES="[]"), False),
     (dict(STUB_TABLES='["gv.audit"]'), False),
+    (dict(STUB_TABLES='["public.plants"]'), False),  # M7
 ], ids=["read-fails", "read-fails-stale-list", "upload-fails", "upload-fails-stale-list",
-        "empty-list", "no-public-table"])
+        "upload-fails-stale-list-same-length", "empty-list", "no-public-table", "one-table"])
 def test_daily_backup_without_a_good_list_is_red_but_the_dump_is_up_and_verified(tmp_path, stub_env, stale):
     day = dt.datetime.now().strftime("%Y%m%d")
+    older = '{"older": "list"}'
+    if stale == "same-length":
+        older = ('{"format" : 1, "dump_key" : "db/garden-%s.dump", "taken_at" : "2026-01-01T00:00:00Z", '
+                 '"tables" : %s}\n' % (day, json.dumps(STUB_LISTED)))
     if stale:
         (tmp_path / "s3" / "db").mkdir(parents=True)
-        (tmp_path / "s3" / "db" / f"garden-{day}.tables.json").write_text('{"older": "list"}')
+        (tmp_path / "s3" / "db" / f"garden-{day}.tables.json").write_text(older)
     results, s3dir, day = _run_backup(tmp_path, **stub_env)
+    if stale == "same-length":
+        # the scenario is real: S3 still holds the older list, byte for byte as long as tonight's
+        in_s3 = (s3dir / "db" / f"garden-{day}.tables.json").read_text()
+        assert in_s3 == older and len(in_s3) == (tmp_path / "work" / f"garden-{day}.tables.json").stat().st_size
     # the dump and upload steps do NOT fail: tonight's dump is never lost to its list
     assert [(n, rc) for n, rc, _ in results] == [(DUMP_STEP, 0), (UPLOAD_STEP, 0), (VERIFY_STEP, 1)], results
     assert (s3dir / "db" / f"garden-{day}.dump").exists()

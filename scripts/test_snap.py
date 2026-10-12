@@ -249,6 +249,7 @@ def _fake_pg(cmds, psql_rc=0, psql_out=PSQL_TABLES, psql_raises=None, dump_rc=0)
     (args, no shell) writes a non-empty file at its -f path."""
     def fake_run(cmd, **kw):
         cmds.append(cmd)
+        fake_run.kwargs[cmd[0]] = kw
         r = mock.Mock(); r.stderr = ""
         if cmd[0] == "psql":
             if psql_raises:
@@ -262,6 +263,7 @@ def _fake_pg(cmds, psql_rc=0, psql_out=PSQL_TABLES, psql_raises=None, dump_rc=0)
             with open(cmd[cmd.index("-f") + 1], "wb") as fh:
                 fh.write(b"PGDMP\x00data")
         return r
+    fake_run.kwargs = {}
     return fake_run
 
 
@@ -798,6 +800,30 @@ def test_dump_to_s3_writes_the_table_list_beside_the_dump(monkeypatch):
         "tables": ["gv.audit", "public.event_log", "public.plants"]}
 
 
+def test_table_list_read_is_bounded_by_a_timeout(monkeypatch):
+    # Post-FF: this timeout is all that stands between a hung psql and a promote
+    # stuck after main has moved.
+    cfg, s3, _ = _dump_with(monkeypatch)
+    snap.dump_to_s3(s3, cfg)
+    assert snap.subprocess.run.kwargs["psql"]["timeout"] == snap.TABLE_LIST_TIMEOUT
+    assert isinstance(snap.TABLE_LIST_TIMEOUT, int) and 0 < snap.TABLE_LIST_TIMEOUT <= 120
+
+
+def test_table_list_warn_never_raises_and_is_ascii(monkeypatch):
+    # The warning is written from inside the handlers that promise "NEVER raises".
+    seen = []
+    monkeypatch.setattr(snap, "gha_warning", seen.append)
+    snap._table_list_warn(make_cfg(), "why")
+    assert len(seen) == 1 and seen[0].isascii()
+
+    def boom(msg):
+        raise UnicodeEncodeError("ascii", msg, 0, 1, "ordinal not in range(128)")
+    monkeypatch.setattr(snap, "gha_warning", boom)
+    cfg, s3, _ = _dump_with(monkeypatch, psql_rc=1)
+    assert snap.read_table_list_or_warn(cfg) == (None, None)
+    assert snap.dump_to_s3(s3, cfg) == "db/snap-v1.2.3.dump"
+
+
 def test_table_list_document_is_what_restore_verify_accepts(monkeypatch):
     """The writer and the reader are separate files; pin them to one contract."""
     import importlib.util
@@ -806,7 +832,8 @@ def test_table_list_document_is_what_restore_verify_accepts(monkeypatch):
         "restore_verify", os.path.join(os.path.dirname(os.path.abspath(snap.__file__)), "restore-verify.py"))
     rv = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(rv)
-    cfg, s3, _ = _dump_with(monkeypatch)
+    # the reader requires its core tables in a list (a short list excuses the rest)
+    cfg, s3, _ = _dump_with(monkeypatch, psql_out="gv.audit\n" + "".join(f"public.{t}\n" for t in rv.SANITY_TABLES))
     dump_key = snap.dump_to_s3(s3, cfg)
     kw = s3.put_object.call_args.kwargs
     assert kw["Key"] == rv.tablelist_key_for(dump_key)

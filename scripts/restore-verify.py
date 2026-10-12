@@ -240,6 +240,10 @@ def _tablelist_problem(doc, dump_key):
         return f"entries that are not schema.table: {bad[:5]}"
     if not any(t.startswith("public.") for t in tables):
         return "no public.* table listed"
+    # A short list would make every table it omits read as "prod is ahead".
+    core_absent = sorted({f"public.{t}" for t in SANITY_TABLES} - set(tables))
+    if core_absent:
+        return f"core tables not listed: {core_absent}"
     return None
 
 
@@ -248,14 +252,29 @@ def load_tablelist(s3, cfg, dump_key):
     Presence is read from the SAME ListObjects call latest_dump_key makes (same
     bucket, same prefix), not from a HEAD: _s3_exists reads a 403 as "absent",
     which here would turn an unreadable list into a silent fallback. A list
-    that is listed but cannot be fetched or parsed raises (HARD)."""
+    that is listed but cannot be fetched or parsed raises (HARD).
+
+    A list OLDER than its dump is not this dump's list (the daily key is
+    per-day: an earlier run's list can sit beside a re-run's dump and would
+    excuse a table that dump lost). Both dumpers put the list after the dump,
+    so that is None with a warning: the live comparison, the old strictness."""
     key = tablelist_key_for(dump_key)
     paginator = s3.get_paginator("list_objects_v2")
-    present = False
+    listed = dumped = None
     for page in paginator.paginate(Bucket=cfg.backup_bucket, Prefix=cfg.dump_prefix):
-        if any(obj["Key"] == key for obj in page.get("Contents", [])):
-            present = True
-    if not present:
+        for obj in page.get("Contents", []):
+            if obj["Key"] == key:
+                listed = obj
+            elif obj["Key"] == dump_key:
+                dumped = obj
+    if listed is None:
+        return None
+    list_at, dump_at = listed.get("LastModified"), (dumped or {}).get("LastModified")
+    if list_at is not None and dump_at is not None and list_at < dump_at:
+        sys.stdout.write(
+            f"::warning::[restore-verify] table list {key} (written {list_at}) is OLDER than "
+            f"its dump {dump_key} (written {dump_at}): left by an earlier run, NOT used\n"
+        )
         return None
     try:
         doc = json.loads(s3.get_object(Bucket=cfg.backup_bucket, Key=key)["Body"].read())
@@ -576,12 +595,23 @@ def assess(cfg, restored_uri, full_scope, tablelist=None):
         trg_missing = prod_trg - rest_trg
         trg_extra = rest_trg - prod_trg
         report["trigger_counts"] = {"prod": len(prod_trg), "restored": len(rest_trg)}
+        if tablelist is not None:
+            # A table the dump-time list proves did not exist, and which is not in
+            # the restore, cannot have had a trigger in the dump.
+            new_tables = ahead - restored_tables
+            trg_ahead = {t for t in trg_missing if t.split(":", 1)[0] in new_tables}
+            if trg_ahead:
+                trg_missing -= trg_ahead
+                report["info"].append(
+                    f"triggers on tables added to prod after the dump was taken: "
+                    f"{sorted(trg_ahead)} (not a failure)"
+                )
         if trg_missing:
             msg = f"public triggers in prod but MISSING from restore: {sorted(trg_missing)}"
             report["hard_failures"].append(msg)
-            # Still compared with LIVE prod (unchanged). A trigger on a table prod
-            # gained since the dump reds here with or without a list; the verdict
-            # says so instead of leaving it to be worked out.
+            # Still compared with LIVE prod. Without a list, a trigger on a table
+            # prod gained since the dump reds here; the verdict says so instead
+            # of leaving it to be worked out.
             if all(t.split(":", 1)[0] in ahead for t in trg_missing):
                 facts["ahead_failures"].append(msg)
         if trg_extra:
@@ -693,9 +723,9 @@ def _verify(cfg, s3, dump):
     if tablelist is None:
         table_source = "LIVE prod (fallback: no list beside the dump)"
         sys.stdout.write(
-            f"[restore-verify] no table list beside this dump ({tablelist_key_for(dump_key)} "
-            f"absent) — FELL BACK to live prod's table list; a table added to prod since the "
-            f"dump will read as missing\n"
+            f"::notice::[restore-verify] no table list for this dump ({tablelist_key_for(dump_key)} "
+            f"absent, or older than the dump) — FELL BACK to live prod's table list; a table "
+            f"added to prod since the dump will read as missing\n"
         )
     else:
         table_source = f"the dump-time list {tablelist['key']}"

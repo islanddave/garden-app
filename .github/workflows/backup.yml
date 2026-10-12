@@ -111,11 +111,11 @@ jobs:
           TABLES_FILE="/tmp/garden-$(date +%Y%m%d).tables.json"
           S3_KEY="db/garden-$(date +%Y%m%d).dump"
           TAKEN_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          if ! timeout 120 psql "${{ secrets.NEON_BACKUP_URL }}" -X -tA -v ON_ERROR_STOP=1 \
+          if ! timeout -k 5 120 psql "${{ secrets.NEON_BACKUP_URL }}" -X -tA -v ON_ERROR_STOP=1 \
             -c "SELECT json_build_object('format', 1, 'dump_key', '$S3_KEY', 'taken_at', '$TAKEN_AT', 'tables', COALESCE(json_agg(table_schema || '.' || table_name ORDER BY table_schema, table_name), '[]'::json)) FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog', 'information_schema') AND table_schema NOT LIKE 'pg_%'" \
             > "$TABLES_FILE"; then
             echo "::error::Table list for $S3_KEY could NOT be read from prod -- the dump continues, and 'Verify upload' will fail this job at its end"
-            rm -f "$TABLES_FILE"
+            rm -f "$TABLES_FILE" || true
           fi
           pg_dump "${{ secrets.NEON_BACKUP_URL }}" \
             --no-owner \
@@ -145,6 +145,7 @@ jobs:
           TABLES_S3_KEY="db/garden-$(date +%Y%m%d).tables.json"
           if [ -s "$TABLES_FILE" ]; then
             aws s3 cp "$TABLES_FILE" "s3://${{ vars.BACKUP_BUCKET_NAME }}/$TABLES_S3_KEY" \
+              && touch "$TABLES_FILE.uploaded" \
               || echo "::error::Upload of $TABLES_S3_KEY FAILED -- 'Verify upload' will fail this job at its end"
           fi
 
@@ -209,29 +210,36 @@ jobs:
           # is printed under a dump that is already uploaded and verified above. A missing
           # or malformed list is RED, not skipped: restore-verify would otherwise fall back
           # to the live comparison (or red on a malformed list) with nothing here saying why.
-          # The size comparison also catches a list left by an earlier run today beside a
-          # newer dump. list-objects-v2 = the same ListBucket the dump check above uses.
+          # The .uploaded marker is written only by THIS run's successful list upload, so
+          # a list left by an earlier run today beside a newer dump can never pass here
+          # (a size comparison could: such a list is usually the same length). The six
+          # core tables = scripts/restore-verify.py SANITY_TABLES; a short list would make
+          # the tables it omits read as "prod is ahead". list-objects-v2 = the same
+          # ListBucket the dump check above uses.
           TABLES_FILE="/tmp/garden-$(date +%Y%m%d).tables.json"
           TABLES_S3_KEY="db/garden-$(date +%Y%m%d).tables.json"
           TABLES_FAIL="the DUMP $S3_KEY is uploaded and verified; only its table list is not. restore-verify will compare that dump with LIVE prod's table list (or red on a bad list)"
-          if ! jq -e --arg k "$S3_KEY" '.format == 1 and .dump_key == $k and (.taken_at | type == "string" and length > 0) and (.tables | type == "array") and ([.tables[] | select(startswith("public."))] | length > 0)' "$TABLES_FILE" > /dev/null; then
-            echo "::error::Table list FAILED — $TABLES_FILE is missing or malformed (the prod read in the dump step failed, or returned no public table); $TABLES_FAIL"
+          if ! jq -e --arg k "$S3_KEY" '.format == 1 and .dump_key == $k and (.taken_at | type == "string" and length > 0) and (.tables | type == "array") and ([.tables[] | select(startswith("public."))] | length > 0) and ((["public.plant_projects", "public.plants", "public.event_log", "public.locations", "public.inventory_items", "public.plant_varieties"] - .tables) | length == 0)' "$TABLES_FILE" > /dev/null; then
+            echo "::error::Table list FAILED — $TABLES_FILE is missing or malformed (the prod read in the dump step failed, or returned no public table or not every core table); $TABLES_FAIL"
             exit 1
           fi
           if ! TBL_BYTES=$(aws s3api list-objects-v2 --bucket "${{ vars.BACKUP_BUCKET_NAME }}" --prefix "$TABLES_S3_KEY" --query 'Contents[0].Size' --output text); then
             echo "::error::Table list FAILED — could not query S3 for $TABLES_S3_KEY; $TABLES_FAIL"
             exit 1
           fi
-          LOCAL_TBL_BYTES=$(wc -c < "$TABLES_FILE" | tr -d ' ')
-          if [ "$TBL_BYTES" != "$LOCAL_TBL_BYTES" ]; then
-            echo "::error::Table list FAILED — $TABLES_S3_KEY in S3 is '${TBL_BYTES}' bytes, the list read with this dump is ${LOCAL_TBL_BYTES} (upload failed, or an older list is still there); $TABLES_FAIL"
+          if [ ! -f "$TABLES_FILE.uploaded" ]; then
+            echo "::error::Table list FAILED — the upload of $TABLES_S3_KEY did not succeed in 'Upload to S3' (S3 has '${TBL_BYTES}' bytes under that key: nothing, or an older list); $TABLES_FAIL"
+            exit 1
+          fi
+          if [ -z "$TBL_BYTES" ] || [ "$TBL_BYTES" = "None" ]; then
+            echo "::error::Table list FAILED — object $TABLES_S3_KEY not found in S3; $TABLES_FAIL"
             exit 1
           fi
           echo "Table list verified: $TABLES_S3_KEY (${TBL_BYTES} bytes, $(jq '.tables | length' "$TABLES_FILE") tables)"
 
       - name: Cleanup local dump
         if: always()
-        run: rm -f /tmp/garden-*.dump /tmp/garden-*.globals.sql /tmp/garden-*.tables.json
+        run: rm -f /tmp/garden-*.dump /tmp/garden-*.globals.sql /tmp/garden-*.tables.json /tmp/garden-*.tables.json.uploaded
 
 # S3 lifecycle rules must be configured on the backup bucket (infrastructure step, not here):
 #   - Retain last 14 daily dumps
