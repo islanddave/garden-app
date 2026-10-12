@@ -341,21 +341,19 @@ export default function PutUp({
   // Sheet, so in an overlay the param degrades to a plain deep link to the ordinary page.
   const inOverlay = useInOverlaySurface()
   const inWalk = searchParams.get('session') === WALK_PARAM && !inOverlay
-  const prefill = (location.state && typeof location.state.prefill === 'object' && location.state.prefill) || {}
-  const prefillKey = prefillContextKey(prefill)
-  const hasPrefill = prefillKey !== BARE_PREFILL_KEY
 
-  // Adaptive default: a harvest-triggered open lands on the form; a bare "Put-Up" tap lands on the
-  // inventory ("what have I got?") — the more common intent from the More menu. V5-INFLIGHTBATCH-001
-  // promotes a bare open to 'going' the moment there is anything to check; see autoDefaultedRef.
-  const [view, setView] = useState(hasPrefill ? 'log' : 'pantry')
+  // The default: every open lands on the inventory ("what have I got?"). V5-INFLIGHTBATCH-001 promotes a
+  // bare open to 'going' the moment there is anything to check; see autoDefaultedRef. Put-Up R2b: an entry
+  // stored while the "Log a put-up" form existed can still carry what the form was opened with on its
+  // router state. That key is not read here or anywhere: such an entry is an open like any other.
+  const [view, setView] = useState('pantry')
   // Put-Up release 1a (V4 §6.1, §10.2) — a door that NAMES its destination. `?view=pantry` is the
   // Pantry segment (B′ release 2 renamed it from "What's put up"); Today's use-soon band links here
   // with it. It counts as a choice already made, so the bare-open promote below never moves someone who
   // was sent to the list.
   const viewNamed = searchParams.get('view') === 'pantry'
   // Set the moment the user picks a view themselves. The auto-default below is a DEFAULT, not a
-  // preference — it may never move someone off a segment they chose or off a form they are typing in.
+  // preference — it may never move someone off a segment they chose.
   const viewTouchedRef = useRef(viewNamed)
   const chooseView = useCallback((v) => { viewTouchedRef.current = true; setView(v) }, [])
 
@@ -602,9 +600,8 @@ export default function PutUp({
   // no new surface of any kind.
   //
   // Decided ONCE, on the first load that produces an answer, and never revisited: a late-arriving
-  // fetch may not yank someone off a form (the prefill path lands on 'log', and clearPrefill leaves
-  // them there with hasPrefill false) or off a segment they chose. Hence both guards plus the
-  // view === 'pantry' check, which is the state this flip is defined to replace.
+  // fetch may not yank someone off a segment they chose. Hence both guards plus the view === 'pantry'
+  // check, which is the state this flip is defined to replace.
   //
   // Put-Up release 1a (V4 §6.1 "Jen's landing") — and only when a listed batch is the VIEWER's own.
   // Batches are household-visible, so Jen opening Put-Up while Dave has a ferment going used to land
@@ -621,33 +618,11 @@ export default function PutUp({
     setView('going')
   }, [going, view, viewerId])
 
-  // V4-PUTUPENGINE-001 slice 2 — picking a recent harvest navigates IN PLACE with a new prefill.
-  // That reuses the one prefill door PreserveOffer / PutUpFromPlanting / PutUpUseSoonBand already
-  // use, so BUG-PUTUPSTASHHARVLINK-001's context-identity guard keeps working with no new
-  // mechanics. But the useState initialiser above already ran, so it cannot see the new context —
-  // this drives the view exactly as a fresh mount would have.
-  //
-  // Keyed on the CONTEXT KEY, never on the prefill object: every navigation builds a fresh object
-  // literal, so an object-identity dep would re-fire on every render and pin the user in 'log'.
-  const lastPrefillKeyRef = useRef(prefillKey)
-  useEffect(() => {
-    if (prefillKey === lastPrefillKeyRef.current) return
-    lastPrefillKeyRef.current = prefillKey
-    if (prefillKey !== BARE_PREFILL_KEY) setView('log')
-  }, [prefillKey])
-
-  const pickHarvest = useCallback((entry) => {
-    // `replace` so the back button leaves /put-up rather than walking the user back through each
-    // harvest they auditioned.
-    navigate(location.pathname, { state: { prefill: prefillFromHarvestEntry(entry) }, replace: true })
-  }, [navigate, location.pathname])
-
-  // Back to a BARE context: drops the harvest link, remounts the form, restores the picker. The
-  // effect above deliberately does NOT force view='log' for the bare key, so the caller's current
-  // view stands — which is what we want, since the user is still mid-log.
-  const clearPrefill = useCallback(() => {
-    navigate(location.pathname, { state: null, replace: true })
-  }, [navigate, location.pathname])
+  // Put-Up R2b — THE RETIRED FORM'S DRAFT. "Log a put-up" kept a half-typed entry in sessionStorage under
+  // DRAFT_KEY, and a phone that was mid-entry when the form left still holds one, with no form to restore
+  // it into. Cleared once, when the page mounts, by its EXACT key: 'put-up/batch-close' (BatchCloseField's
+  // draft) begins with the same letters and is a different draft, which this must never touch.
+  useEffect(() => { clearDraft(DRAFT_KEY) }, [])
 
   // ── Put-Up B′ release 2 — the Pantry, the page search, the door, the bridge ───────────────────────
   // The Pantry list is read at the PAGE: the segment, the page search and the door's name search all
@@ -821,8 +796,8 @@ export default function PutUp({
         {/* LIFECYCLE ORDER, left to right: going → logged → kept. The grammar was already
             inconsistent (a VERB beside a QUESTION) and a third label had to join it; "Going now"
             names the OBJECT's state, which is what the other two labels are really doing too.
-            B′ release 2: "What's put up" is the Pantry (V4 §6.1); "Log a put-up" (the shipped form) is
-            kept beside the Put something up door. ≤ 4, the page's own ceiling. */}
+            B′ release 2: "What's put up" is the Pantry (V4 §6.1). R2b: "Log a put-up" (the shipped form)
+            is gone; Put something up is the one way in. Three segments. */}
         {!modeActive && !searching && (
           <div style={{ marginBottom: 18 }}>
             <SegmentedControl
@@ -843,34 +818,10 @@ export default function PutUp({
             onChanged={() => pantry.reload()} />
         )}
 
-        {seg === 'log' && !hasPrefill && <RecentHarvestPicker onPick={pickHarvest} />}
-
-        {/* The correction path. harvest_log_id has NO control on the form below — that invisibility
-            is the whole substance of BUG-PUTUPSTASHHARVLINK-001 — so before this slice a wrong link
-            could neither be seen nor cleared. Now that a mis-tap in the picker can create one, it
-            needs an exit. Clearing navigates back to a BARE context, which remounts the form and
-            brings the picker back. Also serves the older PreserveOffer path, which never had one. */}
-        {seg === 'log' && hasPrefill && (
-          <div data-testid="putup-prefill-strip"
-            style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, marginBottom: 14, padding: '9px 12px',
-              backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton }}>
-            <span style={{ flex: 1, minWidth: 0, fontSize: T.type.sm, color: P.green, fontWeight: 600 }}>
-              {prefill.harvest_log_id ? 'Linked to a harvest' : 'Prefilled'}
-            </span>
-            <button type="button" onClick={clearPrefill} data-testid="putup-prefill-clear"
-              style={{ background: 'none', border: 'none', padding: '4px 0', cursor: 'pointer',
-                color: P.green, fontSize: '0.8rem', fontWeight: 700, fontFamily: 'inherit',
-                textDecoration: 'underline', minHeight: 32 }}>
-              Change
-            </button>
-          </div>
-        )}
-
         {seg === 'going' && (
           <GoingNowView batches={going} loading={goingLoading} error={goingError} onReload={loadGoing}
             onStartBatch={StartBatchSheet ? openStartSheet : undefined} onOpenBatch={openBatch} onOpenClosed={openClosed} />
         )}
-        {seg === 'log' && <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => chooseView('pantry')} />}
         {seg === 'pantry' && (
           <PantryView fetch={pageFetch} group={pantryGroup} onGroupChange={setPantryGroup} rows={pantry.rows}
             loading={pantry.loading} error={pantry.error} onReload={pantry.reload} recent={pantryRecent} onRecent={setPantryRecent}

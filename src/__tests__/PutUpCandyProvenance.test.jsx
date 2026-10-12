@@ -1,5 +1,7 @@
-// V5-PUTUPCANDY-001 — `candy`'s picker option and the VISIBLE provenance line that is the condition
-// of it shipping at all.
+// V5-PUTUPCANDY-001 — the VISIBLE provenance line that is the condition of `candy` shipping at all, on
+// the saved row. (Put-Up R2b: the "Log a put-up" form's half of this file — candy in its picker, its note
+// and its help text — left with the form; candy at the moment of logging is pinned on the door, in
+// PutUpR2Df.door.test.jsx "candy on the door" and PutUpR2Df.guard.test.jsx.)
 //
 // FOODSAFETY-RULING-V101 §8.2, which this file encodes: a house-sourced shelf life is either
 // "distinguishable on the surface — a provenance line the user can see — or it takes default: null".
@@ -25,26 +27,13 @@ vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }),
   apiFetch: (...args) => fetchMock(...args),
 }))
-vi.mock('../hooks/useUploadPhoto.js', () => ({
-  useUploadPhoto: () => ({ upload: vi.fn(), isUploading: false, error: null, photo: null, preview: null, reset: vi.fn() }),
-}))
-vi.mock('../hooks/useCropTypes.js', () => ({
-  useCropTypes: () => ({
-    cropTypes: [{ slug: 'watermelon', display_name: 'Watermelon', category: 'fruit' }],
-    loading: false,
-  }),
-}))
 
 import PutUp from '../pages/PutUp.jsx'
 import { rowFromRecord } from './helpers/pantryFake.js'
 
-// The claim, spelled out. Duplicated from PutUp.jsx deliberately: a constant imported from the file
+// The claim, spelled out. Written here deliberately, not imported: a constant imported from the file
 // under test would assert only that a string equals itself, and this string is the mitigation the
 // ruling accepted, not an implementation detail.
-const CLAIM =
-  'There’s no published guidance on how long candied fruit keeps, so this use-by is ours rather than ' +
-  'a tested one — the automatic date comes from our own candying guide.'
-const FORM_NOTE = `No published shelf life for this one. ${CLAIM} Set Use by below to Pick a date if you know the real one.`
 // B′ release 2: the Pantry row's chip carries the basis words and its sheet the detail line, both
 // stated once in V4 §3.2 ("house estimate"; "No published figure exists for candied fruit. This date is
 // a house estimate, not a tested one. Set your own.").
@@ -74,25 +63,18 @@ function wire(stores) {
   fetchMock.mockImplementation((path, options = {}) => {
     const method = options.method || 'GET'
     if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve([])
-    if (path.startsWith('/api/plants?') && method === 'GET') return Promise.resolve([])
     // B′ release 2: the list is the Pantry; a jar's sheet reads it by id.
     if (path.startsWith('/api/pantry?')) return Promise.resolve({ rows: [rowFromRecord(rec, { id: 'loc-1', label: 'Pantry shelf', kind: 'pantry' })] })
     if (path === `/api/preservation/${rec.id}` && method === 'GET') return Promise.resolve(rec)
-    if (path === '/api/preservation' && method === 'POST') return Promise.resolve({ id: 'new-1' })
     if (path.startsWith('/api/preservation/') && method === 'PUT') return Promise.resolve({ id: 'rec-candy' })
     return Promise.resolve(null)
   })
 }
 
-function renderPutUp(prefill) {
-  const entry = prefill ? { pathname: '/put-up', state: { prefill } } : { pathname: '/put-up' }
-  return render(<MemoryRouter initialEntries={[entry]}><PutUp /></MemoryRouter>)
+function renderPutUp() {
+  return render(<MemoryRouter initialEntries={[{ pathname: '/put-up' }]}><PutUp /></MemoryRouter>)
 }
 
-function lastPost() {
-  const call = [...fetchMock.mock.calls].reverse().find(([, o]) => (o?.method === 'POST'))
-  return call ? JSON.parse(call[1].body) : null
-}
 function lastPut() {
   const call = [...fetchMock.mock.calls].reverse().find(([, o]) => (o?.method === 'PUT'))
   return call ? JSON.parse(call[1].body) : null
@@ -106,56 +88,6 @@ beforeEach(() => {
   fetchMock.mockReset()
   wire(storesFixture())
   sessionStorage.clear()
-})
-
-describe('the picker offers candy', () => {
-  it('lists it by its label and posts the slug the DB CHECK spells', async () => {
-    renderPutUp({ crop_type_slug: 'watermelon' })
-    const select = screen.getByRole('combobox', { name: 'Method' })
-    const option = [...select.options].find(o => o.value === 'candy')
-    expect(option, 'candy is missing from METHOD_GROUPS — the picker is the only way to log one').toBeTruthy()
-    expect(option.textContent).toBe('Candied')
-
-    fireEvent.change(screen.getByRole('textbox', { name: 'Quantity' }), { target: { value: '1.25' } })
-    fireEvent.change(select, { target: { value: 'candy' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save put-up' }))
-    await waitFor(() => expect(lastPost()).not.toBeNull())
-    expect(lastPost().method).toBe('candy')
-  })
-})
-
-describe('the log form says where the number came from', () => {
-  it('shows the provenance note, verbatim, when candy is chosen', () => {
-    renderPutUp({ crop_type_slug: 'watermelon' })
-    fireEvent.change(screen.getByRole('combobox', { name: 'Method' }), { target: { value: 'candy' } })
-    expect(screen.getByRole('note').textContent).toBe(FORM_NOTE)
-  })
-
-  it('shows nothing of the kind for a method with a published figure', () => {
-    // The note must be CONDITIONAL, not ambient. A line that appeared on every method would say
-    // nothing about candy and would train the user to read past it.
-    renderPutUp({ crop_type_slug: 'watermelon' })
-    fireEvent.change(screen.getByRole('combobox', { name: 'Method' }), { target: { value: 'whole_freeze' } })
-    expect(screen.queryByRole('note')).toBeNull()
-  })
-
-  it('never attributes the figure to a published body', () => {
-    // The one thing the ruling forbids outright. Named sources appear nowhere in this copy because
-    // none of them says anything about candied fruit — claiming one would be the defect inverted.
-    renderPutUp({ crop_type_slug: 'watermelon' })
-    fireEvent.change(screen.getByRole('combobox', { name: 'Method' }), { target: { value: 'candy' } })
-    expect(screen.getByRole('note').textContent).not.toMatch(/NCHFP|USDA|Extension/i)
-  })
-
-  it('stops the Use-by control claiming a tested shelf life for a candy row', () => {
-    // The help text under that control was an unconditional claim, and over a candy row it would
-    // attribute an uncitable number to a tested source in the very place the number is set.
-    renderPutUp({ crop_type_slug: 'watermelon' })
-    expect(screen.getByText('Auto uses tested shelf-life for the method and storage.')).toBeTruthy()
-    fireEvent.change(screen.getByRole('combobox', { name: 'Method' }), { target: { value: 'candy' } })
-    expect(screen.queryByText('Auto uses tested shelf-life for the method and storage.')).toBeNull()
-    expect(screen.getByText('Auto uses our own house estimate for this one — see the note above.')).toBeTruthy()
-  })
 })
 
 // AMENDED for B′ release 2: the list is the Pantry. The row's discard chip names the house estimate in

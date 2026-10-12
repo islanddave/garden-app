@@ -16,12 +16,6 @@ vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }),
   apiFetch: (...args) => fetchMock(...args),
 }))
-vi.mock('../hooks/useUploadPhoto.js', () => ({
-  useUploadPhoto: () => ({ upload: vi.fn(), isUploading: false, error: null, photo: null, preview: null, reset: vi.fn() }),
-}))
-vi.mock('../hooks/useCropTypes.js', () => ({
-  useCropTypes: () => ({ cropTypes: [{ slug: 'pepper', display_name: 'Peppers', category: 'vegetable' }], loading: false }),
-}))
 // The signed-in user, set per test. The real hook shape: { user, profile, loading, identity }.
 const { viewer } = vi.hoisted(() => ({ viewer: { id: null } }))
 vi.mock('../context/AuthContext.jsx', async (importActual) => ({
@@ -50,7 +44,6 @@ function wire(batches) {
     if (path.startsWith('/api/kitchen-batches?state=going')) return Promise.resolve({ state: 'going', batches })
     if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve({ group_by: 'storage', groups: [] })
     if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve([])
-    if (path.startsWith('/api/plants')) return Promise.resolve([])
     return Promise.resolve(null)
   })
 }
@@ -122,10 +115,42 @@ describe('a bare open lands on Going now only for the viewer’s own batch', () 
     expect(activeSegment()).toBe('Pantry')
   })
 
-  it('a harvest-prefilled open still lands on the form', async () => {
+  // Put-Up R2b: the "Log a put-up" form is gone. An entry stored while it existed can still carry what the
+  // form was opened with, in either shape its senders stored (the harvest picker's, the planting link's).
+  // Nothing reads that key, so such an entry is a bare open like any other: the same landing rule, a segment
+  // that exists, and neither the form nor a door over it. (The stored shapes, the overlay and the key never
+  // being read are held in PutUpR2L.landing.test.jsx, on a real history.)
+  const noFormNoDoor = () => {
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByTestId('door-what-name')).toBeNull()
+    expect(screen.queryByTestId('putup-prefill-strip')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Save put-up' })).toBeNull()
+    expect(screen.queryByRole('radio', { name: 'Log a put-up' })).toBeNull()
+  }
+
+  it('an entry carrying an old harvest prefill is a bare open: a checked segment, no form, no door', async () => {
+    const entry = { pathname: '/put-up', state: { prefill: { crop_type_slug: 'pepper', harvest_log_id: 'h-1' } } }
     wire([JENS])
-    renderAs('user_jen', { pathname: '/put-up', state: { prefill: { crop_type_slug: 'pepper', harvest_log_id: 'h-1' } } })
+    const first = renderAs('user_jen', entry)
+    await waitFor(() => expect(activeSegment()).toBe('Going now'))        // her own batch is going: promoted, as a bare open is
+    noFormNoDoor()
+    first.unmount()
+    wire([DAVES])
+    renderAs('user_jen', entry)
     await settled()
-    expect(activeSegment()).toBe('Log a put-up')
+    expect(activeSegment()).toBe('Pantry')                                // nothing of hers going: the list
+    expect(await screen.findByTestId('pantry-view')).toBeTruthy()
+    noFormNoDoor()
+  })
+
+  it('an entry carrying an old planting prefill is a bare open too: a checked segment, no form, no door', async () => {
+    wire([DAVES])
+    renderAs('user_jen', { pathname: '/put-up', state: { prefill: { crop_type_slug: 'tomato', plant_id: 'pl-w3' } } })
+    await settled()
+    expect(activeSegment()).toBe('Pantry')
+    expect(await screen.findByTestId('pantry-view')).toBeTruthy()
+    noFormNoDoor()
+    // The form read the plantings to keep that one selected. Nothing asks for them now.
+    expect(fetchMock.mock.calls.filter(([p]) => String(p).startsWith('/api/plants'))).toEqual([])
   })
 })

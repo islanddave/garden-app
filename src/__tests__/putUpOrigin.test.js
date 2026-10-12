@@ -162,15 +162,21 @@ describe('withFrom — the state a PUSH into a Put-Up mode rides on', () => {
     expect(withFrom({ [CONTINUES_ENTRY_KEY]: 'list1' }, null)).toBeNull()
   })
 
-  it('keeps every other key as it is: background with its historyEntry, prefill, and keys it has never heard of', () => {
+  // AMENDED in Put-Up R2b: `prefill` was what the retired "Log a put-up" form was opened with, and it rode
+  // along while the form existed. Nothing reads it now; an entry stored before can still hold one, and no
+  // write carries it on.
+  it('keeps every other key as it is: background with its historyEntry, and keys it has never heard of — and drops `prefill`', () => {
     const unknown = { deep: { er: true } }
     const got = withFrom({ background, prefill, unknown, flag: false, n: 0, nothing: null }, { label: 'Pantry' })
-    expect(got).toStrictEqual({ background, prefill, unknown, flag: false, n: 0, nothing: null, from: { label: 'Pantry' } })
+    expect(got).toStrictEqual({ background, unknown, flag: false, n: 0, nothing: null, from: { label: 'Pantry' } })
     expect(got.background.historyEntry).toBe('home1')
-    expect(got.prefill).toBe(prefill)
+    expect('prefill' in got).toBe(false)
     expect(got.unknown).toBe(unknown)
     // …and the same holds for a push that names no origin.
-    expect(withFrom({ background, prefill, unknown }, null)).toStrictEqual({ background, prefill, unknown })
+    expect(withFrom({ background, prefill, unknown }, null)).toStrictEqual({ background, unknown })
+    // A state that held nothing else is null, as for a state that held only an origin.
+    expect(withFrom({ prefill }, null)).toBeNull()
+    expect(withFrom({ prefill }, { label: 'Pantry' })).toStrictEqual({ from: { label: 'Pantry' } })
   })
 
   it('`background` survives by reference', () => {

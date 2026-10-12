@@ -32,9 +32,10 @@ describe('the page shell\'s words', () => {
     expect(TRY_AGAIN_CTA).toBe('Try again')
   })
 
-  it('the four segments, in the control\'s order, and frozen', () => {
+  // AMENDED in Put-Up R2b: four became three when the "Log a put-up" form's segment left.
+  it('the three segments, in the control\'s order, and frozen', () => {
     expect(PUT_UP_SEGMENTS.map(s => [s.value, s.label])).toEqual([
-      ['going', 'Going now'], ['log', 'Log a put-up'], ['pantry', 'Pantry'], ['recipes', 'Recipes'],
+      ['going', 'Going now'], ['pantry', 'Pantry'], ['recipes', 'Recipes'],
     ])
     expect(Object.isFrozen(PUT_UP_SEGMENTS)).toBe(true)
     expect(PUT_UP_SEGMENTS.every(Object.isFrozen)).toBe(true)
@@ -42,8 +43,8 @@ describe('the page shell\'s words', () => {
   })
 
   it('segmentLabel names a segment and nothing else', () => {
-    expect(PUT_UP_SEGMENTS.map(s => segmentLabel(s.value))).toEqual(['Going now', 'Log a put-up', 'Pantry', 'Recipes'])
-    for (const v of ['stores', '', null, undefined, 0]) expect(segmentLabel(v)).toBeNull()
+    expect(PUT_UP_SEGMENTS.map(s => segmentLabel(s.value))).toEqual(['Going now', 'Pantry', 'Recipes'])
+    for (const v of ['stores', 'log', '', null, undefined, 0]) expect(segmentLabel(v)).toBeNull()
   })
 })
 
@@ -214,8 +215,26 @@ describe('backWords — the Back says where the press LANDS', () => {
   it('with no origin it is the fallback, whatever the index', () => {
     for (const idx of [0, 1, 9, undefined]) {
       expect(backWords(null, idx, 'Pantry')).toEqual({ name: 'Pantry', suffix: '' })
-      expect(backWords({ background: { pathname: '/today' } }, idx, 'Log a put-up')).toEqual({ name: 'Log a put-up', suffix: '' })
+      expect(backWords({ background: { pathname: '/today' } }, idx, 'Recipes')).toEqual({ name: 'Recipes', suffix: '' })
     }
+  })
+
+  // Put-Up R2b. "Log a put-up" was a segment until the form was retired, and an entry stored before that can
+  // still name it as its origin. With no kind it is read as the Pantry: what the Back says, and (originSegment)
+  // where the press lands. With a kind it is a recipe or a batch that happens to be called that, left alone.
+  // MUTATIONS (run): the mapping taken out of backWords only -> red on the words; the retired label looked up
+  // before the kind check -> red on the two with-kind lines.
+  it('a retired segment\'s label reads as the Pantry, and only where a segment\'s own label would: with no kind', () => {
+    const old = { from: { label: 'Log a put-up' } }
+    expect(backWords(old, 1, 'Going now')).toEqual({ name: 'Pantry', suffix: '' })
+    expect(originSegment(old)).toBe('pantry')
+    expect(backWords({ background: { pathname: '/today' }, from: { label: '  Log a put-up ' } }, 2, 'Recipes')).toEqual({ name: 'Pantry', suffix: '' })
+    // It will not pop: the fallback, as for any origin.
+    expect(backWords(old, 0, 'Going now')).toEqual({ name: 'Going now', suffix: '' })
+    expect(backWords({ from: { label: 'Log a put-up', kind: 'batch', id: 'kb-9' } }, 1, 'Going now')).toEqual({ name: 'Log a put-up', suffix: ' (batch)' })
+    expect(originSegment({ from: { label: 'Log a put-up', kind: 'recipe', id: 'rc-9' } })).toBeNull()
+    // A segment's own label is unchanged by any of this.
+    for (const s of PUT_UP_SEGMENTS) expect(backWords({ from: { label: s.label } }, 1, 'Going now')).toEqual({ name: s.label, suffix: '' })
   })
 
   it('a label is trimmed as origin.js reads it, and the suffix still follows it', () => {

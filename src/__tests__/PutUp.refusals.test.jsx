@@ -24,18 +24,6 @@ vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }),
   apiFetch: (...args) => fetchMock(...args),
 }))
-vi.mock('../hooks/useUploadPhoto.js', () => ({
-  useUploadPhoto: () => ({ upload: vi.fn(), isUploading: false, error: null, photo: null, preview: null, reset: vi.fn() }),
-}))
-vi.mock('../hooks/useCropTypes.js', () => ({
-  useCropTypes: () => ({
-    cropTypes: [
-      { slug: 'tomato', display_name: 'Tomato', category: 'vegetable' },
-      { slug: 'blueberry', display_name: 'Blueberries', category: 'fruit' },
-    ],
-    loading: false,
-  }),
-}))
 const { applySpy } = vi.hoisted(() => ({ applySpy: vi.fn() }))
 vi.mock('../hooks/useAppUpdate.js', () => ({ useAppUpdate: () => ({ update: null, apply: applySpy }) }))
 
@@ -303,27 +291,6 @@ describe('the Pantry row and its sheet — a refused write says why, and the edi
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 describe('every other write on the page reads the code too', () => {
-  it('the log form: client_stale in the banner, Refresh now, and the typed entries kept', async () => {
-    refuseWritesWith(await serverSays({ error: 'stale', code: 'client_stale' }, { path: '/api/preservation', method: 'POST' }))
-    renderPage({ pathname: '/put-up', state: { prefill: { crop_type_slug: 'tomato' } } })
-    fireEvent.change(screen.getByRole('textbox', { name: 'Quantity' }), { target: { value: '6' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save put-up' }))
-    const refresh = await screen.findByRole('button', { name: REFRESH_NOW_LABEL })
-    expect(screen.getByRole('alert').textContent).toContain(CLIENT_STALE_TEXT)
-    expect(screen.getByRole('textbox', { name: 'Quantity' }).value).toBe('6')
-    expect(applySpy).not.toHaveBeenCalled()
-    fireEvent.click(refresh)
-    expect(applySpy).toHaveBeenCalledTimes(1)
-  })
-
-  it('the log form: an uncoded 400 still reads the way it always has', async () => {
-    refuseWritesWith(await serverSays({ error: 'quantity_value must be > 0' }, { status: 400, path: '/api/preservation', method: 'POST' }))
-    renderPage({ pathname: '/put-up', state: { prefill: { crop_type_slug: 'tomato' } } })
-    fireEvent.change(screen.getByRole('textbox', { name: 'Quantity' }), { target: { value: '6' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save put-up' }))
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe("Couldn't save — quantity_value must be > 0"))
-  })
-
   // B′ release 2: the freezer walk is Walk a place — same band, same Undo, same refusal words.
   it('the walk’s Undo: a coded refusal is shown in the band in the server’s words', async () => {
     const undoRefusal = await serverSays({ error: 'That one was already used', code: 'jar_has_uses' }, { method: 'DELETE' })
@@ -347,15 +314,6 @@ describe('every other write on the page reads the code too', () => {
     const band = screen.getByTestId('putup-walk-band')
     fireEvent.click(await within(band).findByTestId('putup-walk-undo'))
     await waitFor(() => expect(within(band).getByRole('alert').textContent).toBe('That one was already used'))
-  })
-
-  it('adding a storage location: a coded refusal replaces the diagnostic line', async () => {
-    refuseWritesWith(await serverSays({ error: 'You already have a place called Garage freezer', code: 'location_label_taken' }, { path: '/api/storage-locations', method: 'POST' }))
-    renderPage({ pathname: '/put-up', state: { prefill: { crop_type_slug: 'tomato' } } })
-    fireEvent.click(screen.getByRole('button', { name: /New location/i }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'New location name' }), { target: { value: 'Garage freezer' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('You already have a place called Garage freezer'))
   })
 })
 

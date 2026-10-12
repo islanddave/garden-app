@@ -750,16 +750,25 @@ export const START_BATCH_CTA = 'Start a batch'
 // Going now's load error offers the reload the page already owns.
 export const TRY_AGAIN_CTA = 'Try again'
 
-// The four segments, in the order the control shows them: going → logged → kept, then the recipes. ONE
-// list for the segmented control AND for the Back's words, so a renamed segment cannot leave a Back that
-// still names the old one.
+// The three segments, in the order the control shows them: going → kept, then the recipes. ONE list for
+// the segmented control AND for the Back's words, so a renamed segment cannot leave a Back that still
+// names the old one.
 export const PUT_UP_SEGMENTS = Object.freeze([
   Object.freeze({ value: 'going', label: 'Going now' }),
-  Object.freeze({ value: 'log', label: 'Log a put-up' }),
   Object.freeze({ value: 'pantry', label: 'Pantry' }),
   Object.freeze({ value: 'recipes', label: 'Recipes' }),
 ])
 export const RECIPES_SEGMENT = 'recipes'
+
+// A SEGMENT THAT IS GONE. Until Put-Up R2b there was a fourth, "Log a put-up" (the retired form), and a mode
+// opened from it stored that label as its origin. history.state outlives a reload and a deploy (origin.js),
+// so an entry on a phone can still say it. It stands for the Pantry: where the Back lands (originSegment)
+// and what the Back says (backWords). Read only where a segment's own label is — with NO kind.
+const RETIRED_SEGMENT_LABELS = new Map([['Log a put-up', 'pantry']])
+// The segment a kind-less origin label names: its own, or the one a retired label now stands for.
+function labelSegment(label) {
+  return PUT_UP_SEGMENTS.find(s => s.label === label)?.value ?? RETIRED_SEGMENT_LABELS.get(label) ?? null
+}
 
 // The segment a mode's Back lands on when it leaves by its own push (nothing to pop to): the one the
 // page is holding, except that a recipe is left onto Recipes — a recipe opened from a search hit on
@@ -792,11 +801,11 @@ export function segmentOrigin(view, { onScreen = true } = {}) {
 // list would then show that segment under a Back that read "← Recipes". So a pop to a segment SELECTS it
 // (the page asks this at the press), and the words stay true however the page came to be holding another.
 // Only a segment's own label with NO kind: a recipe or a batch that happens to be called "Pantry" is a
-// sender like any other.
+// sender like any other. A retired segment's label names the segment that stands for it (labelSegment).
 export function originSegment(state) {
   const from = readFrom(state)
   if (!from || from.kind) return null
-  return PUT_UP_SEGMENTS.find(s => s.label === from.label)?.value ?? null
+  return labelSegment(from.label)
 }
 
 // POP, OR PUSH. A mode's in-page Back pops ONLY when the entry names where it was opened from AND the
@@ -862,8 +871,12 @@ export function popLanding({ started, landedKey }) {
 // backLabel: "Petri Dish" + " (recipe)") only when the press will pop to it, otherwise `fallback` — the
 // label of the segment the push lands on. A Back that reads "Pantry" and lands on Going now would be
 // the page lying about its only exit.
+// An origin that is a segment's label (no kind) is read as the segment it names TODAY: the press selects
+// that segment (originSegment), so a label stored for a segment that is gone reads as the one it lands on.
 export function backWords(state, historyIndex, fallback) {
   if (!leavesByPop(state, historyIndex)) return { name: fallback, suffix: '' }
+  const named = segmentLabel(originSegment(state))
+  if (named) return { name: named, suffix: '' }
   const words = backLabel(state, fallback)
   const name = readFrom(state).label
   return words.startsWith(name) ? { name, suffix: words.slice(name.length) } : { name: words, suffix: '' }

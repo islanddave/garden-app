@@ -48,8 +48,10 @@ export function readFrom(state) {
 //     (and sets the validated copy) — so a push that names no origin cannot carry the last entry's
 //   · removes the page-entry stamp (pageEntry.js CONTINUES_ENTRY_KEY): it names the entry being LEFT, and
 //     a pushed entry that kept it would answer to the list's scroll identity instead of its own
+//   · removes `prefill`: the key the retired "Log a put-up" form was opened with (Put-Up R2b). Nothing
+//     reads it now, and an entry stored before the form left can still hold one — no write carries it on
 //   · keeps every other key as it is, same references: an overlay's `background` (with its
-//     historyEntry), `prefill`, and any key this file has never heard of
+//     historyEntry), and any key this file has never heard of
 //   · returns null, not {}, when nothing is left
 // A sender on ANOTHER route (the planting page) calls withFrom(null, from): it never spreads its own
 // route's state into /put-up.
@@ -57,6 +59,7 @@ export function withFrom(state, from) {
   const out = isPlain(state) ? { ...state } : {}
   delete out.from
   delete out[CONTINUES_ENTRY_KEY]
+  delete out.prefill
   const origin = readFrom({ from })
   if (origin) out.from = origin
   return Object.keys(out).length ? out : null

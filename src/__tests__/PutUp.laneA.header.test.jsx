@@ -3,7 +3,7 @@
 //
 // WHAT THIS FILE HOLDS, each with the mutation that proves it:
 //   · two conditional header buttons with fixed testids: on Going now a filled "Start a batch"
-//     (start-a-batch); on Pantry, Recipes and Log a put-up a filled "Put something up" (putup-door);
+//     (start-a-batch); on Pantry and Recipes a filled "Put something up" (putup-door);
 //   · on Going now "Put something up" stays ONE tap away, as a quiet 48px link in the row that holds
 //     "Walk a place", under the same testid — so there is exactly one putup-door on screen, always;
 //   · ONE filled button per screen state, and one min-width for it on every segment;
@@ -139,7 +139,7 @@ describe('the header\'s filled button follows the segment (PLAN-V3 D10)', () => 
     expect(door.getAttribute('style')).toBe(walk.getAttribute('style'))
   })
 
-  it.each(['Pantry', 'Recipes', 'Log a put-up'])('on %s it is "Put something up", and there is no Start a batch', async (name) => {
+  it.each(['Pantry', 'Recipes'])('on %s it is "Put something up", and there is no Start a batch', async (name) => {
     renderPage()
     await onSegment(name)
     const doors = screen.getAllByTestId('putup-door')
@@ -177,7 +177,7 @@ describe('the header\'s filled button follows the segment (PLAN-V3 D10)', () => 
     const width = start.style.minWidth
     expect(width).toMatch(/^\d+(\.\d+)?em$/)                     // in em: it follows the text size
     expect([start.style.minHeight, start.style.flexShrink, start.style.whiteSpace]).toEqual(['48px', '0', 'nowrap'])
-    for (const name of ['Pantry', 'Recipes', 'Log a put-up']) {
+    for (const name of ['Pantry', 'Recipes']) {
       pick(name)
       const door = screen.getByTestId('putup-door')
       expect({ name, minWidth: door.style.minWidth, style: door.getAttribute('style') })

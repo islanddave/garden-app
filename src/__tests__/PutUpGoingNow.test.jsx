@@ -32,12 +32,6 @@ vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }),
   apiFetch: (...args) => fetchMock(...args),
 }))
-vi.mock('../hooks/useUploadPhoto.js', () => ({
-  useUploadPhoto: () => ({ upload: vi.fn(), isUploading: false, error: null, photo: null, preview: null, reset: vi.fn() }),
-}))
-vi.mock('../hooks/useCropTypes.js', () => ({
-  useCropTypes: () => ({ cropTypes: [{ slug: 'pepper', display_name: 'Peppers', category: 'vegetable' }], loading: false }),
-}))
 vi.mock('react-router-dom', async (orig) => {
   const actual = await orig()
   return { ...actual, useNavigate: () => navigateMock }
@@ -1007,12 +1001,12 @@ function wirePage({ batches = [], batchesFail = false, closed = [], detail = nul
       return batchesFail ? Promise.reject(new Error('no such table')) : Promise.resolve(listEnvelope(batches))
     }
     if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve([])
-    if (path.startsWith('/api/plants?')) return Promise.resolve([])
     if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve({ group_by: 'storage', groups: [] })
     return Promise.resolve(null)
   })
 }
 
+// `prefill` is what an entry stored while the "Log a put-up" form existed can still carry (Put-Up R2b).
 function renderPage(prefill, search = '') {
   const entry = prefill ? { pathname: '/put-up', search, state: { prefill } } : { pathname: '/put-up', search }
   return render(<MemoryRouter initialEntries={[entry]}><PutUp /></MemoryRouter>)
@@ -1032,12 +1026,13 @@ function activeSegment() {
 
 describe('PutUp — the bare-open default lands on "Going now" when something is going', () => {
   // AMENDED in Put-Up release 4: the Recipes segment joins the list, last (V4 §2.6 "The Recipes segment
-  // appears from release 4"); the lifecycle three keep their order ahead of it.
+  // appears from release 4"); the lifecycle ones keep their order ahead of it.
+  // AMENDED in Put-Up R2b: "Log a put-up" (the retired form's segment) is gone. Three.
   it('shows the lifecycle segments in order, then Recipes', async () => {
     wirePage()
     renderPage()
     await waitFor(() => expect(segments().map(r => r.textContent))
-      .toEqual(['Going now', 'Log a put-up', 'Pantry', 'Recipes']))
+      .toEqual(['Going now', 'Pantry', 'Recipes']))
   })
 
   it('promotes a bare open to Going now with ONE open batch', async () => {
@@ -1076,23 +1071,29 @@ describe('PutUp — the bare-open default lands on "Going now" when something is
     fetchMock.mockImplementation((path) => {
       if (path.startsWith('/api/kitchen-batches')) return new Promise(r => { release = () => r(listEnvelope([CANDY])) })
       if (path === '/api/storage-locations') return Promise.resolve([])
-      if (path.startsWith('/api/plants?')) return Promise.resolve([])
       if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve({ group_by: 'storage', groups: [] })
       return Promise.resolve(null)
     })
+    // AMENDED in Put-Up R2b (QA-M4): the segment picked is Recipes; the form's segment is gone.
     renderPage()
-    fireEvent.click(screen.getByRole('radio', { name: 'Log a put-up' }))
-    expect(activeSegment()).toBe('Log a put-up')
+    fireEvent.click(screen.getByRole('radio', { name: 'Recipes' }))
+    expect(activeSegment()).toBe('Recipes')
     release()
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    expect(activeSegment()).toBe('Log a put-up')
+    await new Promise(r => setTimeout(r, 0))
+    expect(activeSegment()).toBe('Recipes')
   })
 
-  it('never yanks a harvest-prefilled open off the form', async () => {
+  // REWRITTEN in Put-Up R2b. This was "never yanks a harvest-prefilled open off the form": the form is gone,
+  // and what an old entry still carries is not read. It is a bare open, so the promotion applies to it.
+  it('an entry carrying an old prefill is promoted like any bare open, and no door opens', async () => {
     wirePage({ batches: [CANDY] })
     renderPage({ crop_type_slug: 'pepper', harvest_log_id: 'h-1' })
-    await waitFor(() => expect(screen.getByTestId('putup-prefill-strip')).toBeTruthy())
-    expect(activeSegment()).toBe('Log a put-up')
+    await waitFor(() => expect(activeSegment()).toBe('Going now'))
+    expect(screen.getByTestId('going-batch-title').textContent).toBe('Candied ginger')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByTestId('door-what-name')).toBeNull()
+    expect(screen.queryByTestId('putup-prefill-strip')).toBeNull()
   })
 
   it('a manual tap reaches Going now from either other segment', async () => {
