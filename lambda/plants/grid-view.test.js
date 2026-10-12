@@ -416,19 +416,13 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
     //   variety_ref.default_unit      -> seeds the quantity unit per crop (V4-HARVUNITDEFAULT-001)
     // It reads NO field outside PICKER_KEYS, and needs no widening of the projection.
     //
-    // FOURTH CONSUMER ADDED 2026-08-31 — pages/PutUp.jsx (V4-PUTUPSESSION-001, the freezer walk).
-    // It fetches through useCachedFetch on the SAME path PlantingSelect self-fetches, so the two
-    // share one warm cache entry rather than each holding their own. Its field reads, counted:
-    //   variety_ref.crop_type_slug  -> plantingsForCrop(), the sole-planting-for-this-crop filter
-    //   archived_at                 -> the !p.archived_at filter, same as EventNew and VoiceHarvest
-    //   id                          -> setPlantId, i.e. the put-up row's attribution
-    //   name                        -> the stated auto-resolution banner "✓ My garden · <name>"
-    //   variety_ref.name,
-    //   succession_order, sown_at   -> only via plantingWaveLabel()'s fallback when name is empty
-    // All inside PICKER_KEYS; no widening. NOTE the archived_at read was ADDED when this consumer
-    // was censused — the original auto-resolve omitted it, which would have attributed a put-up to
-    // an archived planting and shown that guess to the user as a fact. Counting the fields is what
-    // surfaced it, which is the point of this list.
+    // FOURTH CONSUMER, 2026-08-31 until Put-Up R2b — pages/PutUp.jsx (V4-PUTUPSESSION-001: the freezer
+    // walk, then the "Log a put-up" form's planting field). REMOVED from this census when the form was
+    // retired: the page no longer requests the projection (the Put something up door finds plantings
+    // through the kitchen line search). What censusing it taught is kept, because two entries below
+    // refer to it: its first auto-resolve did not read archived_at, which would have attributed a
+    // put-up to an archived planting and shown that guess to the user as a fact. Counting the fields is
+    // what surfaced it, which is the point of this list.
     //
     // FIFTH CONSUMER ADDED 2026-09-02 — pages/SavedSeeds.jsx (V4-SEEDLINK-001). Same shape as PutUp:
     // useCachedFetch on the byte-identical path PlantingSelect self-fetches, so the page's name
@@ -488,7 +482,7 @@ describe('GET /api/plants?view=picker — exactly the chooser field set (V4-PICK
     expect(hits).toEqual([
       'components/LogManyVoice.jsx',
       'components/forms/PlantingSelect.jsx', 'pages/EventNew.jsx', 'pages/PhotoLibrary.jsx',
-      'pages/PutUp.jsx', 'pages/SavedSeeds.jsx', 'pages/VoiceHarvest.jsx',
+      'pages/SavedSeeds.jsx', 'pages/VoiceHarvest.jsx',
     ]);
   });
 });

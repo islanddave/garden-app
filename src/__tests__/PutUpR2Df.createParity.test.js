@@ -8,8 +8,9 @@
 // read back out of the INSERT, in its own column. A key with no column fails "has a column of that name".
 //
 // THE FORM'S KEYS are a frozen literal (src/pages/PutUp.jsx PutUpForm at R2a), held to a living server
-// constant, and — while the form still exists — checked against the form's own text. That last assertion
-// leaves with the form in R2b; the literal was then proved against the code once.
+// constant. While the form existed they were also checked against the form's own text; that assertion left
+// with the form in R2b, the literal having been proved against the code. The server still accepts the
+// form's body (a bundle cached on a phone still sends it), which is why the literal stays.
 //
 // THE WIRE TYPE (ruling Df-4): quantity_value is a JSON number, === Number(totalOfEach(size, count)); when
 // there is no total BOTH keys are absent. The ANSWER's type is not pinned here: the create answers the
@@ -21,9 +22,6 @@
 // numeric string sent -> the wire-type pin; a stale texture sent after a method change -> both fixtures.
 // CI LANE: `npm test` plus the TZ re-run. No DOM.
 import { describe, it, expect, beforeEach } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { stubState, resetStubs } from '../../lambda/_test-stubs/state.js'
 import { validateCreate, normalizeJarUnit, VALID_METHODS } from '../../lambda/preservation/jarRules.js'
 import { PRESERVATION_EDITABLE_COLUMNS, VALID_SOURCE_KINDS } from '../../lambda/preservation/provenance.js'
@@ -39,7 +37,6 @@ import { JAR_CREATE_COLUMNS } from './helpers/pantryFake.js'
 
 const { handler } = await import('../../lambda/preservation/index.js')
 
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const USER = 'user_stub_dave'
 const PLACE = '5b1c2b4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d'
 const PLANT = '6a1c2b4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d'
@@ -118,23 +115,6 @@ beforeEach(() => {
 describe('the form\'s keys — a frozen literal, held to the server and (while it exists) to the form', () => {
   it('are every creatable column the server names, less the two a create never sets', () => {
     expect(sorted(FORM_KEYS)).toEqual(sorted(PRESERVATION_EDITABLE_COLUMNS.filter(c => c !== 'remaining_count' && c !== 'consumed_at')))
-  })
-
-  // R2b deletes this one with the form.
-  it('are the keys PutUpForm builds, read from its own text between `const body = {` and its POST', () => {
-    const src = readFileSync(resolve(REPO, 'src/pages/PutUp.jsx'), 'utf8')
-    const form = src.slice(src.indexOf('function PutUpForm('))
-    const from = form.indexOf('const body = {')
-    const to = form.indexOf("fetch('/api/preservation', { method: 'POST'", from)
-    expect(from, 'PutUpForm no longer declares `const body = {`').toBeGreaterThan(-1)
-    expect(to, 'PutUpForm no longer posts /api/preservation after its body').toBeGreaterThan(from)
-    const span = form.slice(from, to).replace(/\/\/.*$/gm, '')               // its comments name keys in prose
-    const literal = span.slice(0, span.indexOf('\n    }\n'))
-    const keys = new Set([
-      ...[...literal.matchAll(/^\s{6}([a-z_]+)(?::|,)/gm)].map(m => m[1]),
-      ...[...span.matchAll(/\bbody\.([a-z_]+) = /g)].map(m => m[1]),
-    ])
-    expect(sorted(keys)).toEqual(sorted(FORM_KEYS))
   })
 })
 

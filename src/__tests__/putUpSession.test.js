@@ -1,7 +1,7 @@
 // V4-PUTUPSESSION-001 slice 0 — the freezer walk's pure half.
 //
-// Everything here is falsifiable in jsdom: date arithmetic, the exactly-one-planting rule, the
-// "what haven't I put up" set difference, and the two localStorage stores. The walk's GEOMETRY is
+// Everything here is falsifiable in jsdom: date arithmetic, the "what haven't I put up" set
+// difference, and the two localStorage stores. The walk's GEOMETRY is
 // not testable here and is not claimed to be (tests/harness/README.md:14-16 — getBoundingClientRect
 // returns zeros in jsdom), which is why the band's height is measured at runtime rather than pinned
 // to a constant this file could pretend to certify.
@@ -11,7 +11,7 @@ import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 installStoragePolyfill()
 
 import {
-  coarseDate, exactDate, describeDate, describeApprox, plantingsForCrop, solePlanting, unrecordedCrops,
+  coarseDate, exactDate, describeApprox, unrecordedCrops,
   readWalk, writeWalk, clearWalk, readDismissed, dismissCrop,
 } from '../lib/putUpSession.js'
 
@@ -46,27 +46,21 @@ describe('coarseDate — the two answers a freezer walk can actually give', () =
   })
 })
 
-describe('exactDate / describeDate — an estimate never wears the same words as a chosen date', () => {
+// Put-Up R2b: describeDate (the retired "Log a put-up" form's formatter) is gone; describeApprox is the one
+// place the word lives, and the read surfaces format the date themselves before marking it.
+describe('exactDate / describeApprox — an estimate never wears the same words as a chosen date', () => {
   it('a picked date is NOT approximate', () => {
     expect(exactDate('2026-07-04')).toEqual({ date: '2026-07-04', approx: false })
   })
   it('an empty pick is null, not a silent today', () => {
     expect(exactDate('')).toBeNull()
   })
-  it('prefixes "around" only for an estimate', () => {
-    expect(describeDate('2026-07-16', true)).toMatch(/^around /)
-    expect(describeDate('2026-07-16', false)).not.toMatch(/^around /)
-    expect(describeDate('', true)).toBe('')
-  })
 
   // V4-PUTUPSESSION-001 slice 1 — the read surfaces mark an ALREADY-FORMATTED date, because both of
-  // them get a JS Date object back from the neon driver and describeDate's parseYmd cannot take one.
-  it('describeApprox marks a pre-formatted date and is the SAME wording describeDate uses', () => {
+  // them get a JS Date object back from the neon driver.
+  it('describeApprox marks a pre-formatted date: "around" only for an estimate', () => {
     expect(describeApprox('Jul 16, 2026', true)).toBe('around Jul 16, 2026')
     expect(describeApprox('Jul 16, 2026', false)).toBe('Jul 16, 2026')
-    // The single-source claim, asserted rather than assumed: change the word in one place and this
-    // fails rather than letting the walk's band and the saved record drift apart.
-    expect(describeDate('2026-07-16', true)).toBe(describeApprox(describeDate('2026-07-16', false), true))
   })
 
   // NULL is not FALSE. Every row written before the column existed carries NULL, and a read surface
@@ -75,46 +69,6 @@ describe('exactDate / describeDate — an estimate never wears the same words as
   it('an unrecorded flag renders exactly like a chosen date', () => {
     expect(describeApprox('Jul 16, 2026', null)).toBe('Jul 16, 2026')
     expect(describeApprox('Jul 16, 2026', undefined)).toBe('Jul 16, 2026')
-  })
-})
-
-const PLANTS = [
-  { id: 'p-blue', variety_ref: { crop_type_slug: 'blueberry' } },
-  { id: 'p-tom-1', variety_ref: { crop_type_slug: 'tomato' } },
-  { id: 'p-tom-2', variety_ref: { crop_type_slug: 'tomato' } },
-  { id: 'p-none' },
-]
-
-describe('solePlanting — auto-resolution only where there is nothing to choose', () => {
-  it('returns the single planting for a one-planting crop (18 of 31 crops, measured)', () => {
-    expect(solePlanting(PLANTS, 'blueberry').id).toBe('p-blue')
-  })
-  it('returns null when the crop has two — two is a CHOICE and the app must ask', () => {
-    expect(solePlanting(PLANTS, 'tomato')).toBeNull()
-  })
-  it('returns null for a crop with none, for no crop, and for no list', () => {
-    expect(solePlanting(PLANTS, 'squash')).toBeNull()
-    expect(solePlanting(PLANTS, '')).toBeNull()
-    expect(solePlanting(null, 'blueberry')).toBeNull()
-  })
-  it('ignores plantings with no variety_ref rather than throwing on them', () => {
-    expect(plantingsForCrop(PLANTS, 'blueberry')).toHaveLength(1)
-  })
-
-  // ?view=picker returns archived_at rather than filtering in SQL, so each consumer filters it —
-  // VoiceHarvest.jsx:340 and EventNew both do. Auto-attribution is the worst place to skip it: the
-  // result is shown to the user as a stated fact ("✓ My garden · <name>"), so an archived planting
-  // would be laundered into a decision rather than surfaced as a guess.
-  const WITH_ARCHIVED = [
-    { id: 'p-arch', archived_at: '2026-05-01T00:00:00Z', variety_ref: { crop_type_slug: 'garlic' } },
-    { id: 'p-live', variety_ref: { crop_type_slug: 'garlic' } },
-    { id: 'p-arch-only', archived_at: '2026-05-01T00:00:00Z', variety_ref: { crop_type_slug: 'leek' } },
-  ]
-  it('never auto-resolves onto an ARCHIVED planting, even when it is the only one for the crop', () => {
-    expect(solePlanting(WITH_ARCHIVED, 'leek')).toBeNull()
-  })
-  it('resolves to the live planting when an archived sibling shares the crop, instead of declining', () => {
-    expect(solePlanting(WITH_ARCHIVED, 'garlic').id).toBe('p-live')
   })
 })
 

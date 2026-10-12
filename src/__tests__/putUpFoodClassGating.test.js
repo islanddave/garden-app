@@ -1,5 +1,9 @@
-// V4-PUTUPFOODCATEGORY-001 (BD-056) — the non-plant food classes must reach the Put-Up crop field
-// and NO other picker.
+// V4-PUTUPFOODCATEGORY-001 (BD-056) — the non-plant food classes must reach NO garden picker.
+//
+// AMENDED in Put-Up R2b. The one client surface that asked for them, the "Log a put-up" form's crop field
+// (useCropTypes({ scope: 'all' })), is gone with the form. Put something up finds a food class through the
+// server's line search, not through this hook, so today NO call site opts in — and the census below holds
+// that: a scope named anywhere is a food class on its way into a garden picker.
 //
 // The feature is a seed, not a schema change: migrations/v4-putupfood-001 puts bread, cheese, milk,
 // butter, yogurt, meat and fish into crop_types, and the already-shipped whats-put-up?group=crop
@@ -95,25 +99,28 @@ describe('every call site asks for the scope it should', () => {
       .map(m => ({ file: relative(root, p), args: m[1].trim() })))
 
   it('found the call sites it is meant to be auditing', () => {
-    // Seven today: VarietyPicker, VarietyEdit, ProjectsAdminClassify, PutUp, and the three
-    // OPS-CROPTYPEALIASCLIENT-001 additions (Search, PlantingSelect, VoiceHarvest). A zero here
-    // would make every assertion below vacuous, which is exactly how this class of guard rots.
+    // Seven when this floor was set: VarietyPicker, VarietyEdit, ProjectsAdminClassify, PutUp, and the
+    // three OPS-CROPTYPEALIASCLIENT-001 additions (Search, PlantingSelect, VoiceHarvest). PutUp left in
+    // R2b; AddSeeds, useCropFacetOptions and BatchInputsField have joined since, so the scan still finds
+    // more than seven (counted at the cut: ten matches). A zero here would make every assertion below
+    // vacuous, which is exactly how this class of guard rots.
     expect(callSites.length).toBeGreaterThanOrEqual(7)
   })
 
-  it('only the Put-Up crop field opts into the full vocabulary', () => {
+  it('no call site opts into the full vocabulary', () => {
     const optedIn = callSites.filter(c => c.args.includes("'all'")).map(c => c.file).sort()
-    expect(optedIn).toEqual(['src/pages/PutUp.jsx'])
+    expect(optedIn).toEqual([])
   })
 
-  it('no other call site names a scope at all', () => {
+  it('no call site names a scope at all', () => {
     // WIDENED FROM `args !== ''` BY OPS-CROPTYPEALIASCLIENT-001, and narrowed back to the thing this
     // guard is actually about. The old form read "pass no options whatsoever", which was the same
     // assertion as long as `scope` was the only option there was; `enabled` is now a second one and
     // PlantingSelect passes it (it must not fetch before it is typed into — BUG-PLANTFETCHSILENT-001).
-    // The protection is unchanged in the direction that matters: naming `scope` outside PutUp still
-    // reds, whatever value it is given, so scope:'all' and a typo'd scope alike are still caught.
-    const wrong = callSites.filter(c => c.file !== 'src/pages/PutUp.jsx' && /\bscope\b/.test(c.args))
+    // The protection is unchanged in the direction that matters: naming `scope` still reds, whatever
+    // value it is given, so scope:'all' and a typo'd scope alike are still caught. (R2b: PutUp.jsx was
+    // the one file allowed to; with the form gone it is held to the rule like every other.)
+    const wrong = callSites.filter(c => /\bscope\b/.test(c.args))
     expect(
       wrong.map(c => `${c.file}: useCropTypes(${c.args})`),
       'a garden picker must not pass a scope — the default is the safe one',
@@ -125,8 +132,9 @@ describe('every call site asks for the scope it should', () => {
     // rather than trusting that it would. This is the exact string the old `args !== ''` form would
     // also have caught and the new one must not lose.
     const smuggled = [{ file: 'src/pages/Search.jsx', args: "{ enabled: true, scope: 'all' }" }]
-    expect(smuggled.filter(c => c.file !== 'src/pages/PutUp.jsx' && /\bscope\b/.test(c.args)))
-      .toHaveLength(1)
+    expect(smuggled.filter(c => /\bscope\b/.test(c.args))).toHaveLength(1)
+    // …and, since R2b, on the page that used to be exempt.
+    expect([{ file: 'src/pages/PutUp.jsx', args: "{ scope: 'all' }" }].filter(c => /\bscope\b/.test(c.args))).toHaveLength(1)
   })
 })
 

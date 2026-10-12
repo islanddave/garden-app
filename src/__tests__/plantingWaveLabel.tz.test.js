@@ -10,7 +10,6 @@
 // the runner's: CI runs the suite once in UTC, where the defect cannot show.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { plantingWaveLabel } from '../components/forms/PlantingSelect.jsx'
-import { plantingOptionLabel } from '../pages/PutUp.jsx'
 
 const PHONE_TZ = 'America/New_York'
 const ORIGINAL_TZ = process.env.TZ
@@ -41,10 +40,6 @@ describe('plantingWaveLabel prints the sown day that is stored (run in ET)', () 
   it('the first of a month does not fall back into the month before', () => {
     expect(plantingWaveLabel(zuke('2026-05-01'))).toBe('Dark Green Zucchini — wave 2, sown May 1')
     expect(plantingWaveLabel(zuke('2026-01-01T00:00:00.000Z'))).toBe('Dark Green Zucchini — wave 2, sown Jan 1')
-  })
-
-  it('PutUp re-exports the same function, so its provenance line is covered too', () => {
-    expect(plantingOptionLabel(zuke('2026-04-10'))).toBe('Dark Green Zucchini — wave 2, sown Apr 10')
   })
 
   // A value with a real time of day IS an instant, and it still renders in the viewer's zone:

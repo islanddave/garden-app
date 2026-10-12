@@ -25,12 +25,11 @@ const DISMISS_KEY = 'garden:putup-not-mine:v1'
 // Local-time YYYY-MM-DD. Duplicated rather than imported from PutUp.jsx because a lib importing a
 // page would invert the dependency direction every other module here holds to.
 function pad(n) { return String(n).padStart(2, '0') }
-function parseYmd(s) { return new Date(`${s}T00:00:00`) }
 
 // Midpoint arithmetic runs in UTC, deliberately. These are CALENDAR spans, and a local-time span
 // crossing the March DST boundary is 23 hours short — enough to slide the answer a whole day, which
 // would make the same button resolve differently in March than in July for no reason a reader could
-// ever guess. Display still parses local (parseYmd above), matching the rest of the page.
+// ever guess. Display parses local, where the date is shown, matching the rest of the page.
 function utcMs(ymd) {
   const [y, m, d] = ymd.split('-').map(Number)
   return Date.UTC(y, m - 1, d)
@@ -76,49 +75,15 @@ export function exactDate(ymd) {
 }
 
 // "around Jul 16" vs "Jul 16". ONE STRING, ONE PLACE — this is the only literal in the app that
-// marks a date as an estimate, so the walk's band, the form, and a record read back out of the
+// marks a date as an estimate, so the walk's band, the door, and a record read back out of the
 // database cannot drift into saying it three different ways (or one of them not saying it at all).
 //
-// Slice 1 split the wording out of describeDate so the two READ surfaces can reach it without
-// re-deriving a YYYY-MM-DD string. PutUp.jsx and PutUpFromPlanting.jsx each already own a prettyDate
-// that copes with the neon driver handing dates back as JS Date objects; describeDate's parseYmd
-// does not, and passing it a Date returns the Date itself, which React then refuses to render. So
-// they format first and mark second. `approx === true` at every call site, never truthiness: the
-// column is three-valued and NULL means "nobody was asked", which must read exactly as it does today.
+// The callers format the date first and mark it second: the read surfaces (jarWords.js,
+// PutUpFromPlanting.jsx) get JS Date objects back from the neon driver and own the formatting that copes
+// with one. `approx === true` at every call site, never truthiness: the column is three-valued and NULL
+// means "nobody was asked", which must read exactly as it does today.
 export function describeApprox(pretty, approx) {
   return approx ? `around ${pretty}` : pretty
-}
-export function describeDate(date, approx) {
-  if (!date) return ''
-  const d = parseYmd(date)
-  const pretty = isNaN(d.getTime())
-    ? date
-    : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-  return describeApprox(pretty, approx)
-}
-
-// ── auto-resolution (design §4.2 G2) ────────────────────────────────────────
-// 18 of 31 harvested crops have exactly one planting, so for most of the freezer the app can name
-// the plant with no input at all. It returns the planting only when there is EXACTLY one: two is a
-// choice and the caller must ask.
-export function plantingsForCrop(plants, cropSlug) {
-  if (!Array.isArray(plants) || !cropSlug) return []
-  // ARCHIVED PLANTINGS ARE EXCLUDED, and this is load-bearing rather than tidy. The picker
-  // projection RETURNS archived_at rather than filtering in SQL, so every consumer filters it
-  // itself — EventNew and VoiceHarvest.jsx:340 both do. Without it, a crop whose only planting is
-  // archived would silently auto-attribute the put-up to it, and a crop with one live + one
-  // archived would count 2 and decline to auto-resolve at all. Both are wrong, and the first is the
-  // worse kind: a default the user is shown as a stated fact. Archive-Hiding Rule, and "a wrong
-  // default launders a wrong decision".
-  //
-  // The picker query param is deliberately NOT spelled out above: the consumer census in
-  // lambda/plants/grid-view.test.js greps that literal string across src/, so naming it in a comment
-  // registers this file as a call site and reds the guard. Found exactly that way, 2026-08-31.
-  return plants.filter(p => p?.variety_ref?.crop_type_slug === cropSlug && !p.archived_at)
-}
-export function solePlanting(plants, cropSlug) {
-  const hits = plantingsForCrop(plants, cropSlug)
-  return hits.length === 1 ? hits[0] : null
 }
 
 // ── "what haven't I put up?" (design §6 Q4) ─────────────────────────────────

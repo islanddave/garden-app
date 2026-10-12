@@ -23,7 +23,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { stubState, resetStubs } from '../../lambda/_test-stubs/state.js'
-import { ymd, prettyDate } from '../pages/PutUp.jsx'
+import { ymd } from '../pages/PutUp.jsx'
 import { preservedOn } from '../components/putup/JarPicker.jsx'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 
@@ -184,24 +184,22 @@ describe('an untouched echo leaves the stored dates unchanged (the 1a exit proof
 })
 
 describe('every reader of these fields shows the stored calendar day (the census, run in ET)', () => {
-  // PutUp.jsx RecordRow prints prettyDate(preserved_at / use_by_target / planting_sown_at) and its
-  // editor seeds the date input with ymd(use_by_target): the shape the GET now returns, read the way
-  // those two helpers read it.
-  it('PutUp.jsx ymd / prettyDate render the GET body as the stored day', async () => {
+  // PutUp.jsx's jar editor seeds its date input with ymd(use_by_target): the shape the GET now returns,
+  // read the way that helper reads it. (AMENDED in Put-Up R2b: prettyDate, the retired "Log a put-up"
+  // form's printer, left with the form; its three assertions here are made through ymd instead.)
+  it('PutUp.jsx ymd renders the GET body as the stored day', async () => {
     const rec = await getAsThePhoneSeesIt()
     expect(rec.preserved_at).toBe(STORED.preserved_at)
     expect(rec.use_by_target).toBe(STORED.use_by_target)
     expect(rec.planting_sown_at).toBe(STORED.planting_sown_at)
     expect(ymd(rec.use_by_target)).toBe(STORED.use_by_target)
-    expect(prettyDate(rec.preserved_at)).toBe('Sep 28, 2026')
-    expect(prettyDate(rec.use_by_target)).toBe('Sep 28, 2027')
-    expect(prettyDate(rec.planting_sown_at)).toBe('May 12, 2026')
+    expect(ymd(rec.preserved_at)).toBe(STORED.preserved_at)
+    expect(ymd(rec.planting_sown_at)).toBe(STORED.planting_sown_at)
   })
 
-  // The defect, kept visible: the same helpers fed the shape the GET used to send show the day before.
-  it('the old serialisation (a UTC-midnight instant) reads a day early through the same helpers', () => {
+  // The defect, kept visible: the same helper fed the shape the GET used to send shows the day before.
+  it('the old serialisation (a UTC-midnight instant) reads a day early through the same helper', () => {
     expect(ymd('2026-09-28T00:00:00.000Z')).toBe('2026-09-27')
-    expect(prettyDate('2026-09-28T00:00:00.000Z')).toBe('Sep 27, 2026')
   })
 
   // JarPicker and BatchDetailView print preservedOn(preserved_at), which reads the text and never a

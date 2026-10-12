@@ -27,8 +27,10 @@ export const PUT_UP_URL_PARAMS = Object.freeze({
 
 // ── Storage keys ──────────────────────────────────────────────────────────────────────────────────
 export const PUT_UP_STORAGE_KEYS = Object.freeze({
-  // sessionStorage via draftStash.js — the shipped "Log a put-up" form's draft (never rename: PutUp.jsx DRAFT_KEY).
-  'put-up': { store: 'sessionStorage (draftStash)', shape: 'the log form snapshot + prefillKey' },
+  // sessionStorage via draftStash.js — the "Log a put-up" form's draft. RETIRED with the form (Put-Up R2b):
+  // nothing reads or writes it, and the page clears it once at mount. The row stays, as retired, because
+  // phones still hold the key (never rename: PutUp.jsx DRAFT_KEY).
+  'put-up': { store: 'sessionStorage (draftStash)', shape: 'RETIRED — was the log form\'s snapshot; cleared at mount, never read' },
   // localStorage — the walk's stash (putUpSession.js WALK_KEY). v1 records from the shipped freezer walk
   // ({storageId, date, dateApprox, …}) still read; B′ writes {place:{key,id,label,kind}, whenChoice,
   // pickedDate, when:{date,precision}, whenWords, date} under the same key and version, and a record
