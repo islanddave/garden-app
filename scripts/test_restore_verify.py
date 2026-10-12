@@ -540,6 +540,24 @@ def test_load_tablelist_not_older_than_its_dump_is_used(delta):
     assert rv.load_tablelist(s3, rv.Config(env=env()), DUMP)["tables"] == _pub(CORE)
 
 
+@pytest.mark.parametrize("list_stamp, dump_stamp", [
+    ({}, {"LastModified": D(2026, 10, 8)}),
+    ({"LastModified": None}, {"LastModified": D(2026, 10, 8)}),
+    ({"LastModified": D(2026, 10, 9)}, {}),
+], ids=["list-LastModified-missing", "list-LastModified-None", "dump-LastModified-missing"])
+def test_load_tablelist_that_cannot_be_dated_against_its_dump_is_not_used(list_stamp, dump_stamp, capsys):
+    # RC-M1: not comparable is not "fresh". Fall back to live, loudly.
+    body = _list_body(_pub(CORE))
+    s3 = FakeS3([{"Contents": [{"Key": DUMP, "Size": 7901527, **dump_stamp},
+                               {"Key": LIST, "Size": len(body), **list_stamp}]}],
+                {(BUCKET, DUMP): b"D", (BUCKET, LIST): body})
+    assert rv.load_tablelist(s3, rv.Config(env=env()), DUMP) is None
+    out = capsys.readouterr().out
+    assert out.startswith("::warning::") and LIST in out and "NOT used" in out
+    assert "cannot be shown to be newer than its dump" in out
+    assert s3.gets == []
+
+
 def test_tablelist_missing_any_one_core_table_is_malformed():
     assert CORE == set(rv.SANITY_TABLES)
     for t in rv.SANITY_TABLES:
@@ -611,7 +629,8 @@ def test_assess_no_list_prod_ahead_still_reds_and_is_classified(monkeypatch):
     assert not ok and rep["facts"]["table_source"] == "live"
     assert "tables in prod but MISSING from restore: ['seed_lot_addition']" in rep["hard_failures"][0]
     klass, detail = rv.classify_failure(rep)
-    assert klass == "PROD AHEAD OF DUMP" and "seed_lot_addition" in detail and "no table list" in detail
+    assert klass == "PROD AHEAD OF DUMP" and "seed_lot_addition" in detail
+    assert "no usable table list for the dump" in detail
 
 
 def test_assess_list_restore_only_table_warns(monkeypatch):
@@ -719,6 +738,12 @@ def test_trigger_on_an_unlisted_table_that_IS_restored_is_not_excused(monkeypatc
     _prod_trg(monkeypatch, {"made_mid_dump:set_updated_at:set_updated_at"})
     ok, rep = rv.assess(cfg, "postgresql://scratch", full_scope=True, tablelist=_tl(CORE))
     assert not ok and len(rep["hard_failures"]) == 1
+    # RC-M3: classed as prod ahead, in words that are true when the table IS restored
+    klass, detail = rv.classify_failure(rep)
+    assert klass == "PROD AHEAD OF DUMP" and "['made_mid_dump']" in detail
+    assert "a trigger missing from the restore on a table that is in prod and not in" in detail
+    assert "applied after the list was read" in detail
+    assert "not in the restore" not in detail and "no usable table list" not in detail
 
 
 def test_trigger_lost_on_a_dumped_table_is_not_excused_as_prod_ahead(monkeypatch):
@@ -793,6 +818,9 @@ def test_run_with_a_stale_list_reds_a_table_the_newer_dump_lost(monkeypatch, cap
     assert "is OLDER than its dump" in out and out.count("FELL BACK") == 1
     v = _verdicts(err)
     assert len(v) == 1 and "seed_lots" in v[0] and "LIVE prod (fallback" in v[0]
+    # RC-M4: there IS a list beside this dump; the verdict must not say there is none
+    assert "LIVE prod (fallback: no usable list for the dump)" in v[0]
+    assert "no usable table list for the dump" in v[0]
 
 
 def test_run_without_list_prod_ahead_reds_with_one_verdict_before_the_fail_lines(monkeypatch, capsys):

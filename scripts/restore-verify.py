@@ -270,7 +270,15 @@ def load_tablelist(s3, cfg, dump_key):
     if listed is None:
         return None
     list_at, dump_at = listed.get("LastModified"), (dumped or {}).get("LastModified")
-    if list_at is not None and dump_at is not None and list_at < dump_at:
+    if list_at is None or dump_at is None:
+        # Not comparable is not "fresh": only a list shown to be at least as new
+        # as its dump is used.
+        sys.stdout.write(
+            f"::warning::[restore-verify] table list {key} (written {list_at}) cannot be shown "
+            f"to be newer than its dump {dump_key} (written {dump_at}): NOT used\n"
+        )
+        return None
+    if list_at < dump_at:
         sys.stdout.write(
             f"::warning::[restore-verify] table list {key} (written {list_at}) is OLDER than "
             f"its dump {dump_key} (written {dump_at}): left by an earlier run, NOT used\n"
@@ -655,12 +663,19 @@ def classify_failure(report):
             f"restored/prod rows {rows}; this dump does not look like prod"
         )
     if failures and len(ahead) == len(failures):
-        how = ("no table list beside the dump, so it was compared with live prod"
-               if facts.get("table_source") == "live"
-               else "triggers are still compared with live prod")
+        if facts.get("table_source") == "live":
+            return "PROD AHEAD OF DUMP", (
+                f"{facts.get('prod_ahead')} exist in prod and not in the restore (no usable "
+                f"table list for the dump, so it was compared with live prod); expected "
+                f"if prod DDL was applied since the dump; re-check after the next dump"
+            )
+        # With a list only a trigger failure gets here, and its table may well
+        # be in the restore (created between the list read and the dump).
         return "PROD AHEAD OF DUMP", (
-            f"{facts.get('prod_ahead')} exist in prod and not in the restore ({how}); expected "
-            f"if prod DDL was applied since the dump; re-check after the next dump"
+            f"every failure is a trigger missing from the restore on a table that is in prod "
+            f"and not in the dump's table list (such tables: {facts.get('prod_ahead')}; "
+            f"triggers are compared with live prod); expected if prod DDL was applied after "
+            f"the list was read; re-check after the next dump"
         )
     return "OTHER", f"{len(failures)} failure(s), first: {first}"
 
@@ -721,7 +736,7 @@ def _verify(cfg, s3, dump):
     )
     tablelist = load_tablelist(s3, cfg, dump_key)
     if tablelist is None:
-        table_source = "LIVE prod (fallback: no list beside the dump)"
+        table_source = "LIVE prod (fallback: no usable list for the dump)"
         sys.stdout.write(
             f"::notice::[restore-verify] no table list for this dump ({tablelist_key_for(dump_key)} "
             f"absent, or older than the dump) — FELL BACK to live prod's table list; a table "
