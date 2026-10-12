@@ -222,7 +222,7 @@ describe('App route table (single source of truth)', () => {
       '/search':   { ariaLabel: 'Search your garden', size: 'peek' },
       '/log':      { ariaLabel: 'Log an event',       size: 'full' },
       '/log/many': { ariaLabel: 'Log many',           size: 'full' },
-      '/put-up':   { ariaLabel: 'Log a put-up',       size: 'full' },
+      '/put-up':   { ariaLabel: 'Put-Up',             size: 'full' },
     }
     for (const r of renderRoutes({ overlay: true, user: true })) {
       const host = r.props.element

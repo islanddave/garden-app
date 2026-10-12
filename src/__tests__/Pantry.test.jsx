@@ -67,6 +67,9 @@ describe('the Pantry segment (V4 §2.5, §6.1)', () => {
     renderPantry(['/put-up'])
     const seg = screen.getByRole('radiogroup', { name: 'Put-Up view' })
     expect(within(seg).getAllByRole('radio').map(r => r.textContent)).toEqual(['Going now', 'Pantry', 'Recipes'])
+    // Put-Up R2b: three, and each the 48 px tap target (SegmentedControl's `touch`). MUTATION (run): `touch`
+    // taken off the page's control -> red here, 40px.
+    expect(within(seg).getAllByRole('radio').map(r => r.style.minHeight)).toEqual(['48px', '48px', '48px'])
     expect(within(seg).getByRole('radio', { name: 'Pantry' }).getAttribute('aria-checked')).toBe('true')
     await screen.findByRole('heading', { name: 'Kitchen fridge' })
     expect(fake.calls('GET').some(c => c.path === '/api/pantry?group=place')).toBe(true)

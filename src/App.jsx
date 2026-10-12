@@ -369,7 +369,7 @@ export function renderRoutes({ overlay, user, loading }) {
     { path: '/log/harvest',   element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><HarvestLog /></ErrorBoundary></Protected> },
     // Legacy. Kept because the launcher-cached PWA shortcut and any bookmark still name it.
     { path: '/log/voice',     element: <Protected><VoiceHarvestRedirect /></Protected> },
-    { path: '/put-up',        overlayable: true, ariaLabel: 'Log a put-up',       size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PutUp /></ErrorBoundary></Protected> },
+    { path: '/put-up',        overlayable: true, ariaLabel: 'Put-Up',             size: 'full', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PutUp /></ErrorBoundary></Protected> },
     { path: '/photos',        element: <Protected><PhotoLibrary /></Protected> },
     // W-RESTORE. Declared AFTER /photos and matched with `end: true` by react-router v6, so the two
     // never compete. Boundaried like its data-fetching siblings: a throw here must cost this page,

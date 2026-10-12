@@ -717,7 +717,8 @@ export default function PutUp({
             inconsistent (a VERB beside a QUESTION) and a third label had to join it; "Going now"
             names the OBJECT's state, which is what the other two labels are really doing too.
             B′ release 2: "What's put up" is the Pantry (V4 §6.1). R2b: "Log a put-up" (the shipped form)
-            is gone; Put something up is the one way in. Three segments. */}
+            is gone; Put something up is the one way in. Three segments, each at the 48 px tap target
+            the rest of Put-Up's controls have (`touch`). */}
         {!modeActive && !searching && (
           <div style={{ marginBottom: 18 }}>
             <SegmentedControl
@@ -725,6 +726,7 @@ export default function PutUp({
               value={view}
               onChange={chooseView}
               options={PUT_UP_SEGMENTS}
+              touch
             />
           </div>
         )}
