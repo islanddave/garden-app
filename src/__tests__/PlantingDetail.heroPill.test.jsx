@@ -88,21 +88,30 @@ beforeEach(() => {
 })
 
 describe('PlantingDetail — the hero key-fact pill never carries habit prose', () => {
-  it('Purple Blush Tomatillo: the pill is its days, and the sentence is nowhere on the page', async () => {
+  // The sentence is on the page once, as the crop card's Habit row (V5-PLANTPAGEDESIGNQS-001, Dave
+  // 2026-10-11 "add habit"); until then it was nowhere. Never in the hero.
+  it('Purple Blush Tomatillo: the pill is its days, and the sentence is the card\'s Habit row only', async () => {
     renderPage(BLUSH)
     await screen.findByRole('heading', { name: 'Purple Blush Tomatillo' })
     expect(heroGoldPills('Purple Blush Tomatillo')).toEqual(['70–75 days'])
-    expect(document.body.textContent.toLowerCase()).not.toContain('bushy upright')
+    const prose = screen.getAllByText(BLUSH_PROSE)
+    expect(prose).toHaveLength(1)
+    expect(prose[0].parentElement.textContent).toBe(`Habit${BLUSH_PROSE}`)
+    expect(screen.getByRole('heading', { level: 1 }).parentElement.textContent).not.toContain('bushy upright')
   })
 
-  // The hero follows the cultivar's crop type: a tomato named by cultivar gets its determinacy word, as
-  // the V200 design asks ("SHU for peppers, determinate/indeterminate for tomatoes"). Until 2026-09-25
-  // this hero said "75–85 days". The days stay on the page, in the crop card's Days to maturity row.
-  it('Cherokee Green (a tomato named by cultivar): the pill is Indeterminate; the card keeps the days', async () => {
+  // The growth type shows ONCE, as the crop card's green pill (V5-PLANTPAGEDESIGNQS-001 part 1, Dave
+  // 2026-10-12: "Green pill on the card"). From 2026-09-25 to then the hero's gold pill said it too
+  // ("SHU for peppers, determinate/indeterminate for tomatoes", the V200 design) and the hero's days were
+  // gone; the gold pill is now the next rung of its ladder, the days.
+  it('Cherokee Green (a tomato named by cultivar): Indeterminate is the card\'s green pill only; the hero pill is its days', async () => {
     renderPage(CHEROKEE)
     await screen.findByRole('heading', { name: 'Cherokee Green' })
-    expect(heroGoldPills('Cherokee Green')).toEqual(['Indeterminate'])
-    expect(screen.getAllByText('75–85 days')).toHaveLength(1) // the crop card's row; the hero no longer repeats it
+    expect(heroGoldPills('Cherokee Green')).toEqual(['75–85 days'])
+    const word = screen.getAllByText('Indeterminate')
+    expect(word).toHaveLength(1)
+    expect(screen.getByRole('heading', { level: 1 }).parentElement.contains(word[0])).toBe(false) // not in the hero
+    expect(screen.getAllByText('75–85 days')).toHaveLength(2) // the hero pill and the card's Days to maturity row
   })
 })
 

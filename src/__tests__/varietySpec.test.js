@@ -10,9 +10,16 @@ describe('V4-VARSLUG-001 shuLabel', () => {
     expect(shuLabel({ scoville_min: 800000, scoville_max: 1041427 })).toBe('800K–1.04M SHU')
   })
   it('sweet peppers read as Sweet · 0 SHU', () => expect(shuLabel({ scoville_min: 0, scoville_max: 0 })).toBe('Sweet · 0 SHU'))
-  it('single value when min==max or one side null', () => {
+  it('single value when min==max, or when only the top is known', () => {
     expect(shuLabel({ scoville_min: 2500, scoville_max: 2500 })).toBe('2.5K SHU')
-    expect(shuLabel({ scoville_min: 8000, scoville_max: null })).toBe('8K SHU')
+    expect(shuLabel({ scoville_min: null, scoville_max: 8000 })).toBe('8K SHU')
+  })
+  // V5-PLANTPAGEDESIGNQS-001 (Dave 2026-10-11, "show the plus"): "at least 8,000" is not "8,000".
+  it('only the bottom known reads as a floor: "8K+ SHU"', () => {
+    expect(shuLabel({ scoville_min: 8000, scoville_max: null })).toBe('8K+ SHU')
+    expect(shuLabel({ scoville_min: 8000 })).toBe('8K+ SHU')
+    expect(shuLabel({ scoville_min: 1200000, scoville_max: null })).toBe('1.2M+ SHU')
+    expect(shuLabel({ scoville_min: 0, scoville_max: null })).toBe('Sweet · 0 SHU')
   })
 })
 
@@ -26,7 +33,7 @@ describe('V5-SEEDCARDS-001 shuLabel — scoville_source', () => {
   it("an 'inference' figure is prefixed with the word est.", () => {
     expect(shuLabel({ ...RANGE, scoville_source: 'inference' })).toBe('est. 100K–350K SHU')
     expect(shuLabel({ scoville_min: 2500, scoville_max: 2500, scoville_source: 'inference' })).toBe('est. 2.5K SHU')
-    expect(shuLabel({ scoville_min: 8000, scoville_max: null, scoville_source: 'inference' })).toBe('est. 8K SHU')
+    expect(shuLabel({ scoville_min: 8000, scoville_max: null, scoville_source: 'inference' })).toBe('est. 8K+ SHU')
     expect(shuLabel({ scoville_min: 0, scoville_max: 0, scoville_source: 'inference' })).toBe('est. Sweet · 0 SHU')
   })
 

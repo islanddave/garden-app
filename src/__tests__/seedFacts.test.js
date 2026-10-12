@@ -149,4 +149,14 @@ describe('heatFact', () => {
     expect(heatFact({ ...PEPPER, scoville_min: 0, scoville_max: 500, scoville_source: 'inference' })).toBe('0–500 SHU · best guess')
     expect(heatFact({ crop_slug: 'pepper', scoville_min: null, scoville_max: 5000 })).toBe('5,000 SHU')
   })
+
+  // V5-PLANTPAGEDESIGNQS-001 (Dave 2026-10-11, "show the plus"): only the bottom known is a floor.
+  it('only the bottom known reads as a floor, full and compact; only the top known is unchanged', () => {
+    expect(heatFact({ crop_slug: 'pepper', scoville_min: 5000, scoville_max: null })).toBe('5,000+ SHU')
+    expect(heatFact({ crop_slug: 'pepper', scoville_min: 5000, scoville_max: null }, { compact: true })).toBe('5K+ SHU')
+    expect(heatFact({ ...PEPPER, scoville_min: 5000, scoville_max: null, scoville_source: 'inference' }, { compact: true }))
+      .toBe('5K+ SHU · best guess')
+    expect(heatFact({ crop_slug: 'pepper', scoville_min: 0, scoville_max: null })).toBe('Sweet · 0 SHU')
+    expect(heatFact({ crop_slug: 'pepper', scoville_min: null, scoville_max: 5000 }, { compact: true })).toBe('5K SHU')
+  })
 })

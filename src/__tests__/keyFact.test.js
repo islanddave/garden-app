@@ -65,7 +65,11 @@ describe('selectKeyFact — priority cascade', () => {
   // A tomato is the cultivar's crop type (variety_ref.crop_type_slug), the field the plants Lambda sends.
   // These fixtures used a variety_ref.type the Lambda never sends, which is how rung 2 passed here while
   // reaching 2 of 46 live tomatoes.
-  it('(2) tomato -> Indeterminate / Determinate from growth_habit', () => {
+  // V5-PLANTPAGEDESIGNQS-001 part 1 (Dave 2026-10-12, "Green pill on the card"): the growth type shows once,
+  // as the crop card's green pill, which reads the cultivar's own growth_habit. These two carry the word only
+  // on the planting (metadata / attr_override), which the card does not read, so the hero is the one place
+  // it can show and it stays: the rule is once, not zero.
+  it('(2) tomato -> Indeterminate / Determinate when only the planting carries it (the card cannot show it)', () => {
     expect(selectKeyFact({ variety_ref: { crop_type_slug: 'tomato' }, metadata: { growth_habit: 'indeterminate' } })).toBe('Indeterminate')
     expect(selectKeyFact({ variety_ref: { crop_type_slug: 'tomato' }, attr_override: { growth_habit: 'Determinate' } })).toBe('Determinate')
   })
@@ -77,12 +81,31 @@ describe('selectKeyFact — priority cascade', () => {
 
   // Prod rows: plantings are named by cultivar, so none of these names says "tomato". Until 2026-09-25
   // the tomato test read names, and these heroes showed their days (75–85, 65–75, 70–75) instead.
-  it('(2) the crop type makes it a tomato, not the name: live cultivar-named tomatoes get their word', () => {
+  // Since 2026-10-12 the word is the card's green pill alone, so these heroes are back to the next rung,
+  // their days (which is what they showed before 2026-09-25, then for the wrong reason: a name test).
+  it('(2) a tomato whose card wears the green pill: the hero pill is the next rung, never the word again', () => {
     const live = (name, growth_habit, dmin, dmax) => ({ name, variety_ref: { name, crop_type_slug: 'tomato',
       days_to_maturity_min: dmin, days_to_maturity_max: dmax, sun_requirements: 'full_sun', growth_habit } })
-    expect(selectKeyFact(live('Cherokee Green', 'indeterminate vine; 6-8 ft; stake or cage required', 75, 85))).toBe('Indeterminate')
-    expect(selectKeyFact(live('Cherry Falls', 'trailing/cascading determinate; 24-36 in spreading; bred for hanging baskets and containers; no staking required', 65, 75))).toBe('Determinate')
-    expect(selectKeyFact(live('Celebrity', 'semi-determinate bush, 4-5 ft', 70, 75))).toBe('Semi-determinate')
+    expect(selectKeyFact(live('Cherokee Green', 'indeterminate vine; 6-8 ft; stake or cage required', 75, 85))).toBe('75–85 days')
+    expect(selectKeyFact(live('Cherry Falls', 'trailing/cascading determinate; 24-36 in spreading; bred for hanging baskets and containers; no staking required', 65, 75))).toBe('65–75 days')
+    expect(selectKeyFact(live('Celebrity', 'semi-determinate bush, 4-5 ft', 70, 75))).toBe('70–75 days')
+  })
+
+  it('(2) with the word on the card, the ladder runs on as for any planting: days, then sun, then no pill', () => {
+    const tomato = (rest) => ({ name: 'Test Tomato', variety_ref: { crop_type_slug: 'tomato', growth_habit: 'indeterminate vine', ...rest } })
+    expect(selectKeyFact(tomato({ days_to_maturity_min: 80, days_to_maturity_max: 80, sun_requirements: 'full_sun' }))).toBe('80 days')
+    expect(selectKeyFact(tomato({ sun_requirements: 'full_sun' }))).toBe('Full sun')
+    expect(selectKeyFact(tomato({}))).toBeNull()
+  })
+
+  // The planting's own word wins over the cultivar's on the hero (attr); the card reads the cultivar. When
+  // the two name the same class it is the card's; when they differ the hero's word is on the page nowhere
+  // else, so it stays.
+  it('(2) a per-planting word: dropped when it repeats the card pill, kept when it says something else', () => {
+    const v = { crop_type_slug: 'tomato', growth_habit: 'indeterminate vine', days_to_maturity_min: 70, days_to_maturity_max: 75 }
+    expect(selectKeyFact({ variety_ref: v, attr_override: { growth_habit: 'Indeterminate' } })).toBe('70–75 days')
+    expect(selectKeyFact({ variety_ref: v, attr_override: { growth_habit: 'Determinate' } })).toBe('Determinate')
+    expect(selectKeyFact({ variety_ref: { ...v, growth_habit: null }, metadata: { growth_habit: 'semi-determinate' } })).toBe('Semi-determinate')
   })
 
   it('(2) a tomato with no habit prose keeps its days, or has no pill', () => {
@@ -124,9 +147,13 @@ describe('selectKeyFact — priority cascade', () => {
 
   // Live prose that does not open with the word (Celebrity, Cherry Falls, Rosa Sicilian cultivars). The
   // old test printed the first two whole; leftmost-term wins, as on the CropCard pill and the facet chip.
+  // Since 2026-10-12 the hero only shows the word when the card cannot (the planting carries it, not the
+  // cultivar), so the reading is exercised through metadata; cultivar prose gives the card its pill and
+  // the hero its days.
   it('(2) the determinacy word is read wherever it sits in the prose, leftmost first', () => {
-    const tomato = (growth_habit) => ({ name: 'Test Tomato', variety_ref: { crop_type_slug: 'tomato', growth_habit,
+    const tomato = (growth_habit) => ({ name: 'Test Tomato', metadata: { growth_habit }, variety_ref: { crop_type_slug: 'tomato',
       days_to_maturity_min: 70, days_to_maturity_max: 75 } })
+    expect(selectKeyFact({ ...tomato(null), variety_ref: { ...tomato(null).variety_ref, growth_habit: 'semi-determinate bush, 4-5 ft' } })).toBe('70–75 days')
     expect(selectKeyFact(tomato('semi-determinate bush, 4-5 ft'))).toBe('Semi-determinate')
     expect(selectKeyFact(tomato('trailing/cascading determinate; 24-36 in spreading; bred for hanging baskets and containers; no staking required'))).toBe('Determinate')
     expect(selectKeyFact(tomato('indeterminate vine (semi-determinate per some sources); deeply ribbed costoluto-type; 5-6 ft; stake or cage required'))).toBe('Indeterminate')
@@ -231,11 +258,10 @@ describe('selectCropType — V4-ABOVEFOLD-001 crop-type chip', () => {
     expect(selectCropType({ variety_ref: { type: 'root_vegetable' } })).toBe('Root vegetable')
   })
 
-  // Prod rows (plants Lambda variety_ref, 2026-09-25). The name detectors pick WHICH plantings get a chip;
-  // the words are the cultivar's crop type.
+  // Prod rows (plants Lambda variety_ref, 2026-09-25). The words are the cultivar's crop type.
   const live = (name, crop_type_slug, cultivar = name) => ({ name, variety_ref: { name: cultivar, crop_type_slug } })
 
-  it('a pepper/tomato found by name shows its crop type', () => {
+  it('a pepper/tomato whose name says so shows its crop type', () => {
     expect(selectCropType(live('Habanero', 'pepper'))).toBe('Pepper')
     expect(selectCropType(live('Megatron Jalapeños', 'pepper', 'Megatron F1 (jumbo jalapeno)'))).toBe('Pepper')
     expect(selectCropType(live('Tie-Dye Tomato', 'tomato', 'Tie-Dye'))).toBe('Tomato')
@@ -250,11 +276,14 @@ describe('selectCropType — V4-ABOVEFOLD-001 crop-type chip', () => {
     expect(selectCropType(live('Pepper Squash', 'winter_squash', 'Table Queen'))).toBe('Winter Squash')
   })
 
-  // Not a rollout: plantings the name test misses (230 of 246 live) still have no chip.
-  it('where the chip shows is unchanged: none where the name test finds nothing', () => {
-    expect(selectCropType(live('Black Olive', 'pepper'))).toBeNull()
-    expect(selectCropType(live('Cherokee Green', 'tomato'))).toBeNull()
-    expect(selectCropType(live('Cisneros', 'tomatillo'))).toBeNull()
+  // V5-PLANTPAGEDESIGNQS-001 (Dave 2026-10-11, "crop chip on all"): until then only a planting whose NAME
+  // looked like a pepper or tomato had the chip (16 of 246 live).
+  it('every planting whose cultivar has a crop type shows it, whatever the name', () => {
+    expect(selectCropType(live('Black Olive', 'pepper'))).toBe('Pepper')
+    expect(selectCropType(live('Cherokee Green', 'tomato'))).toBe('Tomato')
+    expect(selectCropType(live('Cisneros', 'tomatillo'))).toBe('Tomatillo')
+    expect(selectCropType(live('Genovese', 'basil'))).toBe('Basil')
+    expect(selectCropType(live('Provider', 'bush_bean'))).toBe('Bush Bean')
   })
 
   it('no crop type is no chip, whatever the name says', () => {
