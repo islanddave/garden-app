@@ -91,8 +91,9 @@ describe('flag ON — the /space routes appear', () => {
     // the same route). /sow and /seeds/saved stay as redirects, so this is +1, flag-independent.
     // 60 -> 61: /season-end (End of season), not flag-gated.
     // 61 -> 63: /season-stats (Season stats) and /sources/:id (source edit), not flag-gated.
-    expect(paths).toHaveLength(63)
-    expect(new Set(paths).size).toBe(63)
+    // 63 -> 64: V4-CROPTYPERETIRE-001 adds /admin/crop-types, not flag-gated.
+    expect(paths).toHaveLength(64)
+    expect(new Set(paths).size).toBe(64)
   })
 
   it('adds nothing to the overlay tree (the space page is a full page, not a flyover)', async () => {

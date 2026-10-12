@@ -127,8 +127,9 @@ describe('flag OFF — the /space routes are ABSENT from the table, not merely r
     // the table as redirects into it, so this is +1, not a swap.
     // 58 -> 59: /season-end (End of season), not flag-gated.
     // 59 -> 61: /season-stats (Season stats) and /sources/:id (source edit), not flag-gated.
-    expect(paths).toHaveLength(61)
-    expect(new Set(paths).size).toBe(61)
+    // 61 -> 62: V4-CROPTYPERETIRE-001 adds /admin/crop-types, not flag-gated.
+    expect(paths).toHaveLength(62)
+    expect(new Set(paths).size).toBe(62)
   })
 
   it('adds NO route to the overlay tree either', async () => {
