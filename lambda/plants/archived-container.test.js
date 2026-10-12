@@ -949,6 +949,7 @@ const PK = {
   foreign: 'e1000000-0000-4000-8000-000000000004',     // deleted, another household's
   unowned: 'e1000000-0000-4000-8000-000000000005',     // deleted, created_by NULL
   ofArchived: 'e1000000-0000-4000-8000-000000000006',  // deleted — its planting is deleted AND archived
+  strand: 'e1000000-0000-4000-8000-000000000007',      // deleted, with a DIFFERENT live planting on it: no restore here may touch it
 };
 const R = {
   onLive: 'f1000000-0000-4000-8000-000000000001',
@@ -957,6 +958,7 @@ const R = {
   onUnowned: 'f1000000-0000-4000-8000-000000000004',
   archivedOnDeleted: 'f1000000-0000-4000-8000-000000000005',
   projectless: 'f1000000-0000-4000-8000-000000000006',
+  liveOnStrand: 'f1000000-0000-4000-8000-000000000007',
 };
 // Owned by the OTHER household member, as the containers are: ownership runs through ANY().
 const packet = (id, { deleted = false, owner = JEN } = {}) => ({ id, created_by: owner, deleted_at: deleted ? T : null });
@@ -969,6 +971,7 @@ const packetDb = () => ({
     planting(R.onUnowned, K.live, { deleted: true, packet: PK.unowned }),
     planting(R.archivedOnDeleted, K.live, { deleted: true, archived: true, packet: PK.ofArchived }),
     planting(R.projectless, null, { deleted: true, packet: PK.deleted }),
+    planting(R.liveOnStrand, K.live, { packet: PK.strand }),
   ],
   packets: [
     packet(PK.live),
@@ -977,6 +980,7 @@ const packetDb = () => ({
     packet(PK.foreign, { deleted: true, owner: STRANGER }),
     packet(PK.unowned, { deleted: true, owner: null }),
     packet(PK.ofArchived, { deleted: true }),
+    packet(PK.strand, { deleted: true }),
   ],
 });
 const packetRow = (id) => db.packets.find((r) => r.id === id);
