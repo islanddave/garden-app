@@ -88,11 +88,16 @@ beforeEach(() => {
 })
 
 describe('PlantingDetail — the hero key-fact pill never carries habit prose', () => {
-  it('Purple Blush Tomatillo: the pill is its days, and the sentence is nowhere on the page', async () => {
+  // The sentence is on the page once, as the crop card's Habit row (V5-PLANTPAGEDESIGNQS-001, Dave
+  // 2026-10-11 "add habit"); until then it was nowhere. Never in the hero.
+  it('Purple Blush Tomatillo: the pill is its days, and the sentence is the card\'s Habit row only', async () => {
     renderPage(BLUSH)
     await screen.findByRole('heading', { name: 'Purple Blush Tomatillo' })
     expect(heroGoldPills('Purple Blush Tomatillo')).toEqual(['70–75 days'])
-    expect(document.body.textContent.toLowerCase()).not.toContain('bushy upright')
+    const prose = screen.getAllByText(BLUSH_PROSE)
+    expect(prose).toHaveLength(1)
+    expect(prose[0].parentElement.textContent).toBe(`Habit${BLUSH_PROSE}`)
+    expect(screen.getByRole('heading', { level: 1 }).parentElement.textContent).not.toContain('bushy upright')
   })
 
   // The hero follows the cultivar's crop type: a tomato named by cultivar gets its determinacy word, as

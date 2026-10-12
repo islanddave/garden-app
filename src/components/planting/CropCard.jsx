@@ -230,7 +230,11 @@ export default function CropCard({ planting, onUpdated }) {
   // The column holds a code ('full_sun'); until 2026-09-25 the Sun row printed it as-is on 205 of 244
   // live plantings. sunLabel gives the words VarietyEditor offers; null still hides the row.
   const sun = sunLabel(v.sun_requirements)
-  const attrs = [dtm, sun, v.expected_yield_notes].filter(Boolean)
+  // V5-PLANTPAGEDESIGNQS-001 (Dave 2026-10-11, "add habit") — the cultivar's growth_habit prose as stored,
+  // under the label Search's peek gives the same field. Not beside the determinacy pill: there the prose
+  // opens with the class the pill already names. It counts in `attrs`, so a habit alone earns the card.
+  const habit = !determinacy && typeof v.growth_habit === 'string' && v.growth_habit.trim() ? v.growth_habit.trim() : null
+  const attrs = [dtm, sun, habit, v.expected_yield_notes].filter(Boolean)
   // The early return stays SYNC over today's signals; `!hasWindow` is the async-sparse term — a
   // window-ONLY sparse card renders once the window resolves (pending+sparse renders null,
   // indistinguishable from today; resolved-empty/failed+sparse returns null permanently).
@@ -315,6 +319,7 @@ export default function CropCard({ planting, onUpdated }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <Attr label="Days to maturity" value={dtm} />
           <Attr label="Sun" value={sun} />
+          <Attr label="Habit" value={habit} />
           <Attr label="Expected yield" value={v.expected_yield_notes} />
           <RipenessCue cues={cues} />
           {/* V4-RIPENESSCUES-001: the window renders BELOW the corrective cue — the cue answers
