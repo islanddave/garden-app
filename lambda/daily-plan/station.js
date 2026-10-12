@@ -421,6 +421,10 @@ function deriveStation(raw, { nowMs }) {
     if (Number.isFinite(r.tempf) && r.tempf <= GAUGE_FROZEN_MAX_F) frozenSeen.add(civilDay(r.dateutc, tz));
   }
   const frozenDays = [...frozenSeen].sort();
+  // Which of them held a plausible rain bucket, taken BEFORE the delete because the delete is what erases the
+  // difference. A frozen day the rain field was absent from all day is not a day the GAUGE was reporting, and
+  // yesterdayCovered must not let it vouch for the next day's total. Additive: [] with no frozen day.
+  const frozenRainDays = frozenDays.filter((d) => d in buckets);
   for (const d of frozenDays) delete buckets[d];
 
   const D0 = civilDay(nowMs, tz), D1 = dayBefore(D0), D2 = dayBefore(D1);
@@ -461,7 +465,7 @@ function deriveStation(raw, { nowMs }) {
 
   return { mac: raw.mac, lat: cfg.lat, lng: cfg.lng, tz, fresh, dataAgeMin, tempF, nightMins, recentPrecipIn, coversLookback, buckets, uncertainty,
     day0: D0, day1: D1, day2: D2, hour0: civilHour(nowMs, tz), todayPrecipIn, yesterdayPrecipIn, implausibleDays, negativeDays,
-    frozenDays, arraySilence: silence };
+    frozenDays, frozenRainDays, arraySilence: silence };
 }
 
 // DRG-WXSTATION-003 — the coverage test for YESTERDAY's total, apart from coversLookback's for the two-day sum.
@@ -472,9 +476,11 @@ function deriveStation(raw, { nowMs }) {
 // weeks.
 //
 // What the gate protects is that D-1 is a COMPLETED day, seen from before its midnight to after it. That is a
-// claim about the station REPORTING, not about D-2's rain total being usable. A frozen day's records exist
-// (the thermometer reading that froze it is one of them), so it still stands as D-2 or as the anchor here. It
-// can never stand as D-1: a frozen yesterday has no total to publish.
+// claim about the station REPORTING, not about D-2's rain total being usable. A frozen day that held a rain
+// bucket until the frozen pass deleted it (frozenRainDays) was reporting, so it still stands as D-2 or as the
+// anchor here. A frozen day with temperature records and NO usable rain record does not: the thermometer
+// cannot vouch for the rain field, and a field that comes back mid D-1 has not seen D-1 from its midnight.
+// Neither can ever stand as D-1: a frozen yesterday has no total to publish.
 //
 // A REJECTED day does not get this. An implausible or negative-only day is an instrument fault and what else
 // that day's records can vouch for is unknown, so it stays missing, as before: with no frozen day in the feed
@@ -484,7 +490,7 @@ function yesterdayCovered(st, d1, d2) {
   const b = (st && st.buckets) || {};
   if (!Number.isFinite(b[d1])) return false;
   const rejected = new Set((st && st.implausibleDays) || []);
-  const frozen = new Set(((st && st.frozenDays) || []).filter((d) => !rejected.has(d)));
+  const frozen = new Set(((st && st.frozenRainDays) || []).filter((d) => !rejected.has(d)));
   const earliest = [...Object.keys(b), ...frozen].sort()[0];
   return !!earliest && earliest < d2 && (Number.isFinite(b[d2]) || frozen.has(d2));
 }

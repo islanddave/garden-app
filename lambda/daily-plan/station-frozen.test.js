@@ -38,7 +38,7 @@ const om = () => ({ recent_precip_in: 0.9, today_precip_in: 0.4, today_pop: 60, 
 // Captured from station.js at dev 72c24167, BEFORE the rule existed, over exactly `fixture()` and `om()`.
 // GOLDEN_DERIVE is the WHOLE base object. deriveStation is compared on base's own top-level keys only, in the
 // order it returns them: every key base published must still be there, byte for byte and in the same order,
-// and a key added since (frozenDays is the one so far) is not part of the comparison. So a future additive
+// and a key added since (frozenDays, frozenRainDays) is not part of the comparison. So a future additive
 // key cannot red this for the wrong reason, while a changed, renamed, dropped or reordered base key still
 // does. GOLDEN_MERGE is compared whole: a clean day's stored hydrology gains no key at all.
 const GOLDEN_DERIVE = '{"mac":"AA:BB:CC:DD:EE:FF","lat":41.8888,"lng":-70.7777,"tz":"America/New_York","fresh":true,"dataAgeMin":10,"tempF":62,"nightMins":{},"recentPrecipIn":0.5,"coversLookback":true,"buckets":{"2026-07-06":0.01,"2026-07-05":0.3,"2026-07-04":0.2,"2026-07-03":0},"uncertainty":null,"day0":"2026-07-06","day1":"2026-07-05","day2":"2026-07-04","hour0":2,"todayPrecipIn":0.01,"yesterdayPrecipIn":0.3,"implausibleDays":[],"negativeDays":[],"arraySilence":{"windowMin":1440,"records":3,"gaps":{"tempf":{"missing":0,"longestMin":0,"fromMs":null,"toMs":null,"missingNow":false},"dailyrainin":{"missing":0,"longestMin":0,"fromMs":null,"toMs":null,"missingNow":false}},"silent":[]}}';
@@ -51,6 +51,7 @@ describe('DRG-WXSTATION-003 — a clean above-freezing day is untouched', () => 
     const onBaseKeys = Object.fromEntries(Object.entries(out).filter(([k]) => k in base));
     expect(JSON.stringify(onBaseKeys)).toBe(GOLDEN_DERIVE);
     expect(out.frozenDays).toEqual([]);
+    expect(out.frozenRainDays).toEqual([]);
   });
 
   it('mergeStationHydrology is byte-identical to the pre-rule output (no new provenance key)', () => {
@@ -432,6 +433,25 @@ describe('DRG-WXSTATION-003 — only a frozen day counts as reporting; a rejecte
   it('a D-2 that is BOTH frozen and rejected is rejected', () => {
     expect(yest(withD2(99, 30))).toEqual(['forecast', 0.7, 'forecast', false]);
     expect(yest(withD2(-1, 30))).toEqual(['forecast', 0.7, 'forecast', false]);
+  });
+
+  // Re-check S7. The thermometer reports all of a frozen D-2 while the rain field is absent from every record,
+  // then the rain field comes back at 14:00 on D-1 reading 0.05. Nothing saw D-1's rain from its midnight.
+  it('a frozen D-2 with NO rain record is not a reporting day: yesterday is the forecast figure', () => {
+    const noRain = (day, hh, tempf) => ({ dateutc: Date.parse(`${day}T${hh}:00:00-04:00`), tempf });
+    const raw = { mac: MAC, records: [
+      rec(D0, '02', 0.00, 62),
+      rec(D1, '18', 0.05, 45), rec(D1, '14', 0.05, 45), noRain(D1, '06', 40),
+      noRain(D2, '18', 31), noRain(D2, '06', 30),
+      rec(D3, '18', 0.00, 65),
+    ] };
+    const s = deriveStation(raw, { nowMs: NOW });
+    expect([s.frozenDays, s.frozenRainDays, s.buckets[D1]]).toEqual([[D2], [], 0.05]);
+    expect(yest(raw)).toEqual(['forecast', 0.7, 'forecast', false]);
+    // CONTROL: the same feed with a rain record on the frozen D-2 is the case the sweep keeps on the gauge.
+    raw.records[4] = rec(D2, '18', 0.00, 31);
+    expect(deriveStation(raw, { nowMs: NOW }).frozenRainDays).toEqual([D2]);
+    expect(yest(raw)).toEqual(['station', 0.05, 'forecast', true]);
   });
 
   it('a frozen ANCHOR (D-3) covers yesterday; a rejected or absent one does not', () => {
