@@ -157,7 +157,7 @@ describe('§peek pane — one sheet, content swaps results <-> peek', () => {
 
   it('an unknown peek id renders a plain explanation, not a blank sheet', async () => {
     renderPane('/search?q=cherokee&peek=nope')
-    expect(await screen.findByText(/isn’t in your garden list any more/)).toBeTruthy()
+    expect(await screen.findByText(/isn’t in your garden list anymore/)).toBeTruthy()
     expect(screen.queryByTestId('search-peek')).toBe(null)
     expect(screen.getByText('Back to results')).toBeTruthy()
   })

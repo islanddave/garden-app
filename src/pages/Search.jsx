@@ -443,7 +443,7 @@ export default function Search() {
           </button>
           {loading && <p style={{ ...subStyle, marginTop: 8 }}>Loading your garden&hellip;</p>}
           {!loading && !peekPlanting && (
-            <p style={{ color: P.mid, fontSize: '0.9rem', marginTop: 8 }}>That planting isn&rsquo;t in your garden list any more.</p>
+            <p style={{ color: P.mid, fontSize: '0.9rem', marginTop: 8 }}>That planting isn&rsquo;t in your garden list anymore.</p>
           )}
           {!loading && peekPlanting && (
             <PeekCard planting={peekPlanting} locationName={peekLocationName} headingRef={peekHeadingRef} />

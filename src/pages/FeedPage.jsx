@@ -191,7 +191,7 @@ export default function FeedPage() {
       // (already undone elsewhere, or aged past the server's ten), so it gets its own sentence
       // instead of the Lambda's bare "Not found".
       setUndoError(err?.status === 404
-        ? 'That bulk log can’t be undone any more — it may already have been undone.'
+        ? 'That bulk log can’t be undone anymore — it may already have been undone.'
         : (err?.message || 'That didn’t go through — the entries are still there.'))
     } finally {
       setUndoBusy(false)

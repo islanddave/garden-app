@@ -37,7 +37,7 @@
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Worded for the person. A client branches on `code`.
-export const VARIETY_UNUSABLE = 'That variety is not available any more. Pick another one.';
+export const VARIETY_UNUSABLE = 'That variety is not available anymore. Pick another one.';
 export const FILING_CROP_MISMATCH = 'That variety is a different crop from the plants this seed came from.';
 
 // { variety_id, expect_variety_id, name? } as a request sent it -> { varietyId, expectVarietyId, name }
