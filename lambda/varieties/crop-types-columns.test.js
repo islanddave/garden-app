@@ -1,6 +1,7 @@
 // OPS-SCHEMAAUDITJOIN-001 — the public.crop_types columns lambda/varieties reads.
 //
-// Four statements, every one unaliased, so all four are pinned by hand below. This is
+// Six statements. Four are unaliased, so those four are pinned by hand below; the two in
+// crop-type-admin.js (V4-CROPTYPERETIRE-001) alias the table `ct` and are read automatically. This is
 // crop_types' home directory: index.js owns the /api/varieties/crop-types route that lists,
 // mints, and restores types, and it is the only reader of category and sort_order. One pin is
 // deliberately the query with NO deleted_at filter — the collision set for a new slug must
@@ -53,8 +54,20 @@ const HANDLERS = readdirSync(__dirname)
 // directory's copy of this file (added by migration v4-croptypealias-001, verified present on prod
 // AND staging 2026-08-28); this Lambda began reading it when the crop-types vocab route widened its
 // projection so a client filter can finally answer "cantaloupe".
+//
+// V4-CROPTYPERETIRE-001 adds four keys. crop-type-admin.js counts the live rows of every table with a
+// foreign key to crop_types(slug) before it lets a type be retired, and four of those tables had no
+// reader in this directory until then (plant_varieties, the fifth, is read through public.cultivar and
+// has its own contract file). Columns per migrations/: preservation_log v4-putup-001 0a :72/:98,
+// pantry_item v5-pantry-001 0a :95/:118, kitchen_batch_input v5-putupmake-001 0a (batch_id,
+// crop_type_slug :255, deleted_at), preservation_source v5-putupmultisource-001 0a :200/:214. Not read
+// from a live database by the lane that added them.
 const AUDIT_COLUMNS = {
   crop_types: ['category', 'default_lifecycle', 'deleted_at', 'display_name', 'dtm_basis', 'search_aliases', 'slug', 'sort_order'],
+  kitchen_batch_input: ['batch_id', 'crop_type_slug', 'deleted_at'],
+  pantry_item: ['crop_type_slug', 'deleted_at'],
+  preservation_log: ['crop_type_slug', 'deleted_at'],
+  preservation_source: ['crop_type_slug', 'deleted_at'],
 };
 
 const CROP_TYPES_COLUMNS = AUDIT_COLUMNS.crop_types;
@@ -145,9 +158,9 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/varieties crop_types column contrac
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(4);
+    expect(STATEMENTS).toHaveLength(6);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
-      .toEqual([]);
+      .toEqual(['ct']);
   });
 
   it('accounts for every unaliased crop_types read', () => {
@@ -207,8 +220,31 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/varieties crop_types column contrac
     // The match must stop at the block's OWN `};`, not run on to the next one in the file.
     expect(decl[1]).not.toMatch(/\bconst\b/);
     const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(['crop_types']);
+    expect(pairs.map((m) => m[1])).toEqual(
+      ['crop_types', 'kitchen_batch_input', 'pantry_item', 'preservation_log', 'preservation_source'],
+    );
     const cols = [...pairs[0][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
     expect(cols).toEqual(CROP_TYPES_COLUMNS);
+  });
+
+  it('the four dependent-table keys list exactly the columns crop-type-admin.js reads off each', () => {
+    // Every read of these four tables in this directory is in crop-type-admin.js and aliased, so the
+    // columns are whatever follows each alias there. Both directions, as for crop_types above.
+    const src = decomment(readFileSync(resolve(__dirname, 'crop-type-admin.js'), 'utf8'));
+    for (const [rel, declared] of Object.entries(AUDIT_COLUMNS).filter(([k]) => k !== 'crop_types')) {
+      const aliases = [...new Set([...src.matchAll(
+        new RegExp(String.raw`\b(?:FROM|JOIN)\s+(?:public\.)?${rel}\s+([a-z_][a-z0-9_]*)`, 'gi'),
+      )].map((m) => m[1]))];
+      expect(aliases, `${rel} is not read under one alias`).toHaveLength(1);
+      const used = [...new Set([...src.matchAll(
+        new RegExp(String.raw`\b${aliases[0]}\.([a-z_][a-z0-9_]*)\b`, 'gi'),
+      )].map((m) => m[1].toLowerCase()))].sort();
+      expect(used, rel).toEqual([...declared].sort());
+      for (const f of HANDLERS.filter((h) => h !== 'crop-type-admin.js')) {
+        const other = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
+        expect(other, `${f} reads ${rel}; extend this contract`)
+          .not.toMatch(new RegExp(String.raw`\b(?:FROM|JOIN)\s+(?:public\.)?${rel}\b`, 'i'));
+      }
+    }
   });
 });

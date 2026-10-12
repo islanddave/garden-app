@@ -11,6 +11,9 @@
 //     Was owner-only, which left the 25 cultivars created by offline intake/repair scripts
 //     uneditable by every human. A foreign household still reaches nothing. NOT a general widening.
 //   - GET /api/varieties/crop-types: globally readable controlled vocabulary (V4-PLANTTYPE-001)
+//   - GET /api/varieties/crop-types/admin, POST /api/varieties/crop-types/retire, and the restore arm
+//     of POST /api/varieties/crop-types: ADMIN only, fail-closed on ADMIN_CLERK_SUBS
+//     (V4-CROPTYPERETIRE-001, see ./crop-type-admin.js)
 //   - GET/POST /api/varieties/{sources,source-kinds}: the provenance registry, same contract as
 //     crop-types — globally readable, owner-stamped on write (V4-SOURCEREG-001 / V5-SOURCEKIND-001)
 //   - GET/PATCH /api/varieties/sources/:id: one live source; PATCH is partial and audited, household
@@ -68,6 +71,7 @@ import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { managedPrincipalPatterns, canEditSource, canEditVariety } from './authz.js';
 import { blendRoute, restoreConflictMessage } from './blend.js';
+import { listForAdmin, retireCropType, restoreCropType } from './crop-type-admin.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -212,6 +216,19 @@ export const handler = async (event) => {
   try {
     // PLANTTYPE: controlled crop-type vocabulary. Globally readable; checked BEFORE the
     // /api/varieties/:id route so "crop-types" is not mis-parsed as a variety id.
+    // V4-CROPTYPERETIRE-001 — the admin page's two routes. Their rules and SQL are in
+    // ./crop-type-admin.js; both refuse everyone but an admin before reading anything.
+    if (rawPath === '/api/varieties/crop-types/admin') {
+      if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
+      const out = await listForAdmin(sql, userId, process.env);
+      return resp(out.status, out.body);
+    }
+    if (rawPath === '/api/varieties/crop-types/retire') {
+      if (method !== 'POST') return resp(405, { error: 'Method not allowed' });
+      const out = await retireCropType(sql, JSON.parse(event.body ?? '{}'), userId, process.env);
+      return resp(out.status, out.body);
+    }
+
     if (rawPath === '/api/varieties/crop-types') {
       if (method === 'GET') {
         // OPS-CROPTYPEALIASCLIENT-001 — search_aliases joins the projection, and this is the ONE
@@ -250,6 +267,12 @@ export const handler = async (event) => {
       // is this table's PRIMARY KEY and the FK target of plant_varieties + preservation_log.
       if (method === 'POST') {
         const body = JSON.parse(event.body ?? '{}');
+        // V4-CROPTYPERETIRE-001 — the admin page brings a retired type back by slug, through the
+        // same restore arm the name match below reaches. Admin only.
+        if (body.restore_slug !== undefined) {
+          const out = await restoreCropType(sql, body.restore_slug, userId, process.env);
+          return resp(out.status, out.body);
+        }
         const err = validateCropTypeBody(body);
         if (err) return resp(400, { error: err });
 
@@ -269,16 +292,13 @@ export const handler = async (event) => {
             SELECT slug, display_name, default_lifecycle, category, sort_order, deleted_at
             FROM public.crop_types WHERE slug = ${verdict.existingSlug}
           `;
-          // A previously soft-deleted type is RESTORED rather than refused — the user is asking
-          // for exactly this type and Soft-Delete-Only means the row never actually left.
+          // A previously soft-deleted type is RESTORED rather than refused — Soft-Delete-Only means
+          // the row never actually left. V4-CROPTYPERETIRE-001: only for an admin. A type is now
+          // retired on purpose, so anyone else typing its name is told to ask (a distinct code the
+          // inline forms word), not handed it back. The write lives in ./crop-type-admin.js.
           if (row?.deleted_at) {
-            const [restored] = await sql`
-              UPDATE public.crop_types
-                 SET deleted_at = NULL, updated_at = now()
-               WHERE slug = ${verdict.existingSlug}
-              RETURNING slug, display_name, default_lifecycle, category, sort_order
-            `;
-            return resp(200, { ...restored, restored: true });
+            const out = await restoreCropType(sql, verdict.existingSlug, userId, process.env, { inline: true });
+            return resp(out.status, out.body);
           }
           // Otherwise steer to what already exists. `reason` lets the client word it correctly:
           //   exists/plural      -> "Hibiscus already exists" (benign, just use it)
