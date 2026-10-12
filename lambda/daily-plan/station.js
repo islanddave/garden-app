@@ -70,6 +70,27 @@ const RAIN_MAX_DAILY_IN = Number(process.env.AWN_RAIN_MAX_DAILY_IN) || 20;
 // ever re-open the hole.
 const RAIN_MIN_DAILY_IN = 0;
 
+// DRG-WXSTATION-003 / BUG-GAUGEFROZENZERO-001 — a FROZEN gauge reads a false zero. The WS-2902's rain gauge is a
+// tipping bucket: it counts liquid water running through a funnel. At or below freezing the funnel ices over
+// and snow sits in it, so `dailyrainin` stays at 0.00 while precipitation falls. Neither plausibility bound
+// above can see that, because 0 is the most ordinary value the field has, and a dry day is the input that
+// RELEASES watering suppression: the plan asks for watering on a day it is snowing.
+//
+// THE RULE (Dave 2026-10-11, "Automatic, by temperature"): a civil day on which the station's OWN outdoor
+// thermometer read at or below this in ANY record has no trusted gauge total. One reading is enough, in either
+// order: a frozen dawn holds the night's precipitation back from a thawed afternoon, and an evening freeze
+// stops the count while it is still falling. The day's bucket is deleted and each field takes the labelled
+// Open-Meteo fallback, exactly as a rejected day does. There is no switch, no season and no calendar date:
+// the thermometer on the same mast is the only input.
+//
+// Env-overridable, in the RAIN_MAX_DAILY_IN shape and for its reason: a garbage override must fall back to
+// 32, never to NaN, because every `<= NaN` compares false and would silently switch the rule off.
+//
+// KNOWN LIMIT, NOT HANDLED: the first thawed day after a freeze can post the earlier snow as melt, so that
+// day's total can OVER-read (yesterday's snow counted as today's rain). It is left alone because the error
+// only ever suppresses watering on a day the ground really is receiving that water.
+const GAUGE_FROZEN_MAX_F = Number(process.env.AWN_GAUGE_FROZEN_MAX_F) || 32;
+
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 // Civil-day label (YYYY-MM-DD) for an epoch-ms instant in a named tz. dailyrainin resets at station-LOCAL
@@ -375,6 +396,23 @@ function deriveStation(raw, { nowMs }) {
   for (const d of negSeen) if (!(d in buckets) && !implausibleDays.includes(d)) implausibleDays.push(d);
   implausibleDays.sort();
   const negativeDays = [...negSeen].sort();
+  // DRG-WXSTATION-003 — drop every day the station's own thermometer saw at or below freezing (see
+  // GAUGE_FROZEN_MAX_F). Its OWN list, not implausibleDays: that list means "the reading was impossible" and is
+  // a fault to chase, where this is a healthy instrument in weather it cannot measure, on most days of a winter.
+  // The ACTION is the one above and nothing else, a delete, so a frozen day reaches every consumer down the
+  // same absent-bucket path and there is still exactly one fallback. A record with a non-finite tempf says
+  // nothing either way: unknown is not frozen, so a day with no finite tempf keeps its bucket.
+  // Runs AFTER both plausibility passes on purpose. Run first, it would hide an impossible total on a frozen
+  // day from implausibleDays, and its delete would make a frozen day with one stray negative sample look
+  // negative-ONLY to the `!(d in buckets)` test above. A day can sit in both lists; each stays true alone.
+  // Reads only `tempf` per record and writes only `buckets`: `fresh`, `tempF` and `nightMins` above are
+  // already final, so the frost floor in mergeStationWeather cannot be weakened from here.
+  const frozenSeen = new Set();
+  for (const r of recs) {
+    if (Number.isFinite(r.tempf) && r.tempf <= GAUGE_FROZEN_MAX_F) frozenSeen.add(civilDay(r.dateutc, tz));
+  }
+  const frozenDays = [...frozenSeen].sort();
+  for (const d of frozenDays) delete buckets[d];
 
   const D0 = civilDay(nowMs, tz), D1 = dayBefore(D0), D2 = dayBefore(D1);
   const daysPresent = Object.keys(buckets).sort();
@@ -390,7 +428,12 @@ function deriveStation(raw, { nowMs }) {
   // A negative-only day reaches this through implausibleDays and reads 'implausible' like any other rejection.
   // A day that merely HAD a negative sample and survived it does not: its total is still real and its coverage
   // still intact, so raising 'implausible' would outrank — and misname — a warmup that has a different cause.
-  const uncertainty = !fresh ? 'stale' : (implausibleDays.length ? 'implausible' : (!coversLookback ? 'warmup' : null));
+  // DRG-WXSTATION-003 — 'frozen' sits BELOW 'implausible' and ABOVE 'warmup'. Below, because this is one
+  // string and an impossible reading is the fault an operator has to act on, while a freeze is expected and
+  // is listed in full in frozenDays whichever value wins. Above 'warmup' for the reason 'implausible' is: a
+  // dropped frozen day is what broke the lookback, and "warming up" names the wrong cause.
+  const uncertainty = !fresh ? 'stale'
+    : (implausibleDays.length ? 'implausible' : (frozenDays.length ? 'frozen' : (!coversLookback ? 'warmup' : null)));
 
   // BUG-RAINACTUAL-001 H1 — expose the D0 / D-1 buckets that were already being computed and thrown away.
   // todayPrecipIn needs NO coverage gate: dailyrainin is the STATION's own since-local-midnight accumulator,
@@ -408,7 +451,7 @@ function deriveStation(raw, { nowMs }) {
 
   return { mac: raw.mac, lat: cfg.lat, lng: cfg.lng, tz, fresh, dataAgeMin, tempF, nightMins, recentPrecipIn, coversLookback, buckets, uncertainty,
     day0: D0, day1: D1, day2: D2, hour0: civilHour(nowMs, tz), todayPrecipIn, yesterdayPrecipIn, implausibleDays, negativeDays,
-    arraySilence: silence };
+    frozenDays, arraySilence: silence };
 }
 
 // Gauge totals addressed by CIVIL-DAY LABEL rather than by the fetch instant. deriveStation's D0/D1/D2 are
@@ -619,6 +662,9 @@ function mergeStationHydrology(hy, st, opts) {
     // bad samples were dropped and the day's published total is still real. Folding them would have made every
     // rejection look like a stuck bucket. Unconditional, for the same reason the line above is.
     if (st.negativeDays && st.negativeDays.length) prov.station_negative_days = st.negativeDays;
+    // DRG-WXSTATION-003 — its OWN key again, and unconditional again: "gauge frozen" is not "gauge reading
+    // impossible", and a freeze confined to D0 leaves recent and yesterday gauge-sourced like any other drop.
+    if (st.frozenDays && st.frozenDays.length) prov.station_frozen_days = st.frozenDays;
     // V5-RADIATIVEFROST-001 — the observed overnight minima, keyed by the night's START date so they
     // join a forecast night's conditions without either side re-deriving the key. Carried into the
     // stored plan payload (daily_plan.items), which is the DURABLE store — the observability block
@@ -647,4 +693,4 @@ function mergeStationWeather(wx, st) {
   return { merged: { ...wx, tonightLow: low }, prov };
 }
 
-module.exports = { stationConfig, deriveStation, overnightMins, OVERNIGHT_MIN_SAMPLES, arraySilence, ARRAY_SILENT_WINDOW_MIN, ARRAY_SILENT_MIN_GAP_MIN, ARRAY_FIELDS, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, RAIN_MIN_DAILY_IN, COORD_TOL, NEAR_TERM_WINDOW_H };
+module.exports = { stationConfig, deriveStation, overnightMins, OVERNIGHT_MIN_SAMPLES, arraySilence, ARRAY_SILENT_WINDOW_MIN, ARRAY_SILENT_MIN_GAP_MIN, ARRAY_FIELDS, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, RAIN_MIN_DAILY_IN, GAUGE_FROZEN_MAX_F, COORD_TOL, NEAR_TERM_WINDOW_H };
