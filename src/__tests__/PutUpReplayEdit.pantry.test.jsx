@@ -839,7 +839,7 @@ describe('Put something up — the item route', () => {
     for (const again of [false, true]) {
       on.length = 0
       save()
-      await failed(DISCARD_DATE_TEXT)
+      await failed('Pick the date from the label — or tap No date.')           // a bought item has no Work it out
       await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
       expect(`again ${again}: ${screen.queryByTestId('door-more-panel') != null}`).toBe(`again ${again}: true`)
     }

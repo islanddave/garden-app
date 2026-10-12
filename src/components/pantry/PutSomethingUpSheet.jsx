@@ -98,7 +98,7 @@ import {
 } from './DoorParts.jsx'
 import {
   AS_IS, DOOR_TITLE, DOOR_SHEET, METHOD_REQUIRED_TEXT, methodChoices, routeFor, saveLabel, doorWhen,
-  previewLine, doorError, jarBody, itemBody, START_BATCH_INSTEAD_TEXT, isPlantingHit, methodSlot,
+  previewLine, doorError, discardItemMode, jarBody, itemBody, START_BATCH_INSTEAD_TEXT, isPlantingHit, methodSlot,
   doorOptionsLabel, doorFromLabel, doorNotesPlaceholder, whereFromHeading, sizeEcho, sizeTotalError,
   SIZE_LINK_LABEL, AMOUNT_LINK_LABEL, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText,
   replayUnsavedText, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
@@ -742,7 +742,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
               <RawInOilChips show="oil" method={method} isRaw={isRaw} inOil={inOil} idPrefix="door" disabled={saving}
                 onRaw={() => setIsRaw(v => !v)} onOil={() => setInOil(v => !v)} />
             )}
-            <DiscardChoice value={discard} onChange={setDiscard} idPrefix="door" itemMode={method === AS_IS} disabled={saving} />
+            <DiscardChoice value={discard} onChange={setDiscard} idPrefix="door" itemMode={discardItemMode(method)} disabled={saving} />
           </div>
         )}
 
