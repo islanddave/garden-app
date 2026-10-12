@@ -36,14 +36,21 @@ const om = () => ({ recent_precip_in: 0.9, today_precip_in: 0.4, today_pop: 60, 
   tomorrow_precip_in: 0.2, tomorrow_pop: 30, yesterday_precip_actual_in: 0.7 });
 
 // Captured from station.js at dev 72c24167, BEFORE the rule existed, over exactly `fixture()` and `om()`.
+// GOLDEN_DERIVE is the WHOLE base object. deriveStation is compared on base's own top-level keys only, in the
+// order it returns them: every key base published must still be there, byte for byte and in the same order,
+// and a key added since (frozenDays is the one so far) is not part of the comparison. So a future additive
+// key cannot red this for the wrong reason, while a changed, renamed, dropped or reordered base key still
+// does. GOLDEN_MERGE is compared whole: a clean day's stored hydrology gains no key at all.
 const GOLDEN_DERIVE = '{"mac":"AA:BB:CC:DD:EE:FF","lat":41.8888,"lng":-70.7777,"tz":"America/New_York","fresh":true,"dataAgeMin":10,"tempF":62,"nightMins":{},"recentPrecipIn":0.5,"coversLookback":true,"buckets":{"2026-07-06":0.01,"2026-07-05":0.3,"2026-07-04":0.2,"2026-07-03":0},"uncertainty":null,"day0":"2026-07-06","day1":"2026-07-05","day2":"2026-07-04","hour0":2,"todayPrecipIn":0.01,"yesterdayPrecipIn":0.3,"implausibleDays":[],"negativeDays":[],"arraySilence":{"windowMin":1440,"records":3,"gaps":{"tempf":{"missing":0,"longestMin":0,"fromMs":null,"toMs":null,"missingNow":false},"dailyrainin":{"missing":0,"longestMin":0,"fromMs":null,"toMs":null,"missingNow":false}},"silent":[]}}';
 const GOLDEN_MERGE = '{"merged":{"recent_precip_in":0.5,"today_precip_in":0.4,"today_pop":60,"upcoming_precip_in":1.1,"tomorrow_precip_in":0.2,"tomorrow_pop":30,"yesterday_precip_actual_in":0.3,"today_observed_in":0.01,"today_remaining_in":0.39},"prov":{"recent_source":"station","today_remaining_basis":"wholeday","today_remaining_fallback":"no_hourly","today_source":"station+forecast","yesterday_actual_source":"station","station_age_min":10,"station_fresh":true,"station_mac":"AA:BB:CC:DD:EE:FF"}}';
 
 describe('DRG-WXSTATION-003 — a clean above-freezing day is untouched', () => {
   it('deriveStation is byte-identical to the pre-rule output, plus one empty frozenDays list', () => {
-    const { frozenDays, ...rest } = deriveStation(fixture(), { nowMs: NOW });
-    expect(frozenDays).toEqual([]);
-    expect(JSON.stringify(rest)).toBe(GOLDEN_DERIVE);
+    const out = deriveStation(fixture(), { nowMs: NOW });
+    const base = JSON.parse(GOLDEN_DERIVE);
+    const onBaseKeys = Object.fromEntries(Object.entries(out).filter(([k]) => k in base));
+    expect(JSON.stringify(onBaseKeys)).toBe(GOLDEN_DERIVE);
+    expect(out.frozenDays).toEqual([]);
   });
 
   it('mergeStationHydrology is byte-identical to the pre-rule output (no new provenance key)', () => {
@@ -68,6 +75,19 @@ describe('DRG-WXSTATION-003 — a day at or below 32.0F loses its gauge total', 
       expect(colder.GAUGE_FROZEN_MAX_F).toBe(28);
       expect(colder.deriveStation(fixture({ [D1]: 30 }), { nowMs: NOW }).frozenDays).toEqual([]);
       expect(colder.deriveStation(fixture({ [D1]: 28 }), { nowMs: NOW }).frozenDays).toEqual([D1]);
+      // Outside 20..40 the override is refused and the rule stays at 32: nothing here can freeze every day
+      // (gauge off) or no day (rule off). The band's own ends are accepted.
+      for (const [raw, want] of [['Infinity', 32], ['212', 32], ['1e9', 32], ['40.1', 32], ['-40', 32], ['19.9', 32],
+        ['-Infinity', 32], ['0', 32], ['', 32], ['20', 20], ['40', 40], ['33.5', 33.5]]) {
+        process.env.AWN_GAUGE_FROZEN_MAX_F = raw;
+        vi.resetModules();
+        const m = (await import('./station.js?frozen-clamp')).default;      // re-evaluated: resetModules above
+        expect(m.GAUGE_FROZEN_MAX_F, JSON.stringify(raw)).toBe(want);
+        if (want === 32) {
+          expect(m.deriveStation(fixture({ [D1]: 32.1 }), { nowMs: NOW }).frozenDays, raw).toEqual([]);
+          expect(m.deriveStation(fixture({ [D1]: 32 }), { nowMs: NOW }).frozenDays, raw).toEqual([D1]);
+        }
+      }
     } finally {
       if (prev === undefined) delete process.env.AWN_GAUGE_FROZEN_MAX_F; else process.env.AWN_GAUGE_FROZEN_MAX_F = prev;
       vi.resetModules();

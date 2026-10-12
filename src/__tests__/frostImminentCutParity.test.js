@@ -16,11 +16,24 @@
 // ADVISORY_TRIP_F has the same kind of test (frostWatchLine.test.jsx, "PARITY"); this is the imminent tier's.
 // A Lambda env override (the rehearsal's raised trip) is out of reach of a unit test: this holds the SHIPPED
 // defaults, which is what a real, un-forced email is sent at.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterAll } from 'vitest'
 import { buildFrostAlertLines, FREEZE_BELOW_F } from '../lib/frostAlertLine.js'
 import { PLAN_DATE, imminent, planFor } from './helpers/twoLowsFixtures.js'
 import frostEval from '../../lambda/daily-plan/frostEval.js'
 import frostClass from '../../lambda/daily-plan/frostClass.js'
+
+// The three overrides the trip points read. A shell or CI job that exports one (the rehearsal does) must not
+// decide this file either way, so each is set aside here and put back when the file is done. HOISTED, because
+// frostEval.js and frostClass.js read their defaults when they LOAD: a beforeEach would run after the imports
+// above and delete nothing that matters.
+const SAVED_ENV = vi.hoisted(() => {
+  const saved = {}
+  for (const k of ['FROST_IMMINENT_LOW_F', 'FROST_BAND_THRESHOLDS_JSON', 'FROST_THRESHOLD_OFFSET_F']) {
+    saved[k] = process.env[k]
+    delete process.env[k]
+  }
+  return saved
+})
 
 const WARMED = /^Forecast warmed to [\d.]+°F since the 3 PM frost email\.$/
 // handler-shaped threshold imminent entry (frostWeatherFacts), sent on the 3 PM ET run.
@@ -32,10 +45,12 @@ const trips = () => {
 }
 
 describe('FROST_IMMINENT_LOW_F sits under the freeze cue (PARITY)', () => {
-  it('reads the shipped defaults: no env override is in play', () => {
-    for (const k of ['FROST_IMMINENT_LOW_F', 'FROST_BAND_THRESHOLDS_JSON', 'FROST_THRESHOLD_OFFSET_F']) {
-      expect(process.env[k], k).toBeUndefined()
-    }
+  afterAll(() => {
+    for (const [k, v] of Object.entries(SAVED_ENV)) { if (v === undefined) delete process.env[k]; else process.env[k] = v }
+  })
+
+  it('reads the shipped defaults, whatever the shell exports', () => {
+    for (const k of Object.keys(SAVED_ENV)) expect(process.env[k], k).toBeUndefined()
     const all = trips()
     expect(all.length).toBeGreaterThan(2)                           // the site trip and more than one band
     for (const [name, t] of all) expect(Number.isFinite(t), name).toBe(true)

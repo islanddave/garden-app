@@ -85,13 +85,20 @@ const RAIN_MIN_DAILY_IN = 0;
 // NEIGHBOURING days keep: a frozen day still counts as a day the station was reporting when the next day's
 // completed total is judged (see yesterdayCovered), so it costs its own total and nothing else.
 //
-// Env-overridable, in the RAIN_MAX_DAILY_IN shape and for its reason: a garbage override must fall back to
-// 32, never to NaN, because every `<= NaN` compares false and would silently switch the rule off.
+// Env-overridable, but only inside 20..40F, and anything else is 32: unset, empty, garbage (NaN, where every
+// `<= NaN` compares false and would silently switch the rule off) and any number outside the band. Unbounded,
+// 'Infinity' or '212' would freeze every day and turn the gauge off, and '-40' would turn the rule off, which
+// is the switch the decision says does not exist. The band is wide enough to tune for a funnel that ices a
+// little above or below freezing and no wider.
 //
 // KNOWN LIMIT, NOT HANDLED: the first thawed day after a freeze can post the earlier snow as melt, so that
 // day's total can OVER-read (yesterday's snow counted as today's rain). It is left alone because the error
 // only ever suppresses watering on a day the ground really is receiving that water.
-const GAUGE_FROZEN_MAX_F = Number(process.env.AWN_GAUGE_FROZEN_MAX_F) || 32;
+const GAUGE_FROZEN_DEFAULT_F = 32, GAUGE_FROZEN_OVERRIDE_MIN_F = 20, GAUGE_FROZEN_OVERRIDE_MAX_F = 40;
+const GAUGE_FROZEN_MAX_F = (() => {
+  const n = Number(process.env.AWN_GAUGE_FROZEN_MAX_F);
+  return n >= GAUGE_FROZEN_OVERRIDE_MIN_F && n <= GAUGE_FROZEN_OVERRIDE_MAX_F ? n : GAUGE_FROZEN_DEFAULT_F;
+})();
 
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 

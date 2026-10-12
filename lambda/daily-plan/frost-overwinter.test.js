@@ -25,6 +25,11 @@
 //   * frostForSpace returns early on a new env var named OVERWINTER_QUIET              -> (b) "no switch of its own"
 //   * frostEval.js reads an env var named SOW_DATED_LINES_FROZEN                       -> (b) two cases
 //   * src/lib/frostAlertLine.js imports SOW_DATED_LINES_FROZEN from ./featureFlags.js  -> (b) two cases
+//
+// WHAT (b) DOES NOT RED ON (narrowed after the pre-promote review, each also applied and seen GREEN): the words
+// `featureFlags` or `sowLines` anywhere else in handler.js; a module the page's frost files import taking a
+// DIFFERENT flag from featureFlags.js; a second `.filter(` or a reworded return in frostForSpace. None of those
+// is a frost module reading a sowing-freeze or overwintering switch.
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -133,8 +138,12 @@ const code = (rel) => strip(readFileSync(resolve(REPO, rel), 'utf8'));
 const LAMBDA_FROST = ['lambda/daily-plan/frostEval.js', 'lambda/daily-plan/frostClass.js', 'lambda/daily-plan/radiativeFrost.js'];
 const CLIENT_FROST = ['src/lib/frostAlertLine.js', 'src/lib/tonightLow.js', 'src/components/today/FrostAlertLine.jsx'];
 const FLAGS = 'src/lib/featureFlags.js';
-// The sowing freeze by its constant, its ledger id, its hook option, or the module it lives in.
-const SOW_FREEZE = /SOW_DATED_LINES_FROZEN|sow[_-]?freez|sowLines|featureFlags/i;
+// The sowing freeze by the one binding that carries it. Not the module it lives in: featureFlags.js holds other
+// flags, and taking one of those is not reading the freeze.
+const SOW_FREEZE = /SOW_DATED_LINES_FROZEN/;
+// ...except a whole-module handle on featureFlags.js (namespace import, default import, bare require), which
+// would let the freeze be read under any spelling. A named import list is checked by SOW_FREEZE itself.
+const FLAGS_WHOLE = /import\s+(?:\*\s+as\s+)?[A-Za-z_$][\w$]*\s*(?:,\s*\{[^}]*\}\s*)?from\s*['"][^'"]*featureFlags(?:\.js)?['"]|=\s*(?:await\s+)?(?:require|import)\(\s*['"][^'"]*featureFlags(?:\.js)?['"]\s*\)(?!\s*\.)/;
 const HANDLER = code('lambda/daily-plan/handler.js');
 const frostForSpaceBody = () => {
   const from = HANDLER.indexOf('function frostForSpace(');
@@ -167,16 +176,21 @@ describe('BUG-FROSTALERTNOAPP-001 — no frost module reads the sowing freeze or
     expect(frostForSpaceBody(), 'handler.frostForSpace must be findable').toBeTruthy();
   });
 
-  it('none of the six frost modules, nor the handler, names the sowing freeze in code', () => {
-    for (const rel of [...LAMBDA_FROST, ...CLIENT_FROST]) expect(code(rel), rel).not.toMatch(SOW_FREEZE);
-    expect(HANDLER).not.toMatch(SOW_FREEZE);
+  it('none of the six frost modules, nor handler.frostForSpace, names the sowing freeze in code', () => {
+    for (const rel of [...LAMBDA_FROST, ...CLIENT_FROST]) {
+      expect(code(rel), rel).not.toMatch(SOW_FREEZE);
+      expect(code(rel), rel).not.toMatch(FLAGS_WHOLE);
+    }
+    // The handler is not a frost module. Only the function that decides frost is held to this.
+    expect(frostForSpaceBody()).not.toMatch(SOW_FREEZE);
   });
 
-  it('the page\'s frost modules do not reach featureFlags.js through any import chain', () => {
+  it('nothing the page\'s frost modules import, at any depth, reads the sowing freeze', () => {
     const reached = closure(CLIENT_FROST);
     for (const rel of CLIENT_FROST) expect(reached.has(rel)).toBe(true);
     expect(reached.size).toBeGreaterThan(CLIENT_FROST.length);      // the walk does follow imports (constants.js)
-    expect([...reached]).not.toContain(FLAGS);
+    // featureFlags.js itself may be reached (for another flag) and is where the constant is DEFINED.
+    for (const rel of reached) if (rel !== FLAGS) expect(code(rel), rel).not.toMatch(SOW_FREEZE);
   });
 
   it('the Lambda\'s frost modules read FROST_* env names and nothing else', () => {
@@ -193,14 +207,14 @@ describe('BUG-FROSTALERTNOAPP-001 — no frost module reads the sowing freeze or
     expect(seen).toBeGreaterThan(10);
   });
 
-  it('frostForSpace has no switch of its own: no env read, no overwintering read, one filter', () => {
+  it('frostForSpace has no switch of its own: no env read, no overwintering read, no early exit', () => {
     const body = frostForSpaceBody();
     expect(body).not.toMatch(/process\.env/);
     expect(body).not.toMatch(/overwinter/i);
-    expect(body.match(/\.filter\(/g)).toHaveLength(1);
-    // One exit at the function's own indent, and it hands back the decision: no early "say nothing" return.
+    // One exit at the function's own indent, unconditional, and it hands back the decision: no early "say
+    // nothing" return. What else that line returns, and how it is spelled, is not this guard's business.
     const exits = body.split('\n').filter((l) => /^ {2}(if\b.*)?\breturn\b/.test(l));
     expect(exits).toHaveLength(1);
-    expect(exits[0]).toMatch(/^ {2}return \{ decision, coverage:/);
+    expect(exits[0]).toMatch(/^ {2}return\b.*\bdecision\b/);
   });
 });
