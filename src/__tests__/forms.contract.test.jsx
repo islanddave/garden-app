@@ -267,6 +267,15 @@ describe('formStyles — every value composes from the palette P', () => {
     expect(dis.backgroundColor).toBe(P.light)
     expect(dis.cursor).toBe('not-allowed')
   })
+  it('a disabled button\'s words are never painted in the color of its own fill, in any variant', () => {
+    // The outline button painted P.light words on the P.light disabled fill: a blank grey bar.
+    for (const variant of ['primary', 'secondary', 'danger']) {
+      const dis = formStyles.buttonChrome(variant, true)
+      expect(dis.backgroundColor, variant).toBe(P.light)
+      expect(dis.color, variant).toBe(P.white)
+      expect(dis.color, variant).not.toBe(dis.backgroundColor)
+    }
+  })
 })
 
 describe('Badge — tone, children, escape hatches, no-tone-attr-leak', () => {
