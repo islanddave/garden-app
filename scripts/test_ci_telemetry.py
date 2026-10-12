@@ -13,6 +13,7 @@ import os
 import re
 
 import pytest
+import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -252,6 +253,80 @@ def test_the_report_states_the_dev_push_baseline(tmp_path):
     assert "| pull_request | other branches | 1 | 1 | 0 | 0 | 61.7 |" in text
 
 
+# ── the nine-job shape (plan A2.3): ci.yml's legs and its aggregator, as the workflow file names them ──────────
+
+def _ci_yml_jobs():
+    with open(os.path.join(os.path.dirname(HERE), ".github", "workflows", "ci.yml"), encoding="utf-8") as fh:
+        names = list(yaml.safe_load(fh)["jobs"])
+    assert report.AGGREGATOR in names and len(names) > 1, names     # the id the report reads is the file's
+    return [n for n in names if n != report.AGGREGATOR]
+
+
+def _nine(created, attempt=1, legs="success", aggregator="success", red_leg=None, first_id=100):
+    """One attempt of a ci.yml run in the switch's shape. Leg i installs for 10 + i seconds; the aggregator is
+    created when the legs are done, as GitHub does for a job with `needs`."""
+    names, out = _ci_yml_jobs(), []
+    for i, name in enumerate(names):
+        steps = [("Install dependencies", 10 + i, "success"), ("the leg's own work", 300, "success")]
+        conclusion = legs
+        if name == red_leg:
+            steps, conclusion = [("Install dependencies", 10 + i, "success"), ("the leg's own work", 200, "failure")], "failure"
+        if legs == "cancelled":
+            steps = [("Install dependencies", 10 + i, "cancelled")]
+        out.append(dict(job(name, created, steps=steps, conclusion=conclusion, attempt=attempt, exec_s=400), id=first_id + i))
+    later = (report.ts(created) + datetime.timedelta(seconds=420)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    out.append(dict(job(report.AGGREGATOR, later, exec_s=4, conclusion=aggregator, attempt=attempt,
+                        steps=[("Every leg succeeded", 1, aggregator)]), id=first_id + len(names)))
+    return out
+
+
+def test_the_report_reads_legs_and_an_aggregator_without_folding_or_double_counting_them(tmp_path):
+    legs = _ci_yml_jobs()
+    runs = [
+        run(1, "2026-09-28T10:00:00Z", 3000),                              # the serial shape, before the switch
+        run(2, "2026-09-29T10:00:00Z", 1020),                              # the legs, green
+        run(3, "2026-09-30T10:00:00Z", 1000, conclusion="failure"),        # one leg red, so the aggregator is too
+        run(4, "2026-10-01T10:00:00Z", 1020, attempt=2),                   # superseded, then re-run green
+    ]
+    jobs = {1: [job(created="2026-09-28T10:00:00Z", steps=[("Install dependencies", 40, "success")])],
+            2: _nine("2026-09-29T10:00:00Z"),
+            3: _nine("2026-09-30T10:00:00Z", aggregator="failure", red_leg=legs[-1]),
+            4: _nine("2026-10-01T10:00:00Z", legs="cancelled", aggregator="failure")
+               + _nine("2026-10-01T11:00:00Z", attempt=2, first_id=200)}
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / ("2_a1_%d.log" % (100 + len(legs) - 1))).write_text(LOG)
+    (tmp_path / "logs" / "9_a1_9.log").write_text(LOG)                     # a log of a run with no job data
+    text = report.render(report.load(_directory(tmp_path, runs, jobs)))
+    # one row per (job, step): a setup step every leg repeats is not pooled, nor with the serial job's
+    for i, leg in enumerate(legs):
+        assert "| %s | Install dependencies | 1 | %d | %d | %d |" % (leg, 10 + i, 10 + i, 10 + i) in text, leg
+        assert "| %s | **sum of step medians** |  | **%d** |" % (leg, 310 + i) in text, leg
+    assert "| build-and-test | Install dependencies | 1 | 40 | 40 | 40 |" in text
+    assert "| build-and-test | **sum of step medians** |  | **40** |" in text
+    assert "| build-and-test (aggregator) | **sum of step medians** |  | **1** |" in text
+    assert "%d job executions, %d distinct steps in %d jobs." % (len(legs) + 2, 2 * len(legs) + 2, len(legs) + 2) in text
+    # the red leg is the red; the aggregator beside it only repeats it
+    assert _row(text, "time to first red") == "1 / %s / %s / %s" % ((report.mins(2 + 10 + len(legs) - 1 + 200),) * 3)
+    assert "| the leg's own work | 1 |" in text and "| Every leg succeeded |" not in text
+    # a superseded first attempt is cancelled legs and a `failure` aggregator: cancelled, and no flake candidate
+    assert _row(text, "first attempt by SHA: success / failure / cancelled / other") == "2 / 1 / 1 / 0"
+    assert _row(text, "re-runs that turned a failed first attempt green") == "0"
+    # a job log is named by job id; the report says which leg it is
+    assert "**2_a1_%d.log** (%s) — " % (100 + len(legs) - 1, legs[-1]) in text
+    assert "**9_a1_9.log** — " in text
+
+
+def test_an_aggregator_alone_in_its_attempt_or_red_beside_green_legs_keeps_its_own_result():
+    serial = [job(conclusion="failure")]
+    assert report.own_result(serial) == serial and report.job_label(serial[0], serial) == "build-and-test"
+    stranded = [job("static"), job("pytest", conclusion="skipped"), job(conclusion="cancelled", runner="")]
+    assert report.own_result(stranded) == stranded                         # every leg green, the aggregator not
+    assert report.first_attempt_outcome(run(1, "2026-10-01T00:00:00Z", attempt=2), stranded + [job(attempt=2)]) == "cancelled"
+    red = [job("static", conclusion="failure"), job(conclusion="failure"), job("static", attempt=2), job(attempt=2)]
+    assert report.own_result(red) == [red[0], red[2], red[3]]              # judged attempt by attempt
+    assert report.job_label(red[1], red) == "build-and-test (aggregator)"
+
+
 def test_the_report_says_so_when_the_collection_was_incomplete(tmp_path):
     text = report.render(report.load(_directory(tmp_path, [run(1, "2026-09-28T10:00:00Z")], {},
                                                 problems=["jobs of run 1: gh exit 1: HTTP 502"])))
@@ -321,6 +396,38 @@ def test_logs_are_taken_from_the_newest_green_first_attempt_dev_pushes():
             run(6, "2026-10-01T12:00:00Z", workflow="deploy-staging.yml"), run(7, "2026-10-01T13:00:00Z", branch="main")]
     assert [r["id"] for r in collect.newest_green_dev_pushes(runs, 5)] == [2, 1]
     assert [r["id"] for r in collect.newest_green_dev_pushes(runs, 1)] == [2]
+
+
+def test_logs_are_fetched_for_every_job_of_a_nine_job_run_one_file_per_job(tmp_path, monkeypatch):
+    green = run(2, "2026-09-29T10:00:00Z")
+    listing = _nine("2026-09-29T10:00:00Z")
+    asked = []
+
+    def gh(argv, **_kwargs):
+        assert argv[:4] == ["gh", "api", "-X", "GET"], argv
+        path = argv[4]
+        asked.append(path)
+        if "/actions/runs?" in path:
+            body = json.dumps({"total_count": 1, "workflow_runs": [green]})
+        elif path.startswith("repos/o/r/actions/runs/2/jobs?"):
+            body = json.dumps({"jobs": listing})
+        else:
+            body = "log of " + re.fullmatch(r"repos/o/r/actions/jobs/(\d+)/logs", path).group(1)
+        return type("Proc", (), {"returncode": 0, "stdout": body, "stderr": ""})()
+
+    monkeypatch.setattr(collect.subprocess, "run", gh)
+    out = tmp_path / "out"
+    assert collect.main(["--since", "2026-09-29", "--until", "2026-09-29", "--out", str(out), "--repo", "o/r",
+                         "--logs", "1", "--workers", "1"]) == 0
+    want = sorted("2_a1_%d.log" % j["id"] for j in listing)
+    assert len(want) == len(_ci_yml_jobs()) + 1 == len(set(want))
+    assert sorted(os.listdir(out / "logs")) == want == json.loads((out / "meta.json").read_text())["logs"]
+    assert (out / "logs" / want[0]).read_text() == "log of %s" % listing[0]["id"]
+    assert sum(1 for path in asked if path.endswith("/logs")) == len(want)
+    # and report.py reads what collect.py wrote: every log under its job's name
+    text = report.render(report.load(str(out)))
+    for j in listing:
+        assert "**2_a1_%d.log** (%s) — " % (j["id"], report.job_label(j, listing)) in text
 
 
 def test_collect_refuses_an_output_directory_inside_the_repository(tmp_path, capsys):

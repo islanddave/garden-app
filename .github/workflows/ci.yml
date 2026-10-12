@@ -1,9 +1,9 @@
 name: CI — Build and Unit Tests
 
-# Gate on PRs targeting any protected branch.
-# Must pass before merge to dev, staging, or main is permitted.
-# `push: [dev]` trigger removed 2026-05-01 (pipeline hardening sprint Step 1)
-# to avoid double-firing once enhanced branch protection lands on main/staging.
+# Runs on every push to dev and on PRs targeting dev, staging or main.
+# The dev push's run is the one a promote reads: scripts/promote-preflight.py counts `push` and
+# `workflow_dispatch` runs on the SHA and never a `pull_request` run. (`push: [dev]` was taken out on 2026-05-01,
+# pipeline hardening sprint Step 1, and came back with the promote of 2026-06-03.)
 #
 # THE SHAPE (plan A2.3, the switch: gardening-docs project-state/_promotepath-20261002/PLAN-V003.md §4). Eight
 # parallel legs and one aggregator job whose id is `build-and-test`. promote-gate.yml reads that job, by that id,
@@ -21,10 +21,44 @@ name: CI — Build and Unit Tests
 #   - What a step hands to a later one stays inside its leg; each leg repeats the setup it needs (checkout,
 #     setup-node, npm ci, Chrome, the origin/main fetch). ci-next.yml's header lists the hand-offs.
 #   - The two unit steps carry env VITEST_NODE_PROJECT: '1' (vitest.config.ts then runs the server-side test files
-#     in a `node` project and the rest under jsdom). That two-project shape is the gating one (owner, 2026-10-11);
-#     taking the key out so that it is the only shape is a later commit.
-# A lane cut from a dev older than the switch keeps running the single serial job until it rebases; the preflight
-# passes either shape.
+#     in a `node` project and the rest under jsdom). The owner's decision (2026-10-11, row `switch-unit-shape` of
+#     DECISIONS.md beside the plan) has two halves: that two-project shape is the gating one, and the trial's key
+#     is removed so there is one shape. The switch does the first half only, with the key as the shadow and the
+#     soak ran it. Removing the key is a later commit, and the row is not carried out in full until it lands.
+# A lane's branch runs this file only on a pull request (a push runs it on dev alone), and GitHub takes a pull
+# request's workflow from the merge of the branch into its base (documented behaviour, not observed here): a lane
+# cut from a dev older than the switch gets these nine jobs once its base holds them. What such a lane keeps is its
+# own older ci-next.yml on workflow_dispatch. The preflight counts neither kind of run and passes either shape.
+#
+# READING A RED `build-and-test`. Read the RUN's conclusion and the legs before the aggregator.
+#   - The run concluded `cancelled`: a newer push superseded it. The aggregator runs under always(), reads its
+#     cancelled legs and shows `failure` where the serial job showed a grey cancelled. Nothing to chase.
+#   - A leg red at a test, a gate or a ratchet: a red of the PRODUCT. Fix forward or re-run; never a rollback.
+#   - Every leg green and `build-and-test` not: the aggregator got no runner (the job has no steps and reads
+#     `cancelled`; its 5-minute timeout counts only a running job). `gh run rerun <run id> --failed` re-runs it
+#     alone, then ask the preflight again. Seen once in the shadow (ci-next.yml run 37362246327, 2026-10-05).
+#
+# ROLLBACK, for a first dev push in this shape that is red for a reason of SHAPE (plan §4, "Rollback (core)").
+#   - Of shape: the aggregator red with every leg green in the API, TWICE (the plan's trigger; whether the
+#     shadow's one counts as the first is the owner's ruling and is not made here); a leg red in a step it only
+#     repeats (checkout, setup-node, `Install dependencies`, Chrome, the origin/main fetch), red again on a
+#     re-run; `Workflow lint` or the `pytest` leg's pins red on these two files; a leg red on pull_request only.
+#     One leg whose own content is red is fixed forward (about 17 minutes a cycle), not rolled back.
+#   - The rollback is a forward revert of the WHOLE switch commit and of the review-fix commit after it (subject
+#     `ci: close the switch review's findings`, which edits this header and so conflicts if left), newest first,
+#     on a lane at dev's head: `git revert <fix sha> <switch sha>`, then `python3 scripts/gen-ci-step-manifest.py
+#     --check` and `python3 -m pytest -q scripts/test_*.py`, then the push to dev, which is a gate-file push
+#     (regression-impact review first). All of the switch's ten files or none: the pins red a half-reverted tree.
+#   - What it costs. It takes effect on push, but the reverted SHA needs a full cycle of the serial job (54 to
+#     56 minutes measured, timeout 90) before anything is promotable, and ci-next.yml is on every dev push again
+#     as the shadow. Keep dev quiet until that first run is read.
+#   - It is clean only until the next commit that edits a step of either file or the manifest. After that the
+#     revert conflicts: fix forward.
+#   - It rolls back the job graph and NOT the run-based preflight, which stays and passes either shape. Do not
+#     revert the preflight's commit (31955d88ca) in its place: while this file is split that is not a rollback,
+#     because no single check-run named `build-and-test` comes from one job (gardening-deploy.md, "Items 2 and 3
+#     are decided by the workflow's runs").
+#   - A revert is a dev push like any other. It ships nothing and authorises no promote.
 
 on:
   push:

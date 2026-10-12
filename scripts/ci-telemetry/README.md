@@ -15,18 +15,28 @@ plus one job listing per completed run (about 500 calls for two weeks). Job file
 same command again fetches only what is missing. It exits 1 and lists the problems in `meta.json` if any listing
 could not be read or looks truncated; `report.py` then prints **INCOMPLETE DATA** at the top. `--logs N` also
 downloads the job logs of the N newest successful ci.yml dev pushes, which is what the silent-tail table is
-measured from.
+measured from: one log per job, so nine a run since the switch (plan A2.3) and one before it.
 
 `report.py` reads that directory and nothing else. It prints:
 
 - **ci.yml per dev push**: median and p90 wall, the 10 newest successful runs, success / failure / cancelled,
   re-runs, first-push-green rate, time to first red, queue time, the same by week, and ci.yml by trigger.
-- **ci.yml per-step medians**, over successful first-attempt dev pushes.
+- **ci.yml per-step medians**, over successful first-attempt dev pushes, one row per (job, step) and one sum per
+  job. Since the switch a run is eight legs and the aggregator `build-and-test`: a setup step that every leg
+  repeats has a row per leg, the serial job of before the switch keeps its own rows under `build-and-test`, and
+  the aggregator's are under `build-and-test (aggregator)`. The legs run side by side, so a run's work time is
+  its slowest leg's sum, not the total. A report made before this change pooled by step name alone: do not set
+  its step table against one made after.
 - **promote-gate.yml** and **deploy-staging.yml**: wall, and the split by job (span and runner-seconds).
 - **Runner-minutes by workflow**, with the minutes spent on cancelled runs, failed runs and superseded attempts,
   and any run with a job queued more than 300 s.
 - **Per workflow, by week**: median, p90 and outcome counts.
-- **Silent tails**, when logs were collected: per step, the time between its last output line and the next step.
+- **Silent tails**, when logs were collected: per step, the time between its last output line and the next step,
+  one table per job log, headed by the file and the job's name.
+
+The aggregator runs under `always()` and reads `failure` when a leg failed and when a leg was cancelled. Where a
+job beside it did not succeed, the report leaves it out of "time to first red" and of the first-attempt reading, so
+a red leg is one red and a superseded first attempt reads cancelled. With every leg green it is read as any job.
 
 What each figure means (which attempt a "wall" covers, what counts as an executed job, how a first attempt is
 read after a re-run) is defined once, in the docstring at the top of `report.py`. Compare two reports only when
@@ -47,6 +57,31 @@ promote-gate attempt that ran that step (told by the step's name) the script exi
 `CLOSED: name-based check removed at run ...`: neither READY nor NOT READY, with the dual record before it given as
 history and each later attempt's run-based lines listed. The rules are in its docstring;
 `scripts/test_preflight_dual.py` holds them, and takes the step name and the notice text from the real step.
+
+## Rolling the switch back
+
+The rules are in the header of `.github/workflows/ci.yml` (READING A RED `build-and-test`, then ROLLBACK). In
+short, for the first dev push in the split shape and any after it:
+
+1. Read the run before the aggregator: `gh api repos/OWNER/REPO/actions/runs/RUN_ID --jq .conclusion`, then
+   `gh api "repos/OWNER/REPO/actions/runs/RUN_ID/jobs?per_page=100" --jq '.jobs[] | "\(.name) \(.conclusion) runner=\(.runner_name)"'`.
+   A run that concluded `cancelled` is a superseded push, whatever `build-and-test` shows. A leg red at a test or a
+   gate is a product red: fix forward. Every leg green and `build-and-test` red with no runner:
+   `gh run rerun RUN_ID --failed`, then `python3 scripts/promote-preflight.py --repo OWNER/REPO --sha SHA
+   --workflow ci.yml --job build-and-test`.
+2. A red of shape (the aggregator red over green legs twice; a repeated setup step red again on a re-run; `Workflow
+   lint` or the pins red on the two workflow files; a leg red on pull_request only) is rolled back by a forward
+   revert of the switch commit and the review-fix commit after it, newest first, on a lane at dev's head:
+   `git revert FIX_SHA SWITCH_SHA && python3 scripts/gen-ci-step-manifest.py --check && python3 -m pytest -q
+   scripts/test_*.py`, then the gate-file review and the push to dev. Find the two with
+   `git log --oneline --grep='A2.3 switch' --grep='close the switch review' -- .github/workflows/ci.yml`.
+3. Cost: the reverted SHA runs the serial job (54 to 56 minutes measured) before anything is promotable, and
+   `ci-next.yml` is on every dev push again. The revert is clean only until the next commit that edits a step of
+   either workflow file or the manifest.
+4. It does not roll back the run-based preflight, and reverting the preflight's commit instead is not a rollback
+   while `ci.yml` is split. A revert ships nothing and authorises no promote.
+
+`report.py` and `collect.py` read both shapes, so neither needs anything after a rollback.
 
 ## The shadow's acceptance instruments
 

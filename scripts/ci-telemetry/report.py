@@ -6,13 +6,21 @@ Definitions, so two reports can be compared:
                   re-run runs are also counted on their own.
   week            Monday-start, by the UTC day the run was created.
   dev push        ci.yml runs with event=push on branch dev.
-  step medians    over successful FIRST-attempt dev pushes only, so a step is timed doing its normal work.
+  step medians    over successful FIRST-attempt dev pushes only, so a step is timed doing its normal work. One
+                  row per (job, step): since the switch (plan A2.3) a ci.yml run is eight legs and an aggregator,
+                  and `Install dependencies` in one leg is not the same work as in another. The sums are per job;
+                  the legs run side by side, so a run's work time is its slowest leg's and not their total.
+  aggregator      ci.yml's job `build-and-test` in an attempt that has other jobs. It runs under always() and
+                  reads `failure` when a leg failed OR was cancelled, so where a leg beside it did not succeed it
+                  repeats that leg's result and is left out of "first attempt" and "time to first red". Alone in
+                  its attempt it is the serial job of before the switch and is read as any job.
   executed job    a job that got a runner in that attempt. A job carried into a later attempt (it starts before
                   it is created) and a job that never got a runner are not executions.
   runner-minutes  sum of completed_at - started_at over executed jobs, every attempt. "Rounded" rounds each job
                   up to a whole minute, as billing does.
   first-push-green  per dev-push SHA, how the FIRST attempt of its first ci.yml push run ended. A re-run
-                  overwrites the run's conclusion, so for those it is read from the attempt-1 jobs.
+                  overwrites the run's conclusion, so for those it is read from the attempt-1 jobs (the
+                  aggregator as above: a superseded first attempt reads cancelled, not failure).
   time to first red  per failed job execution: from the job's creation to the end of its first failed step.
   silent tail     in a job log: the time between a step's last output line and the next step's first line.
 
@@ -30,6 +38,7 @@ import statistics
 import sys
 
 MATRIX = "deploy-lambdas matrix"
+AGGREGATOR = "build-and-test"
 NEWEST = 10
 STAGING_WAIT_STEP = "Write-path staging smoke gate"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -134,11 +143,30 @@ def runner_seconds(run, jobs):
     return out
 
 
+def beside(job, jobs):
+    """The other jobs of the same attempt, by name: the legs, when `job` is the aggregator."""
+    return [j for j in jobs if j.get("run_attempt") == job.get("run_attempt") and j.get("name") != job.get("name")]
+
+
+def is_aggregator(job, jobs):
+    return job.get("name") == AGGREGATOR and bool(beside(job, jobs))
+
+
+def own_result(jobs):
+    """The jobs whose conclusion is their own: all but an aggregator beside a leg that did not succeed."""
+    return [job for job in jobs if not (is_aggregator(job, jobs) and any(
+        j.get("conclusion") not in ("success", "skipped") for j in beside(job, jobs)))]
+
+
+def job_label(job, jobs):
+    return job.get("name") + " (aggregator)" if is_aggregator(job, jobs) else job.get("name")
+
+
 def first_attempt_outcome(run, jobs):
     """How the run's FIRST attempt ended: success, failure, cancelled, another conclusion, or None if unknowable."""
     if (run.get("run_attempt") or 1) == 1:
         return outcome(run)
-    first = [job.get("conclusion") for job in jobs if job.get("run_attempt") == 1]
+    first = [job.get("conclusion") for job in own_result(jobs) if job.get("run_attempt") == 1]
     if not first:
         return None
     if "failure" in first or "timed_out" in first:
@@ -286,7 +314,8 @@ def section_dev_push(data):
         first_by_sha.setdefault(run["head_sha"], run)
     firsts = collections.Counter(first_attempt_outcome(r, jobs.get(r["id"], [])) for r in first_by_sha.values())
     judged = firsts["success"] + firsts["failure"]
-    reds = [first_red(j) for r in pushes for j in jobs.get(r["id"], []) if executed(j) and j.get("conclusion") == "failure"]
+    reds = [first_red(j) for r in pushes for j in own_result(jobs.get(r["id"], []))
+            if executed(j) and j.get("conclusion") == "failure"]
     reds = [r for r in reds if r]
     red_s = [r[0] for r in reds]
     flaky = [r for r in reruns if r.get("conclusion") == "success"
@@ -343,22 +372,29 @@ def section_steps(data, floor=2.0):
     for run in dev_pushes(data["runs"]):
         if run.get("conclusion") != "success" or (run.get("run_attempt") or 1) != 1:
             continue
-        for job in data["jobs"].get(run["id"], []):
+        listing = data["jobs"].get(run["id"], [])
+        for job in listing:
             if job.get("conclusion") != "success" or not executed(job):
                 continue
             runs_used += 1
             for number, name, _, seconds in step_durations(job):
-                by_step[name].append(seconds)
-                order[name] = number
-    rows = sorted(((median(v), name, v) for name, v in by_step.items()), key=lambda row: -row[0])
-    shown = [[name, len(v), secs(med), secs(pct(v, 0.9)), secs(max(v))] for med, name, v in rows if med >= floor]
+                key = (job_label(job, listing), name)
+                by_step[key].append(seconds)
+                order[key] = number
+    rows = sorted(((median(v), key, v) for key, v in by_step.items()), key=lambda row: (-row[0], row[1]))
+    shown = [[key[0], key[1], len(v), secs(med), secs(pct(v, 0.9)), secs(max(v))] for med, key, v in rows if med >= floor]
     rest = [med for med, _, _ in rows if med < floor]
-    shown.append(["(%d other steps, each under %.0f s)" % (len(rest), floor), "", secs(sum(rest)), "", ""])
-    shown.append(["**sum of step medians**", "", "**%s**" % secs(sum(med for med, _, _ in rows)), "", ""])
+    shown.append(["", "(%d other steps, each under %.0f s)" % (len(rest), floor), "", secs(sum(rest)), "", ""])
+    sums = collections.defaultdict(float)
+    for med, key, _ in rows:
+        sums[key[0]] += med
+    for label, total in sorted(sums.items(), key=lambda kv: (-kv[1], kv[0])):
+        shown.append([label, "**sum of step medians**", "", "**%s**" % secs(total), "", ""])
     return "\n".join(["## ci.yml per-step medians (seconds)", "",
-                      "Successful first-attempt dev pushes: %d job executions, %d distinct steps." % (
-                          runs_used, len(by_step)), "",
-                      table(["step", "executions", "median", "p90", "max"], shown)])
+                      "Successful first-attempt dev pushes: %d job executions, %d distinct steps in %d jobs. A sum "
+                      "is one job's; jobs of one run are side by side, so its work time is the largest sum that "
+                      "run has, not their total." % (runs_used, len(by_step), len(sums)), "",
+                      table(["job", "step", "executions", "median", "p90", "max"], shown)])
 
 
 def section_split(data, workflow, title):
@@ -449,11 +485,14 @@ def section_tails(data, wall_floor=15, tail_floor=20):
         return ""
     out = ["## Silent tails in ci.yml job logs", "",
            "Steps of at least %d s with at least %d s of silence between their last output line and the next step. "
-           "File names are <run>_a<attempt>_<job>.log." % (wall_floor, tail_floor)]
+           "File names are <run>_a<attempt>_<job>.log; the job's name follows where the job data has it."
+           % (wall_floor, tail_floor)]
+    named = {"%s_a%s_%s.log" % (run_id, job.get("run_attempt"), job.get("id")): job_label(job, listing)
+             for run_id, listing in data["jobs"].items() for job in listing}
     for name, rows in data["logs"].items():
         long = [r for r in rows if r["wall_s"] >= wall_floor and r["silent_tail_s"] >= tail_floor]
-        out += ["", "**%s** — %d steps; silent tails sum to %.0f s" % (name, len(rows),
-                                                                      sum(r["silent_tail_s"] for r in long)), ""]
+        out += ["", "**%s**%s — %d steps; silent tails sum to %.0f s" % (
+            name, " (%s)" % named[name] if name in named else "", len(rows), sum(r["silent_tail_s"] for r in long)), ""]
         out.append(table(["step", "wall", "until last output", "silent tail"],
                          [[r["step"], r["wall_s"], r["until_last_output_s"], r["silent_tail_s"]] for r in long]))
     return "\n".join(out)

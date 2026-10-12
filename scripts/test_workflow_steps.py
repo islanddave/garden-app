@@ -288,6 +288,22 @@ def test_lint_step_downloads_retry_a_refused_connection():
     assert all("--retry-connrefused" in ln.split() for ln in curls), curls
 
 
+def test_lint_step_checks_both_downloads_against_their_pinned_hashes_before_unpacking_either():
+    # The harness stubs sha256sum, and the manifest follows an edit made in both workflow files, so nothing else
+    # reds when a checksum line is dropped (found by mutation in the switch's review). Pinned on the text: each
+    # tarball is checked against its own env hash, and both checks come before the first tar.
+    _, step = _step(*LINT)
+    lines = [ln.strip() for ln in step["run"].splitlines()]
+    checks = [ln for ln in lines if "sha256sum" in ln]
+    assert checks == ['echo "${ACTIONLINT_SHA256}  $T/actionlint.tgz" | sha256sum -c -',
+                      'echo "${SHELLCHECK_SHA256}  $T/shellcheck.tgz" | sha256sum -c -'], checks
+    first_tar = next(i for i, ln in enumerate(lines) if ln.startswith("tar "))
+    assert all(lines.index(ln) < first_tar for ln in checks), lines[:first_tar + 1]
+    for key in ("ACTIONLINT_SHA256", "SHELLCHECK_SHA256"):
+        assert re.fullmatch(r"[0-9a-f]{64}", str(step["env"][key])), key
+    assert "set -euo pipefail" in lines[:1], lines[:1]     # so a failed check stops the step
+
+
 def test_lint_step_passes_only_after_the_canary_is_rejected_and_every_file_is_linted(tmp_path):
     proc, calls, fake = _run_lint(tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr

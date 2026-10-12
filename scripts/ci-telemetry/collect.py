@@ -6,7 +6,8 @@ Read-only: every call is `gh api -X GET` through gh_get(). Nothing is dispatched
 What lands in --out:
   runs.json           every workflow run created in the range (any workflow, any event), one object per run
   jobs/<run_id>.json  the run's jobs with their steps, EVERY attempt (filter=all), for runs that have completed
-  logs/<run>_a<attempt>_<job>.log   only with --logs N: the job logs of the N newest successful ci.yml dev pushes
+  logs/<run>_a<attempt>_<job>.log   only with --logs N: the job logs of the N newest successful ci.yml dev pushes,
+                      one per job (<job> is the job's id): nine a run since the switch (plan A2.3), one before it
   meta.json           the range, when it was fetched, counts, and every problem met on the way
 
 Run listings are sliced by UTC day because the `created` filter returns at most 1,000 runs per query; a day that
