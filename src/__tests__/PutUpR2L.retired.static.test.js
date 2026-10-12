@@ -46,16 +46,19 @@ describe('the stripper leaves the code it is asked about', () => {
   })
 })
 
+// The page alone for these three. goingNow.js never held any of the three words, so a row for it was true
+// before the cut and no step of the cut could turn it (lane T's own note; dropped when the cut landed). The
+// shell's row that does bite is the `log` one, below.
 describe('the form is gone from the page and the page shell', () => {
-  it.each([PAGE, SHELL])('%s: no PutUpForm', (file) => {
+  it.each([PAGE])('%s: no PutUpForm', (file) => {
     expect(hits(code(file), /PutUpForm/)).toEqual([])
   })
 
-  it.each([PAGE, SHELL])('%s: no RecentHarvestPicker', (file) => {
+  it.each([PAGE])('%s: no RecentHarvestPicker', (file) => {
     expect(hits(code(file), /RecentHarvestPicker/)).toEqual([])
   })
 
-  it.each([PAGE, SHELL])('%s: nothing is imported from putUpPrefill, and no line of code names it', (file) => {
+  it.each([PAGE])('%s: nothing is imported from putUpPrefill, and no line of code names it', (file) => {
     expect(hits(code(file), /putUpPrefill/)).toEqual([])
   })
 
