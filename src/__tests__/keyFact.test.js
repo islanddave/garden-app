@@ -231,11 +231,10 @@ describe('selectCropType — V4-ABOVEFOLD-001 crop-type chip', () => {
     expect(selectCropType({ variety_ref: { type: 'root_vegetable' } })).toBe('Root vegetable')
   })
 
-  // Prod rows (plants Lambda variety_ref, 2026-09-25). The name detectors pick WHICH plantings get a chip;
-  // the words are the cultivar's crop type.
+  // Prod rows (plants Lambda variety_ref, 2026-09-25). The words are the cultivar's crop type.
   const live = (name, crop_type_slug, cultivar = name) => ({ name, variety_ref: { name: cultivar, crop_type_slug } })
 
-  it('a pepper/tomato found by name shows its crop type', () => {
+  it('a pepper/tomato whose name says so shows its crop type', () => {
     expect(selectCropType(live('Habanero', 'pepper'))).toBe('Pepper')
     expect(selectCropType(live('Megatron Jalapeños', 'pepper', 'Megatron F1 (jumbo jalapeno)'))).toBe('Pepper')
     expect(selectCropType(live('Tie-Dye Tomato', 'tomato', 'Tie-Dye'))).toBe('Tomato')
@@ -250,11 +249,14 @@ describe('selectCropType — V4-ABOVEFOLD-001 crop-type chip', () => {
     expect(selectCropType(live('Pepper Squash', 'winter_squash', 'Table Queen'))).toBe('Winter Squash')
   })
 
-  // Not a rollout: plantings the name test misses (230 of 246 live) still have no chip.
-  it('where the chip shows is unchanged: none where the name test finds nothing', () => {
-    expect(selectCropType(live('Black Olive', 'pepper'))).toBeNull()
-    expect(selectCropType(live('Cherokee Green', 'tomato'))).toBeNull()
-    expect(selectCropType(live('Cisneros', 'tomatillo'))).toBeNull()
+  // V5-PLANTPAGEDESIGNQS-001 (Dave 2026-10-11, "crop chip on all"): until then only a planting whose NAME
+  // looked like a pepper or tomato had the chip (16 of 246 live).
+  it('every planting whose cultivar has a crop type shows it, whatever the name', () => {
+    expect(selectCropType(live('Black Olive', 'pepper'))).toBe('Pepper')
+    expect(selectCropType(live('Cherokee Green', 'tomato'))).toBe('Tomato')
+    expect(selectCropType(live('Cisneros', 'tomatillo'))).toBe('Tomatillo')
+    expect(selectCropType(live('Genovese', 'basil'))).toBe('Basil')
+    expect(selectCropType(live('Provider', 'bush_bean'))).toBe('Bush Bean')
   })
 
   it('no crop type is no chip, whatever the name says', () => {

@@ -1,7 +1,8 @@
 // The white crop-type chip beside the gold key-fact pill on the planting hero, end to end (keyFact.js
 // selectCropType -> HeroPhoto -> PlantingDetail). Until 2026-09-25 its words came from name heuristics, so it
 // said "Tomato" on both live tomatillos and "Pepper" on Peppermint (crop type mint). It now names the
-// cultivar's crop type; the heuristics still decide where it shows, so plantings without it stay without it.
+// cultivar's crop type, and since V5-PLANTPAGEDESIGNQS-001 (Dave 2026-10-11, "crop chip on all") it shows on
+// every planting whose cultivar has one, not only where the name looks like a pepper or tomato.
 // Fixtures are prod rows in the plants Lambda's variety_ref shape (2026-09-25, read-only).
 // Harness mirrors PlantingDetail.heroPill.test.jsx (mocked useApiFetch, real router, stubbed telemetry).
 // No jest-dom (L-182): role/attr/text + toEqual only.
@@ -39,7 +40,7 @@ const PEPPERMINT = {
     days_to_maturity_min: 70, days_to_maturity_max: 90, sun_requirements: 'part_sun', default_unit: 'cup',
     harvest_habit: 'cut_and_come_again', scoville_min: null, scoville_max: null, scoville_source: null },
 }
-// A pepper named by cultivar: the name heuristic misses it, so it has never had a chip.
+// A pepper named by cultivar: the name heuristic missed it, so until 2026-10-12 it had no chip.
 const BLACK_OLIVE = {
   id: 'pl1', name: 'Black Olive', project_id: 'proj1', project_name: 'Drive',
   status: 'harvested', quantity: 17, featured_photo_view_url: null,
@@ -92,9 +93,15 @@ describe('PlantingDetail — the hero crop-type chip is the crop type', () => {
     expect(heroCropChips('Peppermint')).toEqual(['Mint'])
   })
 
-  it('Black Olive (a pepper the name test misses) still has no chip: not a rollout', async () => {
+  it('Black Olive (a pepper whose name does not say so): the chip says Pepper', async () => {
     renderPage(BLACK_OLIVE)
     await screen.findByRole('heading', { name: 'Black Olive' })
-    expect(heroCropChips('Black Olive')).toEqual([])
+    expect(heroCropChips('Black Olive')).toEqual(['Pepper'])
+  })
+
+  it('a planting with no cultivar has no chip', async () => {
+    renderPage({ ...BLACK_OLIVE, name: 'Mystery Pepper', variety_ref: null })
+    await screen.findByRole('heading', { name: 'Mystery Pepper' })
+    expect(heroCropChips('Mystery Pepper')).toEqual([])
   })
 })

@@ -124,14 +124,15 @@ describe('HeroPhoto — planting chrome in the overlay', () => {
     expect(details.getAttribute('aria-haspopup')).toBe('dialog')
   })
 
-  // What prod does with the shape the Lambda sends: a tomato whose name never says "tomato" wears no
-  // crop-type chip (keyFact.js selectCropType; PlantingDetail.heroCropChip.test.jsx owns the page level).
-  it('a tomato named by cultivar alone wears no crop-type pill', () => {
+  // A tomato whose name never says "tomato" wears the chip too (V5-PLANTPAGEDESIGNQS-001; keyFact.js
+  // selectCropType; PlantingDetail.heroCropChip.test.jsx owns the page level).
+  it('a tomato named by cultivar alone wears the crop-type pill', () => {
     mount()
-    expect(screen.queryByText('Tomato')).toBeNull()
+    const chip = screen.getByText('Tomato')
+    expect(screen.getByRole('heading', { level: 1 }).nextElementSibling.contains(chip)).toBe(true)
   })
 
-  it('renders the crop-type pill, worded from crop_type_slug, when the name carries the crop', () => {
+  it('renders the crop-type pill, worded from crop_type_slug', () => {
     mount({ planting: PL_NAMED })
     const chip = screen.getByText('Tomatillo')
     expect(chip.tagName).toBe('SPAN')
