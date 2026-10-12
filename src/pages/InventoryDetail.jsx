@@ -111,6 +111,9 @@ function InventoryDetailPage() {
   const formRef = useRef(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting,     setDeleting]     = useState(false)
+  // False once this page is gone; handleDelete reads it when its answer lands.
+  const aliveRef = useRef(true)
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false } }, [])
   // BUG-INVDELETEERROROFFSCREEN-001 — why the last delete failed, shown INSIDE the "Remove item?" dialog.
   const [deleteErr,    setDeleteErr]    = useState(null)
   // V4-DIRTYGUARDSWEEP-001 — the last form snapshot that is known to be ON THE SERVER. Kept
@@ -628,10 +631,17 @@ function InventoryDetailPage() {
   // dialog vanished and nothing changed near the finger. Now the dialog stays open with the reason
   // beside its buttons — for ANY delete error, the 409 "This packet can't be removed: …" among them
   // (BUG-INVREFSTRAND-001), whose sentence already says what to do instead.
+  //
+  // BUG-INVDETAILDELETELATENAV-001 — he may have left while the answer was out (Back, or another lot
+  // from header Search, which re-keys this page). The delete is done either way; whether the page is
+  // still there is read NOW, not when he tapped, and a page that is gone takes him nowhere. It used to
+  // navigate regardless: a navigate(-1) from wherever he stood, or My seeds over the lot he had opened.
+  // The same `aliveRef` AddToLot and SaveSeedSheet read for their `closed`.
   async function handleDelete() {
     setDeleting(true)
     setDeleteErr(null)
     const { error } = await deleteItem(id)
+    if (!aliveRef.current) return
     setDeleting(false)
     if (error) {
       setDeleteErr(error)
