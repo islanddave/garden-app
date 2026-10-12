@@ -9,10 +9,15 @@ vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy, getT
 // the sync no-window resolver so nothing async mutates state mid-test (no act() churn; absence
 // assertions race-free). Window rendering is covered in CropCard.window*.test.jsx.
 vi.mock('../lib/harvestWindows.js', () => import('./helpers/harvestWindowsSyncStub.js'))
+// The facet chip row: the tags API is off under test (useTags.js tagsEnabled), so the hook's own answer
+// here is always "no chips". `tags.projected` stands in for GET /api/entity-tags' `projected` rows; it is
+// [] unless a test sets it, which is what the real hook returned for every test in this file.
+const tags = vi.hoisted(() => ({ projected: [] }))
+vi.mock('../hooks/useTags.js', () => ({ useEntityTags: () => ({ direct: [], projected: tags.projected }) }))
 
 import CropCard from '../components/planting/CropCard.jsx'
 
-beforeEach(() => { apiFetchSpy.mockReset(); apiFetchSpy.mockResolvedValue(null) })
+beforeEach(() => { apiFetchSpy.mockReset(); apiFetchSpy.mockResolvedValue(null); tags.projected = [] })
 
 describe('CropCard', () => {
   it('renders nothing when there is no maturity, no chips, and no attrs', () => {
@@ -346,5 +351,70 @@ describe('CropCard — continuous-harvest window (V4-MATURITYREPEAT-001)', () =>
   it('still paints the closing date on a single-habit crop', () => {
     render(<CropCard planting={armageddon('single')} />)
     expect(screen.getByText(/Harvest window open — through Aug 16, 2026/)).toBeTruthy()
+  })
+})
+
+// V5-PLANTPAGEDESIGNQS-001 part 1 (Dave 2026-10-12: "Green pill on the card"). A tomato's growth type showed
+// twice on this card on 41 of 46 live tomatoes: the green pill and, under it, the cultivar's derived
+// `determinacy` facet chip (lambda/varieties/crop-derive.js). The pill stays; the card drops the chip that
+// names the same class. Rows below are the tags Lambda's projection shape.
+describe('CropCard — the growth type shows once: the green pill, not the facet chip under it', () => {
+  const pills = container => [...container.querySelectorAll('span')].filter(s => s.style.borderRadius === '999px' && s.dataset.testid !== 'tag-chip')
+  const chips = () => screen.queryAllByTestId('tag-chip').map(c => c.textContent)
+  const TYPE = { facet: 'type', slug: 'tomato', label: 'Tomato' }
+  const ANNUAL = { facet: 'lifecycle', slug: 'tender_perennial', label: 'Tender perennial' }
+  const det = (slug, label) => ({ facet: 'determinacy', slug, label })
+  const card = variety_ref => render(<CropCard planting={{ id: 'p', variety_ref }} />)
+
+  it('1884: Indeterminate is the green pill; the chip row keeps its other chips and drops the determinacy one', () => {
+    tags.projected = [TYPE, ANNUAL, det('indeterminate', 'Indeterminate')]
+    const { container } = card({ name: '1884', crop_type_slug: 'tomato', growth_habit: 'indeterminate vine; 5-7 ft; stake or cage required' })
+    expect(pills(container).map(s => s.textContent)).toEqual(['Indeterminate'])
+    expect(chips()).toEqual(['Tomato', 'Tender perennial'])
+    expect(screen.getAllByText('Indeterminate')).toHaveLength(1)
+  })
+
+  it.each([
+    ['Determinate bush, 3 ft', 'Determinate', det('determinate', 'Determinate')],
+    ['semi-determinate; 4 ft', 'Semi-determinate', det('semi_determinate', 'Semi-Determinate')],
+  ])('%s: the %s pill, and no chip repeating it', (growth_habit, word, chip) => {
+    tags.projected = [TYPE, chip]
+    const { container } = card({ name: 'T', crop_type_slug: 'tomato', growth_habit })
+    expect(pills(container).map(s => s.textContent)).toEqual([word])
+    expect(chips()).toEqual(['Tomato'])
+  })
+
+  it('matches on the facet and slug, not the label: a chip worded differently still goes, a same-worded chip of another facet stays', () => {
+    tags.projected = [det('indeterminate', 'Vining'), { facet: 'freeform', slug: 'indeterminate', label: 'Indeterminate' }]
+    card({ name: 'T', crop_type_slug: 'tomato', growth_habit: 'indeterminate vine' })
+    expect(chips()).toEqual(['Indeterminate'])
+  })
+
+  it('when the determinacy chip was the only chip, the row goes with it (no empty row)', () => {
+    tags.projected = [det('indeterminate', 'Indeterminate')]
+    const { container } = card({ name: 'T', crop_type_slug: 'tomato', growth_habit: 'indeterminate vine' })
+    expect(chips()).toEqual([])
+    expect([...container.firstChild.children].filter(el => el.childElementCount === 0)).toEqual([]) // no row left empty
+  })
+
+  // Once, not zero: the chip is the only place the class shows when the card has no green pill (the
+  // promoted determinacy column is set and the prose never says the word), so it stays and still earns the card.
+  it('no green pill (no determinacy word in the prose): the chip stays', () => {
+    tags.projected = [TYPE, det('indeterminate', 'Indeterminate')]
+    const { container } = card({ name: 'T', crop_type_slug: 'tomato', growth_habit: null })
+    expect(pills(container)).toEqual([])
+    expect(chips()).toEqual(['Tomato', 'Indeterminate'])
+  })
+
+  // Dwarf is the facet's own refinement and the pill has no word for it; a chip that names a DIFFERENT
+  // class than the pill is not a duplicate either (column and prose disagree: both stay visible).
+  it('a chip that says something the pill does not stays: Dwarf, and a class the pill contradicts', () => {
+    tags.projected = [det('dwarf', 'Dwarf')]
+    const first = card({ name: 'T', crop_type_slug: 'tomato', growth_habit: 'dwarf indeterminate; 3 ft' })
+    expect(chips()).toEqual(['Dwarf'])
+    first.unmount()
+    tags.projected = [det('determinate', 'Determinate')]
+    card({ name: 'T', crop_type_slug: 'tomato', growth_habit: 'indeterminate vine' })
+    expect(chips()).toEqual(['Determinate'])
   })
 })

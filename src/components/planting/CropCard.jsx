@@ -173,6 +173,11 @@ function HarvestWindow({ window: win }) {
   )
 }
 
+// The derived `determinacy` facet slug (lambda/varieties/crop-derive.js DETERMINACY_LABELS) that names the
+// same class as each word of the green determinacy pill. `dwarf` is the facet's own refinement: no pill
+// word, so never a duplicate.
+const DETERMINACY_CHIP_SLUG = { Determinate: 'determinate', 'Semi-determinate': 'semi_determinate', Indeterminate: 'indeterminate' }
+
 export default function CropCard({ planting, onUpdated }) {
   const { projected } = useEntityTags('plant', planting?.id)
   const vref = planting?.variety_ref ?? null
@@ -217,7 +222,14 @@ export default function CropCard({ planting, onUpdated }) {
   const hasMaturity = m.ageDays != null || m.harvestWindowLabel
   // V4-PLANTINGMETA-001 — see the render site below for why this is display-only and conditional.
   const addedDate = fmtAdded(planting?.created_at)
-  const hasChips = Array.isArray(projected) && projected.length > 0
+  // V5-PLANTPAGEDESIGNQS-001 part 1 (Dave 2026-10-12, "Green pill on the card") — the growth type shows once.
+  // 41 of 46 live tomato cards said it twice: the green pill above and the cultivar's derived determinacy
+  // facet chip under it. On THIS card the chip that names the pill's own class is dropped, matched on the
+  // tag's facet and slug, never its label. The tag itself is untouched (filters, grouping, Search). With no
+  // green pill, or a chip naming another class (Dwarf; a column that disagrees with the prose), it stays.
+  const facetChips = (Array.isArray(projected) ? projected : [])
+    .filter(t => !(determinacy && t?.facet === 'determinacy' && t.slug === DETERMINACY_CHIP_SLUG[determinacy]))
+  const hasChips = facetChips.length > 0
   // V4-RIPECUE-001: a sourced cue is enough on its own to earn the card. Without this a planting
   // whose cultivar carries no DTM/sun/yield prose renders no card at all, which would silently drop
   // the cue from exactly the sparsest records — the reach the cue was chosen for.
@@ -310,7 +322,7 @@ export default function CropCard({ planting, onUpdated }) {
       {/* projected faceted chips */}
       {hasChips && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {projected.map(t => <TagChip key={`${t.facet}:${t.slug}`} tag={t} />)}
+          {facetChips.map(t => <TagChip key={`${t.facet}:${t.slug}`} tag={t} />)}
         </div>
       )}
 

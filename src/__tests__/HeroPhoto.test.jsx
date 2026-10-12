@@ -32,7 +32,10 @@ const PL = {
   // Only keys the plants Lambda's variety_ref blocks emit (lambda/plants/index.js). Until 2026-10-11 this
   // carried `type: 'Tomato'`, which no block sends, so the chip below was asserted through
   // selectCropType's explicit-field branch, one prod never takes (BUG-HEROPHOTOPHANTOMFIXTURE-001).
-  variety_ref: { name: 'Cherokee Purple', crop_type_slug: 'tomato', growth_habit: 'indeterminate' },
+  // The gold pill is this tomato's days: its growth type is the crop card's green pill, not the hero's
+  // (V5-PLANTPAGEDESIGNQS-001 part 1, 2026-10-12).
+  variety_ref: { name: 'Cherokee Purple', crop_type_slug: 'tomato', growth_habit: 'indeterminate',
+    days_to_maturity_min: 80, days_to_maturity_max: 90 },
 }
 // The chip shows only when the NAME says pepper/tomato; its words are the cultivar's crop type.
 const PL_NAMED = {
@@ -119,7 +122,8 @@ describe('HeroPhoto — planting chrome in the overlay', () => {
   it('renders the StatusPicker, key-fact pill and Details pill', () => {
     mount()
     expect(screen.getByRole('combobox', { name: /change planting status/i })).toBeTruthy()
-    expect(screen.getByText('Indeterminate')).toBeTruthy()       // gold key-fact pill
+    expect(screen.getByText('80–90 days')).toBeTruthy()          // gold key-fact pill
+    expect(screen.queryByText('Indeterminate')).toBeNull()       // the card's word, never the hero's
     const details = screen.getByRole('button', { name: /details/i })
     expect(details.getAttribute('aria-haspopup')).toBe('dialog')
   })

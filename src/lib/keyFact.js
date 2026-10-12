@@ -77,7 +77,8 @@ function attr(planting, key) {
 
 // selectKeyFact — priority cascade, FIRST non-null wins. Returns a short display string or null.
 //   (1) pepper -> "2.5K–8K SHU" / "Sweet · 0 SHU"   (crop type; the CropCard's SHU label)
-//   (2) tomato -> "Indeterminate" / "Determinate" / "Semi-determinate"   (crop type; growth_habit)
+//   (2) tomato -> "Indeterminate" / "Determinate" / "Semi-determinate"   (crop type; growth_habit), only
+//                 when the crop card's green pill does not already say it
 //   (3) DTM    -> "{min}–{max} days"
 //   (4) sun    -> short sun requirement
 //   (5) null
@@ -106,9 +107,17 @@ export function selectKeyFact(planting) {
   // gate also reads), not a name match. Plantings are named by cultivar, so the name test (isTomato) found
   // 2 of 46 live tomatoes ("Cherokee Green" never says tomato) and took in two tomatillos. No crop type
   // (no cultivar) means not a tomato here, whatever the name says.
+  //
+  // V5-PLANTPAGEDESIGNQS-001 part 1 (Dave 2026-10-12, "Green pill on the card") — the growth type shows
+  // once on the planting page, as the CropCard's green pill, so this rung steps aside whenever that pill
+  // says the same word and the tomato's pill is the next rung (its days, then sun, then none). The card's
+  // pill is determinacyLabel over the cultivar's own growth_habit, and a card with that pill always
+  // renders (a spec chip earns the card), on the one page that mounts this hero. The word stays HERE only
+  // when the card cannot say it: it comes from the planting (metadata / attr_override, which the card
+  // does not read) and the cultivar's prose names no class or a different one. Once, not zero.
   if (planting?.variety_ref?.crop_type_slug === 'tomato') {
     const det = determinacyLabel({ growth_habit: attr(planting, 'growth_habit') })
-    if (det) return det
+    if (det && det !== determinacyLabel(planting.variety_ref)) return det
   }
 
   // (3) Days to maturity window.
