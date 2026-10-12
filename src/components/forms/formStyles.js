@@ -143,7 +143,7 @@ export function buttonChrome(variant = 'primary', disabled = false) {
   const v = BUTTON_VARIANTS[variant] ?? BUTTON_VARIANTS.primary
   return {
     backgroundColor: disabled ? P.light : v.bg,
-    color: disabled && variant === 'secondary' ? P.light : v.fg,
+    color: disabled ? P.white : v.fg,
     border: v.border,
     borderRadius: T.radiusButton,
     padding: '13px 30px',

@@ -465,7 +465,7 @@ function Sitting({ batchId, stage, jars, lines, onChanged, nowMs, gardenNames, o
 // until navigation, the shape What went in's "Taken out · Undo" has.
 export const TAKE_OFF_CTA = 'Take it off this batch'
 export const TAKEN_OFF_TEXT = 'Taken off — it’s still in the Pantry.'
-export const NOT_ON_BATCH_TEXT = 'That one isn’t on this batch any more.'
+export const NOT_ON_BATCH_TEXT = 'That one isn’t on this batch anymore.'
 export const CANT_PUT_BACK_TEXT = 'Couldn’t put it back — it was removed, or picked for another batch since.'
 
 // A held row yields to the read once the read has CONFIRMED it. `gone` is set the first time a read of the
@@ -683,7 +683,7 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
     return (
       <div data-testid="batch-detail-view">
         <div data-testid="batch-detail-missing" style={{ color: P.light, fontSize: T.type.sm }}>
-          That batch isn’t here any more.
+          That batch isn’t here anymore.
         </div>
       </div>
     )

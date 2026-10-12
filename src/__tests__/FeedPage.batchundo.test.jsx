@@ -175,7 +175,7 @@ describe('V4-BATCHUNDO-001 — a failed undo must not look like a successful one
 
     await waitFor(() => expect(screen.getByTestId('batch-undo-error')).toBeTruthy())
     const txt = screen.getByTestId('batch-undo-error').textContent
-    expect(txt).toContain('can’t be undone any more')
+    expect(txt).toContain('can’t be undone anymore')
     expect(txt).not.toBe('Not found')
     expect(screen.getByTestId(`batch-undo-open-${B1}`)).toBeTruthy()
   })

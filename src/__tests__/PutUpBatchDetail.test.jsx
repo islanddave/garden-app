@@ -182,7 +182,7 @@ describe('BatchDetailView — the three non-batch states', () => {
 
   it('says a missing batch is gone, and does not blame the reader for it', () => {
     renderDetail({ batch: null })
-    expect(screen.getByTestId('batch-detail-missing').textContent).toBe('That batch isn’t here any more.')
+    expect(screen.getByTestId('batch-detail-missing').textContent).toBe('That batch isn’t here anymore.')
   })
 })
 

@@ -37,7 +37,7 @@ export function refusalWords(est) {
   if (est.refusal === 'no_heat_lines') return 'Nothing with a listed heat — type it.'
   if (est.refusal === 'mash_in_missing') return 'How much mash went into this bottling? Add “Mash in” on each put-up, then work it out.'
   if (est.refusal === 'row_net_unknown') return 'Can’t work it out: how much is in these bottles.'
-  if (est.refusal === 'not_found') return 'That put-up is not in this batch any more.'
+  if (est.refusal === 'not_found') return 'That put-up is not in this batch anymore.'
   const missing = Array.isArray(est.missing) ? est.missing : []
   const byLabel = new Map()
   for (const m of missing) {

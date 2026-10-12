@@ -272,7 +272,7 @@ describe('filing inside the set route — what is refused', () => {
     refusedBy('unusable');
     let res = parse(await handler(put({ source_plant_ids: [A, B], filing: FILING })));
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'That variety is not available any more. Pick another one.', code: 'variety_unusable' });
+    expect(res.body).toEqual({ error: 'That variety is not available anymore. Pick another one.', code: 'variety_unusable' });
     refusedBy('crop');
     res = parse(await handler(put({ source_plant_ids: [A, B], filing: FILING })));
     expect(res.status).toBe(400);
