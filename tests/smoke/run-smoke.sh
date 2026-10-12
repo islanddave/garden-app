@@ -121,6 +121,8 @@ NAVP_GB_DIRTY=false
 NAVP_GB_RESTORE=""
 SRC_ID=""
 SRC_DIRTY=false
+# Block V (V4-CROPTYPERETIRE-001): the slug of a crop type the block retired and has not yet seen brought back.
+CT_DIRTY_SLUG=""
 DATA_CREATED=false
 CLERK_JWT=""
 CLERK_SESSION_ID=""
@@ -313,6 +315,18 @@ cleanup() {
       "${STAGING_API_VARIETIES%/}/api/varieties/sources/${SRC_ID}" \
       -d '{"instagram_url": null, "facebook_url": null}' \
       && echo "✅ Cleanup: smoke source links cleared" || true
+  fi
+  # Block V (V4-CROPTYPERETIRE-001): died between its retire and its confirmed bring-back. A retired type is
+  # hidden from every picker on staging, so bring it back before the session is revoked. If the type is live
+  # (the retire never landed) the route answers 409 and nothing changes.
+  if [[ -n "${CT_DIRTY_SLUG:-}" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETIES:-}" ]]; then
+    local ct_jwt
+    ct_jwt=$(mint_session_token)
+    curl -sf --max-time 15 --connect-timeout 10 -X POST \
+      -H "Authorization: Bearer $ct_jwt" -H "Content-Type: application/json" -o /dev/null \
+      "${STAGING_API_VARIETIES%/}/api/varieties/crop-types" -d "{\"restore_slug\": \"$CT_DIRTY_SLUG\"}" \
+      && echo "✅ Cleanup: smoke-retired crop type '$CT_DIRTY_SLUG' brought back" \
+      || echo "WARNING: crop type '$CT_DIRTY_SLUG' may still be retired on staging (or was never retired) — check /admin/crop-types"
   fi
   # Revoke the Clerk test session we created (best-effort hygiene).
   if [[ -n "${CLERK_SESSION_ID:-}" && -n "${CLERK_SECRET_KEY_STAGING:-}" ]]; then
@@ -3357,6 +3371,103 @@ elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
   FAIL=$((FAIL+1))
 else
   echo "⚠️  WARN [write:source-links-readback] STAGING_API_VARIETIES unset or no Clerk session — source link assert NOT run"
+fi
+
+
+# ── V) Crop types: retire → read back retired → bring back → read back live (V4-CROPTYPERETIRE-001; L-108)
+#       — Phase 2, continued ─────────────────────────────────────────────────────────────────────────────
+# The three routes are admin-only, fail-closed on ADMIN_CLERK_SUBS (lambda/varieties/crop-type-admin.js). The
+# staging test user is in that list on the functions that carry it (block I), so once garden-varieties-staging
+# carries it too this block takes the ADMIN path: it picks the first type the admin listing reports as
+# retirable (nothing live uses it, by the server's own guard), retires it, reads it back retired in both the
+# admin listing and the public list, brings it back by slug, and reads it back live. The type is a real staging
+# row, so cleanup() brings it back if the run dies in between (CT_DIRTY_SLUG, set before the retire is sent).
+# Until the variable is on the function the listing answers 403 for everyone, and the block takes the REFUSAL
+# path instead and says so: a retire is refused with 403 and the type reads back still live. That path proves
+# the gate, not the retire.
+if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETIES:-}" ]]; then
+  CT_BASE="${STAGING_API_VARIETIES%/}/api/varieties/crop-types"
+  ct_post() {                         # ct_post <url> <json-body> -> "<http> <.code, or ->"
+    local TMP code
+    TMP=$(mktemp)
+    code=$(curl -s --max-time 30 --connect-timeout 10 -X POST \
+      -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+      -o "$TMP" -w "%{http_code}" "$1" -d "$2") || code="000"
+    echo "$code $(jq -r '.code // "-"' "$TMP" 2>/dev/null || echo unreadable)"
+    rm -f "$TMP"
+  }
+  ct_get() {                          # ct_get <url> <jq-filter> -> "<http> <filtered body, compact>"
+    local TMP code
+    TMP=$(mktemp)
+    code=$(curl -s --compressed --max-time 30 --connect-timeout 10 -H "Authorization: Bearer $CLERK_JWT" \
+      -o "$TMP" -w "%{http_code}" "$1") || code="000"
+    echo "$code $(jq -c "$2" "$TMP" 2>/dev/null || echo unreadable)"
+    rm -f "$TMP"
+  }
+  CLERK_JWT=$(mint_session_token)
+
+  CT_LIST=$(ct_get "$CT_BASE/admin" '([.types[] | select(.can_retire)][0].slug) // ""')
+  CT_SLUG=$(echo "${CT_LIST#* }" | tr -d '"')
+  if [[ "$CT_LIST" == 200\ * && "$CT_SLUG" =~ ^[a-z0-9_]+$ ]]; then
+    echo "✅ PASS [crud:GET /varieties/crop-types/admin] the listing names a retirable type ('$CT_SLUG')"
+    PASS=$((PASS+1))
+
+    # V1) retire it, then read it back retired: flagged in the admin listing, gone from the public list.
+    CT_DIRTY_SLUG="$CT_SLUG"
+    CT_CODE=$(ct_post "$CT_BASE/retire" "{\"slug\": \"$CT_SLUG\"}")
+    CT_ADMIN=$(ct_get "$CT_BASE/admin" "[.types[] | select(.slug==\"$CT_SLUG\") | .retired]")
+    CT_PUBLIC=$(ct_get "$CT_BASE" "[.[] | select(.slug==\"$CT_SLUG\")] | length")
+    if [[ "$CT_CODE" == "200 -" && "$CT_ADMIN" == "200 [true]" && "$CT_PUBLIC" == "200 0" ]]; then
+      echo "✅ PASS [write:crop-type-retire-readback] '$CT_SLUG' retired: flagged in the admin listing, gone from the public list"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [write:crop-type-retire-readback] retire '$CT_CODE' (expected 200 -), admin listing '$CT_ADMIN' (expected 200 [true]), public list '$CT_PUBLIC' (expected 200 0)"
+      FAIL=$((FAIL+1))
+    fi
+
+    # V2) bring it back by slug (the admin page's request), then read it back live in both places.
+    CT_CODE=$(ct_post "$CT_BASE" "{\"restore_slug\": \"$CT_SLUG\"}")
+    CT_ADMIN=$(ct_get "$CT_BASE/admin" "[.types[] | select(.slug==\"$CT_SLUG\") | [.retired, .can_retire]]")
+    CT_PUBLIC=$(ct_get "$CT_BASE" "[.[] | select(.slug==\"$CT_SLUG\")] | length")
+    # Live again by the read-back, whatever the POST answered: nothing is left for cleanup() to undo.
+    [[ "$CT_PUBLIC" == "200 1" ]] && CT_DIRTY_SLUG=""
+    if [[ "$CT_CODE" == "200 -" && "$CT_ADMIN" == "200 [[false,true]]" && "$CT_PUBLIC" == "200 1" ]]; then
+      echo "✅ PASS [write:crop-type-restore-readback] '$CT_SLUG' brought back: live in the admin listing and the public list"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [write:crop-type-restore-readback] restore '$CT_CODE' (expected 200 -), admin listing '$CT_ADMIN' (expected 200 [[false,true]]), public list '$CT_PUBLIC' (expected 200 1)"
+      FAIL=$((FAIL+1))
+    fi
+  elif [[ "$CT_LIST" == 200\ * ]]; then
+    echo "⚠️  WARN [write:crop-type-retire-readback] the admin listing answered 200 and names no retirable type — retire/restore assert NOT run"
+  elif [[ "$CT_LIST" == 403\ * ]]; then
+    # REFUSAL path. The caller is not an admin on this function (or it has no ADMIN_CLERK_SUBS yet): a retire
+    # must answer 403 and the type must read back still live.
+    CT_SLUG=$(ct_get "$CT_BASE" '.[0].slug // ""'); CT_SLUG=$(echo "${CT_SLUG#* }" | tr -d '"')
+    if [[ "$CT_SLUG" =~ ^[a-z0-9_]+$ ]]; then
+      CT_CODE=$(ct_post "$CT_BASE/retire" "{\"slug\": \"$CT_SLUG\"}")
+      CT_PUBLIC=$(ct_get "$CT_BASE" "[.[] | select(.slug==\"$CT_SLUG\")] | length")
+      if [[ "$CT_CODE" == 403\ * && "$CT_PUBLIC" == "200 1" ]]; then
+        echo "✅ PASS [gate:crop-type-retire-refused] retire answered '$CT_CODE' and '$CT_SLUG' reads back live"
+        PASS=$((PASS+1))
+        echo "⚠️  WARN [write:crop-type-retire-readback] the smoke account is not an admin on the varieties function (${CT_CODE#* }) — the retire → restore walk was NOT run; only the refusal was proven"
+      else
+        echo "❌ FAIL [gate:crop-type-retire-refused] retire answered '$CT_CODE' (expected 403), '$CT_SLUG' in the public list '$CT_PUBLIC' (expected 200 1) — if it is gone, bring it back at /admin/crop-types"
+        FAIL=$((FAIL+1))
+      fi
+    else
+      echo "❌ FAIL [gate:crop-type-retire-refused] the public crop-type list named no type to try ('$CT_SLUG')"
+      FAIL=$((FAIL+1))
+    fi
+  else
+    echo "❌ FAIL [crud:GET /varieties/crop-types/admin] '$CT_LIST' (expected 200 with a slug, or 403)"
+    FAIL=$((FAIL+1))
+  fi
+elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+  echo "❌ FAIL [write:crop-type-retire-readback] STAGING_API_VARIETIES unset or no Clerk session — the ship gate may not skip this assert"
+  FAIL=$((FAIL+1))
+else
+  echo "⚠️  WARN [write:crop-type-retire-readback] STAGING_API_VARIETIES unset or no Clerk session — crop type retire assert NOT run"
 fi
 
 
