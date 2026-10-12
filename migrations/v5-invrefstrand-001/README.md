@@ -109,8 +109,9 @@ the check sits.
 
 This migration is the **detector**, and it is not redundant: it covers a reference created between the
 check and the UPDATE, a planting or event restored after its item was deleted, and hand-written SQL.
-(Since 2026-10-12 a restored planting no longer does: the restore brings its deleted packet back in the
-same transaction, `restorePacketOfLivePlanting` in `lambda/plants`, BUG-PLANTRESTORESTRAND-001.)
+(Since 2026-10-12 a restored planting no longer does outside a concurrent delete: the restore brings its
+deleted packet back in the same transaction, `restorePacketOfLivePlanting` in `lambda/plants`,
+BUG-PLANTRESTORESTRAND-001. A packet delete whose check ran before that restore committed still can.)
 
 ## If the census gate reds
 

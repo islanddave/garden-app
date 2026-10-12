@@ -23,7 +23,9 @@
 //     this file is where the SQL half is actually executed.
 //   · BUG-PLANTRESTORESTRAND-001, the way round the guard that the fourth point leaves open: delete a
 //     planting, delete its packet (allowed), restore the planting. POST /api/plants/:id/restore brings
-//     the packet back in the same transaction, so the walk ends with both live and no strand.
+//     the packet back in the same transaction, so the walk ends with both live and no strand. A deleted
+//     packet that is NOT the caller's household's refuses the restore instead (404), and both rows stay
+//     deleted: the refusal arm, which the unit tier only runs through a JavaScript model of the SQL.
 //
 // FIXTURES are this file's own (`int-test-` namespaced users). Teardown unwinds what the global sweep
 // cannot reach (seed_lot_stage_log has no step there) and then the RESTRICT/NO ACTION children in FK
@@ -46,9 +48,9 @@ const deletedAt = async (id) => (await directSql`SELECT deleted_at FROM inventor
 let varietyId
 const ids = {}
 
-async function packet(tag, extra = {}) {
+async function packet(tag, extra = {}, userId = USER) {
   const res = await callHandler(handler, {
-    method: 'POST', path: '/api/inventory-items', userId: USER,
+    method: 'POST', path: '/api/inventory-items', userId,
     body: {
       name: `int-delguard-${tag}-${RUN}`, type: 'consumable', category: 'seeds', unit: 'packet',
       quantity_on_hand: 1, variety_id: varietyId, ...extra,
@@ -103,6 +105,17 @@ beforeAll(async () => {
   // BUG-PLANTRESTORESTRAND-001: a LIVE planting on its own packet, for the delete → delete → restore walk.
   ids.walk = await packet('walk')
   ids.walkPlanting = await planting('walk', ids.walk)
+  // The refusal arm of the same route: a packet ANOTHER household created (through the app's POST, as
+  // FOREIGN), soft-deleted at a fixed instant, with a deleted planting of USER's pointing at it. The app
+  // cannot make this pair (every writer passes loadOwnedInventoryItem), so the planting is direct SQL.
+  setTestUserId(FOREIGN)
+  try {
+    ids.foreignPacket = await packet('foreign-packet', {}, FOREIGN)
+  } finally {
+    setTestUserId(USER)
+  }
+  await directSql`UPDATE inventory_items SET deleted_at = '2026-01-02T03:04:05Z' WHERE id = ${ids.foreignPacket}`
+  ids.foreignPlanting = await planting('on-foreign-packet', ids.foreignPacket, { deleted: true })
   // Allowed: a saved-seed lot with its own stage history and its own photo, nothing sown from it.
   // The stage row is the route's own (it used to be inserted by hand beside a create that set the
   // stage; the route now does both, and exactly one row is what the delete case below counts).
@@ -172,6 +185,8 @@ afterAll(async () => {
     // (plants.source_inventory_item_id) must go before the item, and the planting a lot was SAVED OFF
     // (inventory_items.source_plant_id) after it. So: sown plantings, then items, then the rest.
     () => directSql`DELETE FROM plants WHERE created_by = ${USER} AND source_inventory_item_id IS NOT NULL`,
+    // FOREIGN's one packet: after USER's planting that points at it, before the variety it names.
+    () => directSql`DELETE FROM inventory_items WHERE created_by = ${FOREIGN}`,
     // V5-SEEDMULTIPARENT-001: the fact-parent lot is created through POST with a source_plant_id, which
     // now writes a seed_lot_parent_planting row. Both of its foreign keys are RESTRICT, so it goes
     // before the items here and before the plantings on the line after.
@@ -263,6 +278,29 @@ describe('DELETE /api/inventory-items/:id — blocks only on something sown or a
     expect(strands).toEqual([])
     // And the packet is in the way of its own delete again, as any sown packet is.
     expect((await del(ids.walk)).status).toBe(409)
+  })
+
+  it('a deleted packet that is not the household\'s refuses the restore: 404, and the planting and the packet both stay deleted', async () => {
+    setTestUserId(USER)
+    const [f] = await directSql`SELECT created_by, deleted_at FROM inventory_items WHERE id = ${ids.foreignPacket}`
+    expect(f.created_by, 'fixture: the packet must be another household\'s').toBe(FOREIGN)
+    expect(new Date(f.deleted_at).toISOString()).toBe('2026-01-02T03:04:05.000Z')
+    const [before] = await directSql`
+      SELECT created_by, source_inventory_item_id, deleted_at FROM plants WHERE id = ${ids.foreignPlanting}`
+    expect(before.created_by, 'fixture: the planting must be the caller\'s own').toBe(USER)
+    expect(before.source_inventory_item_id).toBe(ids.foreignPacket)
+    expect(before.deleted_at, 'fixture: the planting must be soft-deleted before the restore').not.toBeNull()
+
+    const { status, body } = await callHandler(plantsHandler, {
+      method: 'POST', path: `/api/plants/${ids.foreignPlanting}/restore`, userId: USER,
+    })
+    expect(status, JSON.stringify(body)).toBe(404)
+    expect(body).toEqual({ error: 'Not found' })
+    // Read back, never the handler's echo (L-108): neither row moved.
+    const [after] = await directSql`SELECT deleted_at FROM plants WHERE id = ${ids.foreignPlanting}`
+    expect(after.deleted_at, 'the planting came back onto a deleted packet — the strand').not.toBeNull()
+    expect(new Date(after.deleted_at).toISOString()).toBe(new Date(before.deleted_at).toISOString())
+    expect(new Date(await deletedAt(ids.foreignPacket)).toISOString()).toBe('2026-01-02T03:04:05.000Z')
   })
 
   it('a saved lot with its own stage row and photo deletes (200), and they keep their pointer', async () => {

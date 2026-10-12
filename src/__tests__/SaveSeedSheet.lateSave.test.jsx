@@ -59,8 +59,9 @@ function Host({ takesEnding }) {
   const ending = takesEnding ? { onSaved } : { onSavedAfterClose }
   return <SaveSeedSheet planting={PLANTING} onClose={() => { onClose(); setShown(false) }} {...ending} />
 }
-const mount = async (takesEnding) => {
-  await act(async () => render(<DismissRegistryProvider><Host takesEnding={takesEnding} /></DismissRegistryProvider>))
+const mount = async (takesEnding, { strict = false } = {}) => {
+  const tree = <DismissRegistryProvider><Host takesEnding={takesEnding} /></DismissRegistryProvider>
+  await act(async () => render(strict ? <React.StrictMode>{tree}</React.StrictMode> : tree))
   await act(async () => { await Promise.resolve() })
 }
 const tapSave = async () => {
@@ -146,6 +147,47 @@ describe('a new lot saved after the sheet was closed', () => {
     expect(onSaved.mock.calls[0]).toEqual([LOT, { stageWritten: null }])
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(navigateSpy).not.toHaveBeenCalled()
+  })
+
+  // A development build mounts every component twice (React.StrictMode): mount, unmount, mount. "Is the
+  // sheet still there" is a ref the unmount clears, so the mount has to set it too, or every open sheet
+  // reads as closed there and a save would never leave for the lot.
+  it('under React.StrictMode a still-open sheet is an open sheet: it closes once and goes to the lot', async () => {
+    await mount(false, { strict: true })
+    await tapSave()
+    await act(async () => { held.resolve(LOT) })
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalledTimes(1))
+    expect(navigateSpy.mock.calls[0][0]).toBe('/inventory/lot-1')
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onSavedAfterClose).not.toHaveBeenCalled()
+  })
+})
+
+// The lot landed after the close and its timeline entry then failed. What the form does today, pinned so
+// that it is known: a missed timeline entry is never said on this form (SaveSeedSheet.jsx, the catch in
+// the events loop: "Deliberately nothing said"), open or closed, so the toast is the plain success one.
+describe('a new lot saved after the sheet was closed, whose timeline entry then fails', () => {
+  it('"Seed lot saved" is said as a success, the host hears once, nothing navigates, nothing closes twice, the entry is not tried again', async () => {
+    fetchSpy.mockImplementation((url, opts = {}) => {
+      if (opts.method === 'POST' && String(url) === '/api/inventory-items') return held.promise
+      if (opts.method === 'POST' && String(url) === '/api/events') return Promise.reject(Object.assign(new Error('boom'), { status: 500 }))
+      return Promise.resolve({ id: 'x' })
+    })
+    await mount(false)
+    await tapSave()
+    await closeWhileSaving()
+    expect(posts('/api/events')).toHaveLength(0)
+
+    await act(async () => { held.resolve(LOT) })
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledTimes(1))
+    expect(toastSpy).toHaveBeenCalledWith({ message: 'Seed lot saved', tone: 'success' })
+    expect(onSavedAfterClose).toHaveBeenCalledTimes(1)
+    expect(onSavedAfterClose.mock.calls[0][0]).toEqual(LOT)
+    expect(navigateSpy).not.toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('host-page')).toBeTruthy()
+    expect(posts('/api/inventory-items')).toHaveLength(1)
+    expect(posts('/api/events')).toHaveLength(1)
   })
 })
 

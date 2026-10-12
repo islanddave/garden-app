@@ -37,7 +37,8 @@ const PL = {
   variety_ref: { name: 'Cherokee Purple', crop_type_slug: 'tomato', growth_habit: 'indeterminate',
     days_to_maturity_min: 80, days_to_maturity_max: 90 },
 }
-// The chip shows only when the NAME says pepper/tomato; its words are the cultivar's crop type.
+// The chip shows on every planting whose cultivar has a crop type (no name test since 2cb242b6); its
+// words are the cultivar's crop type, never the name's.
 const PL_NAMED = {
   ...PL, id: 'pl2', name: 'Purple Blush Tomatillo', variety_name: 'Purple Blush',
   crop_type: 'Tomatillo', crop_type_slug: 'tomatillo',

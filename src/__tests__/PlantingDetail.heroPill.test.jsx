@@ -6,7 +6,7 @@
 // No jest-dom (L-182): role/attr/text + toBe/toBeTruthy/toBeNull only.
 
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { P } from '../lib/constants.js'
@@ -56,9 +56,22 @@ const CARMEN = {
     days_to_maturity_min: 60, days_to_maturity_max: 80, sun_requirements: 'full_sun' },
 }
 
-function renderPage(planting) {
+// The cultivar's derived tags as GET /api/entity-tags projects them onto a planting (lambda/tags/index.js,
+// the `projected` SELECT): one row per facet, in the Lambda's column list.
+const tagRow = (facet, slug, label) => ({
+  id: `tag-${facet}-${slug}`, facet, label, slug, source: 'derived', owner_id: 'system', visibility: 'shared',
+  created_by: 'system', created_at: '2026-09-01T00:00:00.000Z', updated_at: '2026-09-01T00:00:00.000Z',
+})
+const CHEROKEE_TAGS = [
+  tagRow('type', 'tomato', 'Tomato'),
+  tagRow('lifecycle', 'tender_perennial', 'Tender Perennial'),
+  tagRow('determinacy', 'indeterminate', 'Indeterminate'),
+]
+
+function renderPage(planting, { projected } = {}) {
   apiFetchSpy.mockImplementation((path) => {
     if (path.startsWith('/api/plants/')) return Promise.resolve(planting)
+    if (projected && path.startsWith('/api/entity-tags?')) return Promise.resolve({ direct: [], projected })
     if (path.startsWith('/api/events')) return Promise.resolve([])
     return Promise.resolve(null)
   })
@@ -86,6 +99,7 @@ beforeEach(() => {
   apiFetchSpy.mockReset()
   window.scrollTo = vi.fn()
 })
+afterEach(() => { vi.unstubAllEnvs() })
 
 describe('PlantingDetail — the hero key-fact pill never carries habit prose', () => {
   // The sentence is on the page once, as the crop card's Habit row (V5-PLANTPAGEDESIGNQS-001, Dave
@@ -104,9 +118,16 @@ describe('PlantingDetail — the hero key-fact pill never carries habit prose', 
   // 2026-10-12: "Green pill on the card"). From 2026-09-25 to then the hero's gold pill said it too
   // ("SHU for peppers, determinate/indeterminate for tomatoes", the V200 design) and the hero's days were
   // gone; the gold pill is now the next rung of its ladder, the days.
+  // "Once" is a count over THREE surfaces: the hero pill, the card's green pill, and the grey facet chip
+  // the tags substrate projects. Tags are on here, as in the prod build, and the mocked Lambda answers
+  // the determinacy row, so the count below includes the chip the card drops.
   it('Cherokee Green (a tomato named by cultivar): Indeterminate is the card\'s green pill only; the hero pill is its days', async () => {
-    renderPage(CHEROKEE)
+    vi.stubEnv('VITE_API_TAGS', 'https://tags.test')
+    renderPage(CHEROKEE, { projected: CHEROKEE_TAGS })
     await screen.findByRole('heading', { name: 'Cherokee Green' })
+    // The chip row has painted: the two tags the card keeps are on the page.
+    await screen.findByText('Tender Perennial')
+    expect(apiFetchSpy.mock.calls.some(([path]) => path === '/api/entity-tags?entity_type=plant&entity_id=pl1')).toBe(true)
     expect(heroGoldPills('Cherokee Green')).toEqual(['75–85 days'])
     const word = screen.getAllByText('Indeterminate')
     expect(word).toHaveLength(1)
