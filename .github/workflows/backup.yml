@@ -93,10 +93,30 @@ jobs:
         # PATH override: bare `pg_dump` resolves to pg16 on this runner image even
         # when pg17 is installed (postgresql-client-common wrapper picks pg16).
         # Prepending pg17's bin dir forces the major-version match Neon requires.
+        # TABLE LIST (OPS-RESTOREVERIFYRED-001): the tables prod has when this dump is
+        # taken, written beside it as db/garden-YYYYMMDD.tables.json. restore-verify
+        # compares its restore with THIS list instead of live prod's, so a table prod
+        # gains after the dump no longer reads as "MISSING from restore" (2026-09-30,
+        # 2026-10-08). Read immediately BEFORE pg_dump, on its own connection (pg_dump
+        # takes its own snapshot): a table created in the gap is then in the dump but
+        # not the list, a restore-verify warning, never the reverse. A failed read does
+        # NOT stop the dump -- tonight's backup matters more than its list -- but it is
+        # not skipped either: "Verify upload" fails the job at its end, after the dump
+        # itself is uploaded and proven. Same SELECT as scripts/snap.py TABLE_LIST_SQL
+        # and scripts/restore-verify.py qualified_table_set().
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
           GLOBALS_FILE="/tmp/garden-$(date +%Y%m%d).globals.sql"
+          TABLES_FILE="/tmp/garden-$(date +%Y%m%d).tables.json"
+          S3_KEY="db/garden-$(date +%Y%m%d).dump"
+          TAKEN_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          if ! timeout 120 psql "${{ secrets.NEON_BACKUP_URL }}" -X -tA -v ON_ERROR_STOP=1 \
+            -c "SELECT json_build_object('format', 1, 'dump_key', '$S3_KEY', 'taken_at', '$TAKEN_AT', 'tables', COALESCE(json_agg(table_schema || '.' || table_name ORDER BY table_schema, table_name), '[]'::json)) FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog', 'information_schema') AND table_schema NOT LIKE 'pg_%'" \
+            > "$TABLES_FILE"; then
+            echo "::error::Table list for $S3_KEY could NOT be read from prod -- the dump continues, and 'Verify upload' will fail this job at its end"
+            rm -f "$TABLES_FILE"
+          fi
           pg_dump "${{ secrets.NEON_BACKUP_URL }}" \
             --no-owner \
             --no-privileges \
@@ -118,6 +138,15 @@ jobs:
           GLOBALS_S3_KEY="db/garden-$(date +%Y%m%d).globals.sql"
           aws s3 cp "$DUMP_FILE" "s3://${{ vars.BACKUP_BUCKET_NAME }}/$S3_KEY"
           aws s3 cp "$GLOBALS_FILE" "s3://${{ vars.BACKUP_BUCKET_NAME }}/$GLOBALS_S3_KEY"
+          # Table list LAST and not fatal HERE: the dump and globals above are already
+          # up, and "Verify upload" must still run on them. It is that step which fails
+          # the job when the list did not make it.
+          TABLES_FILE="/tmp/garden-$(date +%Y%m%d).tables.json"
+          TABLES_S3_KEY="db/garden-$(date +%Y%m%d).tables.json"
+          if [ -s "$TABLES_FILE" ]; then
+            aws s3 cp "$TABLES_FILE" "s3://${{ vars.BACKUP_BUCKET_NAME }}/$TABLES_S3_KEY" \
+              || echo "::error::Upload of $TABLES_S3_KEY FAILED -- 'Verify upload' will fail this job at its end"
+          fi
 
       - name: Verify upload (restorability floor)
         # OPS-GUARDINTEG-001 (2026-07-22): the old check asserted S3 existence only —
@@ -176,10 +205,33 @@ jobs:
             exit 1
           fi
           echo "Upload verified: $S3_KEY (${OBJ_BYTES} bytes >= ${MIN_BYTES} floor; pg_restore --list OK; extensions+gv schemas present) + $GLOBALS_S3_KEY (${GLOB_BYTES} bytes)"
+          # Table list (OPS-RESTOREVERIFYRED-001) -- checked LAST, so every failure below
+          # is printed under a dump that is already uploaded and verified above. A missing
+          # or malformed list is RED, not skipped: restore-verify would otherwise fall back
+          # to the live comparison (or red on a malformed list) with nothing here saying why.
+          # The size comparison also catches a list left by an earlier run today beside a
+          # newer dump. list-objects-v2 = the same ListBucket the dump check above uses.
+          TABLES_FILE="/tmp/garden-$(date +%Y%m%d).tables.json"
+          TABLES_S3_KEY="db/garden-$(date +%Y%m%d).tables.json"
+          TABLES_FAIL="the DUMP $S3_KEY is uploaded and verified; only its table list is not. restore-verify will compare that dump with LIVE prod's table list (or red on a bad list)"
+          if ! jq -e --arg k "$S3_KEY" '.format == 1 and .dump_key == $k and (.taken_at | type == "string" and length > 0) and (.tables | type == "array") and ([.tables[] | select(startswith("public."))] | length > 0)' "$TABLES_FILE" > /dev/null; then
+            echo "::error::Table list FAILED — $TABLES_FILE is missing or malformed (the prod read in the dump step failed, or returned no public table); $TABLES_FAIL"
+            exit 1
+          fi
+          if ! TBL_BYTES=$(aws s3api list-objects-v2 --bucket "${{ vars.BACKUP_BUCKET_NAME }}" --prefix "$TABLES_S3_KEY" --query 'Contents[0].Size' --output text); then
+            echo "::error::Table list FAILED — could not query S3 for $TABLES_S3_KEY; $TABLES_FAIL"
+            exit 1
+          fi
+          LOCAL_TBL_BYTES=$(wc -c < "$TABLES_FILE" | tr -d ' ')
+          if [ "$TBL_BYTES" != "$LOCAL_TBL_BYTES" ]; then
+            echo "::error::Table list FAILED — $TABLES_S3_KEY in S3 is '${TBL_BYTES}' bytes, the list read with this dump is ${LOCAL_TBL_BYTES} (upload failed, or an older list is still there); $TABLES_FAIL"
+            exit 1
+          fi
+          echo "Table list verified: $TABLES_S3_KEY (${TBL_BYTES} bytes, $(jq '.tables | length' "$TABLES_FILE") tables)"
 
       - name: Cleanup local dump
         if: always()
-        run: rm -f /tmp/garden-*.dump /tmp/garden-*.globals.sql
+        run: rm -f /tmp/garden-*.dump /tmp/garden-*.globals.sql /tmp/garden-*.tables.json
 
 # S3 lifecycle rules must be configured on the backup bucket (infrastructure step, not here):
 #   - Retain last 14 daily dumps

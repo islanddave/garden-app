@@ -753,3 +753,126 @@ def test_age_format():
     assert rv._age(D(2026, 10, 8), now) == "1h02m"
     assert rv._age(D(2026, 10, 5), now) == "3d01h"
     assert rv._age(None, now) == "unknown age"
+
+
+# --- the daily writer: backup.yml's own run: bodies, pg/aws stubbed ----------
+# backup.yml checks out nothing, so its table-list writer is inline bash. These
+# run the three real step bodies (dump -> upload -> verify) against stub
+# binaries and feed what lands in "S3" to the reader above.
+
+BACKUP_YML = os.path.join(HERE, "..", ".github", "workflows", "backup.yml")
+DUMP_STEP, UPLOAD_STEP, VERIFY_STEP = (
+    "pg_dump from Neon (prod)", "Upload to S3", "Verify upload (restorability floor)")
+
+STUBS = {
+    "timeout": '#!/bin/bash\nshift\nexec "$@"\n',
+    "psql": r'''#!/bin/bash
+[ -n "$STUB_PSQL_FAIL" ] && { echo "psql: error: connection refused" >&2; exit 2; }
+sql="${@: -1}"
+key=$(printf '%s' "$sql" | sed -n "s/.*'dump_key', '\([^']*\)'.*/\1/p")
+at=$(printf '%s' "$sql" | sed -n "s/.*'taken_at', '\([^']*\)'.*/\1/p")
+printf '{"format" : 1, "dump_key" : "%s", "taken_at" : "%s", "tables" : %s}\n' "$key" "$at" "${STUB_TABLES:-[\"gv.audit\", \"public.plants\"]}"
+''',
+    "pg_dump": '#!/bin/bash\nprintf "PGDMP-stub"\n',
+    "pg_dumpall": '#!/bin/bash\nwhile [ "$1" != "-f" ]; do shift; done\necho "CREATE ROLE neondb_owner;" > "$2"\n',
+    "pg_restore": '#!/bin/bash\nprintf "5; 2615 1 SCHEMA - extensions o\\n6; 2615 2 SCHEMA - gv o\\n"\n',
+    "aws": r'''#!/bin/bash
+if [ "$1 $2" = "s3 cp" ]; then
+  key="${4#s3://bkt/}"
+  case "$key" in *"$STUB_AWS_FAIL_SUFFIX") [ -n "$STUB_AWS_FAIL_SUFFIX" ] && { echo "upload failed: AccessDenied" >&2; exit 1; };; esac
+  mkdir -p "$STUB_S3/$(dirname "$key")" && cp "$3" "$STUB_S3/$key"
+  exit
+fi
+while [ "$1" != "--prefix" ]; do shift; done
+f="$STUB_S3/$2"
+[ -f "$f" ] || { echo None; exit 0; }
+case "$2" in *.dump) echo 7998970;; *.globals.sql) echo 4096;; *) wc -c < "$f" | tr -d ' ';; esac
+''',
+}
+
+
+def _backup_bodies(tmp_path):
+    import yaml
+    with open(BACKUP_YML) as fh:
+        steps = {s.get("name"): s for s in yaml.safe_load(fh)["jobs"]["backup"]["steps"]}
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, text in STUBS.items():
+        (bindir / name).write_text(text)
+        (bindir / name).chmod(0o755)
+    work = tmp_path / "work"
+    work.mkdir()
+
+    def body(name):
+        return (steps[name]["run"]
+                .replace("${{ secrets.NEON_BACKUP_URL }}", "postgresql://stub")
+                .replace("${{ vars.BACKUP_BUCKET_NAME }}", "bkt")
+                .replace("/usr/lib/postgresql/17/bin", str(bindir))
+                .replace("/tmp/", f"{work}/"))
+    return body, bindir
+
+
+def _run_backup(tmp_path, **stub_env):
+    """Run dump, upload, verify in order the way Actions does (`bash -e`, a failed
+    step skips the rest). Returns ([(step, rc, output)], s3 dir, today's stamp)."""
+    import subprocess
+    body, bindir = _backup_bodies(tmp_path)
+    s3dir = tmp_path / "s3"
+    s3dir.mkdir(exist_ok=True)
+    e = dict(os.environ, PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}", STUB_S3=str(s3dir),
+             GITHUB_ENV=str(tmp_path / "github_env"), **stub_env)
+    results = []
+    for name in (DUMP_STEP, UPLOAD_STEP, VERIFY_STEP):
+        p = subprocess.run(["bash", "-e", "-c", body(name)], env=e, capture_output=True, text=True)
+        results.append((name, p.returncode, p.stdout + p.stderr))
+        if p.returncode != 0:
+            break
+    return results, s3dir, dt.datetime.now().strftime("%Y%m%d")
+
+
+def test_daily_backup_writes_a_table_list_the_reader_accepts(tmp_path):
+    results, s3dir, day = _run_backup(tmp_path)
+    assert [rc for _, rc, _ in results] == [0, 0, 0], results
+    dump_key = f"db/garden-{day}.dump"
+    listed = s3dir / rv.tablelist_key_for(dump_key)
+    doc = json.loads(listed.read_text())
+    assert rv._tablelist_problem(doc, dump_key) is None
+    assert doc["tables"] == ["gv.audit", "public.plants"]
+    assert _is_utc_stamp(doc["taken_at"])
+    assert f"Table list verified: db/garden-{day}.tables.json" in results[2][2]
+    # and through the reader's own S3 path
+    pages = [{"Contents": [{"Key": dump_key, "LastModified": D(2026, 10, 12), "Size": 7998970},
+                           {"Key": f"db/garden-{day}.tables.json", "LastModified": D(2026, 10, 12), "Size": 1}]}]
+    s3 = FakeS3(pages, {(BUCKET, f"db/garden-{day}.tables.json"): listed.read_bytes()})
+    assert rv.load_tablelist(s3, rv.Config(env=env()), dump_key)["tables"] == {"gv.audit", "public.plants"}
+
+
+def _is_utc_stamp(s):
+    import re
+    return re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", s)
+
+
+@pytest.mark.parametrize("stub_env, stale", [
+    (dict(STUB_PSQL_FAIL="1"), False),
+    (dict(STUB_PSQL_FAIL="1"), True),              # an earlier run's list is still in S3
+    (dict(STUB_AWS_FAIL_SUFFIX=".tables.json"), False),
+    (dict(STUB_AWS_FAIL_SUFFIX=".tables.json"), True),
+    (dict(STUB_TABLES="[]"), False),
+    (dict(STUB_TABLES='["gv.audit"]'), False),
+], ids=["read-fails", "read-fails-stale-list", "upload-fails", "upload-fails-stale-list",
+        "empty-list", "no-public-table"])
+def test_daily_backup_without_a_good_list_is_red_but_the_dump_is_up_and_verified(tmp_path, stub_env, stale):
+    day = dt.datetime.now().strftime("%Y%m%d")
+    if stale:
+        (tmp_path / "s3" / "db").mkdir(parents=True)
+        (tmp_path / "s3" / "db" / f"garden-{day}.tables.json").write_text('{"older": "list"}')
+    results, s3dir, day = _run_backup(tmp_path, **stub_env)
+    # the dump and upload steps do NOT fail: tonight's dump is never lost to its list
+    assert [(n, rc) for n, rc, _ in results] == [(DUMP_STEP, 0), (UPLOAD_STEP, 0), (VERIFY_STEP, 1)], results
+    assert (s3dir / "db" / f"garden-{day}.dump").exists()
+    assert (s3dir / "db" / f"garden-{day}.globals.sql").exists()
+    out = results[2][2]
+    # ...and it is verified BEFORE the list reds the job, loudly
+    assert out.index("Upload verified: ") < out.index("::error::Table list FAILED")
+    assert "Table list verified" not in out
+    assert "is uploaded and verified; only its table list is not" in out
