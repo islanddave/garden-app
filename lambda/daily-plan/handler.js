@@ -1629,6 +1629,9 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     remainingBasis: Object.values(stationProvBySpace).map((p) => p && p.today_remaining_basis).filter(Boolean),
     remainingFallback: Object.values(stationProvBySpace).map((p) => p && p.today_remaining_fallback).filter(Boolean),
     coversLookback: station && station.coversLookback, uncertainty: station && station.uncertainty,
+    // DRG-WXSTATION-003: `uncertainty` is one string and 'frozen' outranks 'warmup', and on a frozen-today-only
+    // run it is not in the stored plan's provenance at all. The day list says which days lost their gauge total.
+    frozenDays: station && station.frozenDays,
     // V5-STATIONHEALTHYEAR-001: the longest outdoor-field gap in the trailing 24 h, on EVERY run. tempF above is
     // only the newest record, so without this an overnight array dropout could not be measured from CloudWatch.
     arraySilent: station && station.arraySilence ? station.arraySilence.silent : null,

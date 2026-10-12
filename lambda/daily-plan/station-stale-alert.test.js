@@ -67,7 +67,7 @@ async function drive(opts = {}) {
       recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0,
       tomorrow_precip_in: 0, tomorrow_pop: 0, yesterday_precip_actual_in: 0, hourly_frost: null,
     }),
-    fetchStation: async () => STATION_RAW,
+    fetchStation: async () => opts.stationRaw || STATION_RAW,
     publishAlert, etHour: opts.etHour ?? PM_HOUR, event: {},
   });
   return { pg, publishAlert };
@@ -115,6 +115,17 @@ describe('BUG-STATIONSTALESILENT-001 — a bound station that stopped reporting 
     const { publishAlert } = await drive({ now: FRESH_NOW });
     expect(logLines(log).find((l) => l.msg === 'station')).toMatchObject({ boundSpaces: 1, fresh: true });
     expect(publishAlert).not.toHaveBeenCalled();
+  });
+
+  it('(b2) DRG-WXSTATION-003: the station line lists the days that lost their gauge total to frost', async () => {
+    const { log } = quiet();
+    await drive({ now: FRESH_NOW });
+    expect(logLines(log).find((l) => l.msg === 'station').frozenDays).toEqual([]);
+    log.mockClear();
+    // Yesterday's dawn at 30F; the newest reading is still 55F, so nothing else about the run changes.
+    const frosty = { mac: MAC, records: [...STATION_RAW.records, { dateutc: NEWEST - 32 * 3600000, tempf: 30, dailyrainin: 0 }] };
+    await drive({ now: FRESH_NOW, stationRaw: frosty });
+    expect(logLines(log).find((l) => l.msg === 'station')).toMatchObject({ fresh: true, uncertainty: 'frozen', frozenDays: ['2026-09-19'] });
   });
 
   it('(c) stale but bound to NO Space -> station_unbound only, never both in one run', async () => {

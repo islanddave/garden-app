@@ -457,6 +457,18 @@ describe('WeatherWidget — DRG-WXSTATION-002 weather-station source on Today (V
     expect(screen.queryByText(/offline/i)).toBeNull()
   })
 
+  it('a reason with no copy of its own ("frozen", "implausible") reads plain "forecast", never a hardware claim', () => {
+    // DRG-WXSTATION-003: a frozen gauge is online and has its lookback, so neither sentence above is true of it.
+    for (const why of ['frozen', 'implausible']) {
+      const h = withProv({ recent_source: 'forecast', today_source: 'forecast', station_uncertainty: why,
+        station_frozen_days: ['2026-06-21'], station_fresh: true })
+      const { unmount } = render(<WeatherWidget weather={w} hydrology={h} generatedAt={GEN} planDate={DAY} />)
+      expect(stamp().textContent).toBe(`${AS_OF} · forecast`)
+      expect(screen.queryByText(/offline|warming up|rain gauge|frozen/i)).toBeNull()
+      unmount()
+    }
+  })
+
   it('claims NO source when the bag says nothing was usable', () => {
     const h = withProv({ recent_source: 'unavailable', today_source: 'unavailable' })
     render(<WeatherWidget weather={w} hydrology={h} generatedAt={GEN} planDate={DAY} />)
