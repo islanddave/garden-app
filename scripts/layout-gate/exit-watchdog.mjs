@@ -28,11 +28,12 @@ import { basename } from 'node:path'
 
 export const EXIT_WATCHDOG_MS = 15000
 
-export function armExitWatchdog(script = basename(process.argv[1] ?? 'layout gate')) {
+// `ms` and `exit` are parameters for exit-watchdog.test.mjs only; no gate passes them.
+export function armExitWatchdog(script = basename(process.argv[1] ?? 'layout gate'), ms = EXIT_WATCHDOG_MS, exit = code => process.exit(code)) {
   const timer = setTimeout(() => {
-    console.error(`[exit-watchdog] ${script}: process still alive ${EXIT_WATCHDOG_MS / 1000} s after PASS; active resources: ${JSON.stringify(process.getActiveResourcesInfo())}`)
-    process.exit(1)
-  }, EXIT_WATCHDOG_MS)
+    console.error(`[exit-watchdog] ${script}: process still alive ${ms / 1000} s after PASS; active resources: ${JSON.stringify(process.getActiveResourcesInfo())}`)
+    exit(1)
+  }, ms)
   timer.unref()
   return timer
 }

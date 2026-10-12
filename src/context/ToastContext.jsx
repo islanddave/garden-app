@@ -247,13 +247,16 @@ function UndoToast({ toast, onUndo, onDismiss }) {
         <span style={{ border: `1px solid ${P.greenLight}`, borderRadius: 6, padding: '5px 12px' }}>Undo</span>
       </button>
       {/* 6px left/right is the UA button padding the glyph always sat in; the right side adds the
-          toast's own padding and the negative margin gives it back, so the glyph does not move. */}
+          toast's own padding and the negative margin gives it back, so the glyph does not move.
+          minWidth makes the box a full target (BUG-OTHERUNDOTARGETS-001: it was 35.4px wide); the
+          glyph is held at the box's right end, so the extra width opens on the LEFT and the gap to
+          Undo stays the row's own. */}
       <button type="button" onClick={onDismiss} aria-label="Dismiss" style={{
         background: 'transparent', color: P.white, border: 'none', fontSize: '1.1rem', cursor: 'pointer',
         lineHeight: 1, flexShrink: 0,
-        minHeight: TOAST_TAP_TARGET, padding: `0 ${6 + TOAST_PAD_RIGHT}px 0 6px`,
+        minHeight: TOAST_TAP_TARGET, minWidth: TOAST_TAP_TARGET, padding: `0 ${6 + TOAST_PAD_RIGHT}px 0 6px`,
         margin: `-${TOAST_PAD_Y}px -${TOAST_PAD_RIGHT}px -${TOAST_PAD_Y}px 0`,
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end',
       }}>×</button>
     </div>
   )

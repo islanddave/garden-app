@@ -20,7 +20,8 @@
 //   (b) NO BULK — the toast did not grow to buy that: height <= max(text column + padding, TAP) + 1,
 //       and the painted pill stays shorter than TAP (the extra is invisible). A visible 48px button, or
 //       a target made of padding that takes layout space, fails here.
-//   (c) NEIGHBOUR — the Dismiss (x) control is >= TAP tall, takes a tap across its whole box, reaches
+//   (c) NEIGHBOUR — the Dismiss (x) control is >= TAP tall and >= TAP wide (width added 2026-10-12,
+//       BUG-OTHERUNDOTARGETS-001: it was a full-height 35.4px sliver), takes a tap across its whole box, reaches
 //       the toast's right edge (the padding there is target, not dead space), and sits >= MIN_TARGET_GAP
 //       px clear of Undo. The gap is the part that matters most: Undo reverses the action, x throws the
 //       undo away, so a thumb that misses Undo must land on nothing rather than on x.
@@ -206,6 +207,7 @@ function checkToast(where, m) {
   else if (m.pill.h >= TAP) fail(`${where}: the painted Undo pill is ${m.pill.h}px tall — a visible ${TAP}px button, not an invisible target`)
   if (!c) { fail(`${where}: no Dismiss control in the toast`); return }
   if (c.h < TAP || c.hitH < TAP) fail(`${where}: Dismiss is ${c.h}px tall (hit ${c.hitH}px), under ${TAP}`)
+  if (c.w < TAP || c.hitW < TAP) fail(`${where}: Dismiss is ${c.w}px wide (hit ${c.hitW}px), under ${TAP}`)
   if (c.ownGrid.ok !== c.ownGrid.of) fail(`${where}: only ${c.ownGrid.ok}/${c.ownGrid.of} points of Dismiss's own box hit Dismiss`)
   if (c.right < m.toast.right - 0.5) fail(`${where}: Dismiss stops ${r1(m.toast.right - c.right)}px short of the toast's right edge — that padding is dead space again`)
   if (m.gapUndoToClose < MIN_TARGET_GAP) fail(`${where}: Undo and Dismiss are ${m.gapUndoToClose}px apart, under ${MIN_TARGET_GAP}px`)
