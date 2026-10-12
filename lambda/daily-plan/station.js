@@ -81,7 +81,9 @@ const RAIN_MIN_DAILY_IN = 0;
 // order: a frozen dawn holds the night's precipitation back from a thawed afternoon, and an evening freeze
 // stops the count while it is still falling. The day's bucket is deleted and each field takes the labelled
 // Open-Meteo fallback, exactly as a rejected day does. There is no switch, no season and no calendar date:
-// the thermometer on the same mast is the only input.
+// the thermometer on the same mast is the only input. The one difference from a rejected day is what the
+// NEIGHBOURING days keep: a frozen day still counts as a day the station was reporting when the next day's
+// completed total is judged (see yesterdayCovered), so it costs its own total and nothing else.
 //
 // Env-overridable, in the RAIN_MAX_DAILY_IN shape and for its reason: a garbage override must fall back to
 // 32, never to NaN, because every `<= NaN` compares false and would silently switch the rule off.
@@ -439,7 +441,8 @@ function deriveStation(raw, { nowMs }) {
   // todayPrecipIn needs NO coverage gate: dailyrainin is the STATION's own since-local-midnight accumulator,
   // so a single record at 15:00 already carries the whole day to that point. It is partial by nature — that
   // is the point (it grows through the day). yesterdayPrecipIn is a COMPLETED day and is gated by the
-  // caller on coversLookback (design §3-4: reuse the existing gate, no new freshness concept).
+  // caller (design §3-4), on gaugeWindow's coversYesterday: coversLookback, with a frozen day counted as a
+  // day the station was reporting (see yesterdayCovered).
   const todayPrecipIn = Number.isFinite(buckets[D0]) ? round2(buckets[D0]) : null;
   const yesterdayPrecipIn = Number.isFinite(buckets[D1]) ? round2(buckets[D1]) : null;
 
@@ -454,13 +457,38 @@ function deriveStation(raw, { nowMs }) {
     frozenDays, arraySilence: silence };
 }
 
+// DRG-WXSTATION-003 — the coverage test for YESTERDAY's total, apart from coversLookback's for the two-day sum.
+// A frozen day loses ITS OWN total and nothing else. coversLookback asks for three BUCKETS (D-1, D-2 and an
+// anchor before D-2), and the frozen pass deletes buckets, so on that gate one frosty dawn F also cost the
+// measured figure for F+1 and F+2 and the 02:00 run on F+3: days the gauge counted correctly. With frost every
+// second or third night the rain autologger (rainLog.js, gauge-sourced rows only) then wrote no rain event for
+// weeks.
+//
+// What the gate protects is that D-1 is a COMPLETED day, seen from before its midnight to after it. That is a
+// claim about the station REPORTING, not about D-2's rain total being usable. A frozen day's records exist
+// (the thermometer reading that froze it is one of them), so it still stands as D-2 or as the anchor here. It
+// can never stand as D-1: a frozen yesterday has no total to publish.
+//
+// A REJECTED day does not get this. An implausible or negative-only day is an instrument fault and what else
+// that day's records can vouch for is unknown, so it stays missing, as before: with no frozen day in the feed
+// this is coversLookback's own expression, term for term. A day that is BOTH frozen and rejected is rejected.
+// `recent` keeps coversLookback untouched: a two-day sum with either day missing is not a sum.
+function yesterdayCovered(st, d1, d2) {
+  const b = (st && st.buckets) || {};
+  if (!Number.isFinite(b[d1])) return false;
+  const rejected = new Set((st && st.implausibleDays) || []);
+  const frozen = new Set(((st && st.frozenDays) || []).filter((d) => !rejected.has(d)));
+  const earliest = [...Object.keys(b), ...frozen].sort()[0];
+  return !!earliest && earliest < d2 && (Number.isFinite(b[d2]) || frozen.has(d2));
+}
+
 // Gauge totals addressed by CIVIL-DAY LABEL rather than by the fetch instant. deriveStation's D0/D1/D2 are
 // anchored to `nowMs`; a replay (rerun-daily-plan.sh --today) is about a DIFFERENT day, and reading "today's"
 // bucket for it would attribute the wrong day's rain. In the live nightly/intraday runs planDay is
 // todayET() === st.day0 (same America/New_York tz), so every value below is identical to what deriveStation
 // already exposes — this is a correctness widening for replay, not a behaviour change for the real runs.
 function gaugeWindow(st, planDay) {
-  const none = { day: null, observed: null, yesterday: null, recent: null, coversLookback: false };
+  const none = { day: null, observed: null, yesterday: null, recent: null, coversLookback: false, coversYesterday: false };
   if (!st || !st.buckets) return none;
   const d0 = planDay || st.day0;
   if (!d0) return none;
@@ -469,7 +497,8 @@ function gaugeWindow(st, planDay) {
   const at = (k) => (Number.isFinite(b[k]) ? round2(b[k]) : null);
   const earliest = Object.keys(b).sort()[0];
   const covers = !!earliest && earliest < d2 && Number.isFinite(b[d1]) && Number.isFinite(b[d2]);
-  return { day: d0, observed: at(d0), yesterday: at(d1), recent: covers ? round2(b[d1] + b[d2]) : null, coversLookback: covers };
+  return { day: d0, observed: at(d0), yesterday: at(d1), recent: covers ? round2(b[d1] + b[d2]) : null, coversLookback: covers,
+    coversYesterday: yesterdayCovered(st, d1, d2) };
 }
 
 // ── H5 (BUG-RAINACTUAL-001, supersedes the H2 whole-day subtraction) ──────────────────────────────
@@ -642,9 +671,11 @@ function mergeStationHydrology(hy, st, opts) {
   // OBSERVATION and wins. Falling back to the forecast is allowed — but it is ALWAYS LABELLED. An "actual"
   // that is silently a forecast is the entire defect; see also handler.backfillYesterdayActual, which
   // persists this label alongside the value.
-  // Gated on coversLookback because D-1 is a COMPLETED day: a partial D-1 must never be published as its total.
+  // Gated on coverage because D-1 is a COMPLETED day: a partial D-1 must never be published as its total.
+  // coversYesterday, not coversLookback: the same test, except that a frozen D-2 or anchor still counts as a
+  // day the station was reporting (see yesterdayCovered), so a frozen day costs its own total only.
   const fYest = Number.isFinite(base.yesterday_precip_actual_in) ? base.yesterday_precip_actual_in : null;
-  if (st && st.fresh && gw.coversLookback && gw.yesterday != null) {
+  if (st && st.fresh && gw.coversYesterday && gw.yesterday != null) {
     merged.yesterday_precip_actual_in = gw.yesterday;
     prov.yesterday_actual_source = 'station';
   } else {
@@ -693,4 +724,4 @@ function mergeStationWeather(wx, st) {
   return { merged: { ...wx, tonightLow: low }, prov };
 }
 
-module.exports = { stationConfig, deriveStation, overnightMins, OVERNIGHT_MIN_SAMPLES, arraySilence, ARRAY_SILENT_WINDOW_MIN, ARRAY_SILENT_MIN_GAP_MIN, ARRAY_FIELDS, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, RAIN_MIN_DAILY_IN, GAUGE_FROZEN_MAX_F, COORD_TOL, NEAR_TERM_WINDOW_H };
+module.exports = { stationConfig, deriveStation, overnightMins, OVERNIGHT_MIN_SAMPLES, arraySilence, ARRAY_SILENT_WINDOW_MIN, ARRAY_SILENT_MIN_GAP_MIN, ARRAY_FIELDS, gaugeWindow, yesterdayCovered, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, RAIN_MIN_DAILY_IN, GAUGE_FROZEN_MAX_F, COORD_TOL, NEAR_TERM_WINDOW_H };

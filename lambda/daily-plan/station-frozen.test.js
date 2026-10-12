@@ -289,3 +289,163 @@ describe('DRG-WXSTATION-003 — a rain-gauge rule never weakens the frost floor'
     expect(mergeStationHydrology(om(), s).prov.station_overnight_mins).toEqual(s.nightMins);
   });
 });
+
+// One frozen day F in a clean week, seen from the 02:00 and 15:30 runs of F-1 .. F+3. THE RULE UNDER TEST: a
+// frozen day loses ITS OWN total and nothing else. Before yesterdayCovered, `yesterday` rode coversLookback, so
+// F also cost the measured figure for F+1 and F+2 and the 02:00 run on F+3, and the rain autologger wrote no
+// event for a wet F+1 the gauge had counted correctly.
+describe('DRG-WXSTATION-003 — a frozen day costs its own total only: the six-day sweep', () => {
+  // Totals a clean gauge would publish. F reads the frozen funnel's false 0.00; F+1 is the wet, unfrozen day.
+  const DAYS = ['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10', '2026-07-11', '2026-07-12', '2026-07-13'];
+  const RAIN = [0.00, 0.10, 0.20, 0.30, 0.00, 0.45, 0.05, 0.00];
+  const F = 4;                                                   // DAYS[F] = 2026-07-10
+  const at = (day, hh, mm) => Date.parse(`${day}T${hh}:${mm}:00-04:00`);
+  // The 72 h the fetch returns, one record per half hour, newest at the run's own minute. The day's rain all
+  // falls by 10:00; the only freezing readings in the week are F's dawn, 04:00-07:00.
+  const feed = (day, hh, mm, { frost = true } = {}) => {
+    const end = at(day, hh, mm), records = [];
+    for (let ms = end; ms > end - 72 * 3600000; ms -= 30 * 60000) {
+      const d = station.civilDay(ms, TZ), h = station.civilHour(ms, TZ);
+      const cold = frost && d === DAYS[F] && h >= 4 && h <= 7;
+      records.push({ dateutc: ms, dailyrainin: h >= 10 ? RAIN[DAYS.indexOf(d)] : 0, tempf: cold ? 30 : 45 });
+    }
+    return { nowMs: end + 5 * 60000, raw: { mac: MAC, records } };
+  };
+  const RUNS = [['02', '00'], ['15', '30']];
+  const G = 'gauge', FC = 'forecast';
+  const src = (s) => (/^station/.test(s) ? G : s);
+  const run = (i, [hh, mm], opts) => {
+    const { nowMs, raw } = feed(DAYS[i], hh, mm, opts);
+    const s = deriveStation(raw, { nowMs });
+    const { merged, prov } = mergeStationHydrology(om(), s);
+    return { s, merged, prov, row: [src(prov.today_source), src(prov.yesterday_actual_source), merged.yesterday_precip_actual_in,
+      src(prov.recent_source), merged.recent_precip_in] };
+  };
+
+  //            today  yesterday        recent        (forecast figures are om()'s: yesterday 0.7, recent 0.9)
+  const WANT = {
+    'F-1 02:00': [G,  G,  0.20, G,  0.30],
+    'F-1 15:30': [G,  G,  0.20, G,  0.30],
+    'F+0 02:00': [G,  G,  0.30, G,  0.50],                       // the dawn has not happened yet
+    'F+0 15:30': [FC, G,  0.30, G,  0.50],                       // F's own total is the only thing lost
+    'F+1 02:00': [G,  FC, 0.7,  FC, 0.9],                        // yesterday IS F: no total to publish
+    'F+1 15:30': [G,  FC, 0.7,  FC, 0.9],
+    'F+2 02:00': [G,  G,  0.45, FC, 0.9],                        // F+1 measured; the sum still lacks F
+    'F+2 15:30': [G,  G,  0.45, FC, 0.9],
+    'F+3 02:00': [G,  G,  0.05, FC, 0.9],                        // F is the anchor, and a deleted bucket
+    'F+3 15:30': [G,  G,  0.05, G,  0.50],                       // F's dawn has left the 72 h window
+  };
+
+  it('which figure is the gauge\'s and which the forecast\'s, F-1 .. F+3 at 02:00 and 15:30', () => {
+    const got = {};
+    for (let off = -1; off <= 3; off++) for (const t of RUNS) {
+      got[`F${off < 0 ? off : `+${off}`} ${t.join(':')}`] = run(F + off, t).row;
+    }
+    expect(got).toEqual(WANT);
+  });
+
+  it('the same week with no frost is the gauge throughout: every forecast cell above is the rule\'s doing', () => {
+    for (let off = -1; off <= 3; off++) for (const t of RUNS) {
+      const { row, s } = run(F + off, t, { frost: false });
+      expect(s.frozenDays).toEqual([]);
+      expect([row[0], row[1], row[3]], `F${off} ${t.join(':')}`).toEqual([G, G, G]);
+    }
+  });
+
+  it('`recent` never moves: null whenever either of its days is missing, in step in both gates', () => {
+    for (let off = -1; off <= 3; off++) for (const t of RUNS) {
+      const { s } = run(F + off, t);
+      const gw = gaugeWindow(s);
+      expect(gw.coversLookback).toBe(s.coversLookback);
+      expect(gw.recent).toBe(s.recentPrecipIn);
+      // coversYesterday only ever ADDS to coversLookback, and never without a measured D-1 to publish.
+      if (gw.coversLookback) expect(gw.coversYesterday).toBe(true);
+      if (gw.coversYesterday) expect(Number.isFinite(s.buckets[s.day1])).toBe(true);
+      expect(station.yesterdayCovered(s, s.day1, s.day2)).toBe(gw.coversYesterday);
+    }
+    const f2 = run(F + 2, RUNS[0]);
+    expect([f2.s.coversLookback, gaugeWindow(f2.s).coversYesterday]).toEqual([false, true]);
+    expect(f2.s.yesterdayPrecipIn).toBe(0.45);
+    expect(f2.s.recentPrecipIn).toBeNull();
+    expect(f2.prov.station_uncertainty).toBe('frozen');          // the sum's fallback is still named
+  });
+
+  it('the rain autologger logs the MEASURED figure for F+1, and still nothing for F', async () => {
+    const rowFor = async (i) => {
+      const { nowMs, raw } = feed(DAYS[i], '02', '00');
+      const settled = [{ date: DAYS[i - 1], et0_in: 0.1, tmax_f: 45, tmin_f: 40, precip_in: 0.7 }];
+      const { merged, prov } = mergeStationHydrology({ ...om(), settled_days: settled }, deriveStation(raw, { nowMs }));
+      const calls = [];
+      const pg = { query: async (sql, params) => { calls.push(params); return { rows: [], rowCount: 1 }; } };
+      expect(await handler.writeWeatherDaily(pg, 'space-1', DAYS[i], merged, prov)).toBe(1);
+      return { date: calls[0][1], precip_in: calls[0][5], precip_source: calls[0][6] };
+    };
+    // The 02:00 run on F+2 is the autolog slot that settles F+1.
+    const wet = await rowFor(F + 2);
+    expect(wet).toEqual({ date: DAYS[F + 1], precip_in: 0.45, precip_source: 'gauge_merged' });
+    expect(rainLog.rainDecision(wet).log).toBe(true);
+    // The 02:00 run on F+1 settles F itself: forecast figure, never logged as a rain event.
+    const frozen = await rowFor(F + 1);
+    expect(frozen).toEqual({ date: DAYS[F], precip_in: 0.7, precip_source: 'openmeteo_live' });
+    expect(rainLog.rainDecision(frozen).log).toBe(false);
+  });
+});
+
+describe('DRG-WXSTATION-003 — only a frozen day counts as reporting; a rejected day is still missing', () => {
+  // D-2 gone three ways over the same clean fixture. Only the frozen one leaves yesterday on the gauge.
+  const yest = (raw) => {
+    const s = deriveStation(raw, { nowMs: NOW });
+    const { merged, prov } = mergeStationHydrology(om(), s);
+    return [prov.yesterday_actual_source, merged.yesterday_precip_actual_in, prov.recent_source, gaugeWindow(s).coversYesterday];
+  };
+  const withD2 = (dailyrainin, tempf) => { const raw = fixture(); raw.records[3] = rec(D2, '18', dailyrainin, tempf); return raw; };
+
+  it('frozen D-2: yesterday is measured, the two-day sum is not', () => {
+    expect(yest(fixture({ [D2]: 30 }))).toEqual(['station', 0.3, 'forecast', true]);
+  });
+
+  it('implausible D-2 and negative-only D-2: yesterday is the forecast figure, exactly as before the rule', () => {
+    expect(yest(withD2(99, 72))).toEqual(['forecast', 0.7, 'forecast', false]);
+    expect(yest(withD2(-1, 72))).toEqual(['forecast', 0.7, 'forecast', false]);
+  });
+
+  it('a D-2 that is BOTH frozen and rejected is rejected', () => {
+    expect(yest(withD2(99, 30))).toEqual(['forecast', 0.7, 'forecast', false]);
+    expect(yest(withD2(-1, 30))).toEqual(['forecast', 0.7, 'forecast', false]);
+  });
+
+  it('a frozen ANCHOR (D-3) covers yesterday; a rejected or absent one does not', () => {
+    expect(yest(fixture({ [D3]: 30 }))).toEqual(['station', 0.3, 'forecast', true]);
+    const rejected = fixture(); rejected.records[4] = rec(D3, '18', 99, 65);
+    expect(yest(rejected)).toEqual(['forecast', 0.7, 'forecast', false]);
+    const absent = fixture(); absent.records.pop();
+    expect(yest(absent)).toEqual(['forecast', 0.7, 'forecast', false]);
+  });
+
+  it('a frozen D-1 is never published, whatever else is covered', () => {
+    expect(yest(fixture({ [D1]: 30 }))).toEqual(['forecast', 0.7, 'forecast', false]);
+    expect(yest(fixture({ [D1]: 30, [D2]: 30, [D3]: 30 }))).toEqual(['forecast', 0.7, 'forecast', false]);
+  });
+
+  it('a frozen day cannot stand in for a station that was not there: warm-up is still warm-up', () => {
+    // D-1 and a frozen D-2, nothing earlier: D-2 is the first day on record, so it is no anchor for itself.
+    const raw = fixture({ [D2]: 30 }); raw.records.pop();
+    expect(yest(raw)).toEqual(['forecast', 0.7, 'forecast', false]);
+  });
+
+  it('a stale station publishes no yesterday, frozen neighbour or not', () => {
+    const s = deriveStation(fixture({ [D2]: 30 }), { nowMs: Date.parse('2026-07-06T10:00:00Z') });
+    expect(s.fresh).toBe(false);
+    expect(mergeStationHydrology(om(), s).prov.yesterday_actual_source).toBe('forecast');
+  });
+
+  it('a replay addresses the same test by plan day, and a hand-built station with no day lists is unchanged', () => {
+    const s = deriveStation(fixture({ [D3]: 30 }), { nowMs: NOW });
+    expect(gaugeWindow(s, D0).coversYesterday).toBe(true);
+    expect(gaugeWindow(s, D1).coversYesterday).toBe(false);      // D-2 has a bucket but nothing stands before D-3
+    const bare = { buckets: { [D0]: 0.01, [D1]: 0.3, [D2]: 0.2, [D3]: 0 }, day0: D0 };
+    expect(gaugeWindow(bare)).toMatchObject({ coversLookback: true, coversYesterday: true });
+    expect(gaugeWindow({ buckets: { [D0]: 0.01, [D1]: 0.3 }, day0: D0 })).toMatchObject({ coversLookback: false, coversYesterday: false });
+    expect(gaugeWindow(null).coversYesterday).toBe(false);
+  });
+});
