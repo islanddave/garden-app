@@ -299,6 +299,33 @@ jobs:
             echo "ADMIN_CLERK_SUBS set on $FN"
           fi
 
+      - name: Ensure ADMIN_CLERK_SUBS env for varieties-staging
+        # V4-CROPTYPERETIRE-001: the crop-type retire, restore and admin-listing routes fail closed
+        # without it. Carries the smoke's CLERK_TEST_USER_ID alongside Dave (the ux-events-staging
+        # convention above), so the smoke's block V can walk retire -> read back -> restore.
+        if: matrix.function == 'varieties'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on staging deploy role
+        run: |
+          FN="garden-varieties-staging"
+          EXPECTED="user_3D2gM0hIl03gjW3JM2DjtPzm0jI,${{ secrets.CLERK_TEST_USER_ID }}"
+          CURRENT=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables.ADMIN_CLERK_SUBS' --output text 2>/dev/null || echo "None")
+          if [[ "$CURRENT" == "$EXPECTED" ]]; then
+            echo "ADMIN_CLERK_SUBS already correct on $FN"
+          else
+            # OPS-STAGINGENVREAD-001: test EXIT STATUS, not emptiness (rationale on the S3_PHOTOS_BUCKET
+            # step). This step is continue-on-error, so bailing leaves the live config untouched.
+            if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/tmp/env-read-err); then
+              CAUSE=$(tr -s '\r\n' '  ' </tmp/env-read-err | sed -e 's/^ //' -e 's/ $//' | cut -c1-400)
+              echo "::warning::could not read env for $FN (${CAUSE:-no error text}); leaving ADMIN_CLERK_SUBS untouched rather than risking a wipe"
+              exit 1
+            fi
+            UPDATED=$(echo "$EXISTING" | jq --arg v "$EXPECTED" '. + {ADMIN_CLERK_SUBS: $v}')
+            echo "{\"Variables\": $UPDATED}" > /tmp/env-varieties-admin-staging.json
+            aws lambda update-function-configuration --function-name "$FN" --environment file:///tmp/env-varieties-admin-staging.json >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "ADMIN_CLERK_SUBS set on $FN"
+          fi
+
       - name: Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped staging fns (read-merge)
         # B1 (staging side): garden-harvests-staging is household-scoped; create-function above sets
         # ONLY SECRET_NAME, so without this it collapses to per-user scope and the both-household

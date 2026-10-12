@@ -1,4 +1,4 @@
-"""deploy-staging.yml's five read-merge env steps, executed as GitHub's runner executes them (OPS-STAGINGENVREAD-001).
+"""deploy-staging.yml's six read-merge env steps, executed as GitHub's runner executes them (OPS-STAGINGENVREAD-001).
 
 Run: python3 -m pytest -q scripts/test_deploy_staging_env.py
 
@@ -11,7 +11,7 @@ keys the step adds. deploy-lambda.yml dropped that shape under OPS-LAMBDAENVWIPE
 Pinned per step, with a stub `aws` on PATH that logs argv and replays a planned reply:
   - a read that SUCCEEDS leads to the write it always led to: one update carrying existing + the step's keys;
   - a read that exits non-zero is never followed by a write, whatever it printed, and the step says which function
-    and why. The one step with no continue-on-error skips (exit 0); the four advisory ones exit 1;
+    and why. The one step with no continue-on-error skips (exit 0); the five advisory ones exit 1;
   - ResourceNotFoundException fails the step, as it always did (the old update call died on the same error);
   - the paths that never reach the read (value already correct, household ids unreadable) are as they were.
 
@@ -64,6 +64,11 @@ SITES = [
     Site("ux-admin", "Ensure ADMIN_CLERK_SUBS env for ux-events-staging",
          {"${{ secrets.CLERK_TEST_USER_ID }}": SMOKE_USER}, "garden-ux-events-staging",
          {("garden-ux-events-staging", WHOLE_MAP + ".ADMIN_CLERK_SUBS"): "None"},
+         {"ADMIN_CLERK_SUBS": ADMINS}, [], True, 1, "leaving ADMIN_CLERK_SUBS untouched"),
+    # V4-CROPTYPERETIRE-001: the crop-type retire / restore / admin-listing gate on the varieties function.
+    Site("varieties-admin", "Ensure ADMIN_CLERK_SUBS env for varieties-staging",
+         {"${{ secrets.CLERK_TEST_USER_ID }}": SMOKE_USER}, "garden-varieties-staging",
+         {("garden-varieties-staging", WHOLE_MAP + ".ADMIN_CLERK_SUBS"): "None"},
          {"ADMIN_CLERK_SUBS": ADMINS}, [], True, 1, "leaving ADMIN_CLERK_SUBS untouched"),
     Site("household", "Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped staging fns (read-merge)",
          {"${{ matrix.function }}": "harvests"}, "garden-harvests-staging",
@@ -285,7 +290,9 @@ def test_the_function_was_created_and_read_before_any_of_these_steps_runs():
 
 @pytest.mark.parametrize("site,query,value", [
     (BY_ID["photos-bucket"], WHOLE_MAP + ".S3_PHOTOS_BUCKET", "garden-photos-staging"),
-    (BY_ID["ux-admin"], WHOLE_MAP + ".ADMIN_CLERK_SUBS", ADMINS)], ids=["photos-bucket", "ux-admin"])
+    (BY_ID["ux-admin"], WHOLE_MAP + ".ADMIN_CLERK_SUBS", ADMINS),
+    (BY_ID["varieties-admin"], WHOLE_MAP + ".ADMIN_CLERK_SUBS", ADMINS)],
+    ids=["photos-bucket", "ux-admin", "varieties-admin"])
 def test_a_value_that_is_already_correct_is_left_alone(tmp_path, site, query, value):
     run = _run(tmp_path, site, None, probes={f"{site.fn} {query}": {"out": value + "\n"}})
     assert run.proc.returncode == 0 and len(run.calls) == 1 and run.annotations == []

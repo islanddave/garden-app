@@ -564,6 +564,33 @@ jobs:
             echo "ADMIN_CLERK_SUBS set on $FN"
           fi
 
+      - name: Ensure ADMIN_CLERK_SUBS env for varieties
+        if: matrix.function == 'varieties'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
+        run: |
+          # V4-CROPTYPERETIRE-001. The crop-type retire, restore and admin-listing routes read
+          # ADMIN_CLERK_SUBS, which is set per-function and was never set on garden-varieties. Without
+          # this step the gate fail-closes for EVERYONE: nothing can be retired, a retired type cannot
+          # be brought back, and /admin/crop-types says retiring isn't switched on. Read-merge, so the
+          # function's other variables (GARDEN_HOUSEHOLD_IDS, SECRET_REFRESH) are kept.
+          FN="garden-varieties"
+          EXPECTED="user_3D2gM0hIl03gjW3JM2DjtPzm0jI"
+          CURRENT=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables.ADMIN_CLERK_SUBS' --output text 2>/dev/null || echo "None")
+          if [[ "$CURRENT" == "$EXPECTED" ]]; then
+            echo "ADMIN_CLERK_SUBS already correct on $FN"
+          else
+            # OPS-LAMBDAENVWIPE-001: test EXIT STATUS, not emptiness (rationale on the household step).
+            if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/dev/null); then
+              echo "::warning::could not read env for $FN; leaving config untouched rather than risking a wipe"
+              exit 1
+            fi
+            UPDATED=$(echo "$EXISTING" | jq --arg v "$EXPECTED" '. + {ADMIN_CLERK_SUBS: $v}')
+            echo "{\"Variables\": $UPDATED}" > /tmp/env-varieties-admin.json
+            aws lambda update-function-configuration --function-name "$FN" --environment file:///tmp/env-varieties-admin.json >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "ADMIN_CLERK_SUBS set on $FN"
+          fi
+
       - name: Ensure Function URL exists for ${{ matrix.function }}
         if: matrix.function != 'xp-reconcile' && matrix.function != 'daily-plan' && matrix.function != 'photocdn-derivative'  # xp-reconcile/daily-plan EventBridge; photocdn-derivative INTERNAL-INVOKE ONLY (spec-B2: NO public AuthType-NONE URL)
         continue-on-error: true  # requires lambda:CreateFunctionUrlConfig + lambda:GetFunctionUrlConfig + lambda:AddPermission on deploy role
