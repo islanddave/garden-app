@@ -297,6 +297,26 @@ describe('two saves of one draft answered with the same lot', () => {
     expect(onClose).toHaveBeenCalledTimes(2)
   })
 
+  // The save finishing the lot stops short of its ending (here its toast throws). The one waiting on
+  // it must still be let go: it ends its own sheet on the lot, with nothing known of a stage.
+  it('the save that was finishing the lot stopped short: the open sheet is not left on "Saving…"', async () => {
+    await mount()
+    type('save-seed-name', lotName)
+    await tapSave()
+    await closeWhileSaving()
+    await openAgain()
+    type('save-seed-name', lotName)
+    await tapSave()
+
+    toastSpy.mockImplementationOnce(() => { throw new Error('the toast broke') })
+    await act(async () => { creates[0].resolve(LOT) })
+    await act(async () => { creates[1].resolve({ ...LOT }) })
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalledTimes(1))
+    expect(navigateSpy.mock.calls[0][0]).toBe('/inventory/lot-1')
+    expect(screen.getByTestId('open-again')).toBeTruthy()
+    expect(posts('/api/events')).toHaveLength(1)
+  })
+
   it('the first answer was lost, the second names a lot: that save finishes it, whoever made it', async () => {
     await mount()
     draftWithMeasures()
