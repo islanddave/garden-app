@@ -43,8 +43,10 @@
 // loadOwnedInventoryItem, which filters deleted_at IS NULL), so in the app a strand is made by deleting
 // after pointing — here. What gets past it: a reference created between the check and the UPDATE,
 // an event that pointed at an item deleted meanwhile (events have no restore route today), and
-// hand-written SQL. Restoring a PLANTING no longer gets past it: the restore brings the caller's
-// deleted packet back with it, and refuses when the packet is not the caller's household's.
+// hand-written SQL. Restoring a PLANTING no longer gets past it outside a concurrent delete: the
+// restore brings the caller's deleted packet back with it, and refuses when the packet is not the
+// caller's household's. A packet delete whose check ran before that restore committed and whose
+// UPDATE lands after it is the first case above, and still strands.
 // migrations/v5-invrefstrand-001/gates.yml is the detector, and it counts exactly what this blocks on.
 
 // The relations a delete refuses over. Named by their real constraint so the census gate in
