@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.184.1",
+    "date": "2026-10-12",
+    "highlights": [
+      "Put-Up: a letter typed just as name matches appear is no longer taken back, and the save keeps the name you typed"
+    ]
+  },
+  {
     "version": "4.184.0",
     "date": "2026-10-11",
     "highlights": [
