@@ -1,7 +1,13 @@
 {
-  "version": "4.184.1",
+  "version": "4.185.0",
   "date": "2026-10-12",
   "highlights": [
-    "Put-Up: a letter typed just as name matches appear is no longer taken back, and the save keeps the name you typed"
+    "A frozen rain gauge no longer reads as a dry day: on a day at or below 32°F the forecast figure is used",
+    "Restoring a planting brings its deleted seed packet back too, and says so",
+    "Planting page: the crop chip on every planting, a Habit line, growth type shown once, and 5K+ SHU when only a lower heat figure is known",
+    "Put something up: a Save refused for no place shows the reason right under the places, and bought items name the No date button",
+    "Greyed-out buttons show their words, and the x on the Undo message is easier to hit",
+    "Closing a seed sheet while it saves no longer moves you to another page",
+    "Opening a second seed lot from Search no longer sends Cancel back to the first"
   ]
 }
