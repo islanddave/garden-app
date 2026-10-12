@@ -181,6 +181,7 @@ export async function lineSearch(sql, query, householdIds) {
     SELECT ct.slug AS crop_type_slug, ct.display_name AS label
     FROM crop_types ct
     WHERE ct.display_name ILIKE ${pat}
+      AND ct.deleted_at IS NULL
     ORDER BY ct.display_name, ct.slug
     LIMIT ${LINE_SEARCH_LIMIT}
   `,

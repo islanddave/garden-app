@@ -92,6 +92,14 @@ describe('line search — each arm selects exactly these keys, in this order', (
     expect(keysOf(calls[i])).toEqual(keys);
   });
 
+  it('the crop arm leaves retired types out, so a put-up line cannot pick one (V4-CROPTYPERETIRE-001)', async () => {
+    const calls = await arms();
+    expect(calls[3].norm).toBe(
+      'SELECT ct.slug AS crop_type_slug, ct.display_name AS label FROM crop_types ct '
+      + 'WHERE ct.display_name ILIKE ? AND ct.deleted_at IS NULL ORDER BY ct.display_name, ct.slug LIMIT ?',
+    );
+  });
+
   it('the planting arm still orders by name then id, capped per arm', async () => {
     const [plantings] = await arms();
     expect(plantings.norm).toMatch(/ORDER BY gn\.display_name, gn\.id LIMIT \?$/);

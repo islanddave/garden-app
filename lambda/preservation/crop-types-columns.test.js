@@ -46,8 +46,10 @@ const HANDLERS = readdirSync(__dirname)
 // The keyed form binds columns to ONE relation, so this file cannot assert its list onto whatever
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
+// V4-CROPTYPERETIRE-001 adds deleted_at: the line search's crop arm leaves retired types out, and the
+// pantry item's create and PATCH refuse one. The reads that only NAME a crop still do not filter it.
 const AUDIT_COLUMNS = {
-  crop_types: ['display_name', 'slug'],
+  crop_types: ['deleted_at', 'display_name', 'slug'],
 };
 
 const CROP_TYPES_COLUMNS = AUDIT_COLUMNS.crop_types;
@@ -104,7 +106,9 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation crop_types column cont
     // Release F: +1 — the line search's put-up arm matches a jar by its crop's display name.
     // B′ release 3: +1 — the line search's crop arm (V4 §2.5a corpus), columns unchanged.
     // B′ (release 2): +2 — GET /api/pantry's put-up and pantry-item reads name the crop for group=kind.
-    expect(STATEMENTS).toHaveLength(8);
+    // V4-CROPTYPERETIRE-001: +2 — the pantry item's create and its PATCH's first read each ask
+    // whether the crop is a retired type.
+    expect(STATEMENTS).toHaveLength(10);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['ct']);
   });

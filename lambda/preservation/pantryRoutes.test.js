@@ -6,7 +6,7 @@
 // (tests/integration/pantry-*.int.test.js).
 import { describe, it, expect } from 'vitest';
 import {
-  parsePantryRoute, handlePantryRoute, removeJar, ITEM_CONSTRAINT_MESSAGES,
+  parsePantryRoute, handlePantryRoute, removeJar, ITEM_CONSTRAINT_MESSAGES, RETIRED_CROP_REFUSAL,
 } from './pantryRoutes.js';
 import {
   validateItemCreate, validateItemPatch, acquiredOf, jarRow, itemRow, sortPantryRows, discardOf, matchesQuery,
@@ -261,6 +261,18 @@ describe('POST /api/pantry/items', () => {
   const body = (over = {}) => ({ idempotency_key: K1, name: '  Arborio rice ', storage_location_id: PLACE, ...over });
   const placeRow = [{ id: PLACE, label: 'Pantry shelf', kind: 'pantry' }];
   const inserted = (over = {}) => [{ ...itemDb({ user_id: DAVE, storage_location_id: PLACE, acquired_at: null, acquired_precision: null, notes: null }), used_up_at: null, created_at: 'c', deleted_at: null, ...over }];
+
+  it('a retired crop type gains no new item: the INSERT holds it and the refusal is in words (V4-CROPTYPERETIRE-001)', async () => {
+    // The database returns no row when the INSERT's own NOT EXISTS finds the crop retired.
+    const sql = mockSql([placeRow, []]);
+    const res = await call(sql, '/api/pantry/items', 'POST', body({ crop_type_slug: ' tatsoi ' }));
+    expect(res).toEqual({ status: 400, body: { error: RETIRED_CROP_REFUSAL } });
+    const ins = sql.calls[1];
+    const guard = 'WHERE NOT EXISTS (SELECT 1 FROM crop_types ct WHERE ct.slug = ';
+    expect(ins.norm).toContain(`${guard}? ::text AND ct.deleted_at IS NOT NULL) RETURNING`);
+    expect(ins.norm.indexOf(guard)).toBeGreaterThan(ins.norm.indexOf('INSERT INTO pantry_item'));
+    expect(after(ins, guard)).toBe('tatsoi');
+  });
 
   it.each([
     [{ idempotency_key: 'x' }, /idempotency_key must be a uuid/],
@@ -1004,11 +1016,19 @@ describe('PATCH /api/pantry/items/:id with crop_type_slug', () => {
     const res = await call(sql, path, 'PATCH', { name: 'Tomatoes', crop_type_slug: ' tomato ' }, { userId: JEN });
     expect(res).toMatchObject({ status: 200, body: { item: { name: 'Tomatoes', crop_type_slug: 'tomato' } } });
     expect(sql.calls).toHaveLength(2);
-    expect(sql.calls[0].norm).toBe('SELECT plant_id FROM pantry_item WHERE id = ? ::uuid AND user_id = ANY( ? ) AND deleted_at IS NULL');
-    expect(sql.calls[0].values).toEqual([ITEM, HOUSEHOLD]);
+    expect(sql.calls[0].norm).toBe('SELECT plant_id, EXISTS (SELECT 1 FROM crop_types ct WHERE ct.slug = ? ::text AND ct.deleted_at IS NOT NULL) AS crop_retired FROM pantry_item WHERE id = ? ::uuid AND user_id = ANY( ? ) AND deleted_at IS NULL');
+    expect(sql.calls[0].values).toEqual(['tomato', ITEM, HOUSEHOLD]);
     expect(after(sql.calls[1], 'crop_type_slug = CASE WHEN')).toBe(true);
     expect(after(sql.calls[1], CROP)).toBe('tomato');
     expect(sql.calls[1].norm).toContain(`${CROP} ? ::text ELSE crop_type_slug END`);
+  });
+
+  it('a retired crop type is refused in words by that first read, and nothing is written (V4-CROPTYPERETIRE-001)', async () => {
+    const sql = mockSql([[{ plant_id: null, crop_retired: true }]]);
+    const res = await call(sql, path, 'PATCH', { crop_type_slug: 'tatsoi' });
+    expect(res).toEqual({ status: 400, body: { error: RETIRED_CROP_REFUSAL } });
+    expect(RETIRED_CROP_REFUSAL).toBe('That crop type was retired. Pick a different crop.');
+    expect(sql.calls).toHaveLength(1);
   });
 
   it('null clears the crop', async () => {

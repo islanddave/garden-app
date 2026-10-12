@@ -169,6 +169,9 @@ export const ITEM_CONSTRAINT_MESSAGES = {
   chk_pantry_item_source_other: 'Name where it came from.',
   chk_pantry_item_source_plant: PLANTING_SOURCE_REFUSAL,
 };
+// V4-CROPTYPERETIRE-001 — a retired crop type gains no new rows. The foreign key cannot say this (a
+// retired type's row is still there), so the create's INSERT and the PATCH's first read each check it.
+export const RETIRED_CROP_REFUSAL = 'That crop type was retired. Pick a different crop.';
 function itemError(err) {
   if (err?.code !== '23514' && err?.code !== '23503') return null;
   const words = ITEM_CONSTRAINT_MESSAGES[String(err.constraint ?? '')];
@@ -232,6 +235,7 @@ export async function createItem(sql, body, userId, householdIds) {
                ${amt.quantity_value}::numeric, ${amt.quantity_unit}::text,
                ${src.source_kind}::text, ${src.source_label}::text,
                ${body.idempotency_key}::uuid
+        WHERE NOT EXISTS (SELECT 1 FROM crop_types ct WHERE ct.slug = ${crop}::text AND ct.deleted_at IS NOT NULL)
         RETURNING id, user_id, name, storage_location_id, acquired_at, acquired_precision, use_by_target,
                   plant_id, crop_type_slug, quantity_value, quantity_unit, source_kind, source_label,
                   used_up_at, notes, created_at, updated_at, deleted_at
@@ -247,6 +251,8 @@ export async function createItem(sql, body, userId, householdIds) {
     if (r) return r;
     throw err;
   }
+  // No row back means the INSERT's own predicate held it: the crop is a retired type.
+  if (!rows.length) return bad(RETIRED_CROP_REFUSAL);
   return { status: 201, body: { item: projectItem(rows[0]) } };
 }
 
@@ -290,13 +296,18 @@ export async function patchItem(sql, itemId, body, householdIds) {
   }
   if (p.crop_type_slug) {
     const tied = await sql`
-      SELECT plant_id FROM pantry_item
+      SELECT plant_id,
+             EXISTS (SELECT 1 FROM crop_types ct
+                      WHERE ct.slug = ${normalizeText(body.crop_type_slug)}::text
+                        AND ct.deleted_at IS NOT NULL) AS crop_retired
+      FROM pantry_item
       WHERE id = ${itemId}::uuid
         AND user_id = ANY(${householdIds})
         AND deleted_at IS NULL
     `;
     if (!tied.length) return notFound;
     if (tied[0].plant_id != null) return bad(PLANTING_CROP_REFUSAL);
+    if (tied[0].crop_retired) return bad(RETIRED_CROP_REFUSAL);
   }
   const acq = p.acquired_at ? acquiredOf(body) : { acquired_at: null, acquired_precision: null };
   const amt = p.quantity_value ? amountOf(body) : { quantity_value: null, quantity_unit: null };
