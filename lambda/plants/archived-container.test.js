@@ -941,7 +941,7 @@ describe('BUG-PLANTSLISTARCHIVEDCONTAINER-001 — bringing a planting back bring
 // planting on a deleted packet (the BUG-INVREFSTRAND-001 strand). Here because the restore route's
 // transaction is this file's subject and its statements are run, not read: the model above evaluates
 // the planting UPDATE's new NOT EXISTS and the packet UPDATE against the rows below.
-// tests/integration/plants-restore-packet.int.test.js runs the same walk on Postgres.
+// tests/integration/inventory-delete-guard.int.test.js runs the delete → delete → restore walk on Postgres.
 const PK = {
   live: 'e1000000-0000-4000-8000-000000000001',
   deleted: 'e1000000-0000-4000-8000-000000000002',

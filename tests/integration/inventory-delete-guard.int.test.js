@@ -21,6 +21,9 @@
 //     must agree with isSavedLot (src/components/seed/seedLots.js) on real rows: one per fact, plus a
 //     bought packet. lambda/inventory-items/saved-lot-pairing.test.js pins the two to the same facts;
 //     this file is where the SQL half is actually executed.
+//   · BUG-PLANTRESTORESTRAND-001, the way round the guard that the fourth point leaves open: delete a
+//     planting, delete its packet (allowed), restore the planting. POST /api/plants/:id/restore brings
+//     the packet back in the same transaction, so the walk ends with both live and no strand.
 //
 // FIXTURES are this file's own (`int-test-` namespaced users). Teardown unwinds what the global sweep
 // cannot reach (seed_lot_stage_log has no step there) and then the RESTRICT/NO ACTION children in FK
@@ -29,6 +32,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
 import { settle, assertFixtureId } from './_cleanup.js'
 import { handler } from '../../lambda/inventory-items/index.js'
+import { handler as plantsHandler } from '../../lambda/plants/index.js'
 import { deletePreflight } from '../../lambda/inventory-items/delete-guard.js'
 import { isSavedLot } from '../../src/components/seed/seedLots.js'
 
@@ -96,6 +100,9 @@ beforeAll(async () => {
   // Allowed: the only planting was soft-deleted.
   ids.retracted = await packet('retracted')
   await planting('retracted', ids.retracted, { deleted: true })
+  // BUG-PLANTRESTORESTRAND-001: a LIVE planting on its own packet, for the delete → delete → restore walk.
+  ids.walk = await packet('walk')
+  ids.walkPlanting = await planting('walk', ids.walk)
   // Allowed: a saved-seed lot with its own stage history and its own photo, nothing sown from it.
   // The stage row is the route's own (it used to be inserted by hand beside a create that set the
   // stage; the route now does both, and exactly one row is what the delete case below counts).
@@ -227,6 +234,35 @@ describe('DELETE /api/inventory-items/:id — blocks only on something sown or a
     const { status, body } = await del(ids.retracted)
     expect(status, JSON.stringify(body)).toBe(200)
     expect(await deletedAt(ids.retracted)).not.toBeNull()
+  })
+
+  it('delete the planting, delete its packet, restore the planting: both come back live and nothing is stranded', async () => {
+    setTestUserId(USER)
+    const gone = await callHandler(plantsHandler, { method: 'DELETE', path: `/api/plants/${ids.walkPlanting}`, userId: USER })
+    expect(gone.status, JSON.stringify(gone.body)).toBe(200)
+    const packetGone = await del(ids.walk)
+    expect(packetGone.status, JSON.stringify(packetGone.body)).toBe(200)
+    expect(await deletedAt(ids.walk), 'fixture: the packet must be soft-deleted before the restore').not.toBeNull()
+
+    const { status, body } = await callHandler(plantsHandler, {
+      method: 'POST', path: `/api/plants/${ids.walkPlanting}/restore`, userId: USER,
+    })
+    expect(status, JSON.stringify(body)).toBe(200)
+    expect(body.restored_packet_id).toBe(ids.walk)
+    // Read back, never the handler's echo (L-108).
+    const [p] = await directSql`SELECT deleted_at FROM plants WHERE id = ${ids.walkPlanting}`
+    expect(p.deleted_at).toBeNull()
+    expect(await deletedAt(ids.walk), 'the packet stayed deleted — the strand').toBeNull()
+    // The detector's own predicate (migrations/v5-invrefstrand-001/gates.yml, the plants arm), scoped to
+    // this planting: `ids.alreadyDeleted` is a strand this file makes on purpose.
+    const strands = await directSql`
+      SELECT p.id FROM public.plants p
+        JOIN public.inventory_items i ON i.id = p.source_inventory_item_id
+       WHERE p.deleted_at IS NULL AND i.deleted_at IS NOT NULL
+         AND p.id = ${ids.walkPlanting}`
+    expect(strands).toEqual([])
+    // And the packet is in the way of its own delete again, as any sown packet is.
+    expect((await del(ids.walk)).status).toBe(409)
   })
 
   it('a saved lot with its own stage row and photo deletes (200), and they keep their pointer', async () => {
