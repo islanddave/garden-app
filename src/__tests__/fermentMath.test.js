@@ -64,6 +64,16 @@ describe('the salt helper — golden table (06 §5.3)', () => {
     expect(saltAsideWords(b)).toBe('no weight: onion, garlic')
   })
 
+  it('a line with no label is named "something" in the aside, never an empty name; saltBase still hands back the label as it is', () => {
+    expect(saltAsideWords({ no_weight: [null, 'onion'] })).toBe('no weight: something, onion')
+    expect(saltAsideWords({ no_weight: [null] })).toBe('no weight: something')
+    expect(saltAsideWords({ left_out: [undefined, '  ', 'Water'], no_weight: [''] })).toBe('left out: something, something, Water · no weight: something')
+    // A predicate-created row: harvest, null label, null qty pair. The base is unchanged (client/Lambda parity).
+    const b = saltBase([{ input_kind: 'harvest', label: null, qty: null, qty_unit: null }, { label: 'onion', qty: '1', qty_unit: 'each' }], 'produce')
+    expect(b.no_weight).toEqual([null, 'onion'])
+    expect(saltAsideWords(b)).toBe('no weight: something, onion')
+  })
+
   it('water is left out of Veg only and named; Water only leaves the veg out', () => {
     expect(saltAsideWords(saltBase(PETRI, 'produce'))).toBe('left out: Water')
     expect(saltBase(PETRI, 'water').grams).toBe(250)

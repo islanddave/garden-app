@@ -108,9 +108,11 @@ export function saltLiveWords({ pct, base, baseG }) {
 
 // "left out: water 250 ml · no weight: onion, garlic" — what the base did not count, named.
 export function saltAsideWords({ left_out: leftOut = [], no_weight: noWeight = [] } = {}) {
+  // A line can have no label (a predicate-created harvest row); it is named as the heat sheet names one.
+  const named = (labels) => labels.map((l) => (String(l ?? '').trim() ? l : 'something')).join(', ')
   const parts = []
-  if (leftOut.length) parts.push(`left out: ${leftOut.join(', ')}`)
-  if (noWeight.length) parts.push(`no weight: ${noWeight.join(', ')}`)
+  if (leftOut.length) parts.push(`left out: ${named(leftOut)}`)
+  if (noWeight.length) parts.push(`no weight: ${named(noWeight)}`)
   return parts.join(' · ')
 }
 
