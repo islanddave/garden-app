@@ -1005,6 +1005,96 @@ describe('after the tap: no answer (rows 14-19, 21, 23)', () => {
     expect(screen.queryByTestId('confirm-sheet')).toBeNull()
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+
+  // Closed with the answer still out, and the add then lands. The host here takes the sheet away on
+  // close, as every door does. What is true is still said and the host still hears, told the sheet is
+  // closed (its own business whether to leave the page); the sheet is not closed a second time.
+  function Host() {
+    const [shown, setShown] = React.useState(true)
+    if (!shown) return <p data-testid="host-page">the page under the sheet</p>
+    return (
+      <SaveSeedSheet
+        planting={MEMBER} ownLots={[OWN]} onSeedAdded={onSeedAdded} onSeedMaybeAdded={onSeedMaybeAdded}
+        onClose={() => { onClose(); setShown(false) }}
+      />
+    )
+  }
+  const mountHosted = () => render(<DismissRegistryProvider><Host /></DismissRegistryProvider>)
+  const closeUnsure = async () => {
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Close' })) })
+    expect(asked()).toEqual(UNSURE_QUESTION)
+    await tap('confirm-sheet-confirm')
+    expect(screen.getByTestId('host-page')).toBeTruthy()
+    expect(onClose).toHaveBeenCalledTimes(1)
+  }
+
+  it('closed while "Checking…" stands, and the second try then lands: "Added to <lot>" is still said, the host hears it closed, nothing closes twice, nothing is sent again', async () => {
+    const second = defer()
+    net.add = [timedOut(), () => second.promise]
+    mountHosted()
+    await tap('save-seed-put-in-lot')
+    type('seed-add-count', '30')
+    await tap('save-seed-submit')
+    await waitFor(() => expect(text('seed-add-checking')).toBe(CHECKING))
+    await closeUnsure()
+    expect(toastSpy).not.toHaveBeenCalled()
+    await act(async () => { second.resolve(additionReplayReply({ name: OWN.name })) })
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledTimes(1))
+    expect(toastSpy).toHaveBeenCalledWith({ message: `Added to ${OWN.name}`, tone: 'success' })
+    expect(onSeedAdded).toHaveBeenCalledTimes(1)
+    expect(onSeedAdded.mock.calls[0][1].closed).toBe(true)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('host-page')).toBeTruthy()
+    expect(screen.queryByTestId('seed-add-form')).toBeNull()
+    // the one key, twice; the timeline entry once
+    expect(bodies('add')[1]).toEqual(bodies('add')[0])
+    expect(counts()).toEqual({ add: 2, event: 1, open: 0 })
+  })
+
+  it('closed while "Adding…" stands, and the first answer then lands: the same ending, on one POST', async () => {
+    const first = defer()
+    net.add = [() => first.promise]
+    mountHosted()
+    await tap('save-seed-put-in-lot')
+    await tap('save-seed-submit')
+    expect(submitBtn().textContent).toBe('Adding…')
+    await closeUnsure()
+    await act(async () => { first.resolve(additionReply({ name: OWN.name })) })
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledTimes(1))
+    expect(toastSpy).toHaveBeenCalledWith({ message: `Added to ${OWN.name}`, tone: 'success' })
+    expect(onSeedAdded.mock.calls.map((c) => c[1].closed)).toEqual([true])
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(counts()).toEqual({ add: 1, event: 1, open: 0 })
+  })
+
+  it('closed while "Checking…" stands, and the second try then fails or is refused: nothing is said, nothing is sent again, the host hears nothing more', async () => {
+    for (const ending of [timedOut(), coded('amount_too_large')]) {
+      const second = defer()
+      net.add = [timedOut(), () => second.promise]
+      const { unmount } = mountHosted()
+      await tap('save-seed-put-in-lot')
+      await tap('save-seed-submit')
+      await waitFor(() => expect(text('seed-add-checking')).toBe(CHECKING))
+      await closeUnsure()
+      await act(async () => { second.reject(ending) })
+      await act(async () => { await Promise.resolve() })
+      expect(toastSpy).not.toHaveBeenCalled()
+      expect(onSeedAdded).not.toHaveBeenCalled()
+      expect(onClose).toHaveBeenCalledTimes(1)
+      expect(onSeedMaybeAdded).toHaveBeenCalledTimes(1)
+      expect(counts()).toEqual({ add: 2, event: 0, open: 0 })
+      unmount()
+      apiFetchSpy.mockClear(); onClose.mockReset(); onSeedMaybeAdded.mockReset()
+    }
+  })
+
+  it('an add that lands with the sheet still open tells the host so', async () => {
+    net.add = [additionReply({ name: OWN.name })]
+    await openNamed()
+    await tap('save-seed-submit')
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+    expect(onSeedAdded.mock.calls.map((c) => c[1].closed)).toEqual([false])
+  })
 })
 
 describe('the key (row 20)', () => {

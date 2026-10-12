@@ -635,18 +635,29 @@ const NON_GARDEN_KINDS = PUTUP_SOURCE_OPTIONS.filter((o) => (o.value ?? o) !== '
 // a duplicate history entry. Without it the sheet keeps its navigating ending for the planting page
 // and the event menu.
 //
-// V5-SEEDLOTADDITION-001 — `ownLots`, `onSeedAdded(reply, { replace })` and `onSeedMaybeAdded()`, all
+// A save that lands AFTER the sheet was closed (the labelled Close is live while "Saving…" stands) says
+// "Seed lot saved" and nothing else of the sheet's: no second close, no navigation. The host is still
+// told, so what it draws can be read again: `onSaved(lot, { stageWritten, closed: true })` where it
+// takes the ending over (it must then stay where it is), and `onSavedAfterClose(lot, { stageWritten })`,
+// optional, where it does not. A host's own onClose has already run by then, before the lot existed.
+//
+// V5-SEEDLOTADDITION-001 — `ownLots`, `onSeedAdded(reply, { replace, closed })` and `onSeedMaybeAdded()`, all
 // optional. `ownLots` is the planting's own seed lots as its page already read them (GET
 // /api/plants/:id/seed-lots); a host that has none passes nothing and gets the general link.
-// `onSeedAdded` is called after seed went into an existing lot, before the sheet closes: the host
+// `onSeedAdded` is called after seed went into an existing lot, before the sheet closes (`closed` is
+// true when it had been closed already, and a host that leaves the page must then stay): the host
 // refreshes what it shows, or goes to the planting. `replace` is true while this sheet's Back marker is
 // the current history entry (see the navigate note at the end of save()). `onSeedMaybeAdded` is called
 // when the sheet is closed while an add has no definite answer (the seed may or may not be in the
 // lot), before it closes: a host that draws the plant's lots reads them again.
-export default function SaveSeedSheet({ planting, onClose, onSaved, ownLots, onSeedAdded, onSeedMaybeAdded }) {
+export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfterClose, ownLots, onSeedAdded, onSeedMaybeAdded }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
   const navigate = useNavigate()
+  // False once the sheet is gone (AddToLot's ref, for the same reason). Set on mount as well as cleared
+  // on unmount, so a development build's second mount does not leave it false for a sheet that is open.
+  const aliveRef = useRef(true)
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false } }, [])
 
   // The plantings this save is FOR: the prop when the caller knew it, then whatever the user picks
   // below, in pick order. `rows` is the whole parent set and every downstream read goes through it,
@@ -1056,6 +1067,15 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, ownLots, onS
       toast.show(missed.length
         ? { message: `Seed lot saved — couldn't ${missed.join(' or ')}`, tone: 'error' }
         : { message: 'Seed lot saved', tone: 'success' })
+      // He may have closed the sheet while this was out (Dave 2026-10-12, on the add form: say it
+      // worked and leave him where he is). What is said above is true either way. Whether the sheet is
+      // still there is read NOW, not when he tapped: a closed sheet is not closed again and goes
+      // nowhere, and the host is told so it can read again what it shows.
+      if (!aliveRef.current) {
+        if (onSaved) onSaved(lot, { stageWritten, closed: true })
+        else if (onSavedAfterClose) onSavedAfterClose(lot, { stageWritten })
+        return
+      }
       // Read BEFORE onClose(): closing unmounts the sheet, whose disarm pops the Back marker
       // asynchronously — so this is the last moment the stack still shows the sheet's own entry.
       const markerCurrent = typeof window !== 'undefined' && !!window.history && !!readMarker(window.history.state)
@@ -1124,10 +1144,13 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, ownLots, onS
   // V5-SEEDLOTADDITION-001 — seed went into an existing lot. The host hears first (it refreshes the
   // plant's lots, or leaves for the plant's page), then the sheet closes; the plant's page is where
   // this ends. The marker is read BEFORE onClose for the reason given at the end of save().
-  const seedAdded = (reply) => {
+  // `closed`: the add landed after he closed the sheet (AddToLot). The host still hears, so its copy of
+  // the plant's lots is read again, and is told, so it does not leave the page; and the sheet, closed
+  // once already, is not closed again under whatever he has done since.
+  const seedAdded = (reply, { closed = false } = {}) => {
     const markerCurrent = typeof window !== 'undefined' && !!window.history && !!readMarker(window.history.state)
-    if (onSeedAdded) onSeedAdded(reply, { replace: markerCurrent })
-    if (onClose) onClose()
+    if (onSeedAdded) onSeedAdded(reply, { replace: markerCurrent, closed })
+    if (!closed && onClose) onClose()
   }
 
   // The discard question is this sheet's only while a lot is picked (AddToLot reports `dirty`). The

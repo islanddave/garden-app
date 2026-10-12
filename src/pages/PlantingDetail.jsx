@@ -1062,6 +1062,10 @@ export default function PlantingDetail() {
         // Closed while an add had no definite answer: the seed may or may not be in the lot, so read
         // the lots again and let the row say which. No event was posted, so the timeline is not asked.
         onSeedMaybeAdded={() => { seedLots.reload() }}
+        // A NEW lot whose save landed after the sheet was closed: the sheet says "Seed lot saved" and
+        // goes nowhere, so this page is still the one on screen. Read the lots (the new lot's row) and
+        // the events (its timeline entry) again.
+        onSeedSavedAfterClose={() => { seedLots.reload(); setRefreshKey(k => k + 1) }}
         onLogged={(ev) => {
           setRefreshKey(k => k + 1)
           // Optimistic field updates so the UI reacts before the next full record load; the reload

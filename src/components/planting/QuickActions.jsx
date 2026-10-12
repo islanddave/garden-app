@@ -79,7 +79,8 @@ const seedBtn = {
 // V5-SEEDLOTADDITION-001 — `ownLots`, `onSeedAdded` and `onSeedMaybeAdded` pass straight through to
 // SaveSeedSheet: the planting's own seed lots as its page read them, what the page does after seed
 // went into one, and what it does when the sheet closes without knowing whether it did.
-export default function QuickActions({ planting, onLogged, ownLots, onSeedAdded, onSeedMaybeAdded }) {
+// `onSeedSavedAfterClose` is the sheet's `onSavedAfterClose`: a new lot landed after the sheet closed.
+export default function QuickActions({ planting, onLogged, ownLots, onSeedAdded, onSeedMaybeAdded, onSeedSavedAfterClose }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
   const [watering, setWatering] = useState(false)
@@ -298,6 +299,7 @@ export default function QuickActions({ planting, onLogged, ownLots, onSeedAdded,
         <SaveSeedSheet
           planting={planting} onClose={() => setSeedOpen(false)}
           ownLots={ownLots} onSeedAdded={onSeedAdded} onSeedMaybeAdded={onSeedMaybeAdded}
+          onSavedAfterClose={onSeedSavedAfterClose}
         />
       )}
     </div>
