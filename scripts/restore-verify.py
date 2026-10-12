@@ -13,7 +13,13 @@ restore (refuses a dirty/reused container — keeps the invariant honest).
 
 WHAT IS ASSERTED after the restore (expected inventory grounded at runtime by
 read-only SELECTs against live prod — never hardcoded):
-  - public table-set vs prod (missing from restore = HARD; extra = warn)
+  - public table-set vs the TABLE LIST written beside the dump when it was
+    taken (<key minus .dump>.tables.json; listed but missing from restore =
+    HARD; a table live prod has gained since = info, "prod is ahead of this
+    dump by"). A dump with NO list beside it (every dump older than
+    OPS-RESTOREVERIFYRED-001) falls back to live prod's table list (missing
+    from restore = HARD; extra = warn) and says so in one line. A list that
+    exists but cannot be read or parsed is a HARD failure, never "no list".
   - core tables present + populated; per-table row-count drift vs prod
     (ROW_DRIFT_FLOOR — the pre-existing freshness check, kept)
   - FULL-SCOPE dumps additionally: schemas {public, gv, extensions} all exist;
@@ -63,12 +69,20 @@ ENV CONTRACT (read at runtime; no secrets hardcoded):
 Dependencies: boto3 (S3), pg_restore/psql (pg17 — must match the PG17 server;
 ubuntu-latest ships a pg16 client, the workflow installs pg17 from PGDG).
 
+VERDICT LINE: every failure prints exactly ONE `::error::` annotation BEFORE
+the FAIL lines, naming the dump compared (key, size, age) and classifying the
+failure: PROD AHEAD OF DUMP / TABLES LOST BY RESTORE / ROW COUNTS FAR BELOW
+FLOOR (wrong dump?) / OTHER (OPS-RESTOREVERIFYRED-001: the 2026-10-08 red sat
+undiagnosed for four days with every fact already in the log).
+
 Exit codes: 0 = restore verified coherent; 1 = restore failed or incoherent
 (schema/object/row mismatch) -> ALERT.
 ------------------------------------------------------------------------------
 """
 from __future__ import annotations
 
+import datetime
+import json
 import os
 import re
 import subprocess
@@ -195,6 +209,69 @@ def find_globals_key(s3, cfg, dump_key):
     return None
 
 
+# --- S3: the dump-time table list --------------------------------------------
+
+TABLELIST_FORMAT = 1
+
+
+def tablelist_key_for(dump_key):
+    """Contract with both dumpers (backup.yml, snap.py): the list sits beside
+    the dump as <dump key minus .dump>.tables.json — the globals naming rule."""
+    base = dump_key[: -len(".dump")] if dump_key.endswith(".dump") else dump_key
+    return base + ".tables.json"
+
+
+def _tablelist_problem(doc, dump_key):
+    """Why this parsed list cannot be trusted, or None. An EMPTY list is a
+    problem, not "prod had no tables": comparing against nothing passes anything."""
+    if not isinstance(doc, dict):
+        return "not a JSON object"
+    if doc.get("format") != TABLELIST_FORMAT:
+        return f"format {doc.get('format')!r} != {TABLELIST_FORMAT}"
+    if doc.get("dump_key") != dump_key:
+        return f"written for dump {doc.get('dump_key')!r}, not {dump_key!r}"
+    if not isinstance(doc.get("taken_at"), str) or not doc["taken_at"]:
+        return "no taken_at"
+    tables = doc.get("tables")
+    if not isinstance(tables, list) or not tables:
+        return "tables is empty or not a list"
+    bad = [t for t in tables if not isinstance(t, str) or not re.fullmatch(r"[^.]+\..+", t)]
+    if bad:
+        return f"entries that are not schema.table: {bad[:5]}"
+    if not any(t.startswith("public.") for t in tables):
+        return "no public.* table listed"
+    return None
+
+
+def load_tablelist(s3, cfg, dump_key):
+    """The table list written with THIS dump, or None when there is none.
+    Presence is read from the SAME ListObjects call latest_dump_key makes (same
+    bucket, same prefix), not from a HEAD: _s3_exists reads a 403 as "absent",
+    which here would turn an unreadable list into a silent fallback. A list
+    that is listed but cannot be fetched or parsed raises (HARD)."""
+    key = tablelist_key_for(dump_key)
+    paginator = s3.get_paginator("list_objects_v2")
+    present = False
+    for page in paginator.paginate(Bucket=cfg.backup_bucket, Prefix=cfg.dump_prefix):
+        if any(obj["Key"] == key for obj in page.get("Contents", [])):
+            present = True
+    if not present:
+        return None
+    try:
+        doc = json.loads(s3.get_object(Bucket=cfg.backup_bucket, Key=key)["Body"].read())
+    except Exception as e:  # noqa: BLE001 — unreadable must red, whatever the cause
+        raise VerifyError(
+            f"table list {key} exists but cannot be read ({type(e).__name__}: {e}) — "
+            f"refusing to treat it as absent or empty"
+        )
+    problem = _tablelist_problem(doc, dump_key)
+    if problem:
+        raise VerifyError(
+            f"table list {key} is malformed ({problem}) — refusing to treat it as absent or empty"
+        )
+    return {"key": key, "taken_at": doc["taken_at"], "tables": set(doc["tables"])}
+
+
 # --- psql introspection (used against BOTH the scratch target and prod) ------
 
 def _psql_scalar(url, sql):
@@ -211,6 +288,20 @@ def table_set(url):
         "SELECT string_agg(table_name, ',' ORDER BY table_name) "
         "FROM information_schema.tables "
         "WHERE table_schema='public' AND table_type='BASE TABLE';",
+    )
+    return set(t for t in out.split(",") if t)
+
+
+def qualified_table_set(url):
+    """schema.table for every BASE TABLE outside the system schemas — the same
+    read both dumpers store in the table list."""
+    out = _psql_scalar(
+        url,
+        "SELECT string_agg(table_schema||'.'||table_name, ',') "
+        "FROM information_schema.tables "
+        "WHERE table_type='BASE TABLE' "
+        "AND table_schema NOT IN ('pg_catalog','information_schema') "
+        "AND table_schema NOT LIKE 'pg_%';",
     )
     return set(t for t in out.split(",") if t)
 
@@ -354,11 +445,18 @@ def restore_dump(cfg, dump_path, target_uri):
 
 # --- coherence check ---------------------------------------------------------
 
-def assess(cfg, restored_uri, full_scope):
-    """Compare the restored scratch database against live prod. Returns
-    (ok: bool, report: dict). ok=False means a HARD incoherence (alert).
-    Expected inventory is grounded from prod at runtime (read-only)."""
-    report = {"hard_failures": [], "warnings": [], "full_scope": full_scope}
+def assess(cfg, restored_uri, full_scope, tablelist=None):
+    """Compare the restored scratch database against the dump's own table list
+    (tablelist, from load_tablelist) and live prod. Returns (ok: bool, report:
+    dict). ok=False means a HARD incoherence (alert). tablelist=None is the
+    fallback for a dump with no list: the table-set is compared with live prod.
+    Everything else is grounded from prod at runtime (read-only), list or not."""
+    report = {"hard_failures": [], "warnings": [], "info": [], "full_scope": full_scope}
+    # What classify_failure() reads. ahead_failures = the hard failures that
+    # "prod gained a table since the dump" fully explains.
+    facts = {"table_source": "live" if tablelist is None else "list",
+             "missing_tables": [], "row_failures": [], "ahead_failures": []}
+    report["facts"] = facts
 
     prod_tables = table_set(cfg.neon_backup_url)
     restored_tables = table_set(restored_uri)
@@ -366,16 +464,54 @@ def assess(cfg, restored_uri, full_scope):
         report["hard_failures"].append("restored target has NO public tables")
         return False, report
 
-    missing = prod_tables - restored_tables
     extra = restored_tables - prod_tables
-    # Table-set drift: a table in prod but absent from the restore is serious
-    # (stale/partial dump). A restore-only table means it was dropped in prod
-    # after the dump — warning.
-    if missing:
-        report["hard_failures"].append(
-            f"tables in prod but MISSING from restore: {sorted(missing)} "
-            f"(stale/partial dump, or a table was added to prod after the backup)"
-        )
+    if tablelist is None:
+        # Table-set drift: a table in prod but absent from the restore is serious
+        # (stale/partial dump). A restore-only table means it was dropped in prod
+        # after the dump — warning.
+        missing = prod_tables - restored_tables
+        ahead = missing  # cannot be told apart from lost tables without a list
+        if missing:
+            msg = (
+                f"tables in prod but MISSING from restore: {sorted(missing)} "
+                f"(stale/partial dump, or a table was added to prod after the backup)"
+            )
+            report["hard_failures"].append(msg)
+            facts["ahead_failures"].append(msg)
+    else:
+        # Exactly as strict as the live comparison, against the right moment:
+        # every public table prod had when the dump was taken must be restored.
+        listed = {t.split(".", 1)[1] for t in tablelist["tables"] if t.startswith("public.")}
+        missing = listed - restored_tables
+        ahead = prod_tables - listed
+        if missing:
+            report["hard_failures"].append(
+                f"tables in this dump's table list ({tablelist['key']}) but MISSING from "
+                f"restore: {sorted(missing)} (they existed in prod when the dump was taken)"
+            )
+        if ahead:
+            report["info"].append(
+                f"prod is ahead of this dump by: {sorted(ahead)} "
+                f"(tables added to prod after the dump was taken; not a failure)"
+            )
+        unlisted = restored_tables - listed
+        if unlisted:
+            report["warnings"].append(
+                f"tables in restore but not in the dump's table list: {sorted(unlisted)} "
+                f"(created between the list read and the dump's snapshot)"
+            )
+        # Non-public listed tables are reported, not gated: the live comparison
+        # this replaces only ever covered public.
+        other = {t for t in tablelist["tables"] if not t.startswith("public.")}
+        if other:
+            other_missing = other - qualified_table_set(restored_uri)
+            if other_missing:
+                report["warnings"].append(
+                    f"non-public tables in the dump's table list but not in restore: "
+                    f"{sorted(other_missing)}"
+                )
+    facts["missing_tables"] = sorted(missing)
+    facts["prod_ahead"] = sorted(ahead)
     if extra:
         report["warnings"].append(
             f"tables in restore but not prod: {sorted(extra)} "
@@ -395,6 +531,7 @@ def assess(cfg, restored_uri, full_scope):
     total_restored = sum(v for v in rest_counts.values() if isinstance(v, int))
     if total_restored == 0:
         report["hard_failures"].append("restore is EMPTY across all core tables")
+        facts["row_failures"].append("all core tables empty")
 
     # Per-table drift vs prod (freshness check, kept from the original design).
     for t in SANITY_TABLES:
@@ -405,10 +542,12 @@ def assess(cfg, restored_uri, full_scope):
         if p >= cfg.drift_min_rows:
             if r == 0:
                 report["hard_failures"].append(f"{t}: restored 0 rows but prod has {p}")
+                facts["row_failures"].append(f"{t} 0/{p}")
             elif r / p < cfg.row_drift_floor:
                 report["hard_failures"].append(
                     f"{t}: restored {r} << prod {p} (ratio {r/p:.2f} < {cfg.row_drift_floor})"
                 )
+                facts["row_failures"].append(f"{t} {r}/{p}")
 
     # --- structural inventory (Gate 0.2 — the checks the tautology hid) ------
     if full_scope:
@@ -438,9 +577,13 @@ def assess(cfg, restored_uri, full_scope):
         trg_extra = rest_trg - prod_trg
         report["trigger_counts"] = {"prod": len(prod_trg), "restored": len(rest_trg)}
         if trg_missing:
-            report["hard_failures"].append(
-                f"public triggers in prod but MISSING from restore: {sorted(trg_missing)}"
-            )
+            msg = f"public triggers in prod but MISSING from restore: {sorted(trg_missing)}"
+            report["hard_failures"].append(msg)
+            # Still compared with LIVE prod (unchanged). A trigger on a table prod
+            # gained since the dump reds here with or without a list; the verdict
+            # says so instead of leaving it to be worked out.
+            if all(t.split(":", 1)[0] in ahead for t in trg_missing):
+                facts["ahead_failures"].append(msg)
         if trg_extra:
             report["warnings"].append(
                 f"public triggers in restore but not prod: {sorted(trg_extra)}"
@@ -463,15 +606,104 @@ def assess(cfg, restored_uri, full_scope):
     return ok, report
 
 
+# --- verdict -----------------------------------------------------------------
+
+def classify_failure(report):
+    """(class, detail) for a failed assess(), from report["facts"] only."""
+    facts = report.get("facts") or {}
+    failures = report.get("hard_failures") or []
+    missing = facts.get("missing_tables") or []
+    rows = facts.get("row_failures") or []
+    ahead = facts.get("ahead_failures") or []
+    first = failures[0] if failures else "no failure recorded"
+    if facts.get("table_source") == "list" and missing:
+        return "TABLES LOST BY RESTORE", (
+            f"{missing} existed in prod when the dump was taken and are absent from the restore"
+        )
+    if rows:
+        return "ROW COUNTS FAR BELOW FLOOR (wrong dump?)", (
+            f"restored/prod rows {rows}; this dump does not look like prod"
+        )
+    if failures and len(ahead) == len(failures):
+        how = ("no table list beside the dump, so it was compared with live prod"
+               if facts.get("table_source") == "live"
+               else "triggers are still compared with live prod")
+        return "PROD AHEAD OF DUMP", (
+            f"{facts.get('prod_ahead')} exist in prod and not in the restore ({how}); expected "
+            f"if prod DDL was applied since the dump; re-check after the next dump"
+        )
+    return "OTHER", f"{len(failures)} failure(s), first: {first}"
+
+
+def _age(modified, now=None):
+    """'3h07m' / '2d05h' since the dump object was written."""
+    try:
+        now = now or datetime.datetime.now(datetime.timezone.utc)
+        mins = max(0, int((now - modified).total_seconds() // 60))
+    except Exception:  # noqa: BLE001 — a verdict must never fail on its own age
+        return "unknown age"
+    if mins >= 2880:
+        return f"{mins // 1440}d{(mins % 1440) // 60:02d}h"
+    return f"{mins // 60}h{mins % 60:02d}m"
+
+
+def emit_verdict(klass, detail, dump=None, table_source=None):
+    """The ONE `::error::` line of a failed run. dump = (bucket, key, size,
+    modified) or None when no dump was selected. stderr, after flushing stdout,
+    so it lands ahead of the FAIL lines it summarises."""
+    if dump:
+        bucket, key, size, modified = dump
+        what = f"dump s3://{bucket}/{key} ({size} bytes, written {modified}, {_age(modified)} ago"
+        what += f"; tables compared with {table_source})" if table_source else ")"
+    else:
+        what = "no dump selected"
+    line = " ".join(f"restore-verify FAILED [{klass}] {what}: {detail}".split())
+    sys.stdout.flush()
+    sys.stderr.write(f"::error::{line[:1500]}\n")
+    sys.stderr.flush()
+
+
+def _verdict_done(exc):
+    exc.verdict_done = True
+    return exc
+
+
 # --- orchestration -----------------------------------------------------------
 
 def run(cfg, s3=None):
     s3 = s3 or boto3.client("s3")
     dump_key, modified, size = latest_dump_key(s3, cfg)
+    dump = (cfg.backup_bucket, dump_key, size, modified)
+    try:
+        return _verify(cfg, s3, dump)
+    except Exception as e:  # noqa: BLE001 — every failure gets its one verdict line
+        if not getattr(e, "verdict_done", False):
+            emit_verdict("OTHER", f"{type(e).__name__}: {e}", dump)
+            _verdict_done(e)
+        raise
+
+
+def _verify(cfg, s3, dump):
+    _, dump_key, size, modified = dump
     sys.stdout.write(
         f"[restore-verify] latest dump s3://{cfg.backup_bucket}/{dump_key} "
         f"({size} bytes, {modified})\n"
     )
+    tablelist = load_tablelist(s3, cfg, dump_key)
+    if tablelist is None:
+        table_source = "LIVE prod (fallback: no list beside the dump)"
+        sys.stdout.write(
+            f"[restore-verify] no table list beside this dump ({tablelist_key_for(dump_key)} "
+            f"absent) — FELL BACK to live prod's table list; a table added to prod since the "
+            f"dump will read as missing\n"
+        )
+    else:
+        table_source = f"the dump-time list {tablelist['key']}"
+        sys.stdout.write(
+            f"[restore-verify] table list {tablelist['key']} ({len(tablelist['tables'])} tables, "
+            f"taken {tablelist['taken_at']}) — the restore is compared with the list written "
+            f"with this dump\n"
+        )
     ensure_empty_target(cfg.scratch_url)
     with tempfile.TemporaryDirectory() as td:
         path = os.path.join(td, "verify.dump")
@@ -495,20 +727,24 @@ def run(cfg, s3=None):
         else:
             sys.stdout.write("[restore-verify] no globals file for this dump (ok — restore is --no-owner)\n")
         restore_dump(cfg, path, cfg.scratch_url)
-    ok, report = assess(cfg, cfg.scratch_url, full_scope)
+    ok, report = assess(cfg, cfg.scratch_url, full_scope, tablelist=tablelist)
     if globals_report and globals_report["unexpected"]:
         report["warnings"].append(
             f"globals restore: {len(globals_report['unexpected'])} unexpected error(s); "
             f"first: {globals_report['unexpected'][0][:200]}"
         )
+    for i in report.get("info", []):
+        sys.stdout.write(f"[restore-verify] INFO: {i}\n")
     for w in report.get("warnings", []):
         sys.stdout.write(f"[restore-verify] WARN: {w}\n")
     if not ok:
+        klass, detail = classify_failure(report)
+        emit_verdict(klass, detail, dump, table_source)
         for f in report["hard_failures"]:
             sys.stderr.write(f"[restore-verify] FAIL: {f}\n")
-        raise VerifyError(
+        raise _verdict_done(VerifyError(
             f"restore of {dump_key} is INCOHERENT ({len(report['hard_failures'])} failure(s))"
-        )
+        ))
     sys.stdout.write(
         f"[restore-verify] OK {dump_key} restored coherent into empty target "
         f"(scope={'full' if full_scope else 'legacy-public'}; "
@@ -522,9 +758,13 @@ def main(argv=None):
         cfg = Config()
         run(cfg)
     except VerifyError as e:
+        if not getattr(e, "verdict_done", False):
+            emit_verdict("OTHER", str(e))
         sys.stderr.write(f"[restore-verify] ALERT: {e}\n")
         return 1
     except Exception as e:  # noqa: BLE001 — any unexpected error must alert
+        if not getattr(e, "verdict_done", False):
+            emit_verdict("OTHER", f"{type(e).__name__}: {e}")
         sys.stderr.write(f"[restore-verify] ALERT (unexpected): {type(e).__name__}: {e}\n")
         return 1
     return 0
