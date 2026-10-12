@@ -179,12 +179,14 @@ describe('a real frost warning is NOT capped: it still sends from every evaluati
   it('a hard-freeze night on a later run sends the frost warning, with the advisory-degraded email skipped beside it', async () => {
     for (const etHour of LATER) {
       const { log } = quiet();
-      const { calls } = await drive({ low: 30, lows: null, etHour });
+      const { calls, pg } = await drive({ low: 30, lows: null, etHour });
       expect(calls).toHaveLength(1);
       expect(calls[0].topic).toBe('frost');
       expect(calls[0].subject).toMatch(/tonight \(low 30F\)/);
       expect(logLines(log).filter((l) => l.msg === 'frost alert PUBLISHED')).toHaveLength(1);
       expect(logLines(log).filter((l) => l.msg === ADVISORY_SKIPPED)).toHaveLength(1);
+      // The warning is recorded as sent beside the skipped email: without the record the next run sends it again.
+      expect(pg.writes.at(-1).alerts_sent).toEqual([expect.objectContaining({ tier: 'imminent', run: 'intraday-pm', key: expect.stringContaining(`sp1|${DATE}|`) })]);
       vi.restoreAllMocks();
     }
   });
