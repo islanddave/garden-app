@@ -1,22 +1,27 @@
 // src/pages/PutUp.jsx
-// V4-HARVESTCENTER-001 "Put-Up" — the post-harvest preservation log + "what's put up" read surface.
+// V4-HARVESTCENTER-001 "Put-Up" — what is put up, what is on the go, and the recipes.
 // Route-backed, overlayable (App.jsx renderRoutes, path /put-up); when the OVERLAY flag is on it opens
 // as a Sheet flyover (OverlayHost) and when off it renders full-page — byte-identical route element.
 //
-// TWO views behind a segmented toggle (design V101 §4):
-//   'log'    — the put-up form. PROGRESSIVE DISCLOSURE: crop + quantity are the 2 required fast-path
-//              fields; method / storage / use-by are shown pre-defaulted; photo/notes/#packages hide
-//              behind a "More" reveal. Prefilled from location.state.prefill when launched off the
-//              harvest-log "preserve this?" trigger (L9); else the user picks a crop.
-//   'stores' — "what's put up": grouped inventory (default by storage location, one-tap regroup by
-//              crop), numbers-first headline per group (package count + the distinct units present,
-//              NEVER summed across incompatible units — L5), NULL storage → "Unassigned". Per-row
-//              edit + soft-delete + a minimal "mark used / used up" decrement (L4).
+// THREE segments behind one segmented control (goingNow.js PUT_UP_SEGMENTS):
+//   'going'   — the batches in progress (GoingNowView).
+//   'pantry'  — everything put up or bought, one list over GET /api/pantry (PantryView); a row opens its
+//               sheet, and a jar's Edit there is RowEditor, at the foot of this file.
+//   'recipes' — the recipes (RecipesView).
+// and three MODES that replace the segments, each a search param on this same route: a batch (?batch=),
+// a recipe (?recipe=) and the closed batches (?state=closed). The walk (?session=putup) is a fourth.
+//
+// THE ONE WAY TO PUT SOMETHING UP is the Put something up door (components/pantry/PutSomethingUpSheet.jsx),
+// opened from the header's filled button. The "Log a put-up" form that used to be a fourth segment here was
+// retired in Put-Up R2b (V5-PUTUPLOGRETIRE-001) with its harvest picker, its photo field and its place
+// manager. Three things outlive it on a phone, and this page deals with each: an entry whose router state
+// still carries what the form was opened with (never read: it is a bare open), an origin that names the
+// form's segment (it stands for the Pantry: goingNow.js), and the form's draft (cleared at mount: DRAFT_KEY).
+// The server still accepts the form's create body, because a bundle cached on a phone can still send it.
 //
 // Rules honored: Reward-UX (cadence-utility, no streak/celebration/interrupt); Soft-Delete (deleted
 // rows vanish from the read surface — the Lambda filters deleted_at IS NULL, we just refetch);
-// Cross-Device (all state server-side). Offline = require-online: the save is blocked with a clear
-// "can't save offline" state that PRESERVES entered input (no draft queue in V100 — tech-debt).
+// Cross-Device (all state server-side).
 import React, { useState, useEffect, useCallback, useMemo, useId, useRef } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
@@ -65,7 +70,8 @@ import {
 } from '../components/putup/goingNow.js'
 import { readMarker } from '../lib/backNav.js'
 // Put-Up R2a — the jar's Edit (RowEditor) says what the door says: the door's own method words, under an
-// alias because this file's METHOD_LABELS is the log form's and is frozen with it.
+// alias because this file's METHOD_LABELS was the retired log form's and its text is frozen (a parity
+// test reads METHOD_GROUPS through METHOD_LABELS as written).
 import { METHOD_LABELS as JAR_METHOD_LABELS, DISCARD_LABELS } from '../components/putup/putItUp.js'
 import { USE_BY_METHODS } from '../components/putup/jarWords.js'
 import { DISCARD_DATE_TEXT } from '../components/pantry/putSomethingUp.js'
@@ -840,10 +846,9 @@ function RefreshNowButton() {
   )
 }
 
-// Put-Up R2a — the jar's Edit panel's own words. NEW constants, each read by RowEditor only: the log form
-// above is frozen in R2a and reads METHOD_GROUPS, UNIT_GROUPS and HOUSE_ESTIMATE_CLAIM as they are, so
-// none of those is edited to change what Edit says. Each of these is BOTH the label a person sees and
-// the name a screen reader says, so the two cannot drift apart.
+// Put-Up R2a — the jar's Edit panel's own words. Constants read by RowEditor only; METHOD_GROUPS and
+// UNIT_GROUPS, which it also reads, are the retired log form's and are left as they were written. Each of
+// these is BOTH the label a person sees and the name a screen reader says, so the two cannot drift apart.
 const EDIT_COUNT_LABEL = 'How many were put up?'
 const EDIT_METHOD_LABEL = 'How was it put up?'
 // "Bought already preserved" is not something a put-up becomes: Edit offers it only on a row that is one.
