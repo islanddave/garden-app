@@ -1017,7 +1017,9 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
       </button>
       {/* Opened with NO planting, which is the whole point — the sheet asks where the seed came from
           and offers both answers, instead of requiring the caller to already know. */}
-      {intakeOpen && <SaveSeedSheet onClose={() => { setIntakeOpen(false); load() }} />}
+      {/* onSavedAfterClose: a save that lands after the sheet was closed. The read at that close was
+          before the lot existed, so the list is read once more. */}
+      {intakeOpen && <SaveSeedSheet onClose={() => { setIntakeOpen(false); load() }} onSavedAfterClose={() => { load() }} />}
       </>)}
 
       {clearedFor && (

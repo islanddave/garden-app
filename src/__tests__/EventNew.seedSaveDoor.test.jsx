@@ -379,3 +379,34 @@ describe('V5-SEEDLOTADDITION-001 — adding to a lot already started, from the m
     expect(posts('/api/events')).toHaveLength(1)
   })
 })
+
+// The same rule on the NEW-lot form, as an extension of that decision: closed while "Saving…" stands,
+// and the create then lands. This door's ending is the sheet's own (it passes no onSaved), which goes
+// to the new lot; after a close it says "Seed lot saved" and he stays on the log page.
+describe('a new lot saved from the menu after the sheet was closed', () => {
+  it('closed while "Saving…" stands, and the create then lands: it says "Seed lot saved" and goes nowhere', async () => {
+    prime()
+    const base = fetchSpy.getMockImplementation()
+    let land
+    fetchSpy.mockImplementation((url, opts = {}) => {
+      if (opts.method === 'POST' && String(url) === '/api/inventory-items') return new Promise((a) => { land = a })
+      return base(url, opts)
+    })
+    searchParamsRef.current = new URLSearchParams('event_type=seed_saved&plant=pl-1&project=proj-1')
+    await act(async () => render(<DismissRegistryProvider><ToastProvider><EventNew /></ToastProvider></DismissRegistryProvider>))
+    await waitFor(() => expect(screen.getByTestId('save-seed-submit')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-submit')) })
+    expect(screen.getByTestId('save-seed-submit').textContent).toBe('Saving…')
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Close' })) })
+    await waitFor(() => expect(screen.queryByTestId('save-seed-submit')).toBeNull())
+    expect(screen.queryByText('Seed lot saved')).toBeNull()
+
+    await act(async () => { land({ id: 'lot-1' }) })
+    await waitFor(() => expect(screen.getByText('Seed lot saved')).toBeTruthy())
+    expect(navigateSpy).not.toHaveBeenCalled()
+    // The sheet did not come back; one lot, and its timeline entry.
+    expect(screen.queryByTestId('save-seed-submit')).toBeNull()
+    expect(posts('/api/inventory-items')).toHaveLength(1)
+    await waitFor(() => expect(posts('/api/events')).toHaveLength(1))
+  })
+})

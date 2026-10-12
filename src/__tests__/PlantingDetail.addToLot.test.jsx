@@ -200,3 +200,40 @@ describe('PlantingDetail — after "Put it in <lot>" (V5-SEEDLOTADDITION-001)', 
     expect(posts).toBe(2)
   })
 })
+
+// The same rule on the NEW-lot form (the orchestrator's extension of Dave's 2026-10-12 decision): the
+// sheet's own ending goes to the new lot's page, and a save that lands after he closed the sheet must
+// not. He stays on this page, so the page reads again what it draws: the plant's lots, the timeline.
+describe('PlantingDetail — a NEW lot whose save lands after the sheet was closed', () => {
+  it('closed while "Saving…" stands, and the create then lands: "Seed lot saved", the page stays, the lots and the timeline are read again', async () => {
+    const NEW = plantSeedLot({ id: 'lot-new', name: 'Cinderella — saved 2026 (2)', variety_name: 'Cinderella', seed_count: 40, seed_count_estimated: false, seed_weight_g: null })
+    const base = apiFetchSpy.getMockImplementation()
+    let land
+    let landed = false
+    apiFetchSpy.mockImplementation((path, opts = {}) => {
+      const p = String(path)
+      if (opts.method === 'POST' && p === '/api/inventory-items') return new Promise((a) => { land = () => { landed = true; a({ id: NEW.id }) } })
+      if (p === SEED_LOTS_PATH && landed) return Promise.resolve(plantSeedLotsReply({ plant_id: 'pl1', seed_lots: [LOT, NEW] }))
+      return base(path, opts)
+    })
+    mount(DismissRegistryProvider)
+    await waitFor(() => expect(screen.getByText(/Drying · 120 seeds/)).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-open')) })
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-submit')) })
+    expect(screen.getByTestId('save-seed-submit').textContent).toBe('Saving…')
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Close' })) })
+    await waitFor(() => expect(screen.queryByTestId('save-seed-submit')).toBeNull())
+    expect(lotReads()).toBe(1)
+    const eventsBefore = eventReads()
+
+    await act(async () => { land() })
+    await waitFor(() => expect(screen.getByText('Seed lot saved')).toBeTruthy())
+    expect(screen.queryByTestId('left-the-page')).toBeNull()
+    expect(screen.queryByTestId('save-seed-submit')).toBeNull()
+    await waitFor(() => expect(lotReads()).toBe(2))
+    await waitFor(() => expect(screen.getByText(/40 seeds/)).toBeTruthy())
+    await waitFor(() => expect(eventReads()).toBeGreaterThan(eventsBefore))
+    expect(paths((p, o) => o.method === 'POST' && p === '/api/inventory-items').length).toBe(1)
+    expect(paths((p, o) => o.method === 'POST' && p === '/api/events').length).toBe(1)
+  })
+})

@@ -284,6 +284,27 @@ describe('Seeds — header actions (fixed slot per view)', () => {
     })
   })
 
+  // The save landed after he closed the sheet (the sheet says so: `closed`, and does not close it a
+  // second time). This page never left for anywhere after a save, so there is nothing to hold back:
+  // the rows are read again and the view is the one he is on. Whether the new lot should still be
+  // outlined then (which clears a filter hiding it and brings it into sight) is not decided here.
+  it('a save that lands AFTER the sheet was closed: the rows reload, the view does not change, the sheet stays closed', async () => {
+    seedRows = [BOUGHT]
+    const router = mount(['/seeds?view=mine'])
+    await waitFor(() => expect(screen.getByTestId('my-seeds-view')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('seeds-save-seed')) })
+    const { onClose, onSaved } = saveSheetProps.current
+    const NEW = lot({ id: 'lot-new', name: 'Cherokee Purple — saved 2026', variety_name: 'Cherokee Purple' })
+    await act(async () => { onClose() })
+    expect(screen.queryByTestId('save-seed-sheet-stub')).toBeNull()
+    seedRows = [BOUGHT, NEW]
+    await act(async () => { onSaved(NEW, { stageWritten: null, closed: true }) })
+    await waitFor(() => expect(seedGets()).toBe(2))
+    await waitFor(() => expect(document.querySelector('[data-lot-id="lot-new"]')).toBeTruthy())
+    expect(search(router)).toBe('?view=mine')
+    expect(screen.queryByTestId('save-seed-sheet-stub')).toBeNull()
+  })
+
   it('Saved seeds carries + Save seed in the slot; Sow now carries none', async () => {
     const router = mount(['/seeds?view=saved'])
     await waitFor(() => expect(screen.getByTestId('saved-seeds-view')).toBeTruthy())
