@@ -32,7 +32,8 @@
 // rows, and the seed_saved event's metadata.seed_lot_id pointer describe the item, not something else,
 // so they keep their pointer and follow it into soft-deletion intact: clearing the item's deleted_at
 // brings it back with every one of them (Soft-Delete-Only Rule: relations preserved; inventory has no
-// restore route in the app today, so that is a data fix). Blocking on them made every saved-seed lot
+// restore route of its own, but restoring a planting brings its deleted packet back in the same
+// transaction — lambda/plants restorePacketOfLivePlanting, BUG-PLANTRESTORESTRAND-001). Blocking on them made every saved-seed lot
 // undeletable from birth (each is born with a stage row that nothing can remove) and failed Snap's
 // inventory Undo every time (it attaches the captured photo before offering Undo) — measured on prod
 // 2026-09-24: the four-relation guard refused 330 of 525 live items; this one refuses 39.
@@ -41,7 +42,9 @@
 // to point at a deleted item (the plants and events Lambdas both pass the id through
 // loadOwnedInventoryItem, which filters deleted_at IS NULL), so in the app a strand is made by deleting
 // after pointing — here. What gets past it: a reference created between the check and the UPDATE,
-// restoring a planting or event that pointed at an item deleted meanwhile, and hand-written SQL.
+// an event that pointed at an item deleted meanwhile (events have no restore route today), and
+// hand-written SQL. Restoring a PLANTING no longer gets past it: the restore brings the caller's
+// deleted packet back with it, and refuses when the packet is not the caller's household's.
 // migrations/v5-invrefstrand-001/gates.yml is the detector, and it counts exactly what this blocks on.
 
 // The relations a delete refuses over. Named by their real constraint so the census gate in
