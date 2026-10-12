@@ -1,39 +1,52 @@
-name: CI Next — parallel shadow of build-and-test (non-gating)
+name: CI Next — the canary and soak copy of ci.yml's legs (non-gating)
 
-# The SHADOW of ci.yml's serial `build-and-test` job: the same steps, split into parallel legs behind one strict
-# aggregator, `build-and-test-next`. It gates nothing. promote-gate.yml reads ci.yml's `build-and-test` and nothing
-# in this file; no leg here is named build-and-test, integration-tests or smoke-tests. It runs beside ci.yml on
-# every dev push so the two verdicts can be compared SHA for SHA before the legs replace the serial job (plan:
-# gardening-docs project-state/_promotepath-20261002/PLAN-V003.md §4 A2.2 shadow, A2.3 switch).
+# ci.yml's eight legs and its aggregator, kept here for the two things ci.yml must not be able to do: a forced-red
+# CANARY (workflow_dispatch) and a SOAK (repeated runs of one unchanged SHA on the branch `ci-next-soak`). It gates
+# nothing and it runs on NO dev push. promote-gate.yml reads ci.yml's `build-and-test` and nothing in this file; the
+# aggregator here is `build-and-test-next`, and no job here is named build-and-test, integration-tests or
+# smoke-tests.
+#
+# HOW IT GOT HERE. Until the switch (plan: gardening-docs project-state/_promotepath-20261002/PLAN-V003.md §4 A2.2
+# shadow, A2.3 switch) ci.yml was one serial `build-and-test` job and this file was its SHADOW: the same steps as
+# parallel legs, run beside it on every dev push so the two verdicts could be compared SHA for SHA. The switch moved
+# the legs into ci.yml under the aggregator id `build-and-test` and took `dev` off this file's push trigger, so a dev
+# push runs the legs once. Why the canary could not move with them: ci.yml must never gain workflow_dispatch (its
+# header says why).
 #
 # READING A RED HERE. This workflow gates nothing and promote-gate.yml reads ci.yml only, so a red leg here turns the
 # commit's rollup red while the gate is green. Do not push to `ci-next-soak` while a promote is running: its 8 legs
 # compete with the promote's 26-leg Lambda matrix for runners. A canary dispatch is read as "red expected", and a
 # typo in `canary_red_leg` gives a normal green run.
 #
-# THE STEPS ARE ci.yml's. Every step of `build-and-test` is in exactly one leg below with the same name, run, env,
-# uses and with, but for one env key on the two unit steps (THE A3 TRIAL, below). Each leg repeats the setup it needs
-# (checkout, setup-node, npm ci, Chrome, the origin/main fetch).
+# THE LEGS ARE ci.yml's. Every job below is ci.yml's job of the same id, step for step (name, run, env, uses, with,
+# order, runs-on, timeout), and the aggregator is ci.yml's with the id changed. This file adds ONE thing: the canary
+# step at the top of every leg, which only a workflow_dispatch naming that leg can run.
 # Each step's reasoning is the comment beside the same-named step in ci.yml and is not copied here.
-# scripts/test_ci_next.py compares the two files step for step and runs in ci.yml's own pytest step, so until the
-# switch a step added to, edited in or removed from one file and not the other reds the GATING job. A lane that
-# changes a CI step changes it in both files (and regenerates scripts/ci-step-manifest.json) in the same commit.
+# scripts/test_ci_next.py compares the two files job for job and runs in ci.yml's `pytest` leg, so a step added to,
+# edited in or removed from one file and not the other reds the GATING job. A lane that changes a CI step changes it
+# in both files (and regenerates scripts/ci-step-manifest.json) in the same commit. A canary or a soak run of a
+# copy that had drifted from ci.yml would prove nothing about ci.yml; that is what the comparison is for.
 #
-# What this file adds to those steps, each pinned by the same test:
-#   - one canary step at the top of every leg, which only a workflow_dispatch naming that leg can run;
-#   - `Install PyYAML ...` in `static` (ci.yml's migration gate validation gets PyYAML from the pytest step);
+# What the legs carry that the serial job's steps did not, in both files, each pinned by the same test:
+#   - `Install PyYAML ...` in `static` (the serial job's migration gate validation got PyYAML from the pytest step);
 #   - the TZ sentinel in `unit-ny`;
-#   - the trial's env key on the two unit steps;
+#   - env VITEST_NODE_PROJECT: '1' on the two unit steps (THE A3 TRIAL, below);
 #   - the aggregator's one step.
 #
-# THE A3 TRIAL: the one place a leg step differs from ci.yml's. `Run unit tests with coverage` (unit-utc-cov) and
-# `Unit tests under America/New_York TZ (date-fragility guard)` (unit-ny) carry env VITEST_NODE_PROJECT: '1'; the
-# same two steps in ci.yml do not. With the key, vitest.config.ts runs the suite as two projects: `node` takes the
-# test files whose code under test is server-side, with no jsdom and no src/__tests__/setup.ts, and `dom` takes
-# every other file as before. Without it the config is what it was. So ci.yml stays jsdom-everything, the legs run
-# the two-project shape, and the per-zone test-ID comparison of scripts/ci-telemetry/shadow-agree.py is between the
-# two. scripts/test_ci_next.py admits exactly that key at that value on those two steps and reds on it anywhere else
-# in either file.
+# THE A3 TRIAL. `Run unit tests with coverage` (unit-utc-cov) and
+# `Unit tests under America/New_York TZ (date-fragility guard)` (unit-ny) carry env VITEST_NODE_PROJECT: '1'. With the
+# key, vitest.config.ts runs the suite as two projects: `node` takes the test files whose code under test is
+# server-side, with no jsdom and no src/__tests__/setup.ts, and `dom` takes every other file as before. Without it
+# the config is one project, jsdom for every file.
+# SINCE THE SWITCH both files carry the key on those two steps, so the two-project shape is the gating one (owner,
+# 2026-10-11, decision rows `A3-exit` and `switch-unit-shape` in gardening-docs
+# project-state/_promotepath-20261002/DECISIONS.md). scripts/test_ci_next.py holds the key to those two steps in
+# each file and reds on it anywhere else. Taking the key out and making two projects the only shape is a later
+# commit. From here to "Design and measurements" is the trial AS IT RAN, while ci.yml's serial job was the
+# jsdom-everything side and this file's legs the two-project side: kept as the record of what was compared and what
+# the exit was declared on, and because other files point here by this heading. Nothing in it is a standing
+# instruction any more: no dev push runs both shapes, so scripts/ci-telemetry/shadow-agree.py has no new row to
+# count and COUNT_FROM_SHA has nothing left to restart.
 # What the node project holds: a test file that lives under lambda/, scripts/, migrations/ or tests/parity/ AND
 # loads nothing under src/, itself or through what it imports. Where a test lives is not enough. When the rule was
 # written, 36 of the 530 test files under those roots imported SPA code (most to hold a Lambda's copy of a rule to
@@ -131,8 +144,8 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 # coverage/ or artifacts/.
 # A NEW hand-off through the runner (an action, a GITHUB_ENV or GITHUB_PATH write, an apt-get, pip or npm -g
 # install) is red in scripts/test_ci_next.py until it is repeated in every leg that consumes it and listed there.
-# Hand-offs of other kinds (a file written by one step and read by another) are caught only by the two verdicts
-# disagreeing during the shadow.
+# Hand-offs of other kinds (a file written by one step and read by another) were caught by the two verdicts
+# disagreeing during the shadow. Nothing catches a new one now but the step that reads the file failing in its leg.
 #
 # NO continue-on-error, no job-level `if:` on a leg, no matrix. A leg that fails under continue-on-error reads
 # `success` in `needs` (measured on the scratch repository, scratch-actions/RESULTS.md E4), so the aggregator would
@@ -141,9 +154,10 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 
 on:
   push:
-    # dev: beside ci.yml on every push. ci-next-soak: a branch pointed at an unchanged SHA to collect repeated
-    # runs of it (re-run the completed run there) without holding dev still.
-    branches: [dev, ci-next-soak]
+    # ci-next-soak: a branch pointed at an unchanged SHA to collect repeated runs of it (re-run the completed run
+    # there) without holding dev still. NOT dev: since the switch ci.yml runs these legs on every dev push, and a
+    # second copy beside it would double the runners a push takes.
+    branches: [ci-next-soak]
   workflow_dispatch:
     # Exactly one input, and all it can do is make a run MORE red. Dispatch it on a ref that is not dev HEAD. A
     # workflow is dispatchable only once its file is on the default branch, so this waits for the first promote
@@ -159,14 +173,14 @@ permissions:
   contents: read
 
 # Its OWN group. Concurrency groups are repository-wide across workflow files (scratch-actions/RESULTS.md E3), so
-# sharing ci.yml's `ci-${{ github.ref }}` would make the two runs cancel each other on every push and leave no SHA
-# with a gating verdict. scripts/test_ci_next.py asserts no two workflow files share a group expression.
+# sharing ci.yml's `ci-${{ github.ref }}` would let a run of this file cancel a run of ci.yml on the same ref.
+# scripts/test_ci_next.py asserts no two workflow files share a group expression.
 concurrency:
   group: ci-next-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Everything that needs no browser and no test runner, in ci.yml's order. ~1 min.
+  # Everything that needs no browser and no test runner, in the order the serial job ran it. ~1 min.
   static:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -315,7 +329,8 @@ jobs:
       - name: Dependency audit (blocking on moderate, WS-B M6)
         run: python3 scripts/audit-gate.py
 
-  # As in ci.yml, where pytest runs before setup-node and npm ci: the image's own node, no node_modules. ~80 s.
+  # As in the serial job, where pytest ran before setup-node and npm ci: the image's own node, no node_modules.
+  # ~80 s.
   pytest:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

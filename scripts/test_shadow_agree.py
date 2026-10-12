@@ -1688,12 +1688,16 @@ def test_the_pass_step_names_are_the_two_workflow_files():
         with open(os.path.join(HERE, "..", ".github", "workflows", workflow), encoding="utf-8") as fh:
             return [step.get("name") for step in yaml.safe_load(fh)["jobs"][job]["steps"]]
 
+    # Since the switch (plan A2.3) ci.yml holds the legs too, under the same ids, and its serial job is gone: the
+    # serial side of PASSES names that job as it was for the rows counted before the switch, and the step names
+    # are held to the same-named leg of BOTH files.
     assert set(sa.PASS_STEPS) == set(sa.PASSES)
     for name, (serial_job, shadow_job) in sa.PASSES.items():
-        assert steps("ci.yml", serial_job).count(sa.PASS_STEPS[name]) == 1, name
-        assert steps("ci-next.yml", shadow_job).count(sa.PASS_STEPS[name]) == 1, name
-        for other in set(sa.PASSES) - {name}:  # each leg runs its own pass and not the other
-            assert sa.PASS_STEPS[other] not in steps("ci-next.yml", shadow_job)
+        assert serial_job == sa.SERIAL["verdict_job"] == "build-and-test"
+        for workflow in ("ci.yml", "ci-next.yml"):
+            assert steps(workflow, shadow_job).count(sa.PASS_STEPS[name]) == 1, (workflow, name)
+            for other in set(sa.PASSES) - {name}:  # each leg runs its own pass and not the other
+                assert sa.PASS_STEPS[other] not in steps(workflow, shadow_job), (workflow, name)
     assert sa.PASS_STEPS == {"UTC": "Run unit tests with coverage",
                              NY: "Unit tests under America/New_York TZ (date-fragility guard)"}
 
@@ -2360,12 +2364,21 @@ def test_the_queue_times_are_taken_over_every_run_whichever_side_of_the_opening_
 
 # ── the supersede bound and timeouts ────────────────────────────────────────────────────────────────────────────
 
-def test_the_timeout_table_is_the_two_workflow_files():
-    for workflow, table in sa.TIMEOUT_MIN.items():
+def test_the_timeout_table_is_ci_next_yml_as_it_is_and_the_serial_job_as_it_was():
+    """ci-next.yml's entry is held to the file. ci.yml's is FROZEN at its one serial job's 90 minutes: the rows this
+    tool counts are dev pushes from before the switch (plan A2.3), when that job was ci.yml. Today ci.yml's jobs are
+    the legs, with ci-next.yml's timeouts leg for leg, and its `build-and-test` is a 5-minute aggregator: writing
+    that 5 here would read every old serial run cancelled after five minutes as timed out."""
+    def timeouts(workflow):
         with open(os.path.join(HERE, "..", ".github", "workflows", workflow), encoding="utf-8") as fh:
-            jobs = yaml.safe_load(fh)["jobs"]
-        assert table == {name: job.get("timeout-minutes") for name, job in jobs.items()}, workflow
-    assert set(sa.TIMEOUT_MIN) == {sa.SERIAL["workflow"], sa.SHADOW["workflow"]}
+            return {name: job.get("timeout-minutes") for name, job in yaml.safe_load(fh)["jobs"].items()}
+
+    shadow, serial = sa.SHADOW["workflow"], sa.SERIAL["workflow"]
+    assert set(sa.TIMEOUT_MIN) == {serial, shadow} == {"ci.yml", "ci-next.yml"}
+    assert sa.TIMEOUT_MIN[shadow] == timeouts(shadow)
+    assert sa.TIMEOUT_MIN[serial] == {"build-and-test": 90}
+    legs = {name: minutes for name, minutes in timeouts(shadow).items() if name != sa.SHADOW["verdict_job"]}
+    assert {name: minutes for name, minutes in timeouts(serial).items() if name != "build-and-test"} == legs
 
 
 def _leg_cancelled_after(p, leg, seconds):

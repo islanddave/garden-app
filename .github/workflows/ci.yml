@@ -4,6 +4,27 @@ name: CI — Build and Unit Tests
 # Must pass before merge to dev, staging, or main is permitted.
 # `push: [dev]` trigger removed 2026-05-01 (pipeline hardening sprint Step 1)
 # to avoid double-firing once enhanced branch protection lands on main/staging.
+#
+# THE SHAPE (plan A2.3, the switch: gardening-docs project-state/_promotepath-20261002/PLAN-V003.md §4). Eight
+# parallel legs and one aggregator job whose id is `build-and-test`. promote-gate.yml reads that job, by that id,
+# through scripts/promote-preflight.py; it is green only when every leg reported and every one succeeded. Until the
+# switch the same steps were one serial job of that name, and the legs ran beside it in ci-next.yml as a shadow.
+#   - NO workflow_dispatch here, ever. The preflight counts a dispatched run on any branch at the SHA, and a
+#     forced-red canary cannot be re-run green: one at dev's head would leave that commit unpromotable. The canary
+#     and the soak branch live in ci-next.yml, which holds these same legs and runs on no dev push.
+#   - A step added to, edited in or removed from a leg is changed the same way in ci-next.yml, and
+#     scripts/ci-step-manifest.json is regenerated (python3 scripts/gen-ci-step-manifest.py), in ONE commit.
+#     scripts/test_ci_next.py holds the two files to each other and this file to its shape, and
+#     scripts/test_ci_step_manifest.py holds this file to the manifest; both run in the `pytest` leg.
+#   - NO continue-on-error, no `if:` on a leg or a step, no matrix, no job-level env: a leg that fails under
+#     continue-on-error reads `success` in `needs`, and a skipped leg is not a pass.
+#   - What a step hands to a later one stays inside its leg; each leg repeats the setup it needs (checkout,
+#     setup-node, npm ci, Chrome, the origin/main fetch). ci-next.yml's header lists the hand-offs.
+#   - The two unit steps carry env VITEST_NODE_PROJECT: '1' (vitest.config.ts then runs the server-side test files
+#     in a `node` project and the rest under jsdom). That two-project shape is the gating one (owner, 2026-10-11);
+#     taking the key out so that it is the only shape is a later commit.
+# A lane cut from a dev older than the switch keeps running the single serial job until it rebases; the preflight
+# passes either shape.
 
 on:
   push:
@@ -19,12 +40,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  # Everything that needs no browser and no test runner, in the order the serial job ran it. ~1 min.
+  static:
     runs-on: ubuntu-24.04
-    # A backstop only: a step that hangs ends the job here rather than at GitHub's 360-minute
-    # default. The job ran 55-64 min when this was set (2026-10-02).
-    timeout-minutes: 90
-
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -147,17 +166,14 @@ jobs:
           fi
           echo "Workflow lint: $LINTED of $ONDISK workflow files clean under actionlint + shellcheck; the canary was rejected as required."
 
-      - name: Python script tests (pytest)
-        # Retroactively covers the previously-unrun scripts/test_*.py suites
-        # (snap, revert-to, restore-verify, verify-deploy) as well as the guard's
-        # own tests. requests+boto3 are import-time deps of snap.py/revert-to.py.
+      - name: Install PyYAML for the migration gate validation
+        # scripts/gate_runner.py refuses to validate without PyYAML. The serial job got it from the pytest step,
+        # which ran just before the migration gate validation; that step is in the `pytest` leg now, so this leg
+        # installs the one package, in the same two forms (plain, then --break-system-packages for a PEP-668 image).
         run: |
           set -euo pipefail
-          # Plain form is proven on these runners (promote-gate.yml "Install python
-          # deps"); the fallback covers a PEP-668 externally-managed image.
-          python3 -m pip install --quiet pytest requests boto3 pyyaml \
-            || python3 -m pip install --quiet --break-system-packages pytest requests boto3 pyyaml
-          python3 -m pytest -q scripts/test_*.py
+          python3 -m pip install --quiet pyyaml \
+            || python3 -m pip install --quiet --break-system-packages pyyaml
 
       - name: Migration gate schema validation (OPS-GATERUNNER-001)
         # Every migrations/*/gates.yml must PARSE and satisfy the strict gate
@@ -250,6 +266,201 @@ jobs:
         # where the app and its offline cache disagree about what is cached under which key.
         # Defined in package.json and invoked by nothing until now.
         run: npm run gate:sw-mirror
+
+      - name: Icon optical-weight golden (V4-ICON-001)
+        # V101 §14 pre-flight gate: each migrated SVG glyph's live-area ink-coverage must
+        # stay within +/-tolerance of its approved baseline (scripts/icon-ci/icon-golden-baseline.json).
+        run: npm run icon:golden
+
+      - name: Icon region-seam (V4-ICON-001)
+        # V101 §14: color-candidate multi-region glyphs paint every region with no interior
+        # seam holes (backs the zero-geometry-redraw color-pass promise).
+        run: npm run icon:seam
+
+      - name: Icon pair distinctness (V4-GERMVSTRANSPLANT-001)
+        # Glyphs read SIDE BY SIDE must not collapse into each other. Both gates above measure a
+        # glyph alone, so neither could see that event.germination and event.transplant were one
+        # drawing at two scales. Masks are scale-normalised before comparison — raw pixel overlap
+        # scored the shipped defect (0.402) as MORE distinct than a known-good pair (0.367), because
+        # a size change moves pixels while reading as the same shape.
+        run: npm run icon:distinct
+
+      - name: Build (CI — placeholder env vars)
+        # VITE_ vars are inlined at build time as string literals.
+        # Placeholder values allow build to succeed without real infrastructure.
+        run: npm run build
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: pk_test_ci_placeholder
+          VITE_API_PROJECTS:          https://ci-placeholder.lambda-url.us-east-1.on.aws/
+          VITE_API_PLANTS:            https://ci-placeholder.lambda-url.us-east-1.on.aws/
+          VITE_API_LOCATIONS:         https://ci-placeholder.lambda-url.us-east-1.on.aws/
+          VITE_API_EVENTS:            https://ci-placeholder.lambda-url.us-east-1.on.aws/
+          VITE_API_FAVORITES:         https://ci-placeholder.lambda-url.us-east-1.on.aws/
+          VITE_API_PHOTOS:            https://ci-placeholder.lambda-url.us-east-1.on.aws/
+          VITE_API_DASHBOARD:         https://ci-placeholder.lambda-url.us-east-1.on.aws/
+
+      - name: Verify build output
+        run: |
+          test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+
+      - name: Harvest-window chunk split (V4-RIPENESSCUES-001)
+        # THE ONLY DETECTOR for the inert-payload class, and until now it was wired to nothing.
+        # The colour-window feature shipped DEAD in v4.9.x — resolver imported, nothing called it,
+        # ~110KB gzip of JSON riding the entry bundle to every user, all tests green. vitest cannot
+        # catch this class at all: it asserts MODULES, and resolves the import itself at test time,
+        # so it never observes the real chunk graph. Only a build-artifact check can. A mutation
+        # that recreated the bug kept all 127 unit tests passing.
+        #
+        # Asserts against the artifact the step above just built (SKIP_BUILD=1 — verify THIS dist/,
+        # not a second differently-configured build): exactly one hashed chunk carries the dataset
+        # marker, and it is NOT the entry chunk. Fails the build (exit 1) if a static
+        # `import { resolveHarvestWindow }` is reintroduced at/above CropCard, if the dataset
+        # vanishes from the bundle entirely, or if the marker leaks into multiple chunks.
+        #
+        # Home is ci.yml on purpose: this is deterministic from source, so it reaches the same
+        # verdict here as it would in deploy.yml — but here it fails BEFORE the code lands on dev,
+        # rather than mid-deploy after main has already fast-forwarded.
+        env:
+          SKIP_BUILD: '1'
+        run: bash scripts/verify-window-chunk.sh
+
+      - name: Event-types drift guard
+        # V3-EVENT-008: fails the build if lambda/events/eventTypes.generated.js is
+        # stale vs the canonical src/lib/eventTypes.js (regenerate to temp + byte-diff).
+        # Required (not advisory): the deployed Lambda cannot import src/lib/ at runtime,
+        # so a stale generated copy would silently diverge the batch allowlist from the UI.
+        run: npm run check:event-types
+
+      - name: Dependency audit (blocking on moderate, WS-B M6)
+        # Fail the build on any prod-dependency MODERATE+ advisory EXCEPT documented, dated
+        # waivers in scripts/audit-allowlist.json (each a justified non-applicability note).
+        # Replaces the bare `npm audit --omit=dev --audit-level=moderate`. The js-cookie high
+        # (→ Clerk 6.12.7) and the old react-router moderates (→ react-router-dom 7.18.1) stay
+        # remediated. Currently WAIVED: GHSA-qwww-vcr4-c8h2 (react-router RSC-mode CSRF —
+        # non-applicable to this client SPA / no RSC; no react-router-dom fix line yet).
+        # Dave-approved 2026-07-24. Dev-only advisories stay excluded by --omit=dev.
+        run: python3 scripts/audit-gate.py
+
+  # As in the serial job, where pytest ran before setup-node and npm ci: the image's own node, no node_modules.
+  # ~80 s.
+  pytest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Python script tests (pytest)
+        # Retroactively covers the previously-unrun scripts/test_*.py suites
+        # (snap, revert-to, restore-verify, verify-deploy) as well as the guard's
+        # own tests. requests+boto3 are import-time deps of snap.py/revert-to.py.
+        run: |
+          set -euo pipefail
+          # Plain form is proven on these runners (promote-gate.yml "Install python
+          # deps"); the fallback covers a PEP-668 externally-managed image.
+          python3 -m pip install --quiet pytest requests boto3 pyyaml \
+            || python3 -m pip install --quiet --break-system-packages pytest requests boto3 pyyaml
+          python3 -m pytest -q scripts/test_*.py
+
+  # The UTC pass with coverage, between the two halves of the coverage ratchet: the measured floor reads the
+  # coverage/coverage-summary.json this leg's own `npm test` writes. Measured before the trial key, on the soak
+  # (ci-next-soak run 37559095399, dev f792a200, 1,482 files, ten attempts): job median 17.95 min, six of ten over
+  # 17.8, the vitest step 661-1,095 s (gardening-docs project-state/_promotepath-20261002/
+  # scout-a8-and-slowdown-20261007.md, lines 351-355, with the run at 47 and the range at 62). With the trial key
+  # the A3 scout infers about 3 min less; that is not yet measured on a runner.
+  unit-utc-cov:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Coverage ratchet enforcement
+        # Fails the build if vitest.config.ts thresholds fall below the
+        # calendar-due target in coverage-ratchet.json.
+        # B2 from pipeline-consolidation-plan-20260501.md (boss VP add).
+        run: python3 scripts/check-coverage-ratchet.py
+
+      - name: Run unit tests with coverage
+        run: npm test
+        # vitest exits non-zero if coverage thresholds (in vitest.config.ts) not met.
+        # Path A baseline: thresholds at 0%; schedule ratchets up per coverage-ratchet.json.
+        env:
+          VITEST_NODE_PROJECT: '1'
+
+      - name: Coverage ratchet — measured floor (WS-B M4)
+        # The pre-test ratchet step above compares only the CONFIG thresholds to
+        # active_target. This reads ACTUAL measured coverage (coverage/coverage-summary.json,
+        # emitted by the json-summary reporter) and fails if it drops below active_target,
+        # wiring the ratchet to real coverage so advancing active_target (a Dave-gated
+        # milestone decision) immediately protects it. No-op while active_target is 0.
+        run: python3 scripts/check-coverage-ratchet.py --measured
+
+  # The same suite under the app's own timezone, behind a sentinel that the zone resolved. No coverage, so this
+  # is also the only pass whose time is free of instrumentation. ~12 min median, 14.5 min on a slow runner.
+  unit-ny:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: TZ sentinel — America/New_York resolves on this runner
+        # The step below is only a date-fragility guard if TZ takes effect. An unknown or unreadable zone does not
+        # fail: node falls back to UTC and the whole suite passes as a second UTC run. This asks node (the runtime
+        # the tests use) what the zone resolved to and for its January and July offsets, EST 300 and EDT 240.
+        env:
+          TZ: America/New_York
+        run: |
+          set -euo pipefail
+          node -e '
+          const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+          const jan = new Date(2026, 0, 15, 12).getTimezoneOffset()
+          const jul = new Date(2026, 6, 15, 12).getTimezoneOffset()
+          console.log(`TZ=${process.env.TZ} resolved as ${zone}; minutes behind UTC: January ${jan}, July ${jul}`)
+          if (process.env.TZ !== "America/New_York" || zone !== "America/New_York" || jan !== 300 || jul !== 240) {
+            console.log("::error title=TZ sentinel::America/New_York did not resolve (want zone America/New_York, January 300, July 240). The suite below would run in another zone and prove nothing about date fragility.")
+            process.exit(1)
+          }
+          '
+
+      - name: Unit tests under America/New_York TZ (date-fragility guard)
+        # Wave 0 / WS-B M2: the UTC pass (the `unit-utc-cov` leg; UTC is the GHA default) hid a
+        # class of TZ-fragile date assertions that only fail in a UTC-negative zone like
+        # the app's own EDT/EST (plantingMaturity ageDays, Collection "Seen" caption).
+        # Re-run the suite under the app's real timezone so that class fails CI, not prod.
+        run: npx vitest run --no-coverage
+        env:
+          TZ: America/New_York
+          VITEST_NODE_PROJECT: '1'
+
+  # Real-Chrome gates, first group (~246 s of work measured after the idle-timer fix, run 37040756148).
+  gates-a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
 
       # ── The real-Chrome layout gates (OPS-LAYOUTGATESUNWIRED-001) ───────────────────────
       # The WebSocket blocker that kept these unwired is FIXED, not worked around. The gates
@@ -610,96 +821,31 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-scroll
 
-      - name: Page scroll — a page opens at its top, Back returns to the place (BUG-DETAILPAGESCARRYSCROLL-001)
-        # BrowserRouter never resets scroll on a push: the arriving page paints a one-screen loading shell,
-        # Chrome clamps the old offset to it and SCROLL ANCHORING re-applies it once the content lands, so 9
-        # of 10 measured pages opened part-way down, most at their bottom. Today's "Back keeps my place" on
-        # those pages rides the same carry, so a reset alone breaks Back. The fix is ONE app-level manager
-        # (src/hooks/usePageScrollManager.js, decisions in src/lib/pageScroll.js, flag SCROLL_MANAGER_ENABLED):
-        # a reset when the page tree reaches a different page, a restore on POP that re-applies until the
-        # target holds, history.scrollRestoration 'manual'. jsdom has no clamp, no anchoring and no traversal
-        # timing; the unit suites pin the decisions (pageScroll.test.js) and the wiring
-        # (usePageScrollManager.test.jsx) with models.
-        # tests/harness/pagescroll.{html,jsx} mounts the real pages (a planting and its Event log, Zones and a
-        # zone, Garden, Put-Up, Seeds, a seed lot and the variety editor, Harvests, Achievements) under
-        # BrowserRouter in App.jsx's shell, with the REAL manager and main.jsx's real boot mode (the drift
-        # guard fails if either stops matching App.jsx), BottomNav's armed + and More sheets, header Search as
-        # a real OverlayLink with Search.jsx's peek, a network that answers after a loading phase, a Clerk
-        # token that can be slow to come (a cold cache) and a user that can be held unresolved (Protected's
-        # skeleton), framed by viewport.html at 426x836 and 360x640. Real taps (hit-tested in place), real
-        # wheel scrolling, real touch input (a resting thumb, a drag, a finger's tap), real typing,
-        # history.back(). Every page a flow pushes onto must land at scrollY 0 (within 1px — a browser-side
-        # sub-pixel nudge seen on zone pages and on this runner, counted in the log) with its title in the
-        # visible band, and every Back must land on the exact offset
-        # the page was left at, the tapped element at the same viewport top:
-        #   the Event log (two-stage load; 3 s per stage; past "Show more", where the place is out of reach
-        #   and the restore must stop at the page's end once the page has settled, and give way to a tap on
-        #   "Show more"), Zones from a mid-list row plain / 5 s slow / every request waiting 1.5 s for its
-        #   token / left mid-restore / reloaded / reloaded behind a 3 s skeleton, a seed lot after a refused
-        #   Save (the refused field in view and focused, then Back to it on the pixel), a wheel and a moving
-        #   finger inside the restore's hold (the user wins; a
-        #   thumb resting through the load does not take over), Back onto a list and onto Put-Up left at their
-        #   top, the More and Search doors and Search's peek, Garden (Back from a planting, tab away and back
-        #   at 1x and 4x CPU, "Add a planting" on the same page; and three Today round trips with no scrolling
-        #   between — plain, with the household growing on the first return, with a planting added above the
-        #   spot by the return's revalidate, and that one's unchanged control — checked in CONTENT terms: the
-        #   planting left on screen, followed by name, comes back where it was left and does not move once on
-        #   screen; the harness answers /api/members as prod's household of two, so Garden's caretaker row is
-        #   above the list, and every Garden flow checks it is: BUG-GARDENSPOTCREEP-001; and, with the person's
-        #   prefs row served on Lifecycle — ?prefs=, the only flows in which Garden reads prefs — Type picked and
-        #   kept through three returns, its save landing or every save lost to a dead zone:
-        #   BUG-GARDENGROUPBYRESET-001), Put-Up's batch, the
-        #   Seeds view switch and a list's sort (no jump), Harvests' tab re-tapped then Back, Saved seeds opened
-        #   at a lot then Back (no
-        #   second jump to the lot), Back into Saved seeds and into Harvests at the top, a list blanked behind
-        #   Search / a Back marker and still short at the close, the variety-editor round trip, 25 pages deep.
-        #   The six slow flows run at 426x836 only (they measure time, not layout).
-        # FLAG-AWARE, for the rollback: it reads SCROLL_MANAGER_ENABLED as the harness serves it. With the flag
-        # off it prints "manager OFF" and asserts today's contract only (mode 'auto', same-page writes and
-        # overlays never moving the page, Garden's and the hook pages' own restores, the pages that reset
-        # themselves, Back to a page left at its top), printing the manager's own checks instead of asserting
-        # them, so a forward flag-off build passes this step. Roll back that way, never with a revert. Rehearse
-        # it from any checkout: npm run test:flag-off, gate:page-scroll:flag-off, gate:seeds-scroll:flag-off
-        # (the flag served false in memory, tests/harness/flagOffTransform.mjs).
-        # It refuses a frame whose viewport, chrome, latency, skeleton or restore mode is not the one asked
-        # for, a source less than 300px down, a tap that pushed no entry, a Back onto any entry but the one the
-        # offset was taken on, and a takeover flow whose restore had already finished before the user acted;
-        # the script's header lists each flow.
-        # Verified non-vacuous 2026-09-25 (Projects/Gardening/_seedstab12_20260925/scrollmgr-nonvacuity-review-
-        # *.txt in the gardening-docs repo; mutants served through GATE_HARNESS_CONFIG), each red at every
-        # viewport it runs at: the manager deciding nothing with the flag on reds 51 of 59 flow-runs (pages land
-        # at 56, 188, 3000, 52 or deeper; Backs lose the place) and leaves green only the must-not-change guards
-        # (Search's peek, "Add a planting", Put-Up, the Seeds switch); row 4's zero removed reds top-back
-        # (3000 of 0); row 6's reds putup-top (56 of 0); no scroll takeover reds takeover and takeover-touch (the
-        # restore pulls the page back); a touch pointerdown taking over reds takeover-touch (the resting thumb
-        # loses the place); no click takeover reds eventlog-more-tap (the page jumps to the old place); no
-        # out-of-reach stop reds eventlog-more (still pulling 8 s after Back); claims per page instead of per
-        # entry reds retap-back (0 of 1138); the ?lot= hint on a return reds lot-back (the page jumps back to
-        # the lot); time counted under the skeleton reds reload-skeleton; a 4 s budget reds eventlog-slow (2070
-        # of 4658) and zones-slow; stopping on the height alone (no in-flight check) reds eventlog-slow,
-        # zones-slow and leave-during-load; the pathname rule removed reds garden-add, seeds-switch,
-        # same-replace and retap-back (a same-page write jumps to 0); the snapshot removed, or filing while
-        # covered, reds the three blanked-list closes; writes left open while armed reds leave-during-load; row
-        # 5's zero removed reds hook-top. Confirmation round (…/scrollmgr-nonvacuity-confirm-*.txt): with src
-        # served from 2622a8e (a request counted only once its token was in hand) zones-slowtoken is red at both
-        # viewports (56 of 960 / 1104); with the driver back on 4 px lot-refuse comes back at 972 for 968 in 6
-        # of 9 runs at 426x836 (a timing-dependent drift; the driver's unit tests are the deterministic pin).
-        # BUG-GARDENSPOTCREEP-001 (…/gardencreep-v2-mut-*.txt, mutants served in memory, both viewports): the
-        # household uncached (useMembers as 4.156.0) reds garden-cycles — the planting comes back 64/128/192px up
-        # the screen; a restore that holds the raw offset until the network is quiet (the fix first built,
-        # withdrawn after QA) reds garden-plantsgrow — the planting dropped a full tile row, 252.8px; /api/members
-        # answering [] is refused by the roster check, and without that check garden-cycles PASSES on 4.156.0 —
-        # the vacuity that let the creep ship.
-        # Served with the flag OFF (the rollback) it PASSES, printing "manager
-        # OFF". The "entry still current" write rule has no flow (its window is timing-dependent under
-        # 'manual') and is pinned by usePageScrollManager.test.jsx; the reload flow proves one of the hidden and
-        # pagehide flushes (location.reload() fires both), and the discard path (hidden only) is unit-pinned.
-        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~9.5 min locally (42 flows, 78
-        # flow-runs: the six slow ones at 426x836 only).
-        # NO continue-on-error, per the policy note above.
-        env:
-          GATE_CHROME_FLAGS: --no-sandbox
-        run: npm run gate:page-scroll
+  # Real-Chrome gates, second group (~181 s of work, same run).
+  gates-b:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Resolve Chrome for the layout gates
+        run: |
+          BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)"
+          if [ -z "$BIN" ]; then
+            echo "::error::No Chrome on this runner - the layout gates cannot run and must not be skipped."
+            exit 1
+          fi
+          echo "CHROME_PATH=$BIN" >> "$GITHUB_ENV"
+          echo "layout gates will drive $BIN"
+          "$BIN" --version
 
       - name: Kitchen-batch close-out layout and band clearance (V5-KBCLOSE-001)
         # RE-WIRED 2026-09-07 after its first CI run went red and the finding was triaged to TWO
@@ -840,46 +986,6 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:today-shape
 
-      - name: Today V2 contract, instrument and self-test (V5-TODAYREDESIGN-001)
-        # The Today redesign's gate (plan-v2 §9.1), dual-run beside the v1 step above until S8c (§9.2):
-        # v1 keeps gating the default route, unmodified; this runs the V2 route (the ?v2=1 seam of
-        # tests/harness/todaymeasure.jsx, on tests/harness/vite.harness.v2.mjs) over the 20 contract
-        # states in tests/harness/_todaymeasure/today-v2-contract.mjs. Checks whose slice has not landed
-        # are printed PENDING and counted, never passed; the instrument (viewport, clock, font pin,
-        # stubbed weather, no live request, fixture ledger, the V2 flag and seeds, the prefs GET) is armed
-        # on every state from S0. Then two proofs the contract can fail, both of which must hold:
-        # --probe-nothing blinds every v2 anchor and MUST exit 1, and --self-test arms every check against
-        # an EMPTY V2 stub and passes only if the census reds every state while the instrument holds.
-        # The probe is inverted with an explicit `if`, NOT a bare `! cmd`: steps run `bash -e`, and errexit
-        # ignores a `!`-inverted command, so a probe that wrongly exited 0 mid-block would be swallowed.
-        # The v2 mutation matrix stays out of CI (npm run mutate:today-shape:v2).
-        # NO continue-on-error, per the policy note above.
-        env:
-          GATE_CHROME_FLAGS: --no-sandbox
-        run: |
-          npm run gate:today-shape:v2
-          if npm run gate:today-shape:v2:probe-nothing; then
-            echo "::error::gate:today-shape:v2:probe-nothing exited 0 - every v2 anchor pointed at nothing and the gate did not notice"
-            exit 1
-          fi
-          npm run gate:today-shape:v2:self-test
-
-      - name: Today V2 in the app shell (V5-TODAYREDESIGN-001)
-        # tests/harness/todayshell.{html,jsx}: real TopChrome, the nav band, the REAL page-scroll manager
-        # called as AppShell calls it. Armed from S0: the shell itself (measured page band = 836 - 52 - 56,
-        # TopChrome sticky at y=0, scrollRestoration manual, a production-shaped /api/members roster, the
-        # prefs GET) plus a drift guard against App.jsx and main.jsx. Sticky, jump landing and the Back
-        # round trip are PENDING until S3/S4. --probe-nothing MUST exit 1 (explicit `if`, as above).
-        # NO continue-on-error.
-        env:
-          GATE_CHROME_FLAGS: --no-sandbox
-        run: |
-          npm run gate:today-shell:v2
-          if npm run gate:today-shell:v2:probe-nothing; then
-            echo "::error::gate:today-shell:v2:probe-nothing exited 0 - the shell anchors pointed at nothing and the gate did not notice"
-            exit 1
-          fi
-
       - name: Undo toast tap targets, glyph and stack (BUG-UNDOTOASTTAPTARGET-001)
         # The shared UndoToast (src/context/ToastContext.jsx), behind every "Logged … · Undo" message,
         # in real Chrome at 426x836 @ DPR 3 (tests/harness/undotap.{html,jsx}: the real ToastProvider
@@ -921,105 +1027,233 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:save-band-stability
 
-      - name: Icon optical-weight golden (V4-ICON-001)
-        # V101 §14 pre-flight gate: each migrated SVG glyph's live-area ink-coverage must
-        # stay within +/-tolerance of its approved baseline (scripts/icon-ci/icon-golden-baseline.json).
-        run: npm run icon:golden
+  # Page scroll alone: at ~539 s in that run (42 flows, 78 flow-runs today: ~570 s locally) it is longer
+  # than either group above, and it is the gate that grows.
+  gates-c:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Icon region-seam (V4-ICON-001)
-        # V101 §14: color-candidate multi-region glyphs paint every region with no interior
-        # seam holes (backs the zero-geometry-redraw color-pass promise).
-        run: npm run icon:seam
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
 
-      - name: Icon pair distinctness (V4-GERMVSTRANSPLANT-001)
-        # Glyphs read SIDE BY SIDE must not collapse into each other. Both gates above measure a
-        # glyph alone, so neither could see that event.germination and event.transplant were one
-        # drawing at two scales. Masks are scale-normalised before comparison — raw pixel overlap
-        # scored the shipped defect (0.402) as MORE distinct than a known-good pair (0.367), because
-        # a size change moves pixels while reading as the same shape.
-        run: npm run icon:distinct
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
 
-      - name: Build (CI — placeholder env vars)
-        # VITE_ vars are inlined at build time as string literals.
-        # Placeholder values allow build to succeed without real infrastructure.
-        run: npm run build
-        env:
-          VITE_CLERK_PUBLISHABLE_KEY: pk_test_ci_placeholder
-          VITE_API_PROJECTS:          https://ci-placeholder.lambda-url.us-east-1.on.aws/
-          VITE_API_PLANTS:            https://ci-placeholder.lambda-url.us-east-1.on.aws/
-          VITE_API_LOCATIONS:         https://ci-placeholder.lambda-url.us-east-1.on.aws/
-          VITE_API_EVENTS:            https://ci-placeholder.lambda-url.us-east-1.on.aws/
-          VITE_API_FAVORITES:         https://ci-placeholder.lambda-url.us-east-1.on.aws/
-          VITE_API_PHOTOS:            https://ci-placeholder.lambda-url.us-east-1.on.aws/
-          VITE_API_DASHBOARD:         https://ci-placeholder.lambda-url.us-east-1.on.aws/
-
-      - name: Verify build output
+      - name: Resolve Chrome for the layout gates
         run: |
-          test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
+          BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)"
+          if [ -z "$BIN" ]; then
+            echo "::error::No Chrome on this runner - the layout gates cannot run and must not be skipped."
+            exit 1
+          fi
+          echo "CHROME_PATH=$BIN" >> "$GITHUB_ENV"
+          echo "layout gates will drive $BIN"
+          "$BIN" --version
 
-      - name: Harvest-window chunk split (V4-RIPENESSCUES-001)
-        # THE ONLY DETECTOR for the inert-payload class, and until now it was wired to nothing.
-        # The colour-window feature shipped DEAD in v4.9.x — resolver imported, nothing called it,
-        # ~110KB gzip of JSON riding the entry bundle to every user, all tests green. vitest cannot
-        # catch this class at all: it asserts MODULES, and resolves the import itself at test time,
-        # so it never observes the real chunk graph. Only a build-artifact check can. A mutation
-        # that recreated the bug kept all 127 unit tests passing.
-        #
-        # Asserts against the artifact the step above just built (SKIP_BUILD=1 — verify THIS dist/,
-        # not a second differently-configured build): exactly one hashed chunk carries the dataset
-        # marker, and it is NOT the entry chunk. Fails the build (exit 1) if a static
-        # `import { resolveHarvestWindow }` is reintroduced at/above CropCard, if the dataset
-        # vanishes from the bundle entirely, or if the marker leaks into multiple chunks.
-        #
-        # Home is ci.yml on purpose: this is deterministic from source, so it reaches the same
-        # verdict here as it would in deploy.yml — but here it fails BEFORE the code lands on dev,
-        # rather than mid-deploy after main has already fast-forwarded.
+      - name: Page scroll — a page opens at its top, Back returns to the place (BUG-DETAILPAGESCARRYSCROLL-001)
+        # BrowserRouter never resets scroll on a push: the arriving page paints a one-screen loading shell,
+        # Chrome clamps the old offset to it and SCROLL ANCHORING re-applies it once the content lands, so 9
+        # of 10 measured pages opened part-way down, most at their bottom. Today's "Back keeps my place" on
+        # those pages rides the same carry, so a reset alone breaks Back. The fix is ONE app-level manager
+        # (src/hooks/usePageScrollManager.js, decisions in src/lib/pageScroll.js, flag SCROLL_MANAGER_ENABLED):
+        # a reset when the page tree reaches a different page, a restore on POP that re-applies until the
+        # target holds, history.scrollRestoration 'manual'. jsdom has no clamp, no anchoring and no traversal
+        # timing; the unit suites pin the decisions (pageScroll.test.js) and the wiring
+        # (usePageScrollManager.test.jsx) with models.
+        # tests/harness/pagescroll.{html,jsx} mounts the real pages (a planting and its Event log, Zones and a
+        # zone, Garden, Put-Up, Seeds, a seed lot and the variety editor, Harvests, Achievements) under
+        # BrowserRouter in App.jsx's shell, with the REAL manager and main.jsx's real boot mode (the drift
+        # guard fails if either stops matching App.jsx), BottomNav's armed + and More sheets, header Search as
+        # a real OverlayLink with Search.jsx's peek, a network that answers after a loading phase, a Clerk
+        # token that can be slow to come (a cold cache) and a user that can be held unresolved (Protected's
+        # skeleton), framed by viewport.html at 426x836 and 360x640. Real taps (hit-tested in place), real
+        # wheel scrolling, real touch input (a resting thumb, a drag, a finger's tap), real typing,
+        # history.back(). Every page a flow pushes onto must land at scrollY 0 (within 1px — a browser-side
+        # sub-pixel nudge seen on zone pages and on this runner, counted in the log) with its title in the
+        # visible band, and every Back must land on the exact offset
+        # the page was left at, the tapped element at the same viewport top:
+        #   the Event log (two-stage load; 3 s per stage; past "Show more", where the place is out of reach
+        #   and the restore must stop at the page's end once the page has settled, and give way to a tap on
+        #   "Show more"), Zones from a mid-list row plain / 5 s slow / every request waiting 1.5 s for its
+        #   token / left mid-restore / reloaded / reloaded behind a 3 s skeleton, a seed lot after a refused
+        #   Save (the refused field in view and focused, then Back to it on the pixel), a wheel and a moving
+        #   finger inside the restore's hold (the user wins; a
+        #   thumb resting through the load does not take over), Back onto a list and onto Put-Up left at their
+        #   top, the More and Search doors and Search's peek, Garden (Back from a planting, tab away and back
+        #   at 1x and 4x CPU, "Add a planting" on the same page; and three Today round trips with no scrolling
+        #   between — plain, with the household growing on the first return, with a planting added above the
+        #   spot by the return's revalidate, and that one's unchanged control — checked in CONTENT terms: the
+        #   planting left on screen, followed by name, comes back where it was left and does not move once on
+        #   screen; the harness answers /api/members as prod's household of two, so Garden's caretaker row is
+        #   above the list, and every Garden flow checks it is: BUG-GARDENSPOTCREEP-001; and, with the person's
+        #   prefs row served on Lifecycle — ?prefs=, the only flows in which Garden reads prefs — Type picked and
+        #   kept through three returns, its save landing or every save lost to a dead zone:
+        #   BUG-GARDENGROUPBYRESET-001), Put-Up's batch, the
+        #   Seeds view switch and a list's sort (no jump), Harvests' tab re-tapped then Back, Saved seeds opened
+        #   at a lot then Back (no
+        #   second jump to the lot), Back into Saved seeds and into Harvests at the top, a list blanked behind
+        #   Search / a Back marker and still short at the close, the variety-editor round trip, 25 pages deep.
+        #   The six slow flows run at 426x836 only (they measure time, not layout).
+        # FLAG-AWARE, for the rollback: it reads SCROLL_MANAGER_ENABLED as the harness serves it. With the flag
+        # off it prints "manager OFF" and asserts today's contract only (mode 'auto', same-page writes and
+        # overlays never moving the page, Garden's and the hook pages' own restores, the pages that reset
+        # themselves, Back to a page left at its top), printing the manager's own checks instead of asserting
+        # them, so a forward flag-off build passes this step. Roll back that way, never with a revert. Rehearse
+        # it from any checkout: npm run test:flag-off, gate:page-scroll:flag-off, gate:seeds-scroll:flag-off
+        # (the flag served false in memory, tests/harness/flagOffTransform.mjs).
+        # It refuses a frame whose viewport, chrome, latency, skeleton or restore mode is not the one asked
+        # for, a source less than 300px down, a tap that pushed no entry, a Back onto any entry but the one the
+        # offset was taken on, and a takeover flow whose restore had already finished before the user acted;
+        # the script's header lists each flow.
+        # Verified non-vacuous 2026-09-25 (Projects/Gardening/_seedstab12_20260925/scrollmgr-nonvacuity-review-
+        # *.txt in the gardening-docs repo; mutants served through GATE_HARNESS_CONFIG), each red at every
+        # viewport it runs at: the manager deciding nothing with the flag on reds 51 of 59 flow-runs (pages land
+        # at 56, 188, 3000, 52 or deeper; Backs lose the place) and leaves green only the must-not-change guards
+        # (Search's peek, "Add a planting", Put-Up, the Seeds switch); row 4's zero removed reds top-back
+        # (3000 of 0); row 6's reds putup-top (56 of 0); no scroll takeover reds takeover and takeover-touch (the
+        # restore pulls the page back); a touch pointerdown taking over reds takeover-touch (the resting thumb
+        # loses the place); no click takeover reds eventlog-more-tap (the page jumps to the old place); no
+        # out-of-reach stop reds eventlog-more (still pulling 8 s after Back); claims per page instead of per
+        # entry reds retap-back (0 of 1138); the ?lot= hint on a return reds lot-back (the page jumps back to
+        # the lot); time counted under the skeleton reds reload-skeleton; a 4 s budget reds eventlog-slow (2070
+        # of 4658) and zones-slow; stopping on the height alone (no in-flight check) reds eventlog-slow,
+        # zones-slow and leave-during-load; the pathname rule removed reds garden-add, seeds-switch,
+        # same-replace and retap-back (a same-page write jumps to 0); the snapshot removed, or filing while
+        # covered, reds the three blanked-list closes; writes left open while armed reds leave-during-load; row
+        # 5's zero removed reds hook-top. Confirmation round (…/scrollmgr-nonvacuity-confirm-*.txt): with src
+        # served from 2622a8e (a request counted only once its token was in hand) zones-slowtoken is red at both
+        # viewports (56 of 960 / 1104); with the driver back on 4 px lot-refuse comes back at 972 for 968 in 6
+        # of 9 runs at 426x836 (a timing-dependent drift; the driver's unit tests are the deterministic pin).
+        # BUG-GARDENSPOTCREEP-001 (…/gardencreep-v2-mut-*.txt, mutants served in memory, both viewports): the
+        # household uncached (useMembers as 4.156.0) reds garden-cycles — the planting comes back 64/128/192px up
+        # the screen; a restore that holds the raw offset until the network is quiet (the fix first built,
+        # withdrawn after QA) reds garden-plantsgrow — the planting dropped a full tile row, 252.8px; /api/members
+        # answering [] is refused by the roster check, and without that check garden-cycles PASSES on 4.156.0 —
+        # the vacuity that let the creep ship.
+        # Served with the flag OFF (the rollback) it PASSES, printing "manager
+        # OFF". The "entry still current" write rule has no flow (its window is timing-dependent under
+        # 'manual') and is pinned by usePageScrollManager.test.jsx; the reload flow proves one of the hidden and
+        # pagehide flushes (location.reload() fires both), and the discard path (hidden only) is unit-pinned.
+        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~9.5 min locally (42 flows, 78
+        # flow-runs: the six slow ones at 426x836 only).
+        # NO continue-on-error, per the policy note above.
         env:
-          SKIP_BUILD: '1'
-        run: bash scripts/verify-window-chunk.sh
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:page-scroll
 
-      - name: Event-types drift guard
-        # V3-EVENT-008: fails the build if lambda/events/eventTypes.generated.js is
-        # stale vs the canonical src/lib/eventTypes.js (regenerate to temp + byte-diff).
-        # Required (not advisory): the deployed Lambda cannot import src/lib/ at runtime,
-        # so a stale generated copy would silently diverge the batch allowlist from the UI.
-        run: npm run check:event-types
+  # The two Today V2 steps, which run their gate and then its probe-nothing and self-test proofs (~251 s).
+  gate-probes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Coverage ratchet enforcement
-        # Fails the build if vitest.config.ts thresholds fall below the
-        # calendar-due target in coverage-ratchet.json.
-        # B2 from pipeline-consolidation-plan-20260501.md (boss VP add).
-        run: python3 scripts/check-coverage-ratchet.py
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
 
-      - name: Run unit tests with coverage
-        run: npm test
-        # vitest exits non-zero if coverage thresholds (in vitest.config.ts) not met.
-        # Path A baseline: thresholds at 0%; schedule ratchets up per coverage-ratchet.json.
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
 
-      - name: Unit tests under America/New_York TZ (date-fragility guard)
-        # Wave 0 / WS-B M2: the run above executes under UTC (GHA default), which hid a
-        # class of TZ-fragile date assertions that only fail in a UTC-negative zone like
-        # the app's own EDT/EST (plantingMaturity ageDays, Collection "Seen" caption).
-        # Re-run the suite under the app's real timezone so that class fails CI, not prod.
-        run: npx vitest run --no-coverage
+      - name: Resolve Chrome for the layout gates
+        run: |
+          BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)"
+          if [ -z "$BIN" ]; then
+            echo "::error::No Chrome on this runner - the layout gates cannot run and must not be skipped."
+            exit 1
+          fi
+          echo "CHROME_PATH=$BIN" >> "$GITHUB_ENV"
+          echo "layout gates will drive $BIN"
+          "$BIN" --version
+
+      - name: Today V2 contract, instrument and self-test (V5-TODAYREDESIGN-001)
+        # The Today redesign's gate (plan-v2 §9.1), dual-run beside the v1 step above until S8c (§9.2):
+        # v1 keeps gating the default route, unmodified; this runs the V2 route (the ?v2=1 seam of
+        # tests/harness/todaymeasure.jsx, on tests/harness/vite.harness.v2.mjs) over the 20 contract
+        # states in tests/harness/_todaymeasure/today-v2-contract.mjs. Checks whose slice has not landed
+        # are printed PENDING and counted, never passed; the instrument (viewport, clock, font pin,
+        # stubbed weather, no live request, fixture ledger, the V2 flag and seeds, the prefs GET) is armed
+        # on every state from S0. Then two proofs the contract can fail, both of which must hold:
+        # --probe-nothing blinds every v2 anchor and MUST exit 1, and --self-test arms every check against
+        # an EMPTY V2 stub and passes only if the census reds every state while the instrument holds.
+        # The probe is inverted with an explicit `if`, NOT a bare `! cmd`: steps run `bash -e`, and errexit
+        # ignores a `!`-inverted command, so a probe that wrongly exited 0 mid-block would be swallowed.
+        # The v2 mutation matrix stays out of CI (npm run mutate:today-shape:v2).
+        # NO continue-on-error, per the policy note above.
         env:
-          TZ: America/New_York
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: |
+          npm run gate:today-shape:v2
+          if npm run gate:today-shape:v2:probe-nothing; then
+            echo "::error::gate:today-shape:v2:probe-nothing exited 0 - every v2 anchor pointed at nothing and the gate did not notice"
+            exit 1
+          fi
+          npm run gate:today-shape:v2:self-test
 
-      - name: Coverage ratchet — measured floor (WS-B M4)
-        # The pre-test ratchet step above compares only the CONFIG thresholds to
-        # active_target. This reads ACTUAL measured coverage (coverage/coverage-summary.json,
-        # emitted by the json-summary reporter) and fails if it drops below active_target,
-        # wiring the ratchet to real coverage so advancing active_target (a Dave-gated
-        # milestone decision) immediately protects it. No-op while active_target is 0.
-        run: python3 scripts/check-coverage-ratchet.py --measured
+      - name: Today V2 in the app shell (V5-TODAYREDESIGN-001)
+        # tests/harness/todayshell.{html,jsx}: real TopChrome, the nav band, the REAL page-scroll manager
+        # called as AppShell calls it. Armed from S0: the shell itself (measured page band = 836 - 52 - 56,
+        # TopChrome sticky at y=0, scrollRestoration manual, a production-shaped /api/members roster, the
+        # prefs GET) plus a drift guard against App.jsx and main.jsx. Sticky, jump landing and the Back
+        # round trip are PENDING until S3/S4. --probe-nothing MUST exit 1 (explicit `if`, as above).
+        # NO continue-on-error.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: |
+          npm run gate:today-shell:v2
+          if npm run gate:today-shell:v2:probe-nothing; then
+            echo "::error::gate:today-shell:v2:probe-nothing exited 0 - the shell anchors pointed at nothing and the gate did not notice"
+            exit 1
+          fi
 
-      - name: Dependency audit (blocking on moderate, WS-B M6)
-        # Fail the build on any prod-dependency MODERATE+ advisory EXCEPT documented, dated
-        # waivers in scripts/audit-allowlist.json (each a justified non-applicability note).
-        # Replaces the bare `npm audit --omit=dev --audit-level=moderate`. The js-cookie high
-        # (→ Clerk 6.12.7) and the old react-router moderates (→ react-router-dom 7.18.1) stay
-        # remediated. Currently WAIVED: GHSA-qwww-vcr4-c8h2 (react-router RSC-mode CSRF —
-        # non-applicable to this client SPA / no RSC; no react-router-dom fix line yet).
-        # Dave-approved 2026-07-24. Dev-only advisories stay excluded by --omit=dev.
-        run: python3 scripts/audit-gate.py
+  # The verdict. It has no check-run and no job record until every leg has finished (RESULTS.md E5). `always()`
+  # because without it a failed leg makes this job `skipped`, which reads as "no verdict" rather than red. The
+  # step uses no action and no network: it reads the legs' results from `needs` and nothing else. A leg that
+  # timed out reads `cancelled` here, not `failure` (RESULTS.md E4, E9), so the test is "every result is
+  # success", never "no result is failure". The pinned list is what makes a leg dropped from `needs` (or a new
+  # leg nobody listed) a red rather than a quieter green. No `name:` on this job: its id is the check-run name,
+  # and `build-and-test` is the name promote-gate.yml asks scripts/promote-preflight.py for.
+  build-and-test:
+    needs: [static, pytest, unit-utc-cov, unit-ny, gates-a, gates-b, gates-c, gate-probes]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every pinned leg reported, and every one succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          EXPECTED_LEGS="static pytest unit-utc-cov unit-ny gates-a gates-b gates-c gate-probes"
+          export EXPECTED_LEGS
+          python3 - <<'PY'
+          import json, os, sys
 
+
+          def fail(why):
+              print("::error title=build-and-test::" + why)
+              sys.exit(1)
+
+
+          expected = sorted(os.environ["EXPECTED_LEGS"].split())
+          try:
+              needs = json.loads(os.environ.get("NEEDS") or "")
+          except ValueError as exc:
+              fail("the needs context is not JSON (%s); no leg result could be read" % exc)
+          if not isinstance(needs, dict):
+              fail("the needs context is not a JSON object; no leg result could be read")
+          if sorted(needs) != expected:
+              fail("legs reported %s, expected exactly %s" % (sorted(needs), expected))
+          results = {leg: needs[leg].get("result") if isinstance(needs[leg], dict) else None for leg in expected}
+          for leg in expected:
+              print("%-13s %s" % (leg, results[leg]))
+          bad = ["%s=%s" % (leg, results[leg]) for leg in expected if results[leg] != "success"]
+          if bad:
+              fail("not every leg succeeded: " + ", ".join(bad))
+          print("build-and-test: all %d legs succeeded" % len(expected))
+          PY

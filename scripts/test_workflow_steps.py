@@ -224,8 +224,10 @@ def test_audit_step_without_the_secret_warns_and_checks_nothing(tmp_path):
 # logic: the canary must be REJECTED by both linters, and the real run must cover every workflow file with
 # shellcheck enabled. That the fixture really trips actionlint 1.7.12 + shellcheck 0.11.0 is proven with the real
 # binaries outside this suite (and by every CI run of the step).
+# The step is read from ci.yml's `static` leg, where the switch (plan A2.3) put it; `build-and-test` is the
+# aggregator now and holds no check of its own.
 
-LINT = ("ci.yml", "build-and-test", "Workflow lint (actionlint + shellcheck, pinned and checksum-verified)")
+LINT = ("ci.yml", "static", "Workflow lint (actionlint + shellcheck, pinned and checksum-verified)")
 CANARY_FINDINGS = (
     '.github/workflows/canary.yml:3:3: job "canary" needs job "no-such-job" which does not exist [job-needs]\n'
     ".github/workflows/canary.yml:7:9: shellcheck reported issue in this script: SC2034:warning:1:1: unused "
@@ -273,7 +275,7 @@ def _run_lint(tmp_path, canary_out=CANARY_FINDINGS, canary_rc=1, lint_err="verbo
 
 def test_lint_step_runs_under_the_shell_the_harness_models():
     wf, step = _step(*LINT)
-    assert _declared_shell(wf, "build-and-test", step) is None
+    assert _declared_shell(wf, LINT[1], step) is None
 
 
 def test_lint_step_downloads_retry_a_refused_connection():

@@ -50,7 +50,16 @@ history and each later attempt's run-based lines listed. The rules are in its do
 
 ## The shadow's acceptance instruments
 
-`ci-next.yml` runs `ci.yml`'s serial job as parallel legs and replaces it only after agreeing with it over at least
+**Since the switch (plan A2.3) there is no shadow.** `ci.yml` is the parallel legs behind the aggregator
+`build-and-test`, and `ci-next.yml` holds a copy of them for the canary dispatch and the `ci-next-soak` branch only:
+it runs on no dev push. This section, and the trial and coverage sections further down that speak of "the serial
+job" and "the shadow", describe the instruments as they were used to accept the switch, in the tense they were
+written in. What they do now: `shadow-agree.py` still reads dev pushes, but a push after the switch has no
+`ci-next.yml` run, so its row reads NOT-COUNTED (one side MISSING) and the counted rows are the ones from before
+the switch; it also looks for the test-ID notices in `ci.yml`'s `build-and-test` job, which is the aggregator now
+and prints none. Nothing gates on either. `coverage-rows.py` still compares any two job logs it is given.
+
+`ci-next.yml` ran `ci.yml`'s serial job as parallel legs and replaces it only after agreeing with it over at least
 10 dev pushes. Two files here measure that; neither changes what CI gates on.
 
 ```sh
