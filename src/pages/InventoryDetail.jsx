@@ -73,8 +73,22 @@ const STALE_JAR_CODES = new Set(['multi_parent_lot', 'lot_changed', 'parents_cha
 // Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
 // the former local duplicates here were removed (Lane D dedup).
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── BUG-LOTPAGEREUSEDACROSSLOTS-001 — one page instance per lot ────────────────────────────────
+// The route /inventory/:id matches every lot, so react-router re-used ONE instance across a lot → lot
+// navigation (header Search's seed results link straight here) and everything the page keeps for a
+// visit rode along to the next lot: the read-once answer below, so a lot opened from Search over a lot
+// that Seeds had opened took Cancel and Remove BACK onto Search; the "sown" note; a refusal; and a Save
+// still in flight, which landed its form as the next lot's baseline. Keyed on the id, the next lot mounts
+// fresh and the last one's late writes fall on an unmounted page. Here and not in App.jsx's route table,
+// so every mount of the page (the gate harnesses, the suites) is the keyed one. Only the id: a query,
+// a hash or an overlay over the same lot never remounts it.
 export default function InventoryDetail() {
+  const { id } = useParams()
+  return <InventoryDetailPage key={id} />
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+function InventoryDetailPage() {
   const { id }       = useParams()
   const navigate     = useNavigate()
   // V5-SEEDSTAB-001 — answers with the Seeds view that pushed this page, when one did; Cancel then goes
