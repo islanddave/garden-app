@@ -58,6 +58,7 @@ vi.mock('../context/AuthContext.jsx', () => ({
 
 import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
+import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
 import * as cache from '../lib/dataCache.js'
 import { blendReply, openLotsReply, openLotRow, additionReply } from './fixtures/seedMix.fixture.js'
 
@@ -315,5 +316,66 @@ describe('V5-SEEDLOTADDITION-001 — adding to a lot already started, from the m
     await waitFor(() => expect(screen.queryByTestId('seed-lot-list-heading')).toBeNull())
     expect(screen.queryByTestId('save-seed-submit')).toBeNull()
     expect(navigateSpy).not.toHaveBeenCalled()
+  })
+
+  // Dave 2026-10-12: closed with the answer still out, and the add then lands. The app still says
+  // "Added to <lot>", and he stays where he is: this door's leaving for the planting's page is for a
+  // sheet that is still open. `held` is the POST he closed on; the registry is the app's, so the close
+  // asks its question as it does there.
+  const timedOut = () => Object.assign(new Error('Request timed out'), { status: 0, timeout: true })
+  const additions = () => posts(`/api/inventory-items/${ROW.id}/seed-additions`)
+  async function openFormHolding(answers) {
+    primeWithLots()
+    const base = fetchSpy.getMockImplementation()
+    fetchSpy.mockImplementation((url, opts = {}) => {
+      if (opts.method === 'POST' && String(url) === `/api/inventory-items/${ROW.id}/seed-additions`) return answers.shift()()
+      return base(url, opts)
+    })
+    searchParamsRef.current = new URLSearchParams('event_type=seed_saved&plant=pl-1&project=proj-1')
+    await act(async () => render(<DismissRegistryProvider><ToastProvider><EventNew /></ToastProvider></DismissRegistryProvider>))
+    await waitFor(() => expect(screen.getByTestId('save-seed-put-in-lot')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-put-in-lot')) })
+    await waitFor(() => expect(screen.getByTestId('seed-lot-row')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('seed-lot-row')) })
+    await act(async () => { fireEvent.click(screen.getByTestId('save-seed-submit')) })
+  }
+  async function closeTheSheet() {
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Close' })) })
+    expect(screen.getByTestId('confirm-sheet-title').textContent).toBe('Close without checking?')
+    await act(async () => { fireEvent.click(screen.getByTestId('confirm-sheet-confirm')) })
+    await waitFor(() => expect(screen.queryByTestId('seed-add-form')).toBeNull())
+  }
+  const defer = () => { let resolve; const promise = new Promise((a) => { resolve = a }); return { promise, resolve } }
+
+  it('closed while "Checking whether that was added…" stands, and the add then lands: it says "Added to <lot>" and goes nowhere', async () => {
+    const held = defer()
+    await openFormHolding([() => Promise.reject(timedOut()), () => held.promise])
+    await waitFor(() => expect(screen.getByTestId('seed-add-checking').textContent).toBe('Checking whether that was added…'))
+    await closeTheSheet()
+    expect(screen.queryByText(`Added to ${ROW.name}`)).toBeNull()
+
+    await act(async () => { held.resolve(additionReply({ name: ROW.name })) })
+    await waitFor(() => expect(screen.getByText(`Added to ${ROW.name}`)).toBeTruthy())
+    expect(navigateSpy).not.toHaveBeenCalled()
+    // The sheet did not come back, and the one key went twice with one timeline entry.
+    expect(screen.queryByTestId('seed-add-form')).toBeNull()
+    expect(screen.queryByTestId('save-seed-submit')).toBeNull()
+    expect(additions()).toHaveLength(2)
+    expect(additions()[1][1].body).toBe(additions()[0][1].body)
+    expect(posts('/api/events')).toHaveLength(1)
+  })
+
+  it('closed while "Adding…" stands, and the add then lands: the same, on one POST', async () => {
+    const held = defer()
+    await openFormHolding([() => held.promise])
+    expect(screen.getByTestId('save-seed-submit').textContent).toBe('Adding…')
+    await closeTheSheet()
+
+    await act(async () => { held.resolve(additionReply({ name: ROW.name })) })
+    await waitFor(() => expect(screen.getByText(`Added to ${ROW.name}`)).toBeTruthy())
+    expect(navigateSpy).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('seed-add-form')).toBeNull()
+    expect(additions()).toHaveLength(1)
+    expect(posts('/api/events')).toHaveLength(1)
   })
 })

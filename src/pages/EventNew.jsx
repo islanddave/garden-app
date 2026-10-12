@@ -3661,7 +3661,10 @@ export default function EventNew({ harvestSession = false } = {}) {
       <SaveSeedSheet
         planting={seedSaveTarget}
         onClose={() => { if (!seedAddedRef.current) setForm(f => ({ ...f, event_type: '' })) }}
-        onSeedAdded={(_reply, { replace } = {}) => {
+        onSeedAdded={(_reply, { replace, closed } = {}) => {
+          // Dave 2026-10-12: an add that lands after he closed the sheet says "Added" and leaves him
+          // where he is. The type was cleared by that close; nothing here marks the page as leaving.
+          if (closed) return
           seedAddedRef.current = true
           const to = `/plantings/${seedSaveTarget.id}`
           if (replace) navigate(to, { replace: true })

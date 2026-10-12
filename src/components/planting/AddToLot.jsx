@@ -85,7 +85,8 @@ function sameVariety(lot, plant) {
  * read them when it opened. `startLot` is the one named on the link, or null for the list.
  * `Basis` is the sheet's own count-basis switch, passed in so the two forms cannot drift apart.
  * `onState({ dirty, busy, unsure })` tells the sheet what its close control should do and ask; `onBack`
- * returns to the new-lot form; `onAdded(reply)` ends the sheet after a save.
+ * returns to the new-lot form; `onAdded(reply, { closed })` ends the sheet after a save. `closed` is
+ * true when the sheet was closed before the answer came: the seed is in the lot all the same.
  */
 export default function AddToLot({ planting, ownLots = [], startLot = null, Basis, onState, onBack, onAdded }) {
   const { fetch } = useApiFetch()
@@ -106,8 +107,10 @@ export default function AddToLot({ planting, ownLots = [], startLot = null, Basi
   }, [ownRows, read.rows])
   const crop = cropWords(read.crop ?? plant.crop_slug)
 
+  // False once the sheet is gone. Set on mount as well as cleared on unmount, so a development
+  // build's second mount does not leave it false for a sheet that is open.
   const aliveRef = useRef(true)
-  useEffect(() => () => { aliveRef.current = false }, [])
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false } }, [])
 
   // GET /seed-lots-open. Anything but a fresh 2xx whose open_lots is an array is not a list: an older
   // Lambda answers this path 500, and a copy kept for offline use may name a lot that has since moved.
@@ -255,7 +258,10 @@ export default function AddToLot({ planting, ownLots = [], startLot = null, Basi
       eventFailed = true
     }
     toast.show(addedToast(shownName, reply.name, eventFailed))
-    onAdded?.(reply)
+    // He may have closed the sheet while the answer was out. The entry and the toast above are true
+    // either way; whether the sheet is still there is read NOW, not when he tapped, and the host is
+    // told, so nothing takes him off the page he closed it to stay on.
+    onAdded?.(reply, { closed: !aliveRef.current })
   }
 
   const post = (sent) => fetch(`/api/inventory-items/${lotId}/seed-additions`, {

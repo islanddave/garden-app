@@ -635,10 +635,11 @@ const NON_GARDEN_KINDS = PUTUP_SOURCE_OPTIONS.filter((o) => (o.value ?? o) !== '
 // a duplicate history entry. Without it the sheet keeps its navigating ending for the planting page
 // and the event menu.
 //
-// V5-SEEDLOTADDITION-001 — `ownLots`, `onSeedAdded(reply, { replace })` and `onSeedMaybeAdded()`, all
+// V5-SEEDLOTADDITION-001 — `ownLots`, `onSeedAdded(reply, { replace, closed })` and `onSeedMaybeAdded()`, all
 // optional. `ownLots` is the planting's own seed lots as its page already read them (GET
 // /api/plants/:id/seed-lots); a host that has none passes nothing and gets the general link.
-// `onSeedAdded` is called after seed went into an existing lot, before the sheet closes: the host
+// `onSeedAdded` is called after seed went into an existing lot, before the sheet closes (`closed` is
+// true when it had been closed already, and a host that leaves the page must then stay): the host
 // refreshes what it shows, or goes to the planting. `replace` is true while this sheet's Back marker is
 // the current history entry (see the navigate note at the end of save()). `onSeedMaybeAdded` is called
 // when the sheet is closed while an add has no definite answer (the seed may or may not be in the
@@ -1124,10 +1125,13 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, ownLots, onS
   // V5-SEEDLOTADDITION-001 — seed went into an existing lot. The host hears first (it refreshes the
   // plant's lots, or leaves for the plant's page), then the sheet closes; the plant's page is where
   // this ends. The marker is read BEFORE onClose for the reason given at the end of save().
-  const seedAdded = (reply) => {
+  // `closed`: the add landed after he closed the sheet (AddToLot). The host still hears, so its copy of
+  // the plant's lots is read again, and is told, so it does not leave the page; and the sheet, closed
+  // once already, is not closed again under whatever he has done since.
+  const seedAdded = (reply, { closed = false } = {}) => {
     const markerCurrent = typeof window !== 'undefined' && !!window.history && !!readMarker(window.history.state)
-    if (onSeedAdded) onSeedAdded(reply, { replace: markerCurrent })
-    if (onClose) onClose()
+    if (onSeedAdded) onSeedAdded(reply, { replace: markerCurrent, closed })
+    if (!closed && onClose) onClose()
   }
 
   // The discard question is this sheet's only while a lot is picked (AddToLot reports `dirty`). The
