@@ -408,9 +408,12 @@ describe('CropCard — the growth type shows once: the green pill, not the facet
 
   // Dwarf is the facet's own refinement and the pill has no word for it; a chip that names a DIFFERENT
   // class than the pill is not a duplicate either (column and prose disagree: both stay visible).
+  // The Dwarf pair is one crop-derive.js really makes: `dwarf` is derived only from prose whose leftmost
+  // class is `determinate`, so the pill beside that chip says Determinate.
   it('a chip that says something the pill does not stays: Dwarf, and a class the pill contradicts', () => {
     tags.projected = [det('dwarf', 'Dwarf')]
-    const first = card({ name: 'T', crop_type_slug: 'tomato', growth_habit: 'dwarf indeterminate; 3 ft' })
+    const first = card({ name: 'T', crop_type_slug: 'tomato', growth_habit: 'dwarf determinate; 3 ft' })
+    expect(pills(first.container).map(s => s.textContent)).toEqual(['Determinate'])
     expect(chips()).toEqual(['Dwarf'])
     first.unmount()
     tags.projected = [det('determinate', 'Determinate')]
