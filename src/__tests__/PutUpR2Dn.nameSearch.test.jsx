@@ -11,7 +11,9 @@
 //   • CROP AND VARIETY HITS: their words, their test ids, the What a pick gives and what a save then sends.
 //   • SAME-NAMED PLANTINGS read as different lines (wave and sown date), an answer without the two fields says
 //     the name alone, and the sown day is the one `sown_at` names in New York and in UTC alike.
-//   • A TYPED NAME carries the crop the answer resolved for the text on screen, and no other.
+//   • A TYPED NAME carries the crop the answer resolved for the text on screen, and no other. That holds for an
+//     edit (and for a host clearing the name) that lands between the answer's render and that render's passive
+//     effects, as a browser allows and an act() never does (BUG-NAMESEARCHSTALECROPRACE-001).
 //   • SIX ROWS, then "More matches…".
 //   • THE PICKED STATE: the name stays an editable field and keeps its hit; one line says what it is tied to;
 //     "Search again" drops the hit; the wave and sown words are the field's own, never the What's.
@@ -21,9 +23,11 @@
 // anchors in PutUpUxC.door.test.jsx, PutUpUxC.walk.test.jsx and PutUpWalk.test.jsx.
 // MUTATIONS (run, see the lane report): each test names the rule it holds; the report lists mutation → test.
 // CI LANE: `npm test` plus the blocking TZ re-run (the sown-date tests are the reason). No jest-dom (L-182).
-import React, { useState } from 'react'
+import React, { useEffect, useLayoutEffect, useState } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
+// react-dom's own scheduler (the one module instance it queues its work on): see betweenCommitAndEffects.
+import * as Scheduler from 'scheduler'
 import NameSearchField, {
   MAX_MATCH_ROWS, MORE_MATCHES_TEXT, SEARCH_AGAIN_TEXT, sownDayWords, sharedPlantingNames, plantingHitName, plantingHitLine, tiedWords,
 } from '../components/pantry/NameSearchField.jsx'
@@ -107,6 +111,27 @@ async function type(v) {
   fireEvent.change(screen.getByTestId('t-name'), { target: { value: v } })
   await settle()
 }
+// AS A BROWSER RUNS IT (BUG-NAMESEARCHSTALECROPRACE-001): React works off its own scheduler and nothing waits for
+// an act() to end. `update` makes a default-priority update (an answer landing); `inTheGap` is then called AFTER
+// the render that update asks for has committed and BEFORE that render's passive effects have run. A render that
+// takes longer than the scheduler's 5 ms frame is committed in one task and its effects are flushed in the next,
+// and a keystroke that arrives between the two is handled first. settle() can never show that order: act() runs
+// the commit and its effects back to back. The place is held in React's own queue and not by a clock: a task
+// queued behind the render's, and so ahead of the effects' task, which only the commit queues. The INSTRUMENT
+// block holds this to what it says. Returns once React has nothing left queued.
+async function betweenCommitAndEffects(update, inTheGap) {
+  const task = (priority, fn) => new Promise((resolve, reject) => {
+    Scheduler.unstable_scheduleCallback(priority, () => { try { resolve(fn()) } catch (e) { reject(e) } })
+  })
+  globalThis.IS_REACT_ACT_ENVIRONMENT = false
+  try {
+    await update()
+    await task(Scheduler.unstable_NormalPriority, inTheGap)
+    await task(Scheduler.unstable_IdlePriority, () => {})
+  } finally { globalThis.IS_REACT_ACT_ENVIRONMENT = true }
+}
+// The held answer let go, and the field's own `.then` run: its updates are queued, not yet rendered.
+const landed = (release) => async () => { release(); for (let i = 0; i < 6; i++) await Promise.resolve() }
 const list = () => screen.queryByRole('list')
 const rowButtons = () => (list() ? [...list().querySelectorAll('button')] : [])
 const rowIds = () => rowButtons().map(b => b.getAttribute('data-testid'))
@@ -136,6 +161,22 @@ describe('INSTRUMENT — the answers here are the server\'s, and the settle real
     await settle()
     expect(fetch.mock.calls.map(c => c[0])).toEqual(['/api/kitchen-batches/line-search?q=blue'])
     expect(rowIds()).toEqual(['t-hit-planting:p-1'])
+  })
+
+  it('betweenCommitAndEffects is where it says: the update is on screen, its layout effects have run, its passive effects have not', async () => {
+    const order = []
+    const probe = {}
+    function Probe() {
+      const [n, setN] = useState(0)
+      probe.set = setN
+      useLayoutEffect(() => { order.push(`layout ${n}`) })
+      useEffect(() => { order.push(`passive ${n}`) })
+      return <span data-testid="probe">{n}</span>
+    }
+    render(<Probe />)
+    order.length = 0
+    await betweenCommitAndEffects(() => probe.set(1), () => order.push(`in the gap, on screen: ${screen.getByTestId('probe').textContent}`))
+    expect(order).toEqual(['layout 1', 'in the gap, on screen: 1', 'passive 1'])
   })
 })
 
@@ -433,6 +474,41 @@ describe('a typed name\'s crop is the one the answer resolved for the text on sc
     await act(async () => { control.set(null); release(); for (let i = 0; i < 6; i++) await Promise.resolve() })
     expect(screen.getByTestId('t-name').value).toBe('')
     expect(seen).toEqual([{ source: 'typed', name: 'Ristra Cayenne' }])    // the keystroke; the answer wrote nothing
+    expect(list()).toBeNull()
+  })
+
+  // BUG-NAMESEARCHSTALECROPRACE-001. The two above make their change in the same act() as the answer, so the
+  // field renders it before any effect runs. These two make it where a browser can: after the answer has
+  // rendered, before that render's passive effects. Written from a passive effect, the crop went onto the What
+  // with the name the answer was asked about, AFTER the edit: the edit was taken back, and a save sent the old
+  // name with its crop (red once in four on CI, PutUpUxC.walk.test.jsx "an edit before the save takes the crop off").
+  it('an edit made between the answer\'s render and its effects is kept, and the crop goes', async () => {
+    let release
+    const held = new Promise(r => { release = r })
+    const { what } = mount({ answer: (q) => (q === 'Ristra Cayenne' ? held.then(() => answer(q)) : answer(q)) })
+    await type('Ristra Cayenne')                                           // asked; the answer is held
+    await betweenCommitAndEffects(landed(release), () => {
+      expect(rowIds()).toEqual(['t-hit-variety:v-rc'])                     // the answer is on screen, and he types on
+      fireEvent.change(screen.getByTestId('t-name'), { target: { value: 'Ristra Cayenne and garlic' } })
+    })
+    expect(screen.getByTestId('t-name').value).toBe('Ristra Cayenne and garlic')   // not taken back
+    expect(what()).toEqual({ source: 'typed', name: 'Ristra Cayenne and garlic' })
+    expect(sentAsJar(what()).label).toBe('Ristra Cayenne and garlic')
+    expect('crop_type_slug' in sentAsJar(what())).toBe(false)
+    await settle()                                                         // … and the next answer resolves none
+    expect(what()).toEqual({ source: 'typed', name: 'Ristra Cayenne and garlic' })
+  })
+
+  it('the host clearing the name between the answer\'s render and its effects (a save landing) does not bring the name back', async () => {
+    let release
+    const held = new Promise(r => { release = r })
+    const { control } = mount({ answer: (q) => held.then(() => answer(q)) })
+    await type('Ristra Cayenne')                                           // asked; the answer is held
+    await betweenCommitAndEffects(landed(release), () => {
+      expect(rowIds()).toEqual(['t-hit-variety:v-rc'])
+      control.set(null)
+    })
+    expect(screen.getByTestId('t-name').value).toBe('')
     expect(list()).toBeNull()
   })
 

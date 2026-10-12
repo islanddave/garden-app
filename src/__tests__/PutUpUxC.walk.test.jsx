@@ -332,6 +332,10 @@ describe('the name search on the ranked answer, in a Walk group (R2a lane Dn)', 
     fireEvent.click(screen.getByTestId('walk-method-hot_sauce'))
     save()                                                                 // at once: before the next answer
     await waitFor(() => expect(posts('/api/preservation')).toHaveLength(1))
+    // The edit is what is saved. Red once in four on CI (BUG-NAMESEARCHSTALECROPRACE-001): the field wrote the crop
+    // from a passive effect, the edit above came in before it ran, and "Ristra Cayenne" went out with its crop.
+    // That order is forced, not waited for, in PutUpR2Dn.nameSearch.test.jsx (betweenCommitAndEffects).
+    expect(posts('/api/preservation')[0].body.label).toBe('Ristra Cayenne and garlic')
     expect('crop_type_slug' in posts('/api/preservation')[0].body).toBe(false)
     expect(searched('Ristra Cayenne and garlic')).toHaveLength(0)          // (the save did not wait for a search)
   })

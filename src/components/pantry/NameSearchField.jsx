@@ -30,7 +30,7 @@
 //   · A PICKED NAME STAYS EDITABLE and keeps its hit; one line under it says what it is tied to; "Search
 //     again" drops the hit. What the line says beyond the name (a wave, a sown date) is held HERE, never in
 //     the What and never in a draft: a What this field did not pick says its own name.
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import { labelChrome, requiredMarkChrome, inputChrome } from '../forms/formStyles.js'
@@ -238,10 +238,14 @@ export default function NameSearchField({
   }, [fetch, picked, text])
 
   // A typed name's crop is the one the answer resolved for the text ON SCREEN, or none. Put on the What here,
-  // after the render the answer landed in, and only if that render still shows the text it was asked about:
-  // an answer that lands as the host changes the name (a save that clears the field for the next one) is
+  // in the commit of the render the answer landed in, and only if that render still shows the text it was asked
+  // about: an answer that lands as the host changes the name (a save that clears the field for the next one) is
   // never written back over it.
-  useEffect(() => {
+  // A LAYOUT effect, so that nothing comes between that render and this write (BUG-NAMESEARCHSTALECROPRACE-001).
+  // The passive effects of a render that outruns the scheduler's frame run a task after its commit, and a
+  // keystroke (or the host clearing the name) in between was then overwritten with THAT render's name and the
+  // crop: the letter just typed was taken back, and a save that landed there got its name back.
+  useLayoutEffect(() => {
     if (!resolved || picked || text.trim() !== resolved.q) return
     if ((value?.crop_type_slug ?? null) === resolved.slug) return
     onChange(resolved.slug ? { source: 'typed', name: text, crop_type_slug: resolved.slug } : { source: 'typed', name: text })
