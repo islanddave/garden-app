@@ -15,10 +15,15 @@
 // (b) is source text, comment-stripped, the frost-dormant.test.js pattern. It READS the three client files; it
 // does not import them, so this file stays out of scripts/ci-telemetry/vitest-node-project.mjs LOADS_SRC.
 //
+// The two env-read mutations below are spelled "env var NAME", never in the dotted process-env form:
+// scripts/test_check_lambda_config.py greps every .js under this directory, comments and tests included, for
+// that form and reds on a name the Lambda manifest does not declare (the rainLog.js trap). Neither name is
+// Lambda env, so neither belongs in the manifest.
+//
 // MUTATIONS that turn it red (each applied, seen red, reverted — lane t3-frosttests-20261011):
 //   * careRows also drops a planting whose db_cadence carries `overwintering`          -> (a) the regime cases
-//   * frostForSpace returns early on a new process.env.OVERWINTER_QUIET                -> (b) "no switch of its own"
-//   * frostEval.js reads process.env.SOW_DATED_LINES_FROZEN                            -> (b) two cases
+//   * frostForSpace returns early on a new env var named OVERWINTER_QUIET              -> (b) "no switch of its own"
+//   * frostEval.js reads an env var named SOW_DATED_LINES_FROZEN                       -> (b) two cases
 //   * src/lib/frostAlertLine.js imports SOW_DATED_LINES_FROZEN from ./featureFlags.js  -> (b) two cases
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';

@@ -98,6 +98,7 @@
       "AWN_FRESHNESS_MAX_MIN": null,
       "AWN_RAIN_MIN_DAILY_IN": null,
       "AWN_RAIN_MAX_DAILY_IN": null,
+      "AWN_GAUGE_FROZEN_MAX_F": null,
       "RAIN_AUTOLOG_ENABLED": "true",
       "RAIN_LOG_THRESHOLD_IN": null,
       "RAIN_RUN_END_HOUR": null
