@@ -43,7 +43,10 @@ import PutUp from '../pages/PutUp.jsx'
 import {
   DOOR_SHEET, completionWords, jarBody, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
   replayStaleText, replayUnsavedText, printRoute, otherRouteSent, otherRouteText, WALK_NEXT_TEXT, METHOD_REQUIRED_TEXT, DISCARD_DATE_TEXT,
+  AS_IS, doorError, discardItemMode,
 } from '../components/pantry/putSomethingUp.js'
+import { DiscardChoice } from '../components/pantry/DoorParts.jsx'
+import { ALL_PUT_UP_METHODS } from '../components/putup/putItUp.js'
 import { putUpDateWords } from '../components/putup/jarWords.js'
 import { START_REPLAY_NOT_ON_IT } from '../components/kitchen/StartBatchSheet.jsx'
 import { sheetDraftKey, readSheetDraft } from '../components/kitchen/sheetDraft.js'
@@ -415,6 +418,29 @@ describe('one key, two tables — putSomethingUp.js otherRouteSent, otherRouteTe
   })
 })
 
+// Owner's words, 2026-10-12: a bought item is offered "From the label · No date" and no "Work it out", so the
+// refusal for a label date not picked names "No date" there and "Work it out" everywhere else.
+const LABEL_DATE_PUT_UP = 'Pick the date from the label — or tap Work it out.'
+const LABEL_DATE_BOUGHT = 'Pick the date from the label — or tap No date.'
+const discardChips = () => [...document.querySelectorAll('[aria-label="Discard by"] [role="radio"]')].map(r => r.textContent)
+const namedIn = (text) => text.match(/ — or tap (.+)\.$/)[1]
+
+describe('a label date not picked — the refusal names a choice that is offered', () => {
+  it('for every method, the button the refusal names is among the choices DoorParts draws for it', () => {
+    const what = { source: 'typed', name: 'Corn' }
+    const place = { id: 'loc-1', kind: 'freezer', label: 'Chest Freezer 1' }
+    for (const m of [AS_IS, ...ALL_PUT_UP_METHODS]) {
+      const said = doorError({ what, place, method: m, discard: { mode: 'date', date: '' } })
+      expect(`${m}: ${said.field}`).toBe(`${m}: discard`)
+      const view = render(<DiscardChoice value={{ mode: 'date', date: '' }} onChange={() => {}} idPrefix="t" itemMode={discardItemMode(m)} />)
+      expect(`${m}: ${discardChips().includes(namedIn(said.error))}`).toBe(`${m}: true`)
+      expect(`${m}: ${said.error}`).toBe(`${m}: ${m === AS_IS ? LABEL_DATE_BOUGHT : LABEL_DATE_PUT_UP}`)
+      view.unmount()
+    }
+    expect(DISCARD_DATE_TEXT).toBe(LABEL_DATE_PUT_UP)                          // the jar's edit sheet draws all three
+  })
+})
+
 describe('Put something up — the put-up route', () => {
   async function openDoor(props = {}) {
     const handlers = { onClose: vi.fn(), onSaved: vi.fn(), onExists: vi.fn(), ...props }
@@ -436,6 +462,19 @@ describe('Put something up — the put-up route', () => {
   const draft = () => readSheetDraft(DRAFT_KEY, DOOR_SHEET, isDoorDraft)
   const told = (h) => h.onSaved.mock.calls[0][0]
   const words = (h) => completionWords({ route: told(h).route, saved: told(h).saved, place: told(h).place, now: NOW })
+
+  it('From the label with no date: a put-up is told to tap Work it out, a bought item to tap No date — each a chip on screen, and nothing goes out', async () => {
+    await openDoor()
+    corn()
+    tap('door-more'); tap('door-discard-date')
+    save(); await failed(LABEL_DATE_PUT_UP)
+    expect(discardChips()).toContain(namedIn(errorText()))
+    tap('door-method-as_is')
+    expect(screen.getByRole('radio', { name: 'From the label' }).getAttribute('aria-checked')).toBe('true')
+    save(); await failed(LABEL_DATE_BOUGHT)
+    expect(discardChips()).toEqual(['From the label', 'No date'])
+    expect(fake.calls().filter(c => c.method !== 'GET')).toEqual([])
+  })
 
   it('a lost answer, the name, the count and the notes changed, Save: ONE jar — the same key, ONE PATCH onto it with the change; the jar holds it, and the completion is the jar\'s', async () => {
     const table = jarTable()
@@ -1321,6 +1360,19 @@ describe('the Walk — the put-up route', () => {
     tap('walk-discard-auto')
     fireEvent(window, new Event('offline'))
     await refused("You're offline — this can't be saved right now. What you entered is kept.")
+    expect(fake.calls().filter(c => c.method !== 'GET')).toEqual([])
+  })
+
+  it('From the label with no date: a put-up is told to tap Work it out, a bought item to tap No date — each a chip on screen, and nothing goes out', async () => {
+    await startWalk()
+    corn()
+    tap('walk-more'); tap('walk-discard-date')
+    save(); await failed(LABEL_DATE_PUT_UP)
+    expect(discardChips()).toContain(namedIn(errorText()))
+    method('as_is')
+    expect(screen.getByRole('radio', { name: 'From the label' }).getAttribute('aria-checked')).toBe('true')
+    save(); await failed(LABEL_DATE_BOUGHT)
+    expect(discardChips()).toEqual(['From the label', 'No date'])
     expect(fake.calls().filter(c => c.method !== 'GET')).toEqual([])
   })
 

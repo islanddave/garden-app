@@ -13,7 +13,7 @@
 // the create route resolves with, so the date shown is the date stored. The completion line afterwards
 // is built from what the server answered, never from this preview.
 import {
-  ALL_PUT_UP_METHODS, METHOD_LABELS, RAW_METHODS, TEXTURE_METHODS, estimateChips, previewDiscard, resolveWhen,
+  ALL_PUT_UP_METHODS, DISCARD_LABELS, METHOD_LABELS, RAW_METHODS, TEXTURE_METHODS, estimateChips, previewDiscard, resolveWhen,
 } from '../putup/putItUp.js'
 import {
   putUpDateWords, shortDay, parseYmd, toYmd, discardWords, ESTIMATED_PRECISIONS, totalOfEach, qtyText,
@@ -243,14 +243,26 @@ function placeKeys(place) {
   return { place: { kind: place?.kind, label: String(place?.label ?? '').trim() } }
 }
 
+// The discard choices a method is offered (DoorParts.DiscardChoice draws exactly these): a put-up "Work it
+// out · From the label · No date"; a bought item "From the label · No date" — its `auto` chip is the one
+// that means no date. `discardItemMode` is the ONE answer to "is this a bought item" for the chips and for
+// the refusal below, so the refusal can never name a chip that is not on screen.
+export const discardItemMode = (method) => method === AS_IS
+export const discardOptions = (itemMode) => (itemMode
+  ? [{ id: 'date', label: DISCARD_LABELS.date }, { id: 'auto', label: DISCARD_LABELS.none }]
+  : [{ id: 'auto', label: DISCARD_LABELS.auto }, { id: 'date', label: DISCARD_LABELS.date }, { id: 'none', label: DISCARD_LABELS.none }])
+
 // { error, field } for the three required answers (§6.3: what · where · how), else null. A "date from
-// the label" chosen with no date is refused rather than silently saved as the worked-out one.
-export const DISCARD_DATE_TEXT = 'Pick the date from the label — or tap Work it out.'
+// the label" chosen with no date is refused rather than silently saved as the worked-out one — and the
+// way out it names is the method's own `auto` chip ("Work it out"; a bought item's "No date").
+export const discardDateText = (method) =>
+  `Pick the date from the label — or tap ${discardOptions(discardItemMode(method)).find(o => o.id === 'auto').label}.`
+export const DISCARD_DATE_TEXT = discardDateText(null)
 export function doorError({ what, place, method, discard = null }) {
   if (!String(what?.name ?? '').trim()) return { error: WHAT_REQUIRED_TEXT, field: 'what' }
   if (!place) return { error: WHERE_REQUIRED_TEXT, field: 'where' }
   if (!method) return { error: METHOD_REQUIRED_TEXT, field: 'method' }
-  if (discard?.mode === 'date' && !parseYmd(discard.date)) return { error: DISCARD_DATE_TEXT, field: 'discard' }
+  if (discard?.mode === 'date' && !parseYmd(discard.date)) return { error: discardDateText(method), field: 'discard' }
   return null
 }
 

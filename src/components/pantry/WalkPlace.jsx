@@ -49,7 +49,7 @@ import RefusalLine, { refusalOf, refusalText } from './RefusalLine.jsx'
 import { leftWords, rowKey } from './pantryRows.js'
 import {
   AS_IS, METHOD_REQUIRED_TEXT, methodChoices, routeFor, walkWhen, walkWhenChips, previewLine, jarBody, itemBody,
-  methodLabel, doorError, WALK_OPTIONS_LABEL, CANNING_METHODS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText,
+  methodLabel, doorError, discardItemMode, WALK_OPTIONS_LABEL, CANNING_METHODS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText,
   replayStaleText, replayUnsavedText, jarPrint, jarWhenMoved, jarPatchOf, jarFixedPart, jarHolds, replayJarFixedText,
   JAR_PATCH_READS, ITEM_PATCH_READS, otherRouteSent, otherRouteText, saysWalkOn,
 } from './putSomethingUp.js'
@@ -673,7 +673,7 @@ function WalkGroup({
             <RawInOilChips method={method} isRaw={isRaw} inOil={inOil} idPrefix="walk" disabled={saving}
               onRaw={() => setIsRaw(v => !v)} onOil={() => setInOil(v => !v)} />
           )}
-          <DiscardChoice value={discard} onChange={setDiscard} idPrefix="walk" itemMode={method === AS_IS} disabled={saving} />
+          <DiscardChoice value={discard} onChange={setDiscard} idPrefix="walk" itemMode={discardItemMode(method)} disabled={saving} />
           <div>
             <span style={labelChrome} aria-hidden="true">A different date for this one</span>
             <div role="radiogroup" aria-label="A different date for this one" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>

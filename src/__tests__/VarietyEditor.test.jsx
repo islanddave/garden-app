@@ -512,6 +512,9 @@ describe('VarietyEditor — can_edit from the GET outranks the client predicate'
     const notice = screen.getByTestId('variety-readonly-notice')
     expect(notice.textContent).toContain("you can't edit this variety")
     expect(notice.textContent).toContain('system')
+    // The rule is the server's can_edit (household) — the words say so, and no longer name the old one.
+    expect(notice.textContent.replace(/\s+/g, ' ')).toContain('(system). This screen can only save a variety your household can edit. Every value below is shown but nothing you type here will save.')
+    expect(notice.textContent).not.toMatch(/you added|scripts/)
     expect(container.querySelector('#variety-edit-name').disabled).toBe(true)
   })
 

@@ -468,8 +468,8 @@ export default function VarietyEditor({
         <div style={readOnlyNotice} role="status" data-testid="variety-readonly-notice">
           <div style={readOnlyNoticeHeadline}>Read-only — you can't edit this variety here</div>
           It was added by another account (<strong>{variety.created_by}</strong>). This screen can
-          only save a variety you added, or one the garden's own scripts added, so every value below
-          is shown but nothing you type here will save.
+          only save a variety your household can edit. Every value below is shown but nothing you
+          type here will save.
         </div>
       )}
 

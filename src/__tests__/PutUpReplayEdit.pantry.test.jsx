@@ -49,6 +49,7 @@ import PutUp from '../pages/PutUp.jsx'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 import {
   DISCARD_DATE_TEXT, DOOR_SHEET, ITEM_FIXED_KEYS, ITEM_PATCH_READS, itemPatchOf, itemPrint, itemHolds, plantingDiffers, replayFixedText, replayStaleText, replayUnsavedText,
+  WHERE_REQUIRED_TEXT,
 } from '../components/pantry/putSomethingUp.js'
 import { rowHoldsFields } from '../components/kitchen/idempotencyKey.js'
 import { sheetDraftKey, readSheetDraft } from '../components/kitchen/sheetDraft.js'
@@ -838,7 +839,7 @@ describe('Put something up — the item route', () => {
     for (const again of [false, true]) {
       on.length = 0
       save()
-      await failed(DISCARD_DATE_TEXT)
+      await failed('Pick the date from the label — or tap No date.')           // a bought item has no Work it out
       await waitFor(() => expect(broughtIntoView(on, 'door-error')).toBe(true))
       expect(`again ${again}: ${screen.queryByTestId('door-more-panel') != null}`).toBe(`again ${again}: true`)
     }
@@ -850,6 +851,29 @@ describe('Put something up — the item route', () => {
       expect(errorText()).not.toBeNull()
       expect(`again ${again}: ${screen.queryByTestId('door-more-panel') != null}`).toBe(`again ${again}: true`)
     }
+    expect(posts()).toHaveLength(0)
+  })
+
+  // The place row's mark is aria-invalid alone (nothing is painted), so the line is drawn AT the row and the two
+  // are brought into view as one block: at the scroller's end the line would be a screen away from its row.
+  it('a Save refused for no place picked sends nothing and is brought into view WITH its place row — and so is the same refusal again', async () => {
+    const on = watchScrolls()
+    await openDoor()
+    typeInto('door-what-name', 'Oat milk'); tap('door-method-as_is')
+    for (const again of [false, true]) {
+      on.length = 0
+      save()
+      await failed(WHERE_REQUIRED_TEXT)
+      await waitFor(() => expect(`again ${again}: ${broughtIntoView(on, 'door-error')}`).toBe(`again ${again}: true`))
+      expect(`again ${again}: ${on.some(el => el.contains(screen.getByTestId('door-places')) && el.contains(screen.getByTestId('door-error')))}`).toBe(`again ${again}: true`)
+    }
+    const [row, line] = [screen.getByTestId('door-places'), screen.getByTestId('door-error')]
+    expect(row.getAttribute('aria-invalid')).toBe('true')
+    expect(line.getAttribute('role')).toBe('alert')
+    expect(screen.getAllByTestId('door-error')).toHaveLength(1)
+    // After its row, before the method row.
+    expect(row.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(line.compareDocumentPosition(screen.getByTestId('door-methods')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(posts()).toHaveLength(0)
   })
 

@@ -11,9 +11,9 @@ import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, requiredMarkChrome, inputChrome } from '../forms/formStyles.js'
-import { DISCARD_LABELS, RAW_METHODS, RAW_LABEL, RAW_HINT, IN_OIL_LABEL, TEXTURE_CHIPS } from '../putup/putItUp.js'
+import { RAW_METHODS, RAW_LABEL, RAW_HINT, IN_OIL_LABEL, TEXTURE_CHIPS } from '../putup/putItUp.js'
 import { NEW_PLACE_KINDS } from '../putup/placeKinds.js'
-import { AS_IS, methodLabel, OTHER_WAYS_LABEL, CANNING_LINE, HOW_DRY_LABEL, RAW_OR_IN_OIL_LABEL } from './putSomethingUp.js'
+import { AS_IS, methodLabel, OTHER_WAYS_LABEL, CANNING_LINE, HOW_DRY_LABEL, RAW_OR_IN_OIL_LABEL, discardOptions } from './putSomethingUp.js'
 
 const row = { display: 'flex', flexWrap: 'wrap', gap: 8 }
 
@@ -121,11 +121,10 @@ export function focusFirstRadio(groupRef) {
 // words every surface that asks it uses (putItUp.DISCARD_LABELS): a put-up "Work it out · From the label ·
 // No date"; a bought item "From the label · No date" (a discard date only if typed, §2.5 — `itemMode`
 // leaves Work it out off, and its `auto` chip is the one that means no date, so it is pressed for either
-// of the two modes that store none).
+// of the two modes that store none). The list itself is putSomethingUp.discardOptions, which the refusal
+// for a label date not picked reads too.
 export function DiscardChoice({ value, onChange, idPrefix, itemMode = false, disabled = false }) {
-  const opts = itemMode
-    ? [{ id: 'date', label: DISCARD_LABELS.date }, { id: 'auto', label: DISCARD_LABELS.none }]
-    : [{ id: 'auto', label: DISCARD_LABELS.auto }, { id: 'date', label: DISCARD_LABELS.date }, { id: 'none', label: DISCARD_LABELS.none }]
+  const opts = discardOptions(itemMode)
   const chosen = (id) => (itemMode && id === 'auto' ? value.mode !== 'date' : value.mode === id)
   return (
     <div>
