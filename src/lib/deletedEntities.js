@@ -42,6 +42,12 @@ export const DELETED_ENTITY_KINDS = [
     subtitle: (row) => row?.project_name || null,
     invalidatePrefixes: ['/api/plants'],
     toast: 'Planting restored',
+    // BUG-PLANTRESTORESTRAND-001: the restore un-deletes the planting's own deleted seed packet in the
+    // same transaction and answers its id. Say so, or a packet deleted on purpose reappears in Seeds
+    // with nothing said. Words: Dave 2026-10-12.
+    toastFor: (reply) => (reply?.restored_packet_id
+      ? 'Planting restored. Its seed packet was brought back too.'
+      : 'Planting restored'),
   },
   {
     key: 'locations',

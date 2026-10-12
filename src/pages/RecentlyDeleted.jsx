@@ -177,13 +177,13 @@ export function DeletedEntitySection({ kind, apiFetch, toast }) {
     setRestoringId(row.id)
     setRestoreError(null)
     try {
-      await apiFetch(kind.restorePath(row.id), { method: 'POST' })
+      const reply = await apiFetch(kind.restorePath(row.id), { method: 'POST' })
       // Drop locally rather than refetching — the server answer IS the confirmation.
       setRows((prev) => prev.filter((r) => r.id !== row.id))
       // Every cached list that filtered this row out is now wrong. Containers invalidate the
       // plantings prefix too: restoring one can make previously-invisible plantings appear.
       for (const prefix of kind.invalidatePrefixes) invalidatePrefix(prefix)
-      toast?.show?.({ message: kind.toast })
+      toast?.show?.({ message: kind.toastFor ? kind.toastFor(reply) : kind.toast })
     } catch (err) {
       setRestoreError(err?.message || 'Could not restore that item.')
     }
