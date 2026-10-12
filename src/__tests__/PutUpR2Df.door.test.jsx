@@ -15,7 +15,9 @@
 //   • the retry key: a new one only after an answered 4xx (RIA I-3); a replayed answer is the server's row;
 //   • a restored place re-resolved against the live list, and first focus on a seeded open;
 //   • the footer band has its test id, and the size block is marked to be cleared whole;
-//   • a banned-word sweep of every state this lane added.
+//   • a banned-word sweep of every state this lane added;
+//   • (R2b) three things only the retired "Log a put-up" form's tests held: Use this place needs a name and a
+//     kind, a refused place create says the server's words and posts no jar, and candy names no published body.
 // The reload-gate and seeded-door rules are in PutUpR2Df.guard.test.jsx; the bodies in the two parity files.
 // MUTATIONS (run, see the lane report) are named beside the test each reds.
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
@@ -629,6 +631,35 @@ describe('the six kinds of place', () => {
       ['Cellar', 'door-place-new-kind-cold_storage'], ['Counter or other', 'door-place-new-kind-other']])
   })
 
+  // Put-Up R2b: the form's "still blocks an empty name before any request goes out" (PutUp.test.jsx), on the
+  // door. The form refused at its Add; here the button cannot be pressed, and the place is made by the Save
+  // that uses it, so nothing is sent at any step.
+  // MUTATION (run): `!newLabel.trim()` dropped from the button's `disabled` (DoorParts.jsx) -> red here.
+  it('Use this place is disabled until a name and a kind; nothing is sent', async () => {
+    await openDoor()
+    tap('door-place-new')
+    const use = screen.getByTestId('door-place-new-use')
+    expect([use.textContent, use.disabled]).toEqual(['Use this place', true])     // neither
+    typeInto('door-place-new-label', 'Garage fridge')
+    expect(use.disabled).toBe(true)                                              // a name alone
+    typeInto('door-place-new-label', '')
+    tap('door-place-new-kind-fridge')
+    expect(use.disabled).toBe(true)                                              // a kind alone
+    typeInto('door-place-new-label', '   ')
+    expect(use.disabled).toBe(true)                                              // spaces are not a name
+    fireEvent.click(use)
+    expect(screen.getByTestId('door-place-new-editor')).toBeTruthy()             // a press on it does nothing
+    expect(within(screen.getByTestId('door-places')).getAllByRole('radio').filter(r => r.getAttribute('aria-checked') === 'true')).toEqual([])
+    typeInto('door-place-new-label', ' Garage fridge ')
+    expect(use.disabled).toBe(false)
+    expect(fake.calls('POST')).toEqual([])
+    // Using it sends nothing either: it is a chip with no id until a Save needs one.
+    tap('door-place-new-use')
+    const chip = screen.getByTestId('door-place-new:fridge:garage fridge')
+    expect([chip.textContent, chip.getAttribute('aria-checked')]).toEqual(['Garage fridge', 'true'])
+    expect(fake.state.calls.filter(c => c.method !== 'GET')).toEqual([])
+  })
+
   it('the Fridge freezer chip makes a fridge_freezer, and Freeze whole there previews its own figure: 4 months, not 12', async () => {
     const { onSaved } = await openDoor()
     typeWhat('Corn')
@@ -805,6 +836,35 @@ describe('the retry key — a new one only after an answered 4xx', () => {
     expect(keys()[1]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
     // … and the draft holds the new key, so a reload between the refusal and the retry does not resurrect the old one.
     expect(posts('/api/preservation')[1].body.package_count).toBe(2)
+  })
+
+  // Put-Up R2b: the form's "adding a storage location: a coded refusal replaces the diagnostic line"
+  // (PutUp.refusals.test.jsx), on the door, where the place is made by the Save that uses it. The form's
+  // automatic retry and its "(HTTP409)" line went with the form: the door asks once and Save is the retry.
+  // MUTATIONS (run): the place's refusal swallowed at the door (`await ensurePlaceId(fetch, place).catch(() => null)`)
+  // -> red, no words; the refusal shown and the jar posted all the same (`.catch((e) => { setErr(refusalOf(e, ''));
+  // return null })`) -> red on the no-jar line alone; the catch given its own sentence (`setErr({ text: "Couldn't
+  // save it …" })`) -> red, the server's words are gone.
+  it('the place create is refused with a code: the server\'s words, and no jar is posted', async () => {
+    let n = 0
+    wire({ overrides: { 'POST /api/storage-locations': ({ body }) => {
+      if (++n === 1) throw apiError(409, { error: 'You already have a place called Pantry shelf', code: 'location_label_taken' })
+      return { id: 'loc-new-1', label: body.label, kind: body.kind }
+    } } })
+    const { onSaved } = await openDoor()
+    answer('can_water_bath', 'door-place-new:pantry:pantry shelf', 'Tomatoes')
+    save()
+    await waitFor(() => expect(errorText()).toBe('You already have a place called Pantry shelf'))
+    expect(posts('/api/storage-locations').map(c => c.body)).toEqual([{ label: 'Pantry shelf', kind: 'pantry' }])   // asked once
+    expect(posts('/api/preservation')).toEqual([])
+    expect(onSaved).not.toHaveBeenCalled()
+    // Nothing he answered is lost, and Save is the retry: the place is made, then the one jar in it.
+    expect([screen.getByTestId('door-what-name').value, screen.getByTestId('door-place-new:pantry:pantry shelf').getAttribute('aria-checked'),
+      screen.getByTestId('door-method-can_water_bath').getAttribute('aria-checked')]).toEqual(['Tomatoes', 'true', 'true'])
+    save()
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+    expect(posts('/api/storage-locations')).toHaveLength(2)
+    expect(posts('/api/preservation').map(c => c.body.storage_location_id)).toEqual(['loc-new-1'])
   })
 
   it('with replayed: true the completion is built from the server\'s row — a numeric it answers as text reads right', async () => {
@@ -1012,6 +1072,39 @@ describe('no banned word on any state this lane added', () => {
     save()
     expect(errorText()).toBe('Pick a unit for the size — or clear the size.')
     expectClean('a half size refused')
+  })
+})
+
+// Put-Up R2b: the form's candy tests, on the door (PutUpCandyProvenance.test.jsx "lists it by its label and
+// posts the slug the DB CHECK spells" and "never attributes the figure to a published body"). No published
+// body says anything about candied fruit, so with candy chosen the door names none: not in its text, not in a
+// label read aloud, not in a link. The canning line is the one line on the door that does name a body, and it
+// is the sweep's own control here: the same sweep finds it.
+// MUTATIONS (run): 'candy' added to CANNING_METHODS (putSomethingUp.js: the canning line under candy) -> red;
+// the house-estimate words given a body's name (jarWords.js: 'house estimate (USDA)') -> red; jarBody sending
+// another method's slug for candy -> red on the POST line.
+describe('candy on the door', () => {
+  const BODIES = /\b(NCHFP|USDA|FDA|CDC)\b|National Center|Home Food Preservation|Extension|Blue Book|University/i
+  const bodiesNamed = () => {
+    const dialog = screen.getByRole('dialog')
+    return [...wordsOf(dialog), ...[...dialog.querySelectorAll('a[href]')].map(a => a.getAttribute('href'))].filter(s => BODIES.test(s))
+  }
+
+  it('with candy chosen and the options open, no published body is named', async () => {
+    const { onSaved } = await openDoor()
+    typeWhat('Candied peel'); tap('door-place-new:pantry:pantry shelf')
+    tap('door-method-more')
+    tap('door-method-can_water_bath')
+    expect(bodiesNamed().length, 'INSTRUMENT: the sweep finds the canning line').toBeGreaterThan(0)
+    tap('door-method-candy')
+    expect(screen.getByTestId('door-method-candy').textContent).toBe('Candied (pieces or sweets)')
+    tap('door-more'); tap('door-from')
+    expect([!!screen.queryByTestId('door-more-panel'), !!screen.queryByTestId('door-from-panel')]).toEqual([true, true])
+    expect(preview()).toContain('house estimate')
+    expect(bodiesNamed()).toEqual([])
+    save()
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+    expect(posts('/api/preservation').map(c => c.body.method)).toEqual(['candy'])   // the slug the DB CHECK spells
   })
 })
 
