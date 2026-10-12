@@ -150,6 +150,18 @@ window.__h = {
       .map(e => e.textContent.trim())
     return { innerWidth, innerHeight, dpr: devicePixelRatio, tagsEnabled: Boolean(import.meta.env.VITE_API_TAGS), facet, spec }
   },
+  // The Habit row (V5-PLANTPAGEDESIGNQS-001): its value's box, its lines, and whether any of it is cut.
+  habit() {
+    const label = [...document.querySelectorAll('#root div')].find(e => e.children.length === 0 && e.textContent === 'Habit')
+    const v = label?.nextElementSibling
+    if (!v) return null
+    const r = v.getBoundingClientRect(), card = label.closest('[style*="border-radius: 10px"]')?.getBoundingClientRect()
+    const rg = document.createRange(); rg.selectNodeContents(v)
+    const lines = new Set([...rg.getClientRects()].map(q => Math.round(q.top))).size
+    return { chars: v.textContent.length, lines, left: +r.left.toFixed(1), right: +r.right.toFixed(1), width: +r.width.toFixed(1),
+      height: +r.height.toFixed(1), cut: v.scrollWidth > v.clientWidth, cardLeft: card ? +card.left.toFixed(1) : null,
+      cardRight: card ? +card.right.toFixed(1) : null, pageScrollWidth: document.documentElement.scrollWidth, innerWidth }
+  },
   ready() { return window.__h.census().facet.length > 0 || firstError != null },
 }
 

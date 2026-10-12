@@ -14,6 +14,11 @@
 // ?case=carmen    Carmen — a sweet pepper, 0–0: "Sweet · 0 SHU", as on the crop card.
 // ?case=peppermint Peppermint — crop type mint; the chip said "Pepper" (\bpepper matched the name).
 // (blush and pineapple also carry the chip: it said "Tomato" on both tomatillos.)
+// Lane plantpage (2026-10-12, V5-PLANTPAGEDESIGNQS-001) — the chip is on every planting with a crop type
+// (ghost and cherokee now carry it), and a bottom-only heat range is a floor:
+// ?case=sprouts   Long Island Improved — "Brussels Sprouts", the longest crop label in the fixtures, with ×12.
+// ?case=floor     Aji Charapita — scoville_min 30000, no max: "30K+ SHU".
+// census() also reports the chip, pill and Details rects, whether any two overlap, and their lines.
 //
 //   node node_modules/vite/bin/vite.js --config tests/harness/vite.harness.config.mjs --port <p> --strictPort
 //   HARNESS_BASELINE_SHA=3aff926419a4bd59a7c77f9873a5af6d13e964ca … → src/** from before the fix
@@ -82,6 +87,19 @@ const CASES = {
       growth_habit: 'upright spreading perennial 12-36 in tall; reddish square stems; spreads aggressively by rhizomes; sterile hybrid',
       scoville_min: null, scoville_max: null, scoville_source: null,
       sun_requirements: 'part_sun', days_to_maturity_min: 70, days_to_maturity_max: 90 } },
+  // Not prod rows: shaped like them, for the two cases above.
+  sprouts: { ...base, id: 'pl-sprouts', name: 'Long Island Improved', status: 'vegetative', quantity: 12,
+    variety_ref: { name: 'Long Island Improved', genus: 'Brassica', species: 'oleracea', crop_type_slug: 'brussels_sprouts',
+      lifecycle: 'biennial', dtm_basis: 'from-transplant', default_unit: 'count', harvest_habit: 'repeat',
+      growth_habit: 'compact upright stalk 20-24 in tall; sprouts set close along the stem, maturing from the bottom up',
+      scoville_min: null, scoville_max: null, scoville_source: null,
+      sun_requirements: 'full_sun', days_to_maturity_min: 90, days_to_maturity_max: 110 } },
+  floor: { ...base, id: 'pl-floor', name: 'Aji Charapita', status: 'fruiting', quantity: 4,
+    variety_ref: { name: 'Aji Charapita', genus: 'Capsicum', species: 'chinense', crop_type_slug: 'pepper', lifecycle: 'tender_perennial',
+      dtm_basis: 'from-transplant', default_unit: 'count', harvest_habit: 'repeat', breeding_system: 'open_pollinated',
+      growth_habit: 'bushy, 2-3 ft; hundreds of pea-size yellow pods',
+      scoville_min: 30000, scoville_max: null, scoville_source: null,
+      sun_requirements: 'full_sun', days_to_maturity_min: 90, days_to_maturity_max: 100 } },
 }
 const qs = new URLSearchParams(location.search)
 const CASE = CASES[qs.get('case')] ? qs.get('case') : 'blush'
@@ -144,7 +162,15 @@ window.__h = {
     const chips = row ? [...row.children].filter(el => getComputedStyle(el).backgroundColor === CHIP_WHITE && !el.dataset.testid) : []
     const box = h1?.closest('[style*="aspect-ratio"]')
     const pr = pill?.getBoundingClientRect(), br = box?.getBoundingClientRect()
+    const rect = el => { const r = el.getBoundingClientRect(); return { text: el.textContent, left: +r.left.toFixed(1), right: +r.right.toFixed(1), top: +r.top.toFixed(1), bottom: +r.bottom.toFixed(1), width: +r.width.toFixed(1), cut: el.scrollWidth > el.clientWidth } }
+    const rowRects = row ? [...row.children].map(rect) : []
+    const overlaps = []
+    rowRects.forEach((a, i) => rowRects.slice(i + 1).forEach(b => {
+      if (a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5) overlaps.push(`${a.text} / ${b.text}`)
+    }))
     return {
+      rowRects, overlaps, rowLines: new Set(rowRects.map(r => Math.round((r.top + r.bottom) / 2))).size,
+      rowRight: row ? +row.getBoundingClientRect().right.toFixed(1) : null,
       innerWidth, innerHeight, dpr: devicePixelRatio, rule: RULE, chipRule: CHIP_RULE, h1: h1?.textContent ?? null,
       chip: chips.map(el => el.textContent).join(' + ') || null, chipVisible: chips[0] ? seen(chips[0]) : null,
       goldPills: gold.length, pill: pill?.textContent ?? null, pillChars: pill?.textContent.length ?? 0,
