@@ -473,7 +473,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
       if (e.field === 'method') focusFirstRadio(methodRef)
       else if (e.field === 'what') whatRef.current?.focus?.()
       else if (e.field === 'discard') { setMoreOpen(true); setRefusedSeq(s => s + 1) }   // no focus moves: the line is brought into view
-      else if (e.field === 'where') setRefusedSeq(s => s + 1)                            // nor here, and the place row draws no line
+      else if (e.field === 'where') setRefusedSeq(s => s + 1)                            // nor here: the line is at the place row
       return
     }
     if (w.error) { setErr(w.error); setField('when'); setMoreOpen(true); setRefusedSeq(s => s + 1); return }
@@ -648,8 +648,12 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
               {START_BATCH_INSTEAD_TEXT}
             </button>
           ) : null} />
-        <PlaceChipRow chips={chips} value={place} idPrefix="door" disabled={saving} invalid={field === 'where'} groupRef={placesRef}
-          onChange={c => { setPlace(c); clearErr('where') }} />
+        {/* The place refusal is drawn at its row, as the method's is, and the two are brought into view as one block. */}
+        <div ref={field === 'where' ? errRef : null}>
+          <PlaceChipRow chips={chips} value={place} idPrefix="door" disabled={saving} invalid={field === 'where'} groupRef={placesRef}
+            onChange={c => { setPlace(c); clearErr('where') }} />
+          {field === 'where' && <RefusalLine err={err} testId="door-error" style={{ marginTop: T.space.sm }} />}
+        </div>
         <MethodRow choices={choices} value={method} what={what} idPrefix="door" disabled={saving} invalid={field === 'method'}
           groupRef={methodRef} onChange={changeMethod} />
         {field === 'method' && (
@@ -774,7 +778,7 @@ function DoorOpen({ onClose, onSaved, onExists, initialName, initialWhat, stockR
             </button>
           </div>
         )}
-        {field !== 'method' && <RefusalLine err={err} testId="door-error" lineRef={errRef} style={{ marginBottom: FOOTER_GAP_PX }} />}
+        {field !== 'method' && field !== 'where' && <RefusalLine err={err} testId="door-error" lineRef={errRef} style={{ marginBottom: FOOTER_GAP_PX }} />}
       </div>
       <div ref={footerRef} data-testid="door-footer"
         style={{ position: 'sticky', bottom: 0, background: P.white, padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>

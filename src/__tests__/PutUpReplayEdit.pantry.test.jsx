@@ -854,8 +854,9 @@ describe('Put something up — the item route', () => {
     expect(posts()).toHaveLength(0)
   })
 
-  // The place row marks itself and draws no line of its own; no focus moves here either.
-  it('a Save refused for no place picked sends nothing and is brought into view — and so is the same refusal again', async () => {
+  // The place row's mark is aria-invalid alone (nothing is painted), so the line is drawn AT the row and the two
+  // are brought into view as one block: at the scroller's end the line would be a screen away from its row.
+  it('a Save refused for no place picked sends nothing and is brought into view WITH its place row — and so is the same refusal again', async () => {
     const on = watchScrolls()
     await openDoor()
     typeInto('door-what-name', 'Oat milk'); tap('door-method-as_is')
@@ -864,8 +865,15 @@ describe('Put something up — the item route', () => {
       save()
       await failed(WHERE_REQUIRED_TEXT)
       await waitFor(() => expect(`again ${again}: ${broughtIntoView(on, 'door-error')}`).toBe(`again ${again}: true`))
+      expect(`again ${again}: ${on.some(el => el.contains(screen.getByTestId('door-places')) && el.contains(screen.getByTestId('door-error')))}`).toBe(`again ${again}: true`)
     }
-    expect(screen.getByTestId('door-places').getAttribute('aria-invalid')).toBe('true')
+    const [row, line] = [screen.getByTestId('door-places'), screen.getByTestId('door-error')]
+    expect(row.getAttribute('aria-invalid')).toBe('true')
+    expect(line.getAttribute('role')).toBe('alert')
+    expect(screen.getAllByTestId('door-error')).toHaveLength(1)
+    // After its row, before the method row.
+    expect(row.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(line.compareDocumentPosition(screen.getByTestId('door-methods')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(posts()).toHaveLength(0)
   })
 
