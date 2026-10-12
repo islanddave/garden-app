@@ -138,9 +138,12 @@ const code = (rel) => strip(readFileSync(resolve(REPO, rel), 'utf8'));
 const LAMBDA_FROST = ['lambda/daily-plan/frostEval.js', 'lambda/daily-plan/frostClass.js', 'lambda/daily-plan/radiativeFrost.js'];
 const CLIENT_FROST = ['src/lib/frostAlertLine.js', 'src/lib/tonightLow.js', 'src/components/today/FrostAlertLine.jsx'];
 const FLAGS = 'src/lib/featureFlags.js';
-// The sowing freeze by the one binding that carries it. Not the module it lives in: featureFlags.js holds other
-// flags, and taking one of those is not reading the freeze.
-const SOW_FREEZE = /SOW_DATED_LINES_FROZEN/;
+// The sowing freeze by the two names that carry it: the constant, and `sowLines`, the prop it travels under
+// once the page has read it (TodayV2: `sowLines: !SOW_DATED_LINES_FROZEN`). Not the module it lives in:
+// featureFlags.js holds other flags, and taking one of those is not reading the freeze.
+const SOW_FREEZE = /SOW_DATED_LINES_FROZEN|\bsowLines\b/;
+// handler.js is not a frost module and says `sowLines` for its own reasons, so it is never matched whole:
+// only frostForSpace's body is, below.
 // ...except a whole-module handle on featureFlags.js (namespace import, default import, bare require), which
 // would let the freeze be read under any spelling. A named import list is checked by SOW_FREEZE itself.
 const FLAGS_WHOLE = /import\s+(?:\*\s+as\s+)?[A-Za-z_$][\w$]*\s*(?:,\s*\{[^}]*\}\s*)?from\s*['"][^'"]*featureFlags(?:\.js)?['"]|=\s*(?:await\s+)?(?:require|import)\(\s*['"][^'"]*featureFlags(?:\.js)?['"]\s*\)(?!\s*\.)/;
@@ -149,6 +152,19 @@ const frostForSpaceBody = () => {
   const from = HANDLER.indexOf('function frostForSpace(');
   const to = HANDLER.indexOf('\n}\n', from);
   return from < 0 || to < 0 ? null : HANDLER.slice(from, to);
+};
+// Every `return` that exits the function itself, at any depth and however it is laid out: one inside an arrow
+// callback's braces (the dormant filter, cadenceTenderFor) returns from the callback and is not counted.
+const ownReturns = (body) => {
+  const open = [];
+  let n = 0;
+  const re = /=>\s*\{|[{}]|\breturn\b/g;
+  for (let m = re.exec(body); m; m = re.exec(body)) {
+    if (m[0] === '}') open.pop();
+    else if (m[0] === 'return') { if (!open.includes(true)) n += 1; }
+    else open.push(m[0] !== '{');
+  }
+  return n;
 };
 
 // Relative imports only: a bare specifier (react) cannot carry an app flag.
@@ -191,6 +207,12 @@ describe('BUG-FROSTALERTNOAPP-001 — no frost module reads the sowing freeze or
     expect(reached.size).toBeGreaterThan(CLIENT_FROST.length);      // the walk does follow imports (constants.js)
     // featureFlags.js itself may be reached (for another flag) and is where the constant is DEFINED.
     for (const rel of reached) if (rel !== FLAGS) expect(code(rel), rel).not.toMatch(SOW_FREEZE);
+    // ...and defines it ONCE. A second export built from the constant would carry the freeze out under a name
+    // nothing above looks for.
+    const named = code(FLAGS).split('\n').filter((l) => /SOW_DATED_LINES_FROZEN/.test(l));
+    expect(named).toHaveLength(1);
+    expect(named[0]).toMatch(/^export const SOW_DATED_LINES_FROZEN\s*=[^=]*$/);
+    expect(named[0].match(/SOW_DATED_LINES_FROZEN/g)).toHaveLength(1);
   });
 
   it('the Lambda\'s frost modules read FROST_* env names and nothing else', () => {
@@ -216,5 +238,7 @@ describe('BUG-FROSTALERTNOAPP-001 — no frost module reads the sowing freeze or
     const exits = body.split('\n').filter((l) => /^ {2}(if\b.*)?\breturn\b/.test(l));
     expect(exits).toHaveLength(1);
     expect(exits[0]).toMatch(/^ {2}return\b.*\bdecision\b/);
+    // ...and that one is the only way out: a braced or nested early return is a `return` of the function's too.
+    expect(ownReturns(body)).toBe(1);
   });
 });
