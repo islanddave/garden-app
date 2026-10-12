@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.185.2",
+    "date": "2026-10-12",
+    "highlights": [
+      "Behind the scenes: the test run before each release now runs in parallel, so releases reach you about 40 minutes sooner"
+    ]
+  },
+  {
     "version": "4.185.1",
     "date": "2026-10-12",
     "highlights": [
