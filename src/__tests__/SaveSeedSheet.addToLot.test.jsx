@@ -1095,6 +1095,47 @@ describe('after the tap: no answer (rows 14-19, 21, 23)', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
     expect(onSeedAdded.mock.calls.map((c) => c[1].closed)).toEqual([false])
   })
+
+  // A development build mounts every component twice (React.StrictMode): mount, unmount, mount. "Is the
+  // sheet still there" is a ref the unmount clears, so the mount has to set it too, or every open sheet
+  // reads as closed there: the host would be told `closed` and the sheet would stay up.
+  it('under React.StrictMode an add that lands with the sheet still open is an open sheet: the host is told so and the sheet closes', async () => {
+    net.add = [additionReply({ name: OWN.name })]
+    render(
+      <React.StrictMode>
+        <SaveSeedSheet planting={MEMBER} ownLots={[OWN]} onClose={onClose} onSeedAdded={onSeedAdded} />
+      </React.StrictMode>,
+    )
+    await tap('save-seed-put-in-lot')
+    await tap('save-seed-submit')
+    await waitFor(() => expect(onSeedAdded).toHaveBeenCalledTimes(1))
+    expect(onSeedAdded.mock.calls.map((c) => c[1].closed)).toEqual([false])
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  // The add landed after the close and its timeline entry then failed. What the form does today, pinned
+  // so that it is known: the toast it shows for that half-miss with the sheet open, the host told once
+  // that the sheet is closed, nothing closed twice, nothing navigated, the entry not tried again.
+  it('closed while "Adding…" stands, the add then lands and its timeline entry fails: the half-miss is said, the host hears it closed once, nothing is sent again', async () => {
+    const first = defer()
+    net.add = [() => first.promise]
+    net.event = [httpErr(500, { error: 'boom' })]
+    mountHosted()
+    await tap('save-seed-put-in-lot')
+    await tap('save-seed-submit')
+    expect(submitBtn().textContent).toBe('Adding…')
+    await closeUnsure()
+    expect(counts()).toEqual({ add: 1, event: 0, open: 0 })
+    await act(async () => { first.resolve(additionReply({ name: OWN.name })) })
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledTimes(1))
+    expect(toastSpy).toHaveBeenCalledWith({ message: `Added to ${OWN.name}. The timeline entry didn't save.`, tone: 'error' })
+    expect(onSeedAdded).toHaveBeenCalledTimes(1)
+    expect(onSeedAdded.mock.calls[0][1].closed).toBe(true)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(navigateSpy).not.toHaveBeenCalled()
+    expect(screen.getByTestId('host-page')).toBeTruthy()
+    expect(counts()).toEqual({ add: 1, event: 1, open: 0 })
+  })
 })
 
 describe('the key (row 20)', () => {
