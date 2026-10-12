@@ -12,12 +12,12 @@
 //   2. STATIC-SOURCE — that index.js actually performs that composition and threads both values into
 //      BOTH write predicates, that DELETE is still a soft delete, and that nothing else widened.
 //
-// WHY NO HANDLER-LEVEL TEST: no lambda test in this repo imports a handler. The Lambda runtime deps
-// (@neondatabase/serverless, @clerk/backend, @aws-sdk/client-secrets-manager) are declared in each
-// lambda's own package.json and are NOT installed at the repo root, so `import './index.js'` fails at
-// Vite transform time — before vi.mock can intercept. Fixing that means installing runtime deps at
-// the root or adding vitest resolve aliases, both of which change the whole repo's test infra and are
-// out of scope for this change. Layer 2 covers the wiring instead.
+// WHY NO HANDLER-LEVEL TEST IN THIS FILE: when it was written no lambda test imported a handler, so
+// Layer 2 covers the wiring by reading source. That is no longer true of this directory: several
+// files here now `await import('./index.js')` with the runtime deps mocked (can-edit-route,
+// source-routes, facts-edit, blend-route among them), and can-edit-route.test.js runs the handler's
+// GET, PUT and DELETE over the same rows this file reasons about. Layer 2 stays because it pins
+// things a driven handler does not show: ordering, the cast, the count of scoped predicates.
 //
 // SQL SEMANTICS ARE NOT RE-IMPLEMENTED HERE — they were verified read-only against live prod
 // 2026-08-07, for the live 2-id household:
@@ -516,10 +516,19 @@ describe('varieties write predicates — source-level invariants', () => {
     expect(insStmt).not.toMatch(/\$\{household\}|\$\{managedPatterns\}/);
   });
 
+  // Anchored on CODE: SRC is decommented, so an anchor on a comment finds nothing and the block it
+  // slices is empty (this test was vacuous that way). The list is the last GET in the handler, after
+  // the :id route's 405 and before the create POST; the by-id GET is pinned in the describe below.
   it('the GET read paths are untouched (still global, no scope predicate)', () => {
-    const listIdx = SRC.indexOf('// List + search');
-    const listBlock = SRC.slice(listIdx, SRC.lastIndexOf("if (method === 'POST')"));
-    expect(listBlock).not.toMatch(/household|managedPatterns/);
+    const listIdx = SRC.lastIndexOf("if (method === 'GET')");
+    const postIdx = SRC.lastIndexOf("if (method === 'POST')");
+    expect(listIdx, 'expected the list GET after the :id route').toBeGreaterThan(SRC.indexOf('return resp(405', delIdx));
+    expect(postIdx).toBeGreaterThan(listIdx);
+    const listBlock = SRC.slice(listIdx, postIdx);
+    // Both branches (searched and unsearched) read every live cultivar and nothing narrower.
+    expect(listBlock.match(/FROM public\.cultivar\s*\n\s*WHERE deleted_at IS NULL/g)).toHaveLength(2);
+    expect(listBlock).not.toMatch(/household|managedPatterns|userId/);
+    expect(listBlock).not.toMatch(/created_by\s*(?:=|<>|!=|LIKE|IN|IS)\s/);
   });
 
   // Exactly three scoped predicates carry the arm. A fourth means something else widened.
