@@ -110,7 +110,7 @@ const S_SECOND = { id: 'pl-second', name: 'Jimmy row', quantity: 1, variety_id: 
 const S_MIX = { id: 'v-mix', name: 'Ace + Jimmy Nardello mix' }
 const sLot = (name, varietyId, plantIds) => ({
   url: '/api/inventory-items', method: 'POST',
-  body: { name, category: 'seeds', type: 'consumable', unit: 'packet', quantity_on_hand: 1, variety_id: varietyId, source_plant_id: plantIds[0], source_plant_ids: plantIds },
+  body: { name, category: 'seeds', type: 'consumable', unit: 'packet', quantity_on_hand: 1, variety_id: varietyId, source_plant_id: plantIds[0], source_plant_ids: plantIds, idempotency_key: 'KEY' },
 })
 const sEvent = (plantId, name, stage = '') => ({
   url: '/api/events', method: 'POST',
@@ -158,7 +158,9 @@ const sameInputSteps = (open, save) => ({
     await save()
   },
 })
-// The replies both files give those requests, and the list of what was sent, with today's date masked.
+// The replies both files give those requests, and the list of what was sent, with today's date masked
+// and the create's key too (BUG-NEWLOTNOIDEMPOTENCYKEY-001): a key that is a uuid reads KEY, and a body
+// with none, or with anything else in its place, is listed as it was sent and fails the comparison.
 const sameInputReply = (url, opts = {}) => {
   const u = String(url)
   if (opts.method === 'POST' && u === '/api/varieties/blend') return S_MIX
@@ -170,6 +172,8 @@ const sameInputSent = (spy) => spy.mock.calls
   .filter(([, o]) => o?.method)
   .map(([url, o]) => ({ url: String(url), method: o.method, body: JSON.parse(o.body) }))
   .map((r) => (r.url === '/api/events' ? { ...r, body: { ...r.body, event_date: 'TODAY' } } : r))
+  .map((r) => (r.url === '/api/inventory-items' && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(r.body.idempotency_key)
+    ? { ...r, body: { ...r.body, idempotency_key: 'KEY' } } : r))
 // SAME-INPUTS-END
 
 const onClose = vi.fn()

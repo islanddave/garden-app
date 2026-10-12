@@ -145,6 +145,16 @@
 // lot list or, when the plant has exactly one lot that can still take seed, the add form on that lot;
 // both are AddToLot.jsx, drawn in this sheet in the form's place. FLAG OFF: no link, no list, no form,
 // no request to either new route, and every Save seed body equal to the flag-on one.
+//
+// BUG-NEWLOTNOIDEMPOTENCYKEY-001 — THE CREATE CARRIES A KEY, ONE PER DRAFT. Request 1 had none, so a
+// create whose answer was lost and was saved again, or a draft closed mid-save, typed again and saved
+// before the first landed, was two lots. It now sends `idempotency_key` (seedLotKey.js says which saves
+// share one and when a key is let go): the same draft sends the same key, from this sheet or from one
+// opened again, and both flags send it. THE KEY IS HALF OF THE FIX. The route does not read it yet:
+// inventory_items has no column to keep it in, and until it has one two requests are still two lots.
+// When the route answers a second request with the first one's lot, both saves hold that lot and it is
+// finished once (requests 2 to 4 and the toast, by the save that heard of it first); the other save
+// writes nothing and, if its sheet is open, ends where the first one led.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 // V5-SEEDSOURCEPICKER-001 — Field and SourcePicker are InventoryAdd's own two imports for this
@@ -165,6 +175,7 @@ import { seedsHref } from '../../lib/seedsRoutes.js'
 import { SEED_MULTI_PARENT } from '../../lib/featureFlags.js'
 import { sourcePlantFromPlanting, parentSetFacts, lotNotice, previewMixName } from '../seed/seedParents.js'
 import { addToLotAvailable, isOpenLot, lotFactsLine, UNSURE_CLOSE } from '../seed/seedAdditions.js'
+import { sheetOpened, keyForDraft } from '../seed/seedLotKey.js'
 import AddToLot from './AddToLot.jsx'
 
 
@@ -658,6 +669,9 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
   // on unmount, so a development build's second mount does not leave it false for a sheet that is open.
   const aliveRef = useRef(true)
   useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false } }, [])
+  // This sheet's place among the openings and late endings seedLotKey.js keeps count of: a save that
+  // finished after its sheet was closed shares its key with a sheet opened before that, not after.
+  const [openedAt] = useState(sheetOpened)
 
   // The plantings this save is FOR: the prop when the caller knew it, then whatever the user picks
   // below, in pick order. `rows` is the whole parent set and every downstream read goes through it,
@@ -860,6 +874,9 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
     let lot = null
     let lotLanded = false
     let atMix = false
+    // This draft's key (seedLotKey.js). Out here so the `finally` can say the save is over however it
+    // ended: a save of the same draft that is waiting on this one must never be left waiting.
+    let intent = null
     try {
       // V5-SEEDMULTIPARENT-001 — STEP 0, and only for a mix: find or make the variety this jar is
       // filed under. One request, sent at the moment a wait is expected. The route is idempotent
@@ -884,7 +901,7 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
       // ONE array feeds both parent keys, so the legacy source_plant_id can never name a planting
       // that is not in source_plant_ids (the route refuses that pair).
       const parentIds = rows.map((r) => r.id)
-      const createLot = () => fetch('/api/inventory-items', {
+      const lotRequest = (key) => ({
         method: 'POST',
         body: JSON.stringify({
           name: lotName,
@@ -934,8 +951,16 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
           // guard cannot be tested — neutralise either half and the suite stays green.
           ...(!parent && sourceId ? { source_id: sourceId } : {}),
           ...(!parent && acquiredFromId ? { acquired_from_source_id: acquiredFromId } : {}),
+          // BUG-NEWLOTNOIDEMPOTENCYKEY-001 — last, and absent from the body the key is found by.
+          ...(key ? { idempotency_key: key } : {}),
         }),
       })
+      // BUG-NEWLOTNOIDEMPOTENCYKEY-001 — the draft is everything this save sends: the body above, the
+      // measures and the process. The day on the timeline entries is the clock's and not his, so it is
+      // not in it. Both sends below (the first, and the one after a parents_changed) carry the one key.
+      const measure = seedMeasurePayload(count, weight, countEstimated, plantsTyped)
+      intent = keyForDraft([lotRequest(null).body, measure, seedProcess], openedAt)
+      const createLot = () => fetch('/api/inventory-items', lotRequest(intent.key))
       // V5-SEEDMULTIPARENT-001 — 409 parents_changed means a named planting stopped being usable
       // between the route's check and its write, and nothing was written. The server's sentence for
       // it says "Reload and try again", which here would throw away everything typed; the app can do
@@ -947,6 +972,13 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
         lot = await createLot()
       }
       lotLanded = true
+      // BUG-NEWLOTNOIDEMPOTENCYKEY-001 — ANOTHER SAVE OF THIS DRAFT MAY HOLD THIS LOT ALREADY (the
+      // answer to a second request under one key is the first one's lot). The save that heard of the
+      // lot first finishes it; this one then waits for that ending and sends nothing below: no
+      // measure, no stage, no timeline entry, no toast (each is guarded on `twin`). Two answers that
+      // name two lots are two lots, and each save finishes its own as it always did.
+      const twin = intent.otherSaveOf(lot?.id)
+      const first = twin ? await twin : null
       // V5-SEEDQTY-001 — the count, as its own request on its own route. Same shape of decision as
       // the stage below: a second write that the lot's existence does not depend on, so it carries
       // its own failure rather than failing the save. The lot is what the user asked for and it
@@ -960,9 +992,8 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
       // that predates the column: the seed count and the weight landed and the plant count did not.
       let measureFailed = false
       let plantCountFailed = false
-      const measure = seedMeasurePayload(count, weight, countEstimated, plantsTyped)
       const has = (k) => !!measure && Object.prototype.hasOwnProperty.call(measure, k)
-      if (measure && lot?.id) {
+      if (measure && lot?.id && !twin) {
         try {
           const echo = await fetch(`/api/inventory-items/${lot.id}/seed-measure`, {
             method: 'PUT',
@@ -978,9 +1009,10 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
       }
       let stageFailed = false
       // Set only AFTER the stage POST resolves, which is what makes it safe to put in the event's
-      // note: it records the stage that LANDED, not the one that was asked for.
-      let stageWritten = null
-      if (seedProcess && lot?.id) {
+      // note: it records the stage that LANDED, not the one that was asked for. For a save that is
+      // not the one finishing its lot, it is the stage the save that did finish it landed.
+      let stageWritten = first?.stageWritten ?? null
+      if (seedProcess && lot?.id && !twin) {
         try {
           await fetch(`/api/inventory-items/${lot.id}/seed-stage`, {
             method: 'POST',
@@ -1018,7 +1050,7 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
       // hangs every further row would hold "Saving…" another 15 s (three minutes at twelve
       // plantings) before the toast and the way out. The plants after it get no entry; each one's
       // page lists the jar either way. Any other failure is over at once, so the rest still go.
-      for (const row of rows) {
+      for (const row of twin ? [] : rows) {
         try {
           await fetch('/api/events', {
             method: 'POST',
@@ -1064,14 +1096,20 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
         (measureFailed || plantCountFailed) && measureNoun,
         stageFailed && 'start tracking it',
       ].filter(Boolean)
-      toast.show(missed.length
+      if (!twin) toast.show(missed.length
         ? { message: `Seed lot saved — couldn't ${missed.join(' or ')}`, tone: 'error' }
         : { message: 'Seed lot saved', tone: 'success' })
+      // BUG-NEWLOTNOIDEMPOTENCYKEY-001 — the save is over and has said so. An open sheet saw it, and
+      // that ends the draft's key; a closed one did not (seedLotKey.js, "when a key is let go").
+      intent.ended({ stageWritten }, aliveRef.current)
       // He may have closed the sheet while this was out (Dave 2026-10-12, on the add form: say it
       // worked and leave him where he is). What is said above is true either way. Whether the sheet is
       // still there is read NOW, not when he tapped: a closed sheet is not closed again and goes
       // nowhere, and the host is told so it can read again what it shows.
       if (!aliveRef.current) {
+        // The save that finished this lot has said it and told the host; a second word would be about
+        // nothing new.
+        if (twin) return
         if (onSaved) onSaved(lot, { stageWritten, closed: true })
         else if (onSavedAfterClose) onSavedAfterClose(lot, { stageWritten })
         return
@@ -1124,6 +1162,8 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
         : lotLanded ? SAVED_BUT_UNFINISHED
         : saveRefusalSentence(err, { atMix, plants: sourcePlants }))
     } finally {
+      // A no-op after the ending above. Reached first only by a save that stopped short of it.
+      intent?.ended(null, false)
       setBusy(false)
     }
   }

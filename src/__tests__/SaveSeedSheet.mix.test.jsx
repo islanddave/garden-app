@@ -133,6 +133,14 @@ const calls = (path, method = 'POST') => apiFetchSpy.mock.calls
 const bodyOf = (call) => JSON.parse(call[1].body)
 const blendCalls = () => calls('/api/varieties/blend')
 const lotCalls = () => calls('/api/inventory-items')
+// BUG-NEWLOTNOIDEMPOTENCYKEY-001 — the create's body now ends with its key, a uuid. Taken off here so the
+// rest is still compared as a STRING, key order included; a body with no key, or with the key anywhere
+// but last, fails here.
+const lessKey = (text) => {
+  const m = /^(.*),"idempotency_key":"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"\}$/.exec(text)
+  expect(m, 'the create body ends with an idempotency_key that is a uuid').toBeTruthy()
+  return `${m[1]}}`
+}
 const eventCalls = () => calls('/api/events')
 
 /** A + B: two varieties, so a mix. */
@@ -162,8 +170,8 @@ describe('the mix is step 0 of Save', () => {
       create: true,
     }))
     // Every key, in order: the pre-release body with the filed variety swapped for the mix and the
-    // whole set beside the legacy key.
-    expect(lotCalls()[0][1].body).toBe(JSON.stringify({
+    // whole set beside the legacy key. Then the create's own key (lessKey).
+    expect(lessKey(lotCalls()[0][1].body)).toBe(JSON.stringify({
       name: `${blendReply().name} — saved ${YEAR}`,
       category: 'seeds',
       type: 'consumable',

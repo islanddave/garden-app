@@ -113,6 +113,14 @@ const submit = () => fireEvent.click(screen.getByTestId('save-seed-submit'))
 const callsTo = (path, method) => apiFetchSpy.mock.calls
   .filter(([p, o]) => String(p) === path && (!method || o?.method === method))
 const lotBody = () => JSON.parse(callsTo('/api/inventory-items', 'POST')[0][1].body)
+// BUG-NEWLOTNOIDEMPOTENCYKEY-001 — the create's body now ends with its key, a uuid. Taken off here so the
+// rest is still compared as a STRING, key order included; a body with no key, or with the key anywhere
+// but last, fails here.
+const lessKey = (text) => {
+  const m = /^(.*),"idempotency_key":"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"\}$/.exec(text)
+  expect(m, 'the create body ends with an idempotency_key that is a uuid').toBeTruthy()
+  return `${m[1]}}`
+}
 
 beforeEach(() => {
   flags.multi = true
@@ -663,7 +671,8 @@ describe('the plant count: asked only when the rows do not already answer it', (
 // ── FLAG OFF ────────────────────────────────────────────────────────────────────────────────────
 // SEED_MULTI_PARENT is this release's forward undo, so OFF has to be the sheet that shipped before it:
 // nothing added to the screen and every request body byte-equal. The bodies below are compared as
-// STRINGS (key order included), against literals typed from the pre-release save().
+// STRINGS (key order included), against literals typed from the pre-release save(). The create has
+// since gained one key at its end, sent with the flag on or off (lessKey).
 describe('SEED_MULTI_PARENT off — the sheet renders and sends exactly what it did', () => {
   const PL = {
     id: 'pl1', project_id: 'proj1', name: 'Brandywine #2', status: 'fruiting', quantity: 4,
@@ -687,7 +696,7 @@ describe('SEED_MULTI_PARENT off — the sheet renders and sends exactly what it 
       .toBe('Open-pollinated — its seed comes true, as long as it did not cross with something flowering nearby.')
   })
 
-  it('the lot POST body is byte-equal to the pre-release body: no source_plant_ids', async () => {
+  it('the lot POST body is byte-equal to the pre-release body, then its key: no source_plant_ids', async () => {
     mount(PL)
     submit()
     await waitFor(() => expect(toastSpy).toHaveBeenCalled())
@@ -695,7 +704,7 @@ describe('SEED_MULTI_PARENT off — the sheet renders and sends exactly what it 
     const [path, opts] = apiFetchSpy.mock.calls[0]
     expect(path).toBe('/api/inventory-items')
     expect(opts.method).toBe('POST')
-    expect(opts.body).toBe(JSON.stringify({
+    expect(lessKey(opts.body)).toBe(JSON.stringify({
       name: `Brandywine — saved ${YEAR}`,
       category: 'seeds',
       type: 'consumable',
@@ -779,7 +788,7 @@ describe('SEED_MULTI_PARENT off — the sheet renders and sends exactly what it 
     fireEvent.click(screen.getByTestId('stub-pick-variety'))
     submit()
     await waitFor(() => expect(toastSpy).toHaveBeenCalled())
-    expect(apiFetchSpy.mock.calls[0][1].body).toBe(JSON.stringify({
+    expect(lessKey(apiFetchSpy.mock.calls[0][1].body)).toBe(JSON.stringify({
       name: `Saved seed ${YEAR}`,
       category: 'seeds',
       type: 'consumable',
