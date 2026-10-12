@@ -26,7 +26,9 @@
 #        "1 archived planting was sown from it" sentence, and the packet still reads back 200
 #        (F3c, BUG-INVREFSTRAND-001: archived plantings still block a delete); then the planting
 #        deleted → the packet's DELETE answers 200 {"ok":true} and the packet reads back 404
-#        (F3d, the allowed half of the same DELETE)
+#        (F3d, the allowed half of the same DELETE); then POST /api/plants/:id/restore on that planting
+#        → 200 naming the packet in restored_packet_id, and the packet reads back 200 again
+#        (F3e, BUG-PLANTRESTORESTRAND-001: the restore brings its deleted packet back); both deleted again
 #     G) favorites toggle → assert favorited on, then off
 #     U) (right after G; needs block D's variety and planting) seed lots and their parent plantings
 #        (V5-SEEDMULTIPARENT-001). First what every shipped client already sends, on a lot of its own: a create
@@ -1262,6 +1264,9 @@ else
                   # is confirmed, so the trap does not repeat it; one that was not confirmed is left for the
                   # trap, and the L-058 sweep hard-deletes both rows either way.
                   CLERK_JWT=$(mint_session_token)
+                  # F3e's copies: each id below is cleared once its own DELETE is confirmed.
+                  RESTORE_PLANT_ID="$CREATED_SOWN_PLANT_ID"
+                  RESTORE_PKT_ID="$CREATED_SEEDPKT_ID"
                   UNSOW_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
                     -X DELETE -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
                     -o /dev/null -w "%{http_code}" \
@@ -1283,6 +1288,60 @@ else
                   if [[ "$UNSOW_HTTP" == "200" && "$PKTDEL_HTTP" == "200" && "$PKTDEL_OK" == "yes" && "$GONE_HTTP" == "404" ]]; then
                     echo "✅ PASS [write:inventory-delete-allowed-once-unsown] planting DELETE 200; packet DELETE 200 {\"ok\":true}; the packet then reads back 404"
                     PASS=$((PASS+1))
+                    # ── F3e) Plant restore, write → read-back on the deployed stack (BUG-PLANTRESTORESTRAND-001,
+                    # pre-promote review RIA-I2, L-108). F3d just left the pair the bug needs: the planting deleted,
+                    # then its packet deleted (read back 404). POST /api/plants/:id/restore must answer 200 and name
+                    # the packet in restored_packet_id, and the packet must read back 200 with its own id: the
+                    # restore's second write, to inventory_items, is the one only this read-back shows. Runs only
+                    # after F3d passed, so a 200 here means "came back", never "was never deleted". Both ids are
+                    # put back the moment the POST returns, whatever it answered, so the trap still deletes the
+                    # pair (planting first) if this block stops early; the two DELETEs at its end are F3d's own,
+                    # and clear each id once confirmed. The L-058 sweep hard-deletes both rows either way.
+                    CLERK_JWT=$(mint_session_token)
+                    RST_BODY=$(mktemp)
+                    RST_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
+                      -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+                      -o "$RST_BODY" -w "%{http_code}" \
+                      "${STAGING_API_PLANTS%/}/api/plants/${RESTORE_PLANT_ID}/restore") || RST_HTTP="000"
+                    CREATED_SOWN_PLANT_ID="$RESTORE_PLANT_ID"
+                    CREATED_SEEDPKT_ID="$RESTORE_PKT_ID"
+                    RST_PKT=$(jq -r '.restored_packet_id // empty' "$RST_BODY" 2>/dev/null || echo "")
+                    RST_SNIP=$(head -c 200 "$RST_BODY" 2>/dev/null || echo "")
+                    rm -f "$RST_BODY"
+                    if [[ "$RST_HTTP" == "200" && "$RST_PKT" == "$RESTORE_PKT_ID" ]]; then
+                      echo "✅ PASS [write:plant-restore-names-its-packet] POST /plants/:id/restore HTTP 200, restored_packet_id is packet $RESTORE_PKT_ID"
+                      PASS=$((PASS+1))
+                      BACK_BODY=$(mktemp)
+                      BACK_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
+                        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+                        -o "$BACK_BODY" -w "%{http_code}" \
+                        "${STAGING_API_INVENTORY%/}/api/inventory-items/${RESTORE_PKT_ID}") || BACK_HTTP="000"
+                      BACK_ID=$(jq -r '.id // empty' "$BACK_BODY" 2>/dev/null || echo "")
+                      BACK_SNIP=$(head -c 200 "$BACK_BODY" 2>/dev/null || echo "")
+                      rm -f "$BACK_BODY"
+                      if [[ "$BACK_HTTP" == "200" && "$BACK_ID" == "$RESTORE_PKT_ID" ]]; then
+                        echo "✅ PASS [write:plant-restore-packet-readback] the packet reads back 200 with its own id after the planting's restore (it read 404 before)"
+                        PASS=$((PASS+1))
+                      else
+                        echo "❌ FAIL [write:plant-restore-packet-readback] the packet's GET after the planting's restore HTTP $BACK_HTTP, id '$BACK_ID' (expected 200 and '$RESTORE_PKT_ID')"
+                        echo "   Body: $BACK_SNIP"
+                        FAIL=$((FAIL+1))
+                      fi
+                    else
+                      echo "❌ FAIL [write:plant-restore-names-its-packet] POST /plants/$RESTORE_PLANT_ID/restore HTTP $RST_HTTP, restored_packet_id '$RST_PKT' (expected 200 and '$RESTORE_PKT_ID')"
+                      echo "   Body: $RST_SNIP"
+                      FAIL=$((FAIL+1))
+                    fi
+                    REUNSOW_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+                      -X DELETE -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+                      -o /dev/null -w "%{http_code}" \
+                      "${STAGING_API_PLANTS%/}/api/plants/${RESTORE_PLANT_ID}") || REUNSOW_HTTP="000"
+                    if [[ "$REUNSOW_HTTP" == "200" ]]; then CREATED_SOWN_PLANT_ID=""; fi
+                    REPKTDEL_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+                      -X DELETE -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+                      -o /dev/null -w "%{http_code}" \
+                      "${STAGING_API_INVENTORY%/}/api/inventory-items/${RESTORE_PKT_ID}") || REPKTDEL_HTTP="000"
+                    if [[ "$REPKTDEL_HTTP" == "200" ]]; then CREATED_SEEDPKT_ID=""; fi
                   else
                     echo "❌ FAIL [write:inventory-delete-allowed-once-unsown] planting DELETE HTTP $UNSOW_HTTP (expected 200); packet DELETE HTTP $PKTDEL_HTTP body '$PKTDEL_SNIP' (expected 200 {\"ok\":true}); the packet's GET afterwards HTTP $GONE_HTTP (expected 404)"
                     FAIL=$((FAIL+1))
