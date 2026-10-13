@@ -28,13 +28,19 @@
 #   migration in the tree. Every reference is a string compared against pg_class.relname,
 #   pg_attribute.attname or information_schema. So nothing here has to move before a rollback.
 #
-# ── THE CHECK BODIES ARE NOT PINNED AS TEXT, AND THAT IS A GAP ───────────────────────────────────
-#   The sibling directories compare pg_get_constraintdef with the exact text Postgres prints, which
-#   their lanes read off a real server. This lane had none. post_three_checks_validated_and_no_others
-#   pins each CHECK by name, by `convalidated`, and by the exact set of COLUMNS it reads (conkey), and
-#   forbids a fourth. It would not notice a bound that was moved (150 to 1500) or an inequality that
-#   was turned round. Whoever rehearses this on staging should read the three printed definitions
-#   and add them to that gate, in the form v5-seedlotaddition-001 uses.
+# ── THE CHECK BODIES ARE PINNED AS TEXT ──────────────────────────────────────────────────────────
+#   post_three_checks_validated_and_no_others compares pg_get_constraintdef with the exact text
+#   PostgreSQL prints, in the form v5-seedlotaddition-001 uses, and forbids a fourth CHECK. The
+#   three strings were read off the local rehearsal's server (PostgreSQL 17.10, 2026-10-13). Before
+#   that the gate matched each CHECK by the columns it reads, and the rehearsal put a moved bound
+#   (leads_read >= 0; 150 to 1500) and an inequality turned round (p10 >= p50) past it, 9 PASS each
+#   time. Each now reds this gate and no other.
+#   THE TEXT IS WHAT ONE MAJOR VERSION PRINTS. Prod and staging are PostgreSQL 17, the major the
+#   strings were read on, so no difference is expected; they do not depend on search_path (a CHECK
+#   prints no schema-qualified name; measured). The first `post` run of the staging apply is the
+#   confirmation on the real server: a difference would be this gate red, naming the constraint, not
+#   a silent pass. A major-version upgrade can change the printed text without the constraint having
+#   changed: re-read the three definitions then, as part of the upgrade.
 #
 # ── WHAT ELSE THESE GATES DO NOT COVER ───────────────────────────────────────────────────────────
 #   * NO ROW-LEVEL GATE. The CHECKs, the key and the foreign key ARE the row rules, and a gate that
@@ -47,8 +53,9 @@
 #     role exists yet, and whether one is created is not decided (README.md).
 #   * numeric(5,2) is not pinned, only `numeric`.
 #
-# NOT RUN ANYWHERE by the lane that wrote it. `gate_runner.py --validate-only` passes (structure
-# only); no gate here has been executed against PostgreSQL.
+# REHEARSED 2026-10-13 on a throwaway local PostgreSQL 17.10, through scripts/gate_runner.py
+# (rehearse_local.py; README.md "What was rehearsed, and where"): every gate here was seen green
+# where it should be and red on the defect written for it. Not run against staging or prod.
 
 pre:
   - name: pre_table_absent
@@ -264,31 +271,31 @@ post:
     value: 0
 
   # 0a C11. Two halves, one row per finding, naming the constraint:
-  #   (a) each of the three is on this table, VALIDATED, and reads exactly these columns. A bare name
-  #       match passes on a permanently NOT VALID constraint. THE BODY TEXT IS NOT COMPARED: see the
-  #       header. Add the printed definitions here after the staging rehearsal;
+  #   (a) each of the three is on this table, VALIDATED, and exactly this text: what
+  #       pg_get_constraintdef printed on the rehearsal's PostgreSQL 17.10 (see the header). A bare
+  #       name match passes on a permanently NOT VALID constraint, and a match on the columns read
+  #       passes on a moved bound or an inequality turned round. One line each: the fahrenheit one is
+  #       long because a SQL string cannot be wrapped without changing it;
   #   (b) the table carries no CHECK besides the three. A fourth is writer-coupled by construction
   #       (the one writer is a script on a Mac, built against three): add it on purpose, with this
   #       list, or not at all.
   - name: post_three_checks_validated_and_no_others
     sql: |
       SELECT want.conname
-        FROM (VALUES ('weather_cold_range_leads_chk',      ARRAY['leads_expected', 'leads_read']),
-                     ('weather_cold_range_p10_le_p50_chk', ARRAY['p10_min_f', 'p50_min_f']),
-                     ('weather_cold_range_fahrenheit_chk', ARRAY['p10_min_f', 'p50_min_f']))
-             AS want(conname, cols)
+        FROM (VALUES ('weather_cold_range_leads_chk',
+                      'CHECK (((leads_read >= 1) AND (leads_read <= leads_expected)))'),
+                     ('weather_cold_range_p10_le_p50_chk',
+                      'CHECK (((p50_min_f IS NULL) OR (p10_min_f <= p50_min_f)))'),
+                     ('weather_cold_range_fahrenheit_chk',
+                      'CHECK (((p10_min_f > (''-100''::integer)::numeric) AND (p10_min_f < (150)::numeric) AND ((p50_min_f IS NULL) OR (p50_min_f < (150)::numeric))))'))
+             AS want(conname, def)
        WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
          AND NOT EXISTS (SELECT 1 FROM pg_constraint c
                            JOIN pg_class t     ON t.oid = c.conrelid
                            JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
                           WHERE t.relname = 'weather_cold_range' AND c.contype = 'c'
                             AND c.conname = want.conname AND c.convalidated
-                            AND ARRAY(SELECT a.attname::text
-                                        FROM unnest(c.conkey) AS k(attnum)
-                                        JOIN pg_attribute a
-                                          ON a.attrelid = c.conrelid AND a.attnum = k.attnum
-                                       ORDER BY 1)
-                                = want.cols)
+                            AND pg_get_constraintdef(c.oid) = want.def)
       UNION ALL
       SELECT c.conname::text
         FROM pg_constraint c

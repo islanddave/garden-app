@@ -108,7 +108,9 @@
 --   the same name that is something else, so step 0 refuses one that this migration did not make.
 --   LOCKS. Creating the table locks nothing that exists. The foreign key takes a brief
 --   SHARE ROW EXCLUSIVE lock on public.spaces, held to COMMIT: a write to spaces (setting a featured
---   photo) waits for milliseconds, reads do not wait at all.
+--   photo) waits for milliseconds, reads do not wait at all. Measured in the local rehearsal: the
+--   lock is ShareRowExclusiveLock; a reader's open transaction on spaces does not hold this file
+--   up, a writer's does.
 --   lock_timeout: 5s turns a wait behind a long-open transaction into a fast failure that changed
 --   nothing. Run it again.
 --   Exactly ONE COMMIT, at the end. Do not wrap this file in BEGIN/ROLLBACK to "rehearse" it on a
@@ -124,7 +126,8 @@
 --
 -- ROLLBACK: 0r-rollback.sql. It refuses while any row exists.
 --
--- NOT RUN ANYWHERE by the lane that wrote it. No statement in this file has met PostgreSQL.
+-- REHEARSED 2026-10-13 on a throwaway local PostgreSQL 17.10 (rehearse_local.py; README.md "What was
+--   rehearsed, and where"). Not applied to staging or prod.
 --
 -- Usage: psql "$NEON_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f 0a-additive-ddl.sql
 

@@ -34,11 +34,14 @@
 --   instead of disappearing with it.
 --
 -- LOCKS: dropping the table takes ACCESS EXCLUSIVE on it and, to take its foreign key's triggers off
---   public.spaces, a brief lock on spaces as well. This lane believes that one is ACCESS EXCLUSIVE too,
---   so reads of spaces (the daily plan's) would wait behind it for the milliseconds to COMMIT. From
---   memory of how Postgres drops a key, not checked against a server; the rehearsal will show it.
+--   public.spaces, ACCESS EXCLUSIVE on spaces as well, held to COMMIT. Measured in the local rehearsal
+--   (PostgreSQL 17.10). So reads of spaces (the daily plan's) wait behind this file for the
+--   milliseconds to COMMIT, and this file waits behind ANY open transaction that has touched spaces,
+--   a reader's included: after 5s it fails on lock_timeout (55P03) having dropped nothing. Run it
+--   again.
 --
--- NOT RUN ANYWHERE by the lane that wrote it. No statement in this file has met PostgreSQL.
+-- REHEARSED 2026-10-13 on a throwaway local PostgreSQL 17.10 (rehearse_local.py; README.md "What was
+--   rehearsed, and where"). Not run on staging or prod.
 --
 -- Usage: psql "$NEON_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f 0r-rollback.sql
 

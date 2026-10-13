@@ -5,10 +5,10 @@ the forecast ensemble's temperature, one row per night per forecast run. It is w
 job on Dave's Mac and read by the daily-plan read for the Today card. Ledger `V5-WXCOLDBAND-001`. Nothing
 on any existing table changes. The decisions are in the header of `0a-additive-ddl.sql`.
 
-**Not applied anywhere by the lane that wrote it (2026-10-13). No SQL in this directory has been run
-against PostgreSQL**: the lane had no database. The files were parsed with the PostgreSQL grammar
-(libpg_query) for syntax, and `gates.yml` passes `gate_runner.py --validate-only`; that is all. Rehearse on
-staging before anything else. Applying to prod is a prod database change and needs Dave's first-hand OK.
+**Not applied to staging or prod.** Written 2026-10-13 by a lane with no database, then rehearsed the same
+day on a throwaway local PostgreSQL 17.10 (see "What was rehearsed, and where"). The staging apply is still
+the first time these files meet the real `spaces`. Applying to prod is a prod database change and needs
+Dave's first-hand OK.
 
 **This directory creates no role and makes no grant.** The writer's access is described under "The writer's
 access" and is a decision still to be taken.
@@ -17,7 +17,8 @@ access" and is a decision still to be taken.
 |---|---|
 | `0a-additive-ddl.sql` | The table (8 columns), `PRIMARY KEY (space_id, night_date, init_time)`, one CASCADE foreign key to `spaces(id)`, three CHECKs, stamp `5.0.0-wxcoldband-001`. One transaction. Refuses a relation of the same name that carries no stamp. Writes no rows. Idempotent. |
 | `0r-rollback.sql` | Drops the table and the stamp. Guarded: refuses while any row exists. |
-| `gates.yml` | 3 `pre`, 2 `sweep`, 9 standing `post`. Every `post` gate is catalog-only and self-armed on the stamp. The three CHECK bodies are pinned by name, validation and the columns they read, **not by text** (see "What was checked"). |
+| `gates.yml` | 3 `pre`, 2 `sweep`, 9 standing `post`. Every `post` gate is catalog-only and self-armed on the stamp. The three CHECK bodies are pinned by name, validation and the exact text PostgreSQL 17 prints for them. |
+| `rehearse_local.py` | The three files above on a throwaway local Postgres, re-runnable: the whole sequence, every line of the constraint table, the INSERT-only writer sketched below, what is locked on `spaces`, and a planted defect for every gate. `python3 migrations/v5-wxcoldband-001/rehearse_local.py`, about 40 s. Writes only to the cluster it creates. |
 
 One stamp. No `0b` and no `0c`: nothing is backfilled, and the three CHECKs ship armed with the table,
 because no deployed code names it and it is born empty.
@@ -110,8 +111,12 @@ What follows from "INSERT and nothing else", for the lane that builds the job:
 - **A re-run cannot correct a row.** The first row for a key stands. A correction is a different `init_time`
   or an operator.
 
-Those three are from this lane's memory of the PostgreSQL documentation, not from a server. The rehearsal
-is where they get proved.
+Those three were written from memory of the PostgreSQL documentation and then seen on the rehearsal's
+server (PostgreSQL 17.10), as a role holding that column-level INSERT and nothing else: the bare
+`ON CONFLICT DO NOTHING` insert is accepted and a re-run leaves the first row; the same insert with the key
+named in its conflict target, with `RETURNING`, or naming `created_at`, is "permission denied"; an unknown
+space is still 23503. That is PostgreSQL's privilege rule on a local cluster. It says nothing about how
+Neon makes a role or what PUBLIC holds on prod (the four checks below still stand).
 
 **Does the repo have a precedent for a restricted role?** Partly.
 
@@ -170,7 +175,8 @@ names it and it is empty.
 
 This directory by itself is safe in the tree before either database is applied. No gate here names the
 table or one of its columns as a SQL identifier, so every `post` gate is vacuous, not erroring, on a
-database without it. **By construction, not measured.**
+database without it. Measured on the rehearsal database with the DDL absent: `post` 9 of 9, and 9 of 9 under
+`--continuous-only`.
 
 ## Applying
 
@@ -206,8 +212,10 @@ at 08:00 compares table sets, so a table added between them could red that one r
 (v4.185.3 on dev makes the check compare with the backup's own table list; the scheduled run uses main's
 copy of the workflow, so keep the rule until that has been promoted.)
 
-While rehearsing on staging, put the three printed CHECK definitions into
-`post_three_checks_validated_and_no_others` (see "What was checked").
+The three CHECK definitions in `post_three_checks_validated_and_no_others` are the text PostgreSQL 17.10
+printed in the local rehearsal. Staging and prod are PostgreSQL 17, so the same text is expected; the first
+`post` run on staging is where that is confirmed on the real server. If it differs, that gate is red and
+names the constraint: read the definition off staging and correct the gate before prod.
 
 Any `pre` or `sweep` failure is a stop. After `0a` the `pre` phase reads 1 of 3 by design
 (`pre_table_absent` and `pre_not_already_applied` are `continuous: false` and false once applied) and the
@@ -220,6 +228,13 @@ Creating the table locks nothing that exists. Its foreign key takes a brief SHAR
 `spaces`, held to COMMIT: a write to `spaces` (setting a featured photo) waits for milliseconds; reads do not
 wait. `0a` sets `lock_timeout = '5s'`: behind a long-open transaction the file fails fast (psql exits 3,
 `55P03`) having changed nothing. Run it again.
+
+Measured in the rehearsal: `0a` holds `ShareRowExclusiveLock` on `spaces` and nothing stronger; it does not
+wait for a reader's open transaction on `spaces`; behind a writer's (the featured-photo UPDATE, left open)
+it exits 3 with 55P03 after 5.0 s, no table and no stamp. **`0r` is the heavier one:** dropping the table
+takes ACCESS EXCLUSIVE on `spaces` to COMMIT, so reads of `spaces` wait for those milliseconds, and `0r`
+itself waits behind any open transaction that has touched `spaces`, a reader's included (55P03 after 5.0 s,
+nothing dropped).
 
 ## Would the currently deployed code break on this?
 
@@ -262,6 +277,9 @@ in America/New_York. `leads_read` is the fewest steps any stored percentile was 
    delete them deliberately, run it again.
 4. **Nothing in the repo has to move first.** Every gate here is catalog-only and returns to vacuous with
    the stamp gone.
+5. **It takes ACCESS EXCLUSIVE on `spaces` until its COMMIT** (measured; see "What it locks"). Reads of
+   `spaces` wait for those milliseconds, and behind any open transaction on `spaces` the file fails after
+   5 s having dropped nothing. Run it again.
 
 ## Other surfaces this touches
 
@@ -286,20 +304,64 @@ in America/New_York. `leads_read` is the fewest steps any stored percentile was 
   the job simply never writes a partial night. They are kept so the read can refuse a partial row without
   trusting the job.
 
-## What was checked, and what was not
+## What was rehearsed, and where
 
-Checked, with no database:
+On a throwaway local PostgreSQL 17.10 (the sibling directories record prod and staging as 17.11), loopback
+only, on 2026-10-13, by `rehearse_local.py` in this directory, against a minimal schema: `schema_version`
+created by the repo's own statement (`v2-mvp-critter/0a-additive-ddl.sql`); `weather_daily` made by running
+`v4-weatherdaily-001/0a-additive-ddl.sql` whole, so the foreign key this table copies is in the starting
+state as the repo wrote it; and `spaces` cut down to four columns chosen for the rehearsal, because no
+migration in this repo creates that table. Gates were run through `scripts/gate_runner.py`. 105 checks, all
+holding, in 39 s.
 
-- `python3 scripts/gate_runner.py --all --env prod --validate-only` (the CI step) and
-  `scripts/test_gate_runner.py`: this `gates.yml` parses and meets the strict schema;
-- every statement in `0a`, `0r` and every gate parses under the PostgreSQL grammar (libpg_query through
-  `pglast`), the `DO` bodies as PL/pgSQL. Syntax only: no catalog, no types, no execution;
-- the catalog reads in the gates are the forms `v5-seedlotaddition-001` and `v5-recipes-001` run green on
-  prod, with names changed.
+- unapplied: `pre` 3/3, `sweep` 2/2, `post` 9/9 (vacuous, none erroring), and 9/9 for the
+  `--phase post --continuous-only` run `gate-invariants.yml` makes; `0a`; `post` 9/9; `pre` 1/3 and `sweep`
+  0/2, as "Applying" says; `0a` again leaves the schema dump, the stamp row (`applied_at` included) and every
+  row byte-equal;
+- the three CHECKs as that server prints them, which is the text the gate now pins:
+  `CHECK (((leads_read >= 1) AND (leads_read <= leads_expected)))`,
+  `CHECK (((p50_min_f IS NULL) OR (p10_min_f <= p50_min_f)))` and
+  `CHECK (((p10_min_f > ('-100'::integer)::numeric) AND (p10_min_f < (150)::numeric) AND ((p50_min_f IS NULL) OR (p50_min_f < (150)::numeric))))`;
+  the same text under an empty `search_path`, where only the foreign key's printed form changes;
+- `0r` leaving the schema dump (`spaces` included), `schema_version` and every row byte-equal to the state
+  before `0a`; `0r` again a no-op; `pre` 3/3, `0a`, `post` 9/9 again; `0r`, `0a` and `0a` again arriving
+  with an empty `search_path`, each exit 0;
+- every line of the table in "What the constraints do to a writer", against real rows: a complete row, a
+  later run for the same night, the same run at another space; a duplicate key, 23505
+  `weather_cold_range_pkey`, and with `ON CONFLICT DO NOTHING` no error and the first row standing; an
+  unknown space, 23503; **each of the three CHECKs refused by name** (p50 below p10; p10 in Kelvin, p10 of
+  exactly 150 and of exactly -100, p50 of exactly 150; `leads_read` of 0 and of 16 over 15), with the value
+  just inside each bound accepted; four NULLs, 23502; 1000, 22003;
+- deleting a space takes its forecast rows with it (and its `weather_daily` row, by that table's own key)
+  and leaves the other space's; the deployed featured-photo UPDATE of `spaces` is unaffected;
+- `0r` with seven rows: refused ("7 forecast row(s) exist in weather_cold_range, for nights 2026-10-13 to
+  2026-10-15"), nothing dropped; with the rows deleted, the table and the stamp go. With a view or a later
+  foreign key resting on the table: 2BP01, nothing changed. Where `0a` never ran: a no-op;
+- the writer of "The writer's access", made by hand on that cluster (a role with INSERT on the seven columns
+  and nothing else): 10 checks, summarised in that section; with row security enabled and no policy its
+  INSERT is refused while `post_no_trigger_and_no_row_security` reds;
+- what is locked on `spaces`, read from `pg_locks` inside each file's own transaction, and what waits: see
+  "What it locks, and for how long";
+- 6 starting states `0a` cannot apply to (a table or a view of the name already there; no `spaces`; `spaces`
+  with no primary key; `spaces.id` as text; the key's index name taken): `0a` stops each time with the schema
+  dump and `schema_version` as before, and a `pre` or `sweep` gate is red first. A CHECK of one of the three
+  names on another table reds `sweep_no_constraint_name_collisions`; Postgres allows it, so `0a` is not
+  stopped by it;
+- 36 single defects on an applied database, at least one per `post` gate (the stamp; six column shapes;
+  three extra columns, a model column among them; three defaults; five keys; a second unique index; seven
+  foreign keys; seven CHECK defects; a trigger and row security, enabled or forced), each turning exactly
+  the gate written for it red and no other; two controls green;
+- one mutated copy of `0a` per CHECK (`leads_read >= 0`; `p10_min_f >= p50_min_f`; `< 1500`): `post` reads
+  8/9 with `post_three_checks_validated_and_no_others` red, and the script exits 1.
 
-**Not rehearsed, anywhere:** `0a`, `0r`, any gate, every line of the constraint table above, the lock on
-`spaces`, the refusal paths, a second run being a no-op, the `post` gates being vacuous on an unapplied
-database, and the whole standing corpus before and after. **And one thing the sibling directories have that
-this one does not:** the exact text of each CHECK as Postgres prints it. `post_three_checks_validated_and_no_others`
-pins name, validation and columns; it would not notice a moved bound or a reversed inequality until the
-printed definitions are added to it.
+**Owed by the lane that wrote this, and done here:** the three CHECK bodies are pinned as printed text.
+Before the pin the gate matched each CHECK by the columns it reads, and the rehearsal's three wrong bodies
+(a bound moved on two, the inequality turned round on the third) each read 9/9. They now red that gate.
+The pin is the text of one major version; see "Applying" for where it is confirmed on staging.
+
+**A gap the gates state, measured and left:** `numeric(5,2)` is not pinned, only `numeric`. `p10_min_f`
+widened to `numeric(7,2)` reads 9/9.
+
+**Not rehearsed:** anything on staging or prod; the real `spaces` (its triggers, policies and other
+columns); how Neon makes a role and what PUBLIC holds; the Mac job and the read; `garden_ro`'s default ACL;
+the whole standing corpus (`--all`) against a real schema.
