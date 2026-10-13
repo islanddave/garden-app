@@ -120,13 +120,17 @@ export async function listPlaces(fetch) {
 // PUT /api/storage-locations/:id → the place. `patch` is { label?, kind? } and ONLY what changed: the
 // server refuses a change of KIND while the place holds put-ups whose dates were worked out for its kind
 // (409 place_has_dated_jars, with `n`), and a body with no `kind` can never meet that refusal.
+// The by-id path is SPELLED in these two, not built from PLACES_PATH: clientRouteLambdaContract.test.js
+// holds every client route to a Lambda that declares it by reading '/api/...' literals, and it cannot
+// follow a constant. Until Put-Up R2b the retired form's place editor was the one place this route was
+// spelled; these are its only callers now.
 export async function updatePlace(fetch, id, patch = {}) {
-  return fetch(`${PLACES_PATH}/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(patch) })
+  return fetch(`/api/storage-locations/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(patch) })
 }
 
 // DELETE /api/storage-locations/:id — refused while anything is stored there (409 place_in_use, with `n`).
 export async function deletePlace(fetch, id) {
-  return fetch(`${PLACES_PATH}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  return fetch(`/api/storage-locations/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 // A pantry item's Move is a PATCH of storage_location_id, which takes an id. A template chip ("Fridge"
