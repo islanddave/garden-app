@@ -1,0 +1,329 @@
+# gates.yml
+# V5-WXCOLDBAND-001: one new table, weather_cold_range. No change to any existing table.
+#
+# ── SEQUENCING: THE DATABASES FIRST, THEN THE CODE ───────────────────────────────────────────────
+#   1. STAGING: pre -> sweep -> 0a -> post -> rehearse 0r -> pre -> 0a -> post.
+#   2. PROD (Dave's first-hand OK for a prod database change, outside 07:00-08:00 UTC, after a
+#      pre-apply copy): pre -> sweep -> 0a -> post.
+#   3. ONLY THEN may a commit that names weather_cold_range under lambda/** reach dev. Once one is on
+#      dev, the promote's prod schema gate refuses every promote until the table is on prod.
+#   README.md has the commands and the reason for each step. This directory itself is safe in the
+#   tree before either database is applied, because of the next paragraph.
+#
+# ANY pre/sweep/post assertion failing is a HARD ABORT.
+#
+# ── EVERY post GATE IS SELF-ARMING AND CATALOG-ONLY ──────────────────────────────────────────────
+#   `continuous:` DEFAULTS TO TRUE (scripts/gate_runner.py) and .github/workflows/gate-invariants.yml
+#   runs `gate_runner.py --all --phase post --continuous-only` against LIVE PROD AND LIVE STAGING on
+#   every migrations/** push and on a Tuesday cron, with no skip-if-unapplied logic. So each gate
+#   returns rows only when the migration IS applied (stamp 5.0.0-wxcoldband-001 exists) AND the
+#   invariant is violated: vacuous before the apply, asserting permanently after. 0a writes the stamp
+#   in the same transaction as the DDL, and post_schema_version_recorded (armed on the TABLE, not on
+#   itself) proves the stamp landed.
+#
+#   NO `::regclass` ANYWHERE BELOW, AND NO SQL THAT NAMES THE TABLE OR ONE OF ITS COLUMNS AS AN
+#   IDENTIFIER. Postgres resolves a relation name, a column name and a regclass cast at PARSE time,
+#   before any WHERE or EXISTS runs. `SELECT ... FROM public.weather_cold_range` under a false guard
+#   still raises 42P01 on an unapplied database, and an erroring gate reds the run for every
+#   migration in the tree. Every reference is a string compared against pg_class.relname,
+#   pg_attribute.attname or information_schema. So nothing here has to move before a rollback.
+#
+# ── THE CHECK BODIES ARE NOT PINNED AS TEXT, AND THAT IS A GAP ───────────────────────────────────
+#   The sibling directories compare pg_get_constraintdef with the exact text Postgres prints, which
+#   their lanes read off a real server. This lane had none. post_three_checks_validated_and_no_others
+#   pins each CHECK by name, by `convalidated`, and by the exact set of COLUMNS it reads (conkey), and
+#   forbids a fourth. It would not notice a bound that was moved (150 to 1500) or an inequality that
+#   was turned round. Whoever rehearses this on staging should read the three printed definitions
+#   and add them to that gate, in the form v5-seedlotaddition-001 uses.
+#
+# ── WHAT ELSE THESE GATES DO NOT COVER ───────────────────────────────────────────────────────────
+#   * NO ROW-LEVEL GATE. The CHECKs, the key and the foreign key ARE the row rules, and a gate that
+#     re-read the rows would have to name the table.
+#   * No gate says a row is recent, or that there is one for tonight. "The job did not run" is an
+#     ordinary state (the card is blank); a freshness gate here would red on every morning the Mac
+#     was asleep.
+#   * The garden_ro grant is not asserted either way: prod has it from a default ACL and staging
+#     does not (v5-seedlotaddition-001 0a header A7). The WRITER's grant is not asserted either: no
+#     role exists yet, and whether one is created is not decided (README.md).
+#   * numeric(5,2) is not pinned, only `numeric`.
+#
+# NOT RUN ANYWHERE by the lane that wrote it. `gate_runner.py --validate-only` passes (structure
+# only); no gate here has been executed against PostgreSQL.
+
+pre:
+  - name: pre_table_absent
+    note: >
+      The starting state. Reads pg_class for ANY relation of this name in public: a view or a
+      leftover table would make CREATE TABLE IF NOT EXISTS a silent no-op (0a's own step 0 also
+      refuses one that carries no stamp). continuous false: false by design once 0a runs.
+    sql: |
+      SELECT c.relname FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'weather_cold_range'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_not_already_applied
+    note: >
+      A stamp with no table would arm every post gate below against nothing. continuous false, as
+      above.
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # The foreign key's target, checked rather than assumed: spaces is a TABLE in public and its
+  # primary key is the single uuid column `id`. If that is not so, 0a's CREATE TABLE fails; this says
+  # so first.
+  - name: pre_spaces_present_with_uuid_id_key
+    sql: |
+      SELECT 1 FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+       WHERE t.relname = 'spaces' AND t.relkind = 'r'
+         AND c.contype = 'p' AND cardinality(c.conkey) = 1
+         AND a.attname = 'id' AND format_type(a.atttypid, NULL) = 'uuid'
+    expect: rowcount_eq
+    value: 1
+
+sweep:
+  # No name collision on anything this DDL creates. The primary key's index takes the constraint's
+  # name, so one pg_class read covers the table's relations; constraint names are read separately
+  # because a same-named constraint on ANOTHER table is legal in Postgres and would still confuse
+  # anything that maps a violation to a sentence by name alone.
+  - name: sweep_no_relation_name_collisions
+    sql: |
+      SELECT c.relname FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public'
+         AND c.relname IN ('weather_cold_range', 'weather_cold_range_pkey')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: sweep_no_constraint_name_collisions
+    sql: |
+      SELECT conname FROM pg_constraint
+       WHERE conname IN ('weather_cold_range_pkey',
+                         'weather_cold_range_space_id_fkey',
+                         'weather_cold_range_leads_chk',
+                         'weather_cold_range_p10_le_p50_chk',
+                         'weather_cold_range_fahrenheit_chk')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  # SELF-ARMING AND CATALOG-ONLY, EVERY ONE. See the header for why that is forced. Nine gates.
+
+  # ARMED ON THE DDL, NOT ON ITSELF. Guarding "the version row exists" with "the version row exists"
+  # is circular and cannot self-arm; guarding it with "the TABLE exists" is not. 0a writes the table
+  # and the row in one transaction, so a row here means someone hand-applied the DDL or deleted the
+  # stamp: exactly the state that would silence every EXISTS-guarded gate below.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM pg_class c
+                       JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'public' AND c.relname = 'weather_cold_range')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-wxcoldband-001')
+    expect: rowcount_eq
+    value: 0
+
+  # The eight columns, each with its type and nullability. One row per column that is missing or has
+  # another shape, naming it. The three that carry the design:
+  #   night_date is a `date`. A timestamptz would compile, write and read, and re-anchor the night to
+  #     UTC (0a C2).
+  #   init_time is a `timestamp with time zone`. Without the zone, "which run" would depend on the
+  #     session's TimeZone (0a C3).
+  #   p50_min_f is the ONLY nullable column. NOT NULL there would refuse a row from a job that pulled
+  #     only the cold end; nullable p10_min_f would allow a row with no number in it.
+  - name: post_columns_have_these_shapes
+    sql: |
+      SELECT want.column_name
+        FROM (VALUES ('space_id',       'uuid',                     'NO'),
+                     ('night_date',     'date',                     'NO'),
+                     ('init_time',      'timestamp with time zone', 'NO'),
+                     ('p10_min_f',      'numeric',                  'NO'),
+                     ('p50_min_f',      'numeric',                  'YES'),
+                     ('leads_read',     'smallint',                 'NO'),
+                     ('leads_expected', 'smallint',                 'NO'),
+                     ('created_at',     'timestamp with time zone', 'NO'))
+             AS want(column_name, data_type, is_nullable)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'weather_cold_range'
+                            AND c.column_name = want.column_name
+                            AND c.data_type = want.data_type
+                            AND c.is_nullable = want.is_nullable)
+    expect: rowcount_eq
+    value: 0
+
+  # The other half: NO COLUMN OUTSIDE THE EIGHT. Projects the offender's name. The absences this is
+  # for (0a C7, C9): created_by (the ownership-transfer trigger reads a NULL -> value write there as
+  # a transfer), any user column, deleted_at and updated_at (rows are never updated or soft-deleted;
+  # a column that says otherwise invites a writer that needs UPDATE).
+  # A NOT-IN list and not a count, per OPS-GATEFROZENCOUNT-001: a later column added on purpose is
+  # one edit to this list. Keep the list NULL-free.
+  - name: post_no_column_outside_the_eight
+    sql: |
+      SELECT c.column_name FROM information_schema.columns c
+       WHERE c.table_schema = 'public' AND c.table_name = 'weather_cold_range'
+         AND c.column_name NOT IN ('space_id', 'night_date', 'init_time', 'p10_min_f', 'p50_min_f',
+                                   'leads_read', 'leads_expected', 'created_at')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a C6. created_at DEFAULT now() is the card's freshness stamp, set by the database because the
+  # writer does not send it. No other column has a default: a default on a measurement is a number
+  # nobody forecast, and a default on leads_read would call a partial night complete. One row per
+  # column whose default is not what is written here, naming it.
+  - name: post_only_created_at_has_a_default
+    sql: |
+      SELECT c.column_name FROM information_schema.columns c
+       WHERE c.table_schema = 'public' AND c.table_name = 'weather_cold_range'
+         AND (   (c.column_name =  'created_at' AND c.column_default IS DISTINCT FROM 'now()')
+              OR (c.column_name <> 'created_at' AND c.column_default IS NOT NULL))
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a C1. The key is exactly (space_id, night_date, init_time), in that order. Without init_time a
+  # night keeps one forecast and the run-to-run history is foreclosed (the September decision);
+  # without space_id the table is served to whoever asks; in another order the one read there is
+  # (this place, tonight, newest run) no longer walks the key.
+  - name: post_primary_key_is_space_night_init
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'weather_cold_range' AND c.contype = 'p'
+                            AND c.conname = 'weather_cold_range_pkey'
+                            AND ARRAY(SELECT a.attname::text
+                                        FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+                                        JOIN pg_attribute a
+                                          ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+                                       ORDER BY k.ord)
+                                = ARRAY['space_id', 'night_date', 'init_time'])
+    expect: rowcount_eq
+    value: 0
+
+  # The key is the only thing a writer's ON CONFLICT can land on. A second UNIQUE index would be a
+  # second arbiter nobody named (v4-weatherdaily-001's reason for a natural key). A plain index, added
+  # later with a query plan to justify it, is not this gate's business. One row per extra unique
+  # index, naming it.
+  - name: post_primary_key_is_the_only_unique_index
+    sql: |
+      SELECT ic.relname::text
+        FROM pg_index ix
+        JOIN pg_class ic    ON ic.oid = ix.indexrelid
+        JOIN pg_class t     ON t.oid = ix.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'weather_cold_range' AND ix.indisunique
+         AND ic.relname <> 'weather_cold_range_pkey'
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a C8. Two assertions, either one a row:
+  #   (a) the wanted foreign key is there and exact: its name, its one column, the spaces TABLE and
+  #       its `id`, ON DELETE CASCADE ('c'), validated. Read from the catalog columns, not from
+  #       pg_get_constraintdef, so it does not depend on search_path;
+  #   (b) it is the ONLY foreign key on the table. A key to plants or inventory_items would make this
+  #       a merge surface and a delete-guard case; a key to anything else is a design decision with
+  #       its own delete action to argue.
+  - name: post_exactly_one_fk_cascade_validated_to_spaces
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
+         AND (   NOT EXISTS (SELECT 1 FROM pg_constraint c
+                               JOIN pg_class t      ON t.oid = c.conrelid
+                               JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+                               JOIN pg_class tgt    ON tgt.oid = c.confrelid
+                               JOIN pg_namespace tn ON tn.oid = tgt.relnamespace AND tn.nspname = 'public'
+                               JOIN pg_attribute a  ON a.attrelid = c.conrelid  AND a.attnum = c.conkey[1]
+                               JOIN pg_attribute ta ON ta.attrelid = c.confrelid AND ta.attnum = c.confkey[1]
+                              WHERE t.relname = 'weather_cold_range' AND c.contype = 'f'
+                                AND c.conname = 'weather_cold_range_space_id_fkey'
+                                AND cardinality(c.conkey) = 1 AND a.attname = 'space_id'
+                                AND tgt.relname = 'spaces' AND tgt.relkind = 'r'
+                                AND ta.attname = 'id'
+                                AND c.confdeltype = 'c' AND c.convalidated)
+              OR (SELECT count(*) FROM pg_constraint c
+                    JOIN pg_class t     ON t.oid = c.conrelid
+                    JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                   WHERE t.relname = 'weather_cold_range' AND c.contype = 'f') <> 1)
+    expect: rowcount_eq
+    value: 0
+
+  # 0a C11. Two halves, one row per finding, naming the constraint:
+  #   (a) each of the three is on this table, VALIDATED, and reads exactly these columns. A bare name
+  #       match passes on a permanently NOT VALID constraint. THE BODY TEXT IS NOT COMPARED: see the
+  #       header. Add the printed definitions here after the staging rehearsal;
+  #   (b) the table carries no CHECK besides the three. A fourth is writer-coupled by construction
+  #       (the one writer is a script on a Mac, built against three): add it on purpose, with this
+  #       list, or not at all.
+  - name: post_three_checks_validated_and_no_others
+    sql: |
+      SELECT want.conname
+        FROM (VALUES ('weather_cold_range_leads_chk',      ARRAY['leads_expected', 'leads_read']),
+                     ('weather_cold_range_p10_le_p50_chk', ARRAY['p10_min_f', 'p50_min_f']),
+                     ('weather_cold_range_fahrenheit_chk', ARRAY['p10_min_f', 'p50_min_f']))
+             AS want(conname, cols)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'weather_cold_range' AND c.contype = 'c'
+                            AND c.conname = want.conname AND c.convalidated
+                            AND ARRAY(SELECT a.attname::text
+                                        FROM unnest(c.conkey) AS k(attnum)
+                                        JOIN pg_attribute a
+                                          ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+                                       ORDER BY 1)
+                                = want.cols)
+      UNION ALL
+      SELECT c.conname::text
+        FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'weather_cold_range' AND c.contype = 'c'
+         AND c.conname NOT IN ('weather_cold_range_leads_chk',
+                               'weather_cold_range_p10_le_p50_chk',
+                               'weather_cold_range_fahrenheit_chk')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a C10. NO TRIGGER AND NO ROW SECURITY. One row per finding, naming it.
+  #   A trigger: nothing here needs one (rows are never updated, so there is no updated_at to keep).
+  #   Row security: ENABLED WITH NO POLICY IS DENY-ALL for every role that is not the table's owner
+  #   (v4-roschemaversion-001 found schema_version in exactly that state, from a blanket sweep). The
+  #   one writer of this table is meant to be a non-owner role. Armed like that, its INSERT fails
+  #   every morning, the card is blank, and "blank" is also what a sleeping Mac looks like. If the
+  #   writer's access is ever built on a policy instead of a grant, that decision replaces this half
+  #   of the gate on purpose.
+  - name: post_no_trigger_and_no_row_security
+    sql: |
+      SELECT g.tgname::text AS finding
+        FROM pg_trigger g
+        JOIN pg_class t     ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'weather_cold_range' AND NOT g.tgisinternal
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
+      UNION ALL
+      SELECT 'row security is enabled'
+        FROM pg_class t
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'weather_cold_range' AND t.relkind = 'r'
+         AND (t.relrowsecurity OR t.relforcerowsecurity)
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
+    expect: rowcount_eq
+    value: 0
