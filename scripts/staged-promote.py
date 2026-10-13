@@ -118,7 +118,11 @@ def age_hours(when: str, now: datetime) -> float | None:
 
 
 def _git(*args, check=True, timeout=None):
-    return subprocess.run(["git", *args], capture_output=True, text=True, check=check, timeout=timeout)
+    # errors="replace": a byte git prints that is not UTF-8 (a path or a host in an error) must not
+    # become a traceback, which exits 1, the code that means "staged". A replaced character in a
+    # ref line fails the line check in remote_marker_sha() and reads UNKNOWN on its own.
+    return subprocess.run(["git", *args], capture_output=True, text=True, errors="replace",
+                          check=check, timeout=timeout)
 
 
 class MarkerUnreadable(Exception):

@@ -259,7 +259,11 @@ def test_stage_refuses_and_writes_nothing_when_it_cannot_see_an_existing_marker(
 
 # ── the same contract with the real script, real git and real local remotes ──────
 SCRIPT = os.path.join(os.path.dirname(__file__), "staged-promote.py")
-GIT_ENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+# A git that runs this file (a hook, `rebase -x`) exports GIT_DIR and friends; with them set, the fixture's
+# `git init` and `git commit` would act on THAT repository. Same list as scripts/test_forward_undo.py.
+LEAKY_GIT_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX",
+                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE")
+GIT_ENV = {**{k: v for k, v in os.environ.items() if k not in LEAKY_GIT_ENV}, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
            "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull, "GIT_TERMINAL_PROMPT": "0"}
 
@@ -310,6 +314,19 @@ def test_real_git_absent_staged_cleared_and_an_unreachable_remote(repo, tmp_path
     r = _run(work, "clear")
     assert r.returncode == 0 and head in r.stdout, r.stderr
     assert _run(work, "check").returncode == 0
+
+
+def test_bytes_that_are_not_utf8_from_git_are_UNKNOWN_not_a_traceback(repo, tmp_path):
+    """A traceback exits 1, and 1 means "staged"."""
+    work, _ = repo
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "git").write_text("#!/bin/sh\nprintf 'fatal: caf\\351 unreachable\\n' >&2\nexit 128\n")
+    os.chmod(fake / "git", 0o755)
+    env = {**GIT_ENV, "PATH": f"{fake}{os.pathsep}{GIT_ENV.get('PATH', '')}"}
+    for verb in ("check", "clear"):
+        r = subprocess.run([sys.executable, SCRIPT, verb], cwd=work, env=env, capture_output=True, text=True)
+        assert r.returncode == 2 and r.stderr.startswith("UNKNOWN: ") and "Traceback" not in r.stderr, r.stderr
 
 
 def test_real_git_a_remote_name_that_does_not_exist_is_UNKNOWN(repo):

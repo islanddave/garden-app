@@ -491,7 +491,7 @@ def test_the_two_budgets_are_separate_and_an_unreadable_last_read_is_never_a_pas
 def test_each_budget_is_cumulative_so_the_other_kind_of_read_never_resets_it(world):
     """The "at most 8 reads, 7 waits" bound (230 s) holds only while both counts run for the whole step. A loop
     where a differing read resets the failed-read count, or a failed read resets the differing-read count, still
-    refuses everything it should, but can run 18 reads (530 s), past the Lambda leg's 10-minute limit."""
+    refuses everything it should, but can run 18 reads (530 s of the Lambda leg's 600 s limit)."""
     old = world.origin.commit()
     new = world.origin.commit()
     # Five failed reads, one differing read, one more failed read: that is the sixth failure, so it ends there.
