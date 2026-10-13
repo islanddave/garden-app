@@ -121,8 +121,8 @@ NAVP_GB_DIRTY=false
 NAVP_GB_RESTORE=""
 SRC_ID=""
 SRC_DIRTY=false
-# Block V (V4-CROPTYPERETIRE-001): the slug of the smoke's own crop type while it may be retired (set before a
-# retire or a bring-back is sent, cleared once it reads back live).
+# Block V (V4-CROPTYPERETIRE-001): the slug of the smoke's own crop type while it may be live (set before it is
+# made or brought back, cleared once it reads back retired, which is how it rests between runs).
 CT_DIRTY_SLUG=""
 DATA_CREATED=false
 CLERK_JWT=""
@@ -131,24 +131,34 @@ PASS=0
 FAIL=0
 
 cleanup() {
-  # Block V (V4-CROPTYPERETIRE-001), FIRST on purpose: the run died between a retire and its confirmed
-  # bring-back. A cancelled run gets only seconds, so this goes before every sweep and soft-delete below.
-  # 200 = brought back; 409 = it is live already (the retire never landed). Either way there is nothing left
-  # to undo, and the slug is cleared so a second pass (the trap fires again at EXIT after a signal) says nothing.
+  # Block V (V4-CROPTYPERETIRE-001), FIRST on purpose: the run died while the smoke's own crop type was, or may
+  # have been, live. It rests RETIRED between runs (a live one has no harvest habit, which a standing database
+  # gate counts), so this retires it. A cancelled run gets only seconds, so this goes before every sweep and
+  # soft-delete below. 200 = retired; 409 already_retired = it is retired; 404 = it was never made. Then there
+  # is nothing left to do, and the slug is cleared so a second pass (the trap fires again at EXIT after a
+  # signal) says nothing. 409 in_use is cleared too: asking again cannot help, a row names the type.
   if [[ -n "${CT_DIRTY_SLUG:-}" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETIES:-}" ]]; then
-    local ct_jwt ct_http
+    local ct_jwt ct_out ct_http ct_code
     ct_jwt=$(mint_session_token)
-    ct_http=$(curl -s --max-time 15 --connect-timeout 10 -X POST \
-      -H "Authorization: Bearer $ct_jwt" -H "Content-Type: application/json" -o /dev/null -w "%{http_code}" \
-      "${STAGING_API_VARIETIES%/}/api/varieties/crop-types" -d "{\"restore_slug\": \"$CT_DIRTY_SLUG\"}") || ct_http="000"
+    ct_out=$(curl -s --max-time 15 --connect-timeout 10 -X POST \
+      -H "Authorization: Bearer $ct_jwt" -H "Content-Type: application/json" -w '\n%{http_code}' \
+      "${STAGING_API_VARIETIES%/}/api/varieties/crop-types/retire" -d "{\"slug\": \"$CT_DIRTY_SLUG\"}") || ct_out=$'\n000'
+    ct_http="${ct_out##*$'\n'}"
+    ct_code=$(jq -r '.code // "-"' <<<"${ct_out%$'\n'*}" 2>/dev/null) || ct_code="-"
     if [[ "$ct_http" == "200" ]]; then
-      echo "✅ Cleanup: smoke crop type '$CT_DIRTY_SLUG' brought back"
+      echo "✅ Cleanup: smoke crop type '$CT_DIRTY_SLUG' retired (how it rests between runs)"
+      CT_DIRTY_SLUG=""
+    elif [[ "$ct_http" == "409" && "$ct_code" == "already_retired" ]]; then
+      echo "✅ Cleanup: smoke crop type '$CT_DIRTY_SLUG' is retired, nothing to do"
+      CT_DIRTY_SLUG=""
+    elif [[ "$ct_http" == "404" ]]; then
+      echo "✅ Cleanup: smoke crop type '$CT_DIRTY_SLUG' was never made, nothing to do"
       CT_DIRTY_SLUG=""
     elif [[ "$ct_http" == "409" ]]; then
-      echo "✅ Cleanup: smoke crop type '$CT_DIRTY_SLUG' is live, nothing to bring back"
+      echo "WARNING: smoke crop type '$CT_DIRTY_SLUG' is still LIVE on staging and cannot be retired (409 $ct_code) — a row names it; a human must hard-delete every row whose crop_type_slug is '$CT_DIRTY_SLUG', then the next run retires it"
       CT_DIRTY_SLUG=""
     else
-      echo "WARNING: smoke crop type '$CT_DIRTY_SLUG' may still be retired on staging (bring-back answered $ct_http) — the next run brings it back, or use /admin/crop-types"
+      echo "WARNING: smoke crop type '$CT_DIRTY_SLUG' may still be live on staging (retire answered $ct_http) — the next run retires it, or use /admin/crop-types"
     fi
   fi
   # Block P (Put-Up F): the run died between its first write and its own ferm_sweep. Hard-delete, FK order.
@@ -3383,24 +3393,34 @@ else
 fi
 
 
-# ── V) Crop types: retire → read back retired → bring back → read back live (V4-CROPTYPERETIRE-001; L-108)
+# ── V) Crop types: bring back → read back live → retire → read back retired (V4-CROPTYPERETIRE-001; L-108)
 #       — Phase 2, continued ─────────────────────────────────────────────────────────────────────────────
 # The three routes are admin-only, fail-closed on ADMIN_CLERK_SUBS (lambda/varieties/crop-type-admin.js). The
 # staging test user is in that list on the functions that carry it (block I), so once garden-varieties-staging
 # carries it too this block takes the ADMIN path.
 # It works on ONE crop type that is the smoke's own, never a real vocabulary row: "Smoke test crop type", slug
-# smoke_test_crop_type (what the server derives from that name). A retired type leaves every picker on shared
-# staging, and most real types are ones a standing database gate needs live; this one nothing names and no
-# gate knows. The block finds it by slug, so the admin listing's order does not matter. If the type is missing
-# it is made through the inline create, which is open to every user. If it is found RETIRED (an earlier run
-# died between its retire and its bring-back, and its cleanup did too) it is brought back by slug first. Then:
-# retire → read back retired in the admin listing and gone from the public list → bring back by slug → read
-# back live in both. The type stays on staging for good, live between runs; that is intended.
-# cleanup() brings it back if the run dies in between (CT_DIRTY_SLUG, set before each write that can leave it
-# retired, cleared once it reads back live).
+# smoke_test_crop_type (what the server derives from that name). Most real types are ones a standing database
+# gate needs live; this one no gate knows, and NOTHING ELSE MAY EVER NAME IT: not another block, not an
+# integration test, not a row typed by hand on staging (scripts/test_smoke_crop_type_slug.py holds the first
+# two). The retire guard counts deleted rows too, so one row naming it makes it unretirable until that row is
+# hard-deleted by hand.
+# The type RESTS RETIRED between runs. A live one sits in every picker on shared staging and has no harvest
+# habit, which the standing gate v4-harvhabitgap-001/post_every_null_habit_is_a_recorded_decision counts. So the
+# block finds it by slug in the admin listing (the listing's order does not matter), then:
+#   missing  → made through the inline create (first run on a database; it is then live)
+#   retired  → brought back by slug (every run after the first)
+#   live     → left as found (an earlier run died after its bring-back, and its cleanup did too)
+# → read back live in the admin listing and the public list → retire → read back retired in the admin listing
+# and gone from the public list → END, retired. cleanup() retires it if the run dies in between (CT_DIRTY_SLUG,
+# set before the first write that can leave it live, cleared once it reads back retired).
+# A row that names the type is a WARN, not a FAIL: the routes work, and a row somebody wrote with the smoke's
+# own type is in the way. The listing's counts are read before anything is sent, so a type found retired with
+# such a row is left retired (brought back, it could not be retired again), and a retire that still answers
+# 409 in_use warns the same way. The line gives the count and says what a human has to delete.
 # Until the variable is on the function the listing answers 403 for everyone, and the block takes the REFUSAL
-# path instead and says so: a retire of that same type is refused with 403 and it reads back still live. That
-# path proves the gate, not the retire.
+# path instead and says so. That path WRITES NOTHING to the vocabulary, the smoke's own type included: a retire
+# is refused with 403 and the first type in the public list reads back still live. It proves the gate, not the
+# retire.
 if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETIES:-}" ]]; then
   CT_BASE="${STAGING_API_VARIETIES%/}/api/varieties/crop-types"
   CT_SLUG="smoke_test_crop_type"
@@ -3423,91 +3443,97 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETI
     echo "$code $(jq -c "$2" "$TMP" 2>/dev/null || echo unreadable)"
     rm -f "$TMP"
   }
+  ct_rows() {                         # the rows that name the smoke's type, as the admin listing counts them:
+    local out                         # "0 ()" none, "2 (1 put_ups, 1 pantry_items)", "" when the type is missing
+    out=$(ct_get "$CT_BASE/admin" ".types[] | select(.slug==\"$CT_SLUG\") | .counts | \"\\([.[]] | add) (\" + (to_entries | map(select(.value > 0) | \"\\(.value) \\(.key)\") | join(\", \")) + \")\"")
+    out="${out#* }"; echo "${out//\"/}"
+  }
+  ct_in_use() {                       # ct_in_use <what was sent> <the row count> <how the type is left>
+    echo "⚠️  WARN [write:crop-type-retire-readback] '$CT_SLUG' cannot be retired while a row names it ($1): rows that name it, as the admin listing counts them: $2 — some other test or a person on staging wrote a row with the smoke's own crop type, and a deleted row counts too. The app cannot clear it: a human must HARD-DELETE every staging row whose crop_type_slug is '$CT_SLUG' (plant_varieties, preservation_log, pantry_item, kitchen_batch_input, preservation_source). $3, and the retire → read-back walk is NOT proven until then"
+  }
   CLERK_JWT=$(mint_session_token)
 
   # The smoke's type as the admin listing has it: "200 []" missing, "200 [false]" live, "200 [true]" retired.
   CT_LIST=$(ct_get "$CT_BASE/admin" "[.types[] | select(.slug==\"$CT_SLUG\") | .retired]")
-  if [[ "$CT_LIST" == 200\ * ]]; then
-    # V0) make sure it is there and live before anything is asserted about it.
+  CT_ROWS=""
+  [[ "$CT_LIST" == "200 [false]" || "$CT_LIST" == "200 [true]" ]] && CT_ROWS=$(ct_rows)
+  if [[ "$CT_LIST" == "200 [true]" && "$CT_ROWS" != "0 ()" ]]; then
+    # Resting retired, and a row names it: brought back it could not be retired again, and it would sit live.
+    # Nothing is written.
+    ct_in_use "nothing was sent" "$CT_ROWS" "It was found retired and is left retired, not brought back"
+  elif [[ "$CT_LIST" == "200 [false]" && "$CT_ROWS" != "0 ()" ]]; then
+    # Live (an earlier run could not retire it either) and a row names it: the retire would answer 409 in_use.
+    ct_in_use "nothing was sent" "$CT_ROWS" "It is LIVE on staging and stays live until those rows are gone"
+  elif [[ "$CT_LIST" == "200 []" || "$CT_LIST" == "200 [false]" || "$CT_LIST" == "200 [true]" ]]; then
+    # V0) make it live, then read it back live in both places. From here to the confirmed retire the type is,
+    # or may be, live, and cleanup() retires it if the run dies.
+    CT_DIRTY_SLUG="$CT_SLUG"
+    CT_WANT="-"
+    CT_LABEL="crud:GET /varieties/crop-types/admin"
+    CT_HOW="found live: an earlier run died after its bring-back; the bring-back was not walked this run"
     if [[ "$CT_LIST" == "200 [true]" ]]; then
-      CT_DIRTY_SLUG="$CT_SLUG"
+      CT_WANT="200 -"
+      CT_LABEL="write:crop-type-restore-readback"
+      CT_HOW="brought back by slug"
       CT_CODE=$(ct_post "$CT_BASE" "{\"restore_slug\": \"$CT_SLUG\"}")
-      echo "   ('$CT_SLUG' was found retired: an earlier run did not finish. Bring-back answered '$CT_CODE')"
     elif [[ "$CT_LIST" == "200 []" ]]; then
+      CT_WANT="201 -"
+      CT_HOW="made just now, first run on this database; the bring-back was not walked this run"
       CT_CODE=$(ct_post "$CT_BASE" "{\"display_name\": \"$CT_NAME\"}")
-      echo "   ('$CT_SLUG' was not on this database yet. Create answered '$CT_CODE')"
     fi
-    CT_ADMIN=$(ct_get "$CT_BASE/admin" "[.types[] | select(.slug==\"$CT_SLUG\") | [.retired, .can_retire]]")
-    if [[ "$CT_ADMIN" == "200 [[false,true]]" ]]; then
-      CT_DIRTY_SLUG=""
-      echo "✅ PASS [crud:GET /varieties/crop-types/admin] the smoke's own type '$CT_SLUG' is live and retirable"
+    CT_ADMIN=$(ct_get "$CT_BASE/admin" "[.types[] | select(.slug==\"$CT_SLUG\") | .retired]")
+    CT_PUBLIC=$(ct_get "$CT_BASE" "[.[] | select(.slug==\"$CT_SLUG\")] | length")
+    if [[ "$CT_CODE" == "$CT_WANT" && "$CT_ADMIN" == "200 [false]" && "$CT_PUBLIC" == "200 1" ]]; then
+      echo "✅ PASS [$CT_LABEL] '$CT_SLUG' is live in the admin listing and the public list ($CT_HOW)"
       PASS=$((PASS+1))
 
       # V1) retire it, then read it back retired: flagged in the admin listing, gone from the public list.
-      CT_DIRTY_SLUG="$CT_SLUG"
+      # The block ends there; retired is how the type rests.
       CT_CODE=$(ct_post "$CT_BASE/retire" "{\"slug\": \"$CT_SLUG\"}")
       CT_ADMIN=$(ct_get "$CT_BASE/admin" "[.types[] | select(.slug==\"$CT_SLUG\") | .retired]")
       CT_PUBLIC=$(ct_get "$CT_BASE" "[.[] | select(.slug==\"$CT_SLUG\")] | length")
+      # Retired by the read-back, whatever the POST answered: nothing is left for cleanup() to do.
+      [[ "$CT_ADMIN" == "200 [true]" ]] && CT_DIRTY_SLUG=""
       if [[ "$CT_CODE" == "200 -" && "$CT_ADMIN" == "200 [true]" && "$CT_PUBLIC" == "200 0" ]]; then
-        echo "✅ PASS [write:crop-type-retire-readback] '$CT_SLUG' retired: flagged in the admin listing, gone from the public list"
+        echo "✅ PASS [write:crop-type-retire-readback] '$CT_SLUG' retired: flagged in the admin listing, gone from the public list, and left that way until the next run"
         PASS=$((PASS+1))
+      elif [[ "$CT_CODE" == "409 in_use" && "$CT_ADMIN" == "200 [false]" ]]; then
+        # A row began to name the smoke's own type after the listing above was read. Nothing here or in
+        # cleanup() can clear that, so the slug is dropped.
+        CT_DIRTY_SLUG=""
+        ct_in_use "retire answered 409 in_use" "$(ct_rows)" "It is LIVE on staging and stays live until those rows are gone"
       else
         echo "❌ FAIL [write:crop-type-retire-readback] retire '$CT_CODE' (expected 200 -), admin listing '$CT_ADMIN' (expected 200 [true]), public list '$CT_PUBLIC' (expected 200 0)"
         FAIL=$((FAIL+1))
       fi
-
-      # V2) bring it back by slug (the admin page's request), then read it back live in both places.
-      CT_CODE=$(ct_post "$CT_BASE" "{\"restore_slug\": \"$CT_SLUG\"}")
-      CT_ADMIN=$(ct_get "$CT_BASE/admin" "[.types[] | select(.slug==\"$CT_SLUG\") | [.retired, .can_retire]]")
-      CT_PUBLIC=$(ct_get "$CT_BASE" "[.[] | select(.slug==\"$CT_SLUG\")] | length")
-      # Live again by the read-back, whatever the POST answered: nothing is left for cleanup() to undo.
-      [[ "$CT_PUBLIC" == "200 1" ]] && CT_DIRTY_SLUG=""
-      if [[ "$CT_CODE" == "200 -" && "$CT_ADMIN" == "200 [[false,true]]" && "$CT_PUBLIC" == "200 1" ]]; then
-        echo "✅ PASS [write:crop-type-restore-readback] '$CT_SLUG' brought back: live in the admin listing and the public list"
-        PASS=$((PASS+1))
-      else
-        echo "❌ FAIL [write:crop-type-restore-readback] restore '$CT_CODE' (expected 200 -), admin listing '$CT_ADMIN' (expected 200 [[false,true]]), public list '$CT_PUBLIC' (expected 200 1)"
-        FAIL=$((FAIL+1))
-      fi
     else
-      echo "❌ FAIL [crud:GET /varieties/crop-types/admin] the smoke's own type '$CT_SLUG' is not live and retirable: listing first said '$CT_LIST', the write to make or bring it back answered '$CT_CODE', listing then said '$CT_ADMIN' (expected 200 [[false,true]]) — if something names it, that row has to go; nothing but this block should use it"
+      echo "❌ FAIL [$CT_LABEL] the smoke's own type '$CT_SLUG' did not read back live: listing first said '$CT_LIST', the write to make or bring it back answered '$CT_CODE' (expected $CT_WANT), admin listing then '$CT_ADMIN' (expected 200 [false]), public list '$CT_PUBLIC' (expected 200 1) — the retire was not tried"
       FAIL=$((FAIL+1))
     fi
   elif [[ "$CT_LIST" == 403\ * ]]; then
-    # REFUSAL path. The caller is not an admin on this function (or it has no ADMIN_CLERK_SUBS yet): a retire
-    # must answer 403 and the type must read back still live. The type is made first if it is missing.
-    CT_PUBLIC=$(ct_get "$CT_BASE" "[.[] | select(.slug==\"$CT_SLUG\")] | length")
-    if [[ "$CT_PUBLIC" == "200 0" ]]; then
-      CT_CODE=$(ct_post "$CT_BASE" "{\"display_name\": \"$CT_NAME\"}")
-      echo "   ('$CT_SLUG' was not in the public list. Create answered '$CT_CODE')"
-      CT_PUBLIC=$(ct_get "$CT_BASE" "[.[] | select(.slug==\"$CT_SLUG\")] | length")
-    fi
-    if [[ "$CT_PUBLIC" == "200 1" ]]; then
-      CT_DIRTY_SLUG="$CT_SLUG"
+    # REFUSAL path. The caller is not an admin on this function (or it has no ADMIN_CLERK_SUBS yet). Nothing
+    # is made here: a live smoke type nobody can retire is exactly what the standing gate counts. The retire is
+    # sent for the smoke's own slug, there or not: the admin check comes before any read, so it must answer
+    # 403 either way, and if it ever did not, no real type could be hit. The first type in the public list
+    # must then read back still live.
+    CT_ANY=$(ct_get "$CT_BASE" '.[0].slug // ""'); CT_ANY="${CT_ANY#* }"; CT_ANY="${CT_ANY//\"/}"
+    if [[ "$CT_ANY" =~ ^[a-z0-9_]+$ ]]; then
       CT_CODE=$(ct_post "$CT_BASE/retire" "{\"slug\": \"$CT_SLUG\"}")
-      CT_PUBLIC=$(ct_get "$CT_BASE" "[.[] | select(.slug==\"$CT_SLUG\")] | length")
-      [[ "$CT_PUBLIC" == "200 1" ]] && CT_DIRTY_SLUG=""
+      CT_PUBLIC=$(ct_get "$CT_BASE" "[.[] | select(.slug==\"$CT_ANY\")] | length")
       if [[ "$CT_CODE" == 403\ * && "$CT_PUBLIC" == "200 1" ]]; then
-        echo "✅ PASS [gate:crop-type-retire-refused] retire answered '$CT_CODE' and '$CT_SLUG' reads back live"
+        echo "✅ PASS [gate:crop-type-retire-refused] retire answered '$CT_CODE', nothing was made, and '$CT_ANY' reads back live"
         PASS=$((PASS+1))
         echo "⚠️  WARN [write:crop-type-retire-readback] the smoke account is not an admin on the varieties function (${CT_CODE#* }) — the retire → restore walk was NOT run; only the refusal was proven"
       else
-        echo "❌ FAIL [gate:crop-type-retire-refused] retire answered '$CT_CODE' (expected 403), '$CT_SLUG' in the public list '$CT_PUBLIC' (expected 200 1) — if it is gone, bring it back at /admin/crop-types"
+        echo "❌ FAIL [gate:crop-type-retire-refused] retire of '$CT_SLUG' answered '$CT_CODE' (expected 403), '$CT_ANY' in the public list '$CT_PUBLIC' (expected 200 1)"
         FAIL=$((FAIL+1))
       fi
-    elif [[ "$CT_PUBLIC" == "200 0" && "$CT_CODE" == "403 crop_type_retired" ]]; then
-      # The type is retired (an admin-path run died, then the function lost its admin list). Typing its name
-      # did not bring it back for a non-admin, which is the gate holding. Only the smoke's own type is hidden,
-      # and the next admin-path run brings it back.
-      echo "✅ PASS [gate:crop-type-retire-refused] '$CT_SLUG' is retired and its name did not bring it back for a non-admin ('$CT_CODE')"
-      PASS=$((PASS+1))
-      echo "⚠️  WARN [write:crop-type-retire-readback] the smoke account is not an admin on the varieties function and the smoke's own type is retired — the retire → restore walk was NOT run; the next run with an admin brings the type back"
     else
-      echo "❌ FAIL [gate:crop-type-retire-refused] the smoke's own type '$CT_SLUG' is not in the public list ('$CT_PUBLIC') and making it answered '$CT_CODE' (expected 201 -)"
+      echo "❌ FAIL [gate:crop-type-retire-refused] the public crop-type list named no type to read back ('$CT_ANY')"
       FAIL=$((FAIL+1))
     fi
   else
-    echo "❌ FAIL [crud:GET /varieties/crop-types/admin] '$CT_LIST' (expected 200, or 403)"
+    echo "❌ FAIL [crud:GET /varieties/crop-types/admin] '$CT_LIST' (expected 200 with the smoke's own type missing, live or retired; or 403)"
     FAIL=$((FAIL+1))
   fi
 elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
