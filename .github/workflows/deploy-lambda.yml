@@ -108,13 +108,18 @@ jobs:
       # with nothing.
       #
       # main is read from the API by exact ref name, never from a checkout (there is none yet, and a checkout
-      # is the thing being checked). Unreadable after three tries = REFUSE, never pass.
+      # is the thing being checked). Unreadable six times, 10 s apart = REFUSE, never pass. A main that is not
+      # WANT is read twice more, 10 s apart (a ref read can trail a fast-forward made seconds earlier, and on
+      # a revert a false refusal costs a rollback); only the NEWEST read decides: equal passes, else refuse.
       #
       # Paths: promote-gate calls this after its own fast-forward, so main == ref; scripts/revert-to.py moves
       # main to its revert commit (and, on rollback, to its restore commit) BEFORE it dispatches this file on
       # main, so main == github.sha there too and no opt-out exists or is needed. deploy-staging.yml does not
-      # use this job. The step is byte-identical in deploy.yml and deploy-lambda.yml; pinned, and executed
-      # against a stand-in API, by scripts/test_deploy_main_guard.py.
+      # use this job. On a revert the forward legs run the TARGET release's workflow files, so they carry this
+      # step only when that release already shipped it, and the step protects runs created at or after the
+      # SHA that ships it (a re-run of an older run keeps its own workflow files). The step is byte-identical
+      # in deploy.yml and deploy-lambda.yml; pinned, and executed against a stand-in API, by
+      # scripts/test_deploy_main_guard.py.
       - name: Refuse unless main is at the commit this job deploys
         env:
           GH_TOKEN: ${{ github.token }}
@@ -129,22 +134,34 @@ jobs:
             echo "::error::deploy refused: the commit to deploy must be a full 40-hex SHA, got '$WANT'. $NOTHING Remedy: dispatch on ref main with no ref input, or promote through promote-gate."; exit 1
           fi
           OUT=$(mktemp)
-          MAIN=""
-          for ATTEMPT in 1 2 3; do
+          FAILS=0
+          DIFFS=0
+          # Two budgets: 6 reads with no usable SHA, 3 reads of a main that is not WANT. The loop ends on the read that
+          # spends a budget or on a read equal to WANT, so the verdict below is always about the newest read.
+          while true; do
+            MAIN=""
             CODE=$(curl -sS --max-time 20 -o "$OUT" -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/git/ref/heads/main") || CODE="curl-failed"
             if [ "$CODE" = "200" ]; then
               MAIN=$(jq -r 'select(.ref == "refs/heads/main") | .object.sha' "$OUT" 2>/dev/null) || MAIN=""
-              if [[ "$MAIN" =~ $HEX40 ]]; then break; fi
-              MAIN=""
+              if [[ ! "$MAIN" =~ $HEX40 ]]; then MAIN=""; fi
             fi
-            echo "read of main, attempt $ATTEMPT of 3: HTTP $CODE and no usable SHA"
-            if [ "$ATTEMPT" != "3" ]; then sleep 10; fi
+            if [ "$MAIN" = "$WANT" ]; then break; fi
+            if [ -n "$MAIN" ]; then
+              DIFFS=$((DIFFS + 1))
+              echo "read of main: at $MAIN, not $WANT (differing read $DIFFS of 3)"
+              if [ "$DIFFS" = "3" ]; then break; fi
+            else
+              FAILS=$((FAILS + 1))
+              echo "read of main: HTTP $CODE and no usable SHA (failed read $FAILS of 6)"
+              if [ "$FAILS" = "6" ]; then break; fi
+            fi
+            sleep 10
           done
           if [ -z "$MAIN" ]; then
-            echo "::error::deploy refused: could not read where main points (last answer: HTTP $CODE), so this job cannot prove that $WANT is main's head. $NOTHING Remedy: 'Re-run failed jobs' on this run once GitHub answers."; exit 1
+            echo "::error::deploy refused: could not read where main points (6 failed reads, last answer: HTTP $CODE), so this job cannot prove that $WANT is main's head. $NOTHING Remedy: 'Re-run failed jobs' on this run once GitHub answers."; exit 1
           fi
           if [ "$MAIN" != "$WANT" ]; then
-            echo "::error::deploy refused: main is at $MAIN but this job would deploy $WANT. $NOTHING A prod deploy ships main's head and nothing else. Remedy: if main has moved on, a newer promote owns prod and this run must NOT be re-run; to ship $WANT, promote it through promote-gate; a hand dispatch goes on ref main."; exit 1
+            echo "::error::deploy refused: main is at $MAIN (the newest of 3 reads 10 s apart, none of them this commit) but this job would deploy $WANT. $NOTHING A prod deploy ships main's head and nothing else. main has moved: do NOT re-run this run; whatever moved main (a newer promote, or a revert) owns prod. Remedy: to ship $WANT, promote it through promote-gate; if scripts/revert-to.py dispatched this run, follow the revert tool's own output (it rolls back or stops and says so); a hand dispatch goes on ref main."; exit 1
           fi
           echo "main is at $MAIN, the commit this job deploys: proceeding"
 

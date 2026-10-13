@@ -5,7 +5,8 @@ Run: python3 -m pytest -q scripts/test_deploy_main_guard.py
 deploy.yml (the SPA) and deploy-lambda.yml (the 26-function matrix) each open with one guard step. It reads where
 `main` points from the GitHub API and ends the job unless that is the commit the job's own checkout would build,
 `inputs.ref || github.sha`. A late "Re-run failed jobs" on an old promote, or a hand dispatch on an old ref, then
-cannot put an older commit over a newer one.
+cannot put an older commit over a newer one. An unreadable main is asked for six times; a main that is not the wanted
+commit is read twice more; only the newest read decides, and only a read equal to the wanted commit passes.
 
 Two halves, as in test_workflow_steps.py, whose harness this one mirrors:
 
@@ -15,7 +16,8 @@ Two halves, as in test_workflow_steps.py, whose harness this one mirrors:
     move main BEFORE they reach these jobs, which is why the guard needs no opt-out for a revert.
   * EXECUTED: the step body runs the runner's way (`bash -e {0}`) against an in-process stand-in for api.github.com
     that answers from a REAL git repository standing in for origin, so "main moved" is a commit, not a string. curl
-    and jq are the real ones (a `curl` shim only swaps the API origin); `sleep` is a no-op.
+    and jq are the real ones (a `curl` shim only swaps the API origin); `sleep` is a shim that returns at once and
+    records its argument, so the body under test is the committed body, byte for byte, and no test waits 10 s.
 
 Non-vacuity lives in the file: test_a_broken_guard_is_seen runs the same scenarios against mutated bodies and
 requires a different verdict table from each.
@@ -116,7 +118,16 @@ def test_no_input_can_switch_the_guard_off(where):
     body = _guard_body(where)
     assert "${{" not in body, "the body reads its three env values and no expression of its own"
     read = set(re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)", body))
-    assert read == {"WANT", "GH_TOKEN", "REPO", "NOTHING", "HEX40", "OUT", "MAIN", "CODE", "ATTEMPT"}
+    assert read == {"WANT", "GH_TOKEN", "REPO", "NOTHING", "HEX40", "OUT", "MAIN", "CODE", "FAILS", "DIFFS"}
+
+
+@BOTH
+def test_every_read_of_main_is_bounded_and_the_waits_are_ten_seconds(where):
+    """Without `--max-time` a hung read runs to the job limit and the leg reads `cancelled`, not a refusal."""
+    body = _guard_body(where)
+    assert re.findall(r"\$\(curl [-\w ]*?-o ", body) == ["$(curl -sS --max-time 20 -o "]
+    assert body.count("curl ") == 1, "one read command, and it is the bounded one"
+    assert re.findall(r"\bsleep\b.*", body) == ["sleep 10"]
 
 
 def test_promote_gate_reaches_both_jobs_after_its_fast_forward_with_the_promoted_sha():
@@ -200,6 +211,15 @@ class _Origin:
 
 DROP = "drop"  # answer nothing and close: curl exits 52
 LIVE = "live"  # 200 with origin's main, read at request time
+
+
+def _at(sha):
+    """A well-formed answer that puts main at `sha`, whatever origin says: a stale or a wrong read."""
+    return (200, json.dumps({"ref": "refs/heads/main", "object": {"sha": sha, "type": "commit"}}))
+
+
+def _last_char_changed(sha):
+    return sha[:-1] + ("0" if sha[-1] != "0" else "1")
 
 
 class _Api:
@@ -302,6 +322,9 @@ def _passed(proc, api):
     return proc.returncode == 0 and not _errors(proc) and api.log == [MAIN_REF_ROUTE]
 
 
+MOVED = "main has moved: do NOT re-run this run"  # the rules text quotes this; it is printed only for a mismatch
+
+
 def _refused(proc, *needles):
     errors = _errors(proc)
     return proc.returncode == 1 and len(errors) == 1 and all(n in errors[0] for n in needles) \
@@ -323,9 +346,45 @@ def test_a_rerun_after_main_moved_on_is_refused_and_names_both_commits(world):
     old = world.origin.commit()
     new = world.origin.commit()
     proc, api = world(_want(old, old))
-    assert _refused(proc, f"main is at {new}", f"would deploy {old}", "must NOT be re-run", "promote-gate"), \
-        proc.stdout + proc.stderr
-    assert api.log == [MAIN_REF_ROUTE] and proc.slept == [], "a mismatch is an answer: it is not retried"
+    assert _refused(proc, f"main is at {new}", f"would deploy {old}", MOVED, "promote-gate",
+                    "scripts/revert-to.py"), proc.stdout + proc.stderr
+    assert api.log == [MAIN_REF_ROUTE] * 3 and proc.slept == ["10", "10"], "read twice more, 10 s apart, then refuse"
+
+
+def test_a_mismatch_then_a_match_on_a_re_read_passes(world):
+    """A ref read can trail a fast-forward made seconds earlier: the older answer is not a verdict."""
+    before = world.origin.commit()
+    promoted = world.origin.commit()
+    for stale in (1, 2):  # the first read, or the first two, still show main where it was
+        proc, api = world(_want(promoted, promoted), replies=[_at(before)] * stale + [LIVE])
+        assert proc.returncode == 0 and not _errors(proc), proc.stdout + proc.stderr
+        assert f"main is at {promoted}, the commit this job deploys: proceeding" in proc.stdout
+        assert api.log == [MAIN_REF_ROUTE] * (stale + 1) and proc.slept == ["10"] * stale
+
+
+def test_a_mismatch_three_times_is_refused_and_the_newest_read_decides(world):
+    old = world.origin.commit()
+    new = world.origin.commit()
+    other = world.origin.side_commit()
+    proc, api = world(_want(old, old), replies=[_at(new)] * 3 + [_at(old)])  # a fourth read is never made
+    assert _refused(proc, f"main is at {new}", f"would deploy {old}", MOVED), proc.stdout + proc.stderr
+    assert api.log == [MAIN_REF_ROUTE] * 3 and proc.slept == ["10", "10"]
+    # The refusal names the NEWEST read, not the first one that differed.
+    proc, _ = world(_want(old, old), replies=[_at(other), _at(other), LIVE])
+    assert _refused(proc, f"main is at {new}", f"would deploy {old}", MOVED), proc.stdout + proc.stderr
+    assert other not in _errors(proc)[0]
+    # A match is a verdict too: the body stops reading, so an earlier match cannot be overturned or re-rolled.
+    proc, api = world(_want(new, new), replies=[LIVE, _at(old)])
+    assert _passed(proc, api), proc.stdout + proc.stderr
+
+
+def test_a_main_that_differs_only_in_its_last_character_is_refused(world):
+    head = world.origin.commit()
+    near = _last_char_changed(head)
+    assert near != head and near[:39] == head[:39] and re.fullmatch("[0-9a-f]{40}", near)
+    proc, api = world(_want(head, head), replies=[_at(near)])
+    assert _refused(proc, f"main is at {near}", f"would deploy {head}", MOVED), proc.stdout + proc.stderr
+    assert api.log == [MAIN_REF_ROUTE] * 3
 
 
 def test_under_workflow_call_the_ref_input_is_compared_not_the_callers_commit(world):
@@ -385,7 +444,8 @@ def test_an_unreadable_main_is_refused_never_passed(world, case):
     replies = [r if r == DROP else (r[0], r[1].replace("%s", head)) for r in UNREADABLE[case]]
     proc, api = world(_want(head, head), replies=replies)
     assert _refused(proc, "could not read where main points", "Re-run failed jobs", head), proc.stdout + proc.stderr
-    assert api.log == [MAIN_REF_ROUTE] * 3 and proc.slept == ["10", "10"], "three tries, then refuse"
+    assert api.log == [MAIN_REF_ROUTE] * 6 and proc.slept == ["10"] * 5, "six tries, 10 s apart, then refuse"
+    assert MOVED not in _errors(proc)[0], "an unreadable main is not a moved main: this refusal may be re-run"
 
 
 def test_a_missing_jq_is_refused_never_passed(world):
@@ -402,7 +462,30 @@ def test_one_bad_answer_is_asked_again_and_the_next_good_one_decides(world):
     old = world.origin.commit()
     world.origin.commit()
     proc, _ = world(_want(old, old), replies=[(502, "<html>502</html>"), LIVE])
-    assert _refused(proc, "must NOT be re-run"), "a retry must not turn a moved main into a pass"
+    assert _refused(proc, MOVED), "a retry must not turn a moved main into a pass"
+
+
+def test_five_failed_reads_then_a_good_matching_read_passes_and_six_are_refused(world):
+    head = world.origin.commit()
+    bad = [(502, "<html>502</html>"), DROP, (500, "{}"), (200, ""), (401, '{"message": "Bad credentials"}')]
+    proc, api = world(_want(head, head), replies=bad + [LIVE])
+    assert proc.returncode == 0 and not _errors(proc), proc.stdout + proc.stderr
+    assert api.log == [MAIN_REF_ROUTE] * 6 and proc.slept == ["10"] * 5
+    proc, api = world(_want(head, head), replies=bad + [DROP, LIVE])  # the good answer comes one read too late
+    assert _refused(proc, "could not read where main points", "Re-run failed jobs"), proc.stdout + proc.stderr
+    assert api.log == [MAIN_REF_ROUTE] * 6 and proc.slept == ["10"] * 5
+
+
+def test_the_two_budgets_are_separate_and_an_unreadable_last_read_is_never_a_pass(world):
+    old = world.origin.commit()
+    new = world.origin.commit()
+    # Two differing reads, then GitHub stops answering: the newest read is unreadable, so that is the refusal.
+    proc, api = world(_want(old, old), replies=[_at(new), _at(new), DROP])
+    assert _refused(proc, "could not read where main points"), proc.stdout + proc.stderr
+    assert api.log == [MAIN_REF_ROUTE] * 8 and proc.slept == ["10"] * 7, "the longest run of reads there is"
+    # Failed reads do not use up the re-reads of a mismatch, and differing reads do not use up the six tries.
+    proc, api = world(_want(new, new), replies=[DROP, _at(old), DROP, _at(old), DROP, DROP, DROP, LIVE])
+    assert proc.returncode == 0 and not _errors(proc) and api.log == [MAIN_REF_ROUTE] * 8, proc.stdout + proc.stderr
 
 
 @pytest.mark.parametrize("want", ["", "main", "refs/heads/main", "abc1234", "A" * 40, "a" * 39, "a" * 41,
@@ -430,6 +513,9 @@ def _verdicts(world, body):
         "rerun-main-moved": rc(_want(old, old)),
         "hand-dispatch-on-main": rc(_want("", head)),
         "hand-dispatch-elsewhere": rc(_want("", world.origin.side_commit())),
+        "stale-then-fresh": rc(_want(head, head), replies=[_at(old), LIVE]),
+        "differs-three-times": rc(_want(old, old), replies=[_at(head), _at(head), _at(head), _at(old)]),
+        "last-character-differs": rc(_want(head, head), replies=[_at(_last_char_changed(head))]),
         "read-failed": rc(_want(head, head), replies=[(500, "{}")]),
         "read-garbage": rc(_want(head, head), replies=[(200, "<html></html>")]),
         "not-a-sha": rc("main"),
@@ -437,8 +523,10 @@ def _verdicts(world, body):
 
 
 EXPECTED = {"promote-after-ff": 0, "rerun-main-moved": 1, "hand-dispatch-on-main": 0, "hand-dispatch-elsewhere": 1,
+            "stale-then-fresh": 0, "differs-three-times": 1, "last-character-differs": 1,
             "read-failed": 1, "read-garbage": 1, "not-a-sha": 1}
 MISMATCH_TEST, READ_TEST = 'if [ "$MAIN" != "$WANT" ]; then', 'if [ -z "$MAIN" ]; then'
+MATCH_TEST, DIFFS_SPENT = 'if [ "$MAIN" = "$WANT" ]; then break; fi', 'if [ "$DIFFS" = "3" ]; then break; fi'
 MUTATIONS = {
     "deleted": lambda b: "set -euo pipefail\necho no guard\n",
     "comparison-inverted": lambda b: b.replace(MISMATCH_TEST, 'if [ "$MAIN" = "$WANT" ]; then'),
@@ -446,6 +534,12 @@ MUTATIONS = {
     "read-failure-passes": lambda b: b.replace(READ_TEST, 'if [ -z "$MAIN" ]; then MAIN="$WANT"; fi\nif false; then'),
     "main-never-read": lambda b: b.replace('MAIN=$(jq -r', 'MAIN="$WANT"; : $(jq -r'),
     "whole-body-or-true": lambda b: "(\n" + b + "\n) || true\n",
+    "mismatch-not-re-read": lambda b: b.replace(DIFFS_SPENT, 'if [ "$DIFFS" = "1" ]; then break; fi'),
+    "any-read-after-a-mismatch-passes": lambda b: b.replace(
+        MATCH_TEST, MATCH_TEST + '\n  if [ -n "$MAIN" ] && [ "$DIFFS" != "0" ]; then MAIN="$WANT"; break; fi'),
+    "first-seven-characters-compared": lambda b: b.replace(
+        MATCH_TEST, 'if [ "${MAIN:0:7}" = "${WANT:0:7}" ]; then break; fi').replace(
+        MISMATCH_TEST, 'if [ "${MAIN:0:7}" != "${WANT:0:7}" ]; then'),
 }
 
 
