@@ -25,6 +25,7 @@
 // quantity is NUMERIC -> @neondatabase/serverless returns it as a JS string; readbacks coerce via Number().
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { randomUUID } from 'node:crypto'
 import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
 import { handler } from '../../lambda/inventory-items/index.js'
 // V5-SEEDQTY-001 widens lambda/plants' seed-lots SELECT to carry seed_count / seed_weight_g. The
@@ -780,5 +781,133 @@ describe('PUT year_harvested — presence guard against real Postgres (BUG-SEEDY
     expect(body.year_harvested).toBe(null)
     const rows = await directSql`SELECT year_harvested FROM inventory_items WHERE id = ${itemId}`
     expect(rows[0].year_harvested).toBe(null)
+  })
+})
+
+// BUG-NEWLOTNOIDEMPOTENCYKEY-001 — the create's key against REAL Postgres.
+//
+// lambda/inventory-items/create-key.test.js runs against a model of the table. What only a database
+// can say:
+//   · the column and uq_inventory_items_idempotency_key are there (migrations/v5-newlotnoidempotencykey-001);
+//   · `${key}::uuid` types as written, with a key and with the NULL an unkeyed create binds;
+//   · the driver's 23505 names the index in `err.constraint` — from the INSERT awaited alone, and
+//     from inside sql.transaction([...]), which is the path a lot with a parent planting takes and so
+//     the one the save-seed sheet sends;
+//   · a create that met the key left nothing behind: no lot, no link row;
+//   · the replay's body is the create's.
+// A second request already in flight cannot be arranged from here. The INSERT is made to meet the key
+// the other two ways it can: a row of another household's, and a soft-deleted row of the caller's
+// own, neither of which the by-key read answers with.
+//
+// Every claim about state is a directSql read-back, never the handler's echo (L-108).
+describe('BUG-NEWLOTNOIDEMPOTENCYKEY-001 — a create sent twice under one key', () => {
+  const KEY_USER = `user_int_invkey_${RUN}`
+  const KEY_STRANGER = `user_int_invkey_stranger_${RUN}`
+  const CONFLICT = { error: 'That key is already in use.', code: 'key_conflict' }
+  let keyVarietyId
+  let parentId
+
+  const postAs = (user, body) => {
+    setTestUserId(user)
+    return callHandler(handler, { method: 'POST', path: '/api/inventory-items', body })
+  }
+  const lotsUnder = (key) => directSql`
+    SELECT id, created_by, (deleted_at IS NOT NULL) AS deleted
+      FROM inventory_items WHERE idempotency_key = ${key}::uuid`
+  const lotsOf = async (user) => (await directSql`
+    SELECT count(*)::int AS n FROM inventory_items WHERE created_by = ${user}`)[0].n
+  const linksOf = async (user) => (await directSql`
+    SELECT count(*)::int AS n FROM seed_lot_parent_planting
+     WHERE inventory_item_id IN (SELECT id FROM inventory_items WHERE created_by = ${user})`)[0].n
+
+  beforeAll(async () => {
+    const v = await directSql`
+      INSERT INTO plant_varieties (name, created_by)
+      VALUES (${'key-variety-' + RUN}, ${KEY_USER}) RETURNING id`
+    keyVarietyId = v[0].id
+    const p = await directSql`
+      INSERT INTO plants (project_id, name, created_by)
+      VALUES (NULL, ${'key-parent-' + RUN}, ${KEY_USER}) RETURNING id`
+    parentId = p[0].id
+  })
+
+  afterAll(async () => {
+    // The link rows first (ON DELETE RESTRICT to the lot), then the registry row before its variety:
+    // the order the seed-measure block above tears down in.
+    await directSql`
+      DELETE FROM seed_lot_parent_planting
+       WHERE inventory_item_id IN (SELECT id FROM inventory_items WHERE created_by IN (${KEY_USER}, ${KEY_STRANGER}))`
+    await directSql`DELETE FROM inventory_items WHERE created_by IN (${KEY_USER}, ${KEY_STRANGER})`
+    await directSql`DELETE FROM entity WHERE entity_type='cultivar' AND cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ${KEY_USER})`
+    await directSql`DELETE FROM plant_varieties WHERE created_by = ${KEY_USER}`
+  })
+
+  it('is answered with the first lot, keeps the key to itself, and writes nothing when it cannot answer', async () => {
+    const key = randomUUID()
+    const lot = {
+      name: `key-lot-${RUN}`, type: 'consumable', category: 'seeds', unit: 'packet', quantity_on_hand: 1,
+      variety_id: keyVarietyId, source_plant_id: parentId, idempotency_key: key,
+    }
+
+    // 1. A fresh keyed create, through the parents transaction.
+    const first = await postAs(KEY_USER, lot)
+    expect(first.status, `first POST -> ${JSON.stringify(first.body)}`).toBe(201)
+    expect(first.body).not.toHaveProperty('idempotency_key')
+    expect(first.body).not.toHaveProperty('replayed')
+    expect(first.body.source_plants.map((p) => p.id)).toEqual([parentId])
+    expect(await lotsUnder(key)).toEqual([{ id: first.body.id, created_by: KEY_USER, deleted: false }])
+    expect(await linksOf(KEY_USER)).toBe(1)
+
+    // 2. The same request again: 200, the first lot in the create's own body, and nothing more in
+    //    either table.
+    const again = await postAs(KEY_USER, lot)
+    expect(again.status, `second POST -> ${JSON.stringify(again.body)}`).toBe(200)
+    expect(again.body, 'the replay is not the body the create answered with').toEqual({ ...first.body, replayed: true })
+    expect(await lotsUnder(key)).toHaveLength(1)
+    expect(await lotsOf(KEY_USER)).toBe(1)
+    expect(await linksOf(KEY_USER)).toBe(1)
+
+    // 3. No read sends the key back, and no answer so far carries its value.
+    const list = await callHandler(handler, { method: 'GET', path: '/api/inventory-items' })
+    const listed = list.body.find((r) => r.id === first.body.id)
+    expect(listed, 'the lot is missing from the list').toBeTruthy()
+    expect(listed).not.toHaveProperty('idempotency_key')
+    const detail = await callHandler(handler, { method: 'GET', path: `/api/inventory-items/${first.body.id}` })
+    expect(detail.status, `detail -> ${JSON.stringify(detail.body)}`).toBe(200)
+    expect(detail.body).not.toHaveProperty('idempotency_key')
+    for (const res of [first, again, list, detail]) expect(res.raw.body).not.toContain(key)
+
+    // 4. Another household sends the key. Its by-key read finds nothing of its own, so the INSERT,
+    //    awaited alone, meets the index. A 409 here means the driver's 23505 named it; a 500 means
+    //    it did not.
+    const stranger = await postAs(KEY_STRANGER, {
+      name: `key-stranger-${RUN}`, type: 'durable', category: 'tools', quantity: 1, idempotency_key: key,
+    })
+    expect(stranger.status, `stranger POST -> ${JSON.stringify(stranger.body)}`).toBe(409)
+    expect(stranger.body).toEqual(CONFLICT)
+    expect(await lotsOf(KEY_STRANGER)).toBe(0)
+    expect(await lotsUnder(key)).toEqual([{ id: first.body.id, created_by: KEY_USER, deleted: false }])
+
+    // 5. The lot is deleted and still holds its key (the index is not partial on deleted_at). Its
+    //    maker's retry is not answered with a deleted lot and does not make a second: the INSERT meets
+    //    the key INSIDE the parents transaction, which has to take the whole create back.
+    await directSql`UPDATE inventory_items SET deleted_at = NOW() WHERE id = ${first.body.id}`
+    const afterDelete = await postAs(KEY_USER, lot)
+    expect(afterDelete.status, `POST after delete -> ${JSON.stringify(afterDelete.body)}`).toBe(409)
+    expect(afterDelete.body).toEqual(CONFLICT)
+    expect(await lotsUnder(key)).toEqual([{ id: first.body.id, created_by: KEY_USER, deleted: true }])
+    expect(await lotsOf(KEY_USER)).toBe(1)
+    expect(await linksOf(KEY_USER)).toBe(1)
+
+    // 6. A create that sends no key leaves the column NULL, and two of them never meet the index.
+    const plain = { name: `key-none-${RUN}`, type: 'durable', category: 'tools', quantity: 1 }
+    const a = await postAs(KEY_USER, plain)
+    const b = await postAs(KEY_USER, plain)
+    expect([a.status, b.status]).toEqual([201, 201])
+    expect(b.body.id).not.toBe(a.body.id)
+    const unkeyed = await directSql`
+      SELECT count(*)::int AS n FROM inventory_items
+       WHERE id = ANY(${[a.body.id, b.body.id]}::uuid[]) AND idempotency_key IS NULL`
+    expect(unkeyed[0].n).toBe(2)
   })
 })
