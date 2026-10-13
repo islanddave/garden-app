@@ -3420,9 +3420,9 @@ fi
 # If the listing answers 403 the block takes the REFUSAL path instead and says so. That path WRITES NOTHING to
 # the vocabulary, the smoke's own type included: a retire is refused with 403 and the first type in the public
 # list reads back still live. It proves the gate, not the retire. deploy-staging.yml puts ADMIN_CLERK_SUBS on
-# garden-varieties-staging before this script runs, so a refusal that carries the code admin_not_configured
-# means that step did not land, and under SMOKE_REQUIRE_AUTH (the ship gate) it is a FAIL: the write →
-# read-back assert may not be skipped there. A hand run without SMOKE_REQUIRE_AUTH still only warns.
+# garden-varieties-staging, with the smoke user in it, before this script runs, so any refusal there means
+# that step did not land, and under SMOKE_REQUIRE_AUTH (the ship gate) it is a FAIL whatever its code: the
+# write → read-back assert may not be skipped there. A hand run without SMOKE_REQUIRE_AUTH still only warns.
 if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETIES:-}" ]]; then
   CT_BASE="${STAGING_API_VARIETIES%/}/api/varieties/crop-types"
   CT_SLUG="smoke_test_crop_type"
@@ -3518,12 +3518,14 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETI
     # sent for the smoke's own slug, there or not: the admin check comes before any read, so it must answer
     # 403 either way, and if it ever did not, no real type could be hit. The first type in the public list
     # must then read back still live.
-    # ct_unwalked says the walk was not run: a FAIL when the function has no admin list at all and this is the
-    # ship gate, a WARN otherwise.
+    # ct_unwalked says the walk was not run: a FAIL on the ship gate whatever the refusal's code, a WARN on a
+    # hand run. deploy-staging.yml puts the smoke user in the list in the same run, so ANY 403 under
+    # SMOKE_REQUIRE_AUTH means provisioning did not land: no list (admin_not_configured), or a list that
+    # lacks the smoke user (the handler sends no code then).
     CT_WHY=$(ct_get "$CT_BASE/admin" '.code // "-"'); CT_WHY="${CT_WHY//\"/}"
     ct_unwalked() {                   # ct_unwalked <what was proven instead>
-      if [[ "$CT_WHY" == "403 admin_not_configured" && -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
-        echo "❌ FAIL [write:crop-type-retire-readback] garden-varieties has no ADMIN_CLERK_SUBS (admin_not_configured): the deploy step that sets it did not land, and the ship gate may not skip this assert — $1"
+      if [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+        echo "❌ FAIL [write:crop-type-retire-readback] the smoke account is not an admin on the varieties function (${CT_WHY#* }): the deploy step that sets ADMIN_CLERK_SUBS did not land or its list lacks the smoke user, and the ship gate may not skip this assert — $1"
         FAIL=$((FAIL+1))
       else
         echo "⚠️  WARN [write:crop-type-retire-readback] the smoke account is not an admin on the varieties function (${CT_WHY#* }) — the retire → restore walk was NOT run; $1"

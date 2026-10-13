@@ -112,3 +112,22 @@ def test_the_block_ends_on_the_retire():
     admin_path = body[:body.index('elif [[ "$CT_LIST" == 403\\ * ]]; then')]
     assert admin_path.rindex('"$CT_BASE/retire"') > admin_path.rindex('\\"restore_slug\\"')
     assert admin_path.rindex('"$CT_BASE/retire"') > admin_path.rindex('\\"display_name\\"')
+
+
+def test_on_the_ship_gate_any_admin_refusal_fails():
+    """ct_unwalked: under SMOKE_REQUIRE_AUTH the skipped walk is a FAIL whatever code the 403 carried.
+
+    The handler sends admin_not_configured only when the function has no list at all; a list that lacks the
+    smoke user answers 403 with no code. Keying the FAIL on that one code let the second case pass the gate
+    with the write walk skipped.
+    """
+    _, block, _ = block_v()
+    body = code(block)
+    start = body.index("ct_unwalked() {")
+    fn = body[start:body.index("\n    }", start)]
+    first_if = next(line.strip() for line in fn.splitlines() if line.strip().startswith("if "))
+    assert first_if == 'if [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then', first_if
+    fail_arm, warn_arm = fn.split("\n      else\n")
+    assert "FAIL [write:crop-type-retire-readback]" in fail_arm and "FAIL=$((FAIL+1))" in fail_arm
+    assert "WARN [write:crop-type-retire-readback]" in warn_arm and "FAIL=" not in warn_arm
+    assert "admin_not_configured" not in fn
