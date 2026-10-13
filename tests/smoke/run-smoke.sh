@@ -3417,10 +3417,12 @@ fi
 # own type is in the way. The listing's counts are read before anything is sent, so a type found retired with
 # such a row is left retired (brought back, it could not be retired again), and a retire that still answers
 # 409 in_use warns the same way. The line gives the count and says what a human has to delete.
-# Until the variable is on the function the listing answers 403 for everyone, and the block takes the REFUSAL
-# path instead and says so. That path WRITES NOTHING to the vocabulary, the smoke's own type included: a retire
-# is refused with 403 and the first type in the public list reads back still live. It proves the gate, not the
-# retire.
+# If the listing answers 403 the block takes the REFUSAL path instead and says so. That path WRITES NOTHING to
+# the vocabulary, the smoke's own type included: a retire is refused with 403 and the first type in the public
+# list reads back still live. It proves the gate, not the retire. deploy-staging.yml puts ADMIN_CLERK_SUBS on
+# garden-varieties-staging before this script runs, so a refusal that carries the code admin_not_configured
+# means that step did not land, and under SMOKE_REQUIRE_AUTH (the ship gate) it is a FAIL: the write →
+# read-back assert may not be skipped there. A hand run without SMOKE_REQUIRE_AUTH still only warns.
 if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETIES:-}" ]]; then
   CT_BASE="${STAGING_API_VARIETIES%/}/api/varieties/crop-types"
   CT_SLUG="smoke_test_crop_type"
@@ -3511,11 +3513,22 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETI
       FAIL=$((FAIL+1))
     fi
   elif [[ "$CT_LIST" == 403\ * ]]; then
-    # REFUSAL path. The caller is not an admin on this function (or it has no ADMIN_CLERK_SUBS yet). Nothing
+    # REFUSAL path. The caller is not an admin on this function (or it has no ADMIN_CLERK_SUBS). Nothing
     # is made here: a live smoke type nobody can retire is exactly what the standing gate counts. The retire is
     # sent for the smoke's own slug, there or not: the admin check comes before any read, so it must answer
     # 403 either way, and if it ever did not, no real type could be hit. The first type in the public list
     # must then read back still live.
+    # ct_unwalked says the walk was not run: a FAIL when the function has no admin list at all and this is the
+    # ship gate, a WARN otherwise.
+    CT_WHY=$(ct_get "$CT_BASE/admin" '.code // "-"'); CT_WHY="${CT_WHY//\"/}"
+    ct_unwalked() {                   # ct_unwalked <what was proven instead>
+      if [[ "$CT_WHY" == "403 admin_not_configured" && -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+        echo "❌ FAIL [write:crop-type-retire-readback] garden-varieties has no ADMIN_CLERK_SUBS (admin_not_configured): the deploy step that sets it did not land, and the ship gate may not skip this assert — $1"
+        FAIL=$((FAIL+1))
+      else
+        echo "⚠️  WARN [write:crop-type-retire-readback] the smoke account is not an admin on the varieties function (${CT_WHY#* }) — the retire → restore walk was NOT run; $1"
+      fi
+    }
     CT_ANY=$(ct_get "$CT_BASE" '.[0].slug // ""'); CT_ANY="${CT_ANY#* }"; CT_ANY="${CT_ANY//\"/}"
     if [[ "$CT_ANY" =~ ^[a-z0-9_]+$ ]]; then
       CT_CODE=$(ct_post "$CT_BASE/retire" "{\"slug\": \"$CT_SLUG\"}")
@@ -3523,7 +3536,7 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETI
       if [[ "$CT_CODE" == 403\ * && "$CT_PUBLIC" == "200 1" ]]; then
         echo "✅ PASS [gate:crop-type-retire-refused] retire answered '$CT_CODE', nothing was made, and '$CT_ANY' reads back live"
         PASS=$((PASS+1))
-        echo "⚠️  WARN [write:crop-type-retire-readback] the smoke account is not an admin on the varieties function (${CT_CODE#* }) — the retire → restore walk was NOT run; only the refusal was proven"
+        ct_unwalked "only the refusal was proven"
       else
         echo "❌ FAIL [gate:crop-type-retire-refused] retire of '$CT_SLUG' answered '$CT_CODE' (expected 403), '$CT_ANY' in the public list '$CT_PUBLIC' (expected 200 1)"
         FAIL=$((FAIL+1))

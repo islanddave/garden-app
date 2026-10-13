@@ -284,7 +284,8 @@
     "memory": 256,
     "timeout": 30,
     "env": {
-      "GARDEN_HOUSEHOLD_IDS": true
+      "GARDEN_HOUSEHOLD_IDS": true,
+      "ADMIN_CLERK_SUBS": true
     },
     "url": {
       "cors_origins": [
