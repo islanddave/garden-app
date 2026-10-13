@@ -6,7 +6,7 @@ the line for a night between 45 and 50 F (ledger `V5-CHILLBAND-001`; Dave, 2026-
 night"). Every weather line shown on Today writes one row to that table, and the table refuses a cue it does
 not know. The decisions are in the header of `0a-widen-cue-check.sql`.
 
-**Not applied to staging or prod.** Written 2026-10-13 by a lane with no database, then rehearsed the same
+**APPLIED to staging and prod on 2026-10-13** (schema sitting, Dave first-hand: "Apply all three"; post gates read ok on both in gate-invariants run 38454285601). The paragraph below is how it stood before that. Written 2026-10-13 by a lane with no database, then rehearsed the same
 day on a throwaway local PostgreSQL 17.10 (see "What was rehearsed, and where"). The staging apply is still
 the first time these files meet the real table. Applying to prod is a prod database change and needs Dave's
 first-hand OK.

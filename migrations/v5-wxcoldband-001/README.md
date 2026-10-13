@@ -5,7 +5,7 @@ the forecast ensemble's temperature, one row per night per forecast run. It is w
 job on Dave's Mac and read by the daily-plan read for the Today card. Ledger `V5-WXCOLDBAND-001`. Nothing
 on any existing table changes. The decisions are in the header of `0a-additive-ddl.sql`.
 
-**Not applied to staging or prod.** Written 2026-10-13 by a lane with no database, then rehearsed the same
+**APPLIED to staging and prod on 2026-10-13** (schema sitting, Dave first-hand: "Apply all three"; post gates read ok on both in gate-invariants run 38454285601). The paragraph below is how it stood before that. Written 2026-10-13 by a lane with no database, then rehearsed the same
 day on a throwaway local PostgreSQL 17.10 (see "What was rehearsed, and where"). The staging apply is still
 the first time these files meet the real `spaces`. Applying to prod is a prod database change and needs
 Dave's first-hand OK.
