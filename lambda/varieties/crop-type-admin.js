@@ -8,9 +8,12 @@
 // The SQL lives here rather than in index.js so that no statement in that file changes position.
 //
 // WHAT RETIRE MAY NOT DO. A retired type leaves GET /api/varieties/crop-types, and every picker with
-// it, so a type that anything live still names must stay. The guard therefore covers EVERY table with
-// a foreign key to crop_types(slug) — CROP_TYPE_DEPENDENTS below — and crop-type-admin.test.js derives
-// that list from migrations/ and fails when a table appears there that is not listed here. The food
+// it, so a type that any row still names must stay. ANY row: a deleted variety, put-up, pantry item,
+// batch ingredient or source counts too, because each of them can be un-deleted (variety restore,
+// reviveBlend, the batch-input un-delete) and would come back naming a retired type. The guard
+// therefore covers EVERY table with a foreign key to crop_types(slug) — CROP_TYPE_DEPENDENTS below —
+// with no deleted_at filter on any of them, and crop-type-admin.test.js derives that list from
+// migrations/ and fails when a table appears there that is not listed here. The food
 // classes (category non_plant_food: bread, cheese, ...) are refused by category: Put Up reads them and
 // migrations/v4-putupfood-001/gates.yml requires each to stay live.
 //
@@ -61,7 +64,7 @@ export const CROP_TYPE_DEPENDENTS = [
   { table: 'preservation_source', key: 'put_up_sources', one: 'put-up source', many: 'put-up sources' },
 ];
 
-// "Still used by 3 pantry items and 1 batch." — null when nothing live names the type.
+// "Still used by 3 pantry items and 1 batch." — null when no row names the type.
 export function usageSentence(counts) {
   const parts = CROP_TYPE_DEPENDENTS
     .map(d => ({ n: Number(counts?.[d.key] ?? 0), d }))
@@ -99,22 +102,22 @@ export function auditLine(evt, slug, by, at = new Date()) {
   return JSON.stringify({ evt, slug, by, at: at.toISOString() });
 }
 
-// Every type (slug null) or one type, with its live-row count per dependent table. No deleted_at
-// filter on crop_types: the page lists retired types so they can be brought back. A batch counts
-// once however many of its ingredients name the type.
+// Every type (slug null) or one type, with its row count per dependent table, deleted rows included
+// (see the header). No deleted_at filter on crop_types either: the page lists retired types so they
+// can be brought back. A batch counts once however many of its ingredients name the type.
 async function loadUsage(sql, slug) {
   return sql`
     SELECT ct.slug, ct.display_name, ct.category, ct.sort_order, ct.deleted_at,
            (SELECT count(*)::int FROM public.cultivar cv
-             WHERE cv.crop_type_slug = ct.slug AND cv.deleted_at IS NULL) AS varieties,
+             WHERE cv.crop_type_slug = ct.slug) AS varieties,
            (SELECT count(*)::int FROM public.preservation_log pl
-             WHERE pl.crop_type_slug = ct.slug AND pl.deleted_at IS NULL) AS put_ups,
+             WHERE pl.crop_type_slug = ct.slug) AS put_ups,
            (SELECT count(*)::int FROM public.pantry_item pit
-             WHERE pit.crop_type_slug = ct.slug AND pit.deleted_at IS NULL) AS pantry_items,
+             WHERE pit.crop_type_slug = ct.slug) AS pantry_items,
            (SELECT count(DISTINCT kbi.batch_id)::int FROM public.kitchen_batch_input kbi
-             WHERE kbi.crop_type_slug = ct.slug AND kbi.deleted_at IS NULL) AS batches,
+             WHERE kbi.crop_type_slug = ct.slug) AS batches,
            (SELECT count(*)::int FROM public.preservation_source ps
-             WHERE ps.crop_type_slug = ct.slug AND ps.deleted_at IS NULL) AS put_up_sources
+             WHERE ps.crop_type_slug = ct.slug) AS put_up_sources
     FROM public.crop_types ct
     WHERE (${slug}::text IS NULL OR ct.slug = ${slug}::text)
     ORDER BY ct.sort_order ASC, ct.display_name ASC
@@ -155,15 +158,15 @@ export async function retireCropType(sql, body, userId, env) {
        AND ct.deleted_at IS NULL
        AND (ct.category IS NULL OR ct.category <> ${NON_PLANT_FOOD_CATEGORY})
        AND NOT EXISTS (SELECT 1 FROM public.cultivar cv
-                        WHERE cv.crop_type_slug = ct.slug AND cv.deleted_at IS NULL)
+                        WHERE cv.crop_type_slug = ct.slug)
        AND NOT EXISTS (SELECT 1 FROM public.preservation_log pl
-                        WHERE pl.crop_type_slug = ct.slug AND pl.deleted_at IS NULL)
+                        WHERE pl.crop_type_slug = ct.slug)
        AND NOT EXISTS (SELECT 1 FROM public.pantry_item pit
-                        WHERE pit.crop_type_slug = ct.slug AND pit.deleted_at IS NULL)
+                        WHERE pit.crop_type_slug = ct.slug)
        AND NOT EXISTS (SELECT 1 FROM public.kitchen_batch_input kbi
-                        WHERE kbi.crop_type_slug = ct.slug AND kbi.deleted_at IS NULL)
+                        WHERE kbi.crop_type_slug = ct.slug)
        AND NOT EXISTS (SELECT 1 FROM public.preservation_source ps
-                        WHERE ps.crop_type_slug = ct.slug AND ps.deleted_at IS NULL)
+                        WHERE ps.crop_type_slug = ct.slug)
     RETURNING ct.slug, ct.display_name, ct.category, ct.sort_order, ct.deleted_at
   `;
   if (!retired) return { status: 409, body: { error: RACE_REFUSAL, code: 'in_use' } };

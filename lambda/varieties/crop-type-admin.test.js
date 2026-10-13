@@ -40,18 +40,27 @@ const type = (slug, display_name, extra = {}) => ({
   ...ZERO, ...extra,
 });
 
-// The crop_types table plus its per-table live counts, declared per test.
+// The crop_types table plus its per-table counts, declared per test. A type may also declare
+// dependent ROWS (`rows: { varieties: [{ deleted_at }] }`); the stub counts a soft-deleted one unless
+// the statement it is answering filters that table on deleted_at, so a filter put back into either
+// statement lets a type with only deleted rows through, and the tests below see it.
+const ALIAS = { varieties: 'cv', put_ups: 'pl', pantry_items: 'pit', batches: 'kbi', put_up_sources: 'ps' };
+const rowsCounted = (text, r, key) => (r.rows?.[key] ?? [])
+  .filter((d) => !(d.deleted_at && text.includes(`${ALIAS[key]}.deleted_at IS NULL`))).length;
 let table;
 function db(rows) {
   table = rows.map((r) => ({ ...r }));
   stubState.sqlHandler = (text, values) => {
     if (text.includes('INSERT INTO public.rate_limit_buckets')) return [{ count: 1 }];
     if (text.includes('AS put_up_sources')) {
-      return table.filter((r) => values[0] == null || r.slug === values[0]);
+      return table.filter((r) => values[0] == null || r.slug === values[0]).map((r) => ({
+        ...r, ...Object.fromEntries(Object.keys(ALIAS).map((k) => [k, r[k] + rowsCounted(text, r, k)])),
+      }));
     }
     if (text.includes('SET deleted_at = now(), updated_at = now()')) {
       const row = table.find((r) => r.slug === values[0] && !r.deleted_at);
       if (!row) return [];
+      if (Object.keys(ALIAS).some((k) => rowsCounted(text, row, k) > 0)) return [];
       row.deleted_at = '2026-10-12T00:00:00.000Z';
       return [row];
     }
@@ -85,7 +94,7 @@ const auditLines = () => logSpy.mock.calls.map((c) => c[0]).filter((l) => typeof
 
 describe('retire — the guard', () => {
   it.each(CROP_TYPE_DEPENDENTS.map((d) => [d.table, d]))(
-    'refuses while a live %s row names the type, and says what uses it',
+    'refuses while a %s row names the type, and says what uses it',
     async (_table, d) => {
       db([type('tatsoi', 'Tatsoi', { [d.key]: 2 })]);
       const res = await post('/api/varieties/crop-types/retire', { slug: 'tatsoi' });
@@ -97,6 +106,35 @@ describe('retire — the guard', () => {
       expect(auditLines()).toEqual([]);
     },
   );
+
+  // A deleted row can be un-deleted (variety restore, reviveBlend, the batch-input un-delete), and
+  // it would come back naming a retired type. So it holds the type in place like a live one.
+  it.each(CROP_TYPE_DEPENDENTS.map((d) => [d.table, d]))(
+    'refuses a type whose only %s row is soft-deleted',
+    async (_table, d) => {
+      db([type('tatsoi', 'Tatsoi', { rows: { [d.key]: [{ deleted_at: '2026-09-01T00:00:00.000Z' }] } })]);
+      const res = await post('/api/varieties/crop-types/retire', { slug: 'tatsoi' });
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('in_use');
+      expect(res.body.error).toBe(`Still used by 1 ${d.one}.`);
+      expect(writes()).toHaveLength(0);
+      expect(table[0].deleted_at).toBeNull();
+      const list = await get('/api/varieties/crop-types/admin');
+      expect(list.body.types[0]).toMatchObject({ can_retire: false, why_not: `Still used by 1 ${d.one}.` });
+    },
+  );
+
+  it('the write itself refuses on a soft-deleted row that appears after the read passed', async () => {
+    db([type('tatsoi', 'Tatsoi')]);
+    const inner = stubState.sqlHandler;
+    stubState.sqlHandler = (text, values) => {
+      if (text.includes('SET deleted_at = now()')) table[0].rows = { varieties: [{ deleted_at: '2026-09-01T00:00:00.000Z' }] };
+      return inner(text, values);
+    };
+    const res = await post('/api/varieties/crop-types/retire', { slug: 'tatsoi' });
+    expect(res.status).toBe(409);
+    expect(table[0].deleted_at).toBeNull();
+  });
 
   it('names every table that still uses the type in one sentence', async () => {
     db([type('cheddar', 'Cheddar', { pantry_items: 3, batches: 1 })]);
@@ -355,14 +393,25 @@ describe('the dependents census', () => {
   });
 
   it.each(CROP_TYPE_DEPENDENTS.map((d) => [d.table, d]))(
-    'counts live %s rows in the listing and refuses on them inside the retire write',
+    'counts every %s row in the listing, deleted ones included, and refuses on them inside the retire write',
     (tableName, d) => {
       const rel = RELATION[tableName] ?? tableName;
-      const live = String.raw`FROM public\.${rel} (\w+)\s+WHERE \1\.crop_type_slug = ct\.slug AND \1\.deleted_at IS NULL\)`;
-      expect(statement('AS put_up_sources')).toMatch(new RegExp(String.raw`\(SELECT count\([^)]*\)::int ${live} AS ${d.key}\b`));
-      expect(statement('SET deleted_at = now()')).toMatch(new RegExp(String.raw`AND NOT EXISTS \(SELECT 1 ${live}`));
+      // The predicate is the foreign key and nothing else: `\)` straight after it.
+      const any = String.raw`FROM public\.${rel} (\w+)\s+WHERE \1\.crop_type_slug = ct\.slug\)`;
+      expect(statement('AS put_up_sources')).toMatch(new RegExp(String.raw`\(SELECT count\([^)]*\)::int ${any} AS ${d.key}\b`));
+      expect(statement('SET deleted_at = now()')).toMatch(new RegExp(String.raw`AND NOT EXISTS \(SELECT 1 ${any}`));
     },
   );
+
+  it('filters no dependent table on a soft-delete column in either statement', () => {
+    // deleted_at is the only soft-delete or archive column any of the five tables has (migrations/),
+    // and public.cultivar is plant_varieties with no WHERE. The one deleted_at each statement may
+    // name is crop_types' own.
+    for (const marker of ['AS put_up_sources', 'SET deleted_at = now()']) {
+      const named = [...statement(marker).matchAll(/\b(\w+)\.(deleted_at|archived_at|archived)\b/g)].map((m) => m[1]);
+      expect([...new Set(named)], marker).toEqual(['ct']);
+    }
+  });
 
   it('the retire write also refuses a retired type and a food class, and sets updated_at by hand', () => {
     const upd = statement('SET deleted_at = now()');

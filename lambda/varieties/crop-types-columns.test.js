@@ -55,19 +55,20 @@ const HANDLERS = readdirSync(__dirname)
 // AND staging 2026-08-28); this Lambda began reading it when the crop-types vocab route widened its
 // projection so a client filter can finally answer "cantaloupe".
 //
-// V4-CROPTYPERETIRE-001 adds four keys. crop-type-admin.js counts the live rows of every table with a
+// V4-CROPTYPERETIRE-001 adds four keys. crop-type-admin.js counts the rows of every table with a
 // foreign key to crop_types(slug) before it lets a type be retired, and four of those tables had no
 // reader in this directory until then (plant_varieties, the fifth, is read through public.cultivar and
-// has its own contract file). Columns per migrations/: preservation_log v4-putup-001 0a :72/:98,
-// pantry_item v5-pantry-001 0a :95/:118, kitchen_batch_input v5-putupmake-001 0a (batch_id,
-// crop_type_slug :255, deleted_at), preservation_source v5-putupmultisource-001 0a :200/:214. Not read
-// from a live database by the lane that added them.
+// has its own contract file). The counts take deleted rows too, so deleted_at is NOT read off any of
+// the four and is not listed. Columns per migrations/: preservation_log v4-putup-001 0a :72,
+// pantry_item v5-pantry-001 0a :89, kitchen_batch_input v5-putupmake-001 0a (batch_id,
+// crop_type_slug :255), preservation_source v5-putupmultisource-001 0a :200. Not read from a live
+// database by the lane that added them.
 const AUDIT_COLUMNS = {
   crop_types: ['category', 'default_lifecycle', 'deleted_at', 'display_name', 'dtm_basis', 'search_aliases', 'slug', 'sort_order'],
-  kitchen_batch_input: ['batch_id', 'crop_type_slug', 'deleted_at'],
-  pantry_item: ['crop_type_slug', 'deleted_at'],
-  preservation_log: ['crop_type_slug', 'deleted_at'],
-  preservation_source: ['crop_type_slug', 'deleted_at'],
+  kitchen_batch_input: ['batch_id', 'crop_type_slug'],
+  pantry_item: ['crop_type_slug'],
+  preservation_log: ['crop_type_slug'],
+  preservation_source: ['crop_type_slug'],
 };
 
 const CROP_TYPES_COLUMNS = AUDIT_COLUMNS.crop_types;
