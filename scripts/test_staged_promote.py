@@ -1,11 +1,14 @@
 """Tests for the staged-promote marker (OPS-STAGEDPROMOTEINVALIDATED-001).
 
-Pure core only — no git, no network. The subprocess-touching verbs are covered
-by their pure pieces: message formatting, message parsing, age arithmetic, and
-the ls-remote peeling rule, which is the one place a plausible implementation is
-silently wrong.
+No network. The pure pieces first: message formatting, message parsing, age
+arithmetic, and the ls-remote peeling rule, which is the one place a plausible
+implementation is silently wrong. Then the failed-read contract
+(BUG-STAGEDMARKERFAILOPEN-001), with git faked and, at the end, with the real
+script run against real local remotes.
 """
-import importlib.util, os
+import importlib.util, os, subprocess, sys
+
+import pytest
 from datetime import datetime, timezone
 
 spec = importlib.util.spec_from_file_location(
@@ -141,3 +144,175 @@ def test_marker_name_is_outside_the_protected_tag_namespace():
     assert sp.TAG_NAME == "staged-promote"
     assert not sp.TAG_NAME.startswith("v")
     assert not sp.TAG_NAME.startswith("promote-v")
+
+
+# ── a failed read is UNKNOWN, never "nothing staged" (BUG-STAGEDMARKERFAILOPEN-001) ─
+TAG_OBJECT = "1111111111111111111111111111111111111111"
+ANNOTATED = f"{TAG_OBJECT}\t{sp.TAG_REF}\n{SHA}\t{sp.TAG_REF}^{{}}\n"
+
+
+class _Reply:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def _fake_git(monkeypatch, ls_remote):
+    """Replace sp._git. `ls_remote` is a _Reply or an exception to raise for ls-remote;
+    every other git call is recorded and answered with success."""
+    calls = []
+
+    def fake(*args, **kw):
+        calls.append(args)
+        if args[0] == "ls-remote":
+            if isinstance(ls_remote, BaseException):
+                raise ls_remote
+            return ls_remote
+        return _Reply()
+
+    monkeypatch.setattr(sp, "_git", fake)
+    return calls
+
+
+UNREADABLE = {
+    "exit 128, no network": _Reply(128, "", "fatal: unable to access 'https://github.com/x/y.git/': Could not resolve host"),
+    "exit 128 with stale stdout": _Reply(128, ANNOTATED, "fatal: the remote end hung up unexpectedly"),
+    "exit 1": _Reply(1, "", ""),
+    "no reply in time": subprocess.TimeoutExpired(["git", "ls-remote"], 60),
+    "git is not installed": FileNotFoundError("git"),
+    "a page instead of refs": _Reply(0, "<html>502 Bad Gateway</html>\n", ""),
+    "a ref that was not asked for": _Reply(0, f"{SHA}\trefs/heads/dev\n", ""),
+    "a short sha": _Reply(0, f"{SHA[:7]}\t{sp.TAG_REF}\n", ""),
+    "peeled ref without the tag": _Reply(0, f"{SHA}\t{sp.TAG_REF}^{{}}\n", ""),
+}
+
+
+@pytest.mark.parametrize("case", sorted(UNREADABLE))
+def test_a_failed_read_raises_and_is_never_None(monkeypatch, case):
+    _fake_git(monkeypatch, UNREADABLE[case])
+    with pytest.raises(sp.MarkerUnreadable):
+        sp.remote_marker_sha("origin")
+
+
+def test_the_real_reader_answers_absent_annotated_and_lightweight(monkeypatch):
+    _fake_git(monkeypatch, _Reply(0, "", ""))
+    assert sp.remote_marker_sha("origin") is None, "exit 0 with nothing listed is the remote saying: no tag"
+    _fake_git(monkeypatch, _Reply(0, ANNOTATED, ""))
+    assert sp.remote_marker_sha("origin") == SHA
+    _fake_git(monkeypatch, _Reply(0, f"{SHA}\t{sp.TAG_REF}\n", ""))
+    assert sp.remote_marker_sha("origin") == SHA
+
+
+def test_the_ls_remote_is_bounded(monkeypatch):
+    seen = {}
+
+    def fake(*args, **kw):
+        seen.update(kw)
+        return _Reply()
+
+    monkeypatch.setattr(sp, "_git", fake)
+    sp.remote_marker_sha("origin")
+    assert seen.get("timeout") == sp.LS_REMOTE_TIMEOUT_S and 0 < sp.LS_REMOTE_TIMEOUT_S <= 120
+
+
+@pytest.mark.parametrize("case", sorted(UNREADABLE))
+def test_check_says_UNKNOWN_and_exits_2_on_a_failed_read(monkeypatch, capsys, case):
+    _fake_git(monkeypatch, UNREADABLE[case])
+    code = sp.main(["check"])
+    out, err = capsys.readouterr()
+    assert code == 2 == sp.EXIT_UNKNOWN
+    assert "Safe" not in out + err and "No staged promote" not in out + err, "a failed read must never say safe"
+    assert out == "" and err.startswith("UNKNOWN: could not read the staged-promote marker")
+    assert "NOT safe to push to dev" in err
+
+
+def test_check_still_says_safe_only_when_the_remote_answered_with_no_marker(monkeypatch, capsys):
+    _fake_git(monkeypatch, _Reply(0, "", ""))
+    assert sp.main(["check"]) == 0
+    assert capsys.readouterr().out == "No staged promote. Safe to push to dev.\n"
+
+
+def test_check_still_exits_1_when_a_marker_is_staged(monkeypatch, capsys):
+    _fake_git(monkeypatch, _Reply(0, ANNOTATED, ""))
+    assert sp.main(["check"]) == 1
+    assert SHA in capsys.readouterr().err
+
+
+def test_clear_does_not_claim_nothing_is_staged_and_deletes_nothing_on_a_failed_read(monkeypatch, capsys):
+    calls = _fake_git(monkeypatch, UNREADABLE["exit 128, no network"])
+    code = sp.main(["clear"])
+    out, err = capsys.readouterr()
+    assert code == 2 and "Nothing staged" not in out + err and "Nothing was cleared" in err
+    assert [c[0] for c in calls] == ["ls-remote"], "no push and no tag delete after a failed read"
+
+
+def test_stage_refuses_and_writes_nothing_when_it_cannot_see_an_existing_marker(monkeypatch, capsys):
+    calls = _fake_git(monkeypatch, UNREADABLE["exit 128, no network"])
+    code = sp.main(["stage", "--sha", SHA, "--version", "v9.9.9", "--by", "T1/test"])
+    out, err = capsys.readouterr()
+    assert code == 2 and "STAGED" not in out and "Nothing was staged" in err
+    assert [c[0] for c in calls] == ["cat-file", "ls-remote"], "no tag and no push after a failed read"
+    # --force replaces a marker it can SEE; it is not a way past a read that failed.
+    calls = _fake_git(monkeypatch, UNREADABLE["exit 128, no network"])
+    assert sp.main(["stage", "--sha", SHA, "--version", "v9.9.9", "--by", "T1/test", "--force"]) == 2
+    assert [c[0] for c in calls] == ["cat-file", "ls-remote"]
+
+
+# ── the same contract with the real script, real git and real local remotes ──────
+SCRIPT = os.path.join(os.path.dirname(__file__), "staged-promote.py")
+GIT_ENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
+           "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull, "GIT_TERMINAL_PROMPT": "0"}
+
+
+def _g(cwd, *args):
+    return subprocess.run(["git", *args], cwd=cwd, env=GIT_ENV, capture_output=True, text=True, check=True).stdout.strip()
+
+
+def _run(cwd, *args):
+    return subprocess.run([sys.executable, SCRIPT, *args], cwd=cwd, env=GIT_ENV, capture_output=True, text=True)
+
+
+@pytest.fixture
+def repo(tmp_path):
+    bare, work = tmp_path / "origin.git", tmp_path / "work"
+    _g(tmp_path, "init", "--quiet", "--bare", str(bare))
+    _g(tmp_path, "init", "--quiet", str(work))
+    _g(work, "remote", "add", "origin", str(bare))
+    _g(work, "commit", "--quiet", "--allow-empty", "-m", "one")
+    _g(work, "push", "--quiet", "origin", "HEAD:refs/heads/dev")
+    return work, bare
+
+
+def test_real_git_absent_staged_cleared_and_an_unreachable_remote(repo, tmp_path):
+    work, bare = repo
+    head = _g(work, "rev-parse", "HEAD")
+
+    r = _run(work, "check")
+    assert (r.returncode, r.stdout) == (0, "No staged promote. Safe to push to dev.\n"), r.stderr
+
+    r = _run(work, "stage", "--sha", head, "--version", "v9.9.9", "--by", "T1/test")
+    assert r.returncode == 0, r.stderr
+    r = _run(work, "check")
+    assert r.returncode == 1 and head in r.stderr and "T1/test" in r.stderr
+
+    # The remote stops answering while a marker is staged: the old code said "Safe to push to dev" here.
+    gone = tmp_path / "moved-away.git"
+    os.rename(bare, gone)
+    for verb, says in (("check", "NOT safe to push to dev"), ("clear", "Nothing was cleared")):
+        r = _run(work, verb)
+        assert r.returncode == 2 and r.stdout == "", (verb, r.stdout, r.stderr)
+        assert r.stderr.startswith("UNKNOWN: ") and says in r.stderr and "Safe to push" not in r.stderr
+    r = _run(work, "stage", "--sha", head, "--version", "v9.9.10", "--by", "T1/other", "--force")
+    assert r.returncode == 2 and "Nothing was staged" in r.stderr
+
+    os.rename(gone, bare)
+    assert _g(work, "ls-remote", "origin", sp.TAG_REF) != "", "the failed clear left the marker in place"
+    r = _run(work, "clear")
+    assert r.returncode == 0 and head in r.stdout, r.stderr
+    assert _run(work, "check").returncode == 0
+
+
+def test_real_git_a_remote_name_that_does_not_exist_is_UNKNOWN(repo):
+    work, _ = repo
+    r = _run(work, "check", "--remote", "no-such-remote")
+    assert r.returncode == 2 and r.stderr.startswith("UNKNOWN: ") and r.stdout == ""

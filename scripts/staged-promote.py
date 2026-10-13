@@ -117,13 +117,31 @@ def age_hours(when: str, now: datetime) -> float | None:
     return (now - t).total_seconds() / 3600.0
 
 
-def _git(*args, check=True):
-    return subprocess.run(["git", *args], capture_output=True, text=True, check=check)
+def _git(*args, check=True, timeout=None):
+    return subprocess.run(["git", *args], capture_output=True, text=True, check=check, timeout=timeout)
+
+
+class MarkerUnreadable(Exception):
+    """The remote did not give a usable answer about the marker.
+
+    BUG-STAGEDMARKERFAILOPEN-001. This is NOT "no marker". Until 2026-10-13 a failed
+    `git ls-remote` (no network, an expired credential, a wrong remote name) and an
+    absent tag both came back as None, so `check` printed "Safe to push to dev" and
+    exited 0 in exactly the conditions where it knew nothing, `clear` said "Nothing
+    staged" over a marker it never looked at, and `stage` skipped its "a different
+    promote is already staged" refusal. A gate that cannot read says so; it never
+    says safe.
+    """
+
+
+LS_REMOTE_TIMEOUT_S = 60
+EXIT_UNKNOWN = 2
 
 
 def remote_marker_sha(remote="origin") -> str | None:
-    """The commit the remote marker points at, or None. Uses ls-remote so this
-    works without fetching and without a full clone."""
+    """The commit the remote marker points at, or None when the remote ANSWERED and
+    has no marker. Raises MarkerUnreadable when the remote gave no usable answer.
+    Uses ls-remote so this works without fetching and without a full clone."""
     # The glob is LOAD-BEARING, not tidiness. `ls-remote origin refs/tags/staged-promote`
     # matches only the exact ref and therefore returns ONLY the tag-object line; the
     # peeled `refs/tags/staged-promote^{}` line does not match the pattern and is
@@ -132,8 +150,17 @@ def remote_marker_sha(remote="origin") -> str | None:
     # named a sha that appears nowhere in the repository. Caught by running it against
     # the real remote; the unit test covered the parser but not its input, which is the
     # whole reason parser-only coverage is not enough here.
-    r = _git("ls-remote", remote, TAG_REF, TAG_REF + "^{}", check=False)
-    if r.returncode != 0 or not r.stdout.strip():
+    try:
+        r = _git("ls-remote", remote, TAG_REF, TAG_REF + "^{}", check=False, timeout=LS_REMOTE_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        raise MarkerUnreadable(f"`git ls-remote {remote}` gave no reply in {LS_REMOTE_TIMEOUT_S} s")
+    except OSError as exc:
+        raise MarkerUnreadable(f"could not run git: {type(exc).__name__}")
+    if r.returncode != 0:
+        err = " ".join((r.stderr or "").split())[:200] or "no message"
+        raise MarkerUnreadable(f"`git ls-remote {remote}` failed (exit {r.returncode}: {err})")
+    # Exit 0 with nothing listed is the remote's own answer: the tag is not there.
+    if not r.stdout.strip():
         return None
     # An ANNOTATED tag's plain line is the TAG OBJECT's sha; the peeled `<ref>^{}` line
     # carries the commit. Prefer peeled — comparing a tag-object sha against a commit
@@ -141,11 +168,26 @@ def remote_marker_sha(remote="origin") -> str | None:
     peeled, plain = None, None
     for line in r.stdout.strip().splitlines():
         sha, _, ref = line.partition("\t")
+        sha, ref = sha.strip(), ref.strip()
+        # Anything but the two refs asked for, each with a full sha, is not an answer
+        # about the marker (a proxy's error page on stdout, a truncated reply).
+        if ref not in (TAG_REF, TAG_REF + "^{}") or not FULL_SHA.match(sha):
+            raise MarkerUnreadable(f"`git ls-remote {remote}` gave a line that is not the marker: {line[:80]!r}")
         if ref.endswith("^{}"):
-            peeled = sha.strip()
+            peeled = sha
         else:
-            plain = sha.strip()
+            plain = sha
+    if peeled and not plain:
+        raise MarkerUnreadable(f"`git ls-remote {remote}` listed the marker's peeled ref without the marker")
     return peeled or plain
+
+
+def _unknown(verb_line: str, exc: MarkerUnreadable) -> int:
+    print(f"UNKNOWN: could not read the staged-promote marker: {exc}.\n"
+          f"  {verb_line}\n"
+          "  This is a failed read, not an absent marker. Fix the read (network, credential,\n"
+          "  remote name) and run it again.", file=sys.stderr)
+    return EXIT_UNKNOWN
 
 
 def cmd_stage(args) -> int:
@@ -159,7 +201,11 @@ def cmd_stage(args) -> int:
         print(f"FATAL: {sha} is not a commit in this repository. Fetch it first.", file=sys.stderr)
         return 2
 
-    existing = remote_marker_sha(args.remote)
+    try:
+        existing = remote_marker_sha(args.remote)
+    except MarkerUnreadable as exc:
+        return _unknown("Nothing was staged: a different promote may already be staged, and this "
+                        "could not check.", exc)
     if existing and existing != sha and not args.force:
         print(f"REFUSING: a different promote is already staged at {existing}.\n"
               "  Two staged promotes at once is the ambiguity this marker exists to remove.\n"
@@ -181,12 +227,17 @@ def cmd_stage(args) -> int:
 
 
 def cmd_check(args) -> int:
-    """Exit 0 when nothing is staged; exit 1 when something is.
+    """Exit 0 when nothing is staged; exit 1 when something is; exit 2 (UNKNOWN)
+    when the marker could not be read.
 
     Non-zero-on-staged is what lets this drop into a shell `&&` chain before a
-    push without any extra plumbing.
+    push without any extra plumbing. UNKNOWN is non-zero for the same reason: a
+    read that failed is never "safe".
     """
-    sha = remote_marker_sha(args.remote)
+    try:
+        sha = remote_marker_sha(args.remote)
+    except MarkerUnreadable as exc:
+        return _unknown("NOT safe to push to dev on this answer: a promote may be staged.", exc)
     if not sha:
         print("No staged promote. Safe to push to dev.")
         return 0
@@ -217,7 +268,10 @@ def cmd_check(args) -> int:
 
 
 def cmd_clear(args) -> int:
-    sha = remote_marker_sha(args.remote)
+    try:
+        sha = remote_marker_sha(args.remote)
+    except MarkerUnreadable as exc:
+        return _unknown("Nothing was cleared: a marker may still be staged.", exc)
     if not sha:
         print("Nothing staged; nothing to clear.")
         return 0
@@ -242,7 +296,8 @@ def main(argv=None) -> int:
     s.add_argument("--remote", default="origin")
     s.set_defaults(fn=cmd_stage)
 
-    c = sub.add_parser("check", help="exit non-zero if a promote is staged (run before pushing to dev)")
+    c = sub.add_parser("check", help="exit 1 if a promote is staged, 2 if the marker could not be read "
+                                     "(run before pushing to dev)")
     c.add_argument("--remote", default="origin")
     c.set_defaults(fn=cmd_check)
 

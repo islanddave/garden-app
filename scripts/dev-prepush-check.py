@@ -47,8 +47,9 @@ listing, the way scripts/run-status.py reads runs. The script handles no token a
 failed command has any `user:secret@` part of a URL removed before it is shown.
 
 dev's SHA and the marker come from ONE `git ls-remote`, so they describe the same moment. The marker is NOT read
-with staged-promote.py's remote_marker_sha(): that returns None both when the tag is absent and when ls-remote
-failed, which is the open half of a fail-closed check. parse_marker() and age_hours() are imported from it.
+with staged-promote.py's remote_marker_sha(): that is a second ls-remote, so it would describe a different moment
+from dev's SHA. (Until BUG-STAGEDMARKERFAILOPEN-001 it also returned None for a failed read; it now raises.)
+parse_marker() and age_hours() are imported from it.
 """
 import argparse
 import datetime
