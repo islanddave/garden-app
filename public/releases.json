@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.185.4",
+    "date": "2026-10-13",
+    "highlights": [
+      "Behind the scenes: your Del Tonet weighings are accepted for harvest estimates, and a new safety check for pushes"
+    ]
+  },
+  {
     "version": "4.185.3",
     "date": "2026-10-12",
     "highlights": [
