@@ -8,7 +8,8 @@
     "6ac055ac-4830-4556-ba62-2d68054fa9dc",
     "7cdf1dca-360d-4d7c-b6f4-1e399de1a05a",
     "b5ec43ed-dbd0-4282-9adb-52f8666925ef",
-    "bd11098f-d239-4a69-bb61-49a19a8e1488"
+    "bd11098f-d239-4a69-bb61-49a19a8e1488",
+    "6b8e275b-c414-470d-baba-4b5dd12f0a3e"
   ],
   "reviews": [
     {
@@ -109,6 +110,16 @@
       "decision": "ACCEPT — Dave, first-hand, on the harvest-weight review page (mainsync13, 2026-09-29): 'Use my weighings'.",
       "why": "6 weighings, 18-66 g per head: side-shoot sized, against a 500 g main-head variety figure. Nothing weighed since 2026-08-22.",
       "caveat": "Identity checked 2026-09-28 (G-watch Q7b)."
+    },
+    {
+      "cultivar_id": "6b8e275b-c414-470d-baba-4b5dd12f0a3e",
+      "name": "Del Tonet",
+      "sample_g_per_count": 36.4,
+      "reference_g": 200,
+      "ratio": 0.182,
+      "reviewed": "2026-10-13",
+      "decision": "ACCEPT — Dave, first-hand, by AskUserQuestion (meta-triage-20261005-pickup10, 2026-10-13): 'Accept my weighings'.",
+      "why": "17 weighings, medium confidence, about 36 g per fruit against a 200 g generic tomato figure. Del Tonet is a small hanging tomato, so the reference is wrong for this variety. First flagged by the scheduled run of 2026-10-12 (38301727373), which wrote nothing."
     }
   ]
 }
