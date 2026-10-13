@@ -49,7 +49,9 @@
 --   and does not move applied_at). Anything else, or no such constraint: RAISE, changing nothing.
 --   It never widens from a shape it does not recognise. The vocabulary is read as the SET of quoted
 --   values in pg_get_constraintdef, the way v4-losscapture-001's gates read one, so it does not
---   depend on how Postgres orders or spaces the list.
+--   depend on how Postgres orders or spaces the list. The set is not the whole constraint, so the
+--   definition must also be ONE membership test on cue from end to end (v_plain below): a second
+--   condition, or a list element that is not a quoted word, is a shape this file does not widen.
 --   LOCKS. DROP CONSTRAINT takes ACCESS EXCLUSIVE on weather_cue_impression and holds it to COMMIT;
 --   the validating scan runs under it. The table grows by at most five rows per person per day (it
 --   was created 2026-09-02), so the scan is a few hundred rows. The one thing that waits is the
@@ -69,7 +71,8 @@
 --
 -- ROLLBACK: 0r-rollback.sql. It narrows, so it refuses while any `cool` row exists.
 --
--- NOT RUN ANYWHERE by the lane that wrote it. No statement in this file has met PostgreSQL.
+-- REHEARSED 2026-10-13 on a throwaway local PostgreSQL 17.10 (rehearse_local.py; README.md "What was
+--   rehearsed, and where"). Not applied to staging or prod.
 --
 -- Usage: psql "$NEON_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f 0a-widen-cue-check.sql
 
@@ -82,6 +85,7 @@ DO $$
 DECLARE
   v_vocab text[];
   v_valid boolean;
+  v_plain boolean;
   v_five  CONSTANT text[] := ARRAY['freeze', 'cold', 'heat', 'rain', 'wet'];
   v_six   CONSTANT text[] := ARRAY['freeze', 'cold', 'cool', 'heat', 'rain', 'wet'];
 BEGIN
@@ -92,10 +96,15 @@ BEGIN
       USING HINT = 'migrations/ops-cueinstrument-001 creates it; apply that first.';
   END IF;
 
+  -- v_plain: the WHOLE definition is one membership test of cue against quoted words, as PostgreSQL
+  -- prints `cue IN (...)` on a text column. The set of quoted values alone cannot tell the five from
+  -- the five AND a second condition that repeats one of them, or from a list that also holds a
+  -- column (the local rehearsal widened from both, and dropped the extra condition, before this).
   SELECT (SELECT array_agg(m[1])
             FROM regexp_matches(pg_get_constraintdef(c.oid), '''([^'']+)''::text', 'g') AS m),
-         c.convalidated
-    INTO v_vocab, v_valid
+         c.convalidated,
+         pg_get_constraintdef(c.oid) ~ '^CHECK \(\(cue = ANY \(ARRAY\[''[a-z]+''::text(, ''[a-z]+''::text)*\]\)\)\)$'
+    INTO v_vocab, v_valid, v_plain
     FROM pg_constraint c
     JOIN pg_class t     ON t.oid = c.conrelid
     JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
@@ -107,10 +116,10 @@ BEGIN
       USING HINT = 'A cue CHECK under another name would make this widening cosmetic. Find out what happened to it; do not edit this guard.';
   END IF;
 
-  IF v_valid AND v_vocab @> v_six AND v_vocab <@ v_six THEN
+  IF v_valid AND v_plain AND v_vocab @> v_six AND v_vocab <@ v_six THEN
     RAISE NOTICE 'v5-chillband-001 0a: weather_cue_impression_cue_chk already admits the six cues; nothing to do.';
 
-  ELSIF v_valid AND v_vocab @> v_five AND v_vocab <@ v_five THEN
+  ELSIF v_valid AND v_plain AND v_vocab @> v_five AND v_vocab <@ v_five THEN
     ALTER TABLE public.weather_cue_impression
       DROP CONSTRAINT weather_cue_impression_cue_chk;
 
@@ -120,8 +129,8 @@ BEGIN
       CHECK (cue IN ('freeze', 'cold', 'cool', 'heat', 'rain', 'wet'));
 
   ELSE
-    RAISE EXCEPTION 'v5-chillband-001 0a refused, nothing changed: weather_cue_impression_cue_chk is not the constraint this file widens (validated: %, values: %).', v_valid, v_vocab
-      USING HINT = 'Expected exactly freeze, cold, heat, rain, wet, validated. Do not edit this guard.';
+    RAISE EXCEPTION 'v5-chillband-001 0a refused, nothing changed: weather_cue_impression_cue_chk is not the constraint this file widens (validated: %, one plain list on cue: %, values: %).', v_valid, v_plain, v_vocab
+      USING HINT = 'Expected exactly freeze, cold, heat, rain, wet, validated, and nothing else in the CHECK. Do not edit this guard.';
   END IF;
 END $$;
 

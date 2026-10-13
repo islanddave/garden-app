@@ -31,6 +31,13 @@
 #   depend on the order or spacing Postgres prints the list in. ops-cueinstrument-001's own gate
 #   post_cue_check_carries_all_five_rules is five substring matches: it is satisfied by any superset,
 #   which is why this widening does not red it, and why it cannot stand in for the gate below.
+#   THE SET IS NOT THE WHOLE CONSTRAINT, so its shape is matched too, end to end: one membership test
+#   of cue against quoted words, `CHECK ((cue = ANY (ARRAY['a'::text, ...])))`, which is how
+#   PostgreSQL 17 prints `cue IN (...)` on a text column. The set alone reads "the six AND cue <>
+#   'cool'" as the six, and cannot see a list element that is a column. The local rehearsal found
+#   both: 0a and 0r acted on such a constraint, and the pre gate passed it. All four places (0a, 0r,
+#   the pre gate, the post gate) now carry the same pattern. It is text this major version prints; a
+#   server that prints it another way makes 0a refuse and the pre gate red, changing nothing.
 #
 # ── WHEN THE VOCABULARY IS WIDENED AGAIN ─────────────────────────────────────────────────────────
 #   post_cue_check_validated_and_exactly_the_six is exact on purpose and will red on a seventh cue.
@@ -44,8 +51,9 @@
 #     release is entitled to widen it.
 #   * No gate counts `cool` rows. How often the line shows is a fact about the weather.
 #
-# NOT RUN ANYWHERE by the lane that wrote it. `gate_runner.py --validate-only` passes (structure
-# only); no gate here has been executed against PostgreSQL.
+# REHEARSED 2026-10-13 on a throwaway local PostgreSQL 17.10, through scripts/gate_runner.py
+# (rehearse_local.py; README.md "What was rehearsed, and where"): every gate here was seen green
+# where it should be and red on the defect written for it. Not run against staging or prod.
 
 pre:
   - name: pre_table_present
@@ -75,6 +83,7 @@ pre:
         ) x
        WHERE t.relname = 'weather_cue_impression' AND c.contype = 'c'
          AND c.conname = 'weather_cue_impression_cue_chk' AND c.convalidated
+         AND pg_get_constraintdef(c.oid) ~ '^CHECK \(\(cue = ANY \(ARRAY\[''[a-z]+''::text(, ''[a-z]+''::text)*\]\)\)\)$'
          AND x.vocab @> ARRAY['freeze', 'cold', 'heat', 'rain', 'wet']
          AND x.vocab <@ ARRAY['freeze', 'cold', 'heat', 'rain', 'wet']
     expect: rowcount_eq
@@ -160,7 +169,7 @@ post:
              ) x
             WHERE t.relname = 'weather_cue_impression' AND c.contype = 'c'
               AND c.conname = 'weather_cue_impression_cue_chk' AND c.convalidated
-              AND pg_get_constraintdef(c.oid) LIKE 'CHECK ((cue = ANY (ARRAY[%'
+              AND pg_get_constraintdef(c.oid) ~ '^CHECK \(\(cue = ANY \(ARRAY\[''[a-z]+''::text(, ''[a-z]+''::text)*\]\)\)\)$'
               AND x.vocab @> ARRAY['freeze', 'cold', 'cool', 'heat', 'rain', 'wet']
               AND x.vocab <@ ARRAY['freeze', 'cold', 'cool', 'heat', 'rain', 'wet'])
     expect: rowcount_eq

@@ -6,16 +6,17 @@ the line for a night between 45 and 50 F (ledger `V5-CHILLBAND-001`; Dave, 2026-
 night"). Every weather line shown on Today writes one row to that table, and the table refuses a cue it does
 not know. The decisions are in the header of `0a-widen-cue-check.sql`.
 
-**Not applied anywhere by the lane that wrote it (2026-10-13). No SQL in this directory has been run
-against PostgreSQL**: the lane had no database. The files were parsed with the PostgreSQL grammar
-(libpg_query) for syntax, and `gates.yml` passes `gate_runner.py --validate-only`; that is all. Rehearse on
-staging before anything else. Applying to prod is a prod database change and needs Dave's first-hand OK.
+**Not applied to staging or prod.** Written 2026-10-13 by a lane with no database, then rehearsed the same
+day on a throwaway local PostgreSQL 17.10 (see "What was rehearsed, and where"). The staging apply is still
+the first time these files meet the real table. Applying to prod is a prod database change and needs Dave's
+first-hand OK.
 
 | file | what it does |
 |---|---|
 | `0a-widen-cue-check.sql` | Reads the constraint as it stands. Exactly the five, validated: drops it and adds the six, validated against every existing row, in one transaction. Exactly the six: nothing. Anything else: raises, changing nothing. Updates the column comment. Stamp `5.0.0-chillband-001`. Writes no rows. Idempotent. |
 | `0r-rollback.sql` | Narrows back to the five, restores the comment, removes the stamp. Guarded: refuses while any row records `cool`. This is the direction that can hurt a deployed writer (see Rollback). |
 | `gates.yml` | 4 `pre`, 1 `sweep`, 3 standing `post`. Every `post` gate is catalog-only and self-armed on the stamp. |
+| `rehearse_local.py` | The three files above on a throwaway local Postgres, re-runnable: the whole sequence, the writer's INSERT before and after, and a planted defect for every gate and every refusal. `python3 migrations/v5-chillband-001/rehearse_local.py`, about 25 s. Writes only to the cluster it creates. |
 
 One stamp. No column, no index, no new name. `weather_cue_impression_form_chk` is not touched.
 
@@ -63,7 +64,8 @@ No. Read on `origin/dev` `1f58a9d8`, which is what prod runs.
 - **The engine** (`lambda/daily-plan/engine.js` `computeCallout`) has no rule that returns `cool`.
 - **The existing gates** of `ops-cueinstrument-001` stay green by reading: `post_cue_check_carries_all_five_rules`
   is five substring matches and holds on a superset; `post_check_constraints_present` asks for the two
-  names. Neither file is edited here.
+  names. Neither file is edited here. Measured in the rehearsal: that folder's 12 standing `post` gates give
+  the same 12 passes before and after this `0a`.
 
 ## Order of work
 
@@ -82,7 +84,8 @@ round, Today shows the cool-night line and every impression of it is lost with n
 release checklist for the code has to carry "5.0.0-chillband-001 is on prod" as a line someone reads.
 
 This directory by itself is safe in the tree before either database is applied: every `post` gate is
-vacuous without the stamp. **By construction, not measured.**
+vacuous without the stamp. Measured on the rehearsal database with the DDL absent: `post` 3 of 3, and 3 of 3
+under `--continuous-only`.
 
 ## Applying
 
@@ -128,7 +131,8 @@ validating scan of `ADD CONSTRAINT` runs under it. The table has grown by at mos
 day since 2026-09-02, so the scan is a few hundred rows at most (not counted by this lane) and the
 transaction should be milliseconds. The one thing that waits is the impression beacon's INSERT, which is
 fire-and-forget. The Today read does not touch this table. `0a` sets `lock_timeout = '5s'`: behind a
-long-open transaction the file fails fast having changed nothing. Run it again.
+long-open transaction the file fails fast (psql exits 3, `55P03`, after 5.0 s in the rehearsal) having
+changed nothing. Run it again.
 
 ## What the constraint does to a writer, before and after
 
@@ -167,20 +171,63 @@ long-open transaction the file fails fast having changed nothing. Run it again.
 - `ops-cueinstrument-001/0a-additive-ddl.sql` still shows the five-value CHECK and comment. That file is
   the record of what was applied on 2026-09-02 and is not edited.
 
-## What was checked, and what was not
+## What was rehearsed, and where
 
-Checked, with no database:
+On a throwaway local PostgreSQL 17.10 (the sibling directories record prod and staging as 17.11), loopback
+only, on 2026-10-13, by `rehearse_local.py` in this directory. The starting state is the repo's own:
+`schema_version` created by `v2-mvp-critter/0a-additive-ddl.sql`'s statement, and `weather_cue_impression`
+made by running `ops-cueinstrument-001/0a-additive-ddl.sql` whole, so the five-value CHECK is the one that
+file writes. Ten rows, two per cue, written with the deployed writer's INSERT. Gates were run through
+`scripts/gate_runner.py`. 58 checks, all holding, in 22 s.
 
-- `python3 scripts/gate_runner.py --all --env prod --validate-only` (the CI step) and
-  `scripts/test_gate_runner.py`: this `gates.yml` parses and meets the strict schema;
-- every statement in `0a`, `0r` and every gate parses under the PostgreSQL grammar (libpg_query through
-  `pglast`), the `DO` bodies as PL/pgSQL. Syntax only: no catalog, no types, no execution;
-- the two expressions everything here leans on are taken from gates that already run green on prod: the
-  set-of-quoted-values read is `v4-losscapture-001`'s, and the printed form
-  `CHECK ((<column> = ANY (ARRAY['a'::text, ...])))` for a text column written as `IN (...)` is
-  `v5-seedmultiparent-001`'s `chk_slpp_role`.
+- unapplied: `pre` 4/4, `sweep` 1/1, `post` 3/3 (vacuous, none erroring), and 3/3 for the
+  `--phase post --continuous-only` run `gate-invariants.yml` makes; `0a`; the CHECK validated and printing as
+  `CHECK ((cue = ANY (ARRAY['freeze'::text, 'cold'::text, 'cool'::text, 'heat'::text, 'rain'::text, 'wet'::text])))`;
+  `post` 3/3; `pre` 2/4, as "Applying" says; `0a` again says "already admits the six cues; nothing to do" and
+  leaves the constraint's oid, the schema dump, the stamp row (`applied_at` included) and every row as they
+  were;
+- `0r` leaving the schema dump (the five, the old comment), `schema_version` and every row byte-equal to the
+  state before `0a`; `0r` again a no-op; `pre` 4/4, `0a`, `post` 3/3 again; `0r`, `0a` and `0a` again
+  arriving with an empty `search_path`, each exit 0;
+- `0a` behind a reader's open transaction on the table: psql exit 3 with 55P03 after 5.0 s, nothing changed;
+  the same file again, exit 0;
+- every line of the table in "What the constraint does to a writer", with the writer's own statement:
+  `cool` before `0a`, 23514 naming `weather_cue_impression_cue_chk`; after `0a`, accepted, and still one row
+  when sent again the same day; a seventh value after `0a`, 23514 on the same name; each of the five
+  accepted; `cool` in an unknown form refused by `weather_cue_impression_form_chk`, which is untouched;
+- the rollback with one `cool` row present: refused ("1 impression row(s) record the cool cue"), the six,
+  the stamp and every row as before. With that row deleted it narrows, and an INSERT of `cool` is 23514
+  again: the rollback is the arming direction;
+- 9 starting CHECKs that are neither the five nor the six (four values; seven; five with a foreign one; the
+  five NOT VALID; the five AND a second condition; the five and a column in the same list; no CHECK of the
+  name; the five under another name; no table): `0a` refuses each, the schema dump, the constraint and
+  `schema_version` as before, and a `pre` gate is red first;
+- a row outside the six under a CHECK the catalog was told is validated: `sweep` red first; `0a`'s ADD fails
+  on its scan (23514) and the DROP goes back with it, the same constraint oid still there;
+- a second CHECK over `cue` under another name: `pre_no_other_check_names_cue` red before; `0a` does not
+  look for one and widens the named CHECK; `post_no_other_check_names_cue` red after; `cool` is still
+  refused, by the other CHECK. The two gates are what stop this, not `0a`;
+- 11 single defects on an applied database (the stamp deleted; the CHECK narrowed, widened to seven,
+  re-added NOT VALID, dropped, given a second condition, given a column in its list, tested on `lower(cue)`,
+  renamed; a second CHECK over `cue`, alone or with `form`), each turning exactly the gate written for it
+  red (two for the rename); a control green;
+- `0r` refusing a seventh value, the six AND a second condition, the six and a column, and no CHECK of the
+  name, changing nothing each time; a no-op where `0a` never ran; exit 0 with the stamp removed where the
+  table is gone;
+- two mutated copies (`0a` adding the six `NOT VALID`; `0r` with its `cool`-row guard disabled): the script
+  exits 1 for each. Without the guard the narrowing still fails, on the raw 23514 the `0r` header predicts.
 
-**Not rehearsed, anywhere:** `0a`, `0r`, any gate, the three branches of each `DO` block, the refusal with
-a `cool` row present, a second run being a no-op, the `post` gates being vacuous on an unapplied database,
-`ops-cueinstrument-001`'s gates before and after, and a schema dump after `0a` then `0r` being equal to the
-one before.
+**Found by the rehearsal and fixed here:** the constraint was read only as the set of its quoted values, and
+the set is not the whole constraint. `CHECK (cue IN (<the five>) AND cue <> 'rain')` reads as the five, and
+so does a list that also holds a column. `0a` widened from both (dropping the second condition without a
+word), `pre_cue_check_is_exactly_the_five_and_validated` passed both, `0r` narrowed from the same two shapes
+of the six, and the `post` gate (which did check a prefix) passed the six with a column in the list. `0a`,
+`0r` and both gates now also require the whole definition to be one membership test on `cue` against quoted
+words, matched end to end as PostgreSQL 17 prints it. That is text a major version prints: on a server that
+prints it differently `0a` refuses and the `pre` gate reds, changing nothing, which is the safe failure.
+The DDL `0a` and `0r` issue once past their guards is unchanged.
+
+**Not rehearsed:** anything on staging or prod; that the CHECK on either is the one `ops-cueinstrument-001`
+wrote (the `pre` gate reads that at apply time); how many rows either table holds; the Lambda (its 202 on a
+23514 is read in the source, not exercised); two sessions racing the swap; the whole standing corpus
+(`--all`) against a real schema.

@@ -30,7 +30,8 @@
 --
 -- LOCKS: as 0a. ACCESS EXCLUSIVE on weather_cue_impression to COMMIT, one scan of a small table.
 --
--- NOT RUN ANYWHERE by the lane that wrote it. No statement in this file has met PostgreSQL.
+-- REHEARSED 2026-10-13 on a throwaway local PostgreSQL 17.10 (rehearse_local.py; README.md "What was
+--   rehearsed, and where"). Not run on staging or prod.
 --
 -- Usage: psql "$NEON_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f 0r-rollback.sql
 
@@ -43,6 +44,7 @@ DO $$
 DECLARE
   v_vocab text[];
   v_valid boolean;
+  v_plain boolean;
   v_cool  bigint := 0;
   v_five  CONSTANT text[] := ARRAY['freeze', 'cold', 'heat', 'rain', 'wet'];
   v_six   CONSTANT text[] := ARRAY['freeze', 'cold', 'cool', 'heat', 'rain', 'wet'];
@@ -54,10 +56,12 @@ BEGIN
     RETURN;
   END IF;
 
+  -- v_plain, as in 0a: the whole definition is one membership test of cue against quoted words.
   SELECT (SELECT array_agg(m[1])
             FROM regexp_matches(pg_get_constraintdef(c.oid), '''([^'']+)''::text', 'g') AS m),
-         c.convalidated
-    INTO v_vocab, v_valid
+         c.convalidated,
+         pg_get_constraintdef(c.oid) ~ '^CHECK \(\(cue = ANY \(ARRAY\[''[a-z]+''::text(, ''[a-z]+''::text)*\]\)\)\)$'
+    INTO v_vocab, v_valid, v_plain
     FROM pg_constraint c
     JOIN pg_class t     ON t.oid = c.conrelid
     JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
@@ -69,10 +73,10 @@ BEGIN
       USING HINT = 'Find out what happened to it; do not edit this guard.';
   END IF;
 
-  IF v_valid AND v_vocab @> v_five AND v_vocab <@ v_five THEN
+  IF v_valid AND v_plain AND v_vocab @> v_five AND v_vocab <@ v_five THEN
     RAISE NOTICE 'v5-chillband-001 0r: weather_cue_impression_cue_chk is already the five cues; nothing to narrow.';
 
-  ELSIF v_valid AND v_vocab @> v_six AND v_vocab <@ v_six THEN
+  ELSIF v_valid AND v_plain AND v_vocab @> v_six AND v_vocab <@ v_six THEN
     -- EXECUTE, to keep the count out of the block's parse; the table is known to exist here.
     EXECUTE 'SELECT count(*) FROM public.weather_cue_impression WHERE cue = ''cool''' INTO v_cool;
 
@@ -89,7 +93,7 @@ BEGIN
       CHECK (cue IN ('freeze', 'cold', 'heat', 'rain', 'wet'));
 
   ELSE
-    RAISE EXCEPTION 'v5-chillband-001 0r refused, nothing changed: weather_cue_impression_cue_chk is neither the six cues nor the five (validated: %, values: %).', v_valid, v_vocab
+    RAISE EXCEPTION 'v5-chillband-001 0r refused, nothing changed: weather_cue_impression_cue_chk is neither the six cues nor the five (validated: %, one plain list on cue: %, values: %).', v_valid, v_plain, v_vocab
       USING HINT = 'A later migration may have widened it again; that one goes back first.';
   END IF;
 
