@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.186.0",
+    "date": "2026-10-13",
+    "highlights": [
+      "Put-Up has three tabs now: Going now, Pantry and Recipes. The old Log a put-up form is gone; Put something up is the one way to record a put-up."
+    ]
+  },
+  {
     "version": "4.185.4",
     "date": "2026-10-13",
     "highlights": [
