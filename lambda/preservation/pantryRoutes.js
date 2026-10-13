@@ -171,6 +171,8 @@ export const ITEM_CONSTRAINT_MESSAGES = {
 };
 // V4-CROPTYPERETIRE-001 — a retired crop type gains no new rows. The foreign key cannot say this (a
 // retired type's row is still there), so the create's INSERT and the PATCH's first read each check it.
+// The create asks twice in its one statement: the arm that makes a new place runs to completion
+// whatever the item's INSERT decides, so without its own check a refused create would leave an empty place.
 export const RETIRED_CROP_REFUSAL = 'That crop type was retired. Pick a different crop.';
 function itemError(err) {
   if (err?.code !== '23514' && err?.code !== '23503') return null;
@@ -216,6 +218,7 @@ export async function createItem(sql, body, userId, householdIds) {
         INSERT INTO storage_location (user_id, label, kind)
         SELECT ${userId}::text, ${newLabel}::text, ${newKind}::text
         WHERE ${newKind}::text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM found)
+          AND NOT EXISTS (SELECT 1 FROM crop_types ct WHERE ct.slug = ${crop}::text AND ct.deleted_at IS NOT NULL)
         ON CONFLICT (user_id, kind, lower(label)) WHERE deleted_at IS NULL
           DO UPDATE SET label = storage_location.label
         RETURNING id, label, kind

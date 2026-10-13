@@ -274,6 +274,19 @@ describe('POST /api/pantry/items', () => {
     expect(after(ins, guard)).toBe('tatsoi');
   });
 
+  it('a create refused for a retired crop makes no new place either: the place arm asks the same question', async () => {
+    // `made` is a data-modifying CTE: Postgres runs it to completion whatever the item's INSERT
+    // decides, and no error is raised to roll it back. So the arm carries the check itself.
+    const sql = mockSql([[]]);
+    const res = await call(sql, '/api/pantry/items', 'POST', body({ storage_location_id: undefined, place: { kind: 'cold_storage', label: ' Cellar ' }, crop_type_slug: 'tatsoi' }));
+    expect(res).toEqual({ status: 400, body: { error: RETIRED_CROP_REFUSAL } });
+    const ins = sql.calls[0];
+    const made = ins.norm.slice(ins.norm.indexOf('INSERT INTO storage_location'), ins.norm.indexOf('INSERT INTO pantry_item'));
+    const guard = 'AND NOT EXISTS (SELECT 1 FROM crop_types ct WHERE ct.slug = ';
+    expect(made).toContain(`NOT EXISTS (SELECT 1 FROM found) ${guard}? ::text AND ct.deleted_at IS NOT NULL) ON CONFLICT`);
+    expect(after(ins, `NOT EXISTS (SELECT 1 FROM found) ${guard}`)).toBe('tatsoi');
+  });
+
   it.each([
     [{ idempotency_key: 'x' }, /idempotency_key must be a uuid/],
     [{ name: ' ' }, /name what it is/],
