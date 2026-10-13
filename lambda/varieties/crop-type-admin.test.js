@@ -485,9 +485,10 @@ describe('the dependents census', () => {
 // ones that read crop_types and name that column. Each is sorted into one of three kinds:
 //   needs the type live   it expects a positive count of live named types, or is listed in COMPOUND
 //                         as 'requires'. Its slugs go into the list.
-//   cannot be failed      it expects ZERO from one plain SELECT over live rows. Hiding a row can only
-//                         lower that count.
-//   compound              it expects zero but is not one plain SELECT (a subquery, a JOIN, 1 - count).
+//   cannot be failed      it expects ZERO from one plain SELECT over live rows whose whole projection is
+//                         count(*), with no HAVING and no CASE. Hiding a row can only lower that count.
+//   compound              it expects zero but is anything else: a subquery, a JOIN, 1 - count(*), a CASE
+//                         or a HAVING that could turn a lower count into a higher answer.
 //                         Nothing here can tell which way it cuts, so each is decided by hand in
 //                         COMPOUND, and one that is not listed there FAILS this test.
 // So a new gate that needs a type live reds this file until GATE_REQUIRED_SLUGS follows, and a new
@@ -508,6 +509,8 @@ const COMPOUND = {
   // Live types with no habit AND a live planting: the outer scan is of live rows, so hiding one
   // lowers the count.
   'v4-harvhabitgap-001/post_no_unseeded_slug_has_a_live_planting': 'cannot be failed by a retire',
+  // No rows from live dogwood rows HAVING count(*) > 1: hiding one lowers the count.
+  'v4-croptypedogwood-001/post_exactly_one_dogwood_crop_type': 'cannot be failed by a retire',
 };
 
 // The slugs a gate names, read from the places a slug can stand: slug = 'x'; slug IN ('x', ...);
@@ -546,8 +549,10 @@ function gateCensus() {
       expect(['scalar_eq', 'rowcount_eq', 'rowcount_gte'], `${id}: an expectation this census has never read`).toContain(g.expect);
       if (g.expect === 'rowcount_gte' && g.value === 0) continue;
       const bare = sql.replace(SCHEMA_VERSION_ARM, 'TRUE');
+      const projection = bare.match(/\bSELECT\b([\s\S]*?)\bFROM\b/i)?.[1].replace(/\s+/g, ' ').trim().toLowerCase();
       const plain = (bare.match(/\bSELECT\b/gi) ?? []).length === 1 && !/\bJOIN\b/i.test(bare)
-        && /deleted_at\s+IS\s+NULL/i.test(bare);
+        && /deleted_at\s+IS\s+NULL/i.test(bare)
+        && projection === 'count(*)' && !/\bHAVING\b/i.test(bare) && !/\bCASE\b/i.test(bare);
       const zero = g.value === 0 && g.expect !== 'rowcount_gte';
       if (zero && plain) continue;
       if (zero) {
@@ -612,5 +617,15 @@ describe('the gate-required census', () => {
 
   it('the list is sorted and has no duplicate', () => {
     expect([...new Set(GATE_REQUIRED_SLUGS)].sort()).toEqual(GATE_REQUIRED_SLUGS);
+  });
+
+  it("the staging smoke's own crop type is not gate-required, and no gate names it", () => {
+    // tests/smoke/run-smoke.sh block V retires this type on every promote and leaves it retired. A gate
+    // that named it would put it on the list, the retire would answer 409 gate_required, and block V
+    // would fail every promote. Write such a gate against another slug.
+    const smoke = readFileSync(join(REPO, 'tests', 'smoke', 'run-smoke.sh'), 'utf8');
+    expect(smoke).toContain('CT_SLUG="smoke_test_crop_type"');
+    expect(GATE_REQUIRED_SLUGS).not.toContain('smoke_test_crop_type');
+    for (const g of census.requiring) expect(g.slugs, g.id).not.toContain('smoke_test_crop_type');
   });
 });
