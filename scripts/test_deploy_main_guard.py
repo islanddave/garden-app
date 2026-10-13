@@ -488,6 +488,22 @@ def test_the_two_budgets_are_separate_and_an_unreadable_last_read_is_never_a_pas
     assert proc.returncode == 0 and not _errors(proc) and api.log == [MAIN_REF_ROUTE] * 8, proc.stdout + proc.stderr
 
 
+def test_each_budget_is_cumulative_so_the_other_kind_of_read_never_resets_it(world):
+    """The "at most 8 reads, 7 waits" bound (230 s) holds only while both counts run for the whole step. A loop
+    where a differing read resets the failed-read count, or a failed read resets the differing-read count, still
+    refuses everything it should, but can run 18 reads (530 s), past the Lambda leg's 10-minute limit."""
+    old = world.origin.commit()
+    new = world.origin.commit()
+    # Five failed reads, one differing read, one more failed read: that is the sixth failure, so it ends there.
+    proc, api = world(_want(old, old), replies=[DROP] * 5 + [_at(new), DROP])
+    assert _refused(proc, "could not read where main points"), proc.stdout + proc.stderr
+    assert api.log == [MAIN_REF_ROUTE] * 7 and proc.slept == ["10"] * 6, "a differing read must not reset the six tries"
+    # Two differing reads, one failed read, one more differing read: that is the third mismatch, so it ends there.
+    proc, api = world(_want(old, old), replies=[_at(new), _at(new), DROP, _at(new)])
+    assert _refused(proc, MOVED), proc.stdout + proc.stderr
+    assert api.log == [MAIN_REF_ROUTE] * 4 and proc.slept == ["10"] * 3, "a failed read must not reset the re-reads"
+
+
 @pytest.mark.parametrize("want", ["", "main", "refs/heads/main", "abc1234", "A" * 40, "a" * 39, "a" * 41,
                                   "a" * 40 + "\n" + "b" * 40], ids=lambda w: repr(w)[:24])
 def test_a_commit_that_is_not_a_full_sha_is_refused_before_anything_is_read(world, want):
