@@ -6,16 +6,17 @@ new lot's create (`POST /api/inventory-items`, body field `idempotency_key`), so
 makes one lot. Ledger `BUG-NEWLOTNOIDEMPOTENCYKEY-001`. The decisions are in the header of
 `0a-additive-ddl.sql`.
 
-**Not applied anywhere by the lane that wrote it (2026-10-13). No SQL in this directory has been run
-against PostgreSQL**: the lane had no database. The files were parsed with the PostgreSQL grammar
-(libpg_query) for syntax, and `gates.yml` passes `gate_runner.py --validate-only`; that is all. Rehearse on
-staging before anything else. Applying to prod is a prod database change and needs Dave's first-hand OK.
+**Not applied to staging or prod.** Written 2026-10-13 by a lane with no database, then rehearsed the same
+day on a throwaway local PostgreSQL 17.10 (see "What was rehearsed, and where"). The staging apply is still
+the first time these files meet the real `inventory_items`. Applying to prod is a prod database change and
+needs Dave's first-hand OK.
 
 | file | what it does |
 |---|---|
 | `0a-additive-ddl.sql` | The column (uuid, nullable, no default), `uq_inventory_items_idempotency_key` UNIQUE `(idempotency_key) WHERE idempotency_key IS NOT NULL`, stamp `5.0.0-newlotnoidempotencykey-001`. One transaction. Checks the database before and its own result after, and raises rather than commit another shape. Writes no rows. Idempotent. |
 | `0r-rollback.sql` | Drops the column (its index goes with it) and the stamp. No refusal guard: a key is not something a person typed (see Rollback). |
 | `gates.yml` | 3 `pre`, 1 `sweep`, 4 standing `post`. Every `post` gate is catalog-only and self-armed on the stamp. No row-level gate: the index is the row rule. |
+| `rehearse_local.py` | The three files above on a throwaway local Postgres, re-runnable: the whole sequence, what the index does to a write, and a planted defect for every gate and every refusal. `python3 migrations/v5-newlotnoidempotencykey-001/rehearse_local.py`, about 25 s. Writes only to the cluster it creates. |
 
 One stamp. No CHECK and no NOT NULL: every writer deployed today leaves the column NULL.
 
@@ -71,8 +72,8 @@ this column is on dev, every promote by every session is refused, a hotfix inclu
 prod (a column can be waived in `scripts/schema-audit-allowlist.json`; applying it is the house rule).
 
 This directory by itself is safe in the tree before either database is applied. No gate here names the
-column as a SQL identifier, so every `post` gate is vacuous, not erroring, on a database without it. **That
-is by construction and has not been measured**: see "What was checked".
+column as a SQL identifier, so every `post` gate is vacuous, not erroring, on a database without it.
+Measured on the rehearsal database with the DDL absent: `post` 4 of 4, and 4 of 4 under `--continuous-only`.
 
 ## Applying
 
@@ -117,8 +118,9 @@ must read 3 of 3.
 under it. The column is nullable with no default, so the table is not rewritten, and every existing key is
 NULL, so the index is born empty. The table is small (its seed lots alone were 260 in August, per
 `v4-seedsaveflow-001/gates.yml`; this lane counted nothing), so the transaction should be milliseconds, and
-inventory reads and writes wait for that long. Not measured. `0a` sets `lock_timeout = '5s'`: behind a
-long-open transaction the file fails fast (psql exits 3, `55P03`) having changed nothing. Run it again.
+inventory reads and writes wait for that long. Not measured on the real table. `0a` sets
+`lock_timeout = '5s'`: behind a long-open transaction the file fails fast (psql exits 3, `55P03`, after
+5.0 s in the rehearsal) having changed nothing. Run it again.
 
 ## Would the currently deployed code break on this?
 
@@ -174,18 +176,54 @@ No. Read on `origin/dev` `1f58a9d8`, which is what prod runs.
   gates of `v5-seedqty-001` and its neighbours (none counts the table's columns), and the gates that find
   this table's other indexes by name.
 
-## What was checked, and what was not
+## What was rehearsed, and where
 
-Checked, with no database:
+On a throwaway local PostgreSQL 17.10 (the sibling directories record prod and staging as 17.11), loopback
+only, on 2026-10-13, by `rehearse_local.py` in this directory, against a minimal schema: `schema_version`
+created by the repo's own statement (`v2-mvp-critter/0a-additive-ddl.sql`), and `inventory_items` cut down
+to ten columns chosen for the rehearsal, because no migration in this repo creates that table. Gates were
+run through `scripts/gate_runner.py`. 62 checks, all holding, in 24 s.
 
-- `python3 scripts/gate_runner.py --all --env prod --validate-only` (the CI step) and
-  `scripts/test_gate_runner.py`: this `gates.yml` parses and meets the strict schema;
-- every statement in `0a`, `0r` and every gate parses under the PostgreSQL grammar (libpg_query through
-  `pglast`), the two `DO` bodies as PL/pgSQL. Syntax only: no catalog, no types, no execution;
-- the index assertion is the one `v5-pantry-001` runs green on prod for the same predicate, with the table
-  and index names changed.
+- unapplied: `pre` 3/3, `sweep` 1/1, `post` 4/4 (vacuous, none erroring), and 4/4 for the
+  `--phase post --continuous-only` run `gate-invariants.yml` makes; `0a`; `post` 4/4; `pre` 1/3 and `sweep`
+  0/1, as "Applying" says; `0a` again leaves the schema dump, the stamp row (`applied_at` included) and every
+  row byte-equal;
+- `0r` leaving the schema dump, `schema_version` and every row byte-equal to the state before `0a`; `0r`
+  again a no-op; `pre` 3/3, `0a`, `post` 4/4 again; `0r`, `0a` and `0a` again arriving with an empty
+  `search_path`, each exit 0;
+- `0a` behind a reader's open transaction on `inventory_items`: psql exit 3 with 55P03 after 5.0 s, schema
+  dump and rows as before, no stamp; the same file again, exit 0;
+- every line of the table in "What the index does to a writer", against real rows: five rows with a NULL key
+  side by side; a key accepted once; the same key refused on INSERT and on UPDATE, and again **after its row
+  was soft-deleted**, each time 23505 naming `uq_inventory_items_idempotency_key`; a second key accepted; a
+  key that is not a uuid, 22P02; two creates with one key in two sessions, the second waiting 1.5 s for the
+  first and then 23505 on the same name, or accepted when the first rolls back;
+- the index statements of `pantry_item`, `recipe` and `kitchen_batch`, read out of their own migrations and
+  built on stub tables beside this one: the server prints all four definitions as the same text with the
+  names changed, `... USING btree (idempotency_key) WHERE (idempotency_key IS NOT NULL)`. None is partial on
+  `deleted_at`;
+- 8 starting states `0a` must refuse (the column already there as text, with a default, NOT NULL; the index
+  name taken by an index on another table or by a table; the index already there partial on `deleted_at` or
+  not unique; no `inventory_items`): each refused with the schema dump and `schema_version` as before, and
+  each announced first by a red `pre` or `sweep` gate. A ninth (the column in the right shape, no index) is
+  completed, `post` 4/4;
+- 19 single defects on an applied database (the stamp deleted; a default, NOT NULL, text; the index dropped,
+  not unique, partial on `deleted_at`, unpartial, given an owner column, NULLS NOT DISTINCT, moved to another
+  table, left INVALID by a failed concurrent build; a second index, plain, unique, composite, on an
+  expression, or reading the column in its predicate; a CHECK; a UNIQUE constraint), each turning exactly
+  the gate written for it red and no other; two controls green;
+- `0r` with two keyed rows, one soft-deleted: no refusal, by design; it prints 2, drops the column and
+  keeps every row. With a view reading the column: 2BP01, nothing changed. On a database `0a` never ran on:
+  a no-op;
+- two mutated copies of `0a` (a default on the column; the index also partial on `deleted_at`): `0a`'s own
+  step 3 refuses each, and the script exits 1.
 
-**Not rehearsed, anywhere:** `0a`, `0r`, any gate, the lock behaviour, the refusal paths of `0a` step 0 and
-step 3, a second run being a no-op, the `post` gates being vacuous on an unapplied database, and the whole
-standing corpus before and after. The sibling directories record all of those on a local PostgreSQL 17;
-this one records none.
+**Found by the rehearsal and fixed here:** `post_nothing_else_names_the_column` read an index's key columns
+only. A second unique index on an expression over the column (`(idempotency_key::text)`), or any index whose
+predicate reads it, left the gate green: the first would answer a replay with a 23505 under a name the
+handler does not test for. The gate now also reads the index's expressions and predicate. Nothing else in
+`0a`, `0r` or the gates changed.
+
+**Not rehearsed:** anything on staging or prod; the real `inventory_items` (its two triggers, its CHECKs,
+the views over it, row security, and the columns the fixture leaves out); how long the lock is held on the
+real table; the whole standing corpus (`--all`) against a real schema; the handler that will write the key.

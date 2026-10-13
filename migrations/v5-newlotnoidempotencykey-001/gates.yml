@@ -33,8 +33,9 @@
 #   * Nothing here proves a retried create answers with the first lot. That is the server half's
 #     tests, against the route.
 #
-# NOT RUN ANYWHERE by the lane that wrote it. `gate_runner.py --validate-only` passes (structure
-# only); no gate here has been executed against PostgreSQL.
+# REHEARSED 2026-10-13 on a throwaway local PostgreSQL 17.10, through scripts/gate_runner.py
+# (rehearse_local.py; README.md "What was rehearsed, and where"): every gate here was seen green
+# where it should be and red on the defect written for it. Not run against staging or prod.
 
 pre:
   - name: pre_inventory_items_present
@@ -142,6 +143,11 @@ post:
   # could become the arbiter the handler does not name) and no table constraint. A CHECK or a
   # uniqueness constraint over it is writer-coupled: every writer deployed before the server half
   # leaves the column NULL. One row per offender, naming it.
+  # An index reads the column in three places and the first is not the only one: its key or INCLUDE
+  # list (indkey), an expression (indexprs: a unique index on (idempotency_key::text) refuses the same
+  # duplicate under ANOTHER name, and indkey holds 0 for it), and its predicate (indpred). The local
+  # rehearsal found the first arm alone PASS on both of the others; all three are read. The name is
+  # matched as a whole word in the printed expression, never as a column of this query.
   - name: post_nothing_else_names_the_column
     sql: |
       SELECT ic.relname::text AS offender
@@ -149,9 +155,13 @@ post:
         JOIN pg_class ic    ON ic.oid = ix.indexrelid
         JOIN pg_class t     ON t.oid = ix.indrelid
         JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
-        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (ix.indkey)
-       WHERE t.relname = 'inventory_items' AND a.attname = 'idempotency_key'
+       WHERE t.relname = 'inventory_items'
          AND ic.relname <> 'uq_inventory_items_idempotency_key'
+         AND (EXISTS (SELECT 1 FROM pg_attribute a
+                       WHERE a.attrelid = t.oid AND a.attname = 'idempotency_key'
+                         AND a.attnum = ANY (ix.indkey))
+              OR coalesce(pg_get_expr(ix.indexprs, ix.indrelid), '') ~ '\midempotency_key\M'
+              OR coalesce(pg_get_expr(ix.indpred, ix.indrelid), '') ~ '\midempotency_key\M')
          AND EXISTS (SELECT 1 FROM public.schema_version
                       WHERE version = '5.0.0-newlotnoidempotencykey-001')
       UNION ALL

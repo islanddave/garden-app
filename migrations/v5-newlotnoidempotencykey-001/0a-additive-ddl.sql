@@ -80,7 +80,8 @@
 --
 -- ROLLBACK: 0r-rollback.sql.
 --
--- NOT RUN ANYWHERE by the lane that wrote it. No statement in this file has met PostgreSQL.
+-- REHEARSED 2026-10-13 on a throwaway local PostgreSQL 17.10 (rehearse_local.py; README.md "What was
+--   rehearsed, and where"). Not applied to staging or prod.
 --
 -- Usage: psql "$NEON_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f 0a-additive-ddl.sql
 
