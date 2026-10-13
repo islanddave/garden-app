@@ -3459,7 +3459,13 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETI
   CT_LIST=$(ct_get "$CT_BASE/admin" "[.types[] | select(.slug==\"$CT_SLUG\") | .retired]")
   CT_ROWS=""
   [[ "$CT_LIST" == "200 [false]" || "$CT_LIST" == "200 [true]" ]] && CT_ROWS=$(ct_rows)
-  if [[ "$CT_LIST" == "200 [true]" && "$CT_ROWS" != "0 ()" ]]; then
+  if [[ ( "$CT_LIST" == "200 [false]" || "$CT_LIST" == "200 [true]" ) && ! "$CT_ROWS" =~ ^[0-9]+\ \(.*\)$ ]]; then
+    # The type is there and its row count could not be read (a failed second read, or counts that are not
+    # numbers). That is a failed read, not "a row names it": it fails like the first listing read does, and
+    # nothing is sent.
+    echo "❌ FAIL [crud:GET /varieties/crop-types/admin] the smoke's own type '$CT_SLUG' is listed ('$CT_LIST') but its row counts could not be read ('$CT_ROWS') — nothing was sent, the retire was not tried"
+    FAIL=$((FAIL+1))
+  elif [[ "$CT_LIST" == "200 [true]" && "$CT_ROWS" != "0 ()" ]]; then
     # Resting retired, and a row names it: brought back it could not be retired again, and it would sit live.
     # Nothing is written.
     ct_in_use "nothing was sent" "$CT_ROWS" "It was found retired and is left retired, not brought back"

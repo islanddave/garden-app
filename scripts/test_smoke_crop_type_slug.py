@@ -131,3 +131,21 @@ def test_on_the_ship_gate_any_admin_refusal_fails():
     assert "FAIL [write:crop-type-retire-readback]" in fail_arm and "FAIL=$((FAIL+1))" in fail_arm
     assert "WARN [write:crop-type-retire-readback]" in warn_arm and "FAIL=" not in warn_arm
     assert "admin_not_configured" not in fn
+
+
+def test_an_unreadable_row_count_fails_before_the_in_use_arms():
+    """A count that is not '<n> (...)' is a failed read (FAIL), never taken as 'a row names the type' (WARN)."""
+    _, block, _ = block_v()
+    body = code(block)
+    guard = body.index('! "$CT_ROWS" =~ ^[0-9]+\\ \\(.*\\)$ ]]; then')
+    first_in_use = body.index('"$CT_ROWS" != "0 ()"')
+    assert guard < first_in_use
+    arm = body[guard:first_in_use]
+    assert "FAIL=$((FAIL+1))" in arm and "ct_in_use" not in arm and "ct_post" not in arm
+
+
+def test_every_call_of_ct_unwalked_is_bare():
+    """No guard at a call site can skip the ship-gate FAIL that ct_unwalked decides."""
+    _, block, _ = block_v()
+    calls = [l.strip() for l in code(block).splitlines() if "ct_unwalked" in l and "ct_unwalked()" not in l]
+    assert calls and all(l.startswith('ct_unwalked "') for l in calls), calls
