@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.186.1",
+    "date": "2026-10-13",
+    "highlights": [
+      "Behind the scenes: a release can no longer put anything on the live site except the newest approved version"
+    ]
+  },
+  {
     "version": "4.186.0",
     "date": "2026-10-13",
     "highlights": [
