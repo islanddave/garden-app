@@ -17,6 +17,13 @@
 // classes (category non_plant_food: bread, cheese, ...) are refused by category: Put Up reads them and
 // migrations/v4-putupfood-001/gates.yml requires each to stay live.
 //
+// THE GARDEN'S OWN CHECKS. migrations/**/gates.yml hold standing gates that the weekly invariants job
+// re-runs against prod and staging, and some of them require a named type to be LIVE (the thirteen
+// fruit types, the winter greens, aloe, dogwood, garlic, every type whose alias or display name a gate
+// counts, ...). Retiring one would turn that job red until the type came back, so those slugs are
+// refused: GATE_REQUIRED_SLUGS below, which crop-type-admin.test.js recomputes from the gates files
+// and fails on any difference. A new gate that names a type reds that test until the list follows.
+//
 // NO event_log ROW. event_log_has_anchor requires a planting or a project and a crop type has
 // neither, so each retire and restore is recorded as one structured log line instead (auditLine).
 
@@ -30,6 +37,7 @@ export const RETIRED_MESSAGE = "That crop type was retired. Ask the garden's adm
 export const NOT_CONFIGURED_CODE = 'admin_not_configured';
 
 export const FOOD_CLASS_REFUSAL = "Food types like bread and cheese are part of Put Up and can't be retired.";
+export const GATE_REQUIRED_REFUSAL = "The garden's own checks need this crop type.";
 export const ALREADY_RETIRED = 'That crop type is already retired.';
 export const NOT_RETIRED = "That crop type isn't retired.";
 export const NOT_FOUND = "That crop type doesn't exist.";
@@ -64,6 +72,25 @@ export const CROP_TYPE_DEPENDENTS = [
   { table: 'preservation_source', key: 'put_up_sources', one: 'put-up source', many: 'put-up sources' },
 ];
 
+// Every crop type a standing database gate requires to be live, sorted. Derived, not chosen: the
+// census in crop-type-admin.test.js reads every continuous post-gate in migrations/**/gates.yml that
+// filters crop_types on deleted_at IS NULL, keeps the ones a retire could fail, and collects the slugs
+// they name. Do not edit by hand except to make that test pass again.
+export const GATE_REQUIRED_SLUGS = [
+  'aloe', 'althaea', 'apple', 'apricot', 'artichoke', 'arugula', 'bay', 'bean', 'bee_balm', 'beet',
+  'bitter_melon', 'blackberry', 'blackberry_lily', 'bok_choy', 'bread', 'bunching_onion', 'butter',
+  'calibrachoa', 'chard', 'cheese', 'cherry', 'christmas_cactus', 'cilantro', 'claytonia', 'cobaea',
+  'coleus', 'collard', 'columbine', 'cranberry', 'crown_of_thorns', 'cucamelon', 'dogwood',
+  'dracaena', 'edelweiss', 'eggplant', 'elderberry', 'fish', 'fittonia', 'four_o_clock', 'foxglove',
+  'garlic', 'geranium', 'grape', 'haworthia', 'helichrysum', 'hollyhock', 'japanese_maple',
+  'kohlrabi', 'lemon_verbena', 'lithops', 'luffa', 'mache', 'meat', 'melon', 'milk', 'milkweed',
+  'mizuna', 'money_plant', 'morning_glory', 'nectarine', 'okra', 'pea', 'pear', 'perilla',
+  'pineapple', 'plum', 'poppy', 'pothos', 'raspberry', 'rhubarb', 'sage', 'sedum', 'sempervivum',
+  'sour_cherry', 'spider_plant', 'squash', 'stock', 'sunflower', 'tatsoi', 'thunbergia',
+  'tomatillo', 'torenia', 'tradescantia', 'tweedia', 'viola', 'winter_squash', 'yarrow', 'yogurt',
+];
+const GATE_REQUIRED = new Set(GATE_REQUIRED_SLUGS);
+
 // "Still used by 3 pantry items and 1 batch." — null when no row names the type.
 export function usageSentence(counts) {
   const parts = CROP_TYPE_DEPENDENTS
@@ -84,6 +111,7 @@ export function describeType(row) {
   const retired = row.deleted_at != null;
   const why = retired ? null
     : row.category === NON_PLANT_FOOD_CATEGORY ? FOOD_CLASS_REFUSAL
+    : GATE_REQUIRED.has(row.slug) ? GATE_REQUIRED_REFUSAL
     : usageSentence(counts);
   return {
     slug: row.slug,
@@ -144,12 +172,14 @@ export async function retireCropType(sql, body, userId, env) {
   const type = describeType(row);
   if (type.retired) return { status: 409, body: { error: ALREADY_RETIRED, code: 'already_retired', type } };
   if (!type.can_retire) {
-    const code = row.category === NON_PLANT_FOOD_CATEGORY ? 'food_class' : 'in_use';
+    const code = row.category === NON_PLANT_FOOD_CATEGORY ? 'food_class'
+      : GATE_REQUIRED.has(row.slug) ? 'gate_required' : 'in_use';
     return { status: 409, body: { error: type.why_not, code, type } };
   }
 
   // The guard is repeated inside the write, so a row that started naming the type between the read
-  // above and this statement still stops the retire. updated_at is set by hand: crop_types has no
+  // above and this statement still stops the retire, and so the food-class and gate-required
+  // refusals hold even if the pre-check above is ever changed. updated_at is set by hand: crop_types has no
   // trigger that would.
   const [retired] = await sql`
     UPDATE public.crop_types ct
@@ -157,6 +187,7 @@ export async function retireCropType(sql, body, userId, env) {
      WHERE ct.slug = ${slug}
        AND ct.deleted_at IS NULL
        AND (ct.category IS NULL OR ct.category <> ${NON_PLANT_FOOD_CATEGORY})
+       AND NOT (ct.slug = ANY(${GATE_REQUIRED_SLUGS}::text[]))
        AND NOT EXISTS (SELECT 1 FROM public.cultivar cv
                         WHERE cv.crop_type_slug = ct.slug)
        AND NOT EXISTS (SELECT 1 FROM public.preservation_log pl
