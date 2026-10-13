@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.185.3",
+    "date": "2026-10-12",
+    "highlights": [
+      "Behind the scenes: the nightly backup check no longer raises a false alarm on days a new table was added"
+    ]
+  },
+  {
     "version": "4.185.2",
     "date": "2026-10-12",
     "highlights": [
