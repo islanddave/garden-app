@@ -268,8 +268,15 @@ jobs:
           # shellcheck source=/dev/null
           . "$RUNNER_TEMP/probe/lib.sh"
           sec "d. postgres:17 service + dump/restore + image psql"
-          IMAGE_PSQL=$(command -v psql)
           BIN=/usr/lib/postgresql/17/bin
+          # /usr/bin/psql is Debian's pg_wrapper, which runs the NEWEST /usr/lib/postgresql/<n>/bin: once step c has
+          # filled .../17/bin, bare `psql` on ubuntu-24.04 is that copy (17), not the image's 16 (seen in probe run
+          # 38450868495). So the image's own psql is called by its directory here, and the wrapper's pick is recorded.
+          val wrapper_psql_after_the_pg17_fetch "$(/usr/bin/psql --version 2>&1)"
+          val wrapper_pg_dump_after_the_pg17_fetch "$(/usr/bin/pg_dump --version 2>&1)"
+          IMAGE_PG=$(find /usr/lib/postgresql -mindepth 1 -maxdepth 1 ! -name 17 | sort -V | tail -1)
+          IMAGE_PSQL="$IMAGE_PG/bin/psql"
+          psql() { "$IMAGE_PSQL" "$@"; }
           val image_psql_path "$IMAGE_PSQL"
           check d.image-psql-version psql --version
           val image_psql_version "$(psql --version 2>&1)"
