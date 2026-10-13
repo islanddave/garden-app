@@ -1,7 +1,8 @@
 {
-  "version": "4.186.1",
+  "version": "4.187.0",
   "date": "2026-10-13",
   "highlights": [
-    "Behind the scenes: a release can no longer put anything on the live site except the newest approved version"
+    "Crop types can be retired and brought back from a new admin page (/admin/crop-types). A type any row still names, or one the garden's own checks need, can't be retired.",
+    "A retired crop type takes no new put-ups, pantry items or varieties; everything already recorded under it stays as it is."
   ]
 }
