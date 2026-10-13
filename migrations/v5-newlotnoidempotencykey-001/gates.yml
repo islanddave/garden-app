@@ -1,0 +1,167 @@
+# gates.yml
+# BUG-NEWLOTNOIDEMPOTENCYKEY-001: inventory_items.idempotency_key and its partial unique index.
+#
+# ── SEQUENCING: THE DATABASES FIRST, THEN THE CODE ───────────────────────────────────────────────
+#   1. STAGING: pre -> sweep -> 0a -> post -> rehearse 0r -> pre -> 0a -> post.
+#   2. PROD (Dave's first-hand OK for a prod database change, outside 07:00-08:00 UTC, after a
+#      pre-apply copy): pre -> sweep -> 0a -> post.
+#   3. ONLY THEN may a commit whose Lambda names inventory_items.idempotency_key reach dev. Once one
+#      is on dev, the promote's prod schema gate refuses every promote until the column is on prod.
+#   README.md has the commands. This directory itself is safe in the tree before either database is
+#   applied, because of the next paragraph.
+#
+# ANY pre/sweep/post assertion failing is a HARD ABORT.
+#
+# ── EVERY post GATE IS SELF-ARMING AND CATALOG-ONLY ──────────────────────────────────────────────
+#   `continuous:` DEFAULTS TO TRUE (scripts/gate_runner.py) and .github/workflows/gate-invariants.yml
+#   runs `gate_runner.py --all --phase post --continuous-only` against LIVE PROD AND LIVE STAGING on
+#   every migrations/** push and on a Tuesday cron, with no skip-if-unapplied logic. Each gate returns
+#   rows only when the migration IS applied (stamp 5.0.0-newlotnoidempotencykey-001 exists) AND the
+#   invariant is violated: vacuous before the apply, asserting permanently after. 0a writes the stamp
+#   in the same transaction as the DDL, and post_schema_version_recorded (armed on the COLUMN, not on
+#   itself) proves the stamp landed.
+#   No gate names idempotency_key as a column of inventory_items: Postgres resolves a column name at
+#   PARSE time, before any WHERE or EXISTS runs, so such a gate would ERROR (42703) on an unapplied
+#   database and red the run for every migration in the tree. Each reference is a string compared
+#   against pg_attribute.attname, information_schema or an index's printed definition. So nothing
+#   here has to move before a rollback.
+#
+# ── WHAT THESE GATES DO NOT COVER ────────────────────────────────────────────────────────────────
+#   * NO ROW-LEVEL GATE. The index IS the row rule and Postgres enforces it on every write.
+#   * Nothing says a key belongs to the household that reads it. That is the handler's predicate
+#     (created_by = ANY(householdIds)), not the database's: the index is global on purpose (0a K3).
+#   * Nothing here proves a retried create answers with the first lot. That is the server half's
+#     tests, against the route.
+#
+# NOT RUN ANYWHERE by the lane that wrote it. `gate_runner.py --validate-only` passes (structure
+# only); no gate here has been executed against PostgreSQL.
+
+pre:
+  - name: pre_inventory_items_present
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'inventory_items' AND table_type = 'BASE TABLE'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_column_absent
+    note: >
+      Greenfield. 0a is ADD COLUMN IF NOT EXISTS, so a column that arrived by another route would be
+      kept silently in whatever shape it has (0a's own step 0 also refuses one that is not uuid).
+      continuous false: false by design once 0a runs.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'inventory_items'
+         AND column_name = 'idempotency_key'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_not_already_applied
+    note: >
+      A stamp with no column would arm every post gate below against nothing. continuous false, as
+      above.
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.0.0-newlotnoidempotencykey-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+sweep:
+  # 0a creates the index only when no relation of that name exists in public; the handler's replay
+  # test is "a 23505 whose constraint is THIS name". Assert the name is free.
+  - name: sweep_no_index_name_collision
+    sql: |
+      SELECT c.relname FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'uq_inventory_items_idempotency_key'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  # SELF-ARMING AND CATALOG-ONLY, EVERY ONE. See the header for why that is forced. Four gates.
+
+  # ARMED ON THE DDL, NOT ON ITSELF. Guarding "the version row exists" with "the version row exists"
+  # is circular; guarding it with "the column exists" is not. 0a writes both in one transaction, so a
+  # row here means someone hand-applied the DDL or deleted the stamp: exactly the state that would
+  # silence every EXISTS-guarded gate below.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = 'public' AND table_name = 'inventory_items'
+                        AND column_name = 'idempotency_key')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-newlotnoidempotencykey-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_column_is_nullable_uuid_without_default
+    note: >
+      Nullable: NULL is "not made by a keyed create", and NOT NULL would 23502 every create by the
+      deployed Lambda, which does not name the column. No DEFAULT: a default is a key nobody sent,
+      and gen_random_uuid() there would make every row look keyed. uuid, not text: the handler binds
+      ::uuid, as the three sibling tables' handlers do.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-newlotnoidempotencykey-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema = 'public' AND table_name = 'inventory_items'
+                            AND column_name = 'idempotency_key' AND data_type = 'uuid'
+                            AND is_nullable = 'YES' AND column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # 0a header K1, K3, K4. The replay contract is "a 23505 on THIS name". On this table, UNIQUE, valid,
+  # exactly the one column, and partial on IS NOT NULL and nothing else. Same assertion, same text
+  # match, as v5-pantry-001 post_pantry_item_idempotency_unique. A predicate that also said
+  # `deleted_at IS NULL` would let a replay of a since-deleted lot's create make a second lot. A
+  # second key column (an owner) would make the same key legal once per owner, which is not what the
+  # handler copied from the siblings expects a 23505 on this name to mean.
+  - name: post_key_index_unique_and_partial_on_not_null_only
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-newlotnoidempotencykey-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_index x
+                           JOIN pg_class i     ON i.oid = x.indexrelid
+                           JOIN pg_class t     ON t.oid = x.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = 'inventory_items'
+                            AND i.relname = 'uq_inventory_items_idempotency_key'
+                            AND x.indisunique AND x.indisvalid AND x.indnatts = 1
+                            AND strpos(pg_get_indexdef(x.indexrelid),
+                                       '(idempotency_key) WHERE (idempotency_key IS NOT NULL)') > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # 0a header K5. Nothing else may be built on the column: no second index (a second unique index
+  # could become the arbiter the handler does not name) and no table constraint. A CHECK or a
+  # uniqueness constraint over it is writer-coupled: every writer deployed before the server half
+  # leaves the column NULL. One row per offender, naming it.
+  - name: post_nothing_else_names_the_column
+    sql: |
+      SELECT ic.relname::text AS offender
+        FROM pg_index ix
+        JOIN pg_class ic    ON ic.oid = ix.indexrelid
+        JOIN pg_class t     ON t.oid = ix.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (ix.indkey)
+       WHERE t.relname = 'inventory_items' AND a.attname = 'idempotency_key'
+         AND ic.relname <> 'uq_inventory_items_idempotency_key'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-newlotnoidempotencykey-001')
+      UNION ALL
+      SELECT c.conname::text
+        FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+       WHERE t.relname = 'inventory_items' AND a.attname = 'idempotency_key'
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-newlotnoidempotencykey-001')
+    expect: rowcount_eq
+    value: 0
