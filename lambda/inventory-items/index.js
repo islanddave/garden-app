@@ -412,6 +412,45 @@ function seedAdditionReply(resp, out) {
   });
 }
 
+// ── BUG-NEWLOTNOIDEMPOTENCYKEY-001 — the key a create is retried under ─────────────────────────────
+// POST /api/inventory-items may carry `idempotency_key`: a uuid the client mints once per draft
+// (src/components/seed/seedLotKey.js), so a create that is sent twice makes one lot. The row keeps
+// it behind uq_inventory_items_idempotency_key — global, and partial on IS NOT NULL only, so a
+// soft-deleted row still holds its key (migrations/v5-newlotnoidempotencykey-001). That is the
+// shape pantry_item, recipe and kitchen_batch keep theirs in, and the answers are theirs too
+// (lambda/preservation batchBuilderRoutes.js fromJars): a live row of this household under the key
+// is a replay, 200 with `replayed: true`; a key no such row answers for is 409 key_conflict with
+// no payload. OPTIONAL here, where those three require it: every other create, and every client
+// that predates the key, sends none.
+const CREATE_KEY_INDEX = 'uq_inventory_items_idempotency_key';
+const CREATE_KEY_CONFLICT = { error: 'That key is already in use.', code: 'key_conflict' };
+
+// THE KEY IS THE CLIENT'S OWN AND IS NEVER SENT BACK (pantryItems.js projectItem keeps the same
+// rule). `i.*` and `RETURNING *` carry it, so every answer built from one drops it: through this
+// for the create, the replay and the wide PUT, and in the destructuring the list and detail arms
+// already do. create-key.test.js counts those statements and drives each one's answer.
+const withoutCreateKey = ({ idempotency_key: _createKey, ...row }) => row;
+
+// The lot a key made, as a fresh create answers it (the row, its variety's rank, its parents), or
+// null when no LIVE row of THIS HOUSEHOLD holds the key. Scoped in the WHERE and not judged
+// afterwards, so another household's row is never selected: to its caller, a key someone else
+// holds and a key nobody holds are the same nothing. The parents are read only for a seed lot
+// (nothing else can have any), and as they stand now: what the first request left, unless one of
+// the parents routes has run since.
+async function readLotByCreateKey(sql, key, householdIds) {
+  const rows = await sql`
+    SELECT i.*, (SELECT pv.variety_rank FROM public.cultivar pv
+                  WHERE pv.id = i.variety_id) AS variety_rank
+      FROM inventory_items i
+     WHERE i.idempotency_key = ${key}::uuid
+       AND i.created_by = ANY(${householdIds})
+       AND i.deleted_at IS NULL
+  `;
+  if (!rows.length) return null;
+  const parentRows = rows[0].category === 'seeds' ? await readSourcePlants(sql, householdIds, rows[0].id) : [];
+  return { ...withoutCreateKey(rows[0]), source_plants: sourcePlantsOf(parentRows) };
+}
+
 export function validateCreate(body) {
   if (!body || typeof body !== 'object') return 'body required';
   if (!body.name || typeof body.name !== 'string' || !body.name.trim()) return 'name is required';
@@ -443,6 +482,14 @@ export function validateCreate(body) {
   if (body.source_kind != null && body.category !== 'seeds') return 'source_kind is only allowed when category is seeds';
   const merr = validateMetadata(body.metadata);
   if (merr) return merr;
+  // BUG-NEWLOTNOIDEMPOTENCYKEY-001 — optional. Absent or null is a create with no key, which is
+  // every create there was before; anything else that is there must be a uuid (the sentence the
+  // pantry, recipe and batch creates use). Last, so no body that was answered before this line
+  // existed is answered differently.
+  if (body.idempotency_key != null
+    && !(typeof body.idempotency_key === 'string' && UUID_RE.test(body.idempotency_key))) {
+    return 'idempotency_key must be a uuid';
+  }
   return null;
 }
 
@@ -1475,9 +1522,12 @@ export const handler = async (event) => {
         // the id and the url can never disagree (the incoherence DD3 names — a LEFT JOIN that nulls
         // the storage_path while the raw id stays non-null, which the client then feeds to PhotoImg
         // and to featuredInSet badge comparisons). Strip the join-only columns.
+        // BUG-NEWLOTNOIDEMPOTENCYKEY-001 — and the create's key, which `i.*` also carries and no
+        // answer sends back (withoutCreateKey).
         const {
           featured_photo_storage_path: _ignore,
           effective_featured_photo_id: _effective,
+          idempotency_key: _createKey,
           ...rest
         } = row;
         // ── V4-SEEDGERMRATE-001 (BD-057) — the packet's germination record ─────────────────────
@@ -1877,7 +1927,10 @@ export const handler = async (event) => {
           }
           return resp(404, { error: 'Not found' });
         }
-        return resp(200, { ...rows[0], source_plants: parentRows == null ? null : sourcePlantsOf(parentRows) });
+        return resp(200, {
+          ...withoutCreateKey(rows[0]),
+          source_plants: parentRows == null ? null : sourcePlantsOf(parentRows),
+        });
       }
 
       if (method === 'DELETE') {
@@ -2102,10 +2155,15 @@ export const handler = async (event) => {
       // the phone's photos-v1 cache BEFORE asking for a link, so a thumb the phone already holds
       // shows with no request at all — offline included — and only a missing one costs a mint.
       // The thumbs/ prefix is lambda/photos viewTier.js's TIER_PREFIX; the client never builds it.
+      //
+      // BUG-NEWLOTNOIDEMPOTENCYKEY-001 — the create's key leaves with the join-only columns
+      // (withoutCreateKey says why). A list row is what the client sends back to the wide PUT, which
+      // never assigns it.
       const listRows = rows.map((row) => {
         const {
           featured_photo_storage_path: storagePath,
           effective_featured_photo_id: heroId,
+          idempotency_key: _createKey,
           ...rest
         } = row;
         return {
@@ -2128,6 +2186,18 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       const verr = validateCreate(body);
       if (verr) return resp(400, { error: verr });
+
+      // BUG-NEWLOTNOIDEMPOTENCYKEY-001 — A REPLAY IS DECIDED BEFORE ANYTHING ELSE IS CHECKED (the
+      // order batchBuilderRoutes.js fromJars keeps, for its reason). A retried create whose answer
+      // was lost must get its lot back, and every gate below judges the world as it is NOW: a
+      // planting archived since, or a place or a source deleted since, would answer 400 to a
+      // request that already succeeded, and the sheet would say nothing was saved. One read, and
+      // only for a body that carries a key.
+      const createKey = body.idempotency_key ?? null;
+      if (createKey != null) {
+        const prior = await readLotByCreateKey(sql, createKey, householdIds);
+        if (prior) return resp(200, { ...prior, replayed: true });
+      }
 
       // AUTHZ (BUG-AUTHZFKENUM-001): create half of the featured_image_id gate — see the PUT arm.
       if (body.featured_image_id != null) {
@@ -2299,6 +2369,11 @@ export const handler = async (event) => {
       // Minted for every create rather than only for the ones with parents, so there is ONE INSERT
       // statement: a second copy of this column list is how a column gets added to one and not the
       // other. `source_plant_id` is bound to the CACHE (see above), never to the body key directly.
+      //
+      // BUG-NEWLOTNOIDEMPOTENCYKEY-001 — idempotency_key is NAMED for every create and bound NULL
+      // for one that sent no key. NULL is outside the partial index, so such a row can never meet a
+      // 23505 there, and it is the same ONE statement. The column has to be on a database before
+      // this statement runs against it (the migration's README, "Order of work").
       const lotId = randomUUID();
       const insertLot = sql`
         INSERT INTO inventory_items (
@@ -2309,7 +2384,8 @@ export const handler = async (event) => {
           quantity, condition, brand, model,
           image_url, featured_image_id, variety_id, metadata,
           seed_process, source_plant_id, source_kind,
-          source_id, acquired_from_source_id
+          source_id, acquired_from_source_id,
+          idempotency_key
         ) VALUES (
           ${lotId}::uuid, ${userId}, ${userId}, ${body.type}, ${body.name.trim()}, ${body.category},
           ${body.location_id ?? null}, ${body.location_text ?? null}, ${body.source ?? null}, ${body.source_url ?? null}, ${body.purchase_date ?? null},
@@ -2325,10 +2401,22 @@ export const handler = async (event) => {
           ${body.image_url ?? null}, ${body.featured_image_id ?? null}, ${body.variety_id ?? null},
           ${metadataJson}::jsonb,
           ${body.seed_process ?? null}, ${cachePlantId}, ${sourceKind},
-          ${body.source_id ?? null}, ${body.acquired_from_source_id ?? null}
+          ${body.source_id ?? null}, ${body.acquired_from_source_id ?? null},
+          ${createKey}::uuid
         ) RETURNING *, (SELECT pv.variety_rank FROM public.cultivar pv
                          WHERE pv.id = inventory_items.variety_id) AS variety_rank
       `;
+      // BUG-NEWLOTNOIDEMPOTENCYKEY-001 — THE INSERT CAN STILL MEET THE KEY: a request that landed
+      // after the read at the top of this arm, or a row that read does not answer with (another
+      // household's, or a soft-deleted one). A 23505 on the key's index, and on no other, is read
+      // back the same way: this household's live lot is the replay, and anything else is a
+      // conflict that says nothing about the row. The statement that raised wrote nothing, alone
+      // or as the first of the transaction below. null = not this error; the caller rethrows.
+      const answerKeyHeld = async (err) => {
+        if (!(err?.code === '23505' && err.constraint === CREATE_KEY_INDEX)) return null;
+        const prior = await readLotByCreateKey(sql, createKey, householdIds);
+        return prior ? resp(200, { ...prior, replayed: true }) : resp(409, CREATE_KEY_CONFLICT);
+      };
       // `seed_parent_plant_count` is DELIBERATELY ABSENT from the column list above (release 2a) and
       // must stay absent: PUT /:id/seed-measure is its only writer. A second writer here would be the
       // one that drops the value on a Lambda predating the column and answers 201.
@@ -2338,8 +2426,15 @@ export const handler = async (event) => {
       // before, and it never names seed_lot_parent_planting: the commonest write in this handler
       // does not depend on that table.
       if (!parentIds.length) {
-        const rows = await insertLot;
-        return resp(201, { ...rows[0], source_plants: [] });
+        let rows;
+        try {
+          rows = await insertLot;
+        } catch (err) {
+          const held = await answerKeyHeld(err);
+          if (held) return held;
+          throw err;
+        }
+        return resp(201, { ...withoutCreateKey(rows[0]), source_plants: [] });
       }
       // With parents: lot, link rows and the read-back are ONE transaction, so a lot can never be
       // created with its column set and its rows missing (or the reverse). The link INSERT is the
@@ -2386,9 +2481,11 @@ export const handler = async (event) => {
           console.warn(JSON.stringify({ tag: 'inv-source-plants-retry', item: lotId, code: err.code, create: true }));
           return resp(409, parentsChangedBody());
         }
+        const held = await answerKeyHeld(err);
+        if (held) return held;
         throw err;
       }
-      return resp(201, { ...lotRows[0], source_plants: sourcePlantsOf(parentRows) });
+      return resp(201, { ...withoutCreateKey(lotRows[0]), source_plants: sourcePlantsOf(parentRows) });
     }
 
     return resp(405, { error: 'Method not allowed' });

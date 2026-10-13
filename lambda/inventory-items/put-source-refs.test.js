@@ -295,7 +295,8 @@ describe('V4-SOURCEREG-001 POST — the columns are named in the INSERT', () => 
     })));
     expect(status).toBe(201);
     const call = callMatching(/INSERT INTO inventory_items/);
-    expect(call.text).toMatch(/source_id, acquired_from_source_id\s*\)\s*VALUES/);
+    // (The create key's column follows them and closes the list, BUG-NEWLOTNOIDEMPOTENCYKEY-001.)
+    expect(call.text).toMatch(/source_id, acquired_from_source_id,\s*idempotency_key\s*\)\s*VALUES/);
     expect(call.values).toContain(ORIGINATOR);
     expect(call.values).toContain(SHOP);
     // Position, not membership: the ids must land in the two columns just declared, and `toContain`

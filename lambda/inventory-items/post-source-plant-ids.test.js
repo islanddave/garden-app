@@ -501,8 +501,12 @@ describe('POST with source_plant_ids — one transaction (source shape; the stub
       /\[lotRows, , , , , parentRows\] = await sql\.transaction\(\[ insertLot, lockPlantings\(sql, parentIds\), judgeParentRules\(sql, \{ lotId, ids: parentIds, householdIds, alone: true \}\), insertSeedParentLinks\(sql, \{ lotId, ids: parentIds, householdIds, userId \}\), assertEveryParentLinked\(sql, \{ lotId, ids: parentIds, householdIds \}\), readSourcePlants\(sql, householdIds, lotId\), \]\);/);
     // Only the two codes that mean "rolled back whole, try again" are answered here; the rest rethrow.
     // (RESTATED: the 409 body is the sentence with its code — built in one place, parentsChangedBody.)
+    // RESTATED for BUG-NEWLOTNOIDEMPOTENCYKEY-001: and, after those two, a 23505 on the create key's
+    // index, which answerKeyHeld answers (null for every other error, which then rethrows as
+    // before). That it comes second is why a key meeting its row is never told parents_changed.
+    // create-key.test.js drives it.
     expect(POST_ARM).toMatch(
-      /catch \(err\) \{ if \(err\?\.code === '22012' \|\| err\?\.code === '40P01'\) \{ console\.warn\([^;]*\); return resp\(409, parentsChangedBody\(\)\); \} throw err; \}/);
+      /catch \(err\) \{ if \(err\?\.code === '22012' \|\| err\?\.code === '40P01'\) \{ console\.warn\([^;]*\); return resp\(409, parentsChangedBody\(\)\); \} const held = await answerKeyHeld\(err\); if \(held\) return held; throw err; \}/);
     expect(SRC).toMatch(/const parentsChangedBody = \(\) => \(\{ error: PLANTS_CHANGED, code: 'parents_changed' \}\);/);
     expect(SRC).toMatch(/const PLANTS_CHANGED = 'One of those plants changed just now\. Reload and try again\.';/);
     // The lot statement is BUILT, not awaited, where it is written — an awaited statement has
@@ -511,7 +515,9 @@ describe('POST with source_plant_ids — one transaction (source shape; the stub
     expect(POST_ARM).not.toMatch(/await sql` INSERT INTO inventory_items/);
     // Exactly two ways it is ever run: alone when there are no parents, or as element 0 of the batch.
     expect(POST_ARM.match(/\binsertLot\b/g)).toHaveLength(3);
-    expect(POST_ARM).toMatch(/if \(!parentIds\.length\) \{ const rows = await insertLot; return resp\(201, \{ \.\.\.rows\[0\], source_plants: \[\] \}\); \}/);
+    // RESTATED for BUG-NEWLOTNOIDEMPOTENCYKEY-001: still awaited alone, now inside a try whose catch
+    // asks answerKeyHeld the same question the batch's catch does, and the 201 drops the key.
+    expect(POST_ARM).toMatch(/if \(!parentIds\.length\) \{ let rows; try \{ rows = await insertLot; \} catch \(err\) \{ const held = await answerKeyHeld\(err\); if \(held\) return held; throw err; \} return resp\(201, \{ \.\.\.withoutCreateKey\(rows\[0\]\), source_plants: \[\] \}\); \}/);
   });
 
   it('never names the plant count: PUT /:id/seed-measure is its only writer (release 2a)', () => {
@@ -531,7 +537,8 @@ describe('POST with source_plant_ids — one transaction (source shape; the stub
     expect(POST_ARM).toMatch(/const cachePlantId = sourcePlantId \?\? parentIds\[0\] \?\? null;/);
     // The neighbours on both sides, so the cache is bound in source_plant_id's position: the column
     // list reads `seed_process, source_plant_id, source_kind,` and the values must read the same way.
-    expect(POST_ARM).toMatch(/\bseed_process, source_plant_id, source_kind, source_id, acquired_from_source_id \) VALUES \(/);
+    // (RESTATED for BUG-NEWLOTNOIDEMPOTENCYKEY-001: the create key's column is the last one named.)
+    expect(POST_ARM).toMatch(/\bseed_process, source_plant_id, source_kind, source_id, acquired_from_source_id, idempotency_key \) VALUES \(/);
     expect(POST_ARM).toMatch(/\$\{body\.seed_process \?\? null\}, \$\{cachePlantId\}, \$\{sourceKind\},/);
   });
 

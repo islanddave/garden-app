@@ -162,10 +162,16 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     //                          crop) and each parent planting's variety (its crop). Four columns, all
     //                          already in the contract above, so the list did not move. No blend_key,
     //                          no `fv`, and no liveness or ownership test of a variety.
-    expect(STATEMENTS).toHaveLength(12);
+    //
+    // 12 -> 13 with BUG-NEWLOTNOIDEMPOTENCYKEY-001:
+    //   index.js            6  readLotByCreateKey, the read that answers a replayed create. It reads
+    //                          the filed variety's rank in the scalar subquery the POST's RETURNING
+    //                          uses (pv.id, pv.variety_rank: both already in the contract above, so
+    //                          the list did not move), so a replay has a fresh create's projection.
+    expect(STATEMENTS).toHaveLength(13);
     const perFile = Object.fromEntries(HANDLERS.map((f) => [f, STATEMENTS.filter((s) => s.file === f).length]));
     expect(Object.fromEntries(Object.entries(perFile).filter(([, count]) => count > 0))).toEqual({
-      'index.js': 5, 'seed-lot-additions.js': 1, 'seed-lot-filing.js': 2, 'seed-lot-parents.js': 1, 'seed-lot-rules.js': 3,
+      'index.js': 6, 'seed-lot-additions.js': 1, 'seed-lot-filing.js': 2, 'seed-lot-parents.js': 1, 'seed-lot-rules.js': 3,
     });
     const openLots = STATEMENTS.find((s) => s.file === 'seed-lot-additions.js').sql;
     expect(bindings(openLots)).toEqual(['pv', 'pv', 'pv']);
@@ -202,15 +208,19 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     }
   });
 
-  it('projects the filed variety\'s rank on all five lot projections in index.js', () => {
+  it('projects the filed variety\'s rank on all six lot projections in index.js', () => {
     // Release 2a: list (both templates), detail, and the POST and wide-PUT replies. The union above
     // stays green if one of them drops it, so it is pinned per statement.
+    // Six with BUG-NEWLOTNOIDEMPOTENCYKEY-001: the by-key read that answers a replayed create.
     const inIndex = STATEMENTS.filter((s) => s.file === 'index.js');
-    expect(inIndex).toHaveLength(5);
+    expect(inIndex).toHaveLength(6);
     for (const { sql } of inIndex) expect(sql).toMatch(/\bpv\.variety_rank\b/);
     // The two that are writes read it in RETURNING, off the row as the statement left it.
     const returning = inIndex.filter(({ sql }) => /RETURNING \*, \(SELECT pv\.variety_rank FROM public\.cultivar pv\s+WHERE pv\.id = inventory_items\.variety_id\) AS variety_rank/.test(sql));
     expect(returning).toHaveLength(2);
+    // The replay's read spells the same subquery against the row it selected.
+    const byKey = inIndex.filter(({ sql }) => /SELECT i\.\*, \(SELECT pv\.variety_rank FROM public\.cultivar pv\s+WHERE pv\.id = i\.variety_id\) AS variety_rank/.test(sql));
+    expect(byKey).toHaveLength(1);
   });
 
   it('accounts for every unaliased cultivar read', () => {

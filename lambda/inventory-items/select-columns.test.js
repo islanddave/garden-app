@@ -119,6 +119,16 @@ const INVENTORY_ITEMS_COLUMNS = [
   // this one column missing from prod, and that report is the ordering guard working. Not read from
   // information_schema by this lane (it opens no database); the name is R2A-CONTRACT section 1's.
   'seed_parent_plant_count',
+  // BUG-NEWLOTNOIDEMPOTENCYKEY-001 — the key a create is retried under. Genuinely referenced twice:
+  // named in the POST INSERT column list (bound NULL when the body sends none) and matched by the
+  // by-key read that answers a replay. In no SET list and no other route; create-key.test.js pins
+  // that, and that no answer carries the column.
+  //
+  // Arrives with migrations/v5-newlotnoidempotencykey-001 (uuid, nullable, behind the partial
+  // unique index uq_inventory_items_idempotency_key). It has to be on prod before this reaches dev:
+  // from then dev-main-schema-audit.py reads this entry against prod on every promote. Not read
+  // from information_schema by this lane (it opens no database); the name is that migration's.
+  'idempotency_key',
 ];
 
 describe('inventory-items SELECT-column contract (L-081 Phase 1)', () => {
@@ -139,8 +149,9 @@ describe('inventory-items SELECT-column contract (L-081 Phase 1)', () => {
     // V5-SEEDQTY-001's seed_count / seed_weight_g / seed_count_estimated. Ratcheting the floor for
     // columns genuinely added to THIS relation is the normal move; what must never happen is folding
     // a DIFFERENT relation's columns in to raise it, which is why seed_lot_stage_log got its own file.
-    // 38 -> 39 with release 2a's seed_parent_plant_count.
-    expect(INVENTORY_ITEMS_COLUMNS.length).toBeGreaterThanOrEqual(39);
+    // 38 -> 39 with release 2a's seed_parent_plant_count. 39 -> 40 with the create's
+    // idempotency_key (BUG-NEWLOTNOIDEMPOTENCYKEY-001).
+    expect(INVENTORY_ITEMS_COLUMNS.length).toBeGreaterThanOrEqual(40);
   });
 
   it('seed_parent_plant_count has ONE writer in this file: named by /seed-measure, and by no other route here', () => {
