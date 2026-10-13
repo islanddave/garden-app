@@ -1,8 +1,7 @@
 {
-  "version": "4.187.0",
+  "version": "4.187.1",
   "date": "2026-10-13",
   "highlights": [
-    "Crop types can be retired and brought back from a new admin page (/admin/crop-types). A type any row still names, or one the garden's own checks need, can't be retired.",
-    "A retired crop type takes no new put-ups, pantry items or varieties; everything already recorded under it stays as it is."
+    "Saving a new seed lot twice by accident (a double tap, or a retry on a weak connection) now makes one seed lot, not two."
   ]
 }

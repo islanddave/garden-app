@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.187.1",
+    "date": "2026-10-13",
+    "highlights": [
+      "Saving a new seed lot twice by accident (a double tap, or a retry on a weak connection) now makes one seed lot, not two."
+    ]
+  },
+  {
     "version": "4.187.0",
     "date": "2026-10-13",
     "highlights": [
