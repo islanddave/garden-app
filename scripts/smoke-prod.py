@@ -20,6 +20,12 @@
 # whether the deploy ran or was skipped, says which, and still checks AWS against that answer.
 # Omitted, the check is unchanged: it demands every function redeployed since the baseline.
 #
+# COULD NOT READ is not FAIL (BUG-SMOKEPRODJOBSPAGE-001). On promote 38467019027 (v4.187.1) GitHub
+# answered 502 to the run's jobs at per_page=100 for over ten minutes while per_page=30 read all 33,
+# and the check called that a FAIL of the release. The jobs are now read 30 to a page, and a GitHub
+# read that did not answer marks the check [COULD NOT READ]: exit 3 when nothing else failed (run
+# verify again), exit 1 as before when any check really failed. Still never exit 0.
+#
 # WHAT IT DOES NOT DO: it does not sign in. Check 6 asserts that an unauthenticated request to an
 # authed Lambda is REJECTED, which proves the auth path is live and enforcing. Proving a real login
 # works needs a browser and a credential, and a smoke script that carries a credential is a worse
@@ -53,8 +59,11 @@ LAMBDA_DECISION_STEP = 'Decide Lambda deploy from deploy markers on the running 
 
 LAMBDAS_DEPLOYED = 'deployed'
 LAMBDAS_SKIPPED = 'skipped'
-JOBS_PER_PAGE = 100
-JOBS_MAX_PAGES = 10
+JOBS_PER_PAGE = 30      # 100 is the size GitHub 502'd on; a promote run has 33 jobs or so
+JOBS_MAX_PAGES = 34
+
+# do_verify's third verdict beside True (PASS), False (FAIL) and None (SKIP).
+UNREAD = 'could-not-read'
 
 # Network calls are short and this runs right after a deploy — a hung probe reported as a failure is
 # better than a smoke run that never returns.
@@ -63,6 +72,11 @@ TIMEOUT_S = 20
 
 class CheckFailed(Exception):
     pass
+
+
+class CheckUnreadable(CheckFailed):
+    """The evidence could not be read, so the check has no verdict. Never a pass, and not a FAIL of
+    the release either: an outage at GitHub says nothing about what was deployed."""
 
 
 def fetch(path, want_text=True):
@@ -165,15 +179,25 @@ def gh_api(path):
         out = subprocess.run(['gh', 'api', path], capture_output=True, text=True, timeout=60)
     except FileNotFoundError:
         raise CheckFailed('the `gh` CLI is not installed, so the promote run cannot be read')
+    except subprocess.TimeoutExpired:
+        raise CheckUnreadable(f'gh api {path} did not answer in 60 s')
     if out.returncode != 0:
-        raise CheckFailed(f'gh api {path} failed: ' + (out.stderr or out.stdout or '').strip()[:200])
-    return json.loads(out.stdout)
+        why = f'gh api {path} failed: ' + (out.stderr or out.stdout or '').strip()[:200]
+        # 404 is an answer (no such run: the operator's id is wrong). Anything else is GitHub or
+        # the network not answering, which is not a verdict on the release.
+        raise (CheckFailed if 'HTTP 404' in why else CheckUnreadable)(why)
+    try:
+        return json.loads(out.stdout)
+    except json.JSONDecodeError:
+        raise CheckUnreadable(f'gh api {path} answered with something that is not JSON')
 
 
 def promote_run_lambda_evidence(repo, run_id, sha, names):
     """(LAMBDAS_DEPLOYED | LAMBDAS_SKIPPED, the evidence in words) for one promote-gate run.
 
-    Fails closed: anything short of a positive reading raises, and the caller reports that as a FAIL.
+    Fails closed: anything short of a positive reading raises. A run that answered and is wrong
+    (another workflow, another SHA, a failed leg, an unproven skip) raises CheckFailed, a FAIL; one
+    GitHub did not hand over whole raises CheckUnreadable, which the caller reports as COULD NOT READ.
     The run must be a promote-gate run of `sha` — promote-gate's `resolve` job refuses unless the
     run's own commit is the dev_sha it promotes, so head_sha IS the promoted commit.
 
@@ -204,11 +228,14 @@ def promote_run_lambda_evidence(repo, run_id, sha, names):
             if not batch or not isinstance(total, int) or len(jobs) >= total:
                 break
         if not isinstance(total, int) or len(jobs) != total:
-            raise CheckFailed(f'read {len(jobs)} job(s) but the API reports total_count={total!r}')
+            raise CheckUnreadable(f'read {len(jobs)} job(s) but the API reports total_count={total!r}')
+    except CheckUnreadable as e:
+        raise CheckUnreadable(f'promote run {run_id} could not be read (run verify again): {e}')
     except CheckFailed as e:
         raise CheckFailed(f'promote run {run_id} is not usable as evidence: {e}')
     except Exception as e:                          # noqa: BLE001 - a malformed answer is unreadable
-        raise CheckFailed(f'promote run {run_id} is not usable as evidence: {type(e).__name__}: {e}')
+        raise CheckUnreadable(
+            f'promote run {run_id} could not be read (run verify again): {type(e).__name__}: {e}')
 
     def named(n):
         return next((j for j in jobs if (j.get('name') or '').strip() == n), None)
@@ -306,6 +333,8 @@ def do_verify(args):
         try:
             detail = fn()
             results.append((True, name, detail))
+        except CheckUnreadable as e:
+            results.append((UNREAD, name, str(e)))
         except Exception as e:                      # noqa: BLE001 - any failure is a failed check
             results.append((False, name, str(e)))
 
@@ -350,7 +379,8 @@ def do_verify(args):
     def c_lambdas():
         names = matrix_functions(DEPLOY_LAMBDA_WF.read_text())
         since = parse_iso(base['captured_at'])
-        # Read the run BEFORE AWS: an unreadable or wrong run is the failure, whatever AWS says.
+        # Read the run BEFORE AWS: a wrong run is the failure and an unreadable one leaves the
+        # check without a verdict, whatever AWS says.
         evidence = (promote_run_lambda_evidence(args.repo, args.promote_run, args.sha, names)
                     if args.promote_run else None)
         mods = aws_lambda_last_modified(names)
@@ -399,15 +429,24 @@ def do_verify(args):
 
     print(f'\nsmoke-prod: expecting v{args.version} @ {short_sha}\n')
     for ok, name, detail in results:
-        mark = 'SKIP' if ok is None else ('PASS' if ok else 'FAIL')
+        mark = ('SKIP' if ok is None else 'COULD NOT READ' if ok is UNREAD
+                else 'PASS' if ok is True else 'FAIL')
         print(f'  [{mark}] {name}: {detail}')
 
     failed = [r for r in results if r[0] is False]
     skipped = [r for r in results if r[0] is None]
+    unread = [r for r in results if r[0] is UNREAD]
     print()
     if failed:
-        print(f'❌ smoke FAILED — {len(failed)} of {len(results)} checks')
+        print(f'❌ smoke FAILED — {len(failed)} of {len(results)} checks'
+              + (f' ({len(unread)} more could not be read)' if unread else ''))
         return 1
+    if unread:
+        # Not a pass and not a failure of the release: the evidence did not arrive. Its own exit
+        # code, so a caller can tell "run it again" from "look at prod".
+        print(f'⚠️  smoke INCOMPLETE — {len(unread)} of {len(results)} checks could not be read, '
+              'none failed. Run verify again.')
+        return 3
     # A skip is reported in the exit code's company, never silently: the whole point of this script
     # is that a check which did not run must not look like one that passed.
     print(f'✅ smoke PASSED — {len(results) - len(skipped)} checks'
@@ -431,7 +470,8 @@ def main():
                    help='the promote-gate run id that shipped --sha. Lets "lambda redeploy window" '
                         'tell a Lambda deploy the promote SKIPPED (nothing changed: pass, verified '
                         'against AWS) from one it ran (all functions must be redeployed). Read with '
-                        '`gh api`; an unreadable run or one for another SHA fails the check. '
+                        '`gh api`; a run for another SHA fails the check, and one GitHub will '
+                        'not hand over reads COULD NOT READ (exit 3: run verify again). '
                         'Omitted: every function must be redeployed since the baseline.')
     v.add_argument('--repo', default=DEFAULT_REPO, help=f'owner/name for --promote-run (default {DEFAULT_REPO})')
 

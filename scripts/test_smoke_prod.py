@@ -127,21 +127,28 @@ BASELINE_AT = datetime(2026, 10, 10, 18, 45, tzinfo=timezone.utc)
 BEFORE, AFTER = BASELINE_AT - timedelta(days=1), BASELINE_AT + timedelta(minutes=9)
 
 
-def recorded(run_id, mutate=None):
-    """A stand-in for smoke.gh_api that answers from one recorded promote run."""
+def recorded(run_id, mutate=None, seen=None):
+    """A stand-in for smoke.gh_api that answers from one recorded promote run. The recording is
+    one page of every job; it is served at whatever page size is asked for, as GitHub does, and
+    `seen` collects the paths read."""
     rec = json.loads((FIXTURES / f'smoke-prod-promote-run-{run_id}.json').read_text())
     if mutate:
         mutate(rec)
 
     def gh_api(path):
+        if seen is not None:
+            seen.append(path)
         if path == f'repos/islanddave/garden-app/actions/runs/{run_id}':
             return rec['run']
-        m = re.fullmatch(rf'repos/islanddave/garden-app/actions/runs/{run_id}/jobs\?per_page=100&page=(\d+)', path)
+        m = re.fullmatch(rf'repos/islanddave/garden-app/actions/runs/{run_id}/jobs\?per_page=(\d+)&page=(\d+)', path)
         assert m, f'unexpected GitHub read: {path}'
-        pages = rec['jobs_pages']
-        n = int(m.group(1))
-        return pages[n - 1] if n <= len(pages) else {'total_count': pages[0]['total_count'], 'jobs': []}
+        jobs = [j for page in rec['jobs_pages'] for j in page['jobs']]
+        size, n = int(m.group(1)), int(m.group(2))
+        return {'total_count': rec['jobs_pages'][0]['total_count'], 'jobs': jobs[(n - 1) * size:n * size]}
     return gh_api
+
+
+LAST = {}   # the whole of the last run_verify's output, for the tests that read the summary line
 
 
 def run_verify(monkeypatch, tmp_path, capsys, *, sha, version, modified, promote_run=None, gh=None):
@@ -182,6 +189,7 @@ def run_verify(monkeypatch, tmp_path, capsys, *, sha, version, modified, promote
                               skip_aws=False, promote_run=promote_run, repo='islanddave/garden-app')
     rc = smoke.do_verify(args)
     out = capsys.readouterr().out
+    LAST['out'] = out
     line = next(l for l in out.splitlines() if 'lambda redeploy window' in l)
     return rc, line, len(names)
 
@@ -238,7 +246,7 @@ class TestLambdaWindowAgainstThePromoteRun:
         assert rc == 0
         assert '[PASS]' in line and f'all {n} redeployed since' in line and 'promote run' not in line
 
-    def test_an_unreadable_run_fails_even_when_aws_would_pass(self, monkeypatch, tmp_path, capsys):
+    def test_a_run_that_does_not_exist_fails_even_when_aws_would_pass(self, monkeypatch, tmp_path, capsys):
         def gh(path):
             raise smoke.CheckFailed(f'gh api {path} failed: HTTP 404: Not Found')
         rc, line, _ = run_verify(monkeypatch, tmp_path, capsys, sha=DEPLOY_SHA, version='4.179.0',
@@ -253,8 +261,8 @@ class TestLambdaWindowAgainstThePromoteRun:
         rc, line, _ = run_verify(monkeypatch, tmp_path, capsys, sha=DEPLOY_SHA, version='4.179.0',
                                  modified=all_redeployed, promote_run=DEPLOY_RUN,
                                  gh=recorded(DEPLOY_RUN, drop_legs))
-        assert rc == 1
-        assert '[FAIL]' in line and 'total_count=33' in line
+        assert rc == 3
+        assert '[COULD NOT READ]' in line and 'total_count=33' in line
 
     def test_a_run_for_another_sha_fails_in_both_directions(self, monkeypatch, tmp_path, capsys):
         # The skipped run offered as evidence for a release it did not ship: nothing moved, and
@@ -305,6 +313,70 @@ class TestLambdaWindowAgainstThePromoteRun:
                                  modified=all_redeployed, promote_run=DEPLOY_RUN,
                                  gh=recorded(DEPLOY_RUN, fail_leg))
         assert rc == 1 and 'legs not successful: plants=failure' in line
+
+    # BUG-SMOKEPRODJOBSPAGE-001. On promote 38467019027 (v4.187.1) GitHub answered 502 to
+    # jobs?per_page=100 for over ten minutes while per_page=30 read all 33 jobs, and this check
+    # called that a FAIL of a release that had deployed correctly.
+
+    def test_the_jobs_are_read_in_small_pages_and_every_page_is_followed(self, monkeypatch, tmp_path, capsys):
+        seen = []
+        rc, line, n = run_verify(monkeypatch, tmp_path, capsys, sha=DEPLOY_SHA, version='4.179.0',
+                                 modified=all_redeployed, promote_run=DEPLOY_RUN,
+                                 gh=recorded(DEPLOY_RUN, seen=seen))
+        assert rc == 0 and f'{n} deploy-lambdas legs succeeded' in line
+        sizes = [int(x) for p in seen for x in re.findall(r'per_page=(\d+)', p)]
+        assert sizes and max(sizes) <= 30
+        # 33 jobs at 30 a page: the legs on page 2 are part of the verdict.
+        assert [int(x) for p in seen for x in re.findall(r'&page=(\d+)', p)] == [1, 2]
+
+    def test_a_github_read_that_did_not_answer_is_could_not_read_not_fail(self, monkeypatch, tmp_path, capsys):
+        good = recorded(DEPLOY_RUN)
+
+        def gh(path):
+            if '/jobs?' in path:
+                raise smoke.CheckUnreadable(f'gh api {path} failed: gh: Server Error (HTTP 502)')
+            return good(path)
+        rc, line, _ = run_verify(monkeypatch, tmp_path, capsys, sha=DEPLOY_SHA, version='4.179.0',
+                                 modified=all_redeployed, promote_run=DEPLOY_RUN, gh=gh)
+        assert rc == 3
+        assert '[COULD NOT READ]' in line and 'HTTP 502' in line and 'run verify again' in line
+        assert '[FAIL]' not in LAST['out'] and 'FAILED' not in LAST['out'] and 'PASSED' not in LAST['out']
+        assert 'smoke INCOMPLETE — 1 of 8 checks could not be read, none failed' in LAST['out']
+
+    def test_a_real_failure_beside_an_unreadable_check_is_still_exit_1(self, monkeypatch, tmp_path, capsys):
+        def gh(path):
+            raise smoke.CheckUnreadable(f'gh api {path} did not answer in 60 s')
+        names = smoke.matrix_functions((ROOT / '.github/workflows/deploy-lambda.yml').read_text())
+        monkeypatch.setattr(smoke, 'matrix_functions', lambda text: names[:-1])   # a dir with no matrix entry
+        rc, line, _ = run_verify(monkeypatch, tmp_path, capsys, sha=DEPLOY_SHA, version='4.179.0',
+                                 modified=all_redeployed, promote_run=DEPLOY_RUN, gh=gh)
+        assert rc == 1 and '[COULD NOT READ]' in line
+        assert 'smoke FAILED — 1 of 8 checks (1 more could not be read)' in LAST['out']
+
+    @pytest.mark.parametrize('proc, exc', [
+        (dict(returncode=1, stdout='', stderr='gh: Server Error (HTTP 502)'), 'unreadable'),
+        (dict(returncode=1, stdout='', stderr='gh: Bad Gateway (HTTP 502)'), 'unreadable'),
+        (dict(returncode=1, stdout='', stderr='error connecting to api.github.com'), 'unreadable'),
+        (dict(returncode=1, stdout='', stderr='gh: API rate limit exceeded (HTTP 403)'), 'unreadable'),
+        (dict(returncode=0, stdout='<html>502 Bad Gateway</html>', stderr=''), 'unreadable'),
+        (dict(returncode=1, stdout='{"message":"Not Found"}', stderr='gh: Not Found (HTTP 404)'), 'failed'),
+    ])
+    def test_gh_api_tells_no_answer_from_a_wrong_answer(self, monkeypatch, proc, exc):
+        class Proc:
+            pass
+        for k, v in proc.items():
+            setattr(Proc, k, v)
+        monkeypatch.setattr(smoke.subprocess, 'run', lambda *a, **k: Proc())
+        with pytest.raises(smoke.CheckFailed) as e:
+            smoke.gh_api('repos/o/r/actions/runs/1/jobs?per_page=30&page=1')
+        assert isinstance(e.value, smoke.CheckUnreadable) == (exc == 'unreadable')
+
+    def test_gh_api_timing_out_is_unreadable(self, monkeypatch):
+        def hang(*a, **k):
+            raise smoke.subprocess.TimeoutExpired(cmd='gh', timeout=60)
+        monkeypatch.setattr(smoke.subprocess, 'run', hang)
+        with pytest.raises(smoke.CheckUnreadable):
+            smoke.gh_api('repos/o/r/actions/runs/1')
 
     def test_the_decision_step_name_is_the_one_promote_gate_runs(self):
         # The name is the evidence. If promote-gate.yml renames the step, every skip would read as
