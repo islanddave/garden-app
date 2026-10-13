@@ -1,0 +1,638 @@
+# TRIAL-ONLY (lane-ubuntu26-20261013, OPS-UBUNTU26MOVE-001). NOT FOR MERGE: this file lives on the trial branch only.
+#
+# Runs the tools our deploy, promote, backup and revert workflows lean on, on ubuntu-26.04, with ubuntu-24.04 beside
+# it as the control, so the runner pin can be moved knowingly. No secrets, no environment, no AWS, no Neon: every
+# input is made in the job. Each check records PASS or FAIL and the job keeps going; the last step fails the job if
+# any check failed or a section never finished. The full output of each side is uploaded as probe-<image>.
+#
+# Sections: a /tmp, b coreutils, c Docker + the pg17 client fetch, d postgres:17 service + pg_dump/pg_restore + the
+# image's psql, e Python + pip, f jq, g openssl and the tool versions.
+name: Ubuntu 26.04 probe (trial)
+
+on:
+  push:
+    branches: [lane-ubuntu26-20261013]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 15
+    services:
+      # Same image and health options as restore-verify.yml's scratch database. POSTGRES_PASSWORD is a throwaway
+      # for a job-lifetime loopback container, as it is there.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: garden_verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      IMAGE: ${{ matrix.image }}
+      SCRATCH_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/garden_verify
+      RESTORE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/probe_restore
+    steps:
+      - name: Probe helpers
+        continue-on-error: false
+        run: |
+          set -euo pipefail
+          P="$RUNNER_TEMP/probe"
+          mkdir -p "$P"
+          cat > "$P/lib.sh" <<'LIB'
+          # Sourced by every probe step. Nothing here exits: a failing check is recorded and the step goes on.
+          P="$RUNNER_TEMP/probe"
+          OUT="$P/output.txt"
+          VERDICTS="$P/verdicts.txt"
+          VALUES="$P/values.txt"
+          sec() { printf '\n===== %s (%s) =====\n' "$1" "$IMAGE" | tee -a "$OUT"; }
+          # show <label> <command...>: print the command, its output and its exit code; return that exit code.
+          show() {
+            local label="$1" rc=0
+            shift
+            "$@" > "$P/last.txt" 2>&1 || rc=$?
+            { printf -- '--- %s\n$ %s\n' "$label" "$*"; cat "$P/last.txt"; printf '[rc=%s]\n' "$rc"; } | tee -a "$OUT"
+            return "$rc"
+          }
+          verdict() { printf '%s %s\n' "$1" "$2" | tee -a "$VERDICTS" "$OUT"; }
+          # check <id> <command...>: show it, PASS on exit 0, FAIL otherwise.
+          check() {
+            local id="$1" rc=0
+            shift
+            show "$id" "$@" || rc=$?
+            if [ "$rc" -eq 0 ]; then verdict PASS "$id"; else verdict FAIL "$id (exit $rc)"; fi
+          }
+          # expect <id> <want> <have>
+          expect() {
+            if [ "$2" = "$3" ]; then verdict PASS "$1 = $3"; else verdict FAIL "$1: want '$2', have '$3'"; fi
+          }
+          # val <key> <value>: one line per fact, for the side-by-side comparison of the two images.
+          val() { printf '%s=%s\n' "$1" "$2" | tee -a "$VALUES" "$OUT"; }
+          done_section() { printf 'DONE %s\n' "$1" | tee -a "$VERDICTS" "$OUT"; }
+          LIB
+          # shellcheck source=/dev/null
+          . "$P/lib.sh"
+          sec "runner"
+          show os-release cat /etc/os-release || true
+          show uname uname -a || true
+          show image-env bash -c 'echo "ImageOS=${ImageOS:-} ImageVersion=${ImageVersion:-} RUNNER_TEMP=$RUNNER_TEMP TMPDIR=${TMPDIR:-<unset>}"' || true
+          show resources bash -c 'nproc; free -h; df -h /' || true
+          val image_os "${ImageOS:-}"
+          val image_version "${ImageVersion:-}"
+
+      - name: a. /tmp
+        if: ${{ !cancelled() }}
+        continue-on-error: false
+        run: |
+          set +e
+          # shellcheck source=/dev/null
+          . "$RUNNER_TEMP/probe/lib.sh"
+          sec "a. /tmp"
+          check a.df-tmp df -hT /tmp
+          show a.findmnt-tmp findmnt /tmp || echo "(findmnt /tmp: /tmp is not its own mount)" | tee -a "$OUT"
+          show a.findmnt-target-tmp findmnt -T /tmp
+          FSTYPE=$(findmnt -n -o FSTYPE -T /tmp)
+          OPTIONS=$(findmnt -n -o OPTIONS -T /tmp)
+          val tmp_fstype "$FSTYPE"
+          val tmp_mount_options "$OPTIONS"
+          val tmp_is_own_mount "$(findmnt /tmp > /dev/null 2>&1 && echo yes || echo no)"
+          show a.quota-user quota -u "$(id -un)" || echo "(quota not readable this way)" | tee -a "$OUT"
+          show a.repquota sudo repquota /tmp || echo "(repquota not readable)" | tee -a "$OUT"
+          show a.tmp-mount-unit systemctl status tmp.mount --no-pager || true
+          show a.python-tempdir python3 -c 'import tempfile; print(tempfile.gettempdir())'
+          val python_tempdir "$(python3 -c 'import tempfile; print(tempfile.gettempdir())')"
+          val tmp_avail_before "$(df -h --output=avail /tmp | tail -1 | tr -d ' ')"
+          val tmp_size "$(df -h --output=size /tmp | tail -1 | tr -d ' ')"
+          meminfo() { grep -E '^(MemTotal|MemAvailable|Shmem):' /proc/meminfo; }
+          show a.meminfo-before meminfo
+          SHMEM_BEFORE=$(awk '/^Shmem:/ {print $2}' /proc/meminfo)
+          check a.write-2GiB-to-tmp dd if=/dev/zero of=/tmp/probe-2g.bin bs=1M count=2048 conv=fsync
+          show a.df-tmp-with-file df -hT /tmp
+          show a.meminfo-with-file meminfo
+          SHMEM_WITH=$(awk '/^Shmem:/ {print $2}' /proc/meminfo)
+          GREW_MB=$(( (SHMEM_WITH - SHMEM_BEFORE) / 1024 ))
+          val tmp_2GiB_file_grew_shmem_by_MB "$GREW_MB"
+          if [ "$GREW_MB" -gt 1500 ]; then val tmp_ram_backed yes; else val tmp_ram_backed no; fi
+          check a.delete-2GiB rm -f /tmp/probe-2g.bin
+          val tmp_avail_after "$(df -h --output=avail /tmp | tail -1 | tr -d ' ')"
+          check a.df-runner-temp df -hT "$RUNNER_TEMP"
+          val runner_temp_fstype "$(findmnt -n -o FSTYPE -T "$RUNNER_TEMP")"
+          val runner_temp_avail "$(df -h --output=avail "$RUNNER_TEMP" | tail -1 | tr -d ' ')"
+          done_section a
+
+      - name: b. coreutils
+        if: ${{ !cancelled() }}
+        continue-on-error: false
+        run: |
+          set +e
+          # shellcheck source=/dev/null
+          . "$RUNNER_TEMP/probe/lib.sh"
+          sec "b. coreutils"
+          for tool in timeout sha256sum date head tr; do
+            check "b.$tool-version" "$tool" --version
+            val "${tool}_version_line" "$("$tool" --version 2>&1 | head -1)"
+            val "${tool}_resolves_to" "$(readlink -f "$(command -v "$tool")")"
+          done
+          packages() { dpkg -l | grep -Ei 'coreutils|uutils|sudo' || true; }
+          show b.packages packages
+          show b.sudo-version sudo --version || true
+          val sudo_version_line "$(sudo --version 2>&1 | head -1)"
+          check b.timeout-k-5-90-true timeout -k 5 90 true
+          RC=0; timeout 2 sleep 5 || RC=$?
+          expect b.timeout-2-sleep-5-exit 124 "$RC"
+          RC=0; timeout -k 5 90 false || RC=$?
+          expect b.timeout-passes-the-command-exit 1 "$RC"
+          # A command that ignores TERM and has to be KILLed. promote-gate.yml reads 124 as timed out, 137 as killed.
+          RC=0; timeout -k 1 2 bash -c 'trap "" TERM; sleep 10' || RC=$?
+          val timeout_k_exit_when_killed "$RC"
+          RC=0; timeout 1 bash -c 'sleep 5' > /dev/null 2>&1 || RC=$?
+          val timeout_exit_on_bash_child "$RC"
+          check b.date-u-ymd date -u +%Y%m%d
+          STAMP=$(date -u +%Y%m%d)
+          if [[ "$STAMP" =~ ^[0-9]{8}$ ]]; then verdict PASS "b.date-u-ymd-shape"; else verdict FAIL "b.date-u-ymd-shape: '$STAMP'"; fi
+          check b.date-u-d-2-days-ago date -u -d '2 days ago' +%F
+          WANT=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=2)).strftime("%Y-%m-%d"))')
+          expect b.date-2-days-ago-value "$WANT" "$(date -u -d '2 days ago' +%F)"
+          val date_d_iso_parse "$(date -u -d '2026-10-13T07:00:00Z' +%s 2>&1)"
+          val date_d_at_epoch "$(date -u -d @1791875200 +%FT%TZ 2>&1)"
+          cd "$P" || exit 1
+          printf 'ubuntu26 probe\n' > sum-me.txt
+          sha256sum sum-me.txt > sum-me.sha256
+          check b.sha256sum-c-file sha256sum -c sum-me.sha256
+          val sha256sum_c_output "$(sha256sum -c sum-me.sha256 2>&1)"
+          HASH=$(python3 -c 'import hashlib; print(hashlib.sha256(open("sum-me.txt","rb").read()).hexdigest())')
+          lint_form() { echo "${HASH}  $P/sum-me.txt" | sha256sum -c -; }
+          check b.sha256sum-c-stdin-form-of-the-lint-step lint_form
+          bad_form() { echo "0000000000000000000000000000000000000000000000000000000000000000  $P/sum-me.txt" | sha256sum -c -; }
+          RC=0; bad_form > /dev/null 2>&1 || RC=$?
+          expect b.sha256sum-c-refuses-a-wrong-sum 1 "$RC"
+          val head_c "$(printf 'abcdef' | head -c 3)"
+          val tr_d "$(printf ' 12 \n' | tr -d ' ')"
+          val wc_l_tr "$(printf 'a\nb\n' | wc -l | tr -d ' ')"
+          val base64_roundtrip "$(printf 'garden' | base64 | base64 -d)"
+          val base64_w0 "$(printf 'garden' | base64 -w0 2>&1)"
+          val mktemp_d_under "$(dirname "$(mktemp -d)")"
+          cp sum-me.txt sed-me.txt
+          sed -i 's/probe/PROBE/' sed-me.txt
+          val sed_i "$(cat sed-me.txt)"
+          val stat_c_size "$(stat -c %s sum-me.txt 2>&1)"
+          val seq_1_3 "$(seq 1 3 | tr '\n' ' ')"
+          val sort_V "$(printf 'v4.10.0\nv4.9.0\n' | sort -V | tail -1)"
+          done_section b
+
+      - name: c. Docker and the pg17 client fetch (bodies copied from promote-gate.yml)
+        if: ${{ !cancelled() }}
+        continue-on-error: false
+        run: |
+          set +e
+          # shellcheck source=/dev/null
+          . "$RUNNER_TEMP/probe/lib.sh"
+          sec "c. Docker + pg17 client"
+          check c.docker-version docker version
+          val docker_server_version "$(docker version --format '{{.Server.Version}}' 2>&1)"
+          val docker_client_version "$(docker version --format '{{.Client.Version}}' 2>&1)"
+          show c.dir-before ls -la /usr/lib/postgresql/ || true
+          val usr_lib_postgresql_before "$(find /usr/lib/postgresql -mindepth 1 -maxdepth 1 2> /dev/null | sort | tr '\n' ' ')"
+          # The three run: bodies below are promote-gate.yml's, byte for byte (the actions/cache step between the
+          # first two is left out, so the fetch always runs).
+          cat > "$P/pg17-writable.sh" <<'PG17A'
+          set -uo pipefail
+          fail() {
+            echo "::error title=Snapshot tooling (pre-FF)::$1 — nothing has moved (main has NOT been touched): re-run the failed jobs. A runner fault, not a verdict on the promoted code."
+            exit 1
+          }
+          sudo mkdir -p /usr/lib/postgresql/17/bin || fail "sudo mkdir -p /usr/lib/postgresql/17/bin failed (exit $?)"
+          sudo chown -R "$(id -u):$(id -g)" /usr/lib/postgresql/17 || fail "sudo chown of /usr/lib/postgresql/17 to the runner user failed (exit $?)"
+          PG17A
+          cat > "$P/pg17-fetch.sh" <<'PG17B'
+          set -uo pipefail
+          fail() {
+            echo "::error title=Snapshot tooling (pre-FF)::$1 — nothing has moved (main has NOT been touched): re-run the failed jobs. A registry or runner fault, not a verdict on the promoted code."
+            exit 1
+          }
+          # 124 = timed out; 137 = had to be KILLed.
+          cid=$(timeout -k 10 120 docker create postgres:17) || fail "the postgres:17 image could not be pulled and a container created from it within 120 s (exit $?)"
+          [ -n "$cid" ] || fail "creating the postgres:17 container printed no container id"
+          timeout -k 5 30 docker cp "$cid:/usr/lib/postgresql/17/bin/." /usr/lib/postgresql/17/bin/ \
+            || fail "copying /usr/lib/postgresql/17/bin out of the postgres:17 container failed, or did not finish in 30 s (exit $?)"
+          # The copy is what snap needs. A scratch container left behind on a one-job runner is not worth a refusal.
+          timeout -k 5 10 docker rm -f "$cid" > /dev/null 2>&1 \
+            || echo "note: could not remove the scratch container $cid (exit $?); the copy above succeeded"
+          PG17B
+          cat > "$P/pg17-verify.sh" <<'PG17C'
+          set -uo pipefail
+          for tool in pg_dump pg_dumpall; do
+            if ! "/usr/lib/postgresql/17/bin/$tool" --version; then
+              echo "::error title=Snapshot tooling (pre-FF)::/usr/lib/postgresql/17/bin/$tool does not run, and scripts/snap.py calls it after the fast-forward — nothing has moved (main has NOT been touched): re-run the failed jobs. If it fails the same way again the cached copy is bad: delete the Actions cache entry pg17-client-postgres17-image-v1 so the next run fetches a fresh one. Not a verdict on the promoted code."
+              exit 1
+            fi
+          done
+          PG17C
+          check c.pg17-make-writable bash "$P/pg17-writable.sh"
+          START=$SECONDS
+          check c.pg17-fetch bash "$P/pg17-fetch.sh"
+          val pg17_fetch_seconds "$((SECONDS - START))"
+          check c.pg17-verify bash "$P/pg17-verify.sh"
+          BIN=/usr/lib/postgresql/17/bin
+          show c.pg17-bin ls -la "$BIN" || true
+          check c.pg_dump-version "$BIN/pg_dump" --version
+          check c.pg_restore-version "$BIN/pg_restore" --version
+          val pg17_pg_dump_version "$("$BIN/pg_dump" --version 2>&1)"
+          val pg17_pg_restore_version "$("$BIN/pg_restore" --version 2>&1)"
+          val pg17_psql_version "$("$BIN/psql" --version 2>&1)"
+          for tool in pg_dump pg_restore pg_dumpall psql; do
+            show "c.ldd-$tool" ldd "$BIN/$tool"
+            MISSING=$(ldd "$BIN/$tool" 2>&1 | grep -c 'not found')
+            expect "c.ldd-$tool-libraries-not-found" 0 "$MISSING"
+          done
+          val pg17_pg_dump_libpq "$(ldd "$BIN/pg_dump" 2>&1 | awk '/libpq/ {print $3}' | xargs -r readlink -f)"
+          done_section c
+
+      - name: d. postgres:17 service, pg_dump and pg_restore 17, and the image's psql
+        if: ${{ !cancelled() }}
+        continue-on-error: false
+        run: |
+          set +e
+          # shellcheck source=/dev/null
+          . "$RUNNER_TEMP/probe/lib.sh"
+          sec "d. postgres:17 service + dump/restore + image psql"
+          IMAGE_PSQL=$(command -v psql)
+          BIN=/usr/lib/postgresql/17/bin
+          val image_psql_path "$IMAGE_PSQL"
+          check d.image-psql-version psql --version
+          val image_psql_version "$(psql --version 2>&1)"
+          show d.service-container docker ps --format '{{.Image}} {{.Status}} {{.Ports}}' || true
+          check d.server-version "$BIN/psql" "$SCRATCH_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -c 'SHOW server_version'
+          val pg_server_version "$("$BIN/psql" "$SCRATCH_DATABASE_URL" -X -At -c 'SHOW server_version' 2>&1)"
+          cat > "$P/seed.sql" <<'SQL'
+          CREATE TABLE probe_t (id integer PRIMARY KEY, name text NOT NULL, qty numeric(10,3), at timestamptz, doc jsonb);
+          INSERT INTO probe_t SELECT g, 'row ' || g, g / 7.0, timestamptz '2026-10-13 00:00:00+00' + g * interval '1 minute',
+                 jsonb_build_object('n', g, 'label', 'tomato, "Brandywine"') FROM generate_series(1, 1000) g;
+          CREATE INDEX probe_t_name ON probe_t (name);
+          SQL
+          check d.pg17-psql-seed "$BIN/psql" "$SCRATCH_DATABASE_URL" -X -v ON_ERROR_STOP=1 -q -f "$P/seed.sql"
+          DUMP=/tmp/probe-garden.dump
+          check d.pg_dump-Fc "$BIN/pg_dump" -Fc --no-owner -f "$DUMP" "$SCRATCH_DATABASE_URL"
+          val pg_dump_file_bytes_nonzero "$([ -s "$DUMP" ] && echo yes || echo no)"
+          check d.pg_restore-list "$BIN/pg_restore" --list "$DUMP"
+          val pg_restore_list_table_data_lines "$("$BIN/pg_restore" --list "$DUMP" 2>&1 | grep -c 'TABLE DATA')"
+          check d.pg_dumpall-globals "$BIN/pg_dumpall" --globals-only -d "$SCRATCH_DATABASE_URL" -f /tmp/probe-globals.sql
+          check d.create-second-database "$BIN/psql" "$SCRATCH_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE probe_restore'
+          check d.pg_restore-into-second "$BIN/pg_restore" --no-owner --exit-on-error -d "$RESTORE_DATABASE_URL" "$DUMP"
+          SRC=$("$BIN/psql" "$SCRATCH_DATABASE_URL" -X -At -c 'SELECT count(*) FROM probe_t' 2>&1)
+          DST=$("$BIN/psql" "$RESTORE_DATABASE_URL" -X -At -c 'SELECT count(*) FROM probe_t' 2>&1)
+          expect d.source-row-count 1000 "$SRC"
+          expect d.restored-row-count "$SRC" "$DST"
+          SRC_SUM=$("$BIN/psql" "$SCRATCH_DATABASE_URL" -X -At -c "SELECT md5(string_agg(t::text, '|' ORDER BY id)) FROM probe_t t" 2>&1)
+          DST_SUM=$("$BIN/psql" "$RESTORE_DATABASE_URL" -X -At -c "SELECT md5(string_agg(t::text, '|' ORDER BY id)) FROM probe_t t" 2>&1)
+          expect d.restored-content-md5 "$SRC_SUM" "$DST_SUM"
+          val probe_table_md5 "$SRC_SUM"
+          # The image's own psql (16 on ubuntu-24.04, 18 expected on ubuntu-26.04) against the pg17 server, in the
+          # forms integration-test.yml and deploy-staging.yml use.
+          fork() { psql "$SCRATCH_DATABASE_URL" -X -v ON_ERROR_STOP=1 "$@"; }
+          check d.image-psql-qAt-select-1 fork -qAt -c 'SELECT 1'
+          val image_psql_qAt_count "$(fork -qAt -c "SELECT count(*) FROM probe_t WHERE name = 'row 7'" 2>&1)"
+          printf -- '-- schema_version: probe-001\nCREATE TABLE probe_applied (version text PRIMARY KEY);\nINSERT INTO probe_applied VALUES (%s);\n' "'probe-001'" > "$P/0a-probe.sql"
+          check d.image-psql-q-f fork -q -f "$P/0a-probe.sql"
+          val image_psql_At_string_agg "$(psql "$SCRATCH_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "SELECT COALESCE(string_agg(id::text, ','), '') FROM probe_t WHERE id <= 3;" 2>&1)"
+          val image_psql_At_to_regclass "$(psql "$SCRATCH_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "SELECT to_regclass('public.probe_t') IS NOT NULL;" 2>&1)"
+          check d.image-psql-many-c psql "$SCRATCH_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -c "DELETE FROM probe_t WHERE name LIKE 'row 99_';" \
+            -c "DELETE FROM probe_t WHERE id = ANY('{1,2,3}'::int[]);"
+          val image_psql_many_c_output "$(psql "$SCRATCH_DATABASE_URL" -v ON_ERROR_STOP=1 -c "DELETE FROM probe_t WHERE id = 4;" -c "DELETE FROM probe_t WHERE id = 5;" 2>&1 | tr '\n' ' ')"
+          val image_psql_At_remaining "$(psql "$SCRATCH_DATABASE_URL" -At -c "SELECT (SELECT COUNT(*) FROM probe_t) + (SELECT COUNT(*) FROM probe_applied);" 2>&1)"
+          RC=0; psql "$SCRATCH_DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT 1;" -c "SELECT * FROM no_such_table;" -c "SELECT 2;" > "$P/stop.txt" 2>&1 || RC=$?
+          show d.on-error-stop-output cat "$P/stop.txt" || true
+          val image_psql_on_error_stop_c_exit "$RC"
+          if [ "$RC" -ne 0 ] && ! grep -q '^ *2$' "$P/stop.txt"; then verdict PASS "d.on-error-stop-stops-at-the-failing-c"; else verdict FAIL "d.on-error-stop-stops-at-the-failing-c (exit $RC)"; fi
+          printf 'SELECT 1;\nSELECT * FROM no_such_table;\nSELECT 2;\n' > "$P/stop.sql"
+          RC=0; fork -q -f "$P/stop.sql" > /dev/null 2>&1 || RC=$?
+          expect d.on-error-stop-f-exit 3 "$RC"
+          # \copy: neither workflow uses it today; asked for by the brief as the client-side path most likely to
+          # differ between psql 16 and 18.
+          check d.image-psql-copy-out psql "$SCRATCH_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "\copy (SELECT id, name, qty, doc FROM probe_t ORDER BY id) TO '/tmp/probe-copy.csv' WITH (FORMAT csv, HEADER)"
+          val copy_out_lines "$(wc -l < /tmp/probe-copy.csv | tr -d ' ')"
+          val copy_out_sha256 "$(sha256sum /tmp/probe-copy.csv | cut -d' ' -f1)"
+          check d.image-psql-copy-in psql "$SCRATCH_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE probe_copy (id integer, name text, qty numeric(10,3), doc jsonb)" \
+            -c "\copy probe_copy FROM '/tmp/probe-copy.csv' WITH (FORMAT csv, HEADER)"
+          expect d.copy-roundtrip-rows "$(fork -qAt -c 'SELECT count(*) FROM probe_t')" "$(fork -qAt -c 'SELECT count(*) FROM probe_copy')"
+          rm -f "$DUMP" /tmp/probe-globals.sql /tmp/probe-copy.csv
+          done_section d
+
+      - name: e. Python and pip
+        if: ${{ !cancelled() }}
+        continue-on-error: false
+        run: |
+          set +e
+          # shellcheck source=/dev/null
+          . "$RUNNER_TEMP/probe/lib.sh"
+          sec "e. Python + pip"
+          check e.python3-version python3 --version
+          val python3_version "$(python3 --version 2>&1)"
+          val python3_path "$(readlink -f "$(command -v python3)")"
+          show e.pip-version python3 -m pip --version
+          val pip_version "$(python3 -m pip --version 2>&1 | cut -d' ' -f1-2)"
+          val bare_pip_path "$(command -v pip || echo '<none>')"
+          show e.pip-conf cat /etc/pip.conf || echo "(no /etc/pip.conf)" | tee -a "$OUT"
+          show e.externally-managed find /usr/lib -maxdepth 2 -name EXTERNALLY-MANAGED || true
+          IMPORTS='import psycopg2, psycopg, yaml, PIL, boto3, requests, pytest
+          print("psycopg2", psycopg2.__version__)
+          print("psycopg", psycopg.__version__, "impl", psycopg.pq.__impl__)
+          print("yaml", yaml.__version__, "libyaml", yaml.__with_libyaml__)
+          print("PIL", PIL.__version__)
+          print("boto3", boto3.__version__)
+          print("requests", requests.__version__)
+          print("pytest", pytest.__version__)'
+          # how <log>: wheel or source build, from pip's own output
+          how() {
+            if grep -q 'Building wheel' "$1"; then echo "SOURCE BUILD"
+            elif grep -Eq 'Downloading .*\.whl|Using cached .*\.whl' "$1"; then echo "wheel: $(grep -Eo '[A-Za-z0-9_.+-]+\.whl' "$1" | head -1)"
+            elif grep -q 'Requirement already satisfied' "$1"; then echo "already present"
+            else echo "unknown"; fi
+          }
+          # --- in a fresh venv, one package at a time ---
+          check e.venv-create python3 -m venv "$P/venv"
+          for spec in psycopg2-binary 'psycopg[binary]' pyyaml pillow boto3 requests pytest; do
+            LOG="$P/venv-$(echo "$spec" | tr -c 'A-Za-z0-9\n' '_').log"
+            START=$SECONDS
+            RC=0; timeout -k 5 300 "$P/venv/bin/python" -m pip install --no-cache-dir "$spec" > "$LOG" 2>&1 || RC=$?
+            tail -4 "$LOG" | tee -a "$OUT"
+            if [ "$RC" -eq 0 ]; then verdict PASS "e.venv-install $spec"; else verdict FAIL "e.venv-install $spec (exit $RC)"; cat "$LOG" >> "$OUT"; fi
+            val "venv_install_${spec}" "$(how "$LOG"), $((SECONDS - START)) s"
+          done
+          check e.venv-imports "$P/venv/bin/python" -c "$IMPORTS"
+          check e.venv2-create python3 -m venv "$P/venv2"
+          LOG="$P/venv-pyyaml-6.0.2.log"
+          START=$SECONDS
+          RC=0; timeout -k 5 600 "$P/venv2/bin/python" -m pip install --no-cache-dir pyyaml==6.0.2 > "$LOG" 2>&1 || RC=$?
+          cat "$LOG" | tee -a "$OUT"
+          if [ "$RC" -eq 0 ]; then verdict PASS "e.venv-install pyyaml==6.0.2"; else verdict FAIL "e.venv-install pyyaml==6.0.2 (exit $RC)"; fi
+          val venv_install_pyyaml_6.0.2 "$(how "$LOG"), $((SECONDS - START)) s"
+          val venv_pyyaml_6.0.2_import "$("$P/venv2/bin/python" -c 'import yaml; print(yaml.__version__, "libyaml", yaml.__with_libyaml__)' 2>&1 | tail -1)"
+          # --- the bare image pip, in the forms the workflows use ---
+          # plain, then --break-system-packages (ci.yml, ci-next.yml, gate-invariants.yml, promote-gate.yml)
+          two_forms() {
+            local label="$1" log="$P/bare-$1.log" start=$SECONDS form=plain rc=0
+            shift
+            timeout -k 5 90 python3 -m pip install --quiet "$@" > "$log" 2>&1 || {
+              form=break-system-packages
+              timeout -k 5 90 python3 -m pip install --quiet --break-system-packages "$@" >> "$log" 2>&1 || rc=$?
+            }
+            cat "$log" | tee -a "$OUT"
+            if [ "$rc" -eq 0 ]; then verdict PASS "e.bare-install $label"; else verdict FAIL "e.bare-install $label (exit $rc)"; fi
+            val "bare_install_$label" "form=$form, $((SECONDS - start)) s"
+          }
+          two_forms psycopg2-binary psycopg2-binary
+          two_forms psycopg-binary-pyyaml 'psycopg[binary]' pyyaml
+          two_forms pytest-requests-boto3-pyyaml pytest requests boto3 pyyaml
+          two_forms pillow pillow
+          two_forms boto3-requests boto3 requests
+          check e.bare-imports python3 -c "$IMPORTS"
+          val bare_pyyaml_before_pin "$(python3 -c 'import yaml; print(yaml.__version__, "libyaml", yaml.__with_libyaml__)' 2>&1 | tail -1)"
+          # bare `pip install`, no fallback (restore-verify.yml, snap-rehearsal.yml, revert-rehearsal.yml, revert-gate.yml)
+          check e.bare-pip-boto3 pip install boto3 --quiet
+          LOG="$P/bare-revert-gate.log"
+          START=$SECONDS
+          RC=0; timeout -k 5 600 pip install boto3 requests pyyaml==6.0.2 > "$LOG" 2>&1 || RC=$?
+          cat "$LOG" | tee -a "$OUT"
+          if [ "$RC" -eq 0 ]; then verdict PASS "e.bare-pip revert-gate form (boto3 requests pyyaml==6.0.2)"; else verdict FAIL "e.bare-pip revert-gate form (boto3 requests pyyaml==6.0.2) (exit $RC)"; fi
+          val bare_install_pyyaml_6.0.2 "$(how "$LOG"), $((SECONDS - START)) s"
+          val bare_pyyaml_after_pin "$(python3 -c 'import yaml; print(yaml.__version__, "libyaml", yaml.__with_libyaml__)' 2>&1 | tail -1)"
+          check e.bare-imports-after-pin python3 -c "$IMPORTS"
+          done_section e
+
+      - name: f. jq (the program texts of verify-lambda-invariants, deploy-lambda, deploy and deploy-staging)
+        if: ${{ !cancelled() }}
+        continue-on-error: false
+        run: |
+          set +e
+          # shellcheck source=/dev/null
+          . "$RUNNER_TEMP/probe/lib.sh"
+          sec "f. jq"
+          check f.jq-version jq --version
+          val jq_version "$(jq --version 2>&1)"
+          # jqv <key> <jq arguments...>: stdin through jq; record exit code and output on one line.
+          jqv() {
+            local key="$1" rc=0 out
+            shift
+            out=$(jq "$@" 2>&1) || rc=$?
+            printf -- '--- f.%s\n%s\n[rc=%s]\n' "$key" "$out" "$rc" | tee -a "$OUT"
+            val "jq.$key" "rc=$rc $(printf '%s' "$out" | tr '\n' ' ')"
+          }
+          # What `aws lambda get-function-configuration --query Environment.Variables --output json` prints (4-space
+          # indent), with made-up values of the real shapes.
+          ENVJSON='{
+              "DATABASE_URL_SECRET": "garden-app/neon-url",
+              "AWN_STATIONS_JSON": "[{\"mac\":\"AA:BB:CC:DD:EE:FF\",\"tz\":\"America/New_York\",\"lat\":43.123456789012345,\"lng\":-71.5}]",
+              "DRY_RUN": "true",
+              "S3_PHOTOS_BUCKET": "garden-photos-prod",
+              "GARDEN_HOUSEHOLD_IDS": "11111111-2222-3333-4444-555555555555",
+              "UNICODE": "café — 🍅",
+              "ZERO": "0",
+              "EMPTY": ""
+          }'
+          EXISTING="$ENVJSON"
+          # verify-lambda-invariants.yml
+          for k in DATABASE_URL_SECRET EMPTY ZERO MISSING UNICODE; do
+            echo "$ENVJSON" | jqv "vli.key.$k" -r --arg k "$k" '.[$k] // empty'
+          done
+          AWN='(.AWN_STATIONS_JSON // "") | fromjson? | (type=="array" and length>0 and (.[0] | has("mac") and has("tz") and has("lat") and has("lng")))'
+          echo "$ENVJSON" | jqv vli.awn.good -e "$AWN"
+          echo '{"DRY_RUN":"true"}' | jqv vli.awn.missing -e "$AWN"
+          echo '{"AWN_STATIONS_JSON":""}' | jqv vli.awn.empty-string -e "$AWN"
+          echo '{"AWN_STATIONS_JSON":"[]"}' | jqv vli.awn.empty-array -e "$AWN"
+          echo '{"AWN_STATIONS_JSON":"[{\"mac\":\"AA\"}]"}' | jqv vli.awn.short-object -e "$AWN"
+          echo '{"AWN_STATIONS_JSON":"not json"}' | jqv vli.awn.not-json -e "$AWN"
+          echo '{"AWN_STATIONS_JSON":"[{\"mac\":1,}]"}' | jqv vli.awn.trailing-comma -e "$AWN"
+          echo '{"AWN_STATIONS_JSON":"{\"mac\":1}"}' | jqv vli.awn.object-not-array -e "$AWN"
+          echo '{"AWN_STATIONS_JSON":"nan"}' | jqv vli.awn.nan -e "$AWN"
+          echo '{"AWN_STATIONS_JSON":"[{\"mac\":1,\"tz\":2,\"lat\":3,\"lng\":4}] trailing"}' | jqv vli.awn.trailing-text -e "$AWN"
+          echo '{"AWN_STATIONS_JSON":null}' | jqv vli.awn.null -e "$AWN"
+          echo "$ENVJSON" | jqv vli.dry-run -r '.DRY_RUN // empty'
+          echo '{}' | jqv vli.dry-run.absent -r '.DRY_RUN // empty'
+          echo 'null' | jqv vli.dry-run.null-input -r '.DRY_RUN // empty'
+          # deploy-lambda.yml and deploy.yml: the main-ref read
+          echo '{"ref":"refs/heads/main","node_id":"x","object":{"sha":"f74664b3cac818666782ef391756c5ae8df46594","type":"commit"}}' > "$P/ref.json"
+          jqv ref.main -r 'select(.ref == "refs/heads/main") | .object.sha' "$P/ref.json" < /dev/null
+          echo '{"message":"Not Found","status":"404"}' > "$P/ref404.json"
+          jqv ref.not-found -r 'select(.ref == "refs/heads/main") | .object.sha' "$P/ref404.json" < /dev/null
+          echo '<html>502</html>' > "$P/ref-html.json"
+          jqv ref.not-json -r 'select(.ref == "refs/heads/main") | .object.sha' "$P/ref-html.json" < /dev/null
+          : > "$P/ref-empty.json"
+          jqv ref.empty-file -r 'select(.ref == "refs/heads/main") | .object.sha' "$P/ref-empty.json" < /dev/null
+          # deploy-lambda.yml and deploy-staging.yml: the env merges
+          HH=11111111-2222-3333-4444-555555555555
+          echo "$EXISTING" | jqv merge.household --arg v "$HH" '. + {GARDEN_HOUSEHOLD_IDS: $v}'
+          for hh in "$HH" None ""; do
+            echo "$EXISTING" | jqv "merge.fbshare.hh=${hh:-empty}" \
+              --arg hh "$hh" \
+              --arg b "garden-photos-prod" \
+              --arg a "user_sample" \
+              --arg s "garden-app/facebook-page-token" \
+              --arg igs "garden-photos-derivatives-sample" \
+              '. + {S3_PHOTOS_BUCKET:$b, ADMIN_CLERK_SUBS:$a, FB_SECRET_NAME:$s, IG_STAGING_BUCKET:$igs} + (if $hh != "None" and $hh != "" then {GARDEN_HOUSEHOLD_IDS:$hh} else {} end)'
+            echo "$EXISTING" | jqv "merge.fbshare-staging.hh=${hh:-empty}" \
+              --arg hh "$hh" \
+              --arg b "garden-photos-staging" \
+              --arg a "user_sample,user_sample_two" \
+              --arg s "garden-app/facebook-page-token-staging" \
+              '. + {S3_PHOTOS_BUCKET:$b, ADMIN_CLERK_SUBS:$a, FB_SECRET_NAME:$s} + (if $hh != "None" and $hh != "" then {GARDEN_HOUSEHOLD_IDS:$hh} else {} end)'
+          done
+          echo "$EXISTING" | jqv merge.photos-bucket --arg b "garden-photos-prod" '. + {S3_PHOTOS_BUCKET: $b}'
+          echo "$EXISTING" | jqv merge.photo-cdn \
+            --arg d "example.cloudfront.net" \
+            --arg k "KSAMPLE" \
+            --arg s "garden-app/photocdn-signing" \
+            '. + {PHOTO_CDN_DOMAIN:$d, PHOTO_CDN_KEY_PAIR_ID:$k, PHOTO_CDN_SIGNING_SECRET:$s}'
+          echo "$EXISTING" | jqv merge.admin-subs --arg v 'user_a,user_b' '. + {ADMIN_CLERK_SUBS: $v}'
+          echo "$EXISTING" | jqv merge.length 'length'
+          echo "$EXISTING" | jqv merge.dry-run-default '. + {DRY_RUN:"true"}'
+          echo "$EXISTING" | jqv merge.owner-first --arg o "user_owner" '. + {DRY_RUN:"true", OWNER_FALLBACK_SUB:$o}'
+          echo "$EXISTING" | jqv merge.owner-keep --arg o "user_owner" 'if has("OWNER_FALLBACK_SUB") then . else . + {OWNER_FALLBACK_SUB:$o} end'
+          echo '{"OWNER_FALLBACK_SUB":"user_was"}' | jqv merge.owner-keep.present --arg o "user_owner" 'if has("OWNER_FALLBACK_SUB") then . else . + {OWNER_FALLBACK_SUB:$o} end'
+          echo "$EXISTING" | jqv merge.rain 'if has("RAIN_AUTOLOG_ENABLED") then . else . + {RAIN_AUTOLOG_ENABLED:"true"} end'
+          echo "$EXISTING" | jqv merge.originals --arg o "garden-photos-staging" '. + {ORIGINALS_BUCKET:$o}'
+          echo "$EXISTING" | jqv merge.derivatives -r '.DERIVATIVES_BUCKET // empty'
+          echo 'null' | jqv merge.onto-null --arg v x '. + {ADMIN_CLERK_SUBS: $v}'
+          # A merge that changes nothing: the workflows compare "$UPDATED" == "$EXISTING" as strings.
+          UPDATED=$(echo "$EXISTING" | jq --arg b "garden-photos-prod" '. + {S3_PHOTOS_BUCKET: $b}')
+          val jq.noop-merge-equals-aws-4-space-input "$([[ "$UPDATED" == "$EXISTING" ]] && echo equal || echo different)"
+          val jq.noop-merge-equals-its-own-reformat "$([[ "$UPDATED" == "$(echo "$EXISTING" | jq .)" ]] && echo equal || echo different)"
+          # deploy-lambda.yml: the config reads, -er
+          echo '{"garden-facebook-share":{"timeout":30,"memory":1024},"f":{"timeout":30.0,"memory":1e3},"big":{"timeout":10000000000000000001,"memory":0.1}}' > "$P/cfg.json"
+          jqv cfg.timeout -er '.["garden-facebook-share"].timeout' "$P/cfg.json" < /dev/null
+          jqv cfg.memory -er '.["garden-facebook-share"].memory' "$P/cfg.json" < /dev/null
+          jqv cfg.timeout.absent -er '.["garden-nope"].timeout' "$P/cfg.json" < /dev/null
+          jqv cfg.number-30.0 -er '.f.timeout' "$P/cfg.json" < /dev/null
+          jqv cfg.number-1e3 -er '.f.memory' "$P/cfg.json" < /dev/null
+          jqv cfg.number-big -er '.big.timeout' "$P/cfg.json" < /dev/null
+          jqv cfg.number-0.1 -er '.big.memory' "$P/cfg.json" < /dev/null
+          # deploy.yml: bucket versioning (`aws s3api get-bucket-versioning` prints NOTHING for a never-versioned bucket)
+          echo '{"Status":"Enabled","MFADelete":"Disabled"}' | jqv s3.status.enabled -r '.Status // "None"'
+          echo '{}' | jqv s3.status.absent -r '.Status // "None"'
+          printf '' | jqv s3.status.empty-input -r '.Status // "None"'
+          done_section f
+
+      - name: g. openssl and tool versions
+        if: ${{ !cancelled() }}
+        continue-on-error: false
+        run: |
+          set +e
+          # shellcheck source=/dev/null
+          . "$RUNNER_TEMP/probe/lib.sh"
+          sec "g. openssl + versions"
+          check g.openssl-version openssl version
+          val openssl_version "$(openssl version 2>&1)"
+          check g.zip-v zip -v
+          check g.unzip-v unzip -v
+          val zip_version "$(zip -v | head -2 | tail -1)"
+          val unzip_version "$(unzip -v | head -1)"
+          cd "$P" || exit 1
+          mkdir -p zipme && printf 'exports.handler = async () => ({ statusCode: 200 });\n' > zipme/index.mjs
+          ZIP="$P/probe-fn.zip"
+          check g.zip-make bash -c 'cd zipme && zip -r -X ../probe-fn.zip . > /dev/null'
+          check g.unzip-list unzip -l "$ZIP"
+          check g.unzip-test unzip -tq "$ZIP"
+          # deploy-lambda.yml's one openssl call, as written there
+          WANT=$(openssl dgst -sha256 -binary "$ZIP" | base64) || verdict FAIL "g.openssl-dgst (cannot hash)"
+          PY=$(python3 -c 'import base64, hashlib, sys; print(base64.b64encode(hashlib.sha256(open(sys.argv[1], "rb").read()).digest()).decode())' "$ZIP")
+          echo "openssl dgst -sha256 -binary | base64 -> $WANT" | tee -a "$OUT"
+          expect g.openssl-dgst-sha256-binary-base64-matches-hashlib "$PY" "$WANT"
+          val openssl_dgst_base64_length "${#WANT}"
+          check g.curl-version curl --version
+          val curl_version "$(curl --version | head -1 | cut -d' ' -f1-2)"
+          check g.curl-https-with-the-lint-flags curl -sSfL --retry 3 --retry-connrefused -o /dev/null https://api.github.com/zen
+          check g.bash-version bash --version
+          val bash_version "$BASH_VERSION"
+          check g.aws-version aws --version
+          val aws_version "$(aws --version 2>&1)"
+          check g.gh-version gh --version
+          val gh_version "$(gh --version | head -1)"
+          # the lookup every layout gate runs
+          CHROME=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)
+          val chrome_path "$CHROME"
+          check g.google-chrome-version google-chrome --version
+          val chrome_version "$(google-chrome --version 2>&1)"
+          check g.node-default-version node --version
+          val node_default_version "$(node --version 2>&1)"
+          val npm_default_version "$(npm --version 2>&1)"
+          val git_version "$(git --version 2>&1)"
+          val tar_version "$(tar --version | head -1)"
+          val yamllint_version "$(yamllint --version 2>&1)"
+          val shellcheck_image_version "$(shellcheck --version 2>&1 | sed -n 2p)"
+          val docker_compose_version "$(docker compose version 2>&1)"
+          val awk_resolves_to "$(readlink -f "$(command -v awk)")"
+          val sed_version "$(sed --version 2>&1 | head -1)"
+          val grep_version "$(grep --version 2>&1 | head -1)"
+          val find_version "$(find --version 2>&1 | head -1)"
+          val xargs_version "$(xargs --version 2>&1 | head -1)"
+          val sqlite3_version "$(sqlite3 --version 2>&1 | cut -d' ' -f1)"
+          val zstd_version "$(zstd --version 2>&1)"
+          val xvfb "$(command -v Xvfb || command -v xvfb-run || echo '<none>')"
+          done_section g
+
+      - name: Upload the full output
+        if: always()
+        continue-on-error: false
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: probe-${{ matrix.image }}
+          path: |
+            ${{ runner.temp }}/probe/output.txt
+            ${{ runner.temp }}/probe/verdicts.txt
+            ${{ runner.temp }}/probe/values.txt
+            ${{ runner.temp }}/probe/*.log
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verdict
+        if: always()
+        continue-on-error: false
+        run: |
+          set -uo pipefail
+          P="$RUNNER_TEMP/probe"
+          touch "$P/verdicts.txt" "$P/values.txt"
+          PASSED=$(grep -c '^PASS ' "$P/verdicts.txt" || true)
+          FAILED=$(grep -c '^FAIL ' "$P/verdicts.txt" || true)
+          MISSING=""
+          for section in a b c d e f g; do
+            grep -qx "DONE $section" "$P/verdicts.txt" || MISSING="$MISSING $section"
+          done
+          {
+            echo "## Probe on $IMAGE: $PASSED passed, $FAILED failed${MISSING:+, sections that never finished:$MISSING}"
+            echo
+            echo '### Failed'
+            echo '```'
+            grep '^FAIL ' "$P/verdicts.txt" || echo "(none)"
+            echo '```'
+            echo '### Values'
+            echo '```'
+            cat "$P/values.txt"
+            echo '```'
+            echo '### Every check'
+            echo '```'
+            cat "$P/verdicts.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "===== VALUES ($IMAGE) ====="
+          cat "$P/values.txt"
+          echo "===== VERDICTS ($IMAGE) ====="
+          cat "$P/verdicts.txt"
+          if [ "$FAILED" -ne 0 ] || [ -n "$MISSING" ]; then
+            echo "::error title=Ubuntu probe ($IMAGE)::$FAILED check(s) failed${MISSING:+; sections that never finished:$MISSING}. See the step summary."
+            exit 1
+          fi
+          echo "Probe on $IMAGE: all $PASSED checks passed."

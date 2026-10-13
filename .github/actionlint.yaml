@@ -2,6 +2,13 @@
 #
 # Every entry below is a documented FALSE POSITIVE with live evidence. Do not add an ignore without the same:
 # a real run that shows the flagged construct working.
+# TRIAL-ONLY (lane-ubuntu26-20261013, OPS-UBUNTU26MOVE-001). actionlint 1.7.12 is the newest release (2026-03-30)
+# and its label list stops at ubuntu-24.04; its main branch (011a6d15, 2026-04-19) does not know ubuntu-26.04
+# either, so there is no release to bump to. `self-hosted-runner.labels` is actionlint's documented way to declare
+# a label it does not know. The real move keeps this entry until a release that lists the label is pinned.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
 paths:
   .github/workflows/deploy-lambda.yml:
     ignore:

@@ -79,6 +79,9 @@ CI, NEXT = "ci.yml", "ci-next.yml"
 FILES = (CI, NEXT)
 GATE = "build-and-test"                                   # ci.yml's aggregator: the job promote-gate.yml reads
 AGGREGATORS = {CI: GATE, NEXT: "build-and-test-next"}
+# TRIAL-ONLY (lane-ubuntu26-20261013, not for merge): ci-next.yml runs on the trial image while ci.yml stays put.
+# The real move sets both to the new label, or drops this map for the one literal it replaced.
+RUNNER = {CI: "ubuntu-24.04", NEXT: "ubuntu-26.04"}
 LEGS = ("static", "pytest", "unit-utc-cov", "unit-ny", "gates-a", "gates-b", "gates-c", "gate-probes")
 GATE_LEGS = ("gates-a", "gates-b", "gates-c", "gate-probes")
 RESERVED_JOB_IDS = {"build-and-test", "integration-tests", "smoke-tests"}  # what promote-gate.yml reads by name
@@ -259,6 +262,12 @@ def _above_steps(job):
     return {key: value for key, value in job.items() if key != "steps"}
 
 
+def _as_ci_runner(job):
+    """TRIAL-ONLY: a ci-next.yml job's keys above its steps, with the trial label read as ci.yml's."""
+    above = _above_steps(job)
+    return dict(above, **{"runs-on": RUNNER[CI]}) if above.get("runs-on") == RUNNER[NEXT] else above
+
+
 def mirror(ci, nxt):
     out = []
     mine, theirs = list(ci.get("jobs") or {}), list(nxt.get("jobs") or {})
@@ -269,7 +278,7 @@ def mirror(ci, nxt):
     for leg, job in _legs(ci, CI).items():
         if leg not in copies:
             continue
-        if _above_steps(job) != _above_steps(copies[leg]):
+        if _above_steps(job) != _as_ci_runner(copies[leg]):  # TRIAL-ONLY: was _above_steps(copies[leg])
             out.append("leg %s: ci.yml has %s above its steps and ci-next.yml has %s"
                        % (leg, _canon(_above_steps(job)), _canon(_above_steps(copies[leg]))))
         want, have = [_canon(s) for s in job["steps"]], [_canon(s) for s in _mirrored(copies[leg])]
@@ -285,7 +294,9 @@ def mirror(ci, nxt):
             out.append("leg %s: the two files run the same steps %s" % (leg, "in a different order" if sorted(
                 want) == sorted(have) else "a different number of times"))
     gate, copy_ = (ci.get("jobs") or {}).get(GATE), (nxt.get("jobs") or {}).get(AGGREGATORS[NEXT])
-    if gate is None or copy_ is None or _canon(gate) != _canon(copy_).replace(AGGREGATORS[NEXT], GATE):
+    # TRIAL-ONLY: the second replace (the trial label read as ci.yml's)
+    if gate is None or copy_ is None or _canon(gate) != _canon(copy_).replace(AGGREGATORS[NEXT], GATE).replace(
+            RUNNER[NEXT], RUNNER[CI]):
         out.append("ci-next.yml's %s is not ci.yml's %s with the id changed (needs, if, runs-on, timeout and the one "
                    "step, whole)" % (AGGREGATORS[NEXT], GATE))
     return out
@@ -498,8 +509,8 @@ def _graph_of(name, workflow):
     if tuple(legs) != LEGS or aggregator not in jobs:
         out.append("%s: job ids are %s, want the legs %s and %s" % (name, list(jobs), list(LEGS), aggregator))
     for job_id, job in jobs.items():
-        if job.get("runs-on") != "ubuntu-24.04":
-            out.append("%s: %s runs on %r, want ubuntu-24.04" % (name, job_id, job.get("runs-on")))
+        if job.get("runs-on") != RUNNER[name]:  # TRIAL-ONLY: was the literal "ubuntu-24.04" for both files
+            out.append("%s: %s runs on %r, want %s" % (name, job_id, job.get("runs-on"), RUNNER[name]))
         minutes = job.get("timeout-minutes")
         if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes <= 0:
             out.append("%s: %s has no timeout-minutes" % (name, job_id))
