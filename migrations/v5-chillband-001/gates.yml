@@ -1,0 +1,185 @@
+# gates.yml
+# V5-CHILLBAND-001: weather_cue_impression_cue_chk widened from five cues to six (adds `cool`).
+#
+# ── SEQUENCING: THE DATABASES FIRST, THEN THE CODE ───────────────────────────────────────────────
+#   1. STAGING: pre -> sweep -> 0a -> post -> rehearse 0r -> pre -> 0a -> post.
+#   2. PROD (Dave's first-hand OK for a prod database change, outside 07:00-08:00 UTC, after a
+#      pre-apply copy): pre -> sweep -> 0a -> post.
+#   3. ONLY THEN any code that can send the `cool` cue (the engine rule and both vocabularies).
+#   NOTHING ENFORCES STEP 3. The promote's prod schema gate reads columns and relations, not the
+#   values a CHECK admits, and the impression writer swallows a 23514 and answers 202. The wrong
+#   order ships a working Today and silently loses every `cool` impression. README.md has the
+#   commands.
+#
+# ANY pre/sweep/post assertion failing is a HARD ABORT.
+#
+# ── EVERY post GATE IS SELF-ARMING AND CATALOG-ONLY ──────────────────────────────────────────────
+#   `continuous:` DEFAULTS TO TRUE (scripts/gate_runner.py) and .github/workflows/gate-invariants.yml
+#   runs `gate_runner.py --all --phase post --continuous-only` against LIVE PROD AND LIVE STAGING on
+#   every migrations/** push and on a Tuesday cron, with no skip-if-unapplied logic. Each gate returns
+#   rows only when the migration IS applied (stamp 5.0.0-chillband-001 exists) AND the invariant is
+#   violated: vacuous before the apply, asserting permanently after. 0a writes the stamp in the same
+#   transaction as the swap, and post_schema_version_recorded (armed on the CONSTRAINT, not on
+#   itself) proves the stamp landed.
+#   The post gates reach the table through pg_class.relname, never `::regclass` and never FROM: a
+#   database without public.weather_cue_impression must answer zero rows, not 42P01. So nothing here
+#   has to move before a rollback.
+#
+# ── THE VOCABULARY IS READ AS A SET ──────────────────────────────────────────────────────────────
+#   The quoted values are pulled out of pg_get_constraintdef and compared with `@>` and `<@`, the
+#   form v4-losscapture-001's gates use (mutation-measured there on PostgreSQL 17.10). It does not
+#   depend on the order or spacing Postgres prints the list in. ops-cueinstrument-001's own gate
+#   post_cue_check_carries_all_five_rules is five substring matches: it is satisfied by any superset,
+#   which is why this widening does not red it, and why it cannot stand in for the gate below.
+#
+# ── WHEN THE VOCABULARY IS WIDENED AGAIN ─────────────────────────────────────────────────────────
+#   post_cue_check_validated_and_exactly_the_six is exact on purpose and will red on a seventh cue.
+#   The migration that adds one gives that gate `retired: "<why>"` in the same commit and carries
+#   its own. Do not turn the six into a seven here.
+#
+# ── WHAT THESE GATES DO NOT COVER ────────────────────────────────────────────────────────────────
+#   * Nothing here knows whether the engine, the client vocabulary and the server vocabulary agree
+#     with the CHECK. That is the lockstep tests' job in the code lanes.
+#   * weather_cue_impression_form_chk is not asserted: this migration does not touch it, and a later
+#     release is entitled to widen it.
+#   * No gate counts `cool` rows. How often the line shows is a fact about the weather.
+#
+# NOT RUN ANYWHERE by the lane that wrote it. `gate_runner.py --validate-only` passes (structure
+# only); no gate here has been executed against PostgreSQL.
+
+pre:
+  - name: pre_table_present
+    note: >
+      public.weather_cue_impression is ops-cueinstrument-001's table (its own gates.yml records the
+      prod apply on 2026-09-02). Without it there is nothing to widen.
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'weather_cue_impression'
+         AND table_type = 'BASE TABLE'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_cue_check_is_exactly_the_five_and_validated
+    note: >
+      The starting state 0a widens from: the constraint is on this table under this name, validated,
+      and admits exactly freeze, cold, heat, rain, wet. 0a's own DO block refuses any other shape;
+      this says so before anything is run. continuous false: false by design once 0a runs.
+    sql: |
+      SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+        CROSS JOIN LATERAL (
+          SELECT array_agg(m[1]) AS vocab
+            FROM regexp_matches(pg_get_constraintdef(c.oid), '''([^'']+)''::text', 'g') AS m
+        ) x
+       WHERE t.relname = 'weather_cue_impression' AND c.contype = 'c'
+         AND c.conname = 'weather_cue_impression_cue_chk' AND c.convalidated
+         AND x.vocab @> ARRAY['freeze', 'cold', 'heat', 'rain', 'wet']
+         AND x.vocab <@ ARRAY['freeze', 'cold', 'heat', 'rain', 'wet']
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: pre_not_already_applied
+    note: >
+      A stamp over the five-value CHECK would arm the post gates against a constraint that was never
+      widened. continuous false, as above.
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.0.0-chillband-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # A second CHECK over `cue` under any other name would make the widening cosmetic: the narrow one
+  # would still refuse `cool` while the gate on the named one read perfectly correct. One row per
+  # such constraint, naming it.
+  - name: pre_no_other_check_names_cue
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+       WHERE t.relname = 'weather_cue_impression' AND c.contype = 'c'
+         AND a.attname = 'cue'
+         AND c.conname <> 'weather_cue_impression_cue_chk'
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # L-058, the all-row sweep before a CHECK is validated. 0a's ADD CONSTRAINT validates against every
+  # row and would fail on one of these anyway; this names the offending values first. The table has
+  # no deleted_at, so there is no soft-deleted remainder to sweep separately. It names the table
+  # directly: sweep gates are run by hand at apply time, on a database where `pre` has just found it.
+  - name: sweep_no_row_outside_the_six
+    sql: |
+      SELECT DISTINCT cue FROM public.weather_cue_impression
+       WHERE cue NOT IN ('freeze', 'cold', 'cool', 'heat', 'rain', 'wet')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  # SELF-ARMING AND CATALOG-ONLY, EVERY ONE. See the header for why that is forced. Three gates.
+
+  # ARMED ON THE DDL, NOT ON ITSELF. "The stamp exists" cannot guard "the stamp exists"; "the named
+  # CHECK admits `cool`" can. 0a writes both in one transaction, so a row here means someone widened
+  # the constraint by hand or deleted the stamp: exactly the state that would silence the two
+  # EXISTS-guarded gates below.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM pg_constraint c
+                       JOIN pg_class t     ON t.oid = c.conrelid
+                       JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                      WHERE t.relname = 'weather_cue_impression' AND c.contype = 'c'
+                        AND c.conname = 'weather_cue_impression_cue_chk'
+                        AND pg_get_constraintdef(c.oid) LIKE '%''cool''::text%')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-chillband-001')
+    expect: rowcount_eq
+    value: 0
+
+  # The result of 0a, exactly. On this table, under this name, VALIDATED (a NOT VALID re-add would
+  # leave old rows unchecked and is the shape a hurried repair takes), a membership test on the `cue`
+  # column, and admitting exactly the six. Narrowed, it drops a cue's impressions; widened by a value
+  # no rule sends, it stops being a guard. Returns a row when no constraint meets all of that.
+  - name: post_cue_check_validated_and_exactly_the_six
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-chillband-001')
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_constraint c
+             JOIN pg_class t     ON t.oid = c.conrelid
+             JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+             CROSS JOIN LATERAL (
+               SELECT array_agg(m[1]) AS vocab
+                 FROM regexp_matches(pg_get_constraintdef(c.oid), '''([^'']+)''::text', 'g') AS m
+             ) x
+            WHERE t.relname = 'weather_cue_impression' AND c.contype = 'c'
+              AND c.conname = 'weather_cue_impression_cue_chk' AND c.convalidated
+              AND pg_get_constraintdef(c.oid) LIKE 'CHECK ((cue = ANY (ARRAY[%'
+              AND x.vocab @> ARRAY['freeze', 'cold', 'cool', 'heat', 'rain', 'wet']
+              AND x.vocab <@ ARRAY['freeze', 'cold', 'cool', 'heat', 'rain', 'wet'])
+    expect: rowcount_eq
+    value: 0
+
+  # THE GATE WITHOUT WHICH THE WIDENING IS COSMETIC (the lesson of v4-losscapture-001's
+  # post_legacy_loss_cause_check_removed). If a second CHECK over `cue` exists under another name,
+  # the gate above reports the named one as correct while the other still refuses `cool`, and the
+  # writer hides the refusal behind a 202. One row per such constraint, naming it.
+  - name: post_no_other_check_names_cue
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t     ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+       WHERE t.relname = 'weather_cue_impression' AND c.contype = 'c'
+         AND a.attname = 'cue'
+         AND c.conname <> 'weather_cue_impression_cue_chk'
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-chillband-001')
+    expect: rowcount_eq
+    value: 0
