@@ -58,6 +58,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
+import { JAR_UNITS } from '../../lambda/preservation/jarRules.js'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const read = (p) => readFileSync(resolve(root, p), 'utf8')
@@ -285,5 +286,20 @@ describe('the apply-time gates assert the same vocabulary the code does', () => 
     // post_nineteen_values_present. A single occurrence means one of the two lists is short.
     const hits = gatesYml.split(`'${v}'`).length - 1
     expect(hits, `expected ${v} in both the sweep list and the post ARRAY`).toBeGreaterThanOrEqual(2)
+  })
+})
+
+// Put-Up R2b. The row editor's unit list was only ever named by putUpPrefill.test.js, which left with the
+// form. A unit offered here that the server's list lacks is a 400 on every save of that row.
+describe('the row editor offers no unit the server refuses', () => {
+  const block = pageSrc.match(/export const UNIT_GROUPS = \[([\s\S]*?)\n\]/)
+  const units = block ? [...block[1].matchAll(/options:\s*\[([^\]]*)\]/g)].flatMap((m) => [...m[1].matchAll(/'([^']+)'/g)].map((u) => u[1])) : []
+
+  it('the list was found, whole', () => {
+    expect(units.length).toBeGreaterThanOrEqual(14)
+  })
+
+  it.each(units)('%s is in JAR_UNITS', (u) => {
+    expect(JAR_UNITS).toContain(u)
   })
 })

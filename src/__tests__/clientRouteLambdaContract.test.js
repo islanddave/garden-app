@@ -319,6 +319,9 @@ describe('client route -> serving Lambda contract (BUG-HARVWATCHROUTE-001)', () 
   // assertion below would vanish and the file would report success while checking zero contracts.
   it('the extractors found a plausible amount of work to do', () => {
     expect(CLIENT.size).toBeGreaterThan(45)
+    // Put-Up R2b: this route's only literal left with the form once, and its case vanished without a red.
+    // pantryApi.js spells it now; a constant put back there takes the case away again, and this says so.
+    expect([...CLIENT.keys()]).toContain('TABLE /api/storage-locations/:p')
     expect(Object.keys(LAMBDAS).length).toBeGreaterThan(20)
     const routed = Object.values(LAMBDAS).filter((l) => l.literals.size || l.patterns.length)
     expect(routed.length).toBeGreaterThan(15)
