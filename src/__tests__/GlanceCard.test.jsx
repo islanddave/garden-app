@@ -83,7 +83,7 @@ describe('closed — the first screen (D1)', () => {
     expect(v.style.whiteSpace).not.toBe('nowrap')
     expect(v.style.textOverflow).toBe('')
     expect(v.style.overflow).toBe('')
-    expect(v.style.minHeight).toBe('2.7em')
+    expect(v.style.minHeight).toBe('1.35em') // one line reserved (finish plan D-8)
     expect(v.querySelectorAll('svg').length).toBe(1)
     // No second copy anywhere (the old card's sr-only + truncated pair).
     expect(screen.queryAllByText((_, el) => el?.textContent === v.textContent && el !== v && !el.contains(v))).toHaveLength(0)
@@ -105,6 +105,13 @@ describe('closed — the first screen (D1)', () => {
     render(<Harness plan={QUIET} />)
     expect(screen.getByTestId('today-verdict').textContent).toBe('Nothing due for watering today.')
     expect(screen.queryByTestId('weather-cue-line')).toBeNull()
+  })
+  it('finish plan D-2: opened, the weather card says the closed card\'s verdict — never "Water both" over an empty list', () => {
+    render(<Harness plan={QUIET} />)
+    fireEvent.click(toggle())
+    const card = screen.getByTestId('today-weather')
+    expect(card.textContent).toContain('Nothing due for watering today.')
+    expect(card.textContent).not.toMatch(/Water both|Water containers|Water the beds/)
   })
   it('the stale marker only when the page says the plan is not today\'s', () => {
     render(<Harness stale="Yesterday’s plan · as of Sep 23 · 10:00 AM" />)

@@ -34,12 +34,12 @@ import HarvestWatchBand from '../components/HarvestWatchBand.jsx'
 import ComposeHarvestBand from '../components/ComposeHarvestBand.jsx'
 import PutUpUseSoonBand from '../components/PutUpUseSoonBand.jsx'
 import CultivationLead from '../components/today/CultivationLead.jsx'
-import { DormantList } from '../components/today/CareNeeded.jsx'
+import { DormantList, FeedSuppressedList } from '../components/today/CareNeeded.jsx'
 import HouseholdSection, { householdKey } from '../components/today/v2/HouseholdSection.jsx'
 import { useTodayBands } from '../components/today/v2/useTodayBands.js'
 import { useHandednessSync } from '../hooks/useHandedness.js'
 import { useMembers } from '../hooks/useMembers.js'
-import { readShowOthers, memberFirstName } from '../lib/householdView.js'
+import { useShowOthers, memberFirstName } from '../lib/householdView.js'
 import { SOW_DATED_LINES_FROZEN } from '../lib/featureFlags.js'
 
 // TodayV2 — the redesigned Today (V5-TODAYREDESIGN-001; plan-v2 §1, §2.1–2.2, §4–§6). Behind the per-device
@@ -148,10 +148,11 @@ export default function TodayV2() {
   // Hoisted from HarvestWatchBand (plan §8 S6): the band's once-per-session handedness adopt ran because the band
   // was always mounted on Today; here the Harvest body is unmounted while closed, so the page runs it.
   useHandednessSync(needs.getToken)
-  // SF6: another member's section only when THIS device has the household view on — V1's switch, read through
-  // the one reader both pages share (lib/householdView.js), and only for a member with care rows today. The plan
-  // read always asks for the household (§2.9, above); this decides what is SHOWN. Names as V1 names them.
-  const [showOthers] = useState(readShowOthers)
+  // SF6: another member's section only when THIS device has the household view on — V1's switch, read LIVE
+  // through the one reader both pages share (lib/householdView.js; its writer here is the Settings › Controls
+  // row, finish plan D-3), and only for a member with care rows today. The plan read always asks for the
+  // household (§2.9, above); this decides what is SHOWN. Names as V1 names them.
+  const showOthers = useShowOthers()
   const { members } = useMembers()
   const household = useMemo(() => {
     if (!showOthers || !Array.isArray(data?.household_plans)) return []
@@ -179,7 +180,10 @@ export default function TodayV2() {
   const staleMark = plan ? staleMarker({ planDate, generatedAt: data?.generated_at ?? null, fromCache: isFromCache(data), today: todayLocalISO() }) : null
 
   // ── the jump chips (§2.4, §2.7): Water / Feed / Check from the same active rows as the Needs care count.
-  const counts = useMemo(() => ({ ...taskCounts(care), protect: protect.count }), [care, protect.count])
+  // Heads-up carries its count too (finish plan D-7: its band said 1, its chip said nothing).
+  const counts = useMemo(() => ({ ...taskCounts(care), protect: protect.count, headsup: headsup.count }), [care, protect.count, headsup.count])
+  // The verdict's count (finish plan D-9): the water_due rows still on the list, not the plan's raw list.
+  const waterDueLeft = useMemo(() => care.filter((r) => r.need === 'water_due').length, [care])
   const live = useMemo(() => liveChips(present, counts), [present, counts])
 
   // ── the ready point ───────────────────────────────────────────────────────────────────────────────────────
@@ -322,6 +326,9 @@ export default function TodayV2() {
   // ("Before dark · low 42°F · Lemon Verbena, Sweet Basil +3"). Emptied mid-visit: what this visit did.
   const protectUrgent = !!record?.triggers?.protect && record?.overlay?.protect === 'open'
   const headsupUrgent = !!record?.triggers?.headsup && record?.overlay?.headsup === 'open'
+  // A one-item section that is OPEN drops its summary: the summary would repeat its only row (finish plan D-7).
+  // Only where the summary is the rows themselves — Heads-up (its one window's words) and Resting (its names).
+  const soleOpen = (key, n) => n === 1 && isOpen(key)
   const SECTIONS = {
     protect: {
       title: 'Protect tonight',
@@ -334,7 +341,7 @@ export default function TodayV2() {
     headsup: {
       title: 'Heads-up',
       count: headsup.count || null,
-      summary: headsupUrgent && headsup.summary
+      summary: soleOpen('headsup', headsup.count) ? null : headsupUrgent && headsup.summary
         ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{headsup.summary}</>
         : headsup.summary,
       body: <HeadsUp headsup={headsup} record={record} update={update} />,
@@ -353,7 +360,7 @@ export default function TodayV2() {
     resting: {
       title: 'Resting',
       count: restingLeft.length || null,
-      summary: namesSummary(restingLeft),
+      summary: soleOpen('resting', restingLeft.length) ? null : namesSummary(restingLeft),
       body: (
         <div style={stackBody}>
           <p style={quietLine}>No routine care while resting — Resume one when it starts growing.</p>
@@ -419,18 +426,35 @@ export default function TodayV2() {
           liveHydrology={liveHydrology} refreshedAt={refreshedAt} agreed={agreed} current={current} cueCallout={cueCallout}
           stale={staleMark} open={glanceOpen} onToggle={toggleGlance}
           care={needs} record={record} update={update} announce={announce} writesHeld={writesHeld}
-          coldRange={data?.cold_range ?? null}
+          coldRange={data?.cold_range ?? null} waterDue={waterDueLeft}
         />
+      )}
+      {/* The stale marker lives in the glance card; a plan with no weather has no card, so it says how old it is
+          here instead (finish plan D-9 — offline with a cached plan included). */}
+      {plan && !plan.weather && staleMark && (
+        <p data-stale="true" data-testid="today-stale" style={staleLine}>
+          <Icon name="severity.low" size={14} decorative style={{ flexShrink: 0 }} />
+          <span>{staleMark}</span>
+        </p>
       )}
 
       {ready && record && (
         <>
           {/* The one sticky layer: a direct child of this frame, so it pins across every section below it. */}
           {barShown && <JumpBar ref={barRef} chips={chips} counts={counts} onJump={jump} />}
-          {plan && care.length === 0 && !record.order.sections.includes('care') && (
-            <p data-testid="care-empty" style={quietLine}>Needs care: all caught up — nothing due today.</p>
-          )}
-          {shown.map((key) => {
+          {SECTION_ORDER.map((key) => {
+            // No Needs care section this visit: the caught-up line stands in its SLOT, after Protect and Heads-up
+            // (finish plan D-1: it rendered above every section), with the "No feed schedule" line V1 always
+            // shows (D-5: it lived only inside the Needs care body).
+            if (key === 'care' && !shown.includes('care')) {
+              return plan && care.length === 0 ? (
+                <div key="care-empty" style={{ ...stackBody, ...careGap }}>
+                  <p data-testid="care-empty" style={quietLine}>Needs care: all caught up — nothing due today.</p>
+                  <FeedSuppressedList plan={plan} compact />
+                </div>
+              ) : null
+            }
+            if (!shown.includes(key)) return null
             const s = SECTIONS[key]
             return (
               <TodaySection
@@ -485,6 +509,7 @@ const textButton = {
 const dateStyle = { margin: 0, fontSize: T.type.sm, fontWeight: 400, color: P.mid }
 const noPlanStyle = { margin: 0, fontSize: T.type.base, color: P.dark }
 const quietLine = { margin: 0, fontSize: T.type.sm, color: P.mid }
+const staleLine = { margin: 0, display: 'flex', alignItems: 'center', gap: 6, fontSize: T.type.xs, color: P.mid }
 // T.space.md before Needs care: the frame's gap gives T.space.sm, the band asks for the difference.
 const careGap = { marginTop: T.space.md - T.space.sm }
 // S6: a section body holding more than one block (Resting's explainer + rows; Harvest's two bands), and the

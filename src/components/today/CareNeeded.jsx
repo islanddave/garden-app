@@ -9,6 +9,7 @@ import { useAuthOptional } from '../../context/AuthContext.jsx'
 import GroupByControl from '../forms/GroupByControl.jsx'
 import Sheet from '../forms/Sheet.jsx'
 import Icon from '../Icon.jsx'
+import { T } from '../forms/formStyles.js'
 import PhotoView from '../photo/PhotoView.jsx'
 import { TIER } from '../../lib/photoModel.js'
 import {
@@ -878,12 +879,15 @@ export function DroughtList({ plan }) {
 // test asserting it is hidden false-passes. The summary line IS the toggle: one control, one tap,
 // 44px, inline — never a modal, so this needs no DismissRegistry layer (that registry arbitrates
 // Escape/Back across modal surfaces; there is no surface here to arbitrate).
-export function FeedSuppressedList({ plan }) {
+// `compact` (the redesigned Today, finish plan D-5): the line reads "No feed schedule: 9 plantings" on the page's
+// type ramp, and its explainer moves behind the tap with the names. V1 renders exactly as before.
+export function FeedSuppressedList({ plan, compact = false }) {
   const { state, rows } = useMemo(() => feedSuppressedRows(plan), [plan])
   const [open, setOpen] = useState(false)
   if (state !== FEED_SUPPRESSED_LISTED) return null
   const n = rows.length
   const label = (open ? 'Hide the ' : 'Show the ') + n + ' planting' + (n > 1 ? 's' : '') + ' with no feed schedule'
+  const textSize = compact ? T.type.sm : '0.78rem'
 
   return (
     <div data-testid="care-feed-suppressed" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
@@ -894,13 +898,18 @@ export function FeedSuppressedList({ plan }) {
             the gold needTier gives a due feed row — gold in this app means "needed today", and this
             is the opposite claim. Colour is additive: the sentence says it too (SC 1.4.1). */}
         <Icon name="care.feed" size={18} decorative style={{ color: P.green, flex: '0 0 auto' }} />
-        <span style={{ flex: 1, minWidth: 0, fontSize: '0.78rem', color: P.light, lineHeight: 1.4 }}>
-          No feed schedule for {n} planting{n > 1 ? 's' : ''} — fed on plant signals, never by the calendar.
+        <span style={{ flex: 1, minWidth: 0, fontSize: textSize, color: compact ? P.mid : P.light, lineHeight: 1.4 }}>
+          {compact
+            ? `No feed schedule: ${n} planting${n > 1 ? 's' : ''}`
+            : `No feed schedule for ${n} planting${n > 1 ? 's' : ''} — fed on plant signals, never by the calendar.`}
         </span>
-        <span aria-hidden="true" style={{ flex: '0 0 auto', fontSize: '0.78rem', fontWeight: 700, color: P.green }}>
+        <span aria-hidden="true" style={{ flex: '0 0 auto', fontSize: textSize, fontWeight: 700, color: P.green }}>
           {open ? 'Hide' : 'Show'}
         </span>
       </button>
+      {open && compact && (
+        <p style={{ margin: 0, padding: '0 2px', fontSize: T.type.sm, color: P.mid, lineHeight: 1.4 }}>Fed on plant signals, never by the calendar.</p>
+      )}
       {open && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 2px 4px' }}>
           {/* Chips, not full-width rows: nine names cost ~3 wrapped lines at 390px instead of nine

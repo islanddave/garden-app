@@ -131,7 +131,7 @@ export const STATES = [
       { family: 'jumpbar', armedAt: ['S3', 'S5', 'S6'], present: true, chips: ['protect', 'water', 'feed', 'check', 'harvest'] },
       // S3 (new family, named in KILLER_FAMILIES by S0): every chip 48 tall, numbers only on the work chips, and at
       // 200% text (WCAG 1.4.4; Android font scaling) every chip still reachable inside the strip.
-      { family: 'chip-census', armedAt: 'S3', why: 'chips ≥ 48px; numbers only on Protect/Water/Feed/Check; at 200% text the strip scrolls (overflow-x auto) and no chip is stranded past its edge' },
+      { family: 'chip-census', armedAt: 'S3', why: 'chips ≥ 48px; numbers only on Protect/Heads-up/Water/Feed/Check (Heads-up counted since finish plan D-7, 2026-10-14); at 200% text the strip scrolls (overflow-x auto) and no chip is stranded past its edge' },
       // Integration S3 × S4 (first run of this family — neither lane alone could arm it): + 0.78rem, an INHERITED
       // line like the cue/frost lines' 0.84rem (plan §4 "the unchanged … lines keep their own"): V1's
       // FeedSuppressedList (CareNeeded.jsx), reused unchanged at the foot of Needs care (REGIONS
@@ -192,7 +192,7 @@ export const STATES = [
       // S6-scoped: busyfull carries a composable harvest batch AND the watch list, so Harvest exists between Needs care
       // and Resting; nothing opens it (never a trigger). Its header names, never counts; the Sow row is the door alone.
       { family: 'section-open-set', armedAt: ['S4', 'S6'], orderOf: ['care', 'harvest', 'resting'], closed: ['harvest', 'resting'], why: 'S6-scoped: Harvest between Needs care and Resting, closed by default' },
-      { family: 'header-text', armedAt: 'S6', noCount: ['harvest'], summaries: { harvest: '20 picks · logged an hour ago · check Palla Rossa Mavrik Radicchio, Gourmet Blend Beets, Red Acre Cabbage…' }, sowRow: 'All sow windows ›', why: 'S6: the Harvest header names the compose band\'s picks line and the watch band\'s own first three (no count, no denominator); the Sow link row is exactly its door while the 2027 freeze holds (09-24 has two dated engine lines to hide)' },
+      { family: 'header-text', armedAt: 'S6', noCount: ['harvest'], summaries: { harvest: 'Ready to post · Worth checking: Palla Rossa Mavrik Radicchio, Gourmet Blend Beets, Red Acre Cabbage +23' }, sowRow: 'All sow windows ›', why: 'S6, finish plan D-6 (2026-10-14): the Harvest header says a post is ready and names the watch band\'s own first three, then "+N" (no pick count); the Sow link row is exactly its door while the 2027 freeze holds (09-24 has two dated engine lines to hide)' },
       { family: 'owner-floors', armedAt: 'S6', owners: ['glance', 'care', 'harvest', 'resting'], why: 'S6: each owner of a moved region, opened from the default render, is at least its recorded height — a region deleted inside it (dropRegionInOwner) shortens it' },
     ],
   },
@@ -245,7 +245,7 @@ export const STATES = [
       { family: 'spot-retry', armedAt: 'S4g', group: 'Outside', fail: 2, why: 'MF3: a failed write stays on its spot — "N not logged" + Retry on the closed row, out of Water all; Retry completes the run; one Undo' },
       // S6-scoped: busy has the watch list but no fresh harvest batch — Harvest is the watch band alone.
       { family: 'section-open-set', armedAt: ['S4', 'S6'], orderOf: ['care', 'harvest', 'resting'], closed: ['harvest', 'resting'], why: 'S6-scoped: Harvest between Needs care and Resting, closed by default' },
-      { family: 'header-text', armedAt: 'S6', noCount: ['harvest'], summaries: { harvest: 'check Palla Rossa Mavrik Radicchio, Gourmet Blend Beets, Red Acre Cabbage…' }, sowRow: 'All sow windows ›', why: 'S6: names, no count; the Sow link row is exactly its door while the 2027 freeze holds' },
+      { family: 'header-text', armedAt: 'S6', noCount: ['harvest'], summaries: { harvest: 'Worth checking: Palla Rossa Mavrik Radicchio, Gourmet Blend Beets, Red Acre Cabbage +23' }, sowRow: 'All sow windows ›', why: 'S6: names, no count; the Sow link row is exactly its door while the 2027 freeze holds' },
       // OPS-TODAYV2GATECOVERAGE-001 (review-dbl-recut-gatefix-delta-20261006 IMPORTANT-1): flows driven by TRUSTED taps
       // (CDP input, event.isTrusted seen on the page), each from a fresh load of this state. Files `trusted-taps` (what
       // the page shows) and `post-once` (what the wire saw). Not armed, known open: Feed all's missing done line and
@@ -347,7 +347,7 @@ export const STATES = [
       // S6-scoped: the storage state's four jars (storage-grafts.json use_soon) are the one fixture with a Put-Up shelf.
       // This state had no region-headcount check, so REGIONS' putup-use-soon row (v2-storage-mid, S6) was never counted.
       { family: 'section-open-set', armedAt: 'S6', closed: ['putup'], why: 'S6-scoped: From your Put-Up exists and never opens by itself' },
-      { family: 'header-text', armedAt: 'S6', noCount: ['putup'], summaries: { putup: 'Summer Squash (past date) · Plum · Basil · Basil' }, why: 'S6: the use-soon slice by name, past date marked, no count (plan §1.5)' },
+      { family: 'header-text', armedAt: 'S6', noCount: ['putup'], summaries: { putup: 'Summer Squash (past date) · Plum · Basil ×2' }, why: 'S6: the use-soon slice by name, past date marked, no count (plan §1.5)' },
       { family: 'region-headcount', armedAt: 'S6', why: 'S6: putup-use-soon counted inside Put-Up once opened' },
       { family: 'owner-floors', armedAt: 'S6', owners: ['putup'], why: 'S6: Put-Up opened is at least its recorded height' }] },
   { name: 'v2-storage-deadline', fixture: 'storage', redate: '2026-10-08', clock: AT('2026-10-08'), prefs: 'prefs.default.json', proves: 'deadline ≤ 2 days: open, warn plate',
@@ -404,7 +404,8 @@ export const REGIONS_V2 = [
   { id: 'weather-cue-line', owner: 'glance (visible closed)', closed: 'glance', state: 'v2-frost', armedAt: 'S3' },
   { id: 'frost-alert-line', owner: 'glance (visible closed)', closed: 'glance', state: 'v2-frost', armedAt: 'S3' },
   ...['drought-line', 'leaf-wetness-line', 'today-basis-stamp', 'care-rain-note', 'care-drought-list'].map((id) => ({ id, owner: 'glance details', open: 'glance', state: 'v2-frost', armedAt: 'S3' })),
-  { id: 'today-substrate-note', owner: 'Needs care, Feed filter', open: 'care', filter: 'feed', state: 'v2-frost', armedAt: 'S4' },
+  // Finish plan D-5 (2026-10-14): the feeding note is an advisory line at the top of the Needs care body, under any filter.
+  { id: 'today-substrate-note', owner: 'Needs care', open: 'care', state: 'v2-frost', armedAt: 'S4' },
   { id: 'today-care', owner: 'Needs care section', state: 'v2-busy', armedAt: 'S4' },
   { id: 'care-group-bulk', owner: 'Outside group label (MF3)', state: 'v2-busy', armedAt: 'S4' },
   { id: 'care-spot-bulk', owner: 'a spot row\'s Water all', state: 'v2-busy', armedAt: 'S4' },

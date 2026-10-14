@@ -43,6 +43,23 @@ describe('glanceHeadline — headlineFor verbatim behind the empty-list guard (�
     }
     expect(headlineFor(true, true, 7)).toBe(glanceHeadline({ weather: WX, hydrology: DRY, water_due: rows(7) }))
   })
+  it('finish plan D-9: the active count, when given, replaces the raw list length — "N still due" follows what is left', () => {
+    expect(glanceHeadline({ weather: WX, hydrology: SOAK, water_due: rows(18) }, 4)).toBe("Rain may cover today's list — 4 still due.")
+    // Everything logged: the list is known empty, so lanes that say water get no imperative.
+    expect(glanceHeadline({ weather: WX, hydrology: DRY, water_due: rows(18) }, 0)).toBe(NOTHING_DUE)
+    expect(glanceHeadline({ weather: WX, hydrology: SOAK, water_due: rows(18) }, 0)).toBe('All set — no watering needed today.')
+    // Not an integer: the raw length, as before.
+    expect(glanceHeadline({ weather: WX, hydrology: SOAK, water_due: rows(18) }, undefined)).toBe("Rain may cover today's list — 18 still due.")
+  })
+  it('finish plan D-2: WeatherWidget prints a given `headline` in place of its own, and its own sentence without one', () => {
+    const plan = { weather: WX, hydrology: DRY, water_due: [] }
+    const { container } = render(<WeatherWidget weather={WX} hydrology={DRY} waterDueCount={0} headline={glanceHeadline(plan)} />)
+    expect(container.textContent).toContain(NOTHING_DUE)
+    expect(container.textContent).not.toContain('Water both')
+    cleanup()
+    const { container: v1 } = render(<WeatherWidget weather={WX} hydrology={DRY} waterDueCount={0} />)
+    expect(v1.textContent).toContain('Water both — containers and beds today.')
+  })
 })
 
 describe('urgentPhrase — one at most: freeze > frost > hot', () => {
@@ -134,13 +151,13 @@ describe('staleMarker — only for a plan that is not today\'s', () => {
 })
 
 describe('jump chips (§2.4, §2.7; the S3 brief)', () => {
-  it('fixed order, and numbers only on the work chips (Protect, Water, Feed, Check)', () => {
+  it('fixed order, and numbers on the work chips and Heads-up (finish plan D-7), never on Harvest or Put-Up', () => {
     expect(CHIP_ORDER).toEqual(['protect', 'headsup', 'water', 'feed', 'check', 'harvest', 'putup'])
-    expect(CHIP_ORDER.filter((c) => CHIPS[c].counted)).toEqual(['protect', 'water', 'feed', 'check'])
+    expect(CHIP_ORDER.filter((c) => CHIPS[c].counted)).toEqual(['protect', 'headsup', 'water', 'feed', 'check'])
     expect(chipText('water', 168)).toBe('Water 168')
     expect(chipText('water', 0)).toBe('Water · done')
     expect(chipText('harvest', 20)).toBe('Harvest')
-    expect(chipText('headsup', 1)).toBe('Heads-up')
+    expect(chipText('headsup', 1)).toBe('Heads-up 1')
   })
   it('Water / Feed / Check all land on Needs care, each with its task', () => {
     expect(['water', 'feed', 'check'].map((c) => [CHIPS[c].section, CHIPS[c].task])).toEqual([['care', 'water'], ['care', 'feed'], ['care', 'check']])

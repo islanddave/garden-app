@@ -60,6 +60,7 @@ vi.mock('../components/today/v2/useTodayBands.js', () => ({
 }))
 
 import TodayV2 from '../pages/TodayV2.jsx'
+import { coverWhose } from '../components/today/v2/ProtectTonight.jsx'
 import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
 import { readSkipped } from '../components/today/careStore.js'
 import { __resetTodayLogged } from '../components/today/v2/needsCareStore.js'
@@ -568,6 +569,26 @@ describe('cold rows have ONE owner', () => {
     fireEvent.click(within(rowOf('Kiwi Fern Coleus')).getByRole('button', { name: 'Covered: Kiwi Fern Coleus (Jen)' }))
     await settle()
     expect(wire.posts).toEqual([expect.objectContaining({ event_type: 'cover', plant_id: JEN_ROW.id, project_id: 'jen-coleus' })])
+  })
+
+  it('Cover all says whose plants it marks (Dave 10-11, finish plan D-4): "· yours and Jen’s" on a shared spot; the viewer\'s alone say nothing', async () => {
+    localStorage.setItem('garden.today.showOthers', '1')
+    const frz = applyGrafts(PAYLOAD, PLANTS, ['freeze'], G).payload
+    serve({ ...frz, household_plans: [{ user_id: 'member_jen', generated_at: PAYLOAD.generated_at, plan: { ...F('dailyplan.jen.json'), cold: [{ ...JEN_ROW, level: 'bring_in', text: 'cover or bring in tonight' }] } }] })
+    await mount()
+    const buttons = [...document.querySelectorAll('[data-testid="protect-cover-all"]')]
+    const shared = buttons.filter((b) => /Jen’s/.test(b.textContent))
+    expect(shared.length).toBe(1)
+    expect(shared[0].textContent).toMatch(/^Cover all \d+ · yours and Jen’s$/)
+    expect(shared[0].getAttribute('aria-label')).toMatch(/^Cover all \d+ in .+ — yours and Jen’s$/)
+    expect(buttons.filter((b) => b !== shared[0]).every((b) => /^Cover (all \d+|1)$/.test(b.textContent))).toBe(true)
+  })
+
+  it('coverWhose: nothing for the viewer\'s own, the owners by name otherwise', () => {
+    expect(coverWhose([{}, {}])).toBeNull()
+    expect(coverWhose([{ owner: 'Jen' }])).toBe('Jen’s')
+    expect(coverWhose([{}, { owner: 'Jen' }, { owner: 'Jen' }])).toBe('yours and Jen’s')
+    expect(coverWhose([{}, { owner: 'Jen' }, { owner: 'Sam' }])).toBe('yours, Jen’s and Sam’s')
   })
 
   it('household view OFF (the default): Jen\'s cold row appears nowhere and Protect counts the viewer\'s five', async () => {

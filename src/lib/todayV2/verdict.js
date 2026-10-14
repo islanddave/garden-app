@@ -2,12 +2,12 @@
 // "Glance card", §8 S3, §13 SF9 update). PURE: a plan in, sentences out — no React state, no clock, no network.
 //
 // THE HEADLINE is WeatherWidget's headlineFor, printed VERBATIM from the same two lane verdicts the card computes
-// (computeWateringScale → pillState) and the same count V1 hands it (the plan's water_due length), so the glance
-// and the card it opens into cannot disagree — with ONE display-only guard in front (§13 SF9 update): a KNOWN
-// empty water list never gets a watering imperative. That guard is the one parked on lane-waterautumn-20260928
-// (BUG-WATERAUTUMNDEMAND-001), word for word and on the same condition; it lives here because that lane has not
-// shipped and WeatherWidget.jsx stays untouched. Once it ships, headlineFor returns the same sentence itself and
-// the first line of glanceHeadline is a no-op — drop it then.
+// (computeWateringScale → pillState) and the page's active water_due count, with ONE display-only guard in front
+// (§13 SF9 update): a KNOWN empty water list never gets a watering imperative. That guard is the one parked on
+// lane-waterautumn-20260928 (BUG-WATERAUTUMNDEMAND-001), word for word and on the same condition; it lives here
+// because that lane has not shipped. Once it ships, headlineFor returns the same sentence itself and the first
+// line of glanceHeadline is a no-op — drop it then. The open card does not recompute it: GlanceCard hands this
+// sentence to WeatherWidget's `headline` prop (finish plan D-2), so the closed and open card say one thing.
 //
 // THE URGENT PHRASE, one at most, by precedence freeze > frost > hot:
 //   freeze  tonight's low under FREEZE_BELOW_F (40°F), the engine cue's own "Freeze tonight" bar, read off the one
@@ -35,11 +35,14 @@ function num(v) {
 }
 
 // -> the verdict sentence. `plan` is the stored daily plan (plan.weather, plan.hydrology, plan.water_due).
-export function glanceHeadline(plan) {
+// `waterDue` (finish plan D-9): the page's ACTIVE water_due count (logged and skipped rows out), so "N still due"
+// and the empty-list guard follow what is left on the list; absent, the plan's raw water_due length.
+// The open card prints this same sentence (WeatherWidget `headline`, D-2), so the two states cannot disagree.
+export function glanceHeadline(plan, waterDue) {
   const scale = computeWateringScale(plan?.hydrology || {}, plan?.weather || {})
   const containersDo = pillState(scale.containers) === 'do'
   const bedsDo = pillState(scale.beds) === 'do'
-  const waterDueCount = Array.isArray(plan?.water_due) ? plan.water_due.length : 0
+  const waterDueCount = Number.isInteger(waterDue) ? waterDue : (Array.isArray(plan?.water_due) ? plan.water_due.length : 0)
   if (waterDueCount === 0 && (containersDo || bedsDo)) return NOTHING_DUE
   return headlineFor(containersDo, bedsDo, waterDueCount)
 }

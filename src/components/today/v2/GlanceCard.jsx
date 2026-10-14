@@ -22,10 +22,12 @@ import { T } from '../../forms/formStyles.js'
 // card's own rain sentences (verdict.js glanceRain → rainSentences, the same text WeatherWidget prints); C the
 // verdict: headlineFor verbatim behind the empty-list guard, plus at most one urgent phrase. The verdict is ONE
 // visible, wrapping text element — no ellipsis, no sr-only twin (the old card's truncated headline is why) —
-// with two lines reserved so the phrase never shifts what sits below. Under the button, still inside the card:
+// with ONE line reserved (finish plan D-8: two left 20–40 px of empty card on most days); an urgent phrase that
+// needs a second line takes it. Under the button, still inside the card:
 // the weather cue and the frost line, mounted unchanged; and, only for a plan that is not today's, how old it is.
 //
-// OPEN (MF2): the card's rows give way to the UNMODIFIED WeatherWidget, rendered ONCE — never beside rows A–C,
+// OPEN (MF2): the card's rows give way to WeatherWidget, rendered ONCE, its headline the closed card's verdict
+// (`headline`, finish plan D-2: the closed card said "Nothing due" while the open one said "Water both") — never beside rows A–C,
 // which would be two weather cards stacked — under a one-line "Weather" toggle. Then the cue and the frost line,
 // then the drought line, leaf wetness, the dry list, the rain lines and the basis stamp, in V1's reading order.
 // The rain lines (RainHold) carry the plantings waiting for rain, each with its Water chip — under the details,
@@ -42,10 +44,10 @@ const CHEVRON = { closed: '▸', open: '▾' }
 export default function GlanceCard({
   plan, generatedAt = null, planDate = null, liveHydrology = null, refreshedAt = null,
   agreed = null, current = null, cueCallout = null, stale = null, open = false, onToggle,
-  care = null, record = null, update, announce, writesHeld = false, coldRange = null,
+  care = null, record = null, update, announce, writesHeld = false, coldRange = null, waterDue,
 }) {
   const weather = plan.weather || {}
-  const headline = useMemo(() => glanceHeadline(plan), [plan])
+  const headline = useMemo(() => glanceHeadline(plan, waterDue), [plan, waterDue])
   const urgent = useMemo(() => urgentPhrase(plan, agreed), [plan, agreed])
   const { rainNote, nextNote } = useMemo(
     () => glanceRain({ hydrology: plan.hydrology, liveHydrology, generatedAt, planDate }),
@@ -109,7 +111,7 @@ export default function GlanceCard({
       </h2>
       {open && (
         <div id={widgetId}>
-          <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={generatedAt} planDate={planDate} liveHydrology={liveHydrology} refreshedAt={refreshedAt} waterDueCount={Array.isArray(plan.water_due) ? plan.water_due.length : 0} lowShown={agreed?.lowF} coldRange={coldRange} />
+          <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={generatedAt} planDate={planDate} liveHydrology={liveHydrology} refreshedAt={refreshedAt} waterDueCount={Array.isArray(plan.water_due) ? plan.water_due.length : 0} lowShown={agreed?.lowF} coldRange={coldRange} headline={headline} />
         </div>
       )}
       {stale ? (
@@ -163,10 +165,10 @@ const rowB = {
 }
 const rainItem = { display: 'inline-flex', alignItems: 'center', gap: 4 }
 const hairline = { display: 'block', height: 1, background: P.border, margin: '5px 0' }
-// Two lines reserved: the urgent phrase arriving on a refetch never pushes the card's lines down.
+// One line reserved (finish plan D-8); a verdict that wraps takes its second line.
 const verdictStyle = {
   display: 'block', fontSize: T.type.base, fontWeight: 700, color: P.dark, lineHeight: 1.35,
-  minHeight: '2.7em', overflowWrap: 'anywhere',
+  minHeight: '1.35em', overflowWrap: 'anywhere',
 }
 const staleStyle = { margin: 0, display: 'flex', alignItems: 'center', gap: 6, fontSize: T.type.xs, color: P.mid }
 const detailsStyle = { display: 'flex', flexDirection: 'column', gap: 8 }

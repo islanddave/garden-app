@@ -75,14 +75,14 @@ describe('Heads-up — the storage window on the real dataset', () => {
     expect(sec()).toBeNull()
   })
 
-  it('09-28 (the window opens): second in the fixed order, OPEN by itself, the summary and plate from the copy, the cue', async () => {
+  it('09-28 (the window opens): second in the fixed order, OPEN by itself; its one row stands for the summary until closed', async () => {
     onDay('2026-09-28')
     await mount()
     expect(band().getAttribute('aria-expanded')).toBe('true')
     expect(band().textContent).toContain('Heads-up')
     expect(band().textContent).toContain('1')
-    expect(band().textContent).toContain('Start checking sweet potatoes for lifting · by Oct 10')
-    expect(band().querySelector('svg')).toBeTruthy()
+    // Finish plan D-7: a one-item section that is open drops its summary — it would repeat its only row.
+    expect(sec().querySelector('[data-testid="section-summary"]')).toBeNull()
     expect(visit('2026-09-28').triggers.headsup).toEqual({ r: 'window' })
     const body = screen.getByTestId('storage-deadline-alert')
     const row = within(body).getByTestId('headsup-row')
@@ -91,6 +91,8 @@ describe('Heads-up — the storage window on the real dataset', () => {
     expect(within(row).getByTestId('headsup-plate').getAttribute('data-soon')).toBe('false')
     expect(row.textContent).toContain('Sweet Potatoes')
     expect(row.querySelector('h3 button')).toBeTruthy()
+    fireEvent.click(band())
+    expect(sec().querySelector('[data-testid="section-summary"]').textContent).toBe('Start checking sweet potatoes for lifting · by Oct 10')
   })
 
   it('the copy is VERBATIM: line 1 is the prefix, the opened panel the rest from the dash — together, the sentence', async () => {
@@ -170,12 +172,12 @@ describe('Heads-up — the storage window on the real dataset', () => {
     expect(band().getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('its chip (S3\'s table): second in the bar, after Protect and before the work chips, with no number', async () => {
+  it('its chip: second in the bar, after Protect and before the work chips, with its count (finish plan D-7)', async () => {
     onDay('2026-10-08', { plan: D.plan })
     await mount()
     const chips = [...screen.getByRole('navigation', { name: 'Today sections' }).querySelectorAll('[data-chip]')]
     expect(chips.map((c) => c.getAttribute('data-chip')).slice(0, 3)).toEqual(['protect', 'headsup', 'water'])
-    expect(chips[1].textContent).toBe('Heads-up')
+    expect(chips[1].textContent).toBe('Heads-up 1')
     const order = [...document.querySelectorAll('[data-testid^="today-sec-"]')].map((s) => s.getAttribute('data-section'))
     expect(order.slice(0, 3)).toEqual(['protect', 'headsup', 'care'])
   })

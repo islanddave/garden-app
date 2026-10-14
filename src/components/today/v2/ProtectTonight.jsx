@@ -34,6 +34,17 @@ const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2
 // A household member's row carries their name wherever the row is named (orchestrator, 2026-09-29): "(Jen)".
 export const rowLabel = (row) => (row.owner ? `${row.name} (${row.owner})` : row.name)
 
+// Whose plants a Cover all marks (Dave 10-11, "say it in the label"; finish plan D-4): null when they are all the
+// viewer's, else "yours and Jen's" / "Jen's" / "yours, Jen's and Sam's". One cloth covers the spot, so the run
+// stays one run; the button only says whose plants it logs.
+export function coverWhose(rows) {
+  const mine = rows.some((r) => r && !r.owner)
+  const others = [...new Set(rows.filter((r) => r && r.owner).map((r) => r.owner))].map((o) => `${o}’s`)
+  if (!others.length) return null
+  const names = mine ? ['yours', ...others] : others
+  return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
 export default function ProtectTonight({ protect, record, update, announce, writesHeld = false }) {
   const slice = record?.protect || null
   const setSlice = useCallback((fn) => update((r) => ({ ...r, protect: fn(r.protect || {}) })), [update])
@@ -216,7 +227,7 @@ export default function ProtectTonight({ protect, record, update, announce, writ
     const retry = remaining.some((k) => failed[k])
     const partial = covered ? [`covered ${covered}`, retry ? `${remaining.filter((k) => failed[k]).length} not logged` : null].filter(Boolean).join(' · ') : null
     return (
-      <CoverSpotRow key={s.key} spot={s} n={remaining.length} open={open} busy={b} retry={retry} partial={partial} held={writesHeld}
+      <CoverSpotRow key={s.key} spot={s} n={remaining.length} whose={coverWhose(remaining.map((k) => byKey.get(k)))} open={open} busy={b} retry={retry} partial={partial} held={writesHeld}
         onToggle={() => toggleSpot(s.key)} onCover={() => coverSpot(s, remaining)}
         undo={last ? { onClick: () => undoBatch(last[0]), busy: undoing === last[0], label: `Undo: ${s.name} covered ${covered}` } : null}>
         {s.keys.map((k) => plantRow(k, true))}
@@ -288,10 +299,11 @@ function ProtectDoneLine({ row, done, inCard, onUndo, undoBusy }) {
 
 // A spot's cover row (§4 "Protect spot cover row"): the same row anatomy as Needs care's spot rows — the
 // disclosure is a heading's button, the action its sibling behind 8 px of dead space — one level under the band.
-function CoverSpotRow({ spot, n, open, onToggle, onCover, busy, retry, partial, undo, held, children }) {
+function CoverSpotRow({ spot, n, whose = null, open, onToggle, onCover, busy, retry, partial, undo, held, children }) {
   const panelId = useId()
-  const text = busy ? `Covering ${busy.done} of ${busy.total}…` : retry ? `Retry ${n}` : (n === 1 ? 'Cover 1' : `Cover all ${n}`)
-  const name = busy ? text : retry ? `Retry: cover ${n} in ${spot.name}` : `${n === 1 ? 'Cover 1' : 'Cover all ' + n} in ${spot.name}`
+  const cover = (n === 1 ? 'Cover 1' : `Cover all ${n}`) + (whose ? ` · ${whose}` : '')
+  const text = busy ? `Covering ${busy.done} of ${busy.total}…` : retry ? `Retry ${n}` : cover
+  const name = busy ? text : retry ? `Retry: cover ${n} in ${spot.name}` : `${n === 1 ? 'Cover 1' : 'Cover all ' + n} in ${spot.name}${whose ? ` — ${whose}` : ''}`
   return (
     <li data-testid="protect-spot" data-spot={spot.name} data-count={n} style={{ ...cardRow, flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>

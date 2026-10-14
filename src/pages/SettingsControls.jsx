@@ -22,6 +22,7 @@ import { P } from '../lib/constants.js'
 import { HANDS, writeHand, orderByThumb } from '../lib/handedness.js'
 import { useHandedness, useHandednessSync } from '../hooks/useHandedness.js'
 import { saveHandedness } from '../lib/notificationPrefsClient.js'
+import { useShowOthers, writeShowOthers } from '../lib/householdView.js'
 
 const LABELS = {
   right: 'Right-handed',
@@ -126,6 +127,52 @@ export default function SettingsControls() {
         Saved on this device. The weigh-in button on the Harvests header stays on the right either
         way — you tap it before you pick anything up, so both hands are free.
       </p>
+
+      <HouseholdRow />
+    </div>
+  )
+}
+
+// THE HOUSEHOLD VIEW'S SWITCH (Today finish plan D-3; Dave 10-11, "settings row"). The redesigned Today has no
+// pill of its own, and once the old page goes this is the only way to turn it on. It is the SAME per-device key
+// the old page's pill writes (lib/householdView.js), so the two pages agree; Today reads it live. Per phone, on
+// purpose (SF6): turning it on here never puts someone else's care on another phone. No confirm and no toast,
+// like the handedness choice above: it applies on tap and the same tap undoes it.
+function HouseholdRow() {
+  const on = useShowOthers()
+  return (
+    <div style={{ marginTop: 32 }}>
+      <h2 style={{ fontSize: '1.1rem', margin: '0 0 4px', color: P.dark }}>Today</h2>
+      <div style={{ background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, marginTop: 10 }}>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          data-testid="household-view-switch"
+          onClick={() => writeShowOthers(!on)}
+          style={{
+            display: 'flex', alignItems: 'flex-start', gap: 12, width: '100%', textAlign: 'left',
+            minHeight: 48, padding: '12px 14px', background: 'none', cursor: 'pointer',
+            fontFamily: 'inherit', color: P.dark, border: 'none',
+          }}
+        >
+          <span style={{ flex: 1 }}>
+            <span style={{ display: 'block', fontSize: '0.96rem', fontWeight: 600 }}>Show the rest of the household’s care</span>
+            <span style={{ display: 'block', fontSize: '0.82rem', color: P.light, marginTop: 2, lineHeight: 1.4 }}>
+              Adds each other person’s care to Today as its own section, and their plants to Protect tonight. On this phone only.
+            </span>
+          </span>
+          <span aria-hidden="true" style={{
+            flexShrink: 0, width: 40, height: 24, borderRadius: 12, marginTop: 2, position: 'relative',
+            background: on ? P.green : P.border,
+          }}>
+            <span style={{
+              position: 'absolute', top: 2, left: on ? 18 : 2, width: 20, height: 20, borderRadius: '50%',
+              background: P.white,
+            }} />
+          </span>
+        </button>
+      </div>
     </div>
   )
 }

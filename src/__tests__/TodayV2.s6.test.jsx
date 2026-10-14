@@ -60,6 +60,8 @@ vi.mock('../hooks/useCachedFetch.js', () => ({
 
 import TodayV2 from '../pages/TodayV2.jsx'
 import { watchSelection } from '../components/HarvestWatchBand.jsx'
+import { composeBatchState } from '../components/ComposeHarvestBand.jsx'
+import { harvestSummary, putUpSummary } from '../components/today/v2/useTodayBands.js'
 
 const PAYLOAD = F('dailyplan.dave.json')
 const PLANTS = (() => { const p = F('plants.json'); return Array.isArray(p) ? p : p.plants })()
@@ -90,14 +92,37 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
+// Finish plan D-6 / D-7: the closed Harvest and Put-Up bands name what they hold — no pick count, a repeated jar once.
+describe('the band summaries, as data', () => {
+  const sel = (names) => { const all = names.map((name) => ({ name })); return { all, visible: all.slice(0, 2), snoozed: [] } }
+  it('only the compose batch: its crops by name, first three then "+N", never a count of picks', () => {
+    const post = composeBatchState(BATCH, 'harness_user')
+    expect(post).toBeTruthy()
+    const got = harvestSummary(post, { all: [], visible: [], snoozed: [] }, false)
+    expect(got).toMatch(/^Ready to post: [A-Z][^·]+$/)
+    expect(got).not.toMatch(/picks?\b|logged/)
+  })
+  it('both bands: "Ready to post · Worth checking: …" — the watch band\'s order, then the rest, "+N"', () => {
+    expect(harvestSummary(composeBatchState(BATCH, 'harness_user'), sel(['Radicchio', 'Beets', 'Cabbage', 'Kale']), false)).toBe('Ready to post · Worth checking: Radicchio, Beets, Cabbage +1')
+    expect(harvestSummary(null, sel(['Radicchio', 'Beets']), false)).toBe('Worth checking: Radicchio, Beets')
+  })
+  it('a repeated jar reads once with "×N", in its first place', () => {
+    const jar = (title, status = 'ok') => ({ title, crop_display_name: title, use_by_status: status })
+    expect(putUpSummary([jar('Basil'), jar('Plum'), jar('Basil')])).toMatch(/Basil ×2 · Plum$/)
+  })
+})
+
 describe('Harvest — the V2 harvest surface (port of Today.harvestSurface)', () => {
-  it('a closed section that NAMES what its bands list: the picks line, then the watch band\'s first three — no count', async () => {
+  it('a closed section that NAMES what its bands list: the batch\'s crops, then the watch band\'s first three — no pick count (finish plan D-6)', async () => {
     await mount()
     const h = header('harvest')
     expect(h.getAttribute('aria-expanded')).toBe('false')
     expect(sec('harvest').hasAttribute('data-count')).toBe(false)
     const first3 = watchSelection(WATCH).visible.slice(0, 3).map((c) => c.name).join(', ')
-    expect(sec('harvest').querySelector('[data-testid="section-summary"]').textContent).toBe(`6 picks · logged 20 min ago · check ${first3}…`)
+    const all = watchSelection(WATCH).all.length
+    const summary = sec('harvest').querySelector('[data-testid="section-summary"]').textContent
+    expect(summary).toMatch(new RegExp(`^Ready to post · Worth checking: ${first3.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${all > 3 ? ` \\+${all - 3}` : ''}$`))
+    expect(summary).not.toMatch(/picks|logged/)
     expect(screen.queryByTestId('today-watch-band')).toBeNull() // closed = unmounted
     expect(screen.queryByTestId('compose-harvest-band')).toBeNull()
   })
@@ -163,7 +188,7 @@ describe('From your Put-Up', () => {
     const s = sec('putup')
     expect(header('putup').textContent).toContain('From your Put-Up')
     expect(s.hasAttribute('data-count')).toBe(false)
-    expect(s.querySelector('[data-testid="section-summary"]').textContent).toBe('Summer Squash (past date) · Plum · Basil · Basil')
+    expect(s.querySelector('[data-testid="section-summary"]').textContent).toBe('Summer Squash (past date) · Plum · Basil ×2')
     expect(header('putup').getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(header('putup'))
     await settle()

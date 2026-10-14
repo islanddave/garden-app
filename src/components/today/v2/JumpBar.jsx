@@ -54,6 +54,8 @@ const barStyle = {
   top: `calc(${TOP_CHROME_HEIGHT_PX}px + env(safe-area-inset-top))`, zIndex: 70,
   display: 'flex', flexWrap: 'nowrap', alignItems: 'center', gap: 8,
   overflowX: 'auto', minHeight: JUMP_BAR_HEIGHT_PX, boxSizing: 'border-box', padding: '4px 0',
+  // The strip still scrolls (200% text); it draws no scrollbar under the chips (finish plan D-8).
+  scrollbarWidth: 'none',
   background: P.cream, borderBottom: `1px solid ${P.border}`,
 }
 // FilterChipRow's geometry (one chip grammar for navigation and filtering): 48 tall, pill, 6px 14px.

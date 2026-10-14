@@ -501,6 +501,11 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
 
   return (
     <div ref={rootRef} data-testid="today-care" style={{ display: 'flex', flexDirection: 'column', gap: T.space.sm }}>
+      {/* The feeding note, whenever it asks for something (finish plan D-5: it showed only under the Feed filter),
+          as an advisory line — no fill, a sage rule — at the top of the body. */}
+      {care.substrate && (
+        <p data-testid="today-substrate-note" style={substrateNote}>{care.substrate}</p>
+      )}
       {presentTasks.length > 1 && (
         <FilterChipRow aria-label="Show tasks" data-testid="care-filter-tasks"
           options={presentTasks.map((t) => ({ value: t, label: TASK_LABEL[t] }))}
@@ -513,11 +518,6 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
           options={spotsPresent} selected={new Set(spotSel)} pinned={(c?.pinned || []).filter((k) => spotsPresent.some((s) => s.value === k))}
           onToggle={(v) => { const n = new Set(spotSel); if (n.has(v)) n.delete(v); else n.add(v); changeFilters({ ...filters, spots: [...n] }) }}
           onClear={spotSel.length ? () => changeFilters({ ...filters, spots: [] }) : undefined} />
-      )}
-      {feedOnly && care.substrate && (
-        <div data-testid="today-substrate-note" style={substrateNote}>
-          <Icon name="lifecycle.sprout" size={15} decorative style={{ marginRight: 6, verticalAlign: '-0.15em' }} />{care.substrate}
-        </div>
       )}
 
       {feedOnly ? (
@@ -574,7 +574,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
         )
       })}
 
-      <FeedSuppressedList plan={care.plan} />
+      <FeedSuppressedList plan={care.plan} compact />
     </div>
   )
 }
@@ -584,4 +584,5 @@ const cardLi = { listStyle: 'none', background: P.white, border: '1px solid ' + 
 const groupLabel = { margin: 0, paddingLeft: 2, fontSize: T.type.xs, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: P.mid }
 const productHit = { flex: 1, minWidth: 0, minHeight: 48, padding: `6px ${T.space.sm}px`, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }
 const filledCommit = { display: 'block', width: 'calc(100% - 20px)', margin: '6px 10px', minHeight: T.buttonMinHeight, background: P.green, color: P.white, border: 'none', borderRadius: T.radiusButton, fontWeight: 700, fontSize: T.type.sm, cursor: 'pointer', fontFamily: 'inherit' }
-const substrateNote = { fontSize: T.type.sm, color: P.mid, lineHeight: 1.45, background: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: T.radiusCard, padding: '10px 12px' }
+// Advisory line (design-visual-system §3 "Operational alert lines"): no fill, 3px P.sage left rule, normal weight.
+const substrateNote = { margin: 0, fontSize: T.type.sm, color: P.dark, lineHeight: 1.45, borderLeft: `3px solid ${P.sage}`, paddingLeft: T.space.sm }

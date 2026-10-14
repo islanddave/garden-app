@@ -2,8 +2,9 @@
 // §2.4, §2.7, §4 "Jump bar"; §13 Simplify 5). PURE.
 //
 // A chip is NAVIGATION ONLY: it opens its section (a visit overlay, never remembered) and scrolls to it. Numbers
-// sit only on the work chips (Protect, Water, Feed, Check — the S3 brief, which supersedes plan §2.7's
-// "Heads-up n"); Heads-up, Harvest and Put-Up carry none (Reward UX: no count badge on a harvest or a jar).
+// sit on the work chips (Protect, Water, Feed, Check) and on Heads-up, whose band already says its count (Today
+// finish plan D-7 / Dave's D16, 2026-10-14); Harvest and Put-Up carry none (Reward UX: no count badge on a
+// harvest or a jar).
 // There is no in-view highlight (Simplify 5), so a chip has no state of its own.
 //
 // A chip EXISTS when its section is on the page and, for a counted chip, its count is above zero — at the visit's
@@ -18,7 +19,7 @@ export const CHIP_ORDER = ['protect', 'headsup', 'water', 'feed', 'check', 'harv
 
 export const CHIPS = {
   protect: { section: 'protect', label: 'Protect', icon: 'event.brought_inside', counted: true },
-  headsup: { section: 'headsup', label: 'Heads-up', icon: 'action.flag', counted: false },
+  headsup: { section: 'headsup', label: 'Heads-up', icon: 'action.flag', counted: true },
   water: { section: 'care', task: 'water', label: 'Water', icon: 'care.drop', counted: true },
   feed: { section: 'care', task: 'feed', label: 'Feed', icon: 'care.feed', counted: true },
   check: { section: 'care', task: 'check', label: 'Check', icon: 'event.observation', counted: true },

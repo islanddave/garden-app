@@ -8,7 +8,7 @@ import { taskCounts } from '../../../lib/todayV2/chips.js'
 // Feed 7"). V5-TODAYREDESIGN-001 S6; plan-v2 §1.0 row 7, §1.6, §2.9, §13 SF6.
 //
 // SHOWN ONLY WHEN the viewer has the household view on — V1's per-device opt-in (lib/householdView.js
-// readShowOthers(), SF6) — and only for a member with care rows today; the page decides both, and names the
+// useShowOthers(), SF6; switched on from Settings › Controls) — and only for a member with care rows today; the page decides both, and names the
 // member by householdView's memberFirstName() ("Jen", else "Someone else"), as V1 does (TodayV2). The
 // section is CLOSED by default and NEVER opens by itself: no trigger reads a household plan, so its open/closed
 // comes only from an explicit tap (Layer 1, key `hh-<first 8 of the member's sub>`) or Expand/Collapse all.

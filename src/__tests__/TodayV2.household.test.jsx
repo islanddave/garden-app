@@ -44,6 +44,8 @@ import CareNeeded from '../components/today/CareNeeded.jsx'
 import { readSkipped } from '../components/today/careStore.js'
 import { householdKey, householdSummary } from '../components/today/v2/HouseholdSection.jsx'
 import { TRIGGER_CELLS } from '../../tests/harness/_todaymeasure/today-v2-contract.mjs'
+import { writeShowOthers } from '../lib/householdView.js'
+import SettingsControls from '../pages/SettingsControls.jsx'
 
 const DAVE = F('dailyplan.dave.json')
 const JEN = F('dailyplan.jen.json')
@@ -101,6 +103,40 @@ describe('SF6 — household sections only while this device has the household vi
     wire.members = { members: [{ id: 'harness_user', display_name: 'Dave N' }] }
     await mount()
     expect(header(HH).textContent).toContain('Someone else’s care')
+  })
+})
+
+// Finish plan D-3 (Dave 10-11, "settings row"): the switch lives in Settings › Controls, and the page reads it LIVE —
+// a change made while Today is mounted (this tab or another) shows without a remount.
+describe('D-3 — the household switch: a Settings row, read live', () => {
+  it('turned on while the page is mounted: Jen\'s section appears; turned off: it goes', async () => {
+    await mount()
+    expect(sec(HH)).toBeNull()
+    act(() => writeShowOthers(true))
+    await settle()
+    expect(header(HH).textContent).toContain('Jen’s care')
+    act(() => writeShowOthers(false))
+    await settle()
+    expect(sec(HH)).toBeNull()
+  })
+  it('another tab\'s change arrives by the storage event', async () => {
+    await mount()
+    localStorage.setItem('garden.today.showOthers', '1')
+    act(() => { window.dispatchEvent(new StorageEvent('storage', { key: 'garden.today.showOthers', newValue: '1' })) })
+    await settle()
+    expect(sec(HH)).toBeTruthy()
+  })
+  it('the Settings › Controls row is a switch over the same key, per device', async () => {
+    render(<MemoryRouter><SettingsControls /></MemoryRouter>)
+    await settle()
+    const sw = screen.getByRole('switch', { name: /Show the rest of the household’s care/ })
+    expect(sw.getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(sw)
+    expect(localStorage.getItem('garden.today.showOthers')).toBe('1')
+    expect(sw.getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(sw)
+    expect(localStorage.getItem('garden.today.showOthers')).toBe('0')
+    expect(sw.getAttribute('aria-checked')).toBe('false')
   })
 })
 

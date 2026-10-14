@@ -115,8 +115,8 @@ export const MUTANTS_V2 = {
   truncateVerdict: {
     armedAt: 'S3', kind: 'chrome',
     file: 'src/components/today/v2/GlanceCard.jsx',
-    find: "minHeight: '2.7em', overflowWrap: 'anywhere',",
-    replace: "minHeight: '2.7em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',",
+    find: "minHeight: '1.35em', overflowWrap: 'anywhere',",
+    replace: "minHeight: '1.35em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',",
     killers: ['verdict-truncation', 'first-screen'],
     defect: 'the verdict ellipsis is restored',
   },

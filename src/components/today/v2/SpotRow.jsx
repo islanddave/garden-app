@@ -47,10 +47,10 @@ export default function SpotRow({ spot, open, onToggle, children, busy, groupBus
         </h4>
         <div style={zone}>
           <button type="button" onClick={disabled || busy ? undefined : onNotToday} aria-disabled={disabled || busy ? 'true' : undefined} aria-label={'Not today: ' + spot.name} style={outlineBtn}>Not today</button>
-          {n > 0 && (
+          {n > 0 ? (
             <button type="button" data-testid="care-spot-bulk" onClick={disabled || busy ? undefined : onWater} aria-disabled={disabled || busy ? 'true' : undefined}
-              aria-label={running ? label : `${label} in ${spot.name}`} style={tinted}>{label}</button>
-          )}
+              aria-label={running ? label : `${label} in ${spot.name}`} style={slotBtn}>{label}</button>
+          ) : <span aria-hidden="true" style={slotEmpty} />}
         </div>
       </div>
       {failing && (
@@ -88,10 +88,16 @@ const hit = {
   gap: 2, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: P.dark, overflowWrap: 'anywhere',
 }
 const zone = { display: 'flex', alignItems: 'center', gap: 8, paddingRight: 6, flexShrink: 0 }
+// The action column is one width on every spot (finish plan D-8: Not today moved from spot to spot): the water slot
+// is a fixed width, and stays empty when the spot has nothing to water. A longer label ("Water the other 12",
+// "Watering 3 of 12…") wraps inside it rather than pushing Not today left.
+export const SPOT_SLOT_W = 110
 export const tinted = {
   flexShrink: 0, minHeight: T.tapMinHeight, padding: '0 12px', background: P.greenPale, border: 'none', borderRadius: T.radiusButton,
   color: P.green, fontWeight: 700, fontSize: T.type.sm, cursor: 'pointer', fontFamily: 'inherit', fontVariantNumeric: 'tabular-nums',
 }
+const slotBtn = { ...tinted, width: SPOT_SLOT_W, padding: '0 8px', whiteSpace: 'normal', lineHeight: 1.2 }
+const slotEmpty = { flexShrink: 0, width: SPOT_SLOT_W }
 // One 48px line under the header, the done line's anatomy: the failure in words, then its Retry (§5.10 "Failed:
 // 'Not logged' text" — the words carry it, not the colour).
 const failLine = { display: 'flex', alignItems: 'center', gap: 8, minHeight: 48, padding: '0 6px 0 10px', borderTop: '1px solid ' + P.border }

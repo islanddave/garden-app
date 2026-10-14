@@ -630,7 +630,7 @@ async function runInteractions(state, checks, at) {
         const label = CHIPS[ch.key]?.label
         if (!label) { F(`chip '${ch.key}' is not a chip the bar knows`); continue }
         if (counted && !new RegExp(`^${label} (\\d+|· done)$`).test(ch.text)) F(`work chip '${ch.key}' reads "${ch.text}", expected "${label} <count>" or "${label} · done"`)
-        if (!counted && ch.text !== label) F(`chip '${ch.key}' reads "${ch.text}" — only Protect, Water, Feed and Check carry a number`)
+        if (!counted && ch.text !== label) F(`chip '${ch.key}' reads "${ch.text}" — only Protect, Heads-up, Water, Feed and Check carry a number`)
       }
       // At 200% text the chips outgrow the strip: it must scroll (overflow-x auto), and every chip must sit inside
       // the strip's scrollable range — not painted past its edge where no scroll reaches it.

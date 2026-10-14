@@ -292,6 +292,7 @@ export default function WeatherWidget({
   waterDueCount = 0,
   lowShown = null,
   coldRange = null,
+  headline: headlineShown = null,
 }) {
   // V5-FROSTTWOMODELS-001 — `lowShown` is DISPLAY ONLY: the night-low figure below prints it when set
   // (Today passes the one low it prints for tonight, src/lib/tonightLow.js). It never reaches the
@@ -342,7 +343,10 @@ export default function WeatherWidget({
   // Derived headline (NET-NEW). Both lane verdicts -> one no-wrap sentence; the lanes + rain note restate it.
   const containersDo = pillState(scale.containers) === 'do'
   const bedsDo = pillState(scale.beds) === 'do'
-  const headline = headlineFor(containersDo, bedsDo, waterDueCount)
+  // `headline` is DISPLAY ONLY, like `lowShown`: the V2 glance card passes the verdict its closed state prints
+  // (verdict.js glanceHeadline), so opening the card never changes the sentence (Today finish plan D-2). Absent
+  // (V1), the sentence is computed here exactly as before.
+  const headline = headlineShown || headlineFor(containersDo, bedsDo, waterDueCount)
 
   // A full-width stacked lane: [leading target icon] [label flex:1 min-width:0] [3-can rail OR pause shape].
   // V4-WATERWHY-002: non-interactive (was a <button> only to toggle the removed Why panel).

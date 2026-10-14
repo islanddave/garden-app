@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 import { useApiFetch } from '../../../lib/api.js'
 import { useCachedFetch } from '../../../hooks/useCachedFetch.js'
 import { useMembers } from '../../../hooks/useMembers.js'
@@ -7,7 +7,7 @@ import { enrichRows, locationIndex } from '../../../lib/todayV2/spots.js'
 import { coldRows, protectOrder, protectSummary, pickNight } from '../../../lib/todayV2/protect.js'
 import { protectTier, protectTrigger, tonightLowRaw, frostNamesTonight } from '../../../lib/todayV2/triggers.js'
 import { agreedTonightLow } from '../../../lib/tonightLow.js'
-import { readShowOthers, memberFirstName } from '../../../lib/householdView.js'
+import { useShowOthers, memberFirstName } from '../../../lib/householdView.js'
 import { loggedKey } from './needsCareStore.js'
 import { useTodayLogged } from './useTodayLogged.js'
 import { seenKey, readSeen, markSeen } from './todaySeen.js'
@@ -33,7 +33,7 @@ export function useProtect({ plan, planDate, userId, stale, householdPlans, care
   const { fetch, getToken } = useApiFetch()
   const plants = useCachedFetch('/api/plants')
   const locations = useCachedFetch('/api/locations')
-  const [showOthers] = useState(readShowOthers)
+  const showOthers = useShowOthers()
   const { members, loading: membersLoading } = useMembers()
 
   const logKey = loggedKey(userId, planDate)

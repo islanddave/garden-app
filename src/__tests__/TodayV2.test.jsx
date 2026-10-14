@@ -161,6 +161,64 @@ describe('TodayV2 page states', () => {
     expect(sow.style.color).toBeTruthy()
   })
 
+  // Finish plan D-1: the caught-up line sits in Needs care's SLOT — after Protect tonight, never above it.
+  it('D-1: with Protect on the page and nothing to care for, the caught-up line comes after Protect', () => {
+    planState.current = { data: { has_plan: true, plan_date: D, plan: { water_due: [], cold: PLAN.cold, dormant: [] } }, loading: false, error: null, reload: vi.fn() }
+    mount()
+    const empty = screen.getByTestId('care-empty')
+    const protect = screen.getByTestId('today-sec-protect')
+    expect(protect.compareDocumentPosition(empty) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  // Finish plan D-5: V1 always shows the "No feed schedule" line; the redesigned page dropped it whenever Needs care
+  // was absent. On an empty day it now sits with the caught-up line, in the page's own words and type size.
+  it('D-5: an empty day still says which plantings have no feed schedule', () => {
+    planState.current = { data: { has_plan: true, plan_date: D, plan: { water_due: [], dormant: [], feed_suppressed: [row('s1', { name: 'Hydrangea' }), row('s2', { name: 'Rose' })] } }, loading: false, error: null, reload: vi.fn() }
+    mount()
+    const line = screen.getByTestId('care-feed-suppressed')
+    expect(line.textContent).toContain('No feed schedule: 2 plantings')
+    expect(screen.getByTestId('care-empty').compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(line.querySelector('button'))
+    expect(line.textContent).toContain('Fed on plant signals, never by the calendar.')
+    expect(line.textContent).toContain('Hydrangea')
+  })
+
+  // Finish plan D-9: the stale marker lived only inside the glance card, which a plan with no weather does not have.
+  it('D-9: yesterday\'s plan with no weather still says how old it is', () => {
+    planState.current = { data: { has_plan: true, plan_date: '2020-01-01', generated_at: null, plan: { water_due: [], dormant: [] } }, loading: false, error: null, reload: vi.fn() }
+    mount()
+    expect(screen.queryByTestId('today-glance')).toBeNull()
+    const stale = screen.getByTestId('today-stale')
+    expect(stale.getAttribute('data-stale')).toBe('true')
+    expect(stale.textContent).toBe('An older plan')
+  })
+
+  // Finish plan D-7: a one-item section that is open drops its summary (it would repeat its only row).
+  it('D-7: Resting with one plant names it while closed, and drops the name once opened', () => {
+    planState.current = { data: { has_plan: true, plan_date: D, plan: { ...PLAN, dormant: [row('d1', { name: 'Blackberry' })] } }, loading: false, error: null, reload: vi.fn() }
+    mount()
+    const sec = () => screen.getByTestId('today-sec-resting')
+    expect(sec().querySelector('[data-testid="section-summary"]').textContent).toBe('Blackberry')
+    fireEvent.click(band('resting'))
+    expect(sec().querySelector('[data-testid="section-summary"]')).toBeNull()
+  })
+
+  // Finish plan D-5: the feeding note showed only under the Feed filter; now it heads the Needs care body whenever it
+  // asks for something, as an advisory line, and stays quiet when the engine holds feeding.
+  it('D-5: the feeding note heads the opened Needs care body without a filter; on hold, it says nothing', () => {
+    planState.current = { data: { has_plan: true, plan_date: D, plan: { ...PLAN, substrate: { msg: '3 plantings are past the feed window.', on_hold: false } } }, loading: false, error: null, reload: vi.fn() }
+    mount()
+    fireEvent.click(band('care'))
+    const note = screen.getByTestId('today-substrate-note')
+    expect(note.textContent).toBe('3 plantings are past the feed window.')
+    expect(screen.getByTestId('today-care').firstElementChild).toBe(note)
+    cleanup()
+    planState.current = { data: { has_plan: true, plan_date: D, plan: { ...PLAN, substrate: { msg: 'Feeding on hold.', on_hold: true } } }, loading: false, error: null, reload: vi.fn() }
+    mount()
+    fireEvent.click(band('care'))
+    expect(screen.queryByTestId('today-substrate-note')).toBeNull()
+  })
+
   it('no plan: the one neutral sentence, no care line, the Sow link row', () => {
     planState.current = { data: { has_plan: false, plan: null, plan_date: D }, loading: false, error: null, reload: vi.fn() }
     mount()
