@@ -224,8 +224,9 @@ def rehearse(rig):
     chk("the EXECUTE NOTICE names the SECURITY DEFINER trigger function and does not refuse it",
         "SECURITY DEFINER trigger functions among them (not callable directly): audit_row()" in res[2], said(res[2]))
     granted = sorted(ln for ln in rig.dump(db).splitlines() if ROLE in ln)
-    chk("pg_dump with privileges names the role in exactly seven lines: INSERT on each of the seven columns",
-        granted == sorted(f"GRANT INSERT({c}) ON TABLE public.weather_cold_range TO {ROLE};" for c in rl.COLUMNS),
+    chk("pg_dump with privileges names the role in exactly eight lines: INSERT on each of the seven columns and USAGE on schema public",
+        granted == sorted([f"GRANT INSERT({c}) ON TABLE public.weather_cold_range TO {ROLE};" for c in rl.COLUMNS]
+                          + [f"GRANT USAGE ON SCHEMA public TO {ROLE};"]),
         "; ".join(granted))
     applied = rig.state(db)
     res = rig.a(db)

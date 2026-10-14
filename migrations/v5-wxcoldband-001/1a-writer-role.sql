@@ -52,7 +52,7 @@
 --       other column (created_at), and table-level INSERT is false;
 --     every sequence there: no USAGE, SELECT or UPDATE;
 --     CREATE on no non-system schema, and CREATE on this database false;
---     USAGE on schema public true (from PUBLIC, normally), or the grant reaches nothing;
+--     USAGE on schema public true (granted to the role here; Neon staging does not give it to PUBLIC);
 --     row security still off, and not forced, on weather_cold_range (enabled with no policy it is
 --       deny-all for a non-owner: 0a C10);
 --     no SECURITY DEFINER routine it can EXECUTE outside the system schemas, unless it returns trigger
@@ -185,6 +185,10 @@ BEGIN
   END LOOP;
 END $$;
 REVOKE CREATE ON SCHEMA public FROM garden_wx_writer;
+-- USAGE on the schema lets the role name the table and gives no access to any data. PUBLIC holds it on a
+-- stock database; staging (Neon) was found 2026-10-14 not to grant it to PUBLIC, so it is granted to the
+-- role itself. 1r's REVOKE ALL ON SCHEMA public takes it back.
+GRANT USAGE ON SCHEMA public TO garden_wx_writer;
 
 GRANT INSERT (space_id, night_date, init_time, p10_min_f, p50_min_f, leads_read, leads_expected)
   ON public.weather_cold_range TO garden_wx_writer;
@@ -314,7 +318,7 @@ BEGIN
     bad := bad || format('CREATE on database %I (it could make a schema)', current_database());
   END IF;
   IF NOT pg_catalog.has_schema_privilege(me, 'public', 'USAGE') THEN
-    bad := bad || 'no USAGE on schema public (PUBLIC does not hold it here): the grant reaches nothing'::text;
+    bad := bad || 'no USAGE on schema public after granting it: the grant reaches nothing'::text;
   END IF;
 
   -- g. Row security on the table stays off (0a C10).
