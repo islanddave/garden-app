@@ -280,11 +280,11 @@ def _git(cwd, *args):
 @pytest.fixture
 def repos(tmp_path, monkeypatch):
     origin, work, reader = str(tmp_path / "origin.git"), str(tmp_path / "work"), str(tmp_path / "reader")
-    _git(str(tmp_path), "init", "--quiet", "--bare", origin)
-    _git(str(tmp_path), "init", "--quiet", "-b", "dev", work)
+    _git(str(tmp_path), "init", "--quiet", "--object-format=sha1", "--bare", origin)
+    _git(str(tmp_path), "init", "--quiet", "--object-format=sha1", "-b", "dev", work)
     _git(work, "commit", "--quiet", "--allow-empty", "-m", "one")
     _git(work, "push", "--quiet", origin, "dev")
-    _git(str(tmp_path), "init", "--quiet", reader)
+    _git(str(tmp_path), "init", "--quiet", "--object-format=sha1", reader)
     _git(reader, "remote", "add", "origin", origin)
     monkeypatch.setattr(dpc, "ROOT", reader)
     real = dpc._run

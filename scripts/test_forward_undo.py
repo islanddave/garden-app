@@ -73,8 +73,8 @@ class World:
         os.makedirs(tmp, exist_ok=True)
         self.bare = str(tmp / "origin.git")
         self.work = str(tmp / "work")
-        g(tmp, "init", "--quiet", "--bare", "-b", "main", self.bare)
-        g(tmp, "init", "--quiet", "-b", "main", self.work)
+        g(tmp, "init", "--quiet", "--object-format=sha1", "--bare", "-b", "main", self.bare)
+        g(tmp, "init", "--quiet", "--object-format=sha1", "-b", "main", self.work)
         g(self.work, "remote", "add", "origin", self.bare)
         os.makedirs(os.path.join(self.work, "scripts"))
         os.makedirs(os.path.join(self.work, "public"))  # add-release writes into it, never creates it
