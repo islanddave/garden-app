@@ -6,27 +6,32 @@
 // (LOADS_SRC in ./vitest-node-project.mjs). This began as the A3 trial, behind an env key that switched it on; the
 // key is gone (OPS-A3TRIALKEYREMOVE-001) and two projects are the only shape.
 //
-// This file holds five things:
+// This file holds six things:
 //   1. the projects are there. This file has no DOM and runs in `node`, and the installed vitest lists the two
 //      projects;
 //   2. every test-named file outside tests/integration is in exactly one project. A file in no project is never run;
 //      a file in two runs twice and doubles its test IDs;
 //   3. the node project is exactly the *.test.* files under its four roots that are not in LOADS_SRC;
-//   4. no node-project file loads anything under src/, itself or through what it imports. The test-ID digest and the
+//   4. no node-project file picks its own environment with a docblock (vitest's or jest's `-environment` tag).
+//      vitest lets the docblock override the project's `environment`, so such a file would run under jsdom in
+//      `node`, without src/__tests__/setup.ts, and every other guard here would stay green;
+//   5. no node-project file loads anything under src/, itself or through what it imports. The test-ID digest and the
 //      coverage report are both blind to a test that passes under node on the no-browser branches of SPA code;
-//   5. every file in LOADS_SRC still does load something under src/, so the list stays only as long as it is true.
+//   6. every file in LOADS_SRC still does load something under src/, so the list stays only as long as it is true.
 // 1 to 3 ask the installed vitest which project each file is in (`vitest list --filesOnly --json` in a child process,
 // as vitest-test-ids-reporter.test.js asks it for its default reporters) and do not re-implement its globs.
 //
-// The trial's text scan for browser globals in node-project files went with the key, as this header said it would:
-// a DOM test under a node root now fails by itself in every run (`document is not defined`), and the scan kept only
-// its false positives.
+// The trial's text scan for plain uses of browser globals in node-project files went with the key: a DOM test under
+// a node root now fails by itself in every run (`document is not defined`), unless it switches its own environment by
+// docblock, which 4 refuses. 4 is the one part of that scan kept: it reads each line as written, so a comment that
+// names the tag counts too (split the token).
 //
-// 4 and 5 read text, with one pattern (SPECIFIER): a quoted specifier after `from`, `import`, `import(`,
-// `require(`, `require.resolve(`, or a vi.mock / doMock / unmock / doUnmock / importActual / importMock call. That
-// covers static and side-effect imports, re-exports, literal dynamic imports and mocks. Relative specifiers, a
-// leading-slash one that names a file, and the aliases of vitest.config.ts are followed through every file they
-// reach; packages are not. A mock of a src/ module counts as loading it: the code under test imports that module.
+// 4 reads text with its own pattern (ENV_DOCBLOCK). 5 and 6 read text with one pattern (SPECIFIER): a quoted
+// specifier after `from`, `import`, `import(`, `require(`, `require.resolve(`, or a vi.mock / doMock / unmock /
+// doUnmock / importActual / importMock call. That covers static and side-effect imports, re-exports, literal dynamic
+// imports and mocks. Relative specifiers, a leading-slash one that names a file, and the aliases of vitest.config.ts
+// are followed through every file they reach; packages are not. A mock of a src/ module counts as loading it: the
+// code under test imports that module.
 // The scan errs toward dom: an import-shaped line inside a comment or a string counts as an import.
 // What it cannot see, and what the tree held of each when the rule was added (2026-10-07):
 //   - a computed specifier: an import or require of a variable, of a call, or of a template with a placeholder.
@@ -40,7 +45,7 @@
 //     Function constructor, vm or transform call).
 //   - a child process: a test that spawns `node` on a file runs that file outside vitest in either project.
 //   - vite's glob import (the glob method of import.meta): no file under the node roots used one.
-// A test that loads SPA code by one of those routes belongs in LOADS_SRC by hand; 5 would then ask for its removal,
+// A test that loads SPA code by one of those routes belongs in LOADS_SRC by hand; 6 would then ask for its removal,
 // so say so in a line of this header first.
 import { describe, it, expect, beforeAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -52,6 +57,9 @@ const ROOT = process.cwd()
 const NODE_ROOTS = ['lambda/', 'scripts/', 'migrations/', 'tests/parity/']
 const ROOTS_SAID = 'lambda/, scripts/, migrations/ and tests/parity/'
 const LIST = 'LOADS_SRC in scripts/ci-telemetry/vitest-node-project.mjs'
+// An environment docblock, read on the line as written (a docblock is a comment, so comments are not taken off). Built
+// from parts, so that this file, which sits under a node root, does not match itself.
+const ENV_DOCBLOCK = new RegExp('@(?:vitest|jest)' + '-environment\\b')
 // A test file as vitest's own default `include` has it (**/*.{test,spec}.?(c|m)[jt]s?(x)), and nothing wider: a
 // snapshot (x.test.jsx.snap) or a parked draft (x.int.test.js.txt) is named like a test and is not one.
 // NODE_TEST_NAMED, which picks the node project's files, ends the same way, so neither shape collects such a file
@@ -316,6 +324,23 @@ describe('the projects, asked of the installed vitest', () => {
     expect(on.some(({ project }) => project === 'dom')).toBe(true)
   })
 
+  it('finds no node-project file that picks its own environment by docblock', () => {
+    const problems = []
+    for (const file of inNode) {
+      readFileSync(resolve(ROOT, file), 'utf8').split('\n').forEach((line, index) => {
+        const hit = line.match(ENV_DOCBLOCK)
+        if (hit) {
+          problems.push(`${file}:${index + 1} names ${hit[0]}, and this file runs in vitest's node project, where ` +
+            "the docblock overrides the project's environment: the file would run with a DOM and without " +
+            'src/__tests__/setup.ts. Move the test under src/__tests__/ (the dom project), or take the docblock out. ' +
+            "If the line is prose, split the token ('@vitest' + '-environment').")
+        }
+      })
+    }
+    expect(problems, problems.join('\n')).toEqual([])
+    expect(inNode.length).toBeGreaterThan(100)
+  })
+
   it('finds no node-project file that loads anything under src/, itself or through what it imports', () => {
     const problems = []
     const unfollowed = []
@@ -384,6 +409,21 @@ describe('what counts as a test file', () => {
     expect(others.filter((name) => NODE_TEST_NAMED.test(name))).toEqual([])
     expect(['a.test.js', 'a.int.test.mjs', 'a.test.tsx', 'a.spec.js'].map((name) => NODE_TEST_NAMED.test(name)))
       .toEqual([true, true, true, false])
+  })
+})
+
+describe('what counts as an environment docblock', () => {
+  const tag = (tool) => '@' + tool + '-environment'
+
+  it('is either spelling, in a block comment or a line comment, with or without a value', () => {
+    const lines = [`/** ${tag('vitest')} jsdom */`, ` * ${tag('vitest')} happy-dom`, `// ${tag('jest')} jsdom`,
+      `/* ${tag('vitest')} */`]
+    expect(lines.filter((line) => !ENV_DOCBLOCK.test(line))).toEqual([])
+  })
+
+  it('is not the words around it', () => {
+    const lines = ['@vitest/coverage-v8', "environment: 'node'", '@vitest-environments-guide', 'vitest environment']
+    expect(lines.filter((line) => ENV_DOCBLOCK.test(line))).toEqual([])
   })
 })
 

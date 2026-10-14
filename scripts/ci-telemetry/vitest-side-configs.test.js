@@ -7,16 +7,16 @@
 //   - the stress run failed every test of the node project, because its setup file loaded there too.
 //
 // WHAT THIS HOLDS
-//   1. Each `test:flag-off*` script, with the arguments package.json gives it, collects only files under the `--dir`
-//      it passes, and one that passes none collects what the unit run collects. So does vitest.flagoff.config.ts
-//      under a `--dir`, which its script does not pass and a by-hand run may.
+//   1. Each `test:flag-off*` script, with the arguments package.json gives it, collects exactly the files the unit run
+//      collects with the same filters, cut to the `--dir` it passes (all of them when it passes none). So does
+//      vitest.flagoff.config.ts under a `--dir`, which its script does not pass and a by-hand run may.
 //   2. The stress config lists stressSetup.ts in place of src/__tests__/setup.ts and nowhere else: in the jsdom
 //      project, not in the node project, and not beside `projects`.
 //   3. A node-project file passes under the stress config.
 //
 // The children get PATH and HOME and nothing else of this run's environment, as in ./vitest-projects.test.js.
 // Until OPS-A3TRIALKEYREMOVE-001 the projects were behind the A3 trial's env key, and 1 and 2 compared each config
-// with the key and without it. With one shape, 1 holds the `--dir` by where the files are.
+// with the key and without it. With one shape, 1 holds the `--dir` against the unit run cut to that directory.
 import { describe, it, expect } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -55,6 +55,10 @@ const collected = ({ env, args }) => {
   return [...new Set(JSON.parse(out).map(({ file }) => posix(relative(ROOT, file))))].sort()
 }
 
+// A script's positional filters: its arguments without `--config <file>` and `--dir <dir>` (either spelling).
+const filtersOf = (args) => args.filter((word, at) => !['--config', '--dir'].includes(word) &&
+  !['--config', '--dir'].includes(args[at - 1]) && !word.startsWith('--dir=') && !word.startsWith('--config='))
+
 const FLAG_OFF = Object.keys(scripts).filter((name) => name.startsWith('test:flag-off')).sort()
 const RUNS = [
   ...FLAG_OFF.map((name) => ({ said: `npm run ${name}`, run: parsed(name) })),
@@ -79,12 +83,14 @@ describe('the flag-off configs collect the files under their --dir', () => {
       const files = collected(run)
       const dir = cliDir(['node', 'vitest', 'run', ...run.args])
       expect(files.length, 'files collected').toBeGreaterThan(0)
-      if (dir === undefined) {
-        expect(files, 'with no --dir, the files the unit run (vitest.config.ts) collects').toEqual(collected({ env: {}, args: [] }))
-      } else {
-        expect(files.filter((file) => !file.startsWith(`${dir.replace(/\/$/, '')}/`)), `collected outside --dir ${dir}: ` +
-          'the --dir did not reach a project (withCliDir in scripts/ci-telemetry/vitest-side-config.mjs)').toEqual([])
-      }
+      // The unit run (vitest.config.ts) given the same filters, cut to the --dir: exactly what this run must collect.
+      // The unit run does not narrow by a --dir of its own (it does not reach a project), so the cut is made here.
+      const unit = collected({ env: run.env, args: filtersOf(run.args) })
+      const expected = dir === undefined ? unit : unit.filter((file) => file.startsWith(`${dir.replace(/\/$/, '')}/`))
+      const why = dir === undefined ? 'with no --dir, the files the unit run collects'
+        : `the files under --dir ${dir} that the unit run collects with the same filters: more means the --dir did ` +
+          'not reach a project, fewer that withCliDir (scripts/ci-telemetry/vitest-side-config.mjs) narrowed one'
+      expect(files, why).toEqual(expected)
     }, 240000)
   }
 })

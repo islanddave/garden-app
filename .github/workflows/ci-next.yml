@@ -354,11 +354,11 @@ jobs:
           python3 -m pytest -q scripts/test_*.py
 
   # The UTC pass with coverage, between the two halves of the coverage ratchet: the measured floor reads the
-  # coverage/coverage-summary.json this leg's own `npm test` writes. Measured before the trial key, on the soak
-  # (ci-next-soak run 37559095399, dev f792a200, 1,482 files, ten attempts): job median 17.95 min, six of ten over
-  # 17.8, the vitest step 661-1,095 s (gardening-docs project-state/_promotepath-20261002/
-  # scout-a8-and-slowdown-20261007.md, lines 351-355, with the run at 47 and the range at 62). With the trial key
-  # the A3 scout infers about 3 min less; that is not yet measured on a runner.
+  # coverage/coverage-summary.json this leg's own `npm test` writes. Measured in the one-project shape (jsdom for
+  # every file, before the A3 trial), on the soak (ci-next-soak run 37559095399, dev f792a200, 1,482 files, ten
+  # attempts): job median 17.95 min, six of ten over 17.8, the vitest step 661-1,095 s (gardening-docs
+  # project-state/_promotepath-20261002/scout-a8-and-slowdown-20261007.md, lines 351-355, with the run at 47 and the
+  # range at 62). For the two projects the A3 scout inferred about 3 min less; that is not yet measured on a runner.
   unit-utc-cov:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

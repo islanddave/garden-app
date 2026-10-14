@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig, configDefaults } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import TestIdsReporter from './scripts/ci-telemetry/vitest-test-ids-reporter.mjs';
@@ -7,9 +8,10 @@ import { nodeProjectFiles } from './scripts/ci-telemetry/vitest-node-project.mjs
 // server-side: those under lambda/, scripts/, migrations/ and tests/parity/ that load nothing under src/. Which
 // files those are, and why they reach vitest as one list of files and not as globs, is
 // scripts/ci-telemetry/vitest-node-project.mjs. The list is the node project's `include` and the dom project's
-// `exclude`, so dom takes every other file, wherever it lives.
+// `exclude`, so dom takes every other file, wherever it lives. The walk runs on every load of this config, so the
+// directory is a path (fileURLToPath), not a URL's pathname, which would keep a space in the checkout path as %20.
 const twoProjects = () => {
-  const nodeFiles = nodeProjectFiles(new URL('.', import.meta.url).pathname);
+  const nodeFiles = nodeProjectFiles(fileURLToPath(new URL('.', import.meta.url)));
   return [
     { extends: true, test: { name: 'dom', environment: 'jsdom', setupFiles: ['./src/__tests__/setup.ts'], exclude: nodeFiles } },
     { extends: true, test: { name: 'node', environment: 'node', include: nodeFiles } },
