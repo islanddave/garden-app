@@ -9,7 +9,7 @@
 //
 // WHAT BREAKS IF THIS REDS. Someone raised FROST_IMMINENT_LOW_F's default (or a band's), or lowered
 // FREEZE_BELOW_F. Then there is a band of lows, from the cut up to the trip point, where the email has gone out
-// and the forecast has not moved: the cue reads "Cool night", not "Freeze tonight"; the warmed line does not
+// and the forecast has not moved: the cue reads "Cold night", not "Freeze tonight"; the warmed line does not
 // print, because nothing warmed; and Today is silent about a frost email Dave is holding. Fix the constant, or
 // give that band a line, before moving either number.
 //

@@ -11,7 +11,7 @@
 // minimum falls before dawn on 78% of cold days here). So this line CAN name tonight; it names the
 // night the SNS text named. See src/lib/frostAlertLine.js.
 // V5-TODAYRADIATIVEWATCH-001 — the one imminent send that cue does NOT cover renders here too: a
-// radiative "Frost watch tonight", which fires at 39-42F where the cue says "Cool night" or nothing. It
+// radiative "Frost watch tonight", which fires at 39-42F where the cue says "Cold night" or nothing. It
 // and a radiative-only advisory read "Frost watch <night> — clear and calm, low N°F. …", as their
 // emails are titled. Same slot, same treatment below: no new element, colour or tap target.
 // V5-FROSTTWOMODELS-001 — on such a night the two models' lows used to sit on screen side by side for

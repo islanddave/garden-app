@@ -116,7 +116,7 @@ export const MUTANTS = {
     'src/pages/Today.jsx',
     '<WeatherCueLine callout={cueCallout} generatedAt={data?.generated_at} planDate={data?.plan_date} />',
     '<></>',
-    'the engine\'s one-cue-per-day weather line ("Cool night (44°F) — protect …") stops rendering. On a quiet day that is indistinguishable from the engine being silent.',
+    'the engine\'s one-cue-per-day weather line ("Cold night (44°F) — protect …") stops rendering. On a quiet day that is indistinguishable from the engine being silent.',
   ],
   dropFrostLine: [
     'src/pages/Today.jsx',

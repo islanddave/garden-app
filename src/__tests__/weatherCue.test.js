@@ -12,6 +12,8 @@ import {
   buildCueLine, CUE_FORM, CHECK_CLAUSE, CUE_SEPARATOR, WX_CUE_MODEL_VERSION,
 } from '../lib/weatherCue.js'
 
+import { CUES, FORMS, normalizeCueImpression } from '../../lambda/daily-plan-read/cue-impression.js'
+
 const { computeCallout } = engine
 
 // Inputs chosen to reach each of computeCallout's six priority-ordered branches, and its silence
@@ -124,5 +126,35 @@ describe('no threshold and no forecast-amount gate lives in the reader', () => {
 
   it('pins the model version the impression rows are partitioned by', () => {
     expect(WX_CUE_MODEL_VERSION).toBe('wxcue-v3')
+  })
+})
+
+// V5-CHILLBAND-001 — the first version of the cool rule (7b43773d, 2026-09-09) was reverted 46 minutes later:
+// the engine returned icon `cool`, this reader did not know it, and Today went silent on such a night.
+describe('the September failure cannot recur: what the engine emits, Today can render and the server can record', () => {
+  // Every cold-side output across the seasons, pushed through the REAL reader and the REAL validator.
+  const OUTPUTS = []
+  for (const date of ['2026-06-01', '2026-09-08', '2026-01-15', null]) {
+    for (const low of [30, 39.9, 40, 43, 44.9, 45, 45.6, 47, 49.7, 49.9]) {
+      const c = computeCallout({ tonightLow: low, highToday: 74 }, DRY, false, date)
+      if (c) OUTPUTS.push([`${date} ${low}`, c])
+    }
+  }
+
+  it('reaches all three cold-side icons (control)', () => {
+    expect([...new Set(OUTPUTS.map(([, c]) => c.icon))].sort()).toEqual(['cold', 'cool', 'freeze'])
+  })
+
+  it.each(OUTPUTS)('%s renders the engine\'s whole sentence, and its impression is accepted', (_w, callout) => {
+    const line = buildCueLine(callout)
+    expect(line).toEqual({ cue: callout.icon, form: 'imperative', text: callout.text })
+    expect(normalizeCueImpression({ cue: line.cue, form: line.form })).toMatchObject({ cue: callout.icon, form: 'imperative' })
+  })
+
+  it('`cool` is in both closed vocabularies, and keeps the separator the reader splits on', () => {
+    expect(CUE_FORM.cool).toBe('imperative')
+    expect(CUES.has('cool')).toBe(true)
+    expect(FORMS.has(CUE_FORM.cool)).toBe(true)
+    for (const [, c] of OUTPUTS) expect(c.text.split(CUE_SEPARATOR)).toHaveLength(2)
   })
 })

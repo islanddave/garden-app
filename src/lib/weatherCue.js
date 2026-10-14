@@ -21,6 +21,9 @@
 // statement about a night that has not happened yet at any hour Dave reads this — so unlike the
 // other three they are not stale at 08:00, and softening "cover the peppers" into a question would
 // weaken the one cue whose cost of inaction is a dead plant.
+// V5-CHILLBAND-001 (2026-10-13) added a sixth rule, `cool` (a 45-50°F low between May 1 and Oct 31). It is
+// exempt for the same reason, and for one more: its action half is the engine's SEASON words, which a
+// fixed check clause would discard.
 //
 // THE CONDITION HALF IS THE ENGINE'S, VERBATIM. Every cue string is "<condition> — <action>". The
 // condition half carries the engine's numbers (including the probability-weighted rain figure

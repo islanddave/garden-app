@@ -1,7 +1,7 @@
 // V5-TODAYRADIATIVEWATCH-001 — the radiative "Frost watch" on Today: the pure rule and the MOUNT.
 //
 // THE GAP (FROST_RADIATIVE_ENABLED=true in prod). A radiative imminent email ("Garden alert - Frost watch tonight
-// (low 41F)") fires ABOVE the trip point, at a plan low of 39-42F, where the weather cue says "Cool night" or nothing
+// (low 41F)") fires ABOVE the trip point, at a plan low of 39-42F, where the weather cue says "Cold night" or nothing
 // and the frost line skipped every imminent entry — so on the evening the email said "watch", Today never did. And a
 // radiative-only ADVISORY's line read "Frost possible tonight — low 42°F", naming no watch, because its entry did not
 // carry the trip basis.
@@ -188,7 +188,7 @@ function readPage(container) {
 beforeEach(() => { fetchMock.mockClear(); planState.current = null })
 
 describe('Today — the watch line, mounted from plan.alerts_sent', () => {
-  it('THE GAP: a radiative imminent email at plan low 41 -> "Cool night (41°F)" cue AND the watch line', () => {
+  it('THE GAP: a radiative imminent email at plan low 41 -> "Cold night (41°F)" cue AND the watch line', () => {
     planState.current = mountData(planFor(41, [watch(41)]))
     const { container } = render(<Today />)
     expect(readPage(container)).toEqual({ card: '41°', cue: coldText(41), line: WATCH('tonight', 41) })

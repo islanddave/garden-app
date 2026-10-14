@@ -146,7 +146,7 @@ export default function Today() {
               cue (V5-FROSTTWOMODELS-001, `agreed` above) rather than a second model's number for the
               same night. A THRESHOLD imminent send is excluded: it fires at <= 38F on the plan low the
               cue keys on, so the run that sent it has the cue above saying "Freeze tonight". A RADIATIVE
-              one ("Frost watch tonight", 39-42F, where that cue says "Cool night" or nothing) renders
+              one ("Frost watch tonight", 39-42F, where that cue says "Cold night" or nothing) renders
               here as a watch line, and so does a radiative-only advisory (V5-TODAYRADIATIVEWATCH-001).
               A rehearsal (run "forced") never renders (BUG-FROSTREHEARSALSWALLOWS-001). Renders
               nothing on a day with no advisory or watch, and nothing for entries stored before the

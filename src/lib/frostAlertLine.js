@@ -30,7 +30,7 @@
 //                  keys on (weather.tonightLow, handler.js frostForSpace), so on the run that sent it the cue
 //                  says "Freeze tonight" (< 40F). A RADIATIVE send (`trip: 'radiative'`, the "Frost watch
 //                  tonight" email) is RENDERED, as a watch: it fires ABOVE its trip point — 39-42F for the
-//                  tender band (radiativeFrost.js proximity 4) — where the cue says "Cool night" or nothing,
+//                  tender band (radiativeFrost.js proximity 4) — where the cue says "Cold night" or nothing,
 //                  so Today never said "watch" on the evening the email did (V5-TODAYRADIATIVEWATCH-001;
 //                  Dave 2026-09-21, "Show it on Today"). The most recently sent imminent entry decides: a
 //                  later threshold send leaves tonight to the freeze cue again. pickFrostLines ranks it.
