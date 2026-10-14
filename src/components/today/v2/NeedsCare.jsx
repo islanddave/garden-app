@@ -183,7 +183,8 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
 
   // Review 4160.2 IMPORTANT-2: while the page holds its writes (a seeded Back remount still revalidating, TodayV2
   // writesHeld), every write path below returns before it posts or skips anything — the controls are aria-disabled too.
-  const run = async ({ scope, key, name, etype, keys, bodyEventType }) => {
+  // `tag` names the control a run belongs to when its scope's own button is not it (a spot's per-product Feed all).
+  const run = async ({ scope, key, name, etype, keys, bodyEventType, tag }) => {
     if (writesHeld) return null
     const total = keys.size
     if (!total) return null
@@ -191,7 +192,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     const kind = KIND_OF[bodyEventType || etype] || 'logged'
     const fresh = { scope, target: key, name, kind, at: Date.now() }
     const what = { etype, body: bodyEventType || null }
-    setBusy({ scope, key, done: 0, total })
+    setBusy({ scope, key, done: 0, total, tag })
     announce(`${etype === 'watering' ? 'Watering' : 'Logging'} ${total} in ${name}…`)
     let lastSpoken = Date.now()
     let res = null
@@ -209,7 +210,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
           setCare((cc) => ({ ...cc, batches: { ...(cc.batches || {}), [bid]: { ...fresh, created: [], running: true, spotOf, spots, names } } }))
         },
         onProgress: (p) => {
-          setBusy({ scope, key, done: p.done, total: p.total })
+          setBusy({ scope, key, done: p.done, total: p.total, tag })
           if (Date.now() - lastSpoken >= 5000) { lastSpoken = Date.now(); announce(`${p.done} of ${p.total} logged in ${name}.`) }
         },
       })
@@ -245,6 +246,14 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   const waterSpot = (spot) => run({ scope: 'spot', key: spot.key, name: spot.name, etype: 'watering', keys: spot.candidates })
   const waterGroup = (group) => run({ scope: 'group', key: group.key, name: group.key.toLowerCase(), etype: 'watering', keys: group.candidates })
   const feedProduct = (pg) => run({ scope: 'product', key: pg.key, name: pg.product, etype: 'fertilizing', keys: new Set(pg.rows.map((r) => r.key)) })
+  // Finish plan §3.6 (L5): a product's Feed all inside an opened spot is the SPOT's run — its batch is the spot's, so
+  // the spot row says "Fed 43" and keeps its one Undo, a failure is the spot's Retry, and a spot it empties shrinks to
+  // its done line. The Feed all that had focus goes with its product's rows, so focus lands on the spot's own header
+  // when the spot still holds other rows (run() names the done line when it does not).
+  const feedSpot = async (spot, pg, keys) => {
+    const res = await run({ scope: 'spot', key: spot.key, name: spot.name, etype: 'fertilizing', keys: new Set(keys), tag: 'feed:' + pg.key })
+    if (res && alive.current && !res.failed.length && spot.rows.some((r) => !keys.includes(r.key))) setFocusId('spotrow:' + spot.key)
+  }
 
   // MF3: the spot row's Retry — every failed row of the spot in view, re-run as it failed. A run's failures
   // complete THEIR run (same batch: the spot's, or the group's, whose one line and one Undo then cover them); a
@@ -432,6 +441,8 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
           onCohort={() => toggleIn('cohort', spot.key)}
           onShowAll={() => setCare((cc) => ({ ...cc, shown: { ...(cc.shown || {}), [spot.key]: 'all' } }))}
           rowProps={{ ...rowProps, undoBusy: !!undoing }}
+          busy={busy && busy.scope === 'spot' && busy.key === spot.key ? busy : null} held={writesHeld || groupBusy === spot.group}
+          feedOpen={c?.feedOpen || []} onFeedToggle={(k) => toggleIn('feedOpen', k)} onFeedAll={(pg, keys) => feedSpot(spot, pg, keys)}
           waterOther={spot.candidates.size > 0 && (
             <button type="button" onClick={writesHeld ? undefined : () => waterSpot(spot)} aria-disabled={writesHeld ? 'true' : undefined} style={filledCommit} aria-label={`Water the other ${spot.candidates.size} in ${spot.name}`}>
               {`Water the other ${spot.candidates.size}`}

@@ -6,7 +6,7 @@ import Icon from '../../Icon.jsx'
 import { skipMany, unskipMany } from '../careStore.js'
 import { COVER_LEVELS } from '../../../lib/todayV2/protect.js'
 import { tinted } from './SpotRow.jsx'
-import { outlineBtn } from './PlantCareRow.jsx'
+import { outlineBtn, PlantRow } from './PlantCareRow.jsx'
 import { removeLogged, readLogged, claimedKeys, runEnd, runTake, runsEnded } from './needsCareStore.js'
 
 // ProtectTonight — the body of the redesigned Today's Protect tonight (V5-TODAYREDESIGN-001 S5; plan-v2 §1.1 /
@@ -14,9 +14,10 @@ import { removeLogged, readLogged, claimedKeys, runEnd, runTake, runsEnded } fro
 //
 //   · on a frost or hard-freeze night, first: "Pick what's ripe first — log a harvest ›" → /log/harvest, the
 //     harvest door TopChrome opens (§1.1; a chill night has none, §1.2);
-//   · a TENDER planting (a `protect` card) is its own row card: name (→ its planting page), "{spot} · below N°F",
-//     then Skip · 8 px · [Covered] · 8 px · [Brought in] — the 8 px between Covered and Brought in are dead space
-//     (SF1), so a thumb aimed at one cannot land on the other;
+//   · a TENDER planting (a `protect` card) is its own row card in the one per-plant anatomy (finish plan §3.6, D18):
+//     picture box and name (→ its planting page) over "{spot}", then Skip · 8 px · [Covered] · 8 px · [Brought in]
+//     — the 8 px between Covered and Brought in are dead space (SF1), so a thumb aimed at one cannot land on the
+//     other; the tender threshold they share is the band summary's, said once;
 //   · the nightshade mass of a cold night (`bring_in` / `optional` cards) is one COVER ROW per spot — "Bag Area 68",
 //     "Cover or bring in tonight", [Cover all 68] — which opens to its plants.
 // Write paths (§2.3), through useCareActions' V2 run (no toast, §11.1 C2): Covered and Cover all post `cover`
@@ -195,12 +196,15 @@ export default function ProtectTonight({ protect, record, update, announce, writ
   })
 
   // ── render ───────────────────────────────────────────────────────────────────────────────────────────────
+  // The tender threshold every tender row shares, when they do (§3.6: said once, in the band summary, not per row).
+  const thresholds = plantKeys.map((k) => byKey.get(k).threshold)
+  const sharedThreshold = thresholds.length && thresholds.every((t) => t != null && t === thresholds[0]) ? thresholds[0] : null
   const plantRow = (k, inCard) => {
     const r = byKey.get(k)
     if (rowsDone[k]) return <ProtectDoneLine key={k} row={r} done={rowsDone[k]} inCard={inCard} onUndo={() => undoRow(r)} undoBusy={undoing === k} />
     if (!active.has(k)) return null
     return (
-      <ProtectRow key={k} row={r} inCard={inCard} failed={failed[k]} pending={actions.pendingKeys.has(k)} held={writesHeld}
+      <ProtectRow key={k} row={r} inCard={inCard} failed={failed[k]} pending={actions.pendingKeys.has(k)} held={writesHeld} sharedThreshold={sharedThreshold}
         onSkip={skip} onCover={(x) => plantRun(x, 'covered')} onBring={(x) => plantRun(x, 'brought')} />
     )
   }
@@ -252,33 +256,23 @@ export default function ProtectTonight({ protect, record, update, announce, writ
   )
 }
 
-function ProtectRow({ row, inCard, failed, pending, onSkip, onCover, onBring, held }) {
+// A tender planting's row: THE per-plant row anatomy (PlantCareRow.jsx PlantRow; finish plan §3.6, Dave's D18) as
+// its own row card — picture box, name, then Skip · 8 px · [Covered] · 8 px · [Brought in]. SF1: the 8 px between
+// Covered and Brought in is dead space (the flex gap), never a control. The meta holds only what differs from its
+// group (§3.6): the spot — not inside a spot's cover panel, which IS the spot — and the tender threshold only where
+// it is not the one every tender row shares (that one is said once, in the band's summary: "tender below 50°").
+function ProtectRow({ row, inCard, failed, pending, onSkip, onCover, onBring, held, sharedThreshold = null }) {
   const who = rowLabel(row)
   const href = (row.projectId && row.plantingId) ? '/projects/' + row.projectId + '/plantings/' + row.plantingId : '/garden'
-  const meta = [row.spotName, row.threshold != null ? `below ${row.threshold}°F` : null].filter(Boolean).join(' · ')
+  const meta = [inCard ? null : row.spotName, row.threshold != null && row.threshold !== sharedThreshold ? `below ${row.threshold}°F` : null].filter(Boolean).join(' · ')
   return (
-    <li data-testid="protect-row" data-key={row.key} style={inCard ? inRow : cardRow}>
-      <Link to={href} data-focus-id={'protect:' + row.key} style={bodyLink}>
-        <span style={nameStyle}>{row.name}{row.owner && <span style={ownerStyle}>{` (${row.owner})`}</span>}</span>
-        {failed
-          ? <span style={failStyle}>Not logged</span>
-          : meta && <span style={metaStyle}>{meta}</span>}
-      </Link>
-      {failed ? (
-        <div style={controls}>
-          <button type="button" onClick={held ? undefined : () => (failed === 'covered' ? onCover(row) : onBring(row))} disabled={pending} aria-disabled={held ? 'true' : undefined} aria-label={`Retry: ${who}`} style={outlineBtn}>Retry</button>
-        </div>
-      ) : (
-        <>
-          <button type="button" onClick={held ? undefined : () => onSkip(row)} aria-disabled={held ? 'true' : undefined} aria-label={`Skip ${who} tonight`} style={skipCell}>Skip</button>
-          {/* SF1: the 8 px between Covered and Brought in is dead space (the flex gap), never a control. */}
-          <div data-testid="protect-controls" style={controls}>
-            <button type="button" onClick={held ? undefined : () => onCover(row)} disabled={pending} aria-disabled={held ? 'true' : undefined} aria-label={`Covered: ${who}`} style={outlineBtn}>Covered</button>
-            <button type="button" onClick={held ? undefined : () => onBring(row)} disabled={pending} aria-disabled={held ? 'true' : undefined} aria-label={`Brought in: ${who}`} style={tinted}>Brought in</button>
-          </div>
-        </>
-      )}
-    </li>
+    <PlantRow as="li" testid="protect-row" rowKey={row.key} rowStyle={inCard ? inRow : cardRow} href={href} focusId={'protect:' + row.key}
+      photo={row.photo} name={row.name} owner={row.owner} meta={meta || null} failed={failed} held={held} pending={pending}
+      controlsTestid="protect-controls"
+      skip={{ label: `Skip ${who} tonight`, onClick: () => onSkip(row) }}
+      outline={{ text: 'Covered', label: `Covered: ${who}`, onClick: () => onCover(row) }}
+      main={{ text: 'Brought in', label: `Brought in: ${who}`, onClick: () => onBring(row) }}
+      retry={{ label: `Retry: ${who}`, onClick: () => (failed === 'covered' ? onCover(row) : onBring(row)) }} />
   )
 }
 
@@ -340,25 +334,16 @@ function CoverSpotRow({ spot, n, whose = null, open, onToggle, onCover, busy, re
 }
 
 // ── styles (plan-v2 §4; tokens P / T — every size on the T ramp, the visual census reads them) ─────────────────
-// A row is 48 px, its border included (the mockup's row cards, §12 A): the row sets the 48, and the name link and
-// the Skip cell STRETCH to it (46 inside the border — still over the 44 floor) rather than each asking for 48 of
-// their own, which made every row 50 and pushed Needs care 10 px further down a frost night's first screen.
+// A tender row is PlantRow's anatomy in a row card. S5 held it to 48 px border included; finish plan L5 (D18) gives it
+// the 40px picture box and the main action's 48px tap height, so a one-line row is 50 (48 inside the 1px border) —
+// the width-and-height cost Dave was shown and accepted for the picture box (≈35 px lower on a frost night).
 const list = { listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: T.space.xs }
 const panelList = { listStyle: 'none', margin: 0, padding: 0 }
 const cardRow = { listStyle: 'none', background: P.white, border: '1px solid ' + P.border, borderRadius: T.radiusCard, overflow: 'clip', display: 'flex', alignItems: 'stretch', minHeight: 48, boxSizing: 'border-box' }
 const inRow = { listStyle: 'none', display: 'flex', alignItems: 'stretch', minHeight: 48, boxSizing: 'border-box', borderTop: '1px solid ' + P.border }
 const doneRow = { alignItems: 'center', gap: 8, padding: '0 6px 0 10px' }
 const doneText = { flex: 1, minWidth: 0, fontSize: T.type.sm, outline: 'none' }
-const bodyLink = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 1, padding: '4px 10px', textDecoration: 'none', color: P.dark }
-const nameStyle = { fontSize: T.type.base, fontWeight: 600, color: P.dark, overflowWrap: 'anywhere' }
-const ownerStyle = { fontWeight: 400, color: P.mid }
-const metaStyle = { fontSize: T.type.xs, color: P.mid }
-const failStyle = { fontSize: T.type.xs, color: P.severityUrgent, fontWeight: 600 }
-const skipCell = {
-  flexShrink: 0, width: 48, marginRight: 8, border: 'none', borderLeft: '1px solid ' + P.border,
-  background: 'none', color: P.mid, cursor: 'pointer', fontSize: T.type.xs, fontFamily: 'inherit',
-}
-const controls = { display: 'flex', alignItems: 'center', gap: 8, paddingRight: 6, flexShrink: 0 }
+const controls = { display: 'flex', alignItems: 'center', gap: T.space.row, paddingRight: 6, flexShrink: 0 }
 // A Cover all that names whose plants it marks wraps to two lines rather than squeezing the spot name or clipping.
 const tintedWrap = { ...tinted, maxWidth: 150, padding: '4px 10px', whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.2 }
 const hit = {

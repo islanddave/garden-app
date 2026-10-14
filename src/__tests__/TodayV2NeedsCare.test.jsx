@@ -1196,3 +1196,106 @@ describe('under StrictMode a cut-off run still lands with its Undo (delta review
     expect(within(doneLine('Drive-Shade')).getByRole('button', { name: 'Undo: Drive-Shade watered 5' })).toBeTruthy()
   })
 })
+
+// Finish plan §3.6 (L5, Dave's D18 "Rounded buttons + picture"): ONE per-plant row anatomy, the shared meta printed once
+// in a group line, and feeding inside an opened spot as one line per product with its own Feed all.
+describe('L5 — one row anatomy, group lines, per-product feed lines', () => {
+  const openSpot = async (name) => { fireEvent.click(within(spot(name)).getAllByRole('button', { expanded: false })[0]); await settle() }
+  const exRow = (name) => [...document.querySelectorAll('[data-testid="care-exceptions-row"]')].find((r) => r.textContent.includes(name))
+
+  it('Bag Area\'s differing rows: the group line says once what all eight share, each row is its picture box and name', async () => {
+    await mount()
+    await openSpot('Bag Area')
+    const ex = document.querySelector('[data-testid="care-exceptions"]')
+    // The label stays the block's first child and ends in its count (the gate's count-invariant reads it there).
+    expect(ex.firstElementChild.textContent).toBe('Tray cells · 8')
+    const line = screen.getByTestId('care-exceptions-line')
+    expect(line.textContent).toBe('2d overdue · dry fastest · every 2 days · last watered 4 d ago')
+    expect(line.querySelector('svg')).toBeTruthy() // the warning mark, once, for the group
+    const rows = [...document.querySelectorAll('[data-testid="care-exceptions-row"]')]
+    expect(rows.length).toBe(8)
+    for (const r of rows) {
+      expect(r.querySelector('a').firstElementChild.getAttribute('data-testid')).toBe('plant-thumb')
+      expect(r.querySelector('[data-row-meta]')).toBeNull() // the name alone
+      expect(r.textContent).not.toContain('dries fastest')
+      expect([...r.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Skip', 'Moist', 'Water'])
+    }
+    // The accessible names the gates and BD-036b rely on are unchanged.
+    const red = exRow('Red Acre Cabbage')
+    expect(within(red).getByRole('button', { name: 'Skip Red Acre Cabbage today' })).toBeTruthy()
+    expect(within(red).getByRole('button', { name: 'Checked Red Acre Cabbage — still moist' })).toBeTruthy()
+    expect(within(red).getByRole('button', { name: 'Log Water for Red Acre Cabbage' })).toBeTruthy()
+    // No SEVERITY_STYLES fill and no cell divider on the main action: one soft-green rounded button.
+    const water = within(red).getByRole('button', { name: 'Log Water for Red Acre Cabbage' })
+    expect(water.style.borderRadius).toBe('8px')
+    expect(['', '0px']).toContain(water.style.borderLeftWidth)
+    expect(water.style.borderColor).toBe('transparent')
+    expect(water.style.minHeight).toBe('48px')
+  })
+
+  it('a row that is overdue where its group is not says so in its meta: the warning mark and "2d overdue"', async () => {
+    await mount()
+    await openSpot('Drive-Shade')
+    const rows = [...within(spot('Drive-Shade')).getAllByTestId('care-row')]
+    const late = rows.filter((r) => r.querySelector('[data-row-meta]')?.textContent === '2d overdue')
+    expect(late.length).toBeGreaterThan(0)
+    for (const r of late) expect(r.querySelector('[data-row-meta] svg')).toBeTruthy()
+  })
+
+  it('feeding in an opened spot: one line per product, the product said once; Show them opens its rows, each its name alone', async () => {
+    await mount()
+    await openSpot('Bag Area')
+    const lines = [...document.querySelectorAll('[data-testid="care-spot-product"]')]
+    const bagFeed = ROWS.filter((r) => r.spotName === 'Bag Area' && r.task === 'feed')
+    const products = [...new Set(bagFeed.map((r) => r.product))]
+    expect(lines.length).toBe(products.length)
+    const tone = lines.find((l) => l.getAttribute('data-product').includes('Tomato-Tone'))
+    const toneRows = bagFeed.filter((r) => r.product === tone.getAttribute('data-product'))
+    expect(tone.textContent).toContain(`${tone.getAttribute('data-product')} · ${toneRows.length}`)
+    expect(tone.textContent).toContain('top-dress + water in · Show them')
+    // No feed row is drawn until its product is opened: the product is not repeated 43 times.
+    expect(within(spot('Bag Area')).queryAllByRole('button', { name: /^Log Feed for / }).length).toBe(0)
+    fireEvent.click(within(tone).getByRole('button', { expanded: false }))
+    await settle()
+    const rows = within(tone).getAllByTestId('care-row')
+    expect(rows.length).toBe(toneRows.length)
+    for (const r of rows) {
+      expect(r.querySelector('[data-row-meta]')).toBeNull()
+      expect(r.textContent).not.toContain('Tomato-Tone')
+      expect([...r.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Skip', 'Feed'])
+    }
+    expect(within(tone).getByRole('button', { expanded: true }).textContent).toContain('Hide them')
+  })
+
+  it('a product\'s Feed all in a spot is the spot\'s run: it posts each of its plants once, the spot row says "Fed N", and its one Undo deletes them', async () => {
+    await mount()
+    await openSpot('Bag Area')
+    const tone = [...document.querySelectorAll('[data-testid="care-spot-product"]')].find((l) => l.getAttribute('data-product').includes('Tomato-Tone'))
+    const n = ROWS.filter((r) => r.spotName === 'Bag Area' && r.product === tone.getAttribute('data-product')).length
+    fireEvent.click(within(tone).getByRole('button', { name: `Feed all ${n} with ${tone.getAttribute('data-product')} in Bag Area` }))
+    await settle()
+    expect(wire.posts.length).toBe(n)
+    expect(wire.posts.every((b) => b.event_type === 'fertilizing')).toBe(true)
+    expect(new Set(wire.posts.map((b) => b.plant_id)).size).toBe(n)
+    expect(screen.getByTestId('today-status').textContent).toBe(`Logged ${n} in Bag Area.`)
+    expect(within(spot('Bag Area')).getAllByRole('button', { expanded: true })[0].textContent).toContain(`Fed ${n}`)
+    // The product's line is gone with its rows; the others stay. Focus is on the spot's own header, not dropped.
+    expect([...document.querySelectorAll('[data-testid="care-spot-product"]')].some((l) => l.getAttribute('data-product') === tone.getAttribute('data-product'))).toBe(false)
+    expect(document.activeElement.getAttribute('data-focus-id')).toBe('spotrow:' + ROWS.find((r) => r.spotName === 'Bag Area').spotKey)
+    fireEvent.click(within(spot('Bag Area')).getByRole('button', { name: 'Undo' }))
+    await settle()
+    expect(new Set(wire.deletes).size).toBe(n)
+    expect([...document.querySelectorAll('[data-testid="care-spot-product"]')].some((l) => l.getAttribute('data-product') === tone.getAttribute('data-product'))).toBe(true)
+  })
+
+  it('check rows: the label said once in the group line; the main action reads "Checked", named "Checked: <plant>"', async () => {
+    await mount()
+    await openSpot('In-Ground')
+    const checks = ROWS.filter((r) => r.spotName === 'In-Ground' && r.task === 'check')
+    for (const r of checks) {
+      const btn = within(spot('In-Ground')).getByRole('button', { name: `Checked: ${r.name}` })
+      expect(btn.textContent).toBe('Checked')
+      expect(btn.closest('[data-testid="care-row"]').querySelector('[data-row-meta]')).toBeNull()
+    }
+  })
+})

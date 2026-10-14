@@ -124,7 +124,12 @@ export const STATES = [
       // S5 recorded the §11.0 E4 estimate (+60, "est., to be recorded"): measured 797 on the S5 tree (Roboto pin,
       // 426×836) — the glance card with the cue and the two-line frost line is 223 (S3), Protect's band 48 + pick link
       // 44 + five 48px rows, one of them the three-line "Tuberous Begonia (bronze-leaf, hanging)" at 76. +72 = 800.
-      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+72' }, why: '(e) v2-frost; E4 recorded at S5 (measured 797)' },
+      // Finish plan L5 (2026-10-14), re-stated on purpose: Dave's D18 ("Rounded buttons + picture", first-hand 10-14,
+      // told the picture box costs ≈35 px on a frost night) puts a 40px picture box and the main action's 48px tap
+      // height on every tender row, so each one-line row card is 50 (was 48): four of them, +8, measured 805 on the L5
+      // tree. +80 = 808 keeps S5's 3px of headroom over the measurement; lane L3's shorter glance card is to buy it back,
+      // and the integration of L3 + L4 + L5 re-records this ceiling (finish plan §5: R16 tightens to ≤ 680).
+      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+80' }, why: '(e) v2-frost; E4 recorded at S5 (measured 797), re-stated at L5 for D18\'s picture box (measured 805)' },
       // S3 split: the bar carries a chip for every section on the page, in the fixed order (at S3: Water / Feed /
       // Check — Needs care is the only chip-bearing section built); the full set waits for Protect (S5) and Harvest (S6).
       { family: 'jumpbar', armedAt: 'S3', present: true, chipsOfPresent: ['protect', 'water', 'feed', 'check', 'harvest'] },
@@ -201,7 +206,7 @@ export const STATES = [
   // slot is taken) on which the gauge has measured rain AND tomorrow brings enough to change watering: the rain
   // row carries both notes. The first state with its own weather (`wx`, todaymeasure.jsx): the default stub's
   // tomorrow is 0.22″, under the bar. Its floors and ceilings are v2-frost's OWN numbers, copied, not recorded —
-  // the second note may not cost the page a pixel (document 1959, last pixel 1853, Needs care top 800).
+  // the second note may not cost the page a pixel (document 1959, last pixel 1853, Needs care top 800; 808 since L5's picture box).
   {
     name: 'v2-frost-rain', fixture: 'busyfull', grafts: ['gaugerain'], clock: S924, prefs: 'prefs.default.json',
     // five models, [D0, D1, D2]: D1 mean 0.40″ with 4 of 5 wet (80%), D2 0.03″.
@@ -211,7 +216,7 @@ export const STATES = [
       ...common(),
       { family: 'glance-rain', armedAt: 'S3', notes: ['0.45″ fallen today', '0.40″ tomorrow · 80% chance'], why: 'both notes, the measured line in its short form, on one row of the 360px rain row' },
       { family: 'first-screen', armedAt: 'S3', mustContain: ['today-glance', 'weather-cue-line', 'frost-alert-line', 'today-jumpbar'], mustShowText: ['today-verdict'], why: 'as v2-frost: the closed glance card with both alert lines, the bar, and a verdict nothing cuts off' },
-      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+72' }, why: "v2-frost's E4 ceiling, unchanged: Needs care's header top ≤ 800 with the second rain note on the row" },
+      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+80' }, why: "v2-frost's E4 ceiling, unchanged from v2-frost's own (808 since L5's picture box): the second rain note on the row moves Needs care's header not at all" },
     ],
   },
   {

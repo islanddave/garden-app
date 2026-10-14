@@ -160,6 +160,44 @@ export function exceptionReason(r) {
   return parts.filter(Boolean).join(' · ') || r.reason || ''
 }
 
+// Finish plan §3.6 (L5, Dave's D18): urgency is a warning mark plus words in the row's meta, never a fill. The rows
+// that carry it are the ones needTier puts on its overdue tiers (terra / terra-bold: a non-daily water row a day or
+// more past its cadence); the words are the engine's own count, "2d overdue".
+export const isOverdue = (r) => !!r && (r.tier === 'terra' || r.tier === 'terra-bold') && typeof r.overdueBy === 'number' && r.overdueBy > 0
+export const overdueWords = (r) => (isOverdue(r) ? `${r.overdueBy}d overdue` : null)
+
+// §3.6 "meta that every row of a group shares moves into the group line, printed once": the differing rows of a
+// spot (exceptionKeys) as ONE group line and rows that say only what is their own. A row's meta is exceptionReason's
+// three parts — why it differs, its cadence, its record — and its overdue words; what all of them share is printed
+// in the line, the rest stays on the row. When they all differ for one reason, that reason names the group: "Tray
+// cells · 8" over "dry fastest · every 2 days · last watered 4 d ago" (Bag Area, Dave's 09-24 plan: every row is
+// then its name alone). Returns { label, line, urgent, own } — `urgent` when the overdue words are the group's, and
+// `own` maps each row key to { meta, urgent } (meta null = the name alone). `count` is the label's number — the rows
+// still due, when handled ones are passed for a steady line (SpotBody).
+export function exceptionGroup(rows, count = rows.length) {
+  const n = rows.length
+  const vessel = (r) => (SMALL_VESSEL_TYPES.has(r.containerType) && r.need !== 'no_history' ? r.containerType : null)
+  const partsOf = (r) => {
+    const why = r.need === 'no_history' ? 'Never watered' : vessel(r) ? `${VESSEL_LABEL[r.containerType]} — dries fastest` : (r.rainNote || null)
+    return [why, cadenceWords(r.interval), typeof r.daysSince === 'number' ? `last watered ${r.daysSince} d ago` : null]
+  }
+  const parts = rows.map(partsOf)
+  const same = (i) => n > 0 && parts.every((p) => p[i] != null && p[i] === parts[0][i])
+  const shared = [0, 1, 2].map(same)
+  const late = rows.map(overdueWords)
+  const urgent = n > 0 && late.every((w) => w != null && w === late[0])
+  const kind = shared[0] ? vessel(rows[0]) : null
+  const label = kind ? `${VESSEL_PLURAL[kind].replace(/^./, (c) => c.toUpperCase())} · ${count}`
+    : shared[0] && parts[0][0] === 'Never watered' ? `Never watered · ${count}` : `Different from the rest · ${count}`
+  const lead = kind ? 'dry fastest' : shared[0] && parts[0][0] !== 'Never watered' ? parts[0][0] : null
+  const line = [urgent ? late[0] : null, lead, shared[1] ? parts[0][1] : null, shared[2] ? parts[0][2] : null].filter(Boolean).join(' · ') || null
+  const own = new Map(rows.map((r, i) => {
+    const mine = parts[i].filter((p, j) => p != null && !shared[j])
+    return [r.key, { meta: mine.length ? mine.join(' · ') : null, urgent: !urgent && late[i] != null }]
+  }))
+  return { label, line, urgent, own }
+}
+
 // SF2: the disclosed cohort, longest-waiting first, then crop, then name — so on a batch-watered spot (every
 // age tied) it reads by crop, and the cap note drops "longest-waiting" (cohortCapNote).
 export function sortCohort(rows) {

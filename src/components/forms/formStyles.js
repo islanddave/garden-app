@@ -41,7 +41,11 @@ export const T = {
   // a visible pixel change and belongs to Pass B. Do not author new surfaces against
   // xs2/sm2/lg; they exist so the guard has something to route the existing literals to.
   type: { xs: '0.72rem', xs2: '0.75rem', sm: '0.82rem', sm2: '0.88rem', base: '0.9rem', md: '0.95rem', lg: '1rem' },
-  space: { xs: 5, sm: 10, md: 16, lg: 20 },
+  // `row` (V5-TODAYREDESIGN-001 L5): the 8 between list rows, controls and chips — a literal in My seeds,
+  // FilterChipRow and the Today jump bar until now. Off the xs→lg ramp on purpose: it names a gap, not a step.
+  space: { xs: 5, sm: 10, md: 16, lg: 20, row: 8 },
+  // The 3px left rule of a section band and an alert line (FacetGroupHeader's literal; Today's advisory lines).
+  ruleW: 3,
   // Badge tokens — exact current PlantStatusBadge values (parity-preserving).
   badgeFontSm: '0.73rem',
   badgeFontLg: '0.85rem',
