@@ -54,13 +54,19 @@ jobs:
       # response: Neon puts `connection_uris` there only when the branch has one role it can pick, and the
       # staging parent gained a second password role on 2026-10-14 (run 38572988719 on). Why and how:
       # scripts/neon_api_check.py. The branch id is written out the moment it is known, so a failure after
-      # that point still reaches the delete step instead of stranding a ci-* branch.
+      # that point still reaches the delete step instead of stranding a ci-* branch, and the branch carries
+      # a one-day expires_at, so one that strands anyway removes itself. The URL is accepted only on the host
+      # of the endpoint the create response made for THIS branch, and never on a protected long-lived endpoint:
+      # asked without branch_id, the API answers with PROD's host, and the Put-Up step below runs DDL on it.
+      # NEON_PROTECTED_ENDPOINTS is the list in tests/integration/_cleanup.js (test_workflow_steps.py keeps the
+      # two equal).
       - name: Create ephemeral Neon branch
         id: neon_create
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
           NEON_PARENT_BRANCH: br-polished-art-am12o4ue
+          NEON_PROTECTED_ENDPOINTS: ep-lucky-bird-amju6iqt ep-mute-firefly-amq424mj ep-calm-star-amxjxz6n
           RUN_ID: ${{ github.run_id }}
         run: |
           set -uo pipefail
@@ -68,18 +74,24 @@ jobs:
           API="https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID"
           CHK="python3 scripts/neon_api_check.py"
           BODY="$RUNNER_TEMP/neon-body.json"
-          echo "Creating Neon branch: $BRANCH_NAME"
+          # No EXIT trap: under bash 3.2 one turned an abort under set -u into exit 0. Each refusal removes the
+          # body itself (it can hold the URL).
+          EXPIRES=$(python3 -c 'import datetime as d; print((d.datetime.now(d.timezone.utc) + d.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+          echo "Creating Neon branch: $BRANCH_NAME (expires $EXPIRES)"
           rm -f "$BODY"
           CODE=$(curl -sS --max-time 60 -o "$BODY" -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $NEON_API_KEY" \
             -H "Content-Type: application/json" \
             "$API/branches" \
-            -d "{\"branch\":{\"parent_id\":\"$NEON_PARENT_BRANCH\",\"name\":\"$BRANCH_NAME\"},\"endpoints\":[{\"type\":\"read_write\"}]}") || CODE=000
+            -d "{\"branch\":{\"parent_id\":\"$NEON_PARENT_BRANCH\",\"name\":\"$BRANCH_NAME\",\"expires_at\":\"$EXPIRES\"},\"endpoints\":[{\"type\":\"read_write\"}]}") || CODE=000
           $CHK branch-id --endpoint "$API/branches" --status "$CODE" --body-file "$BODY" \
-            --out "$RUNNER_TEMP/neon-branch-id" || exit 1
+            --out "$RUNNER_TEMP/neon-branch-id" || { rm -f "$BODY"; exit 1; }
           BRANCH_ID=$(cat "$RUNNER_TEMP/neon-branch-id")
           echo "NEON_BRANCH_ID=$BRANCH_ID" >> "$GITHUB_ENV"
           echo "Branch created: $BRANCH_ID"
+          $CHK endpoint-host --endpoint "$API/branches" --status "$CODE" --body-file "$BODY" \
+            --branch-id "$BRANCH_ID" --out "$RUNNER_TEMP/neon-endpoint-host" || { rm -f "$BODY"; exit 1; }
+          EP_HOST=$(cat "$RUNNER_TEMP/neon-endpoint-host")
           # The same role, database and direct host the create response's connection_uri carried. `pooled=false`
           # is load-bearing: without it the API answers with the -pooler host.
           URI_URL="$API/connection_uri?branch_id=$BRANCH_ID&role_name=neondb_owner&database_name=neondb&pooled=false"
@@ -97,7 +109,7 @@ jobs:
             fi
           done
           $CHK connection-uri --endpoint "$URI_URL" --status "$CODE" --body-file "$BODY" \
-            --out "$RUNNER_TEMP/neon-uri" || exit 1
+            --expect-host "$EP_HOST" --protected "$NEON_PROTECTED_ENDPOINTS" --out "$RUNNER_TEMP/neon-uri" || { rm -f "$BODY"; exit 1; }
           rm -f "$BODY"
           DB_URL=$(cat "$RUNNER_TEMP/neon-uri")
           rm -f "$RUNNER_TEMP/neon-uri"
@@ -221,14 +233,39 @@ jobs:
               echo "::error::Refusing to delete $ID: it is the staging parent, not this run's branch."
               exit 1
             fi
+            # No Neon branch here is `protected`, so Neon refuses no delete: only a branch that reads back as
+            # this run's ci-<run id> is deleted. One that cannot be read is left to its one-day expiry.
+            CODE=$(curl -sS --max-time 30 -o "$RUNNER_TEMP/neon-branch.json" -w '%{http_code}' \
+              -H "Authorization: Bearer $NEON_API_KEY" "$API/branches/$ID") || CODE=000
+            RC=0
+            python3 scripts/neon_api_check.py branch-is --endpoint "$API/branches/$ID" --status "$CODE" \
+              --body-file "$RUNNER_TEMP/neon-branch.json" --id "$ID" --name "ci-${RUN_ID}" \
+              --out "$RUNNER_TEMP/neon-branch-name" --severity warning || RC=$?
+            if [[ "$RC" -eq 2 ]]; then
+              echo "::error::Refusing to delete $ID: it is not this run's branch ci-${RUN_ID}."
+              exit 1
+            elif [[ "$RC" -ne 0 ]]; then
+              echo "::warning::Could not confirm $ID is ci-${RUN_ID}; not deleting it (it expires within a day)."
+              continue
+            fi
             echo "Deleting Neon branch: $ID"
-            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
-              -H "Authorization: Bearer $NEON_API_KEY" \
-              "$API/branches/$ID") || HTTP=000
+            # A DELETE seconds after the create can meet the endpoint-start operation (423/409): retry, bounded.
+            for try in $(seq 1 6); do
+              HTTP=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" -X DELETE \
+                -H "Authorization: Bearer $NEON_API_KEY" \
+                "$API/branches/$ID") || HTTP=000
+              case "$HTTP" in
+                000|409|423|429|5??) ;;
+                *) break ;;
+              esac
+              if [[ "$try" -lt 6 ]]; then
+                sleep 5
+              fi
+            done
             if [[ "$HTTP" == 2* || "$HTTP" == "404" ]]; then
               echo "Branch deleted (HTTP $HTTP)"
             else
-              echo "::warning::Branch delete returned HTTP $HTTP — $ID may need manual cleanup (idle-suspends automatically)"
+              echo "::warning::Branch delete returned HTTP $HTTP — $ID may need manual cleanup (it expires within a day)"
             fi
           done
 

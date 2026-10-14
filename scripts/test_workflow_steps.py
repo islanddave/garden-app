@@ -29,6 +29,7 @@ import shlex
 import shutil
 import stat
 import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -406,6 +407,7 @@ class _GitHubStandIn:
         self.served = {}
         self.log = []
         self.auth = []  # each request's Authorization header, in step with self.log
+        self.bodies = []  # each request's body, in step with self.log
         stand_in = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -415,8 +417,9 @@ class _GitHubStandIn:
                 pass
 
             def do_GET(self):
-                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                sent = self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 stand_in.auth.append(self.headers.get("Authorization"))
+                stand_in.bodies.append(sent.decode("utf-8", "replace"))
                 reply = stand_in.reply_for(f"{self.command} {self.path}")
                 self.close_connection = True
                 if reply is DROP:
@@ -2145,20 +2148,31 @@ INTEG = "integration-test.yml"
 NEON_CREATE, NEON_DELETE = "Create ephemeral Neon branch", "Delete ephemeral Neon branch"
 NEON_KEY, NEON_PROJECT, NEON_RUN = "napi_testkey0123456789abcdefABCDEF", "proj-test", "4242"
 N_CREATE = rf"^POST /api/v2/projects/{NEON_PROJECT}/branches$"
-N_URI = rf"^GET /api/v2/projects/{NEON_PROJECT}/connection_uri\?"
+N_URI = rf"^GET /api/v2/projects/{NEON_PROJECT}/connection_uri\?(?=.*branch_id=)"
+N_URI_NO_BRANCH = rf"^GET /api/v2/projects/{NEON_PROJECT}/connection_uri\?(?!.*branch_id=)"
+N_GET_BRANCH = rf"^GET /api/v2/projects/{NEON_PROJECT}/branches/[^/?]+$"
 N_LIST = rf"^GET /api/v2/projects/{NEON_PROJECT}/branches\?search="
 N_DELETE = rf"^DELETE /api/v2/projects/{NEON_PROJECT}/branches/"
 N_PW = "s3cretPw0rdXYZ"
 N_DIRECT = f"postgresql://neondb_owner:{N_PW}@ep-test-1.c-5.us-east-1.aws.neon.tech/neondb?sslmode=require"
 N_POOLED = N_DIRECT.replace("ep-test-1.", "ep-test-1-pooler.")
+N_PROD = N_DIRECT.replace("ep-test-1.c-5", "ep-lucky-bird-amju6iqt.c-5")
+N_OTHER = N_DIRECT.replace("ep-test-1.c-5", "ep-some-other-1.c-5")
 N_WRITER = f"postgresql://garden_wx_writer:{N_PW}w@ep-test-1.c-5.us-east-1.aws.neon.tech/neondb?sslmode=require"
 N_BRANCH = "br-ci-test-000001"
 N_ROLES = [{"name": "neondb_owner"}, {"name": "garden_wx_writer"}]
 # The 2026-10-14 shape: branch, endpoints, operations, roles, databases, and no connection_uris.
 N_CREATED_NO_URIS = _json({"branch": {"id": N_BRANCH, "name": f"ci-{NEON_RUN}"},
-                           "endpoints": [{"id": "ep-test-1", "type": "read_write"}], "operations": [],
+                           "endpoints": [{"id": "ep-test-1", "host": "ep-test-1.c-5.us-east-1.aws.neon.tech",
+                                          "branch_id": N_BRANCH, "type": "read_write"}], "operations": [],
                            "roles": N_ROLES, "databases": [{"name": "neondb", "owner_name": "neondb_owner"}]}, 201)
 N_URI_OK = _json({"uri": N_DIRECT})
+# What the API answers with no branch_id: the project's default branch, prod (live 2026-10-14).
+N_DEFAULT_IS_PROD = {N_URI_NO_BRANCH: [_json({"uri": N_PROD})]}
+
+
+def _this_branch(bid=N_BRANCH, name=f"ci-{NEON_RUN}"):
+    return _json({"branch": {"id": bid, "name": name}})
 
 
 def _integ_parent():
@@ -2188,6 +2202,8 @@ def _run_neon_step(tmp_path, name, api, **env_extra):
     genv = tmp_path / "github_env"
     genv.touch()
     env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy") and not k.startswith("NEON_")}
+    literal = {k: v for k, v in (step.get("env") or {}).items() if "${{" not in str(v)}  # e.g. the protected list
+    env.update(literal)
     env.update(PATH=f"{bindir}:{os.environ['PATH']}", NO_PROXY="*", NEON_API_KEY=NEON_KEY,
                NEON_PROJECT_ID=NEON_PROJECT, NEON_PARENT_BRANCH=_integ_parent(), RUN_ID=NEON_RUN,
                RUNNER_TEMP=str(tmp_path / "rt"), GITHUB_ENV=str(genv), **env_extra)
@@ -2240,7 +2256,9 @@ def test_neon_create_step_masks_the_url_and_its_password_before_anything_else_se
     (N_URI_OK[:1] + (json.dumps({"uri": N_POOLED}),), "POOLED host"),
     (_json({}), "`uri` is missing"),
     (DROP, "HTTP 000"),
-], ids=["http-500", "http-404", "pooled", "no-uri", "no-reply"])
+    (_json({"uri": N_PROD}), "PROTECTED long-lived endpoint ep-lucky-bird-amju6iqt"),
+    (_json({"uri": N_OTHER}), "is not this run's branch endpoint ep-test-1.c-5.us-east-1.aws.neon.tech"),
+], ids=["http-500", "http-404", "pooled", "no-uri", "no-reply", "prod-host", "another-branchs-host"])
 def test_neon_create_step_refuses_without_a_direct_url_and_still_hands_the_branch_to_cleanup(tmp_path, github, reply,
                                                                                             said):
     """Fail-closed, AND the branch id is already out, so the always() delete step finds the branch."""
@@ -2251,6 +2269,7 @@ def test_neon_create_step_refuses_without_a_direct_url_and_still_hands_the_branc
     errors = _errors(proc)
     assert len(errors) == 1 and said in errors[0] and "connection_uri" in errors[0], errors
     assert N_PW not in _neon_said(proc) and NEON_KEY not in _neon_said(proc)
+    assert not (tmp_path / "rt" / "neon-body.json").exists() and not (tmp_path / "rt" / "neon-uri").exists()
 
 
 def test_neon_create_step_retries_a_locked_or_failing_read_then_passes(tmp_path, github):
@@ -2286,17 +2305,18 @@ def test_neon_create_step_refuses_a_failed_create_naming_status_and_redacted_bod
 
 
 def test_neon_delete_step_deletes_the_branch_the_create_step_named(tmp_path, github):
-    api = github({N_DELETE: [_json({}, 200)], N_LIST: [_json({"branches": []})]})
+    api = github({N_DELETE: [_json({}, 200)], N_LIST: [_json({"branches": []})], N_GET_BRANCH: [_this_branch()]})
     proc, _ = _run_neon_step(tmp_path, NEON_DELETE, api, NEON_BRANCH_ID=N_BRANCH)
     assert proc.returncode == 0, _neon_said(proc)
-    assert api.log == [f"DELETE /api/v2/projects/{NEON_PROJECT}/branches/{N_BRANCH}"]
+    assert api.log == [f"GET /api/v2/projects/{NEON_PROJECT}/branches/{N_BRANCH}",
+                       f"DELETE /api/v2/projects/{NEON_PROJECT}/branches/{N_BRANCH}"]
 
 
 def test_neon_delete_step_without_an_id_finds_this_runs_branch_by_its_exact_name(tmp_path, github):
     """A create that failed before it learned the id (no reply) must not strand the branch Neon made anyway."""
     listing = {"branches": [{"id": "br-ours", "name": f"ci-{NEON_RUN}"}, {"id": "br-other", "name": f"ci-{NEON_RUN}0"},
                             {"id": "br-staging", "name": "staging"}]}
-    api = github({N_LIST: [_json(listing)], N_DELETE: [_json({}, 200)]})
+    api = github({N_LIST: [_json(listing)], N_DELETE: [_json({}, 200)], N_GET_BRANCH: [_this_branch("br-ours")]})
     proc, _ = _run_neon_step(tmp_path, NEON_DELETE, api, NEON_BRANCH_ID="")
     assert proc.returncode == 0, _neon_said(proc)
     assert [r for r in api.log if r.startswith("DELETE")] == [f"DELETE /api/v2/projects/{NEON_PROJECT}/branches/br-ours"]
@@ -2326,6 +2346,127 @@ def test_neon_delete_step_runs_whatever_failed_before_it():
     assert "${{ env.NEON_BRANCH_ID }}" == step["env"]["NEON_BRANCH_ID"]
 
 
+def _create_step_body(drop=""):
+    body = _step(INTEG, "integration-tests", NEON_CREATE)[1]["run"]
+    if drop:
+        assert body.count(drop) == 1, drop
+        body = body.replace(drop, "")
+    return body
+
+
+def test_neon_create_step_with_branch_id_dropped_refuses_prods_url_before_any_ddl_can_use_it(tmp_path, github,
+                                                                                              monkeypatch):
+    """The review's N1: with no branch_id the API answers for the default branch, which is PROD. The query-string
+    pin alone guarded that; this runs the step with the parameter gone and needs the host check to refuse."""
+    api = github({**N_DEFAULT_IS_PROD, N_CREATE: [N_CREATED_NO_URIS], N_URI: [N_URI_OK]})
+    wf, step = _step(INTEG, "integration-tests", NEON_CREATE)
+    mutated = _create_step_body("branch_id=$BRANCH_ID&")
+    monkeypatch.setitem(step, "run", mutated)
+    monkeypatch.setattr(sys.modules[__name__], "_step", lambda *_a: (wf, step))
+    proc, written = _run_neon_step(tmp_path, NEON_CREATE, api)
+    assert api.reads(N_URI_NO_BRANCH) == 1, api.log
+    assert proc.returncode == 1, _neon_said(proc)
+    assert written == {"NEON_BRANCH_ID": N_BRANCH}
+    errors = _errors(proc)
+    assert len(errors) == 1 and "PROTECTED long-lived endpoint ep-lucky-bird-amju6iqt" in errors[0], errors
+
+
+@pytest.mark.parametrize("endpoints", [[], [{"id": "ep-test-1", "branch_id": N_BRANCH, "type": "read_write"}],
+                                       [{"id": "ep-x", "host": "ep-x.neon.tech", "branch_id": "br-staging",
+                                         "type": "read_write"}]],
+                         ids=["no-endpoint", "no-host", "another-branchs-endpoint"])
+def test_neon_create_step_refuses_when_the_create_response_names_no_endpoint_host_for_the_branch(tmp_path, github,
+                                                                                                endpoints):
+    created = json.loads(N_CREATED_NO_URIS[1])
+    created["endpoints"] = endpoints
+    api = github({N_CREATE: [_json(created, 201)], N_URI: [N_URI_OK]})
+    proc, written = _run_neon_step(tmp_path, NEON_CREATE, api)
+    assert proc.returncode == 1 and api.reads(N_URI) == 0, _neon_said(proc)
+    assert written == {"NEON_BRANCH_ID": N_BRANCH}
+    assert "no single read_write endpoint host" in " ".join(_errors(proc))
+
+
+def test_neon_create_step_asks_for_a_read_write_endpoint_and_a_one_day_expiry(tmp_path, github):
+    """A branch that strands anyway (a DELETE Neon refuses, a cancelled job) removes itself."""
+    api = github({N_CREATE: [N_CREATED_NO_URIS], N_URI: [N_URI_OK]})
+    before = datetime.datetime.now(datetime.timezone.utc)
+    proc, _ = _run_neon_step(tmp_path, NEON_CREATE, api)
+    assert proc.returncode == 0, _neon_said(proc)
+    sent = json.loads(api.bodies[api.log.index(next(r for r in api.log if re.search(N_CREATE, r)))])
+    assert sent["endpoints"] == [{"type": "read_write"}]
+    assert sent["branch"]["name"] == f"ci-{NEON_RUN}" and sent["branch"]["parent_id"] == _integ_parent()
+    expires = datetime.datetime.strptime(sent["branch"]["expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=datetime.timezone.utc)
+    assert datetime.timedelta(hours=23) < expires - before < datetime.timedelta(hours=25)
+
+
+def test_neon_create_step_an_abort_under_set_u_still_fails_the_step(tmp_path, github):
+    """An EXIT trap in this step turned this abort into exit 0 under bash 3.2, with no INT_DATABASE_URL written: a
+    green step that hands the tests nothing. The step has no trap; this keeps it that way."""
+    api = github({N_CREATE: [N_CREATED_NO_URIS], N_URI: [N_URI_OK]})
+    wf, step = _step(INTEG, "integration-tests", NEON_CREATE)
+    env = {k: v for k, v in step["env"].items() if k != "NEON_PROTECTED_ENDPOINTS"}
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setitem(step, "env", env)
+        mp.setattr(sys.modules[__name__], "_step", lambda *_a: (wf, step))
+        proc, written = _run_neon_step(tmp_path, NEON_CREATE, api)
+    assert "NEON_PROTECTED_ENDPOINTS: unbound variable" in proc.stderr, _neon_said(proc)
+    assert proc.returncode != 0 and "INT_DATABASE_URL" not in written
+
+
+@pytest.mark.parametrize("protected", ["", "   "], ids=["empty", "blank"])
+def test_neon_url_check_refuses_to_vouch_for_a_host_with_no_protected_list(tmp_path, protected):
+    body = tmp_path / "body.json"
+    body.write_text(N_URI_OK[1])
+    proc = subprocess.run([sys.executable, os.path.join(HERE, "neon_api_check.py"), "connection-uri", "--endpoint", "e",
+                           "--status", "200", "--body-file", str(body), "--out", str(tmp_path / "uri"),
+                           "--expect-host", "ep-test-1.c-5.us-east-1.aws.neon.tech", "--protected", protected],
+                          capture_output=True, text=True)
+    assert proc.returncode == 1 and not (tmp_path / "uri").exists()
+    assert "no protected endpoint list" in proc.stdout and N_PW not in proc.stdout
+
+
+def test_neon_protected_endpoints_equal_the_integration_suites_denylist():
+    """One list, two places: the vitest guard (after the Put-Up DDL) and the create step (before it)."""
+    js = open(os.path.join(HERE, "..", "tests", "integration", "_cleanup.js")).read()
+    block = re.search(r"const PROTECTED_ENDPOINTS = \[(.*?)\]", js, re.S)
+    assert block, "PROTECTED_ENDPOINTS not found in tests/integration/_cleanup.js"
+    in_js = re.findall(r"^\s*'(ep-[a-z0-9-]+)'", block.group(1), re.M)
+    in_wf = _step(INTEG, "integration-tests", NEON_CREATE)[1]["env"]["NEON_PROTECTED_ENDPOINTS"].split()
+    assert len(in_js) >= 2 and in_wf == in_js
+
+
+@pytest.mark.parametrize("reply", [_this_branch(name="production"), _this_branch(bid="br-other")],
+                         ids=["another-name", "another-id"])
+def test_neon_delete_step_refuses_a_branch_that_does_not_read_back_as_this_runs(tmp_path, github, reply):
+    api = github({N_GET_BRANCH: [reply], N_DELETE: [_json({}, 200)]})
+    proc, _ = _run_neon_step(tmp_path, NEON_DELETE, api, NEON_BRANCH_ID=N_BRANCH)
+    assert proc.returncode == 1 and api.reads(r"^DELETE") == 0, _neon_said(proc)
+    assert any(f"Refusing to delete {N_BRANCH}" in e for e in _errors(proc)), _errors(proc)
+
+
+@pytest.mark.parametrize("reply", [_json({"message": "authentication required"}, 401), DROP, NOT_JSON])
+def test_neon_delete_step_an_unreadable_identity_leaves_the_branch_to_its_expiry(tmp_path, github, reply):
+    api = github({N_GET_BRANCH: [reply], N_DELETE: [_json({}, 200)]})
+    proc, _ = _run_neon_step(tmp_path, NEON_DELETE, api, NEON_BRANCH_ID=N_BRANCH)
+    assert proc.returncode == 0 and api.reads(r"^DELETE") == 0, _neon_said(proc)
+    assert _errors(proc) == [] and any(a.startswith("::warning::") for a in _annotations(proc))
+
+
+def test_neon_delete_step_retries_a_locked_delete(tmp_path, github):
+    api = github({N_GET_BRANCH: [_this_branch()], N_DELETE: [_json({"message": "locked"}, 423), _json({}, 200)]})
+    proc, _ = _run_neon_step(tmp_path, NEON_DELETE, api, NEON_BRANCH_ID=N_BRANCH)
+    assert proc.returncode == 0 and api.reads(r"^DELETE") == 2, _neon_said(proc)
+    assert "Branch deleted (HTTP 200)" in proc.stdout
+
+
+def test_neon_delete_step_a_delete_locked_throughout_warns_after_a_bounded_number_of_tries(tmp_path, github):
+    api = github({N_GET_BRANCH: [_this_branch()], N_DELETE: [_json({"message": "locked"}, 423)]})
+    proc, _ = _run_neon_step(tmp_path, NEON_DELETE, api, NEON_BRANCH_ID=N_BRANCH)
+    assert proc.returncode == 0 and api.reads(r"^DELETE") == 6, _neon_said(proc)
+    assert _errors(proc) == [] and any("HTTP 423" in a for a in _annotations(proc))
+
+
 def test_no_neon_caller_reads_the_database_url_out_of_a_branch_create_response():
     """`connection_uris` is optional on create. A script reading it must also ask GET /connection_uri by name
     (revert-to.py does); no workflow step reads it at all."""
@@ -2337,11 +2478,19 @@ def test_no_neon_caller_reads_the_database_url_out_of_a_branch_create_response()
             for step in job.get("steps") or []:
                 if "connection_uris" in (step.get("run") or ""):
                     offenders.append(f"{os.path.relpath(path, root)}: {job_id} / {step.get('name')}")
+    # Each script allowed to mention it, and what it must also do. Anything else that mentions it is an offender.
+    allowed = {
+        "revert-to.py": ("/connection_uri", "role_name=neondb_owner", "pooled=false"),  # falls back by name
+        "neon_api_check.py": ("--expect-host",),  # explains it in its docstring; never reads it
+    }
     for path in glob.glob(os.path.join(HERE, "*.py")) + glob.glob(os.path.join(HERE, "*.sh")):
-        if os.path.basename(path).startswith("test_"):
+        base = os.path.basename(path)
+        if base.startswith("test_"):
             continue
         text = open(path).read()
-        if "connection_uris" in text and "connection_uri?" not in text and "/connection_uri" not in text:
+        if "connection_uris" not in text:
+            continue
+        if base not in allowed or not all(needle in text for needle in allowed[base]):
             offenders.append(os.path.relpath(path, root))
     assert offenders == []
 

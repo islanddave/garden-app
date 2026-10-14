@@ -20,7 +20,11 @@ so a command substitution cannot swallow the ::error:: line.
 The URL is always asked for by name: role `neondb_owner`, database `neondb`,
 `pooled=false` (the direct host the create response's `connection_uri` used).
 The API's default is NOT direct: asked without `pooled`, it answered with the
-`-pooler` host on 2026-10-14, so a pooled answer is refused here.
+`-pooler` host on 2026-10-14, so a pooled answer is refused here. Asked without
+`branch_id`, it answers for the project's default branch, which is PROD; so the
+URL is accepted only on the host of the endpoint the create response made for
+this branch, and never on a protected long-lived endpoint (the list in
+tests/integration/_cleanup.js, kept equal to the workflow's by a test).
 
 Stdlib only: the step runs before anything is pip-installed.
 """
@@ -39,7 +43,8 @@ REDACTED = "[REDACTED]"
 # A Neon body carries database credentials: `connection_uris[].connection_uri`,
 # `connection_parameters.password`, `roles[].password` on some calls, and the
 # `uri` of GET /connection_uri. None of it may reach the log.
-_URI_CRED_RE = re.compile(r"(?i)(postgres(?:ql)?://)[^@\s\"'/]+@")
+# Any scheme's user:password@, a `/` in the password included; over-redaction is harmless.
+_URI_CRED_RE = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^@\s\"']+@")
 _JSON_SECRET_RE = re.compile(r"(?i)(\"(?:password|uri|connection_uri)\"\s*:\s*\")[^\"]*")
 # A Neon API key, should one ever be reflected back.
 _NEON_KEY_RE = re.compile(r"napi_[A-Za-z0-9]{16,}")
@@ -110,8 +115,22 @@ def extract_branch_id(status, raw, endpoint, method="POST"):
     return bid
 
 
-def extract_direct_uri(status, raw, endpoint, method="GET"):
-    """`uri` from GET /connection_uri, refused unless it is a direct postgres URL with a password."""
+def extract_endpoint_host(status, raw, endpoint, branch_id, method="POST"):
+    """The host of the read_write endpoint the create response made for `branch_id`."""
+    data = _json_object(status, raw, endpoint, method)
+    endpoints = data.get("endpoints")
+    hosts = [e.get("host") for e in endpoints if isinstance(e, dict) and e.get("branch_id") == branch_id
+             and e.get("type") == "read_write"] if isinstance(endpoints, list) else []
+    if len(hosts) != 1 or not isinstance(hosts[0], str) or not hosts[0]:
+        raise NeonApiFailure("%s %s -> HTTP %s but it names no single read_write endpoint host for %s "
+                             "(endpoints: %s)" % (method, endpoint, status, branch_id, one_line(endpoints)))
+    return hosts[0]
+
+
+def extract_direct_uri(status, raw, endpoint, expect_host, protected, method="GET"):
+    """`uri` from GET /connection_uri, refused unless it is a direct postgres URL with a password whose host is
+    `expect_host` (this run's new endpoint) and names none of the `protected` long-lived endpoints. Without
+    `branch_id` the API answers with the DEFAULT branch, which is prod: this is what stops that URL."""
     if str(status) != "200":
         raise NeonApiFailure(describe(endpoint, method, status, raw))
     data = _json_object(status, raw, endpoint, method)
@@ -127,7 +146,34 @@ def extract_direct_uri(status, raw, endpoint, method="GET"):
         raise NeonApiFailure("%s %s -> HTTP 200 but `uri` is the POOLED host %s; the integration tests "
                              "connect direct, as the create response's connection_uri did"
                              % (method, endpoint, parts.hostname))
+    host = parts.hostname.lower()
+    if not protected:
+        raise NeonApiFailure("%s %s: no protected endpoint list was given; refusing to vouch for host %s"
+                             % (method, endpoint, host))
+    hit = [ep for ep in protected if ep.lower() in host]
+    if hit:
+        raise NeonApiFailure("%s %s -> HTTP 200 but `uri` is on the PROTECTED long-lived endpoint %s (host %s); "
+                             "refusing to hand it to the integration job" % (method, endpoint, hit[0], host))
+    if not expect_host or host != expect_host.lower():
+        raise NeonApiFailure("%s %s -> HTTP 200 but `uri` host %s is not this run's branch endpoint %s"
+                             % (method, endpoint, host, expect_host or "<none given>"))
     return uri
+
+
+class IdentityMismatch(NeonApiFailure):
+    """The branch was read and is not the one expected: never delete it."""
+
+
+def check_branch_is(status, raw, endpoint, branch_id, name, method="GET"):
+    """GET /branches/{id} must answer with that id AND the expected name."""
+    if str(status) != "200":
+        raise NeonApiFailure(describe(endpoint, method, status, raw))
+    data = _json_object(status, raw, endpoint, method)
+    branch = data.get("branch") if isinstance(data.get("branch"), dict) else {}
+    if branch.get("id") != branch_id or branch.get("name") != name:
+        raise IdentityMismatch("%s %s -> HTTP 200 but the branch is %s named %r, not %s named %r"
+                               % (method, endpoint, branch.get("id"), branch.get("name"), branch_id, name))
+    return name
 
 
 def branch_ids_named(status, raw, endpoint, name, method="GET"):
@@ -162,6 +208,9 @@ def write_private(path, text):
 def _run(args, extract, report):
     try:
         value = extract(args.status, read_body(args.body_file), args.endpoint, method=args.method)
+    except IdentityMismatch as failure:
+        annotate("error", str(failure))
+        return 2
     except NeonApiFailure as failure:
         annotate(args.severity, str(failure))
         return 1
@@ -175,10 +224,25 @@ def cmd_branch_id(args):
                 lambda bid: "ok: %s %s -> HTTP %s, branch %s" % (args.method, args.endpoint, args.status, bid))
 
 
+def cmd_endpoint_host(args):
+    def extract(status, raw, endpoint, method):
+        return extract_endpoint_host(status, raw, endpoint, args.branch_id, method)
+    return _run(args, extract, lambda host: "ok: branch %s read_write endpoint host %s" % (args.branch_id, host))
+
+
 def cmd_connection_uri(args):
-    return _run(args, extract_direct_uri,
+    def extract(status, raw, endpoint, method):
+        return extract_direct_uri(status, raw, endpoint, args.expect_host, args.protected.split(), method)
+    return _run(args, extract,
                 lambda uri: "ok: %s %s -> HTTP 200, direct host %s"
                 % (args.method, args.endpoint, urllib.parse.urlsplit(uri).hostname))
+
+
+def cmd_branch_is(args):
+    def extract(status, raw, endpoint, method):
+        return check_branch_is(status, raw, endpoint, args.id, args.name, method)
+    return _run(args, extract, lambda name: "ok: %s %s -> HTTP 200, %s is named %s"
+                % (args.method, args.endpoint, args.id, name))
 
 
 def cmd_branch_ids_named(args):
@@ -194,7 +258,10 @@ def build_parser():
     sub = p.add_subparsers(dest="cmd", required=True)
     for name, func, method, helptext in (
             ("branch-id", cmd_branch_id, "POST", "branch.id from a branch-create response"),
+            ("endpoint-host", cmd_endpoint_host, "POST", "the new branch's read_write endpoint host"),
             ("connection-uri", cmd_connection_uri, "GET", "the direct `uri` from GET /connection_uri"),
+            ("branch-is", cmd_branch_is, "GET", "exit 0 only if GET /branches/{id} has that id and name; "
+                                                "2 (an ::error::) if it has another"),
             ("branch-ids-named", cmd_branch_ids_named, "GET", "ids of branches with an exact name")):
         sp = sub.add_parser(name, help=helptext)
         sp.add_argument("--endpoint", required=True)
@@ -204,8 +271,16 @@ def build_parser():
         sp.add_argument("--out", required=True, help="file the value is written to (mode 600)")
         sp.add_argument("--severity", default="error", choices=["error", "warning"],
                         help="annotation level on failure; the exit code is 1 either way")
-        if name == "branch-ids-named":
+        if name in ("branch-ids-named", "branch-is"):
             sp.add_argument("--name", required=True)
+        if name == "branch-is":
+            sp.add_argument("--id", required=True)
+        if name == "endpoint-host":
+            sp.add_argument("--branch-id", required=True)
+        if name == "connection-uri":
+            sp.add_argument("--expect-host", required=True, help="the new branch's endpoint host")
+            sp.add_argument("--protected", required=True,
+                            help="space-separated long-lived endpoint ids the uri must never name")
         sp.set_defaults(func=func)
     return p
 
