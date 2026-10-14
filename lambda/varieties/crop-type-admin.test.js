@@ -526,6 +526,15 @@ function slugsNamed(sql) {
   return out;
 }
 
+// One SELECT, no JOIN, over live rows, projecting exactly count(*), with no HAVING and no CASE.
+function isPlainCount(sql) {
+  const bare = sql.replace(SCHEMA_VERSION_ARM, 'TRUE');
+  const projection = bare.match(/\bSELECT\b([\s\S]*?)\bFROM\b/i)?.[1].replace(/\s+/g, ' ').trim().toLowerCase();
+  return (bare.match(/\bSELECT\b/gi) ?? []).length === 1 && !/\bJOIN\b/i.test(bare)
+    && /deleted_at\s+IS\s+NULL/i.test(bare)
+    && projection === 'count(*)' && !/\bHAVING\b/i.test(bare) && !/\bCASE\b/i.test(bare);
+}
+
 function gateCensus() {
   const dir = join(REPO, 'migrations');
   const requiring = [];
@@ -548,11 +557,7 @@ function gateCensus() {
       // falls through to "needs the type live" like any other positive expectation.
       expect(['scalar_eq', 'rowcount_eq', 'rowcount_gte'], `${id}: an expectation this census has never read`).toContain(g.expect);
       if (g.expect === 'rowcount_gte' && g.value === 0) continue;
-      const bare = sql.replace(SCHEMA_VERSION_ARM, 'TRUE');
-      const projection = bare.match(/\bSELECT\b([\s\S]*?)\bFROM\b/i)?.[1].replace(/\s+/g, ' ').trim().toLowerCase();
-      const plain = (bare.match(/\bSELECT\b/gi) ?? []).length === 1 && !/\bJOIN\b/i.test(bare)
-        && /deleted_at\s+IS\s+NULL/i.test(bare)
-        && projection === 'count(*)' && !/\bHAVING\b/i.test(bare) && !/\bCASE\b/i.test(bare);
+      const plain = isPlainCount(sql);
       const zero = g.value === 0 && g.expect !== 'rowcount_gte';
       if (zero && plain) continue;
       if (zero) {
@@ -613,6 +618,19 @@ describe('the gate-required census', () => {
       expect(new Set(g.slugs).size, g.id).toBe(g.value);
     }
     for (const g of census.requiring) expect(g.slugs.length, g.id).toBeGreaterThan(0);
+  });
+
+  it('reads only a bare count(*) as plain, so a shape that can invert the count is compound', () => {
+    // The three shapes the 2026-10-13 re-check (N3) ran against the old rule, which classed each as
+    // cannot-be-failed and left its slug retirable. Hiding a row raises each one's answer.
+    const live = "FROM public.crop_types WHERE slug = 'garlic' AND deleted_at IS NULL";
+    expect(isPlainCount(`SELECT count(*) ${live}`)).toBe(true);
+    expect(isPlainCount(`SELECT 13 - count(*) ${live}`)).toBe(false);
+    expect(isPlainCount(`SELECT CASE WHEN count(*) = 1 THEN 0 ELSE 1 END ${live}`)).toBe(false);
+    expect(isPlainCount(`SELECT 1 ${live} HAVING count(*) < 1`)).toBe(false);
+    // The projection test alone would pass these two; the HAVING and CASE tests are what catch them.
+    expect(isPlainCount(`SELECT count(*) ${live} HAVING count(*) < 1`)).toBe(false);
+    expect(isPlainCount(`SELECT count(*) ${live} AND CASE WHEN true THEN true END`)).toBe(false);
   });
 
   it('the list is sorted and has no duplicate', () => {
