@@ -8,9 +8,10 @@ import { removeLogged } from './needsCareStore.js'
 
 // RainHold — what rain did to today's watering, in the glance card's OPEN state (BUG-DEFERNOSTRESSOVERRIDE-001,
 // Design A; Dave 2026-10-09: a held plant he finds dry, he waters on the spot). Two lines, never one:
+//   "Rain already watered M plantings."     the ones rain that fell took care of. No control. One plain advisory
+//                                           line of the open card's list, before the rows (finish plan §3.2);
 //   "Waiting for rain · N"  [Show / Hide]   the plantings the engine holds on a FORECAST, each a PlantCareRow
-//                                           with the ordinary Water chip — no Skip, no Moist;
-//   "Already watered by rain · M"           the ones rain that fell took care of. No control.
+//                                           with the ordinary Water chip — no Skip, no Moist.
 // A line whose count is 0 is omitted (the waiting line stays while a row watered this visit keeps its done
 // line and Undo under it). The list shows itself at RAIN_HOLD_AUTO_SHOW or fewer; a Show / Hide tap is the
 // visit's from then on (record.rain.shown). Shown, it draws COHORT_CAP rows and the page's "Show N more" for
@@ -89,6 +90,7 @@ export default function RainHold({ plan, care = null, record = null, update = NO
 
   return (
     <div ref={rootRef} data-testid="care-rain-note" style={{ display: 'flex', flexDirection: 'column', gap: T.space.xs }}>
+      {covered > 0 && <p data-testid="rain-covered-line" style={coveredStyle}>{coveredLine(covered)}</p>}
       {(n > 0 || drawn.length > 0) && (
         <div data-testid="rain-waiting">
           <div style={waitLine}>
@@ -123,7 +125,6 @@ export default function RainHold({ plan, care = null, record = null, update = NO
           )}
         </div>
       )}
-      {covered > 0 && <p data-testid="rain-covered-line" style={coveredStyle}>{coveredLine(covered)}</p>}
     </div>
   )
 }
@@ -132,5 +133,5 @@ const waitLine = { display: 'flex', alignItems: 'center', gap: T.space.sm, minHe
 const textLink = { flexShrink: 0, minHeight: T.buttonMinHeight, minWidth: T.buttonMinHeight, padding: '0 10px', background: 'none', border: 'none', color: P.green, fontWeight: 600, fontSize: T.type.sm, cursor: 'pointer', fontFamily: 'inherit' }
 // One card around the rows (SpotRow's); the first row's own top hairline is tucked under its border.
 const listCard = { background: P.white, border: '1px solid ' + P.border, borderRadius: T.radiusCard, overflow: 'clip' }
-// The 4px above and below are the rain note's this line replaces (the open card's height floor is recorded over it).
-const coveredStyle = { margin: 0, padding: '4px 0', fontSize: T.type.sm, color: P.mid }
+// The open card's advisory line (GlanceCard's alert-line treatment: a 3 px sage rule, T.type.sm, normal weight).
+const coveredStyle = { margin: 0, paddingLeft: T.space.sm, borderLeft: `3px solid ${P.sage}`, fontSize: T.type.sm, lineHeight: 1.45, color: P.dark, fontWeight: 400 }

@@ -371,20 +371,26 @@ function warmedLine(sent, planLow) {
 // figure: "Frost watch tonight — clear and calm, as low as 35°F. …". Decided on the ROUNDED figures (QA M2): a 38.6
 // second forecast under a 39 watch prints 39 either way, and "as low as 39°F" would claim a lower number it does not
 // show. handler.frostSubject applies the same rounded rule to the email subject.
-function lineFor(a, lowShown) {
+// `parts` (the redesigned Today, finish plan §3.2–3.3): the line also carries its two halves without the low —
+// `lead` "Frost watch tonight — clear and calm" / "Frost possible tonight" and `tail` "Plan cover for tender plants." —
+// for a page that states tonight's low once elsewhere. Without it the line is exactly the object it always was.
+const COVER_TAIL = 'Plan cover for tender plants.'
+function lineFor(a, lowShown, parts = false) {
   const night = resolveNight(a)
   const when = nightPhrase(night)
   const own = Number(a.lowF)
   const raw = lineLowRaw(a)
   const low = Number.isFinite(lowShown) ? lowShown : Math.round(raw)
+  const lead = a.trip === 'radiative' ? `Frost watch ${when} — clear and calm` : `Frost possible ${when}`
   return {
     text: a.trip === 'radiative'
-      ? `Frost watch ${when} — clear and calm, ${Math.round(raw) < Math.round(own) ? 'as low as' : 'low'} ${low}°F. Plan cover for tender plants.`
-      : `Frost possible ${when} — low ${low}°F. Plan cover for tender plants.`,
+      ? `${lead}, ${Math.round(raw) < Math.round(own) ? 'as low as' : 'low'} ${low}°F. ${COVER_TAIL}`
+      : `${lead} — low ${low}°F. ${COVER_TAIL}`,
     tier: a.tier,
     dayOffset: intOrNull(a.dayOffset),
     nightOffset: night.nightOffset,
     lowF: low,
+    ...(parts ? { lead, tail: COVER_TAIL } : {}),
   }
 }
 
@@ -398,15 +404,16 @@ function lineFor(a, lowShown) {
 // Today passes it built from the SAME plan tonightLow.js reads, so the card, the cue and this line decide on one row. A
 // retired advisory's warmed line prints current's plan low, the figure pickFrostLines checked it could speak with, so a
 // retirement can never leave tonight with no line at all.
-export function buildFrostAlertLines(alertsSent, { lowShown, planLow, current } = {}) {
+// `parts` adds each watch / possible line's `lead` and `tail` (lineFor); a warmed line has neither.
+export function buildFrostAlertLines(alertsSent, { lowShown, planLow, current, parts = false } = {}) {
   const { tonight, ahead, imminent, warmed } = pickFrostLines(alertsSent, current)
   const lines = []
-  if (tonight) lines.push(lineFor(tonight, lowShown))
+  if (tonight) lines.push(lineFor(tonight, lowShown, parts))
   else {
     const line = warmed ? warmedLine(warmed, current.planLow) : warmedLine(imminent, planLow)
     if (line) lines.push(line)
   }
-  if (ahead) lines.push(lineFor(ahead, null))
+  if (ahead) lines.push(lineFor(ahead, null, parts))
   return lines
 }
 

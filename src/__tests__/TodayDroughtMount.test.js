@@ -39,18 +39,22 @@ describe('Today mounts the drought line', () => {
 
 // V5-TODAYREDESIGN-001 S3 — the redesigned Today mounts it too, in the glance card's details (plan-v2 §4, §7 row
 // 15; §13 MF2). The same guard, pointed at the V2 mount (R3); V1 keeps its own above until it is removed (S8c).
+// Finish plan §3.2 (2026-10-14): V2 merges the drought line and the dry list into ONE line (GlanceCard's DryLine),
+// still read through buildDroughtLine — the validator that refuses a "no rain in N days" note (Dave's ruling) — so
+// the guard follows the merged mount. Its words are pinned by render in GlanceCard.test.jsx.
 const GLANCE = fs.readFileSync(path.resolve(__dirname, '../components/today/v2/GlanceCard.jsx'), 'utf8')
 
 describe('the V2 glance card mounts the drought line', () => {
-  it('imports DroughtLine', () => {
-    expect(GLANCE).toMatch(/import\s+DroughtLine\s+from\s+['"][^'"]*DroughtLine\.jsx['"]/)
+  it('reads it through buildDroughtLine (the category-slip validator)', () => {
+    expect(GLANCE).toMatch(/import\s+\{\s*buildDroughtLine\s*\}\s+from\s+['"][^'"]*lib\/droughtLine\.js['"]/)
+    expect(GLANCE).toMatch(/buildDroughtLine\(plan\)/)
   })
-  it('renders <DroughtLine> and passes it the plan', () => {
-    expect(GLANCE).toMatch(/<DroughtLine\b[^>]*\bplan=\{plan\}/)
+  it('renders the merged line and passes it the plan', () => {
+    expect(GLANCE).toMatch(/<DryLine\b[^>]*\bplan=\{plan\}/)
   })
-  it('renders it below FrostAlertLine, in the same reading order as V1', () => {
-    const frost = GLANCE.indexOf('<FrostAlertLine')
-    const drought = GLANCE.indexOf('<DroughtLine')
+  it('renders it below the frost lines, in the same reading order as V1', () => {
+    const frost = GLANCE.indexOf('<FrostLine key=')
+    const drought = GLANCE.indexOf('<DryLine plan=')
     expect(frost).toBeGreaterThan(-1)
     expect(drought).toBeGreaterThan(frost)
   })

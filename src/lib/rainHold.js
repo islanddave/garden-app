@@ -79,8 +79,11 @@ export function waitingRows(plan) {
 
 const plantings = (n) => n + ' planting' + (n === 1 ? '' : 's')
 export const waitingLine = (n) => 'Waiting for rain · ' + n
-// Parallel to the waiting line, and not "covered": that is this screen's word for a frost cover.
-export const coveredLine = (n) => 'Already watered by rain · ' + n
+// Not "covered": that is this screen's word for a frost cover. Today finish plan §3.2 (2026-10-14) makes it one
+// plain sentence in the open glance card's list; the plan's draft read "Rain already covered N plantings.", and the
+// verb stays "watered" for the reason above.
+export const coveredLine = (n) => 'Rain already watered ' + plantings(n) + '.'
+
 // Today V1's note and DrG's rationale: sentences, no list. The rain-that-fell sentence is each surface's own,
 // unchanged — it was only ever false for the forecast holds, which now get the sentence before it.
 export function rainNoteSentences(plan) {

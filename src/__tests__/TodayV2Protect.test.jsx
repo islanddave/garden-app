@@ -96,7 +96,8 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('Protect tonight on the 09-24 plan (47°F, five protect cards, no alert)', () => {
-  it('opens by itself on the chill plantings\' first night here: first section, count 5, "Tonight · low 47°F · …" with the urgency cue', async () => {
+  // Finish plan §3.3 (D15): tonight's low is the glance card's; open, the summary says the timing and the reason.
+  it('opens by itself on the chill plantings\' first night here: first section, count 5, "Tonight · tender below 50°" with the urgency cue', async () => {
     await mount()
     const sections = [...document.querySelectorAll('[data-testid^="today-sec-"]')].map((s) => s.getAttribute('data-section'))
     expect(sections[0]).toBe('protect')
@@ -104,7 +105,8 @@ describe('Protect tonight on the 09-24 plan (47°F, five protect cards, no alert
     const text = band('protect').textContent
     expect(text).toContain('Protect tonight')
     expect(text).toContain('5')
-    expect(text).toContain('Tonight · low 47°F · Lemon Verbena, Sweet Basil +3')
+    expect(text).toContain('Tonight · tender below 50°')
+    expect(text).not.toMatch(/47|Lemon Verbena/) // no repeated low; the open body lists the names
     expect(band('protect').querySelector('svg')).toBeTruthy() // severity.med: a trigger opened it
     expect(JSON.parse(sessionStorage.getItem(`today-visit:u:${TODAY}:v2`)).triggers.protect).toEqual({ t: 'chill' })
   })
@@ -134,7 +136,9 @@ describe('Protect tonight on the 09-24 plan (47°F, five protect cards, no alert
     localStorage.setItem('today-seen:u', JSON.stringify({ season: '2026-autumn', chill: Object.fromEntries(Object.keys(seen.chill).map((k) => [k, '2026-09-23'])) }))
     await mount()
     expect(band('protect').getAttribute('aria-expanded')).toBe('false')
-    expect(band('protect').textContent).toContain('Tonight · low 47°F · Lemon Verbena, Sweet Basil +3')
+    // Closed, the band names the first two (the body is not on screen to name them); still no low.
+    expect(band('protect').textContent).toContain('Tonight · Lemon Verbena, Sweet Basil +3')
+    expect(band('protect').textContent).not.toMatch(/47/)
     expect(band('protect').querySelector('svg')).toBeNull()
   })
 
@@ -216,12 +220,27 @@ describe('write paths (§2.3), done lines (§2.5) and SF1', () => {
 })
 
 describe('frost and freeze nights', () => {
-  it('busyfull — a radiative advisory naming tonight: frost, "Before dark · low 42°F", the pick link first → /log/harvest', async () => {
+  // Finish plan §3.3 (Dave's D15): the engine's pick cue becomes the pick link, on a chill night too; the glance card
+  // prints no cue line beside it; the cue's impression is recorded where its words are painted (OPS-CUEINSTRUMENT-001).
+  it('a pick cue folds into Protect: the link says it, no cue line on the glance, one impression', async () => {
+    const callout = { icon: 'cool', text: 'Cool night (47°F) — pick coloring peppers & tomatoes' }
+    serve({ ...PAYLOAD, plan: { ...PAYLOAD.plan, weather: { ...PAYLOAD.plan.weather, callout } } })
+    await mount()
+    const pick = screen.getByTestId('protect-pick')
+    expect(pick.textContent).toBe('Pick coloring peppers & tomatoes first — log a harvest ›')
+    expect(screen.getByTestId('protect-body').firstElementChild).toBe(pick)
+    expect(screen.queryByTestId('weather-cue-line')).toBeNull()
+    expect(wire.posts.filter((b) => b.cue === 'cool' && b.form === 'imperative')).toHaveLength(1)
+  })
+
+  it('busyfull — a radiative advisory naming tonight: frost, "Before dark · tender below 50°", the pick link first → /log/harvest', async () => {
     serve({ ...PAYLOAD, plan: { ...PAYLOAD.plan, alerts_sent: BUSYFULL_ALERTS } })
     await mount()
     expect(band('protect').getAttribute('aria-expanded')).toBe('true')
-    expect(band('protect').textContent).toContain('Before dark · low 42°F · Lemon Verbena, Sweet Basil +3')
+    expect(band('protect').textContent).toContain('Before dark · tender below 50°')
+    expect(band('protect').textContent).not.toMatch(/42/)
     const pick = screen.getByTestId('protect-pick')
+    // No cue on this plan (its callout is null): the link keeps its own words.
     expect(pick.textContent).toBe('Pick what’s ripe first — log a harvest ›')
     expect(pick.getAttribute('href')).toBe('/log/harvest')
     expect(screen.getByTestId('protect-body').firstElementChild).toBe(pick)

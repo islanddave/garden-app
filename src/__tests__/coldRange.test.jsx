@@ -54,10 +54,11 @@ describe('where it shows', () => {
     </MemoryRouter>,
   )
 
-  it('V2 closed glance row: beside the low, inside the toggle button', () => {
+  // Today finish plan §3.2 (2026-10-14): the redesigned Today says "could reach" — "as cold as" compares with nothing.
+  it('V2 closed glance row: "could reach 39°" beside the low, inside the toggle button', () => {
     glance({ coldRange: RANGE })
     const note = screen.getByTestId('cold-range')
-    expect(note.textContent).toBe('as cold as 39°')
+    expect(note.textContent).toBe('could reach 39°')
     expect(note.closest('button[aria-expanded="false"]')).toBeTruthy()
   })
 
@@ -66,13 +67,13 @@ describe('where it shows', () => {
     expect(screen.queryByTestId('cold-range')).toBeNull()
   })
 
-  it('V2 open card: WeatherWidget carries it', () => {
+  it('V2 open card: WeatherWidget carries it, in the closed card\'s words', () => {
     glance({ coldRange: RANGE, open: true })
     expect(screen.getByTestId('today-weather')).toBeTruthy()
-    expect(screen.getAllByTestId('cold-range').map((n) => n.textContent)).toEqual(['as cold as 39°'])
+    expect(screen.getAllByTestId('cold-range').map((n) => n.textContent)).toEqual(['could reach 39°'])
   })
 
-  it('WeatherWidget (V1): beside the low it prints, judged against lowShown when set', () => {
+  it('WeatherWidget (V1): beside the low it prints, judged against lowShown when set — still "as cold as"', () => {
     const { unmount } = rtlRender(<WeatherWidget weather={PLAN.weather} hydrology={PLAN.hydrology} planDate={DAY} coldRange={RANGE} />)
     expect(screen.getByTestId('cold-range').textContent).toBe('as cold as 39°')
     unmount()

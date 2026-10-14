@@ -5,6 +5,10 @@ import { T } from '../../forms/formStyles.js'
 import Icon from '../../Icon.jsx'
 import { skipMany, unskipMany } from '../careStore.js'
 import { COVER_LEVELS } from '../../../lib/todayV2/protect.js'
+import { pickLinkText, PICK_DEFAULT } from '../../../lib/todayV2/alerts.js'
+import { buildCueLine } from '../../../lib/weatherCue.js'
+import { useApiFetch } from '../../../lib/api.js'
+import { sendCueImpression } from '../../../lib/weatherCueImpressions.js'
 import { tinted } from './SpotRow.jsx'
 import { outlineBtn } from './PlantCareRow.jsx'
 import { removeLogged, readLogged, claimedKeys, runEnd, runTake, runsEnded } from './needsCareStore.js'
@@ -13,7 +17,9 @@ import { removeLogged, readLogged, claimedKeys, runEnd, runTake, runsEnded } fro
 // §1.2, §2.3, §2.5, §4, §5.5–5.7; §13 SF1; Dave's D6: Protect keeps its existing Skip, no "Leave it out").
 //
 //   · on a frost or hard-freeze night, first: "Pick what's ripe first — log a harvest ›" → /log/harvest, the
-//     harvest door TopChrome opens (§1.1; a chill night has none, §1.2);
+//     harvest door TopChrome opens (§1.1; a chill night has none, §1.2). Finish plan §3.3 (D15): the engine's cue
+//     folds in here — a pick cue ("Cold night (42°F) — pick coloring peppers & tomatoes") becomes the link's words,
+//     "Pick coloring peppers & tomatoes first — log a harvest ›", on any night it fires (lib/todayV2/alerts.js);
 //   · a TENDER planting (a `protect` card) is its own row card: name (→ its planting page), "{spot} · below N°F",
 //     then Skip · 8 px · [Covered] · 8 px · [Brought in] — the 8 px between Covered and Brought in are dead space
 //     (SF1), so a thumb aimed at one cannot land on the other;
@@ -45,7 +51,22 @@ export function coverWhose(rows) {
   return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
 
-export default function ProtectTonight({ protect, record, update, announce, writesHeld = false }) {
+// The cue carried by the pick link records its impression as the cue line would (WeatherCueLine.jsx: on the render
+// that paints it, once per render key; the server owns the per-day grain) — the instrument (OPS-CUEINSTRUMENT-001)
+// must not read a cue on screen as a cue that never fired.
+function useFoldedCueImpression(line, generatedAt, planDate) {
+  const { fetch: apiFetch } = useApiFetch()
+  const sentRef = useRef(null)
+  useEffect(() => {
+    if (!line) return
+    const key = `${planDate ?? ''}|${line.cue}|${line.form}`
+    if (sentRef.current === key) return
+    sentRef.current = key
+    sendCueImpression(apiFetch, line, generatedAt)
+  }, [line, apiFetch, generatedAt, planDate])
+}
+
+export default function ProtectTonight({ protect, record, update, announce, writesHeld = false, cue = null }) {
   const slice = record?.protect || null
   const setSlice = useCallback((fn) => update((r) => ({ ...r, protect: fn(r.protect || {}) })), [update])
   const { actions } = protect
@@ -90,6 +111,10 @@ export default function ProtectTonight({ protect, record, update, announce, writ
   // is on screen. Undo un-writes, as before. No batch goes on the record at the start: the remount builds no cover row
   // for a spot whose keys are all claimed, so there is no line to draw it on.
   const claim = protect.claim
+  // `cue` = { callout, generatedAt, planDate }: the page's cue, folded here when it is a pick cue.
+  const pickText = useMemo(() => pickLinkText(cue?.callout), [cue?.callout])
+  const pickCue = useMemo(() => (pickText ? buildCueLine(cue.callout) : null), [pickText, cue?.callout])
+  useFoldedCueImpression(pickCue, cue?.generatedAt ?? null, cue?.planDate ?? null)
   const alive = useRef(false)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   // A Cover all's result on the record: its batch (the spot's "covered N" and its one Undo) and each failure's Retry.
@@ -237,11 +262,11 @@ export default function ProtectTonight({ protect, record, update, announce, writ
 
   return (
     <div ref={rootRef} data-testid="protect-body" style={{ display: 'flex', flexDirection: 'column', gap: T.space.xs }}>
-      {protect.pick && (
+      {(protect.pick || pickText) && (
         // BUG-LINKICONBLUE-001: an explicit ink on a <Link> holding an <Icon>.
         <Link to="/log/harvest" data-testid="protect-pick" style={pickLink}>
           <Icon name="lifecycle.fruit" size={18} decorative style={{ flexShrink: 0 }} />
-          <span>Pick what’s ripe first — log a harvest ›</span>
+          <span>{pickText || PICK_DEFAULT}</span>
         </Link>
       )}
       <ul style={list}>

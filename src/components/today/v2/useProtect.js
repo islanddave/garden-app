@@ -82,15 +82,17 @@ export function useProtect({ plan, planDate, userId, stale, householdPlans, care
     order: protectOrder(allEnriched.filter((r) => !actions.skipped.has(r.key)), careRows, groupOrder),
     rowsDone: {}, batches: {}, failed: {}, open: [],
   }), [allEnriched, actions.skipped, careRows, groupOrder])
-  // The summary names the rows still to do in the order the body lists them (the same spot order).
+  // The summary names the rows still to do in the order the body lists them (the same spot order) while the section
+  // is closed; open, it says the timing and the reason (finish plan §3.3, D15: `summaryOpen`, no repeated low).
   const summary = useMemo(() => {
     if (!rows.length) return null
     const rank = new Map(protectOrder(rows, careRows, groupOrder).map((k, i) => [k, i]))
-    return protectSummary({ tier, lowF, rows: [...rows].sort((a, b) => rank.get(a.key) - rank.get(b.key)) })
-  }, [rows, careRows, groupOrder, tier, lowF])
+    return protectSummary({ tier, rows: [...rows].sort((a, b) => rank.get(a.key) - rank.get(b.key)) })
+  }, [rows, careRows, groupOrder, tier])
+  const summaryOpen = useMemo(() => (rows.length ? protectSummary({ tier, rows, open: true }) : null), [rows, tier])
 
   return {
     rows, allEnriched, count: rows.length, tier, lowF, trigger, settled, actions, getToken, logKey, claim, snapshot,
-    pick: pickNight(tier), summary,
+    pick: pickNight(tier), summary, summaryOpen,
   }
 }

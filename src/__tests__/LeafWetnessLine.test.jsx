@@ -59,7 +59,30 @@ describe('the sentence', () => {
     render(<LeafWetnessLine plan={{ leaf_wetness: WET({ recent_wet_days: 0, recent_dates: [], ahead_wet_days: 2, ahead_dates: ['2026-09-09', '2026-09-11'] }) }} />)
     const t = screen.getByTestId('leaf-wetness-line').textContent
     expect(t).toMatch(/ahead/)
-    expect(t).toMatch(/keep water off the foliage/i)
+    expect(t).toMatch(/water the soil, not the leaves/i)
+  })
+
+  // Today finish plan §3.2 (2026-10-14): the forecast half read "1 day ahead look like…". Every count agrees with
+  // its verb, and the one wet day being the day after the plan's says "Tomorrow" — only when the date proves it.
+  it('agrees with its count: "1 day ahead looks", "2 days ahead look", "1 more day ahead looks"', () => {
+    const one = buildLeafWetnessLine({ leaf_wetness: WET({ recent_wet_days: 0, recent_dates: [], ahead_wet_days: 1, ahead_dates: ['2026-09-10'] }) }).text
+    expect(one).toMatch(/^1 day ahead looks likely to bring 8\+ modelled hours of wet leaves/)
+    expect(one).not.toMatch(/day ahead look /)
+    const two = buildLeafWetnessLine({ leaf_wetness: WET({ recent_wet_days: 0, recent_dates: [], ahead_wet_days: 2, ahead_dates: ['2026-09-09', '2026-09-11'] }) }).text
+    expect(two).toMatch(/^2 days ahead look likely/)
+    const both = buildLeafWetnessLine({ leaf_wetness: WET({ ahead_wet_days: 1, ahead_dates: ['2026-09-09'] }) }).text
+    expect(both).toMatch(/and 1 more day ahead looks the same/)
+    expect(both).toMatch(/modelled/)
+  })
+  it('"Tomorrow:" only when the one wet day ahead is the day after the plan date — otherwise it counts', () => {
+    const w = WET({ recent_wet_days: 0, recent_dates: [], ahead_wet_days: 1, ahead_dates: ['2026-09-09'] })
+    expect(buildLeafWetnessLine({ leaf_wetness: w }, { planDate: DAY }).text)
+      .toBe('Tomorrow: 8+ modelled hours of wet leaves likely — water the soil, not the leaves; cut basil today.')
+    // Two days out, or no date to prove it: no "Tomorrow" claim.
+    expect(buildLeafWetnessLine({ leaf_wetness: { ...w, ahead_dates: ['2026-09-10'] } }, { planDate: DAY }).text).not.toMatch(/Tomorrow/)
+    expect(buildLeafWetnessLine({ leaf_wetness: w }).text).not.toMatch(/Tomorrow/)
+    render(<LeafWetnessLine plan={{ leaf_wetness: w }} planDate={DAY} />)
+    expect(screen.getByTestId('leaf-wetness-line').textContent).toMatch(/^Tomorrow: /)
   })
 
   it('NEVER claims infection, only wetness — it ships unfalsifiable and must not pretend otherwise', () => {
@@ -68,8 +91,8 @@ describe('the sentence', () => {
     // Each case is scoped to its OWN container. Rendering repeatedly into document.body and calling
     // .remove() between iterations tears the node out from under React and leaves the next
     // screen.getByTestId matching two elements — which is how this test first failed.
-    for (const w of [WET(), WET({ recent_wet_days: 0, ahead_wet_days: 3 }), WET({ ahead_wet_days: 2 })]) {
-      const { container } = render(<LeafWetnessLine plan={{ leaf_wetness: w }} />)
+    for (const w of [WET(), WET({ recent_wet_days: 0, ahead_wet_days: 3 }), WET({ ahead_wet_days: 2 }), WET({ recent_wet_days: 0, recent_dates: [], ahead_wet_days: 1, ahead_dates: ['2026-09-09'] })]) {
+      const { container } = render(<LeafWetnessLine plan={{ leaf_wetness: w }} planDate={DAY} />)
       const t = container.querySelector('[data-testid="leaf-wetness-line"]').textContent
       expect(t).not.toMatch(/blight|infect|disease|septoria|mildew|risk/i)
     }
@@ -82,6 +105,10 @@ describe('the sentence', () => {
     const el = container.querySelector('[data-testid="leaf-wetness-line"]')
     expect(el.textContent).toMatch(/modelled/)
     expect(el.getAttribute('data-wet-basis')).toBe('modelled_precip_hours')
+    // Every sentence form keeps the word, the forecast ones included.
+    for (const w of [WET({ recent_wet_days: 0, recent_dates: [], ahead_wet_days: 1, ahead_dates: ['2026-09-09'] }), WET({ recent_wet_days: 0, recent_dates: [], ahead_wet_days: 2 }), WET({ ahead_wet_days: 1 })]) {
+      expect(buildLeafWetnessLine({ leaf_wetness: w }, { planDate: DAY }).text).toMatch(/modelled/)
+    }
   })
 
   it('never puts an hours count beside a rainfall depth', () => {

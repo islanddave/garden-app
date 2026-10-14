@@ -250,6 +250,10 @@ export default function TodayV2() {
   const hhShown = record ? [...new Set([...record.order.sections, ...present])].filter((k) => k.startsWith('hh-') && household.some((h) => h.key === k)) : []
   const allShown = [...shown, ...hhShown]
   const anyOpen = allShown.some(isOpen)
+  // Finish plan §3.3 (D15): a Protect tonight section on the page takes the glance card's frost and cold-side cue
+  // lines (lib/todayV2/alerts.js). Before the visit starts, the section is the one the page will draw.
+  const protectShown = record ? shown.includes('protect') : present.includes('protect')
+  const cue = useMemo(() => ({ callout: cueCallout, generatedAt: data?.generated_at ?? null, planDate }), [cueCallout, data?.generated_at, planDate])
 
   // The glance paints before the visit starts: until then Layer 1 answers directly (a tap lands there first,
   // so the visit's snapshot at the ready point carries it).
@@ -333,9 +337,11 @@ export default function TodayV2() {
   const markResumed = useCallback((id) => update((r) => ({ ...r, resting: { resumed: [...new Set([...(r.resting?.resumed || []), id])] } })), [update])
   const restingLeft = resting.filter((it) => !resumedSet.has(it.id))
   const careUrgent = !!record?.triggers?.care && record?.overlay?.care === 'open'
-  // S5: the urgency cue (severity.med) only when a trigger opened Protect this visit; the words are the night's
-  // ("Before dark · low 42°F · Lemon Verbena, Sweet Basil +3"). Emptied mid-visit: what this visit did.
+  // S5: the urgency cue (severity.med) only when a trigger opened Protect this visit; the words are the night's —
+  // open "Before dark · tender below 50°", closed "Before dark · Lemon Verbena, Sweet Basil +3" (finish plan §3.3,
+  // D15: the low is the glance card's). Emptied mid-visit: what this visit did.
   const protectUrgent = !!record?.triggers?.protect && record?.overlay?.protect === 'open'
+  const protectSummaryNow = isOpen('protect') ? protect.summaryOpen : protect.summary
   const headsupUrgent = !!record?.triggers?.headsup && record?.overlay?.headsup === 'open'
   // A one-item section that is OPEN drops its summary: the summary would repeat its only row (finish plan D-7).
   // Only where the summary is the rows themselves — Heads-up (its one window's words) and Resting (its names).
@@ -345,9 +351,9 @@ export default function TodayV2() {
       title: 'Protect tonight',
       count: protect.count || null,
       summary: protect.count
-        ? (protectUrgent ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{protect.summary}</> : protect.summary)
+        ? (protectUrgent ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{protectSummaryNow}</> : protectSummaryNow)
         : handledSummary(record?.protect),
-      body: <ProtectTonight protect={protect} record={record} update={update} announce={announce} writesHeld={writesHeld} />,
+      body: <ProtectTonight protect={protect} record={record} update={update} announce={announce} writesHeld={writesHeld} cue={cue} />,
     },
     headsup: {
       title: 'Heads-up',
@@ -437,7 +443,7 @@ export default function TodayV2() {
           liveHydrology={liveHydrology} refreshedAt={refreshedAt} agreed={agreed} current={current} cueCallout={cueCallout}
           stale={staleMark} open={glanceOpen} onToggle={toggleGlance}
           care={needs} record={record} update={update} announce={announce} writesHeld={writesHeld}
-          coldRange={data?.cold_range ?? null} waterDue={waterDueLeft}
+          coldRange={data?.cold_range ?? null} waterDue={waterDueLeft} protectShown={protectShown}
         />
       )}
       {/* The stale marker lives in the glance card; a plan with no weather has no card, so it says how old it is

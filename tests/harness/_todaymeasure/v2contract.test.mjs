@@ -46,8 +46,18 @@ describe('today-v2 contract table', () => {
       expect(armedIn(s.name, 'glance')).toHaveLength(1)
       if (s.fixture !== 'noplan') expect(armedIn(s.name, 'verdict-truncation')).toHaveLength(1)
     }
-    expect(armedIn('v2-frost', 'first-screen').flatMap((c) => c.mustContain)).toEqual(expect.arrayContaining(['today-glance', 'weather-cue-line', 'frost-alert-line', 'today-jumpbar']))
+    expect(armedIn('v2-frost', 'first-screen').flatMap((c) => c.mustContain)).toEqual(expect.arrayContaining(['today-glance', 'today-jumpbar']))
     expect(armedIn('v2-frost', 'first-screen').flatMap((c) => c.mustShowText || [])).toEqual(['today-verdict'])
+    // Finish plan L3 (D15): Protect is on v2-frost's page, so the cue and frost line fold into it — the first screen
+    // must NOT show them (on v2-frost and its rain twin), and the folded words are read where they land.
+    for (const n of ['v2-frost', 'v2-frost-rain']) {
+      expect(armedIn(n, 'first-screen').flatMap((c) => c.mustContain), n).not.toEqual(expect.arrayContaining(['weather-cue-line']))
+      expect(armedIn(n, 'first-screen').flatMap((c) => c.mustNotContain || []), n).toEqual(['weather-cue-line', 'frost-alert-line'])
+    }
+    const d15 = armedIn('v2-frost', 'header-text').filter((c) => c.pick)
+    expect(d15.map((c) => [c.summaries, c.pick])).toEqual([[{ protect: 'Before dark · tender below 50°' }, 'Pick coloring peppers & tomatoes first — log a harvest ›']])
+    expect(REGIONS_V2.find((r) => r.id === 'weather-cue-line' && r.state === 'v2-frost')).toMatchObject({ removed: true, replacedBy: ['protect-pick'] })
+    expect(REGIONS_V2.find((r) => r.id === 'frost-alert-line' && r.state === 'v2-frost')).toMatchObject({ open: 'glance' })
     // S5 landed the Protect half of the split.
     expect(pendingIn('v2-frost', 'first-screen')).toEqual([])
     expect(armedIn('v2-frost', 'first-screen').flatMap((c) => c.mustContain)).toEqual(expect.arrayContaining(['today-sec-protect', 'protect-pick']))
@@ -258,7 +268,8 @@ describe('v2 grafts and the re-dating helper', () => {
     const B = read('today-shape-budget.v2.json').states
     for (const k of ['clock', 'contentBottomFloor', 'contentBottomCeiling', 'controlsFloor', 'scrollHeightCeiling']) expect(B['v2-frost-rain'][k], k).toBe(B['v2-frost'][k])
     expect(STATES).toHaveLength(21)
-    expect(STATES.reduce((a, x) => a + x.checks.filter((c) => isArmed(c)).length, 0)).toBe(266)
+    // L3: + v2-frost's D15 header-text check (Protect's open summary and the pick link's words).
+    expect(STATES.reduce((a, x) => a + x.checks.filter((c) => isArmed(c)).length, 0)).toBe(267)
   })
   it('stale serves the plan one day back', () => {
     expect(applyGrafts(D, PLANTS, ['stale'], G).payload.plan_date).toBe('2026-09-23')

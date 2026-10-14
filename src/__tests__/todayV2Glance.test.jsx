@@ -12,7 +12,7 @@ vi.mock('../lib/rainSentences.js', async (orig) => {
 
 import { rainSentences } from '../lib/rainSentences.js'
 import WeatherWidget, { headlineFor } from '../components/today/WeatherWidget.jsx'
-import { glanceHeadline, urgentPhrase, glanceRain, staleMarker, NOTHING_DUE } from '../lib/todayV2/verdict.js'
+import { glanceHeadline, verdictLead, urgentPhrase, glanceRain, staleMarker, NOTHING_DUE } from '../lib/todayV2/verdict.js'
 import { CHIPS, CHIP_ORDER, taskCounts, liveChips, shownChips, chipText } from '../lib/todayV2/chips.js'
 
 const WX = { tonightLow: 55, highToday: 72, code: 3, hot: false }
@@ -21,33 +21,43 @@ const SOAK = { recent_precip_in: 0.5, today_observed_in: 3.82, today_remaining_i
 const BEDS_WAIT = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 5, tomorrow_precip_in: 0.74, tomorrow_pop: 63 }
 const rows = (n) => Array.from({ length: n }, (_, i) => ({ id: `w${i}` }))
 
-describe('glanceHeadline — headlineFor verbatim behind the empty-list guard (§13 SF9 update)', () => {
-  it('a list and lanes that say water: the card\'s own sentence', () => {
-    expect(glanceHeadline({ weather: WX, hydrology: DRY, water_due: rows(3) })).toBe('Water both — containers and beds today.')
+describe('glanceHeadline — headlineFor behind the empty-list guard (§13 SF9 update), in its short form (finish plan §3.2)', () => {
+  it('a list and lanes that say water: both lanes read the short "Water containers & beds today."; one lane, headlineFor verbatim', () => {
+    expect(glanceHeadline({ weather: WX, hydrology: DRY, water_due: rows(3) })).toBe('Water containers & beds today.')
     expect(glanceHeadline({ weather: WX, hydrology: BEDS_WAIT, water_due: rows(40) })).toBe('Water containers, skip the beds today.')
   })
-  it('a KNOWN empty list under lanes that say water: "Nothing due for watering today." (never an imperative)', () => {
+  it('a KNOWN empty list under lanes that say water: "Nothing to water today." (never an imperative)', () => {
     expect(glanceHeadline({ weather: WX, hydrology: DRY, water_due: [] })).toBe(NOTHING_DUE)
     expect(glanceHeadline({ weather: WX, hydrology: BEDS_WAIT, water_due: [] })).toBe(NOTHING_DUE)
-    expect(NOTHING_DUE).toBe('Nothing due for watering today.')
+    expect(NOTHING_DUE).toBe('Nothing to water today.')
   })
-  it('both lanes hold: the both-hold branch is headlineFor\'s, list or none (the guard only speaks over "water")', () => {
-    expect(glanceHeadline({ weather: WX, hydrology: SOAK, water_due: [] })).toBe('All set — no watering needed today.')
+  it('both lanes hold: an empty list is the same "Nothing to water today."; a list left is headlineFor\'s rain sentence', () => {
+    expect(glanceHeadline({ weather: WX, hydrology: SOAK, water_due: [] })).toBe(NOTHING_DUE)
     expect(glanceHeadline({ weather: WX, hydrology: SOAK, water_due: rows(18) })).toBe("Rain may cover today's list — 18 still due.")
   })
-  it('equals headlineFor on every lane pair once the list is non-empty, and never an ellipsis-budget copy', () => {
-    for (const h of [DRY, SOAK, BEDS_WAIT]) {
+  it('BUG-TODAYWATER-001 still holds: "Nothing to water" never prints over a non-empty list, on any lane pair', () => {
+    for (const h of [DRY, SOAK, BEDS_WAIT]) expect(glanceHeadline({ weather: WX, hydrology: h, water_due: rows(7) })).not.toBe(NOTHING_DUE)
+  })
+  it('equals headlineFor on every lane pair but the both-water one once the list is non-empty, and never an ellipsis-budget copy', () => {
+    for (const h of [SOAK, BEDS_WAIT]) {
       const { container } = render(<WeatherWidget weather={WX} hydrology={h} waterDueCount={7} />)
       expect(container.textContent).toContain(glanceHeadline({ weather: WX, hydrology: h, water_due: rows(7) }))
       cleanup()
     }
-    expect(headlineFor(true, true, 7)).toBe(glanceHeadline({ weather: WX, hydrology: DRY, water_due: rows(7) }))
+    expect(headlineFor(true, true, 7)).toBe('Water both — containers and beds today.')
+    expect(glanceHeadline({ weather: WX, hydrology: DRY, water_due: rows(7) })).toBe('Water containers & beds today.')
+  })
+  it('verdictLead drops the closing " today." / "." for the urgent phrase that follows', () => {
+    expect(verdictLead('Water containers & beds today.')).toBe('Water containers & beds')
+    expect(verdictLead(NOTHING_DUE)).toBe('Nothing to water')
+    expect(verdictLead('Water the beds, hold containers.')).toBe('Water the beds, hold containers')
+    expect(verdictLead("Rain may cover today's list — 3 still due.")).toBe("Rain may cover today's list — 3 still due")
   })
   it('finish plan D-9: the active count, when given, replaces the raw list length — "N still due" follows what is left', () => {
     expect(glanceHeadline({ weather: WX, hydrology: SOAK, water_due: rows(18) }, 4)).toBe("Rain may cover today's list — 4 still due.")
     // Everything logged: the list is known empty, so lanes that say water get no imperative.
     expect(glanceHeadline({ weather: WX, hydrology: DRY, water_due: rows(18) }, 0)).toBe(NOTHING_DUE)
-    expect(glanceHeadline({ weather: WX, hydrology: SOAK, water_due: rows(18) }, 0)).toBe('All set — no watering needed today.')
+    expect(glanceHeadline({ weather: WX, hydrology: SOAK, water_due: rows(18) }, 0)).toBe(NOTHING_DUE)
     // Not an integer: the raw length, as before.
     expect(glanceHeadline({ weather: WX, hydrology: SOAK, water_due: rows(18) }, undefined)).toBe("Rain may cover today's list — 18 still due.")
   })
