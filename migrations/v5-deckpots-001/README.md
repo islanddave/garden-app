@@ -1,6 +1,6 @@
 # v5-deckpots-001 — the three fall pots on the Deck: decided watering, and the Millet rename
 
-**Status: NOT APPLIED** (ledger `DATA-FALLDECKPOTS-001`). Prod apply needs Dave's OK at the sitting.
+**Status: APPLIED on staging and prod 2026-10-14** (ledger `DATA-FALLDECKPOTS-001`). Staging 18:39Z: schema stamp only (the rows are prod-only). Prod, on Dave's OK: pre-gates 6/6, `UPDATE 1` x4, post-gates 4/4, cadencerefill post 5/5. Shipped in v4.189.1.
 
 Dave added three nursery pots on the Deck on 2026-10-12 through the app: Hardy Mums (Garden Chrysanthemum),
 Prairie Sun Yellow Daisies (Prairie Sun, crop `daisy`) and Ornamental Millet (Purple Majesty Miller, crop
