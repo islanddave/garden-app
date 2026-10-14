@@ -124,7 +124,7 @@ export default function Today() {
               (08-03, 08-08). Handing the widget the SAME list it sits above is what lets it stop
               claiming "All set" over a non-empty one. Length, not contents: no new coupling. */}
           {plan.weather && (
-            <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={data?.generated_at} planDate={data?.plan_date} liveHydrology={liveHydrology} refreshedAt={refreshedAt} waterDueCount={Array.isArray(plan.water_due) ? plan.water_due.length : 0} lowShown={agreed?.lowF} />
+            <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={data?.generated_at} planDate={data?.plan_date} liveHydrology={liveHydrology} refreshedAt={refreshedAt} waterDueCount={Array.isArray(plan.water_due) ? plan.water_due.length : 0} lowShown={agreed?.lowF} coldRange={data?.cold_range ?? null} />
           )}
 
           {/* V5-WXCALLOUTRENDER-001 — the engine's one-cue-per-day weather callout, which has had

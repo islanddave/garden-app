@@ -20,7 +20,9 @@ export function redatePayload(payload, day) {
   const from = payload.plan_date
   const shift = from ? Date.parse(`${day}T12:00:00.000Z`) - Date.parse(`${from}T12:00:00.000Z`) : 0
   const gen = payload.generated_at ? new Date(Date.parse(payload.generated_at) + shift).toISOString() : payload.generated_at
-  return { ...payload, plan_date: day, generated_at: gen }
+  // cold_range (V5-WXCOLDBAND-001) is for the plan's night, so it moves with it.
+  const cold = payload.cold_range ? { cold_range: { ...payload.cold_range, night_date: day } } : {}
+  return { ...payload, plan_date: day, generated_at: gen, ...cold }
 }
 
 // Apply the named grafts, in order, to a state's plan payload and its /api/plants list.

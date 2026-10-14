@@ -7,6 +7,7 @@ import DroughtLine from '../DroughtLine.jsx'
 import LeafWetnessLine from '../LeafWetnessLine.jsx'
 import { DroughtList } from '../CareNeeded.jsx'
 import RainHold from './RainHold.jsx'
+import ColdRangeNote from '../ColdRangeNote.jsx'
 import { glanceHeadline, urgentPhrase, glanceRain } from '../../../lib/todayV2/verdict.js'
 import { P } from '../../../lib/constants.js'
 import { ICON_COLORS } from '../../../lib/tokens.js'
@@ -41,7 +42,7 @@ const CHEVRON = { closed: '▸', open: '▾' }
 export default function GlanceCard({
   plan, generatedAt = null, planDate = null, liveHydrology = null, refreshedAt = null,
   agreed = null, current = null, cueCallout = null, stale = null, open = false, onToggle,
-  care = null, record = null, update, announce, writesHeld = false,
+  care = null, record = null, update, announce, writesHeld = false, coldRange = null,
 }) {
   const weather = plan.weather || {}
   const headline = useMemo(() => glanceHeadline(plan), [plan])
@@ -79,6 +80,8 @@ export default function GlanceCard({
                   {/* WeatherWidget's crescent, copied: it has no registry twin (see its note there). */}
                   <svg width="11" height="11" viewBox="0 0 24 24" style={{ marginTop: 2 }} role="img" aria-label="night low"><path d="M20 14.5A8 8 0 1 1 10.5 4 6.3 6.3 0 0 0 20 14.5Z" fill={P.mid} /></svg>
                 </span>
+                {/* V5-WXCOLDBAND-001: the forecast's cold end, only when it is colder than this low. */}
+                <ColdRangeNote coldRange={coldRange} planDate={planDate} lowShown={low} />
                 <span aria-hidden="true" style={{ ...chevronStyle, marginLeft: 'auto', alignSelf: 'center' }}>{CHEVRON.closed}</span>
               </span>
               <span data-testid="glance-rain" style={rowB}>
@@ -106,7 +109,7 @@ export default function GlanceCard({
       </h2>
       {open && (
         <div id={widgetId}>
-          <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={generatedAt} planDate={planDate} liveHydrology={liveHydrology} refreshedAt={refreshedAt} waterDueCount={Array.isArray(plan.water_due) ? plan.water_due.length : 0} lowShown={agreed?.lowF} />
+          <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={generatedAt} planDate={planDate} liveHydrology={liveHydrology} refreshedAt={refreshedAt} waterDueCount={Array.isArray(plan.water_due) ? plan.water_due.length : 0} lowShown={agreed?.lowF} coldRange={coldRange} />
         </div>
       )}
       {stale ? (

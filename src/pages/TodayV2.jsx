@@ -419,6 +419,7 @@ export default function TodayV2() {
           liveHydrology={liveHydrology} refreshedAt={refreshedAt} agreed={agreed} current={current} cueCallout={cueCallout}
           stale={staleMark} open={glanceOpen} onToggle={toggleGlance}
           care={needs} record={record} update={update} announce={announce} writesHeld={writesHeld}
+          coldRange={data?.cold_range ?? null}
         />
       )}
 

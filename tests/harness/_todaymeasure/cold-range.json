@@ -1,0 +1,10 @@
+{
+  "_provenance": "V5-WXCOLDBAND-001. The real WeatherNext 3 cold range for the fixture's night, 2026-09-24 (00Z run), pulled 2026-10-14 with project-state/tools/wn3_send.py --dry-run --night 2026-09-24: p10 40.06 F, p50 46.11 F, 15 of 15 steps. Served on the busyfull payload as cold_range, in the GET /api/daily-plan shape (lambda/daily-plan-read/coldRange.js). Against busyfull's printed low of 42 it renders 'as cold as 40°'.",
+  "value": {
+    "night_date": "2026-09-24",
+    "low_f": 40.06,
+    "mid_f": 46.11,
+    "init_time": "2026-09-24T00:00:00.000Z",
+    "wn3_generated_at": "2026-10-14T15:59:00.000Z"
+  }
+}

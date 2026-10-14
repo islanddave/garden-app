@@ -3,6 +3,7 @@ import Icon from '../Icon.jsx'
 import { computeWateringScale, canRail, pillState } from '../../lib/wateringScale.js'
 import { P, tokens, ICON, ICON_COLORS } from '../../lib/tokens.js'
 import { rainSentences, basisTimeLabel } from '../../lib/rainSentences.js'
+import ColdRangeNote from './ColdRangeNote.jsx'
 
 // Weather widget — V200 Slice 6 reskin (V4-THEME-001). The watering-can scale
 // (computeWateringScale/canRail/pillState) is byte-identical to LOCKED v1, as are the
@@ -290,6 +291,7 @@ export default function WeatherWidget({
   refreshedAt = null,
   waterDueCount = 0,
   lowShown = null,
+  coldRange = null,
 }) {
   // V5-FROSTTWOMODELS-001 — `lowShown` is DISPLAY ONLY: the night-low figure below prints it when set
   // (Today passes the one low it prints for tonight, src/lib/tonightLow.js). It never reaches the
@@ -416,6 +418,8 @@ export default function WeatherWidget({
               be off-token. Drawing a care.moon is the follow-up if the weather family ever grows. */}
           <svg width="11" height="11" viewBox="0 0 24 24" style={{ marginTop: 2 }} role="img" aria-label="night low"><path d="M20 14.5A8 8 0 1 1 10.5 4 6.3 6.3 0 0 0 20 14.5Z" fill={P.mid} /></svg>
         </div>
+        {/* V5-WXCOLDBAND-001: the forecast's cold end, only when it is colder than the low above. */}
+        <ColdRangeNote coldRange={coldRange} planDate={planDate} lowShown={lowShown ?? weather.tonightLow} />
       </div>
 
       {/* NET-NEW no-wrap derived headline. The visible line is ellipsis-truncated, so it is NOT a

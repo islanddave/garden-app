@@ -110,6 +110,8 @@ const BATCHWIN = (await j('/tests/harness/_todaymeasure/harvests.batchwindow.jso
 const JENPLAN = (await j('/tests/harness/_todaymeasure/dailyplan.jen.json'))
 const GRAFTS = (await j('/tests/harness/_todaymeasure/busyfull-grafts.json'))
 const STORAGE_GRAFTS = (await j('/tests/harness/_todaymeasure/storage-grafts.json'))
+// V5-WXCOLDBAND-001: the real cold range for the fixture's night (cold-range.json), busyfull only.
+const COLD_RANGE = (await j('/tests/harness/_todaymeasure/cold-range.json'))?.value ?? null
 // V2 only (seam a/b): the engine-built grafts, GET /api/locations in full, and this state's prefs body.
 const V2GRAFTS = V2 ? await j('/tests/harness/_todaymeasure/v2-grafts.json') : null
 const LOCATIONS_FULL = V2 ? await j('/tests/harness/_todaymeasure/locations.full.json') : null
@@ -212,7 +214,7 @@ const STORAGE_PLANTS = PLANTS.map(p => (p.id === STORAGE_GRAFTS?.sweet_potato_pl
 
 const PAYLOAD_BY_FIX = {
   busy:     { ...D, has_plan: true },
-  busyfull: { ...D, has_plan: true, plan: graftBusyfull(D?.plan, GRAFTS) },
+  busyfull: { ...D, has_plan: true, plan: graftBusyfull(D?.plan, GRAFTS), cold_range: COLD_RANGE },
   busyhh:   { ...D, has_plan: true, household_plans: JENPLAN ? [{ user_id: 'member_jen', generated_at: D?.generated_at ?? null, plan: JENPLAN }] : [] },
   quiet:  { plan: quietPlan, plan_date: D?.plan_date ?? null, generated_at: D?.generated_at ?? null, has_plan: true },
   noplan: { plan: null, plan_date: D?.plan_date ?? null, generated_at: null, has_plan: false },
