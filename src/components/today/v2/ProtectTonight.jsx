@@ -303,7 +303,8 @@ function CoverSpotRow({ spot, n, whose = null, open, onToggle, onCover, busy, re
   const panelId = useId()
   const cover = (n === 1 ? 'Cover 1' : `Cover all ${n}`) + (whose ? ` · ${whose}` : '')
   const text = busy ? `Covering ${busy.done} of ${busy.total}…` : retry ? `Retry ${n}` : cover
-  const name = busy ? text : retry ? `Retry: cover ${n} in ${spot.name}` : `${n === 1 ? 'Cover 1' : 'Cover all ' + n} in ${spot.name}${whose ? ` — ${whose}` : ''}`
+  // The accessible name starts with the visible label (WCAG 2.5.3), then says where.
+  const name = busy ? text : retry ? `Retry: cover ${n} in ${spot.name}` : (whose ? `${cover} — in ${spot.name}` : `${cover} in ${spot.name}`)
   return (
     <li data-testid="protect-spot" data-spot={spot.name} data-count={n} style={{ ...cardRow, flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
@@ -324,7 +325,7 @@ function CoverSpotRow({ spot, n, whose = null, open, onToggle, onCover, busy, re
         {n > 0 && (
           <div style={{ ...controls, paddingRight: 6 }}>
             <button type="button" data-testid="protect-cover-all" data-focus-id={'protect-retry:' + spot.key}
-              onClick={busy || held ? undefined : onCover} aria-disabled={busy || held ? 'true' : undefined} aria-label={name} style={tinted}>{text}</button>
+              onClick={busy || held ? undefined : onCover} aria-disabled={busy || held ? 'true' : undefined} aria-label={name} style={whose ? tintedWrap : tinted}>{text}</button>
           </div>
         )}
       </div>
@@ -358,6 +359,8 @@ const skipCell = {
   background: 'none', color: P.mid, cursor: 'pointer', fontSize: T.type.xs, fontFamily: 'inherit',
 }
 const controls = { display: 'flex', alignItems: 'center', gap: 8, paddingRight: 6, flexShrink: 0 }
+// A Cover all that names whose plants it marks wraps to two lines rather than squeezing the spot name or clipping.
+const tintedWrap = { ...tinted, maxWidth: 150, padding: '4px 10px', whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.2 }
 const hit = {
   flex: 1, minWidth: 0, minHeight: 48, padding: `6px ${T.space.sm}px`, display: 'flex', flexDirection: 'column', justifyContent: 'center',
   gap: 2, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: P.dark, overflowWrap: 'anywhere',

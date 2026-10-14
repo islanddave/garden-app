@@ -182,8 +182,9 @@ export default function TodayV2() {
   // ── the jump chips (§2.4, §2.7): Water / Feed / Check from the same active rows as the Needs care count.
   // Heads-up carries its count too (finish plan D-7: its band said 1, its chip said nothing).
   const counts = useMemo(() => ({ ...taskCounts(care), protect: protect.count, headsup: headsup.count }), [care, protect.count, headsup.count])
-  // The verdict's count (finish plan D-9): the water_due rows still on the list, not the plan's raw list.
-  const waterDueLeft = useMemo(() => care.filter((r) => r.need === 'water_due').length, [care])
+  // The verdict's count (finish plan D-9): the Water rows still on the list — the Water chip's own number, so the
+  // card never says "Nothing due" while the bar says "Water 3" — not the plan's raw water_due length.
+  const waterDueLeft = counts.water
   const live = useMemo(() => liveChips(present, counts), [present, counts])
 
   // ── the ready point ───────────────────────────────────────────────────────────────────────────────────────
@@ -244,7 +245,9 @@ export default function TodayV2() {
   const shown = record ? SECTION_ORDER.filter((k) => record.order.sections.includes(k) || present.includes(k)) : []
   // S6: the household sections, after Resting (held in the visit's order like every section; a member's first
   // appearance mid-visit takes the next slot). Expand / Collapse all move them with the rest.
-  const hhShown = record ? [...new Set([...record.order.sections, ...present])].filter((k) => k.startsWith('hh-')) : []
+  // Only members still on the page: the switch turned off mid-visit leaves no empty slot (and Collapse all
+  // never counts a section that is not drawn).
+  const hhShown = record ? [...new Set([...record.order.sections, ...present])].filter((k) => k.startsWith('hh-') && household.some((h) => h.key === k)) : []
   const allShown = [...shown, ...hhShown]
   const anyOpen = allShown.some(isOpen)
 

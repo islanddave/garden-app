@@ -118,6 +118,7 @@ describe('D-3 — the household switch: a Settings row, read live', () => {
     act(() => writeShowOthers(false))
     await settle()
     expect(sec(HH)).toBeNull()
+    expect(screen.queryByTestId('today-household')).toBeNull() // no empty slot left behind
   })
   it('another tab\'s change arrives by the storage event', async () => {
     await mount()

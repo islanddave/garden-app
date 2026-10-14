@@ -96,7 +96,7 @@ export const tinted = {
   flexShrink: 0, minHeight: T.tapMinHeight, padding: '0 12px', background: P.greenPale, border: 'none', borderRadius: T.radiusButton,
   color: P.green, fontWeight: 700, fontSize: T.type.sm, cursor: 'pointer', fontFamily: 'inherit', fontVariantNumeric: 'tabular-nums',
 }
-const slotBtn = { ...tinted, width: SPOT_SLOT_W, padding: '0 8px', whiteSpace: 'normal', lineHeight: 1.2 }
+const slotBtn = { ...tinted, width: SPOT_SLOT_W, padding: '0 8px', whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.2 }
 const slotEmpty = { flexShrink: 0, width: SPOT_SLOT_W }
 // One 48px line under the header, the done line's anatomy: the failure in words, then its Retry (§5.10 "Failed:
 // 'Not logged' text" — the words carry it, not the colour).

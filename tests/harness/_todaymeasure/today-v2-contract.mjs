@@ -137,6 +137,7 @@ export const STATES = [
       // FeedSuppressedList (CareNeeded.jsx), reused unchanged at the foot of Needs care (REGIONS
       // care-feed-suppressed), prints 0.78rem. Measured: with only that component's 0.78rem → 0.82rem the census
       // passed on v2-frost, so it is the one source. Restyling the line for V2 is a design call, not the gate's.
+      // Finish plan D-5 (2026-10-14) made that call: V2 renders it `compact` at T.type.sm, so 0.78rem is retired here.
       // Integration 2 (orchestrator, 2026-09-29) — plan §9.1(l)'s cap of 4 fingerprints is replaced by an IDENTITY
       // check, in this commit, with this reason: the glance card and the row card are ONE material (white, 1px
       // P.border, radius 10 — measured on the merged S4g + S5 + S6 page, 2026-09-29), so the design's four surfaces
@@ -149,7 +150,7 @@ export const STATES = [
         'glance card + row card (one material)': 'rgb(255, 255, 255) | 1px solid rgb(212, 201, 190) | 10px | none',
         'jump bar': 'rgb(248, 245, 240) | 0px none rgb(0, 0, 0) | 0px | none',
         'section band': 'rgb(230, 240, 232) | 0px none rgb(31, 81, 56) | 7px | none',
-      }, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem', '0.78rem'], why: '(l) every section-level container fingerprint on busyfull is one of the design surfaces (identity, not a count)' },
+      }, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem'], why: '(l) every section-level container fingerprint on busyfull is one of the design surfaces (identity, not a count)' },
       { family: 'weather-once', armedAt: 'S3', why: 'MF2: with the glance OPEN, exactly one today-weather and no repeated hi/lo text' },
       // S4 split the §9.1 phase list: the Water chip is S3's, so the chip step arms with S3 AND S4. Needs care is
       // OPEN at the ready point on this state (the small-pot trigger), so the chip cannot flip today-sec-care's

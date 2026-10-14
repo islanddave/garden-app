@@ -219,6 +219,19 @@ describe('TodayV2 page states', () => {
     expect(screen.queryByTestId('today-substrate-note')).toBeNull()
   })
 
+  // Finish plan D-9 + review I-2: the verdict counts the Water rows still on the list — never-watered ones too — so
+  // it cannot say "Nothing due" while the Water chip still counts one.
+  it('D-9: with the overdue rows skipped and a never-watered row left, the verdict still asks for water', () => {
+    const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+    localStorage.setItem(`today-skipped:${today}`, JSON.stringify(['w1:water_due', 'w2:water_due', 'w3:water_due']))
+    const weather = { tonightLow: 55, highToday: 72, code: 3, hot: false }
+    const hydrology = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, upcoming_precip_in: 0 }
+    planState.current = { data: { has_plan: true, plan_date: today, plan: { ...PLAN, cold: [], weather, hydrology } }, loading: false, error: null, reload: vi.fn() }
+    mount()
+    expect(screen.getByTestId('today-verdict').textContent).not.toMatch(/Nothing due/)
+    expect(screen.getByTestId('today-verdict').textContent).toMatch(/^Water/)
+  })
+
   it('no plan: the one neutral sentence, no care line, the Sow link row', () => {
     planState.current = { data: { has_plan: false, plan: null, plan_date: D }, loading: false, error: null, reload: vi.fn() }
     mount()

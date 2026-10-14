@@ -65,7 +65,7 @@ export const CLIENT_PREF_KEYS = [
   // phone the next person to sign in inherited the last person's choice and could be shown the other's care — V1's
   // pill sets it and the redesigned Today reads the same switch (SF6). Cleared like garden.todayV2, consistent with
   // SF11: after a sign-out the household view starts OFF, on V1 and V2 alike. By import, not a literal:
-  // householdView.js is the one file that spells the key (householdView.test.js pins that) and imports nothing,
+  // householdView.js is the one file that spells the key (householdView.test.js pins that) and imports only React,
   // so there is no cycle.
   SHOW_OTHERS_KEY,
 ]

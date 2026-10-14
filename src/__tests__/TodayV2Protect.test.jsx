@@ -580,7 +580,7 @@ describe('cold rows have ONE owner', () => {
     const shared = buttons.filter((b) => /Jen’s/.test(b.textContent))
     expect(shared.length).toBe(1)
     expect(shared[0].textContent).toMatch(/^Cover all \d+ · yours and Jen’s$/)
-    expect(shared[0].getAttribute('aria-label')).toMatch(/^Cover all \d+ in .+ — yours and Jen’s$/)
+    expect(shared[0].getAttribute('aria-label')).toMatch(/^Cover all \d+ · yours and Jen’s — in .+$/)
     expect(buttons.filter((b) => b !== shared[0]).every((b) => /^Cover (all \d+|1)$/.test(b.textContent))).toBe(true)
   })
 
