@@ -37,7 +37,7 @@ function rowB(plan) {
   const { container } = rtlRender(
     <MemoryRouter>
       <GlanceCard plan={plan} generatedAt={D.generated_at} planDate={D.plan_date} agreed={agreed} current={currentLows(plan)}
-        cueCallout={agreeCallout(plan.weather?.callout, agreed)} open={false} onToggle={() => {}} />
+        cueCallout={agreeCallout(plan.weather?.callout, agreed, D.plan_date)} open={false} onToggle={() => {}} />
     </MemoryRouter>,
   )
   const notes = [...container.querySelectorAll('[data-testid="today-glance"] [aria-expanded] > span:nth-of-type(3) > span')].map((n) => n.textContent)

@@ -7,7 +7,7 @@
 // something reds the moment the two drift.
 import { describe, it, expect, vi } from 'vitest'
 import {
-  agreedTonightLow, agreeCallout, withoutLowClause, AGREED_CUE_MODEL_VERSION,
+  agreedTonightLow, agreeCallout, cueSeason, withoutLowClause, AGREED_CUE_MODEL_VERSION,
 } from '../lib/tonightLow.js'
 import { buildFrostAlertLine } from '../lib/frostAlertLine.js'
 import { buildCueLine, WX_CUE_MODEL_VERSION } from '../lib/weatherCue.js'
@@ -15,14 +15,15 @@ import { sendCueImpression, CUE_IMPRESSIONS_PATH } from '../lib/weatherCueImpres
 import { buildCareNeeded } from '../lib/careNeeded.js'
 import {
   ROWS, GRID_LOWS, GRID_ENTRIES, DRY, planFor, coldBucket, deepFreeze, tonight, tomorrowNight, imminent,
-  computeCallout, freezeText, coldText, BRING, OPTIONAL, TROPICAL,
+  computeCallout, freezeText, coldText, coldTextAllYear, coolText, coolTextSpring, PLAN_DATE, BRING, OPTIONAL, TROPICAL,
 } from './helpers/twoLowsFixtures.js'
+import engine from '../../lambda/daily-plan/engine.js'
 
 // What Today prints, composed from the same calls Today.jsx makes. `card` is what the moon figure
 // prints (WeatherWidget: lowShown ?? weather.tonightLow) — the DOM itself is asserted in the mount file.
 function after(plan) {
   const agreed = agreedTonightLow(plan)
-  const cue = buildCueLine(agreeCallout(plan.weather?.callout, agreed))
+  const cue = buildCueLine(agreeCallout(plan.weather?.callout, agreed, PLAN_DATE))
   const line = buildFrostAlertLine(plan.alerts_sent, { lowShown: agreed?.lowF })
   const shown = agreed?.lowF ?? plan.weather?.tonightLow
   return {
@@ -64,12 +65,15 @@ describe('the spec table — rows 1-12, before -> after (plan date Fri 2026-10-0
     expect(await billedModel(a.cueLine)).toBe(row.after.model)
   })
 
-  it('the impression rows the spec names: 2 agreed, 4 and 12 wxcue-v2, 1/7/10 none', () => {
+  // V5-CHILLBAND-001: row 7 (plan low 47, a line naming tonight at 42) was silent; on Oct 9 it now carries the
+  // `cool` cue, re-worded to the cold line at the agreed 42, so it bills as agreed.
+  it('the impression rows the spec names: 2 and 7 agreed, 4 and 12 wxcue-v3, 1/10 none', () => {
     const model = (n) => ROWS.find((r) => r.n === n).after.model
-    expect(model(2)).toBe(AGREED_CUE_MODEL_VERSION)
+    expect([model(2), model(7)]).toEqual([AGREED_CUE_MODEL_VERSION, AGREED_CUE_MODEL_VERSION])
     expect(AGREED_CUE_MODEL_VERSION).toBe('wxcue-v1-agreed')
+    expect(WX_CUE_MODEL_VERSION).toBe('wxcue-v3')
     expect([model(4), model(12)]).toEqual([WX_CUE_MODEL_VERSION, WX_CUE_MODEL_VERSION])
-    expect([model(1), model(7), model(10)]).toEqual([null, null, null])
+    expect([model(1), model(10)]).toEqual([null, null])
   })
 
   it('row 2 bills freeze / imperative / wxcue-v1-agreed', async () => {
@@ -149,8 +153,38 @@ describe('agreeCallout — the cue', () => {
     const cold = computeCallout({ tonightLow: 43, highToday: 70 }, DRY)
     expect(cold.icon).toBe('cold')
     expect(agreeCallout(cold, { lowF: 38, lowRaw: 37.6 })).toEqual({ icon: 'freeze', text: freezeText(38), modelVersion: AGREED_CUE_MODEL_VERSION })
-    expect(agreeCallout(cold, { lowF: 40, lowRaw: 40 })).toEqual({ icon: 'cold', text: coldText(40), modelVersion: AGREED_CUE_MODEL_VERSION })
-    expect(agreeCallout(cold, { lowF: 42, lowRaw: 42 })).toEqual({ icon: 'cold', text: coldText(42), modelVersion: AGREED_CUE_MODEL_VERSION })
+    expect(agreeCallout(cold, { lowF: 40, lowRaw: 40 })).toEqual({ icon: 'cold', text: coldTextAllYear(40), modelVersion: AGREED_CUE_MODEL_VERSION })
+    expect(agreeCallout(cold, { lowF: 42, lowRaw: 42 })).toEqual({ icon: 'cold', text: coldTextAllYear(42), modelVersion: AGREED_CUE_MODEL_VERSION })
+  })
+
+  // V5-CHILLBAND-001 — the cold words follow the PLAN DATE's season, exactly as the engine's do.
+  it('the re-worded cold line takes the fall words on a fall plan date, the all-year words otherwise', () => {
+    const fall = computeCallout({ tonightLow: 44, highToday: 70 }, DRY, false, '2026-09-20')
+    expect(fall).toEqual({ icon: 'cold', text: 'Cold night (44°F) — pick ripe and coloring peppers & tomatoes' })
+    expect(agreeCallout(fall, { lowF: 42, lowRaw: 42 }, '2026-09-20')).toEqual({ icon: 'cold', text: 'Cold night (42°F) — pick ripe and coloring peppers & tomatoes', modelVersion: AGREED_CUE_MODEL_VERSION })
+    const spring = computeCallout({ tonightLow: 44, highToday: 70 }, DRY, false, '2026-05-20')
+    expect(agreeCallout(spring, { lowF: 42, lowRaw: 42 }, '2026-05-20')).toEqual({ icon: 'cold', text: 'Cold night (42°F) — protect flowering peppers/tomatoes', modelVersion: AGREED_CUE_MODEL_VERSION })
+    // No usable date: the all-year words, never a guess from the device clock.
+    for (const d of [undefined, null, '', 'tomorrow', 20260920, new Date('2026-09-20T12:00:00Z')]) {
+      expect(agreeCallout(fall, { lowF: 42, lowRaw: 42 }, d).text, String(d)).toBe(coldTextAllYear(42))
+    }
+  })
+
+  it('a `cool` cue is cold-side: re-worded to cold under 45 and to freeze under 40, untouched at 45 and above', () => {
+    for (const [date, cool, cold] of [
+      ['2026-09-20', coolText(47), coldText],
+      ['2026-05-20', coolTextSpring(47), coldTextAllYear],
+    ]) {
+      const c = computeCallout({ tonightLow: 47, highToday: 70 }, DRY, false, date)
+      expect(c, date).toEqual({ icon: 'cool', text: cool })
+      expect(agreeCallout(c, { lowF: 44, lowRaw: 44.4 }, date), date).toEqual({ icon: 'cold', text: cold(44), modelVersion: AGREED_CUE_MODEL_VERSION })
+      expect(agreeCallout(c, { lowF: 40, lowRaw: 39.9 }, date), date).toEqual({ icon: 'freeze', text: freezeText(40), modelVersion: AGREED_CUE_MODEL_VERSION })
+      // Still in its own band (and the rounded 45 from a raw 45.0..): the engine's words and number stand.
+      for (const raw of [45, 45.4, 46, 47, 49.9]) expect(agreeCallout(c, { lowF: Math.round(raw), lowRaw: raw }, date), `${date} ${raw}`).toBe(c)
+      expect(agreeCallout(c, null, date)).toBe(c)
+      // The line Today paints for it: the engine's whole sentence, imperative, billed as the engine's own.
+      expect(buildCueLine(agreeCallout(c, { lowF: 46, lowRaw: 46 }, date))).toEqual({ cue: 'cool', form: 'imperative', text: cool })
+    }
   })
 
   it('an unchanged cue comes back as the SAME object, un-billed as agreed', () => {
@@ -188,36 +222,75 @@ describe('agreeCallout — the cue', () => {
 })
 
 describe('PARITY — agreeCallout words freeze/cold exactly as the REAL engine computeCallout', () => {
-  // A freeze input and a cold input: the agreed words depend only on the agreed low.
-  const INPUTS = [computeCallout({ tonightLow: 30, highToday: 70 }, DRY), computeCallout({ tonightLow: 44, highToday: 70 }, DRY)]
+  // V5-CHILLBAND-001 — the words depend on the plan date's season, so the sweep runs on a date inside each
+  // window and on both sides of every boundary. `null` is "no usable date". The expected season is a LITERAL
+  // here, never read from either copy of the rule.
+  const DATES = [
+    ['2026-01-15', null], ['2026-04-30', null], ['2026-05-01', 'spring'], ['2026-06-20', 'spring'], ['2026-08-14', 'spring'],
+    ['2026-08-15', 'fall'], ['2026-09-20', 'fall'], ['2026-10-31', 'fall'], ['2026-11-01', null], ['2026-12-31', null], [null, null],
+  ]
+  const at = (L, date) => computeCallout({ tonightLow: L, highToday: 70 }, DRY, false, date)
+  // A freeze, a cold and (where the engine speaks at 47) a cool input: the agreed words depend only on the
+  // agreed low and the date.
+  const inputsFor = (date) => [at(30, date), at(44, date), at(47, date)].filter(Boolean)
 
-  it('for every whole-degree low 20..44, the words deep-equal computeCallout({tonightLow:L, highToday:70}, dry)', () => {
-    expect(INPUTS.map((c) => c.icon)).toEqual(['freeze', 'cold'])   // control: both branches are inputs
+  it('the season rule is one rule in two places: cueSeason === engine calloutSeason on every day of a leap year, and on junk', () => {
+    for (const [date, season] of DATES) {
+      expect(cueSeason(date), String(date)).toBe(season)
+      expect(engine.calloutSeason(date), String(date)).toBe(season)
+    }
+    let n = 0
+    for (let t = Date.UTC(2028, 0, 1); t <= Date.UTC(2028, 11, 31); t += 86400000) {
+      const d = new Date(t).toISOString().slice(0, 10)
+      expect(cueSeason(d), d).toBe(engine.calloutSeason(d))
+      n++
+    }
+    expect(n).toBe(366)
+    for (const junk of [undefined, '', 'nope', '2026-13-01', '2026-00-10', '2026-08-00', '2026-08-32', '08-15', 20260815, new Date(0), {}]) {
+      expect(cueSeason(junk), String(junk)).toBeNull()
+      expect(engine.calloutSeason(junk), String(junk)).toBeNull()
+    }
+    // A timestamp that starts with the plan date reads as that date (no clock, no zone).
+    expect([cueSeason('2026-08-15T03:59:00.000Z'), engine.calloutSeason('2026-08-15T03:59:00.000Z')]).toEqual(['fall', 'fall'])
+  })
+
+  it.each(DATES)('plan date %s (%s): for every whole-degree low 20..49 the words deep-equal the engine\'s', (date, season) => {
+    const INPUTS = inputsFor(date)
+    // control: every cold-side branch the engine has on this date is an input
+    expect(INPUTS.map((c) => c.icon)).toEqual(season ? ['freeze', 'cold', 'cool'] : ['freeze', 'cold'])
     let n = 0
     for (let L = 20; L <= 44; L++) {
-      const engineOut = computeCallout({ tonightLow: L, highToday: 70 }, DRY)
+      const engineOut = at(L, date)
+      expect(engineOut.text, `L=${L}`).toMatch(L < 40 ? /^Freeze tonight \(/ : season === 'fall' ? /^Cold night \(\d+°F\) — pick ripe and coloring/ : /^Cold night \(\d+°F\) — protect flowering/)
       for (const input of INPUTS) {
-        const { modelVersion, ...words } = agreeCallout(input, { lowF: L, lowRaw: L })
+        const { modelVersion, ...words } = agreeCallout(input, { lowF: L, lowRaw: L }, date)
         expect(words, `L=${L} from ${input.icon}`).toStrictEqual(engineOut)
         expect(modelVersion, `L=${L} from ${input.icon}`).toBe(words.text === input.text ? undefined : AGREED_CUE_MODEL_VERSION)
         n++
       }
     }
-    expect(n).toBe(50)
-  })
-
-  it('the engine\'s freeze/cold band ends at 45, where the copy\'s does', () => {
-    for (let L = 45; L <= 50; L++) {
-      expect(computeCallout({ tonightLow: L, highToday: 70 }, DRY)).toBeNull()
-      expect(agreeCallout(INPUTS[1], { lowF: L, lowRaw: L })).toBe(INPUTS[1])
+    // 45..49: the engine says `cool` in season and nothing out of it; the copy changes no input there.
+    for (let L = 45; L <= 49; L++) {
+      const engineOut = at(L, date)
+      if (season) expect(engineOut, `L=${L}`).toEqual({ icon: 'cool', text: (season === 'fall' ? coolText : coolTextSpring)(L) })
+      else expect(engineOut, `L=${L}`).toBeNull()
+      for (const input of INPUTS) { expect(agreeCallout(input, { lowF: L, lowRaw: L }, date), `L=${L} from ${input.icon}`).toBe(input); n++ }
     }
+    expect(n).toBe(30 * INPUTS.length)
+    // 50 is past every cold-side band, on any date.
+    expect(at(50, date)).toBeNull()
   })
 
-  it('the split keys on the RAW low exactly as the engine\'s does — every tenth of a degree 20.0..44.9', () => {
+  it('a caller with no plan date gets the all-year cold words and no cool line (the pre-chillband call shape)', () => {
+    expect(computeCallout({ tonightLow: 43, highToday: 70 }, DRY)).toEqual({ icon: 'cold', text: coldTextAllYear(43) })
+    for (let L = 45; L <= 50; L++) expect(computeCallout({ tonightLow: L, highToday: 70 }, DRY)).toBeNull()
+  })
+
+  it.each([['2026-06-20'], ['2026-09-20'], ['2026-01-15']])('plan date %s: the split keys on the RAW low exactly as the engine\'s does — every tenth of a degree 20.0..44.9', (date) => {
     for (let t = 200; t < 450; t++) {
       const raw = t / 10
-      const engineIcon = computeCallout({ tonightLow: raw, highToday: 70 }, DRY).icon
-      for (const input of INPUTS) expect(agreeCallout(input, { lowF: Math.round(raw), lowRaw: raw }).icon, `raw ${raw}`).toBe(engineIcon)
+      const engineIcon = at(raw, date).icon
+      for (const input of inputsFor(date)) expect(agreeCallout(input, { lowF: Math.round(raw), lowRaw: raw }, date).icon, `raw ${raw}`).toBe(engineIcon)
     }
   })
 })
@@ -241,12 +314,12 @@ describe('the frost line — buildFrostAlertLine(alertsSent, { lowShown })', () 
 })
 
 describe('buildCueLine carries the model version; the impression bills it', () => {
-  it('an engine callout still yields exactly { cue, form, text } — all five rules', () => {
+  it('an engine callout still yields exactly { cue, form, text } — all six rules', () => {
     const cases = [
-      [{ tonightLow: 34, highToday: 70 }, DRY], [{ tonightLow: 43, highToday: 70 }, DRY], [{ tonightLow: 55, highToday: 91 }, DRY],
+      [{ tonightLow: 34, highToday: 70 }, DRY], [{ tonightLow: 43, highToday: 70 }, DRY], [{ tonightLow: 47, highToday: 70 }, DRY, false, '2026-09-20'], [{ tonightLow: 55, highToday: 91 }, DRY],
       [{ tonightLow: 55, highToday: 70 }, { ...DRY, tomorrow_precip_in: 0.45, tomorrow_pop: 80 }], [{ tonightLow: 55, highToday: 70 }, { ...DRY, recent_precip_in: 0.6 }],
     ]
-    for (const [w, hy] of cases) expect(Object.keys(buildCueLine(computeCallout(w, hy))).sort()).toEqual(['cue', 'form', 'text'])
+    for (const args of cases) expect(Object.keys(buildCueLine(computeCallout(...args))).sort()).toEqual(['cue', 'form', 'text'])
   })
 
   it('carries a non-empty string modelVersion through both forms, and nothing else', () => {
@@ -255,9 +328,9 @@ describe('buildCueLine carries the model version; the impression bills it', () =
     for (const mv of ['', 5, null, {}]) expect(buildCueLine({ icon: 'freeze', text: 'Freeze tonight', modelVersion: mv })).not.toHaveProperty('modelVersion')
   })
 
-  it('the beacon bills the line\'s own model version, else wxcue-v2', async () => {
+  it('the beacon bills the line\'s own model version, else wxcue-v3', async () => {
     expect(await billedModel({ cue: 'freeze', form: 'imperative', modelVersion: AGREED_CUE_MODEL_VERSION })).toBe('wxcue-v1-agreed')
-    expect(await billedModel({ cue: 'freeze', form: 'imperative' })).toBe('wxcue-v2')
+    expect(await billedModel({ cue: 'freeze', form: 'imperative' })).toBe('wxcue-v3')
   })
 })
 

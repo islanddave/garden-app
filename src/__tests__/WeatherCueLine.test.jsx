@@ -123,6 +123,18 @@ describe('(b) check-form for the imperative rules, imperative for freeze', () =>
     expect(el.textContent).toBe(`0.60" rain tomorrow (60% chance) — ${CHECK_CLAUSE.rain}`)
   })
 
+  // V5-CHILLBAND-001 — the cue the September build could not paint.
+  it.each([
+    ['spring', 'Cool night (47°F) — cover or bring in young peppers, basil & cucumbers'],
+    ['fall', 'Cool night (47°F) — pick ripe and coloring peppers & tomatoes'],
+  ])('cool (%s words) renders the engine sentence verbatim, imperative', (_season, text) => {
+    render(<WeatherCueLine callout={{ icon: 'cool', text }} planDate={DAY} />)
+    const el = screen.getByTestId('weather-cue-line')
+    expect(el.dataset.cue).toBe('cool')
+    expect(el.dataset.cueForm).toBe('imperative')
+    expect(el.textContent).toBe(text)
+  })
+
   it('freeze does NOT become a check — it keeps the engine sentence verbatim', () => {
     render(<WeatherCueLine callout={FREEZE} planDate={DAY} />)
     const el = screen.getByTestId('weather-cue-line')

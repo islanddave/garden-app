@@ -52,13 +52,19 @@
  *  impressions by the model that produced the line the reader saw. */
 // v2 (BUG-RAINFCSTONEMODEL-001, 2026-09-25): the rain cue's condition half now prints the amount and the
 // chance side by side (`0.58" rain tomorrow (100% chance)`) instead of amount x PoP, from a five-model forecast.
-export const WX_CUE_MODEL_VERSION = 'wxcue-v2'
+// v3 (V5-CHILLBAND-001, 2026-10-13): a sixth cue, `cool` (45-50°F, season words), and the cold cue's heading
+// reads "Cold night" with fall words from Aug 15 to Oct 31.
+export const WX_CUE_MODEL_VERSION = 'wxcue-v3'
 
-/** engine.js computeCallout's five icons -> the form each renders in. Closed set: a cue not named
- *  here renders nothing, so a sixth engine rule cannot ship an un-reviewed wording by inheritance. */
+/** engine.js computeCallout's six icons -> the form each renders in. Closed set: a cue not named
+ *  here renders nothing, so a seventh engine rule cannot ship an un-reviewed wording by inheritance.
+ *  V5-CHILLBAND-001: `cool` is imperative because its action half is the engine's season words (cover
+ *  young plants in spring, pick what is coloring in fall); a check clause is one fixed string and would
+ *  throw the season away. Like freeze and cold it keys on tonight's low, so it is not stale at 08:00. */
 export const CUE_FORM = {
   freeze: 'imperative',
   cold: 'imperative',
+  cool: 'imperative',
   heat: 'check',
   rain: 'check',
   wet: 'check',

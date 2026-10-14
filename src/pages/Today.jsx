@@ -62,7 +62,7 @@ export default function Today() {
   // V5-TODAYFROSTWARMEDADVISORY-001 — the plan's current lows, which agreedTonightLow reads too: the frost line
   // needs the same ones, or a retired advisory would still print its 38 under a card that says 44.
   const current = useMemo(() => currentLows(plan), [plan])
-  const cueCallout = useMemo(() => agreeCallout(plan?.weather?.callout, agreed), [plan, agreed])
+  const cueCallout = useMemo(() => agreeCallout(plan?.weather?.callout, agreed, data?.plan_date), [plan, agreed, data?.plan_date])
 
   // V5-TODAYSHAPE-001 — the `data-testid` attributes threaded through this render are the region
   // anchors for scripts/layout-gate/today-shape.mjs. They add no DOM node, no style and no

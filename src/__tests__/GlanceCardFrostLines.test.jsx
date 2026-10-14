@@ -49,7 +49,7 @@ function V2({ plan }) {
   const agreed = agreedTonightLow(plan)
   return (
     <GlanceCard plan={plan} generatedAt={GEN} planDate={PLAN_DATE} agreed={agreed} current={currentLows(plan)}
-      cueCallout={agreeCallout(plan.weather?.callout, agreed)} open={open} onToggle={() => setOpen((o) => !o)} />
+      cueCallout={agreeCallout(plan.weather?.callout, agreed, PLAN_DATE)} open={open} onToggle={() => setOpen((o) => !o)} />
   )
 }
 // Today.jsx's mount of the line, prop for prop (Today.jsx: alertsSent / lowShown / planLow / current).

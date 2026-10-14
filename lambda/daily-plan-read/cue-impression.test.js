@@ -13,6 +13,8 @@
 // produce anything other than a 202 — because the client cannot see the response and must never be
 // made to care.
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   handleCueImpressionPost, matchCueImpressionRoute, normalizeCueImpression,
   normalizePlanGeneratedAt, resolveModelVersion,
@@ -58,13 +60,13 @@ const body = (over = {}) => ({
 
 describe('normalizeCueImpression — the closed vocabularies mirror the CHECK constraints', () => {
   it('accepts every cue engine.js computeCallout can emit', () => {
-    for (const cue of ['freeze', 'cold', 'heat', 'rain', 'wet']) {
-      const form = cue === 'freeze' || cue === 'cold' ? 'imperative' : 'check';
+    for (const cue of ['freeze', 'cold', 'cool', 'heat', 'rain', 'wet']) {
+      const form = cue === 'freeze' || cue === 'cold' || cue === 'cool' ? 'imperative' : 'check';
       expect(normalizeCueImpression(body({ cue, form }))?.cue).toBe(cue);
     }
     // The set the module exports is what the CHECK is closed at — pin it so widening one without
     // the other is a red test rather than a silent measurement hole.
-    expect([...CUES].sort()).toEqual(['cold', 'freeze', 'heat', 'rain', 'wet']);
+    expect([...CUES].sort()).toEqual(['cold', 'cool', 'freeze', 'heat', 'rain', 'wet']);
     expect([...FORMS].sort()).toEqual(['check', 'imperative']);
   });
 
@@ -216,9 +218,37 @@ describe('the mirrored model version stays in lockstep with src/lib/weatherCue.j
     expect(WX_CUE_MODEL_VERSION).toBe(client.WX_CUE_MODEL_VERSION);
   });
 
+  it('pins the generation: wxcue-v3 (V5-CHILLBAND-001, the cool cue and the "Cold night" wording)', () => {
+    expect(WX_CUE_MODEL_VERSION).toBe('wxcue-v3');
+  });
+
   it('the server vocabulary is exactly the client CUE_FORM key set', async () => {
     const client = await import('../../src/lib/weatherCue.js');
     expect([...CUES].sort()).toEqual(Object.keys(client.CUE_FORM).sort());
     expect([...FORMS].sort()).toEqual([...new Set(Object.values(client.CUE_FORM))].sort());
+  });
+});
+
+// ── The CHECK the vocabulary mirrors — read from the migration file, no database ─────────────────
+// V5-CHILLBAND-001. A cue this Lambda accepts but the table's CHECK refuses is a row dropped on a 23514
+// that the writer swallows (it answers 202), so the gap would show only as missing impressions. The
+// constraint's cue list lives in migrations/v5-chillband-001/0a-widen-cue-check.sql (applied on prod and
+// staging); this reads the list out of that file and holds CUES inside it.
+describe('every cue the server accepts is admitted by weather_cue_impression_cue_chk', () => {
+  const sql = readFileSync(resolve(process.cwd(), 'migrations/v5-chillband-001/0a-widen-cue-check.sql'), 'utf8');
+  const executable = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+  const checks = [...executable.matchAll(/ADD CONSTRAINT weather_cue_impression_cue_chk\s+CHECK \(cue IN \(([^)]*)\)\)/g)];
+
+  it('the migration adds exactly one cue CHECK, and its list parses (control)', () => {
+    expect(checks).toHaveLength(1);
+    const admitted = checks[0][1].split(',').map((v) => v.trim());
+    expect(admitted.length).toBeGreaterThan(0);
+    for (const v of admitted) expect(v).toMatch(/^'[a-z]+'$/);
+  });
+
+  it('CUES is a subset of the CHECK list — today the two are the same six', () => {
+    const admitted = checks[0][1].split(',').map((v) => v.trim().slice(1, -1));
+    for (const cue of CUES) expect(admitted, cue).toContain(cue);
+    expect([...admitted].sort()).toEqual([...CUES].sort());
   });
 });

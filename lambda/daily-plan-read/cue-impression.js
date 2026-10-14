@@ -38,14 +38,15 @@ export const ET_TZ = 'America/New_York';
 // (same mechanism as ready-impression.js READY_MODEL_VERSION — the Lambda and src/ are separate
 // module graphs and cannot share a constant). Used ONLY as the fallback when a request omits
 // model_version: the client owns the model identity here, because the client owns the wording.
-export const WX_CUE_MODEL_VERSION = 'wxcue-v2';   // v2: BUG-RAINFCSTONEMODEL-001 rain-cue wording
+export const WX_CUE_MODEL_VERSION = 'wxcue-v3';   // v3 (V5-CHILLBAND-001, 2026-10-13): the `cool` cue and "Cold night" wording
 
 // Closed vocabularies, mirroring weather_cue_impression_cue_chk / _form_chk. CUES is engine.js
-// computeCallout's five rules in priority order; FORMS is the render's two wordings. Rejecting here
+// computeCallout's six rules in priority order (`cool` since V5-CHILLBAND-001, admitted by
+// migrations/v5-chillband-001/0a-widen-cue-check.sql); FORMS is the render's two wordings. Rejecting here
 // keeps the CHECK the backstop it is meant to be rather than the first line of defence — and a
 // value outside these is a client/engine drift signal worth dropping loudly in the metric line,
 // not a row worth writing.
-export const CUES = new Set(['freeze', 'cold', 'heat', 'rain', 'wet']);
+export const CUES = new Set(['freeze', 'cold', 'cool', 'heat', 'rain', 'wet']);
 export const FORMS = new Set(['imperative', 'check']);
 
 const MODEL_VERSION_MAX_LEN = 40;

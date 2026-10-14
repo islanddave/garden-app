@@ -2,7 +2,7 @@
 //
 // THE GAP (FROST_RADIATIVE_ENABLED=true in prod). A radiative imminent trip fires when tonight's low is ABOVE the trip
 // point but the night is clear and calm: with the tender band (38F) and the 4F proximity, at 39-42F. The email says
-// "Garden alert - Frost watch tonight (low 41F)". The plan's weather cue for that low is "Cool night (41°F) — …" (or
+// "Garden alert - Frost watch tonight (low 41F)". The plan's weather cue for that low is "Cold night (41°F) — …" (or
 // nothing at 45F+), and src/lib/frostAlertLine.js skipped every imminent entry on the premise that the freeze cue
 // covers them. So Today never said "watch" on the evening the email did. A radiative-only ADVISORY had the same
 // problem one tier down: its entry carried no trip basis, so its line read "Frost possible tonight — low 42°F".
@@ -119,8 +119,8 @@ describe('V5-TODAYRADIATIVEWATCH-001 — the radiative imminent email and Today 
     expect(emails[0].message.startsWith('FROST WATCH TONIGHT — forecast low 41°F, but clear and calm')).toBe(true);
     expect(t.sent()).toHaveLength(1);
     expect(t.sent()[0]).toMatchObject({ tier: 'imminent', level: 'protect', lowF: 41, dayOffset: 0, trip: 'radiative', run: 'intraday-pm' });
-    // The premise: the cue the plan carries for that low says "Cool night", not "Freeze".
-    expect(t.items().weather.callout).toEqual({ icon: 'cold', text: 'Cool night (41°F) — protect flowering peppers/tomatoes' });
+    // The premise: the cue the plan carries for that low says "Cold night", not "Freeze".
+    expect(t.items().weather.callout).toEqual({ icon: 'cold', text: 'Cold night (41°F) — pick ripe and coloring peppers & tomatoes' });
     // What Today renders from the stored row (it rendered nothing at base 3425da14).
     expect(buildFrostAlertLine(t.sent()).text).toBe(LINE('tonight', 41));
     expect(agreedTonightLow(t.items())).toEqual({ lowF: 41, lowRaw: 41 });
@@ -248,7 +248,7 @@ describe('V5-TODAYFROSTLINEGAPS-001 — Today after the real run()', () => {
     const agreed = agreedTonightLow(t.items());
     expect(agreed).toEqual({ lowF: 35, lowRaw: 35 });
     expect(t.items().weather.callout).toEqual({ icon: 'freeze', text: 'Freeze tonight (39°F) — cover or bring peppers & tomatoes in' });
-    expect(agreeCallout(t.items().weather.callout, agreed)).toMatchObject({ icon: 'freeze', text: 'Freeze tonight (35°F) — cover or bring peppers & tomatoes in' });
+    expect(agreeCallout(t.items().weather.callout, agreed, FRI)).toMatchObject({ icon: 'freeze', text: 'Freeze tonight (35°F) — cover or bring peppers & tomatoes in' });
   });
 
   it('(3) a 3 PM "Frost protect tonight (low 36F)", then the plan warms: nothing while it freezes, then the facts', async () => {
@@ -262,7 +262,7 @@ describe('V5-TODAYFROSTLINEGAPS-001 — Today after the real run()', () => {
     expect(lines(t)).toEqual([]);                                  // still covered by the cue
     await once(t, emails, { etHour: 20, nws: 44 });
     expect(emails).toHaveLength(1);
-    expect(t.items().weather.callout).toEqual({ icon: 'cold', text: 'Cool night (44°F) — protect flowering peppers/tomatoes' });
+    expect(t.items().weather.callout).toEqual({ icon: 'cold', text: 'Cold night (44°F) — pick ripe and coloring peppers & tomatoes' });
     expect(lines(t)).toEqual(['Forecast warmed to 44°F since the 3 PM frost email.']);
     expect(agreedTonightLow(t.items())).toBeNull();                // the card keeps the plan's 44
   });

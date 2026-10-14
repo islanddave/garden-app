@@ -173,7 +173,7 @@ export default function TodayV2() {
   const { liveHydrology, refreshedAt } = useLiveRain(plan?.weather_coords ?? plan?.coords)
   const agreed = useMemo(() => agreedTonightLow(plan), [plan])
   const current = useMemo(() => currentLows(plan), [plan])
-  const cueCallout = useMemo(() => agreeCallout(plan?.weather?.callout, agreed), [plan, agreed])
+  const cueCallout = useMemo(() => agreeCallout(plan?.weather?.callout, agreed, planDate), [plan, agreed, planDate])
   // The glance card's stale marker (verdict.js): the conditions of `stale` above, worded for the card (null
   // when the plan is today's).
   const staleMark = plan ? staleMarker({ planDate, generatedAt: data?.generated_at ?? null, fromCache: isFromCache(data), today: todayLocalISO() }) : null

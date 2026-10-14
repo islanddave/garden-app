@@ -127,7 +127,7 @@ describe('the grid — plan low x entry x the REAL callout: ONE number for tonig
           // freeze below 40, never softened to cold by rounding (plan low 39.6 prints "(40°F)").
           if (plan.weather.callout) {
             const raw = low == null ? tonightLow : Math.min(low, tonightLow)
-            expect(page.cue, where).toMatch(raw < 40 ? /^Freeze tonight \(/ : /^Cool night \(/)
+            expect(page.cue, where).toMatch(raw < 40 ? /^Freeze tonight \(/ : /^Cold night \(/)
           }
           on++
         } else {

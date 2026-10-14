@@ -53,9 +53,13 @@
 //
 // THE WORDING IS A COPY, AND THE COPY IS GUARDED. The engine is a CommonJS Lambda module and is not
 // imported into the bundle, so agreeCallout carries a copy of engine.js computeCallout's freeze/cold
-// branches. src/__tests__/tonightLow.test.js sweeps every whole-degree low 20..44 against the REAL
+// branches. src/__tests__/tonightLow.test.js sweeps every whole-degree low 20..49 against the REAL
 // computeCallout and deep-compares the result, so an engine copy change or a retuned threshold reds
 // that test instead of leaving two wordings of one cue on the page.
+// V5-CHILLBAND-001 — the cold words depend on the season of the PLAN DATE (cueSeason below, a copy of
+// engine.js calloutSeason), so agreeCallout takes the plan date and the sweep runs on a date in each
+// season window and on every boundary day. A `cool` cue (45-50°F) is cold-side too: once the agreed low
+// is under 45 it is re-worded to the cold or freeze line, and at 45 or above it passes through untouched.
 import { tonightLineLow, currentLows, FREEZE_BELOW_F } from './frostAlertLine.js'
 
 /** The impression partition for a cue this module RE-WORDED (weatherCueImpressions.js bills it). A
@@ -72,7 +76,27 @@ export const AGREED_CUE_MODEL_VERSION = 'wxcue-v1-agreed'
 // starts exactly where this cue's freeze branch stops; tonightLow.test.js's PARITY sweep guards the one value for both.
 const COLD_BELOW_F = 45
 const freezeText = (t) => `Freeze tonight (${t}°F) — cover or bring peppers & tomatoes in`
-const coldText = (t) => `Cool night (${t}°F) — protect flowering peppers/tomatoes`
+const coldText = (t, season) => (season === 'fall'
+  ? `Cold night (${t}°F) — pick ripe and coloring peppers & tomatoes`
+  : `Cold night (${t}°F) — protect flowering peppers/tomatoes`)
+const COLD_SIDE = new Set(['freeze', 'cold', 'cool'])
+
+/**
+ * PURE. COPY of engine.js calloutSeason: the season a cold-side cue is worded for, from the plan date's
+ * month and day ('YYYY-MM-DD', read as text: no clock, no time zone). 'spring' May 1..Aug 14, 'fall'
+ * Aug 15..Oct 31, null Nov 1..Apr 30 or no usable date. Guarded by the PARITY sweep.
+ */
+export function cueSeason(planDate) {
+  const m = typeof planDate === 'string' ? /^\d{4}-(\d{2})-(\d{2})/.exec(planDate) : null
+  if (!m) return null
+  const mo = Number(m[1])
+  const d = Number(m[2])
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null
+  const md = mo * 100 + d
+  if (md >= 501 && md <= 814) return 'spring'
+  if (md >= 815 && md <= 1031) return 'fall'
+  return null
+}
 
 // A number, or a non-empty numeric string, else null — the same acceptance frostAlertLine.js applies
 // to an entry's lowF, so a plan low and an advisory low are read by one rule.
@@ -99,18 +123,21 @@ export function agreedTonightLow(plan) {
 /**
  * PURE. The engine's callout as Today renders it once `agreed` (agreedTonightLow's result) is set.
  * Returns the SAME object when nothing changes — no trigger, no callout, a heat/rain/wet cue, or a
- * freeze/cold cue whose words and number already match — so an un-triggered page is untouched down to
- * object identity. A re-worded cue is a new object carrying `modelVersion`, which buildCueLine passes
+ * freeze/cold/cool cue whose words and number already match — so an un-triggered page is untouched down
+ * to object identity. A re-worded cue is a new object carrying `modelVersion`, which buildCueLine passes
  * through to the impression beacon.
+ * `planDate` is the plan's own date ('YYYY-MM-DD', the one the engine worded the cue for), never the
+ * device clock. Without one the cold line takes its all-year words, as the engine's does.
  */
-export function agreeCallout(callout, agreed) {
+export function agreeCallout(callout, agreed, planDate = null) {
   if (!agreed || !callout) return callout
-  if (callout.icon !== 'freeze' && callout.icon !== 'cold') return callout
+  if (!COLD_SIDE.has(callout.icon)) return callout
   let next = null
   if (agreed.lowRaw < FREEZE_BELOW_F) next = { icon: 'freeze', text: freezeText(agreed.lowF) }
-  else if (agreed.lowRaw < COLD_BELOW_F) next = { icon: 'cold', text: coldText(agreed.lowF) }
-  // Unreachable on a stored plan (see COLD_BELOW_F). An inconsistent payload keeps the engine's cue
-  // rather than inventing a sentence the engine would not have written.
+  else if (agreed.lowRaw < COLD_BELOW_F) next = { icon: 'cold', text: coldText(agreed.lowF, cueSeason(planDate)) }
+  // At 45 or above: a `cool` cue keeps the engine's words and number (V5-CHILLBAND-001); for freeze/cold
+  // it is unreachable on a stored plan (see COLD_BELOW_F). Either way the engine's cue stands rather than
+  // a sentence the engine would not have written.
   if (!next) return callout
   if (next.icon === callout.icon && next.text === callout.text) return callout
   return { ...next, modelVersion: AGREED_CUE_MODEL_VERSION }

@@ -39,7 +39,7 @@ function Harness({ plan = BUSYFULL, stale = null, initialOpen = false, liveHydro
   const agreed = agreedTonightLow(plan)
   return (
     <GlanceCard plan={plan} generatedAt={D.generated_at} planDate={D.plan_date} liveHydrology={liveHydrology} agreed={agreed} current={currentLows(plan)}
-      cueCallout={agreeCallout(plan.weather?.callout, agreed)} stale={stale} open={open} onToggle={() => setOpen((o) => !o)} />
+      cueCallout={agreeCallout(plan.weather?.callout, agreed, D.plan_date)} stale={stale} open={open} onToggle={() => setOpen((o) => !o)} />
   )
 }
 // The dry list links each planting, so the card lives under a router, as it does in the app.

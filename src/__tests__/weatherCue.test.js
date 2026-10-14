@@ -14,16 +14,18 @@ import {
 
 const { computeCallout } = engine
 
-// Inputs chosen to reach each of computeCallout's five priority-ordered branches, and its silence
+// Inputs chosen to reach each of computeCallout's six priority-ordered branches, and its silence
 // branch. Temperatures are set past each gate rather than at it — this file is about the reader,
 // and pinning the engine's own boundaries here would duplicate engine.test.js and make an engine
 // retune red in two places for one reason.
 const MILD = { tonightLow: 55, highToday: 70 }
 const DRY = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0.0, tomorrow_pop: 0 }
 
+// V5-CHILLBAND-001: the cool cue speaks only on a plan date from May 1 to Oct 31 (the fourth argument).
 const CASES = {
   freeze: [{ ...MILD, tonightLow: 34 }, DRY],
   cold: [{ ...MILD, tonightLow: 43 }, DRY],
+  cool: [{ ...MILD, tonightLow: 47 }, DRY, false, '2026-09-20'],
   heat: [{ ...MILD, highToday: 91 }, DRY],
   rain: [MILD, { ...DRY, tomorrow_precip_in: 0.45, tomorrow_pop: 80 }],
   wet: [MILD, { ...DRY, recent_precip_in: 0.6 }],
@@ -31,7 +33,7 @@ const CASES = {
 
 const calloutFor = (cue) => computeCallout(...CASES[cue])
 
-describe('the engine still emits exactly the five cues this reader words', () => {
+describe('the engine still emits exactly the six cues this reader words', () => {
   it('each case reaches its intended branch — otherwise every assertion below is about the wrong cue', () => {
     for (const cue of Object.keys(CASES)) expect(calloutFor(cue).icon).toBe(cue)
     expect(Object.keys(CASES).sort()).toEqual(Object.keys(CUE_FORM).sort())
@@ -59,12 +61,30 @@ describe('condition (b) — imperative rules render in CHECK-FORM, freeze and co
     expect(line.text).toMatch(/\?|worth checking/)
   })
 
-  it.each(['freeze', 'cold'])('%s stays imperative and untouched — deterministic on tonight\'s low', (cue) => {
+  it.each(['freeze', 'cold', 'cool'])('%s stays imperative and untouched — deterministic on tonight\'s low', (cue) => {
     const callout = calloutFor(cue)
     const line = buildCueLine(callout)
     expect(line.form).toBe('imperative')
     expect(line.text).toBe(callout.text)
     expect(line.text).not.toMatch(/\?/)
+  })
+
+  // V5-CHILLBAND-001 — the September 2026 defect: the engine returned `cool`, this reader did not know it,
+  // and Today painted nothing in place of the heat/rain/wet line it would otherwise have shown.
+  it('the cool line renders in BOTH seasons with the engine\'s season words intact', () => {
+    const spring = computeCallout({ ...MILD, tonightLow: 47 }, DRY, false, '2026-06-01')
+    const fall = computeCallout({ ...MILD, tonightLow: 47 }, DRY, false, '2026-09-20')
+    expect(buildCueLine(spring)).toEqual({ cue: 'cool', form: 'imperative', text: 'Cool night (47°F) — cover or bring in young peppers, basil & cucumbers' })
+    expect(buildCueLine(fall)).toEqual({ cue: 'cool', form: 'imperative', text: 'Cool night (47°F) — pick ripe and coloring peppers & tomatoes' })
+    // A hot afternoon before such a night: cool wins the chain, and the line is not silence.
+    const hot = computeCallout({ tonightLow: 47, highToday: 91 }, DRY, false, '2026-09-20')
+    expect(hot.icon).toBe('cool')
+    expect(buildCueLine(hot)).not.toBeNull()
+  })
+
+  it('the cold line reads "Cold night", with the fall words from Aug 15 to Oct 31', () => {
+    expect(buildCueLine(calloutFor('cold')).text).toBe('Cold night (43°F) — protect flowering peppers/tomatoes')
+    expect(buildCueLine(computeCallout({ ...MILD, tonightLow: 43 }, DRY, false, '2026-09-20')).text).toBe('Cold night (43°F) — pick ripe and coloring peppers & tomatoes')
   })
 
   it('the freeze line keeps the whole engine sentence, action clause included', () => {
@@ -80,7 +100,7 @@ describe('buildCueLine fails CLOSED — it never reverts to the imperative strin
     expect(buildCueLine({ icon: 'rain', text: '' })).toBeNull()
   })
 
-  it('renders nothing for a cue outside the closed set, so a sixth engine rule cannot ship unworded', () => {
+  it('renders nothing for a cue outside the closed set, so a seventh engine rule cannot ship unworded', () => {
     expect(buildCueLine({ icon: 'hail', text: 'Hail tonight — bring it all in' })).toBeNull()
     expect(buildCueLine({ text: 'no icon at all — do something' })).toBeNull()
     expect(buildCueLine(undefined)).toBeNull()
@@ -103,6 +123,6 @@ describe('no threshold and no forecast-amount gate lives in the reader', () => {
   })
 
   it('pins the model version the impression rows are partitioned by', () => {
-    expect(WX_CUE_MODEL_VERSION).toBe('wxcue-v2')
+    expect(WX_CUE_MODEL_VERSION).toBe('wxcue-v3')
   })
 })

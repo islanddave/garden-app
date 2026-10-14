@@ -1455,11 +1455,38 @@ function rainCalloutFires(hy, bedsWait){
     && hy.tomorrow_pop!=null && hy.tomorrow_pop>=SOAK_FCST_POP_PCT;
 }
 
+// V5-CHILLBAND-001 — which words a cold-side callout takes, from the PLAN DATE's month and day ('YYYY-MM-DD',
+// the garden's local date the plan is for; read as text, so no clock or time zone enters). The same 47°F
+// means opposite things in May (young transplants are out) and September (the season is ending): 'spring' is
+// May 1..Aug 14, 'fall' is Aug 15..Oct 31, and null is Nov 1..Apr 30 or no usable date. Dave's windows,
+// 2026-10-13. COPIED in src/lib/tonightLow.js cueSeason (the bundle cannot import this module); its PARITY
+// sweep in src/__tests__/tonightLow.test.js holds the two together on every boundary day.
+function calloutSeason(planDate){
+  const m = typeof planDate==='string' ? /^\d{4}-(\d{2})-(\d{2})/.exec(planDate) : null;
+  if(!m) return null;
+  const mo=Number(m[1]), d=Number(m[2]);
+  if(mo<1 || mo>12 || d<1 || d>31) return null;
+  const md=mo*100+d;
+  if(md>=501 && md<=814) return 'spring';
+  if(md>=815 && md<=1031) return 'fall';
+  return null;
+}
+
 // Compute the single weather callout (action only) from temp + hydrology. Priority order; null = no callout (no filler).
-function computeCallout(weather, hy, bedsWait=false){
+// V5-CHILLBAND-001: planDate picks the season words (calloutSeason). Without one the cold line keeps its
+// all-year words and the 45-50°F `cool` line stays silent, so a caller that passes no date falls through to
+// heat/rain/wet exactly as before. `cool` is a sixth icon: src/lib/weatherCue.js CUE_FORM and
+// lambda/daily-plan-read/cue-impression.js CUES must name it, or Today renders nothing on such a night.
+function computeCallout(weather, hy, bedsWait=false, planDate=null){
   const low=weather&&weather.tonightLow, high=weather&&weather.highToday;
+  const season=calloutSeason(planDate);
   if(low!=null && low<40) return {icon:'freeze', text:`Freeze tonight (${low}°F) — cover or bring peppers & tomatoes in`};
-  if(low!=null && low<45) return {icon:'cold', text:`Cool night (${low}°F) — protect flowering peppers/tomatoes`};
+  if(low!=null && low<45) return {icon:'cold', text: season==='fall'
+    ? `Cold night (${low}°F) — pick ripe and coloring peppers & tomatoes`
+    : `Cold night (${low}°F) — protect flowering peppers/tomatoes`};
+  if(low!=null && low<50 && season) return {icon:'cool', text: season==='fall'
+    ? `Cool night (${low}°F) — pick ripe and coloring peppers & tomatoes`
+    : `Cool night (${low}°F) — cover or bring in young peppers, basil & cucumbers`};
   if(high!=null && high>=88) return {icon:'heat', text:`Hot day (${high}°F) — deep-water thirsty crops, shade if wilting`};
   if(rainCalloutFires(hy, bedsWait)){
     // BUG-RAINFCSTONEMODEL-001 (b) — mirror the Today widget, which since 2026-09-25 prints the amount and the
@@ -1532,7 +1559,7 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
     : null;
   const byUser=new Map();
   for(const p of plantings){ const c=resolveCadence(p,cadence); const u=ownerFor(p,c,ownerFallback)||'__UNASSIGNED__'; if(!byUser.has(u))byUser.set(u,[]); byUser.get(u).push(p); }
-  const hy=hydrology||null; const callout=computeCallout(weather,hy,deferDryEnabled||deferDryBedsEnabled); const hs=hydrologyStatus(hy);
+  const hy=hydrology||null; const callout=computeCallout(weather,hy,deferDryEnabled||deferDryBedsEnabled,today); const hs=hydrologyStatus(hy);
   // BUG-TODAYWATER-001: `rain_coming` could not see rain arriving TODAY -- it read tomorrow only, so on
   // 2026-08-03 it reported false while 3.8" fell. Note this flag reaches NO engine gate (it is emitted at
   // the bottom of this function and consumed client-side), so this is an honesty fix, not the fix that
@@ -1584,7 +1611,7 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
     ...(lwOut ? { leaf_wetness: lwOut } : {}),
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
-module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, satReason, FORECAST_SAT_KINDS, SOON_QPF_IN, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression, feedSuppression, isMedHerb,
+module.exports={generatePlan, calloutSeason, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, satReason, FORECAST_SAT_KINDS, SOON_QPF_IN, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression, feedSuppression, isMedHerb,
   RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, rainDepthTierFor, RAIN_DEPTH_TIER_OVERRIDE,
   FABRIC_GROUND_MIN_GAL, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered, bagHeatDemoteCredit,
   dailyFloorFor, DAILY_FLOOR_DAYS, RESERVOIR_VESSEL_TYPES, RIGID_POT_TYPES,

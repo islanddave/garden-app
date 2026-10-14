@@ -46,7 +46,7 @@ import {
 import { agreedTonightLow, agreeCallout } from '../lib/tonightLow.js'
 import { buildCareNeeded } from '../lib/careNeeded.js'
 import {
-  PLAN_DATE, GEN, DRY, planFor, tonight, tomorrowNight, imminent, coldText, freezeText,
+  PLAN_DATE, GEN, DRY, planFor, tonight, tomorrowNight, imminent, coldText, coolText, freezeText,
 } from './helpers/twoLowsFixtures.js'
 import frostEval from '../../lambda/daily-plan/frostEval.js'
 import frostClass from '../../lambda/daily-plan/frostClass.js'
@@ -206,7 +206,7 @@ describe('Today — the watch line, mounted from plan.alerts_sent', () => {
   it('a radiative-only advisory for tomorrow night: the watch words, tonight untouched', () => {
     planState.current = mountData(planFor(47, [tomorrowNight(42, { trip: 'radiative' })]))
     const { container } = render(<Today />)
-    expect(readPage(container)).toEqual({ card: '47°', cue: null, line: WATCH('tomorrow night', 42) })
+    expect(readPage(container)).toEqual({ card: '47°', cue: coolText(47), line: WATCH('tomorrow night', 42) })   // V5-CHILLBAND-001: 47 on Oct 9 speaks
   })
 
   it('unchanged: a threshold imminent send (freeze cue, no line), and an old radiative advisory with no trip', () => {
@@ -216,7 +216,7 @@ describe('Today — the watch line, mounted from plan.alerts_sent', () => {
     a.unmount()
     planState.current = mountData(planFor(47, [tonight(42)]))
     const b = render(<Today />)
-    expect(readPage(b.container)).toEqual({ card: '42°', cue: null, line: POSSIBLE('tonight', 42) })
+    expect(readPage(b.container)).toEqual({ card: '42°', cue: coldText(42), line: POSSIBLE('tonight', 42) })   // the cool cue, re-worded at the agreed 42
   })
 
   it('a rehearsal renders nothing on Today', () => {
@@ -351,7 +351,7 @@ describe('(2) the watch shows its email\'s colder second forecast — "as low as
     expect(agreedTonightLow(planFor(39, [watch(39)]))).toEqual({ lowF: 39, lowRaw: 39 })  // control: no field, as before
     const p = planFor(41, [w])
     expect(p.weather.callout).toEqual({ icon: 'cold', text: coldText(41) })
-    expect(agreeCallout(p.weather.callout, agreedTonightLow(p))).toMatchObject({ icon: 'freeze', text: freezeText(35) })
+    expect(agreeCallout(p.weather.callout, agreedTonightLow(p), PLAN_DATE)).toMatchObject({ icon: 'freeze', text: freezeText(35) })
     // Protect rows: no third number beside the agreed one
     const rows = buildCareNeeded(p).filter((r) => r.need === 'cold').map((r) => r.reason)
     expect(rows.length).toBeGreaterThan(0)
@@ -475,7 +475,7 @@ const LADDER = [ADV(), PROTECT()]
 // below proves Today wires them this way): the card's figure, the cue's words, the frost lines.
 function screenOf(plan) {
   const agreed = agreedTonightLow(plan)
-  const cue = agreeCallout(plan.weather.callout, agreed)
+  const cue = agreeCallout(plan.weather.callout, agreed, PLAN_DATE)
   return {
     card: agreed ? agreed.lowF : plan.weather.tonightLow,
     cue: cue ? cue.text : null,
@@ -557,7 +557,7 @@ describe('(4) "Forecast warmed" after a same-night ADVISORY — retired once bot
 
   it('T8 a radiative-only advisory keeps its figure (the plan holds no clear-and-calm verdict); so does an unknown trip', () => {
     const rad = [ADV(42, { trip: 'radiative' })]
-    expect(screenOf(planFor(47, rad, hyLows(45)))).toEqual({ card: 42, cue: null, lines: [WATCH('tonight', 42)] })
+    expect(screenOf(planFor(47, rad, hyLows(45)))).toEqual({ card: 42, cue: coldText(42), lines: [WATCH('tonight', 42)] })
     expect(screenOf(planFor(47, rad, hyLows(45)))).toEqual(screenOf(planFor(47, rad)))
     const odd = [ADV(37.6, { trip: 'threshold' }), PROTECT()]
     expect(screenOf(planFor(44, odd, hyLows(45)))).toEqual(screenOf(planFor(44, odd)))
