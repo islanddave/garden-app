@@ -39,7 +39,10 @@ jobs:
       # staging under a 2026-10-02 manifest of today's small staging; snap.py skips objects that exist), and
       # revert-to's validate rightly refused it (run 37946810153). A fresh version makes a matching set without
       # deleting anything from the snapshot bucket. The stale v0.0.0 objects are left in place, unused.
-      SNAP_VERSION: v0.0.900
+      # v0.0.926 since 2026-10-14: the first rehearsal on ubuntu-26.04 must really dump (snap.py skips objects that
+      # exist, so re-running v0.0.900 would prove nothing about pg_dump 17 on 26, TMPDIR or the upload). v0.0.900
+      # stays in the bucket, unused (OPS-UBUNTU26MOVE-001; Dave first-hand 10-14: "Yes, run all four").
+      SNAP_VERSION: v0.0.926
       NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
       NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
       NEON_PROD_BRANCH_ID: br-polished-art-am12o4ue
