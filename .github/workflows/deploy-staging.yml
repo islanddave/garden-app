@@ -91,7 +91,7 @@ env:
 jobs:
   # ── Deploy staging Lambda functions ──────────────────────────────────────
   deploy-lambdas:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     strategy:
       matrix:
@@ -550,7 +550,7 @@ jobs:
 
   # ── Build and deploy staging frontend ────────────────────────────────────
   deploy-frontend:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
     needs: deploy-lambdas
     outputs:
@@ -748,7 +748,7 @@ jobs:
   # Runs AFTER frontend deploy so Lambda and DB changes are both live.
   # Uses isolated staging Neon branch — never touches prod DB.
   db-schema-check:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: deploy-frontend
     timeout-minutes: 5
 
@@ -758,8 +758,8 @@ jobs:
           ref: ${{ inputs.dev_sha || github.sha }}
 
       - name: Run schema integrity check
-        # OPS-SCHEMACHECKAPT-001: no postgresql-client install step. ubuntu-24.04 (pinned
-        # above, so the version cannot drift under us) ships psql 16.14 on PATH, and
+        # OPS-SCHEMACHECKAPT-001: no postgresql-client install step. ubuntu-26.04 (pinned
+        # above, so the version cannot drift under us) ships psql 18 on PATH (16 on 24.04), and
         # check-schema.sh only ever runs psql — which, unlike pg_dump/pg_restore, has no
         # major-version match requirement against the PG 17 staging Neon branch. The apt
         # fetch was a ship-time network dependency for a binary already on the runner.
@@ -771,7 +771,7 @@ jobs:
   # Phase 1: Lambda reachability (no auth required — 4xx is fine, 5xx is not).
   # Phase 2: Authenticated CRUD (requires CLERK_SECRET_KEY_STAGING + CLERK_TEST_USER_ID secrets).
   smoke-tests:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # OPS-STAGINGSMOKESHA-001: deploy-frontend is listed for its OUTPUTS, not for ordering — it is
     # already a transitive ancestor (deploy-frontend -> db-schema-check -> here), so this edge adds
     # no wait and no new skip path, but WITHOUT it `needs.deploy-frontend` is not in this job's
@@ -877,7 +877,7 @@ jobs:
         # pre-apply audit) — latent-correctness edit, same class as the 2026-08-04 additions.
         #
         # 2026-08-20 (OPS-SCHEMACHECKAPT-001): the two apt-get lines that used to open this
-        # sweep are gone. ubuntu-24.04 (pinned on this job) ships psql 16.14 on PATH and the
+        # sweep are gone. ubuntu-26.04 (pinned on this job) ships psql 18 on PATH (16 on 24.04) and the
         # sweep is psql-only, so there is nothing to install — psql, unlike pg_dump/pg_restore,
         # carries no major-version match requirement against the PG 17 staging branch. They
         # were also `>/dev/null 2>&1`-silenced, so an apt flake failed this step with no output.

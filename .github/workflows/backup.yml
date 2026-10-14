@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   backup:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Make /usr/lib/postgresql/17 writable (cache + docker cp target)
         # OPS-SCHEMACHECKAPT-001. See the fetch step below for why this file no longer
@@ -30,11 +30,14 @@ jobs:
         # later runs -- on this workflow or any of the other OPS-SCHEMACHECKAPT-001 sites
         # sharing this key -- get a hit instead of a fetch. This runs daily (07:00 UTC),
         # so it is what keeps the shared key warm for the less-frequent sites.
+        # The key ends in the job's runner label, so binaries copied on one runner image
+        # are never restored onto another (OPS-UBUNTU26MOVE-001). Moving `runs-on` means
+        # moving this suffix at all six sites; scripts/test_workflow_steps.py checks both.
         id: pg17-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /usr/lib/postgresql/17/bin
-          key: pg17-client-postgres17-image-v1
+          key: pg17-client-postgres17-image-v1-runner-ubuntu-26.04
 
       - name: Fetch pg17 client from the postgres:17 image (cache miss only)
         # Cache-miss fallback -- deliberately NOT apt.postgresql.org (PGDG). PGDG was
@@ -64,8 +67,8 @@ jobs:
 
       - name: Verify pg17 client
         # Explicit path, not bare `pg_dump`: /usr/bin/pg_dump on this runner image would
-        # still resolve to pg16 via the postgresql-client-common wrapper even with pg17
-        # present (both client versions coexist). Step 4 below also overrides PATH.
+        # still resolve to the image's own client via the postgresql-client-common wrapper
+        # (pg18 on ubuntu-26.04, pg16 on 24.04), even with pg17 present. Step 4 below also overrides PATH.
         run: /usr/lib/postgresql/17/bin/pg_dump --version
 
       - name: Configure AWS credentials (OIDC)
@@ -90,8 +93,8 @@ jobs:
         # Companion pg_dumpall --globals-only: cluster-level roles pg_dump never
         # captures. --no-role-passwords keeps SCRAM hashes out of S3 (Neon manages
         # role credentials via its own API; hashes are useless on restore).
-        # PATH override: bare `pg_dump` resolves to pg16 on this runner image even
-        # when pg17 is installed (postgresql-client-common wrapper picks pg16).
+        # PATH override: bare `pg_dump` resolves to the image's client (pg18 on ubuntu-26.04)
+        # even when pg17 is installed (postgresql-client-common wrapper picks it).
         # Prepending pg17's bin dir forces the major-version match Neon requires.
         # TABLE LIST (OPS-RESTOREVERIFYRED-001): the tables prod has when this dump is
         # taken, written beside it as db/garden-YYYYMMDD.tables.json. restore-verify
@@ -157,8 +160,8 @@ jobs:
         # its comment claimed "non-zero size" but nothing checked size, so a zero-byte
         # or truncated dump passed green. Now three assertions, any failure is red:
         #   1. pg_restore --list on the local dump proves it is a readable pg
-        #      custom-format archive (cheap, no DB connection; pg17 binary — the
-        #      default pg16 pg_restore cannot read pg17 archives).
+        #      custom-format archive (cheap, no DB connection; pg17 binary, the
+        #      same major as the pg_dump that wrote it, not the image's own client).
         #   2. The S3 object exists (list-objects-v2 = same ListBucket permission
         #      the previous `aws s3 ls` check already used; no IAM change).
         #   3. The S3 object exceeds a 400KB floor: the dump was ~500KB at first

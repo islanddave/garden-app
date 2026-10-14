@@ -34,7 +34,7 @@ concurrency:
 
 jobs:
   a3-exit:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Seven vitest runs of the node project's files, one after another: two without coverage, four with, and a
     # one-test control. Measured on the owner's Mac, 456 s to 715 s wall for all seven
     # (gardening-docs project-state/_promotepath-20261002/lane-a3exit-20261008.log); NOT yet measured on a runner.

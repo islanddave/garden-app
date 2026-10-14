@@ -37,7 +37,7 @@ shape whatever ci-next.yml says:
                 could not be re-run green and would leave that commit unpromotable), its concurrency group, and
                 the aggregator under the id the promote reads. ci-next.yml: push to ci-next-soak only (not dev),
                 the one dispatch input, and no job id the promote reads. Both: no continue-on-error, no `if:`,
-                needs, matrix, name or env on a leg, ubuntu-24.04 and a timeout everywhere, no workflow-level env
+                needs, matrix, name or env on a leg, ubuntu-26.04 and a timeout everywhere, no workflow-level env
                 or defaults, and an aggregator that needs every other job, runs `always()`, and pins the same list
                 in its one step.
   handoffs      a step that hands something on through the runner (an action, a GITHUB_ENV or GITHUB_PATH write, an
@@ -495,8 +495,8 @@ def _graph_of(name, workflow):
     if tuple(legs) != LEGS or aggregator not in jobs:
         out.append("%s: job ids are %s, want the legs %s and %s" % (name, list(jobs), list(LEGS), aggregator))
     for job_id, job in jobs.items():
-        if job.get("runs-on") != "ubuntu-24.04":
-            out.append("%s: %s runs on %r, want ubuntu-24.04" % (name, job_id, job.get("runs-on")))
+        if job.get("runs-on") != "ubuntu-26.04":
+            out.append("%s: %s runs on %r, want ubuntu-26.04" % (name, job_id, job.get("runs-on")))
         minutes = job.get("timeout-minutes")
         if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes <= 0:
             out.append("%s: %s has no timeout-minutes" % (name, job_id))
@@ -1134,7 +1134,7 @@ MUTATIONS = {
     "ci.yml gains a job named integration-tests": ("shape", lambda w, o: w["jobs"].update(
         {"integration-tests": copy.deepcopy(w["jobs"]["pytest"])}), CI),
     "ci.yml is the single serial job again": ("shape", lambda w, o: w.update(jobs={GATE: {
-        "runs-on": "ubuntu-24.04", "timeout-minutes": 90, "steps": _all_steps(w, CI)}}), CI),
+        "runs-on": "ubuntu-26.04", "timeout-minutes": 90, "steps": _all_steps(w, CI)}}), CI),
     # shape: ci-next.yml's triggers and ids
     "the shadow comes back: ci-next.yml runs on dev pushes": ("shape", lambda w, o: _on(w)["push"]["branches"].insert(
         0, "dev"), NEXT),

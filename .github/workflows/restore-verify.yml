@@ -73,7 +73,7 @@ concurrency:
 
 jobs:
   plan:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       matrix: ${{ steps.mk.outputs.matrix }}
     steps:
@@ -98,7 +98,7 @@ jobs:
 
   verify:
     needs: plan
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     name: verify (${{ matrix.leg }})
     strategy:
       fail-fast: false
@@ -134,13 +134,13 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /usr/lib/postgresql/17/bin
-          key: pg17-client-postgres17-image-v1
+          key: pg17-client-postgres17-image-v1-runner-ubuntu-26.04
 
       - name: Fetch pg17 client from the postgres:17 image (cache miss only)
         # OPS-SCHEMACHECKAPT-001: no more apt.postgresql.org (PGDG) -- see backup.yml for
         # the full incident writeup. Neon + the `services.postgres` container above both
-        # run PG 17; pg_restore enforces a strict major-version match and ubuntu-latest
-        # ships a pg16 client, so this job still needs a pg17 client of its own -- but
+        # run PG 17; pg_restore enforces a strict major-version match and the runner image
+        # ships pg18 (ubuntu-26.04; pg16 on 24.04), so this job still needs a pg17 client of its own -- but
         # `postgres:17` is already the image the services container above pulls, so this
         # throwaway `docker create` reuses the same locally-cached layers rather than
         # adding a second image dependency.

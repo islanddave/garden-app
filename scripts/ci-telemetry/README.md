@@ -390,7 +390,7 @@ the recorder and the config, by running `a3-exit.fixture.mjs` in both environmen
 
 ### The exit run on a runner
 
-`.github/workflows/a3-exit-run.yml` runs `a3-exit.sh` on a runner (`ubuntu-24.04`, the Node the unit legs of
+`.github/workflows/a3-exit-run.yml` runs `a3-exit.sh` on a runner (`ubuntu-26.04`, the Node the unit legs of
 `ci-next.yml` set up, `npm ci`, a clean checkout), so the result is one made on CI's Node and not on a laptop's. It
 gates nothing, holds no secret and has one trigger: a push to the branch `a3-exit-run`. Point that branch at the
 commit to measure:

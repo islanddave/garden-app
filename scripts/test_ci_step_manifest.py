@@ -144,7 +144,7 @@ MUTATIONS = {
     "the workflow gains a default shell": lambda wf: wf.update(defaults={"run": {"shell": "sh"}}),
     # the job graph: what one serial job could not get wrong
     "a leg is removed": lambda wf: wf["jobs"].pop("gates-c"),
-    "a leg is added": lambda wf: wf["jobs"].update(extra={"runs-on": "ubuntu-24.04", "steps": [{"run": "true"}]}),
+    "a leg is added": lambda wf: wf["jobs"].update(extra={"runs-on": "ubuntu-26.04", "steps": [{"run": "true"}]}),
     "a leg is renamed": lambda wf: wf["jobs"].update({"gates-d": wf["jobs"].pop("gates-c")}),
     "two jobs swap places": lambda wf: wf["jobs"].update({"static": wf["jobs"].pop("static")}),
     "a step moves to another leg": lambda wf: _job(wf, "gates-b")["steps"].append(_job(wf)["steps"].pop()),

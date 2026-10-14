@@ -2,6 +2,15 @@
 #
 # Every entry below is a documented FALSE POSITIVE with live evidence. Do not add an ignore without the same:
 # a real run that shows the flagged construct working.
+#
+# The one label declaration (OPS-UBUNTU26MOVE-001): every job runs on `ubuntu-26.04`, GA since 2026-09-17
+# (actions/runner-images issue 14747), but actionlint 1.7.12, the newest release and the one pinned, lists labels
+# only up to ubuntu-24.04 and reports `label "ubuntu-26.04" is unknown` on every runs-on line. Declaring it here is
+# actionlint's documented way to add a label. Live proof the label runs: ci-next 38451903325 and integration-test
+# 38451919797 (2026-10-13). Remove this entry when a pinned actionlint release lists the label itself.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
 paths:
   .github/workflows/deploy-lambda.yml:
     ignore:

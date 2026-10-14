@@ -181,7 +181,7 @@ jobs:
   # pair. workflow_dispatch is the only trigger (header, TAG TRIGGER RETIRED); any other event is refused.
   # Fail-closed: dev_sha must be a 40-hex commit SHA and snap_version must match the snap regex.
   resolve:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       dev_sha: ${{ steps.r.outputs.dev_sha }}
       snap_version: ${{ steps.r.outputs.snap_version }}
@@ -244,7 +244,7 @@ jobs:
 
   promote:
     needs: resolve
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: production
     # OPS-PROMOTERACE-001: consumed by the deploy-lambdas job below to decide whether to run at all.
     outputs:
@@ -567,8 +567,9 @@ jobs:
 
       # SNAPSHOT TOOLING, BEFORE THE FAST-FORWARD (S1 pre-FF, Dave decision 2026-10-07; promote-path plan V003 §5).
       # The five steps from here to "Install python deps" fetch and prove everything scripts/snap.py needs that the
-      # checkout does not give it: the pg17 client (pg_dump and pg_dumpall; the runner image ships a pg16 client, and
-      # pg_dump will not dump a server newer than itself) and its Python imports. Until this change they ran AFTER
+      # checkout does not give it: the pg17 client (pg_dump and pg_dumpall; the runner image ships pg18 on ubuntu-26.04,
+      # whose archives the pg17 pg_restore of every restore path does not read, and pg16 on 24.04, which will not dump
+      # a server newer than itself) and its Python imports. Until this change they ran AFTER
       # "Fast-forward main", so a failure or a stall in any of them left main advanced with no snapshot and nothing
       # deployed: the fetch hung 46 minutes there on 2026-08-18. Snap is now the only step after the FF.
       # scripts/test_workflow_steps.py fails if one of these goes back below the FF, or if a step that fetches
@@ -610,15 +611,17 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /usr/lib/postgresql/17/bin
-          key: pg17-client-postgres17-image-v1
+          key: pg17-client-postgres17-image-v1-runner-ubuntu-26.04
 
       - name: Fetch pg17 client from the postgres:17 image (cache miss only)
         # OPS-SCHEMACHECKAPT-001: no more apt.postgresql.org (PGDG) -- see backup.yml for the full incident
         # writeup. While this step ran AFTER the fast-forward it hung 46 minutes (2026-08-18) and stranded main at
         # 437164e with prod still on 4.35.0 and no version tag. Each docker call now runs inside `timeout`, so a
-        # stall ends in this step's own ::error; timeout-minutes is only the backstop. The 120 s pull bound is NOT
-        # measured on this job: no promote sampled has missed the cache (backup.yml and restore-verify.yml refill
-        # the same entry from main every day). A cold pull slower than that is refused here, with nothing moved.
+        # stall ends in this step's own ::error; timeout-minutes is only the backstop. backup.yml and
+        # restore-verify.yml refill this entry from main every day, but the first dev-ref promote after the key
+        # changes always misses and pulls cold (measured: 5 s on 24.04, run 33810423087; container init with a
+        # cold postgres:17 pull 11 s on 26.04, run 38451229825). A pull slower than 120 s is refused here, with
+        # nothing moved.
         if: steps.pg17-cache.outputs.cache-hit != 'true'
         timeout-minutes: 4
         run: |
@@ -643,7 +646,7 @@ jobs:
           set -uo pipefail
           for tool in pg_dump pg_dumpall; do
             if ! "/usr/lib/postgresql/17/bin/$tool" --version; then
-              echo "::error title=Snapshot tooling (pre-FF)::/usr/lib/postgresql/17/bin/$tool does not run, and scripts/snap.py calls it after the fast-forward — nothing has moved (main has NOT been touched): re-run the failed jobs. If it fails the same way again the cached copy is bad: delete the Actions cache entry pg17-client-postgres17-image-v1 so the next run fetches a fresh one. Not a verdict on the promoted code."
+              echo "::error title=Snapshot tooling (pre-FF)::/usr/lib/postgresql/17/bin/$tool does not run, and scripts/snap.py calls it after the fast-forward — nothing has moved (main has NOT been touched): re-run the failed jobs. If it fails the same way again the cached copy is bad: delete the Actions cache entry pg17-client-postgres17-image-v1-runner-ubuntu-26.04 so the next run fetches a fresh one. Not a verdict on the promoted code."
               exit 1
             fi
           done
@@ -957,7 +960,7 @@ jobs:
     # verify-daily-plan (which does not withhold the SPA) does not produce a misleading
     # "SPA withheld" report alongside a successfully-shipped frontend.
     if: ${{ always() && needs.promote.result == 'success' && needs.deploy-lambdas.result != 'skipped' && needs.deploy-lambdas.outputs.deploy_result != 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Report withheld SPA deploy
         run: |
@@ -1026,7 +1029,7 @@ jobs:
   verify:
     needs: [resolve, deploy]
     if: ${{ always() }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Bounds this job if it hangs once it is RUNNING (a stuck API read in verify-deploy.py); the slowest healthy
     # run on record is 21 s. It does NOT bound a job still waiting for a runner: that is scripts/run-status.py
     # STUCK, then cancel and re-run the failed jobs. The three `uses:` jobs above cannot carry a limit (GitHub

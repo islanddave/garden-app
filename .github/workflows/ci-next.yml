@@ -183,7 +183,7 @@ concurrency:
 jobs:
   # Everything that needs no browser and no test runner, in the order the serial job ran it. ~1 min.
   static:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
@@ -333,7 +333,7 @@ jobs:
   # As in the serial job, where pytest ran before setup-node and npm ci: the image's own node, no node_modules.
   # ~80 s.
   pytest:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
@@ -360,7 +360,7 @@ jobs:
   # project-state/_promotepath-20261002/scout-a8-and-slowdown-20261007.md, lines 351-355, with the run at 47 and the
   # range at 62). For the two projects the A3 scout inferred about 3 min less; that is not yet measured on a runner.
   unit-utc-cov:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
@@ -391,7 +391,7 @@ jobs:
   # The same suite under the app's own timezone, behind a sentinel that the zone resolved. No coverage, so this
   # is also the only pass whose time is free of instrumentation. ~12 min median, 14.5 min on a slow runner.
   unit-ny:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
@@ -436,7 +436,7 @@ jobs:
 
   # Real-Chrome gates, first group (~246 s of work measured after the idle-timer fix, run 37040756148).
   gates-a:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
@@ -517,7 +517,7 @@ jobs:
 
   # Real-Chrome gates, second group (~181 s of work, same run).
   gates-b:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
@@ -580,7 +580,7 @@ jobs:
   # Page scroll alone: at ~539 s in that run (42 flows, 78 flow-runs today: ~570 s locally) it is longer
   # than either group above, and it is the gate that grows.
   gates-c:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 25
     steps:
       - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
@@ -617,7 +617,7 @@ jobs:
 
   # The two Today V2 steps, which run their gate and then its probe-nothing and self-test proofs (~251 s).
   gate-probes:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
@@ -677,7 +677,7 @@ jobs:
   build-and-test-next:
     needs: [static, pytest, unit-utc-cov, unit-ny, gates-a, gates-b, gates-c, gate-probes]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Every pinned leg reported, and every one succeeded

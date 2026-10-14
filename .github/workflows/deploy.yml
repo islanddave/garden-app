@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Bounds a deploy that hangs once it is RUNNING (a stuck npm ci, s3 sync, CORS restore or smoke curl); the
     # slowest healthy run on record is 111 s. 15, not 10: the post-deploy HTTP smoke is itself bounded at about
     # 742 s when every probe times out twice (14 checks x 53 s), and its FAIL lines and final verdict must print

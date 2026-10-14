@@ -77,7 +77,7 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Bounds a leg that hangs once it is RUNNING (a stuck `aws lambda wait`, npm install, zip upload). Each matrix
     # leg is its own job with its own 10 minutes; the slowest healthy leg on record is 148 s. It does NOT bound a
     # leg still waiting for a runner: that is scripts/run-status.py STUCK, then cancel and re-run the failed jobs.

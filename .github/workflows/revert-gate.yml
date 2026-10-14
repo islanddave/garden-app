@@ -129,7 +129,7 @@ permissions:
 
 jobs:
   revert:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: production-destructive
     timeout-minutes: 180  # = REVERT_JOB_BUDGET_MIN below; forward redeploys + a full rollback (JOB BUDGET above)
     steps:
@@ -172,7 +172,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /usr/lib/postgresql/17/bin
-          key: pg17-client-postgres17-image-v1
+          key: pg17-client-postgres17-image-v1-runner-ubuntu-26.04
 
       - name: Fetch pg17 client from the postgres:17 image (cache miss only)
         # OPS-SCHEMACHECKAPT-001: no more apt.postgresql.org (PGDG) -- see backup.yml

@@ -1614,7 +1614,7 @@ PG_DIR, PG_CACHE, PG_FETCH, PG_VERIFY, SNAP_DEPS = TOOLING = [
     "Fetch pg17 client from the postgres:17 image (cache miss only)", "Verify pg17 client", "Install python deps"]
 PG_ROOT = "/usr/lib/postgresql/17"
 PG_BIN = PG_ROOT + "/bin"
-PG_KEY = "pg17-client-postgres17-image-v1"
+PG_KEY = "pg17-client-postgres17-image-v1-runner-ubuntu-26.04"
 NOT_MOVED = "nothing has moved (main has NOT been touched): re-run the failed jobs"
 # The promote job's timeout comment, in minutes: what a slowest-passing promote spends before the tooling, and
 # what it allows after the smoke gate for the Lambda decision, the FF and the snap. The rest is derived below.
@@ -1740,7 +1740,9 @@ def test_snapshot_tooling_prepares_exactly_what_snap_py_uses():
 # ── ubuntu-26.04: database dumps on the runner's work disk (OPS-UBUNTU26MOVE-001) ────────────────────────────────
 # On ubuntu-26.04 /tmp is a RAM-backed tmpfs capped at ~7.8G. These scripts dump or download the database through
 # tempfile, which honours TMPDIR, so every step that runs one points it at $RUNNER_TEMP (ext4, the work disk).
-DUMP_SCRIPTS = ("scripts/snap.py", "scripts/restore-verify.py", "scripts/revert-to.py")
+# Any spelling that runs one of them (python3 -u, ./scripts/, a path prefix), so a new site cannot slip past
+# the TMPDIR assert by quoting the command differently.
+_DUMP_SITE = re.compile(r"python3?\b[^\n]*?\b(?:\./)?scripts/(?:snap|restore-verify|revert-to)\.py\b")
 
 
 def _every_step():
@@ -1752,12 +1754,21 @@ def _every_step():
 
 
 def test_every_step_that_runs_a_dump_script_puts_its_tempfiles_on_the_work_disk():
-    found = [(name, step) for name, _, _, step in _every_step()
-             if any(f"python3 {script}" in (step.get("run") or "") for script in DUMP_SCRIPTS)]
+    found = [(name, step) for name, _, _, step in _every_step() if _DUMP_SITE.search(step.get("run") or "")]
     assert {name for name, _ in found} == {"promote-gate.yml", "snap-rehearsal.yml", "restore-verify.yml",
                                            "revert-gate.yml", "revert-rehearsal.yml"}
     for name, step in found:
         assert (step.get("env") or {}).get("TMPDIR") == "${{ runner.temp }}", (name, step.get("name"))
+
+
+def test_every_pg17_client_cache_is_keyed_by_its_jobs_runner_image():
+    """A copy of the pg17 binaries made on one runner image must never be restored onto another: the key carries
+    the job's `runs-on` label, so moving the label without the key reds here."""
+    caches = [(name, job_id, job["runs-on"], step["with"]["key"]) for name, job_id, job, step in _every_step()
+              if str(step.get("uses", "")).startswith("actions/cache@") and step["with"].get("path") == PG_BIN]
+    assert len(caches) == 6, caches
+    for name, job_id, runs_on, key in caches:
+        assert key == f"pg17-client-postgres17-image-v1-runner-{runs_on}", (name, job_id, key)
 
 
 def _poll_seconds(body):
