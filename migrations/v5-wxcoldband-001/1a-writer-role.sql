@@ -74,7 +74,8 @@
 -- SAFETY / IDEMPOTENCY: one transaction. Re-running it converges on the same role, the same single
 --   grant and the same attributes, and does not touch the password. Exactly ONE COMMIT, at the end:
 --   do not wrap this file in BEGIN/ROLLBACK to "rehearse" it on a shared database.
---   lock_timeout: 5s, as 0a. A GRANT takes no lock a reader or the job would wait on.
+--   lock_timeout: 5s, as 0a: a wait behind someone else's open DDL fails fast, having changed nothing.
+--   What a GRANT locks was not measured.
 --
 -- RUN BY the database owner (the role that owns public.weather_cold_range; step 0 refuses any other),
 --   after 0a. With Dave's OK, staging then prod, through the script (README.md "The writer's login"):

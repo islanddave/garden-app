@@ -12,8 +12,8 @@ THE DATABASES IT BUILDS, each a copy of one small fixture (two spaces, one weath
   main       the whole sequence runs here (pre, sweep, post, 0a, post, 0a, 0r, 0a)
   writer     0a applied; what the key, the foreign key and the three CHECKs do to a write; the cascade;
              the rollback with rows present
-  access     0a applied; the INSERT-only role README.md sketches, made HERE BY HAND. No file in this
-             directory creates a role or makes a grant, and neither does this script outside its cluster
+  access     0a applied; the INSERT-only role README.md sketches, made HERE BY HAND. The real one is
+             1a-writer-role.sql, rehearsed by rehearse_writer_role.py; this script makes no role outside its cluster
   lock_*     what 0a and 0r lock on spaces, and what waits
   p_*        one per starting state the pre and sweep gates are for
   m_*        0a applied, then one defect; each must red exactly the post gate written for it
@@ -469,7 +469,7 @@ def rehearse(cl, d):
         said(res[2]))
 
     # ── C. The writer's access as README.md sketches it. Made here, on this cluster, by hand. ────
-    print("C. access: an INSERT-only role (no file in this directory creates one)")
+    print("C. access: an INSERT-only role, made by hand (1a-writer-role.sql is rehearsed by rehearse_writer_role.py)")
     cl.ok("postgres", "CREATE ROLE wx_writer_rehearsal NOLOGIN")
     db = cl.new("access", template="applied")
     cl.ok(db, f"GRANT INSERT ({', '.join(COLUMNS)}) ON {T} TO wx_writer_rehearsal")

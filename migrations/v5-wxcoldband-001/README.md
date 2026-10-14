@@ -10,8 +10,12 @@ day on a throwaway local PostgreSQL 17.10 (see "What was rehearsed, and where").
 the first time these files meet the real `spaces`. Applying to prod is a prod database change and needs
 Dave's first-hand OK.
 
-**This directory creates no role and makes no grant.** The writer's access is described under "The writer's
-access" and is a decision still to be taken.
+**The writer's own login is a file here now, and has run nowhere.** Dave, 2026-10-13: "the Mac writer gets ITS
+OWN NARROW LOGIN: a database role that can add rows to weather_cold_range and nothing else, created from a
+re-runnable setup file that he OKs before it is applied once." `1a-writer-role.sql` is that file, and
+`scripts/wx-writer-role.py` applies it, sets the role's password and proves the negatives over the wire. Written
+2026-10-14 and rehearsed on a throwaway local PostgreSQL only; neither has touched staging or prod. How to run
+them, and what could not be checked from here, is under "The writer's login".
 
 | file | what it does |
 |---|---|
@@ -19,6 +23,10 @@ access" and is a decision still to be taken.
 | `0r-rollback.sql` | Drops the table and the stamp. Guarded: refuses while any row exists. |
 | `gates.yml` | 3 `pre`, 2 `sweep`, 9 standing `post`. Every `post` gate is catalog-only and self-armed on the stamp. The three CHECK bodies are pinned by name, validation and the exact text PostgreSQL 17 prints for them. |
 | `rehearse_local.py` | The three files above on a throwaway local Postgres, re-runnable: the whole sequence, every line of the constraint table, the INSERT-only writer sketched below, what is locked on `spaces`, and a planted defect for every gate. `python3 migrations/v5-wxcoldband-001/rehearse_local.py`, about 40 s. Writes only to the cluster it creates. |
+| `1a-writer-role.sql` | The role `garden_wx_writer`: LOGIN, NOINHERIT, CONNECTION LIMIT 2, no other attribute, a member of nothing, `INSERT` on the seven columns the job sends (never `created_at`), no password. One transaction, re-runnable, run by the table's owner. Ends in an assertion that rolls the whole file back if the role could do anything more, naming each privilege, its grantor and whether PUBLIC gave it. Revokes nothing from PUBLIC. No stamp. |
+| `1r-writer-role-rollback.sql` | Revokes the grant and drops the role. Refuses while the role owns anything. Re-runnable; works after `0r` too. |
+| `rehearse_writer_role.py` | `1a`, `1r` and `scripts/wx-writer-role.py` on a throwaway local Postgres, run by a NON-superuser owner as Neon's is: 71 checks, about 20 s. `python3 migrations/v5-wxcoldband-001/rehearse_writer_role.py`. Port 55498, so it can run beside `rehearse_local.py`. `scripts/test_wx_writer_role.py` runs it where `initdb` is on PATH. |
+| `scripts/wx-writer-role.py` | `apply`, `verify`, `rollback` with `--env staging` or `--env prod --i-have-daves-ok`. See "The writer's login". |
 
 One stamp. No `0b` and no `0c`: nothing is backfilled, and the three CHECKs ship armed with the table,
 because no deployed code names it and it is born empty.
@@ -81,7 +89,9 @@ and every Kelvin temperature at the ground is above 150.
 ## The writer's access
 
 Dave's ruling (2026-10-12): a background job on the Mac "writes one row to the live database", with
-"standing permission for that one script to write that one table unattended".
+"standing permission for that one script to write that one table unattended". And 2026-10-13, first-hand: its
+own narrow login, from a re-runnable setup file he OKs before it is applied once. That is option 1 below, and
+`1a-writer-role.sql`; "The writer's login" says how to run it.
 
 **What the narrowest writer needs**, as PostgreSQL privileges:
 
@@ -91,7 +101,8 @@ Dave's ruling (2026-10-12): a background job on the Mac "writes one row to the l
   `GRANT INSERT (space_id, night_date, init_time, p10_min_f, p50_min_f, leads_read, leads_expected)`;
 - nothing else: no SELECT, no UPDATE, no DELETE, on this table or any other.
 
-Not to be run from here; a sketch of the option for whoever decides:
+The sketch the decision was taken on. `1a-writer-role.sql` is what it became (the attributes spelled out, a
+member of nothing, no password in the file, and an assertion at the end); do not run this sketch:
 
 ```sql
 -- by the database owner, by hand, with Dave's OK. The name is a suggestion.
@@ -128,12 +139,12 @@ Neon makes a role or what PUBLIC holds on prod (the four checks below still stan
 - **No role but the owner writes anything today.** Every writer is a Lambda connecting as the owner. A
   non-owner writer would be the first.
 
-So this directory does not create one. The options, for the decision:
+The options as they were put. **Option 1 was taken (Dave, 2026-10-13)** and is `1a-writer-role.sql`:
 
 1. **A dedicated INSERT-only role, as sketched.** The narrowest thing that is still "the script writes the
    table". A leaked credential can add rows to this one table and nothing else: a false but
    Fahrenheit-shaped range for some night (display only; bounded by the CHECKs), or junk rows. It cannot
-   read, change or delete anything anywhere. Revoking it is one statement. *Recommended.*
+   read, change or delete anything anywhere. Revoking it is one statement. *Recommended, and taken.*
 2. **The script uses the owner's connection string.** No new role, and the widest possible grant: a
    credential on a laptop that can read and rewrite everything. Not recommended.
 3. **No database credential on the Mac.** The job POSTs to a route on the existing daily-plan read, which
@@ -143,20 +154,88 @@ So this directory does not create one. The options, for the decision:
    refuse a night that is not near today, at the cost of a function to maintain. The repo's
    SECURITY DEFINER functions are all audit triggers; none is a write path.
 
-Four things to check before choosing option 1, none of which this lane could read:
+Four things to check before choosing option 1, none of which the lane that wrote this could read. What the
+files now do about each (2026-10-14):
 
 - **How the role is made on Neon.** As this lane remembers Neon's documentation, a role created in the
   Neon console or API is made a member of `neon_superuser`, which is the opposite of narrow; a role created
   with SQL is not. Unverified. Check, then prove the negative as the role.
+  *Now:* `1a` makes it with SQL, revokes every membership it holds, and rolls back if one remains. Still
+  unverified on Neon; the assertion catches it either way.
 - **What PUBLIC can do in this database.** A new role gets whatever PUBLIC has. Prod's default ACL names
   `garden_ro`, not PUBLIC, by the sibling README; nobody has listed PUBLIC's grants.
+  *Now:* still not listed. `1a` revokes nothing from PUBLIC (that changes every role); its assertion counts
+  what PUBLIC holds and refuses, naming each line "granted to PUBLIC", if any of it reaches past the seven
+  columns. The first staging `apply` is the first reading.
 - **The nightly backup does not carry the grant.** `backup.yml` dumps with `--no-owner --no-privileges`,
   and the globals dump carries roles without passwords. After a restore the table and the role come back
   and the grant does not: the job's INSERT is refused and the card is blank. The grant has to live in a
   file someone can run again.
+  *Now:* it does. After a restore: `1a` again, through `wx-writer-role.py apply`, which also sets a new
+  password.
 - **Row security stays off on this table.** Enabled with no policy it is deny-all for a non-owner
   (`v4-roschemaversion-001` found `schema_version` like that). `post_no_trigger_and_no_row_security`
   holds it.
+  *Now:* `1a`'s assertion also refuses if it is enabled or forced.
+
+## The writer's login
+
+What exists: `1a-writer-role.sql`, `1r-writer-role-rollback.sql`, `scripts/wx-writer-role.py`, and their
+rehearsal. The role is `garden_wx_writer`. Its URL goes in `.env.local` as `WX_WRITER_DATABASE_URL_STAGING` /
+`WX_WRITER_DATABASE_URL_PROD`, which is where the Mac job reads it.
+
+**How to run it.** Staging first, then prod, and prod only on Dave's first-hand OK of `1a-writer-role.sql`
+for that step. From the main checkout (the one with `.env.local`); the table must be there (it is, on both,
+since 2026-10-13).
+
+```bash
+python3 scripts/wx-writer-role.py apply  --env staging      # 1a as the owner, a password, the URL line, the probes
+python3 scripts/wx-writer-role.py verify --env staging      # the probes again, any time
+# --- prod: Dave's first-hand OK -------------------------------------------------------------------
+python3 scripts/wx-writer-role.py apply  --env prod --i-have-daves-ok
+```
+
+`apply` runs `1a` with the owner's URL (`NEON_STAGING_URL` / `NEON_DATABASE_URL`, read by key name), sets a
+random 32-byte password on stdin, writes the role's URL (the owner URL's host, database and parameters, the
+role and password substituted) into `.env.local`, then logs in as the role and checks, over the wire: it is
+`garden_wx_writer`; INSERT on the seven columns and not on `created_at`, not table-level; SELECT on
+`weather_cold_range`, SELECT on `plants`, UPDATE and DELETE on `weather_cold_range` each 42501. It prints
+PASS / FAIL lines and the role name, never a URL, host or password, and passes none on a command line. A
+refusal from `1a` is printed with its findings and leaves no role, no password and no line. Exit 0 only if
+every line is PASS.
+
+- **Running `apply` again rotates the password.** The job must then read the new line.
+- **After a restore** (the backup carries neither the grant nor the password): `apply` again.
+- **If staging is recreated**, `apply --env staging` again.
+- **Rollback:** unload the Mac job, then `python3 scripts/wx-writer-role.py rollback --env staging` (prod:
+  `--env prod --i-have-daves-ok`). It runs `1r` and removes the `.env.local` line.
+
+**Not verified, because nothing here can reach Neon:**
+
+- **Whether a role created with SQL on Neon is put in `neon_superuser`.** The assertion refuses either way.
+  If it is, and the owner cannot revoke it (a grant made by Neon's own superuser), `apply` stops at `1a` with
+  "member of neon_superuser (granted by ...)" and nothing is created.
+- **Whether Neon's pooler accepts a password set with SQL on a role made with SQL.** The `apply` probe over the
+  wire answers it on staging. Its first login is tried up to five times over 30 s, in case the proxy answers
+  from what it knew a moment before the password was set (also unverified).
+- **What PUBLIC holds on staging and prod**, and whether any object in schema `public` there belongs to a role
+  the owner cannot speak for (`1a` skips those when revoking, and its assertion still reads them).
+- **That Neon's owner can do what `1a` does**: CREATE ROLE and set attributes (CREATEROLE), GRANT on the table
+  (it owns it), REVOKE CREATE on schema `public` (as the database's owner). Rehearsed with a non-superuser
+  owner holding CREATEROLE and CREATEDB, not on Neon. PostgreSQL 16 and later refuse a non-superuser that
+  names REPLICATION, BYPASSRLS or SUPERUSER in ALTER ROLE even to turn it off (seen locally), so `1a` sets
+  only attributes that differ.
+- **Where the password goes on the server.** `ALTER ROLE ... PASSWORD` carries it in plain text once, as
+  Neon's documentation does it; a statement log or `pg_stat_statements` could keep it, readable only by roles
+  that already hold more than this one. A SCRAM verifier made on the Mac would avoid that, but whether Neon
+  accepts one is unverified too, so the documented form is used.
+
+What `1a`'s assertion holds, and what it reports instead of refusing, is in its header. In short: the role is
+LOGIN, NOINHERIT, CONNECTION LIMIT 2 and nothing else; a member of nothing; owns nothing; no table or view
+privilege anywhere outside the system schemas, table- or column-level, except INSERT on the seven columns; no
+sequence privilege; no CREATE on any schema or on the database; USAGE on `public`; row security off on this
+table; no callable SECURITY DEFINER function that is not a trigger. EXECUTE, which PUBLIC holds on functions
+by default, is a NOTICE.
 
 ## Order of work
 
@@ -261,14 +340,17 @@ involved.
 
 **The job**: send the seven columns in the grant and never `created_at`. `night_date` is the evening's date
 in America/New_York. `leads_read` is the fewest steps any stored percentile was read over. Bare
-`ON CONFLICT DO NOTHING`.
+`ON CONFLICT DO NOTHING`. It connects as `garden_wx_writer` with `WX_WRITER_DATABASE_URL_PROD` from `.env.local`
+(by key name; never on a command line), and must expect that URL to change whenever `apply` is run again. At
+most two connections at once.
 
 ## Rollback
 
 `0r-rollback.sql` drops the table and removes the stamp.
 
-1. **Stop the writer first.** Unload the Mac job before running it. If a role was made for the job, drop it
-   afterwards, by hand; this directory created neither.
+1. **Stop the writer first.** Unload the Mac job before running it. Then, or afterwards, drop the job's
+   role with `scripts/wx-writer-role.py rollback` (`1r-writer-role-rollback.sql`); it works whether or not
+   the table is still there.
 2. **Code back before schema back.** It is a clean undo only while no code on dev names the table. The
    holding state "leave the table" starts when the read is ON DEV, not when it is live.
 3. **It refuses while any row exists**, and says how many and for which nights. The rows are derived data
@@ -361,6 +443,38 @@ The pin is the text of one major version; see "Applying" for where it is confirm
 
 **A gap the gates state, measured and left:** `numeric(5,2)` is not pinned, only `numeric`. `p10_min_f`
 widened to `numeric(7,2)` reads 9/9.
+
+**The writer's login, 2026-10-14**, by `rehearse_writer_role.py` on the same kind of cluster (PostgreSQL
+17.10), every table owned by a NON-superuser owner with CREATEROLE and CREATEDB, a member of a stand-in
+`neon_superuser`, as Neon's owner is. 71 checks, all holding, in 19 s:
+
+- `1a` refused where `0a` never ran, and when run by a CREATEROLE login that does not own the table, each
+  leaving no role. As the owner: exit 0; the role LOGIN, NOINHERIT, limit 2, no password, a member of
+  nothing; `pg_dump` with privileges naming it in exactly seven lines, INSERT on each column; a table in
+  `public` the owner holds no privilege on not in the way. Again, and again with an empty `search_path`:
+  unchanged, the role's oid included. Attributes drifted (NOLOGIN, INHERIT, CREATEDB, no limit): set back.
+  Grants made directly (`neon_superuser` granted by the owner; table, column, view, sequence, schema and
+  function grants): each taken back;
+- as the role, over TCP with a password: the bare `ON CONFLICT DO NOTHING` insert accepted and a re-run
+  keeping the first row; naming `created_at`, `RETURNING`, a conflict target with columns, SELECT, UPDATE,
+  DELETE and TRUNCATE here, SELECT on `plants`, `spaces`, `weather_daily`, a view and a table in another
+  schema, `nextval`, CREATE TABLE and CREATE SCHEMA: each 42501. An unknown space still 23503, Kelvin
+  23514. A third concurrent login refused ("too many connections for role");
+- 16 planted states `1a` refuses with exit 3, naming the finding, the schema with privileges and the role
+  unchanged: `neon_superuser` granted by the superuser (the owner cannot revoke it); another role granted by
+  the superuser; SELECT on a table in another schema granted to the role; granted to PUBLIC: SELECT on
+  `plants`, SELECT on one column of `spaces`, TRUNCATE on `weather_daily`, table-level INSERT on this table,
+  USAGE on a sequence, CREATE on `public`, CREATE on the database; a SECURITY DEFINER function that is not a
+  trigger; row security enabled, and forced; the role owning a table (and `1r` refusing it too); the role
+  made BYPASSRLS by a superuser (the owner may not clear it: 42501 from ALTER ROLE); and, with no role yet,
+  a PUBLIC grant in the way: the CREATE ROLE rolled back with the rest;
+- `1r`: the role gone and `pg_dump` with privileges equal to before `1a`; again, a no-op; after `0r`, still
+  drops it;
+- the script: `--env prod` without the flag refused before anything is read or run; `apply`, `verify`,
+  `apply` again (the password rotated, the old one refused), `verify` with a wrong password, `rollback`
+  twice, `verify` with no line, `apply`/`rollback --env prod --i-have-daves-ok` (on a local database), and
+  `apply` where `1a` refuses. The env file's other lines and its mode kept. psql was wrapped to record its
+  command lines: 31 calls, none carrying a password, URL, host or database name, and no output did either.
 
 **Not rehearsed:** anything on staging or prod; the real `spaces` (its triggers, policies and other
 columns); how Neon makes a role and what PUBLIC holds; the Mac job and the read; `garden_ro`'s default ACL;
