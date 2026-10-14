@@ -139,6 +139,9 @@ class MarkerUnreadable(Exception):
 
 
 LS_REMOTE_TIMEOUT_S = 60
+# The fetch and push after a good ls-remote are bounded too: a remote that answers the
+# ls-remote and then stalls must end the verb with a verdict, not hang it.
+REMOTE_TIMEOUT_S = 60
 EXIT_UNKNOWN = 2
 
 
@@ -220,7 +223,13 @@ def cmd_stage(args) -> int:
     when = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     msg = format_marker(sha, args.version, args.by, when)
     _git("tag", "-f", "-a", TAG_NAME, sha, "-m", msg)
-    push = _git("push", "--force", args.remote, f"{TAG_REF}", check=False)
+    try:
+        push = _git("push", "--force", args.remote, f"{TAG_REF}", check=False, timeout=REMOTE_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        print(f"UNKNOWN: `git push {args.remote}` gave no reply in {REMOTE_TIMEOUT_S} s, so the marker may\n"
+              "  or may not be on the remote. Run `python3 scripts/staged-promote.py check` to see.",
+              file=sys.stderr)
+        return EXIT_UNKNOWN
     if push.returncode != 0:
         print(f"FATAL: could not push the marker: {push.stderr.strip()}", file=sys.stderr)
         return 1
@@ -246,8 +255,14 @@ def cmd_check(args) -> int:
         print("No staged promote. Safe to push to dev.")
         return 0
 
+    # A fetch that fails or stalls leaves the details unreadable; the verdict is still "staged".
     meta = {}
-    if _git("fetch", args.remote, "--force", f"{TAG_REF}:{TAG_REF}", check=False).returncode == 0:
+    try:
+        fetched = _git("fetch", args.remote, "--force", f"{TAG_REF}:{TAG_REF}", check=False,
+                       timeout=REMOTE_TIMEOUT_S).returncode == 0
+    except subprocess.TimeoutExpired:
+        fetched = False
+    if fetched:
         show = _git("cat-file", "-p", TAG_NAME, check=False)
         if show.returncode == 0:
             meta = parse_marker(show.stdout)
@@ -279,7 +294,13 @@ def cmd_clear(args) -> int:
     if not sha:
         print("Nothing staged; nothing to clear.")
         return 0
-    r = _git("push", args.remote, f":{TAG_REF}", check=False)
+    try:
+        r = _git("push", args.remote, f":{TAG_REF}", check=False, timeout=REMOTE_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        print(f"UNKNOWN: `git push {args.remote}` gave no reply in {REMOTE_TIMEOUT_S} s, so the marker may\n"
+              f"  still be staged (was {sha}). Run `python3 scripts/staged-promote.py check` to see.",
+              file=sys.stderr)
+        return EXIT_UNKNOWN
     if r.returncode != 0:
         print(f"FATAL: could not delete the marker: {r.stderr.strip()}", file=sys.stderr)
         return 1

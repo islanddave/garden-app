@@ -257,6 +257,65 @@ def test_stage_refuses_and_writes_nothing_when_it_cannot_see_an_existing_marker(
     assert [c[0] for c in calls] == ["cat-file", "ls-remote"]
 
 
+# ── the fetch and push after a good read are bounded too ─────────────────────────
+REMOTE_VERBS = ("ls-remote", "fetch", "push")
+
+
+def _scripted_git(monkeypatch, ls_remote, stall=None):
+    """Like _fake_git, but records keyword arguments too, and raises TimeoutExpired for
+    the git verb named by `stall`, as a remote that answers ls-remote and then hangs."""
+    calls = []
+
+    def fake(*args, **kw):
+        calls.append((args, kw))
+        if args[0] == stall:
+            raise subprocess.TimeoutExpired(["git", *args], kw.get("timeout"))
+        if args[0] == "ls-remote":
+            return ls_remote
+        return _Reply()
+
+    monkeypatch.setattr(sp, "_git", fake)
+    return calls
+
+
+@pytest.mark.parametrize("argv,ls_remote", [
+    (["check"], _Reply(0, ANNOTATED, "")),
+    (["stage", "--sha", SHA, "--version", "v9.9.9", "--by", "T1/test"], _Reply(0, "", "")),
+    (["clear"], _Reply(0, ANNOTATED, "")),
+])
+def test_every_call_that_talks_to_the_remote_has_a_timeout(monkeypatch, argv, ls_remote):
+    calls = _scripted_git(monkeypatch, ls_remote)
+    sp.main(argv)
+    remote = [(a[0], kw.get("timeout")) for a, kw in calls if a[0] in REMOTE_VERBS]
+    assert len(remote) >= 2, remote
+    for verb, timeout in remote:
+        assert timeout and 0 < timeout <= 120, f"`git {verb}` in {argv[0]} has no timeout"
+
+
+def test_check_whose_fetch_stalls_still_says_staged(monkeypatch, capsys):
+    _scripted_git(monkeypatch, _Reply(0, ANNOTATED, ""), stall="fetch")
+    assert sp.main(["check"]) == 1, "a marker is staged: the stalled fetch only loses the details"
+    out, err = capsys.readouterr()
+    assert SHA in err and "(unknown version)" in err and "Safe" not in out + err
+
+
+def test_stage_whose_push_stalls_is_UNKNOWN_not_staged(monkeypatch, capsys):
+    _scripted_git(monkeypatch, _Reply(0, "", ""), stall="push")
+    code = sp.main(["stage", "--sha", SHA, "--version", "v9.9.9", "--by", "T1/test"])
+    out, err = capsys.readouterr()
+    assert code == sp.EXIT_UNKNOWN and "STAGED" not in out
+    assert err.startswith("UNKNOWN: ") and "staged-promote.py check" in err
+
+
+def test_clear_whose_push_stalls_is_UNKNOWN_and_keeps_the_local_tag(monkeypatch, capsys):
+    calls = _scripted_git(monkeypatch, _Reply(0, ANNOTATED, ""), stall="push")
+    code = sp.main(["clear"])
+    out, err = capsys.readouterr()
+    assert code == sp.EXIT_UNKNOWN and "Cleared" not in out
+    assert err.startswith("UNKNOWN: ") and SHA in err
+    assert [a[0] for a, _ in calls] == ["ls-remote", "push"], "no tag delete after a push that never answered"
+
+
 # ── the same contract with the real script, real git and real local remotes ──────
 SCRIPT = os.path.join(os.path.dirname(__file__), "staged-promote.py")
 # A git that runs this file (a hook, `rebase -x`) exports GIT_DIR and friends; with them set, the fixture's
@@ -279,8 +338,9 @@ def _run(cwd, *args):
 @pytest.fixture
 def repo(tmp_path):
     bare, work = tmp_path / "origin.git", tmp_path / "work"
-    _g(tmp_path, "init", "--quiet", "--bare", str(bare))
-    _g(tmp_path, "init", "--quiet", str(work))
+    # SHA-1 by name: the script accepts 40-hex only, and a git whose default is SHA-256 would red this.
+    _g(tmp_path, "init", "--quiet", "--object-format=sha1", "--bare", str(bare))
+    _g(tmp_path, "init", "--quiet", "--object-format=sha1", str(work))
     _g(work, "remote", "add", "origin", str(bare))
     _g(work, "commit", "--quiet", "--allow-empty", "-m", "one")
     _g(work, "push", "--quiet", "origin", "HEAD:refs/heads/dev")
