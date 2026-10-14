@@ -1,0 +1,57 @@
+# gates.yml
+# BUG-INDOORCADENCE-001 part 1 — Royal Ruby hens & chicks 2d -> 14d, Tumeric leaf profile at 7d.
+#
+# Prod-only by construction, like v4-cadencerefill-001: 0a is keyed to live prod UUIDs that staging's
+# isolated Neon branch does not carry. Unapplied, the post gates pass vacuously through their receipt
+# arm and only the continuous:false receipt gate is red.
+
+pre:
+  - name: pre_royal_ruby_still_at_two_days
+    note: >
+      The starting state: the Royal Ruby cultivar profile at 2 days from cadence-backfill-20260823.
+      continuous:false; false by design once 0a runs.
+    env: prod
+    sql: |
+      SELECT 1 FROM public.care_profile
+       WHERE id = '75b26870-5d72-4a4d-999a-1cb9fb7ea7ae'
+         AND profile->>'water_interval_days_container' = '2'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+post:
+  - name: post_royal_ruby_not_back_on_a_summer_interval
+    note: >
+      Goes red if a later backfill puts the sempervivum back under 12 days, the bottom of every other
+      succulent profile in the garden. Self-armed on the receipt.
+    sql: |
+      SELECT 1 FROM public.care_profile
+       WHERE id = '75b26870-5d72-4a4d-999a-1cb9fb7ea7ae'
+         AND (profile->>'water_interval_days_container')::numeric < 12
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.189.1-indoorcadence-20261014')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_tumeric_resolves_a_db_cadence
+    note: >
+      Tumeric must resolve its cadence from the database (cadence_scopes non-empty), not the house
+      3-day default. Clears if the planting is deleted or archived. Self-armed on the receipt.
+    sql: |
+      SELECT 1 FROM public.plants p
+        JOIN public.v_resolved_care v ON v.leaf_id = p.id
+       WHERE p.id = 'c83adf60-523b-41cb-be90-38d930412e99'
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND cardinality(v.cadence_scopes) = 0
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.189.1-indoorcadence-20261014')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: Apply-time receipt. continuous:false — an apply record, not a standing invariant.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '4.189.1-indoorcadence-20261014'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
