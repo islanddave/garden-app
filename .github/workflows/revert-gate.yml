@@ -218,8 +218,9 @@ jobs:
 
       - name: Install python deps
         # pyyaml: revert-to.py parses the target's own workflow files (SUPPORTED TARGETS above); without
-        # it the revert refuses rather than skipping that check.
-        run: pip install boto3 requests pyyaml==6.0.2 --quiet
+        # it the revert refuses rather than skipping that check. 6.0.3, not 6.0.2: 6.0.2 has no wheel for
+        # ubuntu-26.04's Python 3.14, so it would build from source at revert time (OPS-UBUNTU26MOVE-001).
+        run: pip install boto3 requests pyyaml==6.0.3 --quiet
 
       - name: Run revert-to (PROD — real code + DB + Lambda cutover)
         env:
