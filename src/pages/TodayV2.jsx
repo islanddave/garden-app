@@ -281,16 +281,24 @@ export default function TodayV2() {
     overlayAll([c.section], 'open')
     if (c.task) setFilter(c.section, { tasks: [c.task] })
     revealChip(barRef.current, chipEl, reducedRef.current ? 'instant' : 'smooth')
-    setLanding((l) => ({ section: c.section, seq: (l ? l.seq : 0) + 1 }))
+    setLanding((l) => ({ section: c.section, task: !!c.task, seq: (l ? l.seq : 0) + 1 }))
   }, [yieldScroll, overlayAll, setFilter])
+  // A task chip's filter is applied by Needs care's body in the commit AFTER the one that opens it (NeedsCare's
+  // intent effect, which also records care.intentN). The scroll waits for that commit, so it lands on the body as
+  // filtered: scrolled any earlier, a page that then grew (Check after Feed) left the header short of the bar.
+  const landedSeq = useRef(0)
+  const careIntentN = Number(record?.care?.intentN) || 0
+  const careFilterN = Number(record?.filter?.care?.n) || 0
   useLayoutEffect(() => {
-    if (!landing) return
+    if (!landing || landedSeq.current === landing.seq) return
+    if (landing.task && careIntentN !== careFilterN) return
     const sec = frameRef.current?.querySelector(`[data-section="${landing.section}"]`)
     if (!sec) return
+    landedSeq.current = landing.seq
     if (typeof sec.scrollIntoView === 'function') sec.scrollIntoView({ block: 'start', behavior: reducedRef.current ? 'instant' : 'smooth' })
     const header = sec.querySelector('[aria-expanded]')
     if (header && typeof header.focus === 'function') header.focus({ preventScroll: true })
-  }, [landing])
+  }, [landing, careIntentN, careFilterN])
 
   // While this page is mounted the document scrolls with its sticky layers subtracted (§6.2): a focus move,
   // TalkBack's own scroll or a jump lands BELOW TopChrome and the bar and ABOVE BottomNav plus one toast. The
