@@ -1192,6 +1192,25 @@ def test_rehearsal_setup_that_cannot_read_dev_makes_and_names_nothing(tmp_path, 
     assert exported == [] and api.reads(NEW_REF) == api.reads(OLD_TAG) == 0
 
 
+def test_rehearsal_setup_names_a_refusal_without_printing_the_credential(tmp_path, github):
+    """A body that reflects the request's Authorization header (a proxy page, not GitHub) is still named in the one
+    ::error, with the step's own token replaced by [REDACTED] (gh_api_check.redact). The stand-in records the header,
+    so the token is shown to have been sent, not just absent."""
+    token = "ghs_" + "Z9" * 18  # built here: no token-shaped literal in the source
+    api = github({DEV_REF: [(401, f"<html>401 Unauthorized. Authorization: token {token}</html>")],
+                  NEW_REF: [CREATED], OLD_TAG: [DELETED]})
+    wf, step = _step(*REHEARSAL_SETUP)
+    proc = _run_rehearsal_step(tmp_path, api, step, TARGET_MAIN_SHA=wf["env"]["TARGET_MAIN_SHA"],
+                               GITHUB_ENV=str(tmp_path / "github_env"), GH_TOKEN=token)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert api.auth == [f"token {token}"]
+    errors = _errors(proc)
+    assert len(errors) == 1, errors
+    assert "GET https://api.github.com/repos/owner/repo/git/refs/heads/dev -> HTTP 401: <html>401 Unauthorized. " \
+           "Authorization: token [REDACTED]</html>" in errors[0]
+    assert token not in proc.stdout + proc.stderr
+
+
 # snap-rehearsal.yml's last step deletes the rehearsal tag snap.py made: the same ruleset lets only garden-bot delete
 # a v* tag, so one left behind could not be removed by hand. The step answers for the outcome, not the DELETE's status.
 # The tag is whatever the workflow's SNAP_VERSION says (v0.0.0 until 2026-10-09, v0.0.900 since), read here rather

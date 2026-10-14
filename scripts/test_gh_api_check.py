@@ -139,6 +139,47 @@ def test_summarize_body_falls_back_to_raw_for_html():
     assert "Bad Gateway" in gac.summarize_body("<html>Bad Gateway</html>")
 
 
+# --- redaction: a credential never reaches the log ---------------------------
+
+# Built at run time, so no token-shaped literal sits in the source for a secret
+# scanner to flag.
+FAKE_TOKENS = {p: p + "Z9" * 18 for p in ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_")}
+
+
+@pytest.mark.parametrize("prefix", sorted(FAKE_TOKENS))
+def test_one_line_redacts_every_github_token_shape(prefix):
+    out = gac.one_line("upstream said: %s is not valid" % FAKE_TOKENS[prefix])
+    assert out == "upstream said: [REDACTED] is not valid"
+
+
+@pytest.mark.parametrize("header", ["Authorization: token s3cr3t-value",
+                                    "authorization: Bearer s3cr3t-value",
+                                    "Proxy-Authorization: Basic s3cr3t-value"])
+def test_one_line_redacts_an_authorization_header_value_of_any_shape(header):
+    """A proxy page that reflects request headers, carrying a value no token
+    pattern knows."""
+    out = gac.one_line("<html><p>request: %s</p></html>" % header)
+    assert "s3cr3t-value" not in out and "[REDACTED]</p>" in out
+
+
+def test_one_line_redacts_a_json_token_field():
+    out = gac.one_line(json.dumps({"token": "v1.0123abcdef", "expires_at": "2026-10-14T00:00:00Z"}))
+    assert "v1.0123abcdef" not in out and '"token": "[REDACTED]"' in out and "expires_at" in out
+
+
+def test_redaction_keeps_commit_shas():
+    """SHAs are the diagnosis: a 40-hex run must survive."""
+    sha = "6204e2b348185a677057d437eb7f57e4b35bca13"
+    assert gac.one_line("object %s" % sha) == "object %s" % sha
+
+
+def test_redaction_runs_before_the_cap():
+    """A token straddling BODY_LIMIT must not leak as the fragment the cap
+    leaves, which is too short for any token pattern to match."""
+    out = gac.one_line("x" * (gac.BODY_LIMIT - 10) + " " + FAKE_TOKENS["ghs_"])
+    assert out.endswith("...<truncated>") and "ghs_" not in out and "Z9" not in out
+
+
 # --- CLI: the shape the workflow actually invokes ----------------------------
 
 def _body(tmp_path, text, name="body.json"):
@@ -206,6 +247,31 @@ def test_cli_missing_body_file_still_reports(tmp_path, capsys):
                    "--sha-file", str(tmp_path / "x.sha")])
     out = capsys.readouterr().out
     assert rc != 0 and "500" in out
+
+
+def test_cli_ref_sha_failure_names_the_body_but_not_the_token(tmp_path, capsys):
+    """The caller's own credential reflected in a 401 page: status and body are
+    still named, the token is not."""
+    token = FAKE_TOKENS["ghs_"]
+    body = "<html>401 Unauthorized. Authorization: token %s</html>" % token
+    rc = gac.main(["ref-sha", "--endpoint", REF_URL, "--method", "GET",
+                   "--status", "401", "--body-file", _body(tmp_path, body),
+                   "--sha-file", str(tmp_path / "x.sha")])
+    out = capsys.readouterr().out
+    assert rc == 1 and out.startswith("::error::")
+    assert "HTTP 401: <html>401 Unauthorized. Authorization: token [REDACTED]</html>" in out
+    assert token not in out
+
+
+def test_cli_status_failure_redacts_a_token_in_the_github_message(tmp_path, capsys):
+    token = FAKE_TOKENS["ghp_"]
+    body = json.dumps({"message": "Bad credentials for %s" % token, "status": "401"})
+    rc = gac.main(["status", "--endpoint", REF_URL, "--method", "POST",
+                   "--status", "401", "--body-file", _body(tmp_path, body),
+                   "--ok", "201", "--fatal"])
+    out = capsys.readouterr().out
+    assert rc == 1 and "HTTP 401: Bad credentials for [REDACTED] | status=401" in out
+    assert token not in out
 
 
 # --- the workflow's own wiring, asserted against the YAML --------------------

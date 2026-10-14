@@ -17,9 +17,34 @@ Stdlib only, deliberately: the revert-rehearsal setup step runs BEFORE the
 """
 import argparse
 import json
+import re
 import sys
 
 BODY_LIMIT = 800
+
+# A credential never reaches the log, whatever the body holds. GitHub's own
+# error bodies do not echo the Authorization header, and the runner masks the
+# minted garden-bot token, but neither covers a body from something in between
+# (a proxy page that reflects request headers) or a token the runner was never
+# told to mask. Commit SHAs (40 hex) are deliberately NOT matched: they are the
+# diagnosis. Over-redaction is harmless here; under-redaction is not.
+REDACTED = "[REDACTED]"
+# GitHub token formats: ghp_ classic PAT, gho_ OAuth, ghu_ user-to-server,
+# ghs_ App installation (what garden-bot mints), ghr_ refresh, github_pat_
+# fine-grained PAT.
+_GH_TOKEN_RE = re.compile(r"gh[opusr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}")
+# The value of an Authorization header, whatever the scheme or token shape.
+_AUTH_HEADER_RE = re.compile(
+    r"(?i)((?:proxy-)?authorization\s*[:=]\s*[\"']?\s*(?:token|bearer|basic)\s+)[^\s\"',;<]+")
+# A JSON token field (the shape of an installation-token response).
+_JSON_TOKEN_RE = re.compile(r"(?i)(\"(?:token|access_token|refresh_token)\"\s*:\s*\")[^\"]*")
+
+
+def redact(text):
+    """Replace anything credential-shaped in `text` with [REDACTED]."""
+    text = _GH_TOKEN_RE.sub(REDACTED, text)
+    text = _AUTH_HEADER_RE.sub(lambda m: m.group(1) + REDACTED, text)
+    return _JSON_TOKEN_RE.sub(lambda m: m.group(1) + REDACTED, text)
 
 # What a bare status code actually means for THESE calls. The 404 line is the
 # load-bearing one: a fine-grained PAT without `contents` access 404s a ref read
@@ -48,10 +73,12 @@ class GhApiFailure(Exception):
 
 
 def one_line(text, limit=BODY_LIMIT):
-    """Collapse to a single line and cap. Annotations are line-oriented."""
+    """Redact, collapse to a single line and cap. Annotations are line-oriented.
+    Every body and every failure message passes through here, and redaction
+    runs before the cap so a token cut by it cannot leak as a fragment."""
     if text is None:
         return "<no body>"
-    flat = " ".join(str(text).split())
+    flat = " ".join(redact(str(text)).split())
     if not flat:
         return "<empty body>"
     return flat if len(flat) <= limit else flat[:limit] + "...<truncated>"
