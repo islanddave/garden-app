@@ -120,7 +120,7 @@ describe('V5-TODAYRADIATIVEWATCH-001 — the radiative imminent email and Today 
     expect(t.sent()).toHaveLength(1);
     expect(t.sent()[0]).toMatchObject({ tier: 'imminent', level: 'protect', lowF: 41, dayOffset: 0, trip: 'radiative', run: 'intraday-pm' });
     // The premise: the cue the plan carries for that low says "Cold night", not "Freeze".
-    expect(t.items().weather.callout).toEqual({ icon: 'cold', text: 'Cold night (41°F) — pick ripe and coloring peppers & tomatoes' });
+    expect(t.items().weather.callout).toEqual({ icon: 'cold', text: 'Cold night (41°F) — pick coloring peppers & tomatoes' });
     // What Today renders from the stored row (it rendered nothing at base 3425da14).
     expect(buildFrostAlertLine(t.sent()).text).toBe(LINE('tonight', 41));
     expect(agreedTonightLow(t.items())).toEqual({ lowF: 41, lowRaw: 41 });
@@ -262,7 +262,7 @@ describe('V5-TODAYFROSTLINEGAPS-001 — Today after the real run()', () => {
     expect(lines(t)).toEqual([]);                                  // still covered by the cue
     await once(t, emails, { etHour: 20, nws: 44 });
     expect(emails).toHaveLength(1);
-    expect(t.items().weather.callout).toEqual({ icon: 'cold', text: 'Cold night (44°F) — pick ripe and coloring peppers & tomatoes' });
+    expect(t.items().weather.callout).toEqual({ icon: 'cold', text: 'Cold night (44°F) — pick coloring peppers & tomatoes' });
     expect(lines(t)).toEqual(['Forecast warmed to 44°F since the 3 PM frost email.']);
     expect(agreedTonightLow(t.items())).toBeNull();                // the card keeps the plan's 44
   });

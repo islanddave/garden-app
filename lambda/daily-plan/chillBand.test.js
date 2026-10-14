@@ -29,8 +29,8 @@ const SPRING = '2026-06-01', FALL = '2026-09-08', WINTER = '2026-01-15';
 describe('the 45-50F cool-night band', () => {
   it('speaks on the two real September nights that used to pass in silence', () => {
     // Before this rule both returned null. These are the actual stored tmin values and plan dates.
-    expect(on('2026-09-07', 45.6)).toEqual({ icon: 'cool', text: 'Cool night (45.6°F) — pick ripe and coloring peppers & tomatoes' });
-    expect(on('2026-09-08', 49.7)).toEqual({ icon: 'cool', text: 'Cool night (49.7°F) — pick ripe and coloring peppers & tomatoes' });
+    expect(on('2026-09-07', 45.6)).toEqual({ icon: 'cool', text: 'Cool night (45.6°F) — pick coloring peppers & tomatoes' });
+    expect(on('2026-09-08', 49.7)).toEqual({ icon: 'cool', text: 'Cool night (49.7°F) — pick coloring peppers & tomatoes' });
   });
 
   it('stops at 50 — the band is a floor, not an open-ended cool warning', () => {
@@ -78,10 +78,10 @@ describe('the 45-50F cool-night band', () => {
 });
 
 describe('the season is the PLAN DATE\'s month and day', () => {
-  const SPRING_COOL = 'Cool night (47°F) — cover or bring in young peppers, basil & cucumbers';
-  const FALL_COOL = 'Cool night (47°F) — pick ripe and coloring peppers & tomatoes';
+  const SPRING_COOL = 'Cool night (47°F) — cover young peppers, basil & cukes';
+  const FALL_COOL = 'Cool night (47°F) — pick coloring peppers & tomatoes';
   const ALLYEAR_COLD = 'Cold night (43°F) — protect flowering peppers/tomatoes';
-  const FALL_COLD = 'Cold night (43°F) — pick ripe and coloring peppers & tomatoes';
+  const FALL_COLD = 'Cold night (43°F) — pick coloring peppers & tomatoes';
 
   // date, the cool line at 47 (null = no cool line), the cold line at 43
   const TABLE = [
@@ -149,11 +149,11 @@ describe('generatePlan hands the rule the plan\'s own date', () => {
   it('the stored callout follows `today`, which is also the plan\'s `date`', () => {
     const fall = plan('2026-09-08', 49.7);
     expect(fall.date).toBe('2026-09-08');
-    expect(fall.weather.callout).toEqual({ icon: 'cool', text: 'Cool night (49.7°F) — pick ripe and coloring peppers & tomatoes' });
-    expect(plan('2026-08-14', 47).weather.callout).toEqual({ icon: 'cool', text: 'Cool night (47°F) — cover or bring in young peppers, basil & cucumbers' });
-    expect(plan('2026-08-15', 47).weather.callout.text).toBe('Cool night (47°F) — pick ripe and coloring peppers & tomatoes');
+    expect(fall.weather.callout).toEqual({ icon: 'cool', text: 'Cool night (49.7°F) — pick coloring peppers & tomatoes' });
+    expect(plan('2026-08-14', 47).weather.callout).toEqual({ icon: 'cool', text: 'Cool night (47°F) — cover young peppers, basil & cukes' });
+    expect(plan('2026-08-15', 47).weather.callout.text).toBe('Cool night (47°F) — pick coloring peppers & tomatoes');
     expect(plan('2026-11-01', 47).weather.callout).toBeNull();
-    expect(plan('2026-10-31', 43).weather.callout.text).toBe('Cold night (43°F) — pick ripe and coloring peppers & tomatoes');
+    expect(plan('2026-10-31', 43).weather.callout.text).toBe('Cold night (43°F) — pick coloring peppers & tomatoes');
     expect(plan('2026-11-01', 43).weather.callout.text).toBe('Cold night (43°F) — protect flowering peppers/tomatoes');
   });
 });

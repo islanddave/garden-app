@@ -1482,11 +1482,11 @@ function computeCallout(weather, hy, bedsWait=false, planDate=null){
   const season=calloutSeason(planDate);
   if(low!=null && low<40) return {icon:'freeze', text:`Freeze tonight (${low}°F) — cover or bring peppers & tomatoes in`};
   if(low!=null && low<45) return {icon:'cold', text: season==='fall'
-    ? `Cold night (${low}°F) — pick ripe and coloring peppers & tomatoes`
+    ? `Cold night (${low}°F) — pick coloring peppers & tomatoes`
     : `Cold night (${low}°F) — protect flowering peppers/tomatoes`};
   if(low!=null && low<50 && season) return {icon:'cool', text: season==='fall'
-    ? `Cool night (${low}°F) — pick ripe and coloring peppers & tomatoes`
-    : `Cool night (${low}°F) — cover or bring in young peppers, basil & cucumbers`};
+    ? `Cool night (${low}°F) — pick coloring peppers & tomatoes`
+    : `Cool night (${low}°F) — cover young peppers, basil & cukes`};
   if(high!=null && high>=88) return {icon:'heat', text:`Hot day (${high}°F) — deep-water thirsty crops, shade if wilting`};
   if(rainCalloutFires(hy, bedsWait)){
     // BUG-RAINFCSTONEMODEL-001 (b) — mirror the Today widget, which since 2026-09-25 prints the amount and the

@@ -125,8 +125,8 @@ describe('(b) check-form for the imperative rules, imperative for freeze', () =>
 
   // V5-CHILLBAND-001 — the cue the September build could not paint.
   it.each([
-    ['spring', 'Cool night (47°F) — cover or bring in young peppers, basil & cucumbers'],
-    ['fall', 'Cool night (47°F) — pick ripe and coloring peppers & tomatoes'],
+    ['spring', 'Cool night (47°F) — cover young peppers, basil & cukes'],
+    ['fall', 'Cool night (47°F) — pick coloring peppers & tomatoes'],
   ])('cool (%s words) renders the engine sentence verbatim, imperative', (_season, text) => {
     render(<WeatherCueLine callout={{ icon: 'cool', text }} planDate={DAY} />)
     const el = screen.getByTestId('weather-cue-line')

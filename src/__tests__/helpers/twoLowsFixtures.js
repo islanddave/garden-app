@@ -83,10 +83,10 @@ export function deepFreeze(o) {
 export const freezeText = (t) => `Freeze tonight (${t}°F) — cover or bring peppers & tomatoes in`
 // PLAN_DATE is Oct 9, inside Aug 15..Oct 31: coldText and coolText are the FALL words. coldTextAllYear is
 // what the cold line says on any other date, and when no plan date is known.
-export const coldText = (t) => `Cold night (${t}°F) — pick ripe and coloring peppers & tomatoes`
+export const coldText = (t) => `Cold night (${t}°F) — pick coloring peppers & tomatoes`
 export const coldTextAllYear = (t) => `Cold night (${t}°F) — protect flowering peppers/tomatoes`
-export const coolText = (t) => `Cool night (${t}°F) — pick ripe and coloring peppers & tomatoes`
-export const coolTextSpring = (t) => `Cool night (${t}°F) — cover or bring in young peppers, basil & cucumbers`
+export const coolText = (t) => `Cool night (${t}°F) — pick coloring peppers & tomatoes`
+export const coolTextSpring = (t) => `Cool night (${t}°F) — cover young peppers, basil & cukes`
 export const lineTonight = (t) => `Frost possible tonight — low ${t}°F. Plan cover for tender plants.`
 export const lineTomorrow = (t) => `Frost possible tomorrow night — low ${t}°F. Plan cover for tender plants.`
 // BUG-RAINFCSTONEMODEL-001: was '0.36"' — RAINY's 0.45" x 80%. The callout now prints the amount and the chance.

@@ -222,7 +222,7 @@ describe('TodayV2 hands the plan date to the cue it re-words', () => {
     planState.current = { data: { has_plan: true, plan_date: PLAN_DATE, generated_at: GEN, plan }, loading: false, error: null, reload: vi.fn() }
     mount()
     const cue = screen.getByTestId('weather-cue-line')
-    expect(cue.textContent).toBe('Cold night (42°F) — pick ripe and coloring peppers & tomatoes')
+    expect(cue.textContent).toBe('Cold night (42°F) — pick coloring peppers & tomatoes')
     expect(cue.textContent).not.toBe(coldTextAllYear(42))
     expect(cue.dataset.cue).toBe('cold')
   })

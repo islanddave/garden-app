@@ -160,8 +160,8 @@ describe('agreeCallout — the cue', () => {
   // V5-CHILLBAND-001 — the cold words follow the PLAN DATE's season, exactly as the engine's do.
   it('the re-worded cold line takes the fall words on a fall plan date, the all-year words otherwise', () => {
     const fall = computeCallout({ tonightLow: 44, highToday: 70 }, DRY, false, '2026-09-20')
-    expect(fall).toEqual({ icon: 'cold', text: 'Cold night (44°F) — pick ripe and coloring peppers & tomatoes' })
-    expect(agreeCallout(fall, { lowF: 42, lowRaw: 42 }, '2026-09-20')).toEqual({ icon: 'cold', text: 'Cold night (42°F) — pick ripe and coloring peppers & tomatoes', modelVersion: AGREED_CUE_MODEL_VERSION })
+    expect(fall).toEqual({ icon: 'cold', text: 'Cold night (44°F) — pick coloring peppers & tomatoes' })
+    expect(agreeCallout(fall, { lowF: 42, lowRaw: 42 }, '2026-09-20')).toEqual({ icon: 'cold', text: 'Cold night (42°F) — pick coloring peppers & tomatoes', modelVersion: AGREED_CUE_MODEL_VERSION })
     const spring = computeCallout({ tonightLow: 44, highToday: 70 }, DRY, false, '2026-05-20')
     expect(agreeCallout(spring, { lowF: 42, lowRaw: 42 }, '2026-05-20')).toEqual({ icon: 'cold', text: 'Cold night (42°F) — protect flowering peppers/tomatoes', modelVersion: AGREED_CUE_MODEL_VERSION })
     // No usable date: the all-year words, never a guess from the device clock.
@@ -261,7 +261,7 @@ describe('PARITY — agreeCallout words freeze/cold exactly as the REAL engine c
     let n = 0
     for (let L = 20; L <= 44; L++) {
       const engineOut = at(L, date)
-      expect(engineOut.text, `L=${L}`).toMatch(L < 40 ? /^Freeze tonight \(/ : season === 'fall' ? /^Cold night \(\d+°F\) — pick ripe and coloring/ : /^Cold night \(\d+°F\) — protect flowering/)
+      expect(engineOut.text, `L=${L}`).toMatch(L < 40 ? /^Freeze tonight \(/ : season === 'fall' ? /^Cold night \(\d+°F\) — pick coloring peppers/ : /^Cold night \(\d+°F\) — protect flowering/)
       for (const input of INPUTS) {
         const { modelVersion, ...words } = agreeCallout(input, { lowF: L, lowRaw: L }, date)
         expect(words, `L=${L} from ${input.icon}`).toStrictEqual(engineOut)

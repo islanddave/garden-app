@@ -98,7 +98,7 @@ the gate guards is on screen in one state:
 | key | source plan date | renders |
 |---|---|---|
 | `alerts_sent` | 2026-09-23 | FrostAlertLine: "Frost watch tonight — clear and calm, low 42°F…" (a radiative advisory, `nightOffset` 0). On a tonight-line Today also re-words the cue and the card's night low at the agreed low (V5-FROSTTWOMODELS-001). |
-| `weather.callout` | 2026-09-23 | WeatherCueLine: "Cold night (42°F) — pick ripe and coloring peppers & tomatoes" (stored on 2026-09-23 as "Cool night (44°F) — protect flowering peppers/tomatoes", the pre-V5-CHILLBAND-001 words; re-worded at the agreed low with the plan date's fall words) |
+| `weather.callout` | 2026-09-23 | WeatherCueLine: "Cold night (42°F) — pick coloring peppers & tomatoes" (stored on 2026-09-23 as "Cool night (44°F) — protect flowering peppers/tomatoes", the pre-V5-CHILLBAND-001 words; re-worded at the agreed low with the plan date's fall words) |
 | `leaf_wetness` | 2026-09-12 | LeafWetnessLine: "1 day ahead look like 8+ modelled hours of leaf wetness…" |
 | `rain_skipped` | 2026-09-22 | RainNote: "Rain handled watering for 70 plantings…" (only the count is read) |
 | `drought` | **none — SYNTHETIC** | DroughtLine + the two-row "Dry — no deep soak" list |

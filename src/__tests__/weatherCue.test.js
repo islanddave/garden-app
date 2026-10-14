@@ -76,8 +76,8 @@ describe('condition (b) — imperative rules render in CHECK-FORM, freeze and co
   it('the cool line renders in BOTH seasons with the engine\'s season words intact', () => {
     const spring = computeCallout({ ...MILD, tonightLow: 47 }, DRY, false, '2026-06-01')
     const fall = computeCallout({ ...MILD, tonightLow: 47 }, DRY, false, '2026-09-20')
-    expect(buildCueLine(spring)).toEqual({ cue: 'cool', form: 'imperative', text: 'Cool night (47°F) — cover or bring in young peppers, basil & cucumbers' })
-    expect(buildCueLine(fall)).toEqual({ cue: 'cool', form: 'imperative', text: 'Cool night (47°F) — pick ripe and coloring peppers & tomatoes' })
+    expect(buildCueLine(spring)).toEqual({ cue: 'cool', form: 'imperative', text: 'Cool night (47°F) — cover young peppers, basil & cukes' })
+    expect(buildCueLine(fall)).toEqual({ cue: 'cool', form: 'imperative', text: 'Cool night (47°F) — pick coloring peppers & tomatoes' })
     // A hot afternoon before such a night: cool wins the chain, and the line is not silence.
     const hot = computeCallout({ tonightLow: 47, highToday: 91 }, DRY, false, '2026-09-20')
     expect(hot.icon).toBe('cool')
@@ -86,7 +86,7 @@ describe('condition (b) — imperative rules render in CHECK-FORM, freeze and co
 
   it('the cold line reads "Cold night", with the fall words from Aug 15 to Oct 31', () => {
     expect(buildCueLine(calloutFor('cold')).text).toBe('Cold night (43°F) — protect flowering peppers/tomatoes')
-    expect(buildCueLine(computeCallout({ ...MILD, tonightLow: 43 }, DRY, false, '2026-09-20')).text).toBe('Cold night (43°F) — pick ripe and coloring peppers & tomatoes')
+    expect(buildCueLine(computeCallout({ ...MILD, tonightLow: 43 }, DRY, false, '2026-09-20')).text).toBe('Cold night (43°F) — pick coloring peppers & tomatoes')
   })
 
   it('the freeze line keeps the whole engine sentence, action clause included', () => {

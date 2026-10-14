@@ -77,7 +77,7 @@ export const AGREED_CUE_MODEL_VERSION = 'wxcue-v1-agreed'
 const COLD_BELOW_F = 45
 const freezeText = (t) => `Freeze tonight (${t}°F) — cover or bring peppers & tomatoes in`
 const coldText = (t, season) => (season === 'fall'
-  ? `Cold night (${t}°F) — pick ripe and coloring peppers & tomatoes`
+  ? `Cold night (${t}°F) — pick coloring peppers & tomatoes`
   : `Cold night (${t}°F) — protect flowering peppers/tomatoes`)
 const COLD_SIDE = new Set(['freeze', 'cold', 'cool'])
 
