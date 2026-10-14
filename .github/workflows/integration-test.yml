@@ -50,6 +50,11 @@ jobs:
             (cd lambda/$fn && npm install --omit=dev)
           done
 
+      # The database URL is asked for by name (neondb_owner / neondb / direct), never read from the create
+      # response: Neon puts `connection_uris` there only when the branch has one role it can pick, and the
+      # staging parent gained a second password role on 2026-10-14 (run 38572988719 on). Why and how:
+      # scripts/neon_api_check.py. The branch id is written out the moment it is known, so a failure after
+      # that point still reaches the delete step instead of stranding a ci-* branch.
       - name: Create ephemeral Neon branch
         id: neon_create
         env:
@@ -58,23 +63,50 @@ jobs:
           NEON_PARENT_BRANCH: br-polished-art-am12o4ue
           RUN_ID: ${{ github.run_id }}
         run: |
+          set -uo pipefail
           BRANCH_NAME="ci-${RUN_ID}"
+          API="https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID"
+          CHK="python3 scripts/neon_api_check.py"
+          BODY="$RUNNER_TEMP/neon-body.json"
           echo "Creating Neon branch: $BRANCH_NAME"
-          RESPONSE=$(curl -s -X POST \
+          rm -f "$BODY"
+          CODE=$(curl -sS --max-time 60 -o "$BODY" -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $NEON_API_KEY" \
             -H "Content-Type: application/json" \
-            "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
-            -d "{\"branch\":{\"parent_id\":\"$NEON_PARENT_BRANCH\",\"name\":\"$BRANCH_NAME\"},\"endpoints\":[{\"type\":\"read_write\"}]}")
-          BRANCH_ID=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['branch']['id'])" 2>/dev/null || echo "")
-          DB_URL=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['connection_uris'][0]['connection_uri'])" 2>/dev/null || echo "")
-          if [[ -z "$BRANCH_ID" || -z "$DB_URL" ]]; then
-            echo "FATAL: Neon branch create failed. Response: $RESPONSE"
-            exit 1
-          fi
+            "$API/branches" \
+            -d "{\"branch\":{\"parent_id\":\"$NEON_PARENT_BRANCH\",\"name\":\"$BRANCH_NAME\"},\"endpoints\":[{\"type\":\"read_write\"}]}") || CODE=000
+          $CHK branch-id --endpoint "$API/branches" --status "$CODE" --body-file "$BODY" \
+            --out "$RUNNER_TEMP/neon-branch-id" || exit 1
+          BRANCH_ID=$(cat "$RUNNER_TEMP/neon-branch-id")
           echo "NEON_BRANCH_ID=$BRANCH_ID" >> "$GITHUB_ENV"
-          echo "INT_DATABASE_URL=$DB_URL" >> "$GITHUB_ENV"
-          echo "::add-mask::$DB_URL"
           echo "Branch created: $BRANCH_ID"
+          # The same role, database and direct host the create response's connection_uri carried. `pooled=false`
+          # is load-bearing: without it the API answers with the -pooler host.
+          URI_URL="$API/connection_uri?branch_id=$BRANCH_ID&role_name=neondb_owner&database_name=neondb&pooled=false"
+          for try in $(seq 1 6); do
+            rm -f "$BODY"
+            CODE=$(curl -sS --max-time 30 -o "$BODY" -w '%{http_code}' \
+              -H "Authorization: Bearer $NEON_API_KEY" "$URI_URL") || CODE=000
+            case "$CODE" in
+              000|409|423|429|5??) ;;
+              *) break ;;
+            esac
+            if [[ "$try" -lt 6 ]]; then
+              echo "connection_uri read: HTTP $CODE, retrying ($try/6)"
+              sleep 5
+            fi
+          done
+          $CHK connection-uri --endpoint "$URI_URL" --status "$CODE" --body-file "$BODY" \
+            --out "$RUNNER_TEMP/neon-uri" || exit 1
+          rm -f "$BODY"
+          DB_URL=$(cat "$RUNNER_TEMP/neon-uri")
+          rm -f "$RUNNER_TEMP/neon-uri"
+          DB_PW=${DB_URL#*://}
+          DB_PW=${DB_PW%%@*}
+          DB_PW=${DB_PW#*:}
+          echo "::add-mask::$DB_PW"
+          echo "::add-mask::$DB_URL"
+          echo "INT_DATABASE_URL=$DB_URL" >> "$GITHUB_ENV"
 
       # PUT-UP TRAIN (05-release-train §2.4; lane putup1b-ddl). The train's releases stay OFF staging
       # until B's sitting, so the train proves its code against its own DDL here: on THIS run's
@@ -163,18 +195,40 @@ jobs:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
           NEON_BRANCH_ID: ${{ env.NEON_BRANCH_ID }}
+          NEON_PARENT_BRANCH: br-polished-art-am12o4ue
+          RUN_ID: ${{ github.run_id }}
         run: |
-          if [[ -z "$NEON_BRANCH_ID" ]]; then
+          API="https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID"
+          IDS="$NEON_BRANCH_ID"
+          if [[ -z "$IDS" ]]; then
+            # The create step can fail before it learns the id (no reply, a timeout) after Neon has made the
+            # branch. Look this run's branch up by its exact name so that failure strands nothing either.
+            LIST_URL="$API/branches?search=ci-${RUN_ID}"
+            CODE=$(curl -sS --max-time 30 -o "$RUNNER_TEMP/neon-list.json" -w '%{http_code}' \
+              -H "Authorization: Bearer $NEON_API_KEY" "$LIST_URL") || CODE=000
+            if python3 scripts/neon_api_check.py branch-ids-named --endpoint "$LIST_URL" --status "$CODE" \
+                --body-file "$RUNNER_TEMP/neon-list.json" --name "ci-${RUN_ID}" --out "$RUNNER_TEMP/neon-ids" \
+                --severity warning; then
+              IDS=$(cat "$RUNNER_TEMP/neon-ids")
+            fi
+          fi
+          if [[ -z "$IDS" ]]; then
             echo "No branch ID — nothing to delete"
             exit 0
           fi
-          echo "Deleting Neon branch: $NEON_BRANCH_ID"
-          HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
-            -H "Authorization: Bearer $NEON_API_KEY" \
-            "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$NEON_BRANCH_ID")
-          if [[ "$HTTP" == 2* || "$HTTP" == "404" ]]; then
-            echo "Branch deleted (HTTP $HTTP)"
-          else
-            echo "WARNING: Branch delete returned HTTP $HTTP — may need manual cleanup (idle-suspends automatically)"
-          fi
+          for ID in $IDS; do
+            if [[ "$ID" == "$NEON_PARENT_BRANCH" ]]; then
+              echo "::error::Refusing to delete $ID: it is the staging parent, not this run's branch."
+              exit 1
+            fi
+            echo "Deleting Neon branch: $ID"
+            HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+              -H "Authorization: Bearer $NEON_API_KEY" \
+              "$API/branches/$ID") || HTTP=000
+            if [[ "$HTTP" == 2* || "$HTTP" == "404" ]]; then
+              echo "Branch deleted (HTTP $HTTP)"
+            else
+              echo "::warning::Branch delete returned HTTP $HTTP — $ID may need manual cleanup (idle-suspends automatically)"
+            fi
+          done
 

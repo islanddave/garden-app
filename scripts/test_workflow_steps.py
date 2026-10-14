@@ -2136,6 +2136,216 @@ def test_resolve_refuses_a_dispatch_that_is_not_on_the_promoted_commit(tmp_path,
                                 f"on ref '{ref}' at '{run_sha}', dev_sha is {DEV_SHA}.")
 
 
+# ── integration-test.yml: the ephemeral Neon branch, its database URL and its cleanup ─────────────────────────
+# From 2026-10-14 13:34 UTC the branch-create response stopped carrying `connection_uris` (the staging parent gained
+# a second password role, garden_wx_writer) and the step failed every dev push AFTER Neon had made the branch, before
+# it wrote the id out, so the delete step found nothing and each run stranded a ci-* branch (38572988719,
+# 38577244726). These run both steps against a stand-in for console.neon.tech with the real curl and python3.
+INTEG = "integration-test.yml"
+NEON_CREATE, NEON_DELETE = "Create ephemeral Neon branch", "Delete ephemeral Neon branch"
+NEON_KEY, NEON_PROJECT, NEON_RUN = "napi_testkey0123456789abcdefABCDEF", "proj-test", "4242"
+N_CREATE = rf"^POST /api/v2/projects/{NEON_PROJECT}/branches$"
+N_URI = rf"^GET /api/v2/projects/{NEON_PROJECT}/connection_uri\?"
+N_LIST = rf"^GET /api/v2/projects/{NEON_PROJECT}/branches\?search="
+N_DELETE = rf"^DELETE /api/v2/projects/{NEON_PROJECT}/branches/"
+N_PW = "s3cretPw0rdXYZ"
+N_DIRECT = f"postgresql://neondb_owner:{N_PW}@ep-test-1.c-5.us-east-1.aws.neon.tech/neondb?sslmode=require"
+N_POOLED = N_DIRECT.replace("ep-test-1.", "ep-test-1-pooler.")
+N_WRITER = f"postgresql://garden_wx_writer:{N_PW}w@ep-test-1.c-5.us-east-1.aws.neon.tech/neondb?sslmode=require"
+N_BRANCH = "br-ci-test-000001"
+N_ROLES = [{"name": "neondb_owner"}, {"name": "garden_wx_writer"}]
+# The 2026-10-14 shape: branch, endpoints, operations, roles, databases, and no connection_uris.
+N_CREATED_NO_URIS = _json({"branch": {"id": N_BRANCH, "name": f"ci-{NEON_RUN}"},
+                           "endpoints": [{"id": "ep-test-1", "type": "read_write"}], "operations": [],
+                           "roles": N_ROLES, "databases": [{"name": "neondb", "owner_name": "neondb_owner"}]}, 201)
+N_URI_OK = _json({"uri": N_DIRECT})
+
+
+def _integ_parent():
+    return _step(INTEG, "integration-tests", NEON_CREATE)[1]["env"]["NEON_PARENT_BRANCH"]
+
+
+def _run_neon_step(tmp_path, name, api, **env_extra):
+    """One integration-test.yml step body, run the runner's way with its curl pointed at `api` for console.neon.tech."""
+    assert REAL_CURL, "no curl on PATH: these step bodies need one"
+    _, step = _step(INTEG, "integration-tests", name)
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    (tmp_path / "rt").mkdir(exist_ok=True)
+    if not (tmp_path / "scripts").exists():
+        (tmp_path / "scripts").symlink_to(HERE)
+    port = api.server.server_address[1]
+    shims = {
+        "curl": f'a=()\nfor x in "$@"; do a+=("${{x/https:\\/\\/console.neon.tech\\//http://127.0.0.1:{port}/}}"); done\n'
+                f'for x in "${{a[@]}}"; do case "$x" in http://127.0.0.1:{port}/*) ;; http://*|https://*) '
+                f'echo "curl shim: refusing a URL outside the stand-in: $x" >&2; exit 97 ;; esac; done\n'
+                f'exec {shlex.quote(REAL_CURL)} -q "${{a[@]}}"',
+        "sleep": ":",
+    }
+    for shim, text in shims.items():
+        (bindir / shim).write_text("#!/bin/bash\n" + text + "\n")
+        (bindir / shim).chmod(0o755)
+    genv = tmp_path / "github_env"
+    genv.touch()
+    env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy") and not k.startswith("NEON_")}
+    env.update(PATH=f"{bindir}:{os.environ['PATH']}", NO_PROXY="*", NEON_API_KEY=NEON_KEY,
+               NEON_PROJECT_ID=NEON_PROJECT, NEON_PARENT_BRANCH=_integ_parent(), RUN_ID=NEON_RUN,
+               RUNNER_TEMP=str(tmp_path / "rt"), GITHUB_ENV=str(genv), **env_extra)
+    proc = _run_as_runner(tmp_path, step["run"], env)
+    written = dict(ln.split("=", 1) for ln in genv.read_text().splitlines() if "=" in ln)
+    return proc, written
+
+
+def _neon_said(proc):
+    return proc.stdout + proc.stderr
+
+
+def test_neon_create_step_reads_the_url_by_name_when_the_create_response_has_none(tmp_path, github):
+    """The exact 2026-10-14 failure: Neon made the branch and answered without `connection_uris`."""
+    api = github({N_CREATE: [N_CREATED_NO_URIS], N_URI: [N_URI_OK]})
+    proc, written = _run_neon_step(tmp_path, NEON_CREATE, api)
+    assert proc.returncode == 0, _neon_said(proc)
+    assert written == {"NEON_BRANCH_ID": N_BRANCH, "INT_DATABASE_URL": N_DIRECT}
+    assert _errors(proc) == []
+    uri_reads = [r for r in api.log if re.search(N_URI, r)]
+    assert len(uri_reads) == 1
+    query = dict(p.split("=", 1) for p in uri_reads[0].split("?", 1)[1].split("&"))
+    assert query == {"branch_id": N_BRANCH, "role_name": "neondb_owner", "database_name": "neondb", "pooled": "false"}
+    assert set(api.auth) == {f"Bearer {NEON_KEY}"}
+
+
+def test_neon_create_step_never_takes_the_url_from_the_create_response(tmp_path, github):
+    """Neon's own pick is not ours to inherit: with one present for another role, the step still asks by name."""
+    created = json.loads(N_CREATED_NO_URIS[1])
+    created["connection_uris"] = [{"connection_uri": N_WRITER}]
+    api = github({N_CREATE: [_json(created, 201)], N_URI: [N_URI_OK]})
+    proc, written = _run_neon_step(tmp_path, NEON_CREATE, api)
+    assert proc.returncode == 0, _neon_said(proc)
+    assert written["INT_DATABASE_URL"] == N_DIRECT and api.reads(N_URI) == 1
+
+
+def test_neon_create_step_masks_the_url_and_its_password_before_anything_else_sees_them(tmp_path, github):
+    api = github({N_CREATE: [N_CREATED_NO_URIS], N_URI: [N_URI_OK]})
+    proc, _ = _run_neon_step(tmp_path, NEON_CREATE, api)
+    lines = proc.stdout.splitlines()
+    assert f"::add-mask::{N_PW}" in lines and f"::add-mask::{N_DIRECT}" in lines
+    unmasked = [ln for ln in lines if not ln.startswith("::add-mask::")]
+    assert not [ln for ln in unmasked if N_PW in ln or NEON_KEY in ln], unmasked
+    assert not os.path.exists(tmp_path / "rt" / "neon-uri")
+
+
+@pytest.mark.parametrize("reply,said", [
+    (_json({"code": "", "message": "internal error"}, 500), "HTTP 500"),
+    (_json({"message": "role not found"}, 404), "HTTP 404"),
+    (N_URI_OK[:1] + (json.dumps({"uri": N_POOLED}),), "POOLED host"),
+    (_json({}), "`uri` is missing"),
+    (DROP, "HTTP 000"),
+], ids=["http-500", "http-404", "pooled", "no-uri", "no-reply"])
+def test_neon_create_step_refuses_without_a_direct_url_and_still_hands_the_branch_to_cleanup(tmp_path, github, reply,
+                                                                                            said):
+    """Fail-closed, AND the branch id is already out, so the always() delete step finds the branch."""
+    api = github({N_CREATE: [N_CREATED_NO_URIS], N_URI: [reply]})
+    proc, written = _run_neon_step(tmp_path, NEON_CREATE, api)
+    assert proc.returncode == 1, _neon_said(proc)
+    assert written == {"NEON_BRANCH_ID": N_BRANCH}
+    errors = _errors(proc)
+    assert len(errors) == 1 and said in errors[0] and "connection_uri" in errors[0], errors
+    assert N_PW not in _neon_said(proc) and NEON_KEY not in _neon_said(proc)
+
+
+def test_neon_create_step_retries_a_locked_or_failing_read_then_passes(tmp_path, github):
+    api = github({N_CREATE: [N_CREATED_NO_URIS],
+                  N_URI: [_json({"message": "project locked"}, 423), _json({}, 503), N_URI_OK]})
+    proc, written = _run_neon_step(tmp_path, NEON_CREATE, api)
+    assert proc.returncode == 0, _neon_said(proc)
+    assert written["INT_DATABASE_URL"] == N_DIRECT and api.reads(N_URI) == 3
+
+
+def test_neon_create_step_retries_a_bounded_number_of_times(tmp_path, github):
+    api = github({N_CREATE: [N_CREATED_NO_URIS], N_URI: [_json({"message": "project locked"}, 423)]})
+    proc, written = _run_neon_step(tmp_path, NEON_CREATE, api)
+    assert proc.returncode == 1 and api.reads(N_URI) == 6
+    assert written == {"NEON_BRANCH_ID": N_BRANCH}
+
+
+@pytest.mark.parametrize("reply,said", [
+    (_json({"message": "authentication required"}, 401), "HTTP 401"),
+    (_json({"message": f"branches limit exceeded near {N_WRITER}", "connection_parameters": {"password": N_PW}}, 422),
+     "HTTP 422"),
+    (DROP, "HTTP 000"),
+    (_json({"operations": []}, 201), "branch.id is missing"),
+], ids=["http-401", "http-422-body-with-a-credential", "no-reply", "no-branch-id"])
+def test_neon_create_step_refuses_a_failed_create_naming_status_and_redacted_body(tmp_path, github, reply, said):
+    api = github({N_CREATE: [reply], N_URI: [N_URI_OK]})
+    proc, written = _run_neon_step(tmp_path, NEON_CREATE, api)
+    assert proc.returncode == 1, _neon_said(proc)
+    assert written == {} and api.reads(N_URI) == 0
+    errors = _errors(proc)
+    assert len(errors) == 1 and said in errors[0] and "/branches" in errors[0], errors
+    assert N_PW not in _neon_said(proc) and NEON_KEY not in _neon_said(proc)
+
+
+def test_neon_delete_step_deletes_the_branch_the_create_step_named(tmp_path, github):
+    api = github({N_DELETE: [_json({}, 200)], N_LIST: [_json({"branches": []})]})
+    proc, _ = _run_neon_step(tmp_path, NEON_DELETE, api, NEON_BRANCH_ID=N_BRANCH)
+    assert proc.returncode == 0, _neon_said(proc)
+    assert api.log == [f"DELETE /api/v2/projects/{NEON_PROJECT}/branches/{N_BRANCH}"]
+
+
+def test_neon_delete_step_without_an_id_finds_this_runs_branch_by_its_exact_name(tmp_path, github):
+    """A create that failed before it learned the id (no reply) must not strand the branch Neon made anyway."""
+    listing = {"branches": [{"id": "br-ours", "name": f"ci-{NEON_RUN}"}, {"id": "br-other", "name": f"ci-{NEON_RUN}0"},
+                            {"id": "br-staging", "name": "staging"}]}
+    api = github({N_LIST: [_json(listing)], N_DELETE: [_json({}, 200)]})
+    proc, _ = _run_neon_step(tmp_path, NEON_DELETE, api, NEON_BRANCH_ID="")
+    assert proc.returncode == 0, _neon_said(proc)
+    assert [r for r in api.log if r.startswith("DELETE")] == [f"DELETE /api/v2/projects/{NEON_PROJECT}/branches/br-ours"]
+
+
+@pytest.mark.parametrize("reply", [_json({"message": "authentication required"}, 401), DROP, NOT_JSON])
+def test_neon_delete_step_an_unreadable_lookup_warns_and_deletes_nothing(tmp_path, github, reply):
+    api = github({N_LIST: [reply], N_DELETE: [_json({}, 200)]})
+    proc, _ = _run_neon_step(tmp_path, NEON_DELETE, api, NEON_BRANCH_ID="")
+    assert proc.returncode == 0, _neon_said(proc)
+    assert api.reads(r"^DELETE") == 0 and _errors(proc) == []
+    assert any(a.startswith("::warning::") for a in _annotations(proc))
+
+
+def test_neon_delete_step_never_deletes_the_staging_parent(tmp_path, github):
+    parent = _integ_parent()
+    api = github({N_LIST: [_json({"branches": [{"id": parent, "name": f"ci-{NEON_RUN}"}]})], N_DELETE: [_json({}, 200)]})
+    proc, _ = _run_neon_step(tmp_path, NEON_DELETE, api, NEON_BRANCH_ID="")
+    assert proc.returncode == 1 and api.reads(r"^DELETE") == 0
+    proc, _ = _run_neon_step(tmp_path, NEON_DELETE, api, NEON_BRANCH_ID=parent)
+    assert proc.returncode == 1 and api.reads(r"^DELETE") == 0
+
+
+def test_neon_delete_step_runs_whatever_failed_before_it():
+    _, step = _step(INTEG, "integration-tests", NEON_DELETE)
+    assert step.get("if") == "always()"
+    assert "${{ env.NEON_BRANCH_ID }}" == step["env"]["NEON_BRANCH_ID"]
+
+
+def test_no_neon_caller_reads_the_database_url_out_of_a_branch_create_response():
+    """`connection_uris` is optional on create. A script reading it must also ask GET /connection_uri by name
+    (revert-to.py does); no workflow step reads it at all."""
+    root = os.path.join(HERE, "..")
+    offenders = []
+    for path in glob.glob(os.path.join(root, ".github", "workflows", "*.y*ml")):
+        wf = yaml.safe_load(open(path))
+        for job_id, job in ((wf or {}).get("jobs") or {}).items():
+            for step in job.get("steps") or []:
+                if "connection_uris" in (step.get("run") or ""):
+                    offenders.append(f"{os.path.relpath(path, root)}: {job_id} / {step.get('name')}")
+    for path in glob.glob(os.path.join(HERE, "*.py")) + glob.glob(os.path.join(HERE, "*.sh")):
+        if os.path.basename(path).startswith("test_"):
+            continue
+        text = open(path).read()
+        if "connection_uris" in text and "connection_uri?" not in text and "/connection_uri" not in text:
+            offenders.append(os.path.relpath(path, root))
+    assert offenders == []
+
+
 # ── every step of every workflow: no exit-status read that errexit has already decided ─────────────────────
 # The steps above are guarded one at a time. This scans every bash/sh `run:` body for the shape itself, so a new
 # step cannot reintroduce it unnoticed. Under errexit, `$?` read on its own is always 0 (any non-zero ended the
