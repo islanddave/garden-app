@@ -178,6 +178,9 @@ jobs:
           # and the documented escape hatch demonstrably works. On `schedule` the input is
           # null -> empty -> defaults to 1, which is the strict behaviour we want.
           IN_REQUIRE_FULL_SCOPE: ${{ inputs.require_full_scope }}
+          # restore-verify.py's tempfile download of the dump lands here, not in /tmp: on ubuntu-26.04
+          # /tmp is a RAM-backed tmpfs capped at ~7.8G, $RUNNER_TEMP is the work disk (OPS-UBUNTU26MOVE-001).
+          TMPDIR: ${{ runner.temp }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           export REQUIRE_FULL_SCOPE="${IN_REQUIRE_FULL_SCOPE:-1}"

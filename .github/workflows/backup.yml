@@ -104,11 +104,14 @@ jobs:
         # not skipped either: "Verify upload" fails the job at its end, after the dump
         # itself is uploaded and proven. Same SELECT as scripts/snap.py TABLE_LIST_SQL
         # and scripts/restore-verify.py qualified_table_set().
+        # $RUNNER_TEMP, not /tmp, for every file this job writes (OPS-UBUNTU26MOVE-001): on
+        # ubuntu-26.04 /tmp is a RAM-backed tmpfs capped at ~7.8G; $RUNNER_TEMP is the
+        # runner's work disk (ext4, ~90G free) on both images and is emptied after the job.
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
-          DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
-          GLOBALS_FILE="/tmp/garden-$(date +%Y%m%d).globals.sql"
-          TABLES_FILE="/tmp/garden-$(date +%Y%m%d).tables.json"
+          DUMP_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).dump"
+          GLOBALS_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).globals.sql"
+          TABLES_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).tables.json"
           S3_KEY="db/garden-$(date +%Y%m%d).dump"
           TAKEN_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           if ! timeout -k 5 120 psql "${{ secrets.NEON_BACKUP_URL }}" -X -tA -v ON_ERROR_STOP=1 \
@@ -132,8 +135,8 @@ jobs:
 
       - name: Upload to S3
         run: |
-          DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
-          GLOBALS_FILE="/tmp/garden-$(date +%Y%m%d).globals.sql"
+          DUMP_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).dump"
+          GLOBALS_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).globals.sql"
           S3_KEY="db/garden-$(date +%Y%m%d).dump"
           GLOBALS_S3_KEY="db/garden-$(date +%Y%m%d).globals.sql"
           aws s3 cp "$DUMP_FILE" "s3://${{ vars.BACKUP_BUCKET_NAME }}/$S3_KEY"
@@ -141,7 +144,7 @@ jobs:
           # Table list LAST and not fatal HERE: the dump and globals above are already
           # up, and "Verify upload" must still run on them. It is that step which fails
           # the job when the list did not make it.
-          TABLES_FILE="/tmp/garden-$(date +%Y%m%d).tables.json"
+          TABLES_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).tables.json"
           TABLES_S3_KEY="db/garden-$(date +%Y%m%d).tables.json"
           if [ -s "$TABLES_FILE" ]; then
             aws s3 cp "$TABLES_FILE" "s3://${{ vars.BACKUP_BUCKET_NAME }}/$TABLES_S3_KEY" \
@@ -164,8 +167,8 @@ jobs:
         #      Raise the floor as the DB grows; never lower it without a schema shrink.
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
-          DUMP_FILE="/tmp/garden-$(date +%Y%m%d).dump"
-          GLOBALS_FILE="/tmp/garden-$(date +%Y%m%d).globals.sql"
+          DUMP_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).dump"
+          GLOBALS_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).globals.sql"
           S3_KEY="db/garden-$(date +%Y%m%d).dump"
           GLOBALS_S3_KEY="db/garden-$(date +%Y%m%d).globals.sql"
           MIN_BYTES=409600
@@ -216,7 +219,7 @@ jobs:
           # core tables = scripts/restore-verify.py SANITY_TABLES; a short list would make
           # the tables it omits read as "prod is ahead". list-objects-v2 = the same
           # ListBucket the dump check above uses.
-          TABLES_FILE="/tmp/garden-$(date +%Y%m%d).tables.json"
+          TABLES_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).tables.json"
           TABLES_S3_KEY="db/garden-$(date +%Y%m%d).tables.json"
           TABLES_FAIL="the DUMP $S3_KEY is uploaded and verified; only its table list is not. restore-verify will compare that dump with LIVE prod's table list (or red on a bad list)"
           if ! jq -e --arg k "$S3_KEY" '.format == 1 and .dump_key == $k and (.taken_at | type == "string" and length > 0) and (.tables | type == "array") and ([.tables[] | select(startswith("public."))] | length > 0) and ((["public.plant_projects", "public.plants", "public.event_log", "public.locations", "public.inventory_items", "public.plant_varieties"] - .tables) | length == 0)' "$TABLES_FILE" > /dev/null; then
@@ -239,7 +242,7 @@ jobs:
 
       - name: Cleanup local dump
         if: always()
-        run: rm -f /tmp/garden-*.dump /tmp/garden-*.globals.sql /tmp/garden-*.tables.json /tmp/garden-*.tables.json.uploaded
+        run: rm -f "${RUNNER_TEMP:?}"/garden-*.dump "${RUNNER_TEMP:?}"/garden-*.globals.sql "${RUNNER_TEMP:?}"/garden-*.tables.json "${RUNNER_TEMP:?}"/garden-*.tables.json.uploaded
 
 # S3 lifecycle rules must be configured on the backup bucket (infrastructure step, not here):
 #   - Retain last 14 daily dumps

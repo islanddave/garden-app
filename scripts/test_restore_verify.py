@@ -948,8 +948,7 @@ def _backup_bodies(tmp_path):
         return (steps[name]["run"]
                 .replace("${{ secrets.NEON_BACKUP_URL }}", "postgresql://stub")
                 .replace("${{ vars.BACKUP_BUCKET_NAME }}", "bkt")
-                .replace("/usr/lib/postgresql/17/bin", str(bindir))
-                .replace("/tmp/", f"{work}/"))
+                .replace("/usr/lib/postgresql/17/bin", str(bindir)))
     return body, bindir
 
 
@@ -962,7 +961,7 @@ def _run_backup(tmp_path, **stub_env):
     s3dir.mkdir(exist_ok=True)
     e = dict(os.environ, PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}", STUB_S3=str(s3dir),
              GITHUB_ENV=str(tmp_path / "github_env"), STUB_TABLES_DEFAULT=json.dumps(STUB_LISTED),
-             STUB_TIMEOUT_LOG=str(tmp_path / "timeout.log"), **stub_env)
+             STUB_TIMEOUT_LOG=str(tmp_path / "timeout.log"), RUNNER_TEMP=str(tmp_path / "work"), **stub_env)
     results = []
     for name in (DUMP_STEP, UPLOAD_STEP, VERIFY_STEP):
         p = subprocess.run(["bash", "-e", "-c", body(name)], env=e, capture_output=True, text=True)
@@ -987,6 +986,18 @@ def test_daily_backup_writes_a_table_list_the_reader_accepts(tmp_path):
                            {"Key": f"db/garden-{day}.tables.json", "LastModified": D(2026, 10, 12), "Size": 1}]}]
     s3 = FakeS3(pages, {(BUCKET, f"db/garden-{day}.tables.json"): listed.read_bytes()})
     assert rv.load_tablelist(s3, rv.Config(env=env()), dump_key)["tables"] == set(STUB_LISTED)
+
+
+def test_daily_backup_writes_its_files_on_the_work_disk_not_tmp(tmp_path):
+    # OPS-UBUNTU26MOVE-001: on ubuntu-26.04 /tmp is a RAM-backed tmpfs capped at
+    # ~7.8G, so the prod dump goes to $RUNNER_TEMP, cleanup included.
+    import yaml
+    with open(BACKUP_YML) as fh:
+        steps = yaml.safe_load(fh)["jobs"]["backup"]["steps"]
+    assert [s["name"] for s in steps if "/tmp" in s.get("run", "")] == []
+    results, _, day = _run_backup(tmp_path)
+    assert [rc for _, rc, _ in results] == [0, 0, 0], results
+    assert (tmp_path / "work" / f"garden-{day}.dump").exists()
 
 
 def test_daily_backup_bounds_the_table_list_read(tmp_path):

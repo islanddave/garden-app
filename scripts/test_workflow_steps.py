@@ -1737,6 +1737,29 @@ def test_snapshot_tooling_prepares_exactly_what_snap_py_uses():
     assert PG_KEY in verify  # the remedy for a bad cached copy names the entry to delete
 
 
+# ── ubuntu-26.04: database dumps on the runner's work disk (OPS-UBUNTU26MOVE-001) ────────────────────────────────
+# On ubuntu-26.04 /tmp is a RAM-backed tmpfs capped at ~7.8G. These scripts dump or download the database through
+# tempfile, which honours TMPDIR, so every step that runs one points it at $RUNNER_TEMP (ext4, the work disk).
+DUMP_SCRIPTS = ("scripts/snap.py", "scripts/restore-verify.py", "scripts/revert-to.py")
+
+
+def _every_step():
+    for path in sorted(glob.glob(os.path.join(HERE, "..", ".github", "workflows", "*.yml"))):
+        wf = _workflow(os.path.basename(path))
+        for job_id, job in wf["jobs"].items():
+            for step in job.get("steps") or []:
+                yield os.path.basename(path), job_id, job, step
+
+
+def test_every_step_that_runs_a_dump_script_puts_its_tempfiles_on_the_work_disk():
+    found = [(name, step) for name, _, _, step in _every_step()
+             if any(f"python3 {script}" in (step.get("run") or "") for script in DUMP_SCRIPTS)]
+    assert {name for name, _ in found} == {"promote-gate.yml", "snap-rehearsal.yml", "restore-verify.yml",
+                                           "revert-gate.yml", "revert-rehearsal.yml"}
+    for name, step in found:
+        assert (step.get("env") or {}).get("TMPDIR") == "${{ runner.temp }}", (name, step.get("name"))
+
+
 def _poll_seconds(body):
     """N x S for each `for i in $(seq 1 N)` loop and the `sleep S` inside it: the longest each poll can wait."""
     waits = []

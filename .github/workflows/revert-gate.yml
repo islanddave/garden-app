@@ -238,6 +238,9 @@ jobs:
           SNAP_RETENTION: ${{ vars.SNAP_RETENTION }}
           CF_DIST: E3FAJTXAORQYDT
           REVERT_JOB_BUDGET_MIN: "180"  # MUST equal timeout-minutes above (JOB BUDGET in the header)
+          # revert-to.py's tempfile dumps land here, not in /tmp: on ubuntu-26.04 /tmp is a RAM-backed tmpfs
+          # capped at ~7.8G, $RUNNER_TEMP is the runner's work disk (OPS-UBUNTU26MOVE-001).
+          TMPDIR: ${{ runner.temp }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/revert-to.py

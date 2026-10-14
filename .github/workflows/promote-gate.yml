@@ -900,6 +900,9 @@ jobs:
           SNAP_RETENTION: ${{ vars.SNAP_RETENTION }}
           CF_DIST: E3FAJTXAORQYDT
           APP_VERSION: ${{ needs.resolve.outputs.snap_version }}
+          # snap.py's tempfile dumps land here, not in /tmp: on ubuntu-26.04 /tmp is a RAM-backed tmpfs capped at
+          # ~7.8G, $RUNNER_TEMP is the runner's work disk (OPS-UBUNTU26MOVE-001).
+          TMPDIR: ${{ runner.temp }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/snap.py

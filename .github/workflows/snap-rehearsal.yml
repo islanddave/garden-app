@@ -132,6 +132,8 @@ jobs:
       - name: Run snap (staging-pointed)
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
+          # As promote-gate.yml: snap.py's tempfile dumps on the work disk, not the ubuntu-26.04 /tmp RAM disk.
+          TMPDIR: ${{ runner.temp }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/snap.py
@@ -139,6 +141,8 @@ jobs:
       - name: Re-run snap (idempotency — must skip all, exit 0)
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
+          # As promote-gate.yml: snap.py's tempfile dumps on the work disk, not the ubuntu-26.04 /tmp RAM disk.
+          TMPDIR: ${{ runner.temp }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/snap.py

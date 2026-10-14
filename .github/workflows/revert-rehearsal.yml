@@ -198,6 +198,8 @@ jobs:
           PHOTOS_BUCKET: ${{ vars.PHOTOS_BUCKET }}
           SNAP_RETENTION: ${{ vars.SNAP_RETENTION }}
           CF_DIST: E3FAJTXAORQYDT
+          # As revert-gate.yml: tempfile dumps on the work disk, not the ubuntu-26.04 /tmp RAM disk.
+          TMPDIR: ${{ runner.temp }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           if [ "${FORCE_ABORT:-}" = "1" ]; then
