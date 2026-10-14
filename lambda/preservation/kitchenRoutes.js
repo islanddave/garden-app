@@ -49,6 +49,11 @@ const notAllowed = { status: 405, body: { error: 'Method not allowed' } };
 const bad = (error) => ({ status: 400, body: { error } });
 // contract-F §2 common: a key held outside the household is a 409 with no payload.
 const keyConflict = { status: 409, body: { error: 'That key is already in use.', code: 'key_conflict' } };
+// The two dehydrator answers Check on it stores verbatim as cue_observed (src/components/putup/goingNow.js
+// CONDITIONING_ANSWERS). Copied, not imported — the Lambda may not import from src/ — and held to the
+// client's labels by a parity test that reads that file as text (conditioningSince.test.js).
+export const CONDITIONING_JARS_CUE = 'In jars to condition';
+export const CONDITIONING_DRYER_CUE = 'Condensation → back in the dryer';
 // THE POST-CLOSE WRITE POLICY, in one place (Release F, 06 §3.13; Dave 15:55, "as we go", including
 // at and after bottling). "Put it up and finish" is the DEFAULT, so a policy that locked what went in at
 // close would lock the record at the exact moment he adds and weighs. F therefore RETIRES the old
@@ -262,13 +267,42 @@ export async function handleKitchenRoute({ sql, rawPath, method, rawBody, query,
 // started_at is mandatory and is the SavedSeeds.jsx:594-613 ruling: an unknown start must not outrank
 // a measured one at the top of a "check this" list. first_recorded_at is the second key because it is
 // NOT NULL, so a screen full of unknown starts still has a stable, meaningful order.
+//
+// conditioning_since (V5-PUTUPRULINGGAPS-001, FOODSAFETY-RULING-V101 §7) is the one column this list
+// adds to the view row, derived here rather than in the view so it ships with no DDL. It is WHEN a
+// dehydrator batch went into jars to condition, and nothing else: the earliest live 'In jars to
+// condition' row after the latest live 'Condensation → back in the dryer' row (or the earliest at all
+// when it never went back). A trip back to the dryer starts the next conditioning over, so the card's
+// question counts from the jars that are on the shelf now. "Live" is the view's own exclusion — not a
+// void row, and not voided. It is a date the cook recorded; it says nothing about whether the batch has
+// conditioned, and the card's question is the only thing that reads it.
 async function listBatches(sql, q, householdIds) {
   const state = parseBatchState(q.state);
   const wantAll = state === 'all';
   const wantGoing = state === 'going';
   const wantClosed = state === 'closed';
   const rows = await sql`
-    SELECT * FROM v_kitchen_batch_current
+    SELECT v.*, cond.conditioning_since
+    FROM v_kitchen_batch_current v
+    LEFT JOIN LATERAL (
+      SELECT min(j.entered_at) AS conditioning_since
+      FROM kitchen_stage_log j
+      WHERE v.kind = 'dehydrate'
+        AND j.batch_id = v.id
+        AND j.cue_observed = ${CONDITIONING_JARS_CUE}::text
+        AND j.entered_at IS NOT NULL
+        AND j.stage_kind <> 'void'
+        AND NOT EXISTS (SELECT 1 FROM kitchen_stage_log vd WHERE vd.voids_id = j.id)
+        AND j.entered_at > COALESCE((
+          SELECT max(d.entered_at)
+          FROM kitchen_stage_log d
+          WHERE d.batch_id = v.id
+            AND d.cue_observed = ${CONDITIONING_DRYER_CUE}::text
+            AND d.entered_at IS NOT NULL
+            AND d.stage_kind <> 'void'
+            AND NOT EXISTS (SELECT 1 FROM kitchen_stage_log vd WHERE vd.voids_id = d.id)
+        ), '-infinity'::timestamptz)
+    ) cond ON true
     WHERE user_id = ANY(${householdIds})
       AND deleted_at IS NULL
       AND (${wantAll}

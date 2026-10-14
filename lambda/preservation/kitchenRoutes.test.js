@@ -153,9 +153,11 @@ describe('GET /api/kitchen-batches', () => {
   it('defaults to going, and going INCLUDES suspended batches', async () => {
     // going = closed_at IS NULL. A `suspended_at IS NULL` conjunct would hide the frozen candy parent
     // that resumes over months — a batch that is very much still the cook's to finish.
+    // The state flags are the LAST three bound values: conditioning_since's lateral (§7) binds its two
+    // cue labels ahead of the household array.
     const sql = mockSql([[]]);
     await handleKitchenRoute({ sql, ...call() });
-    expect(sql.calls[0].values.slice(1, 4)).toEqual([false, true, false]);
+    expect(sql.calls[0].values.slice(-3)).toEqual([false, true, false]);
     expect(sql.calls[0].norm).not.toContain('suspended_at IS NULL');
   });
 
@@ -163,12 +165,12 @@ describe('GET /api/kitchen-batches', () => {
     const closed = mockSql([[]]);
     const rc = await handleKitchenRoute({ sql: closed, ...call({ query: { state: 'closed' } }) });
     expect(rc.body.state).toBe('closed');
-    expect(closed.calls[0].values.slice(1, 4)).toEqual([false, false, true]);
+    expect(closed.calls[0].values.slice(-3)).toEqual([false, false, true]);
 
     const all = mockSql([[]]);
     const ra = await handleKitchenRoute({ sql: all, ...call({ query: { state: 'all' } }) });
     expect(ra.body.state).toBe('all');
-    expect(all.calls[0].values.slice(1, 4)).toEqual([true, false, false]);
+    expect(all.calls[0].values.slice(-3)).toEqual([true, false, false]);
   });
 
   it('binds the STRANGER household when a stranger asks, so their query cannot match', async () => {

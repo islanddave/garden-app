@@ -426,6 +426,49 @@ export function fermentPrompts(batch, nowMs) {
   return { stall, cadence: stall ? null : phPrompt(batch, nowMs) }
 }
 
+// ── the conditioning question ────────────────────────────────────────────────────────────────────
+// FOODSAFETY-RULING-V101 §7. NCHFP publishes a conditioning step for dried fruit — in jars for 7 to 10
+// days, shaken daily — and with it the one failure signal a cook can see: "If condensation develops in
+// the jar, return the fruit to the dehydrator." Check on it already records both answers on a
+// dehydrator batch (CONDITIONING_ANSWERS); until now nothing asked during the window. This asks.
+//
+// ⚠ IT ASKS, IT NEVER ASSESSES. The question is about condensation, the observable sign, and it STOPS:
+// no countdown, no "day N of 10", no progress, and nothing on the card when the window closes — going
+// quiet is not "done", and a card that announced the end of conditioning would be saying the batch was
+// ready, which this app is not entitled to say. No streak, count or tick run of check-ins either (§5.3):
+// a jar that sweated and was missed produces the same run of "looked" as one that never sweated.
+//
+// TEN DAYS, THE OUTER BOUND of the published 7–10, so the question never falls silent while the
+// published window is still open. Asking for three days past a cook's own shorter conditioning costs a
+// tap; going quiet on day 7 of a 10-day conditioning would drop the question when it still applies.
+//
+// ONE DAY between asks, from NCHFP's "shake the jars daily". Keyed on when you LAST LOOKED — the same
+// instant the stage line reads — exactly as submersionPrompt is, so a check-in today silences it until
+// tomorrow. The window itself counts from conditioning_since, which the Going list derives server-side
+// (kitchenRoutes.js listBatches) from the 'In jars to condition' answer and restarts after a trip back
+// to the dryer. This function reads that date and the stage date and nothing else — never a cue value.
+export const CONDITIONING_KIND = 'dehydrate'
+export const CONDITIONING_WINDOW_DAYS = 10
+export const CONDITIONING_CHECK_DAYS = 1
+export const CONDITIONING_PROMPT = 'Any condensation in the jars?'
+// Quoted and attributed, the same shape as FERMENT_STALL_NOTE: the step is NCHFP's and the card says so.
+export const CONDITIONING_NOTE =
+  'The National Center for Home Food Preservation says to condition dried fruit in jars for 7 to 10 '
+  + 'days and: "If condensation develops in the jar, return the fruit to the dehydrator."'
+
+export function conditioningPrompt(batch, nowMs) {
+  if (!batch || batch.kind !== CONDITIONING_KIND) return null
+  // Silent on a paused batch — see submersionPrompt.
+  if (isSuspended(batch)) return null
+  const since = batch.conditioning_since ? new Date(batch.conditioning_since).getTime() : NaN
+  if (Number.isNaN(since)) return null
+  if (nowMs - since > CONDITIONING_WINDOW_DAYS * DAY_MS) return null
+  const looked = new Date(batch.current_stage_entered_at || batch.conditioning_since).getTime()
+  const lastLook = Number.isNaN(looked) ? since : looked
+  if (nowMs - lastLook < CONDITIONING_CHECK_DAYS * DAY_MS) return null
+  return CONDITIONING_PROMPT
+}
+
 // ── the card's ONE inline question ───────────────────────────────────────────────────────────────
 // Put-Up 1a (V4 §2.3 "Card"): at most three quiet actions plus AT MOST ONE inline question. The card
 // used to be able to stack the submersion question over a pH question, and a NULL-kind card would now
@@ -441,8 +484,10 @@ export function fermentPrompts(batch, nowMs) {
 //                  question is too: ranking it second would mean it could NEVER appear. This way all
 //                  three shipped prompts still speak at their shipped timing, one at a time.
 //   4. cadence   — the shipped pH question.
+//   5. conditioning — FOODSAFETY-RULING-V101 §7, dehydrator batches only, so exclusive with 2–4 by kind;
+//                  last only because it is the newest.
 // Each prompt keeps its own predicate unchanged; this only chooses which one is on screen. Returning
-// a SHAPE, not a string, keeps the testids of the three shipped prompts independent.
+// a SHAPE, not a string, keeps the testids of the shipped prompts independent.
 export function cardQuestion(batch, nowMs) {
   if (kindQuestionVisible(batch)) return { kind: 'kind' }
   const { stall, cadence } = fermentPrompts(batch, nowMs)
@@ -450,6 +495,8 @@ export function cardQuestion(batch, nowMs) {
   const submersion = submersionPrompt(batch, nowMs)
   if (submersion) return { kind: 'submersion', text: submersion }
   if (cadence) return { kind: 'cadence', text: cadence }
+  const conditioning = conditioningPrompt(batch, nowMs)
+  if (conditioning) return { kind: 'conditioning', text: conditioning }
   return null
 }
 
