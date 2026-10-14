@@ -9,6 +9,6 @@ import { scrollManagerFlagOff } from './tests/harness/flagOffTransform.mjs'
 export default {
   ...base,
   plugins: [scrollManagerFlagOff(), ...(base.plugins || [])],
-  // withCliDir: with the A3 trial key a `--dir` reaches each project (vitest-side-config.mjs).
+  // withCliDir: a `--dir` reaches each project of vitest.config.ts (vitest-side-config.mjs).
   test: withCliDir({ ...base.test, env: { ...(base.test && base.test.env), SCROLL_FLAG_OFF_REHEARSAL: '1' } }),
 }

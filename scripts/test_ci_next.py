@@ -21,10 +21,10 @@ shape whatever ci-next.yml says:
                 canary or a soak run of a copy that had drifted would say nothing about the gating file.
   once          a check runs in one leg: no step other than the five repeatable setup steps (checkout, setup-node,
                 npm ci, Chrome resolve, the origin/main fetch) is in a file's legs twice.
-  trial         the two unit steps carry env VITEST_NODE_PROJECT: '1', so vitest runs the server-side test files
-                in its `node` project and the rest under jsdom (vitest.config.ts). That key, that value, on those
-                two steps of each file; nowhere else in either (an env at any level, or the key written into a
-                run: body). It is the gating shape; removing the key is a later commit.
+  unit_passes   the unit passes (a run: that starts `npm test` or `npx vitest run`) are the two steps named in
+                UNIT_STEPS, one in each unit leg. And neither file names VITEST_NODE_PROJECT, the A3 trial's env
+                key (an env at any level, or the key written into a run: body): vitest.config.ts runs two projects
+                in every run and reads no key, so the key would read as a switch that switches nothing.
   own_steps     the steps the legs carry that the serial job did not: the PyYAML install and the TZ sentinel, by
                 body and by place; and the canary, one per leg, first, keyed to its leg, in ci-next.yml ONLY. No
                 ci.yml step carries an `if:` or reads the inputs context.
@@ -51,8 +51,9 @@ What this file no longer holds, and where the duty went. While ci.yml was one se
 reference: `conservation` held every serial step to exactly one leg and `order` held each leg to the serial order.
 There is no serial list now. That a step is not dropped, edited, reordered or moved between legs of ci.yml is held
 by scripts/ci-step-manifest.json (scripts/test_ci_step_manifest.py), which records every job of ci.yml step for
-step; `mirror` and `once` hold the rest. The trial's one admitted difference between the two files is gone with
-the serial job (both files carry the key), and so is the test that bounded it.
+step; `mirror` and `once` hold the rest. The trial's one admitted difference between the two files went with the
+serial job (both files carried the key), and so did the test that bounded it; the key itself went in
+OPS-A3TRIALKEYREMOVE-001.
 
 Then the bodies the legs introduced are executed the way GitHub's runner executes them: `bash -e` on a FILE holding
 the body (as scripts/test_workflow_steps.py does; never `bash -c`). Each file's aggregator runs against `needs`
@@ -93,26 +94,26 @@ NO_DISPATCH = ("ci.yml must never gain workflow_dispatch (or any trigger beyond 
 CANARY = "Canary — force this leg red (workflow_dispatch input canary_red_leg only)"
 PYYAML = "Install PyYAML for the migration gate validation"
 SENTINEL = "TZ sentinel — America/New_York resolves on this runner"
-# THE TRIAL KEY. The two unit steps of each file carry this env key at this value. vitest.config.ts reads it and
-# runs the test files that need no DOM in a `node` project. It began as the A3 trial, on ci-next.yml's legs only,
-# compared by test ID with the serial job's jsdom-everything; the owner declared the trial's exit and made the
-# two-project shape the gating one (2026-10-11), so the switch carried the key into ci.yml with the legs. `trial`
-# holds that it is on both unit steps of each file and nowhere else. When the projects become unconditional and the
-# key leaves the steps (a later commit, with vitest.config.ts), all of this goes with it.
-TRIAL_KEY, TRIAL_VALUE = "VITEST_NODE_PROJECT", "1"
-TRIAL_STEPS = {"unit-utc-cov": "Run unit tests with coverage",
-               "unit-ny": "Unit tests under America/New_York TZ (date-fragility guard)"}
+# THE UNIT PASSES, and the key that is gone. The two unit steps of each file run the suite as vitest.config.ts
+# has it: two projects, `node` for the test files that need no DOM and `dom` for the rest. That began as the A3 trial,
+# behind an env key on ci-next.yml's unit steps, compared by test ID with the serial job's jsdom-everything; the owner
+# declared the trial's exit and made the two-project shape the gating one (2026-10-11), the switch carried the key
+# into ci.yml with the legs, and OPS-A3TRIALKEYREMOVE-001 took the key out of both files and made the projects
+# unconditional. `unit_passes` holds the two passes to their names (shadow-agree.py reads each pass's test IDs by
+# its step name) and the key out of both files.
+RETIRED_KEY = "VITEST_NODE_PROJECT"
+UNIT_STEPS = {"unit-utc-cov": "Run unit tests with coverage",
+              "unit-ny": "Unit tests under America/New_York TZ (date-fragility guard)"}
 UNIT_PASS = re.compile(r"(?:npm test|npx vitest run)\b")  # matched at the start of a step's run
-TRIAL_RULE = ("env %s: '%s' (a quoted string) is on the two unit steps of ci.yml and of ci-next.yml, %r in "
-              "unit-utc-cov and %r in unit-ny, and nowhere else in either file. With it vitest runs two projects "
-              "(node and dom), which is the gating shape; a unit step without it runs jsdom-everything, a different "
-              "suite shape from the one that was soaked. Taking the key out everywhere is its own commit"
-              % (TRIAL_KEY, TRIAL_VALUE, TRIAL_STEPS["unit-utc-cov"], TRIAL_STEPS["unit-ny"]))
-# Every tracked file that names the key. `trial` reads the two workflow files; the key set anywhere else (the `test`
-# script of package.json is the short way) would switch other runs of the suite with nothing in a workflow changing.
-TRIAL_KEY_FILES = [".github/workflows/ci-next.yml", ".github/workflows/ci.yml", "scripts/ci-step-manifest.json",
-                   "scripts/ci-telemetry/vitest-projects.test.js", "scripts/ci-telemetry/vitest-side-configs.test.js",
-                   "scripts/test_ci_next.py", "vitest.config.ts"]
+UNIT_RULE = ("the unit passes of ci.yml and of ci-next.yml are %r in unit-utc-cov and %r in unit-ny, and neither file "
+             "names %s, the A3 trial's env key. vitest.config.ts runs its two projects (node and dom) in every run "
+             "and reads no key since OPS-A3TRIALKEYREMOVE-001, so a key set in a workflow switches nothing and reads "
+             "as though it did"
+             % (UNIT_STEPS["unit-utc-cov"], UNIT_STEPS["unit-ny"], RETIRED_KEY))
+# Every tracked file that names the retired key: this file, which holds it out, and the record of the trial in
+# ci-next.yml's header. `unit_passes` reads the two workflow files; the key set anywhere else (the `test` script of
+# package.json is the short way) would read as a switch in a config that has none.
+RETIRED_KEY_FILES = [".github/workflows/ci-next.yml", "scripts/test_ci_next.py"]
 REPEATABLE = ("checkout", "setup-node", "npm-ci", "chrome", "fetch-main")
 NODE_PIN = {"node-version": "20.19.0", "cache": "npm"}
 DRY_RUN = "npm install --dry-run --package-lock-only"
@@ -301,30 +302,26 @@ def once(ci, nxt):
     return out
 
 
-def trial(ci, nxt):
+def unit_passes(ci, nxt):
     out = []
     for name, workflow in _pair(ci, nxt):
         passes = [_label(s) for s in _all_steps(workflow, name) if UNIT_PASS.match(s.get("run") or "")]
-        if passes != list(TRIAL_STEPS.values()):
-            out.append("%s's unit passes (a run: that starts `npm test` or `npx vitest run`) are %s, and the key is "
-                       "pinned to %s. A pass that is renamed, added or removed changes TRIAL_STEPS in "
+        if passes != list(UNIT_STEPS.values()):
+            out.append("%s's unit passes (a run: that starts `npm test` or `npx vitest run`) are %s, and they are "
+                       "pinned to %s. A pass that is renamed, added or removed changes UNIT_STEPS in "
                        "scripts/test_ci_next.py in the same commit (and PASS_STEPS in "
                        "scripts/ci-telemetry/shadow-agree.py, which reads each pass's test IDs by its step name): %s"
-                       % (name, passes, list(TRIAL_STEPS.values()), TRIAL_RULE))
-        for leg, step_name in TRIAL_STEPS.items():
+                       % (name, passes, list(UNIT_STEPS.values()), UNIT_RULE))
+        for leg, step_name in UNIT_STEPS.items():
             steps = [s for s in ((workflow.get("jobs") or {}).get(leg) or {}).get("steps") or []
                      if s.get("name") == step_name]
-            envs = [s.get("env") for s in steps]
-            if len(steps) != 1 or not isinstance(envs[0], dict) or envs[0].get(TRIAL_KEY) != TRIAL_VALUE:
-                out.append("%s leg %s: step %r is there %d time(s) with env %s; want it once, with %s: '%s' in its "
-                           "env. Without the key that leg runs jsdom-everything: %s"
-                           % (name, leg, step_name, len(steps), json.dumps(envs, default=str), TRIAL_KEY, TRIAL_VALUE,
-                              TRIAL_RULE))
-        count = json.dumps(workflow, default=str).count(TRIAL_KEY)
-        if count != len(TRIAL_STEPS):
-            out.append("%s names %s %d time(s), want exactly %d, one in the env of each unit step. A job-level or "
-                       "workflow-level env, a third step, or the key written into a run: body is outside the rule: %s"
-                       % (name, TRIAL_KEY, count, len(TRIAL_STEPS), TRIAL_RULE))
+            if len(steps) != 1:
+                out.append("%s leg %s: step %r is there %d time(s); want it once: %s"
+                           % (name, leg, step_name, len(steps), UNIT_RULE))
+        count = json.dumps(workflow, default=str).count(RETIRED_KEY)
+        if count:
+            out.append("%s names %s %d time(s), want none: a step env, a job-level or workflow-level env, or the key "
+                       "written into a run: body. Take it out: %s" % (name, RETIRED_KEY, count, UNIT_RULE))
     return out
 
 
@@ -586,8 +583,8 @@ def concurrency(workflows):
 
 # ── the tree as committed ───────────────────────────────────────────────────────────────────────────────────────
 
-CHECKS = {"mirror": mirror, "once": once, "trial": trial, "own_steps": own_steps, "setup": setup, "shape": shape,
-          "handoffs": handoffs}
+CHECKS = {"mirror": mirror, "once": once, "unit_passes": unit_passes, "own_steps": own_steps, "setup": setup,
+          "shape": shape, "handoffs": handoffs}
 
 
 @pytest.mark.parametrize("check", list(CHECKS.values()), ids=list(CHECKS))
@@ -616,23 +613,21 @@ def test_the_checks_read_both_files_and_are_not_empty(name):
     assert sum(s.get("name") == CANARY for s in _all_steps(workflow, name)) == (len(LEGS) if name == NEXT else 0)
 
 
-def test_the_trial_key_is_named_by_seven_tracked_files_and_not_by_package_json():
-    """`trial` holds the key to two steps of each workflow file. This holds it out of everything else: an npm
-    script that sets it (`"test": "VITEST_NODE_PROJECT=1 vitest run --coverage"`) switches every run of that
-    script, local ones and other workflows' included, with nothing in ci.yml changing."""
+def test_the_retired_trial_key_is_named_only_by_this_file_and_the_trial_record():
+    """`unit_passes` holds the key out of both workflow files. This holds it out of everything else: an npm script
+    that sets it (`"test": "VITEST_NODE_PROJECT=1 vitest run --coverage"`), or a config that reads it, would make a
+    switch again where the owner's decision (row `switch-unit-shape`) left one shape."""
     repo = os.path.join(HERE, "..")
-    named = subprocess.run(["git", "-C", repo, "grep", "-l", "-F", TRIAL_KEY], capture_output=True, text=True)
-    assert named.returncode == 0, "git grep found no tracked file naming %s: %r" % (TRIAL_KEY, named.stderr)
+    named = subprocess.run(["git", "-C", repo, "grep", "-l", "-F", RETIRED_KEY], capture_output=True, text=True)
+    assert named.returncode == 0, "git grep found no tracked file naming %s: %r" % (RETIRED_KEY, named.stderr)
     with open(os.path.join(repo, "package.json"), encoding="utf-8") as fh:
-        assert TRIAL_KEY not in fh.read(), (
-            "package.json names %s. An npm script that sets the key switches every run of that script. Take it out: "
-            "%s" % (TRIAL_KEY, TRIAL_RULE))
-    assert sorted(named.stdout.split()) == TRIAL_KEY_FILES, (
-        "the tracked files that name %s are no longer the seven it is made of (the config that reads it, the two "
-        "workflows that set it, the manifest that records ci.yml's steps, and the three tests that hold it). A file "
-        "that SETS or READS the key elsewhere changes which runs are two-project: take it out. A file that only "
-        "mentions it: reword it, or add it to TRIAL_KEY_FILES in scripts/test_ci_next.py in the same commit: %s"
-        % (TRIAL_KEY, TRIAL_RULE))
+        assert RETIRED_KEY not in fh.read(), (
+            "package.json names %s. Take it out: %s" % (RETIRED_KEY, UNIT_RULE))
+    assert sorted(named.stdout.split()) == RETIRED_KEY_FILES, (
+        "the tracked files that name %s are no longer the two that may (this file, and the trial's record in "
+        "ci-next.yml's header). A file that SETS or READS the key makes a switch that vitest.config.ts no longer "
+        "has: take it out. A file that only mentions it: reword it, or add it to RETIRED_KEY_FILES in "
+        "scripts/test_ci_next.py in the same commit: %s" % (RETIRED_KEY, UNIT_RULE))
 
 
 @pytest.mark.parametrize("name", FILES)
@@ -921,8 +916,8 @@ def _tz_steps(workflow):
 
 
 def _pass(workflow, leg):
-    """A unit leg's pass: the step the trial's key rides on."""
-    return _steps(workflow, leg)[_find(workflow, leg, _named(TRIAL_STEPS[leg]))]
+    """A unit leg's pass: the step that runs the suite."""
+    return _steps(workflow, leg)[_find(workflow, leg, _named(UNIT_STEPS[leg]))]
 
 
 def _canary_step(leg):
@@ -962,10 +957,8 @@ MUTATIONS = {
     "the aggregator's body gains a line": ("mirror", lambda w, o: _repin(w, "set -euo pipefail\n",
                                                                          "set -euo pipefail\ntrue\n")),
     "the aggregator's step is renamed": ("mirror", lambda w, o: _agg(w)["steps"][0].update(name="Verdict")),
-    "a unit pass's trial key changes value": ("mirror", lambda w, o: _pass(w, "unit-utc-cov")["env"].update(
-        {TRIAL_KEY: "0"})),
-    "a unit pass's env gains a key": ("mirror", lambda w, o: _pass(w, "unit-utc-cov")["env"].update(
-        ADDED_BY_TEST="1")),
+    "the UTC pass gains an env": ("mirror", lambda w, o: _pass(w, "unit-utc-cov").update(env={"ADDED_BY_TEST": "1"})),
+    "a unit pass's env gains a key": ("mirror", lambda w, o: _pass(w, "unit-ny")["env"].update(ADDED_BY_TEST="1")),
     "the NY pass loses its TZ": ("mirror", lambda w, o: _pass(w, "unit-ny")["env"].pop("TZ")),
     "a unit pass's run changes": ("mirror", lambda w, o: _pass(w, "unit-utc-cov").update(run="npm test -- --silent")),
     "ci-next.yml's canary step is copied into ci.yml": ("mirror", lambda w, o: _steps(w, "static").insert(
@@ -1178,33 +1171,26 @@ MUTATIONS = {
         w, o, {"uses": "actions/setup-python@v5", "with": {"python-version": "3.12"}}), BOTH),
     "a listed hand-off step is renamed in both files": ("handoffs", lambda w, o: _to_both(w, o, lambda f: [
         s.update(name="Resolve Chrome") for leg in GATE_LEGS for s in _steps(f, leg) if _kind(s) == "chrome"]), BOTH),
-    # trial: the key, and each way it can drift
-    "the trial key leaves the UTC pass": ("trial", lambda w, o: _pass(w, "unit-utc-cov").pop("env")),
-    "the trial key leaves the NY pass": ("trial", lambda w, o: _pass(w, "unit-ny")["env"].pop(TRIAL_KEY)),
-    "the trial key leaves both passes of both files": ("trial", lambda w, o: _to_both(w, o, lambda f: [
-        _pass(f, leg)["env"].pop(TRIAL_KEY) for leg in TRIAL_STEPS]), BOTH),
-    "the trial key's value changes": ("trial", lambda w, o: _pass(w, "unit-ny")["env"].update({TRIAL_KEY: "0"})),
-    "the trial key's value is true": ("trial", lambda w, o: _pass(w, "unit-utc-cov")["env"].update(
-        {TRIAL_KEY: "true"})),
-    "the trial key's value is an unquoted 1": ("trial", lambda w, o: _pass(w, "unit-utc-cov")["env"].update(
-        {TRIAL_KEY: 1})),
-    "the trial key's value is an unquoted 1 in both files": ("trial", lambda w, o: _to_both(
-        w, o, lambda f: _pass(f, "unit-utc-cov")["env"].update({TRIAL_KEY: 1})), BOTH),
-    "the trial key is misspelled": ("trial", lambda w, o: _pass(w, "unit-ny")["env"].update(
-        {TRIAL_KEY + "S": _pass(w, "unit-ny")["env"].pop(TRIAL_KEY)})),
-    "a third step takes the trial key": ("trial", lambda w, o: _gate(w)["env"].update({TRIAL_KEY: "1"})),
-    "a third step takes the trial key in both files": ("trial", lambda w, o: _to_both(
-        w, o, lambda f: _gate(f)["env"].update({TRIAL_KEY: "1"})), BOTH),
-    "the TZ sentinel takes the trial key": ("trial", lambda w, o: _own(w, "unit-ny", SENTINEL)["env"].update(
-        {TRIAL_KEY: "1"})),
-    "the trial key moves from a unit step to its leg's env": ("trial", lambda w, o: w["jobs"]["unit-ny"].update(
-        env={TRIAL_KEY: _pass(w, "unit-ny")["env"].pop(TRIAL_KEY)})),
-    "the trial key is also set for the whole workflow": ("trial", lambda w, o: w.update(env={TRIAL_KEY: "1"})),
-    "a step also sets the trial key inside its run": ("trial", lambda w, o: _gate(w).update(
-        run="export %s=1\n%s" % (TRIAL_KEY, _gate(w)["run"]))),
-    "a unit pass is renamed in both files": ("trial", lambda w, o: _to_both(
+    # unit_passes: the two passes, and each way the retired key can come back
+    "the retired key comes back on the UTC pass": ("unit_passes", lambda w, o: _pass(w, "unit-utc-cov").update(
+        env={RETIRED_KEY: "1"})),
+    "the retired key comes back on the NY pass": ("unit_passes", lambda w, o: _pass(w, "unit-ny")["env"].update(
+        {RETIRED_KEY: "1"})),
+    "the retired key comes back on both passes of both files": ("unit_passes", lambda w, o: _to_both(
+        w, o, lambda f: [_pass(f, leg).setdefault("env", {}).update({RETIRED_KEY: "1"}) for leg in UNIT_STEPS]), BOTH),
+    "the retired key comes back as an unquoted 1": ("unit_passes", lambda w, o: _pass(w, "unit-ny")["env"].update(
+        {RETIRED_KEY: 1})),
+    "a gate step takes the retired key": ("unit_passes", lambda w, o: _gate(w)["env"].update({RETIRED_KEY: "1"})),
+    "the TZ sentinel takes the retired key": ("unit_passes", lambda w, o: _own(w, "unit-ny", SENTINEL)["env"].update(
+        {RETIRED_KEY: "1"})),
+    "the retired key is set for a unit leg": ("unit_passes", lambda w, o: w["jobs"]["unit-ny"].update(
+        env={RETIRED_KEY: "1"})),
+    "the retired key is set for the whole workflow": ("unit_passes", lambda w, o: w.update(env={RETIRED_KEY: "1"})),
+    "a step sets the retired key inside its run": ("unit_passes", lambda w, o: _gate(w).update(
+        run="export %s=1\n%s" % (RETIRED_KEY, _gate(w)["run"]))),
+    "a unit pass is renamed in both files": ("unit_passes", lambda w, o: _to_both(
         w, o, lambda f: _pass(f, "unit-utc-cov").update(name="Unit tests")), BOTH),
-    "a third unit pass is added to both files": ("trial", lambda w, o: _add_to_both(
+    "a third unit pass is added to both files": ("unit_passes", lambda w, o: _add_to_both(
         w, o, {"name": "A third pass", "run": "npx vitest run --no-coverage"}, leg="unit-ny"), BOTH),
 }
 

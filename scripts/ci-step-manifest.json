@@ -445,9 +445,7 @@
           "working-directory": null
         },
         {
-          "env": {
-            "VITEST_NODE_PROJECT": "1"
-          },
+          "env": null,
           "name": "Run unit tests with coverage",
           "other": {},
           "run": [
@@ -545,8 +543,7 @@
         },
         {
           "env": {
-            "TZ": "America/New_York",
-            "VITEST_NODE_PROJECT": "1"
+            "TZ": "America/New_York"
           },
           "name": "Unit tests under America/New_York TZ (date-fragility guard)",
           "other": {},

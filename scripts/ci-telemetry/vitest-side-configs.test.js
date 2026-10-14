@@ -1,21 +1,22 @@
-// The four configs that build on vitest.config.ts, held to both shapes of the A3 trial (VITEST_NODE_PROJECT=1 or
-// not): vitest.stress.config.ts and the three flag-off configs behind the `test:flag-off*` scripts of package.json.
+// The four configs that build on vitest.config.ts, held to its two projects: vitest.stress.config.ts and the three
+// flag-off configs behind the `test:flag-off*` scripts of package.json.
 //
-// Both were wrong with the key set until ./vitest-side-config.mjs (its header has the two mechanisms):
-//   - `npm run test:flag-off:seed` collected 196 files where it collects 175 without the key, because `--dir` does
-//     not reach a project;
+// Both were wrong under the projects until ./vitest-side-config.mjs (its header has the two mechanisms):
+//   - `npm run test:flag-off:seed` collected 196 files where the one-project config collected 175, because `--dir`
+//     does not reach a project: the 21 more were lambda/ tests with "seed" in their path;
 //   - the stress run failed every test of the node project, because its setup file loaded there too.
 //
 // WHAT THIS HOLDS
-//   1. Each `test:flag-off*` script, with the arguments package.json gives it, collects one set of files with the
-//      key and without it. So does vitest.flagoff.config.ts under a `--dir`, which its script does not pass and a
-//      by-hand run may.
-//   2. The stress config lists stressSetup.ts in place of src/__tests__/setup.ts and nowhere else: at the root
-//      without the key; with it, in the jsdom project and not in the node project, and not beside `projects`.
-//   3. A node-project file passes under the stress config with the key set.
+//   1. Each `test:flag-off*` script, with the arguments package.json gives it, collects only files under the `--dir`
+//      it passes, and one that passes none collects what the unit run collects. So does vitest.flagoff.config.ts
+//      under a `--dir`, which its script does not pass and a by-hand run may.
+//   2. The stress config lists stressSetup.ts in place of src/__tests__/setup.ts and nowhere else: in the jsdom
+//      project, not in the node project, and not beside `projects`.
+//   3. A node-project file passes under the stress config.
 //
 // The children get PATH and HOME and nothing else of this run's environment, as in ./vitest-projects.test.js.
-// When the trial ends and the projects are unconditional, the "without the key" halves go and the rest stays.
+// Until OPS-A3TRIALKEYREMOVE-001 the projects were behind the A3 trial's env key, and 1 and 2 compared each config
+// with the key and without it. With one shape, 1 holds the `--dir` by where the files are.
 import { describe, it, expect } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -24,7 +25,6 @@ import { nodeProjectFiles } from './vitest-node-project.mjs'
 import { cliDir, withCliDir, withSetupReplaced } from './vitest-side-config.mjs'
 
 const ROOT = process.cwd()
-const KEY = 'VITEST_NODE_PROJECT'
 const VITEST = resolve(ROOT, 'node_modules/vitest/vitest.mjs')
 const SETUP = './src/__tests__/setup.ts'
 const STRESS_SETUP = './src/__tests__/helpers/stressSetup.ts'
@@ -46,11 +46,11 @@ const parsed = (name) => {
 }
 
 // The files a run with these arguments would collect, repo-relative and sorted, whichever project takes each.
-const collected = ({ env, args }, switched) => {
+const collected = ({ env, args }) => {
   const out = execFileSync(process.execPath, [VITEST, 'list', ...args, '--filesOnly', '--json'], {
     ...CHILD,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...baseEnv(), ...env, ...(switched ? { [KEY]: '1' } : {}) },
+    env: { ...baseEnv(), ...env },
   })
   return [...new Set(JSON.parse(out).map(({ file }) => posix(relative(ROOT, file))))].sort()
 }
@@ -64,7 +64,7 @@ const RUNS = [
   },
 ]
 
-describe('the flag-off configs collect one set of files with the A3 trial key and without it', () => {
+describe('the flag-off configs collect the files under their --dir', () => {
   it('covers the four scripts, each on a config that builds on vitest.config.ts', () => {
     expect(FLAG_OFF).toEqual(['test:flag-off', 'test:flag-off:seed', 'test:flag-off:seedadd', 'test:flag-off:seedboth'])
     for (const name of FLAG_OFF) {
@@ -75,12 +75,16 @@ describe('the flag-off configs collect one set of files with the A3 trial key an
   })
 
   for (const { said, run } of RUNS) {
-    it(`${said}: the same files`, () => {
-      const without = collected(run, false)
-      const withKey = collected(run, true)
-      expect(without.length, 'files collected without the key').toBeGreaterThan(0)
-      expect(withKey.filter((file) => !without.includes(file)), 'collected only with the key').toEqual([])
-      expect(without.filter((file) => !withKey.includes(file)), 'collected only without the key').toEqual([])
+    it(`${said}: the files under its --dir, or the unit run's`, () => {
+      const files = collected(run)
+      const dir = cliDir(['node', 'vitest', 'run', ...run.args])
+      expect(files.length, 'files collected').toBeGreaterThan(0)
+      if (dir === undefined) {
+        expect(files, 'with no --dir, the files the unit run (vitest.config.ts) collects').toEqual(collected({ env: {}, args: [] }))
+      } else {
+        expect(files.filter((file) => !file.startsWith(`${dir.replace(/\/$/, '')}/`)), `collected outside --dir ${dir}: ` +
+          'the --dir did not reach a project (withCliDir in scripts/ci-telemetry/vitest-side-config.mjs)').toEqual([])
+      }
     }, 240000)
   }
 })
@@ -114,33 +118,21 @@ describe('vitest-side-config.mjs', () => {
   })
 })
 
-// vitest.stress.config.ts as vitest is given it, without the key and with it: `test` of each, read by vite's own
-// config loader in a child `node` (not imported here, for the reason given in ./vitest-projects.test.js).
+// vitest.stress.config.ts as vitest is given it: its `test`, read by vite's own config loader in a child `node` (not
+// imported here, for the reason given in ./vitest-projects.test.js).
 const STRESS_READER = `
   import { loadConfigFromFile } from 'vite'
-  const read = []
-  for (const value of [null, '1']) {
-    if (value === null) delete process.env.${KEY}
-    else process.env.${KEY} = value
-    const { config } = await loadConfigFromFile({ command: 'serve', mode: 'test' }, 'vitest.stress.config.ts')
-    read.push(config.test)
-  }
-  process.stdout.write(JSON.stringify(read))`
+  const { config } = await loadConfigFromFile({ command: 'serve', mode: 'test' }, 'vitest.stress.config.ts')
+  process.stdout.write(JSON.stringify(config.test))`
 
-describe('vitest.stress.config.ts puts its setup file where src/__tests__/setup.ts was, in both shapes', () => {
-  const [one, two] = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', STRESS_READER], {
+describe('vitest.stress.config.ts puts its setup file where src/__tests__/setup.ts was', () => {
+  const two = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', STRESS_READER], {
     ...CHILD,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: baseEnv(),
   }))
 
-  it('without the key: one project, the stress setup alone', () => {
-    expect(one.projects).toBeUndefined()
-    expect(one.environment).toBe('jsdom')
-    expect(one.setupFiles).toEqual([STRESS_SETUP])
-  })
-
-  it('with the key: in every jsdom project, in no other, and not beside `projects`', () => {
+  it('in every jsdom project, in no other, and not beside `projects`', () => {
     expect(two.setupFiles ?? []).toEqual([])
     expect(two.projects.map((project) => project.test.environment).sort()).toEqual(['jsdom', 'node'])
     for (const { test } of two.projects) {
@@ -149,12 +141,12 @@ describe('vitest.stress.config.ts puts its setup file where src/__tests__/setup.
     expect(JSON.stringify(two)).not.toContain(SETUP)
   })
 
-  it('with the key: a node-project file passes under the stress config', () => {
+  it('a node-project file passes under the stress config', () => {
     const file = 'lambda/daily-plan/seededgate.test.js'
     expect(nodeProjectFiles(ROOT)).toContain(file)
     const run = spawnSync(process.execPath, [VITEST, 'run', '-c', 'vitest.stress.config.ts', file], {
       ...CHILD,
-      env: { ...baseEnv(), NO_COLOR: '1', [KEY]: '1' },
+      env: { ...baseEnv(), NO_COLOR: '1' },
     })
     expect(run.status, `${run.stdout}\n${run.stderr}`.slice(-3000)).toBe(0)
     expect(run.stdout).toMatch(/Test Files\s+1 passed \(1\)/)

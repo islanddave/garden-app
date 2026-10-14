@@ -1,33 +1,28 @@
-// The two vitest projects of the A3 trial (vitest.config.ts, VITEST_NODE_PROJECT=1), held to the tree.
+// The two vitest projects of the unit run (vitest.config.ts), held to the tree.
 //
-// With the key set the unit suite runs as two projects. `node` takes the test files whose code under test is
-// server-side: those under lambda/, scripts/, migrations/ and tests/parity/ that load nothing under src/, run with no
-// jsdom and no src/__tests__/setup.ts. `dom` takes every other file as before, and that includes the node-root tests
-// that do load SPA code (LOADS_SRC in ./vitest-node-project.mjs). Without the key there is one project and every
-// file gets jsdom. Only ci-next.yml's two unit legs set the key, so each dev push compares the two shapes by test ID
-// (scripts/ci-telemetry/shadow-agree.py).
+// The unit suite runs as two projects. `node` takes the test files whose code under test is server-side: those under
+// lambda/, scripts/, migrations/ and tests/parity/ that load nothing under src/, run with no jsdom and no
+// src/__tests__/setup.ts. `dom` takes every other file, and that includes the node-root tests that do load SPA code
+// (LOADS_SRC in ./vitest-node-project.mjs). This began as the A3 trial, behind an env key that switched it on; the
+// key is gone (OPS-A3TRIALKEYREMOVE-001) and two projects are the only shape.
 //
-// This file is collected in both shapes, so it runs in the gating job and in the legs, and it holds six things:
-//   1. the switch takes. With the key this file has no DOM, without it it has one, and the installed vitest lists
-//      two projects or one to match. A leg whose key did nothing would run jsdom-everything like ci.yml and read
-//      TEST-IDS-EQUAL for the wrong reason;
-//   2. every test-named file outside tests/integration is in exactly one project, and the two shapes collect the
-//      same files. A file in no project is never run; a file in two runs twice and doubles its test IDs;
+// This file holds five things:
+//   1. the projects are there. This file has no DOM and runs in `node`, and the installed vitest lists the two
+//      projects;
+//   2. every test-named file outside tests/integration is in exactly one project. A file in no project is never run;
+//      a file in two runs twice and doubles its test IDs;
 //   3. the node project is exactly the *.test.* files under its four roots that are not in LOADS_SRC;
-//   4. no node-project file reads a member of the five browser globals by its plain spelling, so a DOM test dropped
-//      under scripts/ or lambda/ reds the gating job with a sentence instead of redding only the shadow;
-//   5. no node-project file loads anything under src/, itself or through what it imports. The test-ID digest and the
+//   4. no node-project file loads anything under src/, itself or through what it imports. The test-ID digest and the
 //      coverage report are both blind to a test that passes under node on the no-browser branches of SPA code;
-//   6. every file in LOADS_SRC still does load something under src/, so the list stays only as long as it is true.
+//   5. every file in LOADS_SRC still does load something under src/, so the list stays only as long as it is true.
 // 1 to 3 ask the installed vitest which project each file is in (`vitest list --filesOnly --json` in a child process,
 // as vitest-test-ids-reporter.test.js asks it for its default reporters) and do not re-implement its globs.
 //
-// 4 reads text, so it has false positives (a local named like a browser global, a string) and misses (a DOM reached
-// by a spelling it does not know). It is gating during the trial for one reason: without it a DOM test dropped under
-// a node root reds only the legs, reads DISAGREE, and blocks the shadow's 10-push window, which costs far more than
-// the rename it asks for.
+// The trial's text scan for browser globals in node-project files went with the key, as this header said it would:
+// a DOM test under a node root now fails by itself in every run (`document is not defined`), and the scan kept only
+// its false positives.
 //
-// 5 and 6 read text too, with one pattern (SPECIFIER): a quoted specifier after `from`, `import`, `import(`,
+// 4 and 5 read text, with one pattern (SPECIFIER): a quoted specifier after `from`, `import`, `import(`,
 // `require(`, `require.resolve(`, or a vi.mock / doMock / unmock / doUnmock / importActual / importMock call. That
 // covers static and side-effect imports, re-exports, literal dynamic imports and mocks. Relative specifiers, a
 // leading-slash one that names a file, and the aliases of vitest.config.ts are followed through every file they
@@ -43,14 +38,10 @@
 //     readFileSync it (source pins, copy-parity checks). Reading text runs none of it, so the environment cannot
 //     change what such a test means and it is rightly a node test. None of the 46 evaluated what it read (no eval,
 //     Function constructor, vm or transform call).
-//   - a child process: a test that spawns `node` on a file runs that file outside vitest in both shapes.
+//   - a child process: a test that spawns `node` on a file runs that file outside vitest in either project.
 //   - vite's glob import (the glob method of import.meta): no file under the node roots used one.
-// A test that loads SPA code by one of those routes belongs in LOADS_SRC by hand; 6 would then ask for its removal,
+// A test that loads SPA code by one of those routes belongs in LOADS_SRC by hand; 5 would then ask for its removal,
 // so say so in a line of this header first.
-//
-// When the trial ends and the projects are unconditional, 1 loses its "without the key" half and 4 goes: from then
-// on a DOM test under a node root fails by itself in every run (`document is not defined`) and the scan would keep
-// only its false positives. 2, 3, 5 and 6 stay.
 import { describe, it, expect, beforeAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
@@ -58,7 +49,6 @@ import { join, posix as slashed, relative, resolve, sep } from 'node:path'
 import { LOADS_SRC, NODE_ROOTS as ROOTS_OF_THE_CONFIG, NODE_TEST_NAMED, nodeProjectFiles } from './vitest-node-project.mjs'
 
 const ROOT = process.cwd()
-const KEY = 'VITEST_NODE_PROJECT'
 const NODE_ROOTS = ['lambda/', 'scripts/', 'migrations/', 'tests/parity/']
 const ROOTS_SAID = 'lambda/, scripts/, migrations/ and tests/parity/'
 const LIST = 'LOADS_SRC in scripts/ci-telemetry/vitest-node-project.mjs'
@@ -88,9 +78,9 @@ const walk = (dir = ROOT, found = []) => {
   return found
 }
 
-// One `{ file, project }` per collected file, from a child that has a shell's PATH and HOME, the key or not, and
-// nothing else of this run's environment. The root project of the one-project shape has no name: ''.
-const list = (switched) => {
+// One `{ file, project }` per collected file, from a child that has a shell's PATH and HOME and nothing else of this
+// run's environment. A project with no name reads as ''.
+const list = () => {
   const vitest = resolve(ROOT, 'node_modules/vitest/vitest.mjs')
   const out = execFileSync(process.execPath, [vitest, 'list', '--filesOnly', '--json'], {
     cwd: ROOT,
@@ -98,7 +88,7 @@ const list = (switched) => {
     timeout: 120000,
     maxBuffer: 64 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, ...(switched ? { [KEY]: '1' } : {}) },
+    env: { PATH: process.env.PATH, HOME: process.env.HOME },
   })
   return JSON.parse(out).map(({ file, projectName }) => ({
     file: posix(relative(ROOT, file)),
@@ -109,24 +99,17 @@ const list = (switched) => {
 const projectsOf = (listing) => [...new Set(listing.map((entry) => entry.project))].sort()
 const sorted = (files) => [...new Set(files)].sort()
 
-// vitest.config.ts as vitest is given it, once per value of the key (null: unset): `{ test, alias }` of each, read
-// by vite's own config loader in a child `node` and handed back as JSON. Not imported here: under jsdom a module's
-// import.meta.url is not a file URL, and the config finds the repository by it. The child has PATH and HOME only, so
-// the config is the same on a runner as on a laptop (with GITHUB_ACTIONS it also builds its reporters).
-const KEY_VALUES = [null, '', '0', 'true', '1 ', '1']
+// vitest.config.ts as vitest is given it: `{ test, alias }`, read by vite's own config loader in a child `node` and
+// handed back as JSON. Not imported here: under jsdom a module's import.meta.url is not a file URL, and the config
+// finds the repository by it. The child has PATH and HOME only, so the config is the same on a runner as on a laptop
+// (with GITHUB_ACTIONS it also builds its reporters).
 const CONFIG_READER = `
   import { loadConfigFromFile } from 'vite'
-  const read = []
-  for (const value of ${JSON.stringify(KEY_VALUES)}) {
-    if (value === null) delete process.env.${KEY}
-    else process.env.${KEY} = value
-    const { config } = await loadConfigFromFile({ command: 'serve', mode: 'test' }, 'vitest.config.ts')
-    read.push({ test: config.test, alias: (config.resolve && config.resolve.alias) || {} })
-  }
-  process.stdout.write(JSON.stringify(read))`
-let configsRead
-const configs = () => {
-  configsRead ??= JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', CONFIG_READER], {
+  const { config } = await loadConfigFromFile({ command: 'serve', mode: 'test' }, 'vitest.config.ts')
+  process.stdout.write(JSON.stringify({ test: config.test, alias: (config.resolve && config.resolve.alias) || {} }))`
+let configRead
+const config = () => {
+  configRead ??= JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', CONFIG_READER], {
     cwd: ROOT,
     encoding: 'utf8',
     timeout: 120000,
@@ -134,30 +117,7 @@ const configs = () => {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { PATH: process.env.PATH, HOME: process.env.HOME },
   }))
-  return configsRead
-}
-
-// A line that reads a member of a browser global by its plain spelling: a property read off one of the five, a stub
-// of one, a testing-library import, or an environment docblock. Read as text, so a member that merely shares a name
-// (`plan` + `.window.start`) is not one, and a test's own local named like a global is. The patterns and the samples
-// in this file are assembled from parts, so that this file, which sits under a node root, does not match itself.
-// Comments are prose and are not read for the first two: a whole-line `//`, a block-comment line (` * `, `/*`) and a
-// trailing ` // ...` are taken off first. The docblock and the import are read on the line as written.
-const GLOBALS = 'document|window|navigator|localStorage|sessionStorage'
-const DOM_USE = [
-  new RegExp(`(?<![.\\w$])(?:globalThis\\.|self\\.)?(?:${GLOBALS})(?:\\?\\.|\\.)[A-Za-z_$][\\w$]*`),
-  new RegExp(`stubGlobal\\(\\s*['"\`](?:${GLOBALS})['"\`]`),
-  new RegExp('@testing' + '-library/'),
-  new RegExp('@(?:vitest|jest)' + '-environment'),
-]
-const withoutComment = (line) => (/^\s*(?:\/\/|\/\*|\*)/.test(line) ? '' : line.replace(/\s\/\/\s.*$/, ''))
-const domUse = (line) => {
-  const code = withoutComment(line)
-  for (const [index, pattern] of DOM_USE.entries()) {
-    const hit = (index < 2 ? code : line).match(pattern)
-    if (hit) return hit[0]
-  }
-  return null
+  return configRead
 }
 
 // What a file loads, read from its text: every quoted specifier that follows one of these. A specifier with a
@@ -246,96 +206,70 @@ const repository = (aliases) => ({
   },
 })
 
-describe('the switch (VITEST_NODE_PROJECT)', () => {
+// The keys of vitest.config.ts's `test` block beside `projects`, which both projects inherit (`extends: true`). Off
+// a runner: GITHUB_ACTIONS adds `reporters`, which the child does not have.
+const BESIDE = ['coverage', 'env', 'exclude', 'globals', 'testTimeout']
+
+describe('the projects of vitest.config.ts', () => {
   let read
 
   beforeAll(() => {
-    read = configs()
+    read = config()
   }, 300000)
 
-  it('gives this file a DOM exactly when the key is not 1', ({ task }) => {
-    // The name is the same in both shapes, so the test-ID digest is too; what it asserts follows the key.
-    const switched = process.env[KEY] === '1'
+  it('runs this file in the node project, with no DOM', ({ task }) => {
     const here = 'scripts/ci-telemetry/vitest-projects.test.js'
-    const why = switched
-      ? `${KEY}=1 and ${here} still has a DOM: the switch in vitest.config.ts did not take, this run is ` +
-        'jsdom-everything, and a TEST-IDS-EQUAL against ci.yml would prove nothing. Restore the `projects` fork in ' +
-        'vitest.config.ts (this file belongs to the node project).'
-      : `${KEY} is not 1 and ${here} has no DOM: the node project is on without its key, so ci.yml is no longer ` +
-        'the jsdom-everything side of the shadow comparison. The fork in vitest.config.ts must build the projects ' +
-        `only when process.env.${KEY} === '1'.`
-    expect(typeof document, why).toBe(switched ? 'undefined' : 'object')
-    expect(task.file.projectName || '', `${here} runs in the project the key gives it: 'node' with ${KEY}=1, the ` +
-      'one unnamed project without').toBe(switched ? 'node' : '')
-  })
-
-  it('builds the projects only when the key is exactly 1', () => {
-    expect(KEY_VALUES.at(-1)).toBe('1')
-    for (const [index, value] of KEY_VALUES.slice(0, -1).entries()) {
-      const { test } = read[index]
-      const said = value === null ? `${KEY} unset` : `${KEY}=${JSON.stringify(value)}`
-      expect(test.projects, `vitest.config.ts with ${said} must be the one-project config: only the string '1' ` +
-        'builds the projects, or a run that is not a ci-next leg stops being jsdom-everything').toBeUndefined()
-      expect([test.environment, test.setupFiles], `vitest.config.ts with ${said}: every file gets jsdom and the ` +
-        'setup file').toEqual(['jsdom', ['./src/__tests__/setup.ts']])
-    }
+    expect(typeof document, `${here} has a DOM: the projects in vitest.config.ts are not there, or this file is no ` +
+      'longer a node-project file, and every server-side test runs under jsdom. Restore `projects: twoProjects()` in ' +
+      'vitest.config.ts.').toBe('undefined')
+    expect(task.file.projectName || '', `${here} runs in the node project`).toBe('node')
   })
 
   it('makes the two projects differ in environment, setup file and files, and in nothing else', () => {
     // Read as the object vitest is given, not as text: an option that reaches a project through a variable or a
     // spread is seen here too. The test IDs cannot see an option that changes what the files mean (retry, isolate,
     // pool, sequence, a timeout of the node project's own), so a project that gains one reds here instead.
-    const one = read[0].test
-    const two = read.at(-1).test
-    expect(two.projects, `vitest.config.ts with ${KEY}=1 builds no projects: the fork on the key is gone`)
-      .toHaveLength(2)
-    const where = `vitest.config.ts with ${KEY}=1: `
-    const restart = " Change it here in the same commit, and restart the shadow's count " +
-      '(.github/workflows/ci-next.yml, THE A3 TRIAL).'
-    expect(two.projects.map((project) => [Object.keys(project).sort(), project.extends, project.test.name,
+    const { test } = read
+    expect(test.projects, 'vitest.config.ts builds no projects: `projects: twoProjects()` is gone').toHaveLength(2)
+    const where = 'vitest.config.ts: '
+    const change = ' Change it here in the same commit.'
+    expect(test.projects.map((project) => [Object.keys(project).sort(), project.extends, project.test.name,
       project.test.environment, Object.keys(project.test).sort()]), where + 'the projects are dom then node, each ' +
       '`extends: true`, and each sets these keys and no others. An option added to one changes what its files run ' +
-      'under while every test ID stays equal.' + restart).toEqual([
+      'under while every test ID stays equal.' + change).toEqual([
       [['extends', 'test'], true, 'dom', 'jsdom', ['environment', 'exclude', 'name', 'setupFiles']],
       [['extends', 'test'], true, 'node', 'node', ['environment', 'include', 'name']],
     ])
-    const [dom, node] = two.projects.map((project) => project.test)
-    expect(dom.setupFiles, where + 'the dom project loads the setup files the one-project config loads')
-      .toEqual(one.setupFiles)
+    const [dom, node] = test.projects.map((project) => project.test)
+    expect(dom.setupFiles, where + 'the dom project loads the repo setup file and nothing else')
+      .toEqual(['./src/__tests__/setup.ts'])
     expect(node.include, where + "the node project's `include` is nodeProjectFiles() of " +
       'scripts/ci-telemetry/vitest-node-project.mjs, the files themselves').toEqual(nodeProjectFiles(ROOT))
     expect(dom.exclude, where + "the dom project's `exclude` is the node project's `include`, the same list: a " +
       'file in one and not the other runs in both projects or in neither').toEqual(node.include)
     // A project with `extends: true` inherits the root `test` block and arrays concatenate: a setupFiles beside the
-    // fork would load in the node project too, where src/__tests__/setup.ts throws on its first afterEach.
-    const INSIDE = ['projects', 'environment', 'setupFiles']
-    const beside = (test) => Object.fromEntries(Object.entries(test).filter(([key]) => !INSIDE.includes(key)))
-    expect(Object.keys(two).filter((key) => key === 'environment' || key === 'setupFiles'), where + '`environment` ' +
-      'and `setupFiles` live inside the fork, never beside it: beside it they reach the node project too')
-      .toEqual([])
-    expect(beside(two), where + 'everything beside the fork is what the one-project config has, so both projects ' +
-      'inherit it unchanged.' + restart).toEqual(beside(one))
+    // projects would load in the node project too, where src/__tests__/setup.ts throws on its first afterEach.
+    expect(Object.keys(test).sort(), where + 'beside `projects` the `test` block holds these keys and no others, ' +
+      'which both projects inherit. `environment` and `setupFiles` live inside the projects, never beside them: ' +
+      'beside them they reach the node project too. A key added here reaches both projects.' + change)
+      .toEqual([...BESIDE, 'projects'].sort())
   })
 })
 
 describe('the projects, asked of the installed vitest', () => {
-  let walked, on, off, tree, inNode
+  let walked, on, tree, inNode
 
   beforeAll(() => {
     walked = new Set(walk())
-    on = list(true)
-    off = list(false)
+    on = list()
     inNode = sorted(on.filter((entry) => entry.project === 'node').map((entry) => entry.file))
-    tree = repository(Object.fromEntries(Object.entries(configs()[0].alias)
+    tree = repository(Object.fromEntries(Object.entries(config().alias)
       .map(([specifier, path]) => [specifier, posix(relative(ROOT, path))])))
   }, 300000)
 
-  it('is two projects with the key, dom and node, and one without', () => {
-    expect(projectsOf(on), `with ${KEY}=1 the installed vitest must list the projects dom and node; with anything ` +
-      'else the switch in vitest.config.ts is a no-op or has grown a project nothing here accounts for')
-      .toEqual(['dom', 'node'])
-    expect(projectsOf(off), `without ${KEY} the installed vitest must list one unnamed project: every file under ` +
-      'jsdom, as ci.yml runs it').toEqual([''])
+  it('is two projects, dom and node', () => {
+    expect(projectsOf(on), 'the installed vitest must list the projects dom and node; with anything else the ' +
+      'projects in vitest.config.ts are gone or have grown one nothing here accounts for').toEqual(['dom', 'node'])
   })
 
   it('puts every test file outside tests/integration in exactly one project', () => {
@@ -361,18 +295,6 @@ describe('the projects, asked of the installed vitest', () => {
     expect(walked.size).toBeGreaterThan(1000)
   })
 
-  it('collects the same files with the key as without it, each once', () => {
-    const offFiles = off.map((entry) => entry.file)
-    const onFiles = new Set(on.map((entry) => entry.file))
-    expect(offFiles).toHaveLength(new Set(offFiles).size)
-    const missing = sorted(offFiles).filter((file) => !onFiles.has(file))
-    const extra = sorted(onFiles).filter((file) => !offFiles.includes(file))
-    expect({ missing, extra }, `with ${KEY}=1 the two projects must collect exactly the files the one-project run ` +
-      'collects. `missing` are run by ci.yml and by no project; `extra` are run by a project and not by ci.yml. ' +
-      'Fix nodeProjectFiles() in scripts/ci-telemetry/vitest-node-project.mjs, or twoProjects in vitest.config.ts.')
-      .toEqual({ missing: [], extra: [] })
-  })
-
   it(`makes the node project exactly the files under ${ROOTS_SAID} that are not in LOADS_SRC`, () => {
     expect(ROOTS_OF_THE_CONFIG.map((root) => `${root}/`), 'NODE_ROOTS in scripts/ci-telemetry/vitest-node-project.mjs ' +
       'and NODE_ROOTS in scripts/ci-telemetry/vitest-projects.test.js name the same roots: change both in one ' +
@@ -394,23 +316,6 @@ describe('the projects, asked of the installed vitest', () => {
     expect(on.some(({ project }) => project === 'dom')).toBe(true)
   })
 
-  it('finds no node-project file that reads a member of the five browser globals by its plain spelling', () => {
-    const problems = []
-    for (const file of inNode) {
-      readFileSync(resolve(ROOT, file), 'utf8').split('\n').forEach((line, index) => {
-        const token = domUse(line)
-        if (token === null) return
-        problems.push(`${file}:${index + 1} uses ${token}, and this file runs without a DOM in vitest's node ` +
-          "project (ci-next.yml's unit legs during the A3 trial; every run after it). Move the test under " +
-          'src/__tests__/ (the dom project), or take the DOM out of it. The check reads text, not scope: if that ' +
-          "name is a local of the test's own, rename the local; if it is inside a string, split the token " +
-          "('docu' + 'ment.x'), as scripts/ci-telemetry/vitest-projects.test.js does.")
-      })
-    }
-    expect(problems, problems.join('\n')).toEqual([])
-    expect(inNode.length).toBeGreaterThan(100)
-  })
-
   it('finds no node-project file that loads anything under src/, itself or through what it imports', () => {
     const problems = []
     const unfollowed = []
@@ -420,8 +325,8 @@ describe('the projects, asked of the installed vitest', () => {
       problems.push(`vitest projects: ${file} runs in 'node' and loads SPA code:\n    ${chain.join('\n    ')}\n` +
         '  For code under src/ the browser is production. Under node this test keeps its name and passes while ' +
         'that code takes its no-browser branches, and neither the test-ID digest nor coverage can see it. Add ' +
-        `'${file}' to ${LIST} (kept sorted): it then runs in 'dom', with jsdom and src/__tests__/setup.ts, as the ` +
-        'one-project run has it. Or take the src/ dependency out of the test. The scan reads text: an ' +
+        `'${file}' to ${LIST} (kept sorted): it then runs in 'dom', with jsdom and src/__tests__/setup.ts, like ` +
+        'every test of SPA code. Or take the src/ dependency out of the test. The scan reads text: an ' +
         'import-shaped line inside a comment or a string counts, so reword that or split the token.')
     }
     expect(problems, problems.join('\n')).toEqual([])
@@ -441,7 +346,7 @@ describe('the projects, asked of the installed vitest', () => {
 
   it('keeps LOADS_SRC to test files under the node roots that still load something under src/', () => {
     expect(LOADS_SRC, `${LIST} is sorted and names each file once`).toEqual(sorted(LOADS_SRC))
-    const collected = new Set(off.map((entry) => entry.file))
+    const collected = new Set(on.map((entry) => entry.file))
     const problems = []
     for (const file of LOADS_SRC) {
       const entry = `vitest projects: '${file}' is in ${LIST}`
@@ -474,51 +379,11 @@ describe('what counts as a test file', () => {
     const others = ['PROPOSED-TEST-parent-proj-fk.int.test.js.txt', 'a.test.jsx.snap', 'a.test.js.orig',
       'a.test.json', 'a.test.md', 'a.spec.yaml', 'a.test.js~', 'test.js', 'a.tests.js', 'atest.js']
     expect(others.filter((name) => TEST_NAMED.test(name))).toEqual([])
-    // The node project picks its files by the same ending, *.test.* only: a wider one has it collect a file the
-    // one-project run never does, and the two shapes stop running the same files.
+    // The node project picks its files by the same ending, *.test.* only: a wider one has it collect a file that
+    // vitest's own include never would, and a file that is not a test runs as one.
     expect(others.filter((name) => NODE_TEST_NAMED.test(name))).toEqual([])
     expect(['a.test.js', 'a.int.test.mjs', 'a.test.tsx', 'a.spec.js'].map((name) => NODE_TEST_NAMED.test(name)))
       .toEqual([true, true, true, false])
-  })
-})
-
-describe('what counts as using the DOM', () => {
-  const dot = (...parts) => parts.join('.')
-
-  it('is a property of a browser global, a stub of one, a testing-library import or an environment docblock', () => {
-    const uses = [
-      dot('document', 'body', 'innerHTML'),
-      `expect(${dot('window', 'innerWidth')}).toBe(426)`,
-      dot('globalThis', 'navigator', 'userAgent'),
-      dot('localStorage', "setItem('k', 'v')"),
-      dot('sessionStorage', 'clear()'),
-      ['window', 'matchMedia'].join('?.'),
-      dot('vi', 'stub' + "Global('document', {})"),
-      "import { render } from '" + '@testing' + "-library/react'",
-      '// ' + '@vitest' + '-environment jsdom',
-    ]
-    expect(uses.filter((line) => domUse(line) === null)).toEqual([])
-  })
-
-  it('is not the garden vocabulary those names share', () => {
-    const plain = [
-      'a three-day weather window opens on the 14th',
-      'const window = plan.windows[0]',
-      dot('plan', 'window', 'start'),
-      'the storage location of the document',
-      "typeof document === 'undefined'",
-      'navigator, document and window are absent here',
-    ]
-    expect(plain.filter((line) => domUse(line) !== null)).toEqual([])
-  })
-
-  it('is not a comment that names one, and still is the code before a trailing comment', () => {
-    const title = dot('document', 'title')
-    const prose = [`// sets ${title} in the browser`, `    // ${dot('window', 'start')} is the first day`,
-      ` * reads ${dot('navigator', 'userAgent')}`, `/* ${title} */`, `const days = 3 // not ${title}`]
-    expect(prose.filter((line) => domUse(line) !== null)).toEqual([])
-    expect(domUse(`${title} = 'x' // sets the title`)).toBe(title)
-    expect(domUse(`const page = 'https://example.test/a'; ${title} = page`)).toBe(title)
   })
 })
 

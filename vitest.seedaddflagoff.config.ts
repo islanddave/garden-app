@@ -16,7 +16,7 @@ const both = process.env.SEED_BOTH_FLAGS_OFF === '1'
 export default {
   ...base,
   plugins: [seedAddToLotOff(), ...(both ? [seedMultiParentOff()] : []), ...(base.plugins || [])],
-  // withCliDir: with the A3 trial key the scripts' `--dir src/__tests__` reaches each project (vitest-side-config.mjs).
+  // withCliDir: the scripts' `--dir src/__tests__` reaches each project of vitest.config.ts (vitest-side-config.mjs).
   test: withCliDir({
     ...base.test,
     env: {

@@ -10,6 +10,6 @@ import { seedMultiParentOff } from './tests/harness/seedFlagTransform.mjs'
 export default {
   ...base,
   plugins: [seedMultiParentOff(), ...(base.plugins || [])],
-  // withCliDir: with the A3 trial key a `--dir` reaches each project (vitest-side-config.mjs).
+  // withCliDir: a `--dir` reaches each project of vitest.config.ts (vitest-side-config.mjs).
   test: withCliDir({ ...base.test, env: { ...(base.test && base.test.env), SEED_FLAG_OFF_REHEARSAL: '1' } }),
 }

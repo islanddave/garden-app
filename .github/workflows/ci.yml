@@ -20,11 +20,11 @@ name: CI — Build and Unit Tests
 #     continue-on-error reads `success` in `needs`, and a skipped leg is not a pass.
 #   - What a step hands to a later one stays inside its leg; each leg repeats the setup it needs (checkout,
 #     setup-node, npm ci, Chrome, the origin/main fetch). ci-next.yml's header lists the hand-offs.
-#   - The two unit steps carry env VITEST_NODE_PROJECT: '1' (vitest.config.ts then runs the server-side test files
-#     in a `node` project and the rest under jsdom). The owner's decision (2026-10-11, row `switch-unit-shape` of
-#     DECISIONS.md beside the plan) has two halves: that two-project shape is the gating one, and the trial's key
-#     is removed so there is one shape. The switch does the first half only, with the key as the shadow and the
-#     soak ran it. Removing the key is a later commit, and the row is not carried out in full until it lands.
+#   - The two unit steps run vitest.config.ts as it is: two projects, the server-side test files in `node` and
+#     the rest under jsdom, in every run. The owner's decision (2026-10-11, row `switch-unit-shape` of DECISIONS.md
+#     beside the plan) had two halves: that two-project shape is the gating one, and the A3 trial's env key is
+#     removed so there is one shape. The switch did the first half; OPS-A3TRIALKEYREMOVE-001 did the second, and
+#     scripts/test_ci_next.py holds the key out of both workflow files.
 # A lane's branch runs this file only on a pull request (a push runs it on dev alone), and GitHub takes a pull
 # request's workflow from the merge of the branch into its base (documented behaviour, not observed here): a lane
 # cut from a dev older than the switch gets these nine jobs once its base holds them. What such a lane keeps is its
@@ -425,8 +425,6 @@ jobs:
         run: npm test
         # vitest exits non-zero if coverage thresholds (in vitest.config.ts) not met.
         # Path A baseline: thresholds at 0%; schedule ratchets up per coverage-ratchet.json.
-        env:
-          VITEST_NODE_PROJECT: '1'
 
       - name: Coverage ratchet — measured floor (WS-B M4)
         # The pre-test ratchet step above compares only the CONFIG thresholds to
@@ -479,7 +477,6 @@ jobs:
         run: npx vitest run --no-coverage
         env:
           TZ: America/New_York
-          VITEST_NODE_PROJECT: '1'
 
   # Real-Chrome gates, first group (~246 s of work measured after the idle-timer fix, run 37040756148).
   gates-a:

@@ -3,12 +3,11 @@ import react from '@vitejs/plugin-react';
 import TestIdsReporter from './scripts/ci-telemetry/vitest-test-ids-reporter.mjs';
 import { nodeProjectFiles } from './scripts/ci-telemetry/vitest-node-project.mjs';
 
-// The two projects of the A3 trial (see `test` below). `node` takes the test files whose code under test is
+// The two projects of the unit run (see `test` below). `node` takes the test files whose code under test is
 // server-side: those under lambda/, scripts/, migrations/ and tests/parity/ that load nothing under src/. Which
 // files those are, and why they reach vitest as one list of files and not as globs, is
 // scripts/ci-telemetry/vitest-node-project.mjs. The list is the node project's `include` and the dom project's
-// `exclude`, so dom takes every other file, wherever it lives, as the one-project run does.
-// Built only when the key is set: a run without it does not walk the tree.
+// `exclude`, so dom takes every other file, wherever it lives.
 const twoProjects = () => {
   const nodeFiles = nodeProjectFiles(new URL('.', import.meta.url).pathname);
   return [
@@ -70,22 +69,23 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    // THE A3 TRIAL (CI plan item A3). With VITEST_NODE_PROJECT=1 the suite runs as two projects: `node` takes the
-    // server-side test files (twoProjects, above) and runs them with no jsdom and no setup file; `dom` takes every
-    // other file exactly as before. Without the key (every local run, and ci.yml) the last line below is the config
-    // as it was: one project, jsdom and the setup file for every file. Only ci-next.yml's two unit steps set the
-    // key, so the shadow compares the two shapes commit for commit by test ID
-    // (scripts/ci-telemetry/shadow-agree.py); scripts/test_ci_next.py holds the key to those two steps and
-    // scripts/ci-telemetry/vitest-projects.test.js holds the projects to the tree.
-    // `environment` and `setupFiles` live INSIDE the fork, never beside it. A project with `extends: true` inherits
-    // this whole block and arrays concatenate, so a `setupFiles` out here would also load in the node project, and
-    // src/__tests__/setup.ts reads `document` in an afterEach: measured, every test of the node project failed.
-    // The same concatenation is what makes the dom project's `exclude` ADD to the list further down.
+    // TWO PROJECTS, in every run: `node` takes the server-side test files (twoProjects, above) and runs them with no
+    // jsdom and no setup file; `dom` takes every other file, with jsdom and src/__tests__/setup.ts. This began as
+    // THE A3 TRIAL (CI plan item A3), behind an env key that only ci-next.yml's unit legs set, so that the shadow
+    // compared it with jsdom-everything commit for commit by test ID; the owner declared the trial's exit and made
+    // this the gating shape (2026-10-11, DECISIONS.md rows `A3-exit` and `switch-unit-shape`), and the key went in
+    // OPS-A3TRIALKEYREMOVE-001, so a local run and both workflows run one shape. The trial's record is THE A3 TRIAL
+    // in .github/workflows/ci-next.yml; scripts/ci-telemetry/vitest-projects.test.js holds the projects to the tree.
+    // `environment` and `setupFiles` live INSIDE the projects, never beside them. A project with `extends: true`
+    // inherits this whole block and arrays concatenate, so a `setupFiles` out here would also load in the node
+    // project, and src/__tests__/setup.ts reads `document` in an afterEach: measured, every test of the node project
+    // failed. The same concatenation is what makes the dom project's `exclude` ADD to the list further down.
     // Everything else stays out here and reaches both projects: globals, the reporters, testTimeout, exclude, env.
-    // Coverage is one merged report from this block's `coverage`, whichever shape runs.
-    ...(process.env.VITEST_NODE_PROJECT === '1'
-      ? { projects: twoProjects() }
-      : { environment: 'jsdom', setupFiles: ['./src/__tests__/setup.ts'] }),
+    // Coverage is one merged report from this block's `coverage`.
+    // `--dir` on the command line does not reach a project (vitest hands its projects a fixed list of command-line
+    // options), so `vitest run --dir src/__tests__` collects every file; name the files or a filter instead. The
+    // configs that build on this one and take `--dir` hand it on: scripts/ci-telemetry/vitest-side-config.mjs.
+    projects: twoProjects(),
     // Test-ID evidence for the CI shadow comparison (scripts/ci-telemetry/vitest-test-ids-reporter.mjs): on a
     // GitHub Actions runner each run ends with one ::notice carrying the sha256 of its sorted test-ID list, which
     // scripts/ci-telemetry/shadow-agree.py compares between ci.yml and ci-next.yml. Nothing is added off the

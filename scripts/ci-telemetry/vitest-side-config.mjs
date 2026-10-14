@@ -1,13 +1,13 @@
-// What a config that builds on vitest.config.ts must do by hand when the A3 trial key makes
-// the suite two projects: vitest.stress.config.ts and the three flag-off configs. Which file runs in which project
-// stays where it is, in ./vitest-node-project.mjs by way of vitest.config.ts; nothing here names a test file, and
-// nothing here reads the key: both functions go by whether `test.projects` is there.
-// scripts/ci-telemetry/vitest-side-configs.test.js holds the four configs to both shapes.
+// What a config that builds on vitest.config.ts must do by hand because the suite is two projects:
+// vitest.stress.config.ts and the three flag-off configs. Which file runs in which project stays where it is, in
+// ./vitest-node-project.mjs by way of vitest.config.ts; nothing here names a test file. Both functions go by whether
+// `test.projects` is there (until OPS-A3TRIALKEYREMOVE-001 the A3 trial's env key decided that).
+// scripts/ci-telemetry/vitest-side-configs.test.js holds the four configs to the projects.
 //
-// Two things a spread of `base.test` gets wrong with the key set, both measured on vitest 4.1.11:
+// Two things a spread of `base.test` gets wrong under projects, both measured on vitest 4.1.11:
 //   - `--dir` stops at the root project. vitest hands its projects a fixed list of command-line options
 //     (`cliOverrides` in its resolveProjects) and `dir` is not one of them, so `--dir src/__tests__ seed …` collected
-//     196 files where the one-project run collects 175: the 21 more were every lambda/ test with "seed" in its path.
+//     196 files where the one-project config collected 175: the 21 more were every lambda/ test with "seed" in its path.
 //   - a `setupFiles` beside `projects` loads in every project (arrays concatenate under `extends: true`), the node
 //     project included, where src/__tests__/setup.ts reads `document` in an afterEach and every test fails.
 // Re-read the first on a vitest upgrade: if `dir` joins that list, withCliDir is a no-op that can go.

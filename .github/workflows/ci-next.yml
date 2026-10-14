@@ -30,19 +30,19 @@ name: CI Next — the canary and soak copy of ci.yml's legs (non-gating)
 # What the legs carry that the serial job's steps did not, in both files, each pinned by the same test:
 #   - `Install PyYAML ...` in `static` (the serial job's migration gate validation got PyYAML from the pytest step);
 #   - the TZ sentinel in `unit-ny`;
-#   - env VITEST_NODE_PROJECT: '1' on the two unit steps (THE A3 TRIAL, below);
 #   - the aggregator's one step.
 #
 # THE A3 TRIAL. `Run unit tests with coverage` (unit-utc-cov) and
-# `Unit tests under America/New_York TZ (date-fragility guard)` (unit-ny) carry env VITEST_NODE_PROJECT: '1'. With the
-# key, vitest.config.ts runs the suite as two projects: `node` takes the test files whose code under test is
+# `Unit tests under America/New_York TZ (date-fragility guard)` (unit-ny) carried env VITEST_NODE_PROJECT: '1'. With
+# the key, vitest.config.ts ran the suite as two projects: `node` takes the test files whose code under test is
 # server-side, with no jsdom and no src/__tests__/setup.ts, and `dom` takes every other file as before. Without it
-# the config is one project, jsdom for every file.
-# SINCE THE SWITCH both files carry the key on those two steps, so the two-project shape is the gating one (owner,
+# the config was one project, jsdom for every file.
+# The switch put the key on those two steps of both files, so the two-project shape became the gating one (owner,
 # 2026-10-11, decision rows `A3-exit` and `switch-unit-shape` in gardening-docs
-# project-state/_promotepath-20261002/DECISIONS.md). scripts/test_ci_next.py holds the key to those two steps in
-# each file and reds on it anywhere else. Taking the key out and making two projects the only shape is a later
-# commit. From here to "Design and measurements" is the trial AS IT RAN, while ci.yml's serial job was the
+# project-state/_promotepath-20261002/DECISIONS.md). OPS-A3TRIALKEYREMOVE-001 then took the key out of both files
+# and out of vitest.config.ts, which builds the two projects in every run: one shape, local and CI.
+# scripts/test_ci_next.py holds the key out of both files. From here to "Design and measurements" is the trial AS IT
+# RAN, while ci.yml's serial job was the
 # jsdom-everything side and this file's legs the two-project side: kept as the record of what was compared and what
 # the exit was declared on, and because other files point here by this heading. Nothing in it is a standing
 # instruction any more: no dev push runs both shapes, so scripts/ci-telemetry/shadow-agree.py has no new row to
@@ -95,7 +95,8 @@ name: CI Next — the canary and soak copy of ci.yml's legs (non-gating)
 #     OUT_DIR` makes both at the current checkout, on the Node of .nvmrc and a clean tree. They are met when its
 #     last line is `A3-EXIT-PASS` (exit 0), and not when it is `A3-EXIT-FAIL (e1=…, e2=…, red=…, node=…, tree=…)`.
 #     .github/workflows/a3-exit-run.yml makes that run on a runner, for a commit pushed to the branch `a3-exit-run`.
-# Before the key can be removed and the two projects become the only shape (none of this blocks reading the trial):
+# Before the key could be removed and the two projects become the only shape (met: the six exit checks and their
+# output are in gardening-docs project-state/_promotepath-20261002/lane-a3trialremove-20261014.log):
 #   - the exit list, as commands, is "Exit" in gardening-docs
 #     project-state/_promotepath-20261002/review-a3trial-qa-20261007.md. The owner declares the exit on the output
 #     of those commands; a lane does not;
@@ -383,8 +384,6 @@ jobs:
 
       - name: Run unit tests with coverage
         run: npm test
-        env:
-          VITEST_NODE_PROJECT: '1'
 
       - name: Coverage ratchet — measured floor (WS-B M4)
         run: python3 scripts/check-coverage-ratchet.py --measured
@@ -434,7 +433,6 @@ jobs:
         run: npx vitest run --no-coverage
         env:
           TZ: America/New_York
-          VITEST_NODE_PROJECT: '1'
 
   # Real-Chrome gates, first group (~246 s of work measured after the idle-timer fix, run 37040756148).
   gates-a:
