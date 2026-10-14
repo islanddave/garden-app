@@ -84,7 +84,7 @@ export default function GlanceCard({
               <>
                 <span style={srOnly}>Weather: </span>
                 <span>Less</span>
-                <span aria-hidden="true">{' ▴'}</span>
+                <span aria-hidden="true" style={arrow}>▴</span>
               </>
             ) : (
               <>
@@ -102,7 +102,9 @@ export default function GlanceCard({
                   </span>
                   {/* V5-WXCOLDBAND-001: the forecast's cold end, only when it is colder than this low. */}
                   <ColdRangeNote coldRange={coldRange} planDate={planDate} lowShown={low} phrase={COLD_PHRASE} />
-                  <span style={detailsLabel}>Details<span aria-hidden="true">{' ▾'}</span></span>
+                  {/* The words and the arrow are siblings: the arrow is a glyph the Roboto pin lacks (font-census.mjs
+                      HOST_FONT_OK), so it must be an element of its own. */}
+                  <span style={detailsLabel}><span>Details</span><span aria-hidden="true" style={arrow}>▾</span></span>
                 </span>
                 <span data-testid="glance-rain" style={rowB}>
                   {rain.map((t) => (
@@ -215,6 +217,7 @@ const closedToggle = { ...toggleBase, display: 'block', width: '100%', minHeight
 const linkText = { fontSize: T.type.sm, fontWeight: 600, color: P.green, whiteSpace: 'nowrap' }
 const openToggle = { ...toggleBase, ...linkText, display: 'flex', alignItems: 'center', minHeight: T.tapMinHeight, paddingLeft: 8 }
 const detailsLabel = { ...linkText, marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, paddingLeft: 8, flexShrink: 0 }
+const arrow = { marginLeft: 4 }
 const rowA = { display: 'flex', alignItems: 'center', gap: 11 }
 const tempPair = { display: 'flex', alignItems: 'flex-start', gap: 1, lineHeight: 1 }
 const hiStyle = { fontWeight: 800, letterSpacing: '-0.02em', fontSize: 36, color: P.dark }

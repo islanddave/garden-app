@@ -98,7 +98,7 @@ describe('today-v2 contract table', () => {
     expect(REGIONS_V2.filter((r) => r.state === 'v2-storage-open' && isArmed(r)).map((r) => r.id)).toEqual(['storage-deadline-alert'])
     // R16 re-stated from the measurement (673 vs 668): the Needs care header whole on the first screen.
     expect(armedIn('v2-busy', 'first-screen').some((c) => c.allRows === 'protect-row' && c.headerTopMax?.care === 'FIRST_SCREEN+-48')).toBe(true)
-    expect(armedIn('v2-frost', 'first-screen').some((c) => c.headerTopMax?.care === 'FIRST_SCREEN+72')).toBe(true)
+    expect(armedIn('v2-frost', 'first-screen').some((c) => c.headerTopMax?.care === 'FIRST_SCREEN+-22')).toBe(true)
     expect(armedIn('v2-frost', 'visibility')).toHaveLength(1)
     // The S5 real-Chrome mutants carry their source (the runner refuses an armed mutant without one).
     for (const n of ['openNone', 'coldRowsInNeedsCare', 'pickLinkMissing', 'openAll', 'reorderSections']) {
@@ -264,7 +264,7 @@ describe('v2 grafts and the re-dating helper', () => {
     expect(Math.round(cols.reduce((a, c) => a + c[1], 0) / 5 * 100) / 100).toBe(0.4)      // D1 mean: over the 0.30″ bar
     expect(cols.filter((c) => c[1] >= 0.01).length * 20).toBe(80)                          // D1 chance: over 50%
     expect(rain.checks.filter((c) => c.family === 'glance-rain' && isArmed(c))).toHaveLength(1)
-    expect(rain.checks.some((c) => c.headerTopMax?.care === 'FIRST_SCREEN+72')).toBe(true)
+    expect(rain.checks.some((c) => c.headerTopMax?.care === 'FIRST_SCREEN+-22')).toBe(true)
     const B = read('today-shape-budget.v2.json').states
     for (const k of ['clock', 'contentBottomFloor', 'contentBottomCeiling', 'controlsFloor', 'scrollHeightCeiling']) expect(B['v2-frost-rain'][k], k).toBe(B['v2-frost'][k])
     expect(STATES).toHaveLength(21)

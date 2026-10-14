@@ -94,11 +94,11 @@ describe('closed — the first screen (D1)', () => {
   })
   it('row A: "Details ▾" is a visible part of the one button, a 44px box at the row\'s end', () => {
     render(<Harness />)
-    const label = [...toggle().querySelectorAll('span')].find((el) => el.textContent === 'Details ▾')
+    const label = [...toggle().querySelectorAll('span')].find((el) => el.textContent === 'Details▾')
     expect(label).toBeTruthy()
     expect(label.style.minHeight).toBe('44px')
     expect(label.style.marginLeft).toBe('auto')
-    expect(label.querySelector('[aria-hidden="true"]').textContent).toBe(' ▾')
+    expect(label.querySelector('[aria-hidden="true"]').textContent).toBe('▾')
   })
   it('no Protect section (finish plan §3.3): the cue and ONE frost line sit UNDER the card, outside it, cue first', () => {
     render(<Harness />)
@@ -169,7 +169,7 @@ describe('open — MF2: the weather card ONCE, in place of rows A–C', () => {
     expect(toggle().getAttribute('aria-expanded')).toBe('true')
     expect(screen.getAllByTestId('today-weather')).toHaveLength(1)
     expect(screen.queryByTestId('today-verdict')).toBeNull()
-    expect(toggle().textContent).toBe('Weather: Less ▴')
+    expect(toggle().textContent).toBe('Weather: Less▴')
     // Laid over WeatherWidget's row A at its border + padding from the top right — the closed card's row A end.
     const h2 = toggle().closest('h2')
     expect([h2.style.position, h2.style.top, h2.style.right]).toEqual(['absolute', '17px', '17px'])

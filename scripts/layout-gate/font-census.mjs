@@ -35,6 +35,13 @@ export const HOST_FONT_OK = {
   // 426x836 through gate:today-shape:v2: with ▸/▾ swapped for Roboto '>'/'v', v2-busy / v2-remembered /
   // v2-remembered-conflict kept page 836px, content bottom y=243 / 263 / 243 and 4 controls, identically.
   '▸': '▸ — the redesigned Today\'s closed section-band chevron (FacetGroupHeader native mode), 48px-min band',
+  // V5-TODAYREDESIGN-001 finish plan L3 — the glance card's "Details ▾" / "Less ▴" (GlanceCard.jsx; the arrow is its own
+  // element, so the words stay Roboto's). ▾ is the entry above; ▴ is new. Measured 2026-10-14 at 426x836 @2 through
+  // the v2 harness on v2-frost, closed and open: with ▾/▴ swapped for Roboto 'v'/'^' only the control's OWN width moves
+  // (Details 58.84 → 59.20 px, Less 45.88 → 45.36 px, its right edge pinned at x=393); the glance card (128.98 closed,
+  // 460.22 open), row A (44), the cold note, the verdict, WeatherWidget (273), Protect's and Needs care's headers
+  // (y=297 / 703 closed, 628 / 1034 open) and the document (1890 / 2221) are identical. "Less ▴" is absolutely placed.
+  '▴': '▴ — the redesigned Today\'s glance toggle "Less ▴" (GlanceCard.jsx), 44px-tall, absolutely placed',
 }
 
 export async function fontCensus({ send, sessionId, evalIn }, rootSelector) {
