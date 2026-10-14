@@ -20,6 +20,7 @@ import { useHeadsUp } from '../components/today/v2/useHeadsUp.js'
 import { handledSummary } from '../lib/todayV2/protect.js'
 import { openAtStart } from '../lib/todayV2/triggers.js'
 import { CHIPS, taskCounts, liveChips, shownChips } from '../lib/todayV2/chips.js'
+import { filterResult, filterAnnouncement } from '../lib/todayV2/spots.js'
 import { staleMarker } from '../lib/todayV2/verdict.js'
 import { agreedTonightLow, agreeCallout } from '../lib/tonightLow.js'
 import { currentLows } from '../lib/frostAlertLine.js'
@@ -61,8 +62,9 @@ import { SOW_DATED_LINES_FROZEN } from '../lib/featureFlags.js'
 // key 'glance' (a tap is remembered, nothing ever opens it by itself). The JUMP BAR paints at the ready point
 // with the chips live there, HELD for the visit (order.chips); it is the page's one sticky layer. A chip tap
 // opens its section as a visit overlay, scrolls its header under the bar and focuses it; Water / Feed / Check
-// also leave S4's filter row a pre-select intent (useTodayVisit `setFilter`). While this page is mounted the
-// document scrolls with the sticky layers subtracted (html scroll-padding).
+// ARE Needs care's task filter (finish plan §3.5, Dave's D17): a tap sets that task, a tap on the task already set
+// clears it, and the jump lands either way. While this page is mounted the document scrolls with the sticky
+// layers subtracted (html scroll-padding, at the bar's measured height).
 //
 // THE READY POINT (§6.4): the plan has settled (a plan, no plan, or an error) and Layer 1 can be read — prefs
 // have loaded, OR this device has a mirror, OR 300 ms have passed. Sections paint THERE, all at once, from a
@@ -76,16 +78,6 @@ const CARE_NEEDS = new Set(['water_due', 'no_history', 'fertilize', 'pest', 'ove
 const PREFS_WAIT_MS = 300
 // §6.2's bottom allowance: one toast's height above BottomNav, so a focused control is never under either.
 const TOAST_ALLOWANCE_PX = 64
-
-// The tapped chip, when cut at the strip's edge, slides fully into view. The STRIP scrolls (strip.scrollTo) —
-// never chip.scrollIntoView, which would scroll the page as well (§6.2).
-function revealChip(strip, chip, behavior) {
-  if (!strip || !chip || typeof strip.scrollTo !== 'function') return
-  const s = strip.getBoundingClientRect()
-  const c = chip.getBoundingClientRect()
-  const dx = c.left < s.left ? c.left - s.left : c.right > s.right ? c.right - s.right : 0
-  if (dx) strip.scrollTo({ left: strip.scrollLeft + dx, behavior })
-}
 
 function formatDate(iso) {
   if (!iso) return ''
@@ -186,6 +178,14 @@ export default function TodayV2() {
   // card never says "Nothing due" while the bar says "Water 3" — not the plan's raw water_due length.
   const waterDueLeft = counts.water
   const live = useMemo(() => liveChips(present, counts), [present, counts])
+  // ── the filters (§2.6; finish plan §3.5): ONE set, held by useNeedsCare and saved per session — the task from the
+  // bar's Water / Feed / Check cells, the spots from Needs care's spot chips. Every change, from either, says its
+  // result ONCE through the page's one status region ("Needs care: Water, 168 in 8 spots."), from the change itself.
+  const setCareFilters = needs.setFilters
+  const changeCareFilters = useCallback((next) => {
+    setCareFilters(next)
+    announce(filterAnnouncement(filterResult(care, next)))
+  }, [setCareFilters, announce, care])
 
   // ── the ready point ───────────────────────────────────────────────────────────────────────────────────────
   const settled = !loading
@@ -221,7 +221,7 @@ export default function TodayV2() {
   // is inserted closed in its slot when it arrives (§2.9).
   const ready = settled && !awaitingPrefs && (prefsLoaded || layer1.mirrorExists || prefsWaitOver) && (!plan || needs.settled) && protect.settled && (bands.settled || prefsWaitOver)
 
-  const { record, isOpen, tap, overlayAll, update, setFilter } = useTodayVisit({
+  const { record, isOpen, tap, overlayAll, update } = useTodayVisit({
     userId, planDate, ready,
     start: () => {
       // §3 + MF1 — ONE evaluation (triggers.js openAtStart): Protect tonight (frost / hard freeze / a chill
@@ -267,9 +267,12 @@ export default function TodayV2() {
   const chips = barShown ? shownChips(heldChips, live) : []
 
   // A chip tap (§2.7, §5.5): the page-scroll manager stands down (usePageScrollYield), the target opens as a
-  // visit overlay (never remembered), a task chip leaves S4 its pre-select intent, and — after the commit that
-  // mounts the target's body — the header scrolls under the bar (instant under reduced motion, smooth
-  // otherwise) and takes focus without a second scroll.
+  // visit overlay (never remembered), a task cell with rows sets its task as THE filter or, already set, clears it
+  // (an emptied one only jumps) — and, after the commit that mounts the target's body, the header scrolls under the
+  // bar (instant under reduced motion, smooth otherwise) and takes focus without a second scroll. The filter and
+  // the open land in that ONE commit (the same event), so the scroll measures Needs care as filtered: never a page
+  // that grows under it (Check after Feed left the header short of the bar while the body applied the filter a
+  // commit later, L1).
   const frameRef = useRef(null)
   const barRef = useRef(null)
   const reduced = usePrefersReducedMotion()
@@ -277,31 +280,39 @@ export default function TodayV2() {
   reducedRef.current = reduced
   const yieldScroll = usePageScrollYield()
   const [landing, setLanding] = useState(null)
-  const jump = useCallback((key, chipEl) => {
+  const careFilters = needs.filters
+  const careTask = needs.task
+  const jump = useCallback((key) => {
     const c = CHIPS[key]
     if (!c) return
     yieldScroll()
     overlayAll([c.section], 'open')
-    if (c.task) setFilter(c.section, { tasks: [c.task] })
-    revealChip(barRef.current, chipEl, reducedRef.current ? 'instant' : 'smooth')
-    setLanding((l) => ({ section: c.section, task: !!c.task, seq: (l ? l.seq : 0) + 1 }))
-  }, [yieldScroll, overlayAll, setFilter])
-  // A task chip's filter is applied by Needs care's body in the commit AFTER the one that opens it (NeedsCare's
-  // intent effect, which also records care.intentN). The scroll waits for that commit, so it lands on the body as
-  // filtered: scrolled any earlier, a page that then grew (Check after Feed) left the header short of the bar.
+    if (c.task && counts[c.task] > 0) changeCareFilters({ ...careFilters, tasks: careTask === c.task ? [] : [c.task] })
+    setLanding((l) => ({ section: c.section, seq: (l ? l.seq : 0) + 1 }))
+  }, [yieldScroll, overlayAll, counts, changeCareFilters, careFilters, careTask])
   const landedSeq = useRef(0)
-  const careIntentN = Number(record?.care?.intentN) || 0
-  const careFilterN = Number(record?.filter?.care?.n) || 0
   useLayoutEffect(() => {
     if (!landing || landedSeq.current === landing.seq) return
-    if (landing.task && careIntentN !== careFilterN) return
     const sec = frameRef.current?.querySelector(`[data-section="${landing.section}"]`)
     if (!sec) return
     landedSeq.current = landing.seq
     if (typeof sec.scrollIntoView === 'function') sec.scrollIntoView({ block: 'start', behavior: reducedRef.current ? 'instant' : 'smooth' })
     const header = sec.querySelector('[aria-expanded]')
     if (header && typeof header.focus === 'function') header.focus({ preventScroll: true })
-  }, [landing, careIntentN, careFilterN])
+  }, [landing])
+
+  // The bar's real height (D16: a bar whose cells wrap — 200% text — is taller than its one-row 52px), read as it
+  // changes, so the offsets below never leave a landed or focused header under a second row of cells.
+  const [barH, setBarH] = useState(JUMP_BAR_HEIGHT_PX)
+  useLayoutEffect(() => {
+    const el = barRef.current
+    if (!barShown || !el || typeof ResizeObserver !== 'function') return undefined
+    const read = () => setBarH(Math.ceil(el.getBoundingClientRect().height) || JUMP_BAR_HEIGHT_PX)
+    read()
+    const ro = new ResizeObserver(read)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [barShown])
 
   // While this page is mounted the document scrolls with its sticky layers subtracted (§6.2): a focus move,
   // TalkBack's own scroll or a jump lands BELOW TopChrome and the bar and ABOVE BottomNav plus one toast. The
@@ -310,10 +321,10 @@ export default function TodayV2() {
   useLayoutEffect(() => {
     const s = document.documentElement.style
     const before = [s.scrollPaddingTop, s.scrollPaddingBottom]
-    s.scrollPaddingTop = `calc(${TOP_CHROME_HEIGHT_PX}px + env(safe-area-inset-top)${barShown ? ` + ${JUMP_BAR_HEIGHT_PX}px` : ''})`
+    s.scrollPaddingTop = `calc(${TOP_CHROME_HEIGHT_PX}px + env(safe-area-inset-top)${barShown ? ` + ${barH}px` : ''})`
     s.scrollPaddingBottom = `calc(var(--bottom-nav-height, ${BOTTOM_NAV_HEIGHT_PX}px) + env(safe-area-inset-bottom) + ${TOAST_ALLOWANCE_PX}px)`
     return () => { s.scrollPaddingTop = before[0]; s.scrollPaddingBottom = before[1] }
-  }, [barShown])
+  }, [barShown, barH])
 
   // An explicit tap: the visit's state for the section AND Layer 1. A close made while a trigger holds the
   // section open records that trigger as a date-scoped ack (MF1); an open drops any ack.
@@ -363,7 +374,7 @@ export default function TodayV2() {
       summary: care.length
         ? (careUrgent && needs.summary ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{needs.summary}</> : needs.summary)
         : needs.caughtUp.summary,
-      body: <NeedsCare care={needs} record={record} update={update} announce={announce} planDate={planDate} userId={userId} filterIntent={record?.filter?.care} writesHeld={writesHeld} />,
+      body: <NeedsCare care={needs} record={record} update={update} announce={announce} onFilters={changeCareFilters} writesHeld={writesHeld} />,
     },
     // S6: the explainer (S2), then DormantList's rows, bare. Resume is never optimistic (DormantList); the plants it
     // resumed are held on the visit record, so a close and re-open (closed = unmounted) keeps them off the list,
@@ -452,7 +463,7 @@ export default function TodayV2() {
       {ready && record && (
         <>
           {/* The one sticky layer: a direct child of this frame, so it pins across every section below it. */}
-          {barShown && <JumpBar ref={barRef} chips={chips} counts={counts} onJump={jump} />}
+          {barShown && <JumpBar ref={barRef} chips={chips} counts={counts} task={careTask} onJump={jump} />}
           {SECTION_ORDER.map((key) => {
             // No Needs care section this visit: the caught-up line stands in its SLOT, after Protect and Heads-up
             // (finish plan D-1: it rendered above every section), with the "No feed schedule" line V1 always

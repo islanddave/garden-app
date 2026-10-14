@@ -177,7 +177,8 @@ describe('Heads-up — the storage window on the real dataset', () => {
     await mount()
     const chips = [...screen.getByRole('navigation', { name: 'Today sections' }).querySelectorAll('[data-chip]')]
     expect(chips.map((c) => c.getAttribute('data-chip')).slice(0, 3)).toEqual(['protect', 'headsup', 'water'])
-    expect(chips[1].textContent).toBe('Heads-up 1')
+    expect(chips[1].getAttribute('aria-label')).toBe('Heads-up 1')
+    expect(chips[1].textContent).toBe('1Heads-up') // count over label (finish plan D16)
     const order = [...document.querySelectorAll('[data-testid^="today-sec-"]')].map((s) => s.getAttribute('data-section'))
     expect(order.slice(0, 3)).toEqual(['protect', 'headsup', 'care'])
   })

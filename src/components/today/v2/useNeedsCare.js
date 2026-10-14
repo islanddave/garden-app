@@ -1,12 +1,12 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useState } from 'react'
 import { useApiFetch } from '../../../lib/api.js'
 import { useCachedFetch } from '../../../hooks/useCachedFetch.js'
 import { buildCareNeeded } from '../../../lib/careNeeded.js'
 import { waitingRows, rainSplit, RAIN_HOLD_NEED } from '../../../lib/rainHold.js'
 import { useCareActions } from '../useCareActions.js'
-import { locationIndex, enrichRows, takeOrder, exceptionKeys, careSummary, loggedTodayCount, caughtUpSummary, CAUGHT_UP_TITLE, OUTSIDE } from '../../../lib/todayV2/spots.js'
+import { locationIndex, enrichRows, takeOrder, exceptionKeys, careSummary, loggedTodayCount, caughtUpSummary, CAUGHT_UP_TITLE, OUTSIDE, TASKS } from '../../../lib/todayV2/spots.js'
 import { careReasons, careTrigger } from '../../../lib/todayV2/triggers.js'
-import { loggedKey, readLogged } from './needsCareStore.js'
+import { loggedKey, readLogged, filtersKey, readFilters, writeFilters } from './needsCareStore.js'
 import { useTodayLogged } from './useTodayLogged.js'
 
 // useNeedsCare — the redesigned Today's Needs care STATE, owned by the page (V5-TODAYREDESIGN-001 S4). The
@@ -62,6 +62,25 @@ export function useNeedsCare({ plan, planDate, userId, stale }) {
   const spotCount = useMemo(() => new Set(rows.map((r) => r.spotKey)).size, [rows])
   const summary = useMemo(() => careSummary({ reasons, rows, spotCount }), [reasons, rows, spotCount])
 
+  // The FILTERS (§2.6; finish plan §3.5, Dave's D17): the page's, not the body's, since the jump bar's Water / Feed /
+  // Check cells are the task filter and show it while Needs care is closed (its body unmounted). Saved per session
+  // (needsCareStore), re-read when the plan day or the person changes. One task at a time or all: a saved pair
+  // from before the bar was the filter keeps its first task. Spot chips stay inside Needs care (OR within the row).
+  const fKey = filtersKey(userId)
+  const [saved, setSaved] = useState(() => ({ key: fKey, day: planDate, v: readFilters(fKey, planDate) }))
+  let filters = saved.v
+  if (saved.key !== fKey || saved.day !== planDate) {
+    filters = readFilters(fKey, planDate)
+    setSaved({ key: fKey, day: planDate, v: filters })
+  }
+  if (filters.tasks.length > 1) filters = { ...filters, tasks: filters.tasks.slice(0, 1) }
+  const setFilters = useCallback((next) => {
+    setSaved({ key: fKey, day: planDate, v: next })
+    writeFilters(fKey, planDate, next)
+  }, [fKey, planDate])
+  // The task the list is filtered to: the saved one while it still has rows, else none (all).
+  const task = filters.tasks.find((t) => TASKS.includes(t) && rows.some((r) => r.task === t)) || null
+
   // The visit's held Needs care layout, taken at the ready point over "rows minus skipped, LOGGED KEPT"
   // (BD-036's orderingRows): group + spot order, each spot's differing rows, the 3 largest spots the spot
   // filter pins. Pure — useTodayVisit calls it during render.
@@ -91,7 +110,7 @@ export function useNeedsCare({ plan, planDate, userId, stale }) {
 
   return {
     plan, settled, rows, allEnriched, count: rows.length, reasons, trigger, summary, spotCount, actions, getToken, logKey, claim,
-    rain, rainCovered, loggedToday,
+    rain, rainCovered, loggedToday, filters, setFilters, task,
     caughtUp: { title: CAUGHT_UP_TITLE, summary: caughtUpSummary({ logged: loggedToday, waiting: rain.live.size, rain: rainCovered }) },
     // Spots are LOCATIONS only when both reads answered (enrichRows); otherwise they are projects, with no group
     // header and no group Water all — the /api/locations fallback, now for a failed /api/plants too.

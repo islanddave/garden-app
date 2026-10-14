@@ -1,5 +1,7 @@
 // V5-TODAYREDESIGN-001 S3 — the redesigned Today's jump bar and glance card wired into the page (plan-v2 §2.7,
-// §4 "Jump bar", §5.4–5.5, §6.1–6.2, §6.8; §13 Simplify 5; the S3 brief's chip, sticky and focus rules).
+// §4 "Jump bar", §5.4–5.5, §6.1–6.2, §6.8; §13 Simplify 5; the S3 brief's chip, sticky and focus rules). Finish plan
+// §3.4–3.5 (Dave's D16 + D17, 2026-10-14): count-over-label cells that never scroll, and Water / Feed / Check as THE
+// task filter.
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
@@ -32,6 +34,7 @@ vi.mock('../components/today/v2/useTodayBands.js', () => ({
 }))
 
 import TodayV2 from '../pages/TodayV2.jsx'
+import { barColumns } from '../components/today/v2/JumpBar.jsx'
 import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
 import { writeSkipped } from '../components/today/careStore.js'
 
@@ -80,41 +83,59 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); delete Element.prototype.scrollIntoView; delete window.matchMedia })
 
-describe('the jump bar — navigation only (§2.7, §5.4; Simplify 5)', () => {
-  it('a <nav> "Today sections" of plain buttons; numbers only on work chips; no in-view or pressed state', () => {
+describe('the jump bar — cells, never scroll (§2.7, §5.4; Simplify 5; finish plan D16)', () => {
+  const name = (c) => c.getAttribute('aria-label')
+  it('a <nav> "Today sections" of buttons, count over label; the accessible name is the label with its count; no in-view state', () => {
     mount()
     expect(bar()).toBeTruthy()
     const chips = [...bar().querySelectorAll('[data-chip]')]
     expect(chips.map((c) => c.getAttribute('data-chip'))).toEqual(['water', 'feed', 'check'])
-    expect(chips.map((c) => c.textContent)).toEqual(['Water 4', 'Feed 2', 'Check 1'])
+    expect(chips.map(name)).toEqual(['Water 4', 'Feed 2', 'Check 1'])
+    // Count first (on top), label under it.
+    expect(chips.map((c) => [...c.children].map((x) => x.textContent))).toEqual([['4', 'Water'], ['2', 'Feed'], ['1', 'Check']])
     for (const c of chips) {
       expect(c.tagName).toBe('BUTTON')
       expect(c.getAttribute('type')).toBe('button')
       expect(c.hasAttribute('aria-current')).toBe(false)
-      expect(c.hasAttribute('aria-pressed')).toBe(false)
+      // The task cells are the filter's toggles (D17): pressed only while their task is the filter.
+      expect(c.getAttribute('aria-pressed')).toBe('false')
     }
     expect(screen.getByRole('button', { name: 'Water 4' })).toBe(chips[0])
   })
-  it('the colour variant on every chip glyph (the approved S3b bar): regions painted, no bare currentColor fill', () => {
+  it('a counted cell draws no glyph — its number sits where the icon was', () => {
     mount()
-    for (const k of ['water', 'feed', 'check']) {
-      const svg = chip(k).querySelector('svg')
-      expect(svg.getAttribute('aria-hidden')).toBe('true')
-      expect(svg.innerHTML, k).toMatch(/data-region="[^"]+"[^>]*(fill|stroke)="#[0-9a-fA-F]{3,6}"/)
-    }
+    for (const k of ['water', 'feed', 'check']) expect(chip(k).querySelector('svg'), k).toBeNull()
   })
-  it('one sticky layer just under TopChrome: sticky, 52px + safe area, z 70, a sideways strip, 57px by min-height', () => {
+  it('one sticky layer just under TopChrome: sticky, 52px + safe area, z 70, equal-width auto-fit cells, no sideways scroll, 52px by min-height', () => {
     mount()
     const s = bar().style
     expect(s.position).toBe('sticky')
     expect(s.top).toBe('calc(52px + env(safe-area-inset-top))')
     expect(s.zIndex).toBe('70')
-    expect(s.overflowX).toBe('auto')
+    expect(s.display).toBe('grid')
+    expect(s.gridTemplateColumns).toBe('repeat(auto-fit, minmax(3.75rem, 1fr))')
+    expect(s.overflowX).toBe('')
     expect(s.overflowY).toBe('')
-    expect(s.flexWrap).toBe('nowrap')
-    expect(s.minHeight).toBe('57px')
+    expect(s.minHeight).toBe('52px')
     expect(s.height).toBe('')
     expect(bar().parentElement).toBe(screen.getByTestId('today-page'))
+  })
+  it('wraps — never scrolls — when one row cannot give every cell its minimum: two even rows, then fewer columns as text grows', () => {
+    expect(barColumns(5, true)).toBe('repeat(auto-fit, minmax(3.75rem, 1fr))')
+    // Seven at 426px: "Heads-up" needs 3.75rem, a seventh of the row is less — 4 + 3.
+    expect(barColumns(7, false)).toBe('repeat(auto-fit, minmax(max(3.75rem, calc((100% - 12px) / 4)), 1fr))')
+    const RO = globalThis.ResizeObserver
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+    globalThis.ResizeObserver = class { observe() {} disconnect() {} }
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get() { return this.getAttribute('data-testid') === 'today-jumpbar' ? 150 : 0 } })
+    try {
+      mount()
+      // Three cells need 3 × 60 + 2 × 4 = 188px; 150 cannot give them one row.
+      expect(bar().style.gridTemplateColumns).toBe('repeat(auto-fit, minmax(max(3.75rem, calc((100% - 4px) / 2)), 1fr))')
+    } finally {
+      if (RO) globalThis.ResizeObserver = RO; else delete globalThis.ResizeObserver
+      if (width) Object.defineProperty(HTMLElement.prototype, 'clientWidth', width); else delete HTMLElement.prototype.clientWidth
+    }
   })
   it('drops to static while the keyboard is up — the same in-flow box (§6.8)', () => {
     kb.up = true
@@ -126,12 +147,15 @@ describe('the jump bar — navigation only (§2.7, §5.4; Simplify 5)', () => {
     mount()
     expect(bar()).toBeNull()
   })
-  it('the chip set is HELD for the visit: an emptied chip stays and reads "· done"', () => {
+  it('the chip set is HELD for the visit: an emptied cell stays, a check in place of its number, named "· done", no toggle', () => {
     mount()
     expect(visit().order.chips).toEqual(['water', 'feed', 'check'])
     act(() => writeSkipped(new Set(['w1:water_due', 'w2:water_due', 'w3:water_due', 'n1:no_history'])))
-    expect(chip('water').textContent).toBe('Water · done')
-    expect(chip('feed').textContent).toBe('Feed 2')
+    expect(name(chip('water'))).toBe('Water · done')
+    expect(chip('water').textContent).toBe('Water')
+    expect(chip('water').querySelector('svg')).toBeTruthy()
+    expect(chip('water').hasAttribute('aria-pressed')).toBe(false)
+    expect(name(chip('feed'))).toBe('Feed 2')
   })
 })
 
@@ -169,33 +193,48 @@ describe('a chip tap (§2.7, §5.5, §6.2)', () => {
     fireEvent.click(chip('check'))
     expect(yieldSpy).toHaveBeenCalledTimes(1)
   })
-  it('Water / Feed / Check leave S4 a pre-select intent in the visit record, one per tap', () => {
+  it('Water / Feed / Check ARE the task filter (D17): a tap sets its task, another task replaces it, the same cell again clears it', () => {
     mount()
+    const pressed = () => ['water', 'feed', 'check'].filter((k) => chip(k).getAttribute('aria-pressed') === 'true')
+    const saved = () => JSON.parse(sessionStorage.getItem('today-filters:u') || 'null')
     fireEvent.click(chip('water'))
-    expect(visit().filter).toEqual({ care: { tasks: ['water'], n: 1 } })
+    expect(pressed()).toEqual(['water'])
+    expect(saved()).toMatchObject({ plan_date: D, tasks: ['water'] })
     fireEvent.click(chip('feed'))
-    expect(visit().filter).toEqual({ care: { tasks: ['feed'], n: 2 } })
+    expect(pressed()).toEqual(['feed'])
     fireEvent.click(chip('feed'))
-    expect(visit().filter.care.n).toBe(3)
+    expect(pressed()).toEqual([])
+    expect(saved().tasks).toEqual([])
+    // Every tap still jumps — the clearing one too.
+    expect(scrollSpy).toHaveBeenCalledTimes(3)
+    // No intent is handed through the visit record any more: the bar's cells are the filter itself.
+    expect(visit().filter).toBeUndefined()
   })
-  it('a chip cut at the strip\'s edge slides into view by strip.scrollTo — never chip.scrollIntoView', () => {
+  it('the selected cell shows it beyond colour: the filter chips\' green fill, a doubled border, label 700', () => {
     mount()
-    const strip = bar()
-    strip.scrollTo = vi.fn()
-    strip.getBoundingClientRect = () => ({ left: 16, right: 410, top: 0, bottom: 57, width: 394, height: 57 })
-    chip('check').getBoundingClientRect = () => ({ left: 380, right: 485, top: 4, bottom: 52, width: 105, height: 48 })
     fireEvent.click(chip('check'))
-    expect(strip.scrollTo).toHaveBeenCalledWith({ left: 75, behavior: 'smooth' })
-    expect(scrollSpy.mock.contexts.every((el) => el !== chip('check'))).toBe(true)
+    expect(chip('check').style.background).toBe('rgb(216, 243, 220)')
+    expect(chip('check').style.boxShadow).toBe('inset 0 0 0 1px #2d6a4f')
+    expect(chip('check').children[1].style.fontWeight).toBe('700')
+    expect(chip('water').style.background).toBe('rgb(255, 255, 255)')
   })
-  it('a chip already in view does not move the strip', () => {
+  it('the filter shows on the bar while Needs care is closed, and holds across a remount (saved per session)', () => {
+    const { unmount } = mount()
+    fireEvent.click(chip('feed'))
+    fireEvent.click(band('care'))
+    expect(band('care').getAttribute('aria-expanded')).toBe('false')
+    expect(chip('feed').getAttribute('aria-pressed')).toBe('true')
+    unmount()
     mount()
-    const strip = bar()
-    strip.scrollTo = vi.fn()
-    strip.getBoundingClientRect = () => ({ left: 16, right: 410, top: 0, bottom: 57, width: 394, height: 57 })
-    chip('water').getBoundingClientRect = () => ({ left: 16, right: 132, top: 4, bottom: 52, width: 116, height: 48 })
-    fireEvent.click(chip('water'))
-    expect(strip.scrollTo).not.toHaveBeenCalled()
+    expect(chip('feed').getAttribute('aria-pressed')).toBe('true')
+  })
+  it('an emptied task cell only jumps: it sets no filter', () => {
+    mount()
+    act(() => writeSkipped(new Set(['p1:pest'])))
+    fireEvent.click(chip('check'))
+    expect(scrollSpy).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.getItem('today-filters:u')).toBeNull()
+    expect(['water', 'feed'].map((k) => chip(k).getAttribute('aria-pressed'))).toEqual(['false', 'false'])
   })
 })
 
@@ -203,7 +242,7 @@ describe('scroll offsets while V2 is mounted (§6.2)', () => {
   it('html scroll-padding subtracts TopChrome + the bar (top) and BottomNav + one toast (bottom); cleared on unmount', () => {
     const { unmount } = mount()
     const s = document.documentElement.style
-    expect(s.scrollPaddingTop).toBe('calc(52px + env(safe-area-inset-top) + 57px)')
+    expect(s.scrollPaddingTop).toBe('calc(52px + env(safe-area-inset-top) + 52px)')
     expect(s.scrollPaddingBottom).toBe('calc(var(--bottom-nav-height, 56px) + env(safe-area-inset-bottom) + 64px)')
     unmount()
     expect(s.scrollPaddingTop || '').toBe('')

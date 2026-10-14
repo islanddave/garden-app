@@ -43,6 +43,10 @@
 // at least as tall as the budget recorded — the geometric witness that a region moved into an owner was not
 // deleted inside it (dropRegionInOwner), independent of region-headcount's element census.
 // S4g, S5 and S6 were built in parallel on the same base and merged by the integrator (build-int2.md).
+// Finish plan L4 (2026-10-14, Dave's D16 + D17): the jump bar became equal-width count-over-label cells that NEVER
+// scroll sideways (they wrap instead), and its Water / Feed / Check cells became Needs care's one task filter — the
+// task row inside Needs care (care-filter-tasks) is gone. Every check that drove that row now drives the bar's cells;
+// the families that allowed a sideways strip (no-hscroll, chip-census) now forbid it. Rows changed are marked "L4:".
 export const LANDED = ['S0', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6']
 export const SLICES = ['S0', 'S1', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6', 'S7', 'S8']
 
@@ -93,7 +97,8 @@ const common = ({ plan = true, glanceClosed = true } = {}) => [
   { family: 'prefs-instrument', armedAt: 'S0', why: 'the prefs GET is observed exactly once (seam b); a V2 that never reads prefs cannot honour Layer 1' },
   { family: 'version', armedAt: 'S2', why: 'data-today-version="2" — the V2 route mounted, not V1' },
   { family: 'prefs-loaded-attr', armedAt: 'S2', why: 'data-prefs-loaded matches the observed GET' },
-  { family: 'no-hscroll', armedAt: 'S2', why: '(h) no horizontal overflow; only the chip strip may scroll sideways, with overflow-x:auto' },
+  // L4 (D16): the jump bar was the one box allowed to scroll sideways; it no longer is.
+  { family: 'no-hscroll', armedAt: 'S2', why: '(h) no horizontal overflow — nothing scrolls sideways, the jump bar included (D16: its cells wrap, never scroll)' },
   { family: 'floors', armedAt: 'S2', why: '(j) floors before ceilings — contentBottom, controls ≥ 1, from the v2 budget' },
   { family: 'first-screen', armedAt: 'S2', mustContain: ['today-title', 'today-date'], why: '(e) title + date fully inside [0, FIRST_SCREEN)' },
   // Integration 2: plan-v2 "Visual" — card-in-card → none (D8: flat bands, each item its own white card). Measured on
@@ -130,8 +135,11 @@ export const STATES = [
       { family: 'jumpbar', armedAt: 'S3', present: true, chipsOfPresent: ['protect', 'water', 'feed', 'check', 'harvest'] },
       { family: 'jumpbar', armedAt: ['S3', 'S5', 'S6'], present: true, chips: ['protect', 'water', 'feed', 'check', 'harvest'] },
       // S3 (new family, named in KILLER_FAMILIES by S0): every chip 48 tall, numbers only on the work chips, and at
-      // 200% text (WCAG 1.4.4; Android font scaling) every chip still reachable inside the strip.
-      { family: 'chip-census', armedAt: 'S3', why: 'chips ≥ 48px; numbers only on Protect/Heads-up/Water/Feed/Check (Heads-up counted since finish plan D-7, 2026-10-14); at 200% text the strip scrolls (overflow-x auto) and no chip is stranded past its edge' },
+      // 200% text (WCAG 1.4.4; Android font scaling) every chip still reachable. L4 (D16 + D17) redesigned it from a
+      // scrolling strip to cells: equal widths across the full column, count over label, one row at normal text,
+      // every label inside its cell, and at 200% text the cells WRAP (a second row) with nothing past the bar's edge
+      // and no sideways scroll; the task cells are toggles whose selected state is drawn, not only announced.
+      { family: 'chip-census', armedAt: 'S3', why: 'cells ≥ 48px, equal widths spanning the column, one row at normal text; numbers only on Protect/Heads-up/Water/Feed/Check (Heads-up counted since finish plan D-7), an icon on Harvest/Put-Up, a check on an emptied cell; every label inside its cell; at 200% text the cells wrap, never scroll; a task cell toggles aria-pressed and paints its selected state (D17)' },
       // Integration S3 × S4 (first run of this family — neither lane alone could arm it): + 0.78rem, an INHERITED
       // line like the cue/frost lines' 0.84rem (plan §4 "the unchanged … lines keep their own"): V1's
       // FeedSuppressedList (CareNeeded.jsx), reused unchanged at the foot of Needs care (REGIONS
@@ -154,8 +162,8 @@ export const STATES = [
       { family: 'weather-once', armedAt: 'S3', why: 'MF2: with the glance OPEN, exactly one today-weather and no repeated hi/lo text' },
       // S4 split the §9.1 phase list: the Water chip is S3's, so the chip step arms with S3 AND S4. Needs care is
       // OPEN at the ready point on this state (the small-pot trigger), so the chip cannot flip today-sec-care's
-      // aria-expanded (the step VOIDed as first written); what it always moves is the Water task filter's
-      // pre-select (aria-pressed false → true, S3 → S4 through the visit record), so that is the step's flip.
+      // aria-expanded (the step VOIDed as first written); what it always moves is the Water task filter
+      // (aria-pressed false → true). L4: that is now the bar's own Water cell (D17), read by v2wire flipState.
       // Counts are of VISIBLE rows (§9.1 (d) "every row under an open body passes shown()"), exact — with the
       // Water filter on, as §9.1's phases run (tap the Water chip, open Bag Area, show the cohort).
       // S4's lane also carried these phases without the chip (armed at S4 alone); merged, a second run on the
@@ -177,11 +185,14 @@ export const STATES = [
       // says its result ONCE through today-status; opening and closing a spot (a re-render, no filter change) says
       // nothing. Words on the 09-24 plan (the plan's own example first). Files `announce` (the words) and
       // `announce-once` (writes counted by a MutationObserver). `jump` is S3's chip, so the check names S3 too.
+      // L4 (D17): the task steps are the bar's cells — set (Water), replace (Feed: one task at a time, so no "Water
+      // and Feed"; Feed alone lists products, D12), set again, clear by a second tap — and the spot chips stay.
       { family: 'announce', armedAt: ['S3', 'S4g'], steps: [
-        { press: 'tasks:Water', say: 'Needs care: Water, 168 in 8 spots.' },
-        { press: 'tasks:Feed', say: 'Needs care: Water and Feed, 226 in 9 spots.' },
+        { jump: 'water', say: 'Needs care: Water, 168 in 8 spots.' },
+        { jump: 'feed', say: 'Needs care: Feed, 58 in 3 products.' },
+        { jump: 'water', say: 'Needs care: Water, 168 in 8 spots.' },
         { quiet: 'spot:Trough' },
-        { clear: 'tasks', say: 'Needs care: everything, 233 in 9 spots.' },
+        { jump: 'water', say: 'Needs care: everything, 233 in 9 spots.' },
         { press: 'spots:Bag Area', say: 'Needs care: Bag Area, 141 in 1 spot.' },
         { clear: 'spots', say: 'Needs care: everything, 233 in 9 spots.' },
         { jump: 'check', say: 'Needs care: Check, 7 in 2 spots.' },
@@ -445,7 +456,7 @@ export const SHELL = [
   // S3: armed at S3 + S4. The bar can only pin, and a jump can only land a header under it, on a page taller than
   // one screen; at S3 alone every v2 state ends above the fold (measured, S3 build report), and S4's Needs care
   // body — opened by the Water chip, the first step of both checks — is what makes v2-frost long enough.
-  { family: 'sticky', armedAt: ['S3', 'S4'], state: 'v2-frost', why: '(f) after the Water jump, scrolled to 2 × FIRST_SCREEN (clamped to the page): bar top = TopChrome bottom ± 0.5, shown(), height 57 ± 1, elementFromPoint(bar centre) inside the bar; back at 0 exactly one bar, in flow (in-view chip checks dropped with the scroll-spy, §13 Simplify 5)' },
+  { family: 'sticky', armedAt: ['S3', 'S4'], state: 'v2-frost', why: '(f) after the Water jump, scrolled to 2 × FIRST_SCREEN (clamped to the page): bar top = TopChrome bottom ± 0.5, shown(), height 52 ± 1 (L4: one row of cells; was 57), elementFromPoint(bar centre) inside the bar; back at 0 exactly one bar, in flow (in-view chip checks dropped with the scroll-spy, §13 Simplify 5)' },
   { family: 'jump-landing', armedAt: ['S3', 'S4'], state: 'v2-frost', why: '(g) per chip: target open, header top ∈ [bar bottom, bar bottom + 8] once the scroll settles, activeElement = header, no horizontal scroll. Integration S3 × S4: a landing the page is too short for (the Feed / Check pre-select shrinks Needs care) stops at the page end with the header wholly on screen below the bar; at least one jump per run must land strictly' },
   // Integration S3 × S4: the focus a jump leaves, judged apart from the landing — the second, independent killer for
   // jumpNoOffset (2.4.11: the focused header wholly hidden, hit-tested) and noFocusAfterJump (2.4.3: a real Tab does

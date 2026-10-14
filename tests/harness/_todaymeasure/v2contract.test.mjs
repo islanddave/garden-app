@@ -126,8 +126,10 @@ describe('today-v2 contract table', () => {
     const ann = STATES.find((s) => s.name === 'v2-frost').checks.filter((c) => c.family === 'announce')
     expect(ann).toHaveLength(1)
     expect(ann[0].armedAt).toEqual(['S3', 'S4g'])
-    expect(ann[0].steps[0]).toEqual({ press: 'tasks:Water', say: 'Needs care: Water, 168 in 8 spots.' })
+    // L4 (D17): the task filter is the bar's cells, so the first step is the Water cell; no step drives a task row.
+    expect(ann[0].steps[0]).toEqual({ jump: 'water', say: 'Needs care: Water, 168 in 8 spots.' })
     expect(ann[0].steps.some((s) => s.quiet)).toBe(true)
+    expect(ann[0].steps.some((s) => String(s.press || s.clear || '').startsWith('tasks'))).toBe(false)
     // §2.5's emptied header, LAST on v2-frost (it leaves Needs care empty); busyfull's rain_skipped is 70.
     const frost = STATES.find((s) => s.name === 'v2-frost').checks
     const cu = frost.filter((c) => c.family === 'caught-up')
@@ -274,10 +276,12 @@ describe('v2 grafts and the re-dating helper', () => {
     expect(selectorFor('today-sec-care', '-X')).toBe('[data-testid="today-sec-care-X"] [aria-expanded]')
     expect(() => selectorFor('bogus:thing')).toThrow()
   })
-  // Integration S3 × S4: v2-frost's chip step flips the Water task filter's pre-select (aria-pressed), since Needs
-  // care is already open there and a flip of today-sec-care could never happen (the step VOIDed as first written).
+  // Integration S3 × S4: v2-frost's chip step flips the Water task filter (aria-pressed), since Needs care is already
+  // open there and a flip of today-sec-care could never happen (the step VOIDed as first written). L4 (D17): the
+  // filter's toggle is the jump bar's own cell; an emptied cell (no aria-pressed) is no toggle.
   it('reads a task-filter flip as aria-pressed and every other flip as aria-expanded', () => {
-    document.body.innerHTML = '<div data-testid="care-filter-tasks"><button aria-pressed="false">Water</button><button aria-pressed="true">Feed</button></div>'
+    document.body.innerHTML = '<nav data-testid="today-jumpbar"><button data-chip="water" aria-pressed="false">168Water</button><button data-chip="feed" aria-pressed="true">58Feed</button><button data-chip="check">Check</button></nav>'
+      + '<div data-testid="care-filter-tasks"><button aria-pressed="true">Water</button></div>'
       + '<section data-testid="today-sec-care"><button aria-expanded="true">Needs care</button></section>'
     expect(flipState('task-filter:Water')).toBe('false')
     expect(flipState('task-filter:Feed')).toBe('true')

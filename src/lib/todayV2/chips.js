@@ -1,20 +1,22 @@
 // src/lib/todayV2/chips.js — the redesigned Today's JUMP-BAR chips, as data (V5-TODAYREDESIGN-001 S3; plan-v2
 // §2.4, §2.7, §4 "Jump bar"; §13 Simplify 5). PURE.
 //
-// A chip is NAVIGATION ONLY: it opens its section (a visit overlay, never remembered) and scrolls to it. Numbers
+// A chip opens its section (a visit overlay, never remembered) and scrolls to it. Numbers
 // sit on the work chips (Protect, Water, Feed, Check) and on Heads-up, whose band already says its count (Today
 // finish plan D-7 / Dave's D16, 2026-10-14); Harvest and Put-Up carry none (Reward UX: no count badge on a
 // harvest or a jar).
-// There is no in-view highlight (Simplify 5), so a chip has no state of its own.
+// There is no in-view highlight (Simplify 5). The one state a chip shows is the task filter's: Water, Feed and Check
+// ARE Needs care's task filter (finish plan §3.5, Dave's D17), selected while their task is the filter.
 //
 // A chip EXISTS when its section is on the page and, for a counted chip, its count is above zero — at the visit's
 // ready point, where the set is HELD for the visit: a held chip stays when its count falls to 0 and reads
-// "Water · done". A chip that goes live later (a section inserted mid-visit) takes its slot in the fixed order.
-// Water, Feed and Check all land on Needs care and carry the task filter S4's filter row applies.
+// "Water · done" (a check in place of its number, D16). A chip that goes live later (a section inserted mid-visit)
+// takes its slot in the fixed order. Water, Feed and Check all land on Needs care.
 //
-// Icons: the colour `filled` variant on every chip that has one — the bar Dave approved on the S3b contact
-// sheet (2026-09-29): event.brought_inside, care.drop, care.feed, event.observation, nav.harvests (and nav.putup,
-// same family). action.flag has no colour variant and renders mono.
+// Icons: since the bar became count-over-label cells (D16) only the uncounted chips draw theirs, in the count's
+// place — the colour `filled` variant Dave approved on the S3b contact sheet (2026-09-29): nav.harvests, nav.putup.
+// The counted chips keep their icon names here (event.brought_inside, action.flag, care.drop, care.feed,
+// event.observation), unused by the bar since D16: a number sits in that place.
 export const CHIP_ORDER = ['protect', 'headsup', 'water', 'feed', 'check', 'harvest', 'putup']
 
 export const CHIPS = {

@@ -5,17 +5,17 @@ import FilterChipRow from '../../forms/FilterChipRow.jsx'
 import Icon from '../../Icon.jsx'
 import { skipMany, unskipMany } from '../careStore.js'
 import { FeedSuppressedList } from '../CareNeeded.jsx'
-import { buildModel, productGroups, filterResult, filterAnnouncement, TASKS, TASK_LABEL, TASK_ETYPE, OUTSIDE } from '../../../lib/todayV2/spots.js'
+import { buildModel, productGroups, TASK_ETYPE, OUTSIDE } from '../../../lib/todayV2/spots.js'
 import { MOISTURE_CHECK_EVENT } from '../../../lib/careNeeded.js'
 import SpotRow, { SpotDoneLine, tinted } from './SpotRow.jsx'
 import SpotBody from './SpotBody.jsx'
 import PlantCareRow, { outlineBtn } from './PlantCareRow.jsx'
-import { removeLogged, readLogged, claimedKeys, runStart, runEnd, runGoing, runTake, filtersKey, readFilters, writeFilters } from './needsCareStore.js'
+import { removeLogged, readLogged, claimedKeys, runStart, runEnd, runGoing, runTake } from './needsCareStore.js'
 
 // NeedsCare — the body of the redesigned Today's Needs care section (V5-TODAYREDESIGN-001 S4). Dave's
 // D3 (a spot is logged whole, then its exceptions), D6 (spot Not today), D7 (Outside, Stable and House are
 // separate groups, each with its own Water all), D9 (spot chips as a
-// filter row), D10 (a logged spot shrinks to a done line with Undo, held for the visit; the group version is
+// filter row; the task filter is the jump bar's since finish plan D17), D10 (a logged spot shrinks to a done line with Undo, held for the visit; the group version is
 // ONE line, one Undo), D11 (Skip / Moist on the few, then "Water the other N"; per-plant one-tap Water kept),
 // D12 (under the Feed filter, one row per product across the garden with "Feed all"), and the boss pass:
 // MF3 (the group Water all's result), SF2, SF7, SF8, SF12, Simplify 1.
@@ -23,7 +23,7 @@ import { removeLogged, readLogged, claimedKeys, runStart, runEnd, runGoing, runT
 // State: the care rows and write paths are the page's (useNeedsCare → useCareActions, V2 options); what this
 // body adds is the VISIT's — which spots and cohorts are open, the done lines, the failed rows, the runs'
 // created ids for Undo — kept in the visit record (useTodayVisit, record.care) so a Back from a planting
-// restores it exactly. Filters are per session (needsCareStore). Nothing here raises a toast (§11.1 C2):
+// restores it exactly. Filters are the page's, per session (useNeedsCare over needsCareStore). Nothing here raises a toast (§11.1 C2):
 // results speak through the page's one status region (§5.6) and sit on the done lines.
 const RUN = { concurrency: 4, excludeInFlight: true }
 const KIND_OF = { watering: 'watered', fertilizing: 'fed', observation: 'checked', moisture_check: 'moist' }
@@ -40,37 +40,17 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
 const nameList = (names) => (names.length <= 2 ? names.join(' and ') : `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`)
 const css = (s) => String(s).replace(/"/g, '\\"')
 
-export default function NeedsCare({ care, record, update, announce, planDate, userId, filterIntent, writesHeld = false }) {
+export default function NeedsCare({ care, record, update, announce, onFilters, writesHeld = false }) {
   const c = record?.care || null
   const { actions } = care
   const setCare = useCallback((fn) => update((r) => ({ ...r, care: fn(r.care || {}) })), [update])
 
-  // ── filters (§2.6): one axis per row, OR within a row, empty = all; per session; never re-sort ─────────────
-  const fKey = filtersKey(userId)
-  const [filters, setFilters] = useState(() => readFilters(fKey, planDate))
-  const setAndSave = useCallback((next) => { setFilters(next); writeFilters(fKey, planDate, next) }, [fKey, planDate])
-  // §2.6 / §5.6 (S4g): a filter change — a chip, a Clear, a jump chip's pre-select — says its result ONCE through the
-  // page's one status region ("Needs care: Water, 168 in 8 spots."), from the change itself, never from a render.
-  const changeFilters = useCallback((next) => {
-    setAndSave(next)
-    announce(filterAnnouncement(filterResult(care.rows, next)))
-  }, [setAndSave, announce, care.rows])
-  // S3's jump bar writes the chip's task into the visit record (record.filter.care = { tasks: [task], n }, n
-  // counting the visit's chip taps); each NEW n REPLACES the task row once. The last n applied is kept on the
-  // visit record (care.intentN), not in a ref: a chip tap on a CLOSED Needs care mounts this body with the
-  // intent already written, and must still apply; a Back return or a close and re-open remounts it with an
-  // intent already applied, and must not undo a filter chosen by hand since.
-  const intentN = Number(filterIntent?.n) || 0
-  const appliedN = Number(c?.intentN) || 0
-  useEffect(() => {
-    if (!intentN || intentN === appliedN) return
-    setCare((cc) => ({ ...cc, intentN }))
-    const t = Array.isArray(filterIntent?.tasks) ? filterIntent.tasks[0] : filterIntent?.task
-    if (TASKS.includes(t)) changeFilters({ ...filters, tasks: [t] })
-  }, [intentN, appliedN, filterIntent, filters, changeFilters, setCare])
-
-  const presentTasks = TASKS.filter((t) => care.rows.some((r) => r.task === t))
-  const tasks = filters.tasks.filter((t) => presentTasks.includes(t))
+  // ── filters (§2.6): the page's (useNeedsCare), per session; never re-sort. The TASK filter is the jump bar's Water /
+  // Feed / Check cells (finish plan §3.5, Dave's D17: one task or all) — this body only reads it; the SPOT chips
+  // stay here, OR within their row, empty = all. Every change goes through the page's `onFilters`, which says its
+  // result ONCE through the page's one status region (§2.6 / §5.6), from the change itself, never from a render.
+  const { filters } = care
+  const tasks = useMemo(() => (care.task ? [care.task] : []), [care.task])
   const spotsPresent = useMemo(() => {
     const m = new Map()
     for (const r of care.rows) if (!tasks.length || tasks.includes(r.task)) { if (!m.has(r.spotKey)) m.set(r.spotKey, { value: r.spotKey, label: r.spotName }) }
@@ -506,18 +486,11 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
       {care.substrate && (
         <p data-testid="today-substrate-note" style={substrateNote}>{care.substrate}</p>
       )}
-      {presentTasks.length > 1 && (
-        <FilterChipRow aria-label="Show tasks" data-testid="care-filter-tasks"
-          options={presentTasks.map((t) => ({ value: t, label: TASK_LABEL[t] }))}
-          selected={new Set(tasks)}
-          onToggle={(v) => { const n = new Set(tasks); if (n.has(v)) n.delete(v); else n.add(v); changeFilters({ ...filters, tasks: [...n] }) }}
-          onClear={tasks.length ? () => changeFilters({ ...filters, tasks: [] }) : undefined} />
-      )}
       {spotsPresent.length > 1 && !feedOnly && (
         <FilterChipRow aria-label="Show spots" data-testid="care-filter-spots"
           options={spotsPresent} selected={new Set(spotSel)} pinned={(c?.pinned || []).filter((k) => spotsPresent.some((s) => s.value === k))}
-          onToggle={(v) => { const n = new Set(spotSel); if (n.has(v)) n.delete(v); else n.add(v); changeFilters({ ...filters, spots: [...n] }) }}
-          onClear={spotSel.length ? () => changeFilters({ ...filters, spots: [] }) : undefined} />
+          onToggle={(v) => { const n = new Set(spotSel); if (n.has(v)) n.delete(v); else n.add(v); onFilters({ ...filters, spots: [...n] }) }}
+          onClear={spotSel.length ? () => onFilters({ ...filters, spots: [] }) : undefined} />
       )}
 
       {feedOnly ? (

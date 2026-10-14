@@ -110,7 +110,8 @@ export function buildV2State(state, base, G, prefsBody) {
 //   testid:<id>          anything else by testid
 // `flip` names the element whose aria-expanded must change, in the same vocabulary (a bare
 // `today-sec-<key>` / `care-spot:<name>` / `care-cohort:<name>`), or — read by flipState below —
-//   task-filter:<Label>  a chip of Needs care's task filter row, whose aria-pressed must change
+//   task-filter:<Label>  the task filter's toggle — since finish plan L4 (D17) the jump bar's own cell for that
+//                        task ([data-chip="<label, lower case>"]) — whose aria-pressed must change
 export function selectorFor(target, suffix = '') {
   const [kind, ...rest] = String(target).split(':')
   const arg = rest.join(':')
@@ -133,12 +134,12 @@ export function selectorFor(target, suffix = '') {
 // A step's `flip`, read (in the browser): the value of the attribute that must change — aria-pressed on a
 // `task-filter:<Label>` chip, aria-expanded on every other target. null when the element is not on the page.
 // Integration S3 × S4: a chip jump onto a section that is ALREADY open (v2-frost's Needs care, opened by the
-// small-pot trigger) flips no aria-expanded, but it always moves the task filter's pre-select.
+// small-pot trigger) flips no aria-expanded, but it always moves the task filter (L4: the cell's own aria-pressed).
 export function flipState(target, suffix = '', doc = globalThis.document) {
   const [kind, ...rest] = String(target).split(':')
   if (kind === 'task-filter') {
     const label = rest.join(':')
-    const b = [...doc.querySelectorAll(`[data-testid="care-filter-tasks${suffix}"] button[aria-pressed]`)].find((x) => x.textContent.trim() === label)
+    const b = doc.querySelector(`[data-testid="today-jumpbar${suffix}"] [data-chip="${label.toLowerCase().replace(/"/g, '\\"')}"][aria-pressed]`)
     return b ? b.getAttribute('aria-pressed') : null
   }
   return doc.querySelector(selectorFor(target, suffix))?.getAttribute('aria-expanded') ?? null

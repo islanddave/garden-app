@@ -104,13 +104,59 @@ export const MUTANTS_V2 = {
     killers: ['sticky', 'jump-landing'],
     defect: 'an ancestor gains overflow:hidden and silently disables sticky',
   },
-  chipRowNoScroll: {
+  // Finish plan L4 (2026-10-14, Dave's D16 + D17): the bar is equal-width cells that wrap and never scroll, and its
+  // Water / Feed / Check cells are Needs care's one task filter. chipRowNoScroll's premise (a strip that scrolls with
+  // overflow-x:auto) is gone — RETIRED below; its defect, a chip out of reach past the bar's edge, is now the
+  // bar scrolling instead of wrapping (cellsScrollSideways) or a cell too narrow for its label (cellMinTooSmall).
+  cellsScrollSideways: {
     armedAt: 'S3', kind: 'chrome',
     file: 'src/components/today/v2/JumpBar.jsx',
-    find: "overflowX: 'auto', minHeight: JUMP_BAR_HEIGHT_PX,",
-    replace: "overflowX: 'visible', minHeight: JUMP_BAR_HEIGHT_PX,",
+    find: 'gridTemplateColumns: barColumns(n, oneRow),',
+    replace: "gridAutoFlow: 'column', gridAutoColumns: `minmax(${CELL_MIN_REM}rem, 1fr)`, overflowX: 'auto',",
     killers: ['chip-census', 'no-hscroll'],
-    defect: 'the chip strip overflow:visible — chips past the edge are unreachable',
+    defect: 'D16: the cells sit in one row that scrolls sideways at 200% text instead of wrapping (the strip the bar used to be)',
+  },
+  cellMinTooSmall: {
+    armedAt: 'S3', kind: 'chrome',
+    file: 'src/components/today/v2/JumpBar.jsx',
+    find: 'export const CELL_MIN_REM = 3.75\n',
+    replace: 'export const CELL_MIN_REM = 2\n',
+    killers: ['chip-census'],
+    oneKiller: 'only chip-census measures a label against its cell; a label spilling over its neighbour moves no box another family reads',
+    defect: 'D16: the cells never wrap, so at 200% text the labels spill out of cells too narrow for them',
+  },
+  taskCellNeverPressed: {
+    armedAt: ['S3', 'S4'], kind: 'chrome',
+    file: 'src/components/today/v2/JumpBar.jsx',
+    find: 'aria-pressed={toggle ? String(on) : undefined}',
+    replace: "aria-pressed={toggle ? 'false' : undefined}",
+    killers: ['interaction', 'chip-census'],
+    defect: 'D17: a task cell never reports pressed — the filter is on and a screen reader is never told',
+  },
+  selectedLooksPlain: {
+    armedAt: ['S3', 'S4'], kind: 'chrome',
+    file: 'src/components/today/v2/JumpBar.jsx',
+    find: 'style={on ? cellOn : cellStyle}',
+    replace: 'style={cellStyle}',
+    killers: ['chip-census'],
+    oneKiller: 'only chip-census compares a pressed cell\'s paint with its own unpressed paint; aria-pressed still flips, so interaction and announce stay green',
+    defect: 'D17: the selected task cell looks like every other cell ("where did my Feed rows go?") — only its label weight changes',
+  },
+  barCellSetsNoFilter: {
+    armedAt: ['S3', 'S4'], kind: 'chrome',
+    file: 'src/pages/TodayV2.jsx',
+    find: '    if (c.task && counts[c.task] > 0) changeCareFilters(',
+    replace: '    if (false) changeCareFilters(',
+    killers: ['interaction', 'announce'],
+    defect: 'D17: a Water / Feed / Check cell only jumps — the task filter is no longer anywhere on the page',
+  },
+  secondTapKeepsFilter: {
+    armedAt: ['S3', 'S4g'], kind: 'chrome',
+    file: 'src/pages/TodayV2.jsx',
+    find: "tasks: careTask === c.task ? [] : [c.task] })",
+    replace: 'tasks: [c.task] })',
+    killers: ['announce', 'chip-census'],
+    defect: 'D17: a second tap on the selected task cell re-applies its filter instead of clearing it — no way back to all',
   },
   truncateVerdict: {
     armedAt: 'S3', kind: 'chrome',
@@ -194,10 +240,11 @@ export const MUTANTS_V2 = {
   dropSpotRetry: { armedAt: 'S4g', kind: 'chrome', file: 'src/components/today/v2/SpotRow.jsx', find: '      {failing && (\n', replace: '      {false && (\n', killers: ['header-text', 'spot-retry', 'retry-focus'], defect: 'MF3: a spot holding failed writes shows no "N not logged" line and no Retry — the failure is visible only inside the opened spot' },
   retryNewBatch: { armedAt: 'S4g', kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: "      settle(bid, { scope: 'spot', target: spot.key, name: spot.name, kind, at: Date.now() }, res, { etype: g.etype, body: g.body || null })\n", replace: "      settle(newId(), { scope: 'spot', target: spot.key, name: spot.name, kind, at: Date.now() }, res, { etype: g.etype, body: g.body || null })\n", killers: ['spot-retry', 'header-text'], defect: 'MF3: a Retry lands in a batch of its own instead of completing the run it failed in — the run\'s one Undo leaves the retried writes logged' },
   spotShareIsGroupTotal: { armedAt: 'S4g', kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: "const n = b.kind === 'not-today' ? 0 : (spotKey && b.scope === 'group' ?", replace: "const n = b.kind === 'not-today' ? 0 : (false && b.scope === 'group' ?", killers: ['group-water-all', 'header-text'], defect: 'MF3: after a group Water all every touched spot reads the GROUP\'s total ("Trough · watered 152") instead of its own share' },
-  noFilterAnnouncement: { armedAt: ['S3', 'S4g'], kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: '    announce(filterAnnouncement(filterResult(care.rows, next)))\n', replace: '', killers: ['announce', 'announce-once'], defect: '§2.6: a filter change says nothing through the status region (S4\'s state)' },
+  // L4: the filter (and the one announcement of its change) moved from NeedsCare to the page, beside the bar's cells.
+  noFilterAnnouncement: { armedAt: ['S3', 'S4g'], kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '    announce(filterAnnouncement(filterResult(care, next)))\n', replace: '', killers: ['announce', 'announce-once'], defect: '§2.6: a filter change says nothing through the status region (S4\'s state)' },
   emptiedTitleStays: { armedAt: 'S4g', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: "      title: care.length ? 'Needs care' : needs.caughtUp.title,\n", replace: "      title: 'Needs care',\n", killers: ['header-text', 'empty-focus'], defect: '§2.5: an emptied Needs care keeps the title "Needs care" (S4\'s state) — the header the emptying action focuses does not say it is caught up' },
   dropCaughtUpSummary: { armedAt: 'S4g', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '        : needs.caughtUp.summary,\n', replace: '        : null,\n', killers: ['caught-up', 'empty-focus'], defect: '§2.5: the emptied header loses its "N logged today, M watered by rain" line' },
-  announceEveryRender: { armedAt: ['S3', 'S4g'], kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: "  const feedOnly = tasks.length === 1 && tasks[0] === 'feed'\n", replace: "  const feedOnly = tasks.length === 1 && tasks[0] === 'feed'\n  useEffect(() => { announce(filterAnnouncement(filterResult(care.rows, filters))) })\n", killers: ['announce-once', 'announce'], defect: '§2.6: the filter result is said from a render effect — every render repeats it and talks over the run results (a bulk\'s "Watered N…")' },
+  announceEveryRender: { armedAt: ['S3', 'S4g'], kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: "  const careTask = needs.task\n", replace: "  const careTask = needs.task\n  useEffect(() => { announce(filterAnnouncement(filterResult(care, careFilters))) })\n", killers: ['announce-once', 'announce'], defect: '§2.6: the filter result is said from a render effect — every render repeats it and talks over the run results (a bulk\'s "Watered N…")' },
 
   // ── S5: protect tonight + heads-up (patterns filled by S5, 2026-09-29; exact source text — the plugin throws on a
   // miss). The trigger-predicate mutants are cells of the triggers.js unit table (below, §13 Simplify 3); these three
@@ -281,4 +328,5 @@ export const MUTANTS_V2 = {
 // Retired, with the reason, so the catalogue never loses a name silently.
 export const RETIRED_V2 = {
   highlightStuck: '§13 Simplify 5 cut the in-view scroll-spy (no lit chip state), so there is no highlight to stick',
+  chipRowNoScroll: 'finish plan L4 (Dave\'s D16, 2026-10-14): the bar never scrolls sideways, so there is no overflow-x:auto to lose; its defect (a chip unreachable past the edge) is now cellsScrollSideways and cellMinTooSmall',
 }

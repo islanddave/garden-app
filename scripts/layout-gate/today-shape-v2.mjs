@@ -309,7 +309,8 @@ const CHECKERS = {
   'no-hscroll': (m, c, F) => {
     if (m.scrollWidth > m.clientWidth + 1) F(`document scrollWidth ${m.scrollWidth} > clientWidth ${m.clientWidth} — the page scrolls sideways at ${VIEWPORT.w}px`)
     for (const s of m.sections) if (s.overflowsX) F(`section '${s.key}' overflows its own box horizontally`)
-    if (m.bar && m.bar.sw > m.bar.cw + 1 && m.bar.ox !== 'auto') F(`the chip strip overflows with overflow-x ${m.bar.ox}, not auto`)
+    // L4 (D16): the jump bar's cells wrap; the bar never scrolls sideways, whatever its overflow-x.
+    if (m.bar && m.bar.sw > m.bar.cw + 1) F(`the jump bar is ${m.bar.sw}px wide inside its ${m.bar.cw}px box (overflow-x ${m.bar.ox}) — its cells must wrap, never scroll (D16)`)
   },
   floors: (m, c, F, ctx) => {
     // --record MEASURES the floors it writes; judging that run against the budget it replaces (or, the first
@@ -488,22 +489,41 @@ const INTERACTION_FAMILIES = ['owner-floors', 'interaction', 'region-headcount',
 const ownerRecord = {}
 
 // S3 chip census, measured in the page at normal text and at 200% (WCAG 1.4.4 resize text; Android's font scaling
-// reaches the rem-sized labels the same way). Restores the root font size before it returns.
+// reaches the rem-sized labels the same way). Restores the root font size before it returns. L4 (D16 + D17): each
+// cell's box, its label's box, its accessible name, its glyph and its paint; and one task cell TOGGLED — tapped,
+// read, tapped back — so the selected state is seen drawn and announced, then the filter left as found.
 const CHIP_CENSUS = `(async () => {
   const bar = document.querySelector('[data-testid="today-jumpbar${SUFFIX}"]')
   if (!bar) return null
   const frames = (n) => new Promise(r => { const f = k => (k <= 0 ? r() : requestAnimationFrame(() => f(k - 1))); f(n) })
+  const paint = (el) => { const cs = getComputedStyle(el); return [cs.backgroundColor, cs.borderTopColor, cs.boxShadow].join(' | ') }
   const read = () => {
     const b = bar.getBoundingClientRect(), cs = getComputedStyle(bar)
-    return { ox: cs.overflowX, sw: bar.scrollWidth, cw: bar.clientWidth, l: b.left, r: b.right,
-      chips: [...bar.querySelectorAll('[data-chip]')].map(ch => { const q = ch.getBoundingClientRect(); return { key: ch.getAttribute('data-chip'), l: q.left, r: q.right, h: q.height, text: (ch.textContent || '').replace(/\\s+/g, ' ').trim() } }) }
+    return { ox: cs.overflowX, sw: bar.scrollWidth, cw: bar.clientWidth, l: b.left, r: b.right, t: b.top, b: b.bottom,
+      chips: [...bar.querySelectorAll('[data-chip]')].map(ch => { const q = ch.getBoundingClientRect(), lab = ch.lastElementChild, lq = lab ? lab.getBoundingClientRect() : null
+        return { key: ch.getAttribute('data-chip'), l: q.left, r: q.right, t: q.top, w: q.width, h: q.height, name: ch.getAttribute('aria-label') || '', text: (ch.textContent || '').replace(/\\s+/g, ' ').trim(),
+          glyph: !!ch.querySelector('svg'), pressed: ch.getAttribute('aria-pressed'), paint: paint(ch),
+          label: lq ? { l: lq.left, r: lq.right, sw: lab.scrollWidth, cw: lab.clientWidth } : null } }) }
   }
   const normal = read()
+  // D17: toggle the first task cell that is a toggle, read it, toggle it back. A tap also jumps (the page scrolls),
+  // so the page is put back where it was.
+  let toggle = null
+  const cell = [...bar.querySelectorAll('[data-chip][aria-pressed]')][0]
+  if (cell) {
+    const y = window.scrollY, before = { pressed: cell.getAttribute('aria-pressed'), paint: paint(cell) }
+    cell.click(); await new Promise(r => setTimeout(r, 250)); await frames(2)
+    const after = { pressed: cell.getAttribute('aria-pressed'), paint: paint(cell) }
+    cell.click(); await new Promise(r => setTimeout(r, 250)); await frames(2)
+    const back = { pressed: cell.getAttribute('aria-pressed'), paint: paint(cell) }
+    window.scrollTo({ top: y, behavior: 'instant' }); await frames(3)
+    toggle = { key: cell.getAttribute('data-chip'), before, after, back }
+  }
   const html = document.documentElement, before = html.style.fontSize
   html.style.fontSize = '200%'; await frames(3)
   const large = read()
   html.style.fontSize = before; await frames(3)
-  return { normal, large }
+  return { normal, large, toggle }
 })()`
 
 // S4: how many of a testid are mounted, and how many are SHOWN (the MEASURE shown() rule, inlined).
@@ -624,25 +644,49 @@ async function runInteractions(state, checks, at) {
     } else if (c.family === 'chip-census') {
       const r = await evalSettled(CHIP_CENSUS)
       if (!r) { F('no jump bar to take a chip census of'); continue }
+      const EPS = 1
+      // L4 (D16): cells, never scroll — at either text size every cell inside the bar, every label inside its cell,
+      // the bar never wider than its box; equal widths; the first row spans the column edge to edge.
+      const cells = (L, at200) => {
+        const tag = at200 ? 'at 200% text ' : ''
+        if (L.sw > L.cw + 1) fail(at, 'no-hscroll', `${tag}the jump bar is ${L.sw}px wide inside its ${L.cw}px box (overflow-x ${L.ox}) — its cells scroll sideways instead of wrapping (D16)`)
+        for (const ch of L.chips) {
+          if (ch.l < L.l - EPS || ch.r > L.r + EPS) { F(`${tag}cell '${ch.key}' paints at x=${Math.round(ch.l)}..${Math.round(ch.r)}, past the bar (x=${Math.round(L.l)}..${Math.round(L.r)}) — out of reach (D16: wrap, never scroll)`); break }
+          if (!ch.label) F(`${tag}cell '${ch.key}' has no label`)
+          else if (ch.label.sw > ch.label.cw + 1 || ch.label.l < ch.l - EPS || ch.label.r > ch.r + EPS) F(`${tag}the label of cell '${ch.key}' (x=${Math.round(ch.label.l)}..${Math.round(ch.label.r)}) spills out of its ${Math.round(ch.w)}px cell (x=${Math.round(ch.l)}..${Math.round(ch.r)})`)
+        }
+        const ws = L.chips.map(ch => ch.w)
+        if (ws.length && Math.max(...ws) - Math.min(...ws) > EPS) F(`${tag}the cells are not equal widths: ${L.chips.map(ch => `${ch.key} ${Math.round(ch.w)}`).join(', ')}`)
+        const row1 = L.chips.filter(ch => Math.abs(ch.t - L.chips[0].t) <= EPS)
+        if (row1.length && (Math.abs(row1[0].l - L.l) > EPS || Math.abs(row1[row1.length - 1].r - L.r) > EPS)) F(`${tag}the first row of cells spans x=${Math.round(row1[0].l)}..${Math.round(row1[row1.length - 1].r)}, not the bar's x=${Math.round(L.l)}..${Math.round(L.r)} (D16: across the full width)`)
+        return new Set(L.chips.map(ch => Math.round(ch.t))).size
+      }
+      const rowsNormal = cells(r.normal, false)
       for (const ch of r.normal.chips) {
-        if (ch.h < 47.5) F(`chip '${ch.key}' is ${ch.h}px tall, under the 48px chip floor`)
-        const counted = CHIPS[ch.key]?.counted
-        const label = CHIPS[ch.key]?.label
-        if (!label) { F(`chip '${ch.key}' is not a chip the bar knows`); continue }
-        if (counted && !new RegExp(`^${label} (\\d+|· done)$`).test(ch.text)) F(`work chip '${ch.key}' reads "${ch.text}", expected "${label} <count>" or "${label} · done"`)
-        if (!counted && ch.text !== label) F(`chip '${ch.key}' reads "${ch.text}" — only Protect, Heads-up, Water, Feed and Check carry a number`)
+        if (ch.h < 47.5) F(`cell '${ch.key}' is ${ch.h}px tall, under the 48px floor`)
+        const def = CHIPS[ch.key]
+        if (!def) { F(`cell '${ch.key}' is not a chip the bar knows`); continue }
+        // The accessible name: "<Label> <count>" or "<Label> · done" on a counted cell, the label alone otherwise.
+        if (def.counted && !new RegExp(`^${def.label} (\\d+|· done)$`).test(ch.name)) F(`counted cell '${ch.key}' is named "${ch.name}", expected "${def.label} <count>" or "${def.label} · done"`)
+        if (!def.counted && ch.name !== def.label) F(`cell '${ch.key}' is named "${ch.name}" — only Protect, Heads-up, Water, Feed and Check carry a number`)
+        // What shows: the count over the label, or a glyph (an icon on Harvest / Put-Up, a check on an emptied cell).
+        const done = / · done$/.test(ch.name)
+        if (def.counted && !done && (ch.glyph || ch.text !== `${ch.name.slice(def.label.length + 1)}${def.label}`)) F(`counted cell '${ch.key}' shows "${ch.text}"${ch.glyph ? ' with a glyph' : ''}, expected its count over "${def.label}" and no glyph`)
+        if ((!def.counted || done) && (!ch.glyph || /\d/.test(ch.text))) F(`cell '${ch.key}' shows "${ch.text}"${ch.glyph ? '' : ' and no glyph'} — Harvest / Put-Up carry an icon and an emptied cell a check, never a number (Reward UX)`)
+        if (!!def.task !== (ch.pressed != null) && !done) F(`cell '${ch.key}' ${def.task ? 'is not' : 'is'} a toggle (aria-pressed ${ch.pressed}) — only Water / Feed / Check are the task filter (D17)`)
       }
-      // At 200% text the chips outgrow the strip: it must scroll (overflow-x auto), and every chip must sit inside
-      // the strip's scrollable range — not painted past its edge where no scroll reaches it.
-      const L = r.large
-      if (L.sw > L.cw + 1 && L.ox !== 'auto' && L.ox !== 'scroll') fail(at, 'no-hscroll', `at 200% text the chip strip overflows with overflow-x ${L.ox} — its chips spill past the column instead of scrolling inside it`)
-      const scrolls = (L.ox === 'auto' || L.ox === 'scroll')
-      for (const ch of L.chips) {
-        const inside = ch.l >= L.l - 1 && ch.r <= L.r + 1
-        const reachable = inside || (scrolls && ch.l >= L.l - 1 && ch.r <= L.l + L.sw + 1)
-        if (!reachable) { F(`at 200% text chip '${ch.key}' paints at x=${Math.round(ch.l)}..${Math.round(ch.r)}, past the strip (x=${Math.round(L.l)}..${Math.round(L.r)}), which cannot scroll to it`); break }
+      if (rowsNormal > 1) F(`at normal text the ${r.normal.chips.length} cells take ${rowsNormal} rows — they must fit one row at ${VIEWPORT.w}px (D16)`)
+      const rowsLarge = cells(r.large, true)
+      if (rowsLarge < 2) F(`at 200% text the ${r.large.chips.length} cells still sit in one row — the census cannot tell a wrapping bar from a squeezed one`)
+      // D17: a task cell toggled shows it — aria-pressed flips AND its paint changes — and a second tap undoes both.
+      const tg = r.toggle
+      if (!tg) F('no task cell (Water / Feed / Check with aria-pressed) to toggle — the task filter is not on the bar (D17)')
+      else {
+        if (tg.after.pressed === tg.before.pressed) F(`a tap on '${tg.key}' left aria-pressed at ${tg.before.pressed} — the cell is not the filter's toggle (D17)`)
+        else if (tg.after.paint === tg.before.paint) F(`a tap on '${tg.key}' flipped aria-pressed but the cell looks the same (${tg.after.paint}) — the selected filter is not drawn (D17)`)
+        if (tg.back.pressed !== tg.before.pressed || tg.back.paint !== tg.before.paint) F(`a second tap on '${tg.key}' did not put it back (aria-pressed ${tg.before.pressed} → ${tg.after.pressed} → ${tg.back.pressed}) — the same cell again must clear its filter (D17)`)
       }
-      if (L.sw <= L.cw + 1) F(`at 200% text the chips still fit the strip (${L.sw} ≤ ${L.cw}px) — the census cannot tell a scrolling strip from a clipped one`)
+      console.log(`[today-shape-v2] ${at}: chip-census · ${r.normal.chips.length} cells, ${rowsNormal} row(s) at normal text, ${rowsLarge} at 200% · widths ${r.normal.chips.map(ch => Math.round(ch.w)).join('/')} · widest label ${Math.max(...r.normal.chips.map(ch => ch.label ? ch.label.sw : 0))}px${tg ? ` · ${tg.key} ${tg.before.pressed}→${tg.after.pressed}→${tg.back.pressed}` : ''}`)
     } else if (c.family === 'region-headcount') {
       // S3 + S4: a region row counts once its OWN slice has landed (its armedAt — its owner exists), so the family
       // arms slice by slice; the rest are PENDING rows.
@@ -658,20 +702,18 @@ async function runInteractions(state, checks, at) {
           const cur = await evalSettled(`window.__h.expanded(${JSON.stringify(r.closed)})`)
           if (cur === 'true') { const a = await evalSettled(`window.__h.act({ tap: ${JSON.stringify(r.closed)} })`); if (a.void) { F(`could not close '${r.closed}' to count '${r.id}': ${a.void}`); continue } }
         }
-        // S4: a region that lives under a task filter (the substrate note under Feed) — that filter ALONE first. The
-        // row is multi-select (OR), and a chip jump may have pre-selected another task (S3 × S4: the Water chip
-        // leaves Water pressed), so every other pressed task is released before the named one is pressed.
+        // S4: a region that lives under a task filter — that filter first. L4 (D17): the task filter is the jump bar's
+        // cells, one task at a time, so pressing the named cell (when it is not already the filter) is the whole step.
         if (r.filter) {
-          const pressed = await evalSettled(`(async () => { const row = () => [...document.querySelectorAll('[data-testid="care-filter-tasks${SUFFIX}"] button[aria-pressed]')]; const is = x => x.textContent.trim().toLowerCase() === ${JSON.stringify(r.filter)}
-            if (!row().some(is)) return null
-            for (let o; (o = row().find(x => !is(x) && x.getAttribute('aria-pressed') === 'true'));) { o.click(); await new Promise(res => setTimeout(res, 50)) }
-            const b = row().find(is); if (b.getAttribute('aria-pressed') !== 'true') b.click(); return true })()`)
-          if (!pressed) { F(`could not press the '${r.filter}' task filter to count '${r.id}'`); continue }
+          const pressed = await evalSettled(`(async () => { const b = document.querySelector('[data-testid="today-jumpbar${SUFFIX}"] [data-chip="' + ${JSON.stringify(r.filter)} + '"][aria-pressed]')
+            if (!b) return null
+            if (b.getAttribute('aria-pressed') !== 'true') b.click(); return true })()`)
+          if (!pressed) { F(`could not press the '${r.filter}' task cell to count '${r.id}'`); continue }
           await evalSettled('new Promise(r => setTimeout(r, 120))')
         }
         const k = await evalSettled(`document.querySelectorAll('[data-testid="${r.id}${SUFFIX}"]').length`)
         if (k < 1) F(`region '${r.id}' (owner: ${r.owner}) is not on the page after opening its owner — a moved region was deleted inside its owner`)
-        if (r.filter) await evalSettled(`(() => { const b = [...document.querySelectorAll('[data-testid="care-filter-tasks${SUFFIX}"] button[aria-pressed="true"]')].find(x => x.textContent.trim().toLowerCase() === ${JSON.stringify(r.filter)}); if (b) b.click(); return 1 })()`)
+        if (r.filter) await evalSettled(`(() => { const b = document.querySelector('[data-testid="today-jumpbar${SUFFIX}"] [data-chip="' + ${JSON.stringify(r.filter)} + '"][aria-pressed="true"]'); if (b) b.click(); return 1 })()`)
       }
     } else if (c.family === 'group-water-all') {
       const q = `[data-testid="care-group-bulk${SUFFIX}"][data-group="${c.group}"]`
@@ -730,7 +772,9 @@ async function caughtUpRun(c, at, F) {
   const txt = (q) => `(() => { const el = document.querySelector(${JSON.stringify(q)}); return el ? (el.textContent || '').replace(/\\s+/g, ' ').trim() : null })()`
   const wait = (ms) => evalSettled(`new Promise(r => setTimeout(r, ${ms}))`)
   const start = await evalSettled(`(async () => {
-    for (const r of ['tasks', 'spots']) { const b = [...document.querySelectorAll('[data-testid="care-filter-' + r + '${SUFFIX}"] button')].find(x => x.textContent.trim() === 'Clear'); if (b) { b.click(); await new Promise(res => setTimeout(res, 120)) } }
+    // No filter: the task cell that is on (the bar's, L4 / D17) tapped off, the spot row's Clear.
+    const on = document.querySelector('[data-testid="today-jumpbar${SUFFIX}"] [data-chip][aria-pressed="true"]'); if (on) { on.click(); await new Promise(res => setTimeout(res, 300)) }
+    { const b = [...document.querySelectorAll('[data-testid="care-filter-spots${SUFFIX}"] button')].find(x => x.textContent.trim() === 'Clear'); if (b) { b.click(); await new Promise(res => setTimeout(res, 120)) } }
     const h = document.querySelector(${JSON.stringify(band)}); if (!h) return { miss: 'no Needs care band (today-sec-care)' }
     if (h.getAttribute('aria-expanded') !== 'true') { h.click(); await new Promise(res => setTimeout(res, 150)) }
     return { text: (h.textContent || '').replace(/\\s+/g, ' ').trim() } })()`)
@@ -770,11 +814,14 @@ async function caughtUpRun(c, at, F) {
 async function announceRun(c, at, F) {
   const status = `[data-testid="today-status${SUFFIX}"]`
   const row = (r) => `[data-testid="care-filter-${r}${SUFFIX}"]`
-  // Start from no filter (earlier families leave some pressed), THEN watch.
+  const cells = `[data-testid="today-jumpbar${SUFFIX}"] [data-chip][aria-pressed]`
+  // Start from no filter (earlier families leave some pressed), THEN watch. L4 (D17): the task filter is the bar's
+  // cells — the one that is on is tapped off — and the spot row keeps its Clear.
   const reset = await evalSettled(`(async () => { const wait = () => new Promise(r => setTimeout(r, 120))
-    for (const q of ${JSON.stringify([row('tasks'), row('spots')])}) { const clear = [...document.querySelectorAll(q + ' button')].find(b => b.textContent.trim() === 'Clear'); if (clear) { clear.click(); await wait() } }
+    const on = [...document.querySelectorAll(${JSON.stringify(cells)})].find(b => b.getAttribute('aria-pressed') === 'true'); if (on) { on.click(); await wait() }
+    { const clear = [...document.querySelectorAll(${JSON.stringify(row('spots') + ' button')})].find(b => b.textContent.trim() === 'Clear'); if (clear) { clear.click(); await wait() } }
     const s = document.querySelector(${JSON.stringify(status)}); if (!s) return 'no status region (today-status)'
-    if (!document.querySelector(${JSON.stringify(row('tasks'))})) return 'no task filter row (care-filter-tasks) — is Needs care open?'
+    if (!document.querySelector(${JSON.stringify(cells)})) return 'no task cell on the jump bar (Water / Feed / Check with aria-pressed)'
     window.__s4gAnn = []; window.__s4gObs = new MutationObserver((recs) => { for (const r of recs) if (r.type === 'characterData' || r.addedNodes.length) window.__s4gAnn.push((s.textContent || '').trim()) })
     window.__s4gObs.observe(s, { childList: true, characterData: true, subtree: true }); return null })()`)
   if (reset) { F(`could not start: ${reset}`); return }
@@ -1143,8 +1190,9 @@ async function tapsRun(state, c, at, F) {
   } else if (c.flow === 'feed-all') {
     // (f) Feed all: what it says when it ends, and each planting posted once. (No done line, no Undo: MINOR-4.)
     await tapsLoad(state)
-    const chip = `[...document.querySelectorAll(${JSON.stringify(TQ('care-filter-tasks') + ' button[aria-pressed]')})].find(b => b.textContent.trim().startsWith('Feed'))`
-    if (!(await tap(chip, 'the Feed task filter'))) return
+    // L4 (D17): the Feed filter is the jump bar's Feed cell (tapped only when it is not already the filter).
+    const chip = `document.querySelector(${JSON.stringify(TQ('today-jumpbar') + ' [data-chip="feed"][aria-pressed]')})`
+    if ((await evalSettled(`${chip}?.getAttribute('aria-pressed')`)) !== 'true' && !(await tap(chip, 'the Feed task cell'))) return
     const btn = `[...document.querySelectorAll(${JSON.stringify(TQ('care-product') + ' button')})].find(b => /^Feed all \\d+ with /.test(b.getAttribute('aria-label') || ''))`
     const name0 = await pageWait(`(() => { const b = ${btn}; return b ? b.getAttribute('aria-label') : null })()`, 3000)
     if (!name0) { F(`${c.flow}: under the Feed filter no product offers "Feed all <n> with …" (care-product)`); return }

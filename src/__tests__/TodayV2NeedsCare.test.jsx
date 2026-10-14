@@ -185,54 +185,61 @@ describe('Needs care on Dave\'s 09-24 plan', () => {
   })
 })
 
-// S3 × S4 (integration): a Water / Feed / Check chip in S3's jump bar pre-selects that task filter in S4's Needs
-// care, through the visit record (record.filter.care = { tasks, n }). Each lane tested its own half alone and
-// both stayed green with the halves keyed differently, so this drives the real chip and reads the real filter row.
-describe('a jump chip pre-selects its task filter in Needs care (S3 → S4)', () => {
+// Finish plan §3.5 (Dave's D17, 2026-10-14): the jump bar's Water / Feed / Check cells ARE Needs care's task filter —
+// one set, one task or all. The task row that used to sit inside Needs care is gone; its spot chips stay. Drives the
+// real cells and reads the real list.
+describe('the bar\'s task cells are Needs care\'s task filter (D17)', () => {
   const chip = (k) => screen.getByRole('navigation', { name: 'Today sections' }).querySelector(`[data-chip="${k}"]`)
-  const taskRow = () => screen.getByTestId('care-filter-tasks')
-  const pressed = () => [...taskRow().querySelectorAll('button[aria-pressed="true"]')].map((b) => b.textContent.trim())
-  const filterBtn = (label) => [...taskRow().querySelectorAll('button[aria-pressed]')].find((b) => b.textContent.trim() === label)
+  const pressed = () => ['water', 'feed', 'check'].filter((k) => chip(k).getAttribute('aria-pressed') === 'true')
   const careBand = () => screen.getByTestId('today-sec-care').querySelector('[aria-expanded]')
+  const spotCounts = () => [...document.querySelectorAll('[data-testid="care-spot"]')].reduce((n, li) => n + Number(li.getAttribute('data-count')), 0)
   const tap = async (el) => { fireEvent.click(el); await settle() }
 
-  it('Water, Feed and Check each replace the task row with their own task; the same chip again re-applies over a hand change', async () => {
+  it('no task row inside Needs care; the spot chips stay', async () => {
     await mount()
     expect(careBand().getAttribute('aria-expanded')).toBe('true') // open already (the small-pot trigger)
-    expect(pressed()).toEqual([])
-    await tap(chip('water'))
-    expect(pressed()).toEqual(['Water'])
-    await tap(chip('feed'))
-    expect(pressed()).toEqual(['Feed'])
-    await tap(chip('check'))
-    expect(pressed()).toEqual(['Check'])
-    await tap(filterBtn('Water'))
-    expect(pressed()).toEqual(['Water', 'Check'])
-    await tap(chip('check'))
-    expect(pressed()).toEqual(['Check'])
+    expect(screen.queryByTestId('care-filter-tasks')).toBeNull()
+    expect(screen.getByTestId('care-filter-spots')).toBeTruthy()
   })
 
-  it('also when the chip is what opens a closed Needs care — its body mounts with the intent already written', async () => {
+  it('Water, Feed and Check each set their task alone; the same cell again clears it to all', async () => {
+    await mount()
+    const all = spotCounts()
+    expect(pressed()).toEqual([])
+    await tap(chip('water'))
+    expect(pressed()).toEqual(['water'])
+    expect(spotCounts()).toBe(ROWS.filter((r) => r.task === 'water').length)
+    await tap(chip('check'))
+    expect(pressed()).toEqual(['check'])
+    expect(spotCounts()).toBe(ROWS.filter((r) => r.task === 'check').length)
+    await tap(chip('feed'))
+    expect(pressed()).toEqual(['feed'])
+    expect(document.querySelectorAll('[data-testid="care-product"]').length).toBeGreaterThan(0) // D12: one row per product
+    await tap(chip('feed'))
+    expect(pressed()).toEqual([])
+    expect(spotCounts()).toBe(all)
+  })
+
+  it('also when the cell is what opens a closed Needs care — its body mounts filtered', async () => {
     await mount()
     await tap(careBand())
     expect(careBand().getAttribute('aria-expanded')).toBe('false')
-    expect(screen.queryByTestId('care-filter-tasks')).toBeNull()
     await tap(chip('water'))
     expect(careBand().getAttribute('aria-expanded')).toBe('true')
-    expect(pressed()).toEqual(['Water'])
+    expect(pressed()).toEqual(['water'])
+    expect(spotCounts()).toBe(ROWS.filter((r) => r.task === 'water').length)
   })
 
-  it('an intent already applied is not applied again when the body remounts: a filter chosen by hand survives a close and re-open', async () => {
+  it('the filter, and a spot chosen by hand under it, survive a close and re-open', async () => {
     await mount()
     await tap(chip('water'))
-    expect(pressed()).toEqual(['Water'])
-    await tap(filterBtn('Water'))
-    await tap(filterBtn('Feed'))
-    expect(pressed()).toEqual(['Feed'])
+    const bag = [...screen.getByTestId('care-filter-spots').querySelectorAll('button[aria-pressed]')].find((b) => b.textContent.trim().startsWith('Bag Area'))
+    await tap(bag)
     await tap(careBand())
     await tap(careBand())
     expect(careBand().getAttribute('aria-expanded')).toBe('true')
-    expect(pressed()).toEqual(['Feed'])
+    expect(pressed()).toEqual(['water'])
+    expect([...screen.getByTestId('care-filter-spots').querySelectorAll('button[aria-pressed="true"]')].map((b) => b.textContent.trim())).toEqual(['Bag Area'])
   })
 })
 
@@ -244,7 +251,7 @@ describe('S4g: a failed write stays on its spot as "Not logged · Retry" (MF3)',
   const failLine = (name) => spot(name)?.querySelector('[data-testid="care-spot-failed"]') ?? null
   const retryOf = (name) => spot(name)?.querySelector('[data-testid="care-spot-retry"]') ?? null
   const groupDone = () => document.querySelector('[data-testid="care-group-done"][data-group="Outside"]')
-  const tapTask = async (label) => { fireEvent.click([...screen.getByTestId('care-filter-tasks').querySelectorAll('button[aria-pressed]')].find((b) => b.textContent.trim() === label)); await settle() }
+  const tapTask = async (label) => { fireEvent.click(screen.getByRole('navigation', { name: 'Today sections' }).querySelector(`[data-chip="${label.toLowerCase()}"]`)); await settle() }
 
   it('a spot Water all with failures: the CLOSED row keeps "2 not logged" + Retry (out of Water all), focus lands on it; Retry completes the run — one done line, one Undo for all 5 ids', async () => {
     await mount()
@@ -353,9 +360,11 @@ describe('S4g: a failed write stays on its spot as "Not logged · Retry" (MF3)',
 })
 
 // S4g — §2.6 / §5.6: a filter change says its result through the page's ONE status region, once per change: a
-// chip, a Clear, a spot chip, a jump chip's pre-select. A re-render that changes no filter says nothing.
+// bar task cell (set, replace, clear — finish plan D17), a spot chip, the spot Clear. A re-render that changes no
+// filter says nothing.
 describe('S4g: a filter change says its result once, through the one status region (§2.6)', () => {
   const statusEl = () => screen.getByTestId('today-status')
+  const cell = (k) => screen.getByRole('navigation', { name: 'Today sections' }).querySelector(`[data-chip="${k}"]`)
   const pressIn = (row, label) => [...screen.getByTestId(row).querySelectorAll('button[aria-pressed]')].find((b) => b.textContent.trim() === label)
   const watch = () => {
     const log = []
@@ -366,29 +375,31 @@ describe('S4g: a filter change says its result once, through the one status regi
   }
   const tap = async (el) => { fireEvent.click(el); await settle() }
 
-  it('chips, Clear, a spot chip and a jump chip each say it ONCE; opening a spot or logging a plant says no filter again', async () => {
+  it('a task cell set, replaced and cleared, a spot chip and its Clear each say it ONCE; opening a spot or logging a plant says no filter again', async () => {
     await mount()
     const w = watch()
-    await tap(pressIn('care-filter-tasks', 'Water'))
+    await tap(cell('water'))
     expect(statusEl().textContent).toBe('Needs care: Water, 168 in 8 spots.')
     expect(w.log).toEqual(['Needs care: Water, 168 in 8 spots.'])
-    await tap(pressIn('care-filter-tasks', 'Feed'))
-    expect(w.log.at(-1)).toBe('Needs care: Water and Feed, 226 in 9 spots.')
+    await tap(cell('feed'))
+    expect(w.log.at(-1)).toBe('Needs care: Feed, 58 in 3 products.') // D12: Feed alone lists products
     expect(w.log.length).toBe(2)
+    await tap(cell('water'))
+    expect(w.log.length).toBe(3)
     // Re-renders that change no filter: a spot opened and closed, a one-tap log (its own announcement only).
     await tap(within(spot('Trough')).getAllByRole('button', { expanded: false })[0])
     await tap(within(spot('Trough')).getAllByRole('button', { expanded: true })[0])
-    expect(w.log.length).toBe(2)
+    expect(w.log.length).toBe(3)
     await tap(within(spot('Drive-Shade')).getByRole('button', { name: 'Water all 5 in Drive-Shade' }))
-    expect(w.log.filter((m) => m.startsWith('Needs care:')).length).toBe(2)
-    await tap(within(screen.getByTestId('care-filter-tasks')).getByRole('button', { name: 'Clear' }))
+    expect(w.log.filter((m) => m.startsWith('Needs care:')).length).toBe(3)
+    await tap(cell('water'))
     // Drive-Shade's 5 are logged: 228 left, in the 8 spots that still hold any.
     expect(statusEl().textContent).toBe('Needs care: everything, 228 in 8 spots.')
     await tap(pressIn('care-filter-spots', 'Bag Area'))
     expect(statusEl().textContent).toBe('Needs care: Bag Area, 141 in 1 spot.')
     await tap(within(screen.getByTestId('care-filter-spots')).getByRole('button', { name: 'Clear' }))
     const before = w.log.length
-    await tap(screen.getByRole('navigation', { name: 'Today sections' }).querySelector('[data-chip="check"]'))
+    await tap(cell('check'))
     expect(statusEl().textContent).toBe('Needs care: Check, 7 in 2 spots.')
     expect(w.log.length).toBe(before + 1)
     w.stop()
@@ -912,8 +923,8 @@ describe('a failed /api/plants or /api/locations never builds a whole-garden spo
 // carries its cell's name.
 describe('filter × action cells, as stated in the contract (review 4160.2 IMPORTANT-4)', () => {
   const [SPOT_X_GROUP, TASK_X_NOTTODAY] = FILTER_ACTION_CELLS
-  const tasksRow = () => screen.getByTestId('care-filter-tasks')
-  const taskChip = (label) => [...tasksRow().querySelectorAll('button')].find((b) => b.textContent.trim() === label)
+  // The task filter is the jump bar's (finish plan D17).
+  const taskChip = (label) => screen.getByRole('navigation', { name: 'Today sections' }).querySelector(`[data-chip="${label.toLowerCase()}"]`)
   const spotChip = (label) => [...screen.getByTestId('care-filter-spots').querySelectorAll('button')].find((b) => b.textContent.trim().startsWith(label) && !b.textContent.trim().startsWith(label + '-'))
   const groupLine = () => document.querySelector('[data-testid="care-group-done"][data-group="Outside"]')
 

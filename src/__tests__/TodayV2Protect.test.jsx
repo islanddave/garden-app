@@ -122,7 +122,8 @@ describe('Protect tonight on the 09-24 plan (47°F, five protect cards, no alert
     await mount()
     const chips = [...screen.getByRole('navigation', { name: 'Today sections' }).querySelectorAll('[data-chip]')]
     expect(chips[0].getAttribute('data-chip')).toBe('protect')
-    expect(chips[0].textContent).toBe('Protect 5')
+    expect(chips[0].getAttribute('aria-label')).toBe('Protect 5')
+    expect(chips[0].hasAttribute('aria-pressed')).toBe(false) // navigation, not a filter
   })
 
   it('marks the five first-seen on this device (plan day), and seen yesterday it stays closed — no cue, the words stand', async () => {

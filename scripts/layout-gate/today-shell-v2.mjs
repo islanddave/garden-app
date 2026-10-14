@@ -28,8 +28,10 @@ import { SHELL, LANDED, isArmed, stateByName } from '../../tests/harness/_todaym
 // S3: where each jump chip lands — the bar's own table (src/lib/todayV2/chips.js), not a copy.
 import { CHIPS } from '../../src/lib/todayV2/chips.js'
 
-// plan-v2 §4 / §9.1 (f)(g): the bar is 57px in both states and a jump lands a header within 8px under it.
-const BAR_HEIGHT_PX = 57
+// plan-v2 §4 / §9.1 (f)(g): the bar is one height in both states and a jump lands a header within 8px under it.
+// Finish plan L4 (D16): one row of 48px cells is 52px (JumpBar.jsx JUMP_BAR_HEIGHT_PX — a .jsx module node cannot
+// import, so copied here); every shell state's bar is one row at 426px (chip-census proves it on v2-frost).
+const BAR_HEIGHT_PX = 52
 const LANDING_GAP_PX = 8
 const CHIP_SECTION = Object.fromEntries(Object.entries(CHIPS).map(([k, c]) => [k, c.section]))
 
@@ -171,14 +173,8 @@ const JUMP = (key) => `(async () => {
   const key = ${JSON.stringify(key)}
   window.scrollTo(0, 0); await settle()
   const chip = bar.querySelector('[data-chip="' + key + '"]')
-  // S5 + S6 (one implementation since integration 2): with Protect's and Harvest's chips the bar outgrows the column
-  // (mockup A: the last chip cut at the right edge). A chip past the strip's edge is reached the way a thumb reaches
-  // it (plan §6.9: a sideways swipe that starts inside the strip), so the strip is scrolled — instantly, whatever its
-  // scroll-behavior — until the chip is wholly in view, and the page settles, BEFORE the hit test; a chip covered by
-  // anything else still fails it, and with the strip overflow:visible (chipRowNoScroll) the chip stays off the page.
-  const sr = bar.getBoundingClientRect(), c0 = chip.getBoundingClientRect()
-  const dx = c0.left < sr.left ? c0.left - sr.left : c0.right > sr.right ? c0.right - sr.right : 0
-  if (dx) { bar.scrollTo({ left: bar.scrollLeft + dx, behavior: 'instant' }); await settle() }
+  // Finish plan L4 (D16): the bar never scrolls sideways — every cell is where a thumb already is, so the hit test
+  // runs on the cell as painted; one past the bar's edge (or under anything else) fails it.
   const cr = chip.getBoundingClientRect()
   const hit = document.elementFromPoint(cr.left + cr.width / 2, cr.top + cr.height / 2)
   if (!hit || !(hit === chip || chip.contains(hit))) return { key, covered: true }
@@ -329,7 +325,8 @@ try {
       // Integration S3 × S4 — the FOCUS a jump leaves, judged apart from where the header landed: WCAG 2.4.11 (the
       // focused header is not wholly hidden by TopChrome or the bar — hit-tested, not computed from its top) and
       // 2.4.3 (one real Tab continues INSIDE the jumped-to section, as R5 promises TalkBack and the keyboard). A
-      // section whose open body has no control would fail the Tab half; Needs care's opens with its filter row.
+      // section whose open body has no control would fail the Tab half; Needs care's opens with its spot chips (or,
+      // under Feed, its first product row) — its task row is the bar's cells since L4 (D17).
       if (c.family === 'jump-focus') {
         const r = await jumpRun()
         if (!r.bar) { F('no jump bar (today-jumpbar) to jump from'); continue }
@@ -368,10 +365,10 @@ try {
         const ROW = `[...document.querySelectorAll('[data-testid="care-exceptions-row${SUFFIX}"] a')].find(a => a.textContent.includes('Red Acre Cabbage'))`
         const SPOT = `document.querySelector('[data-testid="care-spot${SUFFIX}"][data-spot="Bag Area"] [aria-expanded]')`
         const r1 = await evalSettled(`(async () => {
-          // Integration S3 × S4: the chip jumps before this leave a task pre-selected (the last one wins), and a
-          // Check or Feed filter hides the water row this trip taps — release every pressed task first (§9.1 (m)
-          // names no filter), one at a time: the row's toggles read the selection they were rendered with.
-          const pressedTask = () => document.querySelector('[data-testid="care-filter-tasks${SUFFIX}"] button[aria-pressed="true"]')
+          // Integration S3 × S4: the chip jumps before this leave a task filter on (the last one wins), and a Check or
+          // Feed filter hides the water row this trip taps — release it first (§9.1 (m) names no filter). L4 (D17): the
+          // filter is the bar's task cell that is on; a second tap clears it.
+          const pressedTask = () => document.querySelector('[data-testid="today-jumpbar${SUFFIX}"] [data-chip][aria-pressed="true"]')
           for (let b, i = 0; (b = pressedTask()) && i < 5; i++) { b.click(); await new Promise(r => setTimeout(r, 120)) }
           const btn = ${SPOT}
           if (!btn) return { void: 'no Bag Area spot on the page' }
