@@ -121,8 +121,8 @@ export const MUTANTS_V2 = {
     file: 'src/components/today/v2/JumpBar.jsx',
     find: 'export const CELL_MIN_REM = 3.75\n',
     replace: 'export const CELL_MIN_REM = 2\n',
-    killers: ['chip-census'],
-    oneKiller: 'only chip-census measures a label against its cell; a label spilling over its neighbour moves no box another family reads',
+    // Measured (L4 mutation run): the spilt labels also widen the bar past its box at 200% text, so no-hscroll reds too.
+    killers: ['chip-census', 'no-hscroll'],
     defect: 'D16: the cells never wrap, so at 200% text the labels spill out of cells too narrow for them',
   },
   taskCellNeverPressed: {
