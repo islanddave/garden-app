@@ -67,11 +67,12 @@ import { tonightLineLow, currentLows, FREEZE_BELOW_F } from './frostAlertLine.js
  *  version names the model that produced the line the reader saw, and here that is only true of the
  *  lines this module actually changed. The server stores any 1..40-character string
  *  (lambda/daily-plan-read/cue-impression.js resolveModelVersion), so no Lambda change goes with it. */
-export const AGREED_CUE_MODEL_VERSION = 'wxcue-v1-agreed'
+// v3 (V5-CHILLBAND-001, 2026-10-13): the re-worded cold line reads "Cold night" and takes fall words; moved with WX_CUE_MODEL_VERSION.
+export const AGREED_CUE_MODEL_VERSION = 'wxcue-v3-agreed'
 
 // engine.js computeCallout: `low<40` -> freeze, `low<45` -> cold. On a consistent plan the agreed low
-// is never warmer than the plan low the engine keyed on (it is a min), so of these two the 40 split is
-// the only one that can move; the 45 bound is kept so the copy reads as the engine's two branches.
+// is never warmer than the plan low the engine keyed on (it is a min), so a plan cue can only move colder:
+// a `cool` plan cue (45 to 49.9) becomes cold or freeze, a `cold` one becomes freeze.
 // FREEZE_BELOW_F is imported from frostAlertLine.js (V5-TODAYFROSTLINEGAPS-001), whose "Forecast warmed" line
 // starts exactly where this cue's freeze branch stops; tonightLow.test.js's PARITY sweep guards the one value for both.
 const COLD_BELOW_F = 45

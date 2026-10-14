@@ -70,19 +70,19 @@ describe('the spec table — rows 1-12, before -> after (plan date Fri 2026-10-0
   it('the impression rows the spec names: 2 and 7 agreed, 4 and 12 wxcue-v3, 1/10 none', () => {
     const model = (n) => ROWS.find((r) => r.n === n).after.model
     expect([model(2), model(7)]).toEqual([AGREED_CUE_MODEL_VERSION, AGREED_CUE_MODEL_VERSION])
-    expect(AGREED_CUE_MODEL_VERSION).toBe('wxcue-v1-agreed')
+    expect(AGREED_CUE_MODEL_VERSION).toBe('wxcue-v3-agreed')
     expect(WX_CUE_MODEL_VERSION).toBe('wxcue-v3')
     expect([model(4), model(12)]).toEqual([WX_CUE_MODEL_VERSION, WX_CUE_MODEL_VERSION])
     expect([model(1), model(10)]).toEqual([null, null])
   })
 
-  it('row 2 bills freeze / imperative / wxcue-v1-agreed', async () => {
+  it('row 2 bills freeze / imperative / wxcue-v3-agreed', async () => {
     const a = after(planFor(43, [tonight(37.6)]))
-    expect(a.cueLine).toMatchObject({ cue: 'freeze', form: 'imperative', modelVersion: 'wxcue-v1-agreed' })
+    expect(a.cueLine).toMatchObject({ cue: 'freeze', form: 'imperative', modelVersion: 'wxcue-v3-agreed' })
     const apiFetch = vi.fn(async () => ({}))
     await sendCueImpression(apiFetch, a.cueLine, '2026-10-09T19:10:00.000Z')
     expect(JSON.parse(apiFetch.mock.calls[0][1].body)).toEqual({
-      cue: 'freeze', form: 'imperative', model_version: 'wxcue-v1-agreed', plan_generated_at: '2026-10-09T19:10:00.000Z',
+      cue: 'freeze', form: 'imperative', model_version: 'wxcue-v3-agreed', plan_generated_at: '2026-10-09T19:10:00.000Z',
     })
   })
 })
@@ -329,7 +329,7 @@ describe('buildCueLine carries the model version; the impression bills it', () =
   })
 
   it('the beacon bills the line\'s own model version, else wxcue-v3', async () => {
-    expect(await billedModel({ cue: 'freeze', form: 'imperative', modelVersion: AGREED_CUE_MODEL_VERSION })).toBe('wxcue-v1-agreed')
+    expect(await billedModel({ cue: 'freeze', form: 'imperative', modelVersion: AGREED_CUE_MODEL_VERSION })).toBe('wxcue-v3-agreed')
     expect(await billedModel({ cue: 'freeze', form: 'imperative' })).toBe('wxcue-v3')
   })
 })

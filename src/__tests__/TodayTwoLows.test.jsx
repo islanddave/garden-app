@@ -85,10 +85,10 @@ describe('the spec table on Today — rows 1-12 render as specified, and bill as
     }
   })
 
-  it('row 2 bills { cue: freeze, form: imperative, model_version: wxcue-v1-agreed }', () => {
+  it('row 2 bills { cue: freeze, form: imperative, model_version: wxcue-v3-agreed }', () => {
     planState.current = mountData(planFor(43, [tonight(37.6)]))
     render(<Today />)
-    expect(impressions()).toEqual([{ cue: 'freeze', form: 'imperative', model_version: 'wxcue-v1-agreed', plan_generated_at: GEN }])
+    expect(impressions()).toEqual([{ cue: 'freeze', form: 'imperative', model_version: 'wxcue-v3-agreed', plan_generated_at: GEN }])
     expect(screen.getByTestId('weather-cue-line').dataset.cue).toBe('freeze')
   })
 
