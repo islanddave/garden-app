@@ -10,6 +10,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { householdScope } from './household.js';  // V4-ASSIGNLENS-001 opt-in household widening (per-dir copy; bundle-safe)
 import { applyDone, planItemIds } from './doneEvents.js';  // V3-TODAYDONE-001 vocabulary + pure fold (per-dir copy; bundle-safe)
 import { matchCueImpressionRoute, handleCueImpressionPost } from './cue-impression.js';  // OPS-CUEINSTRUMENT-001 write path (dependency-free; CI-executable)
+import { readColdRange } from './coldRange.js';  // V5-WXCOLDBAND-001 tonight's forecast cold range (own module; dependency-free)
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const SCHEMA_VERSION = 1;       // API-response envelope version (client contract)
@@ -134,6 +135,12 @@ export const handler = async (event) => {
       plan: plan,
     };
     if (includeHousehold) body.household_plans = householdPlans;
+    // V5-WXCOLDBAND-001 — a passenger on the Today read: written from the Mac, often absent, and never
+    // allowed to fail the plan. Any error (the table missing included) serves null, as no row does.
+    let coldRange = null;
+    try { coldRange = await readColdRange(sql, householdScope(userId)); }
+    catch (e) { console.error('cold-range read (non-fatal):', e?.message ?? String(e)); }
+    body.cold_range = coldRange;
     return resp(200, body);
   } catch (err) {
     console.error('daily-plan-read lambda error', err);

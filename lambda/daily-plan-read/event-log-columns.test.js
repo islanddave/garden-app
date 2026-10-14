@@ -1,4 +1,6 @@
-// OPS-SCHEMAAUDITJOIN-001 — the public.event_log columns lambda/daily-plan-read reads.
+// OPS-SCHEMAAUDITJOIN-001 — the public.event_log columns lambda/daily-plan-read reads, and (V5-WXCOLDBAND-001)
+// the public.weather_cold_range columns coldRange.js reads. One keyed file for both: the directory's
+// contract-file count is capped (scripts/count-ratchets.json), and a keyed file holds several relations.
 //
 // The daily plan asks event_log only whether something has already been done — it reads
 // event_type and event_date and never returns a row, which is why there is no id and no ownership
@@ -7,8 +9,8 @@
 //
 // WHY A SEPARATE FILE AND NOT A BLOCK IN select-columns.test.js: parse_test_file returns on the
 // keyed AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector
-// (scripts/dev-main-schema-audit.py:128-137), so dropping a keyed block into an existing contract
-// file SILENTLY DESTROYS that file's own coverage. Always a new file.
+// (scripts/dev-main-schema-audit.py:128-137), so dropping a keyed block into an existing AUDIT_TABLES
+// contract file SILENTLY DESTROYS that file's own coverage. A new relation is a new KEY here instead.
 //
 // WHY IT HAS TO LIVE IN THIS DIRECTORY: Phase 4 credits a contract only to the handler's OWN
 // directory — it groups by Path(handler).parent — and only when the AUDIT_COLUMNS literal is in
@@ -45,11 +47,16 @@ const HANDLERS = readdirSync(__dirname)
 // The keyed form binds columns to ONE relation, so this file cannot assert its list onto whatever
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
+// weather_cold_range: every column from migrations/v5-wxcoldband-001/0a-additive-ddl.sql, applied to
+// staging and prod 2026-10-13. The read uses all of them (leads_* to refuse a partial night, space_id
+// to reach the household's spaces); the spaces columns it joins on are in household-columns.test.js.
 const AUDIT_COLUMNS = {
   event_log: ['deleted_at', 'event_date', 'event_type', 'plant_id'],
+  weather_cold_range: ['created_at', 'init_time', 'leads_expected', 'leads_read', 'night_date', 'p10_min_f', 'p50_min_f', 'space_id'],
 };
 
 const EVENT_LOG_COLUMNS = AUDIT_COLUMNS.event_log;
+const COLD_RANGE_COLUMNS = AUDIT_COLUMNS.weather_cold_range;
 
 // Extraction mirrors scripts/dev-main-schema-audit.py:238-286 so this guard sees the same
 // statements Phase 4 credits. Only SQL inside a tagged sql`` template counts.
@@ -62,9 +69,9 @@ const DISTINCT_FROM = /\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi;
 // Regex literals are re-created on every evaluation, so each call gets a fresh lastIndex. The alias
 // group is OPTIONAL: an unaliased `FROM public.event_log WHERE ...` captures the next keyword,
 // which NOT_AN_ALIAS rejects and UNALIASED_ARMS then has to account for by hand.
-const bindings = (s) => [...s.matchAll(
-  /\b(?:FROM|JOIN)\s+(?:public\.)?event_log\b(?!\s*\.)\s*(?:AS\s+)?([a-z_][a-z0-9_]*)?/gi,
-)].map((m) => (m[1] ?? '').toLowerCase());
+const bindings = (s, rel = 'event_log') => [...s.matchAll(new RegExp(
+  String.raw`\b(?:FROM|JOIN)\s+(?:public\.)?${rel}\b(?!\s*\.)\s*(?:AS\s+)?([a-z_][a-z0-9_]*)?`, 'gi',
+))].map((m) => (m[1] ?? '').toLowerCase());
 
 const NOT_AN_ALIAS = new Set([
   'on', 'where', 'using', 'left', 'right', 'inner', 'outer', 'full', 'cross', 'join', 'lateral',
@@ -72,22 +79,24 @@ const NOT_AN_ALIAS = new Set([
   'or', 'not', 'as', 'select', 'from', 'with', 'values', 'for', 'window', 'returning', 'when',
 ]);
 
-const aliasesOf = (s) => [...new Set(bindings(s).filter((b) => b && !NOT_AN_ALIAS.has(b)))].sort();
-const unaliasedIn = (s) => bindings(s).filter((b) => !b || NOT_AN_ALIAS.has(b)).length;
+const aliasesOf = (s, rel) => [...new Set(bindings(s, rel).filter((b) => b && !NOT_AN_ALIAS.has(b)))].sort();
+const unaliasedIn = (s, rel) => bindings(s, rel).filter((b) => !b || NOT_AN_ALIAS.has(b)).length;
 
 // Scoped to statements that BIND event_log, so an `x.col` belonging to some other query in the
 // same file can never be read as this table's.
-const columnsOf = (s) => [...new Set(aliasesOf(s).flatMap((a) => [...s.matchAll(
+const columnsOf = (s, rel) => [...new Set(aliasesOf(s, rel).flatMap((a) => [...s.matchAll(
   new RegExp(String.raw`\b${a}\.([a-z_][a-z0-9_]*)\b`, 'gi'),
 )].map((m) => m[1].toLowerCase())))];
 
-const STATEMENTS = HANDLERS.flatMap((f) => {
+const statementsOf = (rel) => HANDLERS.flatMap((f) => {
   const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
   return [...src.matchAll(SQL_TEMPLATE)]
     .map((m) => m[1].replace(DISTINCT_FROM, ' '))
-    .filter((s) => bindings(s).length > 0)
+    .filter((s) => bindings(s, rel).length > 0)
     .map((sql) => ({ file: f, sql }));
 });
+const STATEMENTS = statementsOf('event_log');
+const COLD_RANGE_STATEMENTS = statementsOf('weather_cold_range');
 
 // Reads that name event_log with NO alias. Nothing can attribute their bare identifiers
 // automatically — the surrounding query may scan other tables through their own aliases — so each
@@ -155,8 +164,32 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/daily-plan-read event_log column co
     // The match must stop at the block's OWN `};`, not run on to the next one in the file.
     expect(decl[1]).not.toMatch(/\bconst\b/);
     const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(['event_log']);
-    const cols = [...pairs[0][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
-    expect(cols).toEqual(EVENT_LOG_COLUMNS);
+    expect(pairs.map((m) => m[1])).toEqual(['event_log', 'weather_cold_range']);
+    for (const [, table, body] of pairs) {
+      const cols = [...body.matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+      expect(cols).toEqual(AUDIT_COLUMNS[table]);
+    }
+  });
+});
+
+describe('V5-WXCOLDBAND-001 — lambda/daily-plan-read weather_cold_range column contract', () => {
+  it('finds exactly the one cold-range read, aliased w, in coldRange.js', () => {
+    expect(COLD_RANGE_STATEMENTS.map((s) => s.file)).toEqual(['coldRange.js']);
+    expect(aliasesOf(COLD_RANGE_STATEMENTS[0].sql, 'weather_cold_range')).toEqual(['w']);
+    expect(unaliasedIn(COLD_RANGE_STATEMENTS[0].sql, 'weather_cold_range')).toBe(0);
+  });
+
+  it('references no column absent from the contract, and declares none it does not use', () => {
+    const referenced = [...new Set(COLD_RANGE_STATEMENTS.flatMap((s) => columnsOf(s.sql, 'weather_cold_range')))].sort();
+    expect(referenced).toEqual([...COLD_RANGE_COLUMNS].sort());
+  });
+
+  it('never reaches for a column the table does not have', () => {
+    // No id, no deleted_at (rows are never soft-deleted: derived data), and the place column is
+    // space_id, never user_id.
+    for (const col of ['id', 'deleted_at', 'user_id', 'generated_at']) {
+      expect(COLD_RANGE_COLUMNS).not.toContain(col);
+      expect(COLD_RANGE_STATEMENTS[0].sql).not.toMatch(new RegExp(String.raw`\bw\.${col}\b`, 'i'));
+    }
   });
 });
