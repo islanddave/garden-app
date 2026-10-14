@@ -42,7 +42,10 @@ describe('T — type / space / badge ramps (exact values)', () => {
     })
   })
   it('space ramp', () => {
-    expect(T.space).toEqual({ xs: 5, sm: 10, md: 16, lg: 20 })
+    expect(T.space).toEqual({ xs: 5, sm: 10, md: 16, lg: 20, row: 8 })
+  })
+  it('rule width (V5-TODAYREDESIGN-001 L5)', () => {
+    expect(T.ruleW).toBe(3)
   })
   it('badge tokens match prior PlantStatusBadge inline values', () => {
     expect(T.badgeFontSm).toBe('0.73rem')

@@ -11,7 +11,7 @@ import { buildCareNeeded, bedWaitActive } from '../lib/careNeeded.js'
 import {
   OUTSIDE, SMALL_VESSEL_TYPES, locationIndex, enrichRows, takeOrder, buildModel, exceptionKeys, exceptionReason,
   sortCohort, cohortLine, cohortCapNote, productGroups, careSummary, waterCandidates, filterResult, filterAnnouncement,
-  loggedTodayCount, caughtUpSummary, CAUGHT_UP_TITLE,
+  loggedTodayCount, caughtUpSummary, CAUGHT_UP_TITLE, exceptionGroup, overdueWords, isOverdue,
 } from '../lib/todayV2/spots.js'
 import { careReasons, careTrigger, careOpens } from '../lib/todayV2/triggers.js'
 import { applyGrafts } from '../../tests/harness/_todaymeasure/v2wire.js'
@@ -114,6 +114,38 @@ describe('exceptions and cohort (D11, §11.0 E8, SF2)', () => {
     expect(cohort.length).toBe(89)
     expect(cohortLine(cohort, true)).toBe('89 more like this · mostly daily · last watered 4 d ago')
     expect(exceptionReason(exRows[0])).toBe('Tray cell — dries fastest · every 2 days · last watered 4 d ago')
+  })
+  // Finish plan §3.6 (L5): what every differing row shares is printed once, in the group line.
+  it('exceptionGroup — Bag Area: "Tray cells · 8" over "2d overdue · dry fastest · every 2 days · last watered 4 d ago"; every row its name alone', () => {
+    const ex = exceptionKeys(water('Bag Area'))
+    const exRows = water('Bag Area').filter((r) => ex.includes(r.key))
+    const g = exceptionGroup(exRows)
+    expect(g.label).toBe('Tray cells · 8')
+    expect(g.line).toBe('2d overdue · dry fastest · every 2 days · last watered 4 d ago')
+    expect(g.urgent).toBe(true)
+    expect([...g.own.values()].every((o) => o.meta === null && o.urgent === false)).toBe(true)
+    expect(exceptionGroup(exRows, 5).label).toBe('Tray cells · 5')
+  })
+  it('exceptionGroup — mixed reasons: "Different from the rest · N"; shared parts in the line, each row keeps what is its own', () => {
+    const exRows = water('Bag Area').filter((r) => exceptionKeys(water('Bag Area')).includes(r.key))
+    const mixed = [{ ...exRows[0], need: 'no_history', tier: 'gold', overdueBy: null }, exRows[1], { ...exRows[2], daysSince: 6, overdueBy: 4, tier: 'terra-bold' }]
+    const g = exceptionGroup(mixed)
+    expect(g.label).toBe('Different from the rest · 3')
+    expect(g.line).toBe('every 2 days')
+    expect(g.urgent).toBe(false)
+    expect(g.own.get(mixed[0].key)).toEqual({ meta: 'Never watered · last watered 4 d ago', urgent: false })
+    expect(g.own.get(mixed[1].key)).toEqual({ meta: 'Tray cell — dries fastest · last watered 4 d ago', urgent: true })
+    expect(g.own.get(mixed[2].key)).toEqual({ meta: 'Tray cell — dries fastest · last watered 6 d ago', urgent: true })
+    const never = exceptionGroup([mixed[0], { ...mixed[0], key: 'x' }])
+    expect(never.label).toBe('Never watered · 2')
+  })
+  it('overdueWords: only the overdue tiers carry words ("2d overdue"); a daily or due-today row has none', () => {
+    const rs = water('Bag Area')
+    const late = rs.find((r) => r.tier === 'terra')
+    expect(isOverdue(late)).toBe(true)
+    expect(overdueWords(late)).toBe(`${late.overdueBy}d overdue`)
+    expect(overdueWords(rs.find((r) => r.tier === 'gold'))).toBe(null)
+    expect(overdueWords({ tier: 'terra', overdueBy: null })).toBe(null)
   })
   it('House (≤ 5 water rows) shows every row: no split', () => { expect(exceptionKeys(water('House'))).toBe(null) })
   it('Stable (no shared record) shows every row: no cohort line', () => { expect(exceptionKeys(water('Stable'))).toBe(null) })

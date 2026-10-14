@@ -109,13 +109,56 @@ describe('Protect tonight on the 09-24 plan (47°F, five protect cards, no alert
     expect(JSON.parse(sessionStorage.getItem(`today-visit:u:${TODAY}:v2`)).triggers.protect).toEqual({ t: 'chill' })
   })
 
-  it('lists the five in the page\'s spot order, each "{spot} · below 50°F", with no pick link on a chill night', async () => {
+  // Finish plan §3.6 (L5, Dave's D18): a row's meta holds only what differs from its group. All five share "below
+  // 50°F", which the band's summary says once (lane L3's "tender below 50°"), so each row says its spot alone.
+  it('lists the five in the page\'s spot order, each "{spot}" alone (the shared threshold is not repeated), with no pick link on a chill night', async () => {
     await mount()
     const rows = [...document.querySelectorAll('[data-testid="protect-row"]')]
-    expect(rows.map((r) => r.querySelector('a').firstChild.textContent)).toEqual(['Lemon Verbena', 'Sweet Basil', 'Lantana', 'Tuberous Begonia (bronze-leaf, hanging)', 'Spider Plant'])
-    expect(rows.map((r) => r.querySelector('a').lastChild.textContent)).toEqual(['Bag Area · below 50°F', 'Bag Area · below 50°F', 'Trough · below 50°F', 'Deck · below 50°F', 'Stable · below 50°F'])
+    expect(rows.map((r) => r.querySelector('a [data-row-name]').textContent)).toEqual(['Lemon Verbena', 'Sweet Basil', 'Lantana', 'Tuberous Begonia (bronze-leaf, hanging)', 'Spider Plant'])
+    expect(rows.map((r) => r.querySelector('a [data-row-meta]').textContent)).toEqual(['Bag Area', 'Bag Area', 'Trough', 'Deck', 'Stable'])
+    expect(rows.some((r) => r.textContent.includes('below'))).toBe(false)
     expect(rows[0].querySelector('a').getAttribute('href')).toBe(`/projects/${PAYLOAD.plan.cold[0].project_id}/plantings/${ID['Lemon Verbena']}`)
     expect(screen.queryByTestId('protect-pick')).toBeNull()
+  })
+
+  it('L5 row anatomy: the picture box first in the body link (photo, or the sprout), then quiet Skip · outline Covered · soft-green Brought in', async () => {
+    await mount()
+    const rows = [...document.querySelectorAll('[data-testid="protect-row"]')]
+    for (const r of rows) {
+      const link = r.querySelector('a')
+      const thumb = link.firstElementChild
+      expect(thumb.getAttribute('data-testid')).toBe('plant-thumb')
+      expect(thumb.getAttribute('aria-hidden')).toBe('true')
+      expect(thumb.style.width).toBe('40px')
+      expect(thumb.style.height).toBe('40px')
+      // A planting with no photo still draws the box: the sprout on green.
+      if (thumb.getAttribute('data-photo') === 'none') expect(thumb.querySelector('svg')).toBeTruthy()
+      expect([...r.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Skip', 'Covered', 'Brought in'])
+    }
+    const [skip, covered, brought] = rows[0].querySelectorAll('button')
+    expect(skip.style.borderRadius).toBe('') // quiet text: no box
+    expect(skip.style.marginRight).toBe('8px') // 8 px of dead space after it
+    expect(covered.style.border).toContain('1px solid') // outline
+    expect(covered.style.borderRadius).toBe('8px')
+    // Soft-green fill, no visible rule: the 2px above and below are transparent target, not paint (48 tap, 44 pill).
+    expect(brought.style.backgroundColor).toBeTruthy()
+    expect(brought.style.borderColor).toBe('transparent')
+    expect(brought.style.backgroundClip).toBe('padding-box')
+    expect(brought.style.minHeight).toBe('48px')
+    expect(brought.style.borderRadius).toBe('8px')
+    expect(covered.parentElement.style.gap).toBe('8px')
+    // No cell dividers left on the row (S5's Skip cell carried a left rule).
+    expect(skip.style.borderLeft).toBe('')
+    expect(['', '0px']).toContain(brought.style.borderLeftWidth)
+  })
+
+  it('L5: a tender row whose threshold differs from the rest keeps its own "below N°F"', async () => {
+    const cold = PAYLOAD.plan.cold.map((c) => (c.name === 'Lantana' ? { ...c, text: 'tender tropical — bring in tonight (low 47°F ≤ 55°F)' } : c))
+    serve({ ...PAYLOAD, plan: { ...PAYLOAD.plan, cold } })
+    await mount()
+    const metas = Object.fromEntries([...document.querySelectorAll('[data-testid="protect-row"]')].map((r) => [r.querySelector('[data-row-name]').textContent, r.querySelector('[data-row-meta]').textContent]))
+    expect(metas.Lantana).toBe('Trough · below 55°F')
+    expect(metas['Lemon Verbena']).toBe('Bag Area · below 50°F')
   })
 
   it('the chip reads "Protect 5" and leads the bar', async () => {
@@ -546,7 +589,8 @@ describe('cold rows have ONE owner', () => {
     expect(band('protect').textContent).toContain('6')
     const jen = rowOf('Kiwi Fern Coleus')
     expect(jen.textContent).toContain('Kiwi Fern Coleus (Jen)')
-    expect(jen.textContent).toContain('Trough · below 50°F')
+    // L5 (§3.6): her threshold is the one all six share, said once in the band summary — the row says its spot.
+    expect(jen.querySelector('[data-row-meta]').textContent).toBe('Trough')
     expect(within(jen).getByRole('button', { name: 'Brought in: Kiwi Fern Coleus (Jen)' })).toBeTruthy()
     // Every section open, every spot open: still exactly one row for it on the whole page.
     fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }))

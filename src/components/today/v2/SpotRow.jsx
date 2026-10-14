@@ -24,7 +24,8 @@ export default function SpotRow({ spot, open, onToggle, children, busy, groupBus
   // Inert while the group runs, and while the page holds its writes (review 4160.2 IMPORTANT-2, TodayV2 writesHeld).
   const disabled = !!groupBusy || writesHeld
   const verb = handled || failedN > 0 ? 'Water the other' : 'Water all'
-  const running = busy && !busy.retry ? busy : null
+  // A run of the spot's that is not its Water all (a per-product Feed all, `tag`) speaks through its own button.
+  const running = busy && !busy.retry && !busy.tag ? busy : null
   const label = running ? `Watering ${running.done} of ${running.total}…` : (n === 1 && verb === 'Water all' ? 'Water 1' : `${verb} ${n}`)
   const failing = failedN > 0 && !!onRetry
   return (
