@@ -2082,10 +2082,13 @@ def test_run_rehearsal_dump_path(monkeypatch):
     fr = FakeRequests()
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
-    fr.add("GET", "/branches", FakeResp(200, {"branches": []}))
+    # absent until the dump path creates it; the restore-target guard then finds it by id
+    made = []
+    fr.add("GET", "/branches", lambda url: FakeResp(200, {"branches": made}))
+    fr.add("GET", "/endpoints", FakeResp(200, {"endpoints": [STAGE_ENDPOINT]}))
     fr.add("POST", "/restore", FakeResp(200, {"ok": True}))
-    fr.add("POST", "/branches", FakeResp(201, {"branch": {"id": "br-stage"},
-           "connection_uris": [{"connection_uri": "postgresql://stage"}]}))
+    fr.add("POST", "/branches", lambda url: made.append(STAGE_BRANCH) or FakeResp(201, {
+        "branch": {"id": "br-stage"}, "connection_uris": [{"connection_uri": STAGE_URI}]}))
     fr.add("GET", f"/git/commits/{'a'*40}", FakeResp(200, {"tree": {"sha": "treeX"}}))
     fr.add("GET", "/git/ref/heads/revert-rehearsal-dev-1", FakeResp(200, {"object": {"sha": "rdev"}}))
     fr.add("POST", "/git/commits", FakeResp(201, {"sha": "revc"}))
@@ -2100,11 +2103,17 @@ def test_run_rehearsal_dump_path(monkeypatch):
         returncode = 0
         stderr = ""
         stdout = ""
-    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **k: P())
-    monkeypatch.setattr(rt, "_psql_scalar", lambda url, sql: "25" if "information_schema" in sql else "10")
+    argvs = []
+    monkeypatch.setattr(rt.subprocess, "run", lambda argv, *a, **k: argvs.append(argv) or P())
+    monkeypatch.setattr(rt, "_psql_scalar", _emptied_target_scalar(
+        lambda url, sql: "25" if "information_schema" in sql else "10"))
     lc = FakeLambda()
     out = rt.run(cfg, s3=s3, lambda_client=lc)
     assert out["reverted_to"] == "v2.5.0"
+    # the stage branch is emptied, and only then restored into
+    empty_at = next(i for i, a in enumerate(argvs) if a[0] == "psql" and rt.EMPTY_TARGET_SQL in a)
+    restore_at = next(i for i, a in enumerate(argvs) if a[0] == "pg_restore" and "-d" in a)
+    assert argvs[empty_at][1] == STAGE_URI and empty_at < restore_at
     assert lc.calls == []  # Lambda untouched in rehearsal
     assert (out["lambda_run"], out["spa_run"]) == (None, None)
     assert not any("/actions/" in u for m, u in fr.calls)  # no prod redeploy dispatched or polled
@@ -2421,3 +2430,175 @@ def test_validate_branch_refuses_when_branch_counts_cannot_be_read(monkeypatch):
     monkeypatch.setattr(rt, "_psql_query", boom)
     with pytest.raises(rt.RevertError, match="unverified restore"):
         rt.validate_branch(cfg, "postgresql://s", expected_counts={"public.plants": 3})
+
+
+# --- the dump path restores into an EMPTY database (BUG-REVERTREHEARSALSETUP-001) ------------
+# The stage branch starts as a copy of today's prod, and pg_restore --clean could not drop an
+# object something newer depended on (2026-10-09, "archive 12 vs restored 324"). The target is now
+# emptied first, behind require_restore_target(). These pin the guard and the emptying step's own
+# checks with every database call mocked; test_revert_to_local_pg.py runs them against PostgreSQL.
+
+STAGE_URI = "postgresql://neondb_owner:pw@ep-stage-1.us-east-1.aws.neon.tech/neondb?sslmode=require"
+STAGE_BRANCH = {"id": "br-stage", "name": "revert-stage-v2.5.0", "default": False, "protected": False}
+STAGE_ENDPOINT = {"id": "ep-stage-1", "host": "ep-stage-1.us-east-1.aws.neon.tech", "branch_id": "br-stage"}
+PUBLIC_STATE = "pg_database_owner|standard public schema|PUBLIC=USAGE,pg_database_owner=CREATE,pg_database_owner=USAGE"
+
+
+def _emptied_target_scalar(other, residue="0 0 0", before=PUBLIC_STATE, after=PUBLIC_STATE):
+    """_psql_scalar for empty_restore_target's own reads; anything else goes to `other`."""
+    states = iter([before, after])
+
+    def fake(url, sql):
+        if sql == rt.TARGET_SCHEMAS_SQL:
+            return "extensions,gv,public"
+        if sql == rt.PUBLIC_SCHEMA_STATE_SQL:
+            return next(states)
+        if sql == rt.TARGET_RESIDUE_SQL:
+            return residue
+        return other(url, sql)
+    return fake
+
+
+def _guard_api(monkeypatch, branches=None, endpoints=None, branch_status=200, endpoint_status=200):
+    fr = FakeRequests()
+    fr.add("GET", "/branches", FakeResp(branch_status, {"branches": [STAGE_BRANCH] if branches is None else branches}))
+    fr.add("GET", "/endpoints", FakeResp(endpoint_status, {"endpoints": [STAGE_ENDPOINT] if endpoints is None else endpoints}))
+    monkeypatch.setattr(rt, "requests", fr)
+    return fr
+
+
+@pytest.mark.parametrize("env", [base_env, reh_env], ids=["revert", "rehearsal"])
+def test_restore_target_guard_accepts_the_stage_branch(monkeypatch, env):
+    _guard_api(monkeypatch)
+    rt.require_restore_target(rt.Config(env=env()), "br-stage", STAGE_URI)
+
+
+@pytest.mark.parametrize("env,branch_id,uri,api,said", [
+    (base_env(), "br-delicate-sea-amum92c2", STAGE_URI, {}, "the branch a revert restores"),
+    (reh_env(), "br-delicate-sea-amum92c2", STAGE_URI, {}, "the real prod branch"),
+    (reh_env(), "br-polished-art-am12o4ue", STAGE_URI, {}, "the branch a revert restores"),
+    (base_env(), "", STAGE_URI, {}, "the branch a revert restores"),
+    (base_env(NEON_BACKUP_URL="postgresql://u@EP-STAGE-1.us-east-1.aws.neon.tech/neondb"), "br-stage", STAGE_URI, {},
+     "the live database's"),
+    (base_env(NEON_BACKUP_URL="not a url"), "br-stage", STAGE_URI, {}, "no host to compare"),
+    (base_env(), "br-stage", STAGE_URI.replace("/neondb?", "/postgres?"), {}, "not 'neondb'"),
+    (base_env(), "br-stage", "postgresql:///neondb", {}, "has no host"),
+    (base_env(), "br-stage", STAGE_URI, {"branches": []}, "not in Neon's branch list"),
+    (base_env(), "br-stage", STAGE_URI, {"branches": [{**STAGE_BRANCH, "name": "revert-stage-v9.9.9"}]}, "is named"),
+    (base_env(), "br-stage", STAGE_URI, {"branches": [{**STAGE_BRANCH, "name": "main"}]}, "is named"),
+    (base_env(), "br-stage", STAGE_URI, {"branches": [{**STAGE_BRANCH, "default": True}]}, "is marked default"),
+    (base_env(), "br-stage", STAGE_URI, {"branches": [{**STAGE_BRANCH, "primary": True}]}, "is marked primary"),
+    (base_env(), "br-stage", STAGE_URI, {"branches": [{**STAGE_BRANCH, "protected": True}]}, "is marked protected"),
+    (base_env(), "br-stage", STAGE_URI, {"endpoints": []}, "served by no endpoint"),
+    (base_env(), "br-stage", STAGE_URI, {"endpoints": [{**STAGE_ENDPOINT, "branch_id": "br-delicate-sea-amum92c2"}]},
+     "served by ['br-delicate-sea-amum92c2']"),
+    (base_env(), "br-stage", STAGE_URI, {"endpoints": [STAGE_ENDPOINT, {**STAGE_ENDPOINT, "branch_id": "br-other"}]},
+     "served by ['br-other', 'br-stage']"),
+], ids=["prod-is-the-restore-branch", "rehearsal-real-prod", "rehearsal-staging", "no-branch-id", "live-host",
+        "live-url-unparseable", "not-neondb", "no-host", "branch-unlisted", "wrong-version", "named-main",
+        "default", "primary", "protected", "no-endpoint", "endpoint-on-prod", "host-on-two-branches"])
+def test_restore_target_guard_refuses_anything_not_proven_to_be_the_stage_branch(monkeypatch, env, branch_id, uri,
+                                                                                 api, said):
+    _guard_api(monkeypatch, **api)
+    with pytest.raises(rt.RevertError, match="restore-target guard") as e:
+        rt.require_restore_target(rt.Config(env=env), branch_id, uri)
+    assert said in str(e.value)
+
+
+@pytest.mark.parametrize("api,said", [({"branch_status": 500}, "list branches failed"),
+                                      ({"endpoint_status": 503}, "list endpoints failed")])
+def test_restore_target_guard_refuses_when_neon_cannot_be_read(monkeypatch, api, said):
+    _guard_api(monkeypatch, **api)
+    with pytest.raises(rt.RevertError, match=said):
+        rt.require_restore_target(rt.Config(env=base_env()), "br-stage", STAGE_URI)
+
+
+def _no_db(*a, **k):
+    raise AssertionError("the database was touched although the guard refused")
+
+
+def test_empty_restore_target_touches_nothing_when_the_guard_refuses(monkeypatch):
+    _guard_api(monkeypatch, endpoints=[{**STAGE_ENDPOINT, "branch_id": "br-delicate-sea-amum92c2"}])
+    monkeypatch.setattr(rt.subprocess, "run", _no_db)
+    monkeypatch.setattr(rt, "_psql_scalar", _no_db)
+    with pytest.raises(rt.RevertError, match="nothing was changed"):
+        rt.empty_restore_target(rt.Config(env=base_env()), "br-stage", STAGE_URI)
+
+
+class _Psql:
+    def __init__(self, returncode=0, stderr=""):
+        self.returncode, self.stderr, self.stdout = returncode, stderr, ""
+
+
+def _empty_with(monkeypatch, proc=None, **scalar):
+    _guard_api(monkeypatch)
+    argvs = []
+    monkeypatch.setattr(rt.subprocess, "run", lambda argv, *a, **k: argvs.append(argv) or (proc or _Psql()))
+    monkeypatch.setattr(rt, "_psql_scalar", _emptied_target_scalar(_no_db, **scalar))
+    rt.empty_restore_target(rt.Config(env=base_env()), "br-stage", STAGE_URI)
+    return argvs
+
+
+def test_empty_restore_target_runs_one_statement_on_the_stage_branch(monkeypatch, capsys):
+    argvs = _empty_with(monkeypatch)
+    assert argvs == [["psql", STAGE_URI, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-c", rt.EMPTY_TARGET_SQL]]
+    assert "revert-stage-v2.5.0 emptied: dropped schemas extensions,gv,public" in capsys.readouterr().out
+
+
+def test_emptying_checks_the_database_before_it_drops_anything():
+    sql = rt.EMPTY_TARGET_SQL
+    assert sql.index("current_database() <> 'neondb'") < sql.index("DROP SCHEMA")
+
+
+@pytest.mark.parametrize("residue", ["1 0 0", "0 3 0", "0 0 1"])
+def test_empty_restore_target_refuses_a_target_that_is_not_empty(monkeypatch, residue):
+    with pytest.raises(rt.RevertError, match="not empty after emptying"):
+        _empty_with(monkeypatch, residue=residue)
+
+
+@pytest.mark.parametrize("before,after", [
+    (PUBLIC_STATE, "neondb_owner|standard public schema|neondb_owner=CREATE,neondb_owner=USAGE"),
+    (PUBLIC_STATE, "pg_database_owner||pg_database_owner=CREATE,pg_database_owner=USAGE"),
+    ("", "")], ids=["owner-and-grants-lost", "comment-and-public-usage-lost", "public-unreadable"])
+def test_empty_restore_target_refuses_a_public_schema_that_did_not_come_back(monkeypatch, before, after):
+    with pytest.raises(rt.RevertError, match="did not come back"):
+        _empty_with(monkeypatch, before=before, after=after)
+
+
+def test_empty_restore_target_failure_names_the_reason_without_the_connection_string(monkeypatch):
+    stderr = (f'psql: error: connection to server at "ep-stage-1.us-east-1.aws.neon.tech" failed '
+              f'({STAGE_URI}) ERROR:  must be owner of schema gv')
+    with pytest.raises(rt.RevertError, match="nothing was dropped") as e:
+        _empty_with(monkeypatch, proc=_Psql(1, stderr))
+    assert "must be owner of schema gv" in str(e.value)
+    assert "pw@" not in str(e.value) and "ep-stage-1" not in str(e.value)
+
+
+def test_run_dump_path_guard_refusal_stops_before_restore_and_before_prod(monkeypatch):
+    """A stage connection string Neon places on another branch: the run stops before pg_restore,
+    before the checkpoint and before any prod restore."""
+    cfg = rt.Config(env=reh_env(FORCE_DUMP_PATH="1"))
+    s3 = FakeS3({
+        ("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode(),
+        ("garden-snapshots-prod", "db/snap-v2.5.0.dump"): b"DUMP",
+    })
+    fr = FakeRequests()
+    fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
+    fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
+    made = []
+    fr.add("GET", "/branches", lambda url: FakeResp(200, {"branches": made}))
+    fr.add("GET", "/endpoints", FakeResp(200, {"endpoints": [{**STAGE_ENDPOINT, "branch_id": "br-polished-art-am12o4ue"}]}))
+    fr.add("POST", "/branches", lambda url: made.append(STAGE_BRANCH) or FakeResp(201, {
+        "branch": {"id": "br-stage"}, "connection_uris": [{"connection_uri": STAGE_URI}]}))
+    monkeypatch.setattr(rt, "requests", fr)
+    monkeypatch.setattr(rt, "compute_rpo", lambda cfg: {"total_live_rows": 5, "latest_event": "t"})
+    monkeypatch.setattr(rt, "prerevert_snap", lambda cfg: {"manifest": {
+        "neon_branch_id": "br-pre", "neon_lsn": "0/PRE", "main_sha": "m" * 40, "lambda_versions": {}}})
+    monkeypatch.setattr(rt.subprocess, "run", _no_db)
+    monkeypatch.setattr(rt, "_psql_scalar", _no_db)
+    rolled = []
+    monkeypatch.setattr(rt, "rollback", lambda *a, **k: rolled.append(1))
+    with pytest.raises(rt.RevertError, match="restore-target guard"):
+        rt.run(cfg, s3=s3, lambda_client=FakeLambda())
+    assert not any(u.endswith("/restore") for m, u in fr.calls)  # no Neon restore of anything
+    assert rolled == [] and s3.downloads == []  # never reached the checkpoint, never fetched the dump

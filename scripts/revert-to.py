@@ -114,6 +114,11 @@ UNKNOWNS to resolve in the staging rehearsal (flagged, not guessed):
       Neon API version in rehearsal (mocked here).
   U3. Fresh-branch endpoint provisioning: branch create with endpoint to get a
       direct connection URI for pg_restore. CONFIRM connection_uris shape.
+  U4. Emptying the stage branch (2026-10-14): GET .../projects/{id}/endpoints
+      shape ({"endpoints": [{"host", "branch_id"}]}) for require_restore_target,
+      and that neondb_owner may drop every schema on neondb and recreate public
+      AUTHORIZATION its owner. CONFIRM in rehearsal; either failing refuses
+      before pg_restore, never after.
 ------------------------------------------------------------------------------
 """
 from __future__ import annotations
@@ -130,6 +135,7 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 import boto3
 import requests
@@ -625,8 +631,198 @@ def _branch_direct_uri(cfg, branch_id):
     return uri
 
 
+# --- the dump path restores into an EMPTY database (BUG-REVERTREHEARSALSETUP-001) -------------
+# The stage branch is created off the DEFAULT branch, so it starts as a full copy of today's prod.
+# pg_restore --clean cannot drop an object that something newer depends on: in the 2026-10-09
+# staging rehearsal (run 37956492157) a prod-only FK kept `plants` and its 324 rows, and
+# validate_branch refused ("archive 12 vs restored 324"). A real revert to any snapshot older than
+# a later dependency stopped the same way. Dave, 2026-10-14: restore into an empty database instead.
+# So, on the STAGE branch only, every non-system schema is dropped, `public` is recreated with the
+# owner, privileges and comment it had (PG 15+ dumps never create it), and the dump then lands in
+# an empty database. validate_branch is unchanged and still judges the result.
+#
+# Nothing here can reach prod: empty_restore_target() runs require_restore_target() first, and
+# that refuses unless the branch id, Neon's own name for it, and the host the connection string
+# points at are all the stage branch's, and none of them is prod's.
+STAGE_BRANCH_PREFIX = "revert-stage-"
+STAGE_DATABASE = "neondb"  # what _branch_direct_uri asks for and neon_restore_prod_from carries over
+
+# One statement, so one transaction: either the target is emptied and public is back as it was,
+# or nothing changed. The database check is the first thing it does.
+EMPTY_TARGET_SQL = f"""DO $empty$
+DECLARE
+  own regrole; acl aclitem[]; cmt text; s name; g record;
+BEGIN
+  IF current_database() <> '{STAGE_DATABASE}' THEN
+    RAISE EXCEPTION 'connected to database %, not {STAGE_DATABASE}', current_database();
+  END IF;
+  SELECT n.nspowner::regrole, n.nspacl, obj_description(n.oid, 'pg_namespace')
+    INTO own, acl, cmt FROM pg_namespace n WHERE n.nspname = 'public';
+  IF own IS NULL THEN
+    RAISE EXCEPTION 'schema public is missing on the restore target';
+  END IF;
+  FOR s IN SELECT nspname FROM pg_namespace
+           WHERE nspname NOT IN ('pg_catalog', 'information_schema') AND nspname NOT LIKE 'pg\\_%' LOOP
+    EXECUTE format('DROP SCHEMA %I CASCADE', s);
+  END LOOP;
+  EXECUTE format('CREATE SCHEMA public AUTHORIZATION %s', own);
+  FOR g IN SELECT a.grantee, a.privilege_type, a.is_grantable FROM aclexplode(acl) a
+           WHERE a.grantee <> own::oid LOOP
+    EXECUTE format('GRANT %s ON SCHEMA public TO %s%s', g.privilege_type,
+                   CASE WHEN g.grantee = 0 THEN 'PUBLIC' ELSE g.grantee::regrole::text END,
+                   CASE WHEN g.is_grantable THEN ' WITH GRANT OPTION' ELSE '' END);
+  END LOOP;
+  IF cmt IS NOT NULL THEN
+    EXECUTE format('COMMENT ON SCHEMA public IS %L', cmt);
+  END IF;
+END
+$empty$;"""
+
+# public's owner, comment and privileges, one line. A NULL ACL reads as the owner's default, so
+# "never granted" and "granted exactly the default" compare equal.
+PUBLIC_SCHEMA_STATE_SQL = (
+    "SELECT n.nspowner::regrole::text || '|' || COALESCE(obj_description(n.oid, 'pg_namespace'), '') "
+    "|| '|' || COALESCE((SELECT string_agg(x, ',' ORDER BY x) FROM ("
+    "SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END || '=' "
+    "|| a.privilege_type || CASE WHEN a.is_grantable THEN '*' ELSE '' END AS x "
+    "FROM aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a) t), '') "
+    "FROM pg_namespace n WHERE n.nspname = 'public';"
+)
+# What is left once the target is empty: schemas other than public, objects in public, and
+# extensions outside pg_catalog. "0 0 0" or the restore does not start.
+TARGET_RESIDUE_SQL = (
+    "SELECT (SELECT count(*) FROM pg_namespace WHERE nspname NOT IN "
+    "('pg_catalog', 'information_schema', 'public') AND nspname NOT LIKE 'pg\\_%') || ' ' || "
+    "((SELECT count(*) FROM pg_class WHERE relnamespace = 'public'::regnamespace) "
+    "+ (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace) "
+    "+ (SELECT count(*) FROM pg_type WHERE typnamespace = 'public'::regnamespace)) || ' ' || "
+    "(SELECT count(*) FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace "
+    "WHERE n.nspname <> 'pg_catalog');"
+)
+TARGET_SCHEMAS_SQL = (
+    "SELECT COALESCE(string_agg(nspname, ',' ORDER BY nspname), '') FROM pg_namespace "
+    "WHERE nspname NOT IN ('pg_catalog', 'information_schema') AND nspname NOT LIKE 'pg\\_%';"
+)
+
+
+def stage_branch_name(cfg):
+    return f"{STAGE_BRANCH_PREFIX}{cfg.target_version}"
+
+
+def _uri_host_db(uri):
+    """(lowercased host, database) of a postgres connection string; (None, None) if it has no host."""
+    try:
+        u = urlsplit(uri or "")
+        host = u.hostname
+    except ValueError:
+        return None, None
+    if u.scheme not in ("postgres", "postgresql") or not host:
+        return None, None
+    return host.lower(), u.path.lstrip("/")
+
+
+def _neon_list_endpoints(cfg):
+    r = requests.get(
+        f"{NEON_API}/projects/{cfg.neon_project_id}/endpoints",
+        headers=neon_headers(cfg), timeout=HTTP_TIMEOUT,
+    )
+    if r.status_code != 200:
+        raise RevertError(f"Neon list endpoints failed {r.status_code}: {r.text}")
+    return r.json().get("endpoints", [])
+
+
+def require_restore_target(cfg, branch_id, target_uri):
+    """Fail closed unless (branch_id, target_uri) is provably the dump path's stage branch.
+
+    Runs before the target is emptied, which drops every schema on it. Each check is
+    independent; every failing one is named:
+      - the branch is neither the branch a revert restores (NEON_PROD_BRANCH_ID) nor the real
+        prod branch;
+      - the connection string names database neondb, and its host is not the live database's
+        (NEON_BACKUP_URL, which the RPO probe reads) -- this one needs no Neon call at all;
+      - Neon's own branch list names the branch revert-stage-<TARGET_VERSION> and does not mark
+        it default, primary or protected;
+      - Neon's endpoint list has the connection string's host on exactly one branch, this one.
+    U4: the endpoint list's shape ({"endpoints": [{"host", "branch_id"}]}) is read from Neon's
+    API reference and mocked here; CONFIRM it in the rehearsal. A different shape refuses.
+    """
+    bad = []
+    if not branch_id or branch_id in (cfg.neon_prod_branch_id, PROD_NEON_BRANCH):
+        bad.append(f"branch {branch_id!r} is the branch a revert restores, or the real prod branch")
+    host, db = _uri_host_db(target_uri)
+    live_host, _ = _uri_host_db(cfg.neon_backup_url)
+    if host is None:
+        bad.append("the target connection string has no host")
+    elif live_host is None or host == live_host:
+        bad.append("the target host is the live database's, or NEON_BACKUP_URL has no host to compare")
+    if db != STAGE_DATABASE:
+        bad.append(f"the target database is {db!r}, not {STAGE_DATABASE!r}")
+    if not bad:
+        want = stage_branch_name(cfg)
+        branch = next((b for b in _neon_list_branches(cfg) if b.get("id") == branch_id), None)
+        if branch is None:
+            bad.append(f"branch {branch_id} is not in Neon's branch list")
+        else:
+            if branch.get("name") != want:
+                bad.append(f"branch {branch_id} is named {branch.get('name')!r}, not {want!r}")
+            for flag in ("default", "primary", "protected"):
+                if branch.get(flag):
+                    bad.append(f"branch {branch_id} is marked {flag}")
+        owners = sorted({e.get("branch_id") for e in _neon_list_endpoints(cfg)
+                         if isinstance(e, dict) and (e.get("host") or "").lower() == host})
+        if owners != [branch_id]:
+            bad.append(f"the target host is served by {owners or 'no endpoint'}, not by branch {branch_id} alone")
+    if bad:
+        raise RevertError(
+            "restore-target guard: refusing to empty a database not proven to be the stage branch "
+            "(nothing was changed): " + "; ".join(bad)
+        )
+
+
+def empty_restore_target(cfg, branch_id, target_uri):
+    """Empty the stage branch's database so the dump restores into an empty database.
+
+    require_restore_target() first: nothing is dropped unless the target is proven to be the
+    stage branch. Then one statement drops every non-system schema and recreates public as it
+    was, and two reads confirm the result: nothing left, and public's owner, comment and
+    privileges unchanged. Any failure raises before pg_restore, so before the first prod mutation.
+    """
+    require_restore_target(cfg, branch_id, target_uri)
+    schemas = _psql_scalar(target_uri, TARGET_SCHEMAS_SQL)
+    public_before = _psql_scalar(target_uri, PUBLIC_SCHEMA_STATE_SQL)
+    proc = subprocess.run(
+        ["psql", target_uri, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-c", EMPTY_TARGET_SQL],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise RevertError(
+            "emptying the restore target failed, so nothing was dropped: "
+            + (_redact_conn(proc.stderr.strip())[:800] or f"psql exit {proc.returncode}")
+        )
+    residue = _psql_scalar(target_uri, TARGET_RESIDUE_SQL)
+    public_after = _psql_scalar(target_uri, PUBLIC_SCHEMA_STATE_SQL)
+    if residue != "0 0 0":
+        raise RevertError(
+            f"the restore target is not empty after emptying (other schemas, objects in public, "
+            f"extensions outside pg_catalog = {residue!r}); refusing to restore into it"
+        )
+    if not public_before or public_after != public_before:
+        raise RevertError(
+            "schema public did not come back with the owner, comment and privileges it had "
+            f"({public_before!r} before, {public_after!r} after); refusing to restore into it"
+        )
+    sys.stdout.write(
+        f"[revert] restore target {stage_branch_name(cfg)} emptied: dropped schemas {schemas}; "
+        "public recreated with its owner, comment and privileges\n"
+    )
+    sys.stdout.flush()
+
+
 # --- pg_restore stderr: say what it complained about; validate_branch judges ----
-# The restore target is NOT empty: it is parented off prod, so --clean has to drop
+# Since 2026-10-14 empty_restore_target() empties the target first, so a correct
+# restore shows no errors at all. The text below is the history of why this step
+# exists, and it still explains whatever a restore does print. Until then the
+# target was NOT empty: it is parented off prod, so --clean had to drop
 # a full database first. pg_restore runs without --exit-on-error, skips every
 # statement that fails, and exits non-zero with "errors ignored on restore: N".
 # The old check let that tail excuse everything and never printed stderr, so the
@@ -809,7 +1005,8 @@ def _check_pg_restore_result(returncode, stderr):
 
 def restore_dump_into_branch(s3, cfg, manifest, target_uri):
     """Download the durable dump and pg_restore it into the fresh branch
-    (NOT prod). --clean --if-exists so the fresh branch is overwritten cleanly.
+    (NOT prod), which empty_restore_target() has already emptied. --clean
+    --if-exists stays: on an empty target every DROP it issues is a no-op notice.
     """
     key = manifest["dump_s3_key"]
     with tempfile.TemporaryDirectory() as td:
@@ -1850,10 +2047,13 @@ def run(cfg, s3=None, lambda_client=None):
             source_branch_id = fast["id"]
             source_lsn = manifest.get("neon_lsn")
         else:
-            restore_name = f"revert-stage-{cfg.target_version}"
+            restore_name = stage_branch_name(cfg)
             source_branch_id, uri = neon_create_branch_with_endpoint(
                 cfg, restore_name, ttl_days=cfg.branch_ttl_days
             )
+            # The stage branch starts as a copy of today's prod: empty it (behind the
+            # restore-target guard) so the dump lands in an empty database.
+            empty_restore_target(cfg, source_branch_id, uri)
             _key, expected_counts = restore_dump_into_branch(s3, cfg, manifest, uri)
             validate_branch(cfg, uri, expected_counts=expected_counts)
             source_lsn = None
