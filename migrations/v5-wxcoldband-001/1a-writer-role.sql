@@ -29,8 +29,8 @@
 --   * W3. INSERT ON SEVEN COLUMNS: space_id, night_date, init_time, p10_min_f, p50_min_f, leads_read,
 --     leads_expected. Column-level, never table-level, so it cannot set created_at, the card's
 --     freshness stamp (0a C6). Every direct privilege it might hold on schema public's tables, views,
---     sequences and routines, and CREATE on the schema, is revoked first, so a re-run converges on
---     exactly this grant. What follows for the job (README.md): bare ON CONFLICT DO NOTHING, no column
+--     sequences and routines (those whose owner the caller speaks for), and CREATE on the schema, is
+--     revoked first, so a re-run converges on exactly this grant. What follows for the job (README.md): bare ON CONFLICT DO NOTHING, no column
 --     list, no RETURNING; the foreign key to spaces needs nothing (PostgreSQL checks it as the table's
 --     owner); a re-run cannot correct a row.
 --
@@ -101,15 +101,19 @@ BEGIN
   SELECT c.relowner INTO owner_oid
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = 'public' AND c.relname = 'weather_cold_range' AND c.relkind = 'r';
-  IF owner_oid IS NULL
-     OR NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001') THEN
-    RAISE EXCEPTION 'v5-wxcoldband-001 1a refused, nothing changed: public.weather_cold_range is not here with its stamp 5.0.0-wxcoldband-001.'
+  IF owner_oid IS NULL THEN
+    RAISE EXCEPTION 'v5-wxcoldband-001 1a refused, nothing changed: there is no table public.weather_cold_range.'
       USING HINT = 'Apply 0a-additive-ddl.sql first.';
   END IF;
+  -- Before the stamp: a caller that is not the owner may not be able to read schema_version.
   IF NOT pg_catalog.pg_has_role(current_user, owner_oid, 'USAGE') THEN
     RAISE EXCEPTION 'v5-wxcoldband-001 1a refused, nothing changed: run by %, which is not the owner of public.weather_cold_range (%).',
       current_user, owner_oid::regrole
       USING HINT = 'Run it with the owner''s URL (NEON_STAGING_URL / NEON_DATABASE_URL).';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001') THEN
+    RAISE EXCEPTION 'v5-wxcoldband-001 1a refused, nothing changed: public.weather_cold_range is here without its stamp 5.0.0-wxcoldband-001.'
+      USING HINT = '0a did not make this table. Find what did before giving anyone access to it.';
   END IF;
 END $$;
 
@@ -159,12 +163,26 @@ BEGIN
 END $$;
 
 -- ── 3. Every direct privilege in schema public revoked, then the one grant (W3). ──────────────────
--- ALL TABLES covers views, materialized views, foreign and partitioned tables, and revoking at the
--- table level takes the column-level privileges of the same kind with it. ALL ROUTINES covers
--- functions, procedures and aggregates.
-REVOKE ALL ON ALL TABLES    IN SCHEMA public FROM garden_wx_writer;
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM garden_wx_writer;
-REVOKE ALL ON ALL ROUTINES  IN SCHEMA public FROM garden_wx_writer;
+-- One object at a time, and only objects whose owner the caller speaks for, rather than REVOKE ... ON
+-- ALL TABLES IN SCHEMA: that is an ERROR, not a no-op, on an object the caller holds no privilege on
+-- at all (rehearsed: a table the role itself owns). A grant this caller cannot revoke is left for the
+-- assertion to name. Revoking at the table level takes the column-level privileges with it.
+DO $$
+DECLARE
+  x record;
+BEGIN
+  FOR x IN SELECT CASE WHEN c.relkind = 'S' THEN 'SEQUENCE' ELSE 'TABLE' END AS kind, c.oid::regclass::text AS name
+             FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+              AND pg_catalog.pg_has_role(current_user, c.relowner, 'USAGE')
+           UNION ALL
+           SELECT 'ROUTINE', p.oid::regprocedure::text
+             FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'public' AND pg_catalog.pg_has_role(current_user, p.proowner, 'USAGE')
+           ORDER BY 1, 2 LOOP
+    EXECUTE format('REVOKE ALL ON %s %s FROM garden_wx_writer', x.kind, x.name);
+  END LOOP;
+END $$;
 REVOKE CREATE ON SCHEMA public FROM garden_wx_writer;
 
 GRANT INSERT (space_id, night_date, init_time, p10_min_f, p50_min_f, leads_read, leads_expected)

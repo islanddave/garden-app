@@ -32,6 +32,7 @@ DECLARE
   me    oid;
   here  text;
   there text;
+  x     record;
 BEGIN
   SELECT oid INTO me FROM pg_catalog.pg_roles WHERE rolname = 'garden_wx_writer';
   IF me IS NULL THEN
@@ -57,9 +58,19 @@ BEGIN
       USING HINT = 'Decide what happens to each (drop it, or ALTER ... OWNER TO the owner), then run this again.';
   END IF;
 
-  REVOKE ALL ON ALL TABLES    IN SCHEMA public FROM garden_wx_writer;
-  REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM garden_wx_writer;
-  REVOKE ALL ON ALL ROUTINES  IN SCHEMA public FROM garden_wx_writer;
+  -- As 1a section 3: one object at a time, only those whose owner the caller speaks for (REVOKE on an
+  -- object it holds no privilege on at all is an error, not a no-op).
+  FOR x IN SELECT CASE WHEN c.relkind = 'S' THEN 'SEQUENCE' ELSE 'TABLE' END AS kind, c.oid::regclass::text AS name
+             FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+              AND pg_catalog.pg_has_role(current_user, c.relowner, 'USAGE')
+           UNION ALL
+           SELECT 'ROUTINE', p.oid::regprocedure::text
+             FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'public' AND pg_catalog.pg_has_role(current_user, p.proowner, 'USAGE')
+           ORDER BY 1, 2 LOOP
+    EXECUTE format('REVOKE ALL ON %s %s FROM garden_wx_writer', x.kind, x.name);
+  END LOOP;
   REVOKE ALL ON SCHEMA public FROM garden_wx_writer;
 
   -- DROP ROLE removes the role's memberships, either way round, with it.
