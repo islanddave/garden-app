@@ -27,6 +27,7 @@ vi.mock('../components/today/v2/useTodayBands.js', () => ({
 }))
 
 import TodayV2, { namesSummary, activeCareRows } from '../pages/TodayV2.jsx'
+import { PLAN_DATE, GEN, planFor, tonight, coldText, coldTextAllYear } from './helpers/twoLowsFixtures.js'
 
 const D = '2026-09-24'
 const row = (id, extra = {}) => ({ id, name: `Plant ${id}`, crop: 'Kale', ...extra })
@@ -208,5 +209,21 @@ describe('helpers', () => {
     const rows = activeCareRows(PLAN, new Set(['p1:pest']))
     expect(rows.map((r) => r.need)).not.toContain('cold')
     expect(rows).toHaveLength(6)
+  })
+})
+
+// V5-CHILLBAND-001 — the cold line's words follow the season of the PLAN DATE, and on a night the frost line
+// names, the page re-words the cue at the agreed low (src/lib/tonightLow.js agreeCallout). That re-wording
+// needs the plan date from THIS page: without it the line would fall back to the all-year words in the fall.
+describe('TodayV2 hands the plan date to the cue it re-words', () => {
+  it('plan dated Oct 9, engine cue at 44, frost line naming tonight at 42 -> "Cold night (42°F)" in the FALL words', () => {
+    const plan = planFor(44, [tonight(42)])
+    expect(plan.weather.callout).toEqual({ icon: 'cold', text: coldText(44) })   // the real engine's, for PLAN_DATE
+    planState.current = { data: { has_plan: true, plan_date: PLAN_DATE, generated_at: GEN, plan }, loading: false, error: null, reload: vi.fn() }
+    mount()
+    const cue = screen.getByTestId('weather-cue-line')
+    expect(cue.textContent).toBe('Cold night (42°F) — pick ripe and coloring peppers & tomatoes')
+    expect(cue.textContent).not.toBe(coldTextAllYear(42))
+    expect(cue.dataset.cue).toBe('cold')
   })
 })
