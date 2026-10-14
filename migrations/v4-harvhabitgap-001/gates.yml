@@ -176,6 +176,13 @@ post:
   # unchanged. Listing it here first is what keeps that apply from turning this gate red on the next
   # run, the lamb_s_ear failure above; a slug in NOT IN that does not exist yet excuses nothing.
   # Recorded in not_harvest_tracked.slugs and src/lib/harvestTracked.js in the same change.
+  #
+  # 2026-10-14 (DATA-FALLDECKPOTS-001): daisy and millet added. Both were minted in the app on
+  # 2026-10-12 with a NULL harvest_habit when Dave added three nursery pots on the Deck, so this gate
+  # went red on prod (expected 0, got 2), the lamb_s_ear shape. daisy is category='flower' (Rudbeckia
+  # hirta), millet category='ornamental' (Pennisetum glaucum); one live planting each, zero harvest
+  # events. Dave decided first-hand 2026-10-14: not harvested. Registered here, in
+  # not_harvest_tracked.slugs and in src/lib/harvestTracked.js in the same change; no habit invented.
   - name: post_every_null_habit_is_a_recorded_decision
     sql: |
       SELECT count(*) FROM public.crop_types c
@@ -198,6 +205,7 @@ post:
            'spinach','stock','succulent','summer_savory','sunflower','thunbergia','torenia',
            'tradescantia','turnip','tweedia',
            'horseweed','hylotelephium',
+           'daisy','millet',
            'vietnamese_coriander','viola','yarrow','yogurt')
     expect: scalar_eq
     value: 0

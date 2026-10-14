@@ -1,0 +1,171 @@
+# v5-deckpots-001 — gates. Shape of v5-crabappleprofile-001/gates.yml.
+#
+# pre: one portable gate, five prod-only premises read 2026-10-14 (the ids exist only on prod).
+# post: the stamp, one standing invariant (self-armed, prod-only), two apply-window receipts.
+# Every gate that names a prod id is env: prod; the two that name none run on both.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-deckpots-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_cultivars_are_the_rows_read_at_authoring
+    env: prod
+    note: >
+      Identity receipt for the three cultivars whose profiles 0a replaces, read on prod 2026-10-14: name
+      and controlled crop type, live. The selector is always the id; the name is checked once here. A
+      renamed or retyped row means someone re-filed the plant: stop and re-decide before applying.
+    sql: |
+      SELECT pv.id
+        FROM (VALUES
+               ('f1588cbd-0861-45ef-8c5a-42687839e218'::uuid, 'Garden Chrysanthemum',  'chrysanthemum'),
+               ('0f89c33f-8c9a-479f-8e80-aca9091b3622'::uuid, 'Prairie Sun',           'daisy'),
+               ('7a61c3e5-b90a-4f32-a21f-ba08d7daa3d3'::uuid, 'Purple Majesty Miller', 'millet')
+             ) AS v(variety_id, name, crop_type_slug)
+        JOIN public.plant_varieties pv
+          ON pv.id = v.variety_id AND pv.name = v.name AND pv.crop_type_slug = v.crop_type_slug
+         AND pv.deleted_at IS NULL
+    expect: rowcount_eq
+    value: 3
+
+  - name: pre_profiles_are_the_untouched_create_placeholders
+    env: prod
+    note: >
+      The exact starting state 0a matches, and why a whole-object replace is safe: each row is still the
+      three-key placeholder the create path wrote, byte-identical to what was reviewed (md5 read on prod
+      2026-10-14). 0a carries the same md5 in its WHERE. If this fails a row changed since authoring: 0a
+      would match nothing for it and still stamp, so re-read before applying.
+    sql: |
+      SELECT cp.id
+        FROM (VALUES
+               ('63463242-7d45-43cb-821a-55450f8320bd'::uuid, 'f1588cbd-0861-45ef-8c5a-42687839e218'::uuid),
+               ('737964e9-f583-49af-bf1c-34058376e934'::uuid, '0f89c33f-8c9a-479f-8e80-aca9091b3622'::uuid),
+               ('f61237a4-1868-4cfe-9710-7916b42dcf77'::uuid, '7a61c3e5-b90a-4f32-a21f-ba08d7daa3d3'::uuid)
+             ) AS v(row_id, scope_id)
+        JOIN public.care_profile cp
+          ON cp.id = v.row_id AND cp.scope = 'cultivar' AND cp.scope_id = v.scope_id
+       WHERE cp.profile->>'_basis' = 'unresearched'
+         AND cp.profile->>'_source' = 'cultivar-create'
+         AND md5(cp.profile::text) = 'd5335984e4af2339fe6ee7b4f4946436'
+    expect: rowcount_eq
+    value: 3
+
+  - name: pre_no_leaf_override_decides_water
+    env: prod
+    note: >
+      v_resolved_care merges system || cultivar || leaf, right wins. A leaf row on one of these plantings
+      carrying its own watering key would override 0a's value. None exists at authoring (no leaf row at
+      all). A leaf row carrying only `overwintering` is not counted.
+    sql: |
+      SELECT lo.id, p.name
+        FROM public.care_profile lo
+        JOIN public.plants p ON p.id = lo.scope_id
+       WHERE lo.scope = 'leaf'
+         AND p.variety_id IN ('f1588cbd-0861-45ef-8c5a-42687839e218',
+                              '0f89c33f-8c9a-479f-8e80-aca9091b3622',
+                              '7a61c3e5-b90a-4f32-a21f-ba08d7daa3d3')
+         AND p.deleted_at IS NULL
+         AND (   lo.profile ? 'no_calendar_water' OR lo.profile ? 'water_rule'
+              OR lo.profile ? 'water_interval_days' OR lo.profile ? 'water_interval_days_container'
+              OR lo.profile ? 'water_interval_days_inground')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_each_cultivar_reaches_only_its_deck_pot
+    env: prod
+    note: >
+      THE REACH GUARD. A cultivar row reaches every planting of its variety; Dave decided for three pots.
+      Read on prod 2026-10-14: each cultivar has exactly one planting, ever. A second live planting of any
+      of them must stop the apply and be decided on its own.
+    sql: |
+      SELECT p.id, p.name
+        FROM public.plants p
+       WHERE p.variety_id IN ('f1588cbd-0861-45ef-8c5a-42687839e218',
+                              '0f89c33f-8c9a-479f-8e80-aca9091b3622',
+                              '7a61c3e5-b90a-4f32-a21f-ba08d7daa3d3')
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND p.id NOT IN ('5735a21b-8e2b-4bcd-bc1c-e506b0331a35',
+                          '1fc6fe9b-c7b0-4671-854a-5bb419f085f6',
+                          '31ab9250-f584-4ed4-a4dc-766dcd8239e1')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_the_engine_resolves_no_database_cadence_for_the_pots
+    env: prod
+    note: >
+      The premise, as the engine sees it: nothing in the database supplies a cadence for these plantings
+      (cadence_scopes empty), which is what v4-cadencerefill-001's placeholder gate reports. If it fails,
+      someone has decided them some other way: find out how before applying.
+    sql: |
+      SELECT vrc.leaf_id
+        FROM public.v_resolved_care vrc
+       WHERE vrc.leaf_id IN ('5735a21b-8e2b-4bcd-bc1c-e506b0331a35',
+                             '1fc6fe9b-c7b0-4671-854a-5bb419f085f6',
+                             '31ab9250-f584-4ed4-a4dc-766dcd8239e1')
+         AND cardinality(vrc.cadence_scopes) = 0
+    expect: rowcount_eq
+    value: 3
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-deckpots-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_the_deck_pots_resolve_dave_s_three_day_cadence
+    env: prod
+    note: >
+      Standing invariant, self-armed on the stamp. Each live planting resolves a database cadence and the
+      container interval Dave decided (3). Reds if the cultivar row is reverted to a placeholder, loses
+      its key, or is overridden from a leaf. Ended or archived plantings drop out, so retiring a pot is
+      never a red.
+    sql: |
+      SELECT p.id, p.name, vrc.resolved_profile->'water_interval_days_container' AS cont
+        FROM public.plants p
+        JOIN public.v_resolved_care vrc ON vrc.leaf_id = p.id
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-deckpots-001')
+         AND p.id IN ('5735a21b-8e2b-4bcd-bc1c-e506b0331a35',
+                      '1fc6fe9b-c7b0-4671-854a-5bb419f085f6',
+                      '31ab9250-f584-4ed4-a4dc-766dcd8239e1')
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND (    cardinality(vrc.cadence_scopes) > 0
+              AND vrc.resolved_profile->'water_interval_days_container' = '3'::jsonb
+             ) IS NOT TRUE
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_three_profiles_written
+    env: prod
+    continuous: false
+    note: >
+      Apply-window receipt: the three cultivar rows carry 0a's values. continuous:false because a later,
+      legitimate re-decision would change them.
+    sql: |
+      SELECT cp.id
+        FROM public.care_profile cp
+       WHERE cp.id IN ('63463242-7d45-43cb-821a-55450f8320bd',
+                       '737964e9-f583-49af-bf1c-34058376e934',
+                       'f61237a4-1868-4cfe-9710-7916b42dcf77')
+         AND cp.scope = 'cultivar'
+         AND cp.profile->>'_source' = 'v5-deckpots-001'
+         AND cp.profile->>'_basis' = 'dave_decision'
+         AND cp.profile->'water_interval_days_container' = '3'::jsonb
+         AND (cp.id <> '63463242-7d45-43cb-821a-55450f8320bd'
+              OR cp.profile->'fertilize_interval_days' = '28'::jsonb)
+    expect: rowcount_eq
+    value: 3
+
+  - name: post_receipt_millet_renamed
+    env: prod
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = '7a61c3e5-b90a-4f32-a21f-ba08d7daa3d3'
+         AND name = 'Purple Majesty Millet' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
