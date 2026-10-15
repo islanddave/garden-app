@@ -40,6 +40,8 @@ export const REGIMES = ['protected_productive', 'protected_quiescent', 'field_ha
 // truncate a card, not fail a save Dave is making with a plant already under cover.
 export const MAX_NOTE = 400;
 
+const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
 // 'MM-DD' or a full ISO date. overwinterProfile() slices the last 5 chars off whatever it finds, so
 // both forms already work downstream; validating here keeps '3/15' and 'March' out of the column.
 function normDate(v, label) {
@@ -49,7 +51,9 @@ function normDate(v, label) {
   const m = /^(?:\d{4}-)?(\d{2})-(\d{2})$/.exec(s);
   if (!m) return { ok: false, error: `${label} must be MM-DD or YYYY-MM-DD` };
   const mo = Number(m[1]), d = Number(m[2]);
-  if (mo < 1 || mo > 12 || d < 1 || d > 31) return { ok: false, error: `${label} is not a real date` };
+  // Day checked against the month (Feb 29 allowed, the window recurs every year): '02-31' used to be
+  // stored and then rolled forward into March by the date maths (BUG-LAMBDAERRPATHS-001 I4).
+  if (mo < 1 || mo > 12 || d < 1 || d > DAYS_IN_MONTH[mo - 1]) return { ok: false, error: `${label} is not a real date` };
   return { ok: true, value: s };
 }
 

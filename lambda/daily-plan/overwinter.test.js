@@ -368,4 +368,43 @@ describe('the window and the exit', () => {
   it('returns null for a planting that is not overwintering', () => {
     expect(overwinterState({}, c, '2027-01-15')).toBeNull();
   });
+
+  // BUG-LAMBDAERRPATHS-001 (I4). A stored until of '2-3' reached addDays as '2026-2-3' and threw a
+  // RangeError, which ended the nightly run for every Space. Mutation: put back the bare
+  // `o.until.slice(-5)` in overwinterProfile and the first call throws.
+  it('treats an unreadable stored until as absent and reports it', () => {
+    const dflt = overwinterState({}, withRegime('protected_quiescent'), '2026-10-14').until;
+    const st = overwinterState({}, { ...c, overwintering: { regime: 'protected_quiescent', until: '2-3' } }, '2026-10-14');
+    expect(st.until).toBe(dflt);
+    expect(st.bad_dates).toEqual(['until']);
+    expect(overwinterState({}, withRegime('protected_quiescent'), '2026-10-14').bad_dates).toBeNull();
+  });
+
+  // '02-31' does not throw: the date maths rolls it forward into March and the reminder runs long. Same for
+  // from, and for a non-string. Mutation: check the day against 31 instead of the month and the
+  // '02-31' row keeps its value. Feb 29 and a full ISO date are real and must survive.
+  it('rejects impossible days but keeps Feb 29 and the ISO tail', () => {
+    const at = (ow2) => overwinterState({}, { ...c, overwintering: { regime: 'field_hardy', ...ow2 } }, '2027-01-15');
+    const dflt = at({});
+    for (const bad of ['02-31', '02-30', '04-31', '00-10', '13-01', '03-00', '3/15', 'March', '2-3']) {
+      const st = at({ from: bad, until: bad });
+      expect(st.from, bad).toBe(dflt.from);
+      expect(st.until, bad).toBe(dflt.until);
+      expect(st.bad_dates, bad).toEqual(['from', 'until']);
+    }
+    expect(at({ until: 20270303 }).bad_dates).toEqual(['until']);
+    expect(at({ until: '02-29' }).until).toBe('02-29');
+    expect(at({ until: '2027-03-15' }).until).toBe('03-15');
+    expect(at({ from: '', until: null }).bad_dates).toBeNull();
+  });
+
+  // The engine's fallback after a throw: the stored dates are not even read.
+  it('defaultWindow ignores the stored from/until', () => {
+    const st = { ...c, overwintering: { regime: 'field_hardy', from: '10-01', until: '04-15' } };
+    const dflt = overwinterState({}, withRegime('field_hardy'), '2027-03-01');
+    const fb = overwinterState({}, st, '2027-03-01', undefined, { defaultWindow: true });
+    expect(fb.from).toBe(dflt.from);
+    expect(fb.until).toBe(dflt.until);
+    expect(fb.active).toBe(dflt.active);
+  });
 });
