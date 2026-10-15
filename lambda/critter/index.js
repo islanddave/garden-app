@@ -11,7 +11,8 @@
 //   PATCH  /api/critters/species-prefs             D-INV-1 Option A: long-press love/meh weight
 //   POST   /api/notifications/garden-view-opened   Updates last_garden_view_at (Stage 4 reopen instrumentation §3.3)
 //   GET    /api/notifications/prefs                Read current prefs (stateless defaults) + can_edit_bar
-//   PATCH  /api/notifications/prefs                Persist toggle change (incl. more_pins / bar_layout, V5-NAVCUSTOM-001)
+//   PATCH  /api/notifications/prefs                Persist toggle change (incl. more_pins / bar_layout, V5-NAVCUSTOM-001;
+//                                                  today_sections alone, V5-TODAYREDESIGN-001 S7)
 //   POST   /api/notifications/coachmark-dismissed  One-shot: writes coachmark_seen_at = now()
 //   POST   /api/notifications/opt-in-dismissed     One-shot: writes opt_in_prompt_seen_at = now() (suppression-flag fix §3.8)
 //   GET    /api/app-config                         DORMANT since V5-NAVCUSTOM-001 — was the global nav read
@@ -134,6 +135,45 @@ async function readUserPrefs(sql, clerkSub) {
     created_at: null, updated_at: null,
   }
 }
+
+// V5-TODAYREDESIGN-001 S7 — today_sections, the redesigned Today's remembered open/closed state.
+//
+// THIS LAMBDA TOLERATES THE COLUMN'S ABSENCE, unlike more_pins / bar_layout above. migrations/
+// v5-todaysections-001 may land on an environment after this code does (prod DDL waits for Dave's OK), so
+// the column is never named in readUserPrefs' boot SELECT — a missing column there would 500 every user's
+// boot read. It is read by its own statement instead, and that statement's failure never fails the GET:
+//   * 42703 naming the column (not migrated here yet): the GET carries NO today_sections key at all, and the
+//     absence is remembered for TODAY_SECTIONS_ABSENT_MS so a warm container does not re-ask on every boot;
+//   * any other error: logged, and the key is omitted the same way. The client then reads its own mirror.
+// The PATCH arm (Route 8) writes it with its own statement too, and answers 409 on the same 42703.
+const TODAY_SECTIONS_ABSENT_MS = 60 * 1000
+let todaySectionsAbsentUntil = 0
+const isMissingTodaySections = (err) =>
+  err?.code === '42703' && /today_sections/.test(String(err?.message ?? ''))
+
+// -> { present: true, value } | { present: false }. Never throws.
+async function readTodaySections(sql, clerkSub) {
+  if (Date.now() < todaySectionsAbsentUntil) return { present: false }
+  try {
+    const rows = await sql`
+      SELECT today_sections
+        FROM public.user_notification_prefs
+       WHERE created_by = ${clerkSub}
+       LIMIT 1
+    `
+    return { present: true, value: rows.length > 0 ? (rows[0].today_sections ?? null) : null }
+  } catch (err) {
+    if (isMissingTodaySections(err)) {
+      todaySectionsAbsentUntil = Date.now() + TODAY_SECTIONS_ABSENT_MS
+    } else {
+      console.error('today_sections read failed:', err?.code ?? '', err?.message ?? String(err))
+    }
+    return { present: false }
+  }
+}
+
+// Test seam: the absence memo is module state and vitest does not reset modules between cases in a file.
+export function __resetTodaySectionsAbsence() { todaySectionsAbsentUntil = 0 }
 
 // ─── handler ───────────────────────────────────────────────────────────────
 
@@ -374,9 +414,13 @@ export const handler = async (event) => {
     // can_edit_bar (V5-NAVCUSTOM-001) is computed per request from ADMIN_CLERK_SUBS and never stored.
     // It decides only who SEES the bar editor (D3: today, Dave); every bar_layout write goes to the
     // caller's own row and needs no admin check. Fail-closed: unset allowlist -> false for everyone.
+    // today_sections (V5-TODAYREDESIGN-001 S7) rides along only when this environment has the column: absent
+    // from the body means "this server cannot store it yet", null means "stored nothing yet" (readTodaySections).
     if (rawPath === '/api/notifications/prefs' && method === 'GET') {
-      const prefs = await readUserPrefs(sql, userId)
-      return resp(200, { ...prefs, can_edit_bar: isAdmin(userId, process.env) })
+      const [prefs, sections] = await Promise.all([readUserPrefs(sql, userId), readTodaySections(sql, userId)])
+      const body = { ...prefs, can_edit_bar: isAdmin(userId, process.env) }
+      if (sections.present) body.today_sections = sections.value
+      return resp(200, body)
     }
 
     // ── Route 8: PATCH /api/notifications/prefs ─────────────────────────
@@ -384,6 +428,32 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}')
       const vErr = validatePrefsPatchBody(body)
       if (vErr) return resp(vErr.status, { error: vErr.error })
+      // V5-TODAYREDESIGN-001 S7 — today_sections, alone (the validator refused it beside anything else), by
+      // its OWN statement: the one write on this route that may meet a database without its column. Merged
+      // PER TOP-LEVEL KEY — `stored || incoming`, so an entry this body carries replaces that section's
+      // entry and every other section's entry stays (plan-v2 §2.1; README-BUILD.md "Cross-device merge
+      // rule"). Every other column on this route still replaces whole (COALESCE below). jsonb, so stringified
+      // and cast ::jsonb at both binding sites, exactly as today_skipped. 42703 → 409 with nothing written:
+      // the client keeps the entries dirty on its device and sends them again at its next visit start.
+      if (body.today_sections != null) {
+        const tsec = JSON.stringify(body.today_sections)
+        try {
+          const rows = await sql`
+            INSERT INTO public.user_notification_prefs (created_by, today_sections)
+            VALUES (${userId}, ${tsec}::jsonb)
+            ON CONFLICT (created_by) DO UPDATE SET
+              today_sections = COALESCE(public.user_notification_prefs.today_sections, '{}'::jsonb) || ${tsec}::jsonb,
+              updated_at     = now()
+            RETURNING today_sections, updated_at
+          `
+          todaySectionsAbsentUntil = 0
+          return resp(200, rows[0])
+        } catch (err) {
+          if (!isMissingTodaySections(err)) throw err
+          todaySectionsAbsentUntil = Date.now() + TODAY_SECTIONS_ABSENT_MS
+          return resp(409, { error: 'today_sections is not stored on this server yet' })
+        }
+      }
       // Build column set dynamically (NULLs are skip via COALESCE on UPDATE).
       // Use INSERT...ON CONFLICT DO UPDATE for upsert.
       const cv = body.critter_visit ?? null
