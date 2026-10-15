@@ -92,6 +92,8 @@ export const ROW_TESTIDS = ['protect-row', 'care-row', 'care-spot', 'care-group'
 //          todaySeen {date}          — today-seen:<user> marks every cold card of the served plan first-seen on `date`
 //          mirror {…entries}         — today-sections:<user> = {v:1, s:{…}, dirty:[]}
 //          showOthers true           — garden.today.showOthers = '1' (SF6: household stays opt-in per person)
+//          skipped 'cold'            — today-skipped:<clock's day> = every cold card of the served plan, the set a Skip
+//                                      tapped on each leaves (careStore; the server's set is unioned in, never replaces it)
 // clock:   the pinned instant (todaymeasure.html ?clock=). ET 10:30 on the named day.
 const AT = (day) => `${day}T14:30:00.000Z`
 const S924 = AT('2026-09-24')
@@ -249,6 +251,23 @@ export const STATES = [
       // L3: as v2-frost — the cue and frost line fold into Protect (D15).
       { family: 'first-screen', armedAt: 'S3', mustContain: ['today-glance', 'today-jumpbar'], mustNotContain: ['weather-cue-line', 'frost-alert-line'], mustShowText: ['today-verdict'], why: 'as v2-frost: the closed glance card, the bar, a verdict nothing cuts off, no cue or frost line on the first screen' },
       { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+-19' }, why: "v2-frost's ceiling, as v2-frost (709 since the L3 + L4 + L5 integration; measured 706 here too): Needs care's header top unchanged by the second rain note on the row" },
+    ],
+  },
+  // Review I1 (L3 + L4 + L5 integrated): L3 moved v2-frost's cue and frost line to mustNotContain (D15 folds them into
+  // Protect) and nothing required either any more — D15's OTHER half, "no Protect section: the first frost line stays
+  // under the card" and a cold cue that does not fold, was in no gate state. This is v2-frost's day (busyfull, plan
+  // untouched: the radiative advisory naming tonight and the engine's cold cue are real) after a Skip on each of its
+  // five tender rows earlier today (local.skipped — careStore's one set), so Protect has nothing left to do and is not
+  // on the page. No fixture carries a non-cold cue (v2-hot's graft sets weather.hot alone, with no callout), so this
+  // cold cue on a night without Protect is the cue line a gate state can require.
+  {
+    name: 'v2-frost-noprotect', fixture: 'busyfull', clock: S924, prefs: 'prefs.default.json', local: { skipped: 'cold' },
+    proves: 'D15 with no Protect section: the cue line and the short frost line stay under the closed glance card, on the first screen',
+    checks: [
+      ...common(),
+      { family: 'section-open-set', armedAt: ['S4', 'S5', 'S6'], order: ['care', 'harvest', 'resting'], open: ['care'], closed: ['harvest', 'resting'], why: 'every tender row skipped: no Protect section on the page; Needs care opens (small), as on v2-frost' },
+      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-glance', 'weather-cue-line', 'frost-alert-line', 'today-jumpbar'], mustNotContain: ['protect-pick'], mustShowText: ['today-verdict'], why: 'D15 (finish plan §3.3): with no Protect section the cold cue keeps its own line and tonight\'s frost line stays under the closed card (short form), both whole on the first screen' },
+      { family: 'region-headcount', armedAt: ['S3', 'S5'], why: 'the cue and frost line counted with the glance CLOSED — under the card, not only behind Details' },
     ],
   },
   {
@@ -443,10 +462,13 @@ export const REGIONS_V2 = [
   { id: 'today-weather', owner: 'glance', open: 'glance', state: 'v2-frost', armedAt: 'S3' },
   // L3 (finish plan §3.3, D15): on v2-frost Protect tonight is on the page, so the cue is no line of its own — its pick
   // words are the pick link's (declared replaced, as care-bulk-chips is) — and the frost line waits behind Details. Both
-  // were S3's "visible closed" rows; a night with no Protect keeps them under the card (GlanceCard.test.jsx: no gate
-  // fixture has a frost night without cold cards).
+  // were S3's "visible closed" rows; a night with no Protect keeps them under the card (GlanceCard.test.jsx, and since
+  // review I1 the v2-frost-noprotect rows below).
   { id: 'weather-cue-line', removed: true, replacedBy: ['protect-pick'], state: 'v2-frost', armedAt: 'S3' },
   { id: 'frost-alert-line', owner: 'glance details (folded into Protect, D15)', open: 'glance', state: 'v2-frost', armedAt: 'S3' },
+  // Review I1: on a night with NO Protect section (v2-frost-noprotect) both stay under the CLOSED card — counted closed.
+  { id: 'weather-cue-line', owner: 'under the closed glance card (no Protect tonight, D15)', closed: 'glance', state: 'v2-frost-noprotect', armedAt: ['S3', 'S5'] },
+  { id: 'frost-alert-line', owner: 'under the closed glance card (no Protect tonight, D15)', closed: 'glance', state: 'v2-frost-noprotect', armedAt: ['S3', 'S5'] },
   // L3: the dry list is the deep-soak line's inline names now (finish plan §3.2), still its own region.
   ...['drought-line', 'leaf-wetness-line', 'today-basis-stamp', 'care-rain-note', 'care-drought-list'].map((id) => ({ id, owner: 'glance details', open: 'glance', state: 'v2-frost', armedAt: 'S3' })),
   // Finish plan D-5 (2026-10-14): the feeding note is an advisory line at the top of the Needs care body, under any filter.

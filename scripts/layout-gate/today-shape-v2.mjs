@@ -1308,7 +1308,7 @@ try {
     for (const p of m.harness.liveRequests || []) fail(at, 'instrument', `a third-party request ESCAPED the harness to the live network — ${p}`)
     for (const f of m.harness.fixtures.filter(f => !f.ok || f.bytes === 0)) fail(at, 'fixture', `fixture ${f.name} is unusable (${f.why || 'zero bytes'})`)
     for (const need of ['v2-grafts.json', 'locations.full.json', state.prefs]) if (!m.harness.fixtures.some(f => f.name === need && f.ok)) fail(at, 'fixture', `fixture ${need} was not loaded — the state is not the one the contract names`)
-    const wantSeeds = 1 + (state.local?.todaySeen ? 1 : 0) + (state.local?.mirror ? 1 : 0) + (state.local?.showOthers ? 1 : 0)
+    const wantSeeds = 1 + (state.local?.todaySeen ? 1 : 0) + (state.local?.mirror ? 1 : 0) + (state.local?.showOthers ? 1 : 0) + (state.local?.skipped ? 1 : 0)
     if ((v2.seeds || []).length !== wantSeeds) fail(at, 'instrument', `${(v2.seeds || []).length} device seed(s) written (${(v2.seeds || []).join(', ')}), the contract asks for ${wantSeeds}`)
     if (state.redate && v2.planDate !== state.redate) fail(at, 'instrument', `the plan is dated ${v2.planDate}, the contract re-dates it to ${state.redate}`)
     if (SELF_TEST && v2.route !== 'stub') fail(at, 'instrument', `--self-test expected the stub V2 mounted, got route '${v2.route}'`)

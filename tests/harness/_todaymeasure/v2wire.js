@@ -84,6 +84,11 @@ export function localSeeds(state, payload, userId) {
   }
   if (L.mirror) out.push([`today-sections:${userId}`, JSON.stringify({ v: 1, s: L.mirror, dirty: [] })])
   if (L.showOthers) out.push(['garden.today.showOthers', '1'])
+  // Review I1: every served cold card skipped for the clock's day, as a Skip tapped on each leaves careStore's one set.
+  if (L.skipped === 'cold') {
+    const keys = ((payload && payload.plan && payload.plan.cold) || []).map((c) => `${c.id}:cold`)
+    out.push([`today-skipped:${dayOfClock(state.clock)}`, JSON.stringify(keys)])
+  }
   return out
 }
 

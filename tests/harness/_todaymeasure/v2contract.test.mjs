@@ -58,6 +58,19 @@ describe('today-v2 contract table', () => {
     expect(d15.map((c) => [c.summaries, c.pick])).toEqual([[{ protect: 'Before dark · tender below 50°' }, 'Pick coloring peppers & tomatoes first — log a harvest ›']])
     expect(REGIONS_V2.find((r) => r.id === 'weather-cue-line' && r.state === 'v2-frost')).toMatchObject({ removed: true, replacedBy: ['protect-pick'] })
     expect(REGIONS_V2.find((r) => r.id === 'frost-alert-line' && r.state === 'v2-frost')).toMatchObject({ open: 'glance' })
+    // Review I1: D15's other half — with no Protect section both lines stay under the closed card, and a gate state
+    // requires them there (on the first screen, and counted with the glance closed), so a fold applied every night reds.
+    const np = STATES.find((s) => s.name === 'v2-frost-noprotect')
+    expect(np).toMatchObject({ fixture: 'busyfull', local: { skipped: 'cold' } })
+    expect(np.grafts).toBeUndefined() // the plan is busyfull's, untouched
+    expect(armedIn('v2-frost-noprotect', 'first-screen').flatMap((c) => c.mustContain)).toEqual(expect.arrayContaining(['today-glance', 'weather-cue-line', 'frost-alert-line']))
+    expect(armedIn('v2-frost-noprotect', 'section-open-set').map((c) => c.order)).toEqual([['care', 'harvest', 'resting']])
+    expect(REGIONS_V2.filter((r) => r.state === 'v2-frost-noprotect').map((r) => [r.id, r.closed, isArmed(r)])).toEqual([['weather-cue-line', 'glance', true], ['frost-alert-line', 'glance', true]])
+    expect(armedIn('v2-frost-noprotect', 'region-headcount')).toHaveLength(1)
+    for (const n of ['cueFoldsWithoutProtect', 'frostUnderNeverKept']) {
+      expect(isArmed(MUTANTS_V2[n]), n).toBe(true)
+      expect(MUTANTS_V2[n].killers, n).toEqual(['first-screen', 'region-headcount'])
+    }
     // S5 landed the Protect half of the split.
     expect(pendingIn('v2-frost', 'first-screen')).toEqual([])
     expect(armedIn('v2-frost', 'first-screen').flatMap((c) => c.mustContain)).toEqual(expect.arrayContaining(['today-sec-protect', 'protect-pick']))
@@ -272,9 +285,10 @@ describe('v2 grafts and the re-dating helper', () => {
     expect(rain.checks.some((c) => c.headerTopMax?.care === 'FIRST_SCREEN+-19')).toBe(true)
     const B = read('today-shape-budget.v2.json').states
     for (const k of ['clock', 'contentBottomFloor', 'contentBottomCeiling', 'controlsFloor', 'scrollHeightCeiling']) expect(B['v2-frost-rain'][k], k).toBe(B['v2-frost'][k])
-    expect(STATES).toHaveLength(21)
+    // Review I1: + v2-frost-noprotect (D15 with no Protect section) — 9 common checks + 3 of its own.
+    expect(STATES).toHaveLength(22)
     // L3: + v2-frost's D15 header-text check (Protect's open summary and the pick link's words).
-    expect(STATES.reduce((a, x) => a + x.checks.filter((c) => isArmed(c)).length, 0)).toBe(267)
+    expect(STATES.reduce((a, x) => a + x.checks.filter((c) => isArmed(c)).length, 0)).toBe(279)
   })
   it('stale serves the plan one day back', () => {
     expect(applyGrafts(D, PLANTS, ['stale'], G).payload.plan_date).toBe('2026-09-23')
@@ -284,6 +298,13 @@ describe('v2 grafts and the re-dating helper', () => {
     const seeds = Object.fromEntries(localSeeds(s, D, 'harness_user'))
     expect(seeds['garden.todayV2']).toBe('1')
     expect(Object.keys(JSON.parse(seeds['today-seen:harness_user']).chill)).toHaveLength(D.plan.cold.length)
+  })
+  it('skips every served cold card for the clock\'s day under careStore\'s key and row keys (review I1)', () => {
+    const s = STATES.find((x) => x.name === 'v2-frost-noprotect')
+    const seeds = localSeeds(s, D, 'harness_user')
+    expect(seeds.map(([k]) => k)).toEqual(['garden.todayV2', 'today-skipped:2026-09-24'])
+    expect(JSON.parse(seeds[1][1])).toEqual(D.plan.cold.map((c) => c.id + ':cold'))
+    expect(D.plan.cold).toHaveLength(5)
   })
   it('resolves interaction targets to the contract anchors, and refuses an unknown one', () => {
     expect(selectorFor('jump:water')).toBe('[data-testid="today-jumpbar"] [data-chip="water"]')

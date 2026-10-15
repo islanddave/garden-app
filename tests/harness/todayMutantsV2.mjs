@@ -232,6 +232,26 @@ export const MUTANTS_V2 = {
     oneKiller: 'the link keeps its one-line box at 426 px in both wordings, so no geometry moves; the words are read by this family alone',
     defect: 'D15: the engine\'s pick cue folds away but its words never reach the pick link — the night\'s pick advice is gone from the page',
   },
+  // Review I1 (L3 + L4 + L5 integrated): the fold's OTHER half — with NO Protect section the cue and the first frost line
+  // stay under the closed card — was in no gate state, so a fold applied every night survived every family. Armed by
+  // v2-frost-noprotect (busyfull with each tender row skipped today): its first screen must hold both lines and its
+  // region-headcount counts both with the glance closed.
+  cueFoldsWithoutProtect: {
+    armedAt: ['S3', 'S5'], kind: 'chrome',
+    file: 'src/lib/todayV2/alerts.js',
+    find: '  return !!(protectShown && line && COLD_CUES.has(line.cue))\n',
+    replace: '  return !!(line && COLD_CUES.has(line.cue))\n',
+    killers: ['first-screen', 'region-headcount'],
+    defect: 'D15 over-applied: a cold cue folds away on a night with NO Protect section — no pick link is there to carry its words, so the night\'s advice is nowhere on the page',
+  },
+  frostUnderNeverKept: {
+    armedAt: ['S3', 'S5'], kind: 'chrome',
+    file: 'src/lib/todayV2/alerts.js',
+    find: '  if (protectShown || !all.length) return { under: null, details: all }\n',
+    replace: '  return { under: null, details: all }\n',
+    killers: ['first-screen', 'region-headcount'],
+    defect: 'D15 over-applied: on a frost night with NO Protect section the frost line leaves the card for Details too — the first screen keeps only the verdict\'s phrase',
+  },
 
   // ── S4: needs care (patterns filled by S4, 2026-09-29; exact source text — the plugin throws on a miss)
   clipSpotPanel: { armedAt: "S4", kind: 'chrome', file: "src/components/today/v2/SpotRow.jsx", find: "{open && <div id={panelId}>{children}</div>}", replace: "{open && <div id={panelId} style={{ height: 0, overflow: 'hidden' }}>{children}</div>}", killers: ["interaction", "visibility"], defect: "the Bag Area panel clipped (height 0, overflow hidden) \u2014 mounted, counted, unseen" },
