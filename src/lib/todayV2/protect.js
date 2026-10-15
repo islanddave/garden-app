@@ -50,11 +50,15 @@ export function protectOrder(rows, careRows = [], groupOrder = [OUTSIDE]) {
 // card), so the summary carries the REASON instead — "tender below 50°", the threshold the rows' cards name, once
 // (a range when they differ) — and an open section drops the names its body lists right under it (§2 of the
 // ADHD review: "an open section's summary drops its name list and keeps reason + timing").
+// The thresholds the rows still to do name, low to high, once each — what the open summary says, and what the body
+// reads to leave the one shared threshold off its rows (ProtectTonight), so the two can never count different rows.
+export const tenderThresholds = (rows) => [...new Set((rows || []).map((r) => r.threshold).filter((n) => Number.isFinite(n)))].sort((a, b) => a - b)
+
 export function protectSummary({ tier, rows, open = false }) {
   const bits = [tier === 'frost' || tier === 'hardfreeze' ? 'Before dark' : 'Tonight']
   if (tier === 'hardfreeze') bits.push('hard freeze')
   if (open) {
-    const t = [...new Set((rows || []).map((r) => r.threshold).filter((n) => Number.isFinite(n)))].sort((a, b) => a - b)
+    const t = tenderThresholds(rows)
     if (t.length) bits.push(`tender below ${t.length > 1 ? `${t[0]}–${t[t.length - 1]}` : t[0]}°`)
     return bits.join(' · ')
   }

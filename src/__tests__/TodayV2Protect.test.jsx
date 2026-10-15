@@ -165,6 +165,23 @@ describe('Protect tonight on the 09-24 plan (47°F, five protect cards, no alert
     expect(metas['Lemon Verbena']).toBe('Bag Area · below 50°F')
   })
 
+  // Review M1: the rows' shared threshold is read off the rows still to do, as the open summary is. Once Lantana (its own
+  // 55) is brought in, the four left share 50: said once, by the summary, and on none of their rows.
+  it('M1: once the row with its own threshold is handled, the shared one is said exactly once — the summary\'s', async () => {
+    const cold = PAYLOAD.plan.cold.map((c) => (c.name === 'Lantana' ? { ...c, text: 'tender tropical — bring in tonight (low 47°F ≤ 55°F)' } : c))
+    serve({ ...PAYLOAD, plan: { ...PAYLOAD.plan, cold } })
+    await mount()
+    expect(band('protect').textContent).toContain('Tonight · tender below 50–55°')
+    fireEvent.click(within(rowOf('Lantana')).getByRole('button', { name: /^Brought in: Lantana/ }))
+    await settle()
+    expect(doneOf('Lantana')).toBeTruthy()
+    expect(band('protect').textContent).toContain('Tonight · tender below 50°')
+    const rows = [...document.querySelectorAll('[data-testid="protect-row"]')]
+    expect(rows).toHaveLength(4)
+    expect(rows.some((r) => r.textContent.includes('below'))).toBe(false)
+    expect(document.body.textContent.match(/below 50°/g)).toHaveLength(1)
+  })
+
   it('the chip reads "Protect 5" and leads the bar', async () => {
     await mount()
     const chips = [...screen.getByRole('navigation', { name: 'Today sections' }).querySelectorAll('[data-chip]')]

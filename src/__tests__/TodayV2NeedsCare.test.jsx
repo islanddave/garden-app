@@ -1266,6 +1266,8 @@ describe('L5 — one row anatomy, group lines, per-product feed lines', () => {
     expect(tone.textContent).toContain('top-dress + water in · Show them')
     // No feed row is drawn until its product is opened: the product is not repeated 43 times.
     expect(within(spot('Bag Area')).queryAllByRole('button', { name: /^Log Feed for / }).length).toBe(0)
+    // Review M7: the toggle names its panel (aria-controls) only while the panel is drawn, as every disclosure here.
+    expect(within(tone).getByRole('button', { expanded: false }).hasAttribute('aria-controls')).toBe(false)
     fireEvent.click(within(tone).getByRole('button', { expanded: false }))
     await settle()
     const rows = within(tone).getAllByTestId('care-row')
@@ -1275,7 +1277,14 @@ describe('L5 — one row anatomy, group lines, per-product feed lines', () => {
       expect(r.textContent).not.toContain('Tomato-Tone')
       expect([...r.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Skip', 'Feed'])
     }
-    expect(within(tone).getByRole('button', { expanded: true }).textContent).toContain('Hide them')
+    const toggle = within(tone).getByRole('button', { expanded: true })
+    expect(toggle.textContent).toContain('Hide them')
+    const panel = document.getElementById(toggle.getAttribute('aria-controls'))
+    expect(panel).toBeTruthy()
+    expect(panel.contains(rows[0])).toBe(true)
+    // Each product's panel id is its own.
+    const ids = [...document.querySelectorAll('[data-testid="care-spot-product"] [aria-controls]')].map((b) => b.getAttribute('aria-controls'))
+    expect(new Set(ids).size).toBe(ids.length)
   })
 
   it('a product\'s Feed all in a spot is the spot\'s run: it posts each of its plants once, the spot row says "Fed N", and its one Undo deletes them', async () => {

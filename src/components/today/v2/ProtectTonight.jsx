@@ -4,7 +4,7 @@ import { P } from '../../../lib/constants.js'
 import { T } from '../../forms/formStyles.js'
 import Icon from '../../Icon.jsx'
 import { skipMany, unskipMany } from '../careStore.js'
-import { COVER_LEVELS } from '../../../lib/todayV2/protect.js'
+import { COVER_LEVELS, tenderThresholds } from '../../../lib/todayV2/protect.js'
 import { pickLinkText, PICK_DEFAULT } from '../../../lib/todayV2/alerts.js'
 import { buildCueLine } from '../../../lib/weatherCue.js'
 import { useApiFetch } from '../../../lib/api.js'
@@ -221,9 +221,11 @@ export default function ProtectTonight({ protect, record, update, announce, writ
   })
 
   // ── render ───────────────────────────────────────────────────────────────────────────────────────────────
-  // The tender threshold every tender row shares, when they do (§3.6: said once, in the band summary, not per row).
-  const thresholds = plantKeys.map((k) => byKey.get(k).threshold)
-  const sharedThreshold = thresholds.length && thresholds.every((t) => t != null && t === thresholds[0]) ? thresholds[0] : null
+  // The tender threshold every tender row shares, when they do (§3.6: said once, in the band summary, not per row) —
+  // read off the SAME rows the open summary reads, the ones still to do (review M1: a handled row with its own
+  // threshold kept the shared one printing on every row as well as in the summary).
+  const thresholds = tenderThresholds(protect.rows)
+  const sharedThreshold = thresholds.length === 1 ? thresholds[0] : null
   const plantRow = (k, inCard) => {
     const r = byKey.get(k)
     if (rowsDone[k]) return <ProtectDoneLine key={k} row={r} done={rowsDone[k]} inCard={inCard} onUndo={() => undoRow(r)} undoBusy={undoing === k} />

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useId } from 'react'
 import { P } from '../../../lib/constants.js'
 import { T } from '../../forms/formStyles.js'
 import Icon from '../../Icon.jsx'
@@ -20,6 +20,8 @@ import { exceptionGroup, sortCohort, cohortLine, cohortCapNote, productGroups, C
 // [Feed all 43] (D12 carried into the spot) — whose plant rows open on Show them.
 export default function SpotBody({ spot, spotAll, exceptions, done, failed, pendingKeys, cohortOpen, cohortAll, onCohort, onShowAll, rowProps, waterOther, busy = null, held = false, feedOpen = [], onFeedToggle, onFeedAll }) {
   const inView = new Set(spot.rows.map((r) => r.key))
+  // Each product's panel id, for its toggle's aria-controls (only while the panel is drawn, as every disclosure here).
+  const panelBase = useId()
   const place = (r, testid, reason, urgent) => {
     const d = done[r.key]
     if (!inView.has(r.key) && !d) return null
@@ -106,10 +108,11 @@ export default function SpotBody({ spot, spotAll, exceptions, done, failed, pend
             const b = busy && busy.tag === 'feed:' + pg.key ? busy : null
             const n = keys.length
             const label = n === 1 ? 'Feed 1' : `Feed all ${n}`
+            const panelId = `${panelBase}-feed-${i}`
             return (
               <div key={pg.key} data-testid="care-spot-product" data-product={pg.product} style={i > 0 || products.length > 1 ? { borderTop: '1px solid ' + P.border } : undefined}>
                 <div style={{ display: 'flex', alignItems: 'stretch', gap: T.space.row }}>
-                  <button type="button" aria-expanded={open} onClick={() => onFeedToggle(k)} style={productHit}>
+                  <button type="button" aria-expanded={open} aria-controls={open ? panelId : undefined} onClick={() => onFeedToggle(k)} style={productHit}>
                     <span style={{ display: 'block', fontSize: T.type.base, fontWeight: 600, color: P.dark }}>
                       <Icon name="event.fertilizing" size={14} decorative style={{ marginRight: 4, verticalAlign: '-2px', color: P.green }} />
                       {pg.product + (live.length ? ' · ' + live.length : '')}
@@ -127,7 +130,7 @@ export default function SpotBody({ spot, spotAll, exceptions, done, failed, pend
                     </div>
                   )}
                 </div>
-                {open && <div role="list">{pg.rows.map((r) => place(r, 'care-row', ''))}</div>}
+                {open && <div id={panelId} role="list">{pg.rows.map((r) => place(r, 'care-row', ''))}</div>}
               </div>
             )
           })}
