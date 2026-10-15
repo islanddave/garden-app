@@ -40,7 +40,9 @@ function mockSql(queue = []) {
     if (!queue.length) {
       return Promise.reject(new Error(`unexpected extra query: ${text.replace(/\s+/g, ' ').slice(0, 90)}`));
     }
-    return Promise.resolve(queue.shift());
+    // A queued Error is that statement FAILING (BUG-LAMBDAERRPATHS-001 I9), e.g. a 23503 on row k.
+    const next = queue.shift();
+    return next instanceof Error ? Promise.reject(next) : Promise.resolve(next);
   };
   fn.batches = [];
   fn.transaction = async (qs) => {
@@ -150,13 +152,55 @@ describe('PUT replaces the whole list', () => {
     // outgoing rows on uq_ps_parent_ordinal (partial on deleted_at IS NULL) and 23505.
     // Mutation: move the soft-delete after the insert loop and this reds.
     // BUG-AUTHZLAMBDA-001 (B3): the planting ownership read comes first, then the same order.
+    // BUG-LAMBDAERRPATHS-001 (I9): the writes now open with the actor GUC, element 0 of the one batch.
     const sql = mockSql([OWNED, PLANTING, [], [], [], [], []]);
     await put([garden(), bought()], { sql });
     const kinds = sql.calls.slice(1).map((c) => c.norm.slice(0, 60));
     expect(kinds[0]).toMatch(/^SELECT gn\.id/);
-    expect(kinds[1]).toMatch(/^UPDATE preservation_source SET deleted_at/);
-    expect(kinds[2]).toMatch(/^INSERT INTO preservation_source/);
+    expect(kinds[1]).toMatch(/^SELECT set_config\('app\.actor_clerk_sub'/);
+    expect(kinds[2]).toMatch(/^UPDATE preservation_source SET deleted_at/);
     expect(kinds[3]).toMatch(/^INSERT INTO preservation_source/);
+    expect(kinds[4]).toMatch(/^INSERT INTO preservation_source/);
+  });
+
+  // BUG-LAMBDAERRPATHS-001 (I9). The soft-delete, the INSERTs and the parent cache were separate
+  // statements, so a failure on row k left the jar with rows 0..k-1 and a stale cache. Now they are
+  // ONE transaction, in the same order. Mutation: take the soft-delete or the INSERTs out of the
+  // sql.transaction array (await them before it) and the batch below loses them.
+  it('replaces the list in ONE transaction: GUC, soft-delete, inserts, parent cache', async () => {
+    const sql = mockSql([OWNED, PLANTING, [], [], [], [], []]);
+    const r = await put([garden(), bought()], { sql });
+    expect(r.status).toBe(200);
+    expect(sql.batches).toHaveLength(1);
+    expect(sql.batches[0].map((c) => c.norm.slice(0, 60))).toEqual([
+      expect.stringMatching(/^SELECT set_config\('app\.actor_clerk_sub'/),
+      expect.stringMatching(/^UPDATE preservation_source SET deleted_at/),
+      expect.stringMatching(/^INSERT INTO preservation_source/),
+      expect.stringMatching(/^INSERT INTO preservation_source/),
+      expect.stringMatching(/^UPDATE preservation_log/),
+    ]);
+    // Every write is inside that batch; nothing was issued around it.
+    const writes = sql.calls.filter((c) => /^(UPDATE|INSERT)/.test(c.norm));
+    expect(writes.every((c) => sql.batches[0].includes(c))).toBe(true);
+  });
+
+  // The failure the batch exists for: row 2 names a variety that does not exist (variety_id is only
+  // shape-checked, so Postgres answers 23503). The whole replace must fail as one, so the old list
+  // stays live. Mutation: await the soft-delete and the INSERT loop before sql.transaction and the
+  // rejection escapes with no batch issued, the soft-delete already run.
+  it('a failing second INSERT fails the whole batch, and nothing runs outside it', async () => {
+    const fk = Object.assign(new Error('insert or update on table "preservation_source" violates foreign key constraint'), { code: '23503' });
+    const sql = mockSql([OWNED, PLANTING, [], [], fk, [], []]);
+    await expect(put([garden(), bought({ variety_id: '77777777-7777-7777-7777-777777777777' })], { sql }))
+      .rejects.toBe(fk);
+    expect(sql.batches).toHaveLength(1);
+    const batch = sql.batches[0].map((c) => c.norm.slice(0, 60));
+    expect(batch).toHaveLength(5);
+    expect(batch[1]).toMatch(/^UPDATE preservation_source SET deleted_at/);
+    expect(batch[3]).toMatch(/^INSERT INTO preservation_source/);
+    expect(batch[4]).toMatch(/^UPDATE preservation_log/);
+    // The re-read never ran: the caller gets the error, not a list.
+    expect(sql.calls.some((c) => /FROM preservation_source/.test(c.norm) && /^SELECT/.test(c.norm))).toBe(false);
   });
 
   it('inserts one row per source, with ordinals from array position', async () => {
@@ -227,6 +271,13 @@ describe('PUT replaces the whole list', () => {
     expect(cache.values).toContain(null);
     // CONTROL: the clear really is a clear — no INSERT was issued.
     expect(sql.calls.some((c) => /INSERT/.test(c.norm))).toBe(false);
+    // BUG-LAMBDAERRPATHS-001 (I9): the soft-delete rides the same transaction as the cache clear.
+    // Mutation: await the soft-delete before sql.transaction and this batch has two elements.
+    expect(sql.batches.map((b) => b.map((c) => c.norm.slice(0, 60)))).toEqual([[
+      expect.stringMatching(/^SELECT set_config\('app\.actor_clerk_sub'/),
+      expect.stringMatching(/^UPDATE preservation_source SET deleted_at/),
+      expect.stringMatching(/^UPDATE preservation_log/),
+    ]]);
   });
 
   it('400s a bad row and writes NOTHING', async () => {

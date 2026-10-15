@@ -14,6 +14,7 @@
 //
 // quantity_value is NUMERIC -> the driver returns it as a JS string; readbacks coerce via Number().
 
+import { randomUUID } from 'node:crypto'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
 import { handler } from '../../lambda/preservation/index.js'
@@ -77,6 +78,9 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  // preservation_source.preservation_log_id is ON DELETE RESTRICT (BUG-PUTUPSRCCASCADE-001), so the
+  // source rows the I9 case writes go first.
+  await directSql`DELETE FROM preservation_source WHERE preservation_log_id IN (SELECT id FROM preservation_log WHERE user_id IN (${USER}, ${FOREIGN_USER}))`
   await directSql`DELETE FROM preservation_log WHERE user_id IN (${USER}, ${FOREIGN_USER})`
   await directSql`DELETE FROM harvest_log WHERE created_by = ${USER}`
   await directSql`DELETE FROM event_log WHERE created_by = ${USER}`
@@ -710,5 +714,59 @@ describe('DATE columns leave the read surfaces as YYYY-MM-DD through the real dr
       expect(row, surface).toBeTruthy()
       expect({ surface, preserved_at: row.preserved_at, use_by_target: row.use_by_target }).toEqual({ surface, ...stored })
     }
+  })
+})
+
+// BUG-LAMBDAERRPATHS-001 (I9). PUT /:id/sources soft-deleted the old list and inserted the new rows as
+// separate statements, so a failure on row 2 left the jar with row 1 only and a stale parent cache.
+// variety_id is only shape-checked by the handler, so a well-formed uuid naming no variety reaches
+// Postgres and 23503s on its own INSERT. Now the whole replace is one transaction: the old list stays.
+describe('PUT /:id/sources — a failing row leaves the old list live (BUG-LAMBDAERRPATHS-001 I9)', () => {
+  const liveSources = (id) => directSql`
+    SELECT id, ordinal, display_label, source_label FROM preservation_source
+    WHERE preservation_log_id = ${id} AND deleted_at IS NULL ORDER BY ordinal
+  `
+  const parentCache = async (id) => (await directSql`
+    SELECT source_kind, source_label, plant_id, harvest_log_id, crop_type_slug, variety_id FROM preservation_log WHERE id = ${id}
+  `)[0]
+
+  it('a two-row replace whose second row names no variety errors and changes nothing', async () => {
+    setTestUserId(USER)
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/preservation',
+      body: { crop_type_slug: CROP, method: 'whole_freeze', quantity_value: 1, quantity_unit: 'lb', preserved_at: isoDate(-1) },
+    })
+    expect(created.status).toBe(201)
+    const id = created.body.id
+    const srcPath = `/api/preservation/${id}/sources`
+
+    const seeded = await callHandler(handler, {
+      method: 'PUT', path: srcPath,
+      body: { sources: [{ source_kind: 'store', display_label: 'old basil ' + RUN, source_label: 'Big Y' }] },
+    })
+    expect(seeded.status).toBe(200)
+    const before = await liveSources(id)
+    expect(before.map((r) => r.display_label)).toEqual(['old basil ' + RUN])
+    const cacheBefore = await parentCache(id)
+    expect(cacheBefore.source_label).toBe('Big Y') // CONTROL: the seeding PUT did write the cache
+
+    const r = await callHandler(handler, {
+      method: 'PUT', path: srcPath,
+      body: { sources: [
+        { source_kind: 'store', display_label: 'new garlic ' + RUN, source_label: 'Market' },
+        { source_kind: 'store', display_label: 'new pine nuts ' + RUN, source_label: 'Market', variety_id: randomUUID() },
+      ] },
+    })
+    expect(r.status).toBe(400)
+    expect(r.body.error).toMatch(/Foreign key violation/)
+
+    // The old row is still live, unchanged; nothing from the failed batch exists, even soft-deleted.
+    expect(await liveSources(id)).toEqual(before)
+    const [{ n }] = await directSql`SELECT count(*)::int AS n FROM preservation_source WHERE preservation_log_id = ${id}`
+    expect(n).toBe(1)
+    expect(await parentCache(id)).toEqual(cacheBefore)
+    const got = await callHandler(handler, { method: 'GET', path: srcPath })
+    expect(got.status).toBe(200)
+    expect(got.body.sources.map((s) => s.display_label)).toEqual(['old basil ' + RUN])
   })
 })
