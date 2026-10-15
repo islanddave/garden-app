@@ -106,6 +106,125 @@ describe('AUTHZ photos GET /api/photos list — household scope (0A.5)', () => {
   })
 })
 
+// ── T3b archive leftover: a photo on an ARCHIVED container leaves the aggregate list but stays on
+//    the container's own page (?project_id=). ────────────────────────────────────────────────────
+describe('photos list hides a photo whose container is ARCHIVED (T3b archive leftover)', () => {
+  let archivedProjectId, archivedPhotoId
+
+  beforeAll(async () => {
+    const p = await directSql`
+      INSERT INTO plant_projects (name, slug, kind, created_by)
+      VALUES (${'authz-photo-arch-' + RUN}, ${'authz-photo-arch-' + RUN}, 'campaign', ${OWNER}) RETURNING id`
+    archivedProjectId = p[0].id
+    const ph = await directSql`
+      INSERT INTO photos (project_id, storage_path, uploaded_by, created_by)
+      VALUES (${archivedProjectId}, ${`projects/${archivedProjectId}/arch-${RUN}.jpg`}, ${OWNER}, ${OWNER}) RETURNING id`
+    archivedPhotoId = ph[0].id
+  })
+
+  it('live container: the photo is in the unfiltered list (control)', async () => {
+    setTestUserId(OWNER)
+    const { status, body } = await callHandler(handler, { method: 'GET', path: '/api/photos' })
+    expect(status).toBe(200)
+    expect(body.map((p) => p.id)).toContain(archivedPhotoId)
+  })
+
+  it('archived container: absent from the unfiltered list, present under ?project_id=', async () => {
+    await directSql`UPDATE plant_projects SET archived_at = NOW() WHERE id = ${archivedProjectId}`
+    setTestUserId(OWNER)
+    const list = await callHandler(handler, { method: 'GET', path: '/api/photos' })
+    expect(list.status).toBe(200)
+    expect(list.body.map((p) => p.id)).not.toContain(archivedPhotoId)
+    const own = await callHandler(handler, { method: 'GET', path: `/api/photos?project_id=${archivedProjectId}` })
+    expect(own.status).toBe(200)
+    expect(own.body.map((p) => p.id)).toContain(archivedPhotoId)
+  })
+})
+
+// ── I34 / I35 (BUG-AUTHZLAMBDA-001): a caller-named S3 key carries no owner segment, so a key
+//    another household registered is refused on POST (400) and on the three signing routes (403).
+//    Env OWNER,MEMBER: household sharing must survive (MEMBER may register OWNER's key). ─────────
+describe('AUTHZ photos storage_path — a foreign-registered key is refused (I34 / I35)', () => {
+  const MEMBER = `authz_photo_member_${RUN}`
+  const KEY_BODY = 'storage_path is not a valid upload key'
+  let ownerKey, hhEnv
+
+  beforeAll(async () => {
+    hhEnv = process.env.GARDEN_HOUSEHOLD_IDS
+    process.env.GARDEN_HOUSEHOLD_IDS = `${OWNER},${MEMBER}`
+    ownerKey = `plants/${projectId}/k-${RUN}.jpg`
+    await directSql`
+      INSERT INTO photos (project_id, storage_path, uploaded_by, created_by)
+      VALUES (${projectId}, ${ownerKey}, ${OWNER}, ${OWNER})`
+  })
+
+  afterAll(async () => {
+    if (hhEnv === undefined) delete process.env.GARDEN_HOUSEHOLD_IDS
+    else process.env.GARDEN_HOUSEHOLD_IDS = hhEnv
+    await directSql`DELETE FROM photos WHERE created_by = ${MEMBER}`
+  })
+
+  it('FOREIGN POSTs OWNER\'s registered key -> 400, generic body, no row', async () => {
+    setTestUserId(FOREIGN)
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: '/api/photos', body: { storage_path: ownerKey, intake_status: 'pending_tag' },
+    })
+    expect(status, JSON.stringify(body)).toBe(400)
+    expect(body.error).toBe(KEY_BODY)
+    const rows = await directSql`SELECT 1 FROM photos WHERE storage_path = ${ownerKey} AND created_by = ${FOREIGN}`
+    expect(rows).toHaveLength(0)
+  })
+
+  it('MEMBER (same household) POSTs OWNER\'s key -> 201 (household sharing preserved)', async () => {
+    setTestUserId(MEMBER)
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: '/api/photos', body: { storage_path: ownerKey, intake_status: 'pending_tag' },
+    })
+    expect(status, JSON.stringify(body)).toBe(201)
+  })
+
+  it('thumbs/<key> and another sub\'s inbox are refused with the SAME body; own inbox is accepted', async () => {
+    setTestUserId(FOREIGN)
+    const thumb = await callHandler(handler, {
+      method: 'POST', path: '/api/photos', body: { storage_path: `thumbs/${ownerKey}`, intake_status: 'pending_tag' },
+    })
+    expect(thumb.status).toBe(400)
+    expect(thumb.body.error).toBe(KEY_BODY)
+    const theirInbox = await callHandler(handler, {
+      method: 'POST', path: '/api/photos', body: { storage_path: `inbox/${OWNER}/x-${RUN}.jpg`, intake_status: 'pending_tag' },
+    })
+    expect(theirInbox.status).toBe(400)
+    expect(theirInbox.body.error).toBe(KEY_BODY)
+    const ownInbox = await callHandler(handler, {
+      method: 'POST', path: '/api/photos', body: { storage_path: `inbox/${FOREIGN}/own-${RUN}.jpg`, intake_status: 'pending_tag' },
+    })
+    expect(ownInbox.status, JSON.stringify(ownInbox.body)).toBe(201)
+  })
+
+  // The negative arms only: S3 is not stubbed for relay (a 200 would PUT for real). The presign is
+  // stubbed, so upload-url / thumb-upload-url also carry an OWNER positive control.
+  it('FOREIGN upload-url / thumb-upload-url / relay-upload on OWNER\'s key -> 403', async () => {
+    setTestUserId(FOREIGN)
+    const up = await callHandler(handler, { method: 'GET', path: `/api/photos/upload-url?key=${encodeURIComponent(ownerKey)}` })
+    expect(up.status).toBe(403)
+    expect(up.body).toEqual({ error: 'Forbidden' })
+    const th = await callHandler(handler, { method: 'GET', path: `/api/photos/thumb-upload-url?key=${encodeURIComponent(ownerKey)}` })
+    expect(th.status).toBe(403)
+    const relay = await callHandler(handler, {
+      method: 'POST', path: '/api/photos/relay-upload', body: { key: ownerKey, data_b64: Buffer.from('x').toString('base64') },
+    })
+    expect(relay.status).toBe(403)
+  })
+
+  it('OWNER may still sign their own key (control)', async () => {
+    setTestUserId(OWNER)
+    const up = await callHandler(handler, { method: 'GET', path: `/api/photos/upload-url?key=${encodeURIComponent(ownerKey)}` })
+    expect(up.status).toBe(200)
+    const th = await callHandler(handler, { method: 'GET', path: `/api/photos/thumb-upload-url?key=${encodeURIComponent(ownerKey)}` })
+    expect(th.status).toBe(200)
+  })
+})
+
 // Runs LAST — mutates the fixture (soft-deletes the shared photo).
 describe('AUTHZ photos read paths exclude soft-deleted rows (deleted_at) (0A.5)', () => {
   it('a soft-deleted photo drops from view-url (404) and the owner list', async () => {
@@ -115,5 +234,14 @@ describe('AUTHZ photos read paths exclude soft-deleted rows (deleted_at) (0A.5)'
     expect(view.status).toBe(404)
     const list = await callHandler(handler, { method: 'GET', path: '/api/photos' })
     expect(list.body.map((p) => p.id)).not.toContain(photoId)
+  })
+
+  // I35: the probe deliberately counts soft-deleted rows — the S3 object survives and restore
+  // brings the row back, so a stranger must not be able to re-sign it in the meantime.
+  it('a SOFT-DELETED foreign row still blocks FOREIGN from signing its key (I35)', async () => {
+    setTestUserId(FOREIGN)
+    const key = `plants/authz/${RUN}.jpg`
+    const up = await callHandler(handler, { method: 'GET', path: `/api/photos/upload-url?key=${encodeURIComponent(key)}` })
+    expect(up.status).toBe(403)
   })
 })

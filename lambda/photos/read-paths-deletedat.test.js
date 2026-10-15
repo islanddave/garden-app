@@ -4,6 +4,7 @@
 // the attachedTo branch already filtered. The enumeration guard closes the class for this
 // Lambda's serving SELECTs. EXEMPT by construction: the PUT re-tag `WITH prev` lookup is a
 // WRITE-path CTE (feeds an UPDATE, not a response) — tracked separately in the 0A.6 report.
+// EXEMPT BY NAME: foreignStorageKey's ownership probe (I34/I35) — see FOREIGN_KEY_PROBE below.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -30,6 +31,15 @@ function sqlTemplates(src) {
   return out;
 }
 
+// I34/I35 (BUG-AUTHZLAMBDA-001) NAMED EXEMPTION. foreignStorageKey() is not a serving read: it
+// answers "does a row OUTSIDE the caller's household already hold this S3 key", and it must count
+// SOFT-DELETED rows — a soft delete keeps the S3 object and restore brings the row back, so a probe
+// that skipped them would let a stranger re-sign / overwrite / register exactly the bytes a later
+// restore serves. Exempted by its exact text so no other template can borrow the exemption, and
+// pinned below to carry NO deleted_at (the class guard above nudges every author to add one).
+const FOREIGN_KEY_PROBE =
+  'SELECT 1 FROM photos WHERE storage_path = ${key} AND NOT (created_by = ANY(${householdIds})) LIMIT 1';
+
 describe('photos Lambda — deleted_at filters on serving read paths (0A.6)', () => {
   it('view-url SELECT excludes soft-deleted photos', () => {
     const i = SRC.indexOf('SELECT storage_path FROM photos');
@@ -54,7 +64,7 @@ describe('photos Lambda — deleted_at filters on serving read paths (0A.6)', ()
 
   it('enumeration (class-closing): EVERY serving SELECT reading FROM photos filters deleted_at', () => {
     const servingReads = sqlTemplates(SRC).filter(
-      (t) => /^\s*SELECT/i.test(t) && /FROM photos\b/i.test(t),
+      (t) => /^\s*SELECT/i.test(t) && /FROM photos\b/i.test(t) && t !== FOREIGN_KEY_PROBE,
     );
     // view-url + attachedTo + project_id + unfiltered = 4 today; a new serving read that
     // forgets the filter fails here, a new one that remembers it just raises the count.
@@ -63,6 +73,21 @@ describe('photos Lambda — deleted_at filters on serving read paths (0A.6)', ()
       expect(t, `serving SELECT on photos without deleted_at filter:\n${t}`).toMatch(
         /deleted_at IS NULL/,
       );
+    }
+  });
+});
+
+describe('photos Lambda — the foreign storage-key probe sees soft-deleted rows (I34/I35)', () => {
+  const probes = () => sqlTemplates(SRC).filter((t) => /storage_path = \$\{key\}/.test(t));
+  it('exactly one probe template, and it is the named exemption verbatim', () => {
+    expect(probes()).toEqual([FOREIGN_KEY_PROBE]);
+  });
+  // MUTATION: append `AND deleted_at IS NULL` to the probe -> RED here (it would still pass the
+  // class guard above, which is why this pin exists).
+  it('the probe carries NO deleted_at and keeps the household negation', () => {
+    for (const t of probes()) {
+      expect(t).not.toMatch(/deleted_at/);
+      expect(t).toMatch(/AND NOT \(created_by = ANY\(\$\{householdIds\}\)\)/);
     }
   });
 });

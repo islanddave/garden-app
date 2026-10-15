@@ -123,7 +123,7 @@ describe('AC-2 — set-featured re-designates the hero', () => {
   it('the first uploaded photo auto-features, and a later explicit choice REPLACES it', async () => {
     const first = await callHandler(handler, {
       method: 'POST', path: '/api/photos',
-      body: { storage_path: `spaces/${RUN}/a.jpg`, space_id: spaceId },
+      body: { storage_path: `standalone/${RUN}-a.jpg`, space_id: spaceId },
     })
     expect(first.status).toBe(201)
     let [row] = await directSql`SELECT featured_photo_id FROM spaces WHERE id = ${spaceId}`
@@ -131,7 +131,7 @@ describe('AC-2 — set-featured re-designates the hero', () => {
 
     const second = await callHandler(handler, {
       method: 'POST', path: '/api/photos',
-      body: { storage_path: `spaces/${RUN}/b.jpg`, space_id: spaceId },
+      body: { storage_path: `standalone/${RUN}-b.jpg`, space_id: spaceId },
     })
     expect(second.status).toBe(201)
     // Auto-promote only fills a NULL, so the second upload must NOT steal the hero.
@@ -174,9 +174,12 @@ describe('AC-3 — cross-household attach and set-featured are refused, with no 
   it('POST with another household\'s space_id 400s and writes nothing', async () => {
     const res = await callHandler(handler, {
       method: 'POST', path: '/api/photos',
-      body: { storage_path: `spaces/${RUN}/steal.jpg`, space_id: foreignSpaceId },
+      body: { storage_path: `standalone/${RUN}-steal.jpg`, space_id: foreignSpaceId },
     })
     expect(res.status).toBe(400)
+    // T3b I34: POSTed keys must be upload-grammar keys now; assert the 400 is still the SPACE gate's,
+    // not the storage_path gate's (the old `spaces/…` key would reject for the wrong reason).
+    expect(res.body.error).toBe('space_id does not match a space you can use')
     const rows = await directSql`SELECT id FROM photos WHERE space_id = ${foreignSpaceId}`
     expect(rows).toHaveLength(0)
   })
@@ -248,13 +251,13 @@ describe('AC-4 — POST add-parent: a duplicate content_hash ATTACHES rather tha
     try {
       const first = await callHandler(handler, {
         method: 'POST', path: '/api/photos',
-        body: { storage_path: `spaces/${RUN}/keep.jpg`, space_id: spaceId, content_hash: hash },
+        body: { storage_path: `standalone/${RUN}-keep.jpg`, space_id: spaceId, content_hash: hash },
       })
       expect(first.status).toBe(201)
 
       await callHandler(handler, {
         method: 'POST', path: '/api/photos',
-        body: { storage_path: `spaces/${RUN}/keep.jpg`, space_id: other, content_hash: hash },
+        body: { storage_path: `standalone/${RUN}-keep.jpg`, space_id: other, content_hash: hash },
       })
       const [row] = await directSql`SELECT space_id FROM photos WHERE id = ${first.body.id}`
       expect(row.space_id).toBe(spaceId)
@@ -268,7 +271,7 @@ describe('AC-4 — POST add-parent: a duplicate content_hash ATTACHES rather tha
   it('a space_id alone satisfies photos_must_have_parent for an upload_failed row', async () => {
     const res = await callHandler(handler, {
       method: 'POST', path: '/api/photos',
-      body: { storage_path: `spaces/${RUN}/failed.jpg`, space_id: spaceId, intake_status: 'upload_failed' },
+      body: { storage_path: `standalone/${RUN}-failed.jpg`, space_id: spaceId, intake_status: 'upload_failed' },
     })
     expect(res.status).toBe(201)
   })
@@ -294,7 +297,7 @@ describe('AC-5 — flag OFF is behaviourally identical to the pre-V4 handler', (
   it('POST ignores space_id entirely (the column is not in the INSERT)', async () => {
     const res = await callHandler(handler, {
       method: 'POST', path: '/api/photos',
-      body: { storage_path: `spaces/${RUN}/off3.jpg`, location_id: locationId, space_id: spaceId },
+      body: { storage_path: `standalone/${RUN}-off3.jpg`, location_id: locationId, space_id: spaceId },
     })
     expect(res.status).toBe(201)
     const [row] = await directSql`SELECT space_id FROM photos WHERE id = ${res.body.id}`
@@ -304,9 +307,10 @@ describe('AC-5 — flag OFF is behaviourally identical to the pre-V4 handler', (
   it('POST with ONLY space_id still 400s on the pre-V4 parentless rule', async () => {
     const res = await callHandler(handler, {
       method: 'POST', path: '/api/photos',
-      body: { storage_path: `spaces/${RUN}/off4.jpg`, space_id: spaceId, intake_status: 'upload_failed' },
+      body: { storage_path: `standalone/${RUN}-off4.jpg`, space_id: spaceId, intake_status: 'upload_failed' },
     })
     expect(res.status).toBe(400)
+    expect(res.body.error).toBe("intake_status 'upload_failed' requires a parent") // not the I34 key gate
   })
 
   it('neither space route exists — both fall through to the 405 the pre-V4 handler gave', async () => {

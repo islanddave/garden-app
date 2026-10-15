@@ -10,6 +10,7 @@ import { householdScope, loadOwnedSpace, loadOwnedLocation, loadOwnedInventoryIt
 import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-parents.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isAllowedUploadKey } from './uploadKeyPolicy.js';
+import { isAllowedStoragePath } from './uploadKeyPolicy.js';
 import { normalizeViewTier, viewTierKey, PHOTO_VIEW_TIERS } from './viewTier.js';
 // W-DEL — the soft-delete + restore core lives in its own module BECAUSE this file is not
 // importable from the repo root, so anything written here can only be covered by SQL-text
@@ -86,6 +87,17 @@ async function getUploadUrl(photoId, ext, contentType) {
   });
   const url = await getSignedUrl(s3, cmd, { expiresIn: 300 }); // 5 minutes
   return { url, key };
+}
+
+// I34/I35 (BUG-AUTHZLAMBDA-001): the S3 key grammar has no owner segment, so a caller holding another
+// household's key could re-sign it (upload-url, thumb-upload-url), overwrite it (relay-upload) or
+// register it as their own row (POST) and read it back. True when a photos row OUTSIDE the caller's
+// household already holds this key. Deliberately NO deleted_at: a soft-deleted row keeps its S3 bytes
+// and can be restored (read-paths-deletedat.test.js names this exemption). No try/catch — a DB error
+// must fail closed through the handler's outer catch. Unindexed scan, ~2k rows (OPS-UNBOUNDEDQUERIES-001).
+async function foreignStorageKey(sql, key, householdIds) {
+  const rows = await sql`SELECT 1 FROM photos WHERE storage_path = ${key} AND NOT (created_by = ANY(${householdIds})) LIMIT 1`;
+  return rows.length > 0;
 }
 
 // Pre-signed GET URL — 15-minute expiry per architecture spec
@@ -567,6 +579,11 @@ export const handler = async (event) => {
       if (!isAllowedUploadKey(key) || !SAFE_CONTENT_TYPE.test(contentType)) {
         return resp(403, { error: 'Forbidden' });
       }
+      // I35: a key another household already registered is theirs — never re-sign it.
+      if (await foreignStorageKey(sql, key, householdIds)) {
+        warnRejectedFk(userId, 'photos', 'storage_path', key);
+        return resp(403, { error: 'Forbidden' });
+      }
       const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType });
       const upload_url = await getSignedUrl(s3, cmd, { expiresIn: 300 });
       return resp(200, { upload_url, key });
@@ -590,6 +607,11 @@ export const handler = async (event) => {
       const key = event.queryStringParameters?.key;
       if (!key) return resp(400, { error: 'key is required' });
       if (!isAllowedUploadKey(key)) return resp(403, { error: 'Forbidden' });
+      // I35: the thumb of a foreign-registered original is theirs too.
+      if (await foreignStorageKey(sql, key, householdIds)) {
+        warnRejectedFk(userId, 'photos', 'storage_path', key);
+        return resp(403, { error: 'Forbidden' });
+      }
       const cmd = new PutObjectCommand({
         Bucket: BUCKET,
         Key: `thumbs/${key}`,
@@ -662,6 +684,11 @@ export const handler = async (event) => {
       if (!isAllowedUploadKey(key) || !SAFE_CONTENT_TYPE.test(relayType)) return resp(403, { error: 'Forbidden' });
       if (typeof dataB64 !== 'string' || dataB64.length > RELAY_MAX_B64_CHARS) return resp(413, { error: 'Photo too large to relay' });
       if (thumbB64 != null && (typeof thumbB64 !== 'string' || thumbB64.length > RELAY_THUMB_MAX_B64_CHARS)) return resp(413, { error: 'Thumb too large to relay' });
+      // I35: never overwrite (or thumb) an object another household registered.
+      if (await foreignStorageKey(sql, key, householdIds)) {
+        warnRejectedFk(userId, 'photos', 'storage_path', key);
+        return resp(403, { error: 'Forbidden' });
+      }
       let bytes;
       let thumbBytes = null;
       try {
@@ -1359,6 +1386,17 @@ export const handler = async (event) => {
     if (rawPath === '/api/photos' && method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.storage_path) return resp(400, { error: 'storage_path is required' });
+      // I34 (BUG-AUTHZLAMBDA-001): storage_path was bound straight into the INSERT, so a caller could
+      // register thumbs/…, another sub's inbox, or another household's key and then view-url it. One
+      // body for both rejects (grammar, foreign row): the only signal left is "this exact key is
+      // registered elsewhere", to a caller who already holds the full uuid key (accepted residual).
+      if (!isAllowedStoragePath(body.storage_path, userId)) {
+        return resp(400, { error: 'storage_path is not a valid upload key' });
+      }
+      if (await foreignStorageKey(sql, body.storage_path, householdIds)) {
+        warnRejectedFk(userId, 'photos', 'storage_path', body.storage_path);
+        return resp(400, { error: 'storage_path is not a valid upload key' });
+      }
 
       // intake_status reaches a CHECK-constrained column, so validate it here rather than letting
       // Postgres reject it — a 23514 falls through isUpstream() to an opaque 500 the client cannot
