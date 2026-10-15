@@ -45,3 +45,34 @@ describe('harvests Lambda — archived plantings are excluded from the read mode
     expect(count(/LEFT JOIN garden_node gn ON gn\.id = e\.plant_id AND gn\.deleted_at IS NULL/g)).toBe(3);
   });
 });
+
+// BUG-ARCHIVEHIDE-002 (audit I21) — the CONTAINER archive axis, and the I20 carve-out it must not
+// disturb (Dave 2026-10-15, DEC-ARCHIVECARVEOUTS-001: picks from a soft-deleted container stay in
+// the log, totals and weights). Archiving a container does not cascade to its plantings, so this
+// clause is the only thing that hides a live planting's picks in an archived container.
+describe('harvests Lambda — archived CONTAINERS are excluded, deleted ones are not (I21 / I20)', () => {
+  const CONTAINER_CLAUSE =
+    /AND \(\$\{plant\}::uuid IS NOT NULL OR pj\.archived_at IS NULL OR pj\.deleted_at IS NOT NULL\)/g;
+
+  // MUTATION: delete the clause from any one read model -> RED (count 2). A total that disagrees
+  // with the rows under it is the failure this whole file counts against.
+  it('all three read models carry the container-archive clause', () => {
+    expect(count(CONTAINER_CLAUSE)).toBe(3);
+  });
+
+  // MUTATION: drop `OR pj.deleted_at IS NOT NULL` -> RED. A container archived and later
+  // soft-deleted keeps archived_at; without the arm its picks vanish, against the I20 carve-out.
+  it('a soft-deleted container is never hidden by its leftover archived_at (I20 carve-out)', () => {
+    expect(count(/pj\.archived_at IS NULL OR pj\.deleted_at IS NOT NULL/g)).toBe(3);
+  });
+
+  // MUTATION: add `pj.deleted_at IS NULL` "for symmetry" anywhere in the read models -> RED.
+  it('pj.deleted_at is never a filter (the I20 carve-out keeps those picks)', () => {
+    expect(SRC).not.toMatch(/pj\.deleted_at IS NULL/);
+  });
+
+  // ?plant= is PlantingDetail's own harvest list, the deliberate route; it gates this clause too.
+  it('the clause is gated off by ?plant=, like the planting anti-join', () => {
+    expect(count(/AND \(\$\{plant\}::uuid IS NOT NULL OR pj\.archived_at/g)).toBe(3);
+  });
+});

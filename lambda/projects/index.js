@@ -195,6 +195,11 @@ async function handlePublicProject(slug, secrets) {
       WHERE project_id = ${row.id}
         AND is_public IS TRUE
         AND deleted_at IS NULL
+        -- BUG-ARCHIVEHIDE-002 (audit I37): not on an ARCHIVED planting. The predicate the by-id
+        -- event_count below uses (V4-ARCHIVEHIDE-001 L1 parity), qualified by table name because
+        -- this read is deliberately unaliased (event-log-columns.test.js pins it in full).
+        AND NOT EXISTS (SELECT 1 FROM public.garden_node ga
+                         WHERE ga.id = event_log.plant_id AND ga.archived_at IS NOT NULL)
       ORDER BY event_date DESC
       LIMIT 200
     `;
@@ -335,10 +340,18 @@ export const handler = async (event) => {
     // --- /api/projects/types ---
     if (typesMatch) {
       if (method === 'GET') {
+        // BUG-ARCHIVEHIDE-002 / audit I36 (Dave, AskUserQuestion, first-hand, 2026-10-15: "Household
+        // only"; ledger DEC-ARCHIVECARVEOUTS-001). Built-in types (created_by NULL) stay shared; a
+        // user-made type is listed only to its creator's household, and no row carries its creator's
+        // Clerk sub any more. The page needs two facts, not the sub: is_system (the badge) and
+        // is_own (the Delete button, which the DELETE route below still gates owner-only).
         const rows = await sql`
-          SELECT id, name, category, description, icon, created_by
+          SELECT id, name, category, description, icon,
+                 (created_by IS NULL) AS is_system,
+                 (created_by IS NOT NULL AND created_by = ${userId}) AS is_own
           FROM project_types
           WHERE deleted_at IS NULL
+            AND (created_by IS NULL OR created_by = ANY(${householdIds}))
           ORDER BY category, name
         `;
         return resp(200, rows);
@@ -355,7 +368,8 @@ export const handler = async (event) => {
             ${body.icon ?? '📋'},
             ${userId}
           )
-          RETURNING *
+          RETURNING id, name, category, description, icon,
+                    false AS is_system, true AS is_own
         `;
         return resp(201, rows[0]);
       }

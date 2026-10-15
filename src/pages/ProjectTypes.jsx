@@ -172,9 +172,18 @@ function Section({ title, types, userId, onDelete }) {
   )
 }
 
+// Audit I36: GET /api/projects/types no longer returns created_by (a household member's Clerk sub);
+// it says is_system and is_own. The created_by arms read an older Lambda's response, which can be
+// live for the minutes between the Lambda and SPA deploys.
+export function typeFlags(t, userId) {
+  if (typeof t.is_own === 'boolean' || typeof t.is_system === 'boolean') {
+    return { isOwn: t.is_own === true, isSystem: t.is_system === true }
+  }
+  return { isOwn: !!(t.created_by && t.created_by === userId), isSystem: !t.created_by }
+}
+
 function TypeRow({ type: t, userId, onDelete }) {
-  const isOwn = t.created_by && t.created_by === userId
-  const isSystem = !t.created_by
+  const { isOwn, isSystem } = typeFlags(t, userId)
   return (
     <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px' }}>
       <span style={{ fontSize: '1.5rem', flexShrink: 0 }}>{t.icon || '📋'}</span>

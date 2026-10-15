@@ -107,10 +107,12 @@ const UNALIASED_ARMS = [
     file: 'index.js',
     // The public project event list. AND is_public IS TRUE is deny-by-default: drop it and
     // private notes reach an unauthenticated page. Pinned in full for that reason.
-    pin: /SELECT id, event_type, event_date, notes, quantity\s+FROM event_log\s+WHERE project_id = \$\{row\.id\}\s+AND is_public IS TRUE\s+AND deleted_at IS NULL/,
+    pin: /SELECT id, event_type, event_date, notes, quantity\s+FROM event_log\s+WHERE project_id = \$\{row\.id\}\s+AND is_public IS TRUE\s+AND deleted_at IS NULL\s+AND NOT EXISTS \(SELECT 1 FROM public\.garden_node ga\s+WHERE ga\.id = event_log\.plant_id AND ga\.archived_at IS NOT NULL\)/,
     columns: [
       'id', 'event_type', 'event_date', 'notes', 'quantity', 'project_id', 'is_public',
-      'deleted_at'
+      'deleted_at',
+      // BUG-ARCHIVEHIDE-002 (I37): the archived-planting anti-join reads event_log.plant_id.
+      'plant_id'
     ],
   },
 ];

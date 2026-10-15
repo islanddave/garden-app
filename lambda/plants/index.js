@@ -2136,6 +2136,11 @@ export const handler = async (event) => {
             -- soft-deleted container would have stayed visible.
             WHERE (( pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL )
                    OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})))
+              -- BUG-ARCHIVEHIDE-002 (audit I17): nor in an ARCHIVED container — the grid and picker
+              -- clause (BUG-PLANTSLISTARCHIVEDCONTAINER-001), now on the wide default list too. NULL-safe
+              -- for a project-less planting (the LEFT JOIN leaves pp all NULL). The ?project_id branch
+              -- above is EXEMPT on purpose: it names one container and is that container's own page.
+              AND pp.archived_at IS NULL
               AND p.deleted_at IS NULL
               AND p.archived_at IS NULL
             ORDER BY p.created_at DESC

@@ -3000,6 +3000,11 @@ export const handler = async (event) => {
               AND e.deleted_at IS NULL
               -- V4-SOFTDEL-001 F3 (container rule; see the /feed route above for the rationale).
               AND pp.deleted_at IS NULL
+              -- BUG-ARCHIVEHIDE-002 (audit I10): the CONTAINER archive axis, as the /feed route has it.
+              -- Only this branch: the project-scoped branch above names one container and is the
+              -- archived container's own page (ProjectDetail renders it with Unarchive), the same
+              -- reason the plant-scoped branches skip the planting axis.
+              AND pp.archived_at IS NULL
               -- V4-ARCHIVEHIDE-001 L1 (planting archive axis; full rationale on the project-scoped
               -- branch above). This branch names nothing at all, so nothing here is a deliberate
               -- request for an archived planting.

@@ -88,6 +88,27 @@ describe('events Lambda — V4-ARCHIVEHIDE-001 L1, the exemption is deliberate',
   });
 });
 
+// BUG-ARCHIVEHIDE-002 (audit I10) — the CONTAINER archive axis on Route 4. The bare branch names
+// nothing, so an archived container's events must not reach it; the project-scoped branch names one
+// container and is that container's own page (ProjectDetail shows an archived one with Unarchive, and
+// lambda/projects' by-id event_count applies no container-archive filter either), so it is exempt.
+describe('events Lambda — BUG-ARCHIVEHIDE-002 I10, the container archive axis on Route 4', () => {
+  // MUTATION: delete `AND pp.archived_at IS NULL` from the bare branch -> RED (82 prod events return).
+  it('the bare (unscoped) branch filters events in an ARCHIVED container', () => {
+    expect(ladderBranches()[2]).toMatch(/AND pp\.archived_at IS NULL/);
+  });
+
+  // MUTATION: add the clause to the project-scoped branch -> RED. An archived container's own page
+  // would render an empty event log under its Unarchive button.
+  it('the project-scoped branch is EXEMPT (naming a container is the deliberate request for it)', () => {
+    expect(ladderBranches()[1]).not.toMatch(/pp\.archived_at/);
+  });
+
+  it('the bare branch still carries the soft-delete predicate beside it (two axes, two clauses)', () => {
+    expect(ladderBranches()[2]).toMatch(/AND pp\.deleted_at IS NULL/);
+  });
+});
+
 describe('events Lambda — the two axes stay separate', () => {
   // MUTATION: rewrite the predicate as `ga.deleted_at IS NOT NULL` (or fold archived into the
   // existing deleted_at predicate) -> RED. Soft-delete and archive have different recovery

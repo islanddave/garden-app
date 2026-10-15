@@ -108,9 +108,9 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/dashboard garden_node column contra
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(10);
+    expect(STATEMENTS).toHaveLength(12);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
-      .toEqual(['gn', 'gp', 'p']);
+      .toEqual(['ga', 'gn', 'gna', 'gne', 'gp', 'p']);
   });
 
   it('accounts for every unaliased garden_node read', () => {

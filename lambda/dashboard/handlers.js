@@ -139,6 +139,12 @@ export function queryRecentEvents(sql, userId) {
         -- undoing a container left its events on the Log with the container's name still
         -- resolving through this same JOIN.
         AND pp.deleted_at IS NULL
+        -- BUG-ARCHIVEHIDE-002 (audit I30): the PLANTING archive axis, which lambda/events' own feed
+        -- has filtered since V4-ARCHIVEHIDE-001 L1 (932 prod events off 19 archived plantings then).
+        -- pp.archived_at above is the container axis only. NOT EXISTS, alias ga, the events feed's
+        -- exact shape: an event with no planting stays, and alias gn stays free for the policy switch.
+        AND NOT EXISTS (SELECT 1 FROM public.garden_node ga
+                         WHERE ga.id = e.plant_id AND ga.archived_at IS NOT NULL)
         -- Deleted-PLANTING policy — see HIDE_EVENTS_UNDER_DELETED_PLANTING. Disabled today, so
         -- this OR is TRUE on its first operand and the gn test never runs.
         AND (${HIDE_EVENTS_UNDER_DELETED_PLANTING}::boolean IS NOT TRUE
@@ -1132,6 +1138,9 @@ export function searchEvents(sql, userId, pat) {
       WHERE pp.created_by = ANY(${householdIds})
         AND e.deleted_at IS NULL
         AND pp.deleted_at IS NULL AND pp.archived_at IS NULL
+        -- BUG-ARCHIVEHIDE-002 (audit I31): and not on an ARCHIVED planting (the events feed's shape).
+        AND NOT EXISTS (SELECT 1 FROM public.garden_node ga
+                         WHERE ga.id = e.plant_id AND ga.archived_at IS NOT NULL)
         AND (e.title ILIKE ${pat} ESCAPE '\\'
              OR e.notes ILIKE ${pat} ESCAPE '\\'
              OR e.event_type ILIKE ${pat} ESCAPE '\\')
@@ -1209,6 +1218,19 @@ export function searchPhotos(sql, userId, pat) {
       WHERE p.created_by = ANY(${householdIds})
         AND p.deleted_at IS NULL
         AND COALESCE(p.original_filename, '') NOT LIKE 'vendor-image--%'
+        -- BUG-ARCHIVEHIDE-002 (audit I32): the Photo Library's two archived-planting anti-joins
+        -- (lambda/photos/index.js, unscoped list), copied: one for a photo on the planting, one for a
+        -- photo on an event of the planting, scoped to a live event. Planting axis only, as there.
+        AND NOT EXISTS (
+          SELECT 1 FROM public.garden_node gna
+          WHERE gna.id = p.plant_id AND gna.archived_at IS NOT NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM public.event_log ea
+          JOIN public.garden_node gne ON gne.id = ea.plant_id
+          WHERE ea.id = p.event_id AND ea.deleted_at IS NULL
+            AND gne.archived_at IS NOT NULL
+        )
         AND p.caption IS NOT NULL AND p.caption <> ''
         AND p.caption ILIKE ${pat} ESCAPE '\\'
       ORDER BY p.created_at DESC

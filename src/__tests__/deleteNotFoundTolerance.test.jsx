@@ -133,9 +133,9 @@ describe('Locations delete — 404 tolerance (BUG-DELCLIENT-001)', () => {
 // ───────────────────────── ProjectTypes ─────────────────────────
 
 describe('ProjectTypes delete — 404 tolerance (BUG-DELCLIENT-001)', () => {
-  // The Delete button renders only when `t.created_by === user.id` (TypeRow), so the fixture must
-  // be owned or there is nothing to click.
-  const TYPE = { id: 'pt1', name: 'Raised Bed', category: 'garden', icon: '🌱', created_by: 'user-1' }
+  // The Delete button renders only on an own type (TypeRow), so the fixture must be owned or there
+  // is nothing to click. Audit I36: the response says is_own / is_system, never created_by.
+  const TYPE = { id: 'pt1', name: 'Raised Bed', category: 'garden', icon: '🌱', is_own: true, is_system: false }
 
   async function renderAndDelete() {
     render(<MemoryRouter><ProjectTypes /></MemoryRouter>)

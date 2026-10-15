@@ -104,13 +104,17 @@ describe('GET /api/inventory-items/:id — sown_from (V5-SEEDSTAB-001 slice 3)',
     const germ = stubState.sqlCalls.find((c) => isGermination(c.text));
     // The statement as it stood before sown_from existed (lambda/inventory-items/index.js at
     // 32141128db33b5ce4334ad74bde9c42fa47a02fe), whitespace-normalised: moving it into a Promise.all
-    // re-indented it and must have changed nothing else.
+    // re-indented it and must have changed nothing else. One deliberate change since
+    // (BUG-ARCHIVEHIDE-002, audit I13): a sowing in a SOFT-DELETED container drops out. Archived
+    // sowings stay counted (Dave 2026-10-15, "Keep counting"), so there is still no archived_at here.
     const squash = (s) => s.replace(/\s+/g, ' ').trim();
     expect(squash(germ.text)).toBe(squash(`
       SELECT p.id, p.display_name AS name, p.sown_at, p.seeds_sown, p.seeds_germinated
         FROM public.garden_node p
+        LEFT JOIN public.container pc ON pc.id = p.container_id
        WHERE p.source_inventory_item_id = ?
          AND p.deleted_at IS NULL
+         AND (p.container_id IS NULL OR pc.deleted_at IS NULL)
          AND p.seeds_sown IS NOT NULL
        ORDER BY p.sown_at DESC NULLS LAST, p.id
     `));

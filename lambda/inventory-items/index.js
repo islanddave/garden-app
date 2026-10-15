@@ -1548,6 +1548,14 @@ export const handler = async (event) => {
         // germinated COALESCEs to 0 only INSIDE a row that has a sown count, where a null means he
         // recorded the sowing and nothing came up yet.
         //
+        // ARCHIVED sowings STAY IN (Dave, AskUserQuestion, first-hand, 2026-10-15: "Keep counting";
+        // audit I13, BUG-ARCHIVEHIDE-002; gardening.md Archive-Hiding Rule, look-back carve-outs). The
+        // packet's germination record is about the seed box, like season stats: archiving finished
+        // plantings is the normal end of a season and must not shrink the packet's rate or history.
+        // A sowing in a SOFT-DELETED container drops out (the container rule: a deleted container
+        // hides its contents); the alias is pc, not pp, so this read cannot be mistaken for the
+        // sown_from read below, which sown-from.test.js holds to the plants Lambda's text.
+        //
         // ── V5-SEEDSTAB-001 slice 3 (design section 9) — sown_from: the plantings sown FROM this packet
         // Every planting whose source_inventory_item_id is this item, as the four fields a link needs
         // (id, the planting's name, its sown date, its status), so the packet page can link to each one.
@@ -1591,8 +1599,10 @@ export const handler = async (event) => {
             sql`
               SELECT p.id, p.display_name AS name, p.sown_at, p.seeds_sown, p.seeds_germinated
                 FROM public.garden_node p
+                LEFT JOIN public.container pc ON pc.id = p.container_id
                WHERE p.source_inventory_item_id = ${itemId}
                  AND p.deleted_at IS NULL
+                 AND (p.container_id IS NULL OR pc.deleted_at IS NULL)
                  AND p.seeds_sown IS NOT NULL
                ORDER BY p.sown_at DESC NULLS LAST, p.id
             `,

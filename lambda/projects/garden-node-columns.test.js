@@ -122,7 +122,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/projects garden_node column contrac
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(7);
+    expect(STATEMENTS).toHaveLength(8);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['ga', 'gp']);
   });

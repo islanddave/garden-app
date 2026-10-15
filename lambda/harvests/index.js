@@ -230,6 +230,16 @@ export const handler = async (event) => {
     // HarvestExportSheet, ComposeHarvestBand and EventNew's season totals are all unscoped), so the
     // carve-out cannot re-open the aggregate leak.
     //
+    // BUG-ARCHIVEHIDE-002 (audit I21) — the CONTAINER archive axis, its own clause beside the
+    // planting anti-join with the same ?plant= gate. Archiving a container does not cascade to its
+    // plantings (lambda/projects' archive PATCH writes the container's own column only), so without
+    // it the picks of a live planting in an archived container stayed in every read model. The
+    // `OR pj.deleted_at IS NOT NULL` arm is load-bearing: a container archived and LATER soft-deleted
+    // keeps its archived_at, and the I20 carve-out (gardening.md, Deleted-Planting History Rule,
+    // DEC-ARCHIVECARVEOUTS-001) keeps a soft-deleted container's picks in the log, totals and weights.
+    // Without the arm, deleting would keep a harvest that archiving hides only if archive came first.
+    // pj.deleted_at is otherwise never a filter here. NULL-safe for a project-less pick (pj all NULL).
+    //
     // ⚠️ THIS CHANGES SEASON TOTALS by 424 g / 4 events. That is what "must not be loaded at all"
     // asks for, but R3 recon §2 DAVE-DECISION 1 reads it the other way ("keep harvest/weight
     // aggregates intact — they are season truth"). If Dave rules that archiving keeps the harvest
@@ -298,6 +308,7 @@ export const handler = async (event) => {
                 SELECT 1 FROM public.garden_node gna
                 WHERE gna.id = e.plant_id AND gna.archived_at IS NOT NULL
               ))
+          AND (${plant}::uuid IS NOT NULL OR pj.archived_at IS NULL OR pj.deleted_at IS NOT NULL)
           AND (${createdSince}::timestamptz IS NULL OR e.created_at >= ${createdSince}::timestamptz)
           AND (
             ${curDate}::timestamptz IS NULL
@@ -374,6 +385,7 @@ export const handler = async (event) => {
                 SELECT 1 FROM public.garden_node gna
                 WHERE gna.id = e.plant_id AND gna.archived_at IS NOT NULL
               ))
+          AND (${plant}::uuid IS NOT NULL OR pj.archived_at IS NULL OR pj.deleted_at IS NOT NULL)
       `;
       out.aggregates = computeAggregates(aggRows);
 
@@ -459,6 +471,7 @@ export const handler = async (event) => {
                 SELECT 1 FROM public.garden_node gna
                 WHERE gna.id = e.plant_id AND gna.archived_at IS NOT NULL
               ))
+          AND (${plant}::uuid IS NOT NULL OR pj.archived_at IS NULL OR pj.deleted_at IS NOT NULL)
         GROUP BY GROUPING SETS (
           (),
           (cv.crop_type_slug),

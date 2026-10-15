@@ -103,9 +103,9 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/dashboard event_log column contract
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(6);
+    expect(STATEMENTS).toHaveLength(7);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
-      .toEqual(['e', 'el', 'el2', 'ev']);
+      .toEqual(['e', 'ea', 'el', 'el2', 'ev']);
   });
 
   it('accounts for every unaliased event_log read', () => {
