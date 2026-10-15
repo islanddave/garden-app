@@ -165,9 +165,25 @@ def test_deploy_workflow_sets_the_household_key_the_manifest_declares():
     cond = lines[step[0] + 1].strip()
     assert cond.startswith("if: "), "the household ensure step's `if:` must directly follow its name"
     gated = set(re.findall(r"matrix\.function == '([a-z0-9-]+)'", cond))
-    body = "\n".join(lines[step[0]:step[0] + 40])
-    assert "GARDEN_HOUSEHOLD_IDS: $v" in body and "get-function-configuration" in body, \
-        "the step must read-merge the key (read the live env, add the key), never set-not-merge"
+    import yaml
+    with open(wf) as fh:
+        doc = yaml.safe_load(fh)
+    runs = [st.get("run", "") for job in doc["jobs"].values() for st in job.get("steps", [])
+            if str(st.get("name", "")).startswith("Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped fns")]
+    assert len(runs) == 1, "the household ensure step is missing or duplicated (parsed YAML)"
+    run = "\n".join(l for l in runs[0].splitlines() if not l.strip().startswith("#"))
+    # Read-merge, asserted on the step's own run text: the WHOLE live map is read with its exit
+    # status tested (a failed read never becomes a merge base), the key is added onto that map, and
+    # nothing builds the map from scratch. Mutations that must red: `jq -n '{GARDEN_HOUSEHOLD_IDS:$v}'`,
+    # `|| echo "{}"` on the read, dropping the `if !` exit-status test.
+    assert re.search(r'if ! EXISTING=\$\(aws lambda get-function-configuration --function-name "\$FN" \\\s*'
+                     r"--query 'Environment\.Variables' --output json", run), \
+        "the step must read the live env map and test the read's exit status before any write"
+    assert """UPDATED=$(echo "$EXISTING" | jq --arg v "$HH" '. + {GARDEN_HOUSEHOLD_IDS: $v}')""" in run, \
+        "the step must merge the key onto the live map, never set-not-merge"
+    assert "jq -n" not in run, "the step must never build the env map from scratch (jq -n)"
+    assert 'echo "{}"' not in run and "echo '{}'" not in run, \
+        "a failed read must never become an empty merge base"
     for fn in ("shared-state", "daily-plan"):
         assert fn in gated, "%s is not in the household ensure step's `if:`" % fn
         assert clc.load_manifest()["garden-" + fn]["env"].get("GARDEN_HOUSEHOLD_IDS") is True, \
