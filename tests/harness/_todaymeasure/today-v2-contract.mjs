@@ -134,7 +134,9 @@ export const STATES = [
       // height on every tender row, so each one-line row card is 50 (was 48): four of them, +8, measured 805 on the L5
       // tree. +80 = 808 keeps S5's 3px of headroom over the measurement; lane L3's shorter glance card is to buy it back,
       // and the integration of L3 + L4 + L5 re-records this ceiling (finish plan §5: R16 tightens to ≤ 680).
-      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+80' }, why: '(e) v2-frost; E4 recorded at S5 (measured 797), re-stated at L5 for D18\'s picture box (measured 805)' },
+      // L4 + L5 integrated (2026-10-14, L3 still to merge): L4's jump bar is one 52px row of cells (was 57), so the
+      // header moves up 5 — measured 800 (799.88) on the merged tree. +75 = 803 keeps the same 3px of headroom.
+      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+75' }, why: '(e) v2-frost; E4 recorded at S5 (measured 797), re-stated at L5 for D18\'s picture box (measured 805), tightened at the L4 + L5 integration for L4\'s 52px bar (measured 800)' },
       // S3 split: the bar carries a chip for every section on the page, in the fixed order (at S3: Water / Feed /
       // Check — Needs care is the only chip-bearing section built); the full set waits for Protect (S5) and Harvest (S6).
       { family: 'jumpbar', armedAt: 'S3', present: true, chipsOfPresent: ['protect', 'water', 'feed', 'check', 'harvest'] },
@@ -227,7 +229,7 @@ export const STATES = [
       ...common(),
       { family: 'glance-rain', armedAt: 'S3', notes: ['0.45″ fallen today', '0.40″ tomorrow · 80% chance'], why: 'both notes, the measured line in its short form, on one row of the 360px rain row' },
       { family: 'first-screen', armedAt: 'S3', mustContain: ['today-glance', 'weather-cue-line', 'frost-alert-line', 'today-jumpbar'], mustShowText: ['today-verdict'], why: 'as v2-frost: the closed glance card with both alert lines, the bar, and a verdict nothing cuts off' },
-      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+80' }, why: "v2-frost's E4 ceiling, unchanged from v2-frost's own (808 since L5's picture box): the second rain note on the row moves Needs care's header not at all" },
+      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+75' }, why: "v2-frost's E4 ceiling, unchanged from v2-frost's own (803 since the L4 + L5 integration; measured 800 here too): the second rain note on the row moves Needs care's header not at all" },
     ],
   },
   {
