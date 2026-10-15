@@ -16,7 +16,7 @@
 // matches.
 //
 // LANE: the root `npm test` run (vitest run --coverage), which is blocking.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { handleSourceRoute, parseSourceRoute, sourceErrorMessage } from './sourceRoutes.js';
 
 const HOUSEHOLD = ['user_dave', 'user_jen'];
@@ -52,6 +52,9 @@ function mockSql(queue = []) {
 }
 
 const OWNED = [{ id: JAR, user_id: DAVE }];
+// What loadPlantings / loadPicks (lineRoutes.js) return for the household's own planting and pick.
+const PLANTING = [{ id: PLANT, display_name: 'Purple Petra', crop_type_slug: 'basil' }];
+const PICK = [{ id: HARVEST, plant_id: PLANT, display_name: 'Purple Petra' }];
 const garden = (over = {}) => ({
   source_kind: 'own_garden', display_label: 'Purple Petra', crop_type_slug: 'basil',
   plant_id: PLANT, ...over,
@@ -146,16 +149,18 @@ describe('PUT replaces the whole list', () => {
     // Replacing [A,B] with [B,A] reuses ordinals 0 and 1. Inserting first would collide with the
     // outgoing rows on uq_ps_parent_ordinal (partial on deleted_at IS NULL) and 23505.
     // Mutation: move the soft-delete after the insert loop and this reds.
-    const sql = mockSql([OWNED, [], [], [], [], []]);
+    // BUG-AUTHZLAMBDA-001 (B3): the planting ownership read comes first, then the same order.
+    const sql = mockSql([OWNED, PLANTING, [], [], [], [], []]);
     await put([garden(), bought()], { sql });
     const kinds = sql.calls.slice(1).map((c) => c.norm.slice(0, 60));
-    expect(kinds[0]).toMatch(/^UPDATE preservation_source SET deleted_at/);
-    expect(kinds[1]).toMatch(/^INSERT INTO preservation_source/);
+    expect(kinds[0]).toMatch(/^SELECT gn\.id/);
+    expect(kinds[1]).toMatch(/^UPDATE preservation_source SET deleted_at/);
     expect(kinds[2]).toMatch(/^INSERT INTO preservation_source/);
+    expect(kinds[3]).toMatch(/^INSERT INTO preservation_source/);
   });
 
   it('inserts one row per source, with ordinals from array position', async () => {
-    const sql = mockSql([OWNED, [], [], [], [], []]);
+    const sql = mockSql([OWNED, PLANTING, [], [], [], [], []]);
     await put([garden(), bought()], { sql });
     const inserts = sql.calls.filter((c) => /INSERT INTO preservation_source/.test(c.norm));
     expect(inserts).toHaveLength(2);
@@ -166,7 +171,7 @@ describe('PUT replaces the whole list', () => {
   it('copies user_id from the PARENT, not from the caller', async () => {
     // A household member editing another member's jar must not silently re-own its sources.
     const owned = [{ id: JAR, user_id: 'user_jen' }];
-    const sql = mockSql([owned, [], [], [], []]);
+    const sql = mockSql([owned, PLANTING, [], [], [], []]);
     await put([garden()], { sql, userId: DAVE });
     const insert = sql.calls.find((c) => /INSERT INTO preservation_source/.test(c.norm));
     expect(insert.values).toContain('user_jen');
@@ -176,7 +181,7 @@ describe('PUT replaces the whole list', () => {
   it('WRITES THE PARENT CACHE IN THE SAME REQUEST, unconditionally', async () => {
     // The invariant the no-parent-migration decision rests on. Mutation: delete the parent UPDATE
     // and this reds — nothing else in the suite would.
-    const sql = mockSql([OWNED, [], [], [], [], []]);
+    const sql = mockSql([OWNED, PLANTING, PICK, [], [], [], [], []]);
     await put([garden({ harvest_log_id: HARVEST }), bought()], { sql });
     const cache = sql.calls.find((c) => /UPDATE preservation_log/.test(c.norm));
     expect(cache, 'no parent cache write issued').toBeTruthy();
@@ -189,7 +194,7 @@ describe('PUT replaces the whole list', () => {
   it('caches a NON-garden primary WITHOUT its garden pointers', async () => {
     // chk_preservation_log_source_plant would 23514 the parent UPDATE otherwise. The handler cannot
     // even produce the row — sourceRowError refuses it — so this asserts the second guard.
-    const sql = mockSql([OWNED, [], [], [], [], []]);
+    const sql = mockSql([OWNED, PLANTING, [], [], [], [], []]);
     await put([bought(), garden()], { sql });
     const cache = sql.calls.find((c) => /UPDATE preservation_log/.test(c.norm));
     expect(cache.values).toContain('store');
@@ -244,9 +249,124 @@ describe('PUT replaces the whole list', () => {
   it('re-reads and returns the stored list, not the submitted one', async () => {
     // The client must see what landed. Returning the echo would hide a write that partly failed.
     const stored = [{ id: 's1', ordinal: 0, display_label: 'Purple Petra' }];
-    const sql = mockSql([OWNED, [], [], [], stored]);
+    const sql = mockSql([OWNED, PLANTING, [], [], [], stored]);
     const r = await put([garden()], { sql });
     expect(r.body.sources).toEqual(stored);
+  });
+});
+
+describe('PUT proves each garden pointer is the household\'s (BUG-AUTHZLAMBDA-001 B3)', () => {
+  // sourceRowError checks only the uuid SHAPE. Without the loaders a caller could bind any
+  // planting or pick in the database onto a household jar and into its parent cache. The mock
+  // returns what the household-scoped loader would: [] for a STRANGER's id.
+  // Mutation: delete the gardenPointerError call in replaceSources and the refusals here red.
+  const put = (sources, over = {}) => call({
+    method: 'PUT', rawBody: JSON.stringify({ sources }), ...over,
+  });
+  const OTHER_PLANT = '22222222-2222-2222-2222-222222222222';
+  // A refusal must precede the soft-delete: no UPDATE, no INSERT, no transaction.
+  const wroteNothing = (sql) => {
+    expect(sql.calls.some((c) => /^(UPDATE|INSERT)/.test(c.norm))).toBe(false);
+    expect(sql.batches).toHaveLength(0);
+  };
+  let warn;
+  const spyWarn = () => { warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); };
+  afterEach(() => { warn?.mockRestore(); warn = undefined; });
+  const rejectLog = () => warn.mock.calls.map((a) => JSON.parse(a[0]));
+
+  it('400s a STRANGER plant_id and writes NOTHING', async () => {
+    spyWarn();
+    const sql = mockSql([OWNED, []]);
+    const r = await put([bought(), garden()], { sql });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('source 2: that planting / pick does not match one you can use');
+    expect(JSON.stringify(r.body)).not.toMatch(/forbidden|permission|exist/i);
+    expect(sql.calls).toHaveLength(2);
+    wroteNothing(sql);
+    // The loader is household-scoped (the array, not the caller) and asked about this id.
+    const read = sql.calls[1];
+    expect(read.norm).toMatch(/FROM garden_node gn/);
+    expect(read.values).toContainEqual([PLANT]);
+    expect(read.values).toContain(HOUSEHOLD);
+    expect(read.values).not.toContain(DAVE);
+    expect(rejectLog()).toEqual([{
+      msg: 'authz-fk-reject', userId: DAVE, table: 'preservation_source', column: 'plant_id', value: PLANT,
+    }]);
+  });
+
+  it('400s a STRANGER harvest_log_id and writes NOTHING', async () => {
+    spyWarn();
+    const sql = mockSql([OWNED, PLANTING, []]);
+    const r = await put([garden({ harvest_log_id: HARVEST })], { sql });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('source 1: that planting / pick does not match one you can use');
+    expect(sql.calls).toHaveLength(3);
+    wroteNothing(sql);
+    const read = sql.calls[2];
+    expect(read.norm).toMatch(/FROM harvest_log h/);
+    expect(read.values).toContainEqual([HARVEST]);
+    expect(read.values).toContain(HOUSEHOLD);
+    expect(rejectLog()).toEqual([{
+      msg: 'authz-fk-reject', userId: DAVE, table: 'preservation_source', column: 'harvest_log_id', value: HARVEST,
+    }]);
+  });
+
+  it('400s a STRANGER pick on a row with no planting, and writes NOTHING', async () => {
+    spyWarn();
+    const sql = mockSql([OWNED, []]);
+    const r = await put([garden({ plant_id: null, harvest_log_id: HARVEST })], { sql });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/^source 1: that planting \/ pick does not match/);
+    wroteNothing(sql);
+  });
+
+  it('400s a planting that is a different crop from the row, and writes NOTHING', async () => {
+    const sql = mockSql([OWNED, [{ ...PLANTING[0], crop_type_slug: 'tomato' }]]);
+    const r = await put([garden()], { sql });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('source 1: that planting is a different crop');
+    wroteNothing(sql);
+  });
+
+  it('400s a pick whose planting is not the row\'s planting, and writes NOTHING', async () => {
+    const sql = mockSql([OWNED, PLANTING, [{ ...PICK[0], plant_id: OTHER_PLANT }]]);
+    const r = await put([garden({ harvest_log_id: HARVEST })], { sql });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('source 1: that pick is from a different planting');
+    wroteNothing(sql);
+  });
+
+  it('does NOT refuse a household pick on a row that names no planting', async () => {
+    // The consistency check runs only when the row names both. No plant_id → no planting read.
+    const sql = mockSql([OWNED, PICK, [], [], [], []]);
+    const r = await put([garden({ plant_id: null, harvest_log_id: HARVEST })], { sql });
+    expect(r.status).toBe(200);
+    expect(sql.calls.some((c) => /FROM garden_node gn/.test(c.norm))).toBe(false);
+    expect(sql.calls.filter((c) => /INSERT INTO preservation_source/.test(c.norm))).toHaveLength(1);
+  });
+
+  it('CONTROL: the household\'s own planting and pick are written', async () => {
+    // Without this the refusals above could be a handler that refuses every garden row.
+    const stored = [{ id: 's1', ordinal: 0, display_label: 'Purple Petra' }];
+    const sql = mockSql([OWNED, PLANTING, PICK, [], [], [], [], stored]);
+    const r = await put([garden({ harvest_log_id: HARVEST }), bought()], { sql });
+    expect(r.status).toBe(200);
+    expect(r.body.sources).toEqual(stored);
+    expect(sql.calls.filter((c) => /INSERT INTO preservation_source/.test(c.norm))).toHaveLength(2);
+  });
+
+  it('matches an upper-case id against the lower-case one Postgres returns', async () => {
+    // The shape check is case-insensitive; a strict string compare would 400 a household planting.
+    const sql = mockSql([OWNED, PLANTING, PICK, [], [], [], []]);
+    const r = await put([garden({ plant_id: PLANT.toUpperCase(), harvest_log_id: HARVEST.toUpperCase() })], { sql });
+    expect(r.status).toBe(200);
+  });
+
+  it('issues no ownership read for a list with no garden pointers', async () => {
+    const sql = mockSql([OWNED, [], [], [], []]);
+    const r = await put([bought()], { sql });
+    expect(r.status).toBe(200);
+    expect(sql.calls.some((c) => /FROM (garden_node gn|harvest_log h)/.test(c.norm))).toBe(false);
   });
 });
 

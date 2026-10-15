@@ -32,6 +32,10 @@
 import {
   PS_ORDER, PS_WRITABLE_COLUMNS, normalizeSourceRows, parentCache,
 } from './putUpSources.js';
+// BUG-AUTHZLAMBDA-001 (B3): the batch household loaders for the two garden pointers a row may carry.
+// pantryRoutes.js imports the same module, so it already loads under vitest.
+import { loadPlantings, loadPicks } from './lineRoutes.js';
+import { warnRejectedFk } from './household.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -80,6 +84,50 @@ async function listSources(sql, putUpId, householdIds) {
     ORDER BY ordinal ASC, id ASC
   `;
   return { status: 200, body: { sources: rows } };
+}
+
+// BUG-AUTHZLAMBDA-001 (B3): sourceRowError proves only the uuid SHAPE of plant_id / harvest_log_id.
+// This proves each one is the household's, then that the row agrees with what it points at. It runs
+// BEFORE the soft-delete, so a refusal writes nothing and the existing list survives. A miss answers
+// the same generic sentence for a foreign, absent or deleted id (no existence oracle) and goes to
+// CloudWatch through warnRejectedFk. Two batch reads cover the whole list; a list with no garden
+// pointers issues none (the loaders return [] for no ids without querying).
+// Ids are compared lower-cased: the shape check is case-insensitive and Postgres returns lower case.
+async function gardenPointerError(sql, rows, userId, householdIds) {
+  const lc = (v) => (v == null ? null : String(v).toLowerCase());
+  const distinct = (col) => [...new Set(rows.map((r) => lc(r[col])).filter((v) => v != null))];
+  const plantings = new Map(
+    (await loadPlantings(sql, distinct('plant_id'), householdIds)).map((p) => [lc(p.id), p]),
+  );
+  const picks = new Map(
+    (await loadPicks(sql, distinct('harvest_log_id'), householdIds)).map((h) => [lc(h.id), h]),
+  );
+  for (const r of rows) {
+    const at = `source ${r.ordinal + 1}`;
+    const plantId = lc(r.plant_id);
+    const pickId = lc(r.harvest_log_id);
+    const planting = plantId == null ? null : plantings.get(plantId);
+    const pick = pickId == null ? null : picks.get(pickId);
+    if (plantId != null && !planting) {
+      warnRejectedFk(userId, 'preservation_source', 'plant_id', r.plant_id);
+      return `${at}: that planting / pick does not match one you can use`;
+    }
+    if (pickId != null && !pick) {
+      warnRejectedFk(userId, 'preservation_source', 'harvest_log_id', r.harvest_log_id);
+      return `${at}: that planting / pick does not match one you can use`;
+    }
+    // The pantryRoutes.js rule: refused only when both sides name a crop and they differ.
+    if (planting && r.crop_type_slug != null && planting.crop_type_slug != null
+        && r.crop_type_slug !== planting.crop_type_slug) {
+      return `${at}: that planting is a different crop`;
+    }
+    // Only when the row names both: a pick alone is a complete pointer, and is not refused for
+    // lacking a planting.
+    if (planting && pick && lc(pick.plant_id) !== plantId) {
+      return `${at}: that pick is from a different planting`;
+    }
+  }
+  return null;
 }
 
 // The whole-list replace. Order of statements is load-bearing:
@@ -131,6 +179,9 @@ async function replaceSources(sql, putUp, body, userId, householdIds) {
 
   const { error, rows } = normalizeSourceRows(submitted);
   if (error) return { status: 400, body: { error } };
+
+  const refused = await gardenPointerError(sql, rows, userId, householdIds);
+  if (refused) return { status: 400, body: { error: refused } };
 
   await sql`
     UPDATE preservation_source SET deleted_at = NOW()
