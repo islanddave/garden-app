@@ -725,3 +725,83 @@ describe('notificationPrefsClient — saveMorePins / saveBarLayout (reported)', 
 // prefsWriters.static.test.js. The runtime version that stood here called ten hand-listed writers with
 // fixed arguments, so none was ever handed a prefs object and the mutation it named could not happen;
 // a new writer, or a PATCH from another file, was not covered at all (QA MINOR-4).
+
+// V5-TODAYREDESIGN-001 S7 — saveTodaySections (reported, alone, keepalive) and the per-section staleness stamp.
+describe('notificationPrefsClient — saveTodaySections / sectionPredatesSave (S7)', () => {
+  const BASE = 'https://staging.example.com'
+  const D = '2026-10-14'
+  const okJson = { ok: true, status: 200, json: async () => ({}) }
+  const getJson = (b) => ({ ok: true, status: 200, json: async () => b })
+
+  beforeEach(() => { global.fetch = vi.fn() })
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks() })
+
+  it('PATCHes exactly { today_sections } with keepalive and reports ok', async () => {
+    const mod = await loadModule(BASE)
+    global.fetch.mockResolvedValueOnce(okJson)
+    const sections = { v: 1, harvest: { open: false, at: D } }
+    expect(await mod.saveTodaySections({ getToken: async () => TOKEN, sections })).toEqual({ ok: true })
+    const [url, init] = global.fetch.mock.calls[0]
+    expect(url).toBe(`${BASE}/api/notifications/prefs`)
+    expect(init.method).toBe('PATCH')
+    expect(init.keepalive).toBe(true)
+    expect(JSON.parse(init.body)).toEqual({ today_sections: sections })
+  })
+
+  it('passes the server\'s refusal through (409 not stored yet, 400 pre-S7) and the offline 0', async () => {
+    const mod = await loadModule(BASE)
+    const sections = { v: 1, care: { open: true, at: D } }
+    global.fetch.mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({}) })
+    expect(await mod.saveTodaySections({ getToken: async () => TOKEN, sections })).toEqual({ ok: false, status: 409 })
+    global.fetch.mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({}) })
+    expect(await mod.saveTodaySections({ getToken: async () => TOKEN, sections })).toEqual({ ok: false, status: 400 })
+    global.fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    expect(await mod.saveTodaySections({ getToken: async () => TOKEN, sections })).toEqual({ ok: false, status: 0 })
+  })
+
+  it('a value the server would refuse is refused locally, without the round trip', async () => {
+    const mod = await loadModule(BASE)
+    for (const sections of [null, { v: 1 }, { v: 2, care: { open: true, at: D } }, { v: 1, sidebar: { open: true, at: D } }]) {
+      expect(await mod.saveTodaySections({ getToken: async () => TOKEN, sections })).toEqual({ ok: false, status: 400, local: true })
+    }
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it('a body read before a confirmed save of a section predates it for THAT section only; a later read does not', async () => {
+    const mod = await loadModule(BASE)
+    mod.__resetPrefsFlight(); mod.__resetSectionsSaves()
+    global.fetch.mockResolvedValueOnce(getJson({ today_sections: { v: 1, harvest: { open: true, at: D } } }))
+    const before = await mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+    expect(mod.sectionPredatesSave(before, 'harvest')).toBe(false)
+    global.fetch.mockResolvedValueOnce(okJson)
+    await mod.saveTodaySections({ getToken: async () => TOKEN, sections: { v: 1, harvest: { open: false, at: D } } })
+    expect(mod.sectionPredatesSave(before, 'harvest')).toBe(true)
+    expect(mod.sectionPredatesSave(before, 'putup')).toBe(false)
+    global.fetch.mockResolvedValueOnce(getJson({ today_sections: { v: 1, harvest: { open: false, at: D } } }))
+    const after = await mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+    expect(mod.sectionPredatesSave(after, 'harvest')).toBe(false)
+    // The stamp is invisible to every existing reader: not enumerable, not in JSON.
+    expect(Object.keys(after)).toEqual(['today_sections'])
+    expect(JSON.stringify(after)).not.toMatch(/ReadAt/)
+  })
+
+  it('a failed save moves nothing: the held body still counts', async () => {
+    const mod = await loadModule(BASE)
+    mod.__resetPrefsFlight(); mod.__resetSectionsSaves()
+    global.fetch.mockResolvedValueOnce(getJson({ today_sections: null }))
+    const body = await mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+    global.fetch.mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({}) })
+    await mod.saveTodaySections({ getToken: async () => TOKEN, sections: { v: 1, care: { open: true, at: D } } })
+    expect(mod.sectionPredatesSave(body, 'care')).toBe(false)
+  })
+
+  it('an object no read produced (no stamp) is older than any confirmed save — never trusted over one', async () => {
+    const mod = await loadModule(BASE)
+    mod.__resetSectionsSaves()
+    expect(mod.sectionPredatesSave({ today_sections: {} }, 'care')).toBe(false)   // no save yet: nothing to predate
+    global.fetch.mockResolvedValueOnce(okJson)
+    await mod.saveTodaySections({ getToken: async () => TOKEN, sections: { v: 1, care: { open: true, at: D } } })
+    expect(mod.sectionPredatesSave({ today_sections: {} }, 'care')).toBe(true)
+    expect(mod.sectionPredatesSave(null, 'care')).toBe(true)
+  })
+})

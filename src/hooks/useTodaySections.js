@@ -12,19 +12,27 @@
 //
 // THE MIRROR, localStorage 'today-sections:<user>' = { v:1, s:{…entries}, dirty:[keys] }. Every tap lands
 // here first and is marked dirty: the local copy is authoritative until the server has confirmed it.
-// S2 ships the mirror ONLY (Simplify 4): the server column user_notification_prefs.today_sections is S7's,
-// and until it exists a PATCH carrying it is a guaranteed 400. `pending` + `markSent` are the seam S7's
-// sender uses — it sends the dirty entries ALONE (never batched: a pre-S7 Lambda's 400 would drop anything
-// riding with them) and clears exactly the keys a 200 confirmed; a 400 or a network failure leaves them
-// dirty for the next visit start.
+//
+// S7 — THE SENDER (this hook, given `getToken`). A tap's entry goes to the server at once:
+// PATCH /api/notifications/prefs { today_sections: { v:1, <dirty key>: entry, … } }, ALONE (never batched: a
+// pre-S7 Lambda's 400, or the S7 Lambda's 409 while its database lacks the column, would drop anything riding
+// with it), keepalive. The server merges per top-level key, so only dirty entries are sent. One request at a
+// time; taps made while one is on the wire go together in the next. A 200 clears exactly the keys whose entry is
+// still what was sent (sectionsWire confirmedKeys); a 4xx, 5xx or network failure leaves them dirty, and every
+// mount — a visit start, or a return to Today — sends what is still dirty. Nothing else sends: Expand/Collapse
+// all, a chip jump and a trigger never mark an entry dirty, so they never reach the server.
 //
 // READ PRECEDENCE, per key: a dirty mirror entry > the server's (prefs.today_sections, IGNORED when the
-// service worker served the body from its cache — a days-old body must not overrule a fresh choice) > the
-// mirror's > nothing (closed). A version other than 1, on either side, reads as nothing. The PAGE reads this
-// ONCE, at the visit's ready point (useTodayVisit): a server answer that lands later waits for the next
-// visit, so a late prefs read never rearranges the page under a thumb.
-import { useCallback, useMemo, useState } from 'react'
+// service worker served the body from its cache — a days-old body must not overrule a fresh choice — and, per
+// section, when the body was read before this device's own confirmed save of that section:
+// notificationPrefsClient sectionPredatesSave) > the mirror's > nothing (closed). A version other than 1, on
+// either side, reads as nothing. The PAGE reads this ONCE, at the visit's ready point (useTodayVisit): a server
+// answer that lands later waits for the next visit, so a late prefs read never rearranges the page under a thumb.
+// Cross-device merge rule in full: migrations/v5-todaysections-001/README-BUILD.md.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isFromCache } from '../lib/api.js'
+import { saveTodaySections, sectionPredatesSave } from '../lib/notificationPrefsClient.js'
+import { pendingBody, confirmedKeys } from '../lib/todayV2/sectionsWire.js'
 
 export const SECTIONS_PREFIX = 'today-sections:'
 const V = 1
@@ -79,7 +87,7 @@ export function withEntry(mirror, key, entry) {
   return { s: { ...base.s, [key]: entry }, dirty: base.dirty.includes(key) ? base.dirty : [...base.dirty, key] }
 }
 
-export function useTodaySections({ userId, prefs } = {}) {
+export function useTodaySections({ userId, prefs, getToken } = {}) {
   const key = sectionsKey(userId)
   const [state, setState] = useState(() => ({ key, mirror: readMirror(key) }))
   // Another person (or the user id landing after first render): that person's mirror, never the last one's.
@@ -88,7 +96,44 @@ export function useTodaySections({ userId, prefs } = {}) {
   const { mirror } = current
   const server = useMemo(() => serverSections(prefs), [prefs])
 
-  const resolve = useCallback((section) => resolveSection(section, mirror, server), [mirror, server])
+  // Per section, the server's entry counts only when the body was read after this device's last confirmed save
+  // of that section (asked at call time: a save confirmed after the body arrived changes the answer).
+  const resolve = useCallback((section) => resolveSection(section, mirror, sectionPredatesSave(prefs, section) ? null : server), [mirror, server, prefs])
+
+  // S7: the sender. Refs, so a send in flight survives re-renders and its answer lands on the mirror it was for.
+  const tokenRef = useRef(getToken)
+  tokenRef.current = getToken
+  const keyRef = useRef(key)
+  keyRef.current = key
+  const flight = useRef({ busy: false, again: false })
+  const send = useCallback(async () => {
+    const k = key
+    const f = flight.current
+    if (!k || typeof tokenRef.current !== 'function') return
+    if (f.busy) { f.again = true; return }
+    f.busy = true
+    try {
+      do {
+        f.again = false
+        const body = pendingBody(readMirror(k))
+        if (!body) break
+        const res = await saveTodaySections({ getToken: tokenRef.current, sections: body })
+        if (!res?.ok) break                     // kept dirty: the next visit start sends it again
+        const cur = readMirror(k)
+        const done = confirmedKeys(cur, body)
+        if (cur && done.length) {
+          const next = { s: cur.s, dirty: cur.dirty.filter((d) => !done.includes(d)) }
+          writeMirror(k, next)
+          if (keyRef.current === k) setState({ key: k, mirror: next })
+        }
+      } while (f.again)
+    } finally {
+      f.busy = false
+    }
+  }, [key])
+
+  // Every mount (and a change of person) sends what an earlier visit left dirty.
+  useEffect(() => { send() }, [send])
 
   // An explicit tap. Re-reads storage first, so another tab's taps on this device are never overwritten.
   const remember = useCallback((section, entry) => {
@@ -96,9 +141,11 @@ export function useTodaySections({ userId, prefs } = {}) {
     const next = withEntry(readMirror(key) || mirror, section, entry)
     writeMirror(key, next)
     setState({ key, mirror: next })
-  }, [key, mirror])
+    send()
+  }, [key, mirror, send])
 
-  // S7's sender: the server confirmed these keys, so they stop overruling its answer.
+  // The server confirmed these keys, so they stop overruling its answer. (The sender above clears its own;
+  // kept for a caller that confirms by other means.)
   const markSent = useCallback((sections) => {
     const cur = readMirror(key) || mirror
     if (!cur) return

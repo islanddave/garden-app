@@ -29,8 +29,10 @@ const Parser = acorn.Parser.extend(acornJsx())
 const SRC = join(process.cwd(), 'src')
 const CLIENT = 'lib/notificationPrefsClient.js'
 const ROUTE = 'notifications/prefs'
-// The fields this release added, and the one writer allowed to name each.
-const NEW_FIELDS = { more_pins: 'saveMorePins', bar_layout: 'saveBarLayout', can_edit_bar: null }
+// The fields this release added, and the one writer allowed to name each. today_sections is V5-TODAYREDESIGN-001
+// S7's: the server merges it per section, so a writer that carried a read copy would write other devices' older
+// entries back over newer ones — only its own writer may name it, with the device's dirty entries alone.
+const NEW_FIELDS = { more_pins: 'saveMorePins', bar_layout: 'saveBarLayout', today_sections: 'saveTodaySections', can_edit_bar: null }
 // The one non-exported helper allowed to stringify a PARAMETER; its call sites are checked instead.
 const SENDING_HELPERS = ['patchPrefsReported']
 
@@ -171,6 +173,7 @@ describe('I6 — the prefs route has one writer module, and every body it sends 
     }
     expect(helperBodies.get('saveMorePins')).toEqual(['more_pins'])
     expect(helperBodies.get('saveBarLayout')).toEqual(['bar_layout'])
+    expect(helperBodies.get('saveTodaySections')).toEqual(['today_sections'])
   })
 
   it('2. the only function that stringifies a PARAMETER is the checked sending helper', () => {
