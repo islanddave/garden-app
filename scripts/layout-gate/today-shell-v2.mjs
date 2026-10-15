@@ -268,11 +268,15 @@ try {
   cdp = await attach(chrome.version.webSocketDebuggerUrl)
   if (PROBE_NOTHING) console.log('[today-shell-v2] --probe-nothing: every shell anchor points at nothing and every check is armed. This run MUST fail.')
   console.log(`[today-shell-v2] LANDED ${LANDED.join(', ')} · BAR_H ${BAR_H} · BOTTOM_NAV ${BOTTOM_NAV_HEIGHT_PX} · FIRST_SCREEN ${FIRST_SCREEN} · manager ${MANAGER_ON ? 'ON' : 'OFF'}`)
+  // Pre-L7 QA (IMPORTANT 2): a check may name a `textScale` (the root font at 200%: Android text scaling) — its own
+  // fresh load of the state, so its jumps never share a pass with the normal-text ones.
   const byState = new Map()
-  for (const c of SHELL) { if (!byState.has(c.state)) byState.set(c.state, []); byState.get(c.state).push(c) }
-  for (const [name, checks] of byState) {
+  for (const c of SHELL) { const k = `${c.state}|${c.textScale || 1}`; if (!byState.has(k)) byState.set(k, []); byState.get(k).push(c) }
+  for (const [key, checks] of byState) {
+    const [name, scaleText] = key.split('|')
+    const scale = Number(scaleText)
     const st = stateByName(name)
-    const at = `shell:${name}@${VIEWPORT.w}x${VIEWPORT.h}`
+    const at = `shell:${name}@${VIEWPORT.w}x${VIEWPORT.h}${scale !== 1 ? `@${scale * 100}%text` : ''}`
     const armed = checks.filter(c => isArmed(c, LANDED, ARM_ALL))
     for (const c of checks.filter(c => !isArmed(c, LANDED, ARM_ALL))) pending.push(`${name}: ${c.family}@${[].concat(c.armedAt).join('+')} — ${c.why}`)
     if (!armed.length) continue
@@ -287,6 +291,19 @@ try {
     catch (e) { fail(at, 'void', `VOID — ${e.message}`); continue }
     await evalSettled('new Promise(r=>setTimeout(r,1500))')
     const m = await evalSettled(CHROME_MEASURE)
+    // The root font grows AFTER the ready point and the instrument read (as a user's text setting reaches a page already
+    // laid out); the bar's ResizeObserver then re-reads its height. The run says so if the bar did not wrap — a jump
+    // from a one-row bar here would test nothing new.
+    let barAtScale = null
+    if (scale !== 1) {
+      barAtScale = await evalSettled(`(async () => { document.documentElement.style.fontSize = '${scale * 100}%'; await new Promise(r => setTimeout(r, 600))
+        const bar = document.querySelector('[data-testid="today-jumpbar${SUFFIX}"]'); if (!bar) return null
+        const rows = new Set([...bar.querySelectorAll('[data-chip]')].map(c => Math.round(c.getBoundingClientRect().top))).size
+        return { h: bar.getBoundingClientRect().height, rows, padTop: document.documentElement.style.scrollPaddingTop } })()`)
+      if (!barAtScale) { fail(at, 'void', `VOID — no jump bar at ${scale * 100}% text`); continue }
+      if (barAtScale.rows < 2) { fail(at, 'void', `VOID — at ${scale * 100}% text the bar is still one row (${barAtScale.h}px): nothing here jumps from a wrapped bar`); continue }
+      console.log(`[today-shell-v2] ${at}: root font ${scale * 100}% · bar ${barAtScale.h}px in ${barAtScale.rows} rows · scroll-padding-top ${barAtScale.padTop}`)
+    }
     // S3: the jumps run first (in the contract's order, jump-landing before sticky): the Water jump opens Needs
     // care, and the page it leaves behind is the one the sticky check scrolls. Integration S3 × S4: jump-landing and
     // jump-focus judge ONE pass over the chips (runJumps, run on first use), each its own property of it.
@@ -345,7 +362,9 @@ try {
         // Never pass over a page that cannot pin: the bar must have scrolled past its own in-flow place.
         if (p.maxScroll < p.inFlowTop - p.chromeBottom + 1) { F(`the page scrolls ${Math.round(p.maxScroll)}px, too short to pin a bar that sits at y=${Math.round(p.inFlowTop)} — the check cannot run here`); continue }
         if (Math.abs(p.barTop - p.chromeBottom) > 0.5) F(`scrolled to y=${Math.round(p.y)} the bar's top is y=${p.barTop}, TopChrome ends at y=${p.chromeBottom}: it must pin flush under it`)
-        if (Math.abs(p.barHeight - BAR_HEIGHT_PX) > 1) F(`the pinned bar is ${p.barHeight}px tall, expected ${BAR_HEIGHT_PX} ± 1`)
+        // At a text scale the bar is its own wrapped height (read above, in flow), not one row's 52.
+        const wantH = barAtScale ? barAtScale.h : BAR_HEIGHT_PX
+        if (Math.abs(p.barHeight - wantH) > 1) F(`the pinned bar is ${p.barHeight}px tall, expected ${Math.round(wantH * 10) / 10} ± 1${barAtScale ? ` (its in-flow height at ${scale * 100}% text)` : ''}`)
         if (!p.shown) F('the pinned bar is not visible')
         if (p.clipped) F('an ancestor of the bar has overflow other than visible — sticky is scoped to it (plan §6.1)')
         if (!p.hitInside) F('a tap at the pinned bar\'s centre lands on something else — the bar is under another layer')

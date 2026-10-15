@@ -37,6 +37,7 @@ import TodayV2 from '../pages/TodayV2.jsx'
 import { barColumns } from '../components/today/v2/JumpBar.jsx'
 import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
 import { writeSkipped } from '../components/today/careStore.js'
+import { filtersKey, writeFilters } from '../components/today/v2/needsCareStore.js'
 
 const D = '2026-09-24'
 const row = (id, extra = {}) => ({ id, name: `Plant ${id}`, crop: 'Kale', ...extra })
@@ -228,6 +229,22 @@ describe('a chip tap (§2.7, §5.5, §6.2)', () => {
     mount()
     expect(chip('feed').getAttribute('aria-pressed')).toBe('true')
   })
+  // Pre-L7 QA (prepromote-v5-qa.md MINOR): a filter saved this session by the build before L4 may hold two tasks; the
+  // single-select bar shows it cut to its first — one pressed cell, and the list filtered to that task alone.
+  it('a saved two-task filter from the earlier build reads as its first task: one pressed cell', () => {
+    writeFilters(filtersKey('u'), D, { tasks: ['water', 'feed'], spots: [] })
+    mount()
+    expect(['water', 'feed', 'check'].filter((k) => chip(k).getAttribute('aria-pressed') === 'true')).toEqual(['water'])
+    // The list matches the one pressed cell: the water rows only (3 due + 1 never watered), no feed.
+    fireEvent.click(band('care'))
+    const spots = [...screen.getByTestId('today-sec-care').querySelectorAll('[data-testid="care-spot"]')]
+    expect(spots.map((s) => s.getAttribute('data-count'))).toEqual(['4'])
+    expect(spots[0].querySelector('[aria-expanded]').textContent).toContain('Water 4')
+    expect(screen.getByTestId('today-sec-care').textContent).not.toMatch(/Feed/)
+    // The next tap on another task replaces it, as for any filter.
+    fireEvent.click(chip('feed'))
+    expect(['water', 'feed', 'check'].filter((k) => chip(k).getAttribute('aria-pressed') === 'true')).toEqual(['feed'])
+  })
   it('an emptied task cell only jumps: it sets no filter', () => {
     mount()
     act(() => writeSkipped(new Set(['p1:pest'])))
@@ -247,6 +264,31 @@ describe('scroll offsets while V2 is mounted (§6.2)', () => {
     unmount()
     expect(s.scrollPaddingTop || '').toBe('')
     expect(s.scrollPaddingBottom || '').toBe('')
+  })
+  // Pre-L7 QA (prepromote-v5-qa.md IMPORTANT 2): a bar that wraps to two rows (7 cells, or Android text at 200%) is
+  // taller than 52, and the landing offset must follow its MEASURED height, read again whenever it changes.
+  it('a wrapped bar: the padding takes its measured height (104), and follows it when it changes', () => {
+    const RO = globalThis.ResizeObserver
+    const rect = HTMLElement.prototype.getBoundingClientRect
+    const observers = []
+    let h = 104
+    globalThis.ResizeObserver = class { constructor(cb) { this.cb = cb; observers.push(this) } observe() {} disconnect() {} }
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      const r = rect.call(this)
+      return this.getAttribute('data-testid') === 'today-jumpbar' ? { ...r.toJSON?.(), top: 52, bottom: 52 + h, left: 0, right: 426, width: 426, height: h, x: 0, y: 52 } : r
+    }
+    try {
+      mount()
+      const s = document.documentElement.style
+      expect(s.scrollPaddingTop).toBe('calc(52px + env(safe-area-inset-top) + 104px)')
+      // Text shrinks back: the bar is one row again, and the observer's next read moves the padding with it.
+      h = 52.4
+      act(() => { for (const o of observers) o.cb([]) })
+      expect(s.scrollPaddingTop).toBe('calc(52px + env(safe-area-inset-top) + 53px)')
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = rect
+      if (RO) globalThis.ResizeObserver = RO; else delete globalThis.ResizeObserver
+    }
   })
   it('no bar, no bar in the padding', () => {
     planState.current = payload({ ...PLAN, no_history: [], fertilize: [], pest: [] })

@@ -194,6 +194,20 @@ export const MUTANTS_V2 = {
     killers: ['jump-landing', 'sticky'],
     defect: 'html scroll-padding-top not set while V2 is mounted',
   },
+  // Pre-L7 QA (prepromote-v5-qa.md IMPORTANT 2): the offsets take the bar's height as a constant again. One row, nothing
+  // changes; a WRAPPED bar (Android text at 200%) is taller, so every jump lands its header under the second row of cells
+  // and a header focused under the pinned bar stays beneath it. Seen only by the shell gate's 200%-text pass (SHELL
+  // textScale 2); TodayV2.jumpbar.test.jsx's 104px case is its jsdom twin.
+  barHeightConstant: {
+    armedAt: ['S3', 'S4'], kind: 'chrome',
+    file: 'src/pages/TodayV2.jsx',
+    find: '    const read = () => setBarH(Math.ceil(el.getBoundingClientRect().height) || JUMP_BAR_HEIGHT_PX)\n',
+    replace: '    const read = () => setBarH(JUMP_BAR_HEIGHT_PX)\n',
+    // Measured (2026-10-15): at 200% the bar is 160px in 2 rows; under the mutant every jump lands its header at y=112
+    // against a bar ending at 212, four of five headers wholly hidden, and a focused parked header stays at 104.
+    killers: ['jump-landing', 'jump-focus', 'sticky'],
+    defect: 'the landing offset ignores a wrapped bar: at 200% text a jumped-to header lands under the bar\'s second row (WCAG 2.4.11)',
+  },
   noFocusAfterJump: {
     armedAt: ['S3', 'S4'], kind: 'chrome',
     file: 'src/pages/TodayV2.jsx',
@@ -263,6 +277,12 @@ export const MUTANTS_V2 = {
   // Finish plan L5 (2026-10-14) re-pointed the pattern: the rows now take their meta from the group line (exceptionGroup),
   // so the line the cap edits changed; the defect and its two killers are the same.
   exceptionsCapped: { armedAt: "S4", kind: 'chrome', file: "src/components/today/v2/SpotBody.jsx", find: "{exRows.map((r) => { const o = ex.own.get(r.key);", replace: "{exRows.slice(0, 5).map((r) => { const o = ex.own.get(r.key);", killers: ["interaction", "count-invariant"], defect: "the exceptions list is capped (5 of 8 shown under \"\u00b7 8\")" },
+  // Pre-L7 QA (prepromote-v5-qa.md IMPORTANT 1, 2026-10-15): finish plan L5's opened-spot anatomy, which only jsdom saw.
+  // The group line never mounted, every Feed all drawn 32px tall, the picture box gone from every row — each is now seen
+  // in real Chrome by the spot families (one census of Bag Area, no task filter) and a second, independent family.
+  groupLineDropped: { armedAt: 'S4', kind: 'chrome', file: 'src/components/today/v2/SpotBody.jsx', find: '{ex.line && (', replace: '{false && ex.line && (', killers: ['interaction', 'region-headcount', 'spot-anatomy'], defect: 'L5 §3.6: the differing rows\' group line ("dry fastest · every 2 days · last watered 4 d ago") is never mounted — the rows say nothing of what they share' },
+  feedAllShort: { armedAt: 'S4', kind: 'chrome', file: 'src/components/today/v2/SpotBody.jsx', find: 'style={tinted}>', replace: "style={{ ...tinted, minHeight: 0, height: 32 }}>", killers: ['spot-floors', 'spot-reach'], defect: 'a product line\'s Feed all is 32px tall, under the 44px tap floor — the product row keeps its 48px, so no row or height census moves' },
+  thumbDropped: { armedAt: 'S4', kind: 'chrome', file: 'src/components/today/v2/PlantCareRow.jsx', find: '<PlantThumb photo={photo} />', replace: '{null}', killers: ['region-headcount', 'spot-anatomy'], defect: 'D18: the 40px picture box is gone from every plant row (Needs care and Protect) — the row is its name alone' },
   uncapCohort: { armedAt: "S4", kind: 'chrome', file: "src/components/today/v2/SpotBody.jsx", find: "  const shown = cohortAll ? cohort.length : Math.min(COHORT_CAP, cohort.length)\n", replace: "  const shown = cohort.length\n", killers: ["interaction", "region-headcount"], defect: "the disclosed cohort renders uncapped (89 rows, no Show more / cap note)" },
   dropExceptions: { armedAt: "S4", kind: 'chrome', file: "src/lib/todayV2/spots.js", find: "  if (rows.length <= SMALL_SPOT_MAX) return null\n", replace: "  if (rows.length) return null\n", killers: ["interaction", "region-headcount"], defect: "the exceptions / cohort split is gone \u2014 every spot lists every row" },
   // BUG-DEFERNOSTRESSOVERRIDE-001 retired bulkIgnoresBedWait and groupBulkIgnoresBedWait: "Water all includes the beds
@@ -347,6 +367,9 @@ export const MUTANTS_V2 = {
   // L3: re-pointed at the merged deep-soak line (DryLine) and the compact leaf-wetness mount.
   dropRegionInOwner_droughtLine: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<DryLine plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'droughtLine' (drought-line) is deleted inside the glance details" },
   dropRegionInOwner_leafLine: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<LeafWetnessLine plan={plan} planDate={planDate} compact />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'leafLine' (leaf-wetness-line) is deleted inside the glance details" },
+  // Pre-L7 QA (prepromote-v5-qa.md MINOR): review B1 back — her section's Needs care gets no onFilters, so a tap on one of
+  // her spot chips throws and presses nothing. Seen by v2-household's interaction run (her chip's aria-pressed must flip).
+  householdChipsDead: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/HouseholdSection.jsx', find: ' onFilters={changeFilters} writesHeld={writesHeld} />', replace: ' writesHeld={writesHeld} />', killers: ['interaction'], oneKiller: 'only v2-household\'s interaction run opens her section and taps her chips; the semantic second guard is jsdom (TodayV2.household.test.jsx), which this matrix does not run', defect: 'B1: a spot chip in a household member\'s section does nothing — her list cannot be filtered' },
   // The freeze switched off at its one consumer: the page asks for sow lines and the Sow link row prints the engine's
   // "Sow X by …" lines above its door. Killers: header-text (the row's exact words, v2-busy / v2-frost, whose 09-24
   // engine run has two such lines) and floors (the row is the page's last block, so the lines push the last ink and

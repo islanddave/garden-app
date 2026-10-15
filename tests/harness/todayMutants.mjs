@@ -63,8 +63,9 @@ export const MUTANTS = {
   ],
   dropCultivationLead: [
     'src/pages/Today.jsx',
-    '<CultivationLead />',
-    '<></>',
+    // Indented 2026-10-15: the bare tag also occurs in a comment at Today.jsx:94, and v1mutants.test.mjs pins one match.
+    '      <CultivationLead />',
+    '      <></>',
     'the page loses its durable door to /sow. It renders in every state, the empty ones included.',
   ],
   dropHouseholdToggle: [
@@ -132,7 +133,9 @@ export const MUTANTS = {
   ],
   dropLeafWetness: [
     'src/pages/Today.jsx',
-    '<LeafWetnessLine plan={plan} />',
+    // Re-pointed 2026-10-15 (prepromote-v5-qa.md MINOR): v5.0.0 gave the mount planDate, so the old text matched nothing
+    // and the mutant stopped applying; v1mutants.test.mjs now pins every pattern to exactly one occurrence.
+    '<LeafWetnessLine plan={plan} planDate={data?.plan_date} />',
     '<></>',
     'the leaf-wetness scouting line is unmounted. It renders on ~23% of days, so its absence reads as an ordinary dry week.',
   ],

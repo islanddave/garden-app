@@ -1308,6 +1308,58 @@ describe('L5 — one row anatomy, group lines, per-product feed lines', () => {
     expect([...document.querySelectorAll('[data-testid="care-spot-product"]')].some((l) => l.getAttribute('data-product') === tone.getAttribute('data-product'))).toBe(true)
   })
 
+  // Pre-L7 QA (prepromote-v5-qa.md MINOR, partial failure): Feed all shares Water all's retry machinery, but a failure is
+  // recorded as its own event type (NeedsCare.jsx retrySpot), so its Retry must replay as fertilizing — never watering —
+  // and complete the SAME run, whose one Undo then covers every id.
+  it('a product\'s Feed all with failures: the spot keeps "2 not logged" + Retry; Retry replays them as fertilizing into the same run, and its one Undo deletes all', async () => {
+    await mount()
+    await openSpot('Bag Area')
+    const tone = [...document.querySelectorAll('[data-testid="care-spot-product"]')].find((l) => l.getAttribute('data-product').includes('Tomato-Tone'))
+    const product = tone.getAttribute('data-product')
+    const rows = ROWS.filter((r) => r.spotName === 'Bag Area' && r.product === product)
+    const n = rows.length
+    expect(n).toBeGreaterThan(2)
+    wire.failPlants = new Set([rows[0].plantingId, rows[1].plantingId])
+    fireEvent.click(within(tone).getByRole('button', { name: `Feed all ${n} with ${product} in Bag Area` }))
+    await settle()
+    expect(wire.posts.length).toBe(n - 2)
+    const failLine = spot('Bag Area').querySelector('[data-testid="care-spot-failed"]')
+    const retry = spot('Bag Area').querySelector('[data-testid="care-spot-retry"]')
+    expect(failLine.textContent).toContain('2 not logged')
+    expect(retry.getAttribute('aria-label')).toBe('Retry: 2 not logged in Bag Area')
+    expect(screen.getByTestId('today-status').textContent).toContain('2 not logged in Bag Area')
+    wire.failPlants = new Set()
+    fireEvent.click(retry)
+    await settle()
+    const replayed = wire.posts.slice(n - 2)
+    expect(replayed.map((b) => b.plant_id).sort()).toEqual([rows[0].plantingId, rows[1].plantingId].sort())
+    expect(replayed.every((b) => b.event_type === 'fertilizing')).toBe(true)
+    expect(wire.posts.filter((b) => b.event_type === 'watering')).toEqual([])
+    expect(spot('Bag Area').querySelector('[data-testid="care-spot-failed"]')).toBeNull()
+    expect(within(spot('Bag Area')).getAllByRole('button', { expanded: true })[0].textContent).toContain(`Fed ${n}`)
+    fireEvent.click(within(spot('Bag Area')).getByRole('button', { name: 'Undo' }))
+    await settle()
+    expect(new Set(wire.deletes).size).toBe(n)
+  })
+
+  it('Feed all is inert while a run is in flight or writes are held: aria-disabled, and a tap posts nothing', async () => {
+    await mount()
+    await openSpot('Bag Area')
+    const feedAlls = () => [...document.querySelectorAll('[data-testid="care-spot-feed-all"]')]
+    expect(feedAlls().length).toBe(3)
+    for (const b of feedAlls()) expect(b.hasAttribute('aria-disabled')).toBe(false)
+    wire.hold = true
+    fireEvent.click(feedAlls()[0])
+    await settle()
+    const sent = wire.posts.length
+    expect(sent).toBeGreaterThan(0)
+    for (const b of feedAlls()) expect(b.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(feedAlls()[feedAlls().length - 1])
+    await settle()
+    expect(wire.posts.length).toBe(sent)
+    await act(async () => { for (const r of wire.held.splice(0)) r(false); for (let i = 0; i < 8; i++) await new Promise((res) => setTimeout(res, 0)) })
+  })
+
   it('check rows: the label said once in the group line; the main action reads "Checked", named "Checked: <plant>"', async () => {
     await mount()
     await openSpot('In-Ground')

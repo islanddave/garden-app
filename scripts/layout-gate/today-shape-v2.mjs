@@ -483,7 +483,7 @@ const CHECKERS = {
   // Interaction-driven families run in the interaction phase below; here they only have to exist.
   interaction: () => {}, 'region-headcount': () => {}, 'weather-once': () => {}, 'group-water-all': () => {}, 'chip-census': () => {},
   'spot-retry': () => {}, announce: () => {}, 'caught-up': () => {}, 'trusted-taps': () => {},
-  'owner-floors': () => {}, 'rain-wait-floors': () => {},
+  'owner-floors': () => {}, 'rain-wait-floors': () => {}, 'spot-anatomy': () => {}, 'spot-floors': () => {}, 'spot-reach': () => {},
 }
 // S6: owner-floors runs FIRST, on the page as it first rendered (it opens each owner it measures and closes it again),
 // so what it records does not depend on what the other families leave open, pressed or scrolled.
@@ -492,7 +492,9 @@ const CHECKERS = {
 // leaves it empty.
 // trusted-taps (OPS-TODAYV2GATECOVERAGE-001) after everything: each of its flows loads the state afresh, so it reads
 // nothing the families above left behind — and nothing above reads what it leaves.
-const INTERACTION_FAMILIES = ['owner-floors', 'interaction', 'region-headcount', 'weather-once', 'rain-wait-floors', 'chip-census', 'group-water-all', 'spot-retry', 'announce', 'caught-up', 'trusted-taps']
+// Pre-L7 QA: the three spot families read ONE census of an opened spot (spotCensus, taken on first use per state),
+// after region-headcount and before anything that writes.
+const INTERACTION_FAMILIES = ['owner-floors', 'interaction', 'region-headcount', 'spot-anatomy', 'spot-floors', 'spot-reach', 'weather-once', 'rain-wait-floors', 'chip-census', 'group-water-all', 'spot-retry', 'announce', 'caught-up', 'trusted-taps']
 // S6: owner heights measured this run, per state — written into the v2 budget by --record, judged against it otherwise.
 const ownerRecord = {}
 
@@ -546,7 +548,63 @@ const VISIBLE_COUNT = (id) => `(() => { const d = document, w = window, de = d.d
   return { mounted: els.length, shown: els.filter(shown).length } })()`
 const CARE_COUNT = `(() => { const s = document.querySelector('[data-testid="today-sec-care${SUFFIX}"]'); return s ? Number(s.getAttribute('data-count')) : null })()`
 
+// Pre-L7 QA (prepromote-v5-qa.md IMPORTANT 1): ONE read of an opened spot with no task filter, its first product's rows
+// disclosed — what the three spot families judge. Facts only: the group lines, the product lines and their Feed all, each
+// plant row's picture boxes, every control's box, a hit test over the floor-sized square centred on each control
+// (centre, and floor/2 − 1 px off it on each axis, after scrolling the control to the middle of the screen), and the
+// product lines' overflow at normal text and at 200%. The spot, the product and the root font size are put back as found;
+// the task filter is left cleared (region-headcount's noFilter rows leave it so too).
+const SPOT_CENSUS = (spot, floor) => `(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms))
+  const frames = (n) => new Promise(r => { const f = k => (k <= 0 ? r() : requestAnimationFrame(() => f(k - 1))); f(n) })
+  const q = (id) => '[data-testid="' + id + '${SUFFIX}"]'
+  for (let i = 0; i < 3; i++) { const b = document.querySelector(q('today-jumpbar') + ' [data-chip][aria-pressed="true"]'); if (!b) break; b.click(); await wait(150) }
+  { const clear = [...document.querySelectorAll(q('care-filter-spots') + ' button')].find(b => b.textContent.trim() === 'Clear'); if (clear) { clear.click(); await wait(150) } }
+  if (document.querySelector(q('today-jumpbar') + ' [data-chip][aria-pressed="true"]')) return { void: 'the task filter would not clear' }
+  const sp = document.querySelector(q('care-spot') + '[data-spot="' + ${JSON.stringify(spot)} + '"]')
+  if (!sp) return { void: 'no care-spot ' + ${JSON.stringify(spot)} + ' on the page' }
+  const toggle = sp.querySelector('[aria-expanded]')
+  const spotWasOpen = toggle.getAttribute('aria-expanded') === 'true'
+  if (!spotWasOpen) { toggle.click(); await wait(300) }
+  const panel = sp.querySelector(q('care-spot-panel'))
+  if (!panel) return { void: 'the opened spot ' + ${JSON.stringify(spot)} + ' has no care-spot-panel' }
+  const products = [...panel.querySelectorAll(q('care-spot-product'))]
+  const prodToggle = products[0] ? products[0].querySelector('button[aria-expanded]') : null
+  const prodWasOpen = prodToggle ? prodToggle.getAttribute('aria-expanded') === 'true' : true
+  if (prodToggle && !prodWasOpen) { prodToggle.click(); await wait(250) }
+  const bx = (el) => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, w: +r.width.toFixed(2), h: +r.height.toFixed(2) } }
+  const shown = (el) => (!el.checkVisibility || el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) && el.getBoundingClientRect().height > 0
+  const lines = [...panel.querySelectorAll(q('care-exceptions-line'))].map(el => ({ shown: shown(el), text: (el.textContent || '').replace(/\\s+/g, ' ').trim() }))
+  const rowSel = ['care-exceptions-row', 'care-row', 'care-cohort-row'].map(q).join(', ')
+  const rows = [...panel.querySelectorAll(rowSel)].map(el => { const rb = bx(el)
+    return { name: (el.querySelector('[data-row-name]')?.textContent || '').trim().slice(0, 40), thumbs: [...el.querySelectorAll(q('plant-thumb'))].map(t => { const tb = bx(t); return { shown: shown(t), w: tb.w, h: tb.h, inside: tb.l >= rb.l - 0.5 && tb.r <= rb.r + 0.5 && tb.t >= rb.t - 0.5 && tb.b <= rb.b + 0.5 } }) } })
+  const overflow = () => { const pb = panel.getBoundingClientRect()
+    return [...panel.querySelectorAll(q('care-spot-product'))].map(p => { const r = p.getBoundingClientRect(), fa = p.querySelector(q('care-spot-feed-all')), fr = fa ? fa.getBoundingClientRect() : null
+      return { product: p.getAttribute('data-product'), sw: p.scrollWidth, cw: p.clientWidth, right: r.right, panelRight: pb.right, feedRight: fr ? fr.right : null } }) }
+  const prods = products.map(p => ({ product: p.getAttribute('data-product'), feedAll: p.querySelectorAll(q('care-spot-feed-all')).length }))
+  const normal = overflow()
+  const html = document.documentElement, fs = html.style.fontSize
+  html.style.fontSize = '200%'; await frames(3)
+  const large = overflow()
+  html.style.fontSize = fs; await frames(3)
+  const half = ${floor} / 2 - 1
+  const controls = []
+  for (const b of panel.querySelectorAll('button')) {
+    const label = (b.getAttribute('aria-label') || b.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 60)
+    b.scrollIntoView({ block: 'center' }); await frames(2)
+    const r = b.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2
+    const missed = [[0, 0], [0, -half], [0, half], [-half, 0], [half, 0]].filter(([dx, dy]) => { const h = document.elementFromPoint(cx + dx, cy + dy); return !h || !(h === b || b.contains(h)) }).map(([dx, dy]) => (dx ? (dx > 0 ? '+' : '') + dx + 'x' : '') + (dy ? (dy > 0 ? '+' : '') + dy + 'y' : '') || 'centre')
+    controls.push({ label, testid: b.getAttribute('data-testid'), main: /^(Log |Checked: )/.test(b.getAttribute('aria-label') || ''), w: +r.width.toFixed(2), h: +r.height.toFixed(2), missed })
+  }
+  if (prodToggle && !prodWasOpen) { prodToggle.click(); await wait(200) }
+  if (!spotWasOpen) { toggle.click(); await wait(200) }
+  window.scrollTo({ top: 0, behavior: 'instant' }); await frames(2)
+  return { lines, prods, rows, normal, large, controls }
+})()`
+
 async function runInteractions(state, checks, at) {
+  let spotRead = null
+  const spotCensus = async (c) => (spotRead ||= await evalSettled(SPOT_CENSUS(c.spot, c.floor || 44)))
   for (const c of checks) {
     const F = (msg) => fail(at, c.family === 'interaction' ? 'interaction' : c.family, msg)
     if (c.family === 'interaction') {
@@ -591,6 +649,36 @@ async function runInteractions(state, checks, at) {
           }
         }
         if (!wasOpen) await evalSettled(`window.__h.act({ tap: ${JSON.stringify(target)} })`)
+      }
+    } else if (c.family === 'spot-anatomy' || c.family === 'spot-floors' || c.family === 'spot-reach') {
+      const r = await spotCensus(c)
+      if (r.void) { F(`VOID — could not read the opened spot '${c.spot}': ${r.void}`); continue }
+      if (c.family === 'spot-anatomy') {
+        const e = c.expect || {}
+        const lines = r.lines.filter(l => l.shown && l.text)
+        if (e.lines != null && lines.length !== e.lines) F(`'${c.spot}' opened shows ${lines.length} group line(s) with words (care-exceptions-line; ${r.lines.length} mounted), expected ${e.lines} — the differing rows lost the line that says what they share (L5 §3.6)`)
+        if (e.products != null && r.prods.length !== e.products) F(`'${c.spot}' opened with no filter shows ${r.prods.length} product line(s) (care-spot-product), expected ${e.products} (D12: one line per product)`)
+        for (const p of r.prods) if (p.feedAll !== 1) F(`the '${p.product}' line in '${c.spot}' carries ${p.feedAll} Feed all (care-spot-feed-all), expected exactly 1`)
+        const fa = r.prods.reduce((a, p) => a + p.feedAll, 0)
+        if (e.feedAll != null && fa !== e.feedAll) F(`'${c.spot}' opened carries ${fa} Feed all, expected ${e.feedAll}`)
+        if (r.rows.length < (e.minRows || 1)) F(`'${c.spot}' opened (first product disclosed) shows ${r.rows.length} plant row(s), expected at least ${e.minRows || 1}`)
+        for (const row of r.rows) {
+          const ok = row.thumbs.filter(t => t.shown && t.inside && t.w >= c.thumb - 0.5 && t.h >= c.thumb - 0.5)
+          if (row.thumbs.length !== 1 || ok.length !== 1) { F(`row '${row.name}' in '${c.spot}' has ${row.thumbs.length} picture box(es) (plant-thumb)${row.thumbs[0] ? `, ${row.thumbs[0].w}×${row.thumbs[0].h}${row.thumbs[0].shown ? '' : ' not shown'}${row.thumbs[0].inside ? '' : ' outside its row'}` : ''} — expected one ${c.thumb}px box, shown, inside its row (D18)`); break }
+        }
+        for (const [L, tag] of [[r.normal, ''], [r.large, 'at 200% text ']]) for (const p of L) {
+          if (p.sw > p.cw + 1 || p.right > p.panelRight + 1 || (p.feedRight != null && p.feedRight > p.panelRight + 1)) F(`${tag}the '${p.product}' line runs past its box (scrollWidth ${p.sw} in ${p.cw}; right ${Math.round(p.right)}, Feed all right ${p.feedRight == null ? '—' : Math.round(p.feedRight)}, panel right ${Math.round(p.panelRight)})`)
+        }
+        console.log(`[today-shape-v2] ${at}: spot-anatomy · ${c.spot}: ${lines.length} group line · ${r.prods.length} product(s) · ${fa} Feed all · ${r.rows.length} row(s), ${r.rows.filter(x => x.thumbs.length === 1).length} with a picture box · ${r.controls.length} control(s)`)
+      } else if (c.family === 'spot-floors') {
+        if (!r.controls.some(x => x.testid === 'care-spot-feed-all' + SUFFIX) || !r.controls.some(x => x.main)) F(`'${c.spot}' opened has ${r.controls.length} control(s), none a Feed all or none a main action — nothing to hold to the floor`)
+        for (const x of r.controls) {
+          if (x.w < c.floor - 0.5 || x.h < c.floor - 0.5) F(`'${x.label}' in '${c.spot}' is ${x.w}×${x.h}px, under the ${c.floor}px tap floor (T.tapMinHeight)`)
+          else if (x.main && x.h < c.mainFloor - 0.5) F(`the main action '${x.label}' in '${c.spot}' is ${x.h}px tall, under its ${c.mainFloor}px (T.buttonMinHeight)`)
+        }
+      } else {
+        if (!r.controls.length) F(`'${c.spot}' opened has no control to hit-test`)
+        for (const x of r.controls) if (x.missed.length) F(`a tap on '${x.label}' in '${c.spot}' (${x.w}×${x.h}px) misses it at ${x.missed.join(', ')} of its ${c.floor}px square — a thumb there lands on something else`)
       }
     } else if (c.family === 'weather-once') {
       // Opened only if closed, and left as found: region-headcount runs first and leaves the glance OPEN (its last
@@ -704,6 +792,13 @@ async function runInteractions(state, checks, at) {
           const target = ['glance'].includes(r.open) ? 'glance' : (r.open.includes(':') ? r.open : `section:${r.open}`)
           const cur = await evalSettled(`window.__h.expanded(${JSON.stringify(target)})`)
           if (cur !== 'true') { const a = await evalSettled(`window.__h.act({ tap: ${JSON.stringify(target)} })`); if (a.void) { F(`could not open '${r.open}' to count '${r.id}': ${a.void}`); continue } }
+        }
+        // Pre-L7 QA: a region that shows only with NO task filter (an opened spot's product lines) — the bar's pressed
+        // cell is tapped off first (a second tap on the selected cell clears it, D17). Left cleared: later families
+        // that need a filter set their own (announce and caught-up start from their own reset).
+        if (r.noFilter) {
+          const cleared = await evalSettled(`(async () => { for (let i = 0; i < 3; i++) { const b = document.querySelector('[data-testid="today-jumpbar${SUFFIX}"] [data-chip][aria-pressed="true"]'); if (!b) return true; b.click(); await new Promise(r => setTimeout(r, 150)) } return false })()`)
+          if (!cleared) { F(`could not clear the task filter to count '${r.id}'`); continue }
         }
         // S3: a region the contract places on the CLOSED owner is counted with the owner closed.
         if (r.closed) {

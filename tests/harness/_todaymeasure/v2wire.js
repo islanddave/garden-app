@@ -113,6 +113,10 @@ export function buildV2State(state, base, G, prefsBody) {
 //   cohort:<name>        a spot's cohort toggle: [data-testid="care-cohort"][data-spot="<name>"] [aria-expanded]
 //   glance               the glance card's toggle: [data-testid="today-glance"] [aria-expanded]
 //   testid:<id>          anything else by testid
+//   spotchip:<key>       the FIRST spot chip of section <key>'s spot filter row (pre-L7 QA, prepromote-v5-qa.md
+//                        MINOR: a household member's section, whose chips had no browser check):
+//                        [data-testid="today-sec-<key>"] [data-testid="care-filter-spots"] button[aria-pressed]
+//                        — a toggle, so as a `flip` it reads aria-pressed
 // `flip` names the element whose aria-expanded must change, in the same vocabulary (a bare
 // `today-sec-<key>` / `care-spot:<name>` / `care-cohort:<name>`), or — read by flipState below —
 //   task-filter:<Label>  the task filter's toggle — since finish plan L4 (D17) the jump bar's own cell for that
@@ -130,6 +134,7 @@ export function selectorFor(target, suffix = '') {
     case 'care-cohort': return `[data-testid="care-cohort${suffix}"][data-spot="${q(arg)}"] [aria-expanded]`
     case 'testid': return `[data-testid="${q(arg)}${suffix}"]`
     case 'glance': return `[data-testid="today-glance${suffix}"] [aria-expanded]`
+    case 'spotchip': return `[data-testid="today-sec-${q(arg)}${suffix}"] [data-testid="care-filter-spots${suffix}"] button[aria-pressed]`
     default:
       if (kind.startsWith('today-sec-')) return `[data-testid="${q(kind)}${suffix}"] [aria-expanded]`
       throw new Error(`selectorFor: unknown target '${target}'`)
@@ -147,6 +152,7 @@ export function flipState(target, suffix = '', doc = globalThis.document) {
     const b = doc.querySelector(`[data-testid="today-jumpbar${suffix}"] [data-chip="${label.toLowerCase().replace(/"/g, '\\"')}"][aria-pressed]`)
     return b ? b.getAttribute('aria-pressed') : null
   }
+  if (kind === 'spotchip') return doc.querySelector(selectorFor(target, suffix))?.getAttribute('aria-pressed') ?? null
   return doc.querySelector(selectorFor(target, suffix))?.getAttribute('aria-expanded') ?? null
 }
-export const flipAttr = (target) => (String(target).startsWith('task-filter:') ? 'aria-pressed' : 'aria-expanded')
+export const flipAttr = (target) => (/^(task-filter|spotchip):/.test(String(target)) ? 'aria-pressed' : 'aria-expanded')

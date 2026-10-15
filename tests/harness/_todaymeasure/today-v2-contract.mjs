@@ -201,13 +201,25 @@ export const STATES = [
         { tap: 'cohort:Bag Area', flip: 'care-cohort:Bag Area' },
         { scroll: '2*FIRST_SCREEN' },
         { scroll: 0 },
-      ], counts: { afterSpot: { 'care-exceptions-row': 8, 'care-cohort': 1 }, afterCohort: { 'care-cohort-row': 20, 'care-show-more': 1 } }, why: '(d) Bag Area: 8 exception rows + 1 cohort line; disclosed: 20 rows + "Show 69 more"' },
+      // Pre-L7 QA (prepromote-v5-qa.md IMPORTANT 1): + the L5 group line over the 8 differing rows, counted shown.
+      ], counts: { afterSpot: { 'care-exceptions-row': 8, 'care-exceptions-line': 1, 'care-cohort': 1 }, afterCohort: { 'care-cohort-row': 20, 'care-show-more': 1 } }, why: '(d) Bag Area: 8 exception rows under their one group line + 1 cohort line; disclosed: 20 rows + "Show 69 more"' },
       { family: 'header-text', armedAt: 'S4', counts: { care: 233 }, why: 'S4-scoped: water 168 + feed 58 + check 7' },
       { family: 'count-invariant', armedAt: 'S4', why: 'S4-scoped §2.4: the Needs care header count = Σ spot counts, no filter' },
       // S3: each REGIONS_V2 row arms with its OWN slice (the gate skips a row whose armedAt has not landed), so
       // the glance's rows count from S3 and S4–S6's rows join as they land. S4's lane carried its own S4-scoped
       // copy of this check (armed at S4 alone); merged, the two counted the same rows, so this one is kept.
       { family: 'region-headcount', armedAt: 'S3', why: 'every ARMED REGIONS_V2 row owned by v2-frost, counted after its owner is opened' },
+      // Pre-L7 QA (prepromote-v5-qa.md IMPORTANT 1, 2026-10-15): finish plan L5's opened-spot anatomy, in real Chrome — until
+      // now only jsdom saw the group line, the product lines, Feed all and the picture boxes, and no gate read the tap size of
+      // anything in an opened spot but the main action on the waiting list. ONE read of Bag Area with no task filter (its
+      // three products only show unfiltered), its first product's rows disclosed, judged by three families, each its own
+      // property of that read (as the shell gate's jump-landing and jump-focus judge one pass of jumps). Measured on the
+      // L5 tree: 1 group line, 3 products each with its Feed all (88/81/63 × 44), a picture box on every row; every
+      // secondary control (Skip 48, Moist 44, Feed all 44, Show them 44, a product toggle ≥ 48) at the 44 floor
+      // (T.tapMinHeight), every main action (Log … / Checked: …) at 48 (T.buttonMinHeight).
+      { family: 'spot-anatomy', armedAt: 'S4', spot: 'Bag Area', expect: { lines: 1, products: 3, feedAll: 3, minRows: 9 }, thumb: 40, why: 'L5 (§3.6, D12, D18): an opened spot shows its group line, one line per product each with its own Feed all, and a 40px picture box on every plant row; no product line runs past the panel at 426px or at 200% text' },
+      { family: 'spot-floors', armedAt: 'S4', spot: 'Bag Area', floor: 44, mainFloor: 48, why: 'every control inside an opened spot (Feed all, a product\'s Show them, the cohort toggle, each row\'s Skip / Moist / main action) is at least 44 × 44; each row\'s main action is 48 tall' },
+      { family: 'spot-reach', armedAt: 'S4', spot: 'Bag Area', floor: 44, why: 'hit-tested, not boxed: a tap anywhere in the 44px square centred on each of those controls lands on that control (a control drawn smaller than its floor, or under another layer, is missed by a thumb)' },
       // S4g (§2.6 / §5.6): each filter change — a task chip, a spot chip, either Clear, a jump chip's pre-select —
       // says its result ONCE through today-status; opening and closing a spot (a re-render, no filter change) says
       // nothing. Words on the 09-24 plan (the plan's own example first). Files `announce` (the words) and
@@ -422,7 +434,15 @@ export const STATES = [
     // today-household row (v2-household, S6) was never counted. The shared skip set is a unit test
     // (TodayV2.household.test.jsx), not a geometry.
     checks: [...common(), { family: 'section-open-set', armedAt: 'S6', closed: ['hh-member_j'] }, { family: 'header-text', armedAt: 'S6', counts: { 'hh-member_j': 15 }, summaries: { 'hh-member_j': 'Water 8 · Feed 7' } },
-      { family: 'region-headcount', armedAt: 'S6', why: 'S6: today-household on the default render (her section closed)' }],
+      { family: 'region-headcount', armedAt: 'S6', why: 'S6: today-household on the default render (her section closed)' },
+      // Pre-L7 QA (prepromote-v5-qa.md MINOR): review B1 (her section's spot chips did nothing: onFilters was never passed)
+      // was guarded by jsdom alone. Open her section and tap her first spot chip; its aria-pressed must flip (the
+      // interaction phase runs after every geometric check, so her section is closed for those). Measured: chips House ·
+      // Deck; House pressed, her list down to House, "Jen's care: House, 11 in 1 spot." in the status region.
+      { family: 'interaction', armedAt: 'S6', steps: [
+        { tap: 'section:hh-member_j', flip: 'today-sec-hh-member_j' },
+        { tap: 'spotchip:hh-member_j', flip: 'spotchip:hh-member_j' },
+      ], why: 'B1: a spot chip inside a household member\'s section is her filter — a tap presses it' }],
   },
   {
     name: 'v2-remembered', fixture: 'busy', clock: S924, prefs: 'prefs.remembered.json',
@@ -483,6 +503,13 @@ export const REGIONS_V2 = [
   { id: 'care-cap-note', owner: 'disclosed cohort in Bag Area', open: 'cohort:Bag Area', state: 'v2-frost', armedAt: 'S4' },
   { id: 'care-show-more', owner: 'disclosed cohort in Bag Area (control)', open: 'cohort:Bag Area', state: 'v2-frost', armedAt: 'S4' },
   { id: 'care-moist', owner: 'plant rows in an opened spot (control)', open: 'spot:Bag Area', state: 'v2-frost', armedAt: 'S4' },
+  // Pre-L7 QA (prepromote-v5-qa.md IMPORTANT 1): finish plan L5's anatomy of an opened spot. The group line and the picture
+  // box show under any filter; the product lines (and their Feed all) only with no task filter, so those two rows clear
+  // the bar's pressed cell first (`noFilter`) — the interaction run above leaves Water pressed.
+  { id: 'care-exceptions-line', owner: 'the differing rows\' group line in an opened spot (L5 §3.6)', open: 'spot:Bag Area', state: 'v2-frost', armedAt: 'S4' },
+  { id: 'plant-thumb', owner: 'every plant row\'s 40px picture box (L5, D18)', open: 'spot:Bag Area', state: 'v2-frost', armedAt: 'S4' },
+  { id: 'care-spot-product', owner: 'one line per product in an opened spot (L5, D12)', open: 'spot:Bag Area', noFilter: true, state: 'v2-frost', armedAt: 'S4' },
+  { id: 'care-spot-feed-all', owner: 'a product line\'s own Feed all (L5, D12)', open: 'spot:Bag Area', noFilter: true, state: 'v2-frost', armedAt: 'S4' },
   // REMOVED by D3/D7 — declared, not dropped: its replacements carry the one-tap path.
   { id: 'care-bulk-chips', removed: true, replacedBy: ['care-group-bulk', 'care-spot-bulk'], state: 'v2-frost', armedAt: 'S4' },
   { id: 'care-dormant', owner: 'Resting', open: 'resting', state: 'v2-frost', armedAt: 'S6' },
@@ -518,6 +545,15 @@ export const SHELL = [
   // not continue inside the section). Measured over the same pass of chip jumps as jump-landing.
   { family: 'jump-focus', armedAt: ['S3', 'S4'], state: 'v2-frost', why: 'per chip: the focused header is not wholly hidden by TopChrome or the bar (WCAG 2.4.11, hit-tested over the header), and one real Tab continues inside the jumped-to section (WCAG 2.4.3; R5 — TalkBack and the keyboard carry on from the header)' },
   { family: 'back-restore', armedAt: 'S4', state: 'v2-frost', why: '(m) open Bag Area → tap "Red Acre Cabbage" → Back → Bag Area open, same row top within 1 px' },
+  // Pre-L7 QA (prepromote-v5-qa.md IMPORTANT 2, 2026-10-15): a bar that WRAPS was never jumped from. Android text scaling
+  // wraps it (chip-census proves the wrap at 200% on this state), and then the landing offset rests on the bar's MEASURED
+  // height (TodayV2.jsx barH, a ResizeObserver read) — a constant 52 would land every jumped-to header under the second row
+  // of cells (WCAG 2.4.11). The same jumps and the same pinned-bar focus move, on a fresh load of v2-frost with the root
+  // font at 200% (`textScale`, set after the ready point; the bar must actually wrap or the run says so): the landing is
+  // judged against the bar as measured, and the pinned bar's height is its own wrapped height, not 52.
+  { family: 'jump-landing', armedAt: ['S3', 'S4'], state: 'v2-frost', textScale: 2, why: '(g) at 200% text, the bar wrapped: per chip the header lands in [bar bottom, bar bottom + 8] and takes focus' },
+  { family: 'jump-focus', armedAt: ['S3', 'S4'], state: 'v2-frost', textScale: 2, why: 'at 200% text, the bar wrapped: per chip the focused header is not wholly hidden under TopChrome and the bar (2.4.11), and one Tab continues inside the section (2.4.3)' },
+  { family: 'sticky', armedAt: ['S3', 'S4'], state: 'v2-frost', textScale: 2, why: '(f) at 200% text: the wrapped bar pins flush under TopChrome at its own (two-row) height, and a header focused while parked under it is brought out below it (2.4.11)' },
 ]
 
 // ── MUTANT KILLER FAMILIES (§9.1) and the trigger TABLE that replaced the trigger-predicate mutants ──────
@@ -532,7 +568,9 @@ export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibi
   // Integration 2: no card inside a card (plan-v2 Visual, D8).
   'card-nesting',
   // BUG-DEFERNOSTRESSOVERRIDE-001: tap sizes of the "Waiting for rain" list in the open glance card.
-  'rain-wait-floors']
+  'rain-wait-floors',
+  // Pre-L7 QA (prepromote-v5-qa.md IMPORTANT 1): an opened spot's L5 anatomy, its controls' boxes, and their reach.
+  'spot-anatomy', 'spot-floors', 'spot-reach']
 
 // §13 Simplify 3: the trigger-predicate mutants (ignoreRemembered, rememberedBeatsUrgent, staleAutoOpens,
 // chillOpensEveryNight, headsupAlwaysOpen, householdAlwaysOpen, glanceOpenByDefault) are no longer real-Chrome

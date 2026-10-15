@@ -8,6 +8,15 @@ describe('cmpVersion', () => {
     expect(cmpVersion('3.24.0', '3.24.0')).toBe(0)
     expect(cmpVersion('3.24', '3.24.0')).toBe(0)
   })
+  // 5.0.0 was the first major crossing the update probe and the What's New dot ever saw (prepromote-v5-qa.md MINOR):
+  // numeric per segment, so a lower major with a far higher minor never reads as newer.
+  it('orders across a major version', () => {
+    expect(cmpVersion('5.0.0', '4.190.1')).toBe(1)
+    expect(cmpVersion('4.190.1', '5.0.0')).toBe(-1)
+    expect(cmpVersion('10.0.0', '9.99.99')).toBe(1)
+    expect(isUnseen('5.0.0', '4.190.1')).toBe(true)
+    expect(isUnseen('4.190.1', '5.0.0')).toBe(false)
+  })
 })
 
 describe('isUnseen', () => {

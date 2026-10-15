@@ -88,7 +88,7 @@ describe('today-v2 contract table', () => {
     // S4, Needs care's v2-frost rows are armed beside them; S5 adds the pick link; S6 arms Resting's and Harvest's.
     const glanceRows = ['today-weather', 'weather-cue-line', 'frost-alert-line', 'drought-line', 'leaf-wetness-line', 'today-basis-stamp', 'care-rain-note', 'care-drought-list']
     expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && r.armedAt === 'S3').map((r) => r.id)).toEqual(glanceRows)
-    expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && isArmed(r)).map((r) => r.id)).toEqual([...glanceRows, 'today-substrate-note', 'care-cap-note', 'care-show-more', 'care-moist', 'care-bulk-chips', 'care-dormant', 'care-feed-suppressed', 'today-watch-band', 'compose-harvest-band', 'protect-pick'])
+    expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && isArmed(r)).map((r) => r.id)).toEqual([...glanceRows, 'today-substrate-note', 'care-cap-note', 'care-show-more', 'care-moist', 'care-exceptions-line', 'plant-thumb', 'care-spot-product', 'care-spot-feed-all', 'care-bulk-chips', 'care-dormant', 'care-feed-suppressed', 'today-watch-band', 'compose-harvest-band', 'protect-pick'])
   })
   // S5 arms what Protect tonight and Heads-up can answer. Pinned so a later edit cannot quietly un-arm (or drop) any
   // of it — and so the three contract rows S5 had to restate stay restated.
@@ -192,6 +192,40 @@ describe('today-v2 contract table', () => {
     // states' first-screen mustContain, which fails on absence.)
     for (const r of REGIONS_V2.filter((x) => x.armedAt === 'S6' && x.state !== '*')) expect(armedIn(r.state, 'region-headcount').length, r.id).toBeGreaterThan(0)
   })
+  // Pre-L7 QA (prepromote-v5-qa.md, 2026-10-15): the gaps a 5.0.0 review said must close before V2 becomes the default
+  // (L7). Pinned so none can quietly un-arm: L5's opened-spot anatomy (IMPORTANT 1), the wrapped bar jumped from at 200%
+  // text (IMPORTANT 2), her section's chips in real Chrome (MINOR, review B1).
+  it('pre-L7: the spot anatomy, the 200%-text jumps and her chips are armed, each with its mutants', () => {
+    const frost = STATES.find((s) => s.name === 'v2-frost').checks.filter(isArmed)
+    for (const fam of ['spot-anatomy', 'spot-floors', 'spot-reach']) {
+      const c = frost.filter((x) => x.family === fam)
+      expect(c, fam).toHaveLength(1)
+      expect(c[0].spot, fam).toBe('Bag Area')
+      expect(KILLER_FAMILIES, fam).toContain(fam)
+    }
+    expect(frost.find((x) => x.family === 'spot-anatomy').expect).toEqual({ lines: 1, products: 3, feedAll: 3, minRows: 9 })
+    expect(frost.find((x) => x.family === 'spot-floors')).toMatchObject({ floor: 44, mainFloor: 48 })
+    expect(frost.find((x) => x.family === 'interaction').counts.afterSpot['care-exceptions-line']).toBe(1)
+    expect(REGIONS_V2.filter((r) => r.noFilter).map((r) => r.id)).toEqual(['care-spot-product', 'care-spot-feed-all'])
+    const wrapped = SHELL.filter((c) => c.textScale === 2)
+    expect(wrapped.map((c) => [c.family, c.state, isArmed(c)])).toEqual([['jump-landing', 'v2-frost', true], ['jump-focus', 'v2-frost', true], ['sticky', 'v2-frost', true]])
+    const hh = STATES.find((s) => s.name === 'v2-household').checks.filter((c) => c.family === 'interaction' && isArmed(c))
+    expect(hh.map((c) => c.steps.map((s) => s.flip))).toEqual([['today-sec-hh-member_j', 'spotchip:hh-member_j']])
+    const want = { groupLineDropped: ['interaction', 'region-headcount', 'spot-anatomy'], feedAllShort: ['spot-floors', 'spot-reach'], thumbDropped: ['region-headcount', 'spot-anatomy'], barHeightConstant: ['jump-landing', 'jump-focus', 'sticky'], householdChipsDead: ['interaction'] }
+    for (const [n, k] of Object.entries(want)) {
+      expect(isArmed(MUTANTS_V2[n]), n).toBe(true)
+      expect(MUTANTS_V2[n].killers, n).toEqual(k)
+      if (k.length < 2) expect(MUTANTS_V2[n].oneKiller, n).toBeTruthy()
+    }
+  })
+  it('a spotchip target is a household section\'s first spot chip, flipped by aria-pressed', () => {
+    expect(selectorFor('spotchip:hh-member_j')).toBe('[data-testid="today-sec-hh-member_j"] [data-testid="care-filter-spots"] button[aria-pressed]')
+    document.body.innerHTML = '<section data-testid="today-sec-hh-member_j"><div data-testid="care-filter-spots"><button aria-pressed="false">House</button><button aria-pressed="true">Deck</button></div></section>'
+    expect(flipState('spotchip:hh-member_j')).toBe('false')
+    expect(flipAttr('spotchip:hh-member_j')).toBe('aria-pressed')
+    document.body.innerHTML = ''
+    expect(flipState('spotchip:hh-member_j')).toBeNull()
+  })
   it('keeps every trigger-predicate mutant as a unit-table cell (Simplify 3), never silently dropped', () => {
     const cellMutants = new Set(TRIGGER_CELLS.map((c) => c.killedMutant))
     for (const [n, m] of Object.entries(MUTANTS_V2)) if (m.kind === 'unit-table') expect(cellMutants.has(n)).toBe(true)
@@ -287,8 +321,9 @@ describe('v2 grafts and the re-dating helper', () => {
     for (const k of ['clock', 'contentBottomFloor', 'contentBottomCeiling', 'controlsFloor', 'scrollHeightCeiling']) expect(B['v2-frost-rain'][k], k).toBe(B['v2-frost'][k])
     // Review I1: + v2-frost-noprotect (D15 with no Protect section) — 9 common checks + 3 of its own.
     expect(STATES).toHaveLength(22)
-    // L3: + v2-frost's D15 header-text check (Protect's open summary and the pick link's words).
-    expect(STATES.reduce((a, x) => a + x.checks.filter((c) => isArmed(c)).length, 0)).toBe(279)
+    // L3: + v2-frost's D15 header-text check (Protect's open summary and the pick link's words). Pre-L7 QA: + v2-frost's
+    // three spot families and v2-household's chip interaction.
+    expect(STATES.reduce((a, x) => a + x.checks.filter((c) => isArmed(c)).length, 0)).toBe(283)
   })
   it('stale serves the plan one day back', () => {
     expect(applyGrafts(D, PLANTS, ['stale'], G).payload.plan_date).toBe('2026-09-23')
