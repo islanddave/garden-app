@@ -526,13 +526,13 @@ describe('AC-7 — the daily-plan spaces read still works after the ALTER', () =
     // Extracted from source rather than retyped: a future edit to that query is picked up here
     // instead of silently drifting away from what this test claims to cover.
     const src = readFileSync(new URL('../../lambda/daily-plan/handler.js', import.meta.url), 'utf8')
-    const m = src.match(/`(select id, postal_code, weather_lat, weather_lng from spaces)`/)
+    const m = src.match(/`(select id, postal_code, weather_lat, weather_lng, created_by from spaces)`/)
     expect(m, 'daily-plan spaces query not found — update this test if it moved').toBeTruthy()
 
     const rows = await directSql(m[1])
     expect(Array.isArray(rows)).toBe(true)
     expect(rows.length).toBeGreaterThan(0)
-    for (const k of ['id', 'postal_code', 'weather_lat', 'weather_lng']) {
+    for (const k of ['id', 'postal_code', 'weather_lat', 'weather_lng', 'created_by']) {
       expect(Object.prototype.hasOwnProperty.call(rows[0], k)).toBe(true)
     }
   })
