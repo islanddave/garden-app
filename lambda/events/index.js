@@ -24,7 +24,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, normalizeNotes, toGrams, isUserSuppliedWeight, seedsWeightCalibration, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES, readReductionPlan, orderEndStatusOffer, PLANT_REDUCTION_EVENT_TYPES, deriveEventProjectId, normalizeScopeIds, normalizeLegacyEventType, isPlantReductionEventType, eventTypeTokens, GIVEAWAY_EVENT_TYPE } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, eventDateBoundsError, PUT_FUTURE_BOUND_MS, normalizeNotes, toGrams, isUserSuppliedWeight, seedsWeightCalibration, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES, readReductionPlan, orderEndStatusOffer, PLANT_REDUCTION_EVENT_TYPES, deriveEventProjectId, normalizeScopeIds, normalizeLegacyEventType, isPlantReductionEventType, eventTypeTokens, GIVEAWAY_EVENT_TYPE } from './validators.js';
 import { isEventOwned } from './eventOwnership.js';
 import { loadEventPhotos } from './eventPhotos.js';
 import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearFields.js';
@@ -1674,6 +1674,17 @@ export const handler = async (event) => {
         if (!isEventOwned(owned[0], householdIds)) return resp(404, { error: 'Not found' });
         const existing = owned[0];
         const hasHarvestRow = existing.harvest_log_id != null;
+
+        // BUG-LAMBDAVALIDATION-001 (I12): the POST's F22 bounds, with PUT's 24h future allowance, but
+        // only on a REAL move. EventDetail re-sends noon LOCAL on every save while the row holds the
+        // noon UTC it was stored at, so a notes-only edit "moves" the instant by up to 14h each way.
+        // 36h clears that shift; without the gate an untouched event older than 5y could never be
+        // edited again. dateChanged below is left as it is: it feeds cacheDirty, a different question.
+        if (eventDate != null
+          && Math.abs(new Date(eventDate).getTime() - new Date(existing.event_date).getTime()) > 36 * 3600 * 1000) {
+          const dateErr = eventDateBoundsError(eventDate, Date.now(), PUT_FUTURE_BOUND_MS);
+          if (dateErr) return resp(dateErr.status, { error: dateErr.error });
+        }
 
         // Pairing guard. harvest_log rows belong to harvest events; an event_type edit that breaks
         // that pairing is refused EXPLICITLY rather than silently orphaning a harvest row (which

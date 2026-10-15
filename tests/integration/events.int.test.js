@@ -387,6 +387,61 @@ describe('PUT /api/events/:id — BUG-HARVESTEDIT-001', () => {
   })
 })
 
+// BUG-LAMBDAVALIDATION-001 (I12): the PUT applies POST's event_date bounds (24h future allowance)
+// only when the date really moved (>36h from the stored instant). EventDetail re-sends noon LOCAL on
+// every save, so an untouched old date arrives shifted by the user's offset and must still save.
+describe('PUT /api/events/:id — event_date bounds on a real move (I12)', () => {
+  let bProjectId
+  let oldEventId
+  const DAY = 86400e3
+  // Noon UTC on a calendar day six years back: older than the 5y past bound.
+  const oldNoon = new Date(Math.floor((Date.now() - 6 * 365 * DAY) / DAY) * DAY + 12 * 3600e3)
+  beforeAll(async () => {
+    bProjectId = (await insertProject({ name: 'int-evt-bounds-' + RUN, createdBy: USER })).id
+    oldEventId = (await directSql`
+      INSERT INTO event_log (project_id, event_type, event_date, is_public, logged_by, created_by)
+      VALUES (${bProjectId}, 'observation', ${oldNoon.toISOString()}, false, ${USER}, ${USER})
+      RETURNING id
+    `)[0].id
+  })
+  afterAll(async () => {
+    await directSql`DELETE FROM entity_memory WHERE project_id = ${bProjectId}`
+    await directSql`DELETE FROM event_log WHERE project_id = ${bProjectId}`
+  })
+  const put = (id, body) => callHandler(handler, { method: 'PUT', path: `/api/events/${id}`, body, userId: USER })
+  const storedDate = async (id) => (await directSql`SELECT event_date FROM event_log WHERE id = ${id}`)[0].event_date
+
+  it('control: a notes-only save of an event older than 5y, re-sending noon-local (UTC-10), is 200', async () => {
+    const res = await put(oldEventId, {
+      event_type: 'observation', notes: 'typo fixed',
+      event_date: new Date(oldNoon.getTime() + 10 * 3600e3).toISOString(),
+    })
+    expect(res.status, JSON.stringify(res.body)).toBe(200)
+  })
+
+  it('moving that event to 1900 is refused and the stored date is unchanged', async () => {
+    const before = new Date(await storedDate(oldEventId)).getTime()
+    const res = await put(oldEventId, { event_type: 'observation', event_date: '1900-01-01' })
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBe('event_date too far in past')
+    expect(new Date(await storedDate(oldEventId)).getTime()).toBe(before)
+  })
+
+  it('moving an event two days ahead is refused; moving it to ~12h ahead (noon local, far east) saves', async () => {
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/events', userId: USER,
+      body: { project_id: bProjectId, event_type: 'observation', event_date: new Date(Date.now() - 10 * DAY).toISOString() },
+    })
+    expect(created.status, JSON.stringify(created.body)).toBe(201)
+    const id = created.body.id ?? created.body.eventId
+    const far = await put(id, { event_type: 'observation', event_date: new Date(Date.now() + 2 * DAY).toISOString() })
+    expect(far.status).toBe(400)
+    expect(far.body.error).toBe('event_date in future')
+    const near = await put(id, { event_type: 'observation', event_date: new Date(Date.now() + 12 * 3600e3).toISOString() })
+    expect(near.status, JSON.stringify(near.body)).toBe(200)
+  })
+})
+
 describe('POST /api/events — validation + create', () => {
   it('YYYY-MM-DD bare date → 201, stored at noon UTC (normalizeEventDate verified)', async () => {
     setTestUserId(USER)
