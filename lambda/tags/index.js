@@ -18,8 +18,11 @@ import { householdScope } from './household.js';
 import { assembleBulkEntities } from './bulk.js';
 import { applyDerive } from './crop-derive.js';
 import {
-  slugify, validateTagCreate, validateTagPatch, validateEntityTagCreate, isAdmin,
+  slugify, validateTagCreate, validateTagPatch, validateEntityTagCreate, isAdmin, VALID_ENTITY_TYPES,
 } from './validate.js';
+
+// Every entity_tag target id is a uuid column; shape-check before binding (same constant as household.js).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 let _secrets = null;
@@ -289,6 +292,16 @@ export const handler = async (event) => {
               AND ( pp.created_by = ANY(${household})
                     OR (gn.container_id IS NULL AND gn.created_by = ANY(${household})) )`;
           return resp(200, { entities: assembleBulkEntities(directRows, projRows) });
+        }
+        // I24 (BUG-AUTHZLAMBDA-001): the single read named no owner — `direct` filtered only tag
+        // visibility (so a stranger got every `system` tag on a foreign entity) and `projected` had no
+        // household arm or deleted_at at all. Gate on the SAME household-scoped entityExists the POST
+        // uses. Foreign, absent, soft-deleted and malformed ids all get one 200-empty body (no oracle;
+        // the uuid shape-check spares the 22P02 500). entityExists has no archived_at, so an archived
+        // planting's own detail page keeps its tags.
+        if (!VALID_ENTITY_TYPES.includes(et)) return resp(400, { error: `entity_type must be one of: ${VALID_ENTITY_TYPES.join(', ')}` });
+        if (!UUID_RE.test(String(eid)) || !(await entityExists(sql, et, eid, household))) {
+          return resp(200, { direct: [], projected: [] });
         }
         const direct = await sql`
           SELECT t.id, t.facet, t.label, t.slug, t.source, t.owner_id, t.visibility, t.created_by, t.created_at, t.updated_at
