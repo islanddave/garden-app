@@ -113,7 +113,8 @@ describe('evidence-ingest write path (integration, real Neon)', () => {
 
 // I40 (BUG-AUTHZLAMBDA-001) — dave_confirmed (trust_rank 5) and source_record_id are admin-only.
 // Fail-closed: with ADMIN_CLERK_SUBS unset nobody passes. The admin arm is the control: a gate that
-// 403s every write would pass the denials alone.
+// 403s every write would pass the denials alone. So the preconditions FAIL here rather than return:
+// a silent skip would let a gate that 403s everything pass all four denials with no control run.
 describe('evidence-ingest admin-only fields (I40)', () => {
   const DENIED_NOTE = `i40-denied-${RUN}`;
   let adminEnv;
@@ -131,7 +132,7 @@ describe('evidence-ingest admin-only fields (I40)', () => {
   ];
   for (const [field, over] of denied) {
     it(`non-admin ${field} -> 403 and no row`, async () => {
-      if (!tableExists) return;
+      expect(tableExists, 'I40 needs the evidence table').toBe(true);
       setTestUserId(USER);
       // The gate precedes the entity lookup, so an absent entity still 403s (no existence signal).
       const entity_id = sampleEntityId ?? '00000000-0000-0000-0000-0000000000ff';
@@ -143,7 +144,9 @@ describe('evidence-ingest admin-only fields (I40)', () => {
   }
 
   it('an admin may write dave_confirmed (control) -> 201', async () => {
-    if (!tableExists || !sampleEntityId || !v2ColsExist) return;
+    expect(tableExists, 'I40 control needs the evidence table').toBe(true);
+    expect(v2ColsExist, 'I40 control needs the V2 evidence columns').toBe(true);
+    expect(sampleEntityId, 'I40 control needs an ownerless entity').not.toBeNull();
     process.env.ADMIN_CLERK_SUBS = USER;
     try {
       setTestUserId(USER);
