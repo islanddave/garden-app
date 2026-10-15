@@ -6,9 +6,20 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 // Workspace-shared (not per-user): until V4 Workspaces there is no `workspaces` table on
 // prod, so every authenticated household member reads/writes the SAME row set under the
 // denormalized SENTINEL workspace value. SENTINEL mirrors gv.sentinel_workspace() and the
-// workspace_id DEFAULT on the 8 Foundation tables. Auth is required (must be a logged-in
-// user) but the data itself is common to the household.
+// workspace_id DEFAULT on the 8 Foundation tables. The data is common to the household, so the
+// caller must be a household MEMBER, not just a logged-in user (BUG-AUTHZLAMBDA-001 B6).
 const SENTINEL_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+
+// Membership on the RAW GARDEN_HOUSEHOLD_IDS list, read at call time. Deliberately not "the
+// caller's household scope includes the caller": household.js returns [userId] for a non-member,
+// so that test is always true. Fails closed: an unset, blank or one-entry list admits nobody (a
+// one-entry list is not a household — householdActive() needs length > 1 for the same reason).
+// Known limitation: one global list over a sentinel-pinned row; per-Space gating comes with Spaces.
+function householdMembership(userId) {
+  const ids = (process.env.GARDEN_HOUSEHOLD_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (ids.length < 2) return 'env-missing';
+  return ids.includes(userId) ? null : 'non-member';
+}
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -48,17 +59,28 @@ export const handler = async (event) => {
 
   const authHeader = event.headers?.authorization ?? event.headers?.Authorization ?? '';
   const token = authHeader.replace(/^Bearer\s+/i, '');
+  let userId;
   try {
-    await verifyToken(token, {
+    const payload = await verifyToken(token, {
       secretKey: secrets.CLERK_SECRET_KEY,
       authorizedParties: [
         'https://garden.futureishere.net',
         'https://dg6mmjhepoyt9.cloudfront.net',
       ],
     });
+    userId = payload.sub;
   } catch (err) {
     console.error('verifyToken failed:', err?.message ?? String(err));
     return resp(401, { error: 'Unauthorized' });
+  }
+  if (!userId) return resp(401, { error: 'Unauthorized' });
+
+  // Gate before neon() so a non-member costs no DB connection. The client turns any non-OK into
+  // null and renders nothing, so this log line is the only place a denial is visible.
+  const denied = householdMembership(userId);
+  if (denied) {
+    console.warn(JSON.stringify({ msg: 'household-membership-denied', userId, reason: denied }));
+    return resp(403, { error: 'Forbidden' });
   }
 
   const sql = neon(secrets.NEON_DATABASE_URL);
