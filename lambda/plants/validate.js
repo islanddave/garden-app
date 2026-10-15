@@ -232,3 +232,18 @@ export function validateQuantity(body = {}) {
   if (!Number.isInteger(n)) return QUANTITY_ERROR;
   return null;
 }
+
+// BUG-AUTHZLAMBDA-001 (I19) — the loss_cause and container_type allowlists, ONE literal each.
+//
+// These used to be block-local consts inside the PUT and the POST handlers of index.js, two
+// hand-maintained copies per vocabulary, and the merge route (whose `overrides` map lands in the
+// same columns via merge.js's winner UPDATE) had none at all. They live here now so all three
+// writers reference the same list and cannot drift. The rationale for each vocabulary stays on the
+// PUT path in index.js; the parity guards (loss-cause-vocab.test.js, container-enum.test.js) parse
+// THESE literals against the armed CHECKs.
+//
+// ALLOWED_LOSS: set-equal to chk_plants_loss_cause (migrations/v4-losscapture-001/0b) and to
+// src/lib/eventTypes.js LOSS_REASONS. V4-LOSSEVENT-001 widened it to seven, SCHEMA FIRST.
+export const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown', 'animal_damage', 'culled'];
+// ALLOWED_CONTAINER: in lockstep with chk_plants_container_type (BUG-CONTVAL-001, 14 values).
+export const ALLOWED_CONTAINER = ['fabric_bag','plastic_pot','terracotta','ceramic','raised_bed','in_ground','tray_cell','hanging_basket','window_box','trough','whiskey_barrel','soil_block','solo_cup','other'];

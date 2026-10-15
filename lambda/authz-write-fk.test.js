@@ -129,7 +129,8 @@ describe('V4-AUTHZSWEEP-001: ownership loaders bind the correct owner column', (
 // paired with an unrelated later loader call. A count is what makes a removed gate visible — and a
 // removed gate is a live cross-household FK write plus a read leak through every JOINing surface.
 const SITES = [
-  ['plants/index.js', 'location_id', 'loadOwnedLocation', 2],
+  // BUG-AUTHZLAMBDA-001 (B4): 3 = PUT, POST, and the merge route's overrides.location_id.
+  ['plants/index.js', 'location_id', 'loadOwnedLocation', 3],
   ['plants/index.js', 'parent_plant_id', 'loadOwnedPlantingRef', 2],
   ['plants/index.js', 'source_inventory_item_id', 'loadOwnedInventoryItem', 2],
   ['inventory-items/index.js', 'location_id', 'loadOwnedLocation', 2],

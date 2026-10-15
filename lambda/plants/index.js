@@ -19,7 +19,7 @@ import { loadOwnedProject, loadOwnedPlantingRef, resolveContainerForCultivar } f
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { jsonResponder } from './http-response.js';
 import { isStatusChange, formatStatusChangeNote, buildStatusChangeMetadata, STATUS_CHANGE_EVENT_TYPE } from './statusEvents.js';
-import { validateClear, approxOrNull, validateAcquiredMature, validateQtyLost, validateQuantity } from './validate.js';
+import { validateClear, approxOrNull, validateAcquiredMature, validateQtyLost, validateQuantity, ALLOWED_LOSS, ALLOWED_CONTAINER } from './validate.js';
 import { reconcileNextWaterAt } from './waterVerdict.js';
 import { deriveAnchorOnCreate } from './anchorCreate.js';
 import { setOverwinterCore } from './overwinterAttr.js';
@@ -659,15 +659,42 @@ export const handler = async (event) => {
       // 400 is the right answer to a bad request, whereas mergeCore's failures are 409/422 outcomes
       // of a legitimate one. Only `quantity` is judged: overrides also carries qty_initial /
       // qty_current / qty_harvested / qty_lost, which are `integer` columns and out of this ticket.
+      //
+      // BUG-AUTHZLAMBDA-001 (B4/I19) — the rest of the override map gets the PUT's guards too.
+      // `overrides` must be a plain object: mergeCore's `col in overrides` throws a TypeError (500)
+      // on a string or a number. overrides.location_id lands in the winner UPDATE's
+      // `location_id = ${resolved.location_id}` (merge.js), so it is gated by the same ownership
+      // loader, log line and generic 400 as the PUT and the POST — without it a caller could pin
+      // the winner to another household's location. qty_lost, loss_cause and container_type reach
+      // the same UPDATE and take the same validators/allowlists as the two body verbs.
+      // variety_id stays ungated here exactly as on PUT/POST (plant_varieties is a global catalogue).
+      const ov = body.overrides ?? {};
+      if (typeof ov !== 'object' || ov === null || Array.isArray(ov)) {
+        return resp(400, { error: 'overrides must be an object' });
+      }
       const _qErrMerge = validateQuantity(body.overrides ?? {});
       if (_qErrMerge) return resp(400, { error: _qErrMerge });
+      const _qlErrMerge = validateQtyLost(ov);
+      if (_qlErrMerge) return resp(400, { error: _qlErrMerge });
+      if (ov.loss_cause != null && !ALLOWED_LOSS.includes(ov.loss_cause)) {
+        return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });
+      }
+      if (ov.container_type != null && !ALLOWED_CONTAINER.includes(ov.container_type)) {
+        return resp(400, { error: `container_type must be one of ${ALLOWED_CONTAINER.join(', ')} or null` });
+      }
+      if (ov.location_id != null) {
+        if (!await loadOwnedLocation(sql, ov.location_id, householdIds)) {
+          warnRejectedFk(userId, 'plants', 'location_id', ov.location_id);
+          return resp(400, { error: 'location_id does not match a location you can use' });
+        }
+      }
 
       const r = await mergeCore(sql, {
         winnerId,
         loserIds: body.loser_ids,
         opId: body.op_id,
         fingerprint: body.fingerprint ?? null,
-        overrides: body.overrides ?? {},
+        overrides: ov,
         groupLabel: body.group_label ?? null,
         dryRun: body.dry_run === true,
         userId,
@@ -1095,7 +1122,8 @@ export const handler = async (event) => {
         //
         // Canonical vocabulary: src/lib/eventTypes.js LOSS_REASONS, pinned to the migration ARRAY
         // and to gates.yml by that same test. Do not edit one copy.
-        const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown', 'animal_damage', 'culled'];
+        // BUG-AUTHZLAMBDA-001: ALLOWED_LOSS and ALLOWED_CONTAINER are now imported from validate.js,
+        // one literal each, shared by this PUT, the POST and the merge route.
         // V4-SOURCEFREE-001: source_type is free-text (like event_type). No server allowlist; DB CHECK dropped. UI dropdownRegistry is the single source of truth.
         // BUG-DIVERGENCEVOCAB-001: this list had ZERO overlap with plants_divergence_type_check
         // ('division','cutting','saved_seed_from'), so every value this allowlist admitted the DB
@@ -1109,7 +1137,6 @@ export const handler = async (event) => {
         // NULL already means "not recorded". Canonical source: migrations/v4-divergencevocab-001/
         // 0a-additive-ddl.sql; lambda/plants/divergence-enum.test.js parses it and fails on drift.
         const ALLOWED_DIVERGENCE = ['division', 'cutting', 'saved_seed_from'];
-        const ALLOWED_CONTAINER = ['fabric_bag','plastic_pot','terracotta','ceramic','raised_bed','in_ground','tray_cell','hanging_basket','window_box','trough','whiskey_barrel','soil_block','solo_cup','other'];
         if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
           return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });
         }
@@ -2133,14 +2160,13 @@ export const handler = async (event) => {
 
       // V1.2a-4 S1 (PROJ-RESCOPE): server-side enum validation. NULL allowed.
       // V4-LOSSEVENT-001 widened this to seven — the SCHEMA-FIRST deploy ordering and the whole
-      // rationale are on the PUT path above; this is its textual twin and both move together.
-      const ALLOWED_LOSS = ['pest', 'disease', 'weather', 'transplant_shock', 'unknown', 'animal_damage', 'culled'];
+      // rationale are on the PUT path above. ALLOWED_LOSS / ALLOWED_CONTAINER are the validate.js
+      // exports the PUT and the merge route also use (BUG-AUTHZLAMBDA-001), so they cannot drift.
       // V4-SOURCEFREE-001: source_type is free-text — no server allowlist (see PUT path).
       // BUG-DIVERGENCEVOCAB-001: must stay set-equal to plants_divergence_type_check. Rationale and
       // canonical source on the PUT path above; the drift guard asserts both copies match the
       // migration, so editing one without the other reds CI.
       const ALLOWED_DIVERGENCE = ['division', 'cutting', 'saved_seed_from'];
-      const ALLOWED_CONTAINER = ['fabric_bag','plastic_pot','terracotta','ceramic','raised_bed','in_ground','tray_cell','hanging_basket','window_box','trough','whiskey_barrel','soil_block','solo_cup','other'];
       if (body.loss_cause != null && !ALLOWED_LOSS.includes(body.loss_cause)) {
         return resp(400, { error: `loss_cause must be one of ${ALLOWED_LOSS.join(', ')} or null` });
       }

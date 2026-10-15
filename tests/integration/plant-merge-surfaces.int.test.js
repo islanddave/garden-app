@@ -47,6 +47,8 @@ afterAll(async () => {
     () => directSql`DELETE FROM event_log WHERE plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids})) OR project_id IN (SELECT id FROM plant_projects WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM entity WHERE planting_ref_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM plants WHERE created_by = ANY(${ids})`,
+    // After plants: plants.location_id references locations (the B4 override case seeds two).
+    () => directSql`DELETE FROM locations WHERE created_by = ANY(${ids})`,
     () => directSql`DELETE FROM plant_projects WHERE created_by = ANY(${ids})`,
     () => directSql`DELETE FROM audit_events WHERE actor_clerk_sub = ANY(${ids})`,
   ])
@@ -67,11 +69,11 @@ async function seedGroup(tag) {
   return { W, L1, L2, L3 }
 }
 
-async function merge(winner, losers) {
+async function merge(winner, losers, extra = {}) {
   setTestUserId(DAVE)
   return callHandler(handler, {
     method: 'POST', path: `/api/plants/${winner}/merge`,
-    body: { loser_ids: losers, op_id: randomUUID() }, userId: DAVE,
+    body: { loser_ids: losers, op_id: randomUUID(), ...extra }, userId: DAVE,
   })
 }
 
@@ -200,5 +202,49 @@ describe('planting merge — the §6a telemetry and source surfaces on a real en
     expect(await snapshotRepoints(r.body.merge_event_id, 'preservation_source'))
       .toEqual([{ id: a, old: L1 }, { id: b, old: L2 }, { id: retracted, old: L1 }]
         .sort((x, y) => x.id.localeCompare(y.id, 'en', { numeric: true })))
+  })
+})
+
+// BUG-AUTHZLAMBDA-001 (B4) — overrides.location_id lands in the winner UPDATE, so it takes the same
+// ownership gate as PUT/POST. OTHER is outside DAVE's household (the suite runs with no
+// GARDEN_HOUSEHOLD_IDS, so DAVE's household is [DAVE]). The own-location case is the control: without it
+// a route that refused every override would pass the foreign case.
+describe('planting merge — overrides.location_id is ownership-gated (B4)', () => {
+  const loc = async (owner, tag) => (await directSql`
+    INSERT INTO locations (name, slug, created_by)
+    VALUES (${`mrg-loc-${tag}-${RUN}`}, ${`mrg-loc-${tag}-${RUN}`}, ${owner}) RETURNING id`)[0].id
+
+  it('refuses another household\'s location with the generic 400 and merges nothing', async () => {
+    const { W, L1 } = await seedGroup('b4x')
+    const foreign = await loc(OTHER, 'foreign')
+    const opId = randomUUID()
+    setTestUserId(DAVE)
+    const r = await callHandler(handler, {
+      method: 'POST', path: `/api/plants/${W}/merge`,
+      body: { loser_ids: [L1], op_id: opId, overrides: { location_id: foreign } }, userId: DAVE,
+    })
+    expect(r.status, JSON.stringify(r.body)).toBe(400)
+    expect(r.body.error).toBe('location_id does not match a location you can use')
+    const [w] = await directSql`SELECT location_id FROM plants WHERE id = ${W}`
+    expect(w.location_id).toBeNull()
+    const [l] = await directSql`SELECT deleted_at FROM plants WHERE id = ${L1}`
+    expect(l.deleted_at).toBeNull()
+    const [ev] = await directSql`SELECT count(*)::int AS n FROM merge_event WHERE op_id = ${opId}`
+    expect(ev.n).toBe(0)
+  })
+
+  it('accepts the caller\'s own location and writes it onto the winner', async () => {
+    const { W, L1 } = await seedGroup('b4o')
+    const own = await loc(DAVE, 'own')
+    const r = await merge(W, [L1], { overrides: { location_id: own } })
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    const [w] = await directSql`SELECT location_id FROM plants WHERE id = ${W}`
+    expect(w.location_id).toBe(own)
+  })
+
+  it('refuses a non-object overrides with a 400, not a 500', async () => {
+    const { W, L1 } = await seedGroup('b4s')
+    const r = await merge(W, [L1], { overrides: 'location_id' })
+    expect(r.status, JSON.stringify(r.body)).toBe(400)
   })
 })
