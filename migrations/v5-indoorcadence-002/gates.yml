@@ -1,0 +1,99 @@
+# gates.yml
+# BUG-INDOORCADENCE-001 part 2 — water_interval_days_indoor on five variety profiles.
+#
+# Prod-only by construction, like v5-indoorcadence-001: 0a is keyed to live prod UUIDs that staging's
+# isolated Neon branch does not carry. Every gate naming a prod id is env: prod. "Armed" below means the
+# receipt exists and 0r has not marked it rolled back.
+
+pre:
+  - name: pre_five_profiles_as_read_on_prod
+    note: >
+      The five cultivar rows hold exactly the profile 0a's md5 guard was written against (read on prod
+      2026-10-14), with no indoor key yet. continuous:false; false by design once 0a runs.
+    env: prod
+    sql: |
+      SELECT 1 FROM public.care_profile cp
+        JOIN (VALUES
+          ('a29447b8-387f-4390-ac73-7e152efcbe8d'::uuid, '5421338c837dae75308c5df32312e817'),
+          ('e74d95b7-df0a-4948-9bf2-d5bfd1bbeeea'::uuid, '81f8ce0784e2747cf5a2ee469ec558b7'),
+          ('6b8e2195-5534-4bb6-aceb-c91a9daebc88'::uuid, 'fff6d33d22b85c1bd849b7d2c22a3e48'),
+          ('573c512c-f98a-4b1f-9fc6-c18afced8306'::uuid, 'f1da83d4f74e9ebd64f003074786bc8c'),
+          ('6834e8f5-2342-4605-9e82-e03f94f3143d'::uuid, 'ca6ecefc181fbc46514d1976ab831ffa')
+        ) AS v(id, md5_before) ON v.id = cp.id
+       WHERE md5(cp.profile::text) = v.md5_before
+         AND NOT (cp.profile ? 'water_interval_days_indoor')
+    expect: rowcount_eq
+    value: 5
+    continuous: false
+
+post:
+  - name: post_indoor_interval_stays_on_the_five_profiles
+    note: >
+      Goes red if a later backfill or profile rewrite strips the indoor key, or leaves it as something
+      the engine ignores (not a positive number), on any of the five rows. Any positive value passes, so
+      Dave can retune it. Self-armed on the receipt.
+    env: prod
+    sql: |
+      SELECT 1 FROM public.care_profile cp
+       WHERE cp.id IN ('a29447b8-387f-4390-ac73-7e152efcbe8d', 'e74d95b7-df0a-4948-9bf2-d5bfd1bbeeea',
+                       '6b8e2195-5534-4bb6-aceb-c91a9daebc88', '573c512c-f98a-4b1f-9fc6-c18afced8306',
+                       '6834e8f5-2342-4605-9e82-e03f94f3143d')
+         AND NOT (jsonb_typeof(cp.profile->'water_interval_days_indoor') = 'number'
+                  AND (cp.profile->>'water_interval_days_indoor')::numeric > 0)
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-indoorcadence-002'
+                        AND description NOT LIKE 'ROLLED BACK %')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_summer_intervals_untouched
+    note: >
+      0a merged keys in and changed no summer interval. continuous:false: an apply-time check, since Dave
+      may later retune a summer value.
+    env: prod
+    sql: |
+      SELECT 1 FROM public.care_profile cp
+        JOIN (VALUES
+          ('a29447b8-387f-4390-ac73-7e152efcbe8d'::uuid, 5, 2),
+          ('e74d95b7-df0a-4948-9bf2-d5bfd1bbeeea'::uuid, 7, 1),
+          ('6b8e2195-5534-4bb6-aceb-c91a9daebc88'::uuid, 7, 2),
+          ('573c512c-f98a-4b1f-9fc6-c18afced8306'::uuid, 5, 1),
+          ('6834e8f5-2342-4605-9e82-e03f94f3143d'::uuid, 4, 2)
+        ) AS v(id, indoor, summer) ON v.id = cp.id
+       WHERE cp.profile->'water_interval_days_indoor' = to_jsonb(v.indoor)
+         AND cp.profile->'water_interval_days_container' = to_jsonb(v.summer)
+         AND cp.profile->>'_indoor_source' = 'v5-indoorcadence-002'
+    expect: rowcount_eq
+    value: 5
+    continuous: false
+
+  - name: post_stable_plantings_resolve_the_indoor_interval
+    note: >
+      The five Stable plantings see the indoor value in v_resolved_care and still resolve their cadence
+      from the database (cadence_scopes non-empty; the view does not count the new key). Clears for a
+      planting deleted or archived since. continuous:false: a planting may move or gain its own profile.
+    env: prod
+    sql: |
+      SELECT 1 FROM public.plants p
+        JOIN public.v_resolved_care v ON v.leaf_id = p.id
+       WHERE p.id IN ('0064e3a9-3168-4fe0-a6eb-42fc84ad8a04', 'edfc68f5-2342-4605-9e82-e03f94f3143d',
+                      '39141bf6-fc5d-46a6-99d8-2a190906956a', '6cfdc63e-a62a-4408-b9b9-6edf913ff1ce',
+                      '2d50a15d-0bc3-4a37-a9aa-5a134df7b0a9')
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (v.resolved_profile->'water_interval_days_indoor' IS NULL OR cardinality(v.cadence_scopes) = 0)
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.0.0-indoorcadence-002'
+                        AND description NOT LIKE 'ROLLED BACK %')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: post_receipt_written
+    note: Apply-time receipt. continuous:false — an apply record, not a standing invariant.
+    env: prod
+    sql: |
+      SELECT 1 FROM public.schema_version
+       WHERE version = '5.0.0-indoorcadence-002' AND description NOT LIKE 'ROLLED BACK %'
+    expect: rowcount_eq
+    value: 1
+    continuous: false

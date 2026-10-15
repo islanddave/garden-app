@@ -29,7 +29,7 @@ import { T } from '../../lib/tokens.js'
 import { ErrorBanner, Button } from '../forms'
 import {
   partitionGoing, describeAge, describeStage, describeExpectedWindow,
-  FERMENT_STALL_NOTE, describeLastPhReading,
+  FERMENT_STALL_NOTE, CONDITIONING_NOTE, describeLastPhReading,
   OPEN_BATCH_CTA, CLOSED_DOOR_CTA, CHECK_ON_IT_CTA, cardQuestion, START_BATCH_CTA, TRY_AGAIN_CTA,
 } from './goingNow.js'
 import CheckOnItSheet from './CheckOnItSheet.jsx'
@@ -146,6 +146,22 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, s
           <div data-testid="going-batch-stall-note"
             style={{ marginTop: 3, color: P.light, fontSize: '0.78rem', lineHeight: 1.45 }}>
             {FERMENT_STALL_NOTE}
+          </div>
+        </div>
+      )}
+      {/* The conditioning question (FOODSAFETY-RULING-V101 §7), dehydrator batches in their jars only.
+          Painted exactly like the stall prompt: ordinary ink, the question is the door to Check on it,
+          and the attribution sits beneath it because the step and its failure signal are NCHFP's. No
+          countdown, no day count, no urgency colour — it asks about condensation and stops. */}
+      {question?.kind === 'conditioning' && (
+        <div style={{ marginTop: 4, color: P.mid, fontSize: '0.82rem' }}>
+          <button type="button" data-testid="going-question-link" onClick={() => onCheck?.(batch.id)} style={questionLink}>
+            <span data-testid="going-batch-conditioning">{question.text}</span>
+            <span aria-hidden="true" style={{ color: P.green }}>→</span>
+          </button>
+          <div data-testid="going-batch-conditioning-note"
+            style={{ marginTop: 3, color: P.light, fontSize: '0.78rem', lineHeight: 1.45 }}>
+            {CONDITIONING_NOTE}
           </div>
         </div>
       )}
