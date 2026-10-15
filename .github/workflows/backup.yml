@@ -32,7 +32,7 @@ jobs:
         # so it is what keeps the shared key warm for the less-frequent sites.
         # The key ends in the job's runner label, so binaries copied on one runner image
         # are never restored onto another (OPS-UBUNTU26MOVE-001). Moving `runs-on` means
-        # moving this suffix at all six sites; scripts/test_workflow_steps.py checks both.
+        # moving this suffix at all seven sites (pg17-cache-warm.yml included); scripts/test_workflow_steps.py checks both.
         id: pg17-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

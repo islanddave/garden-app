@@ -1721,7 +1721,8 @@ WARM_FETCH = "Fetch pg17 client from the postgres:17 image (miss, or force_refet
 WARM_FORCE_REFUSE = "Refuse to pretend force_refetch replaced an existing entry"
 NOT_MOVED = "nothing has moved (main has NOT been touched): re-run the failed jobs"
 # The promote job's timeout comment, in minutes: what a slowest-passing promote spends before the tooling, and
-# what it allows after the smoke gate for the Lambda decision, the FF and the snap. The rest is derived below.
+# what it allows after the smoke gate for the Lambda decision, the snap, the fresh token, the FF and the prune. The rest
+# is derived below.
 BEFORE_TOOLING_MIN, AFTER_SMOKE_MIN = 4, 10
 # A step that fetches tooling: an installer, a registry client or a downloader in its body, or any action at all
 # (a cache restore is a download, a credentials action a network exchange). snap.py talks to Neon, S3 and GitHub

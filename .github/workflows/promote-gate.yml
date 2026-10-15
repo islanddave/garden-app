@@ -32,9 +32,9 @@ name: promote-gate
 #      (PREFLIGHT — RUN-BASED below); the same for integration-test.yml (require_integration, default true).
 #   2. Version/tag skew gate — snap_version == v<package.json at dev_sha>, and that tag not already consumed.
 #   3. Prod schema gate — the L-081 audit of the promoted tree against PROD (require_schema_audit, default true).
-#   4. Snapshot tooling — the pg17 client and scripts/snap.py's Python imports, fetched and proven usable (here
+#   4. Snapshot tooling — the pg17 client and scripts/snap.py's Python imports, restored or installed and proven usable (here
 #      since 2026-10-07; until then they were prepared AFTER the FF). Never a verdict on the promoted code: a red
-#      one is a runner, cache, registry or PyPI fault, and the remedy is to re-run the failed jobs.
+#      one is a runner, Actions cache or PyPI fault (the pg17 client is restored from the cache only: a miss refuses), and the remedy is to re-run the failed jobs.
 #   5. Write-path staging smoke gate — deploy-staging on the exact dev SHA, smoke-tests = success.
 # Then the Lambda deploy decision, which fails CLOSED to "deploy", never to "skip". Then the snap (snap.py
 # --no-prune), a fresh bot token, and the FF. After the FF the job runs one step, the prune (never fatal).
@@ -274,9 +274,9 @@ jobs:
     # SNAPSHOT TOOLING (2026-10-07). The pg17 and python deps steps ran after the FF, inside the "~10 min FF and
     # snap" above; they now run before the staging smoke. Same steps, same job, so no sum above changes: only
     # the side of the FF their share falls on, about 3 s on a cache hit. They are bounded now, and a bound
-    # reached is a refusal before the FF. If the three limited ones (cache 2, fetch 4, deps 5 min) each ran to
-    # just under its limit and passed, the first sum becomes 48.5 + 11 = 59.5 min, still inside this limit
-    # (scripts/test_workflow_steps.py derives the 11 and the 34.5 from the steps and pins the sum: change a
+    # reached is a refusal before the FF. If the two limited ones (cache 2, deps 5 min; the fetch step went with OPS-SCHEMACHECKAPT-001) each ran
+    # to just under its limit and passed, the first sum becomes 48.5 + 7 = 55.5 min, still inside this limit
+    # (scripts/test_workflow_steps.py derives the 7 and the 34.5 from the steps and pins the sum: change a
     # bound and that test together). The opted-out all-hang sums (57.5, 59.5) have no room for that as well;
     # there the limit would end the job before the FF or inside snap, where the same durations used to end it
     # after the FF every time. Since the snap moved above the FF (BUG-PROMOTEFFORDER-001, 2026-10-15) the job limit
@@ -663,7 +663,7 @@ jobs:
           set -uo pipefail
           for tool in pg_dump pg_dumpall; do
             if ! "/usr/lib/postgresql/17/bin/$tool" --version; then
-              echo "::error title=Snapshot tooling (pre-FF)::/usr/lib/postgresql/17/bin/$tool does not run, and scripts/snap.py calls it after the fast-forward — nothing has moved (main has NOT been touched): re-run the failed jobs. If it fails the same way again the cached copy is bad: delete the Actions cache entry pg17-client-postgres17-image-v1-runner-ubuntu-26.04 on BOTH refs/heads/dev and refs/heads/main (a dev run falls back to main's entry), warm it again (push a commit to dev that touches .github/workflows/pg17-cache-warm.yml, or dispatch pg17-cache-warm.yml once it is on main), then re-run the failed jobs. Not a verdict on the promoted code."
+              echo "::error title=Snapshot tooling (pre-FF)::/usr/lib/postgresql/17/bin/$tool does not run, and scripts/snap.py calls it just before the fast-forward — nothing has moved (main has NOT been touched): re-run the failed jobs. If it fails the same way again the cached copy is bad: delete the Actions cache entry pg17-client-postgres17-image-v1-runner-ubuntu-26.04 on BOTH refs/heads/dev and refs/heads/main (a dev run falls back to main's entry), warm it again (push a commit to dev that touches .github/workflows/pg17-cache-warm.yml, or dispatch pg17-cache-warm.yml once it is on main), then re-run the failed jobs. Not a verdict on the promoted code."
               exit 1
             fi
           done
