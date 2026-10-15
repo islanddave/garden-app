@@ -98,6 +98,13 @@ describe('baseWaterInterval: the indoor key replaces the interval only indoors',
     }
   });
 
+  it('a tray-class vessel indoors (cells, soil blocks, solo cups) ignores it: a sowing is not an adult pot', () => {
+    for (const container_type of ['tray_cell', 'soil_block', 'solo_cup']) {
+      const p = P({ container_type, container_size: null });
+      expect(baseWaterInterval(p, cOf(p), cad), container_type).toBe(2);
+    }
+  });
+
   it('a bundled-fallback planting with no key keeps the house default', () => {
     const p = P({ cadence_scopes: [], db_cadence: null, variety: null, name: 'Mystery', genus: null });
     expect(baseWaterInterval(p, cOf(p), cad)).toBe(cad.default.water_interval_days_container);
@@ -190,7 +197,7 @@ const ROWS = [
   { row: 'a29447b8-387f-4390-ac73-7e152efcbe8d', cultivar: 'be1211e0-0e4f-41c2-a37d-f48c313aac0b', md5: '5421338c837dae75308c5df32312e817',
     planting: '0064e3a9-3168-4fe0-a6eb-42fc84ad8a04', name: 'Ginger', crop: 'ginger', summer: 2, indoor: 5, ct: 'plastic_pot', size: '10 in' },
   { row: 'e74d95b7-df0a-4948-9bf2-d5bfd1bbeeea', cultivar: '72ebf73c-bf46-429a-bb2d-3243e3d0826d', md5: '81f8ce0784e2747cf5a2ee469ec558b7',
-    planting: 'edfc68f5-2342-4605-9e82-e03f94f3143d', name: 'Lemon Verbena', crop: 'lemon verbena', summer: 1, indoor: 7, ct: 'fabric_bag', size: '5 gal' },
+    planting: 'edfc68f5-a28a-484a-8be6-dd00b4067dde', name: 'Lemon Verbena', crop: 'lemon verbena', summer: 1, indoor: 7, ct: 'fabric_bag', size: '5 gal' },
   { row: '6b8e2195-5534-4bb6-aceb-c91a9daebc88', cultivar: 'db83be63-5344-4615-9399-4eb0644dce14', md5: 'fff6d33d22b85c1bd849b7d2c22a3e48',
     planting: '39141bf6-fc5d-46a6-99d8-2a190906956a', name: 'Lemon Thyme', crop: 'thyme', summer: 2, indoor: 7, ct: 'ceramic', size: '4 in' },
   { row: '573c512c-f98a-4b1f-9fc6-c18afced8306', cultivar: 'ba9e69e5-b8e5-40ea-a4a4-aeee7411ddd2', md5: 'f1da83d4f74e9ebd64f003074786bc8c',
@@ -279,8 +286,10 @@ describe('gates.yml carries the same rows and values as 0a', () => {
     const s = gate('post_summer_intervals_untouched');
     for (const r of ROWS) expect(s).toContain(`('${r.row}'::uuid, ${r.indoor}, ${r.summer})`);
     const v = gate('post_stable_plantings_resolve_the_indoor_interval');
-    for (const r of ROWS) expect(v).toContain(r.planting);
+    for (const r of ROWS) expect(v).toContain(`('${r.planting}'::uuid, '${r.cultivar}'::uuid)`);
     expect(v).not.toContain(TROUGH_COLEUS);
+    // counts matches, so a mistyped planting id reds instead of passing vacuously (impact pass, 10-14)
+    expect(v).toMatch(/expect: rowcount_eq\n\s+value: 5\n/);
   });
 
   it('every gate that names a prod id is env: prod', () => {
