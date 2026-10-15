@@ -1112,11 +1112,13 @@ def test_deploy_staging_job_graph_is_what_the_promote_staging_gate_reads():
     for job, body in jobs.items():  # a skipped or advisory job would let the run conclude without the smoke
         assert "if" not in body and "continue-on-error" not in body and "name" not in body, job
     # ...and so would an advisory STEP: `smoke-tests = success` must mean every step of the chain passed. The Lambda
-    # legs carry the only advisory steps (six config steps the staging role may lack the permission for; the sixth,
-    # V4-CROPTYPERETIRE-001, is ADMIN_CLERK_SUBS on garden-varieties-staging, and the smoke's block V says which path it took).
+    # legs carry the only advisory steps (seven config steps the staging role may lack the permission for; the sixth,
+    # V4-CROPTYPERETIRE-001, is ADMIN_CLERK_SUBS on garden-varieties-staging, and the smoke's block V says which path it took;
+    # the seventh, BUG-AUTHZLAMBDA-001, is GARDEN_HOUSEHOLD_IDS on garden-shared-state-staging, and a miss there 403s
+    # both shared-state smoke blocks, so the smoke still fails red rather than passing on a skipped step).
     advisory = {job: [s.get("name") for s in body["steps"] if "continue-on-error" in s] for job, body in jobs.items()}
     assert {job: len(names) for job, names in advisory.items()} == {
-        "deploy-lambdas": 6, "deploy-frontend": 0, "db-schema-check": 0, "smoke-tests": 0}, advisory
+        "deploy-lambdas": 7, "deploy-frontend": 0, "db-schema-check": 0, "smoke-tests": 0}, advisory
     assert "inputs.dev_sha" in wf["run-name"] and wf["run-name"].startswith("staging ")
     legs = len(jobs["deploy-lambdas"]["strategy"]["matrix"]["function"])
     assert jobs["deploy-lambdas"]["strategy"]["fail-fast"] is False

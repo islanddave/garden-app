@@ -146,6 +146,40 @@ def test_deploy_workflow_sets_the_rain_autolog_key_the_manifest_declares():
         "the merge must preserve an existing value — a deploy that re-arms a kill switch is not one"
 
 
+def test_deploy_workflow_sets_the_household_key_the_manifest_declares():
+    """BUG-AUTHZLAMBDA-001 — same rule as above for GARDEN_HOUSEHOLD_IDS on the two functions that
+    joined in that fix: shared-state (membership gate, fails closed to 403) and daily-plan
+    (household(Space)). Each must be in the `if:` of the deploy step that read-merges the key, or
+    the manifest declaration has no setter behind it and a wiped key reds every promote with
+    nothing in the deploy to restore it. Named explicitly, so dropping the manifest line and the
+    `if:` term together cannot pass. (Older household fns had the key set by hand and are not in
+    that `if:`; this test does not widen to them.)
+    """
+    import re
+    wf = os.path.join(os.path.dirname(__file__), "..", ".github", "workflows", "deploy-lambda.yml")
+    with open(wf) as fh:
+        lines = [l for l in fh.read().splitlines() if not l.strip().startswith("#")]
+    step = [i for i, l in enumerate(lines)
+            if l.strip().startswith("- name: Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped fns")]
+    assert len(step) == 1, "the household ensure step is missing or duplicated"
+    cond = lines[step[0] + 1].strip()
+    assert cond.startswith("if: "), "the household ensure step's `if:` must directly follow its name"
+    gated = set(re.findall(r"matrix\.function == '([a-z0-9-]+)'", cond))
+    body = "\n".join(lines[step[0]:step[0] + 40])
+    assert "GARDEN_HOUSEHOLD_IDS: $v" in body and "get-function-configuration" in body, \
+        "the step must read-merge the key (read the live env, add the key), never set-not-merge"
+    for fn in ("shared-state", "daily-plan"):
+        assert fn in gated, "%s is not in the household ensure step's `if:`" % fn
+        assert clc.load_manifest()["garden-" + fn]["env"].get("GARDEN_HOUSEHOLD_IDS") is True, \
+            "garden-%s must declare GARDEN_HOUSEHOLD_IDS present" % fn
+    inv = os.path.join(os.path.dirname(__file__), "..", ".github", "workflows", "verify-lambda-invariants.yml")
+    with open(inv) as fh:
+        loops = [l for l in fh.read().splitlines()
+                 if l.strip().startswith("for k in DRY_RUN SYSTEM_CLERK_SUB OWNER_FALLBACK_SUB")]
+    assert len(loops) == 1 and "GARDEN_HOUSEHOLD_IDS" in loops[0].split(";")[0].split(), \
+        "verify-lambda-invariants' daily-plan invariant-1 key loop must assert GARDEN_HOUSEHOLD_IDS"
+
+
 def test_manifest_declares_every_env_var_daily_plan_reads():
     """The daily-plan flag set is declared EXHAUSTIVELY — a read-but-undeclared var is how
     CARE_WATER_LEDGER_ENABLED stayed invisible. Adding a process.env read must add a declaration."""
