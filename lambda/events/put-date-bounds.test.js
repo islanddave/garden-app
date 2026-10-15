@@ -12,7 +12,7 @@
 // pinned so the bounds do not drift with the calendar.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
-import { eventDateBoundsError, PUT_FUTURE_BOUND_MS } from './validators.js';
+import { eventDateBoundsError, PUT_FUTURE_BOUND_MS, validatePostBody, validateBatchBody } from './validators.js';
 
 const rec = vi.hoisted(() => ({ sent: [], tx: 0, respond: () => [] }));
 
@@ -97,6 +97,13 @@ describe('eventDateBoundsError — the one helper, future allowance as an argume
   });
   it('now itself passes', () => {
     expect(eventDateBoundsError(NOW, now, 3600e3)).toBeNull();
+  });
+  it('POST and batch keep the 1h allowance: 12h ahead is refused by both (the PUT\'s 24h did not leak)', () => {
+    const ahead = new Date(now + 12 * 3600e3).toISOString();
+    expect(validatePostBody({ event_type: 'observation', project_id: 'proj-1', event_date: ahead })?.error)
+      .toBe('event_date in future');
+    expect(validateBatchBody({ idempotency_key: 'k', event_type: 'watering', scope: { type: 'all' }, event_date: ahead })?.error)
+      .toBe('event_date in future');
   });
 });
 
