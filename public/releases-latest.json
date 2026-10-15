@@ -1,7 +1,7 @@
 {
-  "version": "4.190.1",
-  "date": "2026-10-14",
+  "version": "5.0.0",
+  "date": "2026-10-15",
   "highlights": [
-    "Plants wintering in the Stable or House can have their own, longer watering interval"
+    "Today, new page preview (More › Debug & smoke › New Today): a glance card at the top with tonight's frost and cold warnings, a jump bar to each section, and one row per plant saying what it needs."
   ]
 }
