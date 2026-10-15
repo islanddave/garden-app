@@ -1093,7 +1093,7 @@ const COVER_INHERIT_ARM = `
 // NOT a call to POST /api/events/batch, deliberately — see rainLog.js. The care cache is maintained
 // here exactly as the batch path maintains it; XP, streaks, achievements, critters and app_events
 // telemetry are NOT fired, because auto-logged rain is not a logging action Dave performed.
-async function logRainEvents(pg, { today, dryRun, event, etHour }) {
+async function logRainEvents(pg, { today, dryRun, event, etHour, spaces = [] }) {
   const t0 = Date.now();
   // BUG-RAINAUTOLOGCLIFF-001: `flag` names WHERE the arming decision came from, and it rides EVERY
   // exit path including the catch — so "the rain logger is on" and "the rain logger is on because
@@ -1110,81 +1110,131 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
     const day = previousDay(today);
     if (!day) return say({ logged: 0, skipped: 'bad_plan_date' });
 
-    // Gauge-sourced rows only, and ordered so a multi-Space future takes the wettest rather than an
-    // arbitrary one. Prod has a single Space today; this is not a guess about which is right for
-    // several, it is a deterministic choice so the behaviour is at least reproducible if one appears.
-    const { rows: wrows } = await pg.query(
-      `select precip_in, precip_source from weather_daily
-        where "date" = $1 order by precip_in desc nulls last limit 1`, [day]);
-    const d = rainDecision(wrows[0]);
-    if (!d.log) return say({ day, logged: 0, skipped: d.reason, amount_in: d.amountIn });
+    // BUG-AUTHZLAMBDA-001 — PER SPACE, over the Spaces run() already read (no re-query, no "one Space"
+    // assumption). Each Space reads its OWN weather_daily row, decides on it, and writes only its own
+    // household's plantings. This used to take the wettest row of any Space and write every planting in
+    // the database. A Space with no row for the day (no coordinates, so nothing was ever written for it)
+    // is skipped as no_weather_row. An unowned Space owns nothing, so it is skipped before any read.
+    const perSpace = [];
+    let logged = 0;
+    for (const s of spaces) {
+      const sc = spaceScope(s.created_by);
+      const one = (o) => perSpace.push({ space_id: s.id, logged: 0, ...o });
+      if (!sc.members.length) { one({ skipped: 'space_owner_missing' }); continue; }
+      const { rows: wrows } = await pg.query(
+        `select precip_in, precip_source from weather_daily
+          where "date" = $1 and space_id = $2::uuid limit 1`, [day, s.id]);
+      const d = rainDecision(wrows[0]);
+      if (!d.log) { one({ skipped: d.reason, amount_in: d.amountIn }); continue; }
 
-    // ── the once-a-day cap. LOAD-BEARING, not belt-and-braces ──────────────────────────────────
-    // resolveRainRun's window is 00:00–05:59 ET and BOTH the nightly (02:00) and intraday-am (05:30)
-    // runs fall inside it — rainLog.test.js pins that overlap on purpose. This guard is the only
-    // thing standing between Dave's "once a day at most" and two identical fan-outs 3.5 hours apart.
-    // It also makes a manual re-run via scripts/rerun-daily-plan.sh safe.
-    const { rows: already } = await pg.query(
-      `select 1 from event_log
-        where event_type = 'rain' and deleted_at is null and event_date::date = $1 limit 1`, [day]);
-    if (already.length) return say({ day, logged: 0, skipped: 'already_logged', amount_in: d.amountIn });
+      // ── the once-a-day cap. LOAD-BEARING, not belt-and-braces ────────────────────────────────
+      // resolveRainRun's window is 00:00–05:59 ET and BOTH the nightly (02:00) and intraday-am (05:30)
+      // runs fall inside it — rainLog.test.js pins that overlap on purpose. It also makes a manual
+      // re-run via scripts/rerun-daily-plan.sh safe.
+      // TWO HALVES since BUG-AUTHZLAMBDA-001, because one database-wide "any rain row that day" let one
+      // Space (or one household) suppress every other, and let a run that wrote only some plantings
+      // (GARDEN_HOUSEHOLD_IDS missing) block the run that would have written the rest:
+      //   * here, the day: rain the household HAND-LOGGED in this Space — on a planting, or on a
+      //     container (plant_id NULL) — means the day is already recorded, so the gauge adds nothing.
+      //     A row this writer made carries metadata.precip_source (rainMetadata); a hand-logged one
+      //     does not, the same test readLedgerEvents uses. The owner is the subject's, by the two-arm
+      //     rule, exactly as in the INSERT.
+      //   * in the INSERT, the planting: no planting gets a second rain row for the day.
+      const { rows: already } = await pg.query(
+        `select 1 from event_log e
+           left join garden_node n on n.id = e.plant_id
+           left join container c on c.id = (case when e.plant_id is null then e.project_id else n.container_id end)
+          where e.event_type = 'rain' and e.deleted_at is null and e.event_date::date = $1
+            and e.metadata->>'precip_source' is null
+            and coalesce(n.workspace_id, c.workspace_id) = $2::uuid
+            and (c.created_by = any($3::text[]) or (c.id is null and n.created_by = any($3::text[])))
+          limit 1`, [day, s.id, sc.members]);
+      if (already.length) { one({ skipped: 'already_logged', amount_in: d.amountIn }); continue; }
 
-    if (dryRun) return say({ day, logged: 0, skipped: 'dry_run', amount_in: d.amountIn, would_log: true });
+      if (dryRun) { one({ skipped: 'dry_run', amount_in: d.amountIn, would_log: true }); continue; }
 
-    // Ownership context for the transfer trigger, same as every other writer.
-    await pg.query(`select set_config('app.actor_clerk_sub', $1, true)`, [SYSTEM_ACTOR_FALLBACK]);
+      // Ownership context for the transfer trigger, same as every other writer.
+      await pg.query(`select set_config('app.actor_clerk_sub', $1, true)`, [SYSTEM_ACTOR_FALLBACK]);
 
-    // Column list, join shape and NULL semantics mirror lambda/events/index.js's batch INSERT, and
-    // the roof rule mirrors migrations/v4-rainbackfill-001. LEFT JOIN container, never INNER
-    // (BUG-LOGMANYPROJECTLESS-001): a project-less planting must still get its row.
+      // Column list, join shape and NULL semantics mirror lambda/events/index.js's batch INSERT, and
+      // the roof rule mirrors migrations/v4-rainbackfill-001. LEFT JOIN container, never INNER
+      // (BUG-LOGMANYPROJECTLESS-001): a project-less planting must still get its row.
+      //
+      // OPS-RAININSERTCONTAINERFILTER-001: a planting whose CONTAINER is soft-deleted or archived gets
+      // none. Neither state cascades to the plantings (lambda/projects/index.js sets the container's own
+      // column and nothing else), so gn's filter cannot see it. A row written there is hidden on arrival
+      // (the events feed drops a deleted or archived container's events; the plants API 404s a planting
+      // whose container is deleted) and resurfaces, one per rain day, on restore or unarchive. The
+      // predicate is the anchor re-derivation target's (REDERIVE_CTE, pj there); `ct.id is null` is the
+      // project-less arm. Guarded at write time by rain-live-filter.test.js, which parses it out of this
+      // statement. The v4-rainbackfill-001 backfill predates this and has no container filter.
+      //
+      // BUG-RAINONENDEDPLANTINGS-001 (Dave, 2026-09-19): rain goes where the plan looks. The status test
+      // is the plantings query's own, word for word (the ANCHOR vocabulary in
+      // lambda/live-planting-predicate-sync.test.js), so an ended or failed planting stops collecting rain
+      // rows — they only ever reached display surfaces, where a dug crop showed "Next watering" after each
+      // rain. Dormant and every growing status (Harvesting included) are credited as before: a dormant
+      // perennial is still in the ground, and its rain becomes last_water when it is resumed. Existing
+      // rows are left alone. The backfill has no status filter either. rain-live-filter.test.js pins
+      // the set and compares it, status by status, with the plantings query's.
+      const { rowCount } = await pg.query(
+        `insert into event_log
+           (project_id, location_id, plant_id, event_type, event_date, is_public,
+            logged_by, created_by, quantity_numeric, metadata, source, notes)
+         -- ALIASES ARE gn/ct, NOT p/pp, DELIBERATELY. archived-exclusion.test.js is a source-text guard
+         -- that locates the plantings query by grepping this file for the phrase
+         --   where p.deleted_at is null and p.archived_at is null
+         -- and then asserts what follows it. Written with a p alias, THIS query appears earlier in the
+         -- file and the guard latched onto it instead — passing its own vacuity floor while checking
+         -- the wrong statement. The guard is correct; this query was shadowing its anchor. Do not
+         -- rename these back. (Note also: no backticks anywhere in this block. It lives inside a
+         -- template literal, so one would end the string mid-SQL.)
+         select ct.id, ct.location_id, gn.id, 'rain', ($1::date + time '12:00')::timestamptz, true,
+                gn.created_by, gn.created_by, $2::numeric, $3::jsonb, 'import',
+                'Rain recorded by the on-site weather station.'
+           from garden_node gn
+           left join container ct on ct.id = gn.container_id
+          where gn.deleted_at is null and gn.archived_at is null
+            and not coalesce((
+                  with recursive up as (
+                    select l.id, l.parent_id, l.covered from locations l
+                     where l.id = gn.location_id and l.deleted_at is null
+                    union all
+                    select l.id, l.parent_id, l.covered from up
+                      join locations l on l.id = up.parent_id and l.deleted_at is null
+                  ) select bool_or(up.covered) from up), false)
+            and (ct.id is null or (ct.deleted_at is null and ct.archived_at is null))
+            and (gn.status is null or gn.status not in ('ended','failed','dead','archived'))
+            -- BUG-AUTHZLAMBDA-001: this Space's plantings, of this Space's household only (the two-arm
+            -- rule: the container's owner, or the creator of a project-less planting), and none that
+            -- already has a rain row for the day. That last term is the per-planting half of the cap:
+            -- a second run in the window writes nothing twice, and a run after a degraded one fills only
+            -- the plantings it missed. Evaluated by rain-live-filter.test.js (the owner pass).
+            and gn.workspace_id = $4::uuid
+            and (ct.created_by = any($5::text[]) or (gn.container_id is null and gn.created_by = any($5::text[])))
+            and not exists (select 1 from event_log r
+                             where r.plant_id = gn.id and r.event_type = 'rain' and r.deleted_at is null
+                               and r.event_date::date = $1::date)`,
+        [day, d.amountIn, JSON.stringify(rainMetadata(d.amountIn)), s.id, sc.members]);
+      logged += rowCount || 0;
+      // Zero written = every eligible planting already had its row (the later in-window run); named, as
+      // the old cap's already_logged was, so that run is not mistaken for a dry Space.
+      one(rowCount ? { logged: rowCount, amount_in: d.amountIn } : { skipped: 'already_credited', amount_in: d.amountIn });
+    }
+    // ONE rain-log line per invocation whatever the Space count (scripts/weather-observability.sh counts
+    // them), with each Space's outcome in `spaces`. Top-level `skipped` is the shared reason when every
+    // Space was skipped for the same one, else 'per_space'.
+    const reasons = [...new Set(perSpace.map((x) => x.skipped))];
+    if (!logged) {
+      return say({ day, logged: 0, skipped: !perSpace.length ? 'no_spaces' : reasons.length === 1 && reasons[0] ? reasons[0] : 'per_space',
+        slot: decisionRun.slot, spaces: perSpace });
+    }
+
+    // ONCE per invocation, after the loop, and only when some Space wrote a row: a later run in the
+    // window inserts nothing (the per-planting term above) and leaves the cache alone, as the old
+    // database-wide cap did. The statements are Space-neutral (they recompute every cache row), so
+    // running them per Space would only repeat them.
     //
-    // OPS-RAININSERTCONTAINERFILTER-001: a planting whose CONTAINER is soft-deleted or archived gets
-    // none. Neither state cascades to the plantings (lambda/projects/index.js sets the container's own
-    // column and nothing else), so gn's filter cannot see it. A row written there is hidden on arrival
-    // (the events feed drops a deleted or archived container's events; the plants API 404s a planting
-    // whose container is deleted) and resurfaces, one per rain day, on restore or unarchive. The
-    // predicate is the anchor re-derivation target's (REDERIVE_CTE, pj there); `ct.id is null` is the
-    // project-less arm. Guarded at write time by rain-live-filter.test.js, which parses it out of this
-    // statement. The v4-rainbackfill-001 backfill predates this and has no container filter.
-    //
-    // BUG-RAINONENDEDPLANTINGS-001 (Dave, 2026-09-19): rain goes where the plan looks. The status test
-    // is the plantings query's own, word for word (the ANCHOR vocabulary in
-    // lambda/live-planting-predicate-sync.test.js), so an ended or failed planting stops collecting rain
-    // rows — they only ever reached display surfaces, where a dug crop showed "Next watering" after each
-    // rain. Dormant and every growing status (Harvesting included) are credited as before: a dormant
-    // perennial is still in the ground, and its rain becomes last_water when it is resumed. Existing
-    // rows are left alone. The backfill has no status filter either. rain-live-filter.test.js pins
-    // the set and compares it, status by status, with the plantings query's.
-    const { rowCount: inserted } = await pg.query(
-      `insert into event_log
-         (project_id, location_id, plant_id, event_type, event_date, is_public,
-          logged_by, created_by, quantity_numeric, metadata, source, notes)
-       -- ALIASES ARE gn/ct, NOT p/pp, DELIBERATELY. archived-exclusion.test.js is a source-text guard
-       -- that locates the plantings query by grepping this file for the phrase
-       --   where p.deleted_at is null and p.archived_at is null
-       -- and then asserts what follows it. Written with a p alias, THIS query appears earlier in the
-       -- file and the guard latched onto it instead — passing its own vacuity floor while checking
-       -- the wrong statement. The guard is correct; this query was shadowing its anchor. Do not
-       -- rename these back. (Note also: no backticks anywhere in this block. It lives inside a
-       -- template literal, so one would end the string mid-SQL.)
-       select ct.id, ct.location_id, gn.id, 'rain', ($1::date + time '12:00')::timestamptz, true,
-              gn.created_by, gn.created_by, $2::numeric, $3::jsonb, 'import',
-              'Rain recorded by the on-site weather station.'
-         from garden_node gn
-         left join container ct on ct.id = gn.container_id
-        where gn.deleted_at is null and gn.archived_at is null
-          and not coalesce((
-                with recursive up as (
-                  select l.id, l.parent_id, l.covered from locations l
-                   where l.id = gn.location_id and l.deleted_at is null
-                  union all
-                  select l.id, l.parent_id, l.covered from up
-                    join locations l on l.id = up.parent_id and l.deleted_at is null
-                ) select bool_or(up.covered) from up), false)
-          and (ct.id is null or (ct.deleted_at is null and ct.archived_at is null))
-          and (gn.status is null or gn.status not in ('ended','failed','dead','archived'))`,
-      [day, d.amountIn, JSON.stringify(rainMetadata(d.amountIn))]);
-
     // Care cache, FORWARD ONLY (GREATEST), recomputed FROM event_log rather than from the amount
     // above — so it stays correct even if the insert matched fewer rows than expected, and can never
     // walk the cache backwards into V4-CARECACHEUNDO-001's territory.
@@ -1253,7 +1303,7 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
          updated_at      = now()`);
     const cached = cachedPlant + cachedProject;
 
-    return say({ day, logged: inserted, cache_rows: cached, amount_in: d.amountIn, slot: decisionRun.slot });
+    return say({ day, logged, cache_rows: cached, slot: decisionRun.slot, spaces: perSpace });
   } catch (e) {
     // Fail-open: log and return. The plan is already written and must not be lost to this.
     console.error(JSON.stringify({ msg: 'rain-log ERROR', today, flag, error: e?.message ?? String(e) }));
@@ -2186,7 +2236,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // V4-RAINAUTOLOG-001 part 2. Placed HERE on purpose: after every plan row is durably written, and
   // before the frost throw below, so a rain-log problem can never cost the plan and can never mask
   // a frost publish failure. Fail-open internally; never throws.
-  await logRainEvents(pg, { today, dryRun, event, etHour });
+  await logRainEvents(pg, { today, dryRun, event, etHour, spaces });
 
   // §3-7 fail LOUD, after every plan row is durably written. The daily plan itself must not be lost to an
   // SNS outage, but the invocation MUST be marked failed so garden-daily-plan-errors pages. Throwing here

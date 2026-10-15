@@ -68,9 +68,12 @@ function recordingPg({ throwOnWeatherDaily = false, weatherRows = [] } = {}) {
         return { rows: [] };
       }
       if (/from plants/.test(sql)) return { rows: PLANTINGS };
+      // created_by: BUG-AUTHZLAMBDA-001 — the rain logger skips an unowned Space before it reads.
       if (/from spaces/.test(sql)) {
-        return { rows: [{ id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6 }] };
+        return { rows: [{ id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6, created_by: 'user_dave' }] };
       }
+      // A row written, as on a rain night: the cache upserts run only after a Space wrote one.
+      if (/^\s*insert into event_log/i.test(sql)) return { rows: [], rowCount: 1 };
       return { rows: [] };
     }),
     calls,

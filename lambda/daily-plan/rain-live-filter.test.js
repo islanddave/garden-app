@@ -792,7 +792,9 @@ const NONE_ADMITTED = Object.fromEntries(Object.keys(OWNER_ADMITTED).map((k) => 
 // `space` names the planting's Space column when the statement must carry a Space term (the writer); the
 // state then gains `spaceMatch`. Returns the members expression and the Space bind actually used, so a
 // caller can check them against the run's parameters.
-function ownerModelOf(flat, { container, planting, fk, space = null }) {
+// `extra` pins further exact terms (text -> state => value); `extraOwned` names more columns that must
+// only appear in a recognised term.
+function ownerModelOf(flat, { container, planting, fk, space = null, extra = {}, extraOwned = [] }, states = null) {
   const expr = boolTree(outerWhereOf(flat))
   const terms = []
   const walk = (n) => {
@@ -801,11 +803,12 @@ function ownerModelOf(flat, { container, planting, fk, space = null }) {
     if (n.args) n.args.forEach(walk)
   }
   walk(expr)
-  const owned = [`${container}.created_by`, `${planting}.created_by`, fk, ...(space ? [space] : [])]
+  const owned = [`${container}.created_by`, `${planting}.created_by`, fk, ...(space ? [space] : []), ...extraOwned]
   const pinned = new Map()
   const members = new Set()
   const spaceBinds = new Set()
-  const any = (col) => new RegExp(`^${col.replace('.', '\\.')} = any \\( (.+) \\)$`)
+  const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const any = (col) => new RegExp(`^${esc(col)} = any \\( (.+) \\)$`)
   for (const t of terms) {
     let m
     if ((m = t.text.match(any(`${container}.created_by`)))) {
@@ -814,9 +817,10 @@ function ownerModelOf(flat, { container, planting, fk, space = null }) {
       members.add(m[1]); pinned.set(t.text, (s) => s.creatorIn)
     } else if (t.text === `${fk} is null`) pinned.set(t.text, (s) => !s.inContainer)
     else if (t.text === `${fk} is not null`) pinned.set(t.text, (s) => s.inContainer)
-    else if (space && (m = t.text.match(new RegExp(`^${space.replace('.', '\\.')} = (.+)$`)))) {
+    else if (space && (m = t.text.match(new RegExp(`^${esc(space)} = (.+)$`)))) {
       spaceBinds.add(m[1]); pinned.set(t.text, (s) => s.spaceMatch)
-    } else if (owned.some((c) => t.tokens.includes(c))) {
+    } else if (Object.hasOwn(extra, t.text)) pinned.set(t.text, extra[t.text])
+    else if (owned.some((c) => t.tokens.includes(c))) {
       throw new Error(`an owner term is buried inside a larger expression the guard cannot evaluate: ${t.text.slice(0, 90)}…`)
     }
   }
@@ -836,6 +840,8 @@ function ownerModelOf(flat, { container, planting, fk, space = null }) {
   }
   const withSpace = (match) => Object.fromEntries(Object.entries(OWNER_STATES).map(([k, s]) => [k, { ...s, spaceMatch: match }]))
   return {
+    expr,
+    admitsAll: states ? admitsFor(states) : null,
     members: [...members][0] ?? null,
     spaceBind: [...spaceBinds][0] ?? null,
     spaceTerms: spaceBinds.size,
@@ -896,5 +902,76 @@ describe('BUG-AUTHZLAMBDA-001 — the daily plan takes only the Space household\
     ]) expect(of(w), w).toEqual(admits)
     expect(() => of(`${P} and coalesce(pj.created_by, p.created_by) = any(hh.members)`)).toThrow(/buried/)
     expect(() => of(`${P} and (${C} or (p.project_id is null and p.created_by = any(hh.others)))`)).toThrow(/different member lists/)
+  })
+})
+
+// ── the writer's owner pass ──────────────────────────────────────────────────────────────────────────
+const RAIN_OWNER = { container: 'ct', planting: 'gn', fk: 'gn.container_id', space: 'gn.workspace_id' }
+
+// The once-a-day cap (logRainEvents), from its binding to the template's closing backtick.
+function capStatementOf(src) {
+  const hits = [...src.matchAll(/\{\s*rows:\s*already\s*\}\s*=\s*await\s+pg\.query\(\s*`/g)]
+  if (hits.length !== 1) throw new Error(`expected the rain cap bound exactly once, found ${hits.length}`)
+  const start = hits[0].index + hits[0][0].length
+  return strip(src.slice(start, src.indexOf('`', start)))
+}
+const HAND = "e.metadata - > > 'precip_source' is null"
+// The cap's subject: a planting row (n, and its container c), or a container row (plant_id NULL: no n).
+const CAP_STATES = {
+  ...OWNER_STATES,
+  containerRow_household: { inContainer: true, containerIn: true, creatorIn: null },
+  containerRow_foreign: { inContainer: true, containerIn: false, creatorIn: null },
+}
+const CAP_ADMITTED = { ...OWNER_ADMITTED, containerRow_household: true, containerRow_foreign: false }
+
+describe('BUG-AUTHZLAMBDA-001 — the rain writer credits only its Space household\'s plantings, once', () => {
+  it('admits exactly the household\'s plantings in THIS Space, by the two-arm rule', () => {
+    const m = ownerModelOf(sqlFlat(HANDLER_STMT), RAIN_OWNER)
+    expect(m.members, 'the rain insert carries no owner term at all').not.toBeNull()
+    expect(m.admits, 'the rain insert credits these owner states wrongly').toEqual(OWNER_ADMITTED)
+    expect(m.spaceTerms, 'the rain insert carries no Space term').toBe(1)
+    expect(m.admitsOtherSpace, 'a planting in ANOTHER Space is credited').toEqual(NONE_ADMITTED)
+    // The binds run() fills: $4 the Space's id, $5 that Space's members (rain-space.test.js checks the values).
+    expect(m.spaceBind).toBe('$4 : : uuid')
+    expect(m.members).toBe('$5 : : text [ ]')
+  })
+
+  it('never writes a planting a second rain row for the day (the per-planting half of the cap)', () => {
+    const { expr } = ownerModelOf(sqlFlat(HANDLER_STMT), RAIN_OWNER)
+    expect(expr.op).toBe('and')
+    const dedupe = expr.args.filter((a) => a.op === 'not' && a.arg.op === 'term'
+      && /^exists \( select 1 from event_log (\w+) where \1\.plant_id = gn\.id and \1\.event_type = 'rain' and \1\.deleted_at is null and \1\.event_date : : date = \$1 : : date \)$/.test(a.arg.text))
+    expect(dedupe, 'the insert has no top-level "no rain row for this planting on this day" conjunct').toHaveLength(1)
+  })
+
+  it('the day cap: matches the household\'s HAND-LOGGED rain in this Space, on a planting or a container', () => {
+    const flat = sqlFlat(capStatementOf(HANDLER))
+    const states = (hand, spaceMatch) => Object.fromEntries(Object.entries(CAP_STATES).map(([k, s]) => [k, { ...s, hand, spaceMatch }]))
+    const of = (hand, spaceMatch) => ownerModelOf(flat,
+      { container: 'c', planting: 'n', fk: 'c.id', space: 'coalesce ( n.workspace_id , c.workspace_id )',
+        extra: { [HAND]: (s) => s.hand }, extraOwned: ['e.metadata', 'n.workspace_id', 'c.workspace_id'] },
+      states(hand, spaceMatch))
+    const m = of(true, true)
+    expect(m.spaceTerms, 'the cap carries no Space term — one Space would suppress every other').toBe(1)
+    expect(m.spaceBind).toBe('$2 : : uuid')
+    expect(m.members).toBe('$3 : : text [ ]')
+    // A container-level hand row (plant_id NULL) still caps the day: no double credit (review I-3).
+    expect(m.admitsAll, 'the cap matches these hand-logged rows wrongly').toEqual(CAP_ADMITTED)
+    expect(of(true, false).admitsAll, 'hand rain in ANOTHER Space caps this one').toEqual(
+      Object.fromEntries(Object.keys(CAP_ADMITTED).map((k) => [k, false])))
+    // This writer's own rows do not cap the day, so a run after a degraded one can fill the gaps.
+    expect(of(false, true).admitsAll, 'an auto-logged row caps the day').toEqual(
+      Object.fromEntries(Object.keys(CAP_ADMITTED).map((k) => [k, false])))
+  })
+
+  it('the cap is read AFTER the decision and the space subject join is the event\'s own', () => {
+    const flat = sqlFlat(capStatementOf(HANDLER))
+    expect(flat).toMatch(/left join garden_node n on n\.id = e\.plant_id/)
+    expect(flat).toMatch(/left join container c on c\.id = \(case when e\.plant_id is null then e\.project_id else n\.container_id end\)/)
+    const src = strip(HANDLER)
+    const decide = src.indexOf('const d = rainDecision(wrows[0])')
+    const cap = src.search(/\{\s*rows:\s*already\s*\}/)
+    expect(decide).toBeGreaterThan(-1)
+    expect(cap).toBeGreaterThan(decide)
   })
 })
