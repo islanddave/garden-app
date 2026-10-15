@@ -24,9 +24,8 @@
 // V5-TODAYREDESIGN-001 S7 added today_sections, and with it the opposite design: the Lambda TOLERATES the
 // column's absence (migrations/v5-todaysections-001 may reach prod after the code). So the column is never in
 // the boot SELECT; it has a read and an upsert of its own, both pinned below, and a test here holds the boot
-// read free of it. The auditor still reports it missing on prod until that DDL lands — the contract says what
-// the code names, whatever the code does about a miss. scripts/schema-audit-allowlist.json carries its waiver
-// while the column is absent from prod (README-BUILD.md there).
+// read free of it. The contract says what the code names, whatever the code does about a miss; the DDL was
+// applied to prod (2026-10-15) before this code reached dev, so no waiver was needed (README-BUILD.md there).
 //
 // Static source inspection rather than import: the contract has to be asserted against the SQL TEXT.
 import { describe, it, expect } from 'vitest';

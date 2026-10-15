@@ -2,8 +2,8 @@
 # V5-TODAYREDESIGN-001 S7 (v5-todaysections-001) — user_notification_prefs.today_sections jsonb NULL, with
 # a shape-only CHECK (NULL or a JSON object) added NOT VALID in 0a and VALIDATEd in 0c.
 #
-# STATUS AT AUTHORING (2026-10-14): AUTHORED, NOT APPLIED. Not applied to staging, not applied to prod.
-# The authoring lane opened no database connection.
+# STATUS AT AUTHORING (2026-10-14): AUTHORED, NOT APPLIED. The authoring lane opened no database connection.
+# APPLIED 2026-10-15 to staging, then prod on Dave's OK: pre 5/5, sweep 1/1 twice, post 6/6 in each env.
 #
 # ─────────────────────────────────────────────────────────────────────────────────────────────────
 # SEQUENCING — full reasoning in README-BUILD.md "Landing order".

@@ -9,11 +9,11 @@ phones: the device's localStorage mirror (`today-sections:<user>`, shipped in S2
 
 | Step | State |
 |---|---|
-| `0a` / `0c` staging | **NOT APPLIED** (authored 2026-10-14; the authoring lane opened no database connection) |
-| `0a` / `0c` prod | **NOT APPLIED** — needs Dave's explicit OK, citing the staging `post` PASS |
-| Critter Lambda (`lambda/critter/`) | branch `claude/today-l6`, not pushed |
-| SPA (`src/`) | branch `claude/today-l6`, not pushed |
-| Schema-audit waiver | `scripts/schema-audit-allowlist.json`, its own commit on the branch (see "Promotability") |
+| `0a` / `0c` staging | **APPLIED 2026-10-15** — pre 5/5, sweep 1/1 before and after 0a, post 6/6 |
+| `0a` / `0c` prod | **APPLIED 2026-10-15** on Dave's OK (AskUserQuestion, first-hand: "Staging then prod") — pre-apply copy `sitting-todaysections-prod-preapply-20261015` (expires 2026-10-22); pre 5/5, sweep 1/1 before and after 0a, post 6/6 incl. `post_today_sections_is_nullable_jsonb_without_default` |
+| Critter Lambda (`lambda/critter/`) | on dev with this folder; ships with the next promote |
+| SPA (`src/`) | on dev with this folder; ships with the next promote |
+| Schema-audit waiver | **Not used** — Dave chose option B (column first), so the waiver commit was dropped before the push |
 
 ## Files
 

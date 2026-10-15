@@ -168,9 +168,8 @@ real = {
     # V5-NAVCUSTOM-001 (2026-09-24): the keyed contract that puts readUserPrefs' boot SELECT (and the
     # four prefs upserts) under Phase 1. more_pins and bar_layout exist on prod only once
     # migrations/v5-navcustom-001 is applied, so Phase 1 FAILS on them until then -- by design.
-    # V5-TODAYREDESIGN-001 S7 (2026-10-14) added today_sections: absent from prod until
-    # migrations/v5-todaysections-001 is applied there, and waived in schema-audit-allowlist.json meanwhile
-    # (the critter Lambda tolerates its absence; the waiver is deleted when the prod DDL lands).
+    # V5-TODAYREDESIGN-001 S7 (2026-10-14) added today_sections: migrations/v5-todaysections-001 was applied
+    # to prod 2026-10-15 before this code reached dev, so no waiver was needed.
     "lambda/critter/prefs-columns.test.js": {
         "user_notification_prefs": [
             "created_by", "critter_visit", "quiet_hours_start", "quiet_hours_end",
