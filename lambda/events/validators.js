@@ -135,6 +135,21 @@ export function deriveEventProjectId({ plantId, plantProjectId, requestedProject
 // F22 event_date bounds. Tolerates clock-skew + small client lag.
 const PAST_BOUND_MS = 5 * 365 * 24 * 3600 * 1000;
 const FUTURE_BOUND_MS = 3600 * 1000;
+// BUG-LAMBDAVALIDATION-001 (I12): the PUT's future allowance. EventDetail re-sends NOON LOCAL on
+// every save (EventDetail.jsx:444), which for a same-day edit east of UTC is up to ~12h ahead of
+// now, so POST's 1h would 400 an ordinary edit.
+export const PUT_FUTURE_BOUND_MS = 24 * 3600 * 1000;
+
+// The one F22 bounds check, shared by POST, batch and PUT (same three messages). The future
+// allowance is an argument because PUT needs a wider one than POST/batch; the past bound is 5y
+// everywhere. Returns null on success, or { status, error }.
+export function eventDateBoundsError(ed, nowMs, futureMs) {
+  const t = new Date(ed).getTime();
+  if (!Number.isFinite(t)) return { status: 400, error: 'event_date invalid' };
+  if (t < nowMs - PAST_BOUND_MS) return { status: 400, error: 'event_date too far in past' };
+  if (t > nowMs + futureMs) return { status: 400, error: 'event_date in future' };
+  return null;
+}
 
 // Returns null on success, or { status, error } on validation failure.
 export function validatePostBody(body) {
@@ -182,11 +197,8 @@ export function validatePostBody(body) {
 
   // F22 — event_date range validation
   if (body.event_date != null) {
-    const ed = new Date(body.event_date);
-    if (!Number.isFinite(ed.getTime())) return { status: 400, error: 'event_date invalid' };
-    const now = Date.now();
-    if (ed.getTime() < now - PAST_BOUND_MS) return { status: 400, error: 'event_date too far in past' };
-    if (ed.getTime() > now + FUTURE_BOUND_MS) return { status: 400, error: 'event_date in future' };
+    const dateErr = eventDateBoundsError(body.event_date, Date.now(), FUTURE_BOUND_MS);
+    if (dateErr) return dateErr;
   }
 
   // F6 reorder: severity SHAPE check first.
@@ -615,11 +627,8 @@ export function validateBatchBody(body) {
     return { status: 400, error: `event_type must be one of: ${BATCH_EVENT_TYPES.join(', ')} (harvest/first_harvest/photo not supported in batch)` };
   }
   if (body.event_date != null) {
-    const ed = new Date(body.event_date);
-    if (!Number.isFinite(ed.getTime())) return { status: 400, error: 'event_date invalid' };
-    const now = Date.now();
-    if (ed.getTime() < now - PAST_BOUND_MS) return { status: 400, error: 'event_date too far in past' };
-    if (ed.getTime() > now + FUTURE_BOUND_MS) return { status: 400, error: 'event_date in future' };
+    const dateErr = eventDateBoundsError(body.event_date, Date.now(), FUTURE_BOUND_MS);
+    if (dateErr) return dateErr;
   }
   const s = body.scope;
   if (!s || typeof s !== 'object') return { status: 400, error: 'scope is required' };

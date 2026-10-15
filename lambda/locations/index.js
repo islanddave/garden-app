@@ -428,7 +428,9 @@ export const handler = async (event) => {
 
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
-      if (!body.name) return resp(400, { error: 'name is required' });
+      // BUG-LAMBDAVALIDATION-001 (I41): `!body.name` let '   ' through and 500'd on a number at the
+      // slug derivation below. Same rule as the PUT's blank guard; the POST keeps its own message.
+      if (typeof body.name !== 'string' || !body.name.trim()) return resp(400, { error: 'name is required' });
 
       // V5-LOCHEATEDUI-001 — heated.js. A new row has only this body, so both rules are decided here
       // with no read: heated:true without covered:true in the same request is refused.
@@ -463,6 +465,9 @@ export const handler = async (event) => {
 
       const slug = body.slug?.trim() ||
         body.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      // I41: keyed on the COMPUTED slug, not on whether one was sent — a blank sent slug falls through
+      // to the derived one above, and a name with no letter or digit ('!!!', an emoji) derives ''.
+      if (slug === '') return resp(400, { error: 'name must contain a letter or number, or send a slug' });
 
       const rows = await sql`
         INSERT INTO locations
