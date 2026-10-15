@@ -718,13 +718,15 @@ window.__h = {
     try { sel = selectorFor(step.tap); flipState(flip) } catch (e) { out.void = e.message; return out }
     const el = document.querySelector(sel)
     if (!el) { out.void = `tap target '${step.tap}' (${sel}) matched nothing`; return out }
-    // S4: a target wholly off screen is scrolled to first, as a thumb would (the cohort line under an opened
-    // Bag Area sits below the fold); a target ON screen is never moved, so a bar covering it still VOIDs.
-    const r0 = el.getBoundingClientRect()
-    if (r0.bottom <= 0 || r0.top >= innerHeight) { el.scrollIntoView({ block: 'center' }); await frames(3) }
-    const r = el.getBoundingClientRect()
-    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
-    if (!hit || !(hit === el || el.contains(hit))) { out.void = `tap target '${step.tap}' is not what a finger at its centre would hit (${hit ? hit.tagName.toLowerCase() + (hit.getAttribute('data-testid') ? '[' + hit.getAttribute('data-testid') + ']' : '') : 'nothing — off screen'})`; return out }
+    // S4: a target whose centre is off screen is scrolled to first, as a thumb would (the cohort line under an
+    // opened Bag Area sits below the fold); a target whose centre is ON screen is never moved, so a bar covering
+    // it still VOIDs. "Off screen" is the hit test's own answer — elementFromPoint is null only outside the
+    // viewport — not a box comparison: Chrome rounds the point to a whole px, so a centre at 835.94 of 836 (the
+    // L4 + L5 merge's cohort line after the Water jump) is inside by the box and outside to the hit test.
+    const centreHit = () => { const q = el.getBoundingClientRect(); return { r: q, hit: document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2) } }
+    let { r, hit } = centreHit()
+    if (!hit) { el.scrollIntoView({ block: 'center' }); await frames(3); ({ r, hit } = centreHit()) }
+    if (!hit || !(hit === el || el.contains(hit))) { out.void = `tap target '${step.tap}' is not what a finger at its centre would hit (${hit ? hit.tagName.toLowerCase() + (hit.getAttribute('data-testid') ? '[' + hit.getAttribute('data-testid') + ']' : '') : `nothing — off screen (centre ${(r.left + r.width / 2).toFixed(2)},${(r.top + r.height / 2).toFixed(2)} of ${innerWidth}×${innerHeight}, box ${Math.round(r.width)}×${Math.round(r.height)}, scrollY ${Math.round(window.scrollY)})`})`; return out }
     out.before = flipState(flip)
     el.click()
     await frames(3); await new Promise(res => setTimeout(res, 50))
