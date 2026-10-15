@@ -48,12 +48,13 @@ describe('POST /api/locations — an empty computed slug (I41)', () => {
   it.each([
     [{ name: '!!!' }],
     [{ name: '🌱' }],
+    [{ name: '花园' }],
     [{ name: '!!!', slug: '' }],
     [{ name: '!!!', slug: '   ' }],
   ])('%j -> 400, nothing written', async (body) => {
     const r = await post(body);
     expect(r.status).toBe(400);
-    expect(r.body.error).toBe('name must contain a letter or number, or send a slug');
+    expect(r.body.error).toBe('name needs at least one A–Z letter or digit, or send a slug');
     expect(inserts()).toEqual([]);
   });
 

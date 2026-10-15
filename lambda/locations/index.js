@@ -466,8 +466,8 @@ export const handler = async (event) => {
       const slug = body.slug?.trim() ||
         body.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
       // I41: keyed on the COMPUTED slug, not on whether one was sent — a blank sent slug falls through
-      // to the derived one above, and a name with no letter or digit ('!!!', an emoji) derives ''.
-      if (slug === '') return resp(400, { error: 'name must contain a letter or number, or send a slug' });
+      // to the derived one above, and a name with no A–Z letter or digit ('!!!', an emoji, '花园') derives ''.
+      if (slug === '') return resp(400, { error: 'name needs at least one A–Z letter or digit, or send a slug' });
 
       const rows = await sql`
         INSERT INTO locations
