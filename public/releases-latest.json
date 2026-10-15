@@ -1,8 +1,7 @@
 {
-  "version": "4.190.0",
+  "version": "4.190.1",
   "date": "2026-10-14",
   "highlights": [
-    "Put Up: after you mark a dehydrator batch \"In jars to condition\", its card asks once a day for 10 days whether there is condensation in the jars, with the home-preservation guidance beneath.",
-    "Today: tidier caught-up line, weather verdict, Heads-up count and harvest summary; Cover all says whose plants it marks; the household view switch is now in Settings › Controls."
+    "Plants wintering in the Stable or House can have their own, longer watering interval"
   ]
 }

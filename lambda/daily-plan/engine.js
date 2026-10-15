@@ -164,14 +164,17 @@ function likelyInGround(p,c){
 // "Indoors" is ledger.exposureClass === 'indoor' (a covered location: on prod only House, Stable and
 // the indoor shelves are covered, 2026-10-14). An explicit rain_exposed override wins both ways there,
 // so a pot Dave marked rain-exposed keeps its outdoor interval. A non-positive or non-numeric indoor
-// value is ignored, never read as "water every 0 days".
+// value is ignored, never read as "water every 0 days". A tray-class vessel (ledgerParams TRAY_TYPES:
+// cells, soil blocks, solo cups) ignores it too: the key sits at cultivar scope, so an indoor sowing of
+// the same variety would otherwise inherit an adult pot's 4-7 days, and the legacy chain has no tray cap.
 // Shared by the ordinary branch and the overwinter check, so the ledger fold (_wiBase) and the
 // overwinter base see the same number. v_resolved_care.cadence_scopes does NOT count this key: an
 // indoor value alone does not make a profile "researched", by design, so a profile must still carry
 // a container/inground interval to resolve from the DB.
 function baseWaterInterval(p, c, cad){
   const ind = c.water_interval_days_indoor;
-  if(Number.isFinite(ind) && ind>0 && ledger.exposureClass(p)==='indoor') return ind;
+  if(Number.isFinite(ind) && ind>0 && ledger.exposureClass(p)==='indoor'
+     && !ledger.vesselProfile(p.container_type, p.container_size).tray) return ind;
   return (likelyInGround(p,c) ? c.water_interval_days_inground : c.water_interval_days_container)
     ?? c.water_interval_days_container
     ?? cad.default.water_interval_days_container;

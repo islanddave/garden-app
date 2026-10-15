@@ -69,23 +69,26 @@ post:
 
   - name: post_stable_plantings_resolve_the_indoor_interval
     note: >
-      The five Stable plantings see the indoor value in v_resolved_care and still resolve their cadence
-      from the database (cadence_scopes non-empty; the view does not count the new key). Clears for a
-      planting deleted or archived since. continuous:false: a planting may move or gain its own profile.
+      Each of the five Stable plantings exists, is live, sits under the cultivar 0a wrote, sees the indoor
+      value in v_resolved_care and still resolves its cadence from the database (cadence_scopes non-empty;
+      the view does not count the new key). Counts the matches (5), so a mistyped planting id reds instead
+      of passing vacuously. continuous:false: a planting may move, be archived or gain its own profile.
     env: prod
     sql: |
       SELECT 1 FROM public.plants p
         JOIN public.v_resolved_care v ON v.leaf_id = p.id
-       WHERE p.id IN ('0064e3a9-3168-4fe0-a6eb-42fc84ad8a04', 'edfc68f5-2342-4605-9e82-e03f94f3143d',
-                      '39141bf6-fc5d-46a6-99d8-2a190906956a', '6cfdc63e-a62a-4408-b9b9-6edf913ff1ce',
-                      '2d50a15d-0bc3-4a37-a9aa-5a134df7b0a9')
-         AND p.deleted_at IS NULL AND p.archived_at IS NULL
-         AND (v.resolved_profile->'water_interval_days_indoor' IS NULL OR cardinality(v.cadence_scopes) = 0)
-         AND EXISTS (SELECT 1 FROM public.schema_version
-                      WHERE version = '5.0.0-indoorcadence-002'
-                        AND description NOT LIKE 'ROLLED BACK %')
+        JOIN (VALUES
+          ('0064e3a9-3168-4fe0-a6eb-42fc84ad8a04'::uuid, 'be1211e0-0e4f-41c2-a37d-f48c313aac0b'::uuid),
+          ('edfc68f5-a28a-484a-8be6-dd00b4067dde'::uuid, '72ebf73c-bf46-429a-bb2d-3243e3d0826d'::uuid),
+          ('39141bf6-fc5d-46a6-99d8-2a190906956a'::uuid, 'db83be63-5344-4615-9399-4eb0644dce14'::uuid),
+          ('6cfdc63e-a62a-4408-b9b9-6edf913ff1ce'::uuid, 'ba9e69e5-b8e5-40ea-a4a4-aeee7411ddd2'::uuid),
+          ('2d50a15d-0bc3-4a37-a9aa-5a134df7b0a9'::uuid, '6f1ebb8f-9e65-4a95-bd7e-4ba9b1a659ef'::uuid)
+        ) AS x(planting, cultivar) ON x.planting = p.id AND x.cultivar = p.variety_id
+       WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND v.resolved_profile->'water_interval_days_indoor' IS NOT NULL
+         AND cardinality(v.cadence_scopes) > 0
     expect: rowcount_eq
-    value: 0
+    value: 5
     continuous: false
 
   - name: post_receipt_written
