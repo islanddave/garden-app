@@ -40,6 +40,7 @@ afterAll(async () => {
   await settle(`plant-merge-surfaces teardown ${RUN}`, [
     () => directSql`DELETE FROM ready_impression WHERE user_id = ANY(${ids}) OR plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM watch_exclusion WHERE user_id = ANY(${ids}) OR plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
+    () => directSql`DELETE FROM harvest_watch_dismissal WHERE user_id = ANY(${ids}) OR plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM preservation_source WHERE user_id = ANY(${ids}) OR preservation_log_id IN (SELECT id FROM preservation_log WHERE user_id = ANY(${ids}))`,
     () => directSql`DELETE FROM preservation_log WHERE user_id = ANY(${ids})`,
     () => directSql`DELETE FROM merge_event WHERE merged_by = ANY(${ids}) OR winner_plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
@@ -171,6 +172,65 @@ describe('planting merge — the §6a telemetry and source surfaces on a real en
       { id: String(otherReason), old: L1 }, { id: String(otherUser), old: L2 },
       { id: String(otherDay), old: L3 },
     ])
+  })
+
+  // BUG-MERGEHARDDELETE-001. uq_harvest_watch_dismissal_active_day is (user_id, plant_id, observed_on)
+  // WHERE undone_at IS NULL. The merge used to DELETE a loser's active row on the winner's key (the
+  // table's DDL forbids hard deletes) and had no loser-vs-loser arm, so the pair below 409'd the merge.
+  // Now both kinds are RETIRED (undone_at = the merge's own instant) and every row moves; none is lost.
+  it('harvest_watch_dismissal: retires a loser row on the winner\'s key and the higher-id of two losers\' rows, deletes none, moves all', async () => {
+    const { W, L1, L2, L3 } = await seedGroup('hwd')
+    const hwd = async (user, plant, day, undoneAt = null) => (await directSql`
+      INSERT INTO harvest_watch_dismissal (user_id, plant_id, observed_on, model_version, undone_at)
+      VALUES (${user}, ${plant}, ${day}::date, 'int-test', ${undoneAt}::timestamptz) RETURNING id`)[0].id
+    const winner = await hwd(DAVE, W, D1)
+    const onWinnerKey = await hwd(DAVE, L1, D1)              // collides with the winner's row
+    const pairA = await hwd(DAVE, L2, D2)                    // two losers, one key, no winner row:
+    const pairB = await hwd(DAVE, L3, D2)                    //   the lower uuid survives
+    const otherUser = await hwd(OTHER, L1, D1)               // near-misses: one key column differs
+    const otherDay = await hwd(DAVE, L2, D3)
+    const userUndo = '2026-09-05T12:00:00+00'
+    const alreadyUndone = await hwd(DAVE, L3, D1, userUndo)  // a real user retraction: outside the index
+    // uuid order is byte order, which is the order of the lowercase hex text.
+    const [pairLow, pairHigh] = [pairA, pairB].sort()
+    const group = [W, L1, L2, L3]
+    const all = [winner, onWinnerKey, pairA, pairB, otherUser, otherDay, alreadyUndone]
+    // Not vacuous: moved as-is, the active rows break the key twice over.
+    const [pre] = await directSql`
+      SELECT count(*)::int AS n FROM (
+        SELECT 1 FROM harvest_watch_dismissal WHERE plant_id = ANY(${group}) AND undone_at IS NULL
+         GROUP BY user_id, observed_on HAVING count(*) > 1) g`
+    expect(pre.n).toBe(2)
+    const [winnerBefore] = await directSql`SELECT * FROM harvest_watch_dismissal WHERE id = ${winner}`
+
+    const r = await merge(W, [L1, L2, L3])
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+
+    const rows = await directSql`
+      SELECT id, plant_id, undone_at::text AS undone_at FROM harvest_watch_dismissal WHERE id = ANY(${all})`
+    // Nothing deleted: every row is still there, and every row is on the winner.
+    expect(rows).toHaveLength(all.length)
+    expect(rows.every((x) => x.plant_id === W)).toBe(true)
+    const [m] = await directSql`SELECT merged_at::text AS merged_at, snapshot FROM merge_event WHERE id = ${r.body.merge_event_id}`
+    const undone = Object.fromEntries(rows.map((x) => [x.id, x.undone_at]))
+    // Retired with the merge's own instant (same transaction), which is what tells them apart.
+    expect(undone[onWinnerKey]).toBe(m.merged_at)
+    expect(undone[pairHigh]).toBe(m.merged_at)
+    for (const id of [pairLow, otherUser, otherDay]) expect(undone[id], id).toBeNull()
+    // The user's own retraction keeps its own instant; the winner's row is untouched.
+    expect(undone[alreadyUndone]).not.toBe(m.merged_at)
+    expect(undone[alreadyUndone]).not.toBeNull()
+    const [winnerAfter] = await directSql`SELECT * FROM harvest_watch_dismissal WHERE id = ${winner}`
+    expect(winnerAfter).toEqual(winnerBefore)
+    // The partial index holds after the move: one active row per (user, day) on the winner.
+    const [post] = await directSql`
+      SELECT count(*)::int AS n FROM (
+        SELECT 1 FROM harvest_watch_dismissal WHERE plant_id = ${W} AND undone_at IS NULL
+         GROUP BY user_id, observed_on HAVING count(*) > 1) g`
+    expect(post.n).toBe(0)
+    const snap = typeof m.snapshot === 'string' ? JSON.parse(m.snapshot) : m.snapshot
+    expect([...snap.dismissals_retired].sort()).toEqual([onWinnerKey, pairHigh].sort())
+    expect(snap.schema_version).toBe(3)
   })
 
   it('preservation_source: every source row on a loser moves to the winner, a retracted one too, none dropped', async () => {

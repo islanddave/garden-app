@@ -88,12 +88,22 @@ function bump(counter, key) { counter[key] = (counter[key] ?? 0) + 1; }
 //
 // Sample shape (one per dismissal row, joined to its planting's first pick):
 //   { plant_id, observed_on, first_pick_date|null, censored_on|null,
-//     harvest_habit|null, crop_type_slug|null, model_version|null, undone_at|null }
+//     harvest_habit|null, crop_type_slug|null, model_version|null, undone_at|null,
+//     id?, merge_retired? }
 // opts.asOf: fallback censoring date for units with no censored_on (normally "today" at extract
 // time). A censored unit with neither is DROPPED, not silently placed — guessing its horizon would
 // invent the exact quantity correction 2 exists to respect.
+//
+// BUG-MERGEHARDDELETE-001 — a planting merge RETIRES a loser's dismissal that duplicates the
+// winner's (same user, same day) by setting undone_at, where it used to hard-delete it. That row is
+// not a human retraction, so it is counted as `merge_retired`, not `retracted`, and the retraction
+// count stays a human signal. Either marker identifies one: `s.merge_retired === true` (the extract
+// sets it where undone_at = merge_event.merged_at for a merge onto the row's planting, the
+// in-transaction discriminator), or `s.id` in opts.mergeRetiredIds (merge_event.snapshot ->
+// 'dismissals_retired'). Both kinds stay out of the fit either way.
 export function reduceToPlantingUnits(samples, opts = {}) {
   const asOf = toYmd(opts.asOf);
+  const mergeRetired = new Set(opts.mergeRetiredIds ?? []);
   const dropped = {};
   const firstByPlant = new Map();
 
@@ -104,7 +114,11 @@ export function reduceToPlantingUnits(samples, opts = {}) {
     if (observedOn == null) { bump(dropped, 'no_observed_on'); continue; }
     // A retracted dismissal is not a label — the human took the observation back. It must never
     // reach the fit even if the extraction query forgot the filter.
-    if (s?.undone_at != null) { bump(dropped, 'retracted'); continue; }
+    if (s?.undone_at != null) {
+      const byMerge = s?.merge_retired === true || (s?.id != null && mergeRetired.has(s.id));
+      bump(dropped, byMerge ? 'merge_retired' : 'retracted');
+      continue;
+    }
 
     const prior = firstByPlant.get(plantId);
     if (prior == null || observedOn < prior.observed_on) {
