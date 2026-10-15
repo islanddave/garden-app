@@ -125,7 +125,8 @@ describe('run() — backfill wired in, current-day plan untouched', () => {
     const q = vi.fn(async (sql) => {
       if (/^\s*update daily_plan/i.test(sql)) { if (failBackfill) throw new Error('backfill boom'); return { rows: [] }; }
       if (sql.includes('select items, generated_at')) return { rows: [] };
-      if (sql.includes('from spaces')) return { rows: [{ id: 'sp1', postal_code: null, ...(atStation ? { weather_lat: 41.8888, weather_lng: -70.7777 } : { weather_lat: 42.5, weather_lng: -72.6 }) }] };
+      // created_by: the Space's owner. An unowned Space owns no planting and keeps no assignee (BUG-AUTHZLAMBDA-001).
+      if (sql.includes('from spaces')) return { rows: [{ id: 'sp1', postal_code: null, created_by: USER, ...(atStation ? { weather_lat: 41.8888, weather_lng: -70.7777 } : { weather_lat: 42.5, weather_lng: -72.6 }) }] };
       if (sql.includes('from plants')) return { rows: [PLANT_ROW] };
       return { rows: [] };
     });

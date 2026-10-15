@@ -10,6 +10,7 @@ const { frostEval, frostCoverage, sentCoverage, isFrostSeason, resolveFrostRun, 
 const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
 const { resolveRainRun, rainDecision, previousDay, rainMetadata } = require('./rainLog'); // V4-RAINAUTOLOG-001 pt2
 const drought = require('./droughtSignal');                                      // V5-LEGACYEXCEPTIONCARE-001
+const { householdIds, spaceScope } = require('./householdScope');                 // BUG-AUTHZLAMBDA-001
 const { applyRainForecast } = require('./rainForecast');                         // BUG-RAINFCSTONEMODEL-001
 
 // The machine actor for rows this Lambda writes on nobody's behalf. Same source as the SYSTEM_SUBS
@@ -1437,6 +1438,18 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
              else false
            end as state) cov on true
     left join v_resolved_care vrc on vrc.leaf_id = p.id
+    -- BUG-AUTHZLAMBDA-001: the planting's OWN Space and that Space's household, computed here rather
+    -- than from the spaces read below so this stays the run's first statement (the db-ready marker).
+    -- hh.members is householdScope.js spaceScope() in SQL: an unowned Space (blank created_by) gets
+    -- the empty set, an owner in GARDEN_HOUSEHOLD_IDS (the one bind) gets the list, any other owner
+    -- gets itself.
+    -- An inner join on purpose: a planting whose workspace_id names no Space belongs to no household.
+    join spaces sp on sp.id = p.workspace_id
+    cross join lateral (select case
+             when nullif(btrim(sp.created_by), '') is null then '{}'::text[]
+             when sp.created_by = any($1::text[])          then $1::text[]
+             else array[sp.created_by]
+           end as members) hh
     where p.deleted_at is null and p.archived_at is null
       and (p.status is null or p.status not in ('ended','failed','dead','archived'))
       and (pj.status is null or pj.status <> 'planning')
@@ -1448,7 +1461,12 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       -- Its own clause, never merged into the archived one above: archived and deleted are separate axes
       -- and stay separately observable. A project-less planting has pj all NULL and passes both.
       -- Parsed and evaluated per container state by rain-live-filter.test.js (the plan pass).
-      and pj.deleted_at is null`);
+      and pj.deleted_at is null
+      -- BUG-AUTHZLAMBDA-001: only the Space household's plantings. The two-arm owner rule of
+      -- lambda/household.js: a planting in a container is the container's owner's, a project-less one
+      -- its own creator's. Evaluated per owner state by rain-live-filter.test.js (the owner pass).
+      and (pj.created_by = any(hh.members) or (p.project_id is null and p.created_by = any(hh.members)))`,
+    [householdIds()]);
   console.log(JSON.stringify({ msg: 'db-ready', ms: Date.now() - t0, rows: plantings.length })); // first pool.query done — includes any Neon cold-resume stall
   // V4-ANCHORSUPERSEDE-001. Here rather than at the end of the run: it is one indexed statement, it
   // depends on nothing the run computes, and running it early means a fetch hang later in the night
@@ -1469,7 +1487,40 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     (process.env.SYSTEM_CLERK_SUB || 'user_3D7uvqWjyxdq3jgVwTZs0mKT7Xd')
       .split(',').map((s) => s.trim()).filter(Boolean));
   for (const p of plantings) { if (SYSTEM_SUBS.has(p.assignee_user_id)) p.assignee_user_id = null; }
-  const { rows: spaces } = await pg.query(`select id, postal_code, weather_lat, weather_lng from spaces`);
+  const { rows: spaces } = await pg.query(`select id, postal_code, weather_lat, weather_lng, created_by from spaces`);
+  // BUG-AUTHZLAMBDA-001 — each Space's household (householdScope.js), the same one the plantings SELECT
+  // computed in SQL. It decides three things below: which assignee a planting may keep, who gets the
+  // Space's unassigned plantings (its owner, spaces.created_by; there is no global fallback sub, so an
+  // unowned Space's go to __UNASSIGNED__), and which plantings the rain logger may write.
+  const scopeBySpace = {};
+  for (const s of spaces) scopeBySpace[s.id] = spaceScope(s.created_by);
+  for (const p of plantings) scopeBySpace[p.workspace_id] ||= spaceScope(null);   // names no Space: owns nothing
+  const ownerBySpace = Object.fromEntries(Object.entries(scopeBySpace).map(([id, sc]) => [id, sc.owner]));
+  {
+    // After the System remap above, never before: a System assignee is already null and is not an outsider.
+    // An assignee outside the planting's Space household is dropped rather than handed a plan for a Space
+    // that is not theirs; the planting then goes to the Space owner like any unassigned one.
+    const outside = {};
+    for (const p of plantings) {
+      if (p.assignee_user_id && !scopeBySpace[p.workspace_id].members.includes(p.assignee_user_id)) {
+        (outside[p.workspace_id] ||= []).push(p.id);
+        p.assignee_user_id = null;
+      }
+    }
+    const rowsIn = {};
+    for (const p of plantings) rowsIn[p.workspace_id] = (rowsIn[p.workspace_id] || 0) + 1;
+    for (const [spaceId, sc] of Object.entries(scopeBySpace)) {
+      if (!sc.owner) {
+        console.log(JSON.stringify({ msg: 'space-owner-missing', space_id: spaceId, plantings: rowsIn[spaceId] || 0 }));
+      } else if (sc.degraded) {
+        console.log(JSON.stringify({ msg: 'household-scope-degraded', space_id: spaceId, reason: sc.degraded,
+          members: sc.members.length, plantings: rowsIn[spaceId] || 0, assignees_excluded: (outside[spaceId] || []).length }));
+      }
+    }
+    for (const [spaceId, ids] of Object.entries(outside)) {
+      console.log(JSON.stringify({ msg: 'assignee-outside-household', space_id: spaceId, count: ids.length, plant_ids: ids.slice(0, 50) }));
+    }
+  }
   // DRG-WXSTATION-001: one account-level station fetch per run (V200 §3), derived to a normalized reading.
   // fetchStation is fully guarded (returns null on any secret/HTTP/timeout failure) so it can NEVER empty the
   // nightly plan (B6); a null station simply leaves Open-Meteo/NWS as the source.
@@ -1657,7 +1708,9 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // stationUnbound, so the three station conditions can never send two emails from one run.
   const stationArraySilent = boundSpaces > 0 && station.fresh
     && !!(station.arraySilence && station.arraySilence.silent.length);
-  const owner = process.env.OWNER_FALLBACK_SUB || null;     // unassigned -> Space owner (Dave); NEVER leaks to Jen.
+  // Unassigned -> the planting's Space owner (ownerBySpace above, BUG-AUTHZLAMBDA-001). This was the
+  // OWNER_FALLBACK_SUB env, one sub for every Space; it is no longer read, and an unowned Space does NOT
+  // fall back to it (its plantings go to __UNASSIGNED__, engine.js).
   // DRG-WXWATER-001 coarse-v1: SINGLE flag read-site (spec I2 — plan is computed once nightly, all readers consume
   // the stored plan, so one flag here is inherently consistent). Default OFF; the 3-substrate-tier rain model is
   // inert (byte-identical plan) until CARE_RAIN_CREDIT_ENABLED=true is set after shadow-soak.
@@ -1739,7 +1792,8 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // built into local objects; nothing is stamped onto p, because the SAME array is handed to
   // generatePlan AND to frostClass.summarize and a stamped field would travel into both.
   //
-  // by_owner mirrors engine.ownerFor (assignee, else the fallback sub; System subs are already nulled
+  // by_owner mirrors engine.ownerFor (assignee, else the Space owner generatePlan gets; System subs and
+  // assignees outside the Space household are already nulled
   // at line 809). Pooled-only would go blind to Jen: her 16 rows sit inside Dave's 213, and her 0 %
   // naked-default is a small-sample zero, not a property.
   //
@@ -1758,7 +1812,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     for (const p of plantings) {
       const c = resolveCadence(p, cadence);
       const arm = c && c._via ? String(c._via).split(':')[0] : 'unknown';   // db | variety | genus | default
-      const own = (p && p.assignee_user_id) || owner;
+      const own = (p && p.assignee_user_id) || ownerBySpace[p.workspace_id] || null;
       via[arm] = (via[arm] || 0) + 1;
       (byOwner[own] ||= {})[arm] = ((byOwner[own] ||= {})[arm] || 0) + 1;
       if (arm === 'default') nakedIds.push(p.id);
@@ -1828,7 +1882,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     // window + the run instant feed the ledger fold, all behind waterLedgerEnabled. enabled is
     // ANDed with `ledgerEvents != null` so a failed event-window read degrades the run to flag-OFF
     // (a fold against a falsely-empty window would over-due every planting — see readLedgerEvents).
-    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled, measuredCreditEnabled, deferDryEnabled, deferDryBedsEnabled, soonAwareEnabled,
+    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: ownerBySpace[spaceId] || null,rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled, measuredCreditEnabled, deferDryEnabled, deferDryBedsEnabled, soonAwareEnabled,
       waterLedgerEnabled: waterLedgerEnabled && ledgerEvents != null, eventsByPlant: ledgerEvents, nowMs: Date.now(),
       droughtState: droughtBySpace[spaceId] || null,
       // BUG-INGROUNDOFFSEASONSILENT-001 — engine.coldFor drops an in-ground bring-in card only while the

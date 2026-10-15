@@ -756,3 +756,145 @@ describe('BUG-PLANSOFTDELCONTAINER-001 — the daily plan drops a planting in a 
     }
   })
 })
+
+// ── BUG-AUTHZLAMBDA-001 — the owner pass ─────────────────────────────────────────────────────────────
+// The nightly plan takes, and the rain writer credits, only the plantings of the Space's household, by
+// the two-arm rule of lambda/household.js: a planting in a container belongs to the container's owner, a
+// project-less one to its own creator. The mocks every run()-driven test uses return their fixture rows
+// whatever the SQL says, so dropping either arm (or the whole term) leaves the rest of the suite green;
+// this pass is what reds.
+//
+// METHOD, the same as the passes above: the WHERE is parsed and evaluated by truth table. The owner terms
+// are PINNED from an owner state — `<container>.created_by = any(<members>)`, `<fk> is [not] null`,
+// `<planting>.created_by = any(<members>)`, and for the writer `<planting>.workspace_id = <bind>` — and
+// every other term stays FREE. A term that names an owner column in any other shape THROWS ("buried").
+// Under a LEFT JOIN a project-less planting's container columns are NULL, so its container arm is NULL.
+const OWNER_STATES = {
+  householdContainer_foreignCreator: { inContainer: true, containerIn: true, creatorIn: false },
+  householdContainer_householdCreator: { inContainer: true, containerIn: true, creatorIn: true },
+  foreignContainer_householdCreator: { inContainer: true, containerIn: false, creatorIn: true },
+  foreignContainer_foreignCreator: { inContainer: true, containerIn: false, creatorIn: false },
+  projectless_householdCreator: { inContainer: false, containerIn: null, creatorIn: true },
+  projectless_foreignCreator: { inContainer: false, containerIn: null, creatorIn: false },
+}
+// The only acceptable answer. The first row is the synthetic-created_by planting (a migration label, say)
+// in a household container: the container decides, so it is the household's.
+const OWNER_ADMITTED = {
+  householdContainer_foreignCreator: true,
+  householdContainer_householdCreator: true,
+  foreignContainer_householdCreator: false,
+  foreignContainer_foreignCreator: false,
+  projectless_householdCreator: true,
+  projectless_foreignCreator: false,
+}
+const NONE_ADMITTED = Object.fromEntries(Object.keys(OWNER_ADMITTED).map((k) => [k, false]))
+
+// `space` names the planting's Space column when the statement must carry a Space term (the writer); the
+// state then gains `spaceMatch`. Returns the members expression and the Space bind actually used, so a
+// caller can check them against the run's parameters.
+function ownerModelOf(flat, { container, planting, fk, space = null }) {
+  const expr = boolTree(outerWhereOf(flat))
+  const terms = []
+  const walk = (n) => {
+    if (n.op === 'term') terms.push(n)
+    if (n.arg) walk(n.arg)
+    if (n.args) n.args.forEach(walk)
+  }
+  walk(expr)
+  const owned = [`${container}.created_by`, `${planting}.created_by`, fk, ...(space ? [space] : [])]
+  const pinned = new Map()
+  const members = new Set()
+  const spaceBinds = new Set()
+  const any = (col) => new RegExp(`^${col.replace('.', '\\.')} = any \\( (.+) \\)$`)
+  for (const t of terms) {
+    let m
+    if ((m = t.text.match(any(`${container}.created_by`)))) {
+      members.add(m[1]); pinned.set(t.text, (s) => (s.inContainer ? s.containerIn : null))
+    } else if ((m = t.text.match(any(`${planting}.created_by`)))) {
+      members.add(m[1]); pinned.set(t.text, (s) => s.creatorIn)
+    } else if (t.text === `${fk} is null`) pinned.set(t.text, (s) => !s.inContainer)
+    else if (t.text === `${fk} is not null`) pinned.set(t.text, (s) => s.inContainer)
+    else if (space && (m = t.text.match(new RegExp(`^${space.replace('.', '\\.')} = (.+)$`)))) {
+      spaceBinds.add(m[1]); pinned.set(t.text, (s) => s.spaceMatch)
+    } else if (owned.some((c) => t.tokens.includes(c))) {
+      throw new Error(`an owner term is buried inside a larger expression the guard cannot evaluate: ${t.text.slice(0, 90)}…`)
+    }
+  }
+  if (members.size > 1) throw new Error(`the owner arms test different member lists: ${[...members].join(' | ')}`)
+  const others = [...new Set(terms.map((t) => t.text))].filter((t) => !pinned.has(t))
+  if (others.length > 14) throw new Error(`the WHERE has ${others.length} free terms — too many to enumerate`)
+  const admitsFor = (states) => {
+    const admits = {}
+    for (const [name, s] of Object.entries(states)) {
+      admits[name] = false
+      for (let mask = 0; mask < 2 ** others.length && !admits[name]; mask += 1) {
+        const val = (t) => (pinned.has(t) ? pinned.get(t)(s) : Boolean(mask & (1 << others.indexOf(t))))
+        if (truth(expr, val) === true) admits[name] = true
+      }
+    }
+    return admits
+  }
+  const withSpace = (match) => Object.fromEntries(Object.entries(OWNER_STATES).map(([k, s]) => [k, { ...s, spaceMatch: match }]))
+  return {
+    members: [...members][0] ?? null,
+    spaceBind: [...spaceBinds][0] ?? null,
+    spaceTerms: spaceBinds.size,
+    admits: admitsFor(withSpace(true)),
+    admitsOtherSpace: admitsFor(withSpace(false)),
+  }
+}
+
+const PLAN_OWNER = { container: 'pj', planting: 'p', fk: 'p.project_id' }
+
+describe('BUG-AUTHZLAMBDA-001 — the daily plan takes only the Space household\'s plantings', () => {
+  it('admits exactly the household\'s plantings, by the two-arm rule', () => {
+    const m = ownerModelOf(sqlFlat(planStatementOf(HANDLER)), PLAN_OWNER)
+    expect(m.members, 'the plantings query carries no owner term at all').not.toBeNull()
+    expect(m.admits, 'the plantings query plans these owner states wrongly').toEqual(OWNER_ADMITTED)
+  })
+
+  it('tests the members of the PLANTING\'s own Space: an inner join on p.workspace_id, and the household lateral', () => {
+    const flat = sqlFlat(planStatementOf(HANDLER))
+    const m = ownerModelOf(flat, PLAN_OWNER)
+    const bound = [...flat.matchAll(/\b(left\s+(?:outer\s+)?join|cross\s+join|join|from)\s+(?:public\.)?spaces\s+(?:as\s+)?(\w+)\s+on\s+([\w.]+)\s*=\s*([\w.]+)/g)]
+    expect(bound, 'spaces must be bound exactly once in the plantings query').toHaveLength(1)
+    const [, how, sp, l, r] = bound[0]
+    // An inner join: under a LEFT JOIN a planting in no Space would reach the WHERE with an empty-handed
+    // lateral, and the Space it is matched to must be its OWN.
+    expect(how, 'spaces is not INNER joined').toBe('join')
+    expect([l, r].sort()).toEqual([`${sp}.id`, 'p.workspace_id'].sort())
+    // The lateral: blank owner -> the empty set, owner in the household list -> the list, else the owner.
+    // householdScope.js spaceScope() in SQL, arm for arm; householdScope-parity.test.js checks the JS side.
+    const lat = flat.match(new RegExp(
+      `cross join lateral \\(\\s*select case\\s+when nullif\\(btrim\\(${sp}\\.created_by\\), ''\\) is null then '\\{\\}'::text\\[\\]`
+      + `\\s+when ${sp}\\.created_by = any\\((\\$\\d+)::text\\[\\]\\)\\s+then (\\$\\d+)::text\\[\\]`
+      + `\\s+else array\\[${sp}\\.created_by\\]\\s+end as (\\w+)\\)\\s*(\\w+)`))
+    expect(lat, 'the household lateral is missing or no longer has its three arms').not.toBeNull()
+    const [, testBind, listBind, col, alias] = lat
+    expect(listBind, 'the lateral tests one list and returns another').toBe(testBind)
+    expect(m.members, 'the owner terms do not read the lateral\'s members').toBe(`${alias}.${col}`)
+  })
+
+  it('reads the owner rule from the predicate, not its spelling (synthetic WHEREs)', () => {
+    const P = 'p.deleted_at is null and p.archived_at is null'
+    const C = 'pj.created_by = any(hh.members)'
+    const O = 'p.created_by = any(hh.members)'
+    const of = (w) => ownerModelOf(sqlFlat(`select p.id from plants p left join plant_projects pj on pj.id = p.project_id where ${w}`), PLAN_OWNER).admits
+    for (const w of [
+      `${P} and (${C} or (p.project_id is null and ${O}))`,                      // the handler's shape
+      `${P} and ((p.project_id is null and ${O}) or ${C})`,                      // order is not meaning
+      `${P} and (p.project_id is not null and ${C} or p.project_id is null and ${O})`,
+    ]) expect(of(w), w).toEqual(OWNER_ADMITTED)
+    const T = true
+    const F = false
+    for (const [w, admits] of [
+      [P, { ...OWNER_ADMITTED, foreignContainer_householdCreator: T, foreignContainer_foreignCreator: T, projectless_foreignCreator: T }],  // no owner term
+      [`${P} and ${O}`, { ...OWNER_ADMITTED, householdContainer_foreignCreator: F, foreignContainer_householdCreator: T }],              // creator only
+      [`${P} and ${C}`, { ...OWNER_ADMITTED, projectless_householdCreator: F }],                                                          // container only
+      [`${P} and (${C} or ${O})`, { ...OWNER_ADMITTED, foreignContainer_householdCreator: T }],                                           // the project-less guard dropped
+      [`${P} and (${C} or (p.project_id is null and ${O})) or true`, { householdContainer_foreignCreator: T, householdContainer_householdCreator: T, foreignContainer_householdCreator: T, foreignContainer_foreignCreator: T, projectless_householdCreator: T, projectless_foreignCreator: T }],
+    ]) expect(of(w), w).toEqual(admits)
+    expect(() => of(`${P} and coalesce(pj.created_by, p.created_by) = any(hh.members)`)).toThrow(/buried/)
+    expect(() => of(`${P} and (${C} or (p.project_id is null and p.created_by = any(hh.others)))`)).toThrow(/different member lists/)
+  })
+})
