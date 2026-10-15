@@ -117,7 +117,13 @@ export const MUTANTS_V2 = {
     file: 'src/components/today/v2/GlanceCard.jsx',
     find: "minHeight: '1.35em', overflowWrap: 'anywhere',",
     replace: "minHeight: '1.35em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',",
-    killers: ['verdict-truncation', 'first-screen'],
+    // L3 (finish plan §3.2 row C): the short verdict fits ONE line on every gate state at 426 px (measured 19.44 px on
+    // all of them, the longest "Water containers & beds · frost watch tonight"; even v2-bedwait's beds-held sentence
+    // with a frost phrase fits), so a restored ellipsis clips no glyph and first-screen's mustShowText cannot see it.
+    // verdict-truncation reads the style itself. A second killer needs a fixture whose verdict takes two lines (both
+    // lanes holding over a list: "Rain may cover today's list — N still due · …"), which no v2 graft builds today.
+    killers: ['verdict-truncation'],
+    oneKiller: 'L3\'s short verdict fits one line on every gate fixture, so a restored ellipsis clips nothing a first-screen text check can see; only verdict-truncation reads the ellipsis style',
     defect: 'the verdict ellipsis is restored',
   },
   jumpNoOffset: {
