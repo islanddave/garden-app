@@ -157,6 +157,26 @@ function likelyInGround(p,c){
   return isCucurbit(p,c&&c.crop)||isLeek(p,c&&c.crop);
 }
 
+// BUG-INDOORCADENCE-001 part 2 — the planting's BASE watering interval, before the vessel floor, the
+// heat gate and the caps. A profile may carry water_interval_days_indoor for a plant that summers
+// outside and winters in the House or Stable: its summer number stays right for summer, and spring
+// needs no reset because the indoor value is read only while the planting sits indoors.
+// "Indoors" is ledger.exposureClass === 'indoor' (a covered location: on prod only House, Stable and
+// the indoor shelves are covered, 2026-10-14). An explicit rain_exposed override wins both ways there,
+// so a pot Dave marked rain-exposed keeps its outdoor interval. A non-positive or non-numeric indoor
+// value is ignored, never read as "water every 0 days".
+// Shared by the ordinary branch and the overwinter check, so the ledger fold (_wiBase) and the
+// overwinter base see the same number. v_resolved_care.cadence_scopes does NOT count this key: an
+// indoor value alone does not make a profile "researched", by design, so a profile must still carry
+// a container/inground interval to resolve from the DB.
+function baseWaterInterval(p, c, cad){
+  const ind = c.water_interval_days_indoor;
+  if(Number.isFinite(ind) && ind>0 && ledger.exposureClass(p)==='indoor') return ind;
+  return (likelyInGround(p,c) ? c.water_interval_days_inground : c.water_interval_days_container)
+    ?? c.water_interval_days_container
+    ?? cad.default.water_interval_days_container;
+}
+
 // ── BUG-COLDNAMEMATCHNAG-001 — solanaceous identity for the cold band: genus, then the controlled
 // slug, NEVER free text. ──────────────────────────────────────────────────────────────────────────
 // coldFor's band predicate was `PEPPER_TOMATO.test(c.crop) || PEPPER_TOMATO.test(p.name)`. BOTH arms
@@ -1138,7 +1158,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
       // faster than July does, so inheriting dormant's "skip routine care" is how an overwintered crop
       // dies of a dry freeze. The item asks Dave to feel the soil, never to water unconditionally.
       overwinterHeld++;
-      const _wiOw = ow.checkIntervalFor(_ow, (likelyInGround(p,c) ? c.water_interval_days_inground : c.water_interval_days_container) ?? c.water_interval_days_container ?? cad.default.water_interval_days_container);
+      const _wiOw = ow.checkIntervalFor(_ow, baseWaterInterval(p, c, cad));
       // V4-OVERWINTERCARDNOISE-001 (1): _ow carries rain_counts, so a covered/indoor regime reads
       // last_hand_water and a logged rain no longer clears its check. Passing _ow is load-bearing —
       // dropping the second argument silently restores the rain credit for all three protected regimes.
@@ -1175,9 +1195,8 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     } else {
     // CARE-PROFILES-001: select inground or container cadence based on container_type.
     const inGround=likelyInGround(p,c);
-    let wi=(inGround ? c.water_interval_days_inground : c.water_interval_days_container)
-          ?? c.water_interval_days_container
-          ?? cad.default.water_interval_days_container;
+    // BUG-INDOORCADENCE-001: water_interval_days_indoor replaces it while the planting is indoors.
+    let wi=baseWaterInterval(p, c, cad);
     // V4-WATERMATH-001 F2: the ledger fold consumes the PRE-heat-gate interval — the >=88F wi-=1
     // gate is RETIRED in-flag (continuous ET0 demand subsumes it; retaining it double-counts heat).
     const _wiBase = wi;
@@ -1614,5 +1633,5 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
 module.exports={generatePlan, calloutSeason, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, satReason, FORECAST_SAT_KINDS, SOON_QPF_IN, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression, feedSuppression, isMedHerb,
   RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, rainDepthTierFor, RAIN_DEPTH_TIER_OVERRIDE,
   FABRIC_GROUND_MIN_GAL, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered, bagHeatDemoteCredit,
-  dailyFloorFor, DAILY_FLOOR_DAYS, RESERVOIR_VESSEL_TYPES, RIGID_POT_TYPES,
+  dailyFloorFor, DAILY_FLOOR_DAYS, RESERVOIR_VESSEL_TYPES, RIGID_POT_TYPES, baseWaterInterval,
   overwinter: ow, drought: dr, leafWetness: lw};
