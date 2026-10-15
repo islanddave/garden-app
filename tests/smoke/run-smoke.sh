@@ -2619,9 +2619,9 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_CRITTER
       FAIL=$((FAIL+1))
     fi
   elif [[ "$TSEC_HTTP" == "200" && "$TSEC_HAS" == "true" ]]; then
-    TSEC_HARVEST_BEFORE=$(echo "$TSEC_BEFORE" | jq -c '.today_sections.harvest // null')
-    TSEC_PROTECT_BEFORE=$(echo "$TSEC_BEFORE" | jq -c '.today_sections.protect // null')
-    TSEC_CV=$(echo "$TSEC_BEFORE" | jq -r '.critter_visit // "in_app_only"')
+    TSEC_HARVEST_BEFORE=$(echo "$TSEC_BEFORE" | jq -c '.today_sections.harvest // null' 2>/dev/null || echo null)
+    TSEC_PROTECT_BEFORE=$(echo "$TSEC_BEFORE" | jq -c '.today_sections.protect // null' 2>/dev/null || echo null)
+    TSEC_CV=$(echo "$TSEC_BEFORE" | jq -r '.critter_visit // "in_app_only"' 2>/dev/null || echo in_app_only)
     if [[ "$(echo "$TSEC_HARVEST_BEFORE" | jq -r '.open // false')" == "true" ]]; then TSEC_OPEN=false; else TSEC_OPEN=true; fi
     if [[ "$(echo "$TSEC_PROTECT_BEFORE" | jq -r '.ack.t // ""')" == "frost" ]]; then TSEC_TIER=hardfreeze; else TSEC_TIER=frost; fi
     TSEC_HARVEST=$(jq -S -c -n --argjson o "$TSEC_OPEN" --arg at "$TSEC_AT" '{open: $o, at: $at}')
