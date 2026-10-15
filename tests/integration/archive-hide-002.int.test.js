@@ -37,7 +37,7 @@ let varietyId, packetId
 // containers
 let cLive, cArch, cArchDel
 // plantings
-let pLive, pNone, pArchPl, pInArch, pInArchDel, pSownArch, pSownDel, pSownLive
+let pLive, pNone, pArchPl, pInArch, pInArchDel, pSownArch, pSownDel, pSownLive, pSownInArch
 // events
 let eLive, eArchPl, eInArch, eArchPlPrivate
 // harvests
@@ -132,6 +132,8 @@ beforeAll(async () => {
   pSownLive = await planting('sown-live', cLive, { item: packetId, sown: 10, up: 6, sownAt: '2026-05-01' })
   pSownArch = await planting('sown-arch', cLive, { archived: true, item: packetId, sown: 10, up: 4, sownAt: '2026-04-01' })
   pSownDel = await planting('sown-del', cArchDel, { item: packetId, sown: 100, up: 100, sownAt: '2026-03-01' })
+  // Archived-only container: the wrong-axis implementation (pc.archived_at) would drop it.
+  pSownInArch = await planting('sown-in-arch', cArch, { item: packetId, sown: 10, up: 2, sownAt: '2026-02-01' })
 
   // Archive the two containers LAST, once their rows exist, then soft-delete one of them: a container
   // archived and later deleted keeps its archived_at (lambda/projects' DELETE sets deleted_at only).
@@ -278,10 +280,10 @@ describe('I36 — GET /api/projects/types is household-only', () => {
 })
 
 describe('I13 — the packet\'s germination record (Dave 2026-10-15: archived sowings keep counting)', () => {
-  it('counts the live and the ARCHIVED sowing, and drops the sowing in a deleted container', async () => {
+  it('counts the live sowing, the ARCHIVED one and the one in an archived container, and drops the one in a deleted container', async () => {
     const { status, body } = await call(inventoryHandler, 'GET', `/api/inventory-items/${packetId}`)
     expect(status, JSON.stringify(body)).toBe(200)
-    expect(body.germination.sowings.map((s) => s.id)).toEqual([pSownLive, pSownArch])
-    expect(body.germination).toMatchObject({ seeds_sown: 20, seeds_germinated: 10, rate: 50 })
+    expect(body.germination.sowings.map((s) => s.id)).toEqual([pSownLive, pSownArch, pSownInArch])
+    expect(body.germination).toMatchObject({ seeds_sown: 30, seeds_germinated: 12, rate: 40 })
   })
 })

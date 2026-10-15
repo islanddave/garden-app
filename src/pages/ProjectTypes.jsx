@@ -173,8 +173,9 @@ function Section({ title, types, userId, onDelete }) {
 }
 
 // Audit I36: GET /api/projects/types no longer returns created_by (a household member's Clerk sub);
-// it says is_system and is_own. The created_by arms read an older Lambda's response, which can be
-// live for the minutes between the Lambda and SPA deploys.
+// it says is_system and is_own. The created_by arms read an older Lambda's response (a Lambda
+// rollback). The reverse skew, an old cached SPA on the new Lambda, shows custom types as "system"
+// with no Delete until the service worker refreshes: accepted for I36 (0 user-made types on prod).
 export function typeFlags(t, userId) {
   if (typeof t.is_own === 'boolean' || typeof t.is_system === 'boolean') {
     return { isOwn: t.is_own === true, isSystem: t.is_system === true }

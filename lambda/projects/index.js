@@ -323,8 +323,8 @@ export const handler = async (event) => {
         // DELIBERATELY LEFT ALONE here: household-mode.test.js:60 pins it by name
         // ('project_types delete guard remains owner-only (out of scope)'). Widening it is a
         // separate authz decision, not a rider on a response-contract fix. The 404 does not make
-        // it user-visible: ProjectTypes.jsx:147 only renders the Delete button when
-        // `t.created_by === userId`, so a second household member has no path to this route for a
+        // it user-visible: ProjectTypes.jsx (typeFlags) only renders the Delete button on is_own,
+        // which the GET below computes as created_by = the caller, so a second household member has no path to this route for a
         // type they do not own. Revisit only together with that test.
         const rows = await sql`
           UPDATE project_types SET deleted_at = NOW()
