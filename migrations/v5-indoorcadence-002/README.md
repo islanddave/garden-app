@@ -5,11 +5,14 @@ Part 2 of **`BUG-INDOORCADENCE-001`**. Data only, no DDL, prod only. Part 1 is `
 
 ## Status
 
-**NOT APPLIED.** Dry-run on prod 2026-10-14 inside one rolled-back transaction: pre gate 5/5; 0a `UPDATE 5`,
-post gates 4/4, all six plantings of the five varieties resolve the indoor value with `cadence_scopes`
-`{cultivar}`; a second 0a `UPDATE 0`; 0r `UPDATE 5` and the pre gate's md5s match again. Prod afterwards: no
-row carries the key, no receipt. Apply only after the engine change that reads the key is live on prod, and
-only on Dave's yes.
+**APPLIED TO PROD 2026-10-14** (~01:20Z 10-15), after the engine shipped in v4.190.1 (main
+`f277ff386300c752e61771f489ea92a4b7613afe`, deployed daily-plan Lambda checked to carry `baseWaterInterval`), on
+Dave's first-hand "Ship it. After it is live, yes, apply v5-indoorcadence-002 to prod." `UPDATE 5`, post gates
+4/4. Receipt `5.0.0-indoorcadence-002`. The `pre` gate is now false by design (`continuous: false`).
+
+Before apply: dry-run on prod inside one rolled-back transaction, twice (the second after the impact pass fixed
+the Lemon Verbena planting id and made the resolve gate count matches): pre 5/5, `UPDATE 5`, post 4/4, a second
+0a `UPDATE 0`, 0r `UPDATE 5` and the md5s match again.
 
 ## Why
 
