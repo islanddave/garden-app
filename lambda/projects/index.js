@@ -703,6 +703,14 @@ export const handler = async (event) => {
         // Field-presence test (not truthy test) lets callers set it to null to clear.
         const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
         const hasAssignee = Object.prototype.hasOwnProperty.call(body, 'assignee_user_id');
+        // BUG-LAMBDAVALIDATION-001 (I39): assignee_user_id was written verbatim, so any string (a
+        // stranger's sub, an object) could land in the column the dashboard's "assigned to me" tiles
+        // read. A non-null value must be one of the caller's household ids; null still clears. For a
+        // non-member householdIds is [caller], so they can assign only themselves.
+        if (hasAssignee && body.assignee_user_id != null
+          && !(typeof body.assignee_user_id === 'string' && householdIds.includes(body.assignee_user_id))) {
+          return resp(400, { error: 'assignee_user_id must be a household member' });
+        }
         if (hasFeatured && body.featured_photo_id != null) {
           const linkRows = await sql`
             SELECT 1 FROM photos
