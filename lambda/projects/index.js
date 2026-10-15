@@ -358,7 +358,8 @@ export const handler = async (event) => {
       }
       if (method === 'POST') {
         const body = JSON.parse(event.body ?? '{}');
-        if (!body.name) return resp(400, { error: 'name is required' });
+        // BUG-LAMBDAVALIDATION-001 (I38): `!body.name` let '   ' through and 500'd on a number.
+        if (typeof body.name !== 'string' || !body.name.trim()) return resp(400, { error: 'name is required' });
         const rows = await sql`
           INSERT INTO project_types (name, category, description, icon, created_by)
           VALUES (
@@ -988,7 +989,10 @@ export const handler = async (event) => {
 
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
-      if (!body.name) return resp(400, { error: 'name is required' });
+      // BUG-LAMBDAVALIDATION-001 (I38): `!body.name` let '   ' through (a blank-named container) and
+      // 500'd on a number at body.name.toLowerCase() below. Same rule as the PUT's BUG-BLANKNAME-001
+      // guard; the POST keeps its own message.
+      if (typeof body.name !== 'string' || !body.name.trim()) return resp(400, { error: 'name is required' });
       // V1.2a-4 S1 (PROJ-RESCOPE): validate kind enum server-side. A null/absent
       // kind is coalesced to a default below (S6) so alive rows are never kind=NULL.
       const ALLOWED_KINDS = ['campaign', 'category', 'cultivar'];
