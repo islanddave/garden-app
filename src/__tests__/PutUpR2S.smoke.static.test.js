@@ -482,7 +482,7 @@ describe('S17: the place\'s DELETE — refused while in use, then clean', () => 
 
 describe('P11: a batch made from a jar that already exists (block P)', () => {
   const at = P.indexOf('# ── P11)')
-  const P11 = P.slice(at, P.indexOf('if ferm_sweep; then'))
+  const P11 = P.slice(at, P.indexOf('# ── P13)'))
 
   it('sits after P10 and before block P\'s closing mint, and mints nothing of its own', () => {
     expect(at).toBeGreaterThan(P.indexOf('fe_fail "p10-raw-create"'))

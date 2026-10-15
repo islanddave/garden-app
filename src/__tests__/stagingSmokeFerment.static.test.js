@@ -306,13 +306,13 @@ describe('P10 — Raw at create', () => {
 // drop either read-back -> its literal reds.
 describe('P12 — take a put-up off its batch, and put it back', () => {
   const at = BLOCK.indexOf('# ── P12)')
-  const P12 = BLOCK.slice(at, BLOCK.indexOf('if ferm_sweep; then'))
+  const P12 = BLOCK.slice(at, BLOCK.indexOf('# ── P13)'))
   const line = (needle) => P12.split('\n').find((l) => l.includes(needle)) ?? ''
   const UUID = '00000000-0000-4000-8000-000000000000'
 
   it('sits after P11 and the mint that follows it, before the sweep, and mints nothing of its own', () => {
     expect(at).toBeGreaterThan(BLOCK.indexOf('fe_check "p11-replay"'))
-    expect(at).toBeGreaterThan(BLOCK.lastIndexOf('CLERK_JWT=$(mint_session_token)', BLOCK.indexOf('if ferm_sweep; then')))
+    expect(at).toBeGreaterThan(BLOCK.lastIndexOf('CLERK_JWT=$(mint_session_token)', BLOCK.indexOf('# ── P13)')))
     expect(P12.split('\n').filter((l) => l.includes('mint_session_token') && !l.trim().startsWith('#'))).toEqual([])
   })
 
@@ -340,5 +340,31 @@ describe('P12 — take a put-up off its batch, and put it back', () => {
   it('each write is read back from the jar: off the batch and live, then on THAT batch and live', () => {
     expect(line('fe_check "p12-take-off"')).toContain(`"$FE_CODE $(fe_row "SELECT coalesce(batch_id::text,'null')||'|'||(deleted_at IS NULL)::text FROM preservation_log WHERE id = '$FE_J11'")" "200 null|true"`)
     expect(line('fe_check "p12-put-back"')).toContain(`"$FE_CODE $(fe_jq '.linked') $(fe_row "SELECT (batch_id = '$FE_B11')::text||'|'||(deleted_at IS NULL)::text FROM preservation_log WHERE id = '$FE_J11'")" "200 1 true|true"`)
+  })
+})
+
+// OPS-SMOKEKITCHENLIST-001 — GET /api/kitchen-batches?state=going is what the Going view loads and the only source of
+// conditioning_since, the dehydrator conditioning question's start date. MUTATION: drop a GET or change a cue label
+// -> its literal reds; move P13 past the sweep -> the order arm reds.
+describe('P13 — the Put Up list route reads conditioning_since back', () => {
+  const at = BLOCK.indexOf('# ── P13)')
+  const P13 = BLOCK.slice(at, BLOCK.indexOf('if ferm_sweep; then'))
+
+  it('sits after P12, before the sweep, on a mint of its own', () => {
+    expect(at).toBeGreaterThan(BLOCK.indexOf('# ── P12)'))
+    expect(at).toBeLessThan(BLOCK.indexOf('if ferm_sweep; then'))
+    expect(P13).toContain('CLERK_JWT=$(mint_session_token)')
+  })
+
+  it('writes a $FE_TAG dehydrate batch, so ferm_sweep takes it and its stage rows', () => {
+    expect(P13).toContain('\\"label\\": \\"$FE_TAG P13\\", \\"kind\\": \\"dehydrate\\"')
+  })
+
+  it("sends the Lambda's exact cue labels and reads the list route after each write", () => {
+    expect(P13).toContain('"In jars to condition"')
+    expect(P13).toContain('"Condensation → back in the dryer"')
+    expect(P13).toContain('fe_req GET "$FE_BASE/api/kitchen-batches?state=going"')
+    for (const id of ['p13-list-jars', 'p13-list-dryer', 'p13-list-rejar']) expect(P13).toContain(`fe_check "${id}"`)
+    expect(P13).toContain('"201 200 null"')
   })
 })

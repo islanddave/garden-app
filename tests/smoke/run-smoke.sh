@@ -3259,7 +3259,7 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       # sheet's jar picker makes too): unlink → the jar is live and on no batch; link again → the answer counts 1 and
       # the jar is on that batch again. The batch id is read from the JAR before the unlink, so the last check compares
       # the link to what it was, not to the answer's shape. Two requests on the mint above: block P gains no mint, and
-      # block Q, which starts on this token, gets it a few seconds older. P11's rows are the only ones touched and
+      # block Q starts on P13's mint, below. P11's rows are the only ones touched and
       # they end as P11 left them, so ferm_sweep is unchanged.
       FE_B11=$(fe_row "SELECT batch_id FROM preservation_log WHERE id = '${FE_J11:-}'")
       if fe_id_ok "$FE_B11"; then
@@ -3273,7 +3273,7 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       # ── P13) The Put Up list route's conditioning_since read-back (OPS-SMOKEKITCHENLIST-001; L-108) ──
       # GET /api/kitchen-batches?state=going is what PutUp.jsx's Going view loads, and conditioning_since (the
       # listBatches lateral, kitchenRoutes.js) is the start date the dehydrator "conditioned yet?" question reads.
-      # No other smoke GETs this route. A dehydrate batch gets two check-ins whose cue_observed is the client's
+      # No other smoke GETs this route. A dehydrate batch gets three check-ins whose cue_observed is the client's
       # exact label: 'In jars to condition' at J1 → the list reads J1; 'Condensation → back in the dryer' at D1
       # after it → null; jars again at J2 after that → J2 (the count starts over from the latest trip to the dryer).
       # Fixed past instants, compared as epoch seconds so the driver's ISO spelling cannot matter. The label carries
@@ -3287,14 +3287,15 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
           fe_req GET "$FE_BASE/api/kitchen-batches?state=going"
           FE_S13="$FE_CODE $(fe_jqx "$FE_B13" '[.batches[] | select(.id == $x)] | if length != 1 then "rows:\(length)" else (.[0].conditioning_since | if . == null then "null" else (tostring | sub("\\.[0-9]+"; "") | sub("(\\+00(:00)?)$"; "Z") | sub(" "; "T") | fromdateiso8601 | tostring) end) end')"
         }
-        FE_J1="2026-01-10T12:00:00Z"; FE_D1="2026-01-11T12:00:00Z"; FE_J2="2026-01-12T12:00:00Z"
-        fe_cue13 "In jars to condition" "$FE_J1"
+        FE_T13_J1="2026-01-10T12:00:00Z"; FE_T13_D1="2026-01-11T12:00:00Z"; FE_T13_J2="2026-01-12T12:00:00Z"
+        fe_cue13 "In jars to condition" "$FE_T13_J1"
         fe_check "p13-jars-write" "$FE_CODE" "201" "POST /api/kitchen-batches/:id/stages tended, cue 'In jars to condition'"
         fe_since13; fe_check "p13-list-jars" "$FE_S13" "200 1768046400" "GET /api/kitchen-batches?state=going; the batch's conditioning_since = the jars check-in"
-        fe_cue13 "Condensation → back in the dryer" "$FE_D1"
+        fe_cue13 "Condensation → back in the dryer" "$FE_T13_D1"
         FE_W13=$FE_CODE; fe_since13; fe_check "p13-list-dryer" "$FE_W13 $FE_S13" "201 200 null" "back in the dryer after it → conditioning_since null"
-        fe_cue13 "In jars to condition" "$FE_J2"
+        fe_cue13 "In jars to condition" "$FE_T13_J2"
         FE_W13=$FE_CODE; fe_since13; fe_check "p13-list-rejar" "$FE_W13 $FE_S13" "201 200 1768219200" "jars again after the dryer → conditioning_since = the new jars check-in"
+        unset -f fe_cue13 fe_since13
       else
         fe_fail "p13-create" "POST /api/kitchen-batches kind dehydrate → HTTP $FE_CODE, id '$FE_B13'"
       fi
