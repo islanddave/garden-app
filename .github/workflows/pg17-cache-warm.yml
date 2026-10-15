@@ -1,0 +1,152 @@
+name: pg17 client cache warm
+
+# OPS-SCHEMACHECKAPT-001. promote-gate.yml takes the pg17 client (pg_dump, pg_dumpall) for scripts/snap.py from the
+# Actions cache entry pg17-client-postgres17-image-v1-runner-ubuntu-26.04 and fetches nothing: on a miss it refuses
+# before the fast-forward, nothing moved. It never saves the entry either (actions/cache/restore has no save). This
+# workflow fills that entry and proves it: restore; on a hit run both binaries; on a miss copy them out of the
+# digest-pinned postgres:17 image, run them, save, then look the entry up again and fail if it is not there.
+# backup.yml and restore-verify.yml (daily, on main) still save the same key from the floating tag on their own miss.
+#
+# KEY, PATH, ACTION SHA AND RUNS-ON equal promote-gate's (and backup.yml's key and path). The cache version hashes the
+# path, and the key carries the runner label, so an entry written here with any of them different is one the promote
+# never restores. scripts/test_workflow_steps.py pins them together.
+#
+# CACHE SCOPE. An entry belongs to the ref whose run saved it; a run reads its own ref's entry, then the default
+# branch's (main). The push trigger fills dev's, for promotes that run on dev; the schedule and a dispatch run on main
+# and fill main's. A hit, from either ref, is verified and never re-saved: entries are immutable.
+#
+# WHY NO PUSH TO main: scripts/revert-to.py refuses to revert to any release whose workflows run on a push to main
+# (the revert's fast-forward would start them, unseen), whatever their paths filter. Until this file is on main it
+# cannot be dispatched (workflow_dispatch needs the file on the default branch), so the first warm comes from the
+# push to dev that carries it.
+#
+# THE DIGEST PIN GOVERNS FUTURE FILLS ONLY. The key carries no digest, so entries already saved (from the floating
+# postgres:17 tag, here or by the other savers) keep serving until they are deleted or the key changes. Every run
+# prints pg_dump --version, so the log records what the entry actually holds.
+#
+# A BAD ENTRY: delete the key on BOTH refs first (gh cache delete pg17-client-postgres17-image-v1-runner-ubuntu-26.04
+# --ref refs/heads/dev, and again with --ref refs/heads/main), then run this; the miss refetches and saves.
+# force_refetch on a hit fetches and verifies a fresh copy but cannot replace the entry, and says so in an ::error.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_refetch:
+        description: "Fetch and verify a fresh copy even on a hit (it is NOT saved over an existing entry: delete the key on both refs first)"
+        type: boolean
+        default: false
+  push:
+    branches: [dev]
+    paths:
+      - .github/workflows/pg17-cache-warm.yml
+      - .github/workflows/promote-gate.yml
+  schedule:
+    # Mondays 06:17 UTC: weekly, ahead of backup.yml's daily 07:00.
+    - cron: '17 6 * * 1'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: pg17-cache-warm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Make /usr/lib/postgresql/17 writable (cache + docker cp target)
+        run: |
+          set -uo pipefail
+          fail() {
+            echo "::error title=pg17 cache warm::$1 — the cache entry was not checked or written: re-run this workflow. A runner fault."
+            exit 1
+          }
+          sudo mkdir -p /usr/lib/postgresql/17/bin || fail "sudo mkdir -p /usr/lib/postgresql/17/bin failed (exit $?)"
+          sudo chown -R "$(id -u):$(id -g)" /usr/lib/postgresql/17 || fail "sudo chown of /usr/lib/postgresql/17 to the runner user failed (exit $?)"
+
+      - name: pg17 client cache
+        id: pg17-cache
+        timeout-minutes: 2
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/lib/postgresql/17/bin
+          key: pg17-client-postgres17-image-v1-runner-ubuntu-26.04
+
+      # A hit is what every promote will restore, so it must run here too: a corrupt entry fails this workflow,
+      # not the next promote. `== 'true'`: on a plain miss the action leaves cache-hit unset.
+      - name: Verify the cached pg17 client (hit)
+        if: steps.pg17-cache.outputs.cache-hit == 'true'
+        run: |
+          set -uo pipefail
+          for tool in pg_dump pg_dumpall; do
+            if ! "/usr/lib/postgresql/17/bin/$tool" --version; then
+              echo "::error title=pg17 cache warm::the cached /usr/lib/postgresql/17/bin/$tool does not run, so every promote that restores this entry refuses. Delete the key pg17-client-postgres17-image-v1-runner-ubuntu-26.04 on BOTH refs/heads/dev and refs/heads/main (the command is in this workflow's header), then re-run this workflow: the miss refetches and saves."
+              exit 1
+            fi
+          done
+
+      # promote-gate's old miss path, moved here, from a digest-pinned image. Each docker call runs inside
+      # `timeout` (124 = timed out, 137 = had to be KILLed): pull 120 + 10 s, copy 30 + 5 s, remove 10 + 5 s.
+      - name: Fetch pg17 client from the postgres:17 image (miss, or force_refetch)
+        id: fetch
+        if: steps.pg17-cache.outputs.cache-hit != 'true' || inputs.force_refetch
+        timeout-minutes: 4
+        env:
+          # postgres:17 manifest list (linux/amd64: PG 17.11, image created 2026-10-06), read 2026-10-15.
+          PG17_IMAGE: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+        run: |
+          set -uo pipefail
+          fail() {
+            echo "::error title=pg17 cache warm::$1 — the cache entry was not written: re-run this workflow. A registry or runner fault."
+            exit 1
+          }
+          cid=$(timeout -k 10 120 docker create "$PG17_IMAGE") || fail "the $PG17_IMAGE image could not be pulled and a container created from it within 120 s (exit $?)"
+          [ -n "$cid" ] || fail "creating the $PG17_IMAGE container printed no container id"
+          timeout -k 5 30 docker cp "$cid:/usr/lib/postgresql/17/bin/." /usr/lib/postgresql/17/bin/ \
+            || fail "copying /usr/lib/postgresql/17/bin out of the $PG17_IMAGE container failed, or did not finish in 30 s (exit $?)"
+          # The copy is what the cache needs. A scratch container left behind on a one-job runner is not worth a failure.
+          timeout -k 5 10 docker rm -f "$cid" > /dev/null 2>&1 \
+            || echo "note: could not remove the scratch container $cid (exit $?); the copy above succeeded"
+
+      - name: Verify the fetched pg17 client
+        if: steps.fetch.outcome == 'success'
+        run: |
+          set -uo pipefail
+          for tool in pg_dump pg_dumpall; do
+            if ! "/usr/lib/postgresql/17/bin/$tool" --version; then
+              echo "::error title=pg17 cache warm::/usr/lib/postgresql/17/bin/$tool copied out of the pinned postgres:17 image does not run; nothing was saved. Check the image digest in this workflow."
+              exit 1
+            fi
+          done
+
+      # Entries are immutable: a save under a key this ref can already restore is refused (or, for main's entry seen
+      # from dev, would sit behind it), and the save action reports that only as a warning. So no save is tried.
+      - name: Refuse to pretend force_refetch replaced an existing entry
+        if: inputs.force_refetch && steps.pg17-cache.outputs.cache-hit == 'true'
+        run: |
+          set -uo pipefail
+          echo "::error title=pg17 cache warm::force_refetch fetched and verified a fresh copy (versions above), but the existing entry pg17-client-postgres17-image-v1-runner-ubuntu-26.04 was NOT replaced: cache entries are immutable. Delete the key on BOTH refs/heads/dev and refs/heads/main (the command is in this workflow's header), then run this workflow again: the miss refetches and saves."
+          exit 1
+
+      - name: Save pg17 client cache (miss only)
+        if: steps.pg17-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 2
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/lib/postgresql/17/bin
+          key: pg17-client-postgres17-image-v1-runner-ubuntu-26.04
+
+      # The save action turns every error (a reserve race, a cache-service fault) into a warning and passes, so a
+      # green save proves nothing. This lookup fails the run unless an entry this ref will restore now exists.
+      - name: Prove the pg17 client cache entry exists (miss only)
+        if: steps.pg17-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 1
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/lib/postgresql/17/bin
+          key: pg17-client-postgres17-image-v1-runner-ubuntu-26.04
+          lookup-only: true
+          fail-on-cache-miss: true
