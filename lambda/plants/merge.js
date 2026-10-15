@@ -310,9 +310,19 @@ export async function mergeCore(sql, {
   if (!opId) return { status: 400, body: { error: 'opId is required' } }
 
   // 1. Idempotent replay.
+  //
+  //    BUG-MERGEREPLAYSCOPE-001: scoped to the caller's household (merged_by, the only actor column
+  //    merge_event has) AND to this winner. This read runs before the group ownership load below, so
+  //    unscoped it handed any authenticated caller who knew (or guessed — merge-run uses
+  //    `merge-run-g<n>`) an op_id another household's merge record: winner, losers and counts. A
+  //    foreign op_id now finds nothing here, runs the caller's own merge, and is refused by
+  //    merge_event_op_uniq at the INSERT (the generic 409 in the catch below). The winner term stops
+  //    a household replay under a different path id from returning another group's outcome.
+  //    The literal prefix `FROM merge_event WHERE op_id` is the merge.test.js mock key; keep it.
   const prior = await sql`
     SELECT winner_plant_id, loser_plant_ids, events_dropped, rows_repointed, merged_at
     FROM merge_event WHERE op_id = ${opId}
+     AND merged_by = ANY(${householdIds}) AND winner_plant_id = ${winnerId}
   `
   if (prior.length) return { status: 200, body: replayBody(prior[0]) }
 
@@ -900,13 +910,22 @@ export async function mergeCore(sql, {
     } }
   } catch (err) {
     const msg = err?.message ?? String(err)
-    // A concurrent identical op landed first — return its outcome rather than a 500.
+    // A concurrent identical op landed first — return its outcome rather than a 500. Same scope as
+    // the replay read at step 1 (BUG-MERGEREPLAYSCOPE-001).
     if (/merge_event_op_uniq|duplicate key/i.test(msg)) {
       const r = await sql`
         SELECT winner_plant_id, loser_plant_ids, events_dropped, rows_repointed, merged_at
         FROM merge_event WHERE op_id = ${opId}
+         AND merged_by = ANY(${householdIds}) AND winner_plant_id = ${winnerId}
       `
       if (r.length) return { status: 200, body: replayBody(r[0]) }
+      // The op_id is taken by a merge outside this scope (another household's, or another winner's).
+      // Generic and with no `detail`: the raw message names merge_event_op_uniq, and the caller
+      // learns nothing beyond "pick another op_id". Full closure (uniqueness per merged_by) needs a
+      // migration and is out of scope.
+      if (/merge_event_op_uniq/i.test(msg)) {
+        return { status: 409, body: { error: 'opId already used — choose a new opId' } }
+      }
     }
     if (/archive_events_subset/i.test(msg)) {
       return { status: 422, body: { error: 'Refused: the drop set is not chores-only', detail: msg } }

@@ -590,6 +590,88 @@ describe('mergeCore', () => {
   })
 })
 
+// ── BUG-MERGEREPLAYSCOPE-001 — the op_id replay is household- and winner-scoped ────────────────
+// The replay read ran before the group ownership load and matched op_id alone, so any caller who knew
+// an op_id got another household's merge record back. The mock below is a tiny merge_event table that
+// applies a scope term ONLY IF the issued statement carries it (read off the SQL text), so removing
+// either term from merge.js makes the foreign row come back and these tests red.
+describe('mergeCore — op_id replay scope (BUG-MERGEREPLAYSCOPE-001)', () => {
+  const ok = { opId: 'op1', userId: 'user_a', householdIds: ['user_a', 'user_b'] }
+  const FOREIGN_LOSER = '44444444-4444-4444-4444-444444444444'
+  const withMergeEvents = (table, txError = null) => {
+    const base = mockSql(baseResponses([plantRow(WINNER), plantRow(LOSER1)]))
+    const sql = (strings, ...values) => {
+      const p = base(strings, ...values)
+      const text = p.__text
+      if (!text.includes('FROM merge_event WHERE op_id')) return p
+      const at = (re) => { const m = text.match(re); return m ? values[Number(m[1])] : undefined }
+      let rows = table.filter((r) => r.op_id === at(/op_id = \$(\d+)/))
+      const household = at(/merged_by = ANY\(\$(\d+)\)/)
+      if (household !== undefined) rows = rows.filter((r) => household.includes(r.merged_by))
+      const winner = at(/winner_plant_id = \$(\d+)/)
+      if (winner !== undefined) rows = rows.filter((r) => r.winner_plant_id === winner)
+      const q = Promise.resolve(rows)
+      q.__text = text
+      return q
+    }
+    sql.calls = base.calls
+    sql.lastTransaction = base.lastTransaction
+    sql.transaction = txError ? async () => { throw txError } : base.transaction
+    return sql
+  }
+  const record = (over) => ({
+    op_id: 'op1', merged_by: 'user_z', winner_plant_id: WINNER, loser_plant_ids: [FOREIGN_LOSER],
+    events_dropped: 7, rows_repointed: 42, merged_at: '2026-08-01T00:00:00Z', ...over,
+  })
+  const opTaken = () => Object.assign(
+    new Error('duplicate key value violates unique constraint "merge_event_op_uniq"'), { code: '23505' })
+
+  it('does not replay another household\'s merge for a known op_id — 409, nothing of theirs', async () => {
+    const sql = withMergeEvents([record()], opTaken())
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(409)
+    expect(r.body.replayed).toBeUndefined()
+    // No detail: the raw message names the constraint, which tells the caller the op_id exists.
+    expect(r.body.detail).toBeUndefined()
+    const text = JSON.stringify(r.body)
+    for (const leak of [FOREIGN_LOSER, 'user_z', '42', 'merge_event_op_uniq']) expect(text).not.toContain(leak)
+  })
+
+  it('does not replay a household merge recorded on a different winner', async () => {
+    const sql = withMergeEvents([record({ merged_by: 'user_b', winner_plant_id: LOSER1 })], opTaken())
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(409)
+    expect(r.body.replayed).toBeUndefined()
+  })
+
+  it('still replays the household\'s own op_id on this winner, by any member', async () => {
+    const sql = withMergeEvents([record({ merged_by: 'user_b' })])
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(200)
+    expect(r.body.replayed).toBe(true)
+    expect(sql.calls.some((c) => c.transaction)).toBe(false)
+  })
+
+  it('replays from the duplicate-key arm when a concurrent identical op landed first', async () => {
+    // The step-1 read is empty (the other request had not committed); the catch's re-read finds it.
+    const table = []
+    const sql = withMergeEvents(table, opTaken())
+    const tx = sql.transaction
+    sql.transaction = async (stmts) => { table.push(record({ merged_by: 'user_a' })); return tx(stmts) }
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(200)
+    expect(r.body.replayed).toBe(true)
+  })
+
+  it('both merge_event lookups carry both terms after the literal prefix', () => {
+    // Prefix kept literally: it is the mock key above and in every other mergeCore test.
+    expect((SRC.match(/FROM merge_event WHERE op_id/g) || [])).toHaveLength(2)
+    const scoped = SRC.match(
+      /FROM merge_event WHERE op_id = \$\{opId\}\s+AND merged_by = ANY\(\$\{householdIds\}\) AND winner_plant_id = \$\{winnerId\}/g) || []
+    expect(scoped).toHaveLength(2)
+  })
+})
+
 // ── a deadlock is "run it again", not a broken merge ─────────────────────────────────────────
 // The cutover takes its seed lots first and the losers' photos later; a photo delete takes the photo
 // first and the lot that features it later. A loser's photo on a seed jar is in both, and on real

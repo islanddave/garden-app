@@ -11,6 +11,11 @@
 //   MERGE_REHEARSAL_DSN=postgres://... node scripts/merge-rehearse.mjs \
 //     --winner <uuid> --losers <uuid,uuid> --label "group 6 Chili Red" [--household id,id]
 //
+// --household MUST include the winner's owner (plants.created_by of --winner). The run merges as
+// that owner, and since BUG-MERGEREPLAYSCOPE-001 mergeCore's op_id replay only matches a merge_event
+// whose merged_by is in householdIds; leave the owner out and (j1) 409s instead of replaying.
+// Omitting --household derives the scope from the group's owners, which always includes it.
+//
 // Exit 0 = every invariant held AND the second run changed nothing. Exit 1 = any failure.
 // A green run here is NOT full verification: it does not exercise Lambda side effects,
 // user_stats/XP recompute, or the app read paths. The water-verdict check needs staging.

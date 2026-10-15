@@ -26,8 +26,9 @@ import { handler } from '../../lambda/plants/index.js'
 
 const RUN = testRunId()
 const DAVE = `mrg-dave-${RUN}`
-// Only ever a user_id VALUE on a telemetry row: the key's user column is text with no FK, and the merge
-// moves rows by plant_id whoever they belong to.
+// A user_id VALUE on a telemetry row (the key's user column is text with no FK, and the merge moves rows
+// by plant_id whoever they belong to), the owner of the foreign location in the B4 case, and the
+// second household in the I18 replay case.
 const OTHER = `mrg-other-${RUN}`
 const D1 = '2026-09-01'
 const D2 = '2026-09-02'
@@ -55,15 +56,16 @@ afterAll(async () => {
   ])
 })
 
-/** A container with a winner and three sibling losers, all DAVE's and all alike on every guarded column. */
-async function seedGroup(tag) {
-  const proj = await insertProject({ name: `mrg-${tag}-${RUN}`, createdBy: DAVE })
+/** A container with a winner and three sibling losers, all `owner`'s (DAVE's by default) and all alike on
+ *  every guarded column. */
+async function seedGroup(tag, owner = DAVE) {
+  const proj = await insertProject({ name: `mrg-${tag}-${RUN}`, createdBy: owner })
   const ids = []
   for (const who of ['w', 'l1', 'l2', 'l3']) {
     // eslint-disable-next-line no-await-in-loop
     const [p] = await directSql`
       INSERT INTO plants (project_id, name, created_by)
-      VALUES (${proj.id}, ${`mrg-${tag}-${who}-${RUN}`}, ${DAVE}) RETURNING id`
+      VALUES (${proj.id}, ${`mrg-${tag}-${who}-${RUN}`}, ${owner}) RETURNING id`
     ids.push(p.id)
   }
   const [W, L1, L2, L3] = ids
@@ -306,5 +308,46 @@ describe('planting merge — overrides.location_id is ownership-gated (B4)', () 
     const { W, L1 } = await seedGroup('b4s')
     const r = await merge(W, [L1], { overrides: 'location_id' })
     expect(r.status, JSON.stringify(r.body)).toBe(400)
+  })
+})
+
+// BUG-MERGEREPLAYSCOPE-001 (I18) — an op_id is not a key to another household's merge record. DAVE merges
+// with an op_id; OTHER (a separate household: no GARDEN_HOUSEHOLD_IDS in this suite) reuses it on a group
+// of their own. Before the fix the replay read matched op_id alone and handed OTHER DAVE's winner, losers
+// and counts with status 200. Now OTHER's merge runs, hits merge_event_op_uniq, and is refused with a
+// generic 409 that names nothing of DAVE's; OTHER's group is untouched (the cutover rolled back whole).
+describe('planting merge — op_id replay is household-scoped (I18)', () => {
+  it('a foreign op_id gets a bare 409, not the other household\'s merge record', async () => {
+    const mine = await seedGroup('i18d')
+    const theirs = await seedGroup('i18o', OTHER)
+    const opId = randomUUID()
+    setTestUserId(DAVE)
+    const first = await callHandler(handler, {
+      method: 'POST', path: `/api/plants/${mine.W}/merge`,
+      body: { loser_ids: [mine.L1], op_id: opId }, userId: DAVE,
+    })
+    expect(first.status, JSON.stringify(first.body)).toBe(200)
+
+    setTestUserId(OTHER)
+    const r = await callHandler(handler, {
+      method: 'POST', path: `/api/plants/${theirs.W}/merge`,
+      body: { loser_ids: [theirs.L1], op_id: opId }, userId: OTHER,
+    })
+    expect(r.status, JSON.stringify(r.body)).toBe(409)
+    expect(r.body.replayed).toBeUndefined()
+    expect(r.body.detail).toBeUndefined()
+    const text = JSON.stringify(r.body)
+    for (const id of [mine.W, mine.L1, DAVE, 'merge_event_op_uniq']) expect(text).not.toContain(id)
+    const [l] = await directSql`SELECT deleted_at FROM plants WHERE id = ${theirs.L1}`
+    expect(l.deleted_at).toBeNull()
+
+    // The owner's own replay still works.
+    setTestUserId(DAVE)
+    const again = await callHandler(handler, {
+      method: 'POST', path: `/api/plants/${mine.W}/merge`,
+      body: { loser_ids: [mine.L1], op_id: opId }, userId: DAVE,
+    })
+    expect(again.status).toBe(200)
+    expect(again.body.replayed).toBe(true)
   })
 })
