@@ -362,7 +362,9 @@ def _mints(steps):
 def test_rehearsal_mints_garden_bot_the_way_promote_gate_does(name):
     """promote-gate.yml is the reference: same action at the same pinned commit,
     same two secrets. A pin bump there that skips a rehearsal reds here."""
-    (reference,) = _mints(_job("promote-gate.yml", "promote")["steps"])
+    # Two in promote: the job's first step, and a fresh one just before the fast-forward (BUG-PROMOTEFFORDER-001).
+    reference, before_ff = _mints(_job("promote-gate.yml", "promote")["steps"])
+    assert (before_ff["uses"], before_ff["with"]) == (reference["uses"], reference["with"])
     (mint,) = _mints(_rehearse_steps(name))
     assert re.fullmatch(r"actions/create-github-app-token@[0-9a-f]{40}", reference["uses"])
     assert mint["uses"] == reference["uses"]
