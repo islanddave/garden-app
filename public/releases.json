@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.190.1",
+    "date": "2026-10-14",
+    "highlights": [
+      "Plants wintering in the Stable or House can have their own, longer watering interval"
+    ]
+  },
+  {
     "version": "4.190.0",
     "date": "2026-10-14",
     "highlights": [
