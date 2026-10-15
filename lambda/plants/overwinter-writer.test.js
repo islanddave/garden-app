@@ -118,6 +118,20 @@ describe('parseOverwinterBody', () => {
     expect(parseOverwinterBody({ regime: 'field_hardy', from: '13-01' }).ok).toBe(false)
   })
 
+  // BUG-LAMBDAERRPATHS-001 (I4). Mutation: put back `d > 31` in normDate. '02-31' and '04-31' are
+  // stored, and the evaluator's date maths rolls them forward into March and May. Feb 29 stays legal
+  // (the window recurs every year, leap or not).
+  it('rejects a day the month does not have, keeping Feb 29', () => {
+    for (const bad of ['02-31', '02-30', '04-31', '2027-06-31', '11-31']) {
+      const r = parseOverwinterBody({ regime: 'field_hardy', until: bad })
+      expect(r.ok, bad).toBe(false)
+      expect(r.error, bad).toBe('until is not a real date')
+    }
+    expect(parseOverwinterBody({ regime: 'field_hardy', from: '02-29' }).attr.from).toBe('02-29')
+    expect(parseOverwinterBody({ regime: 'field_hardy', until: '03-31' }).attr.until).toBe('03-31')
+    expect(parseOverwinterBody({ regime: 'field_hardy', until: '04-30' }).attr.until).toBe('04-30')
+  })
+
   // Mutation: delete the `.slice(0, MAX_NOTE)`. An unbounded note is rendered straight into a care
   // row and into the daily-plan payload.
   it('caps the note', () => {

@@ -195,12 +195,31 @@ function readAttr(p, c) {
   return null;
 }
 
+// BUG-LAMBDAERRPATHS-001 (I4). A stored from/until is used only when its last 5 chars are a real
+// MM-DD (Feb 29 allowed, so a leap-year date is never refused). Anything else reads as absent, so the
+// computed default applies, and the field name is reported in bad_dates the way unknown_regime is.
+// Unchecked, '2-3' made addDays throw a RangeError and took down the whole nightly run, and '02-31'
+// silently rolled forward into March. The writer (plants/overwinterAttr.js normDate) refuses both.
+const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+function storedMmdd(v) {
+  if (v == null || v === '') return { value: null, bad: false };
+  const m = typeof v === 'string' ? /^(\d{2})-(\d{2})$/.exec(v.slice(-5)) : null;
+  const mo = m ? Number(m[1]) : 0, d = m ? Number(m[2]) : 0;
+  if (!m || mo < 1 || mo > 12 || d < 1 || d > DAYS_IN_MONTH[mo - 1]) return { value: null, bad: true };
+  return { value: m[0], bad: false };
+}
+
 // Accepts either the shorthand `true` or an object. Returns null when the attribute is absent, so
 // every planting in the garden today (zero leaf-scope care_profile rows on prod) is untouched.
-function overwinterProfile(p, c) {
+// opts.defaultWindow skips the stored from/until entirely (the engine's fallback after a throw).
+function overwinterProfile(p, c, opts) {
   const raw = readAttr(p, c);
   if (raw == null) return null;
   const o = (typeof raw === 'object') ? raw : {};
+  const dflt = !!(opts && opts.defaultWindow);
+  const from = dflt ? { value: null, bad: false } : storedMmdd(o.from);
+  const until = dflt ? { value: null, bad: false } : storedMmdd(o.until);
+  const badDates = [from.bad && 'from', until.bad && 'until'].filter(Boolean);
   const named = typeof o.regime === 'string' ? o.regime : null;
   const known = named != null && Object.prototype.hasOwnProperty.call(OVERWINTER_REGIMES, named);
   const regime = known ? named : DEFAULT_REGIME;
@@ -216,8 +235,9 @@ function overwinterProfile(p, c) {
     // land. Read by lastTouch — see the note there for why this is a correctness fix and not a tidy-up.
     rain_counts: !spec.protected,
     guidance: typeof o.note === 'string' && o.note ? o.note : spec.guidance,
-    from: typeof o.from === 'string' ? o.from.slice(-5) : null,   // 'MM-DD' or the tail of an ISO date
-    until: typeof o.until === 'string' ? o.until.slice(-5) : null,
+    from: from.value,   // 'MM-DD' or the tail of an ISO date
+    until: until.value,
+    bad_dates: badDates.length ? badDates : null,
   };
 }
 
@@ -245,8 +265,8 @@ function inWrappedWindow(md, from, until) {
 // planting simply returns to its normal cadence. That is deliberate — `dormant` became a one-way trap
 // precisely because the only writer of plants.status is a human tapping a form, and no automation
 // ever clears it. A date window has no writer to forget.
-function overwinterState(p, c, today, lat = SITE_LAT) {
-  const prof = overwinterProfile(p, c);
+function overwinterState(p, c, today, lat = SITE_LAT, opts) {
+  const prof = overwinterProfile(p, c, opts);
   if (!prof) return null;
   const year = Number(today.slice(0, 4));
   const ps = persephoneDates(lat, year);

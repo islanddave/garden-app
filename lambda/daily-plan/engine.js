@@ -1133,10 +1133,27 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // PRECEDENCE IS ENFORCED BY THE BRANCH ORDER BELOW, not by this line — waterSuppression WINS. A
     // no_calendar_water profile is the Lithops class, where an interval-driven prompt is what killed the
     // plant; overwintering's reduced check would re-introduce exactly that prompt at a longer period.
-    // The `_wsup ?` here is a short-circuit only (skip the date maths we would discard anyway); deleting
+    // The `if(!_wsup)` here is a short-circuit only (skip the date maths we would discard anyway); deleting
     // it changes no behaviour, which is why the precedence guard in overwinter-engine.test.js mutates
     // the BRANCH ORDER rather than this expression.
-    const _ow = _wsup ? null : ow.overwinterState(p, c, today);
+    //
+    // BUG-LAMBDAERRPATHS-001 (I4): a throw here used to end the run for every Space. It now degrades
+    // this planting only, to the DEFAULT window (stored from/until ignored). _ow is never nulled on a
+    // throw: null means "not overwintering", which would hand a dormant plant fertilize and water rows.
+    // If even the default window throws, the planting is skipped for tonight rather than mis-carded.
+    let _ow = null;
+    if(!_wsup){
+      try { _ow = ow.overwinterState(p, c, today); }
+      catch(e){
+        console.warn(JSON.stringify({ msg: 'overwinter-state-throw', planting: p.id, error: e?.message }));
+        try { _ow = ow.overwinterState(p, c, today, undefined, { defaultWindow: true }); }
+        catch(e2){
+          console.warn(JSON.stringify({ msg: 'overwinter-state-throw', planting: p.id, fallback: true, error: e2?.message }));
+          continue;
+        }
+      }
+      if(_ow && _ow.bad_dates) console.warn(JSON.stringify({ msg: 'overwinter-bad-date', planting: p.id, fields: _ow.bad_dates }));
+    }
     if(_wsup){
       // V5-LEGACYEXCEPTIONCARE-001 — the drought signal rides HERE, appended to the reason and mirrored
       // as a structured key. It does NOT amend the suppression rule: the shipped policy stays "water only
