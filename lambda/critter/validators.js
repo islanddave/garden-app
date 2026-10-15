@@ -60,6 +60,78 @@ export const MORE_PINS_MAX = 32
 export const BAR_REQUIRED_KEYS = ['today', 'create']
 export const BAR_MAX_SLOTS = NAV_TAB_KEYS.length
 
+// V5-TODAYREDESIGN-001 S7 — today_sections, the redesigned Today's remembered open/closed state (plan-v2
+// §2.1 Layer 1, §13 MF1). {v:1, <section>: {open, at, ack?}}: one entry per section key, written only by an
+// explicit header tap. The database checks shape only (migrations/v5-todaysections-001: NULL or an object);
+// this is the contract. The client's copy is src/lib/todayV2/sectionsWire.js; todaySections.parity.test.js
+// runs both over one table of bodies, so a body one side accepts and the other refuses reds there.
+//
+// KEYS ARE A WHITELIST, per the S7 brief: the seven fixed sections and one household section per member,
+// 'hh-' + the first 8 characters of that member's Clerk sub (HouseholdSection.jsx householdKey). A sub is
+// `user_` + base62, so the tail carries '_' and capitals — a lowercase-only form would refuse every real
+// household key. A section added later is added here in the same release; until then the client keeps
+// that entry on the device (it never sends an entry this list refuses, so one cannot block the others).
+export const TODAY_SECTION_KEYS = ['glance', 'protect', 'headsup', 'care', 'harvest', 'putup', 'resting']
+export const TODAY_SECTION_HH_RE = /^hh-[A-Za-z0-9_-]{1,8}$/
+// The ack vocabulary is what triggers.js records (its header names this validator): t is a Protect tier
+// (TIER_RANK's keys), r one reason type or a list of them (CARE_REASONS ∪ HEADSUP_REASONS).
+export const TODAY_SECTION_ACK_TIERS = ['chill', 'frost', 'hardfreeze']
+export const TODAY_SECTION_ACK_REASONS = ['never', 'hot', 'small', 'window', 'deadline']
+// v plus 23 sections. Eight exist today plus one per other household member, so this is headroom, not a
+// limit anyone meets; the byte cap bounds the body whatever a future entry shape adds.
+export const TODAY_SECTIONS_MAX_KEYS = 24
+export const TODAY_SECTIONS_MAX_CHARS = 4096
+export const TODAY_SECTIONS_VERSION = 1
+
+const plainObject = (x) => x != null && typeof x === 'object' && !Array.isArray(x)
+export const todaySectionKeyOk = (k) => TODAY_SECTION_KEYS.includes(k) || TODAY_SECTION_HH_RE.test(k)
+
+// One entry, or the reason it is refused. EXACTLY {open, at} or {open:false, at, ack}: an ack records a
+// close made while a trigger held the section open (MF1), so an open entry never carries one — and the
+// ack is date-scoped by the entry's own `at`, which is why it has no date of its own.
+export function todaySectionEntryError(e) {
+  if (!plainObject(e)) return 'must be an object {open, at}'
+  const unknown = Object.keys(e).filter(k => k !== 'open' && k !== 'at' && k !== 'ack')
+  if (unknown.length > 0) return `has unknown key: ${unknown.join(', ')}`
+  if (typeof e.open !== 'boolean') return 'open must be a boolean'
+  if (typeof e.at !== 'string' || !DATE_RE.test(e.at)) return 'at must be YYYY-MM-DD'
+  if (e.ack === undefined) return null
+  if (e.open !== false) return 'ack is allowed only on a close (open:false)'
+  if (!plainObject(e.ack)) return 'ack must be an object {t?, r?}'
+  const ackUnknown = Object.keys(e.ack).filter(k => k !== 't' && k !== 'r')
+  if (ackUnknown.length > 0) return `ack has unknown key: ${ackUnknown.join(', ')}`
+  if (e.ack.t === undefined && e.ack.r === undefined) return 'ack must carry t or r'
+  if (e.ack.t !== undefined && !TODAY_SECTION_ACK_TIERS.includes(e.ack.t)) {
+    return `ack.t must be one of: ${TODAY_SECTION_ACK_TIERS.join(', ')}`
+  }
+  if (e.ack.r !== undefined) {
+    const rs = Array.isArray(e.ack.r) ? e.ack.r : [e.ack.r]
+    if (rs.length === 0 || rs.some(r => !TODAY_SECTION_ACK_REASONS.includes(r)) || new Set(rs).size !== rs.length) {
+      return `ack.r must be one of ${TODAY_SECTION_ACK_REASONS.join(', ')}, or a list of them without repeats`
+    }
+  }
+  return null
+}
+
+// The whole today_sections value of a PATCH, or the reason it is refused. Refused whole: a partly applied
+// set would silently drop a tap the person just made.
+export function todaySectionsError(ts) {
+  if (!plainObject(ts)) return 'today_sections must be an object'
+  if (ts.v !== TODAY_SECTIONS_VERSION) return `today_sections.v must be ${TODAY_SECTIONS_VERSION}`
+  const keys = Object.keys(ts)
+  if (keys.length > TODAY_SECTIONS_MAX_KEYS) return `today_sections exceeds max ${TODAY_SECTIONS_MAX_KEYS} keys`
+  const sections = keys.filter(k => k !== 'v')
+  if (sections.length === 0) return 'today_sections carries no section'
+  const unknown = sections.filter(k => !todaySectionKeyOk(k))
+  if (unknown.length > 0) return `today_sections has unknown section key: ${unknown.join(', ')}`
+  for (const k of sections) {
+    const err = todaySectionEntryError(ts[k])
+    if (err) return `today_sections.${k} ${err}`
+  }
+  if (JSON.stringify(ts).length > TODAY_SECTIONS_MAX_CHARS) return `today_sections exceeds ${TODAY_SECTIONS_MAX_CHARS} characters`
+  return null
+}
+
 export function validatePrefsPatchBody(body) {
   if (!body || typeof body !== 'object') return { status: 400, error: 'body required' }
   if (body.critter_visit != null && !CRITTER_VISIT_VALUES.has(body.critter_visit)) {
@@ -178,8 +250,18 @@ export function validatePrefsPatchBody(body) {
     }
     if (new Set(hidden).size !== hidden.length) return { status: 400, error: 'bar_layout.hidden must not repeat a tab' }
   }
+  // V5-TODAYREDESIGN-001 S7 — today_sections, SENT ALONE (plan-v2 §2.1). The route writes it with its own
+  // statement, so that a database without the column (migrations/v5-todaysections-001 not yet applied there)
+  // can refuse it with 409 BEFORE anything is written; a body that also carried another field would be half
+  // saved. The client already sends it alone, because a pre-S7 Lambda answers its 400 for the whole body.
+  if (body.today_sections != null) {
+    const others = Object.keys(body).filter(k => k !== 'today_sections' && body[k] != null)
+    if (others.length > 0) return { status: 400, error: `today_sections must be sent alone (also present: ${others.join(', ')})` }
+    const err = todaySectionsError(body.today_sections)
+    if (err) return { status: 400, error: err }
+  }
   // At least one updatable field must be present
-  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by', 'garden_sort_order', 'garden_expanded', 'garden_bloom_seen', 'garden_helper_rung1_seen', 'today_skipped', 'log_many_all_selected', 'whats_new_last_seen', 'more_pins', 'bar_layout']
+  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by', 'garden_sort_order', 'garden_expanded', 'garden_bloom_seen', 'garden_helper_rung1_seen', 'today_skipped', 'log_many_all_selected', 'whats_new_last_seen', 'more_pins', 'bar_layout', 'today_sections']
     .some(k => body[k] != null)
   if (!HAS_UPDATABLE) return { status: 400, error: 'no updatable fields present' }
   return null

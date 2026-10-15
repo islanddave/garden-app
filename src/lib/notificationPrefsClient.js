@@ -17,6 +17,7 @@ import { HANDS } from './handedness.js'
 import { API_TIMEOUT_MS, FROM_CACHE, FROM_CACHE_HEADER } from './api.js'
 import { MORE_PIN_ID_RE, MORE_PINS_MAX_STORED } from './moreRegistry.js'
 import { resolveBarLayout } from './navConfig.js'
+import { wireOk as todaySectionsWireOk } from './todayV2/sectionsWire.js'
 
 const CRITTER_BASE = (import.meta.env.VITE_API_CRITTERS ?? '').replace(/\/$/, '')
 
@@ -158,6 +159,26 @@ let inFlight = null
 let groupBySavesConfirmed = 0
 export const PREDATES_GROUP_BY_SAVE = Symbol.for('garden-app.prefsPredatesGroupBySave')
 
+// V5-TODAYREDESIGN-001 S7 — the same problem for the redesigned Today's remembered sections, PER SECTION, and
+// for a body held since BEFORE the save as well as one landing after it. PrefsProvider reads prefs once, at boot,
+// and Today reads a section's server entry over its own clean mirror entry (plan-v2 §2.1). So once a tap's save
+// is confirmed, the held boot body is stale for that section: read as it stands, the next visit would bring the
+// pre-tap value back. Every body is therefore stamped with the count of confirmed sections saves when its read
+// STARTED (PREFS_SECTIONS_READ_AT, non-enumerable like FROM_CACHE), each confirmed section with the count its
+// save made, and sectionPredatesSave says which entries of a body are older than this device's own confirmed
+// tap. Today reads its mirror for those (useTodaySections). A body read after the save carries the server's
+// merge — this tap, or another device's newer one — and is read as the server's again.
+let sectionsSavesConfirmed = 0
+const sectionConfirmedAt = new Map()
+export const PREFS_SECTIONS_READ_AT = Symbol.for('garden-app.prefsSectionsReadAt')
+
+export function sectionPredatesSave(prefs, key) {
+  const at = sectionConfirmedAt.get(key)
+  if (at == null) return false
+  const readAt = prefs?.[PREFS_SECTIONS_READ_AT]
+  return !(typeof readAt === 'number' && readAt >= at)
+}
+
 // fetchNotificationPrefs — GETs current prefs, joining any request already in flight.
 // Returns the prefs object on success, null on no-op or failure (NEVER throws).
 //
@@ -174,6 +195,7 @@ export async function fetchNotificationPrefs({ getToken } = {}) {
   if (inFlight) return inFlight
   inFlight = (async () => {
     const savesAtStart = groupBySavesConfirmed
+    const sectionsAtStart = sectionsSavesConfirmed
     try {
       const token = await (typeof getToken === 'function' ? getToken() : null)
       if (!token) return null
@@ -196,6 +218,9 @@ export async function fetchNotificationPrefs({ getToken } = {}) {
           Object.defineProperty(json, PREDATES_GROUP_BY_SAVE, { value: true, enumerable: false, configurable: true })
         } catch { /* frozen body — marking is best-effort */ }
       }
+      try {
+        Object.defineProperty(json, PREFS_SECTIONS_READ_AT, { value: sectionsAtStart, enumerable: false, configurable: true })
+      } catch { /* frozen body — an unstamped body reads as older than every confirmed section save */ }
       return json
     } catch {
       return null
@@ -213,6 +238,7 @@ export async function fetchNotificationPrefs({ getToken } = {}) {
 // without this a suite's second case would silently join the first case's settled promise.
 // Mirrors __resetHandednessSync() in hooks/useHandedness.js.
 export function __resetPrefsFlight() { inFlight = null }
+export function __resetSectionsSaves() { sectionsSavesConfirmed = 0; sectionConfirmedAt.clear() }
 
 // patchNotificationPrefs — PATCHes a partial prefs object.
 // Inputs:
@@ -502,6 +528,26 @@ export async function saveBarLayout({ getToken, layout } = {}) {
   const r = resolveBarLayout(layout)
   if (!r.applied.order || !r.applied.hidden) return LOCAL_REFUSAL
   return patchPrefsReported(getToken, { bar_layout: { order: r.order, hidden: r.hidden } })
+}
+
+// saveTodaySections — V5-TODAYREDESIGN-001 S7. The redesigned Today's remembered open/closed state: `sections`
+// is the whole wire value, { v:1, <section>: {open, at, ack?}, … } (src/lib/todayV2/sectionsWire.js builds it from
+// the device mirror's dirty entries). Written only from an explicit section-header tap, never from the visit layer
+// or a trigger — useTodaySections is the only caller and sends only what a tap marked dirty.
+//
+// SENT ALONE (plan-v2 §2.1): a critter Lambda from before S7 answers 400 "no updatable fields present" for the
+// whole body, and the S7 Lambda answers 409 while its database lacks the column — anything batched beside it
+// would be lost with it. The caller keeps every non-ok entry dirty on the device and sends it again at the next
+// visit start. keepalive (rimpact #5): a tap followed at once by leaving Today must still reach the server.
+// A confirmed save moves the count every read is stamped with (sectionPredatesSave, above the read).
+export async function saveTodaySections({ getToken, sections } = {}) {
+  if (!todaySectionsWireOk(sections)) return LOCAL_REFUSAL
+  const res = await patchPrefsReported(getToken, { today_sections: sections }, { keepalive: true })
+  if (res.ok) {
+    sectionsSavesConfirmed += 1
+    for (const k of Object.keys(sections)) if (k !== 'v') sectionConfirmedAt.set(k, sectionsSavesConfirmed)
+  }
+  return res
 }
 
 // saveGardenGroupBy — the cross-device Garden grouping (user_notification_prefs.garden_group_by).

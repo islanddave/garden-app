@@ -4,6 +4,8 @@ import {
   validateMarkViewedPatchBody, MAX_MARK_VIEWED_BATCH, UUID_RE,
   GARDEN_EXPANDED_MAX, NAV_TAB_KEYS, MOVABLE_TAB_KEYS, MORE_PIN_ID_RE, MORE_PINS_MAX, BAR_REQUIRED_KEYS, BAR_MAX_SLOTS,
   GARDEN_GROUP_BY_VALUES,
+  todaySectionsError, todaySectionEntryError, todaySectionKeyOk, TODAY_SECTION_KEYS, TODAY_SECTION_ACK_TIERS,
+  TODAY_SECTION_ACK_REASONS, TODAY_SECTIONS_MAX_KEYS, TODAY_SECTIONS_MAX_CHARS,
 } from './validators.js'
 
 const VALID_UUID = '11111111-2222-3333-4444-555555555555'
@@ -464,5 +466,120 @@ describe('validatePrefsPatchBody — V5-NAVCUSTOM-001 more_pins + bar_layout', (
       ok({ bar_layout: null, critter_visit: 'off' })
       refuses({ bar_layout: null }, 'no updatable fields present')
     })
+  })
+})
+
+// ─── V5-TODAYREDESIGN-001 S7 — today_sections (plan-v2 §2.1, §13 MF1) ───────────────────────────────────
+describe('validatePrefsPatchBody — V5-TODAYREDESIGN-001 S7 today_sections', () => {
+  const D = '2026-10-14'
+  const ok = (today_sections) => validatePrefsPatchBody({ today_sections })
+  const refused = (today_sections) => {
+    const r = validatePrefsPatchBody({ today_sections })
+    expect(r?.status, JSON.stringify(today_sections)).toBe(400)
+    return r.error
+  }
+
+  it('counts as an updatable field on its own — a body of only today_sections is not "no updatable fields"', () => {
+    expect(ok({ v: 1, harvest: { open: true, at: D } })).toBeNull()
+  })
+
+  it('accepts every whitelisted section key and a household key, open or closed', () => {
+    for (const k of TODAY_SECTION_KEYS) {
+      expect(ok({ v: 1, [k]: { open: true, at: D } }), k).toBeNull()
+      expect(ok({ v: 1, [k]: { open: false, at: D } }), k).toBeNull()
+    }
+    // householdKey(userId) = 'hh-' + the first 8 of the Clerk sub: '_' and capitals occur in real ones.
+    for (const k of ['hh-member_j', 'hh-user_2Nb', 'hh-user_2ab', 'hh-u', 'hh-ab-cd_E9']) {
+      expect(ok({ v: 1, [k]: { open: true, at: D } }), k).toBeNull()
+    }
+  })
+
+  it('refuses a key off the whitelist, naming it', () => {
+    for (const k of ['sidebar', 'Harvest', 'hh-', 'hh-123456789', 'hh-ab cd', 'hh-ab.cd', 'sow', 'glance2', '__proto__x']) {
+      expect(refused({ v: 1, [k]: { open: true, at: D } }), k).toMatch(/unknown section key/)
+    }
+    expect(todaySectionKeyOk('v')).toBe(false)     // the version is never a section
+  })
+
+  it('requires v === 1, and at least one section', () => {
+    expect(refused({ harvest: { open: true, at: D } })).toMatch(/v must be 1/)
+    expect(refused({ v: 2, harvest: { open: true, at: D } })).toMatch(/v must be 1/)
+    expect(refused({ v: '1', harvest: { open: true, at: D } })).toMatch(/v must be 1/)
+    expect(refused({ v: 1 })).toMatch(/carries no section/)
+  })
+
+  it('refuses a non-object value whole', () => {
+    for (const bad of [[], 'x', 1, true]) expect(refused(bad)).toMatch(/must be an object/)
+  })
+
+  it('an entry is exactly {open, at} or {open:false, at, ack}', () => {
+    expect(refused({ v: 1, care: { open: 'yes', at: D } })).toMatch(/care open must be a boolean/)
+    expect(refused({ v: 1, care: { open: true } })).toMatch(/at must be YYYY-MM-DD/)
+    expect(refused({ v: 1, care: { open: true, at: '10/14/2026' } })).toMatch(/at must be YYYY-MM-DD/)
+    expect(refused({ v: 1, care: { open: true, at: D, seen: 1 } })).toMatch(/unknown key: seen/)
+    expect(refused({ v: 1, care: null })).toMatch(/must be an object/)
+    expect(refused({ v: 1, care: [true, D] })).toMatch(/must be an object/)
+  })
+
+  it('MF1: an ack rides only on a close, and is {t?, r?} in triggers.js\'s vocabulary', () => {
+    expect(ok({ v: 1, protect: { open: false, at: D, ack: { t: 'chill' } } })).toBeNull()
+    expect(ok({ v: 1, care: { open: false, at: D, ack: { r: 'small' } } })).toBeNull()
+    expect(ok({ v: 1, care: { open: false, at: D, ack: { r: ['never', 'small'] } } })).toBeNull()
+    expect(ok({ v: 1, headsup: { open: false, at: D, ack: { r: 'deadline' } } })).toBeNull()
+    expect(ok({ v: 1, protect: { open: false, at: D, ack: { t: 'hardfreeze', r: 'hot' } } })).toBeNull()
+    for (const t of TODAY_SECTION_ACK_TIERS) expect(ok({ v: 1, protect: { open: false, at: D, ack: { t } } })).toBeNull()
+    for (const r of TODAY_SECTION_ACK_REASONS) expect(ok({ v: 1, care: { open: false, at: D, ack: { r } } })).toBeNull()
+
+    expect(refused({ v: 1, care: { open: true, at: D, ack: { r: 'small' } } })).toMatch(/only on a close/)
+    expect(refused({ v: 1, care: { open: false, at: D, ack: null } })).toMatch(/ack must be an object/)
+    expect(refused({ v: 1, care: { open: false, at: D, ack: {} } })).toMatch(/ack must carry t or r/)
+    expect(refused({ v: 1, protect: { open: false, at: D, ack: { t: 'freeze' } } })).toMatch(/ack\.t must be one of/)
+    expect(refused({ v: 1, care: { open: false, at: D, ack: { r: 'busy' } } })).toMatch(/ack\.r must be/)
+    expect(refused({ v: 1, care: { open: false, at: D, ack: { r: [] } } })).toMatch(/ack\.r must be/)
+    expect(refused({ v: 1, care: { open: false, at: D, ack: { r: ['small', 'small'] } } })).toMatch(/without repeats/)
+    // The dropped R9 arms (MF1): no ids, no keys, no own date.
+    expect(refused({ v: 1, care: { open: false, at: D, ack: { r: 'small', keys: ['small:a1b2c3d4'] } } })).toMatch(/ack has unknown key: keys/)
+    expect(refused({ v: 1, protect: { open: false, at: D, ack: { t: 'frost', ids: ['a1b2c3d4'] } } })).toMatch(/ack has unknown key: ids/)
+    expect(refused({ v: 1, protect: { open: false, at: D, ack: { t: 'frost', at: D } } })).toMatch(/ack has unknown key: at/)
+  })
+
+  it('caps the key count and the serialized size', () => {
+    const many = { v: 1 }
+    for (let i = 0; i < TODAY_SECTIONS_MAX_KEYS; i++) many[`hh-m${String(i).padStart(2, '0')}`] = { open: true, at: D }
+    expect(Object.keys(many).length).toBe(TODAY_SECTIONS_MAX_KEYS + 1)
+    expect(refused(many)).toMatch(new RegExp(`exceeds max ${TODAY_SECTIONS_MAX_KEYS} keys`))
+    delete many['hh-m00']
+    expect(ok(many)).toBeNull()                    // exactly at the cap
+    // The largest entry the vocabulary allows, 23 times, fits well inside the byte cap: the cap is a backstop.
+    const big = { v: 1 }
+    for (let i = 0; i < TODAY_SECTIONS_MAX_KEYS - 1; i++) {
+      big[`hh-${String(i).padStart(8, 'x')}`] = { open: false, at: D, ack: { t: 'hardfreeze', r: [...TODAY_SECTION_ACK_REASONS] } }
+    }
+    expect(JSON.stringify(big).length).toBeLessThan(TODAY_SECTIONS_MAX_CHARS)
+    expect(ok(big)).toBeNull()
+  })
+
+  it('must be sent alone: refused beside any other non-null field, naming it', () => {
+    const ts = { v: 1, harvest: { open: true, at: D } }
+    for (const other of [
+      { today_skipped: { date: D, keys: [] } }, { bar_layout: { order: ['today', 'create'], hidden: [] } },
+      { critter_visit: 'off' }, { handedness: 'left' },
+    ]) {
+      const r = validatePrefsPatchBody({ today_sections: ts, ...other })
+      expect(r?.status).toBe(400)
+      expect(r.error).toMatch(new RegExp(`today_sections must be sent alone \\(also present: ${Object.keys(other)[0]}\\)`))
+    }
+    // A null beside it is "leave alone" on this route, not a second field.
+    expect(validatePrefsPatchBody({ today_sections: ts, bar_layout: null })).toBeNull()
+  })
+
+  it('a null today_sections is "leave alone", like every other field — and alone it is no update', () => {
+    expect(validatePrefsPatchBody({ today_sections: null, critter_visit: 'off' })).toBeNull()
+    expect(validatePrefsPatchBody({ today_sections: null })).toEqual({ status: 400, error: 'no updatable fields present' })
+  })
+
+  it('the entry check is exported on its own for the client parity test', () => {
+    expect(todaySectionEntryError({ open: true, at: D })).toBeNull()
+    expect(todaySectionsError({ v: 1, glance: { open: true, at: D } })).toBeNull()
   })
 })

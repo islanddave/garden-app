@@ -168,6 +168,8 @@ real = {
     # V5-NAVCUSTOM-001 (2026-09-24): the keyed contract that puts readUserPrefs' boot SELECT (and the
     # four prefs upserts) under Phase 1. more_pins and bar_layout exist on prod only once
     # migrations/v5-navcustom-001 is applied, so Phase 1 FAILS on them until then -- by design.
+    # V5-TODAYREDESIGN-001 S7 (2026-10-14) added today_sections: migrations/v5-todaysections-001 was applied
+    # to prod 2026-10-15 before this code reached dev, so no waiver was needed.
     "lambda/critter/prefs-columns.test.js": {
         "user_notification_prefs": [
             "created_by", "critter_visit", "quiet_hours_start", "quiet_hours_end",
@@ -175,7 +177,7 @@ real = {
             "garden_group_by", "garden_sort_order", "garden_expanded",
             "garden_bloom_seen", "garden_helper_rung1_seen", "today_skipped",
             "log_many_all_selected", "whats_new_last_seen", "more_pins", "bar_layout",
-            "created_at", "updated_at",
+            "today_sections", "created_at", "updated_at",
         ],
     },
     # Its neighbour, pinned beside it: a keyed AUDIT_COLUMNS block dropped into this AUDIT_TABLES file

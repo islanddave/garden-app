@@ -18,8 +18,14 @@
 // source text. lambda/events/critterAward.js also reads this table and is NOT covered by this file.
 //
 // WHAT THIS FILE DOES NOT PROVE: that the columns exist on prod. The list is derived from this
-// directory's own SQL (the five statements pinned below); existence is what the auditor checks, and before
+// directory's own SQL (the seven statements pinned below); existence is what the auditor checks, and before
 // v5-navcustom-001 is applied to prod it reports more_pins and bar_layout missing, which is the point.
+//
+// V5-TODAYREDESIGN-001 S7 added today_sections, and with it the opposite design: the Lambda TOLERATES the
+// column's absence (migrations/v5-todaysections-001 may reach prod after the code). So the column is never in
+// the boot SELECT; it has a read and an upsert of its own, both pinned below, and a test here holds the boot
+// read free of it. The contract says what the code names, whatever the code does about a miss; the DDL was
+// applied to prod (2026-10-15) before this code reached dev, so no waiver was needed (README-BUILD.md there).
 //
 // Static source inspection rather than import: the contract has to be asserted against the SQL TEXT.
 import { describe, it, expect } from 'vitest';
@@ -43,9 +49,9 @@ const HANDLERS = readdirSync(__dirname)
 
 // L-081 KEYED contract: every user_notification_prefs column this directory's SQL names, and no other.
 // The first seventeen predate V5-NAVCUSTOM-001; more_pins and bar_layout exist only once
-// migrations/v5-navcustom-001 is applied.
+// migrations/v5-navcustom-001 is applied; today_sections only once migrations/v5-todaysections-001 is.
 const AUDIT_COLUMNS = {
-  user_notification_prefs: ['created_by', 'critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'coachmark_seen_at', 'opt_in_prompt_seen_at', 'last_garden_view_at', 'garden_group_by', 'garden_sort_order', 'garden_expanded', 'garden_bloom_seen', 'garden_helper_rung1_seen', 'today_skipped', 'log_many_all_selected', 'whats_new_last_seen', 'more_pins', 'bar_layout', 'created_at', 'updated_at'],
+  user_notification_prefs: ['created_by', 'critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'coachmark_seen_at', 'opt_in_prompt_seen_at', 'last_garden_view_at', 'garden_group_by', 'garden_sort_order', 'garden_expanded', 'garden_bloom_seen', 'garden_helper_rung1_seen', 'today_skipped', 'log_many_all_selected', 'whats_new_last_seen', 'more_pins', 'bar_layout', 'today_sections', 'created_at', 'updated_at'],
 };
 
 const PREFS_COLUMNS = AUDIT_COLUMNS.user_notification_prefs;
@@ -56,7 +62,7 @@ const DISTINCT_FROM = /\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi;
 // Mirrors the auditor's Phase 4 extractor for this one relation. Built fresh on every call, never
 // shared: .test() on a /g/ regex advances lastIndex and would skip matches silently.
 const relationRe = () => /\b(?:FROM|JOIN)\s+(?:public\.)?user_notification_prefs\b(?!\s*\.)/gi;
-// The four upserts write the table. Phase 2 audits their INSERT lists; this contract covers the whole
+// The five upserts write the table. Phase 2 audits their INSERT lists; this contract covers the whole
 // statement, because SET and RETURNING name columns too and RETURNING is a read by any other name.
 const writeTargetRe = () => /\bINSERT\s+INTO\s+(?:public\.)?user_notification_prefs\b(?!\s*\.)/gi;
 // The upserts' COALESCE arms qualify the stored value: public.user_notification_prefs.critter_visit.
@@ -121,6 +127,17 @@ const PINNED_ARMS = [
   },
   {
     file: 'index.js',
+    // readTodaySections (V5-TODAYREDESIGN-001 S7) — the boot GET's second, separate read. Its own statement so
+    // that a database without the column fails THIS read (42703, caught: the key is omitted), never the boot one.
+    pin: /SELECT today_sections\s+FROM public\.user_notification_prefs\s+WHERE created_by = \$\{clerkSub\}\s+LIMIT 1/,
+  },
+  {
+    file: 'index.js',
+    // Route 8's today_sections arm (S7) — sent alone, merged per top-level key, its own statement for the same reason.
+    pin: /INSERT INTO public\.user_notification_prefs \(created_by, today_sections\)\s+VALUES \(\$\{userId\}, \$\{tsec\}::jsonb\)\s+ON CONFLICT \(created_by\) DO UPDATE SET\s+today_sections = COALESCE\(public\.user_notification_prefs\.today_sections, '\{\}'::jsonb\) \|\| \$\{tsec\}::jsonb,\s+updated_at\s+= now\(\)\s+RETURNING today_sections, updated_at/,
+  },
+  {
+    file: 'index.js',
     // Route 9, POST /api/notifications/coachmark-dismissed.
     pin: /INSERT INTO public\.user_notification_prefs \(created_by, coachmark_seen_at\)[\s\S]*?RETURNING coachmark_seen_at/,
   },
@@ -132,7 +149,7 @@ const PINNED_ARMS = [
 ];
 
 describe('OPS-L081COLS-001 — lambda/critter user_notification_prefs column contract', () => {
-  it('finds the five statements, so the assertions below are not vacuous', () => {
+  it('finds the seven statements, so the assertions below are not vacuous', () => {
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
@@ -153,13 +170,32 @@ describe('OPS-L081COLS-001 — lambda/critter user_notification_prefs column con
   it('covers every column of the boot read, more_pins and bar_layout included', () => {
     // The statement a missing column breaks for every user at once. Read its SELECT list on its own, so
     // a column added there without a contract entry reds here by name.
-    const boot = STATEMENTS.filter((s) => relationRe().test(s.sql));
+    const boot = STATEMENTS.filter((s) => relationRe().test(s.sql) && /^\s*SELECT critter_visit\b/.test(s.sql));
     expect(boot).toHaveLength(1);
     const selectList = boot[0].sql.match(/SELECT([\s\S]*?)FROM/i)[1]
       .split(',').map((c) => c.trim().toLowerCase());
     expect(selectList).toContain('more_pins');
     expect(selectList).toContain('bar_layout');
     expect(selectList.filter((c) => !PREFS_COLUMNS.includes(c))).toEqual([]);
+  });
+
+  it('keeps today_sections OUT of the boot read and in reads and writes of its own (S7 tolerates its absence)', () => {
+    // The two reads of the table: the boot read and readTodaySections. Nothing else SELECTs from it.
+    const reads = STATEMENTS.filter((s) => relationRe().test(s.sql));
+    expect(reads).toHaveLength(2);
+    const boot = reads.filter((s) => /^\s*SELECT critter_visit\b/.test(s.sql));
+    expect(boot).toHaveLength(1);
+    // KILLING MUTATION: add today_sections to readUserPrefs' list — an unmigrated database then 500s every boot.
+    expect(boot[0].sql).not.toMatch(/\btoday_sections\b/);
+    const own = reads.filter((s) => s !== boot[0]);
+    expect(columnsOf(own[0].sql)).toEqual(['created_by', 'today_sections']);
+    // Every statement that names it names no other prefs column but the key and updated_at: a today_sections
+    // write folded into the main upsert would make every save fail on a database without the column.
+    const naming = STATEMENTS.filter((s) => /\btoday_sections\b/.test(s.sql));
+    expect(naming).toHaveLength(2);
+    for (const s of naming) {
+      expect(columnsOf(s.sql).filter((c) => !['created_by', 'today_sections', 'updated_at'].includes(c))).toEqual([]);
+    }
   });
 
   it('never names can_edit_bar — it is computed per request and never stored (CONTRACT §2)', () => {

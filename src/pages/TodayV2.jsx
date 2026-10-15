@@ -24,7 +24,7 @@ import { filterResult, filterAnnouncement } from '../lib/todayV2/spots.js'
 import { staleMarker } from '../lib/todayV2/verdict.js'
 import { agreedTonightLow, agreeCallout } from '../lib/tonightLow.js'
 import { currentLows } from '../lib/frostAlertLine.js'
-import { isFromCache } from '../lib/api.js'
+import { isFromCache, useApiFetch } from '../lib/api.js'
 import { buildCareNeeded } from '../lib/careNeeded.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
 import { P, TOP_CHROME_HEIGHT_PX, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
@@ -49,8 +49,9 @@ import { SOW_DATED_LINES_FROZEN } from '../lib/featureFlags.js'
 // S2 IS THE SKELETON: the Seeds frame, the title row (1.3rem green "Today" + Expand/Collapse all), the date,
 // the loading / error / no-plan states, one page-level status region, and the SECTIONS — in their fixed
 // order, as flat bands (TodaySection), open or closed from the three state layers:
-//   Layer 1 remembered (useTodaySections: the localStorage mirror; the server column is S7's) — written ONLY
-//           by an explicit header tap;
+//   Layer 1 remembered (useTodaySections: the localStorage mirror, and since S7 the server's copy on
+//           user_notification_prefs.today_sections, sent from the same hook) — written ONLY by an explicit
+//           header tap;
 //   Layer 2 the visit (useTodayVisit: Expand/Collapse all, and later chip jumps and triggers) — never saved;
 //   Layer 3 triggers (S5: triggers.js openAtStart, ONE evaluation at the ready point) — only Protect tonight,
 //           Heads-up and Needs care ever open by themselves.
@@ -114,7 +115,9 @@ export default function TodayV2() {
   const writesHeld = !!seedPending
   const planDate = data?.plan_date ?? null
   const plan = data?.has_plan ? (data.plan ?? null) : null
-  const layer1 = useTodaySections({ userId, prefs })
+  // S7: the token lets Layer 1 send a tap's entry to the server (useTodaySections owns the sender).
+  const { getToken } = useApiFetch()
+  const layer1 = useTodaySections({ userId, prefs, getToken })
   // §3: a plan served from the offline cache, or not dated today, is stale — it opens nothing.
   const stale = !!data && (isFromCache(data) || data.plan_date !== todayLocalISO())
   // S4: Needs care's state lives here, above its section (the header, the trigger and the visit's held order

@@ -1,0 +1,207 @@
+# gates.yml
+# V5-TODAYREDESIGN-001 S7 (v5-todaysections-001) — user_notification_prefs.today_sections jsonb NULL, with
+# a shape-only CHECK (NULL or a JSON object) added NOT VALID in 0a and VALIDATEd in 0c.
+#
+# STATUS AT AUTHORING (2026-10-14): AUTHORED, NOT APPLIED. The authoring lane opened no database connection.
+# APPLIED 2026-10-15 to staging, then prod on Dave's OK: pre 5/5, sweep 1/1 twice, post 6/6 in each env.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# SEQUENCING — full reasoning in README-BUILD.md "Landing order".
+#
+#   staging pre -> sweep -> 0a -> sweep again -> 0c -> post
+#   -> prod pre -> sweep -> 0a -> sweep again -> 0c -> post     (ONLY on Dave's explicit OK)
+#   -> `--all --phase post --continuous-only` on BOTH envs
+#
+# Unlike v5-navcustom-001, the critter Lambda that names today_sections TOLERATES its absence (a separate
+# statement whose 42703 omits the key from the GET; a today_sections PATCH answers 409), so the code may
+# reach an environment before this DDL without breaking the boot prefs read. README-BUILD.md says what
+# that costs and why the DDL-first order is still the recommended one.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# GATE CLASSIFICATION (L-369 — decided at authoring, not after the first false red)
+#
+#   * pre and sweep gates are `continuous: false`. gate-invariants.yml never runs them (post only), and
+#     the pre gates assert the UNAPPLIED state, so they are self-falsifying once 0a succeeds.
+#   * Every continuous post gate SELF-ARMS on this migration's schema_version row, or is naturally
+#     vacuous over the column's own catalog rows: vacuously true before the apply, asserting forever
+#     after, with no follow-up edit. gate-invariants.yml runs `--all --phase post --continuous-only` on
+#     prod AND staging and also fires on pushes touching `migrations/**`, so a post gate that is not
+#     self-arming would red the moment this directory reached dev without the apply.
+#   * PARSE-TIME HAZARD (v5-wxbackfillvars-001, v5-locheated-001): Postgres resolves column and
+#     ::regclass references when it PARSES a statement, before any EXISTS guard is evaluated. No gate
+#     here names today_sections as a column or casts to ::regclass. VALUES are read as
+#     `to_jsonb(t) -> 'today_sections'`, a key lookup that parses on an unapplied database and yields SQL
+#     NULL there; catalog facts are read from information_schema / pg_catalog by name.
+#   * to_jsonb BLIND SPOT, stated rather than hidden: a row's SQL NULL and a stored JSON `null` literal
+#     both render as JSON null inside to_jsonb(row), so the value gates below cannot see a stored JSON
+#     null. The CHECK rejects one (jsonb_typeof 'null' is not 'object'), VALIDATE would refuse it loudly,
+#     and the Lambda binds a JS null as SQL NULL, so no writer produces one.
+#
+# COUNT DISCIPLINE: no gate counts user_notification_prefs rows or columns. The table held 2 rows on
+# prod at the v5-navcustom-001 design; a prod-derived absolute would red the day a third person signs in.
+
+pre:
+  - name: pre_userprefs_table_present
+    continuous: false
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_userprefs_is_a_table_not_a_view
+    continuous: false
+    note: >
+      Checked, not assumed, as v5-navcustom-001 did: a plain table (relkind 'r') cannot hide a new base
+      column behind an explicit-column-list view, the garden_node failure mode. If this fails the table
+      became a view and 0a's ALTER TABLE is aimed at the wrong object; stop.
+    sql: |
+      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname='public' AND c.relname='user_notification_prefs' AND c.relkind='r'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_today_sections_absent
+    continuous: false
+    note: >
+      Greenfield. A row here means the column already arrived, by this 0a or by another route. 0a is
+      ADD COLUMN IF NOT EXISTS, so it would silently keep a pre-existing column of whatever shape it has;
+      stop and diff before applying.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+         AND column_name='today_sections'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_shape_check_name_is_free
+    continuous: false
+    note: >
+      0a creates the CHECK only when no constraint of that NAME exists on the table, so a same-named
+      constraint with a different body would be silently kept. Returns any constraint already holding the
+      name, anywhere in the database.
+    sql: |
+      SELECT conname FROM pg_constraint
+       WHERE conname = 'chk_unp_today_sections_shape'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_not_already_applied
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-todaysections-001'
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # L-058: the predicate the CHECK is about to enforce must already hold on the FULL table (no deleted_at
+  # filter; this table has none) before VALIDATE. Run this phase before 0a (vacuous: the column does not
+  # exist, and to_jsonb yields SQL NULL) AND again between 0a and 0c (vacuous on a first apply when no S7
+  # Lambda is live: the column is born NULL). It earns its keep when the S7 Lambda reached the environment
+  # first, or on a re-run. Returns the OFFENDING rows, named by created_by.
+
+  - name: sweep_today_sections_shape_holds
+    continuous: false
+    sql: |
+      SELECT t.created_by
+        FROM public.user_notification_prefs t
+       WHERE COALESCE(jsonb_typeof(to_jsonb(t) -> 'today_sections'), 'null') NOT IN ('null', 'object')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ── APPLY-WINDOW RECEIPT (continuous: false) ─────────────────────────────────────────────────────
+
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-todaysections-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANTS, SELF-ARMING ─────────────────────────────────────────────────────────────
+  # Each is wrapped in `WHERE EXISTS (schema_version = this migration)` or is naturally vacuous before
+  # the apply. v5-navcustom-001 is the nearest sibling.
+
+  - name: post_today_sections_is_nullable_jsonb_without_default
+    note: >
+      The information_schema read to cite wherever the prod apply is recorded (plan-v2 §8 S7 step 2).
+      Nullable with no DEFAULT: NULL is the honest "never tapped" state of every existing row, and a
+      DEFAULT would stamp a choice nobody made (V4-ACQMATURE-001). Also catches a column that arrived by
+      another route with another shape, which 0a's IF NOT EXISTS would skip.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-todaysections-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='user_notification_prefs'
+                            AND column_name='today_sections' AND data_type='jsonb'
+                            AND is_nullable='YES' AND column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_today_sections_check_exists_and_is_validated
+    note: >
+      Presence AND validation, read from pg_catalog by name (never ::regclass, so this parses on an
+      unapplied database). A NOT VALID constraint looks identical to a validated one unless convalidated
+      is read, and 0c is the half that gets forgotten. RED BY DESIGN between 0a and 0c, because 0a writes
+      the stamp; that window should last seconds. A red that persists means 0c never ran.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-todaysections-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname='public' AND t.relname='user_notification_prefs'
+                            AND c.conname='chk_unp_today_sections_shape'
+                            AND c.contype='c' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_only_the_shape_check_touches_today_sections
+    note: >
+      THE DECISION 0a DOCUMENTS, pinned: the database checks SHAPE only. A vocabulary CHECK (known section
+      keys, the entry shape, ack tiers) would make a retired section key a 23514 on every later save by
+      that person and every new section a migration. The only CHECK allowed to mention the column is the
+      single-column shape CHECK. Returns one row per offending constraint, naming it. Naturally vacuous
+      before the apply (no pg_attribute row to join), and self-armed besides.
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-todaysections-001')
+         AND n.nspname='public' AND t.relname='user_notification_prefs'
+         AND c.contype='c' AND a.attname = 'today_sections'
+         AND NOT (cardinality(c.conkey) = 1 AND c.conname = 'chk_unp_today_sections_shape')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_today_sections_shape_holds
+    note: >
+      The shape contract asserted INDEPENDENTLY of the CHECK, so a dropped, disabled or weakened
+      constraint cannot make the data look clean. Value read through to_jsonb (header, PARSE-TIME
+      HAZARD). Returns the offending rows by created_by.
+    sql: |
+      SELECT t.created_by
+        FROM public.user_notification_prefs t
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-todaysections-001')
+         AND COALESCE(jsonb_typeof(to_jsonb(t) -> 'today_sections'), 'null') NOT IN ('null', 'object')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_today_sections_version_is_1
+    note: >
+      Every stored object carries "v": 1 — the client (useTodaySections serverSections) reads any other
+      version as nothing, so a row without it is a person whose remembered state silently stopped
+      applying. The validator requires v === 1 on every write and the merge (old || new) re-writes it, so
+      this can only fail through a hand edit or a future writer that forgot it. Returns offending rows.
+    sql: |
+      SELECT t.created_by
+        FROM public.user_notification_prefs t
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-todaysections-001')
+         AND jsonb_typeof(to_jsonb(t) -> 'today_sections') = 'object'
+         AND (to_jsonb(t) -> 'today_sections' -> 'v') IS DISTINCT FROM '1'::jsonb
+    expect: rowcount_eq
+    value: 0

@@ -50,7 +50,10 @@
 #        (V5-NAVCUSTOM-001): PATCH more_pins, then bar_layout, on the critter Lambda, each read back
 #        through GET, which must also carry a boolean can_edit_bar; then restored to [] and the shipped bar;
 #        then garden_group_by 'crop_type' (Type) and 'bean_use' (a bean facet), each read back, then
-#        restored (BUG-GARDENGROUPBYRESET-001: the two values the Lambda refused before)
+#        restored (BUG-GARDENGROUPBYRESET-001: the two values the Lambda refused before); then M5,
+#        today_sections (V5-TODAYREDESIGN-001 S7): one section PATCHed alone and read back, unchanged by an
+#        unrelated save, a second section merged beside it, two refusals, then restored — or, before
+#        migrations/v5-todaysections-001 reaches staging, the GET without the key and the PATCH's 409
 #     P) Put-Up 1b + Ferment (06-ferment-path §5.6): P1 put-up date/basis + legacy-PUT refusal, P1b clearing a typed
 #        discard date (the engine's date, then the recipe's on a batch that follows one), P2 salt line,
 #        P3 draw → Mark used → RowEditor, P4 weighed draw to 0 g, P5 take out/restore, P6 check-in edit,
@@ -119,6 +122,8 @@ CREATED_FAVORITE_DONE=false
 NAVP_DIRTY=false
 NAVP_GB_DIRTY=false
 NAVP_GB_RESTORE=""
+TSEC_DIRTY=false
+TSEC_RESTORE=""
 SRC_ID=""
 SRC_DIRTY=false
 # Block V (V4-CROPTYPERETIRE-001): the slug of the smoke's own crop type while it may be live (set before it is
@@ -335,6 +340,16 @@ cleanup() {
       -H "Authorization: Bearer $navp_gb_jwt" -H "Content-Type: application/json" -o /dev/null \
       "$NAVP_URL" -d "{\"garden_group_by\": \"$NAVP_GB_RESTORE\"}" \
       && echo "✅ Cleanup: smoke account Garden grouping restored" || true
+  fi
+  # Block M5 (V5-TODAYREDESIGN-001 S7): died between its first today_sections PATCH and its restore. TSEC_RESTORE
+  # is the restore body M5 built before writing anything (the sections it touches, back to what the first GET read).
+  if [[ "$TSEC_DIRTY" == "true" && -n "${CLERK_SESSION_ID:-}" && -n "${NAVP_URL:-}" && -n "$TSEC_RESTORE" ]]; then
+    local tsec_jwt
+    tsec_jwt=$(mint_session_token)
+    curl -sf --max-time 15 --connect-timeout 10 -X PATCH \
+      -H "Authorization: Bearer $tsec_jwt" -H "Content-Type: application/json" -o /dev/null \
+      "$NAVP_URL" -d "$TSEC_RESTORE" \
+      && echo "✅ Cleanup: smoke account Today sections restored" || true
   fi
   # Block Q (V5-SOURCECONTACT-001): died between its first link PATCH and its restore. Clear the smoke
   # source's two links, best-effort, before the session is revoked (the next run's O4 clears them anyway).
@@ -2560,6 +2575,125 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_CRITTER
     PASS=$((PASS+1))
   else
     echo "❌ FAIL [write:prefs-garden-group-by-restore-readback] PATCH HTTP $NAVP_CODE, read-back '$NAVP_GOT' (expected \"$NAVP_GB_RESTORE\")"
+    FAIL=$((FAIL+1))
+  fi
+
+  # M5) today_sections (V5-TODAYREDESIGN-001 S7; L-108) — the redesigned Today's remembered open/closed state,
+  # per person, through the same route. The Lambda takes it ALONE (beside any other field it is a 400) and merges
+  # it PER TOP-LEVEL KEY: stored || incoming, so a section a PATCH carries replaces that section and every other
+  # section stays. M5a writes harvest and reads it back; M5b saves an unrelated field (critter_visit, set to the
+  # value the first GET read: a no-op) and reads harvest back unchanged; M5c writes protect, with a date-scoped
+  # ack, and reads BOTH back (the merge); M5d sends a key off the whitelist, and today_sections beside another
+  # field, each a 400; M5e restores and reads the restore back.
+  #
+  # BEFORE migrations/v5-todaysections-001 is applied on staging, the S7 Lambda answers the GET with NO
+  # today_sections key and a today_sections PATCH with 409 (nothing written). That state is asserted instead
+  # (M5-absent), with a WARN that the round trip did not run; the column landing switches the block to the round
+  # trip with no edit here. A critter Lambda from before S7 fails either way: its GET has no key and its PATCH
+  # answers 400 "no updatable fields present", not 409.
+  #
+  # Values are chosen to DIFFER from what the first GET held (harvest's open flipped; protect's ack tier the one
+  # it did not have), so a leftover from a run that died mid-block cannot make a read-back pass vacuously.
+  #
+  # RESTORE: the merge only adds and replaces, so a PATCH cannot take a section out of the stored object. Each
+  # section M5 wrote goes back to what the first GET held, or, where it held none, to {"open": false, "at": <today>}
+  # with no ack — which every reader treats exactly as no entry (closed, and nothing to hold a trigger back). The
+  # restore body is built BEFORE the first write, so cleanup() can send it if the run dies in between (TSEC_DIRTY).
+  CLERK_JWT=$(mint_session_token)
+  TSEC_B=$(mktemp)
+  TSEC_HTTP=$(curl -s --max-time 30 --connect-timeout 10 -H "Authorization: Bearer $CLERK_JWT" \
+    -o "$TSEC_B" -w "%{http_code}" "$NAVP_URL") || TSEC_HTTP="000"
+  TSEC_BEFORE=$(cat "$TSEC_B" 2>/dev/null || echo ""); rm -f "$TSEC_B"
+  TSEC_HAS=$(echo "$TSEC_BEFORE" | jq -r 'if type == "object" then (has("today_sections") | tostring) else "unparseable" end' 2>/dev/null || echo "unparseable")
+  TSEC_AT=$(date -u +%F)
+  if [[ "$TSEC_HTTP" == "200" && "$TSEC_HAS" == "false" ]]; then
+    # M5-absent) the column is not on staging yet: the GET leaves the key out and the PATCH is refused 409.
+    TSEC_PROBE=$(jq -c -n --arg at "$TSEC_AT" '{today_sections: {v: 1, glance: {open: false, at: $at}}}')
+    TSEC_CODE=$(navp_patch "$TSEC_PROBE")
+    if [[ "$TSEC_CODE" == "409" ]]; then
+      echo "✅ PASS [write:prefs-today-sections-absent] GET carries no today_sections key and the PATCH answers 409 (column not on this database yet)"
+      PASS=$((PASS+1))
+      echo "⚠️  WARN [write:prefs-today-sections] migrations/v5-todaysections-001 not applied here — the write → read-back round trip did NOT run"
+    else
+      echo "❌ FAIL [write:prefs-today-sections-absent] GET had no today_sections key, but the PATCH answered HTTP $TSEC_CODE (expected 409: the S7 Lambda without its column)"
+      FAIL=$((FAIL+1))
+    fi
+  elif [[ "$TSEC_HTTP" == "200" && "$TSEC_HAS" == "true" ]]; then
+    TSEC_HARVEST_BEFORE=$(echo "$TSEC_BEFORE" | jq -c '.today_sections.harvest // null' 2>/dev/null || echo null)
+    TSEC_PROTECT_BEFORE=$(echo "$TSEC_BEFORE" | jq -c '.today_sections.protect // null' 2>/dev/null || echo null)
+    TSEC_CV=$(echo "$TSEC_BEFORE" | jq -r '.critter_visit // "in_app_only"' 2>/dev/null || echo in_app_only)
+    if [[ "$(echo "$TSEC_HARVEST_BEFORE" | jq -r '.open // false')" == "true" ]]; then TSEC_OPEN=false; else TSEC_OPEN=true; fi
+    if [[ "$(echo "$TSEC_PROTECT_BEFORE" | jq -r '.ack.t // ""')" == "frost" ]]; then TSEC_TIER=hardfreeze; else TSEC_TIER=frost; fi
+    TSEC_HARVEST=$(jq -S -c -n --argjson o "$TSEC_OPEN" --arg at "$TSEC_AT" '{open: $o, at: $at}')
+    TSEC_PROTECT=$(jq -S -c -n --arg t "$TSEC_TIER" --arg at "$TSEC_AT" '{open: false, at: $at, ack: {t: $t}}')
+    TSEC_RESTORE=$(jq -c -n --argjson h "$TSEC_HARVEST_BEFORE" --argjson p "$TSEC_PROTECT_BEFORE" --arg at "$TSEC_AT" \
+      '{today_sections: {v: 1, harvest: ($h // {open: false, at: $at}), protect: ($p // {open: false, at: $at})}}')
+    TSEC_DIRTY=true
+
+    # M5a) one section, alone → GET → equal, under v 1.
+    TSEC_CODE=$(navp_patch "$(jq -c -n --argjson e "$TSEC_HARVEST" '{today_sections: {v: 1, harvest: $e}}')")
+    TSEC_GOT=$(navp_get '[.today_sections.v, .today_sections.harvest]')
+    if [[ "${TSEC_CODE:0:1}" == "2" && "$TSEC_GOT" == "[1,$TSEC_HARVEST]" ]]; then
+      echo "✅ PASS [write:prefs-today-sections-readback] harvest read back == $TSEC_HARVEST"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [write:prefs-today-sections-readback] PATCH HTTP $TSEC_CODE, read-back '$TSEC_GOT' (expected [1,$TSEC_HARVEST])"
+      FAIL=$((FAIL+1))
+    fi
+
+    # M5b) an unrelated save (critter_visit, its own value) → harvest unchanged: the main upsert never names it.
+    CLERK_JWT=$(mint_session_token)
+    TSEC_CODE=$(navp_patch "{\"critter_visit\": \"$TSEC_CV\"}")
+    TSEC_GOT=$(navp_get '.today_sections.harvest')
+    if [[ "${TSEC_CODE:0:1}" == "2" && "$TSEC_GOT" == "$TSEC_HARVEST" ]]; then
+      echo "✅ PASS [write:prefs-today-sections-untouched] an unrelated prefs save left harvest as written"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [write:prefs-today-sections-untouched] PATCH HTTP $TSEC_CODE, harvest now '$TSEC_GOT' (expected $TSEC_HARVEST)"
+      FAIL=$((FAIL+1))
+    fi
+
+    # M5c) a second section → GET → BOTH present: the per-key merge, not a replace of the whole object.
+    CLERK_JWT=$(mint_session_token)
+    TSEC_CODE=$(navp_patch "$(jq -c -n --argjson e "$TSEC_PROTECT" '{today_sections: {v: 1, protect: $e}}')")
+    TSEC_GOT=$(navp_get '[.today_sections.harvest, .today_sections.protect]')
+    if [[ "${TSEC_CODE:0:1}" == "2" && "$TSEC_GOT" == "[$TSEC_HARVEST,$TSEC_PROTECT]" ]]; then
+      echo "✅ PASS [write:prefs-today-sections-merge] protect merged beside harvest (ack t=$TSEC_TIER)"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [write:prefs-today-sections-merge] PATCH HTTP $TSEC_CODE, read-back '$TSEC_GOT' (expected [$TSEC_HARVEST,$TSEC_PROTECT])"
+      FAIL=$((FAIL+1))
+    fi
+
+    # M5d) the validator is live: a key off the whitelist, and today_sections beside another field, each 400.
+    CLERK_JWT=$(mint_session_token)
+    TSEC_BAD_KEY='{"today_sections": {"v": 1, "sidebar": {"open": true, "at": "2026-10-14"}}}'
+    TSEC_CODE=$(navp_patch "$TSEC_BAD_KEY")
+    TSEC_CODE2=$(navp_patch "$(jq -c -n --argjson e "$TSEC_HARVEST" --arg cv "$TSEC_CV" '{today_sections: {v: 1, harvest: $e}, critter_visit: $cv}')")
+    if [[ "$TSEC_CODE" == "400" && "$TSEC_CODE2" == "400" ]]; then
+      echo "✅ PASS [write:prefs-today-sections-refusals] unknown section key → 400; beside another field → 400"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [write:prefs-today-sections-refusals] unknown key HTTP $TSEC_CODE, beside another field HTTP $TSEC_CODE2 (expected 400 and 400)"
+      FAIL=$((FAIL+1))
+    fi
+
+    # M5e) restore, and read it back.
+    CLERK_JWT=$(mint_session_token)
+    TSEC_CODE=$(navp_patch "$TSEC_RESTORE")
+    [[ "${TSEC_CODE:0:1}" == "2" ]] && TSEC_DIRTY=false
+    TSEC_GOT=$(navp_get '[.today_sections.harvest, .today_sections.protect]')
+    TSEC_WANT=$(echo "$TSEC_RESTORE" | jq -S -c '[.today_sections.harvest, .today_sections.protect]')
+    if [[ "${TSEC_CODE:0:1}" == "2" && "$TSEC_GOT" == "$TSEC_WANT" ]]; then
+      echo "✅ PASS [write:prefs-today-sections-restore-readback] harvest and protect back to $TSEC_WANT"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [write:prefs-today-sections-restore-readback] PATCH HTTP $TSEC_CODE, read-back '$TSEC_GOT' (expected $TSEC_WANT)"
+      FAIL=$((FAIL+1))
+    fi
+  else
+    echo "❌ FAIL [read:prefs-today-sections] HTTP $TSEC_HTTP, has today_sections=$TSEC_HAS (expected 200 and true|false)"
+    echo "   Body: ${TSEC_BEFORE:0:200}"
     FAIL=$((FAIL+1))
   fi
 else
