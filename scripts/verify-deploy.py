@@ -249,8 +249,10 @@ def _why_not_deployed(jobs):
     if not bad:
         promote = next((j for j in jobs if j.get("name", "").strip() == "promote"), None)
         if promote is not None and promote.get("conclusion") not in ("success", None):
-            # e.g. snap.py or the pg17 fetch failing AFTER the fast-forward: main moved, and the bare
-            # `needs:` then skipped deploy-lambdas, so nothing was deployed for this SHA.
+            # e.g. a promote job that failed: before the fast-forward (snap.py and the FF itself are its
+            # last steps since 2026-10-15) main did not move; a job limit landing in the post-FF prune
+            # leaves main moved. Either way the bare `needs:` skipped deploy-lambdas, so nothing was
+            # deployed for this SHA.
             bad = [f"promote={promote.get('conclusion')} (deploy-lambdas never ran)"]
     return bad
 

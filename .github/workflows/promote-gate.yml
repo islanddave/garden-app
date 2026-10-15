@@ -12,16 +12,18 @@ name: promote-gate
 # "ship it"/"promote to prod") is therefore the SOLE authorization control. For contrast, the `production-destructive`
 # environment used by revert-gate.yml DOES carry required_reviewers=[islanddave] — do not generalize from it to here.
 # Promote = fast-forward main -> the exact dev SHA (no squash). CI is enforced here (required-checks on main only gate PRs).
-# After the FF, a version-snap (scripts/snap.py) captures a revertible marker (git tag + Neon branch + durable dump +
-# photo/lambda version-ids + manifest) INSIDE the same promote job — so a green promote always has a snapshot
-# (a snap failure reds the promote). Then the `deploy` job (workflow_call into deploy.yml) builds + deploys the SPA
+# Just BEFORE the FF, a version-snap (scripts/snap.py) captures a revertible marker (git tag + Neon branch + durable
+# dump + photo/lambda version-ids + manifest) INSIDE the same promote job — so a green promote always has a snapshot,
+# and a snap failure reds the promote with main untouched (BUG-PROMOTEFFORDER-001, 2026-10-15; it ran after the FF
+# until then). After the FF the job prunes old snapshot branches (never fatal). Then the `deploy` job (workflow_call
+# into deploy.yml) builds + deploys the SPA
 # under that same approval-free production ref policy, making promote->deploy deterministic (no reliance on
 # push:main retriggering) — it is a second environment binding, NOT a second approval.
 # Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY, NEON_API_KEY, NEON_PROJECT_ID, NEON_BACKUP_URL, NEON_DATABASE_URL.
 # Vars: SNAP_AWS_ROLE_ARN, SNAP_BUCKET, PHOTOS_BUCKET, SNAP_RETENTION.
 #
-# PRE-FF CHECKS, in job order. Each fails the promote job before "Fast-forward main", so a red one leaves main,
-# the tags and prod untouched:
+# PRE-FF CHECKS, in job order. Each fails the promote job before "Fast-forward main", so a red one leaves main
+# and prod untouched, and the tags too (the snap, last, tags vX only after its captures succeed):
 #   0. resolve — the run's own commit (github.sha) must equal dev_sha, so the workflow file, the checkout and the
 #      promoted commit are one SHA. A dispatch on ref main, or on dev with an older dev_sha, is refused by name.
 #   1. Preflight — dev unmoved since dispatch; CI green on dev_sha, judged from ci.yml's runs on that commit
@@ -32,8 +34,12 @@ name: promote-gate
 #      since 2026-10-07; until then they were prepared AFTER the FF). Never a verdict on the promoted code: a red
 #      one is a runner, cache, registry or PyPI fault, and the remedy is to re-run the failed jobs.
 #   5. Write-path staging smoke gate — deploy-staging on the exact dev SHA, smoke-tests = success.
-# Then the Lambda deploy decision, which fails CLOSED to "deploy", never to "skip". After the FF the job runs one
-# step, the snap.
+# Then the Lambda deploy decision, which fails CLOSED to "deploy", never to "skip". Then the snap (snap.py
+# --no-prune), a fresh bot token, and the FF. After the FF the job runs one step, the prune (never fatal).
+# THE ONE THING THE SNAP CAN LEAVE: tag vX on dev_sha, when a step from the tag to the FF fails. While dev is
+# unmoved, "Re-run failed jobs" finishes the promote. Once dev moves, vX is BURNT and never shipped (the tag can
+# never be moved or deleted): bump and promote the new SHA. revert-to.py refuses vX as a target ("never reached
+# main"); forward-undo.py's previous_release does not know about burnt tags and can pick one as vPREV.
 #
 # PROD SCHEMA GATE (OPS-PROMOTESCHEMAGATE-001, added 2026-09-24). Until then nothing on this path read PROD's
 # schema: integration-tests forks its Neon branch from STAGING and the staging smoke runs against staging. A
@@ -256,7 +262,7 @@ jobs:
     # is 30 s generous) + four script reads that each ride out two 10 s timeouts and two 2 s
     # pauses and then take up to 10 s themselves; its step limit is 5; the rest ~1 min as before 2026-10-02: skew,
     # psycopg2 install, and a schema gate that PASSES in seconds) + up to 34.5 min in the staging smoke gate
-    # (5 locate + 27.5 poll + 2 jobs read) + ~10 min FF and snap = ~48.5 min. The schema gate's hang bounds (install <=190 s, self-tests <=105 s, audit
+    # (5 locate + 27.5 poll + 2 jobs read) + ~10 min snap, FF and prune = ~48.5 min. The schema gate's hang bounds (install <=190 s, self-tests <=105 s, audit
     # <=250 s, about 9 min together) end in a refusal BEFORE the FF, so they stack with snap only on a
     # require_schema_audit=false dispatch. There, all of them at once on top of a maximal smoke wait come to ~57.5
     # min, and 59.5 with the preflight at its 5-minute step limit (54.5 before the preflight's retries; the bot token minted in the first step lives 60, so do not raise
@@ -271,8 +277,11 @@ jobs:
     # (scripts/test_workflow_steps.py derives the 11 and the 34.5 from the steps and pins the sum: change a
     # bound and that test together). The opted-out all-hang sums (57.5, 59.5) have no room for that as well;
     # there the limit would end the job before the FF or inside snap, where the same durations used to end it
-    # after the FF every time. The job limit can strand main only by landing between the FF and the end of
-    # snap: that window was tooling + snap wide and is now snap alone, 20-49 s over six promotes.
+    # after the FF every time. Since the snap moved above the FF (BUG-PROMOTEFFORDER-001, 2026-10-15) the job limit
+    # can strand main only by landing in the post-FF prune (seconds; step limit 2). Landing between the end of the
+    # snap and the FF leaves tag vX with main unmoved: re-run the failed jobs while dev is unmoved, else vX is burnt.
+    # After the smoke the job now spends the Lambda decision, the snap (20-49 s over six promotes), a token, the FF
+    # (bounded at about 2.5 min) and the prune: well inside the ~10 above.
     timeout-minutes: 60
     steps:
       - name: Mint garden-bot installation token
@@ -375,9 +384,10 @@ jobs:
         # PLACEMENT IS LOAD-BEARING: after Preflight, BEFORE the ~28-minute
         # staging-smoke gate and BEFORE "Fast-forward main". Failing here costs
         # nothing — main is untouched, no tag exists, no Neon branch, no dump.
-        # scripts/snap.py does enforce version uniqueness (its ensure_tag /
-        # manifest guards), but it runs AFTER the FF, so its abort reds a promote
-        # whose irreversible half already happened.
+        # scripts/snap.py does enforce version uniqueness (its tag / manifest
+        # guards), but it runs at the end of the job, after the staging smoke
+        # (and until 2026-10-15 after the FF, where its abort redded a promote
+        # whose irreversible half had already happened).
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           REPO: ${{ github.repository }}
@@ -402,9 +412,13 @@ jobs:
           fi
           # Matching alone is NOT enough. Promoting an UNBUMPED dev (dev==main==3.81.1,
           # snap_version=v3.81.1) satisfies the equality above, then dies in snap.py's
-          # ensure_tag/manifest reuse guard AFTER main has been fast-forwarded. Pull that
-          # exact check forward. Idempotency is preserved deliberately, mirroring
-          # snap.py: an existing tag ALREADY pointing at this DEV_SHA is a clean re-run.
+          # tag/manifest reuse guard ~30 minutes later. Pull that exact check forward.
+          # Idempotency is preserved deliberately, mirroring snap.py: an existing tag
+          # ALREADY pointing at this DEV_SHA is a clean re-run.
+          # A tag on ANOTHER commit is either a shipped version (main contains it) or a
+          # BURNT one: a promote that snapped and never fast-forwarded main, after which dev
+          # moved (BUG-PROMOTEFFORDER-001). Both refuse; the message says which, from a
+          # compare of the tag's commit with main, and never calls a burnt one shipped.
           # "000" = no usable HTTP answer (curl prints it for a transport error); it lands in the lookup-failed branch.
           CODE=$(curl -sS -o /tmp/tagref.json -w "%{http_code}" -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/git/ref/tags/$SNAP") || CODE="000"
           if [ "$CODE" = "200" ]; then
@@ -418,7 +432,14 @@ jobs:
               exit 1
             fi
             if [ "$TAG_SHA" != "$DEV_SHA" ]; then
-              echo "::error::tag $SNAP already exists at $TAG_SHA (!= $DEV_SHA) — that version has already shipped. Bump dev first: node scripts/add-release.mjs <next> \"<highlight>\", then re-dispatch. main has NOT been touched (snap.py would have caught this only AFTER the fast-forward)."
+              # compare/<tag commit>...main: ahead or identical = main contains it; behind or diverged = it does not.
+              CMP=$(curl -sS -f --max-time 20 -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/compare/$TAG_SHA...main" | python3 -c "import sys,json;print(json.load(sys.stdin)['status'])") || CMP=""
+              case "$CMP" in
+                ahead|identical) WHY="that version has already shipped (main contains $TAG_SHA)" ;;
+                behind|diverged) WHY="that version is BURNT and never shipped: a promote tagged it and never fast-forwarded main to it, and the tag can never be moved or deleted. Never revert to it" ;;
+                *) WHY="that version is taken (whether main contains $TAG_SHA could not be read)" ;;
+              esac
+              echo "::error::tag $SNAP already exists at $TAG_SHA (!= $DEV_SHA) — $WHY. Bump dev first: node scripts/add-release.mjs <next> \"<highlight>\", then re-dispatch. main has NOT been touched."
               exit 1
             fi
             echo "::notice::tag $SNAP already exists and points at $DEV_SHA — idempotent re-promote of the same SHA"
@@ -571,7 +592,8 @@ jobs:
       # whose archives the pg17 pg_restore of every restore path does not read, and pg16 on 24.04, which will not dump
       # a server newer than itself) and its Python imports. Until this change they ran AFTER
       # "Fast-forward main", so a failure or a stall in any of them left main advanced with no snapshot and nothing
-      # deployed: the fetch hung 46 minutes there on 2026-08-18. Snap is now the only step after the FF.
+      # deployed: the fetch hung 46 minutes there on 2026-08-18. Since 2026-10-15 the snap runs before the FF too,
+      # and only the never-fatal prune follows it.
       # scripts/test_workflow_steps.py fails if one of these goes back below the FF, or if a step that fetches
       # tooling is added there.
       #
@@ -668,7 +690,7 @@ jobs:
             || timeout -k 5 90 python3 -m pip install --quiet --break-system-packages boto3 requests \
             || fail "pip could not install boto3 and requests in either form (exit $?; 124 or 137 = it hung)"
           timeout -k 5 30 python3 -c "import boto3, requests, botocore.exceptions" \
-            || fail "boto3, requests and botocore.exceptions do not import after the install (exit $?), and scripts/snap.py imports them before it does anything, after the fast-forward"
+            || fail "boto3, requests and botocore.exceptions do not import after the install (exit $?), and scripts/snap.py imports them before it does anything"
 
       - name: Write-path staging smoke gate (PHASE2-CI-001 / L-145)
         env:
@@ -874,20 +896,14 @@ jobs:
           fi
           echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
-      - name: Fast-forward main -> dev SHA
-        env:
-          GH_TOKEN: ${{ steps.bot.outputs.token }}
-          REPO: ${{ github.repository }}
-          DEV_SHA: ${{ needs.resolve.outputs.dev_sha }}
-        run: |
-          set -euo pipefail
-          CODE=$(curl -sS -o /tmp/ff.json -w "%{http_code}" -X PATCH -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" -d "{\"sha\":\"$DEV_SHA\",\"force\":false}" "https://api.github.com/repos/$REPO/git/refs/heads/main")
-          echo "FF main -> $CODE"
-          if [ "$CODE" != "200" ]; then
-            cat /tmp/ff.json; echo "::error::fast-forward of main failed ($CODE)"; exit 1
-          fi
-          echo "promoted main -> $DEV_SHA"
-
+      # THE SNAP RUNS BEFORE THE FAST-FORWARD (BUG-PROMOTEFFORDER-001, 2026-10-15). It needs no moved main: it
+      # tags MAIN_SHA = dev_sha through the API and snapshots prod, which does not depend on main. A snap failure
+      # therefore refuses the promote with main and prod untouched; until this change it left main advanced with
+      # nothing deployed. --no-prune: the retention prune deletes an old revert point, so it waits for the FF
+      # (the last step). The tag is the one artifact that outlives a refusal (release-tag-integrity forbids
+      # moving or deleting it); snap.py creates it last, just before its manifest, so only a failure from there
+      # to the FF leaves tag vX for a commit main never reached. Re-run failed jobs while dev is unmoved; once
+      # dev moves, vX is burnt (see the FF step).
       - name: Version snap (revertibility marker)
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
@@ -908,7 +924,82 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
-          python3 scripts/snap.py
+          python3 scripts/snap.py --no-prune
+
+      # A fresh token for the FF. The first was minted at the start of the job and lives 60 minutes; the FF is
+      # now the job's last-but-one step, where that token is oldest (up to the job's whole 60).
+      - name: Mint garden-bot installation token (fast-forward)
+        id: bot-ff
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547  # v1
+        with:
+          app-id: ${{ secrets.GARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.GARDEN_BOT_PRIVATE_KEY }}
+
+      # THE COMMIT POINT. Every read and write is bounded (--max-time 20) and every curl ends in `|| X=`, so no
+      # transport error or hang ends this step without its own ::error (GitHub runs it as `bash -e`). main
+      # already at DEV_SHA is a re-run whose FF landed: exit 0. A transport error (000) or a 5xx is retried 3
+      # times, 10 s apart; worst case about 2.5 minutes, under the 4-minute backstop. Anything else refuses,
+      # naming main's SHA. By then the snap has tagged vX on DEV_SHA, so the remedy depends on dev:
+      #   dev still at DEV_SHA -> Re-run failed jobs (snap is create-if-missing, the skew gate accepts the tag);
+      #   dev has moved        -> vX is burnt and never shipped: bump on dev and promote the new SHA. Never
+      #                           revert to vX (revert-to.py refuses it: "never reached main").
+      - name: Fast-forward main -> dev SHA
+        timeout-minutes: 4
+        env:
+          GH_TOKEN: ${{ steps.bot-ff.outputs.token }}
+          REPO: ${{ github.repository }}
+          DEV_SHA: ${{ needs.resolve.outputs.dev_sha }}
+          SNAP: ${{ needs.resolve.outputs.snap_version }}
+        run: |
+          set -uo pipefail
+          # main's ref: GET it, or PATCH it with the options passed.
+          ref_main() { curl -sS --connect-timeout 10 --max-time 20 -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@" "https://api.github.com/repos/$REPO/git/refs/heads/main"; }
+          # A SHA read from a reply is echoed into annotations, so it is used only when it is 40 hex.
+          main_head() { ref_main | python3 -c "import sys,json;s=json.load(sys.stdin)['object']['sha'];print(s if len(s)==40 and all(c in '0123456789abcdef' for c in s) else 'UNREADABLE')"; }
+          BEFORE=$(main_head) || BEFORE="UNREADABLE"
+          echo "main before: $BEFORE"
+          if [ "$BEFORE" = "$DEV_SHA" ]; then
+            echo "main already at DEV_SHA $DEV_SHA (re-run): nothing to fast-forward"; exit 0
+          fi
+          CODE="000"
+          for attempt in 1 2 3 4; do
+            CODE=$(ref_main -o /tmp/ff.json -w "%{http_code}" -X PATCH -d "{\"sha\":\"$DEV_SHA\",\"force\":false}") || CODE="000"
+            echo "FF main -> $CODE (attempt $attempt of 4)"
+            case "$CODE" in
+              000|5??) ;;
+              *) break ;;
+            esac
+            if [ "$attempt" -lt 4 ]; then sleep 10; fi
+          done
+          AFTER=$(main_head) || AFTER="UNREADABLE"
+          echo "main after: $AFTER"
+          if [ "$CODE" = "200" ] || [ "$AFTER" = "$DEV_SHA" ]; then
+            echo "promoted main -> $DEV_SHA"; exit 0
+          fi
+          BODY=$(head -c 300 /tmp/ff.json 2>/dev/null | tr '\r\n' '  ') || BODY=""
+          echo "FF response body (head): ${BODY:-(empty)}"
+          echo "::error::fast-forward of main to $DEV_SHA failed (HTTP $CODE); main is at $AFTER and nothing is deployed. Snap $SNAP is already recorded for $DEV_SHA (tag, manifest, Neon branch). If dev is still at $DEV_SHA: Re-run failed jobs on this run. If dev has moved: $SNAP is burnt and never shipped; bump on dev (node scripts/add-release.mjs) and promote the new SHA, and never revert to $SNAP."
+          exit 1
+
+      # AFTER THE FAST-FORWARD: the retention prune the snap above skipped (--no-prune). Deleting an old revert
+      # point waits until this version has certainly shipped. NEVER FATAL, twice over: snap.py --prune-only exits
+      # 0 on every outcome, and continue-on-error covers what it cannot (an interpreter that will not start, the
+      # step's own limit). A red step here would fail the promote job and skip both deploys with main moved.
+      # The job's own limit is the one thing that can still strand main here; the prune takes seconds.
+      - name: Prune old snapshot branches (post-FF; never fatal)
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          NEON_PROD_BRANCH_ID: br-delicate-sea-amum92c2
+          SNAP_RETENTION: ${{ vars.SNAP_RETENTION }}
+          SNAP_VERSION: ${{ needs.resolve.outputs.snap_version }}
+          MAIN_SHA: ${{ needs.resolve.outputs.dev_sha }}
+          SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
+          # As the snap: any tempfile on the work disk (the prune writes none today).
+          TMPDIR: ${{ runner.temp }}
+        run: python3 scripts/snap.py --prune-only
 
   # OPS-PROMOTERACE-001 — THE ORDERING EDGE. Lambdas ship BEFORE the SPA, by graph, not by luck.
   #

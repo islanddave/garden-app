@@ -18,7 +18,9 @@ SPEC B2 STEP MAP (repo-version-env-spec-V100-20260602.md §3 B2):
      from THIS tree), before anything is read or touched. One-way releases are undone
      with a forward build instead (scripts/forward-undo.py).
   1. load manifest (Object-Lock bucket) + cross-check live tag SHA ==
-     manifest.main_sha; FAIL CLOSED on mismatch (forged/moved tag guard).
+     manifest.main_sha; FAIL CLOSED on mismatch (forged/moved tag guard); and
+     manifest.main_sha must be on main, or vX "never reached main" (a promote
+     that snapped and never fast-forwarded; BUG-PROMOTEFFORDER-001).
   2. PRE-REVERT snap of CURRENT prod (revert is revertible) + surface RPO to
      Dave ("discards all DB writes since vX — N rows / since TIMESTAMP").
   3. DB: restore the durable dump (authoritative) into a FRESH Neon branch;
@@ -398,7 +400,7 @@ def require_target_above_floor(cfg, floors_path=None):
                      f"(prod runs {prod})\n")
 
 
-# --- step 1: manifest load + tag cross-check ---------------------------------
+# --- step 1: manifest load + tag cross-check + reached main ------------------
 
 def load_manifest(s3, cfg):
     """Read snapshots/<vX>.json from the durable bucket. Missing = fail closed."""
@@ -460,6 +462,40 @@ def verify_tag(cfg, manifest):
             f"{manifest['main_sha']}; refusing to revert (forged/moved tag)"
         )
     return commit
+
+
+def verify_reached_main(cfg, manifest):
+    """The target's commit must be on main: manifest.main_sha is main's head or an ancestor of it.
+    Fail closed.
+
+    promote-gate snaps BEFORE it fast-forwards main (BUG-PROMOTEFFORDER-001), so a promote that
+    snapped and then never moved main leaves tag vX + manifest + Neon branch for a tree that never
+    ran in prod, and verify_tag passes it. Reverting to it would ship that tree through the
+    emergency path. GET /compare/{main_sha}...{main}: `ahead` (main has moved on past it) or
+    `identical` passes; `behind` or `diverged` (main lacks the commit) refuses; anything unreadable
+    refuses."""
+    tag = cfg.target_version
+    sha = manifest["main_sha"]
+    try:
+        r = requests.get(
+            f"{GITHUB_API}/repos/{cfg.repo}/compare/{sha}...{cfg.main_branch}",
+            headers=gh_headers(cfg), timeout=HTTP_TIMEOUT,
+        )
+        body = r.json() if r.status_code == 200 else None
+        status = body.get("status") if isinstance(body, dict) else None
+    except _GH_TRANSPORT_ERRORS as e:
+        raise RevertError(f"could not tell whether {tag} ({sha}) reached {cfg.main_branch} "
+                          f"({type(e).__name__}: {e}); refusing")
+    if status in ("ahead", "identical"):
+        return status
+    if status in ("behind", "diverged"):
+        raise RevertError(
+            f"{tag} never reached {cfg.main_branch}: its commit {sha} is not on {cfg.main_branch} "
+            f"(compare status {status}). A promote snapped it and never fast-forwarded, so it never ran "
+            f"in prod; refusing to revert to it. Pick a version that shipped")
+    raise RevertError(
+        f"could not tell whether {tag} ({sha}) reached {cfg.main_branch} (compare HTTP {r.status_code}, "
+        f"status {status!r}); refusing")
 
 
 # --- step 2: pre-revert snap + RPO -------------------------------------------
@@ -2004,9 +2040,10 @@ def run(cfg, s3=None, lambda_client=None):
     # its workflows) and before the pre-revert snap. Some releases are one-way; see revert_floors.py.
     require_target_above_floor(cfg)
 
-    # Step 1 — manifest + tag cross-check (fail closed) BEFORE any mutation.
+    # Step 1 — manifest + tag cross-check + the target reached main (fail closed) BEFORE any mutation.
     manifest = load_manifest(s3, cfg)
     verify_tag(cfg, manifest)
+    verify_reached_main(cfg, manifest)
 
     # Step 2 — RPO surface + explicit data-loss confirmation, THEN pre-revert snap.
     rpo = compute_rpo(cfg)

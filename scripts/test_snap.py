@@ -910,6 +910,7 @@ def test_table_list_key_lookup_never_raises(monkeypatch):
 
 def _patch_run_steps(monkeypatch, order, uncaptured=None):
     monkeypatch.setattr(snap, "precheck_existing_manifest", lambda s, c: None)
+    monkeypatch.setattr(snap, "precheck_tag", lambda c: order.append("tag-precheck"))
     monkeypatch.setattr(snap, "ensure_tag",
                         lambda c: order.append("tag") or "v1.2.3")
     monkeypatch.setattr(snap, "ensure_neon_branch",
@@ -962,6 +963,10 @@ def test_run_writes_manifest_last(monkeypatch):
     mi = order.index("manifest")
     for step in ("tag", "neon", "dump", "globals", "photos", "lambda", "verify"):
         assert order.index(step) < mi, f"{step} must precede manifest"
+    # BUG-PROMOTEFFORDER-001: the tag (the one artifact nothing can remove) is created after every fallible
+    # capture and just before self-verify; only its read-only precheck runs first.
+    assert order[:order.index("verify") + 1] == [
+        "tag-precheck", "neon", "dump", "globals", "photos", "lambda", "tag", "verify"]
     # prune runs after the commit-marker manifest
     assert order.index("prune") > mi
     assert result["manifest"]["git_tag"] == "v1.2.3"
@@ -991,10 +996,59 @@ def test_run_prune_false_skips_prune(monkeypatch):
     assert "prune" not in result["manifest"]
 
 
+@pytest.mark.parametrize("failing", ["neon", "dump", "globals", "photos", "lambda"])
+def test_run_a_failed_capture_creates_no_tag(monkeypatch, failing):
+    """A promote refused in snap must not burn its version: no capture failure may leave the tag behind."""
+    cfg = make_cfg()
+    order = []
+    _patch_run_steps(monkeypatch, order)
+    target = {"neon": "ensure_neon_branch", "dump": "dump_to_s3", "globals": "dump_globals_to_s3",
+              "photos": "capture_photo_versions", "lambda": "publish_lambda_versions"}[failing]
+
+    def boom(*a, **k):
+        order.append(failing)
+        raise snap.SnapError(f"{failing} failed")
+    monkeypatch.setattr(snap, target, boom)
+    wm = mock.Mock()
+    monkeypatch.setattr(snap, "write_manifest", wm)
+    with pytest.raises(snap.SnapError, match=f"{failing} failed"):
+        snap.run(cfg, s3=mock.Mock(), lambda_client=mock.Mock(), prune=False)
+    assert "tag" not in order and order[0] == "tag-precheck"
+    wm.assert_not_called()
+
+
+def test_precheck_tag_refuses_a_tag_on_another_commit_and_creates_nothing(monkeypatch):
+    cfg = make_cfg()
+    get = mock.Mock(side_effect=[_resp(200, {"object": {"sha": "tagobj"}}),
+                                 _resp(200, {"object": {"sha": "b" * 40}})])
+    post = mock.Mock()
+    monkeypatch.setattr(snap.requests, "get", get)
+    monkeypatch.setattr(snap.requests, "post", post)
+    with pytest.raises(snap.SnapError, match="refusing to move tag"):
+        snap.precheck_tag(cfg)
+    post.assert_not_called()
+
+
+def test_precheck_tag_free_or_same_commit_passes(monkeypatch):
+    cfg = make_cfg()
+    monkeypatch.setattr(snap.requests, "get", mock.Mock(return_value=_resp(404)))
+    assert snap.precheck_tag(cfg) is None
+    monkeypatch.setattr(snap.requests, "get", mock.Mock(side_effect=[
+        _resp(200, {"object": {"sha": "tagobj"}}), _resp(200, {"object": {"sha": cfg.main_sha}})]))
+    assert snap.precheck_tag(cfg) == cfg.main_sha
+
+
+def test_precheck_tag_unreadable_lookup_refuses(monkeypatch):
+    monkeypatch.setattr(snap.requests, "get", mock.Mock(return_value=_resp(502, text="bad gateway")))
+    with pytest.raises(snap.SnapError, match="502"):
+        snap.precheck_tag(make_cfg())
+
+
 def test_run_aborts_if_self_verify_fails(monkeypatch):
     cfg = make_cfg()
     s3 = mock.Mock()
     monkeypatch.setattr(snap, "precheck_existing_manifest", lambda s, c: None)
+    monkeypatch.setattr(snap, "precheck_tag", lambda c: None)
     monkeypatch.setattr(snap, "ensure_tag", lambda c: "v1.2.3")
     monkeypatch.setattr(snap, "ensure_neon_branch", lambda c: ("br-1", "0/ABC"))
     monkeypatch.setattr(snap, "dump_to_s3", lambda s, c: "db/x.dump")
@@ -1025,9 +1079,96 @@ def test_main_returns_zero_on_success(monkeypatch):
     fake_cfg_attrs = {"snap_bucket": "b"}
     for k, v in fake_cfg_attrs.items():
         setattr(snap.Config, k, v)
+    seen = []
     monkeypatch.setattr(
         snap, "run",
-        lambda cfg: {"manifest_key": "snapshots/v1.json",
-                     "manifest": {"git_tag": "v1"}, "pruned": [], "skipped": []},
+        lambda cfg, **kw: seen.append(kw) or {"manifest_key": "snapshots/v1.json",
+                                              "manifest": {"git_tag": "v1"}, "pruned": [], "skipped": []},
     )
     assert snap.main([]) == 0
+    assert snap.main() == 0  # no argv at all is the same full snap, prune included
+    assert snap.main(["--no-prune"]) == 0
+    assert [k["prune"] for k in seen] == [True, True, False]
+
+
+def test_main_rejects_no_prune_with_prune_only():
+    with pytest.raises(SystemExit) as e:
+        snap.main(["--prune-only", "--no-prune"])
+    assert e.value.code == 2
+
+
+# --- --prune-only (post-FF; never fatal) ---------------------------------------
+
+PRUNE_ENV = {"NEON_API_KEY": "neon_xxx", "NEON_PROJECT_ID": "proj-123"}
+SNAP_ENV_KEYS = set(BASE_ENV) | {"NEON_PROD_BRANCH_ID", "SNAP_BUCKET", "SNAP_BRANCH_PREFIX", "SNAP_RETENTION",
+                                 "CF_DIST", "APP_VERSION"}
+
+
+def _only_env(monkeypatch, env):
+    """The process environment holds exactly `env` of the keys snap.py reads."""
+    for key in SNAP_ENV_KEYS | set(env):
+        monkeypatch.delenv(key, raising=False)
+    for key, val in env.items():
+        monkeypatch.setenv(key, val)
+
+
+def test_prune_config_needs_only_what_prune_reads():
+    cfg = snap.PruneConfig(env=dict(PRUNE_ENV))  # no GH_TOKEN, NEON_BACKUP_URL, PHOTOS_BUCKET, MAIN_SHA
+    assert (cfg.neon_prod_branch_id, cfg.branch_prefix, cfg.retention) == (PROD_ID, "snap-", 5)
+    assert cfg.version == "" and cfg.main_sha == ""
+
+
+def test_prune_only_prunes_and_exits_0(monkeypatch, capsys):
+    _only_env(monkeypatch, dict(PRUNE_ENV))
+    seen = []
+    monkeypatch.setattr(snap, "prune_old_branches",
+                        lambda c: seen.append(c) or {"pruned": [{"id": "br-o", "name": "snap-v0"}], "skipped": []})
+    boto = mock.Mock()
+    monkeypatch.setattr(snap.boto3, "client", boto)
+    assert snap.main(["--prune-only"]) == 0
+    assert isinstance(seen[0], snap.PruneConfig) and "pruned 1" in capsys.readouterr().out
+    boto.assert_not_called()  # no SNAP_VERSION / MAIN_SHA: no manifest record, no AWS
+
+
+@pytest.mark.parametrize("failure", ["config", "prune"])
+def test_prune_only_never_fails(monkeypatch, capsys, failure):
+    env = {} if failure == "config" else dict(PRUNE_ENV)
+    _only_env(monkeypatch, env)
+
+    def boom(c):
+        raise RuntimeError("neon down")
+    monkeypatch.setattr(snap, "prune_old_branches", boom)
+    assert snap.main(["--prune-only"]) == 0
+    out = capsys.readouterr().out
+    assert out.count("::warning::") == 1 and "NOT pruned" in out
+
+
+def test_prune_only_records_the_report_in_its_own_manifest(monkeypatch):
+    env = dict(PRUNE_ENV, SNAP_VERSION="v1.2.3", MAIN_SHA="a" * 40)
+    _only_env(monkeypatch, env)
+    report = {"pruned": [{"id": "br-o", "name": "snap-v0"}], "skipped": []}
+    monkeypatch.setattr(snap, "prune_old_branches", lambda c: report)
+    monkeypatch.setattr(snap.boto3, "client", lambda name: mock.Mock())
+    monkeypatch.setattr(snap, "s3_get_json", lambda s, b, k: {"main_sha": "a" * 40, "git_tag": "v1.2.3"})
+    written = []
+    monkeypatch.setattr(snap, "write_manifest", lambda s, c, m: written.append((c.version, m)))
+    assert snap.main(["--prune-only"]) == 0
+    assert written == [("v1.2.3", {"main_sha": "a" * 40, "git_tag": "v1.2.3", "prune": report})]
+
+
+def test_prune_only_never_records_into_another_commits_manifest_and_never_fails_on_s3(monkeypatch, capsys):
+    env = dict(PRUNE_ENV, SNAP_VERSION="v1.2.3", MAIN_SHA="a" * 40)
+    _only_env(monkeypatch, env)
+    monkeypatch.setattr(snap, "prune_old_branches", lambda c: {"pruned": [], "skipped": []})
+    monkeypatch.setattr(snap.boto3, "client", lambda name: mock.Mock())
+    write = mock.Mock()
+    monkeypatch.setattr(snap, "write_manifest", write)
+    monkeypatch.setattr(snap, "s3_get_json", lambda s, b, k: {"main_sha": "b" * 40})
+    assert snap.main(["--prune-only"]) == 0
+    write.assert_not_called()
+
+    def denied(*a):
+        raise _client_error("AccessDenied", op="GetObject")
+    monkeypatch.setattr(snap, "s3_get_json", denied)
+    assert snap.main(["--prune-only"]) == 0
+    assert capsys.readouterr().out.count("::warning::") == 2

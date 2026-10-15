@@ -152,7 +152,8 @@ jobs:
 
       # Only garden-bot may delete refs/tags/v* (release-tag-integrity), so a
       # rehearsal tag left here could not be removed by hand. Runs on failure
-      # too: the tag is snap.py's first write, so a failed run has usually made it.
+      # too: snap.py tags just before its manifest (since 2026-10-15; until then
+      # the tag was its first write), so a run that failed late may have made it.
       # The name guard keeps this step off every real release tag whatever
       # SNAP_VERSION is set to. What it answers for is the OUTCOME: the DELETE
       # only warns (an absent tag is not a failure), then the tag is looked up

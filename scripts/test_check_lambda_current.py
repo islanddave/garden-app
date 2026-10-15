@@ -466,7 +466,8 @@ def test_promote_job_reads_aws_and_the_script_before_deciding_and_decides_before
     lam = names.index(_lam_step()["name"])
     ff = names.index("Fast-forward main -> dev SHA")
     snap = names.index("Version snap (revertibility marker)")
-    assert creds < lam and checkout < lam < ff < snap
+    # The decision, then the snap, then the FF (BUG-PROMOTEFFORDER-001): all three judged before main moves.
+    assert creds < lam and checkout < lam < snap < ff
 
 
 def _marker_step():

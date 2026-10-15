@@ -556,6 +556,99 @@ def test_skew_step_refuses_with_its_own_annotation_when_the_tag_cannot_be_read(t
     assert _errors(proc) == [want]
 
 
+# A tag on another commit refuses either way. Since the snap runs before the fast-forward (BUG-PROMOTEFFORDER-001), it
+# can be a BURNT version (tagged, never fast-forwarded, then dev moved) and not a shipped one; the message says which.
+COMPARE = r"/compare/"
+OTHER_SHA = "f" * 40
+
+
+@PROMOTE_SHELLS
+@pytest.mark.parametrize("compare,says,never", [
+    (_json({"status": "ahead"}), f"that version has already shipped (main contains {OTHER_SHA})", "BURNT"),
+    (_json({"status": "identical"}), "that version has already shipped", "BURNT"),
+    (_json({"status": "behind"}), "that version is BURNT and never shipped", "already shipped"),
+    (_json({"status": "diverged"}), "that version is BURNT and never shipped", "already shipped"),
+    (DROP, f"that version is taken (whether main contains {OTHER_SHA} could not be read)", "shipped"),
+    (_json({"message": "Not Found"}, 404), "that version is taken", "shipped"),
+], ids=["ahead", "identical", "behind", "diverged", "compare-no-reply", "compare-404"])
+def test_skew_step_says_whether_a_taken_tag_shipped_or_is_burnt(tmp_path, github, shell, compare, says, never):
+    api = github({PKG: [_json({"version": "1.2.3"})], TAG_REF: [_json({"object": {"type": "commit", "sha": OTHER_SHA}})],
+                  COMPARE: [compare]})
+    proc = _run_promote_step(tmp_path, SKEW, api, shell, SNAP="v1.2.3")
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    errors = _errors(proc)
+    assert len(errors) == 1 and errors[0].startswith(f"::error::tag v1.2.3 already exists at {OTHER_SHA} "), errors
+    assert says in errors[0] and never not in errors[0] and "main has NOT been touched" in errors[0], errors[0]
+    assert api.log[-1] == f"GET /repos/owner/repo/compare/{OTHER_SHA}...main"
+
+
+# ── promote-gate.yml: the fast-forward, after the snap (BUG-PROMOTEFFORDER-001) ──────────────────────────────────────
+FF_STEP = "Fast-forward main -> dev SHA"
+MAIN_GET, MAIN_PATCH = r"^GET .*/git/refs/heads/main$", r"^PATCH .*/git/refs/heads/main$"
+FF_REMEDIES = ("If dev is still at", "Re-run failed jobs", "If dev has moved: v1.2.3 is burnt and never shipped",
+               "never revert to v1.2.3")
+
+
+def _main_at(sha):
+    return _json({"ref": "refs/heads/main", "object": {"type": "commit", "sha": sha}})
+
+
+def _run_ff(tmp_path, github, shell, gets, patches):
+    api = github({MAIN_GET: list(gets), MAIN_PATCH: list(patches)})
+    return api, _run_promote_step(tmp_path, FF_STEP, api, shell, SNAP="v1.2.3")
+
+
+@PROMOTE_SHELLS
+def test_ff_step_on_a_rerun_whose_ff_landed_exits_0_without_a_patch(tmp_path, github, shell):
+    api, proc = _run_ff(tmp_path, github, shell, [_main_at(DEV_SHA)], [_json({}, 500)])
+    assert proc.returncode == 0 and _annotations(proc) == [], proc.stdout + proc.stderr
+    assert f"main already at DEV_SHA {DEV_SHA} (re-run)" in proc.stdout and api.reads(MAIN_PATCH) == 0
+
+
+@PROMOTE_SHELLS
+@pytest.mark.parametrize("gets,patches,n_patch", [
+    ([_main_at(OTHER_SHA), _main_at(DEV_SHA)], [_json({}, 200)], 1),
+    ([DROP, _main_at(DEV_SHA)], [_json({}, 200)], 1),  # an unreadable first read still tries the (safe) PATCH
+    ([_main_at(OTHER_SHA), _main_at(DEV_SHA)], [DROP, HTML_502, _json({}, 200)], 3),  # 000 and 5xx are retried
+    # a 502 that landed: the retry is refused 422, and the re-read shows main at DEV_SHA
+    ([_main_at(OTHER_SHA), _main_at(DEV_SHA)], [HTML_502, _json({"message": "Update is not a fast forward"}, 422)], 2),
+], ids=["clean", "first-read-unreadable", "transient-then-200", "5xx-that-landed"])
+def test_ff_step_moves_main_and_logs_both_shas(tmp_path, github, shell, gets, patches, n_patch):
+    api, proc = _run_ff(tmp_path, github, shell, gets, patches)
+    assert proc.returncode == 0 and _errors(proc) == [], proc.stdout + proc.stderr
+    assert f"promoted main -> {DEV_SHA}" in proc.stdout and f"main after: {DEV_SHA}" in proc.stdout
+    assert api.reads(MAIN_PATCH) == n_patch
+    patch_bodies = [json.loads(b) for r, b in zip(api.log, api.bodies) if r.startswith("PATCH ")]
+    assert patch_bodies and all(b == {"sha": DEV_SHA, "force": False} for b in patch_bodies)
+
+
+@PROMOTE_SHELLS
+@pytest.mark.parametrize("patches,n_patch,code", [
+    ([DROP], 4, "000"),
+    ([HTML_502], 4, "502"),
+    ([_json({"message": "Update is not a fast forward"}, 422)], 1, "422"),  # a refusal is not retried
+    ([_json({"message": "Bad credentials"}, 401)], 1, "401"),
+], ids=["no-reply-x4", "502-x4", "422", "401"])
+def test_ff_step_refuses_naming_mains_sha_and_both_remedies(tmp_path, github, shell, patches, n_patch, code):
+    api, proc = _run_ff(tmp_path, github, shell, [_main_at(OTHER_SHA)], patches)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert api.reads(MAIN_PATCH) == n_patch
+    errors = _errors(proc)
+    assert len(errors) == 1, errors
+    assert errors[0].startswith(f"::error::fast-forward of main to {DEV_SHA} failed (HTTP {code}); main is at {OTHER_SHA}")
+    assert all(r in errors[0] for r in FF_REMEDIES), errors[0]
+
+
+def test_ff_step_every_curl_is_bounded_and_falls_back():
+    """Bare, a transport error ended the step on the assignment with no ::error, and a hang ran to the job limit."""
+    _, step = _step(PROMOTE, "promote", FF_STEP)
+    body = step["run"]
+    assert body.count("curl ") == 1 and "--max-time 20" in body.split("curl ", 1)[1].splitlines()[0]
+    assert '|| CODE="000"' in body and '|| BEFORE="UNREADABLE"' in body and '|| AFTER="UNREADABLE"' in body
+    assert re.findall(r"\bsleep\b.*", body) == ["sleep 10; fi"]
+    assert type(step.get("timeout-minutes")) is int and step["timeout-minutes"] * 60 >= 20 + 4 * 20 + 3 * 10 + 20 + 30
+
+
 @PROMOTE_SHELLS
 def test_smoke_step_passes_on_readable_replies(tmp_path, github, shell):
     api = _smoke_api(github)
@@ -1650,18 +1743,23 @@ def test_snapshot_tooling_is_prepared_before_the_fast_forward_and_before_the_sta
     # One block, in the order each step needs the one before: directory, restore into it, fill a miss, run, deps.
     assert [at(n) for n in TOOLING] == list(range(at(PG_DIR), at(PG_DIR) + len(TOOLING)))
     # After the gates that judge the promoted code and before the smoke: a tooling refusal costs no staging deploy.
-    assert at(SCHEMA) < at(PG_DIR) and at(SNAP_DEPS) < at(SMOKE) < at(FF) < at(SNAP)
+    # Then the snap, and only then the FF (BUG-PROMOTEFFORDER-001): a snap failure leaves main where it was.
+    assert at(SCHEMA) < at(PG_DIR) and at(SNAP_DEPS) < at(SMOKE) < at(SNAP) < at(FF)
 
 
 def test_nothing_after_the_fast_forward_fetches_tooling():
     steps, names = _promote_steps()
     after = steps[names.index(FF) + 1:]
-    # What remains below the FF, and why: the snap is the promote's commit-marker. It tags the commit main now
-    # points at and snapshots prod as that version's revert point (snap.py's header), so it follows the FF by design.
-    assert [s.get("name") for s in after] == [SNAP]
+    # What remains below the FF, and why: only the retention prune (BUG-PROMOTEFFORDER-001). It deletes an old
+    # revert point, so it waits until this version has certainly shipped, and it can never fail the job.
+    assert [s.get("name") for s in after] == [PRUNE]
     assert [_fetches_tooling(s) for s in after] == [""]
-    assert after[0]["run"].splitlines() == [f'export PATH="{PG_BIN}:$PATH"', "python3 scripts/snap.py"]
-    assert "if" not in after[0] and "continue-on-error" not in after[0]
+    assert after[0]["run"].splitlines() == ["python3 scripts/snap.py --prune-only"]
+    assert "if" not in after[0] and after[0].get("continue-on-error") is True
+    # The snap, above the FF, snaps without pruning.
+    snap = steps[names.index(SNAP)]
+    assert snap["run"].splitlines() == [f'export PATH="{PG_BIN}:$PATH"', "python3 scripts/snap.py --no-prune"]
+    assert "if" not in snap and "continue-on-error" not in snap
     # The scan is not blind: it names every step above the FF that does fetch.
     found = {n: _fetches_tooling(steps[names.index(n)]) for n in TOOLING}
     assert found == {PG_DIR: "", PG_CACHE: "action actions/cache", PG_FETCH: "docker", PG_VERIFY: "", SNAP_DEPS: "pip"}
@@ -1693,7 +1791,7 @@ def test_no_promote_gate_job_and_no_step_up_to_the_fast_forward_is_advisory():
     steps, names = _promote_steps()
     assert names.index(SKEW) < names.index(SMOKE) < names.index(FF)
     gated = [("resolve", s) for s in jobs["resolve"]["steps"]] + [("promote", s) for s in steps[:names.index(FF) + 1]]
-    assert len(gated) == 16, [s.get("name") for _, s in gated]
+    assert len(gated) == 18, [s.get("name") for _, s in gated]
     soft = [f"{job}: {s.get('name')}" for job, s in gated if "continue-on-error" in s]
     assert not soft, f"advisory steps before main moves: {soft}"
     assert [s.get("name") for _, s in gated if "if" in s] == [PG_FETCH]
@@ -1805,11 +1903,14 @@ def test_snapshot_tooling_every_stall_ends_inside_its_step_and_all_of_them_insid
 
 
 # The move left a gap: the tooling is proven, then the smoke, the credentials and the Lambda decision run for 5 to
-# 35 minutes, then the FF, then snap.py uses it. The pins above place the five steps; these three pin the gap and
-# what follows the FF, so a step that puts a death back after the fast-forward is a reviewed edit to this file.
+# 35 minutes, then snap.py uses it, then a fresh token and the FF, then the never-fatal prune (BUG-PROMOTEFFORDER-001).
+# The pins above place the five steps; these three pin the gap and what follows the FF, so a step that puts a death
+# back after the fast-forward is a reviewed edit to this file.
 AWS_CREDS = "Configure AWS credentials (snap role, OIDC)"
 LAM_DECISION = "Decide Lambda deploy from deploy markers on the running functions (pre-FF; fail-closed)"
-FROM_TOOLING_TO_END = TOOLING + [SMOKE, AWS_CREDS, LAM_DECISION, FF, SNAP]
+MINT_FF = "Mint garden-bot installation token (fast-forward)"
+PRUNE = "Prune old snapshot branches (post-FF; never fatal)"
+FROM_TOOLING_TO_END = TOOLING + [SMOKE, AWS_CREDS, LAM_DECISION, SNAP, MINT_FF, FF, PRUNE]
 SPAN_PINNED = """
 The promote job's steps from the snapshot tooling to the end of the job are pinned by name and order.
 Why: the tooling is proven before the fast-forward so that its failure cannot leave main advanced with no snapshot
@@ -1819,7 +1920,8 @@ Before changing the list, check the new or moved step:
     depend on tooling that is not proven yet? Then it belongs BEFORE the fast-forward, with its own time limit;
   - does it change which python3 runs, what is on PATH, or what is under /usr/lib/postgresql/17, after
     'Install python deps'? Then scripts/snap.py dies after the fast-forward: put it before the tooling steps;
-  - is it below the fast-forward? Only the snap belongs there.
+  - is it below the fast-forward? Only the never-fatal prune belongs there: a failure after the FF leaves main
+    advanced with nothing deployed, so the snap and everything that can refuse runs above it.
 """
 # Between the tooling and the snap, the one action allowed and why. May only shrink.
 GAP_ACTIONS = {AWS_CREDS: "aws-actions/configure-aws-credentials"}  # exports AWS_* only; snap.py's own credentials
@@ -1874,8 +1976,12 @@ def test_once_main_moves_no_step_is_an_action_or_runs_an_installer():
     assert len(from_ff) > 1, "nothing follows the fast-forward: the scan would be vacuous"
     found = {s.get("name"): _installs(s) for s in from_ff}
     assert not any(found.values()), f"runs after main has moved, where a failure strands the promote: {found}\n{SPAN_PINNED}"
-    for step in from_ff:  # nothing after the FF may be skipped or shrugged off either
-        assert "run" in step and not {"if", "continue-on-error"} & set(step), step.get("name")
+    # The FF may not be skipped or shrugged off. What follows it (the prune alone) may never fail the job: a red
+    # step there would skip both deploys with main moved. So it is shrugged off, never skipped, and time-limited.
+    assert "run" in from_ff[0] and not {"if", "continue-on-error"} & set(from_ff[0]), from_ff[0].get("name")
+    for step in from_ff[1:]:
+        assert "run" in step and "if" not in step and step.get("continue-on-error") is True, step.get("name")
+        assert type(step.get("timeout-minutes")) is int and 0 < step["timeout-minutes"] <= 2, step.get("name")
     # The scan is not blind: above the FF it names each step that is an action or installs.
     above = {s.get("name"): _installs(s) for s in steps[:moves[0]]}
     assert {n: above[n] for n in TOOLING + [AWS_CREDS]} == {

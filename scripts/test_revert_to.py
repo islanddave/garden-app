@@ -187,6 +187,54 @@ def test_verify_tag_ok_annotated(monkeypatch):
     assert rt.verify_tag(cfg, good_manifest()) == "a" * 40
 
 
+# BUG-PROMOTEFFORDER-001: promote-gate snaps BEFORE it fast-forwards, so a tag + manifest can exist for a commit main
+# never reached. compare/{manifest.main_sha}...main: ahead/identical = on main; behind/diverged = never shipped.
+@pytest.mark.parametrize("status", ["ahead", "identical"])
+def test_verify_reached_main_passes_a_commit_main_contains(monkeypatch, status):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", f"/compare/{'a' * 40}...main", FakeResp(200, {"status": status}))
+    monkeypatch.setattr(rt, "requests", fr)
+    assert rt.verify_reached_main(cfg, good_manifest()) == status
+    assert fr.calls == [("GET", f"https://api.github.com/repos/islanddave/garden-app/compare/{'a' * 40}...main")]
+
+
+@pytest.mark.parametrize("status", ["behind", "diverged"])
+def test_verify_reached_main_refuses_a_version_that_never_reached_main(monkeypatch, status):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "/compare/", FakeResp(200, {"status": status}))
+    monkeypatch.setattr(rt, "requests", fr)
+    with pytest.raises(rt.RevertError, match="v2.5.0 never reached main"):
+        rt.verify_reached_main(cfg, good_manifest())
+
+
+@pytest.mark.parametrize("resp", [FakeResp(404, {"message": "Not Found"}), FakeResp(200, {"message": "?"}),
+                                  FakeResp(200, bad_json=True), FakeResp(502, text="bad gateway"),
+                                  real_requests.ConnectionError("reset")],
+                         ids=["404", "no-status", "not-json", "502", "transport"])
+def test_verify_reached_main_refuses_when_it_cannot_tell(monkeypatch, resp):
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+
+    def reply(url):
+        if isinstance(resp, Exception):
+            raise resp
+        return resp
+    fr.add("GET", "/compare/", reply)
+    monkeypatch.setattr(rt, "requests", fr)
+    with pytest.raises(rt.RevertError, match="could not tell whether v2.5.0"):
+        rt.verify_reached_main(cfg, good_manifest())
+
+
+def test_run_refuses_a_never_shipped_target_before_the_prerevert_snap(monkeypatch):
+    cfg, s3, fr, gh, events, lc = prod_world(monkeypatch)
+    fr.routes.insert(0, ("GET", "/compare/", FakeResp(200, {"status": "behind"})))
+    with pytest.raises(rt.RevertError, match="never reached main"):
+        rt.run(cfg, s3=s3, lambda_client=lc)
+    assert ("snap",) not in events and not [c for c in fr.calls if c[0] != "GET"]
+
+
 # --- step 3: DB pieces -------------------------------------------------------
 
 def test_fast_path_lsn_match(monkeypatch):
@@ -836,6 +884,7 @@ def test_run_data_loss_guard(monkeypatch):
     serve_prod_version(fr)
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
+    fr.add("GET", "/compare/", FakeResp(200, {"status": "ahead"}))  # the target reached main
     monkeypatch.setattr(rt, "requests", fr)
     monkeypatch.setattr(rt, "compute_rpo", lambda cfg: {"total_live_rows": 5, "latest_event": "t"})
     with pytest.raises(rt.RevertError) as e:
@@ -1053,6 +1102,7 @@ def prod_world(monkeypatch, prerevert=None, target_files=None, env_over=None, **
     serve_target_workflows(fr, current_workflows() if target_files is None else target_files)
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
+    fr.add("GET", f"/compare/{'a' * 40}...main", FakeResp(200, {"status": "ahead"}))  # the target shipped
     fr.add("GET", "/branches", FakeResp(200, {"branches": [
         {"id": "br-snap", "name": "snap-v2.5.0", "current_state_lsn": "0/ABC"}]}))
 
@@ -2082,6 +2132,7 @@ def test_run_rehearsal_dump_path(monkeypatch):
     fr = FakeRequests()
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
+    fr.add("GET", "/compare/", FakeResp(200, {"status": "ahead"}))  # the target reached main
     # absent until the dump path creates it; the restore-target guard then finds it by id
     made = []
     fr.add("GET", "/branches", lambda url: FakeResp(200, {"branches": made}))
@@ -2244,6 +2295,7 @@ def test_run_rehearsal_force_abort_rolls_back(monkeypatch):
     fr = FakeRequests()
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
+    fr.add("GET", "/compare/", FakeResp(200, {"status": "ahead"}))  # the target reached main
     fr.add("GET", "/branches", FakeResp(200, {"branches": [
         {"id": "br-snap", "name": "snap-v2.5.0", "current_state_lsn": "0/ABC"}]}))
     fr.add("POST", "/restore", FakeResp(200, {"ok": True}))
@@ -2585,6 +2637,7 @@ def test_run_dump_path_guard_refusal_stops_before_restore_and_before_prod(monkey
     fr = FakeRequests()
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
+    fr.add("GET", "/compare/", FakeResp(200, {"status": "ahead"}))  # the target reached main
     made = []
     fr.add("GET", "/branches", lambda url: FakeResp(200, {"branches": made}))
     fr.add("GET", "/endpoints", FakeResp(200, {"endpoints": [{**STAGE_ENDPOINT, "branch_id": "br-polished-art-am12o4ue"}]}))

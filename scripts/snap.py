@@ -3,20 +3,36 @@
 snap.py — garden-app "version-snap" primitive (spec §3 B1).
 
 Captures a point-in-time, COUPLED code+DB+assets bundle keyed by one version
-string (vX), so any shipped prod version is revertible. Designed to run as the
-FINAL gated step of `promote-gate.yml` (the `promote` job, inside
-`environment: production`), AFTER a successful fast-forward of `main`.
+string (vX), so any shipped prod version is revertible. Runs as the LAST gate
+of `promote-gate.yml` (the `promote` job, inside `environment: production`),
+BEFORE the fast-forward of `main` (BUG-PROMOTEFFORDER-001, 2026-10-15; until
+then it ran after the FF, and a snap failure left main advanced with nothing
+deployed). After the FF that job runs `snap.py --prune-only`, the retention
+prune this run no longer does (`--no-prune`), so an old revert point is never
+deleted for a version that might not ship.
 
 This is the commit-marker of a prod promote: if snap fails, the SHIP fails
-(non-zero exit), because a green promote with a silently-absent snapshot is the
-exact trap this primitive closes.
+(non-zero exit) with main untouched, because a green promote with a
+silently-absent snapshot is the exact trap this primitive closes.
+
+ORPHAN TAG. The tag is created last of the artifacts, just before the manifest
+(precheck_tag refuses a taken tag up front, read-only). A failure between the
+tag and the fast-forward, or a failed FF, leaves tag vX + manifest + Neon branch
+for a commit main never reached. While dev is unmoved, "Re-run failed jobs"
+completes it (every artifact is create-if-missing). Once dev moves, vX is burnt:
+release-tag-integrity forbids moving or deleting the tag, the skew gate refuses
+it, and revert-to.py refuses it as a target ("never reached main").
+forward-undo.py's previous_release (highest tag below vN whose commit is an
+ancestor of vN) does NOT know this and can pick such a burnt vX as vPREV.
 
 ------------------------------------------------------------------------------
 ENV CONTRACT (read at runtime; no secrets are hardcoded):
   GH_TOKEN            garden-bot GitHub App installation token (tag creation is
                       ruleset-restricted to garden-bot; the job runs as the bot).
   GITHUB_REPOSITORY   "owner/repo" (provided by GitHub Actions).
-  MAIN_SHA            the promoted main commit SHA to tag and pin the snap to.
+  MAIN_SHA            the commit to tag and pin the snap to: inside promote-gate
+                      the dev SHA main is about to be fast-forwarded to (main
+                      has not moved yet); in revert-to.py, main's current head.
   SNAP_VERSION        the version string vX, e.g. "v1", "v1.2", "v1.2.3".
                       Validated against ^v\\d+(\\.\\d+){0,2}$.
   NEON_API_KEY        Neon API key (Authorization: Bearer).
@@ -46,10 +62,21 @@ Idempotency: every artifact is create-if-missing. If it already exists it is
 SKIPPED, not errored, so a partial snap completes cleanly on re-run. BUT if a
 target artifact for vX already exists pinned to a DIFFERENT main_sha, we ABORT
 (guards a vX reuse with new content).
+
+MODES (argv):
+  (none)              the full snap above, then the retention prune.
+  --no-prune          the full snap without the prune (promote-gate, pre-FF).
+  --prune-only        the retention prune alone (promote-gate, post-FF). Reads
+                      only NEON_API_KEY, NEON_PROJECT_ID, NEON_PROD_BRANCH_ID,
+                      SNAP_BRANCH_PREFIX, SNAP_RETENTION; with SNAP_VERSION and
+                      MAIN_SHA set it also records the report in that version's
+                      manifest (SNAP_BUCKET, AWS), best-effort. NEVER fails: it
+                      runs after main has moved, and exits 0 on every outcome.
 ------------------------------------------------------------------------------
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -128,6 +155,23 @@ class Config:
         except ValueError:
             raise SnapError(f"{key} must be an integer, got {raw!r}")
         return max(minimum, val)
+
+
+class PruneConfig:
+    """--prune-only: what prune_old_branches reads, and nothing else (no bot token, no DB URL, no
+    photos bucket). Same defaults as Config. version/main_sha are optional: only the best-effort
+    manifest record uses them."""
+
+    def __init__(self, env=None):
+        env = os.environ if env is None else env
+        self.neon_api_key = Config._req(env, "NEON_API_KEY")
+        self.neon_project_id = Config._req(env, "NEON_PROJECT_ID")
+        self.neon_prod_branch_id = env.get("NEON_PROD_BRANCH_ID", "br-delicate-sea-amum92c2")
+        self.branch_prefix = env.get("SNAP_BRANCH_PREFIX") or "snap-"
+        self.retention = Config._int_env(env, "SNAP_RETENTION", 5, minimum=1)
+        self.version = env.get("SNAP_VERSION") or ""
+        self.main_sha = env.get("MAIN_SHA") or ""
+        self.snap_bucket = env.get("SNAP_BUCKET") or "garden-snapshots-prod"
 
 
 # --- helpers -----------------------------------------------------------------
@@ -240,6 +284,29 @@ def precheck_existing_manifest(s3, cfg):
 
 
 # --- (a) git annotated tag ---------------------------------------------------
+
+def precheck_tag(cfg):
+    """Read-only half of ensure_tag, run before any capture: a tag vX that already exists on
+    another commit refuses HERE, before a Neon branch or a dump is made for a version that can
+    never be tagged. Creates nothing; ensure_tag (just before the manifest) creates the tag.
+    Returns the commit an existing tag resolves to (== MAIN_SHA), or None when it is free."""
+    r = requests.get(
+        f"{GITHUB_API}/repos/{cfg.repo}/git/ref/tags/{cfg.version}",
+        headers=gh_headers(cfg),
+        timeout=HTTP_TIMEOUT,
+    )
+    if r.status_code == 404:
+        return None
+    if r.status_code != 200:
+        raise SnapError(f"GitHub ref lookup failed {r.status_code}: {r.text}")
+    target = _resolve_ref_commit(cfg, r.json().get("object", {}).get("sha"))
+    if target != cfg.main_sha:
+        raise SnapError(
+            f"tag {cfg.version} already exists pointing at {target} != "
+            f"{cfg.main_sha}; refusing to move tag"
+        )
+    return target
+
 
 def ensure_tag(cfg):
     """Create annotated tag vX on MAIN_SHA via GitHub API. Idempotent:
@@ -471,9 +538,10 @@ def write_table_list_or_warn(s3, cfg, dump_key, tables, taken_at):
     """Put the table list beside the dump it was read for. Returns the key, or
     None when nothing was written.
 
-    WARNS, NEVER FAILS THE SHIP. This runs inside promote-gate AFTER main has
-    fast-forwarded, where a raise strands main advanced with nothing deployed
-    (the reason publish_lambda_versions records instead of raising). The list is
+    WARNS, NEVER FAILS THE SHIP. This ran inside promote-gate AFTER main had
+    fast-forwarded until 2026-10-15, where a raise stranded main advanced with
+    nothing deployed; it now runs before the FF, where a raise still refuses the
+    release (and burns vX once dev moves, see the module docstring). The list is
     not part of what a revert restores: its only reader is restore-verify, which
     falls back to the live comparison for a dump with no list and says so. So a
     lost list costs one possible false red there, announced here by a
@@ -496,7 +564,7 @@ def write_table_list_or_warn(s3, cfg, dump_key, tables, taken_at):
 
 
 def table_list_key_if_present(s3, cfg):
-    """The table-list key for the manifest, or None. Never raises (post-FF)."""
+    """The table-list key for the manifest, or None. Never raises (it never fails the ship)."""
     key = s3_key_for("tables", cfg)
     try:
         return key if s3_object_exists(s3, cfg.snap_bucket, key) else None
@@ -671,13 +739,16 @@ def publish_lambda_versions(cfg, lambda_client=None, functions=None):
     in rollback(), from its own pre-revert snap; a forward revert rebuilds the target's Lambdas
     from the target's tree instead.
 
-    Race-hardened (L-221): the promote FF triggers a push:main Lambda deploy, which can
-    leave a function with LastUpdateStatus=InProgress when snap runs — PublishVersion
-    then raises ResourceConflictException and reds the whole promote. We wait for each
-    function to go idle, then publish with bounded backoff retry on ResourceConflictException.
+    Race-hardened (L-221): the promote FF used to trigger a push:main Lambda deploy (removed by
+    OPS-PROMOTERACE-001; deploy-lambdas is now a graph successor of the promote job), which could
+    leave a function with LastUpdateStatus=InProgress when snap ran — PublishVersion then raises
+    ResourceConflictException. A console upload or a revert can still do that, so we wait for
+    each function to go idle, then publish with bounded backoff retry on ResourceConflictException.
 
-    UNCAPTURED IS RECORDED, NOT FATAL (OPS-REVERTRESTORE-001). This runs AFTER promote-gate's
-    fast-forward, so a raise here strands main advanced with nothing deployed. Two per-function
+    UNCAPTURED IS RECORDED, NOT FATAL (OPS-REVERTRESTORE-001). This ran AFTER promote-gate's
+    fast-forward until 2026-10-15 (BUG-PROMOTEFFORDER-001), where a raise stranded main advanced
+    with nothing deployed; before the FF a raise refuses the release instead, and a function whose
+    first deploy is this promote can still never be captured here. Two per-function
     outcomes are therefore returned in `uncaptured` (-> manifest.lambda_uncaptured) and warned:
       ResourceNotFoundException  a function whose FIRST deploy is this very promote.
       AccessDeniedException      a release function snap-ops does not grant yet.
@@ -878,16 +949,17 @@ def prune_old_branches(cfg):
 
 def run(cfg, s3=None, lambda_client=None, prune=True):
     """prune=False is the revert-flow contract: revert-to.py's pre-revert snap
-    must not prune (it could delete the very snapshot being restored)."""
+    must not prune (it could delete the very snapshot being restored). The
+    promote passes it too (--no-prune) and prunes after its fast-forward."""
     s3 = s3 or boto3.client("s3")
 
     validate(cfg.version)
 
-    # Guard vX reuse with different content before doing any work.
+    # Guard vX reuse with different content before doing any work: the manifest,
+    # and (read-only) the tag.
     precheck_existing_manifest(s3, cfg)
+    precheck_tag(cfg)
 
-    # (a) tag
-    tag = ensure_tag(cfg)
     # (b) Neon branch + LSN
     neon_branch_id, neon_lsn = ensure_neon_branch(cfg)
     # (c) fresh durable dump (full database) + cluster globals companion
@@ -897,6 +969,10 @@ def run(cfg, s3=None, lambda_client=None, prune=True):
     photo_key = capture_photo_versions(s3, cfg)
     # (d)(ii) lambda versions — every release function; uncaptured ones recorded, not fatal
     lambda_versions, lambda_uncaptured = publish_lambda_versions(cfg, lambda_client=lambda_client)
+    # (a) tag, LAST of the artifacts (BUG-PROMOTEFFORDER-001): the tag is the one artifact that can
+    # never be removed (release-tag-integrity), so every fallible capture runs before it. A failure
+    # above leaves no tag, and a promote refused there burns no version.
+    tag = ensure_tag(cfg)
 
     # self-verify EVERY artifact before the manifest commit-marker
     self_verify(s3, cfg, dump_key, globals_key, photo_key, neon_branch_id, tag)
@@ -940,10 +1016,64 @@ def run(cfg, s3=None, lambda_client=None, prune=True):
     }
 
 
+def record_prune_report(cfg, report):
+    """Best-effort: add the --prune-only report to vX's manifest, as the full snap's post-prune
+    rewrite does. Only with SNAP_VERSION and MAIN_SHA set, and only into a manifest pinned to
+    MAIN_SHA. Never raises."""
+    if not (cfg.version and cfg.main_sha):
+        return
+    try:
+        s3 = boto3.client("s3")
+        key = s3_key_for("manifest", cfg)
+        manifest = s3_get_json(s3, cfg.snap_bucket, key)
+        if manifest.get("main_sha") != cfg.main_sha:
+            gha_warning(f"snap prune: prune report NOT recorded: s3://{cfg.snap_bucket}/{key} is pinned to "
+                        f"{manifest.get('main_sha')}, not {cfg.main_sha}")
+            return
+        manifest["prune"] = report
+        write_manifest(s3, cfg, manifest)
+    except Exception as e:  # noqa: BLE001 — never fatal post-FF
+        gha_warning(f"snap prune: could not record prune report in manifest: {type(e).__name__}: {e}")
+
+
+def main_prune_only(env=None):
+    """--prune-only. Exit 0 on EVERY outcome: it runs after promote-gate's fast-forward, where a red
+    step would fail the promote job and skip both deploys with main already moved. A prune that
+    does not happen leaves an old branch until the next promote's prune."""
+    try:
+        cfg = PruneConfig(env=env)
+        report = prune_old_branches(cfg)
+    except Exception as e:  # noqa: BLE001 — never fatal
+        gha_warning(f"snap prune: old snapshot branches NOT pruned ({type(e).__name__}: {e}); never fatal, "
+                    f"the next promote's prune retries")
+        return 0
+    record_prune_report(cfg, report)
+    sys.stdout.write(f"[snap] prune-only OK (pruned {len(report['pruned'])}, "
+                     f"skipped {len(report['skipped'])} old branches)\n")
+    return 0
+
+
+def parse_args(argv):
+    p = argparse.ArgumentParser(prog="snap.py", description="garden-app version-snap (see the module docstring)")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--prune-only", action="store_true",
+                      help="the retention prune alone; never fails (promote-gate, after the fast-forward)")
+    p.add_argument("--no-prune", action="store_true",
+                   help="the full snap without the retention prune (promote-gate, before the fast-forward)")
+    args = p.parse_args(argv)
+    if args.prune_only and args.no_prune:
+        p.error("--no-prune applies to the full snap only")
+    return args
+
+
 def main(argv=None):
+    """argv=None is the no-argument call: the full snap with its prune, as before argparse."""
+    args = parse_args([] if argv is None else argv)
+    if args.prune_only:
+        return main_prune_only()
     try:
         cfg = Config()
-        result = run(cfg)
+        result = run(cfg, prune=not args.no_prune)
     except SnapError as e:
         # Unrecoverable -> FAIL THE SHIP.
         sys.stderr.write(f"[snap] FAIL: {e}\n")
@@ -960,4 +1090,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

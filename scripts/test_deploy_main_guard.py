@@ -135,7 +135,10 @@ def test_promote_gate_reaches_both_jobs_after_its_fast_forward_with_the_promoted
     dev_sha = "${{ needs.resolve.outputs.dev_sha }}"
     ff = next(s for s in jobs["promote"]["steps"] if s.get("name") == "Fast-forward main -> dev SHA")
     assert ff["env"]["DEV_SHA"] == dev_sha and "if" not in ff and "continue-on-error" not in ff
-    assert '\\"sha\\":\\"$DEV_SHA\\"' in ff["run"] and "/git/refs/heads/main" in ff["run"]
+    assert '\\"sha\\":\\"$DEV_SHA\\",\\"force\\":false' in ff["run"] and "/git/refs/heads/main" in ff["run"]
+    # BUG-PROMOTEFFORDER-001: bounded, never ends on an unannotated transport error, and a fresh bot token.
+    assert "--max-time 20" in ff["run"] and '|| CODE="000"' in ff["run"] and "-X PATCH" in ff["run"]
+    assert ff["env"]["GH_TOKEN"] == "${{ steps.bot-ff.outputs.token }}"
     for job_id, called in (("deploy-lambdas", "deploy-lambda.yml"), ("deploy", "deploy.yml")):
         job = jobs[job_id]
         assert job["uses"] == f"./.github/workflows/{called}"
