@@ -127,7 +127,9 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/events garden_node column contract'
     // contract rather than inherit it. Update this number in the same commit that adds one.
     // 18th (BUG-CACHEORPHANREGRESS-001): the PUT re-anchor's plant cache upsert reads gn.id and
     // gn.deleted_at, both already in the contract below.
-    expect(STATEMENTS).toHaveLength(18);
+    // 19th and 20th (BUG-EVENTSPATCHRESOLVE-001): the PATCH resolve ownership pre-read and the
+    // plant arm's EXISTS in its UPDATE; both read pn.id, pn.deleted_at and pn.created_by.
+    expect(STATEMENTS).toHaveLength(20);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['ga', 'gn', 'gn2', 'gp', 'p', 'pn']);
   });

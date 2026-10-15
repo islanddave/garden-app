@@ -96,8 +96,12 @@ describe('events Lambda — Household Mode surgical widening', () => {
     //   planting was never stamped from an event, so its germinated_at can only be a human's, and
     //   declining to touch it is the correct behaviour rather than the BUG-ANCHORNOPROJ-001 blind
     //   spot. That is also why the container-less-arm census below does NOT move.
+    // + BUG-EVENTSPATCHRESOLVE-001 PATCH /:id resolve (2026-10-15): ONE site, 24 -> 25. The route
+    //   gained the two-arm ownership pre-read the GET/PUT/DELETE use (its project arm is the new
+    //   site); the UPDATE's own predicate moved 1:1 from a `FROM public.container` join into an
+    //   EXISTS, which this regex is blind to. Not a widening: the PATCH used the container arm alone.
     const matches = SRC.match(/pp\.created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBe(24);
+    expect(matches.length).toBe(25);
     // The moved gate still exists — assert it at its new home so this count can never drop silently.
     const localAuthz = decomment(readFileSync(resolve(__dirname, 'authz-parents.js'), 'utf8'));
     expect(localAuthz).toMatch(/pp\.created_by = ANY\(\$\{householdIds\}\)/);

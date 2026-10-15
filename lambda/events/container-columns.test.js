@@ -103,7 +103,9 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/events container column contract', 
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(30);
+    // 31st (BUG-EVENTSPATCHRESOLVE-001): the PATCH resolve ownership pre-read; reads pp.id,
+    // pp.deleted_at and pp.created_by, all already in the contract below.
+    expect(STATEMENTS).toHaveLength(31);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['c', 'pp']);
   });
