@@ -496,10 +496,11 @@ describe('per-query builders bind userId correctly', () => {
     expect(sqlCalls[0].resolved).toMatch(/metadata->>'batch_id'/);
     expect(sqlCalls[0].resolved).toMatch(/LEFT JOIN event_batches/);
   });
-  it('queryCounts binds householdScope twice (projects + plants sub-counts)', async () => {
+  it('queryCounts binds householdScope three times (projects + plants + locations sub-counts)', async () => {
     await queryCounts(makeSql(), 'user_alpha');
-    // HOUSEHOLD-MODE: both ownership sub-counts widened to ANY(['user_alpha']).
-    expect(countUserBinds(sqlCalls[0].values, 'user_alpha')).toBe(2);
+    // HOUSEHOLD-MODE: every ownership sub-count widened to ANY(['user_alpha']). 2 -> 3 at T3b I29
+    // (location_count counted every household's locations).
+    expect(countUserBinds(sqlCalls[0].values, 'user_alpha')).toBe(3);
   });
   it('queryFavoriteCount binds userId', async () => {
     await queryFavoriteCount(makeSql(), 'user_alpha');

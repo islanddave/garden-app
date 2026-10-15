@@ -196,7 +196,7 @@ export function queryCounts(sql, userId) {
         (
           SELECT COUNT(*)::int
           FROM locations
-          WHERE deleted_at IS NULL
+          WHERE deleted_at IS NULL AND created_by = ANY(${householdIds})
         ) AS location_count
     `;
 }
@@ -1215,6 +1215,7 @@ export function searchPhotos(sql, userId, pat) {
   return sql`
       SELECT p.id, p.caption, p.project_id, p.plant_id, p.created_at
       FROM photos p
+      LEFT JOIN public.container pp ON pp.id = p.project_id AND pp.deleted_at IS NULL
       WHERE p.created_by = ANY(${householdIds})
         AND p.deleted_at IS NULL
         AND COALESCE(p.original_filename, '') NOT LIKE 'vendor-image--%'
@@ -1231,6 +1232,10 @@ export function searchPhotos(sql, userId, pat) {
           WHERE ea.id = p.event_id AND ea.deleted_at IS NULL
             AND gne.archived_at IS NOT NULL
         )
+        -- T3b archive leftover: a photo on an ARCHIVED container is hidden, as in the Library's
+        -- unscoped list. deleted_at sits in the JOIN, so a deleted container counts as no container
+        -- and its photo stays visible (Library parity); no container at all passes.
+        AND pp.archived_at IS NULL
         AND p.caption IS NOT NULL AND p.caption <> ''
         AND p.caption ILIKE ${pat} ESCAPE '\\'
       ORDER BY p.created_at DESC

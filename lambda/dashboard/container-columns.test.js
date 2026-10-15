@@ -129,7 +129,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/dashboard container column contract
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(14);
+    expect(STATEMENTS).toHaveLength(15); // 15: searchPhotos LEFT JOINs container (T3b archive leftover)
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['pp']);
   });
