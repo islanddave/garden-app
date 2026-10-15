@@ -110,3 +110,49 @@ describe('evidence-ingest write path (integration, real Neon)', () => {
     expect(r.status).toBe(405);
   });
 });
+
+// I40 (BUG-AUTHZLAMBDA-001) — dave_confirmed (trust_rank 5) and source_record_id are admin-only.
+// Fail-closed: with ADMIN_CLERK_SUBS unset nobody passes. The admin arm is the control: a gate that
+// 403s every write would pass the denials alone.
+describe('evidence-ingest admin-only fields (I40)', () => {
+  const DENIED_NOTE = `i40-denied-${RUN}`;
+  let adminEnv;
+  beforeAll(() => { adminEnv = process.env.ADMIN_CLERK_SUBS; delete process.env.ADMIN_CLERK_SUBS; });
+  afterAll(() => {
+    if (adminEnv === undefined) delete process.env.ADMIN_CLERK_SUBS;
+    else process.env.ADMIN_CLERK_SUBS = adminEnv;
+  });
+
+  const denied = [
+    ['tier', { tier: 'dave_confirmed' }],
+    ['source_tier', { source_tier: 'dave_confirmed' }],
+    ['provenance', { provenance: 'dave_confirmed' }],
+    ['source_record_id', { source_record_id: `i40-src-${RUN}` }],
+  ];
+  for (const [field, over] of denied) {
+    it(`non-admin ${field} -> 403 and no row`, async () => {
+      if (!tableExists) return;
+      setTestUserId(USER);
+      // The gate precedes the entity lookup, so an absent entity still 403s (no existence signal).
+      const entity_id = sampleEntityId ?? '00000000-0000-0000-0000-0000000000ff';
+      const r = await callHandler(handler, { method: 'POST', path: '/api/evidence', body: validBody({ ...over, entity_id, note: DENIED_NOTE }) });
+      expect(r.status, JSON.stringify(r.body)).toBe(403);
+      const rows = await directSql`SELECT 1 FROM public.evidence WHERE note = ${DENIED_NOTE}`;
+      expect(rows).toHaveLength(0);
+    });
+  }
+
+  it('an admin may write dave_confirmed (control) -> 201', async () => {
+    if (!tableExists || !sampleEntityId || !v2ColsExist) return;
+    process.env.ADMIN_CLERK_SUBS = USER;
+    try {
+      setTestUserId(USER);
+      const r = await callHandler(handler, { method: 'POST', path: '/api/evidence', body: validBody({ tier: 'dave_confirmed', note: `i40-admin-${RUN}` }) });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      inserted.push(r.body.evidence.id);
+      expect(r.body.evidence.source_tier).toBe('dave_confirmed');
+    } finally {
+      delete process.env.ADMIN_CLERK_SUBS;
+    }
+  });
+});
