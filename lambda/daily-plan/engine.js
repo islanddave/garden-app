@@ -1140,7 +1140,8 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // BUG-LAMBDAERRPATHS-001 (I4): a throw here used to end the run for every Space. It now degrades
     // this planting only, to the DEFAULT window (stored from/until ignored). _ow is never nulled on a
     // throw: null means "not overwintering", which would hand a dormant plant fertilize and water rows.
-    // If even the default window throws, the planting is skipped for tonight rather than mis-carded.
+    // If even the default window throws, the planting is skipped for tonight rather than mis-carded,
+    // and that skip logs at ERROR so the Lambda error-log alarm path still sees a run that dropped cards.
     let _ow = null;
     if(!_wsup){
       try { _ow = ow.overwinterState(p, c, today); }
@@ -1148,7 +1149,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
         console.warn(JSON.stringify({ msg: 'overwinter-state-throw', planting: p.id, error: e?.message }));
         try { _ow = ow.overwinterState(p, c, today, undefined, { defaultWindow: true }); }
         catch(e2){
-          console.warn(JSON.stringify({ msg: 'overwinter-state-throw', planting: p.id, fallback: true, error: e2?.message }));
+          console.error(JSON.stringify({ msg: 'overwinter-state-throw', planting: p.id, fallback: true, error: e2?.message }));
           continue;
         }
       }

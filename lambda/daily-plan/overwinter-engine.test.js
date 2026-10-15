@@ -436,11 +436,17 @@ describe('the card states the regime\'s own moisture test', () => {
 // of overwinterState used to end the nightly run for every Space. Now it degrades one planting.
 describe('a bad stored window degrades one planting, never the plan', () => {
   let warn;
-  beforeEach(() => { warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+  let error;
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
   afterEach(() => { vi.restoreAllMocks(); });
-  const warned = (msg) => warn.mock.calls
+  const logged = (spy, msg) => spy.mock.calls
     .map(([s]) => { try { return JSON.parse(s); } catch { return null; } })
     .filter((o) => o && o.msg === msg);
+  const warned = (msg) => logged(warn, msg);
+  const errored = (msg) => logged(error, msg);
   // protected_quiescent is a manual-exit regime, so on WINTER (outside a '2-3' window) the engine reaches
   // the exit-reminder date maths, which is where '2026-2-3' threw a RangeError.
   const garage = (ow2) => P({ id: 'g1', name: 'Garage Fig', status: 'vegetative', last_water: '2026-11-16',
@@ -474,7 +480,9 @@ describe('a bad stored window degrades one planting, never the plan', () => {
   });
 
   // If even the default window throws, that planting is skipped for the night and the rest of the
-  // plan stands. Mutation: delete the inner try/catch and generatePlan throws.
+  // plan stands. Mutation: delete the inner try/catch and generatePlan throws. The skip logs at ERROR
+  // (the first throw stays a warn), so the error-log alarm path sees dropped cards. Mutation: log the
+  // fallback line with console.warn again and the errored/warned split goes red.
   it('skips the planting when the default window throws too', () => {
     const boom = { get regime() { throw new TypeError('worse'); } };
     const u = planFor([garage(boom), owned({ regime: 'protected_productive' })]);
@@ -482,6 +490,9 @@ describe('a bad stored window degrades one planting, never the plan', () => {
     expect(owRows(u).some((r) => r.id === 'g1')).toBe(false);
     expect(inAnyWaterList(u, 'g1')).toBe(false);
     expect(u.tasks.fertilize.some((r) => r.id === 'g1')).toBe(false);
-    expect(warned('overwinter-state-throw').map((o) => !!o.fallback)).toEqual([false, true]);
+    expect(warned('overwinter-state-throw').map((o) => !!o.fallback)).toEqual([false]);
+    expect(errored('overwinter-state-throw')).toEqual([
+      { msg: 'overwinter-state-throw', planting: 'g1', fallback: true, error: 'worse' },
+    ]);
   });
 });
