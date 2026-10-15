@@ -305,6 +305,10 @@ describe('filter result announcement (§2.6, §5.6)', () => {
     expect(say({ tasks: ['water'], spots: [key('Yard - Stable')] })).toBe('Needs care: Water, 168 in 8 spots.')
     expect(filterAnnouncement(filterResult([], {}))).toBe('Needs care: everything, nothing due.')
   })
+  it('said of a household section, it names her list (review B1)', () => {
+    expect(filterAnnouncement(filterResult(rows, { spots: [key('Bag Area')] }), 'Jen’s care')).toBe('Jen’s care: Bag Area, 141 in 1 spot.')
+    expect(filterAnnouncement(filterResult([], {}), 'Jen’s care')).toBe('Jen’s care: everything, nothing due.')
+  })
 })
 
 // S4g — §2.5: the emptied Needs care header. Logged = the plan's done care items ∪ this tab's store, by key.

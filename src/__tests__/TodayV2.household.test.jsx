@@ -45,6 +45,7 @@ import { readSkipped } from '../components/today/careStore.js'
 import { householdKey, householdSummary } from '../components/today/v2/HouseholdSection.jsx'
 import { TRIGGER_CELLS } from '../../tests/harness/_todaymeasure/today-v2-contract.mjs'
 import { writeShowOthers } from '../lib/householdView.js'
+import { filtersKey, writeFilters } from '../components/today/v2/needsCareStore.js'
 import SettingsControls from '../pages/SettingsControls.jsx'
 
 const DAVE = F('dailyplan.dave.json')
@@ -216,6 +217,64 @@ describe('the same row anatomy and the SAME shared skip set', () => {
     const deck = JEN.water_due.filter((r) => /Scallion|Onion/.test(r.name)).map((r) => r.id).sort()
     expect(wire.posts.map((b) => b.plant_id).sort()).toEqual(deck)
     expect(wire.posts.every((b) => b.event_type === 'watering')).toBe(true)
+  })
+})
+
+// Review B1 (L3–L5 integrated): her section mounted NeedsCare without the `onFilters` L4 moved to the page, so a spot
+// chip in it threw ("onFilters is not a function") and did nothing; and the task row it lost left a task saved for her
+// section earlier in the session filtering her list with nothing to clear it. Her filter is now her section's own:
+// spot chips only (the bar's Water / Feed / Check cells are the viewer's), each change said once under her name.
+describe('her spot chips are her section\'s own filter; no task filter applies to her list (review B1)', () => {
+  const statusEl = () => screen.getByTestId('today-status')
+  const chip = (label) => [...within(sec(HH)).getByTestId('care-filter-spots').querySelectorAll('button[aria-pressed]')].find((b) => b.textContent.trim() === label)
+  const spots = (key) => [...sec(key).querySelectorAll('[data-testid="care-spot"]')].map((s) => s.getAttribute('data-spot'))
+  const cell = (k) => screen.getByRole('navigation', { name: 'Today sections' }).querySelector(`[data-chip="${k}"]`)
+  const tap = async (el) => { fireEvent.click(el); await settle() }
+
+  it('a spot chip and its Clear filter her list — no error, Dave\'s list untouched — each said ONCE as "Jen’s care: …"', async () => {
+    localStorage.setItem('garden.today.showOthers', '1')
+    const errors = []
+    const onError = (e) => { errors.push(String(e.error?.message || e.message)); e.preventDefault() }
+    window.addEventListener('error', onError)
+    try {
+      await mount()
+      const daveSpots = spots('care')
+      await tap(header(HH))
+      expect(spots(HH)).toEqual(['Deck', 'House'])
+      const log = []
+      const mo = new MutationObserver((recs) => { for (const r of recs) if (r.type === 'characterData' || r.addedNodes.length) log.push(statusEl().textContent) })
+      mo.observe(statusEl(), { childList: true, characterData: true, subtree: true })
+      await tap(chip('House'))
+      expect(errors).toEqual([])
+      expect(chip('House').getAttribute('aria-pressed')).toBe('true')
+      expect(spots(HH)).toEqual(['House'])
+      expect(statusEl().textContent).toMatch(/^Jen’s care: House, \d+ in 1 spot\.$/)
+      await tap(within(screen.getByTestId('today-sec-' + HH)).getByRole('button', { name: 'Clear' }))
+      expect(errors).toEqual([])
+      expect(spots(HH)).toEqual(['Deck', 'House'])
+      expect(statusEl().textContent).toBe('Jen’s care: everything, 15 in 2 spots.')
+      expect(log.length).toBe(2)
+      mo.disconnect()
+      expect(spots('care')).toEqual(daveSpots) // the viewer's list is not filtered by her chips
+    } finally {
+      window.removeEventListener('error', onError)
+    }
+  })
+
+  it('the viewer\'s Feed cell, and a Feed task saved for her section earlier this session, leave her Water rows in view', async () => {
+    localStorage.setItem('garden.today.showOthers', '1')
+    writeFilters(filtersKey(`harness_user~${HH}`), TODAY, { tasks: ['feed'], spots: [] })
+    await mount()
+    await tap(cell('feed'))
+    expect(cell('feed').getAttribute('aria-pressed')).toBe('true') // the viewer's own list is on Feed
+    await tap(header(HH))
+    // Under a Feed filter her body would be products, not spots (D12), and her Deck Water all would be gone.
+    expect(spots(HH)).toEqual(['Deck', 'House'])
+    expect(within(sec(HH)).getByRole('button', { name: /^Water all 2 in Deck$/ })).toBeTruthy()
+    expect(sec(HH).querySelector('[data-testid="care-filter-spots"]')).toBeTruthy()
+    // A spot chip saves her filter with no task: the stale one is gone for the session.
+    await tap(chip('Deck'))
+    expect(JSON.parse(sessionStorage.getItem(filtersKey(`harness_user~${HH}`)))).toMatchObject({ tasks: [], spots: [expect.any(String)] })
   })
 })
 

@@ -296,7 +296,8 @@ export function productGroups(rows) {
 
 // §2.6 / §5.6 (S4g): what a filter selection leaves in view — by NeedsCare's own rules: a task with no rows drops
 // out, a spot with no rows of the chosen tasks drops out, and the Feed filter alone shows products (D12), not
-// spots — and the one sentence the status region says about it: "Needs care: Water, 168 in 8 spots."
+// spots — and the one sentence the status region says about it: "Needs care: Water, 168 in 8 spots." (`title`: the
+// list it is said of — a household section's is "Jen’s care").
 export function filterResult(rows, { tasks = [], spots = [] } = {}) {
   const present = TASKS.filter((t) => rows.some((r) => r.task === t))
   const ts = tasks.filter((t) => present.includes(t))
@@ -309,13 +310,13 @@ export function filterResult(rows, { tasks = [], spots = [] } = {}) {
   return { tasks: ts, spots: ss.map((k) => names.get(k)), n: view.length, spotCount: new Set(view.map((r) => r.spotKey)).size, products: feedOnly ? productGroups(view).length : null }
 }
 const andList = (xs) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`)
-export function filterAnnouncement({ tasks, spots, n, spotCount, products }) {
+export function filterAnnouncement({ tasks, spots, n, spotCount, products }, title = 'Needs care') {
   const t = tasks.length ? andList(tasks.map((x) => TASK_LABEL[x])) : null
   const s = spots.length ? andList(spots) : null
   const label = t && s ? `${t} in ${s}` : (t || s || 'everything')
-  if (!n) return `Needs care: ${label}, nothing due.`
+  if (!n) return `${title}: ${label}, nothing due.`
   const where = products != null ? `${products} product${products === 1 ? '' : 's'}` : `${spotCount} spot${spotCount === 1 ? '' : 's'}`
-  return `Needs care: ${label}, ${n} in ${where}.`
+  return `${title}: ${label}, ${n} in ${where}.`
 }
 
 // §2.5 (S4g): an emptied Needs care keeps its header, which reads "Needs care · all caught up" over "95 logged

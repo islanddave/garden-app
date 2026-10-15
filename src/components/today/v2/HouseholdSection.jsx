@@ -3,6 +3,7 @@ import TodaySection from './TodaySection.jsx'
 import NeedsCare from './NeedsCare.jsx'
 import { useNeedsCare } from './useNeedsCare.js'
 import { taskCounts } from '../../../lib/todayV2/chips.js'
+import { filterResult, filterAnnouncement } from '../../../lib/todayV2/spots.js'
 
 // HouseholdSection — one other member's care on the redesigned Today ("Jen's care · 15", summary "Water 8 ·
 // Feed 7"). V5-TODAYREDESIGN-001 S6; plan-v2 §1.0 row 7, §1.6, §2.9, §13 SF6.
@@ -51,16 +52,29 @@ export default function HouseholdSection({ sectionKey, name, plan, planDate, vie
     return { ...r, hh: { ...(r.hh || {}), [sectionKey]: next.care } }
   }), [update, sectionKey])
 
+  // Her FILTERS are this section's own. No task filter: the bar's Water / Feed / Check cells are the viewer's (finish
+  // plan D17) and never filter her list, and nothing here could clear one — so a task saved for this section before the
+  // bar was the filter is not read, and every change saves none. Her spot chips filter it, and each change says its
+  // result ONCE through the page's status region, under her section's name ("Jen’s care: House, 7 in 1 spot.").
+  const title = `${name}’s care`
+  const { setFilters, rows } = needs
+  const care = { ...needs, task: null, filters: { ...needs.filters, tasks: [] } }
+  const changeFilters = useCallback((next) => {
+    const f = { ...next, tasks: [] }
+    setFilters(f)
+    announce(filterAnnouncement(filterResult(rows, f), title))
+  }, [setFilters, rows, announce, title])
+
   return (
     <TodaySection
       sectionKey={sectionKey}
-      title={`${name}’s care`}
+      title={title}
       count={needs.rows.length || null}
       summary={householdSummary(needs.rows)}
       open={open}
       onToggle={onToggle}
     >
-      <NeedsCare care={needs} record={view} update={updateView} announce={announce} planDate={planDate} userId={listId} writesHeld={writesHeld} />
+      <NeedsCare care={care} record={view} update={updateView} announce={announce} onFilters={changeFilters} writesHeld={writesHeld} />
     </TodaySection>
   )
 }
