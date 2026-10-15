@@ -283,8 +283,12 @@ jobs:
       # BUG-TAGENTOWN-001 (v3.75.0): garden-tags joined — entityExists now carries a household
       # ownership predicate; without the env it fail-closes to [caller] and every cross-member
       # tag attach 404s (pre-promote impact pass found the live fn had no GARDEN_HOUSEHOLD_IDS).
+      # BUG-AUTHZLAMBDA-001: garden-shared-state (membership gate; without the env it 403s Dave and
+      # Jen and the Garden sightings card vanishes) and garden-daily-plan (household(Space)) joined.
+      # This step runs AFTER the code update, so it is the BACKSTOP: the key is meant to be set live
+      # on both before the code ships. scripts/lambda-config-expected.json asserts it post-deploy.
       - name: Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped fns (read-merge)
-        if: matrix.function == 'harvests' || matrix.function == 'members' || matrix.function == 'tags'
+        if: matrix.function == 'harvests' || matrix.function == 'members' || matrix.function == 'tags' || matrix.function == 'shared-state' || matrix.function == 'daily-plan'
         continue-on-error: true  # requires lambda:GetFunctionConfiguration + lambda:UpdateFunctionConfiguration on deploy role
         run: |
           FN="garden-${{ matrix.function }}"

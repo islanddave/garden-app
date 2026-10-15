@@ -101,7 +101,8 @@
       "AWN_GAUGE_FROZEN_MAX_F": null,
       "RAIN_AUTOLOG_ENABLED": "true",
       "RAIN_LOG_THRESHOLD_IN": null,
-      "RAIN_RUN_END_HOUR": null
+      "RAIN_RUN_END_HOUR": null,
+      "GARDEN_HOUSEHOLD_IDS": true
     },
     "url": null
   },
@@ -417,6 +418,10 @@
   "garden-shared-state": {
     "memory": 256,
     "timeout": 30,
+    "_note": "BUG-AUTHZLAMBDA-001 — the handler admits only members of GARDEN_HOUSEHOLD_IDS (at least two entries) and fails closed, so a wiped key 403s the whole household. ORDERING: set the live key (scripts/lambda-env-set.sh, value copied from garden-events) before this line ships; deploy-lambda.yml's household ensure step is the continue-on-error backstop.",
+    "env": {
+      "GARDEN_HOUSEHOLD_IDS": true
+    },
     "url": {
       "cors_origins": [
         "https://garden.futureishere.net"

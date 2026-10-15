@@ -10,12 +10,20 @@ import { handler } from '../../lambda/shared-state/index.js';
 
 const RUN = testRunId();
 const USER = `user_int_sharedstate_${RUN}`;
+// BUG-AUTHZLAMBDA-001 B6: the handler admits household members only. USER + MATE are the household
+// (two entries — a one-entry list admits nobody); STRANGER holds a valid token but is outside it.
+const MATE = `user_int_sharedstate_mate_${RUN}`;
+const STRANGER = `user_int_sharedstate_stranger_${RUN}`;
 const TALLY_KEY = `int-tally-${RUN}`;
 const FEATURED_DATE = new Date().toISOString().slice(0, 10);
 const SENTINEL = '00000000-0000-0000-0000-000000000001';
 let tableExists = false;
+let _hhEnv;
 
 beforeAll(async () => {
+  // Saved and restored so this file does not leak into the shared worker env.
+  _hhEnv = process.env.GARDEN_HOUSEHOLD_IDS;
+  process.env.GARDEN_HOUSEHOLD_IDS = `${USER},${MATE}`;
   setTestUserId(USER);
   const r = await directSql`SELECT to_regclass('public.garden_shared_state') AS t`;
   tableExists = !!r[0]?.t;
@@ -25,6 +33,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (_hhEnv === undefined) delete process.env.GARDEN_HOUSEHOLD_IDS;
+  else process.env.GARDEN_HOUSEHOLD_IDS = _hhEnv;
   if (!tableExists) return;
   await directSql`DELETE FROM garden_shared_state WHERE kind='incentive_counter' AND natural_key = ${TALLY_KEY}`;
   await directSql`DELETE FROM garden_shared_state WHERE kind='featured_of_day' AND natural_key = ${FEATURED_DATE}`;
@@ -102,5 +112,40 @@ describe('garden_shared_state endpoints (integration, real Neon)', () => {
     if (!tableExists) return;
     const r = await callHandler(handler, { method: 'DELETE', path: '/api/shared-state/featured-of-day' });
     expect(r.status).toBe(405);
+  });
+
+  it('a household member other than the first entry is admitted (200)', async () => {
+    if (!tableExists) return;
+    setTestUserId(MATE);
+    try {
+      const r = await callHandler(handler, { method: 'GET', path: `/api/shared-state/tally/${TALLY_KEY}` });
+      expect(r.status).toBe(200);
+    } finally {
+      setTestUserId(USER);
+    }
+  });
+
+  // Runs whether or not the table exists: the gate answers before any SQL.
+  it('a non-member with a valid token gets 403 on every route and writes nothing', async () => {
+    const KEY = `int-stranger-${RUN}`;
+    setTestUserId(STRANGER);
+    try {
+      for (const [method, path, body] of [
+        ['GET', `/api/shared-state/tally/${KEY}`],
+        ['POST', `/api/shared-state/tally/${KEY}/increment`, {}],
+        ['GET', '/api/shared-state/featured-of-day'],
+        ['PUT', '/api/shared-state/featured-of-day', { date: FEATURED_DATE, payload: { by: 'stranger' } }],
+      ]) {
+        const r = await callHandler(handler, { method, path, body });
+        expect(r.status, `${method} ${path}`).toBe(403);
+      }
+    } finally {
+      setTestUserId(USER);
+    }
+    if (!tableExists) return;
+    const rows = await directSql`
+      SELECT 1 FROM garden_shared_state
+      WHERE kind='incentive_counter' AND natural_key = ${KEY}`;
+    expect(rows.length).toBe(0);
   });
 });

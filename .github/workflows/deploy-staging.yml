@@ -360,6 +360,35 @@ jobs:
           aws lambda wait function-updated --function-name "$FN"
           echo "GARDEN_HOUSEHOLD_IDS ensured on $FN"
 
+      - name: Ensure GARDEN_HOUSEHOLD_IDS env for shared-state-staging
+        # BUG-AUTHZLAMBDA-001: shared-state admits only members of a list of at least two, and fails
+        # closed, so without this both shared-state smoke blocks 403. NOT sourced from
+        # garden-events-staging like the step above: that function has no such key on staging, and
+        # giving it one would switch events/harvests/members staging into household mode. Carries the
+        # smoke's CLERK_TEST_USER_ID alongside Dave (the ux-events-staging ADMIN_CLERK_SUBS convention).
+        if: matrix.function == 'shared-state'
+        continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on staging deploy role
+        run: |
+          FN="garden-shared-state-staging"
+          EXPECTED="user_3D2gM0hIl03gjW3JM2DjtPzm0jI,${{ secrets.CLERK_TEST_USER_ID }}"
+          CURRENT=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables.GARDEN_HOUSEHOLD_IDS' --output text 2>/dev/null || echo "None")
+          if [[ "$CURRENT" == "$EXPECTED" ]]; then
+            echo "GARDEN_HOUSEHOLD_IDS already correct on $FN"
+          else
+            # OPS-STAGINGENVREAD-001: test EXIT STATUS, not emptiness (rationale on the S3_PHOTOS_BUCKET
+            # step). This step is continue-on-error, so bailing leaves the live config untouched.
+            if ! EXISTING=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables' --output json 2>/tmp/env-read-err); then
+              CAUSE=$(tr -s '\r\n' '  ' </tmp/env-read-err | sed -e 's/^ //' -e 's/ $//' | cut -c1-400)
+              echo "::warning::could not read env for $FN (${CAUSE:-no error text}); leaving GARDEN_HOUSEHOLD_IDS untouched rather than risking a wipe"
+              exit 1
+            fi
+            UPDATED=$(echo "$EXISTING" | jq --arg v "$EXPECTED" '. + {GARDEN_HOUSEHOLD_IDS: $v}')
+            echo "{\"Variables\": $UPDATED}" > /tmp/env-shared-state-household-staging.json
+            aws lambda update-function-configuration --function-name "$FN" --environment file:///tmp/env-shared-state-household-staging.json >/dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            echo "GARDEN_HOUSEHOLD_IDS set on $FN"
+          fi
+
       - name: Ensure facebook-share-staging config (household + admin + bucket + secret; read-merge)
         # Staging mirror of deploy-lambda.yml's "Ensure facebook-share config" step.
         # READ-MERGE is mandatory: --environment is set-not-merge and a naive set would wipe the
