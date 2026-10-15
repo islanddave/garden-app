@@ -1,7 +1,7 @@
 {
-  "version": "5.1.1",
+  "version": "5.1.2",
   "date": "2026-10-15",
   "highlights": [
-    "Privacy hardening: shared garden data, the nightly plan and rain logging only ever touch your own household's plantings, and flagged issues on plantings without a container can now be resolved."
+    "Archived plantings stay out of the dashboard, search, harvest totals and share pages, and custom project types stay inside your household."
   ]
 }

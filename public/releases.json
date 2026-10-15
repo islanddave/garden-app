@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.1.2",
+    "date": "2026-10-15",
+    "highlights": [
+      "Archived plantings stay out of the dashboard, search, harvest totals and share pages, and custom project types stay inside your household."
+    ]
+  },
+  {
     "version": "5.1.1",
     "date": "2026-10-15",
     "highlights": [
