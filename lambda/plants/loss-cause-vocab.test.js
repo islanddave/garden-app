@@ -37,6 +37,9 @@ const decomment = (s) => s.split('\n')
   .join('\n');
 
 const LAMBDA_SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+// BUG-AUTHZLAMBDA-001: the two index.js literals (PUT, POST) were collapsed into ONE exported literal
+// in validate.js, which the PUT, the POST and the merge route all reference. That is the copy parsed.
+const VALIDATE_SRC = decomment(readFileSync(resolve(__dirname, 'validate.js'), 'utf8'));
 // V4-LOSSEVENT-001 — the vocabulary now has a FIFTH home: src/lib/eventTypes.js LOSS_REASONS, the
 // canonical list the events Lambda validates a reduction's reason against. Read as SOURCE TEXT
 // rather than imported, matching how every other copy here is read, so a `LOSS_REASONS` that is
@@ -67,8 +70,8 @@ function canonicalVocabulary(conname) {
   return values;
 }
 
-/** Every ALLOWED_LOSS literal in the Lambda, as arrays of strings. */
-const lambdaAllowlists = () => [...LAMBDA_SRC.matchAll(/ALLOWED_LOSS\s*=\s*\[([^\]]*)\]/g)]
+/** Every ALLOWED_LOSS literal in the plants Lambda (index.js + validate.js), as arrays of strings. */
+const lambdaAllowlists = () => [...(LAMBDA_SRC + '\n' + VALIDATE_SRC).matchAll(/ALLOWED_LOSS\s*=\s*\[([^\]]*)\]/g)]
   .map((m) => quoted(m[1]));
 
 /** One gate's YAML block, or null. The name is anchored to END-OF-LINE — `name: foo` must not be
@@ -102,8 +105,21 @@ describe('BUG-LOSSCAUSE-001 loss_cause vocabulary parity', () => {
     ]);
   });
 
-  it('both Lambda write paths (PUT and POST) define ALLOWED_LOSS', () => {
-    expect(lambdaAllowlists()).toHaveLength(2);
+  it('the Lambda carries exactly ONE ALLOWED_LOSS literal, exported from validate.js', () => {
+    expect(lambdaAllowlists()).toHaveLength(1);
+    expect(VALIDATE_SRC).toMatch(/export const ALLOWED_LOSS\s*=\s*\[/);
+    expect(LAMBDA_SRC).toMatch(/import\s*\{[^}]*\bALLOWED_LOSS\b[^}]*\}\s*from\s*'\.\/validate\.js'/);
+  });
+
+  it('PUT, POST and the merge route all check loss_cause against that one list', () => {
+    // Two body checks (PUT, POST) plus the merge route's override check. A writer without one is an
+    // API path that accepts what chk_plants_loss_cause 23514s on.
+    const body = [...LAMBDA_SRC.matchAll(/body\.loss_cause != null && !ALLOWED_LOSS\.includes\(body\.loss_cause\)/g)];
+    expect(body).toHaveLength(2);
+    const start = LAMBDA_SRC.indexOf('if (mergeMatch) {');
+    const merge = LAMBDA_SRC.slice(start, LAMBDA_SRC.indexOf('await mergeCore(', start));
+    expect(start).toBeGreaterThan(-1);
+    expect(merge).toMatch(/ov\.loss_cause != null && !ALLOWED_LOSS\.includes\(ov\.loss_cause\)/);
   });
 
   it('every ALLOWED_LOSS is the SAME SET as the armed CHECK — not a superset, not a subset', () => {

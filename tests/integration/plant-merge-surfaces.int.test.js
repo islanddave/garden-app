@@ -26,8 +26,9 @@ import { handler } from '../../lambda/plants/index.js'
 
 const RUN = testRunId()
 const DAVE = `mrg-dave-${RUN}`
-// Only ever a user_id VALUE on a telemetry row: the key's user column is text with no FK, and the merge
-// moves rows by plant_id whoever they belong to.
+// A user_id VALUE on a telemetry row (the key's user column is text with no FK, and the merge moves rows
+// by plant_id whoever they belong to), the owner of the foreign location in the B4 case, and the
+// second household in the I18 replay case.
 const OTHER = `mrg-other-${RUN}`
 const D1 = '2026-09-01'
 const D2 = '2026-09-02'
@@ -40,6 +41,7 @@ afterAll(async () => {
   await settle(`plant-merge-surfaces teardown ${RUN}`, [
     () => directSql`DELETE FROM ready_impression WHERE user_id = ANY(${ids}) OR plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM watch_exclusion WHERE user_id = ANY(${ids}) OR plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
+    () => directSql`DELETE FROM harvest_watch_dismissal WHERE user_id = ANY(${ids}) OR plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM preservation_source WHERE user_id = ANY(${ids}) OR preservation_log_id IN (SELECT id FROM preservation_log WHERE user_id = ANY(${ids}))`,
     () => directSql`DELETE FROM preservation_log WHERE user_id = ANY(${ids})`,
     () => directSql`DELETE FROM merge_event WHERE merged_by = ANY(${ids}) OR winner_plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
@@ -47,31 +49,34 @@ afterAll(async () => {
     () => directSql`DELETE FROM event_log WHERE plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids})) OR project_id IN (SELECT id FROM plant_projects WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM entity WHERE planting_ref_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM plants WHERE created_by = ANY(${ids})`,
+    // After plants: plants.location_id references locations (the B4 override case seeds two).
+    () => directSql`DELETE FROM locations WHERE created_by = ANY(${ids})`,
     () => directSql`DELETE FROM plant_projects WHERE created_by = ANY(${ids})`,
     () => directSql`DELETE FROM audit_events WHERE actor_clerk_sub = ANY(${ids})`,
   ])
 })
 
-/** A container with a winner and three sibling losers, all DAVE's and all alike on every guarded column. */
-async function seedGroup(tag) {
-  const proj = await insertProject({ name: `mrg-${tag}-${RUN}`, createdBy: DAVE })
+/** A container with a winner and three sibling losers, all `owner`'s (DAVE's by default) and all alike on
+ *  every guarded column. */
+async function seedGroup(tag, owner = DAVE) {
+  const proj = await insertProject({ name: `mrg-${tag}-${RUN}`, createdBy: owner })
   const ids = []
   for (const who of ['w', 'l1', 'l2', 'l3']) {
     // eslint-disable-next-line no-await-in-loop
     const [p] = await directSql`
       INSERT INTO plants (project_id, name, created_by)
-      VALUES (${proj.id}, ${`mrg-${tag}-${who}-${RUN}`}, ${DAVE}) RETURNING id`
+      VALUES (${proj.id}, ${`mrg-${tag}-${who}-${RUN}`}, ${owner}) RETURNING id`
     ids.push(p.id)
   }
   const [W, L1, L2, L3] = ids
   return { W, L1, L2, L3 }
 }
 
-async function merge(winner, losers) {
+async function merge(winner, losers, extra = {}) {
   setTestUserId(DAVE)
   return callHandler(handler, {
     method: 'POST', path: `/api/plants/${winner}/merge`,
-    body: { loser_ids: losers, op_id: randomUUID() }, userId: DAVE,
+    body: { loser_ids: losers, op_id: randomUUID(), ...extra }, userId: DAVE,
   })
 }
 
@@ -171,6 +176,65 @@ describe('planting merge — the §6a telemetry and source surfaces on a real en
     ])
   })
 
+  // BUG-MERGEHARDDELETE-001. uq_harvest_watch_dismissal_active_day is (user_id, plant_id, observed_on)
+  // WHERE undone_at IS NULL. The merge used to DELETE a loser's active row on the winner's key (the
+  // table's DDL forbids hard deletes) and had no loser-vs-loser arm, so the pair below 409'd the merge.
+  // Now both kinds are RETIRED (undone_at = the merge's own instant) and every row moves; none is lost.
+  it('harvest_watch_dismissal: retires a loser row on the winner\'s key and the higher-id of two losers\' rows, deletes none, moves all', async () => {
+    const { W, L1, L2, L3 } = await seedGroup('hwd')
+    const hwd = async (user, plant, day, undoneAt = null) => (await directSql`
+      INSERT INTO harvest_watch_dismissal (user_id, plant_id, observed_on, model_version, undone_at)
+      VALUES (${user}, ${plant}, ${day}::date, 'int-test', ${undoneAt}::timestamptz) RETURNING id`)[0].id
+    const winner = await hwd(DAVE, W, D1)
+    const onWinnerKey = await hwd(DAVE, L1, D1)              // collides with the winner's row
+    const pairA = await hwd(DAVE, L2, D2)                    // two losers, one key, no winner row:
+    const pairB = await hwd(DAVE, L3, D2)                    //   the lower uuid survives
+    const otherUser = await hwd(OTHER, L1, D1)               // near-misses: one key column differs
+    const otherDay = await hwd(DAVE, L2, D3)
+    const userUndo = '2026-09-05T12:00:00+00'
+    const alreadyUndone = await hwd(DAVE, L3, D1, userUndo)  // a real user retraction: outside the index
+    // uuid order is byte order, which is the order of the lowercase hex text.
+    const [pairLow, pairHigh] = [pairA, pairB].sort()
+    const group = [W, L1, L2, L3]
+    const all = [winner, onWinnerKey, pairA, pairB, otherUser, otherDay, alreadyUndone]
+    // Not vacuous: moved as-is, the active rows break the key twice over.
+    const [pre] = await directSql`
+      SELECT count(*)::int AS n FROM (
+        SELECT 1 FROM harvest_watch_dismissal WHERE plant_id = ANY(${group}) AND undone_at IS NULL
+         GROUP BY user_id, observed_on HAVING count(*) > 1) g`
+    expect(pre.n).toBe(2)
+    const [winnerBefore] = await directSql`SELECT * FROM harvest_watch_dismissal WHERE id = ${winner}`
+
+    const r = await merge(W, [L1, L2, L3])
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+
+    const rows = await directSql`
+      SELECT id, plant_id, undone_at::text AS undone_at FROM harvest_watch_dismissal WHERE id = ANY(${all})`
+    // Nothing deleted: every row is still there, and every row is on the winner.
+    expect(rows).toHaveLength(all.length)
+    expect(rows.every((x) => x.plant_id === W)).toBe(true)
+    const [m] = await directSql`SELECT merged_at::text AS merged_at, snapshot FROM merge_event WHERE id = ${r.body.merge_event_id}`
+    const undone = Object.fromEntries(rows.map((x) => [x.id, x.undone_at]))
+    // Retired with the merge's own instant (same transaction), which is what tells them apart.
+    expect(undone[onWinnerKey]).toBe(m.merged_at)
+    expect(undone[pairHigh]).toBe(m.merged_at)
+    for (const id of [pairLow, otherUser, otherDay]) expect(undone[id], id).toBeNull()
+    // The user's own retraction keeps its own instant; the winner's row is untouched.
+    expect(undone[alreadyUndone]).not.toBe(m.merged_at)
+    expect(undone[alreadyUndone]).not.toBeNull()
+    const [winnerAfter] = await directSql`SELECT * FROM harvest_watch_dismissal WHERE id = ${winner}`
+    expect(winnerAfter).toEqual(winnerBefore)
+    // The partial index holds after the move: one active row per (user, day) on the winner.
+    const [post] = await directSql`
+      SELECT count(*)::int AS n FROM (
+        SELECT 1 FROM harvest_watch_dismissal WHERE plant_id = ${W} AND undone_at IS NULL
+         GROUP BY user_id, observed_on HAVING count(*) > 1) g`
+    expect(post.n).toBe(0)
+    const snap = typeof m.snapshot === 'string' ? JSON.parse(m.snapshot) : m.snapshot
+    expect([...snap.dismissals_retired].sort()).toEqual([onWinnerKey, pairHigh].sort())
+    expect(snap.schema_version).toBe(3)
+  })
+
   it('preservation_source: every source row on a loser moves to the winner, a retracted one too, none dropped', async () => {
     const { W, L1, L2 } = await seedGroup('ps')
     const [crop] = await directSql`SELECT slug FROM crop_types ORDER BY slug LIMIT 1`
@@ -200,5 +264,90 @@ describe('planting merge — the §6a telemetry and source surfaces on a real en
     expect(await snapshotRepoints(r.body.merge_event_id, 'preservation_source'))
       .toEqual([{ id: a, old: L1 }, { id: b, old: L2 }, { id: retracted, old: L1 }]
         .sort((x, y) => x.id.localeCompare(y.id, 'en', { numeric: true })))
+  })
+})
+
+// BUG-AUTHZLAMBDA-001 (B4) — overrides.location_id lands in the winner UPDATE, so it takes the same
+// ownership gate as PUT/POST. OTHER is outside DAVE's household (the suite runs with no
+// GARDEN_HOUSEHOLD_IDS, so DAVE's household is [DAVE]). The own-location case is the control: without it
+// a route that refused every override would pass the foreign case.
+describe('planting merge — overrides.location_id is ownership-gated (B4)', () => {
+  const loc = async (owner, tag) => (await directSql`
+    INSERT INTO locations (name, slug, created_by)
+    VALUES (${`mrg-loc-${tag}-${RUN}`}, ${`mrg-loc-${tag}-${RUN}`}, ${owner}) RETURNING id`)[0].id
+
+  it('refuses another household\'s location with the generic 400 and merges nothing', async () => {
+    const { W, L1 } = await seedGroup('b4x')
+    const foreign = await loc(OTHER, 'foreign')
+    const opId = randomUUID()
+    setTestUserId(DAVE)
+    const r = await callHandler(handler, {
+      method: 'POST', path: `/api/plants/${W}/merge`,
+      body: { loser_ids: [L1], op_id: opId, overrides: { location_id: foreign } }, userId: DAVE,
+    })
+    expect(r.status, JSON.stringify(r.body)).toBe(400)
+    expect(r.body.error).toBe('location_id does not match a location you can use')
+    const [w] = await directSql`SELECT location_id FROM plants WHERE id = ${W}`
+    expect(w.location_id).toBeNull()
+    const [l] = await directSql`SELECT deleted_at FROM plants WHERE id = ${L1}`
+    expect(l.deleted_at).toBeNull()
+    const [ev] = await directSql`SELECT count(*)::int AS n FROM merge_event WHERE op_id = ${opId}`
+    expect(ev.n).toBe(0)
+  })
+
+  it('accepts the caller\'s own location and writes it onto the winner', async () => {
+    const { W, L1 } = await seedGroup('b4o')
+    const own = await loc(DAVE, 'own')
+    const r = await merge(W, [L1], { overrides: { location_id: own } })
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    const [w] = await directSql`SELECT location_id FROM plants WHERE id = ${W}`
+    expect(w.location_id).toBe(own)
+  })
+
+  it('refuses a non-object overrides with a 400, not a 500', async () => {
+    const { W, L1 } = await seedGroup('b4s')
+    const r = await merge(W, [L1], { overrides: 'location_id' })
+    expect(r.status, JSON.stringify(r.body)).toBe(400)
+  })
+})
+
+// BUG-MERGEREPLAYSCOPE-001 (I18) — an op_id is not a key to another household's merge record. DAVE merges
+// with an op_id; OTHER (a separate household: no GARDEN_HOUSEHOLD_IDS in this suite) reuses it on a group
+// of their own. Before the fix the replay read matched op_id alone and handed OTHER DAVE's winner, losers
+// and counts with status 200. Now OTHER's merge runs, hits merge_event_op_uniq, and is refused with a
+// generic 409 that names nothing of DAVE's; OTHER's group is untouched (the cutover rolled back whole).
+describe('planting merge — op_id replay is household-scoped (I18)', () => {
+  it('a foreign op_id gets a bare 409, not the other household\'s merge record', async () => {
+    const mine = await seedGroup('i18d')
+    const theirs = await seedGroup('i18o', OTHER)
+    const opId = randomUUID()
+    setTestUserId(DAVE)
+    const first = await callHandler(handler, {
+      method: 'POST', path: `/api/plants/${mine.W}/merge`,
+      body: { loser_ids: [mine.L1], op_id: opId }, userId: DAVE,
+    })
+    expect(first.status, JSON.stringify(first.body)).toBe(200)
+
+    setTestUserId(OTHER)
+    const r = await callHandler(handler, {
+      method: 'POST', path: `/api/plants/${theirs.W}/merge`,
+      body: { loser_ids: [theirs.L1], op_id: opId }, userId: OTHER,
+    })
+    expect(r.status, JSON.stringify(r.body)).toBe(409)
+    expect(r.body.replayed).toBeUndefined()
+    expect(r.body.detail).toBeUndefined()
+    const text = JSON.stringify(r.body)
+    for (const id of [mine.W, mine.L1, DAVE, 'merge_event_op_uniq']) expect(text).not.toContain(id)
+    const [l] = await directSql`SELECT deleted_at FROM plants WHERE id = ${theirs.L1}`
+    expect(l.deleted_at).toBeNull()
+
+    // The owner's own replay still works.
+    setTestUserId(DAVE)
+    const again = await callHandler(handler, {
+      method: 'POST', path: `/api/plants/${mine.W}/merge`,
+      body: { loser_ids: [mine.L1], op_id: opId }, userId: DAVE,
+    })
+    expect(again.status).toBe(200)
+    expect(again.body.replayed).toBe(true)
   })
 })

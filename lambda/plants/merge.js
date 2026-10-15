@@ -46,7 +46,10 @@ import { buildPlantEventRepoint } from './plantMemoryRepoint.js'
 // knows version 1, a version 2 snapshot puts a pruned parent link back on its loser and leaves it
 // soft-deleted: the loser restored, no longer a parent of its lot, and that lot's source_plant_id
 // restored to point at it. The number is what lets a restore refuse instead.
-export const SNAPSHOT_VERSION = 2
+// 3 — BUG-MERGEHARDDELETE-001: the snapshot gained dismissals_retired, the harvest_watch_dismissal
+// rows the merge retired (undone_at) instead of hard-deleting them. A restore that only knows version
+// 2 would leave them retired, reading as user retractions; it can now refuse instead.
+export const SNAPSHOT_VERSION = 3
 
 // Every surface holding a reference to a planting, with its disposition.
 // DERIVED, NOT REMEMBERED: scripts/merge-surface-inventory.py regenerates this from pg_constraint
@@ -67,7 +70,14 @@ export const SURFACES = Object.freeze([
   { table: 'seen_event',              column: 'leaf_id',        action: 'repoint' },
   { table: 'favorites',               column: 'entity_id',      action: 'repoint', conflict: 'skip' },
   { table: 'watch_impression',        column: 'plant_id',       action: 'repoint', conflict: 'skip' },
-  { table: 'harvest_watch_dismissal', column: 'plant_id',       action: 'repoint', conflict: 'skip' },
+  //   harvest_watch_dismissal — BUG-MERGEHARDDELETE-001: `conflict: 'retire'`, not 'skip'. The table's
+  //     DDL forbids hard deletes ("NEVER hard-delete a row: an undo is signal"), so a loser row that
+  //     collides on uq_harvest_watch_dismissal_active_day (user, plant, day WHERE undone_at IS NULL)
+  //     is retired with undone_at instead of dropped. undone_at is set to the transaction's now(),
+  //     which equals merge_event.merged_at — that equality, and snapshot.dismissals_retired, are what
+  //     tell a merge-retired row from a user retraction. The retired row then repoints with the rest;
+  //     it is outside the partial index, so it cannot collide.
+  { table: 'harvest_watch_dismissal', column: 'plant_id',       action: 'repoint', conflict: 'retire' },
   // Put-Up train §6a: scripts/merge-surface-inventory.py exited 1 on prod on six unclassified surfaces;
   // they are classified here (with 1b's kitchen_batch_input.plant_id) before the script is wired into
   // gate-invariants. Each repoint keeps what the loser's row RECORDS attached to the planting that now
@@ -300,9 +310,19 @@ export async function mergeCore(sql, {
   if (!opId) return { status: 400, body: { error: 'opId is required' } }
 
   // 1. Idempotent replay.
+  //
+  //    BUG-MERGEREPLAYSCOPE-001: scoped to the caller's household (merged_by, the only actor column
+  //    merge_event has) AND to this winner. This read runs before the group ownership load below, so
+  //    unscoped it handed any authenticated caller who knew (or guessed — merge-run uses
+  //    `merge-run-g<n>`) an op_id another household's merge record: winner, losers and counts. A
+  //    foreign op_id now finds nothing here, runs the caller's own merge, and is refused by
+  //    merge_event_op_uniq at the INSERT (the generic 409 in the catch below). The winner term stops
+  //    a household replay under a different path id from returning another group's outcome.
+  //    The literal prefix `FROM merge_event WHERE op_id` is the merge.test.js mock key; keep it.
   const prior = await sql`
     SELECT winner_plant_id, loser_plant_ids, events_dropped, rows_repointed, merged_at
     FROM merge_event WHERE op_id = ${opId}
+     AND merged_by = ANY(${householdIds}) AND winner_plant_id = ${winnerId}
   `
   if (prior.length) return { status: 200, body: replayBody(prior[0]) }
 
@@ -553,6 +573,21 @@ export async function mergeCore(sql, {
                          AND o.inventory_item_id = l.inventory_item_id AND o.role = l.role))
   `
 
+  // BUG-MERGEHARDDELETE-001 — the dismissals the retire in step 7 is about to set undone_at on, read
+  // with that statement's own predicate (merge.test.js holds the two to the same text, as for
+  // prunedParentLinks above). Advisory: the in-transaction discriminator is undone_at = merged_at,
+  // because a dismiss or undo between this read and the cutover can make the two lists differ.
+  const retiredDismissals = await sql`
+    SELECT l.id FROM harvest_watch_dismissal l
+     WHERE l.plant_id = ANY(${loserIds}) AND l.undone_at IS NULL
+       AND (EXISTS (SELECT 1 FROM harvest_watch_dismissal w
+                    WHERE w.plant_id = ${winnerId} AND w.undone_at IS NULL
+                      AND w.user_id = l.user_id AND w.observed_on = l.observed_on)
+            OR EXISTS (SELECT 1 FROM harvest_watch_dismissal o
+                       WHERE o.plant_id = ANY(${loserIds}) AND o.undone_at IS NULL AND o.id < l.id
+                         AND o.user_id = l.user_id AND o.observed_on = l.observed_on))
+  `
+
   const snapshot = {
     schema_version: SNAPSHOT_VERSION,
     winner,
@@ -562,6 +597,7 @@ export async function mergeCore(sql, {
     dropped_batch: dedup.droppedBatch,
     anchors_superseded: liveAnchors.map((a) => a.id),
     seed_lot_parents_pruned: prunedParentLinks.map((r) => r.id),
+    dismissals_retired: retiredDismissals.map((r) => r.id),
     entity_memory_deleted: memoryRows,
     fingerprint: liveFp,
     resolved,
@@ -572,10 +608,16 @@ export async function mergeCore(sql, {
   //    and soft-delete the losers LAST so plants_entity_softdel retires their entity rows only once
   //    nothing references them.
   //
-  //    Conflict-prune rationale: on the four surfaces whose unique index has no deleted_at escape,
-  //    a loser row that would collide with an existing winner row is DELETED rather than moved.
-  //    All four are derived impression/dismissal/favourite state — a duplicate carries nothing the
-  //    winner's own row does not already have — and the snapshot holds the row for restore.
+  //    Conflict-prune rationale: on the five `conflict: 'skip'` surfaces (favorites, watch_impression,
+  //    ready_impression, watch_exclusion, findings) a loser row that would collide with an existing
+  //    winner row, or (ready_impression / watch_exclusion) with a lower-id loser row, is DELETED
+  //    rather than moved. They are treated as derived impression/favourite/finding state — a
+  //    duplicate carries nothing the winner's own row does not already have. A DELETED ROW IS NOT
+  //    RESTORABLE: the snapshot's `repoints` records only {row_id, old_value} for it, not the row, so
+  //    a restore can re-point survivors but cannot rebuild what was pruned. (This comment used to say
+  //    "the snapshot holds the row for restore", which was never true.) harvest_watch_dismissal is NOT
+  //    one of them: it is retired with undone_at (`conflict: 'retire'`, BUG-MERGEHARDDELETE-001), and
+  //    seed_lot_parent_planting with deleted_at (`conflict: 'soft_delete'`, below the planting locks).
   // BUG-ENTITYMEMSTALE-001: the event_log repoint and the winner's cache rebuild are one unit,
   // built together and destructured here so neither can be added without the other. `recompute` is
   // pushed LAST (see below) because it reads the surviving event set.
@@ -633,11 +675,20 @@ export async function mergeCore(sql, {
                        WHERE w.plant_id = ${winnerId}
                          AND w.user_id = l.user_id AND w.shown_on = l.shown_on
                          AND w.region = l.region)`,
-    sql`DELETE FROM harvest_watch_dismissal l
+    // BUG-MERGEHARDDELETE-001 — RETIRE, never delete (the table's DDL: "NEVER hard-delete a row").
+    // A loser's active row collides with the winner's (w) or with a lower-id loser's (o) on
+    // uq_harvest_watch_dismissal_active_day; the o arm was missing, so two losers holding one day's
+    // row 409'd the whole merge. undone_at = now() is this transaction's now(), equal to the
+    // merge_event.merged_at the INSERT below defaults to. Predicate text = retiredDismissals' above.
+    sql`UPDATE harvest_watch_dismissal l
+           SET undone_at = now()
          WHERE l.plant_id = ANY(${loserIds}) AND l.undone_at IS NULL
-           AND EXISTS (SELECT 1 FROM harvest_watch_dismissal w
-                       WHERE w.plant_id = ${winnerId} AND w.undone_at IS NULL
-                         AND w.user_id = l.user_id AND w.observed_on = l.observed_on)`,
+           AND (EXISTS (SELECT 1 FROM harvest_watch_dismissal w
+                        WHERE w.plant_id = ${winnerId} AND w.undone_at IS NULL
+                          AND w.user_id = l.user_id AND w.observed_on = l.observed_on)
+                OR EXISTS (SELECT 1 FROM harvest_watch_dismissal o
+                           WHERE o.plant_id = ANY(${loserIds}) AND o.undone_at IS NULL AND o.id < l.id
+                             AND o.user_id = l.user_id AND o.observed_on = l.observed_on))`,
     // Put-Up train §6a — the two telemetry surfaces' UNIQUE keys. A loser row collides with the
     // winner's, or with another loser's of a lower id (two losers can hold the same day's row).
     sql`DELETE FROM ready_impression l
@@ -859,13 +910,22 @@ export async function mergeCore(sql, {
     } }
   } catch (err) {
     const msg = err?.message ?? String(err)
-    // A concurrent identical op landed first — return its outcome rather than a 500.
+    // A concurrent identical op landed first — return its outcome rather than a 500. Same scope as
+    // the replay read at step 1 (BUG-MERGEREPLAYSCOPE-001).
     if (/merge_event_op_uniq|duplicate key/i.test(msg)) {
       const r = await sql`
         SELECT winner_plant_id, loser_plant_ids, events_dropped, rows_repointed, merged_at
         FROM merge_event WHERE op_id = ${opId}
+         AND merged_by = ANY(${householdIds}) AND winner_plant_id = ${winnerId}
       `
       if (r.length) return { status: 200, body: replayBody(r[0]) }
+      // The op_id is taken by a merge outside this scope (another household's, or another winner's).
+      // Generic and with no `detail`: the raw message names merge_event_op_uniq, and the caller
+      // learns nothing beyond "pick another op_id". Full closure (uniqueness per merged_by) needs a
+      // migration and is out of scope.
+      if (/merge_event_op_uniq/i.test(msg)) {
+        return { status: 409, body: { error: 'opId already used — choose a new opId' } }
+      }
     }
     if (/archive_events_subset/i.test(msg)) {
       return { status: 422, body: { error: 'Refused: the drop set is not chores-only', detail: msg } }

@@ -1358,7 +1358,34 @@ export const handler = async (event) => {
         const body = JSON.parse(event.body ?? '{}');
         if (body.resolved !== true) return resp(400, { error: 'resolved must be true' });
 
-        // §2.3 — single-statement UPDATE with auth via plant_projects join.
+        // BUG-EVENTSPATCHRESOLVE-001 — the two-arm ownership rule (eventOwnership.js), as the GET,
+        // PUT and DELETE apply it. This route used `FROM public.container pp ... pp.id = el.project_id`
+        // alone, so a project-less flagged event (plant-anchored, project_id NULL) could never be
+        // resolved — a one-arm scope that 404'd the owner. First gate: this pre-read, selecting exactly
+        // the three columns isEventOwned reads. Second, independent gate: isEventOwned on the row.
+        // Every miss (foreign, unflagged, deleted, absent) is the same 404 — no existence oracle.
+        const owned = await sql`
+          SELECT el.project_id,
+                 pp.created_by AS project_owner_id,
+                 pn.created_by AS plant_owner_id
+          FROM event_log el
+          LEFT JOIN public.container pp ON pp.id = el.project_id AND pp.deleted_at IS NULL
+          LEFT JOIN public.garden_node pn ON pn.id = el.plant_id AND pn.deleted_at IS NULL
+          WHERE el.id = ${eventId}
+            AND el.deleted_at IS NULL
+            AND el.flagged_as_issue = true
+            AND (
+                  (el.project_id IS NOT NULL AND pp.created_by = ANY(${householdIds}))
+               OR (el.project_id IS NULL     AND pn.created_by = ANY(${householdIds}))
+            )
+        `;
+        if (!owned.length) return resp(404, { error: 'Not found' });
+        if (!isEventOwned(owned[0], householdIds)) return resp(404, { error: 'Not found' });
+
+        // §2.3 — single-statement UPDATE. BUG-EVENTSPATCHRESOLVE-001: no `FROM public.container`
+        // any more (an UPDATE ... FROM cannot LEFT JOIN, which is what dropped the project-less arm);
+        // the same two arms are RE-ASSERTED here as EXISTS conjuncts, so ownership is checked again
+        // inside the write and the gap between the pre-read and this transaction cannot be raced.
         // F8 NOW()-relative achievement gate in RETURNING (not preserved resolved_at).
         // F26 resolved_by COALESCE preserves first-resolver on idempotent re-PATCH.
         // BUG-EVENTAUDITACTOR-001 — PRE-EMPTIVE, not a live defect. resolved_at / resolved_by /
@@ -1374,13 +1401,19 @@ export const handler = async (event) => {
           SET resolved_at = COALESCE(el.resolved_at, NOW()),
               resolved_by = COALESCE(el.resolved_by, ${userId}),
               updated_at  = NOW()
-          FROM public.container pp
           WHERE el.id = ${eventId}
             AND el.flagged_as_issue = true
             AND el.deleted_at IS NULL
-            AND pp.id = el.project_id
-            AND pp.created_by = ANY(${householdIds})
-            AND pp.deleted_at IS NULL
+            AND (
+                  (el.project_id IS NOT NULL AND EXISTS (
+                     SELECT 1 FROM public.container pp
+                      WHERE pp.id = el.project_id AND pp.deleted_at IS NULL
+                        AND pp.created_by = ANY(${householdIds})))
+               OR (el.project_id IS NULL AND EXISTS (
+                     SELECT 1 FROM public.garden_node pn
+                      WHERE pn.id = el.plant_id AND pn.deleted_at IS NULL
+                        AND pn.created_by = ANY(${householdIds})))
+            )
           RETURNING
             el.id, el.project_id, el.event_type, el.flagged_as_issue,
             el.severity, el.resolved_at, el.resolved_by, el.created_at,

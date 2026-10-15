@@ -1262,7 +1262,8 @@ describe.skipIf(!HAS_TABLE)('planting merge — parent links are pruned, then mo
     await expectCacheRule(lot)
 
     const rec = await mergeRecord(r.body.merge_event_id)
-    expect(rec.version).toBe(2)
+    // 3 since BUG-MERGEHARDDELETE-001 added snapshot.dismissals_retired.
+    expect(rec.version).toBe(3)
     expect(rec.pruned).toEqual([rowL.id])
     expect(rec.repoints).toEqual([{ id: rowL.id, old: g.L1, column: 'plant_id' }])
     // The retired row carries the merge's own instant, as its updated_at does.

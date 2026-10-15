@@ -19,16 +19,41 @@ const decomment = (s) => s.split('\n')
   .join('\n');
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+// BUG-AUTHZLAMBDA-001: the list moved out of the PUT/POST handlers into validate.js as ONE exported
+// literal, shared by PUT, POST and the merge route. The literal is parsed from validate.js; index.js
+// must import it and carry no local copy.
+const VALIDATE_SRC = decomment(readFileSync(resolve(__dirname, 'validate.js'), 'utf8'));
 const REQUIRED = ['fabric_bag','plastic_pot','terracotta','ceramic','raised_bed','in_ground','tray_cell','hanging_basket','window_box','trough','whiskey_barrel','soil_block','solo_cup','other'];
+const quoted = (s) => [...s.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+const sorted = (a) => [...a].sort();
+
+/** The source from the first `from` up to the next `to` (or to the end). */
+const between = (src, from, to) => {
+  const a = src.indexOf(from);
+  if (a < 0) return '';
+  const b = to ? src.indexOf(to, a + from.length) : -1;
+  return b < 0 ? src.slice(a) : src.slice(a, b);
+};
 
 describe('BUG-CONTVAL-001 container_type enum parity', () => {
-  it('ALLOWED_CONTAINER includes every live DB CHECK value (incl. trough)', () => {
-    const m = SRC.match(/ALLOWED_CONTAINER\s*=\s*\[([^\]]*)\]/);
-    expect(m).toBeTruthy();
-    for (const v of REQUIRED) expect(m[1]).toContain(`'${v}'`);
+  it('validate.js exports exactly ONE ALLOWED_CONTAINER literal', () => {
+    const defs = [...VALIDATE_SRC.matchAll(/export const ALLOWED_CONTAINER\s*=\s*\[([^\]]*)\]/g)];
+    expect(defs).toHaveLength(1);
   });
-  it('defines ALLOWED_CONTAINER on both the create and update paths', () => {
-    const count = (SRC.match(/ALLOWED_CONTAINER\s*=/g) || []).length;
-    expect(count).toBe(2);
+  it('that literal is the SAME SET as the live DB CHECK (incl. trough) — not a superset, not a subset', () => {
+    const m = VALIDATE_SRC.match(/ALLOWED_CONTAINER\s*=\s*\[([^\]]*)\]/);
+    expect(m).toBeTruthy();
+    expect(sorted(quoted(m[1]))).toEqual(sorted(REQUIRED));
+  });
+  it('index.js defines no local copy and imports the shared list', () => {
+    expect((SRC.match(/ALLOWED_CONTAINER\s*=/g) || [])).toHaveLength(0);
+    expect(SRC).toMatch(/import\s*\{[^}]*\bALLOWED_CONTAINER\b[^}]*\}\s*from\s*'\.\/validate\.js'/);
+  });
+  it('PUT, POST and the merge route all check container_type against it', () => {
+    // One check per writer: body.container_type on PUT and POST, the override map on merge.
+    const body = [...SRC.matchAll(/body\.container_type != null && !ALLOWED_CONTAINER\.includes\(body\.container_type\)/g)];
+    expect(body).toHaveLength(2);
+    const merge = between(SRC, 'if (mergeMatch) {', 'await mergeCore(');
+    expect(merge).toMatch(/ov\.container_type != null && !ALLOWED_CONTAINER\.includes\(ov\.container_type\)/);
   });
 });

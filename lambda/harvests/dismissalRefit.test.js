@@ -109,6 +109,21 @@ describe('V4-DISMISSREFITSTATS-001 correction 1 — repeated dismissals are one 
     expect(dropped.retracted).toBe(1);
   });
 
+  it('counts a merge-retired dismissal apart from a human retraction (BUG-MERGEHARDDELETE-001)', () => {
+    // A planting merge retires a loser's duplicate dismissal with undone_at. It must not reach the
+    // fit, and it must not inflate the retraction count either.
+    const undone = '2026-06-02T00:00:00Z';
+    const { units, dropped } = reduceToPlantingUnits([
+      tap({ plant_id: 'a', first_pick_date: ymd(OBS, 5) }),
+      tap({ plant_id: 'b', first_pick_date: ymd(OBS, 5), undone_at: undone }),
+      tap({ plant_id: 'c', first_pick_date: ymd(OBS, 5), undone_at: undone, merge_retired: true }),
+      tap({ id: 'hwd-9', plant_id: 'd', first_pick_date: ymd(OBS, 5), undone_at: undone }),
+    ], { mergeRetiredIds: ['hwd-9'] });
+    expect(units.map((u) => u.plant_id)).toEqual(['a']);
+    expect(dropped.retracted).toBe(1);
+    expect(dropped.merge_retired).toBe(2);
+  });
+
   it('drops a pick that PRECEDES the observation instead of fitting a negative interval', () => {
     const { units, dropped } = reduceToPlantingUnits([tap({ first_pick_date: ymd(OBS, -3) })]);
     expect(units).toHaveLength(0);

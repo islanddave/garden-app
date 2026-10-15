@@ -590,6 +590,88 @@ describe('mergeCore', () => {
   })
 })
 
+// ── BUG-MERGEREPLAYSCOPE-001 — the op_id replay is household- and winner-scoped ────────────────
+// The replay read ran before the group ownership load and matched op_id alone, so any caller who knew
+// an op_id got another household's merge record back. The mock below is a tiny merge_event table that
+// applies a scope term ONLY IF the issued statement carries it (read off the SQL text), so removing
+// either term from merge.js makes the foreign row come back and these tests red.
+describe('mergeCore — op_id replay scope (BUG-MERGEREPLAYSCOPE-001)', () => {
+  const ok = { opId: 'op1', userId: 'user_a', householdIds: ['user_a', 'user_b'] }
+  const FOREIGN_LOSER = '44444444-4444-4444-4444-444444444444'
+  const withMergeEvents = (table, txError = null) => {
+    const base = mockSql(baseResponses([plantRow(WINNER), plantRow(LOSER1)]))
+    const sql = (strings, ...values) => {
+      const p = base(strings, ...values)
+      const text = p.__text
+      if (!text.includes('FROM merge_event WHERE op_id')) return p
+      const at = (re) => { const m = text.match(re); return m ? values[Number(m[1])] : undefined }
+      let rows = table.filter((r) => r.op_id === at(/op_id = \$(\d+)/))
+      const household = at(/merged_by = ANY\(\$(\d+)\)/)
+      if (household !== undefined) rows = rows.filter((r) => household.includes(r.merged_by))
+      const winner = at(/winner_plant_id = \$(\d+)/)
+      if (winner !== undefined) rows = rows.filter((r) => r.winner_plant_id === winner)
+      const q = Promise.resolve(rows)
+      q.__text = text
+      return q
+    }
+    sql.calls = base.calls
+    sql.lastTransaction = base.lastTransaction
+    sql.transaction = txError ? async () => { throw txError } : base.transaction
+    return sql
+  }
+  const record = (over) => ({
+    op_id: 'op1', merged_by: 'user_z', winner_plant_id: WINNER, loser_plant_ids: [FOREIGN_LOSER],
+    events_dropped: 7, rows_repointed: 42, merged_at: '2026-08-01T00:00:00Z', ...over,
+  })
+  const opTaken = () => Object.assign(
+    new Error('duplicate key value violates unique constraint "merge_event_op_uniq"'), { code: '23505' })
+
+  it('does not replay another household\'s merge for a known op_id — 409, nothing of theirs', async () => {
+    const sql = withMergeEvents([record()], opTaken())
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(409)
+    expect(r.body.replayed).toBeUndefined()
+    // No detail: the raw message names the constraint, which tells the caller the op_id exists.
+    expect(r.body.detail).toBeUndefined()
+    const text = JSON.stringify(r.body)
+    for (const leak of [FOREIGN_LOSER, 'user_z', '42', 'merge_event_op_uniq']) expect(text).not.toContain(leak)
+  })
+
+  it('does not replay a household merge recorded on a different winner', async () => {
+    const sql = withMergeEvents([record({ merged_by: 'user_b', winner_plant_id: LOSER1 })], opTaken())
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(409)
+    expect(r.body.replayed).toBeUndefined()
+  })
+
+  it('still replays the household\'s own op_id on this winner, by any member', async () => {
+    const sql = withMergeEvents([record({ merged_by: 'user_b' })])
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(200)
+    expect(r.body.replayed).toBe(true)
+    expect(sql.calls.some((c) => c.transaction)).toBe(false)
+  })
+
+  it('replays from the duplicate-key arm when a concurrent identical op landed first', async () => {
+    // The step-1 read is empty (the other request had not committed); the catch's re-read finds it.
+    const table = []
+    const sql = withMergeEvents(table, opTaken())
+    const tx = sql.transaction
+    sql.transaction = async (stmts) => { table.push(record({ merged_by: 'user_a' })); return tx(stmts) }
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok })
+    expect(r.status).toBe(200)
+    expect(r.body.replayed).toBe(true)
+  })
+
+  it('both merge_event lookups carry both terms after the literal prefix', () => {
+    // Prefix kept literally: it is the mock key above and in every other mergeCore test.
+    expect((SRC.match(/FROM merge_event WHERE op_id/g) || [])).toHaveLength(2)
+    const scoped = SRC.match(
+      /FROM merge_event WHERE op_id = \$\{opId\}\s+AND merged_by = ANY\(\$\{householdIds\}\) AND winner_plant_id = \$\{winnerId\}/g) || []
+    expect(scoped).toHaveLength(2)
+  })
+})
+
 // ── a deadlock is "run it again", not a broken merge ─────────────────────────────────────────
 // The cutover takes its seed lots first and the losers' photos later; a photo delete takes the photo
 // first and the lot that features it later. A loser's photo on a seed jar is in both, and on real
@@ -873,7 +955,7 @@ describe('mergeCore — seed_lot_parent_planting', () => {
     const k = seq.indexOf('LOCK plantings')
     expect(seq.slice(0, k)).toEqual([
       'set_config', 'LOCK lots',
-      'DELETE favorites', 'DELETE watch_impression', 'DELETE harvest_watch_dismissal',
+      'DELETE favorites', 'DELETE watch_impression', 'UPDATE harvest_watch_dismissal',
       'DELETE ready_impression', 'DELETE watch_exclusion', 'DELETE findings',
       'UPDATE event_log', 'UPDATE photos', 'UPDATE preservation_log',
       'UPDATE critter_state', 'UPDATE critter_state', 'UPDATE evidence', 'UPDATE findings',
@@ -932,7 +1014,7 @@ describe('mergeCore — seed_lot_parent_planting', () => {
   })
 
   it('never hard-deletes a parent link', async () => {
-    // The other five prunes in the cutover are DELETEs over derived state. This one is provenance a
+    // Five of the other prunes in the cutover are DELETEs over derived state. This one is provenance a
     // person recorded; a copy of ready_impression's statement with the table name changed would
     // destroy it and still satisfy an "is there a prune" check.
     const { tx } = await run({}, [LOSER1, LOSER2])
@@ -1041,6 +1123,116 @@ describe('mergeCore — seed_lot_parent_planting', () => {
   })
 })
 
+// ── BUG-MERGEHARDDELETE-001 — harvest_watch_dismissal is retired, never deleted ─────────────
+// The table's DDL: "NEVER hard-delete a row: an undo is signal". The cutover used to DELETE a loser's
+// active row that collided with the winner's on uq_harvest_watch_dismissal_active_day, and had no
+// loser-vs-loser arm, so two losers holding one day's row 409'd the merge. Now the colliding rows get
+// undone_at = now() (= merge_event.merged_at, same transaction) and move with the rest; the snapshot
+// names them (dismissals_retired) so a restore can tell them from user retractions.
+describe('mergeCore — harvest_watch_dismissal (BUG-MERGEHARDDELETE-001)', () => {
+  const ok = { opId: 'op1', userId: 'user_a', householdIds: ['user_a'] }
+  const run = async (responses = {}, losers = [LOSER1]) => {
+    const plants = [plantRow(WINNER), ...losers.map((id) => plantRow(id))]
+    const sql = mockSql({ ...responses, ...baseResponses(plants) })
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: losers, ...ok })
+    return { sql, r, tx: sql.lastTransaction() }
+  }
+  const isRetire = (t) => /^\s*UPDATE harvest_watch_dismissal l\b/.test(t)
+  const READ = 'SELECT l.id FROM harvest_watch_dismissal l'
+  const snapshotOf = (sql) => {
+    const insert = sql.calls.find((c) => c.text?.includes('INSERT INTO merge_event'))
+    return { insert, snap: JSON.parse(insert.values.find((v) => typeof v === 'string' && v.startsWith('{'))) }
+  }
+
+  it('never hard-deletes a dismissal, in the source or in the issued batch', async () => {
+    const { tx } = await run({}, [LOSER1, LOSER2])
+    expect(tx.some((t) => /DELETE FROM harvest_watch_dismissal/.test(t))).toBe(false)
+    expect(SRC).not.toMatch(/DELETE FROM harvest_watch_dismissal/)
+  })
+
+  it('retires with undone_at = now() over active rows, with BOTH arms, bound to the right ids', async () => {
+    const { sql, tx } = await run({}, [LOSER1, LOSER2])
+    const retire = tx.filter(isRetire)
+    expect(retire).toHaveLength(1)
+    expect(retire[0]).toMatch(/SET undone_at = now\(\)\s+WHERE l\.plant_id = ANY\(\$\d+\) AND l\.undone_at IS NULL/)
+    // w: the winner already has an active row for this user and day.
+    expect(retire[0]).toMatch(/FROM harvest_watch_dismissal w\s+WHERE w\.plant_id = \$\d+ AND w\.undone_at IS NULL\s+AND w\.user_id = l\.user_id AND w\.observed_on = l\.observed_on/)
+    // o: another loser's active row of a lower id does. Without `o.id < l.id` the two colliding
+    // losers either both survive (23505 on the repoint) or retire each other.
+    expect(retire[0]).toMatch(/FROM harvest_watch_dismissal o\s+WHERE o\.plant_id = ANY\(\$\d+\) AND o\.undone_at IS NULL AND o\.id < l\.id\s+AND o\.user_id = l\.user_id AND o\.observed_on = l\.observed_on/)
+    // In template order: l = the losers, w = the winner, o = the losers.
+    const issued = sql.calls.find((c) => c.text && isRetire(c.text))
+    expect(issued.values).toEqual([[LOSER1, LOSER2], WINNER, [LOSER1, LOSER2]])
+  })
+
+  it('retires before the repoint and in the same transaction as the merge_event INSERT', async () => {
+    // undone_at = now() equals merged_at only inside one transaction; that equality is the
+    // in-transaction discriminator a restore or the refit can key on.
+    const { sql, tx } = await run({}, [LOSER1, LOSER2])
+    const retire = tx.findIndex(isRetire)
+    const repoint = tx.findIndex((t) => /^\s*UPDATE harvest_watch_dismissal SET plant_id =/.test(t))
+    const insert = tx.findIndex((t) => t.includes('INSERT INTO merge_event'))
+    expect(retire).toBeGreaterThanOrEqual(0)
+    expect(repoint).toBeGreaterThan(retire)
+    expect(insert).toBeGreaterThan(repoint)
+    expect(sql.calls.filter((c) => c.transaction)).toHaveLength(1)
+    // merged_at is the column DEFAULT now(), never a value the INSERT supplies.
+    expect(tx[insert]).not.toMatch(/merged_at\s*,|merged_at\)/)
+  })
+
+  it('reads the rows it is about to retire with the retire\'s own predicate', () => {
+    const norm = (s) => s.replace(/\s+/g, ' ').trim()
+    const templates = [...SRC.matchAll(/sql`([\s\S]*?)`/g)].map((m) => norm(m[1]))
+    const read = templates.filter((t) => t.startsWith(READ))
+    const retire = templates.filter((t) => t.startsWith('UPDATE harvest_watch_dismissal l'))
+    expect(read).toHaveLength(1)
+    expect(retire).toHaveLength(1)
+    const predicate = (t) => t.slice(t.indexOf(' WHERE l.plant_id'))
+    expect(predicate(read[0])).toMatch(/^ WHERE l\.plant_id = ANY\(\$\{loserIds\}\) AND l\.undone_at IS NULL AND \(EXISTS/)
+    expect(predicate(read[0])).toBe(predicate(retire[0]))
+  })
+
+  it('names the retired rows in the snapshot, beside the house repoint entries', async () => {
+    const { sql, r } = await run({
+      'AS old_value FROM harvest_watch_dismissal': [
+        { id: 'hwd-moved', old_value: LOSER1 }, { id: 'hwd-retired', old_value: LOSER1 },
+      ],
+      [READ]: [{ id: 'hwd-retired' }],
+    })
+    expect(r.status).toBe(200)
+    const { insert, snap } = snapshotOf(sql)
+    expect(snap.repoints.filter((x) => x.table === 'harvest_watch_dismissal')).toEqual([
+      { table: 'harvest_watch_dismissal', column: 'plant_id', row_id: 'hwd-moved', old_value: LOSER1 },
+      { table: 'harvest_watch_dismissal', column: 'plant_id', row_id: 'hwd-retired', old_value: LOSER1 },
+    ])
+    expect(snap.dismissals_retired).toEqual(['hwd-retired'])
+    expect(snap.schema_version).toBe(3)
+    expect(insert.values).toContain(3)
+  })
+
+  it('writes dismissals_retired as an empty array, never an absent key, when nothing collided', async () => {
+    const { sql } = await run()
+    expect(snapshotOf(sql).snap.dismissals_retired).toEqual([])
+  })
+
+  it('takes the retired-id read on its own, before any cutover statement is built', async () => {
+    const { sql, tx } = await run()
+    const at = (needle) => sql.calls.findIndex((c) => c.text?.includes(needle))
+    const firstOfCutover = at("set_config('app.actor_clerk_sub'")
+    expect(at(READ)).toBeGreaterThanOrEqual(0)
+    expect(at(READ)).toBeLessThan(firstOfCutover)
+    expect(tx.some((t) => t.includes(READ))).toBe(false)
+  })
+
+  it('does not touch the table on a dry run', async () => {
+    const plants = [plantRow(WINNER), plantRow(LOSER1)]
+    const sql = mockSql(baseResponses(plants))
+    const r = await mergeCore(sql, { winnerId: WINNER, loserIds: [LOSER1], ...ok, dryRun: true })
+    expect(r.body.dry_run).toBe(true)
+    expect(sql.calls.some((c) => c.text?.includes('harvest_watch_dismissal'))).toBe(false)
+  })
+})
+
 // ── static-source guards ─────────────────────────────────────────────────────────────────────
 
 describe('source guards', () => {
@@ -1091,7 +1283,9 @@ describe('source guards', () => {
     // 1 -> 2: the snapshot gained a top-level key, seed_lot_parents_pruned (the parent links the
     // merge soft-deleted). The six repoint surfaces added before it only put new `table` values
     // inside `repoints`, which is not a shape change and did not move this.
-    expect(SNAPSHOT_VERSION).toBe(2)
+    // 2 -> 3: dismissals_retired, the harvest_watch_dismissal rows the merge retired with undone_at
+    // (BUG-MERGEHARDDELETE-001) — without it they read as user retractions.
+    expect(SNAPSHOT_VERSION).toBe(3)
     expect(SRC).toMatch(/snapshot_version/)
   })
 
@@ -1105,20 +1299,26 @@ describe('source guards', () => {
     // `conflict` was prose: six surfaces said 'skip' and nothing checked that a statement stood
     // behind any of them, or that one did not stand behind a surface that says nothing. Bound both
     // ways and by KIND, because the kind is the decision — 'skip' drops the loser's colliding row
-    // (derived state), 'soft_delete' retires it (seed_lot_parent_planting: recorded provenance).
+    // (derived state), 'soft_delete' retires it (seed_lot_parent_planting: recorded provenance),
+    // 'retire' sets undone_at (harvest_watch_dismissal: its DDL forbids hard deletes and has no
+    // deleted_at, BUG-MERGEHARDDELETE-001).
     // A surface that declared one and shipped the other would otherwise pass every guard here.
     const declared = REPOINT_SURFACES.filter((s) => s.conflict)
     expect(declared.map((s) => s.conflict).sort()).toEqual(
-      ['skip', 'skip', 'skip', 'skip', 'skip', 'skip', 'soft_delete'])
+      ['retire', 'skip', 'skip', 'skip', 'skip', 'skip', 'soft_delete'])
     for (const s of REPOINT_SURFACES) {
-      expect([undefined, 'skip', 'soft_delete'], `${s.table}.${s.column}`).toContain(s.conflict)
+      expect([undefined, 'skip', 'soft_delete', 'retire'], `${s.table}.${s.column}`).toContain(s.conflict)
       const drops = new RegExp(
         `DELETE FROM ${s.table} l\\s+WHERE l\\.${s.column} = ANY\\(\\$\\{loserIds\\}\\)`).test(SRC)
       const retires = new RegExp(
         `UPDATE ${s.table} l\\s+SET deleted_at = now\\(\\), updated_at = now\\(\\)\\s+`
         + `WHERE l\\.${s.column} = ANY\\(\\$\\{loserIds\\}\\) AND l\\.deleted_at IS NULL`).test(SRC)
+      const undoes = new RegExp(
+        `UPDATE ${s.table} l\\s+SET undone_at = now\\(\\)\\s+`
+        + `WHERE l\\.${s.column} = ANY\\(\\$\\{loserIds\\}\\) AND l\\.undone_at IS NULL`).test(SRC)
       expect(drops, `${s.table}.${s.column}: a DELETE prune`).toBe(s.conflict === 'skip')
       expect(retires, `${s.table}.${s.column}: a soft-delete prune`).toBe(s.conflict === 'soft_delete')
+      expect(undoes, `${s.table}.${s.column}: an undone_at retire`).toBe(s.conflict === 'retire')
     }
   })
 })

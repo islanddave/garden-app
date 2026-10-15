@@ -237,7 +237,9 @@ describe('ownership and plausibility', () => {
 
 describe('the POST call site', () => {
   const POST = (() => {
-    const start = SRC.indexOf("if (method === 'POST') {", SRC.indexOf('const ALLOWED_LOSS'))
+    // Anchored on the create path's own first guard. It used to search forward from the first
+    // `const ALLOWED_LOSS`, which BUG-AUTHZLAMBDA-001 moved into validate.js.
+    const start = SRC.lastIndexOf("if (method === 'POST') {", SRC.indexOf("error: 'name is required'"))
     return SRC.slice(start > -1 ? start : 0)
   })()
 
