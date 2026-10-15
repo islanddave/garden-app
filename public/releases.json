@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.1.3",
+    "date": "2026-10-15",
+    "highlights": [
+      "Behind-the-scenes hardening: stricter checks on who can see and change garden photos, tags and assignments, and the daily plan keeps going if one plant has a bad overwinter date."
+    ]
+  },
+  {
     "version": "5.1.2",
     "date": "2026-10-15",
     "highlights": [
