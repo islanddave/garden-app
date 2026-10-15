@@ -1152,6 +1152,10 @@ export const handler = async (event) => {
             LIMIT ${limit}
           `;
       } else if (locationId) {
+        // T3b archive leftover: the location, space and unscoped branches also hide a photo whose
+        // CONTAINER (photos.project_id) is archived — `pp.archived_at IS NULL` on the existing LEFT
+        // JOIN, so a photo with no container passes. NOT on ?project_id= (the container's own page)
+        // or ?attachedTo (the planting's own gallery): an archived thing keeps its own page.
         rows = await sql`
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
@@ -1172,6 +1176,7 @@ export const handler = async (event) => {
                 WHERE ea.id = p.event_id AND ea.deleted_at IS NULL
                   AND gne.archived_at IS NOT NULL
               )
+              AND pp.archived_at IS NULL
               AND p.location_id IN (
                 WITH RECURSIVE loc_subtree AS (
                   SELECT id FROM locations WHERE id = ${locationId} AND deleted_at IS NULL
@@ -1234,6 +1239,7 @@ export const handler = async (event) => {
                 WHERE ea.id = p.event_id AND ea.deleted_at IS NULL
                   AND gne.archived_at IS NOT NULL
               )
+              AND pp.archived_at IS NULL
               AND p.space_id = ${spaceId}
             ORDER BY COALESCE(p.taken_at, p.created_at) DESC, p.id DESC
             LIMIT ${limit}
@@ -1271,6 +1277,7 @@ export const handler = async (event) => {
                 WHERE ea.id = p.event_id AND ea.deleted_at IS NULL
                   AND gne.archived_at IS NOT NULL
               )
+              AND pp.archived_at IS NULL
             ORDER BY COALESCE(p.taken_at, p.created_at) DESC, p.id DESC
             LIMIT ${limit}
           `;

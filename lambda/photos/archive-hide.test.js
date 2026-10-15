@@ -121,3 +121,42 @@ describe('photos Lambda — archived plantings are excluded from aggregate galle
     }
   });
 });
+
+// T3b archive leftover — a photo hung off an ARCHIVED container (photos.project_id) still loaded in
+// the aggregate galleries: only the planting axis was filtered. The term rides the existing
+// `LEFT JOIN public.container pp`, so a photo with no container passes (NULL archived_at).
+describe('photos Lambda — archived CONTAINERS are excluded from aggregate galleries (T3b)', () => {
+  // MUTATION: delete `AND pp.archived_at IS NULL` from any one of the three branches -> RED.
+  for (const name of ['locationId', 'spaceId', 'unfiltered']) {
+    it(`the ${name} branch filters an archived container`, () => {
+      expect(BRANCHES[name]).toMatch(/\n\s+AND pp\.archived_at IS NULL\n/);
+      expect(BRANCHES[name]).toMatch(/LEFT JOIN public\.container pp ON pp\.id = p\.project_id\n/);
+    });
+  }
+
+  // Placed after the anti-joins: the unfiltered slice is a fixed window, and the term must sit
+  // inside it together with them (and before ORDER BY).
+  it('the unfiltered term sits after both anti-joins and before ORDER BY', () => {
+    const u = BRANCHES.unfiltered;
+    const iTerm = u.indexOf('AND pp.archived_at IS NULL');
+    expect(iTerm).toBeGreaterThan(u.search(EVENT_ANTIJOIN));
+    expect(iTerm).toBeLessThan(u.indexOf('ORDER BY'));
+  });
+
+  // The container's own page (?project_id=) is the one route an archived container still has; the
+  // planting's own gallery (?attachedTo) likewise. Neither may filter the container archive.
+  it('does NOT filter ?project_id= or ?attachedTo on the container archive', () => {
+    expect(BRANCHES.projectId).toMatch(/p\.project_id = \$\{projectId\}/);
+    expect(BRANCHES.projectId).not.toMatch(/pp\.archived_at/);
+    expect(SRC.slice(iAttached, iLocation)).not.toMatch(/pp\.archived_at/);
+  });
+
+  // Header search (lambda/dashboard/handlers.js searchPhotos) carries the same term; the two must
+  // not drift (archive-hide-002.test.js pins the planting arms the same way).
+  it('header search hides the archived container too', () => {
+    const dash = decomment(readFileSync(resolve(__dirname, '../dashboard/handlers.js'), 'utf8'));
+    const i = dash.indexOf('export function searchPhotos(');
+    expect(i).toBeGreaterThan(-1);
+    expect(dash.slice(i, dash.indexOf('\nexport ', i + 1))).toMatch(/AND pp\.archived_at IS NULL/);
+  });
+});
