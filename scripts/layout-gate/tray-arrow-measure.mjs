@@ -60,7 +60,8 @@ try {
     await ev(`(() => { for (const el of document.querySelectorAll('[data-arrow-probe]')) el.removeAttribute('data-arrow-probe'); return 1 })()`)
     return out.join(', ')
   }
-  // Every box the gate reads on this surface, and the slack left on the toggle's line.
+  // Every box the gate reads on this surface, and the slack left on the toggle's line. Finish plan L4 (D17) removed the
+  // task row inside Needs care (care-filter-tasks): `tasks` is the jump bar's Water / Feed / Check cells (review M4).
   const GEOM = `(() => {
     const r = (el) => { const b = el.getBoundingClientRect(); return [Math.round(b.left * 100) / 100, Math.round((b.top + scrollY) * 100) / 100, Math.round(b.width * 100) / 100, Math.round(b.height * 100) / 100] }
     const row = document.querySelector('[data-testid="care-filter-spots"]')
@@ -71,7 +72,7 @@ try {
     return {
       toggleText: toggle ? toggle.textContent : null, toggle: toggle ? r(toggle) : null,
       chips: row ? [...row.querySelectorAll('button')].map((b) => b.textContent.trim() + '@' + r(b).join(',')) : [],
-      row: row ? r(row) : null, tasks: (() => { const t = document.querySelector('[data-testid="care-filter-tasks"]'); return t ? r(t) : null })(),
+      row: row ? r(row) : null, tasks: [...document.querySelectorAll('[data-testid="today-jumpbar"] [data-chip][aria-pressed]')].map(r),
       care: r(document.querySelector('[data-testid="today-sec-care"]')),
       spots: [...document.querySelectorAll('[data-testid="care-spot"]')].map((s) => s.getAttribute('data-spot') + '@' + r(s).join(',')),
       scrollHeight: document.documentElement.scrollHeight, lastInk: ink, slack,
