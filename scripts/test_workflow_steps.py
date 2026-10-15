@@ -1701,15 +1701,24 @@ def test_schema_gate_install_step_cannot_red_the_job_and_says_why(tmp_path):
 # tooling; that they prepare exactly what snap.py uses; that every stall ends inside its step and all of them inside
 # the job's limit; and that each body's failure says nothing has moved. sudo, docker, python3 and the two pg17
 # binaries are stubs, and a body's one textual change is its /usr/lib/postgresql/17, moved into tmp_path.
+# Since OPS-SCHEMACHECKAPT-001 (2026-10-15) the promote fetches no pg17 client: it restores the cache entry or
+# refuses, and .github/workflows/pg17-cache-warm.yml fills the entry (its pins follow the promote's below).
 
 FF = "Fast-forward main -> dev SHA"
 SNAP = "Version snap (revertibility marker)"
-PG_DIR, PG_CACHE, PG_FETCH, PG_VERIFY, SNAP_DEPS = TOOLING = [
-    "Make /usr/lib/postgresql/17 writable (cache + docker cp target)", "pg17 client cache",
-    "Fetch pg17 client from the postgres:17 image (cache miss only)", "Verify pg17 client", "Install python deps"]
+PG_DIR, PG_CACHE, PG_MISS, PG_VERIFY, SNAP_DEPS = TOOLING = [
+    "Make /usr/lib/postgresql/17 writable (cache restore target)", "pg17 client cache",
+    "Refuse a pg17 client cache miss (the promote fetches nothing)", "Verify pg17 client", "Install python deps"]
 PG_ROOT = "/usr/lib/postgresql/17"
 PG_BIN = PG_ROOT + "/bin"
 PG_KEY = "pg17-client-postgres17-image-v1-runner-ubuntu-26.04"
+PG_RUNNER = "ubuntu-26.04"
+CACHE_SHA = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"  # actions/cache v6.1.0, and its restore/ and save/ sub-actions
+MISS_IF = "steps.pg17-cache.outputs.cache-hit != 'true'"  # never `== 'false'`: a plain miss leaves cache-hit unset
+WARM = "pg17-cache-warm.yml"
+WARM_HIT_VERIFY = "Verify the cached pg17 client (hit)"
+WARM_FETCH = "Fetch pg17 client from the postgres:17 image (miss, or force_refetch)"
+WARM_FORCE_REFUSE = "Refuse to pretend force_refetch replaced an existing entry"
 NOT_MOVED = "nothing has moved (main has NOT been touched): re-run the failed jobs"
 # The promote job's timeout comment, in minutes: what a slowest-passing promote spends before the tooling, and
 # what it allows after the smoke gate for the Lambda decision, the FF and the snap. The rest is derived below.
@@ -1740,7 +1749,7 @@ def test_snapshot_tooling_is_prepared_before_the_fast_forward_and_before_the_sta
     at = names.index
     for name in TOOLING:
         assert at(name) < at(FF), f"{name!r} runs after the fast-forward: its failure leaves main moved, no snapshot"
-    # One block, in the order each step needs the one before: directory, restore into it, fill a miss, run, deps.
+    # One block, in the order each step needs the one before: directory, restore into it, refuse a miss, run, deps.
     assert [at(n) for n in TOOLING] == list(range(at(PG_DIR), at(PG_DIR) + len(TOOLING)))
     # After the gates that judge the promoted code and before the smoke: a tooling refusal costs no staging deploy.
     # Then the snap, and only then the FF (BUG-PROMOTEFFORDER-001): a snap failure leaves main where it was.
@@ -1763,7 +1772,7 @@ def test_nothing_after_the_fast_forward_fetches_tooling():
     assert "if" not in snap and "continue-on-error" not in snap
     # The scan is not blind: it names every step above the FF that does fetch.
     found = {n: _fetches_tooling(steps[names.index(n)]) for n in TOOLING}
-    assert found == {PG_DIR: "", PG_CACHE: "action actions/cache", PG_FETCH: "docker", PG_VERIFY: "", SNAP_DEPS: "pip"}
+    assert found == {PG_DIR: "", PG_CACHE: "action actions/cache/restore", PG_MISS: "", PG_VERIFY: "", SNAP_DEPS: "pip"}
 
 
 def test_snapshot_tooling_steps_run_on_every_path_and_cannot_be_advisory():
@@ -1772,10 +1781,38 @@ def test_snapshot_tooling_steps_run_on_every_path_and_cannot_be_advisory():
     for name in TOOLING:
         step = steps[name]
         assert "continue-on-error" not in step, name
-        # The fetch is skipped on a cache hit and by nothing else; the other four have no condition at all.
-        assert step.get("if") == ("steps.pg17-cache.outputs.cache-hit != 'true'" if name == PG_FETCH else None), name
+        # The miss refusal runs on anything but a hit and is skipped by nothing else; the other four have no
+        # condition at all.
+        assert step.get("if") == (MISS_IF if name == PG_MISS else None), name
         assert "uses" in step or _declared_shell(wf, "promote", step) is None, name
-    assert steps[PG_CACHE]["id"] == "pg17-cache" and str(steps[PG_CACHE]["uses"]).startswith("actions/cache@")
+    # Restore only (never actions/cache, whose post step saves), at the pinned SHA. No fail-on-cache-miss: the
+    # action would end the job in its own text and skip the refusal that carries the remedy.
+    assert steps[PG_CACHE]["id"] == "pg17-cache" and steps[PG_CACHE]["uses"] == f"actions/cache/restore@{CACHE_SHA}"
+    assert set(steps[PG_CACHE]["with"]) == {"path", "key"}
+
+
+def test_the_promote_gate_fetches_no_postgres_client_and_refuses_a_miss():
+    """OPS-SCHEMACHECKAPT-001: no step of any promote-gate job pulls an image, runs docker, apt or PGDG, or saves
+    the pg17 entry; a miss ends in the refusal step right after the restore, which exits 1."""
+    jobs = _workflow(PROMOTE)["jobs"]
+    pulls = re.compile(r"\bdocker\b|\bapt(?:-get)?\b|pgdg|apt\.postgresql\.org|\bpostgres:\d", re.I)
+    for job_id, job in jobs.items():
+        assert not {"services", "container"} & set(job), job_id  # an image pulled at job start
+        for step in job.get("steps") or []:
+            uses = str(step.get("uses", ""))
+            assert not uses.startswith("docker://"), (job_id, step.get("name"))
+            if uses.startswith("actions/cache"):
+                assert uses.startswith("actions/cache/restore@"), (job_id, step.get("name"), uses)
+            found = pulls.search(step.get("run", ""))
+            assert not found, (job_id, step.get("name"), found and found.group())
+    steps, names = _promote_steps()
+    miss = steps[names.index(PG_MISS)]
+    assert names.index(PG_MISS) == names.index(PG_CACHE) + 1 and miss["if"] == MISS_IF
+    assert miss["run"].splitlines()[-1].strip() == "exit 1"
+    # The scan is not blind: the warmer it points to does all of this.
+    warm = _workflow(WARM)["jobs"]["warm"]["steps"]
+    assert any(pulls.search(s.get("run", "")) for s in warm)
+    assert any(str(s.get("uses", "")).startswith("actions/cache/save@") for s in warm)
 
 
 def test_no_promote_gate_job_and_no_step_up_to_the_fast_forward_is_advisory():
@@ -1788,14 +1825,14 @@ def test_no_promote_gate_job_and_no_step_up_to_the_fast_forward_is_advisory():
         assert not {"if", "continue-on-error"} & set(jobs[job]), job
     # Step level: every step of `resolve`, and every `promote` step down to and including the fast-forward, is a gate
     # or feeds one. continue-on-error turns its refusal into a pass; an `if:` lets it not run at all. The one
-    # condition is the pg17 fetch, skipped on a cache hit (test_snapshot_tooling_steps_run_on_every_path_...).
+    # condition is the pg17 miss refusal, skipped on a cache hit (test_snapshot_tooling_steps_run_on_every_path_...).
     steps, names = _promote_steps()
     assert names.index(SKEW) < names.index(SMOKE) < names.index(FF)
     gated = [("resolve", s) for s in jobs["resolve"]["steps"]] + [("promote", s) for s in steps[:names.index(FF) + 1]]
     assert len(gated) == 18, [s.get("name") for _, s in gated]
     soft = [f"{job}: {s.get('name')}" for job, s in gated if "continue-on-error" in s]
     assert not soft, f"advisory steps before main moves: {soft}"
-    assert [s.get("name") for _, s in gated if "if" in s] == [PG_FETCH]
+    assert [s.get("name") for _, s in gated if "if" in s] == [PG_MISS]
     for name in (SKEW, SMOKE):
         assert not {"if", "continue-on-error"} & set(steps[names.index(name)]), name
 
@@ -1830,12 +1867,12 @@ def test_snapshot_tooling_prepares_exactly_what_snap_py_uses():
     assert probe and {m.strip().split(".")[0] for m in probe.group(1).split(",")} == third_party
     loop = re.search(r"^for tool in ([a-z_ ]+); do$", verify, re.M)
     assert loop and set(loop.group(1).split()) == tools and f'"{PG_BIN}/$tool" --version' in verify
-    # One directory in five places: made writable, restored into, copied into, verified, and first on snap's PATH.
+    # One directory in four places: made writable, restored into, verified, and first on snap's PATH.
     assert f"sudo mkdir -p {PG_BIN} " in steps[PG_DIR]["run"] and f" {PG_ROOT} " in steps[PG_DIR]["run"]
     assert steps[PG_CACHE]["with"] == {"path": PG_BIN, "key": PG_KEY}
-    assert f'docker cp "$cid:{PG_BIN}/." {PG_BIN}/ ' in steps[PG_FETCH]["run"]
     assert f'export PATH="{PG_BIN}:$PATH"' in steps[SNAP]["run"]
-    assert PG_KEY in verify  # the remedy for a bad cached copy names the entry to delete
+    for body in (verify, steps[PG_MISS]["run"]):  # each remedy names the entry and the workflow that fills it
+        assert PG_KEY in body and f".github/workflows/{WARM}" in body
 
 
 # ── ubuntu-26.04: database dumps on the runner's work disk (OPS-UBUNTU26MOVE-001) ────────────────────────────────
@@ -1865,11 +1902,98 @@ def test_every_step_that_runs_a_dump_script_puts_its_tempfiles_on_the_work_disk(
 def test_every_pg17_client_cache_is_keyed_by_its_jobs_runner_image():
     """A copy of the pg17 binaries made on one runner image must never be restored onto another: the key carries
     the job's `runs-on` label, so moving the label without the key reds here."""
-    caches = [(name, job_id, job["runs-on"], step["with"]["key"]) for name, job_id, job, step in _every_step()
-              if str(step.get("uses", "")).startswith("actions/cache@") and step["with"].get("path") == PG_BIN]
-    assert len(caches) == 6, caches
-    for name, job_id, runs_on, key in caches:
+    caches = [(name, job_id, job["runs-on"], step["with"]["key"], str(step["uses"]))
+              for name, job_id, job, step in _every_step()
+              if re.match(r"actions/cache(?:/restore|/save)?@", str(step.get("uses", "")))
+              and step["with"].get("path") == PG_BIN]
+    # Five actions/cache sites that still fetch on a miss, promote-gate's restore, and the warmer's three.
+    assert sorted((name, uses.split("@")[0]) for name, _, _, _, uses in caches) == sorted(
+        [(n, "actions/cache") for n in ("backup.yml", "restore-verify.yml", "revert-gate.yml", "revert-rehearsal.yml",
+                                        "snap-rehearsal.yml")]
+        + [(PROMOTE, "actions/cache/restore")]
+        + [(WARM, "actions/cache/restore"), (WARM, "actions/cache/save"), (WARM, "actions/cache/restore")]), caches
+    for name, job_id, runs_on, key, _ in caches:
         assert key == f"pg17-client-postgres17-image-v1-runner-{runs_on}", (name, job_id, key)
+
+
+def _pg17_cache_steps(name, job_id):
+    job = _workflow(name)["jobs"][job_id]
+    return job, [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/cache")]
+
+
+def test_the_warmer_writes_the_entry_the_promote_restores():
+    """The cache version hashes the path, and the key carries the runner label: a warmer whose key, path, action
+    SHA or runs-on drifts from promote-gate's writes an entry no promote restores, and every promote refuses."""
+    promote, (restore,) = _pg17_cache_steps(PROMOTE, "promote")
+    warm, warm_caches = _pg17_cache_steps(WARM, "warm")
+    backup, (backup_cache,) = _pg17_cache_steps("backup.yml", "backup")
+    assert promote["runs-on"] == warm["runs-on"] == backup["runs-on"] == PG_RUNNER
+    assert restore["with"] == {"path": PG_BIN, "key": PG_KEY}
+    for step in warm_caches + [restore, backup_cache]:
+        assert step["uses"].split("@")[1] == CACHE_SHA, step.get("name")
+        assert step["with"]["path"] == PG_BIN and step["with"]["key"] == PG_KEY, step.get("name")
+    # Restore, save, then a lookup that fails the run when the save left no entry (the save action only warns).
+    assert [s["uses"].split("@")[0] for s in warm_caches] == [
+        "actions/cache/restore", "actions/cache/save", "actions/cache/restore"]
+    first, save, proof = warm_caches
+    assert set(first["with"]) == {"path", "key"} and first["id"] == "pg17-cache"
+    assert save["if"] == MISS_IF == proof["if"]
+    assert proof["with"]["lookup-only"] is True and proof["with"]["fail-on-cache-miss"] is True
+
+
+def test_the_warmer_never_runs_on_a_push_to_main():
+    """scripts/revert-to.py refuses to revert to a release whose workflows run on a push to main (paths filters do
+    not help), so a push-to-main trigger here would make every release that carries it unrevertible."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("revert_to_for_warm", os.path.join(HERE, "revert-to.py"))
+    rt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rt)
+    wf_dir = os.path.join(HERE, "..", ".github", "workflows")
+    files = {n: open(os.path.join(wf_dir, n)).read()
+             for n in sorted(os.listdir(wf_dir)) if n.endswith((".yml", ".yaml"))}
+    text = files[WARM]
+    assert rt.target_workflow_hazards(files) == []
+    on = _workflow(WARM)[True]  # PyYAML reads the bare `on` key as boolean True
+    assert set(on) == {"workflow_dispatch", "push", "schedule"} and on["push"]["branches"] == ["dev"]
+    assert set(on["push"]) == {"branches", "paths"}
+    assert on["push"]["paths"] == [f".github/workflows/{WARM}", f".github/workflows/{PROMOTE}"]
+    assert on["workflow_dispatch"]["inputs"]["force_refetch"] == {
+        "description": on["workflow_dispatch"]["inputs"]["force_refetch"]["description"], "type": "boolean",
+        "default": False}
+    # The check is not blind: the same file with main added is refused.
+    to_main = dict(files, **{WARM: text.replace("branches: [dev]", "branches: [dev, main]")})
+    assert rt.target_workflow_hazards(to_main) == [
+        f"{WARM} runs on a push to main (the revert's fast-forward would start it, unseen)"]
+
+
+def test_the_warmer_verifies_a_hit_and_every_copy_it_saves():
+    """A corrupt entry must fail the warmer, not the next promote; a fetched copy that does not run is not saved."""
+    wf = _workflow(WARM)
+    job = wf["jobs"]["warm"]
+    steps = job["steps"]
+    names = [s.get("name") for s in steps]
+    assert wf["permissions"] == {"contents": "read", "actions": "read"}
+    assert wf["concurrency"] == {"group": "pg17-cache-warm-${{ github.ref }}", "cancel-in-progress": False}
+    assert type(job["timeout-minutes"]) is int and job["timeout-minutes"] <= 10
+    verifies = [i for i, s in enumerate(steps)
+                if re.search(r"^for tool in pg_dump pg_dumpall; do$", s.get("run", ""), re.M)
+                and f'"{PG_BIN}/$tool" --version' in s["run"]]
+    assert len(verifies) == 2, names
+    hit, fetched = (steps[i] for i in verifies)
+    assert hit["if"] == "steps.pg17-cache.outputs.cache-hit == 'true'"
+    fetch = steps[names.index(WARM_FETCH)]
+    assert fetch["id"] == "fetch" and fetch["if"] == MISS_IF + " || inputs.force_refetch"
+    assert fetched["if"] == "steps.fetch.outcome == 'success'"
+    save = next(i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith("actions/cache/save@"))
+    assert verifies[0] < names.index(WARM_FETCH) < verifies[1] < save
+    # The image is digest-pinned: the pin decides what a future fill copies.
+    assert re.fullmatch(r"postgres:17@sha256:[0-9a-f]{64}", fetch["env"]["PG17_IMAGE"])
+    assert f'docker cp "$cid:{PG_BIN}/." {PG_BIN}/ ' in fetch["run"]
+    # force_refetch on a hit cannot replace an immutable entry, and says so instead of passing.
+    refuse = steps[names.index(WARM_FORCE_REFUSE)]
+    assert refuse["if"] == "inputs.force_refetch && steps.pg17-cache.outputs.cache-hit == 'true'"
+    assert verifies[1] < names.index(WARM_FORCE_REFUSE) < save
+    assert refuse["run"].splitlines()[-1].strip() == "exit 1" and "::error" in refuse["run"]
 
 
 def _poll_seconds(body):
@@ -1886,21 +2010,24 @@ def test_snapshot_tooling_every_stall_ends_inside_its_step_and_all_of_them_insid
     steps = {s.get("name"): s for s in job["steps"]}
     # Inside the bodies: every docker and python3 call runs as `timeout -k K D ...`, so a hang ends in the step's own
     # ::error; timeout-minutes is the backstop and must outlast them all (the schema gate's rule, same 30 s margin).
-    for name, command, calls, worst in ((PG_FETCH, "docker", 3, 180), (SNAP_DEPS, "python3", 3, 225)):
-        body = steps[name]["run"]
+    # The warmer's fetch (promote-gate's old miss path) keeps the same rule.
+    warm_steps = {s.get("name"): s for s in _workflow(WARM)["jobs"]["warm"]["steps"]}
+    for step, name, command, calls, worst in ((warm_steps[WARM_FETCH], WARM_FETCH, "docker", 3, 180),
+                                              (steps[SNAP_DEPS], SNAP_DEPS, "python3", 3, 225)):
+        body = step["run"]
         bounds = [int(k) + int(d) for k, d in re.findall(rf"\btimeout -k (\d+) (\d+) {command}\b", body)]
         assert len(bounds) == len(re.findall(rf"\b{command}\b", body)) == calls, (name, bounds)
-        assert sum(bounds) == worst and worst + 30 <= steps[name]["timeout-minutes"] * 60, (name, bounds)
+        assert sum(bounds) == worst and worst + 30 <= step["timeout-minutes"] * 60, (name, bounds)
     limits = {n: steps[n]["timeout-minutes"] for n in TOOLING if "timeout-minutes" in steps[n]}
-    assert limits == {PG_CACHE: 2, PG_FETCH: 4, SNAP_DEPS: 5}
-    for name in (PG_DIR, PG_VERIFY):  # no limit, because they reach nothing but the runner's own disk
+    assert limits == {PG_CACHE: 2, SNAP_DEPS: 5}
+    for name in (PG_DIR, PG_MISS, PG_VERIFY):  # no limit, because they reach nothing but the runner's own disk
         assert _fetches_tooling(steps[name]) == "", name
     # The job. Its comment adds ~4 min before the tooling, the smoke gate's longest wait and ~10 min after it to
-    # 48.5; with all three tooling limits reached at once the FF and the snap must still fit inside the job's own.
+    # 48.5; with both tooling limits reached at once the FF and the snap must still fit inside the job's own.
     smoke = _poll_seconds(steps[SMOKE]["run"])
     assert smoke == [300, 1650, 120]
     worst = BEFORE_TOOLING_MIN + sum(limits.values()) + sum(smoke) / 60 + AFTER_SMOKE_MIN
-    assert (worst, job["timeout-minutes"]) == (59.5, 60)
+    assert (worst, job["timeout-minutes"]) == (55.5, 60)
 
 
 # The move left a gap: the tooling is proven, then the smoke, the credentials and the Lambda decision run for 5 to
@@ -1965,7 +2092,7 @@ def test_nothing_between_the_tooling_and_the_snap_can_undo_what_the_tooling_prov
         assert not {"shell", "working-directory"} & set(step), step.get("name")
     # The scan is not blind: the steps that set the tooling up do what it looks for.
     seen = {n: bool(UNDOES_TOOLING.search(steps[names.index(n)].get("run", ""))) for n in TOOLING}
-    assert seen == {PG_DIR: True, PG_CACHE: False, PG_FETCH: True, PG_VERIFY: True, SNAP_DEPS: True}
+    assert seen == {PG_DIR: True, PG_CACHE: False, PG_MISS: False, PG_VERIFY: True, SNAP_DEPS: True}
 
 
 def test_once_main_moves_no_step_is_an_action_or_runs_an_installer():
@@ -1986,7 +2113,7 @@ def test_once_main_moves_no_step_is_an_action_or_runs_an_installer():
     # The scan is not blind: above the FF it names each step that is an action or installs.
     above = {s.get("name"): _installs(s) for s in steps[:moves[0]]}
     assert {n: above[n] for n in TOOLING + [AWS_CREDS]} == {
-        PG_DIR: "", PG_CACHE: "uses actions/cache", PG_FETCH: "docker", PG_VERIFY: "", SNAP_DEPS: "pip install",
+        PG_DIR: "", PG_CACHE: "uses actions/cache/restore", PG_MISS: "", PG_VERIFY: "", SNAP_DEPS: "pip install",
         AWS_CREDS: "uses aws-actions/configure-aws-credentials"}
     assert _installs({"run": "curl -sS https://example.com/x | sh"}) and not _installs(
         {"run": 'curl -sS "https://api.github.com/repos/$REPO/git/refs/heads/main"'})
@@ -1995,9 +2122,12 @@ def test_once_main_moves_no_step_is_an_action_or_runs_an_installer():
 def test_every_snapshot_tooling_step_that_can_stall_has_its_own_short_time_limit():
     steps, names = _promote_steps()
     can_stall = [n for n in TOOLING if _fetches_tooling(steps[names.index(n)])]
-    assert can_stall == [PG_CACHE, PG_FETCH, SNAP_DEPS]
-    for name in can_stall:
-        limit = steps[names.index(name)].get("timeout-minutes")
+    assert can_stall == [PG_CACHE, SNAP_DEPS]
+    warm = {s.get("name"): s for s in _workflow(WARM)["jobs"]["warm"]["steps"]}
+    warm_stall = [n for n, s in warm.items() if _fetches_tooling(s)]
+    assert len(warm_stall) == 4 and WARM_FETCH in warm_stall, warm_stall  # restore, fetch, save, proof
+    for name, step in [(n, steps[names.index(n)]) for n in can_stall] + [(n, warm[n]) for n in warm_stall]:
+        limit = step.get("timeout-minutes")
         assert type(limit) is int and 0 < limit <= 5, (
             f"{name!r} can wait on the network and has timeout-minutes {limit!r}: without a step limit of 1 to 5 "
             "minutes a stall runs to the job's 60, and the next tooling limit no longer fits inside it")
@@ -2105,16 +2235,17 @@ def test_no_promote_gate_job_but_the_spa_deploy_ends_in_deploy():
     assert ending == ["deploy"], ending
 
 
-def _run_tooling(tmp_path, name, **stubs):
-    """One tooling step's body, the runner's way. `stubs` maps a command to the sh body that follows its argv log
-    line; /usr/lib/postgresql/17 becomes tmp_path/pg17. Returns (proc, the logged command lines, tmp_path/pg17)."""
-    _, step = _step(PROMOTE, "promote", name)
+def _run_tooling(tmp_path, name, workflow=PROMOTE, job="promote", **stubs):
+    """One tooling step's body, the runner's way, with its own `env:`. `stubs` maps a command to the sh body that
+    follows its argv log line; /usr/lib/postgresql/17 becomes tmp_path/pg17. Returns (proc, the logged command
+    lines, tmp_path/pg17)."""
+    _, step = _step(workflow, job, name)
     bindir, log, root = _bindir(tmp_path), tmp_path / "argv", tmp_path / "pg17"
     for command, body in stubs.items():
         (bindir / command).write_text(f'#!/bin/sh\necho "{command} $*" >> "{log}"\n{body}\n')
         (bindir / command).chmod(0o755)
     proc = _run_as_runner(tmp_path, step["run"].replace(PG_ROOT, str(root)),
-                          dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}"))
+                          dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", **(step.get("env") or {})))
     return proc, (log.read_text().splitlines() if log.exists() else []), root
 
 
@@ -2148,13 +2279,22 @@ esac"""
 def _run_fetch(tmp_path, monkeypatch, create=0, cp=0, rm=0, cid="c0ffee"):
     for key, value in (("CREATE_RC", create), ("CP_RC", cp), ("RM_RC", rm), ("CID", cid)):
         monkeypatch.setenv(key, str(value))
-    return _run_tooling(tmp_path, PG_FETCH, docker=DOCKER_STUB)
+    return _run_tooling(tmp_path, WARM_FETCH, WARM, "warm", docker=DOCKER_STUB)
 
 
-def test_pg17_fetch_step_copies_the_client_out_of_the_image(tmp_path, monkeypatch):
+def _refused_unwritten(proc):
+    """The warmer's step failed with exactly one ::error, under its own title, saying the entry was not written."""
+    errors = _errors(proc)
+    assert proc.returncode == 1 and len(errors) == 1, proc.stdout + proc.stderr
+    assert errors[0].startswith("::error title=pg17 cache warm::") and "the cache entry was not written" in errors[0]
+    return errors[0]
+
+
+def test_pg17_warm_fetch_step_copies_the_client_out_of_the_pinned_image(tmp_path, monkeypatch):
     proc, log, root = _run_fetch(tmp_path, monkeypatch)
     assert proc.returncode == 0 and not _annotations(proc), proc.stdout + proc.stderr
-    assert log == ["docker create postgres:17", f"docker cp c0ffee:{root}/bin/. {root}/bin/", "docker rm -f c0ffee"]
+    image = _step(WARM, "warm", WARM_FETCH)[1]["env"]["PG17_IMAGE"]
+    assert log == [f"docker create {image}", f"docker cp c0ffee:{root}/bin/. {root}/bin/", "docker rm -f c0ffee"]
 
 
 @pytest.mark.parametrize("outcome,said,calls", [
@@ -2164,12 +2304,12 @@ def test_pg17_fetch_step_copies_the_client_out_of_the_image(tmp_path, monkeypatc
     (dict(cp=1), "failed, or did not finish in 30 s (exit 1)", 2),
     (dict(cp=137), "did not finish in 30 s (exit 137)", 2),
 ], ids=["pull-failed", "pull-hung", "no-container-id", "copy-failed", "copy-hung"])
-def test_pg17_fetch_step_refuses_unmoved_and_names_what_failed(tmp_path, monkeypatch, outcome, said, calls):
+def test_pg17_warm_fetch_step_fails_loudly_and_names_what_failed(tmp_path, monkeypatch, outcome, said, calls):
     proc, log, _ = _run_fetch(tmp_path, monkeypatch, **outcome)
-    assert said in _refused_unmoved(proc) and len(log) == calls
+    assert said in _refused_unwritten(proc) and len(log) == calls
 
 
-def test_pg17_fetch_step_a_scratch_container_it_cannot_remove_is_a_note_not_a_refusal(tmp_path, monkeypatch):
+def test_pg17_warm_fetch_step_a_scratch_container_it_cannot_remove_is_a_note_not_a_failure(tmp_path, monkeypatch):
     proc, log, _ = _run_fetch(tmp_path, monkeypatch, rm=1)
     assert proc.returncode == 0 and not _annotations(proc), proc.stdout + proc.stderr
     assert len(log) == 3 and "note: could not remove the scratch container c0ffee (exit 1)" in proc.stdout
@@ -2199,6 +2339,42 @@ def test_pg17_verify_step_refuses_unmoved_and_names_the_binary_and_the_cache_ent
     error = _refused_unmoved(proc)
     assert f"::{root}/bin/{broken} does not run" in error
     assert f"delete the Actions cache entry {PG_KEY}" in error
+    # A dev-ref run falls back to main's entry, and a miss is refused: delete both, then warm, then re-run.
+    assert "BOTH refs/heads/dev and refs/heads/main" in error and f".github/workflows/{WARM}" in error
+    assert "fetches a fresh one" not in error
+
+
+def test_pg17_cache_miss_step_refuses_unmoved_and_says_how_to_warm(tmp_path):
+    proc, log, _ = _run_tooling(tmp_path, PG_MISS)
+    error = _refused_unmoved(proc)
+    assert log == [] and PG_KEY in error and "the promote does not fetch one" in error
+    assert f"push a commit to dev that touches .github/workflows/{WARM}" in error
+    assert f"dispatch {WARM} once it is on main" in error
+    assert "BOTH refs/heads/dev and refs/heads/main" in error
+
+
+def test_pg17_warm_verifies_a_cache_hit(tmp_path):
+    _pg17_binaries(tmp_path / "pg17", pg_dump=0, pg_dumpall=0)
+    proc, _, _ = _run_tooling(tmp_path, WARM_HIT_VERIFY, WARM, "warm")
+    assert proc.returncode == 0 and not _annotations(proc), proc.stdout + proc.stderr
+    assert proc.stdout.splitlines() == ["pg_dump (PostgreSQL) 17.6", "pg_dumpall (PostgreSQL) 17.6"]
+
+
+@pytest.mark.parametrize("present,broken", [(dict(pg_dump=0), "pg_dumpall"), (dict(pg_dump=1, pg_dumpall=0), "pg_dump")])
+def test_pg17_warm_fails_loudly_on_a_cached_copy_that_does_not_run(tmp_path, present, broken):
+    _pg17_binaries(tmp_path / "pg17", **present)
+    proc, _, root = _run_tooling(tmp_path, WARM_HIT_VERIFY, WARM, "warm")
+    errors = _errors(proc)
+    assert proc.returncode == 1 and len(errors) == 1, proc.stdout + proc.stderr
+    assert errors[0].startswith(f"::error title=pg17 cache warm::the cached {root}/bin/{broken} does not run")
+    assert f"Delete the key {PG_KEY} on BOTH refs/heads/dev and refs/heads/main" in errors[0]
+
+
+def test_pg17_warm_force_refetch_on_a_hit_fails_instead_of_pretending(tmp_path):
+    proc, _, _ = _run_tooling(tmp_path, WARM_FORCE_REFUSE, WARM, "warm")
+    errors = _errors(proc)
+    assert proc.returncode == 1 and len(errors) == 1, proc.stdout + proc.stderr
+    assert "was NOT replaced: cache entries are immutable" in errors[0] and "BOTH refs" in errors[0]
 
 
 PIP_PLAIN = "python3 -m pip install --quiet boto3 requests"
