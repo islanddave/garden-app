@@ -68,7 +68,7 @@ function planTable(rows) {
   const store = new Map();
   const pg = { query: vi.fn(async (sql, params = []) => {
     if (/from plants/.test(sql)) return { rows };
-    if (/from spaces/.test(sql)) return { rows: [{ id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6 }] };
+    if (/from spaces/.test(sql)) return { rows: [{ id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6, created_by: DAVE }] };
     if (/insert into daily_plan/.test(sql)) { store.set(`${params[0]}|${params[1]}`, JSON.parse(params[2])); return { rows: [] }; }
     if (/from daily_plan where user_id = \$1 and plan_date = \$2/.test(sql)) {
       const items = store.get(`${params[0]}|${params[1]}`);
@@ -90,6 +90,8 @@ beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.stubEnv('FROST_ALERT_ENABLED', 'true');
   vi.stubEnv('FROST_RADIATIVE_ENABLED', 'true');   // prod, read 2026-09-18
+  // BUG-AUTHZLAMBDA-001: the Space is Dave's, and Jen shares its household, so both keep their assignments.
+  vi.stubEnv('GARDEN_HOUSEHOLD_IDS', 'user_dave,user_jen');
 });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 

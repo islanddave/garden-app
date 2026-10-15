@@ -74,6 +74,10 @@ async function planting(tag, projectId, state = 'live') {
 }
 // Drive run() and keep the cache upserts it sent. `today` is arbitrary: the recording answers the rain
 // reader with a gauge day above threshold and the once-a-day guard with nothing, whatever the date.
+// BUG-AUTHZLAMBDA-001: the rain logger runs per Space, over the Spaces run() read, and only for one
+// with an owner; the cache upserts follow once a Space's INSERT wrote a row. So the recording answers
+// the spaces read with one owned Space and the rain INSERT with one row written. Neither is executed.
+const SPACE_ID = '5a000000-0000-4000-8000-0000000000c1'
 async function sentCacheUpserts() {
   const sent = []
   const pg = {
@@ -82,6 +86,10 @@ async function sentCacheUpserts() {
       if (/select precip_in, precip_source from weather_daily/i.test(text)) {
         return { rows: [{ precip_in: 0.34, precip_source: 'gauge_merged' }], rowCount: 1 }
       }
+      if (/from spaces/i.test(text)) {
+        return { rows: [{ id: SPACE_ID, postal_code: null, weather_lat: 42.5, weather_lng: -72.6, created_by: USER }], rowCount: 1 }
+      }
+      if (/^\s*insert\s+into\s+event_log/i.test(text)) return { rows: [], rowCount: 1 }
       return { rows: [], rowCount: 0 }
     },
   }

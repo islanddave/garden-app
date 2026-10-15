@@ -98,7 +98,7 @@ function pgStub(sent, plantings = [planting('p1', 'pepper'), planting('p2', 'tom
   return {
     query: vi.fn(async (sql) => {
       if (/from plants/.test(sql)) return { rows: plantings };
-      if (/from spaces/.test(sql)) return { rows: [{ id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6 }] };
+      if (/from spaces/.test(sql)) return { rows: [{ id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6, created_by: USER }] };
       if (/select items->'alerts_sent' as alerts_sent from daily_plan/.test(sql)) return { rows: sent ? [{ alerts_sent: sent }] : [] };
       if (/^\s*select items from daily_plan/.test(sql)) return { rows: sent ? [{ items: { alerts_sent: sent } }] : [] };
       return { rows: [] };
@@ -182,6 +182,7 @@ describe('END TO END — the written row, read by the Today client\'s own rule',
 describe('both users\' rows — one run(), two written rows, one decision (QA probe)', () => {
   it('two users, one Space, a post-window run: both written rows carry the arrays and both say "warmed"', async () => {
     vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    vi.stubEnv('GARDEN_HOUSEHOLD_IDS', 'user_dave,user_jen');   // BUG-AUTHZLAMBDA-001: Jen shares Dave's Space household
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const pg = pgStub(SENT, [planting('p1', 'pepper'), planting('p2', 'tomato', { assignee_user_id: 'user_jen' })]);
     await h.run({

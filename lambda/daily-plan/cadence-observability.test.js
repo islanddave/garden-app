@@ -40,8 +40,11 @@ const { withCoverFlags } = _cf;
 
 const SPACE = 'sp1';
 const DATE = '2026-06-20';
-const FALLBACK = 'user_owner_fallback';   // OWNER_FALLBACK_SUB — unassigned rows land here
+const FALLBACK = 'user_owner_fallback';   // the Space's owner (spaces.created_by) — unassigned rows land here
+// BUG-AUTHZLAMBDA-001: unassigned rows go to the Space owner, not to OWNER_FALLBACK_SUB, and an assignee
+// must be in the Space household. So the Space is owned by FALLBACK and JEN shares its household.
 const JEN = 'user_3E2xA85kQhr1vSZhiv4W1GLudJV';
+const HOUSEHOLD = `${FALLBACK},${JEN}`;
 
 // The system-only resolved_profile, verbatim from prod. Identical on every naked-default row.
 const SYSTEM_PROFILE = { light: 'part_sun', water_amount_ml: 250, water_interval_days: 3, fertilize_interval_days: 14 };
@@ -73,7 +76,7 @@ function pgStub(plantings) {
   const writes = [];
   const query = vi.fn(async (sql, params) => {
     if (/from plants/.test(sql)) return { rows: plantings };
-    if (/from spaces/.test(sql)) return { rows: [{ id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6 }] };
+    if (/from spaces/.test(sql)) return { rows: [{ id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6, created_by: FALLBACK }] };
     if (/insert into daily_plan/.test(sql)) { writes.push(JSON.parse(params[2])); return { rows: [] }; }
     return { rows: [] };
   });
@@ -86,7 +89,7 @@ const precip = async () => ({ forecast_lows: [null, null, null],
   today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, yesterday_precip_actual_in: 0 });
 
 async function drive(plantings = ROWS()) {
-  vi.stubEnv('OWNER_FALLBACK_SUB', FALLBACK);
+  vi.stubEnv('GARDEN_HOUSEHOLD_IDS', HOUSEHOLD);
   vi.stubEnv('CARE_CADENCE_SCOPES_ENABLED', 'true');           // the live prod arm
   const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
   const pg = pgStub(plantings);
@@ -168,7 +171,7 @@ describe('the emit reports the correct arm counts', () => {
 });
 
 describe('per-user disaggregation — Jen must not be invisible inside Dave', () => {
-  it('by_owner keys on the assignee, falling back to OWNER_FALLBACK_SUB', async () => {
+  it('by_owner keys on the assignee, falling back to the Space owner', async () => {
     const { emits } = await drive();
     expect(emits[0].by_owner).toEqual({
       [FALLBACK]: { default: 1, genus: 1 },
@@ -196,6 +199,37 @@ describe('per-user disaggregation — Jen must not be invisible inside Dave', ()
     const { emits } = await drive(rows);
     expect(emits[0].by_owner[JEN]).toEqual({ default: 1, db: 1 });
     expect(emits[0].by_owner[FALLBACK]).toEqual({ genus: 1 });
+  });
+
+  it('BUG-AUTHZLAMBDA-001: unassigned rows go to EACH Space\'s own owner, never to OWNER_FALLBACK_SUB', async () => {
+    // Two Spaces, two owners, and an OWNER_FALLBACK_SUB that is neither: by_owner must attribute each
+    // Space's unassigned rows to that Space's created_by, exactly as generatePlan is handed it.
+    vi.stubEnv('OWNER_FALLBACK_SUB', 'user_stale_global_fallback');
+    vi.stubEnv('GARDEN_HOUSEHOLD_IDS', HOUSEHOLD);
+    vi.stubEnv('CARE_CADENCE_SCOPES_ENABLED', 'true');
+    const rows = ROWS();
+    rows[1].workspace_id = 'sp2';
+    rows[2].assignee_user_id = null;
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const writes = [];
+    const pg = {
+      query: vi.fn(async (sql, params) => {
+        if (/from plants/.test(sql)) return { rows };
+        if (/from spaces/.test(sql)) return { rows: [
+          { id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6, created_by: FALLBACK },
+          { id: 'sp2', postal_code: null, weather_lat: 42.5, weather_lng: -72.6, created_by: 'user_other_house' }] };
+        if (/insert into daily_plan/.test(sql)) { writes.push(params[0]); return { rows: [] }; }
+        return { rows: [] };
+      }),
+    };
+    await run({ pg, today: DATE, dryRun: false, geocodeZip: async () => ({ lat: 42.5, lng: -72.6 }),
+      fetchNWS: wx, fetchPrecip: precip, fetchStation: async () => null, etHour: 2, event: {} });
+    const e = spy.mock.calls.map(([l]) => { try { return JSON.parse(l); } catch { return null; } })
+      .find((l) => l && l.msg === 'cadence-fallback');
+    expect(e.by_owner).toEqual({ [FALLBACK]: { default: 1, db: 1 }, user_other_house: { genus: 1 } });
+    expect(e.by_owner.user_stale_global_fallback).toBeUndefined();
+    // The plans themselves follow the same owners.
+    expect([...new Set(writes)].sort()).toEqual([FALLBACK, 'user_other_house'].sort());
   });
 });
 
@@ -261,15 +295,15 @@ describe('containment — an observability slice can never cost a nightly plan',
     // lines with N different denominators. Two spaces, one emit.
     const rows = ROWS();
     rows[2].workspace_id = 'sp2';
-    vi.stubEnv('OWNER_FALLBACK_SUB', FALLBACK);
+    vi.stubEnv('GARDEN_HOUSEHOLD_IDS', HOUSEHOLD);
     vi.stubEnv('CARE_CADENCE_SCOPES_ENABLED', 'true');
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const pg = {
       query: vi.fn(async (sql) => {
         if (/from plants/.test(sql)) return { rows };
         if (/from spaces/.test(sql)) return { rows: [
-          { id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6 },
-          { id: 'sp2', postal_code: null, weather_lat: 42.5, weather_lng: -72.6 }] };
+          { id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6, created_by: FALLBACK },
+          { id: 'sp2', postal_code: null, weather_lat: 42.5, weather_lng: -72.6, created_by: FALLBACK }] };
         return { rows: [] };
       }),
     };

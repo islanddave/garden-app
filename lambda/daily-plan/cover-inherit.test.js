@@ -96,8 +96,16 @@ async function plantingsSql(flagOverrides) {
 // UNCONDITIONAL, like the three above. Same procedure: captured with this file's harness before and
 // after and diffed. The whole flag-OFF diff is that comma and those 12 lines, and the flag-ON diff is
 // the same at the same position. No join, CTE or predicate moved, and no other column.
-const PRE_CHANGE_SHA256 = '81ecfce6863bd0f862ffb6c6c3899e888f2f7635f6ef633827a31171e39b1606';
-const PRE_CHANGE_LENGTH = 16189;
+//
+// RE-BASELINED A FIFTH TIME, 2026-10-15 (lane t3-authz-d2-20261015, BUG-AUTHZLAMBDA-001), from
+// 81ecfce6863bd0f862ffb6c6c3899e888f2f7635f6ef633827a31171e39b1606 / 16189. Two additions, both
+// UNCONDITIONAL: after the v_resolved_care join, `join spaces sp` and the `hh` household lateral with
+// their 6-line SQL comment; and after `and pj.deleted_at is null`, the two-arm owner predicate with its
+// 3-line comment. Same procedure: captured with this file's harness before and after and diffed; the
+// flag-OFF diff and the flag-ON diff are the same lines at the same positions. No column, CTE or
+// existing predicate moved.
+const PRE_CHANGE_SHA256 = '09fb5cea3c63033fb911676ca942378061da471e15f02a5d07a41a8d8c0c19ae';
+const PRE_CHANGE_LENGTH = 17422;
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 
