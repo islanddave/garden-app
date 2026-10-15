@@ -2272,6 +2272,25 @@ def test_prerevert_snap_passes_prune_false(monkeypatch):
     assert seen["prune"] is False
 
 
+def test_prerevert_snap_labels_its_lambda_versions_pre_revert(monkeypatch):
+    """OPS-SNAPCAPTUREORDER-001: a pre-revert manifest's Lambda versions are what prod serves, so it is never
+    labelled pre-deploy (the promote's label) and never absent once snap.run() takes a phase."""
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    fr.add("GET", "/git/ref/heads/main", FakeResp(200, {"object": {"sha": "mainHEAD"}}))
+    monkeypatch.setattr(rt, "requests", fr)
+    seen = {}
+    def fake_run(snap_cfg, s3=None, lambda_client=None, prune=True, phase=None):
+        seen.update(prune=prune, phase=phase)
+        return {"manifest": {}}
+    monkeypatch.setattr(rt, "snap_mod", types.SimpleNamespace(Config=lambda env=None: "SNAPCFG", run=fake_run))
+    rt.prerevert_snap(cfg)
+    assert seen == {"prune": False, "phase": "pre-revert"}
+    # and against the real snap.run(): it still has both parameters
+    import snap as real_snap
+    assert {"prune", "phase"} <= set(rt.inspect.signature(real_snap.run).parameters)
+
+
 def test_prerevert_snap_legacy_signature_fallback(monkeypatch, capsys):
     cfg = rt.Config(env=base_env())
     fr = FakeRequests()

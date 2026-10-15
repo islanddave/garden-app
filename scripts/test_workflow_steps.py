@@ -1758,7 +1758,8 @@ def test_nothing_after_the_fast_forward_fetches_tooling():
     assert "if" not in after[0] and after[0].get("continue-on-error") is True
     # The snap, above the FF, snaps without pruning.
     snap = steps[names.index(SNAP)]
-    assert snap["run"].splitlines() == [f'export PATH="{PG_BIN}:$PATH"', "python3 scripts/snap.py --no-prune"]
+    assert snap["run"].splitlines() == [f'export PATH="{PG_BIN}:$PATH"',
+                                        "python3 scripts/snap.py --no-prune --phase pre-deploy"]
     assert "if" not in snap and "continue-on-error" not in snap
     # The scan is not blind: it names every step above the FF that does fetch.
     found = {n: _fetches_tooling(steps[names.index(n)]) for n in TOOLING}
@@ -2002,7 +2003,7 @@ def test_every_snapshot_tooling_step_that_can_stall_has_its_own_short_time_limit
             "minutes a stall runs to the job's 60, and the next tooling limit no longer fits inside it")
 
 
-# After the fast-forward the promote runs three called workflows and two jobs of its own. A job that `uses:` a
+# After the fast-forward the promote runs three called workflows and three jobs of its own. A job that `uses:` a
 # workflow cannot carry timeout-minutes (GitHub does not accept the key there), so each limit sits on the job that
 # has the steps. None is None on purpose: spa-withheld is one echo and an exit 1, and has no limit by decision.
 DEPLOY_JOB_LIMITS = {
@@ -2010,7 +2011,7 @@ DEPLOY_JOB_LIMITS = {
     "deploy.yml": {"deploy": 15},  # above its own smoke step's bounded worst case, about 826 s
     "verify-lambda-invariants.yml": {"verify": 10},
 }
-AFTER_PROMOTE_LIMITS = {"verify": 10, "spa-withheld": None}
+AFTER_PROMOTE_LIMITS = {"verify": 10, "spa-withheld": None, "snap-lambdas": 10}
 CALLER_JOBS = {
     PROMOTE: {"deploy-lambdas", "deploy", "verify-lambda-invariants"},
     "deploy-lambda.yml": {"verify-daily-plan"},
@@ -2050,6 +2051,58 @@ def test_every_deploy_job_that_runs_after_the_fast_forward_has_its_pinned_time_l
         assert not limited, (
             f"{name}: {limited} call a reusable workflow and carry timeout-minutes, which GitHub refuses when the "
             "workflow is loaded; put the limit on the called workflow's own job")
+
+
+# ── promote-gate.yml: snap-lambdas records the Lambda versions that shipped (OPS-SNAPCAPTUREORDER-001) ─────────────
+SNAP_LAMBDAS_IF = ("${{ !cancelled() && needs.promote.result == 'success' && "
+                   "needs.deploy-lambdas.outputs.deploy_result == 'success' }}")
+
+
+def test_snap_lambdas_runs_after_a_good_lambda_deploy_and_nothing_waits_for_it():
+    jobs = _workflow(PROMOTE)["jobs"]
+    job = jobs["snap-lambdas"]
+    assert _needs(job) == {"resolve", "promote", "deploy-lambdas"} and job["if"] == SNAP_LAMBDAS_IF
+    assert (job["runs-on"], job["timeout-minutes"]) == ("ubuntu-26.04", 10)
+    assert job["permissions"] == {"id-token": "write", "contents": "read"}
+    # Nothing needs it: the SPA deploy is never delayed or withheld by it, and no later job reads it.
+    assert [j for j, body in jobs.items() if "snap-lambdas" in _needs(body)] == []
+    assert "continue-on-error" not in job and "uses" not in job
+    steps = job["steps"]
+    assert [str(s.get("uses", "")).split("@")[0] or s["run"].strip().splitlines()[-1].strip() for s in steps] == [
+        "actions/checkout", "|| fail \"boto3, requests and botocore.exceptions do not import after the install (exit $?)\"",
+        "aws-actions/configure-aws-credentials", "python3 scripts/snap.py --lambdas-only"]
+    assert steps[0]["with"] == {"ref": "${{ needs.resolve.outputs.dev_sha }}"}
+    assert steps[1]["timeout-minutes"] <= 5 and steps[1]["run"].count("timeout -k ") == 3
+    creds = {s["name"]: s for s in jobs["promote"]["steps"] if "name" in s}[AWS_CREDS]
+    assert steps[2]["uses"] == creds["uses"] and steps[2]["with"] == creds["with"]
+    assert set(steps[3]["env"]) == {"MAIN_SHA", "SNAP_VERSION", "SNAP_BUCKET", "TMPDIR"}
+    assert steps[3]["env"]["MAIN_SHA"] == "${{ needs.resolve.outputs.dev_sha }}"
+
+
+def test_snap_lambdas_is_in_the_promotes_environment():
+    """The snap role trusts the environment subject only: without it AssumeRoleWithWebIdentity is denied."""
+    jobs = _workflow(PROMOTE)["jobs"]
+    assert jobs["snap-lambdas"]["environment"] == jobs["promote"]["environment"] == "production"
+
+
+def test_every_job_that_assumes_the_snap_role_declares_a_production_environment():
+    found = []
+    for path in sorted(glob.glob(os.path.join(HERE, "..", ".github", "workflows", "*.yml"))):
+        for job_id, job in _workflow(os.path.basename(path))["jobs"].items():
+            if "vars.SNAP_AWS_ROLE_ARN" in json.dumps(job):
+                env = job.get("environment")
+                env = env.get("name") if isinstance(env, dict) else env
+                found.append((os.path.basename(path), job_id))
+                assert env in ("production", "production-destructive"), (os.path.basename(path), job_id, env)
+    assert ("promote-gate.yml", "snap-lambdas") in found and ("promote-gate.yml", "promote") in found, found
+
+
+def test_no_promote_gate_job_but_the_spa_deploy_ends_in_deploy():
+    """verify-deploy.py counts every job whose name ends in "deploy" as the SPA deploy (OPS-VERIFY-001)."""
+    jobs = _workflow(PROMOTE)["jobs"]
+    ending = sorted({j for j, body in jobs.items()
+                     for n in (j, str(body.get("name", ""))) if n.strip().lower().endswith("deploy")})
+    assert ending == ["deploy"], ending
 
 
 def _run_tooling(tmp_path, name, **stubs):

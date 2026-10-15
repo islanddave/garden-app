@@ -518,7 +518,11 @@ def prerevert_snap(cfg):
     # revert reaches fast_path_branch, and with the snap fleet at/over K it can
     # DELETE snap-<TARGET_VERSION> — the very branch the revert is about to
     # restore from. The revert's snap must archive only, never prune.
-    if "prune" in inspect.signature(snap_mod.run).parameters:
+    params = inspect.signature(snap_mod.run).parameters
+    if "prune" in params:
+        # phase labels the manifest's Lambda versions as what prod serves now (OPS-SNAPCAPTUREORDER-001).
+        if "phase" in params:
+            return snap_mod.run(snap_cfg, prune=False, phase="pre-revert")
         return snap_mod.run(snap_cfg, prune=False)
     sys.stderr.write(
         "[revert] WARN: snap.run() has no prune parameter — retention prune may "

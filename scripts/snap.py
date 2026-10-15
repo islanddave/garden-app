@@ -66,6 +66,18 @@ target artifact for vX already exists pinned to a DIFFERENT main_sha, we ABORT
 MODES (argv):
   (none)              the full snap above, then the retention prune.
   --no-prune          the full snap without the prune (promote-gate, pre-FF).
+  --phase P           the full snap, stamping manifest.lambda_versions_phase = P
+                      (promote-gate passes pre-deploy; revert-to.py's pre-revert
+                      snap passes pre-revert through run(); without it the key is
+                      absent).
+  --lambdas-only      after promote-gate's deploy-lambdas (job snap-lambdas):
+                      re-publish the release functions and rewrite vX's manifest
+                      with the versions that shipped (OPS-SNAPCAPTUREORDER-001).
+                      Reads only MAIN_SHA, SNAP_VERSION, SNAP_BUCKET and AWS
+                      credentials. Refuses a manifest pinned to another MAIN_SHA.
+                      The first run keeps the pre-deploy map as
+                      lambda_versions_pre_deploy / lambda_uncaptured_pre_deploy;
+                      a re-run (phase already post-deploy) never touches them.
   --prune-only        the retention prune alone (promote-gate, post-FF). Reads
                       only NEON_API_KEY, NEON_PROJECT_ID, NEON_PROD_BRANCH_ID,
                       SNAP_BRANCH_PREFIX, SNAP_RETENTION; with SNAP_VERSION and
@@ -171,6 +183,17 @@ class PruneConfig:
         self.retention = Config._int_env(env, "SNAP_RETENTION", 5, minimum=1)
         self.version = env.get("SNAP_VERSION") or ""
         self.main_sha = env.get("MAIN_SHA") or ""
+        self.snap_bucket = env.get("SNAP_BUCKET") or "garden-snapshots-prod"
+
+
+class LambdasOnlyConfig:
+    """--lambdas-only (OPS-SNAPCAPTUREORDER-001): MAIN_SHA, SNAP_VERSION, SNAP_BUCKET, plus the AWS
+    credentials boto3 finds itself. No bot token, Neon key or DB URL: the job that runs it has none."""
+
+    def __init__(self, env=None):
+        env = os.environ if env is None else env
+        self.main_sha = Config._req(env, "MAIN_SHA")
+        self.version = Config._req(env, "SNAP_VERSION")
         self.snap_bucket = env.get("SNAP_BUCKET") or "garden-snapshots-prod"
 
 
@@ -734,8 +757,11 @@ def publish_lambda_versions(cfg, lambda_client=None, functions=None):
     that was LIVE when this snap ran. Inside promote-gate that is the PREVIOUS release's code,
     not this one's: snap is a step of the `promote` job and `deploy-lambdas` needs that job, so
     it deploys after snap. Manifest v4.128.0 recorded garden-plants v175, whose code is the
-    v4.127.0 deploy, while $LATEST carried v4.128.0's. Inside revert-to.py's PRE-REVERT snap the
-    versions are exactly what prod is serving. So revert-to.py restores from these versions only
+    v4.127.0 deploy, while $LATEST carried v4.128.0's. Since OPS-SNAPCAPTUREORDER-001 the full
+    snap stamps that as lambda_versions_phase "pre-deploy", and promote-gate's snap-lambdas job,
+    after a successful deploy-lambdas, calls this again (--lambdas-only) and records the shipped
+    versions as phase "post-deploy". Inside revert-to.py's PRE-REVERT snap the
+    versions are exactly what prod is serving (phase "pre-revert"). So revert-to.py restores from these versions only
     in rollback(), from its own pre-revert snap; a forward revert rebuilds the target's Lambdas
     from the target's tree instead.
 
@@ -947,10 +973,15 @@ def prune_old_branches(cfg):
 
 # --- orchestration -----------------------------------------------------------
 
-def run(cfg, s3=None, lambda_client=None, prune=True):
+def run(cfg, s3=None, lambda_client=None, prune=True, phase=None):
     """prune=False is the revert-flow contract: revert-to.py's pre-revert snap
     must not prune (it could delete the very snapshot being restored). The
-    promote passes it too (--no-prune) and prunes after its fast-forward."""
+    promote passes it too (--no-prune) and prunes after its fast-forward.
+
+    phase labels what lambda_versions are (manifest.lambda_versions_phase):
+    "pre-deploy" from promote-gate (the previous release's code; snap-lambdas
+    moves it to "post-deploy"), "pre-revert" from revert-to.py (what prod
+    serves). None leaves the key out (snap-rehearsal, older callers)."""
     s3 = s3 or boto3.client("s3")
 
     validate(cfg.version)
@@ -994,6 +1025,8 @@ def run(cfg, s3=None, lambda_client=None, prune=True):
         "app_version": cfg.app_version,
         "timestamp": utc_now_iso(),
     }
+    if phase:
+        manifest["lambda_versions_phase"] = phase
     manifest_key = write_manifest(s3, cfg, manifest)
 
     # Retention prune AFTER a successful, fully-verified snap.
@@ -1014,6 +1047,86 @@ def run(cfg, s3=None, lambda_client=None, prune=True):
         "pruned": prune_report["pruned"],
         "skipped": prune_report["skipped"],
     }
+
+
+# What revert-to.py's load_manifest requires (revert-to.py:414-417). --lambdas-only refuses to
+# rewrite a manifest that lacks one, and never drops one.
+REQUIRED_MANIFEST_KEYS = ("git_tag", "main_sha", "neon_branch", "dump_s3_key", "lambda_versions", "cf_dist")
+LAMBDA_PHASES_BEFORE_DEPLOY = (None, "pre-deploy")  # None = a manifest from before the phase key
+
+
+def read_manifest_strict(s3, cfg):
+    """snapshots/<vX>.json via GetObject. Unlike s3_object_exists, a 403 is NEVER read as absent."""
+    key = s3_key_for("manifest", cfg)
+    where = f"s3://{cfg.snap_bucket}/{key}"
+    try:
+        return s3_get_json(s3, cfg.snap_bucket, key)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("AccessDenied", "403", "Forbidden"):
+            raise SnapError(
+                f"AccessDenied reading {where}: the snap role needs s3:GetObject on snapshots/* (snap-ops "
+                f"SnapBucketWriteRead, Projects/Gardening/iam-trust-rollback). Not treated as absent; S3 also "
+                f"answers a missing key with 403 to a role without s3:ListBucket, but the promote's own snap "
+                f"wrote this key, so the grant is the first thing to check")
+        if code in ("NoSuchKey", "404", "NotFound"):
+            raise SnapError(f"no manifest at {where}: the promote's snap did not write one for {cfg.version}")
+        raise SnapError(f"reading {where} failed: {code or type(e).__name__}: {e}")
+
+
+def lambdas_only(cfg, s3=None, lambda_client=None):
+    """--lambdas-only: record the Lambda versions that SHIPPED in vX's manifest.
+
+    Runs after deploy-lambdas succeeded (promote-gate job snap-lambdas). publish_version on each
+    release function now returns the version of the code just deployed. IDEMPOTENT: the
+    pre-deploy map is copied to lambda_versions_pre_deploy / lambda_uncaptured_pre_deploy only
+    while the phase is still pre-deploy (or absent); a re-run finds post-deploy and only
+    refreshes lambda_versions / lambda_uncaptured, so "Re-run failed jobs" can never overwrite
+    the real pre-deploy map with the post-deploy one. Every other key is kept as it was."""
+    validate(cfg.version)
+    s3 = s3 or boto3.client("s3")
+    manifest = read_manifest_strict(s3, cfg)
+    if manifest.get("main_sha") != cfg.main_sha:
+        raise SnapError(
+            f"manifest for {cfg.version} is pinned to main_sha {manifest.get('main_sha')} != "
+            f"{cfg.main_sha}; refusing to record this promote's Lambda versions in it")
+    missing = [k for k in REQUIRED_MANIFEST_KEYS if k not in manifest]
+    if missing:
+        raise SnapError(f"manifest for {cfg.version} lacks {missing}; refusing to rewrite a manifest "
+                        f"revert-to.py cannot load")
+    phase = manifest.get("lambda_versions_phase")
+    if phase not in LAMBDA_PHASES_BEFORE_DEPLOY + ("post-deploy",):
+        raise SnapError(f"manifest for {cfg.version} has lambda_versions_phase {phase!r}; only a "
+                        f"promote's manifest (pre-deploy or post-deploy) is updated here")
+    versions, uncaptured = publish_lambda_versions(cfg, lambda_client=lambda_client)
+    updated = dict(manifest)
+    if phase in LAMBDA_PHASES_BEFORE_DEPLOY:
+        updated["lambda_versions_pre_deploy"] = manifest["lambda_versions"]
+        updated["lambda_uncaptured_pre_deploy"] = manifest.get("lambda_uncaptured", {})
+    updated["lambda_versions"] = versions
+    updated["lambda_uncaptured"] = uncaptured
+    updated["lambda_versions_phase"] = "post-deploy"
+    updated["lambda_versions_captured_at"] = utc_now_iso()
+    key = write_manifest(s3, cfg, updated)
+    return {"manifest_key": key, "manifest": updated, "rerun": phase == "post-deploy"}
+
+
+def main_lambdas_only(env=None):
+    try:
+        cfg = LambdasOnlyConfig(env=env)
+        result = lambdas_only(cfg)
+    except SnapError as e:
+        sys.stderr.write(f"[snap] lambdas-only FAIL: {e}\n")
+        return 1
+    except Exception as e:  # noqa: BLE001 — any unexpected error is a red job, never a silent pass
+        sys.stderr.write(f"[snap] lambdas-only FAIL (unexpected): {type(e).__name__}: {e}\n")
+        return 1
+    m = result["manifest"]
+    sys.stdout.write(
+        f"[snap] lambdas-only OK {cfg.version} -> s3://{cfg.snap_bucket}/{result['manifest_key']} phase "
+        f"post-deploy ({len(m['lambda_versions'])} captured, {len(m['lambda_uncaptured'])} uncaptured"
+        f"{'; re-run, pre-deploy map kept' if result['rerun'] else ''})\n")
+    return 0
 
 
 def record_prune_report(cfg, report):
@@ -1058,11 +1171,15 @@ def parse_args(argv):
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--prune-only", action="store_true",
                       help="the retention prune alone; never fails (promote-gate, after the fast-forward)")
+    mode.add_argument("--lambdas-only", action="store_true",
+                      help="record the shipped Lambda versions in vX's manifest (promote-gate, snap-lambdas)")
     p.add_argument("--no-prune", action="store_true",
                    help="the full snap without the retention prune (promote-gate, before the fast-forward)")
+    p.add_argument("--phase", choices=("pre-deploy", "pre-revert"),
+                   help="the full snap: stamp manifest.lambda_versions_phase")
     args = p.parse_args(argv)
-    if args.prune_only and args.no_prune:
-        p.error("--no-prune applies to the full snap only")
+    if (args.prune_only or args.lambdas_only) and (args.no_prune or args.phase):
+        p.error("--no-prune and --phase apply to the full snap only")
     return args
 
 
@@ -1071,9 +1188,11 @@ def main(argv=None):
     args = parse_args([] if argv is None else argv)
     if args.prune_only:
         return main_prune_only()
+    if args.lambdas_only:
+        return main_lambdas_only()
     try:
         cfg = Config()
-        result = run(cfg, prune=not args.no_prune)
+        result = run(cfg, prune=not args.no_prune, phase=args.phase)
     except SnapError as e:
         # Unrecoverable -> FAIL THE SHIP.
         sys.stderr.write(f"[snap] FAIL: {e}\n")

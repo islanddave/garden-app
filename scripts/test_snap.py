@@ -1172,3 +1172,207 @@ def test_prune_only_never_records_into_another_commits_manifest_and_never_fails_
     monkeypatch.setattr(snap, "s3_get_json", denied)
     assert snap.main(["--prune-only"]) == 0
     assert capsys.readouterr().out.count("::warning::") == 2
+
+
+# --- lambda_versions_phase + --lambdas-only (OPS-SNAPCAPTUREORDER-001) ------------------------------------------
+
+@pytest.mark.parametrize("phase", [None, "pre-deploy", "pre-revert"])
+def test_run_stamps_the_phase_only_when_given(monkeypatch, phase):
+    manifests = []
+    _patch_run_steps(monkeypatch, [])
+    monkeypatch.setattr(snap, "write_manifest", lambda s, c, m: manifests.append(dict(m)) or "k")
+    result = snap.run(make_cfg(), s3=mock.Mock(), lambda_client=mock.Mock(), prune=False, phase=phase)
+    assert manifests[0].get("lambda_versions_phase") == phase == result["manifest"].get("lambda_versions_phase")
+    assert ("lambda_versions_phase" in manifests[0]) is (phase is not None)
+
+
+def test_main_passes_the_phase_to_the_full_snap(monkeypatch):
+    monkeypatch.setattr(snap.Config, "__init__", lambda self, env=None: None)
+    monkeypatch.setattr(snap.Config, "snap_bucket", "b", raising=False)
+    seen = []
+    monkeypatch.setattr(snap, "run", lambda cfg, **kw: seen.append(kw) or {
+        "manifest_key": "k", "manifest": {"git_tag": "v1"}, "pruned": [], "skipped": []})
+    assert snap.main(["--no-prune", "--phase", "pre-deploy"]) == 0
+    assert seen == [{"prune": False, "phase": "pre-deploy"}]
+
+
+@pytest.mark.parametrize("argv", [["--lambdas-only", "--no-prune"], ["--lambdas-only", "--phase", "pre-deploy"],
+                                  ["--lambdas-only", "--prune-only"], ["--phase", "post-deploy"]])
+def test_main_rejects_flags_that_do_not_go_together(argv):
+    with pytest.raises(SystemExit) as e:
+        snap.main(argv)
+    assert e.value.code == 2
+
+
+LO_ENV = {"MAIN_SHA": "a" * 40, "SNAP_VERSION": "v1.2.3", "SNAP_BUCKET": "garden-snapshots-prod"}
+MANIFEST_KEY = ("garden-snapshots-prod", "snapshots/v1.2.3.json")
+
+
+def _promote_manifest(**over):
+    m = {"git_tag": "v1.2.3", "main_sha": "a" * 40, "neon_branch": "snap-v1.2.3", "neon_branch_id": "br-1",
+         "neon_lsn": "0/ABC", "dump_s3_key": "db/snap-v1.2.3.dump", "globals_s3_key": "db/snap-v1.2.3.globals.sql",
+         "tables_s3_key": None, "photo_versionids_key": "photos/snap-v1.2.3.versionids.json",
+         "lambda_versions": {"garden-plants": "175", "garden-a": "3"},
+         "lambda_uncaptured": {"garden-new": "ResourceNotFoundException: x"},
+         "cf_dist": "E3FAJTXAORQYDT", "app_version": "v1.2.3", "timestamp": "2026-10-15T00:00:00Z",
+         "lambda_versions_phase": "pre-deploy", "prune": {"pruned": [], "skipped": []}}
+    m.update(over)
+    return {k: v for k, v in m.items() if v is not _DROP}
+
+
+_DROP = object()
+
+
+class _S3:
+    """get_object / put_object over a dict; `deny` makes GetObject answer AccessDenied."""
+
+    def __init__(self, manifest=None, deny=False):
+        self.objects = {} if manifest is None else {MANIFEST_KEY: json.dumps(manifest).encode()}
+        self.deny = deny
+        self.puts = []
+
+    def get_object(self, Bucket, Key):
+        if self.deny:
+            raise _client_error("AccessDenied", "Access Denied", op="GetObject")
+        if (Bucket, Key) not in self.objects:
+            raise _client_error("NoSuchKey", "The specified key does not exist.", op="GetObject")
+        body = self.objects[(Bucket, Key)]
+        return {"Body": mock.Mock(read=lambda: body)}
+
+    def put_object(self, Bucket, Key, Body, ContentType):
+        self.puts.append(Key)
+        self.objects[(Bucket, Key)] = Body
+
+    def manifest(self):
+        return json.loads(self.objects[MANIFEST_KEY])
+
+
+def _lambda_client(version):
+    client = mock.Mock()
+    client.get_function_configuration.return_value = {"LastUpdateStatus": "Successful"}
+    client.publish_version.side_effect = lambda FunctionName: {"Version": version}
+    return client
+
+
+def _lo(monkeypatch, s3, version="176"):
+    monkeypatch.setattr(snap, "release_lambda_functions", lambda: ["garden-plants", "garden-a", "garden-new"])
+    return snap.lambdas_only(snap.LambdasOnlyConfig(env=dict(LO_ENV)), s3=s3, lambda_client=_lambda_client(version))
+
+
+def test_lambdas_only_records_the_shipped_versions_and_keeps_the_pre_deploy_map(monkeypatch):
+    before = _promote_manifest()
+    s3 = _S3(before)
+    result = _lo(monkeypatch, s3)
+    after = s3.manifest()
+    assert s3.puts == ["snapshots/v1.2.3.json"] and result["manifest"] == after and result["rerun"] is False
+    assert after["lambda_versions"] == {"garden-plants": "176", "garden-a": "176", "garden-new": "176"}
+    assert after["lambda_uncaptured"] == {}  # first deployed by this promote: captured now
+    assert after["lambda_versions_pre_deploy"] == before["lambda_versions"]
+    assert after["lambda_uncaptured_pre_deploy"] == before["lambda_uncaptured"]
+    assert after["lambda_versions_phase"] == "post-deploy"
+    # every other key exactly as it was, so revert-to.py loads it as before
+    changed = {"lambda_versions", "lambda_uncaptured", "lambda_versions_phase"}
+    added = {"lambda_versions_pre_deploy", "lambda_uncaptured_pre_deploy", "lambda_versions_captured_at"}
+    assert set(after) == set(before) | added
+    assert {k: after[k] for k in set(before) - changed} == {k: before[k] for k in set(before) - changed}
+    assert all(k in after for k in snap.REQUIRED_MANIFEST_KEYS)
+
+
+def test_lambdas_only_required_keys_match_what_revert_to_requires():
+    import ast
+    with open(snap.os.path.join(snap.os.path.dirname(snap.__file__), "revert-to.py")) as fh:
+        tree = ast.parse(fh.read())
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "load_manifest")
+    lists = [n for n in ast.walk(fn) if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "required"]
+    assert len(lists) == 1 and tuple(ast.literal_eval(lists[0].value)) == snap.REQUIRED_MANIFEST_KEYS
+
+
+def test_lambdas_only_run_twice_never_overwrites_the_pre_deploy_map(monkeypatch):
+    before = _promote_manifest()
+    s3 = _S3(before)
+    _lo(monkeypatch, s3, version="176")
+    first = s3.manifest()
+    result = _lo(monkeypatch, s3, version="177")  # "Re-run failed jobs" re-runs it
+    second = s3.manifest()
+    assert result["rerun"] is True
+    assert second["lambda_versions_pre_deploy"] == first["lambda_versions_pre_deploy"] == before["lambda_versions"]
+    assert second["lambda_uncaptured_pre_deploy"] == before["lambda_uncaptured"]
+    assert set(second["lambda_versions"].values()) == {"177"} and second["lambda_versions_phase"] == "post-deploy"
+
+
+def test_lambdas_only_treats_a_manifest_with_no_phase_as_pre_deploy(monkeypatch):
+    before = _promote_manifest(lambda_versions_phase=_DROP, lambda_uncaptured=_DROP)  # an older snap.py's
+    s3 = _S3(before)
+    _lo(monkeypatch, s3)
+    after = s3.manifest()
+    assert after["lambda_versions_pre_deploy"] == before["lambda_versions"]
+    assert after["lambda_uncaptured_pre_deploy"] == {} and after["lambda_versions_phase"] == "post-deploy"
+
+
+@pytest.mark.parametrize("over,match", [
+    ({"main_sha": "b" * 40}, "pinned to main_sha b+ != a+; refusing"),
+    ({"cf_dist": _DROP}, r"lacks \['cf_dist'\]; refusing"),
+    ({"lambda_versions": _DROP}, r"lacks \['lambda_versions'\]"),
+    ({"lambda_versions_phase": "pre-revert"}, "lambda_versions_phase 'pre-revert'"),
+])
+def test_lambdas_only_refuses_and_writes_nothing(monkeypatch, over, match):
+    s3 = _S3(_promote_manifest(**over))
+    client = _lambda_client("176")
+    with pytest.raises(snap.SnapError, match=match):
+        snap.lambdas_only(snap.LambdasOnlyConfig(env=dict(LO_ENV)), s3=s3, lambda_client=client)
+    assert s3.puts == [] and client.publish_version.call_count == 0
+
+
+def test_lambdas_only_access_denied_names_the_grant_and_never_says_absent(monkeypatch):
+    s3 = _S3(_promote_manifest(), deny=True)
+    with pytest.raises(snap.SnapError) as e:
+        _lo(monkeypatch, s3)
+    msg = str(e.value)
+    assert msg.startswith("AccessDenied reading s3://garden-snapshots-prod/snapshots/v1.2.3.json")
+    assert "s3:GetObject on snapshots/*" in msg and "Not treated as absent" in msg and s3.puts == []
+
+
+def test_lambdas_only_a_missing_manifest_is_its_own_error(monkeypatch):
+    with pytest.raises(snap.SnapError, match="no manifest at s3://garden-snapshots-prod/snapshots/v1.2.3.json"):
+        _lo(monkeypatch, _S3(None))
+
+
+def test_lambdas_only_config_reads_only_its_three_keys():
+    cfg = snap.LambdasOnlyConfig(env={"MAIN_SHA": "a" * 40, "SNAP_VERSION": "v1.2.3", "SNAP_BUCKET": ""})
+    assert (cfg.main_sha, cfg.version, cfg.snap_bucket) == ("a" * 40, "v1.2.3", "garden-snapshots-prod")
+    for key in ("MAIN_SHA", "SNAP_VERSION"):
+        with pytest.raises(snap.SnapError, match=key):
+            snap.LambdasOnlyConfig(env={k: v for k, v in LO_ENV.items() if k != key})
+
+
+def _snap_lambdas_step_env():
+    import yaml
+    path = snap.os.path.join(snap.os.path.dirname(snap.__file__), "..", ".github", "workflows", "promote-gate.yml")
+    with open(path) as fh:
+        steps = yaml.safe_load(fh)["jobs"]["snap-lambdas"]["steps"]
+    step = next(s for s in steps if "snap.py --lambdas-only" in s.get("run", ""))
+    return step["env"]
+
+
+def test_lambdas_only_runs_with_exactly_the_env_snap_lambdas_passes(monkeypatch, tmp_path, capsys):
+    """The only proof of the job's env contract before prod: main(['--lambdas-only']) with exactly the keys the
+    workflow step sets (expressions replaced by values; an unset repo var renders as ""), boto3 stubbed."""
+    values = {"MAIN_SHA": "a" * 40, "SNAP_VERSION": "v1.2.3", "SNAP_BUCKET": "", "TMPDIR": str(tmp_path)}
+    env = {k: values[k] for k in _snap_lambdas_step_env()}  # a KeyError here = a key this test does not know
+    _only_env(monkeypatch, env)
+    for key in ("GH_TOKEN", "NEON_API_KEY", "NEON_BACKUP_URL", "PHOTOS_BUCKET", "GITHUB_REPOSITORY"):
+        assert key not in snap.os.environ
+    s3, client = _S3(_promote_manifest()), _lambda_client("176")
+    monkeypatch.setattr(snap.boto3, "client", lambda name: {"s3": s3, "lambda": client}[name])
+    assert snap.main(["--lambdas-only"]) == 0, capsys.readouterr()
+    assert s3.manifest()["lambda_versions_phase"] == "post-deploy"
+    assert set(s3.manifest()["lambda_versions"]) == set(snap.lambda_fleet.release_functions())
+    assert "[snap] lambdas-only OK v1.2.3" in capsys.readouterr().out
+
+
+def test_main_lambdas_only_fails_red_on_a_refusal(monkeypatch, capsys):
+    _only_env(monkeypatch, dict(LO_ENV))
+    monkeypatch.setattr(snap.boto3, "client", lambda name: {"s3": _S3(_promote_manifest(main_sha="b" * 40)),
+                                                            "lambda": _lambda_client("1")}[name])
+    assert snap.main(["--lambdas-only"]) == 1
+    assert "lambdas-only FAIL: manifest for v1.2.3 is pinned" in capsys.readouterr().err

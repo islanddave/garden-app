@@ -15,7 +15,9 @@ name: promote-gate
 # Just BEFORE the FF, a version-snap (scripts/snap.py) captures a revertible marker (git tag + Neon branch + durable
 # dump + photo/lambda version-ids + manifest) INSIDE the same promote job — so a green promote always has a snapshot,
 # and a snap failure reds the promote with main untouched (BUG-PROMOTEFFORDER-001, 2026-10-15; it ran after the FF
-# until then). After the FF the job prunes old snapshot branches (never fatal). Then the `deploy` job (workflow_call
+# until then). After the FF the job prunes old snapshot branches (never fatal). The snap's Lambda versions are the
+# PREVIOUS release's code (phase "pre-deploy"); after a successful deploy-lambdas the `snap-lambdas` job re-records
+# them as the versions that shipped (OPS-SNAPCAPTUREORDER-001). Then the `deploy` job (workflow_call
 # into deploy.yml) builds + deploys the SPA
 # under that same approval-free production ref policy, making promote->deploy deterministic (no reliance on
 # push:main retriggering) — it is a second environment binding, NOT a second approval.
@@ -924,7 +926,7 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
-          python3 scripts/snap.py --no-prune
+          python3 scripts/snap.py --no-prune --phase pre-deploy
 
       # A fresh token for the FF. The first was minted at the start of the job and lives 60 minutes; the FF is
       # now the job's last-but-one step, where that token is oldest (up to the job's whole 60).
@@ -1007,7 +1009,7 @@ jobs:
   # raced BOTH the SPA deploy and snap.py. Measured inversion: promote-gate 31657287769 served the new
   # SPA 3m10s before the Lambdas finished. It is now an explicit predecessor, which also places it
   # strictly AFTER snap.py (a step of `promote`), so the revert manifest records a clean pre-deploy
-  # Lambda set instead of a torn mix.
+  # Lambda set instead of a torn mix, and `snap-lambdas` below then records the set that shipped.
   #
   # Skipped entirely on an SPA-only promote — that is the common case and must stay cheap.
   #
@@ -1058,7 +1060,8 @@ jobs:
           {
             echo "## SPA deploy WITHHELD — Lambda deploy failed"
             echo ""
-            echo "\`main\` HAS been fast-forwarded and the snapshot marker was taken, but one or more"
+            echo "\`main\` HAS been fast-forwarded and the snapshot marker was taken (its Lambda versions stay"
+            echo "the pre-deploy set: snap-lambdas runs only after a good Lambda deploy), but one or more"
             echo "Lambda functions failed to deploy, so the SPA was held back deliberately: a new"
             echo "frontend against stale Lambdas is the incompatibility this ordering exists to prevent."
             echo ""
@@ -1069,6 +1072,67 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::error::SPA deploy withheld — Lambda deploy failed. main is advanced; prod still serves the previous SPA. See the run summary."
           exit 1
+
+  # OPS-SNAPCAPTUREORDER-001 — THE LAMBDA VERSIONS THAT SHIPPED. The promote's snap runs before deploy-lambdas, so
+  # the versions it publishes are the PREVIOUS release's code, stamped lambda_versions_phase "pre-deploy". Once the
+  # Lambda deploy has succeeded, this job re-publishes every release function (scripts/snap.py --lambdas-only) and
+  # rewrites snapshots/<vX>.json: lambda_versions = what now runs, the old map kept as lambda_versions_pre_deploy,
+  # phase "post-deploy". Skipped on an SPA-only promote (the pre-deploy capture IS the running code) and when the
+  # Lambda deploy failed (the manifest then honestly says pre-deploy).
+  #   * Nothing needs it: `deploy` neither waits for it nor can be withheld by it, and verify-deploy.py counts
+  #     only jobs whose name ends in "deploy" (keep this name off that suffix; a test pins it).
+  #   * environment: production is LOAD-BEARING. The snap role's OIDC trust is an exact match on the subject
+  #     ...:environment:production / production-destructive; without an environment the subject is the ref and
+  #     AssumeRoleWithWebIdentity is denied. It adds no approval (that environment has none).
+  #   * A RED snap-lambdas makes the run's conclusion failure while PROD IS FINE: main moved, the Lambdas deployed,
+  #     and the SPA deploy (which runs beside this job) is judged by its own job; only the manifest still reads
+  #     pre-deploy. Remedy: "Re-run failed jobs". It is idempotent: a re-run keeps the pre-deploy map and only
+  #     refreshes lambda_versions.
+  snap-lambdas:
+    needs: [resolve, promote, deploy-lambdas]
+    if: ${{ !cancelled() && needs.promote.result == 'success' && needs.deploy-lambdas.outputs.deploy_result == 'success' }}
+    runs-on: ubuntu-26.04
+    environment: production
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      # scripts/snap.py, scripts/lambda_fleet.py and the release set it reads (lambda-config-expected.json).
+      - name: Checkout dev_sha (scripts/snap.py + the Lambda release set)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.resolve.outputs.dev_sha }}
+
+      # As the promote job's "Install python deps": bounded, plain form first, then the PEP-668 form.
+      - name: Install python deps
+        timeout-minutes: 5
+        run: |
+          set -uo pipefail
+          fail() {
+            echo "::error title=snap-lambdas::$1 — prod is not affected (the Lambdas deployed; the SPA deploy is its own job); only the snapshot manifest still reads pre-deploy. Re-run failed jobs."
+            exit 1
+          }
+          timeout -k 5 90 python3 -m pip install --quiet boto3 requests \
+            || timeout -k 5 90 python3 -m pip install --quiet --break-system-packages boto3 requests \
+            || fail "pip could not install boto3 and requests in either form (exit $?; 124 or 137 = it hung)"
+          timeout -k 5 30 python3 -c "import boto3, requests, botocore.exceptions" \
+            || fail "boto3, requests and botocore.exceptions do not import after the install (exit $?)"
+
+      - name: Configure AWS credentials (snap role, OIDC)
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Record the shipped Lambda versions in the snapshot manifest
+        env:
+          MAIN_SHA: ${{ needs.resolve.outputs.dev_sha }}
+          SNAP_VERSION: ${{ needs.resolve.outputs.snap_version }}
+          SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
+          # As the snap: any tempfile on the work disk (this mode writes none today).
+          TMPDIR: ${{ runner.temp }}
+        run: python3 scripts/snap.py --lambdas-only
 
   # OPS-LAMCHANGEDBLIND-002 — THE SAFETY CHECK THAT SURVIVES THE SKIP. Unconditional by design.
   #
