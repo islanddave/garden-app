@@ -36,6 +36,7 @@ export const LOADS_SRC = Object.freeze([
   'lambda/critter/navcustom.parity.test.js',
   'lambda/critter/retired-post-route.test.js',
   'lambda/critter/smokeNavPrefs.static.test.js',
+  'lambda/critter/todaySections.parity.test.js',
   'lambda/daily-plan-read/cue-impression.test.js',
   'lambda/daily-plan/advisorynight.test.js',
   'lambda/daily-plan/cadence-rename-alias.test.js',
