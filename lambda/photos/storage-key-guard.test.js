@@ -15,7 +15,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isAllowedUploadKey, isAllowedStoragePath } from './uploadKeyPolicy.js';
+import { isAllowedUploadKey, isAllowedStoragePath, SAFE_KEY_SEGMENT } from './uploadKeyPolicy.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RAW = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
@@ -28,6 +28,8 @@ const ME = 'user_3D2gM0hIl03gjW3JM2DjtPzm0jI';
 const UUID = 'a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
 const ID = '11111111-1111-4111-8111-111111111111';
 const KEY = `plants/${ID}/${UUID}.jpg`;
+// Distinct from [userId], so a probe narrowed to the caller alone (over-blocks members) is caught.
+const HOUSEHOLD = [ME, 'user_member_x'];
 
 // ── 1. policy ────────────────────────────────────────────────────────────────────────────────────
 describe('isAllowedStoragePath — what POST /api/photos may register (I34a)', () => {
@@ -64,6 +66,19 @@ describe('isAllowedStoragePath — what POST /api/photos may register (I34a)', (
     expect(isAllowedStoragePath(`inbox//${UUID}.jpg`, '')).toBe(false);
     expect(isAllowedStoragePath(`inbox/a b/${UUID}.jpg`, 'a b')).toBe(false);
     expect(isAllowedStoragePath(`inbox/undefined/${UUID}.jpg`, undefined)).toBe(false);
+  });
+  it('rejects a whole-segment . or .. sub (SAFE_KEY_SEGMENT)', () => {
+    expect(isAllowedStoragePath(`inbox/../${UUID}.jpg`, '..')).toBe(false);
+    expect(isAllowedStoragePath(`inbox/./${UUID}.jpg`, '.')).toBe(false);
+    for (const s of ['.', '..', '', 'a b', 'a/b']) expect(SAFE_KEY_SEGMENT.test(s), s).toBe(false);
+    for (const s of [ME, '...', '.x', 'x..', 'user_a.b-c']) expect(SAFE_KEY_SEGMENT.test(s), s).toBe(true);
+  });
+  it('caps the inbox arm at 256 chars, like the upload arm', () => {
+    const at = (n) => `inbox/${ME}/${'a'.repeat(n - `inbox/${ME}/`.length - 4)}.jpg`;
+    expect(at(256)).toHaveLength(256);
+    expect(isAllowedStoragePath(at(256), ME)).toBe(true);
+    expect(isAllowedStoragePath(at(257), ME)).toBe(false);
+    expect(isAllowedStoragePath(`inbox/${ME}/${'a'.repeat(100000)}.jpg`, ME)).toBe(false);
   });
 });
 
@@ -130,7 +145,7 @@ function routeRunner(marker) {
   return async ({ method, event, probeRows }) => {
     const deps = {
       rawPath: marker, method, event,
-      sql: makeSql(probeRows), householdIds: [ME], userId: ME, isAllowedUploadKey,
+      sql: makeSql(probeRows), householdIds: HOUSEHOLD, userId: ME, isAllowedUploadKey,
       SAFE_CONTENT_TYPE: constant('SAFE_CONTENT_TYPE'),
       RELAY_MAX_B64_CHARS: constant('RELAY_MAX_B64_CHARS'),
       RELAY_THUMB_MAX_B64_CHARS: constant('RELAY_THUMB_MAX_B64_CHARS'),
@@ -173,6 +188,9 @@ for (const r of ROUTES) {
       expect(res).toEqual({ statusCode: 403, body: { error: 'Forbidden' } });
       expect(r.effect(deps)).not.toHaveBeenCalled();
       expect(deps.warnRejectedFk).toHaveBeenCalledWith(ME, 'photos', 'storage_path', KEY);
+      // The probe saw the caller's exact key and the whole household (not thumbs/…, not [userId]).
+      expect(deps.sql.calls).toHaveLength(1);
+      expect(deps.sql.calls[0].values).toEqual([KEY, HOUSEHOLD]);
     });
     // The control: an over-blocking probe (inverted, or 403 on every key) fails here.
     it('no foreign row -> reaches the presign / PUT and answers 200', async () => {
@@ -180,6 +198,8 @@ for (const r of ROUTES) {
       expect(res.statusCode).toBe(200);
       expect(r.effect(deps)).toHaveBeenCalled();
       expect(deps.warnRejectedFk).not.toHaveBeenCalled();
+      expect(deps.sql.calls).toHaveLength(1);
+      expect(deps.sql.calls[0].values).toEqual([KEY, HOUSEHOLD]);
     });
     it('a grammar reject still 403s without spending the probe', async () => {
       const bad = r.method === 'GET'
@@ -202,8 +222,9 @@ describe('POST /api/photos — storage_path gate (I34)', () => {
     expect(post).toMatch(/storage_path is required/);
   });
   // MUTATION: delete the isAllowedStoragePath gate -> RED.
-  it('grammar / own-inbox gate -> the generic 400', () => {
-    expect(post).toMatch(/if \(!isAllowedStoragePath\(body\.storage_path, userId\)\) \{\s*return resp\(400, \{ error: 'storage_path is not a valid upload key' \}\);/);
+  // MUTATION: drop the warnRejectedFk line from the grammar reject -> RED.
+  it('grammar / own-inbox gate -> logged, then the generic 400', () => {
+    expect(post).toMatch(/if \(!isAllowedStoragePath\(body\.storage_path, userId\)\) \{\s*warnRejectedFk\(userId, 'photos', 'storage_path', body\.storage_path\);\s*return resp\(400, \{ error: 'storage_path is not a valid upload key' \}\);/);
   });
   // MUTATION: delete the foreignStorageKey gate -> RED.
   it('foreign-row probe -> logged, then the SAME 400 body (no second oracle)', () => {
@@ -216,5 +237,11 @@ describe('POST /api/photos — storage_path gate (I34)', () => {
   });
   it('imports the policy from the per-dir module', () => {
     expect(SRC).toMatch(/import \{ isAllowedStoragePath \} from '\.\/uploadKeyPolicy\.js';/);
+  });
+  // I34 / S4: one copy of the sub rule — /batch uses the imported SAFE_KEY_SEGMENT, no local literal.
+  it('/batch uses the shared SAFE_KEY_SEGMENT, not a second literal', () => {
+    expect(SRC).toMatch(/import \{ SAFE_KEY_SEGMENT \} from '\.\/uploadKeyPolicy\.js';/);
+    expect(SRC).not.toMatch(/const SAFE_KEY_SEGMENT\s*=/);
+    expect(SRC).toMatch(/if \(!SAFE_KEY_SEGMENT\.test\(userId\)\) return resp\(400/);
   });
 });

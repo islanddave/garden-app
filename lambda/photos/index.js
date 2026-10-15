@@ -11,6 +11,7 @@ import { loadOwnedProject, loadOwnedPlantingRef, loadOwnedEvent } from './authz-
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { isAllowedUploadKey } from './uploadKeyPolicy.js';
 import { isAllowedStoragePath } from './uploadKeyPolicy.js';
+import { SAFE_KEY_SEGMENT } from './uploadKeyPolicy.js';
 import { normalizeViewTier, viewTierKey, PHOTO_VIEW_TIERS } from './viewTier.js';
 // W-DEL — the soft-delete + restore core lives in its own module BECAUSE this file is not
 // importable from the repo root, so anything written here can only be covered by SQL-text
@@ -49,7 +50,7 @@ const MAX_BATCH = 20;
 // Mirrors the photos_intake_status_valid CHECK. Only these two are stored; every other state in
 // the design (tagged / skipped) is DERIVED, so a third value here would be a bug, not a feature.
 const INTAKE_STATUSES = ['pending_tag', 'upload_failed'];
-const SAFE_KEY_SEGMENT = /^[A-Za-z0-9._-]+$/;  // Clerk subs look like user_3D2gM0hIl03gjW3JM2DjtPzm0jI
+// SAFE_KEY_SEGMENT (imported above, uploadKeyPolicy.js) — Clerk subs look like user_3D2gM0hIl03gjW3JM2DjtPzm0jI
 // BUG-PHOTOUPLOADRELAY-001 caps. Lambda URLs cap request payloads at 6MB and base64 inflates 4/3:
 // these keep base64 + JSON envelope safely under it. A downscaled photo runs ~300-600KB decoded.
 const RELAY_MAX_B64_CHARS = 5_200_000;      // ≈3.9MB decoded
@@ -1391,6 +1392,7 @@ export const handler = async (event) => {
       // body for both rejects (grammar, foreign row): the only signal left is "this exact key is
       // registered elsewhere", to a caller who already holds the full uuid key (accepted residual).
       if (!isAllowedStoragePath(body.storage_path, userId)) {
+        warnRejectedFk(userId, 'photos', 'storage_path', body.storage_path);
         return resp(400, { error: 'storage_path is not a valid upload key' });
       }
       if (await foreignStorageKey(sql, body.storage_path, householdIds)) {
