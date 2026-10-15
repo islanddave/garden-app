@@ -136,7 +136,7 @@ function prodPg() {
         return { rows: PROD_PRECIP.filter((r) => r.date >= from && r.date <= to) }
       }
       if (/from plants/.test(sql)) return { rows: PLANTINGS }
-      if (/from spaces/.test(sql)) return { rows: [{ id: SPACE, postal_code: '01373', weather_lat: 42.5, weather_lng: -72.6 }] }
+      if (/from spaces/.test(sql)) return { rows: [{ id: SPACE, postal_code: '01373', weather_lat: 42.5, weather_lng: -72.6, created_by: USER }] }
       return { rows: [] }
     }),
   }
