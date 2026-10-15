@@ -1,7 +1,7 @@
 {
-  "version": "5.1.0",
+  "version": "5.1.1",
   "date": "2026-10-15",
   "highlights": [
-    "Today, new page preview: the sections you open or close are remembered for you on every phone, not just the one you tapped."
+    "Privacy hardening: shared garden data, the nightly plan and rain logging only ever touch your own household's plantings, and flagged issues on plantings without a container can now be resolved."
   ]
 }

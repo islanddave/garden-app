@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.1.1",
+    "date": "2026-10-15",
+    "highlights": [
+      "Privacy hardening: shared garden data, the nightly plan and rain logging only ever touch your own household's plantings, and flagged issues on plantings without a container can now be resolved."
+    ]
+  },
+  {
     "version": "5.1.0",
     "date": "2026-10-15",
     "highlights": [
