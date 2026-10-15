@@ -30,13 +30,17 @@
 // No icon at all — partly because the quiet treatment does not need one, and partly because there is
 // no freeze/cold anchor in iconRegistry and inventing a dependency on one would couple this line to
 // whatever the icon set does next.
+//
+// `compact` (the redesigned Today, finish plan §3.2–3.3): the line under the glance card on the page's type ramp.
+// Same rule, ink and weight; without it the line renders exactly as before.
 import React, { useEffect, useMemo, useRef } from 'react'
 import { P } from '../../lib/constants.js'
+import { T } from '../forms/formStyles.js'
 import { useApiFetch } from '../../lib/api.js'
 import { buildCueLine } from '../../lib/weatherCue.js'
 import { sendCueImpression } from '../../lib/weatherCueImpressions.js'
 
-export default function WeatherCueLine({ callout = null, generatedAt = null, planDate = null }) {
+export default function WeatherCueLine({ callout = null, generatedAt = null, planDate = null, compact = false }) {
   const { fetch: apiFetch } = useApiFetch()
   const line = useMemo(() => buildCueLine(callout), [callout])
 
@@ -68,7 +72,7 @@ export default function WeatherCueLine({ callout = null, generatedAt = null, pla
       style={{
         borderLeft: `3px solid ${P.sage}`,
         paddingLeft: 10,
-        fontSize: '0.84rem',
+        fontSize: compact ? T.type.sm : '0.84rem',
         lineHeight: 1.45,
         color: imperative ? P.dark : P.mid,
         fontWeight: imperative ? 600 : 400,

@@ -173,7 +173,7 @@ export default function Today() {
               Below DroughtLine because drought asks him to water and this only asks him to LOOK — and
               because it is the least time-critical of the four ambient lines. Renders nothing on the
               77% of days (94 of 122 measured) where no day crosses 8 modelled wet hours in band. */}
-          <LeafWetnessLine plan={plan} />
+          <LeafWetnessLine plan={plan} planDate={data?.plan_date} />
 
           {/* V4-TODAYHOLD-001 — Today is an ACTION surface: show the substrate/feeding note only
               when it is actionable. `substrate.on_hold` is true exactly when there are zero feed

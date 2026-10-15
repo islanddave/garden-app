@@ -203,6 +203,9 @@ const MEASURE = `(() => {
   // S6: the Sow link row's words (the whole row is one link).
   const sowEl = d.querySelector(tid('cultivation-lead'))
   const sowRowText = sowEl ? (sowEl.textContent || '').replace(/\\s+/g, ' ').trim() : null
+  // Finish plan §3.3 (D15): the pick link's words — the engine's pick cue folds into them on a Protect night.
+  const pickEl = d.querySelector(tid('protect-pick'))
+  const pickText = pickEl ? (pickEl.textContent || '').replace(/\\s+/g, ' ').trim() : null
   const regions = Object.fromEntries(${JSON.stringify(REGION_IDS)}.map(id => { const els = all(tid(id)); return [id, { count: els.length, boxes: els.slice(0, 3).map(el => ({ ...box(el), shown: shown(el) })) }] }))
   const one = id => { const el = d.querySelector(tid(id)); return el ? { ...box(el), shown: shown(el), sw: el.scrollWidth, cw: el.clientWidth, ox: w.getComputedStyle(el).overflowX, text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 200) } : null }
   const glanceEl = d.querySelector(tid('today-glance'))
@@ -272,7 +275,7 @@ const MEASURE = `(() => {
     controls: controls.length,
     version: all('[data-today-version="2' + SUF + '"]').length,
     prefsLoaded: (d.querySelector('[data-prefs-loaded]') || { getAttribute: () => null }).getAttribute('data-prefs-loaded'),
-    sections, regions, testidCounts, firstBoxes, closedSpots, counts, spotCtl, groupBulk, careSummary, sowRowText,
+    sections, regions, testidCounts, firstBoxes, closedSpots, counts, spotCtl, groupBulk, careSummary, sowRowText, pickText,
     glance: glanceEl ? { ...box(glanceEl), shown: shown(glanceEl), expanded: glanceToggle ? glanceToggle.getAttribute('aria-expanded') : null, stale: !!glanceEl.querySelector('[data-stale="true"]') } : null,
     // The closed card's rain row (row B): each note's words and its unrounded box, and the row's own box.
     glanceRain: (() => { const row = glanceEl ? glanceEl.querySelector(tid('glance-rain')) : null; if (!row) return null; const rr = row.getBoundingClientRect(); const cw = parseFloat(w.getComputedStyle(row).columnGap) || 0
@@ -335,6 +338,9 @@ const CHECKERS = {
       if (!boxes.length) F(`'${id}' is not on the page — the first screen must contain it`)
       else if (!inFirst(boxes[0])) F(`'${id}' paints at y=${boxes[0].t}..${boxes[0].b}, not fully inside the first screen [0, ${FIRST_SCREEN})`)
     }
+    // Finish plan §3.3 (D15): what a state must NOT show on its first screen — the glance's cue and frost lines on a
+    // night Protect tonight carries them (an element anywhere inside [0, FIRST_SCREEN) counts).
+    for (const id of c.mustNotContain || []) { const k = (m.firstBoxes[id + SUFFIX] || []).filter(b => b.b > 0 && b.t < FIRST_SCREEN && b.b > b.t).length; if (k) F(`'${id}' paints on the first screen (${k}x) — this state folds it away`) }
     for (const [id, n] of Object.entries(c.minCount || {})) { const k = (m.firstBoxes[id + SUFFIX] || []).filter(inFirst).length; if (k < n) F(`${k} '${id}' inside the first screen, expected ≥ ${n}`) }
     if (c.allRows) { const bs = m.firstBoxes[c.allRows + SUFFIX] || []; if (!bs.length) F(`no '${c.allRows}' at all — expected every one inside the first screen`); for (const b of bs) if (!inFirst(b)) { F(`a '${c.allRows}' paints at y=${b.t}..${b.b}, outside the first screen`); break } }
     for (const [key, lim] of Object.entries(c.headerTopMax || {})) { const s = secOf(m, key); const L = resolveY(lim); if (!s?.header) F(`section '${key}' has no header to place`); else if (s.header.box.t > L) F(`the '${key}' header top is y=${s.header.box.t}, past its ${L}px ceiling`) }
@@ -425,6 +431,8 @@ const CHECKERS = {
     for (const [key, text] of Object.entries(c.summaries || {})) { const s = secOf(m, key); if (!s) F(`section '${key}' is not on the page to read its summary`); else if (s.summary !== text) F(`the '${key}' summary reads ${JSON.stringify(s.summary)}, expected ${JSON.stringify(text)}`) }
     for (const key of c.noCount || []) { const s = secOf(m, key); if (!s) F(`section '${key}' is not on the page`); else if (s.dataCount != null) F(`section '${key}' carries a count (${s.dataCount}) — its header names what it lists, never a number`) }
     if (c.sowRow != null && m.sowRowText !== c.sowRow) F(`the Sow link row reads ${JSON.stringify(m.sowRowText)}, expected exactly ${JSON.stringify(c.sowRow)} — dated sow lines during the 2027 freeze (SOW_DATED_LINES_FROZEN)?`)
+    // Finish plan §3.3 (D15): Protect's pick link carries the engine's pick cue, word for word as the contract states it.
+    if (c.pick != null && m.pickText !== c.pick) F(`the pick link reads ${JSON.stringify(m.pickText)}, expected exactly ${JSON.stringify(c.pick)} — the cue did not fold into Protect (D15)?`)
   },
   jumpbar: (m, c, F) => {
     if (c.present === false) { if (m.bar) F('a jump bar rendered with fewer than 2 chips'); return }

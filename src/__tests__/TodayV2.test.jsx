@@ -287,8 +287,9 @@ describe('helpers', () => {
 // names, the page re-words the cue at the agreed low (src/lib/tonightLow.js agreeCallout). That re-wording
 // needs the plan date from THIS page: without it the line would fall back to the all-year words in the fall.
 describe('TodayV2 hands the plan date to the cue it re-words', () => {
+  // No cold cards on the plan, so no Protect section takes the cue (finish plan §3.3): it is its own line.
   it('plan dated Oct 9, engine cue at 44, frost line naming tonight at 42 -> "Cold night (42°F)" in the FALL words', () => {
-    const plan = planFor(44, [tonight(42)])
+    const plan = { ...planFor(44, [tonight(42)]), cold: [] }
     expect(plan.weather.callout).toEqual({ icon: 'cold', text: coldText(44) })   // the real engine's, for PLAN_DATE
     planState.current = { data: { has_plan: true, plan_date: PLAN_DATE, generated_at: GEN, plan }, loading: false, error: null, reload: vi.fn() }
     mount()
@@ -296,5 +297,18 @@ describe('TodayV2 hands the plan date to the cue it re-words', () => {
     expect(cue.textContent).toBe('Cold night (42°F) — pick coloring peppers & tomatoes')
     expect(cue.textContent).not.toBe(coldTextAllYear(42))
     expect(cue.dataset.cue).toBe('cold')
+  })
+  // Finish plan §3.3 (D15): with Protect on the page the same cue is the pick link's words — the fall words prove
+  // the date arrived (the all-year cue, "protect flowering…", is no pick and leaves the link its own words).
+  it('the same night with cold cards: Protect carries the cue as its pick link, and the glance prints no cue line', async () => {
+    const plan = planFor(44, [tonight(42)])
+    planState.current = { data: { has_plan: true, plan_date: PLAN_DATE, generated_at: GEN, plan }, loading: false, error: null, reload: vi.fn() }
+    mount()
+    expect(screen.queryByTestId('weather-cue-line')).toBeNull()
+    // The plan is dated Oct 9, not this device's today, so nothing opens by itself (stale, §3): open Protect.
+    const sec = await screen.findByTestId('today-sec-protect')
+    fireEvent.click(sec.querySelector('[aria-expanded]'))
+    const pick = await screen.findByTestId('protect-pick')
+    expect(pick.textContent).toBe('Pick coloring peppers & tomatoes first — log a harvest ›')
   })
 })

@@ -1,13 +1,20 @@
 // src/lib/todayV2/verdict.js — the redesigned Today's GLANCE CARD, as data (V5-TODAYREDESIGN-001 S3; plan-v2 §4
 // "Glance card", §8 S3, §13 SF9 update). PURE: a plan in, sentences out — no React state, no clock, no network.
 //
-// THE HEADLINE is WeatherWidget's headlineFor, printed VERBATIM from the same two lane verdicts the card computes
+// THE HEADLINE is WeatherWidget's headlineFor over the same two lane verdicts the card computes
 // (computeWateringScale → pillState) and the page's active water_due count, with ONE display-only guard in front
 // (§13 SF9 update): a KNOWN empty water list never gets a watering imperative. That guard is the one parked on
-// lane-waterautumn-20260928 (BUG-WATERAUTUMNDEMAND-001), word for word and on the same condition; it lives here
-// because that lane has not shipped. Once it ships, headlineFor returns the same sentence itself and the first
-// line of glanceHeadline is a no-op — drop it then. The open card does not recompute it: GlanceCard hands this
-// sentence to WeatherWidget's `headline` prop (finish plan D-2), so the closed and open card say one thing.
+// lane-waterautumn-20260928 (BUG-WATERAUTUMNDEMAND-001), on the same condition; it lives here because that lane
+// has not shipped. Once it ships, headlineFor returns its own empty-list sentence and the guard's line of
+// glanceHeadline is a no-op — drop it then. The open card does not recompute it: GlanceCard hands this sentence to
+// WeatherWidget's `headline` prop (finish plan D-2), so the closed and open card say one thing.
+//
+// SHORT FORM (finish plan §3.2 row C, 2026-10-14): two of headlineFor's five sentences are shortened for the card,
+// the other three print verbatim. Both lanes "do" reads "Water containers & beds today."; and the two sentences
+// that mean the list is empty — the guard's and headlineFor's both-hold "All set — no watering needed today." —
+// read "Nothing to water today." (still only on a list known to be empty: BUG-TODAYWATER-001's rule holds).
+// verdictLead drops the closing " today." / "." when an urgent phrase follows: "Water containers & beds · frost
+// watch tonight".
 //
 // THE URGENT PHRASE, one at most, by precedence freeze > frost > hot:
 //   freeze  tonight's low under FREEZE_BELOW_F (40°F), the engine cue's own "Freeze tonight" bar, read off the one
@@ -26,7 +33,8 @@ import { rainSentences } from '../rainSentences.js'
 import { pickFrostLines, currentLows, FREEZE_BELOW_F } from '../frostAlertLine.js'
 import { agreedTonightLow } from '../tonightLow.js'
 
-export const NOTHING_DUE = 'Nothing due for watering today.'
+export const NOTHING_DUE = 'Nothing to water today.'
+const BOTH_DO = 'Water containers & beds today.'
 
 function num(v) {
   if (typeof v !== 'number' && !(typeof v === 'string' && v.trim() !== '')) return null
@@ -43,8 +51,14 @@ export function glanceHeadline(plan, waterDue) {
   const containersDo = pillState(scale.containers) === 'do'
   const bedsDo = pillState(scale.beds) === 'do'
   const waterDueCount = Number.isInteger(waterDue) ? waterDue : (Array.isArray(plan?.water_due) ? plan.water_due.length : 0)
-  if (waterDueCount === 0 && (containersDo || bedsDo)) return NOTHING_DUE
+  if (waterDueCount === 0) return NOTHING_DUE
+  if (containersDo && bedsDo) return BOTH_DO
   return headlineFor(containersDo, bedsDo, waterDueCount)
+}
+
+// The verdict as the lead of "<verdict> · <urgent phrase>": its closing " today." or "." dropped.
+export function verdictLead(headline) {
+  return String(headline || '').replace(/ today\.$/, '').replace(/\.$/, '')
 }
 
 // -> { kind: 'freeze'|'frost'|'hot', text } | null. `agreed` is agreedTonightLow(plan) when the page already has it.

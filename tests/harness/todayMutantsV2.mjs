@@ -163,7 +163,13 @@ export const MUTANTS_V2 = {
     file: 'src/components/today/v2/GlanceCard.jsx',
     find: "minHeight: '1.35em', overflowWrap: 'anywhere',",
     replace: "minHeight: '1.35em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',",
-    killers: ['verdict-truncation', 'first-screen'],
+    // L3 (finish plan §3.2 row C): the short verdict fits ONE line on every gate state at 426 px (measured 19.44 px on
+    // all of them, the longest "Water containers & beds · frost watch tonight"; even v2-bedwait's beds-held sentence
+    // with a frost phrase fits), so a restored ellipsis clips no glyph and first-screen's mustShowText cannot see it.
+    // verdict-truncation reads the style itself. A second killer needs a fixture whose verdict takes two lines (both
+    // lanes holding over a list: "Rain may cover today's list — N still due · …"), which no v2 graft builds today.
+    killers: ['verdict-truncation'],
+    oneKiller: 'L3\'s short verdict fits one line on every gate fixture, so a restored ellipsis clips nothing a first-screen text check can see; only verdict-truncation reads the ellipsis style',
     defect: 'the verdict ellipsis is restored',
   },
   jumpNoOffset: {
@@ -194,21 +200,33 @@ export const MUTANTS_V2 = {
     killers: ['jump-landing', 'jump-focus'],
     defect: 'focus does not move to the section header after a jump',
   },
-  dropCueInCard: {
-    armedAt: 'S3', kind: 'chrome',
-    file: 'src/components/today/v2/GlanceCard.jsx',
-    find: '<WeatherCueLine callout={cueCallout} generatedAt={generatedAt} planDate={planDate} />',
-    replace: '{open && <WeatherCueLine callout={cueCallout} generatedAt={generatedAt} planDate={planDate} />}',
-    killers: ['region-headcount', 'first-screen'],
-    defect: 'the weather cue line leaves the closed glance card (shown only once it is opened)',
+  // L3 (finish plan §3.3, D15, 2026-10-14) retired dropCueInCard and dropFrostInCard (RETIRED_V2, below): on a Protect
+  // night the cue and the frost line are no longer in the closed card for a mutant to drop. Their successors guard the
+  // fold itself and where the folded words land.
+  foldIgnored: {
+    armedAt: ['S3', 'S5'], kind: 'chrome',
+    file: 'src/pages/TodayV2.jsx',
+    find: 'coldRange={data?.cold_range ?? null} waterDue={waterDueLeft} protectShown={protectShown}',
+    replace: 'coldRange={data?.cold_range ?? null} waterDue={waterDueLeft} protectShown={false}',
+    killers: ['first-screen', 'floors'],
+    defect: 'D15 ignored: the glance never learns Protect tonight is on the page, so the cold cue and the frost line stay under the card on a frost night (two more lines above Needs care)',
   },
-  dropFrostInCard: {
+  frostLeavesDetails: {
     armedAt: 'S3', kind: 'chrome',
     file: 'src/components/today/v2/GlanceCard.jsx',
-    find: '<FrostAlertLine alertsSent={plan.alerts_sent} lowShown={agreed?.lowF} planLow={weather.tonightLow} current={current} />',
-    replace: '{open && <FrostAlertLine alertsSent={plan.alerts_sent} lowShown={agreed?.lowF} planLow={weather.tonightLow} current={current} />}',
-    killers: ['region-headcount', 'first-screen'],
-    defect: 'the frost line leaves the closed glance card (shown only once it is opened)',
+    find: '{[...(frost.under ? [frost.under] : []), ...frost.details].map((l, i) => <FrostLine key={i} line={l} />)}',
+    replace: '{false && [...(frost.under ? [frost.under] : []), ...frost.details].map((l, i) => <FrostLine key={i} line={l} />)}',
+    killers: ['region-headcount', 'owner-floors'],
+    defect: 'the folded frost sentence is not behind Details either (D15: "full frost sentence behind Details") — on a Protect night it is nowhere',
+  },
+  pickWordsLost: {
+    armedAt: ['S3', 'S5'], kind: 'chrome',
+    file: 'src/components/today/v2/ProtectTonight.jsx',
+    find: '<span>{pickText || PICK_DEFAULT}</span>',
+    replace: '<span>{PICK_DEFAULT}</span>',
+    killers: ['header-text'],
+    oneKiller: 'the link keeps its one-line box at 426 px in both wordings, so no geometry moves; the words are read by this family alone',
+    defect: 'D15: the engine\'s pick cue folds away but its words never reach the pick link — the night\'s pick advice is gone from the page',
   },
 
   // ── S4: needs care (patterns filled by S4, 2026-09-29; exact source text — the plugin throws on a miss)
@@ -272,8 +290,9 @@ export const MUTANTS_V2 = {
   pickLinkMissing: {
     armedAt: 'S5', kind: 'chrome',
     file: 'src/components/today/v2/ProtectTonight.jsx',
-    find: '      {protect.pick && (\n',
-    replace: '      {false && protect.pick && (\n',
+    // L3: the link also shows for a folded pick cue (D15), so the condition grew; re-pointed.
+    find: '      {(protect.pick || pickText) && (\n',
+    replace: '      {false && (protect.pick || pickText) && (\n',
     killers: ['region-headcount', 'first-screen'],
     defect: 'the "Pick what\'s ripe first" link is gone from a frost / freeze night',
   },
@@ -289,7 +308,8 @@ export const MUTANTS_V2 = {
   dropRegionInOwner_compose: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '<ComposeHarvestBand data={bands.compose} bare />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'compose' (compose-harvest-band) is deleted inside Harvest" },
   dropRegionInOwner_putUp: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '<PutUpUseSoonBand data={bands.soon} bare />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'putUp' (putup-use-soon) is deleted inside From your Put-Up" },
   dropRegionInOwner_dormant: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '<DormantList plan={plan} bare resumed={resumedSet} onResumed={markResumed} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'dormant' (care-dormant) is deleted inside Resting" },
-  dropRegionInOwner_dryList: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<DroughtList plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'dryList' (care-drought-list) is deleted inside the glance details" },
+  // L3 (finish plan §3.2): the dry list is the deep-soak line's inline names now — re-pointed at that span.
+  dropRegionInOwner_dryList: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: "{rows.length > 0 && <span data-testid=\"care-drought-list\">{`${rows.map((r) => r.name).join(', ')}.`}</span>}", replace: '{null}', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'dryList' (care-drought-list) is deleted inside the glance details" },
   dropRegionInOwner_feedSuppressed: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: '<FeedSuppressedList plan={care.plan} compact />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'feedSuppressed' (care-feed-suppressed) is deleted at the foot of Needs care" },
   dropRegionInOwner_rainNote: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<RainHold plan={plan} care={care} record={record} update={update} announce={announce} writesHeld={writesHeld} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'rainNote' (care-rain-note) is deleted inside the glance details" },
   // Review I5 (BUG-DEFERNOSTRESSOVERRIDE-001): the waiting list's tap sizes. The Water chip is PlantCareRow's, so the
@@ -300,8 +320,9 @@ export const MUTANTS_V2 = {
   rainWaterChipShort: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/PlantCareRow.jsx', find: "  minHeight: T.buttonMinHeight, padding: '0 8px', backgroundColor: P.greenPale, borderRadius: T.radiusButton,\n", replace: "  height: 32, alignSelf: 'center', padding: '0 8px', backgroundColor: P.greenPale, borderRadius: T.radiusButton,\n", killers: ['rain-wait-floors'], oneKiller: 'the row keeps its height (its link holds 48px), so no height floor or census moves; the button size is read by this family alone', defect: 'the Water button on a row is 32px tall, under the 48px tap floor' },
   rainToggleShort: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/RainHold.jsx', find: "const textLink = { flexShrink: 0, minHeight: T.buttonMinHeight, minWidth: T.buttonMinHeight,", replace: "const textLink = { flexShrink: 0, minHeight: 30, minWidth: 30,", killers: ['rain-wait-floors'], oneKiller: 'the line it sits on keeps its own 48px, so the open card is no shorter; the control size is read by this family alone', defect: "the waiting list's Show / Hide is 30px tall, under the 48px tap floor" },
   dropRegionInOwner_basisStamp: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '{basis && <p data-testid="today-basis-stamp"', replace: '{false && basis && <p data-testid="today-basis-stamp"', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'basisStamp' (today-basis-stamp) is deleted inside the glance details" },
-  dropRegionInOwner_droughtLine: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<DroughtLine plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'droughtLine' (drought-line) is deleted inside the glance details" },
-  dropRegionInOwner_leafLine: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<LeafWetnessLine plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'leafLine' (leaf-wetness-line) is deleted inside the glance details" },
+  // L3: re-pointed at the merged deep-soak line (DryLine) and the compact leaf-wetness mount.
+  dropRegionInOwner_droughtLine: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<DryLine plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'droughtLine' (drought-line) is deleted inside the glance details" },
+  dropRegionInOwner_leafLine: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<LeafWetnessLine plan={plan} planDate={planDate} compact />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'leafLine' (leaf-wetness-line) is deleted inside the glance details" },
   // The freeze switched off at its one consumer: the page asks for sow lines and the Sow link row prints the engine's
   // "Sow X by …" lines above its door. Killers: header-text (the row's exact words, v2-busy / v2-frost, whose 09-24
   // engine run has two such lines) and floors (the row is the page's last block, so the lines push the last ink and
@@ -334,4 +355,6 @@ export const MUTANTS_V2 = {
 export const RETIRED_V2 = {
   highlightStuck: '§13 Simplify 5 cut the in-view scroll-spy (no lit chip state), so there is no highlight to stick',
   chipRowNoScroll: 'finish plan L4 (Dave\'s D16, 2026-10-14): the bar never scrolls sideways, so there is no overflow-x:auto to lose; its defect (a chip unreachable past the edge) is now cellsScrollSideways and cellMinTooSmall',
+  dropCueInCard: 'finish plan L3 (D15): on a Protect night the cue folds into the pick link, so the closed card holds no cue line to drop; foldIgnored and pickWordsLost guard the fold and its words',
+  dropFrostInCard: 'finish plan L3 (D15): on a Protect night the frost line is behind Details, not in the closed card; foldIgnored and frostLeavesDetails guard the fold and the full sentence',
 }

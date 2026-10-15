@@ -44,12 +44,20 @@ export function protectOrder(rows, careRows = [], groupOrder = [OUTSIDE]) {
   return rows.map((r, idx) => ({ r, idx })).sort((a, b) => (at(a.r) - at(b.r)) || (a.idx - b.idx)).map(({ r }) => r.key)
 }
 
-// The band's one-line summary (§1.1 / §1.2): when to act, tonight's low, the first two names. "Before dark" on a
-// frost or hard-freeze night (the pick link and the cover work need daylight), "Tonight" otherwise.
-export function protectSummary({ tier, lowF, rows }) {
+// The band's one-line summary (§1.1 / §1.2): when to act, then — open — why, or — closed — the first two names.
+// "Before dark" on a frost or hard-freeze night (the pick link and the cover work need daylight), "Tonight"
+// otherwise. Finish plan §3.3 / §3.6 (D15, 2026-10-14): tonight's low is stated once on the page (the glance
+// card), so the summary carries the REASON instead — "tender below 50°", the threshold the rows' cards name, once
+// (a range when they differ) — and an open section drops the names its body lists right under it (§2 of the
+// ADHD review: "an open section's summary drops its name list and keeps reason + timing").
+export function protectSummary({ tier, rows, open = false }) {
   const bits = [tier === 'frost' || tier === 'hardfreeze' ? 'Before dark' : 'Tonight']
   if (tier === 'hardfreeze') bits.push('hard freeze')
-  if (lowF != null) bits.push(`low ${lowF}°F`)
+  if (open) {
+    const t = [...new Set((rows || []).map((r) => r.threshold).filter((n) => Number.isFinite(n)))].sort((a, b) => a - b)
+    if (t.length) bits.push(`tender below ${t.length > 1 ? `${t[0]}–${t[t.length - 1]}` : t[0]}°`)
+    return bits.join(' · ')
+  }
   const names = (rows || []).map((r) => r.name).filter(Boolean)
   if (names.length) bits.push(names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', '))
   return bits.join(' · ')

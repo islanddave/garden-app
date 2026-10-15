@@ -33,7 +33,19 @@ const SCOUT_TARGETS = 'tomatoes, peppers and basil';
 
 function plural(n, one, many) { return n === 1 ? one : many; }
 
-export function buildLeafWetnessLine(plan) {
+// THE SENTENCES (Today finish plan §3.2, 2026-10-14: the forecast half read "1 day ahead look like…"). Each
+// agrees with its count, and each keeps "modelled" (constraint 2). `planDate` (optional, the plan's YYYY-MM-DD)
+// lets the forecast half say "Tomorrow" when the only wet day ahead is the day after the plan's — the engine's
+// window reaches three days out, so without the date, or for any other day, the line counts the days instead.
+function dayAfter(ymd) {
+  if (typeof ymd !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+  const d = new Date(`${ymd}T12:00:00Z`);
+  if (isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+export function buildLeafWetnessLine(plan, { planDate = null } = {}) {
   const w = plan && typeof plan === 'object' ? plan.leaf_wetness : null;
   if (!w || typeof w !== 'object') return null;
 
@@ -48,13 +60,18 @@ export function buildLeafWetnessLine(plan) {
   const hrs = Number.isFinite(Number(w.wet_hours_min)) ? Number(w.wet_hours_min) : null;
   const hourPhrase = hrs ? `${hrs}+ modelled hours` : 'a long modelled stretch';
 
+  const tomorrow = a === 1 && Array.isArray(w.ahead_dates) && w.ahead_dates.length === 1
+    && dayAfter(planDate) != null && w.ahead_dates[0] === dayAfter(planDate);
+
   let text;
   if (r && a) {
-    text = `${r} of the last few days had ${hourPhrase} of leaf wetness, and ${a} more ${plural(a, 'day', 'days')} ahead look the same — scout the lower leaves on ${SCOUT_TARGETS}, and keep water off the foliage.`;
+    text = `${r} of the last few days had ${hourPhrase} of wet leaves, and ${a} more ${plural(a, 'day ahead looks', 'days ahead look')} the same — scout the lower leaves on ${SCOUT_TARGETS}; water the soil, not the leaves.`;
   } else if (r) {
-    text = `${r} ${plural(r, 'day', 'days')} recently had ${hourPhrase} of leaf wetness — worth scouting the lower leaves on ${SCOUT_TARGETS}.`;
+    text = `${r} ${plural(r, 'day', 'days')} recently had ${hourPhrase} of wet leaves — worth scouting the lower leaves on ${SCOUT_TARGETS}.`;
+  } else if (tomorrow) {
+    text = `Tomorrow: ${hourPhrase} of wet leaves likely — water the soil, not the leaves; cut basil today.`;
   } else {
-    text = `${a} ${plural(a, 'day', 'days')} ahead look like ${hourPhrase} of leaf wetness — keep water off the foliage, and cut basil before it lands.`;
+    text = `${a} ${plural(a, 'day ahead looks', 'days ahead look')} likely to bring ${hourPhrase} of wet leaves — water the soil, not the leaves; cut basil before then.`;
   }
 
   return {

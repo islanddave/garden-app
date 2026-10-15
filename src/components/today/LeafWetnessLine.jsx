@@ -21,12 +21,17 @@
 // House rules for an operational alert, unchanged and absolute: no modal, no toast, no snackbar, no
 // banner, no sheet, no overlay, no push, no sound, no haptic, no count badge. Dave's only surface is
 // an installed PWA on Android; an interrupt there would need his explicit approval.
+//
+// `planDate` lets the forecast sentence say "Tomorrow" when the date proves it (leafWetnessLine.js). `compact` (the
+// redesigned Today, finish plan §3.2 — FeedSuppressedList's precedent): the line in the open glance card's plain
+// list, on the page's type ramp at normal weight. Without it the line renders exactly as before.
 import React, { useMemo } from 'react'
 import { P } from '../../lib/constants.js'
+import { T } from '../forms/formStyles.js'
 import { buildLeafWetnessLine } from '../../lib/leafWetnessLine.js'
 
-export default function LeafWetnessLine({ plan = null }) {
-  const line = useMemo(() => buildLeafWetnessLine(plan), [plan])
+export default function LeafWetnessLine({ plan = null, planDate = null, compact = false }) {
+  const line = useMemo(() => buildLeafWetnessLine(plan, { planDate }), [plan, planDate])
 
   if (!line) return null
 
@@ -41,10 +46,10 @@ export default function LeafWetnessLine({ plan = null }) {
       style={{
         borderLeft: `3px solid ${P.sage}`,
         paddingLeft: 10,
-        fontSize: '0.84rem',
+        fontSize: compact ? T.type.sm : '0.84rem',
         lineHeight: 1.45,
         color: P.dark,
-        fontWeight: 600,
+        fontWeight: compact ? 400 : 600,
       }}
     >
       {line.text}

@@ -161,21 +161,23 @@ describe('the open card — two honest lines', () => {
     expect(waitRows().length).toBe(9)
   })
 
-  it('rain that fell: "Already watered by rain · M", no control; a missing sat_kind is never a waiting row', async () => {
+  // Finish plan §3.2: one plain sentence in the open card's list ("watered", never "covered": the frost word here).
+  it('rain that fell: "Rain already watered M plantings.", no control; a missing sat_kind is never a waiting row', async () => {
     await mount(ALL.slice(0, 2).map(fell))
-    expect(screen.getByTestId('rain-covered-line').textContent).toBe('Already watered by rain · 2')
+    expect(screen.getByTestId('rain-covered-line').textContent).toBe('Rain already watered 2 plantings.')
     expect(screen.queryByTestId('rain-waiting')).toBeNull()
     expect(waitRows().length).toBe(0)
     expect(within(note()).queryAllByRole('button').length).toBe(0)
   })
 
-  it('both: waiting first, then covered; a held planting the read path marks done (watered elsewhere) is neither', async () => {
+  it('both: what rain watered first, then the waiting list (finish plan §3.2); a held planting the read path marks done (watered elsewhere) is neither', async () => {
     await mount([...ALL.slice(0, 3), { ...ALL[3], done: true }, ...ALL.slice(4, 6).map(fell)])
     expect(waitLineText()).toBe('Waiting for rain · 3')
     expect(waitRows().length).toBe(3)
     expect(note().textContent).not.toContain(ALL[3].name)
-    expect(screen.getByTestId('rain-covered-line').textContent).toBe('Already watered by rain · 2')
-    expect(note().firstElementChild.getAttribute('data-testid')).toBe('rain-waiting')
+    expect(screen.getByTestId('rain-covered-line').textContent).toBe('Rain already watered 2 plantings.')
+    expect(note().firstElementChild.getAttribute('data-testid')).toBe('rain-covered-line')
+    expect(note().lastElementChild.getAttribute('data-testid')).toBe('rain-waiting')
   })
 
   it('nothing held and nothing covered: no rain lines at all', async () => {

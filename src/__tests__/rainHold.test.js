@@ -148,7 +148,10 @@ describe('the words — a forecast hold is never rain that fell', () => {
   const FELL = /recent rain|covered|handled|already fell|counted/i
   it('V2 lines', () => {
     expect(waitingLine(12)).toBe('Waiting for rain · 12')
-    expect(coveredLine(58)).toBe('Already watered by rain · 58')
+    // Finish plan §3.2: one plain sentence; never "covered", this screen's word for a frost cover.
+    expect(coveredLine(58)).toBe('Rain already watered 58 plantings.')
+    expect(coveredLine(1)).toBe('Rain already watered 1 planting.')
+    expect(coveredLine(58)).not.toMatch(/cover/i)
     expect(waitingLine(3)).not.toMatch(FELL)
   })
   it('V1 note: holds only → one waiting sentence; fell only → the rain sentence; both → both, waiting first', () => {
