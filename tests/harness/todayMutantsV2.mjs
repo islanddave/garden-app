@@ -168,6 +168,10 @@ export const MUTANTS_V2 = {
     // with a frost phrase fits), so a restored ellipsis clips no glyph and first-screen's mustShowText cannot see it.
     // verdict-truncation reads the style itself. A second killer needs a fixture whose verdict takes two lines (both
     // lanes holding over a list: "Rain may cover today's list — N still due · …"), which no v2 graft builds today.
+    // Re-surveyed at the L3 + L4 + L5 integration (glanceHeadline + urgentPhrase over busy with every graft, alone and
+    // gaugerain + bedwait together, with and without busyfull's frost alerts): both lanes hold on none of them, and
+    // the longest, "Water containers, skip the beds · frost watch tonight" (L3's busyfull + bedwait trial), is one
+    // line. A two-line verdict would need hydrology no real day in the fixtures has, so it stays declared one-killer.
     killers: ['verdict-truncation'],
     oneKiller: 'L3\'s short verdict fits one line on every gate fixture, so a restored ellipsis clips nothing a first-screen text check can see; only verdict-truncation reads the ellipsis style',
     defect: 'the verdict ellipsis is restored',
