@@ -5,9 +5,10 @@
 // one helper (eventDateBoundsError) across all three, with two PUT-only differences:
 //   - a 24h future allowance, because EventDetail re-sends NOON LOCAL on every save (up to ~12h ahead
 //     of now for a same-day edit east of UTC);
-//   - the bounds run only when the new instant is more than 36h from the stored one, because that
-//     same noon-local re-send "moves" an untouched date by up to 14h. Without the gate a notes-only
-//     edit of an event older than 5y would 400 forever.
+//   - the PAST bound runs only when the new instant is more than 36h from the stored one, because
+//     that same noon-local re-send "moves" an untouched date by up to 14h. Without the gate a
+//     notes-only edit of an event older than 5y would 400 forever. The FUTURE bound always runs, so
+//     a date cannot be walked forward 36h per PUT.
 // Drives the REAL handler with the per-file neon mock (as loss-token-alias.test.js). The clock is
 // pinned so the bounds do not drift with the calendar.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -120,6 +121,20 @@ describe('PUT /api/events/:id — the bounds on a real date move', () => {
     expect(r.status).toBe(400);
     expect(r.body.error).toBe('event_date in future');
     expect(updates(r.sent)).toEqual([]);
+  });
+
+  // S6: the future bound is not gated on a 36h move, so stepping a date forward under 36h is caught.
+  it('stored = now, PUT now+30h (a sub-36h step past the 24h allowance) is refused before any write', async () => {
+    const r = await put(NOW, { event_type: 'observation', event_date: '2026-10-16T18:00:00.000Z' });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('event_date in future');
+    expect(updates(r.sent)).toEqual([]);
+  });
+
+  it('control: stored = now, PUT now+20h (inside the 24h allowance) saves', async () => {
+    const r = await put(NOW, { event_type: 'observation', event_date: '2026-10-16T08:00:00.000Z' });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(updates(r.sent)).toHaveLength(1);
   });
 
   it('an unparseable date keeps its existing 400', async () => {

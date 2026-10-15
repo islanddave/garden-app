@@ -1675,15 +1675,19 @@ export const handler = async (event) => {
         const existing = owned[0];
         const hasHarvestRow = existing.harvest_log_id != null;
 
-        // BUG-LAMBDAVALIDATION-001 (I12): the POST's F22 bounds, with PUT's 24h future allowance, but
-        // only on a REAL move. EventDetail re-sends noon LOCAL on every save while the row holds the
-        // noon UTC it was stored at, so a notes-only edit "moves" the instant by up to 14h each way.
-        // 36h clears that shift; without the gate an untouched event older than 5y could never be
-        // edited again. dateChanged below is left as it is: it feeds cacheDirty, a different question.
-        if (eventDate != null
-          && Math.abs(new Date(eventDate).getTime() - new Date(existing.event_date).getTime()) > 36 * 3600 * 1000) {
+        // BUG-LAMBDAVALIDATION-001 (I12): the POST's F22 bounds, with PUT's 24h future allowance.
+        // The FUTURE bound applies whenever a date is sent: relative to the stored instant it could be
+        // walked forward 36h per PUT. The PAST bound applies only on a REAL move. EventDetail re-sends
+        // noon LOCAL on every save while the row holds the noon UTC it was stored at, so a notes-only
+        // edit "moves" the instant by up to 14h each way. 36h clears that shift; without the gate an
+        // untouched event older than 5y could never be edited again. dateChanged below is left as it
+        // is: it feeds cacheDirty, a different question.
+        if (eventDate != null) {
           const dateErr = eventDateBoundsError(eventDate, Date.now(), PUT_FUTURE_BOUND_MS);
-          if (dateErr) return resp(dateErr.status, { error: dateErr.error });
+          const realMove = Math.abs(new Date(eventDate).getTime() - new Date(existing.event_date).getTime()) > 36 * 3600 * 1000;
+          if (dateErr && (realMove || dateErr.error === 'event_date in future')) {
+            return resp(dateErr.status, { error: dateErr.error });
+          }
         }
 
         // Pairing guard. harvest_log rows belong to harvest events; an event_type edit that breaks
