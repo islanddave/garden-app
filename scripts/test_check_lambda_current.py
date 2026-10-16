@@ -38,7 +38,8 @@ def marker(src=DEV, recipe=None, code=CODE, run="35274928023.1"):
 
 
 def cfg(desc, code=CODE, status="Successful"):
-    return {"Description": desc, "CodeSha256": code, "LastUpdateStatus": status, "State": "Active"}
+    return {"Description": desc, "CodeSha256": code, "LastUpdateStatus": status, "State": "Active",
+            "Runtime": "nodejs22.x"}
 
 
 def all_marked(src=DEV, recipe=None):
@@ -100,6 +101,24 @@ def test_built_from_an_older_commit_with_identical_inputs_is_current():
     code, lines = cc.decide(DEV, FNS, all_marked(OLD), ident)
     assert code == cc.CURRENT, lines
     assert {p for _, p in ident.calls} == set(cc.PATHS)
+
+
+def test_a_runtime_that_is_not_the_declared_one_forces_a_deploy():
+    # OPS-LAMBDANODE22-001: only a deploy-lambda leg moves Runtime, so a function left on (or put back on)
+    # another runtime must not let the promote skip the legs.
+    configs = {fn: dict(c, Runtime="nodejs22.x") for fn, c in all_marked(DEV).items()}
+    configs["garden-tags"]["Runtime"] = "nodejs20.x"
+    want = {fn: "nodejs22.x" for fn in FNS}
+    code, lines = cc.decide(DEV, FNS, configs, Idents(default=None), want)
+    assert code == cc.NOT_CURRENT and "garden-tags" in lines[-1]
+    assert any("garden-tags: runtime nodejs20.x is not the declared nodejs22.x" in l for l in lines)
+    configs["garden-tags"]["Runtime"] = "nodejs22.x"
+    assert cc.decide(DEV, FNS, configs, Idents(default=None), want)[0] == cc.CURRENT
+
+
+def test_an_undeclared_runtime_asserts_nothing():
+    code, lines = cc.decide(DEV, FNS, all_marked(DEV), Idents(default=None), {fn: None for fn in FNS})
+    assert code == cc.CURRENT, lines
 
 
 @pytest.mark.parametrize("path", cc.PATHS)
@@ -486,7 +505,9 @@ def test_marker_step_is_last_and_cannot_red_a_leg():
     steps, step = _marker_step()
     assert steps[-1] is step
     assert step.get("continue-on-error") is True
-    assert "if" not in step  # default success(): only after every earlier step of the leg passed
+    # success(): only after every earlier step of the leg passed; and never after a failed runtime move
+    # (OPS-LAMBDANODE22-001), whose step is continue-on-error and so does not fail success() by itself.
+    assert step["if"] == "success() && steps.ensure_runtime.outcome != 'failure'"
 
 
 def _run_marker(tmp_path, live_code=None, get_rc=0, update_rc=0):

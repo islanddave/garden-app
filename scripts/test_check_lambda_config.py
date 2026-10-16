@@ -26,6 +26,30 @@ def test_unstated_memory_is_not_asserted():
     assert clc.check_function("x", {"env": {}}, live(mem=9999)) == []
 
 
+# --- runtime (OPS-LAMBDANODE22-001) ------------------------------------------
+
+def test_runtime_match_is_clean():
+    assert clc.check_function("garden-tags", {"runtime": "nodejs22.x"}, dict(live(), Runtime="nodejs22.x")) == []
+
+def test_runtime_left_behind_is_reported():
+    v = clc.check_function("garden-tags", {"runtime": "nodejs22.x"}, dict(live(), Runtime="nodejs20.x"))
+    assert len(v) == 1 and "Runtime is nodejs20.x" in v[0] and "declares nodejs22.x" in v[0]
+
+def test_runtime_unreadable_is_reported_not_skipped():
+    v = clc.check_function("garden-tags", {"runtime": "nodejs22.x"}, live())
+    assert len(v) == 1 and "Runtime is None" in v[0]
+
+def test_unstated_runtime_is_not_asserted():
+    assert clc.check_function("x", {"env": {}}, dict(live(), Runtime="nodejs18.x")) == []
+
+def test_every_release_function_declares_the_node22_runtime():
+    # One source for the deploy step (jq .runtime) and this guard: an entry without it would make the
+    # step's `jq -e` fail and leave that function unasserted.
+    m = clc.load_manifest()
+    assert m and all(spec.get("runtime") == "nodejs22.x" for spec in m.values()), \
+        sorted(fn for fn, spec in m.items() if spec.get("runtime") != "nodejs22.x")
+
+
 # --- the absent-vs-false distinction (the bug this file exists for) ----------
 
 def test_absent_flag_when_a_value_is_declared_fails():

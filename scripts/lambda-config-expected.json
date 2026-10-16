@@ -14,6 +14,9 @@
     "SCHEMA \u2014 per function name (the live name, e.g. 'garden-plants'):",
     "  memory   int    required MemorySize in MB",
     "  timeout  int    required Timeout in seconds (optional; omit to not assert)",
+    "  runtime  str    Runtime, exact match (optional; omit to not assert). Also the TARGET: deploy-lambda.yml",
+    "                  and deploy-staging.yml read it to move a function's runtime, and check-lambda-current",
+    "                  deploys any function not on it (OPS-LAMBDANODE22-001). A runtime rollback is an edit here.",
     "  env      obj    per-KEY expectation. NOT exhaustive \u2014 unlisted keys are ignored, which is",
     "                  deliberate: SECRET_REFRESH / FORCE_COLD_START are operational churn.",
     "",
@@ -59,6 +62,7 @@
     "                load_manifest() keeps returning FUNCTIONS ONLY."
   ],
   "garden-daily-plan": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 120,
     "_note": "memory INTENTIONALLY 256 \u2014 DRG-NIGHTLYTIMEOUT-001 proved I/O wait, not CPU. env below is the COMPLETE set of vars lambda/daily-plan reads, so every flag is declared present-or-absent. RAIN_AUTOLOG_ENABLED moved null -> 'true' on 2026-09-02 (BUG-RAINAUTOLOGCLIFF-001) and this is NOT a flag flip: logRainEvents was already ARMED, by the ABSENCE of the key, and has authored the latest water event for 217 of 239 live plantings that way. rainLog.js arms on anything that is not the exact string 'false', so declaring the value it already behaves as changes nothing at runtime and everything about who can audit it \u2014 every prior investigation of this writer aimed at CARE_WATER_LEDGER_ENABLED because you cannot grep for a variable nobody set. ORDERING: the live key must be SET BEFORE this line ships (scripts/lambda-env-set.sh garden-daily-plan RAIN_AUTOLOG_ENABLED true), because check-lambda-config.py ignores a live key the manifest omits but HARD-REDS a declared key the live account lacks; deploy-lambda.yml's daily-plan env merge also adds it if-absent, but that step is continue-on-error and, on the promote that ships this, may be loaded from the pre-change workflow. Declared as the EXACT string, not the present-any-value sentinel, so a live disarm is a reviewable repo change like every other kill switch here.",
@@ -107,6 +111,7 @@
     "url": null
   },
   "garden-plants": {
+    "runtime": "nodejs22.x",
     "memory": 1024,
     "timeout": 30,
     "_note": "OPS-PLANTSLAMBDACPU-001 \u2014 bumped 256->1024 live 2026-08-17 with Dave's approval: ~446 HMAC CDN presigns per list request were CPU-bound at 256MB's 0.145 vCPU. update-function-code does not touch memory, so the bump survives deploys, but it was UNDECLARED until now.",
@@ -125,6 +130,7 @@
     }
   },
   "garden-photos": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -144,6 +150,7 @@
     }
   },
   "garden-projects": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -162,6 +169,7 @@
     }
   },
   "garden-locations": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -179,6 +187,7 @@
     }
   },
   "garden-inventory-items": {
+    "runtime": "nodejs22.x",
     "memory": 512,
     "timeout": 120,
     "_note": "V4-SEEDINV-001 \u2014 Anthropic image-OCR proxy needs >30s and base64 headroom.",
@@ -197,6 +206,7 @@
     }
   },
   "garden-facebook-share": {
+    "runtime": "nodejs22.x",
     "memory": 1024,
     "timeout": 180,
     "_note": "V4-FBSHARE-001. FB_SHARE_ENABLED='1' since 2026-08-21 \u2014 Facebook posting is LIVE (secret provisioned, token non-expiring, Dev-mode post visibility verified equal to a hand-made post). This line declares that deliberate flip so the drift guard stops redding every promote on it. 1024MB/180s (was 512/60): the live function was raised to these values on 2026-08-21 because it fans out over up to 10 photos \u2014 S3 get + metadata strip + a multipart Graph upload each \u2014 and a timeout mid-Promise.all orphans uploaded Graph media with NO cleanup, because the catch never runs. deploy-lambda.yml hardcoded the old 60/512 with no read/compare, so every Lambda deploy silently reverted that raise; fixed in the same commit as this line. IG_SHARE_ENABLED is declared '1' and Instagram is LIVE — see the ENABLEMENT paragraph at the end of this note, which is the authorising record. It was declared ABSENT until 2026-08-30, for two successive reasons: first because the handler did not exist, then (from 2026-08-28) because it was the one control keeping a built, deployable publish path dark. That history is kept because the tripwire below only means anything if you can see what it was guarding. POST /api/share/instagram is routed and reachable the moment this key is set to '1' \u2014 there is no second gate behind it, and an Instagram post CANNOT be deleted through the API. Setting it is therefore a SHIP EVENT, not a config tweak, and must be a deliberate act with the same weight as a promote. If this key's live value ever CHANGES — set, cleared, or altered — without an accompanying edit to this line, treat it as an unauthorised change rather than drift. That guard was written when the key was absent and said 'appears'; it is restated for a key that is now set, and it is deliberately NOT weakened by the enablement having happened. IG_STAGING_BUCKET added 2026-08-30: the Instagram flow parks an EXIF-stripped scratch copy of a private photo before handing Meta a presigned URL, and it used to park it in garden-photos-prod \u2014 which is versioned AND replicates every object to garden-photos-replica-usw2 with delete-marker replication disabled. Since S3 never replicates version-specific deletes, NO deletion of any kind reached the replica and every staged copy accumulated in us-west-2 permanently. garden-photos-derivatives-769788341849 is unversioned and unreplicated (both verified live), so a plain DeleteObject genuinely deletes and there is no second region. The handler FALLS BACK to S3_PHOTOS_BUCKET when this key is absent, so it is safe to deploy ahead of the key \u2014 but the fallback is the old, leaky behaviour, which is why this is asserted as an exact string rather than left optional. ENABLEMENT 2026-08-30: IG_SHARE_ENABLED flipped null -> '1' on Dave's explicit instruction to make Instagram fully functional. This edit IS the accompanying repo change this line demands - the key appearing live without it would have been an unauthorised enablement. Preconditions verified live the same day, not recalled: the Page-linked Instagram business account is 17841480663170931 (gardensatmathews) and matches the secret; the page_token is valid, type PAGE, expires_at 0; the deployed prod bundle carries the Instagram route; and the whole publish path was exercised end to end against an unpublished staging Page (share_log status posted, 7.7s). NOTE the frontend half is a SEPARATE and deliberately withheld switch: api.js routes BOTH /api/share/facebook and /api/share/instagram through VITE_API_FACEBOOK_SHARE, so setting that repo variable turns on Facebook posting - which is already armed - in the same instant. Instagram cannot be enabled in the UI alone as the code stands.",
@@ -216,9 +226,10 @@
     }
   },
   "garden-photocdn-derivative": {
+    "runtime": "nodejs22.x",
     "memory": 2048,
     "timeout": 30,
-    "_note": "Created by infra/photocdn.yaml (CFN), not by deploy-lambda.yml's create branch \u2014 which would produce nodejs20.x/x86_64/256MB. Asserted here so a CFN placeholder-revert is caught by the deploy rather than days later.",
+    "_note": "Created by infra/photocdn.yaml (CFN), not by deploy-lambda.yml's create branch \u2014 which would produce x86_64/256MB. Asserted here so a CFN placeholder-revert is caught by the deploy rather than days later.",
     "env": {
       "ORIGINALS_BUCKET": "garden-photos-prod",
       "DERIVATIVES_BUCKET": "garden-photos-derivatives-769788341849"
@@ -226,6 +237,7 @@
     "url": null
   },
   "garden-xp-reconcile": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -234,6 +246,7 @@
     "url": null
   },
   "garden-harvests": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -246,6 +259,7 @@
     }
   },
   "garden-members": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -258,6 +272,7 @@
     }
   },
   "garden-events": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -270,6 +285,7 @@
     }
   },
   "garden-dashboard": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -282,6 +298,7 @@
     }
   },
   "garden-varieties": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -295,6 +312,7 @@
     }
   },
   "garden-findings": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -307,6 +325,7 @@
     }
   },
   "garden-evidence-ingest": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -319,6 +338,7 @@
     }
   },
   "garden-storage-location": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -331,6 +351,7 @@
     }
   },
   "garden-preservation": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -343,6 +364,7 @@
     }
   },
   "garden-daily-plan-read": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -355,6 +377,7 @@
     }
   },
   "garden-tags": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -368,6 +391,7 @@
     }
   },
   "garden-ux-events": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "env": {
@@ -380,6 +404,7 @@
     }
   },
   "garden-favorites": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "url": {
@@ -389,6 +414,7 @@
     }
   },
   "garden-app-events": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "url": {
@@ -398,6 +424,7 @@
     }
   },
   "garden-achievements": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "url": {
@@ -407,6 +434,7 @@
     }
   },
   "garden-critter": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "url": {
@@ -416,6 +444,7 @@
     }
   },
   "garden-shared-state": {
+    "runtime": "nodejs22.x",
     "memory": 256,
     "timeout": 30,
     "_note": "BUG-AUTHZLAMBDA-001 — the handler admits only members of GARDEN_HOUSEHOLD_IDS (at least two entries) and fails closed, so a wiped key 403s the whole household. ORDERING: set the live key (scripts/lambda-env-set.sh, value copied from garden-events) before this line ships; deploy-lambda.yml's household ensure step is the continue-on-error backstop.",

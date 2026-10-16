@@ -117,6 +117,15 @@ def check_function(name, expected, live):
                 "%s: Timeout is %s, manifest declares %s" % (name, actual, expected["timeout"])
             )
 
+    # OPS-LAMBDANODE22-001: deploy-lambda.yml moves Runtime only in its "Ensure declared runtime" step,
+    # which is continue-on-error, so this is what turns a function left on the old runtime into a red run.
+    if "runtime" in expected:
+        actual = live.get("Runtime")
+        if actual != expected["runtime"]:
+            violations.append(
+                "%s: Runtime is %s, manifest declares %s" % (name, actual, expected["runtime"])
+            )
+
     env_live = (live.get("Environment") or {}).get("Variables") or {}
     for key, want in (expected.get("env") or {}).items():
         got = env_live.get(key, ABSENT)

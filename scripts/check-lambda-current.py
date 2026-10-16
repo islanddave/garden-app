@@ -233,10 +233,12 @@ def fetch_configs(functions, region, budget):
 _NOT_READ = object()
 
 
-def decide(dev_sha, functions, configs, ident):
+def decide(dev_sha, functions, configs, ident, runtimes=None):
     """(code, lines). `configs` maps every name in `functions` to its live config dict, or None for a
-    function that does not exist. `ident(ref, path)` returns an identity string or None. Pure: all
-    I/O is in the arguments, so every branch is testable against recorded responses."""
+    function that does not exist. `ident(ref, path)` returns an identity string or None. `runtimes`
+    maps a function to the runtime dev_sha's manifest declares for it (OPS-LAMBDANODE22-001); a live
+    Runtime that differs is NOT CURRENT, because only a deploy-lambda leg moves it. Pure: all I/O is in
+    the arguments, so every branch is testable against recorded responses."""
     lines, stale, unknown, groups = [], [], [], {}
     if not re.fullmatch(r"[0-9a-f]{40}", dev_sha or ""):
         return UNKNOWN, [f"dev_sha {dev_sha!r} is not a 40-hex commit sha"]
@@ -260,6 +262,11 @@ def decide(dev_sha, functions, configs, ident):
         if status == "Failed":
             stale.append(fn)
             lines.append(f"  {fn}: last update FAILED")
+            continue
+        want_rt = (runtimes or {}).get(fn)
+        if want_rt and cfg.get("Runtime") != want_rt:
+            stale.append(fn)
+            lines.append(f"  {fn}: runtime {cfg.get('Runtime')} is not the declared {want_rt}")
             continue
         marker = parse_marker(cfg.get("Description"))
         if marker is None:
@@ -376,7 +383,16 @@ def main(argv=None):
         return cache[(ref, path)]
 
     try:
-        code, lines = decide(args.dev_sha, functions, configs, ident)
+        with open(lambda_fleet.MANIFEST) as fh:
+            runtimes = {fn: spec.get("runtime") for fn, spec in json.load(fh).items()
+                        if fn in functions and isinstance(spec, dict)}
+    except (OSError, ValueError) as e:
+        print(f"::warning::{e}")
+        print("VERDICT: UNKNOWN — deploy (declared runtimes unreadable)")
+        return UNKNOWN
+
+    try:
+        code, lines = decide(args.dev_sha, functions, configs, ident, runtimes)
     except (urllib.error.URLError, OSError, ValueError, RuntimeError) as e:
         print(f"::warning::repository read failed: {e}")
         print("VERDICT: UNKNOWN — deploy (Lambda inputs could not be compared)")

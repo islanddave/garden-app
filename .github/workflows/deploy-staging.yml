@@ -114,7 +114,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'  # the Lambda runtime's major (OPS-LAMBDANODE22-001); the frontend job stays on 20.19.0
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -147,6 +147,32 @@ jobs:
           unzip -l ../photocdn-derivative.zip | grep -q 'node_modules/blurhash' || { echo "FATAL: blurhash dep missing from zip"; exit 1; }
           echo "arm64 sharp + blurhash present in photocdn-derivative.zip"
 
+      # OPS-LAMBDANODE22-001 (mirrors deploy-lambda.yml's "Ensure declared runtime", body byte-identical,
+      # pinned by scripts/test_ensure_runtime_step.py): update-function-code never touches Runtime, so this
+      # moves an existing staging function to the runtime the prod manifest declares for its prod twin
+      # (KEY). Runtime only, no env map; before the code update. Hard-fails on purpose (prod's copy is
+      # continue-on-error): nothing asserts staging config afterwards, and staging is where the runtime is
+      # proven, so a red leg here correctly stops the promote's staging gate.
+      - name: Ensure declared runtime on ${{ matrix.function }}-staging
+        env:
+          FN: garden-${{ matrix.function }}-staging
+          KEY: garden-${{ matrix.function }}
+        run: |
+          set -euo pipefail
+          WANT=$(jq -er --arg f "$KEY" '.[$f].runtime' scripts/lambda-config-expected.json)
+          ERR=$(mktemp)
+          if ! CUR=$(aws lambda get-function-configuration --function-name "$FN" --query Runtime --output text 2>"$ERR"); then
+            if grep -q ResourceNotFoundException "$ERR"; then echo "$FN does not exist yet: its create step sets $WANT"; exit 0; fi
+            cat "$ERR"; echo "::error::$FN: could not read Runtime; left unchanged"; exit 1
+          fi
+          if [ "$CUR" = "$WANT" ]; then echo "$FN already on $WANT"; exit 0; fi
+          echo "Moving $FN runtime $CUR -> $WANT"
+          aws lambda update-function-configuration --function-name "$FN" --runtime "$WANT" >/dev/null
+          aws lambda wait function-updated --function-name "$FN"
+          GOT=$(aws lambda get-function-configuration --function-name "$FN" --query '[Runtime,LastUpdateStatus]' --output text)
+          if [ "$GOT" != "$(printf '%s\tSuccessful' "$WANT")" ]; then echo "::error::$FN: Runtime/LastUpdateStatus read '$GOT' after the update, want $WANT/Successful"; exit 1; fi
+          echo "$FN runtime $WANT"
+
       - name: Deploy or create ${{ matrix.function }}-staging
         # First-deploy support per VARIETY-REF Session 2 — mirrors deploy-lambda.yml
         # create-or-update pattern (closes Pending D1 from carry-forward backlog).
@@ -164,7 +190,7 @@ jobs:
             echo "Creating new function: $FN"
             aws lambda create-function \
               --function-name "$FN" \
-              --runtime nodejs20.x \
+              --runtime nodejs22.x \
               --handler index.handler \
               --role arn:aws:iam::769788341849:role/garden-app-lambda-exec \
               --zip-file "$ZIP_FILE" \

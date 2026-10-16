@@ -174,7 +174,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'  # the Lambda runtime's major (OPS-LAMBDANODE22-001); CI's test jobs stay on 20.19.0
           # no root-level lockfile — caching disabled for lambda subdirs
 
       - name: Configure AWS credentials (OIDC)
@@ -239,6 +239,40 @@ jobs:
           unzip -l ../photocdn-derivative.zip | grep -q 'node_modules/blurhash' || { echo "FATAL: blurhash dep missing from zip"; exit 1; }
           echo "arm64 sharp + blurhash present in photocdn-derivative.zip"
 
+      # OPS-LAMBDANODE22-001: update-function-code never touches Runtime, so the create branch's runtime
+      # alone moves no existing function. This step moves an existing one to the runtime declared in
+      # scripts/lambda-config-expected.json and is a no-op once it is there. It sends Runtime only, never
+      # an env map, so nothing else in the configuration can be overwritten. It runs BEFORE the code
+      # update so the leg never needs AWS to accept a code update on a deprecated runtime; the previous
+      # code runs on the new runtime for the seconds until the update lands (the staging gate proves the
+      # same pairing). continue-on-error like the other config-ensure steps: verify-lambda-invariants
+      # asserts `runtime` from the same manifest after every promote, so a failure here reds the run
+      # without withholding the SPA; it also withholds the deploy marker (the marker step's `if:`), and
+      # check-lambda-current reads a runtime that is not the declared one as NOT CURRENT, so the next
+      # promote redeploys and retries. The body is byte-identical to deploy-staging.yml's copy
+      # (scripts/test_ensure_runtime_step.py).
+      - name: Ensure declared runtime on garden-${{ matrix.function }}
+        id: ensure_runtime
+        continue-on-error: true
+        env:
+          FN: garden-${{ matrix.function }}
+          KEY: garden-${{ matrix.function }}
+        run: |
+          set -euo pipefail
+          WANT=$(jq -er --arg f "$KEY" '.[$f].runtime' scripts/lambda-config-expected.json)
+          ERR=$(mktemp)
+          if ! CUR=$(aws lambda get-function-configuration --function-name "$FN" --query Runtime --output text 2>"$ERR"); then
+            if grep -q ResourceNotFoundException "$ERR"; then echo "$FN does not exist yet: its create step sets $WANT"; exit 0; fi
+            cat "$ERR"; echo "::error::$FN: could not read Runtime; left unchanged"; exit 1
+          fi
+          if [ "$CUR" = "$WANT" ]; then echo "$FN already on $WANT"; exit 0; fi
+          echo "Moving $FN runtime $CUR -> $WANT"
+          aws lambda update-function-configuration --function-name "$FN" --runtime "$WANT" >/dev/null
+          aws lambda wait function-updated --function-name "$FN"
+          GOT=$(aws lambda get-function-configuration --function-name "$FN" --query '[Runtime,LastUpdateStatus]' --output text)
+          if [ "$GOT" != "$(printf '%s\tSuccessful' "$WANT")" ]; then echo "::error::$FN: Runtime/LastUpdateStatus read '$GOT' after the update, want $WANT/Successful"; exit 1; fi
+          echo "$FN runtime $WANT"
+
       - name: Deploy or create ${{ matrix.function }}
         run: |
           FUNCTION_NAME="garden-${{ matrix.function }}"
@@ -254,7 +288,7 @@ jobs:
             echo "Creating new function: $FUNCTION_NAME"
             aws lambda create-function \
               --function-name "$FUNCTION_NAME" \
-              --runtime nodejs20.x \
+              --runtime nodejs22.x \
               --handler index.handler \
               --role ${{ vars.LAMBDA_EXECUTION_ROLE_ARN }} \
               --zip-file "$ZIP_FILE" \
@@ -912,7 +946,13 @@ jobs:
       #
       # RECIPE_SHA is github.sha, which inside a called workflow is the CALLER's commit — the one this file
       # was loaded from. It differs from the checked-out SRC when promote-gate is dispatched from main.
+      #
+      # Withheld when "Ensure declared runtime" failed (OPS-LAMBDANODE22-001), so this leg never certifies a
+      # function whose runtime move failed: the marker left from the previous deploy names other code or an
+      # older recipe in the cases that matter (new code, or this recipe's first run), and the next promote
+      # redeploys the function and retries the move. verify-lambda-invariants reds on the runtime either way.
       - name: Record deployed source on garden-${{ matrix.function }} (deploy marker read by promote-gate)
+        if: success() && steps.ensure_runtime.outcome != 'failure'
         continue-on-error: true
         env:
           FN: garden-${{ matrix.function }}
