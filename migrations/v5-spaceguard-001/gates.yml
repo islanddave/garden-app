@@ -1,0 +1,469 @@
+# gates.yml
+# v5-spaceguard-001: V5-SPACEREPOINTGUARD-001 (multi-space Phase 1 1.1 C-AUDIT, 1.2 C-GUARD) and
+# V4-SPACESOFTDEL-001 (1.3b C-BLOCK). Stamp 5.1.5-spaceguard-001. README.md has the apply order and why.
+#
+# ANY pre/post assertion failing during the apply is a HARD ABORT.
+#
+# ── EVERY post GATE IS SELF-ARMING ────────────────────────────────────────────────────────────────
+#   gate-invariants runs `gate_runner.py --all --phase post --continuous-only` against live prod and live
+#   staging on every migrations/** push and on a Tuesday cron, with no skip-if-unapplied logic. So each
+#   post gate returns rows only when stamp 5.1.5-spaceguard-001 exists AND its invariant is violated:
+#   vacuous before the apply, asserting after it. The one exception is post_schema_version_recorded,
+#   armed on the objects 0a creates (it cannot arm on the row it checks for).
+#   No `::regclass` anywhere: every relation is matched by pg_class.relname joined to pg_namespace.
+#   The tables named as identifiers below (spaces, audit_events, weather_daily, weather_cold_range,
+#   schema_version) exist on prod, staging and every fork of either; 0a refuses where they do not.
+#
+# ── TRIGGER INVENTORIES FILTER NOT tgisinternal AND ASSERT tgenabled = 'O' ────────────────────────
+#   v5-spacefk-001 adds foreign keys into spaces, and each adds internal RI triggers on spaces; the
+#   closed-world gate below would red on them without the filter. 'O' because session_replication_role
+#   cannot be set by the app's role (Phase 0 read 22), so 'A' never arises.
+#
+# ── THE FUNCTION BODIES ARE PINNED BY md5(prosrc) ─────────────────────────────────────────────────
+#   Read off the rehearsal's PostgreSQL 17.10 after applying 0a (README.md "Rehearsal"). prosrc is the
+#   text between the dollar quotes, byte for byte, so these change only when 0a's bodies change: then
+#   re-read them on purpose, here.
+#
+# REHEARSED on a throwaway local PostgreSQL 17.10 loaded with prod's schema and stamps (README.md). Not run
+# against staging or prod as an applied migration.
+
+pre:
+  - name: pre_not_already_applied
+    note: >
+      A stamp without the objects would arm every post gate against nothing. continuous false: false by
+      design once 0a runs.
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.1.5-spaceguard-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_names_free
+    note: >
+      No function or trigger already carries a name 0a creates (0a step 0 refuses the same thing).
+      continuous false, as above.
+    sql: |
+      SELECT 'function ' || p.proname
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public'
+         AND p.proname IN ('audit_stmt_insert', 'guard_spaces_repoint', 'guard_spaces_delete', 'guard_space_truncate')
+      UNION ALL
+      SELECT 'trigger ' || g.tgname
+        FROM pg_trigger g
+       WHERE NOT g.tgisinternal
+         AND g.tgname IN ('trg_audit_spaces_upd', 'trg_audit_spaces_del', 'trg_audit_spaces_ins',
+                          'spaces_repoint_guard', 'spaces_delete_guard', 'spaces_truncate_guard',
+                          'weather_daily_truncate_guard', 'weather_cold_range_truncate_guard')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_spaces_has_only_the_ownership_trigger
+    note: >
+      Phase 0 read 3: spaces has one trigger, prevent_ownership_transfer. Anything else is a trigger this
+      migration did not plan around (a BEFORE UPDATE that rewrites coordinates would slip past the
+      repoint guard's UPDATE OF list). continuous false: 0a adds six.
+    sql: |
+      SELECT g.tgname::text
+        FROM pg_trigger g
+        JOIN pg_class t     ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'spaces' AND NOT g.tgisinternal
+         AND g.tgname <> 'prevent_ownership_transfer'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_spaces_has_no_deleted_at
+    note: >
+      trg_audit_spaces_upd binds audit_stmt_update_no_soft_delete, which is right only without deleted_at.
+    sql: |
+      SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'spaces' AND column_name = 'deleted_at'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_shared_audit_writers_present
+    note: >
+      The two shared writers 0a binds and the slice helper they call, each SECURITY DEFINER with the
+      pinned search_path (v4-harvestaudit-001, v5-fermentpath-001).
+    sql: |
+      SELECT want.proname
+        FROM (VALUES ('audit_stmt_update_no_soft_delete'), ('audit_stmt_delete')) AS want(proname)
+       WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = 'public' AND p.proname = want.proname AND p.prosecdef
+                            AND p.proconfig::text LIKE '%search_path=pg_catalog, public%')
+      UNION ALL
+      SELECT 'audit_watched_slice'
+       WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = 'public' AND p.proname = 'audit_watched_slice')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_audit_events_admits_insert
+    sql: |
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'audit_events' AND c.conname = 'audit_events_action_check'
+                            AND pg_get_constraintdef(c.oid) LIKE '%''INSERT''%')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_foreign_keys_into_spaces_are_single_column_on_id
+    note: >
+      spaces_delete_guard reads single-column keys on spaces.id. Phase 0 read 4: four, all single-column
+      (photos RESTRICT; spacetheme, weather_daily, weather_cold_range CASCADE).
+    sql: |
+      SELECT c.conname::text
+        FROM pg_constraint c
+        JOIN pg_class p      ON p.oid = c.confrelid
+        JOIN pg_namespace pn ON pn.oid = p.relnamespace AND pn.nspname = 'public'
+        LEFT JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = c.confkey[1]
+       WHERE c.contype = 'f' AND p.relname = 'spaces'
+         AND (cardinality(c.conkey) <> 1 OR cardinality(c.confkey) <> 1 OR pa.attname IS DISTINCT FROM 'id')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_weather_tables_present
+    sql: |
+      SELECT want.relname
+        FROM (VALUES ('weather_daily'), ('weather_cold_range'), ('spacetheme')) AS want(relname)
+       WHERE NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE n.nspname = 'public' AND c.relname = want.relname AND c.relkind = 'r')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ARMED ON THE DDL, NOT ON ITSELF. 0a writes the objects and the row in one transaction, so a row here
+  # means someone hand-applied the DDL or deleted the stamp: the state that silences every gate below.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE (EXISTS (SELECT 1 FROM pg_trigger g WHERE NOT g.tgisinternal
+                         AND g.tgname IN ('spaces_delete_guard', 'spaces_truncate_guard', 'trg_audit_spaces_ins'))
+              OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = 'public' AND p.proname = 'audit_stmt_insert'))
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+    expect: rowcount_eq
+    value: 0
+
+  # The six triggers 0a puts on spaces, each by name, timing/level/event (tgtype), function, OF-column list
+  # and enabled state. One row per trigger that is missing or differs, naming it. tgtype: 16 AFTER UPDATE
+  # statement, 8 AFTER DELETE statement, 4 AFTER INSERT statement, 19 BEFORE UPDATE row, 11 BEFORE DELETE
+  # row, 34 BEFORE TRUNCATE statement. Binding trg_audit_spaces_upd to audit_stmt_update (the mutant that
+  # audits nothing on a table without deleted_at) reds here.
+  - name: post_spaces_guard_and_audit_triggers_exact_and_enabled
+    sql: |
+      SELECT want.tgname
+        FROM (VALUES ('trg_audit_spaces_upd',  16, 'audit_stmt_update_no_soft_delete', ''),
+                     ('trg_audit_spaces_del',   8, 'audit_stmt_delete',                ''),
+                     ('trg_audit_spaces_ins',   4, 'audit_stmt_insert',                ''),
+                     ('spaces_repoint_guard',  19, 'guard_spaces_repoint',             'postal_code,weather_lat,weather_lng'),
+                     ('spaces_delete_guard',   11, 'guard_spaces_delete',              ''),
+                     ('spaces_truncate_guard', 34, 'guard_space_truncate',             ''))
+             AS want(tgname, tgtype, proname, of_cols)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_trigger g
+                 JOIN pg_class t      ON t.oid = g.tgrelid
+                 JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+                 JOIN pg_proc p       ON p.oid = g.tgfoid
+                 JOIN pg_namespace pn ON pn.oid = p.pronamespace AND pn.nspname = 'public'
+                WHERE t.relname = 'spaces' AND NOT g.tgisinternal
+                  AND g.tgname = want.tgname AND g.tgtype = want.tgtype
+                  AND p.proname = want.proname AND g.tgenabled = 'O'
+                  AND coalesce((SELECT string_agg(a.attname::text, ',' ORDER BY a.attname)
+                                  FROM unnest(g.tgattr::int2[]) AS k(attnum)
+                                  JOIN pg_attribute a ON a.attrelid = g.tgrelid AND a.attnum = k.attnum), '')
+                      = want.of_cols)
+    expect: rowcount_eq
+    value: 0
+
+  # CLOSED WORLD on spaces: no non-internal trigger besides the six above and prevent_ownership_transfer.
+  # A BEFORE UPDATE trigger that rewrote a coordinate would not be seen by spaces_repoint_guard (an UPDATE
+  # OF list sees the SET list, not changes other triggers make), so a new trigger here is a decision, made
+  # by amending this list in the same push.
+  - name: post_spaces_has_no_other_trigger
+    sql: |
+      SELECT g.tgname::text
+        FROM pg_trigger g
+        JOIN pg_class t     ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'spaces' AND NOT g.tgisinternal
+         AND g.tgname NOT IN ('prevent_ownership_transfer', 'trg_audit_spaces_upd', 'trg_audit_spaces_del',
+                              'trg_audit_spaces_ins', 'spaces_repoint_guard', 'spaces_delete_guard',
+                              'spaces_truncate_guard')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_weather_truncate_guards_present_and_enabled
+    sql: |
+      SELECT want.relname || '.' || want.tgname
+        FROM (VALUES ('weather_daily', 'weather_daily_truncate_guard'),
+                     ('weather_cold_range', 'weather_cold_range_truncate_guard')) AS want(relname, tgname)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_trigger g
+                 JOIN pg_class t      ON t.oid = g.tgrelid
+                 JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+                 JOIN pg_proc p       ON p.oid = g.tgfoid
+                 JOIN pg_namespace pn ON pn.oid = p.pronamespace AND pn.nspname = 'public'
+                WHERE t.relname = want.relname AND NOT g.tgisinternal
+                  AND g.tgname = want.tgname AND g.tgtype = 34
+                  AND p.proname = 'guard_space_truncate' AND g.tgenabled = 'O')
+    expect: rowcount_eq
+    value: 0
+
+  # The four bodies, the definer bit and the pinned search_path. md5 values: see the header. The audit
+  # writer must be SECURITY DEFINER (a missing grant would otherwise degrade to a swallowed WARNING, an
+  # invisible audit gap); the guards must not be (they read, and run as the caller).
+  - name: post_new_functions_pinned
+    sql: |
+      SELECT want.proname
+        FROM (VALUES ('audit_stmt_insert',    '234403a353e3af56da5f58555762e47b', true),
+                     ('guard_spaces_repoint', '0ae98164bf01c2ef8cf82d4e4bfb8834', false),
+                     ('guard_spaces_delete',  '6d06cc78542302d6296eaebef4849d20', false),
+                     ('guard_space_truncate', 'b4822edae885159115e43d13113bcba1', false))
+             AS want(proname, body_md5, secdef)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+                WHERE p.proname = want.proname AND md5(p.prosrc) = want.body_md5
+                  AND p.prosecdef = want.secdef AND p.pronargs = 0
+                  AND p.proconfig::text LIKE '%search_path=pg_catalog, public%')
+    expect: rowcount_eq
+    value: 0
+
+  # The audit triggers are statement-level and carry the transition tables their functions read. Without
+  # them the function sees no rows and writes nothing while every presence gate stays green.
+  - name: post_spaces_audit_triggers_have_transition_tables
+    sql: |
+      SELECT g.tgname::text
+        FROM pg_trigger g
+        JOIN pg_class t     ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'spaces' AND NOT g.tgisinternal
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND (   (g.tgname = 'trg_audit_spaces_upd'
+                  AND pg_get_triggerdef(g.oid) NOT LIKE '%REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT%')
+              OR (g.tgname = 'trg_audit_spaces_del'
+                  AND pg_get_triggerdef(g.oid) NOT LIKE '%REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT%')
+              OR (g.tgname = 'trg_audit_spaces_ins'
+                  AND pg_get_triggerdef(g.oid) NOT LIKE '%REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT%'))
+    expect: rowcount_eq
+    value: 0
+
+  # audit_stmt_insert on ANY table (a later platform_operators migration uses it too) is an AFTER INSERT
+  # statement trigger with the NEW TABLE it reads. Bound to UPDATE or DELETE, or without the transition
+  # table, it would install cleanly and record nothing.
+  - name: post_audit_stmt_insert_only_on_after_insert_statement
+    sql: |
+      SELECT t.relname || '.' || g.tgname
+        FROM pg_trigger g
+        JOIN pg_class t      ON t.oid = g.tgrelid
+        JOIN pg_proc p       ON p.oid = g.tgfoid
+        JOIN pg_namespace pn ON pn.oid = p.pronamespace AND pn.nspname = 'public'
+       WHERE p.proname = 'audit_stmt_insert' AND NOT g.tgisinternal
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND (g.tgtype <> 4 OR pg_get_triggerdef(g.oid) NOT LIKE '%REFERENCING NEW TABLE AS new_rows%')
+    expect: rowcount_eq
+    value: 0
+
+  # Port-time tripwire. The _no_soft_delete writer on a table that HAS deleted_at would record a soft delete
+  # as a plain UPDATE; the migration that adds spaces.deleted_at swaps the trigger to audit_stmt_update and
+  # watches deleted_at, in the same file.
+  - name: post_spaces_update_audit_matches_deleted_at
+    sql: |
+      SELECT 'spaces has deleted_at but trg_audit_spaces_upd calls audit_stmt_update_no_soft_delete'
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = 'public' AND table_name = 'spaces' AND column_name = 'deleted_at')
+         AND EXISTS (SELECT 1 FROM pg_trigger g JOIN pg_proc p ON p.oid = g.tgfoid
+                      WHERE g.tgname = 'trg_audit_spaces_upd' AND p.proname = 'audit_stmt_update_no_soft_delete')
+    expect: rowcount_eq
+    value: 0
+
+  # Every watched name is a REAL column of spaces. audit_watched_slice projects a missing key to JSON null
+  # on both sides, so a typo'd or dropped column stops being watched in silence. Shape:
+  # v4-harvestaudit-001 post_every_watched_column_actually_exists.
+  - name: post_spaces_every_watched_column_exists
+    sql: |
+      WITH targs AS (
+        SELECT btrim(x, ' ''') AS col
+          FROM pg_trigger g
+          JOIN pg_class t     ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(g.oid) FROM 'audit_stmt_update_no_soft_delete\(([^)]*)\)'), ',') AS x
+         WHERE t.relname = 'spaces' AND g.tgname = 'trg_audit_spaces_upd'
+      )
+      SELECT col FROM targs
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND col <> ''
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns ic
+                          WHERE ic.table_schema = 'public' AND ic.table_name = 'spaces'
+                            AND ic.column_name = targs.col)
+    expect: rowcount_eq
+    value: 0
+
+  # THE ANTI-SILENT-GAP GATE. Every column of spaces is either watched (read live from the trigger's
+  # arguments) or in the ignored list, so a column added later forces a decision instead of a quiet hole.
+  # Ignored: id (it IS audit_events.row_id), created_at (never changes), updated_at (moves on unwatched
+  # writes such as a same-hero re-pick; watching it would audit those). Shape: v4-harvestaudit-001
+  # post_column_classification_is_complete.
+  - name: post_spaces_column_classification_is_complete
+    sql: |
+      WITH targs AS (
+        SELECT btrim(x, ' ''') AS col
+          FROM pg_trigger g
+          JOIN pg_class t     ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(g.oid) FROM 'audit_stmt_update_no_soft_delete\(([^)]*)\)'), ',') AS x
+         WHERE t.relname = 'spaces' AND g.tgname = 'trg_audit_spaces_upd'
+      )
+      SELECT ic.column_name
+        FROM information_schema.columns ic
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND ic.table_schema = 'public' AND ic.table_name = 'spaces'
+         AND ic.column_name NOT IN ('id', 'created_at', 'updated_at')
+         AND NOT EXISTS (SELECT 1 FROM targs WHERE targs.col = ic.column_name)
+    expect: rowcount_eq
+    value: 0
+
+  # The baseline. Every Space that existed when 0a ran (created_at at or before the stamp's applied_at) has
+  # its starting audit row: the baseline 0a wrote, or, for a Space created while the triggers were already
+  # on (it can predate the stamp's applied_at only after a 0r -> 0a cycle, which moves applied_at), its
+  # INSERT row. Later Spaces get an INSERT row from trg_audit_spaces_ins, which the next gate reads.
+  - name: post_baseline_row_for_every_space_older_than_the_apply
+    sql: |
+      SELECT s.id::text
+        FROM public.spaces s
+        JOIN public.schema_version v ON v.version = '5.1.5-spaceguard-001'
+       WHERE s.created_at <= v.applied_at
+         AND NOT EXISTS (SELECT 1 FROM public.audit_events a
+                          WHERE a.table_name = 'spaces' AND a.row_id = s.id
+                            AND (a.actor_clerk_sub = 'migration:v5-spaceguard-001' OR a.action = 'INSERT'))
+    expect: rowcount_eq
+    value: 0
+
+  # 1.2 DATA GATE. Each Space's (weather_lat, weather_lng, postal_code) equals the after_jsonb of its
+  # newest spaces audit row (INSERT or UPDATE). No audit row = a finding. The triple ONLY: a same-hero
+  # PUT sets updated_at without changing a watched column, writes no audit row, and must stay green
+  # (RIA I6). Newest = greatest ts; rows written in one transaction share ts, so the row matches if ANY
+  # row of its newest group does (an INSERT and a later UPDATE in one transaction). Red here means a
+  # coordinate moved without the audit trigger seeing it: triggers were disabled wholesale, or the escape
+  # template was run with DISABLE TRIGGER USER/ALL instead of the one guard.
+  - name: post_space_coordinates_match_newest_audit
+    sql: |
+      WITH newest AS (
+        SELECT a.row_id, max(a.ts) AS ts
+          FROM public.audit_events a
+         WHERE a.table_name = 'spaces' AND a.action IN ('INSERT', 'UPDATE') AND a.after_jsonb IS NOT NULL
+         GROUP BY a.row_id
+      )
+      SELECT s.id::text
+        FROM public.spaces s
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM newest nw
+                 JOIN public.audit_events a
+                   ON a.table_name = 'spaces' AND a.row_id = nw.row_id AND a.ts = nw.ts
+                  AND a.action IN ('INSERT', 'UPDATE') AND a.after_jsonb IS NOT NULL
+                WHERE nw.row_id = s.id
+                  AND jsonb_build_object('weather_lat', s.weather_lat, 'weather_lng', s.weather_lng,
+                                         'postal_code', s.postal_code)
+                    = jsonb_build_object('weather_lat', a.after_jsonb -> 'weather_lat',
+                                         'weather_lng', a.after_jsonb -> 'weather_lng',
+                                         'postal_code', a.after_jsonb -> 'postal_code'))
+    expect: rowcount_eq
+    value: 0
+
+  # spaces_delete_guard reads single-column keys on spaces.id and raises on any other shape. That refusal
+  # is safe (no Space can be deleted), but this says why before someone meets it.
+  - name: post_foreign_keys_into_spaces_are_single_column_on_id
+    sql: |
+      SELECT c.conname::text
+        FROM pg_constraint c
+        JOIN pg_class p      ON p.oid = c.confrelid
+        JOIN pg_namespace pn ON pn.oid = p.relnamespace AND pn.nspname = 'public'
+        LEFT JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = c.confkey[1]
+       WHERE c.contype = 'f' AND p.relname = 'spaces'
+         AND (cardinality(c.conkey) <> 1 OR cardinality(c.confkey) <> 1 OR pa.attname IS DISTINCT FROM 'id')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+    expect: rowcount_eq
+    value: 0
+
+  # ── WEATHER COUNT GATES, PER ENV ─────────────────────────────────────────────────────────────────
+  # A direct DELETE on a weather table is DETECTED here, not prevented (a DELETE guard would break test
+  # cleanup). Per Space key, per env: count at least the pinned baseline, and the oldest day no later than
+  # the pinned one. The oldest day is an UPPER bound, not an equality: a backfill of older days (Phase 3)
+  # moves it earlier and must not red; a delete of the oldest days moves it later and does. No contiguity
+  # form: a missed hourly run would red it. Baselines read read-only 2026-10-16 ~10:00 ET (garden_ro on
+  # prod; a READ ONLY transaction on staging). The stamp test is inside HAVING: an aggregate over no rows
+  # still returns one row, so a WHERE-only guard would red before the apply.
+  - name: post_weather_daily_kept_prod
+    env: prod
+    note: >
+      Prod 2026-10-16: space ...0001 has 159 weather_daily rows, 2026-05-10 to 2026-10-15.
+    sql: |
+      SELECT 'space 00000000-0000-0000-0000-000000000001: ' || count(*) || ' rows, oldest '
+             || coalesce(min(w.date)::text, 'none')
+        FROM public.weather_daily w
+       WHERE w.space_id = '00000000-0000-0000-0000-000000000001'
+      HAVING EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND (count(*) < 159 OR min(w.date) IS NULL OR min(w.date) > DATE '2026-05-10')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_weather_cold_range_kept_prod
+    env: prod
+    note: >
+      Prod 2026-10-16: space ...0001 has 3 weather_cold_range rows, nights 2026-10-14 to 2026-10-16.
+    sql: |
+      SELECT 'space 00000000-0000-0000-0000-000000000001: ' || count(*) || ' rows, oldest night '
+             || coalesce(min(c.night_date)::text, 'none')
+        FROM public.weather_cold_range c
+       WHERE c.space_id = '00000000-0000-0000-0000-000000000001'
+      HAVING EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND (count(*) < 3 OR min(c.night_date) IS NULL OR min(c.night_date) > DATE '2026-10-14')
+    expect: rowcount_eq
+    value: 0
+
+  # Staging has NO weather_daily gate: it had 0 rows on 2026-10-16 (Phase 0 read 10 too), so a baseline of
+  # 0 could never red. Add one, pinned the same way, the day staging holds weather_daily rows.
+  - name: post_weather_cold_range_kept_staging
+    env: staging
+    note: >
+      Staging 2026-10-16: space ...0001 has 1 weather_cold_range row, night 2026-10-14.
+    sql: |
+      SELECT 'space 00000000-0000-0000-0000-000000000001: ' || count(*) || ' rows, oldest night '
+             || coalesce(min(c.night_date)::text, 'none')
+        FROM public.weather_cold_range c
+       WHERE c.space_id = '00000000-0000-0000-0000-000000000001'
+      HAVING EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND (count(*) < 1 OR min(c.night_date) IS NULL OR min(c.night_date) > DATE '2026-10-14')
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPT ─────────────────────────────────────────────────────────────────────────
+  # Run right after 0a. Every Space's newest audit row is the baseline 0a wrote: proof the baseline came
+  # from THIS apply and nothing has written spaces since. continuous false: the first featured-photo change
+  # or new Space makes it false, as designed.
+  - name: post_receipt_newest_spaces_audit_is_the_baseline
+    continuous: false
+    sql: |
+      SELECT s.id::text
+        FROM public.spaces s
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM public.audit_events a
+                WHERE a.table_name = 'spaces' AND a.row_id = s.id
+                  AND a.actor_clerk_sub = 'migration:v5-spaceguard-001'
+                  AND a.ts = (SELECT max(b.ts) FROM public.audit_events b
+                               WHERE b.table_name = 'spaces' AND b.row_id = s.id))
+    expect: rowcount_eq
+    value: 0

@@ -1,0 +1,357 @@
+# gates.yml
+# v5-platformoperators-001: V5-SPACEISOLATION-001 (multi-space Phase 1 step 1.16, public.platform_operators).
+# Stamp 5.1.5-platformoperators-001. README.md has the apply order and why.
+#
+# ANY pre/post assertion failing during the apply is a HARD ABORT.
+#
+# ── EVERY post GATE IS SELF-ARMING ────────────────────────────────────────────────────────────────
+#   gate-invariants runs `gate_runner.py --all --phase post --continuous-only` against live prod and live
+#   staging on every migrations/** push and on a Tuesday cron, with no skip-if-unapplied logic. So each
+#   post gate returns rows only when stamp 5.1.5-platformoperators-001 exists AND its invariant is violated:
+#   vacuous before the apply, asserting after it. The one exception is post_schema_version_recorded, armed on
+#   the objects 0a creates (it cannot arm on the row it checks for).
+#   No `::regclass` anywhere: every relation is matched by pg_class.relname joined to pg_namespace.
+#   A gate that reads public.platform_operators' ROWS reads them through query_to_xml inside a CASE on the
+#   stamp (the v5-recipes-001 idiom): PostgreSQL resolves a relation named in the SQL text at parse time, so a
+#   plain FROM public.platform_operators would ERROR 42P01, not pass vacuously, before the apply and after 0r.
+#
+# ── TRIGGER INVENTORIES FILTER NOT tgisinternal AND ASSERT tgenabled = 'O' ────────────────────────
+#   The UNIQUE and PRIMARY KEY constraints add no triggers, but a later foreign key into this table would add
+#   internal RI triggers; 'O' because session_replication_role cannot be set by the app's role (Phase 0 read 22).
+#
+# ── THE GUARD BODY IS PINNED BY md5(prosrc) ───────────────────────────────────────────────────────
+#   Read off the rehearsal's PostgreSQL 17.10 after applying 0a (README.md "Rehearsal"). prosrc is the text
+#   between the dollar quotes, byte for byte, so it changes only when 0a's body changes: then re-read it here.
+#
+# REHEARSED on a throwaway local PostgreSQL 17.10 loaded with prod's schema and stamps, v5-spaceguard-001's 0a
+# applied first (README.md). Not run against staging or prod as an applied migration.
+
+pre:
+  - name: pre_not_already_applied
+    note: >
+      A stamp without the objects would arm every post gate against nothing. continuous false: false by
+      design once 0a runs.
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.1.5-platformoperators-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_names_free
+    note: >
+      No relation, function or trigger already carries a name 0a creates (0a step 0 refuses the same thing).
+      continuous false, as above.
+    sql: |
+      SELECT 'relation ' || c.relname
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'platform_operators'
+      UNION ALL
+      SELECT 'function ' || p.proname
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'guard_platform_operators_identity'
+      UNION ALL
+      SELECT 'trigger ' || g.tgname
+        FROM pg_trigger g
+       WHERE NOT g.tgisinternal
+         AND g.tgname IN ('trg_audit_platform_operators_ins', 'trg_audit_platform_operators_upd',
+                          'trg_audit_platform_operators_del', 'platform_operators_identity_guard')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_spaceguard_applied
+    note: >
+      v5-spaceguard-001 first: its stamp, and the SECURITY DEFINER public.audit_stmt_insert() with the pinned
+      search_path that trg_audit_platform_operators_ins calls.
+    sql: |
+      SELECT 'stamp 5.1.5-spaceguard-001 missing'
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+      UNION ALL
+      SELECT 'public.audit_stmt_insert() missing or not SECURITY DEFINER with the pinned search_path'
+       WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = 'public' AND p.proname = 'audit_stmt_insert' AND p.pronargs = 0
+                            AND p.prosecdef AND p.proconfig::text LIKE '%search_path=pg_catalog, public%')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_shared_audit_writers_present
+    note: >
+      The two shared writers 0a binds and the slice helper they call (v4-harvestaudit-001, v5-fermentpath-001).
+    sql: |
+      SELECT want.proname
+        FROM (VALUES ('audit_stmt_update_no_soft_delete'), ('audit_stmt_delete')) AS want(proname)
+       WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = 'public' AND p.proname = want.proname AND p.prosecdef
+                            AND p.proconfig::text LIKE '%search_path=pg_catalog, public%')
+      UNION ALL
+      SELECT 'audit_watched_slice'
+       WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = 'public' AND p.proname = 'audit_watched_slice')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_audit_events_takes_a_uuid_insert
+    note: >
+      audit_events.row_id is the uuid the writers insert, and audit_events_action_check admits INSERT.
+    sql: |
+      SELECT 'audit_events.row_id is not uuid'
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema = 'public' AND table_name = 'audit_events'
+                            AND column_name = 'row_id' AND data_type = 'uuid')
+      UNION ALL
+      SELECT 'audit_events_action_check does not admit INSERT'
+       WHERE NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'audit_events' AND c.conname = 'audit_events_action_check'
+                            AND pg_get_constraintdef(c.oid) LIKE '%''INSERT''%')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_seed_source_is_one_person
+    note: >
+      The seed reads the original Space's created_by. Phase 0 read 1: one row on each env, owned by the same
+      prod person id. Absent, NULL or not a user_ id, the seed would write nothing (0a refuses the same thing).
+    sql: |
+      SELECT 'original Space absent, ownerless, or not owned by a user_ id'
+       WHERE NOT EXISTS (SELECT 1 FROM public.spaces s
+                          WHERE s.id = '00000000-0000-0000-0000-000000000001'
+                            AND s.created_by ~ '^user_[A-Za-z0-9]+$')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ARMED ON THE DDL, NOT ON ITSELF. 0a writes the objects and the row in one transaction, so a row here
+  # means someone hand-applied the DDL or deleted the stamp: the state that silences every gate below.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE (EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                       WHERE n.nspname = 'public' AND c.relname = 'platform_operators')
+              OR EXISTS (SELECT 1 FROM pg_trigger g WHERE NOT g.tgisinternal
+                          AND g.tgname IN ('trg_audit_platform_operators_ins', 'platform_operators_identity_guard')))
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-platformoperators-001')
+    expect: rowcount_eq
+    value: 0
+
+  # The shape, closed world: exactly these four columns with these types, nullability and defaults, and no
+  # other (a deleted_at added later would also need the UPDATE audit trigger swapped to audit_stmt_update; a
+  # new column needs a watched-or-ignored decision, below). One row per column that is missing, differs or is
+  # extra.
+  - name: post_platform_operators_columns_exact
+    sql: |
+      WITH want (column_name, data_type, is_nullable, default_like) AS (
+        VALUES ('id',            'uuid',                     'NO', 'gen_random_uuid()'),
+               ('clerk_user_id', 'text',                     'NO', NULL),
+               ('added_by',      'text',                     'NO', NULL),
+               ('created_at',    'timestamp with time zone', 'NO', 'now()')
+      ), have AS (
+        SELECT column_name::text, data_type::text, is_nullable::text, column_default::text
+          FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'platform_operators'
+      )
+      SELECT 'column ' || coalesce(w.column_name, h.column_name)
+        FROM want w FULL JOIN have h ON h.column_name = w.column_name
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-platformoperators-001')
+         AND (w.column_name IS NULL OR h.column_name IS NULL
+              OR h.data_type <> w.data_type OR h.is_nullable <> w.is_nullable
+              OR h.column_default IS DISTINCT FROM w.default_like)
+    expect: rowcount_eq
+    value: 0
+
+  # Keys and the person-id CHECK: PRIMARY KEY on id (what audit_events.row_id names), UNIQUE on clerk_user_id
+  # (one grant per person), and the user_ shape.
+  - name: post_platform_operators_constraints_exact
+    sql: |
+      SELECT want.conname
+        FROM (VALUES ('platform_operators_pkey',                    'PRIMARY KEY (id)'),
+                     ('platform_operators_clerk_user_id_key',       'UNIQUE (clerk_user_id)'),
+                     ('chk_platform_operators_clerk_user_id_shape', 'CHECK ((clerk_user_id ~ ''^user_[A-Za-z0-9]+$''::text))'))
+             AS want(conname, def)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-platformoperators-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_constraint c
+                 JOIN pg_class t     ON t.oid = c.conrelid
+                 JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                WHERE t.relname = 'platform_operators' AND c.conname = want.conname
+                  AND pg_get_constraintdef(c.oid) = want.def AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # The four triggers, each by name, timing/level/event (tgtype), function, OF-column list and enabled state;
+  # one row per trigger that is missing or differs. tgtype: 4 AFTER INSERT statement, 16 AFTER UPDATE statement,
+  # 8 AFTER DELETE statement, 19 BEFORE UPDATE row. Binding the UPDATE audit to audit_stmt_update (it reads
+  # o.deleted_at, which this table does not have: a swallowed 42703 and no audit row) reds here.
+  - name: post_platform_operators_triggers_exact_and_enabled
+    sql: |
+      SELECT want.tgname
+        FROM (VALUES ('trg_audit_platform_operators_ins',   4, 'audit_stmt_insert',                ''),
+                     ('trg_audit_platform_operators_upd',  16, 'audit_stmt_update_no_soft_delete', ''),
+                     ('trg_audit_platform_operators_del',   8, 'audit_stmt_delete',                ''),
+                     ('platform_operators_identity_guard', 19, 'guard_platform_operators_identity', 'clerk_user_id,id'))
+             AS want(tgname, tgtype, proname, of_cols)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-platformoperators-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_trigger g
+                 JOIN pg_class t      ON t.oid = g.tgrelid
+                 JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+                 JOIN pg_proc p       ON p.oid = g.tgfoid
+                 JOIN pg_namespace pn ON pn.oid = p.pronamespace AND pn.nspname = 'public'
+                WHERE t.relname = 'platform_operators' AND NOT g.tgisinternal
+                  AND g.tgname = want.tgname AND g.tgtype = want.tgtype
+                  AND p.proname = want.proname AND g.tgenabled = 'O'
+                  AND coalesce((SELECT string_agg(a.attname::text, ',' ORDER BY a.attname)
+                                  FROM unnest(g.tgattr::int2[]) AS k(attnum)
+                                  JOIN pg_attribute a ON a.attrelid = g.tgrelid AND a.attnum = k.attnum), '')
+                      = want.of_cols)
+    expect: rowcount_eq
+    value: 0
+
+  # CLOSED WORLD on platform_operators: no non-internal trigger besides the four above. A BEFORE trigger that
+  # rewrote clerk_user_id would not be seen by an UPDATE OF list.
+  - name: post_platform_operators_has_no_other_trigger
+    sql: |
+      SELECT g.tgname::text
+        FROM pg_trigger g
+        JOIN pg_class t     ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'platform_operators' AND NOT g.tgisinternal
+         AND g.tgname NOT IN ('trg_audit_platform_operators_ins', 'trg_audit_platform_operators_upd',
+                              'trg_audit_platform_operators_del', 'platform_operators_identity_guard')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-platformoperators-001')
+    expect: rowcount_eq
+    value: 0
+
+  # The audit triggers are statement-level and carry the transition tables their functions read. Without them
+  # the function sees no rows and writes nothing while every presence gate stays green.
+  - name: post_platform_operators_audit_triggers_have_transition_tables
+    sql: |
+      SELECT g.tgname::text
+        FROM pg_trigger g
+        JOIN pg_class t     ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'platform_operators' AND NOT g.tgisinternal
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-platformoperators-001')
+         AND (   (g.tgname = 'trg_audit_platform_operators_upd'
+                  AND pg_get_triggerdef(g.oid) NOT LIKE '%REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT%')
+              OR (g.tgname = 'trg_audit_platform_operators_del'
+                  AND pg_get_triggerdef(g.oid) NOT LIKE '%REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT%')
+              OR (g.tgname = 'trg_audit_platform_operators_ins'
+                  AND pg_get_triggerdef(g.oid) NOT LIKE '%REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT%'))
+    expect: rowcount_eq
+    value: 0
+
+  # THE ANTI-SILENT-GAP GATE. Every column is watched by trg_audit_platform_operators_upd (read live from its
+  # arguments) or in the ignored list: id (it IS audit_events.row_id, and the identity guard refuses a change),
+  # created_at (never changes). And every watched name is a real column: audit_watched_slice projects a missing
+  # key to JSON null on both sides, so a typo stops being watched in silence. Shape: v4-harvestaudit-001.
+  - name: post_platform_operators_column_classification_is_complete
+    sql: |
+      WITH targs AS (
+        SELECT btrim(x, ' ''') AS col
+          FROM pg_trigger g
+          JOIN pg_class t     ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(g.oid) FROM 'audit_stmt_update_no_soft_delete\(([^)]*)\)'), ',') AS x
+         WHERE t.relname = 'platform_operators' AND g.tgname = 'trg_audit_platform_operators_upd'
+      )
+      SELECT 'unclassified column ' || ic.column_name
+        FROM information_schema.columns ic
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-platformoperators-001')
+         AND ic.table_schema = 'public' AND ic.table_name = 'platform_operators'
+         AND ic.column_name NOT IN ('id', 'created_at')
+         AND NOT EXISTS (SELECT 1 FROM targs WHERE targs.col = ic.column_name)
+      UNION ALL
+      SELECT 'watched name is not a column: ' || targs.col
+        FROM targs
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-platformoperators-001')
+         AND targs.col <> ''
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns ic
+                          WHERE ic.table_schema = 'public' AND ic.table_name = 'platform_operators'
+                            AND ic.column_name = targs.col)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_identity_guard_pinned
+    sql: |
+      SELECT 'guard_platform_operators_identity'
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-platformoperators-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+                WHERE p.proname = 'guard_platform_operators_identity'
+                  AND md5(p.prosrc) = 'a370878ba887f80bcf96d9844f8e6c93'
+                  AND NOT p.prosecdef AND p.pronargs = 0
+                  AND p.proconfig::text LIKE '%search_path=pg_catalog, public%')
+    expect: rowcount_eq
+    value: 0
+
+  # The audit is not silently failing: every grant has its INSERT audit row for the same person
+  # (audit_stmt_insert swallows any failure as a WARNING, so a broken writer leaves a grant with no trail and
+  # only this sees it), and a row this migration wrote carries the migration actor. Rows read through
+  # query_to_xml behind the stamp (header).
+  - name: post_every_operator_has_its_insert_audit_row
+    sql: |
+      SELECT 'grant(s) without their INSERT audit row'
+       WHERE CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-platformoperators-001')
+                  THEN (xpath('/table/row/n/text()', query_to_xml(
+                         'SELECT count(*) AS n FROM public.platform_operators o '
+                         'WHERE NOT EXISTS (SELECT 1 FROM public.audit_events a '
+                         '                   WHERE a.table_name = ''platform_operators'' AND a.row_id = o.id '
+                         '                     AND a.action = ''INSERT'' '
+                         '                     AND a.after_jsonb ->> ''clerk_user_id'' = o.clerk_user_id '
+                         '                     AND (o.added_by <> ''migration:v5-platformoperators-001'' '
+                         '                          OR a.actor_clerk_sub = ''migration:v5-platformoperators-001''))',
+                         false, false, '')))[1]::text::bigint > 0
+                  ELSE false END
+    expect: rowcount_eq
+    value: 0
+
+  # NEW CONTINUOUS GATE (review DSA BLOCKING). Every public table that carries a trigger bound to a shared audit
+  # writer (public.audit_stmt_*, and the audit_<x>_stmt_* family with the same contract) has an id column of type
+  # uuid, NOT NULL. Those writers insert n.id / o.id into audit_events.row_id (uuid NOT NULL); on a table without
+  # one every write is a swallowed 42703 or 23502 and the table only LOOKS audited (v5-sourcekind-001). 2026-10-16,
+  # read-only, prod and staging alike: event_log, harvest_log, kitchen_batch_input, kitchen_stage_log,
+  # plant_varieties, plants, preservation_log, source, plus spaces once v5-spaceguard-001 lands: all uuid.
+  - name: post_audited_tables_have_a_uuid_id
+    sql: |
+      SELECT DISTINCT t.relname::text
+        FROM pg_trigger g
+        JOIN pg_class t      ON t.oid = g.tgrelid
+        JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_proc p       ON p.oid = g.tgfoid
+        JOIN pg_namespace pn ON pn.oid = p.pronamespace AND pn.nspname = 'public'
+       WHERE NOT g.tgisinternal
+         AND p.proname ~ '^audit_([a-z0-9]+_)?stmt_'
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-platformoperators-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_attribute a
+                           JOIN pg_type ty       ON ty.oid = a.atttypid
+                           JOIN pg_namespace tyn ON tyn.oid = ty.typnamespace AND tyn.nspname = 'pg_catalog'
+                          WHERE a.attrelid = t.oid AND a.attname = 'id' AND NOT a.attisdropped
+                            AND ty.typname = 'uuid' AND a.attnotnull)
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPT ─────────────────────────────────────────────────────────────────────────
+  # Run right after 0a. The operators are exactly {the original Space's owner}, written by this migration, and
+  # that Space exists with an owner (so the equality cannot pass as {} = {}). continuous false: the positive
+  # control's planted second row, and every later grant (Phase 4 step 4.7), make it false by design.
+  - name: post_receipt_seeded_set_is_the_space_owner
+    continuous: false
+    sql: |
+      SELECT 'operators are not exactly {the original Space owner, seeded by this migration}'
+       WHERE CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-platformoperators-001')
+                  THEN (xpath('/table/row/n/text()', query_to_xml(
+                         'SELECT (SELECT count(*) FROM public.platform_operators o '
+                         '         WHERE o.added_by <> ''migration:v5-platformoperators-001'' '
+                         '            OR o.clerk_user_id IS DISTINCT FROM '
+                         '               (SELECT s.created_by FROM public.spaces s '
+                         '                 WHERE s.id = ''00000000-0000-0000-0000-000000000001'')) '
+                         '     + (SELECT count(*) WHERE NOT EXISTS ( '
+                         '          SELECT 1 FROM public.platform_operators o '
+                         '            JOIN public.spaces s ON s.created_by = o.clerk_user_id '
+                         '           WHERE s.id = ''00000000-0000-0000-0000-000000000001'')) AS n',
+                         false, false, '')))[1]::text::bigint > 0
+                  ELSE false END
+    expect: rowcount_eq
+    value: 0

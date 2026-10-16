@@ -1,6 +1,13 @@
 {
   "floors": [
     {
+      "floor": "v5.2.2",
+      "since": "v5.2.3",
+      "reason": "multi-space Phase 1 migration dirs (v5-spaceguard-001 and after): once 0a is applied, spaces, weather_daily and weather_cold_range carry delete/truncate/re-point guards, and only code at or above v5.2.2 tears integration fixtures down in the order they allow (tests/integration/_cleanup.js NS_SPACES deletes a fixture Space's weather and theme rows first and probes their residue; season-stats deletes its own weather rows). Older code puts back the cleanup the guard refuses, so fixture Spaces leak on every CI fork with the failure logged and the probes gone. Forward-fix only.",
+      "ledger": "V5-SPACEREPOINTGUARD-001",
+      "undo_instead": null
+    },
+    {
       "floor": "v4.170.0",
       "since": "v4.174.0",
       "reason": "seed release 3 (put more seed in a seed lot already started): once this ships, prod holds rows in seed_lot_addition, lots whose count was raised by a picking, and seed_saved timeline entries marked addition. Code at or above v4.170.0 reads every row this release leaves, never names seed_lot_addition, never hard-deletes a link row, and its merge moves link rows so pickings follow. Undo release 3 by switching SEED_ADD_TO_LOT off (rehearsal: npm run test:flag-off:seedadd); the table stays. The count-save guard (three expected_seed_* keys on the measure PUT) is not behind the flag: undoing it is a code revert of 74c2f805, a1d6f660 and b79fe5ff.",

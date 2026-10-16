@@ -1,0 +1,328 @@
+# gates.yml
+# v5-spacefk-001: the fold (1.9, V5-SPACESENTINELDOC-001), the two workspace keys and their validation
+#   (1.8, 1.10, V5-SPACETENANCYKEY-001). Four files, four stamps, applied in order:
+#     0a-fold.sql              5.1.5-spacefk-001-fold
+#     0b-fk-plants.sql         5.1.5-spacefk-001-fk-plants
+#     0c-fk-plant-projects.sql 5.1.5-spacefk-001-fk-projects
+#     0d-validate.sql          5.1.5-spacefk-001-validate
+#
+# ── EVERY post GATE SELF-ARMS ON ONE EXACT STAMP ─────────────────────────────────────────────────
+#   gate-invariants runs `gate_runner.py --all --phase post --continuous-only` against live prod and
+#   live staging with no skip-if-unapplied logic, and gates.yml has no arming key (gate_runner.py
+#   ITEM_KEYS). So each gate carries `EXISTS (SELECT 1 FROM public.schema_version WHERE version =
+#   '<stamp>')` in its SQL: vacuous before its own file runs, asserting permanently after. Each stamp is
+#   written in the same transaction as its change, so the file that arms a gate is the file that makes it
+#   true. A gate armed on a later stamp than the change it checks would leave a window; one armed on an
+#   earlier stamp would red mid-sequence (review DSA I4).
+#   NO ::regclass, and no relation named that might not exist: plants, plant_projects, spaces and
+#   schema_version exist on every database this corpus runs against. The census reads the other
+#   workspace_id tables through query_to_xml, by name from the catalog, so it names none of them.
+#
+# ── ENV ──────────────────────────────────────────────────────────────────────────────────────────
+#   The ten nil-workspace containers exist on prod only (Phase 0 read 6, read 17; re-read 2026-10-16).
+#   Gates about THOSE rows are env: prod; on staging they would test nothing. Everything else is both.
+#
+# ── WHAT THESE GATES DO NOT COVER ────────────────────────────────────────────────────────────────
+#   * Code. lambda/container-workspace-census.test.js pins every Lambda reader of a container's
+#     workspace_id and asserts no Lambda writes plants/plant_projects workspace_id.
+#   * The photo tenancy check (1.11) is M3's, armed on this directory's -fold stamp.
+#   * TRUNCATE spaces CASCADE: M1's spaces_truncate_guard. 0b and 0c refuse without it; no gate here
+#     re-asserts M1's trigger.
+#
+# REHEARSED 2026-10-16 on a throwaway local PostgreSQL 17 with prod's schema (pg_dump --schema-only of
+#   public and gv, read-only) and prod's schema_version rows; README.md "What was rehearsed". Not run
+#   against staging or prod.
+
+pre:
+  # Receipts for the apply window only (continuous: false): each is false once the migration has run.
+  - name: pre_target_space_present
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.spaces WHERE id = '00000000-0000-0000-0000-000000000001'
+    expect: rowcount_eq
+    value: 1
+    note: The one Space the fold moves the ten containers into, and the default of every workspace_id column.
+
+  - name: pre_spaces_truncate_guard_enabled
+    continuous: false
+    sql: |
+      SELECT 1
+        FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'spaces'
+         AND t.tgname = 'spaces_truncate_guard' AND NOT t.tgisinternal
+         AND t.tgenabled = 'O' AND (t.tgtype & 2) <> 0 AND (t.tgtype & 32) <> 0
+    expect: rowcount_eq
+    value: 1
+    note: M1 (v5-spaceguard-001) applied first. 0b and 0c refuse without it; this names the stop before 0a runs.
+
+  - name: pre_no_workspace_key_yet
+    continuous: false
+    sql: |
+      SELECT r.relname, c.conname
+        FROM pg_constraint c
+        JOIN pg_class r ON r.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = r.relnamespace
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+       WHERE n.nspname = 'public' AND r.relname IN ('plants', 'plant_projects')
+         AND c.contype = 'f' AND a.attname = 'workspace_id'
+    expect: rowcount_eq
+    value: 0
+    note: Phase 0 read 5. Neither column has a foreign key before 0b/0c.
+
+  - name: pre_nil_rows_only_the_pinned_ten
+    continuous: false
+    sql: |
+      SELECT 'plant_projects' AS t, 1::bigint AS n
+        FROM public.plant_projects p
+       WHERE p.workspace_id = '00000000-0000-0000-0000-000000000000'
+         AND p.id NOT IN ('5ddfb9ab-0261-40f8-9528-e8c0cf5861f6', 'a377adc6-6d83-4bf1-a19e-c533be0b938e',
+                          '49be2767-0e6d-4bab-ba71-12ee293c5d0f', 'abc3a67a-7612-4224-96d6-2d0dfea20a7a',
+                          'a03bd522-3c81-4ecf-bfb8-f4832f7794e0', '8c94878e-0689-4ea4-9c6e-ebb859e4ecc2',
+                          '6cc82240-35ca-495d-a050-0481a0e7b5c4', '5cd427cf-2e90-46f9-98bb-7dcebd4e64cc',
+                          'a08de1c6-da94-445b-85e7-f20c4a967ce2', '10ff66bb-1343-4316-88fd-2b3dec325628')
+      UNION ALL
+      SELECT c.relname::text, x.n
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace ns ON ns.oid = c.relnamespace
+        CROSS JOIN LATERAL (
+          SELECT (xpath('/table/row/n/text()', query_to_xml(format(
+                   'SELECT count(*) AS n FROM public.%I WHERE workspace_id = %L',
+                   c.relname, '00000000-0000-0000-0000-000000000000'), false, false, '')))[1]::text::bigint AS n) x
+       WHERE ns.nspname = 'public' AND c.relkind IN ('r', 'p')
+         AND a.attname = 'workspace_id' AND NOT a.attisdropped
+         AND c.relname <> 'plant_projects' AND c.relname !~ '^(ctas|snap)_'
+         AND x.n > 0
+    expect: rowcount_eq
+    value: 0
+    note: 0a refuses on the same predicate, over every workspace_id table. Both envs (staging has no nil row at all).
+
+  - name: pre_pinned_ten_still_nil
+    env: prod
+    continuous: false
+    sql: |
+      SELECT count(*)
+        FROM public.plant_projects p
+       WHERE p.workspace_id = '00000000-0000-0000-0000-000000000000'
+         AND p.id IN ('5ddfb9ab-0261-40f8-9528-e8c0cf5861f6', 'a377adc6-6d83-4bf1-a19e-c533be0b938e',
+                      '49be2767-0e6d-4bab-ba71-12ee293c5d0f', 'abc3a67a-7612-4224-96d6-2d0dfea20a7a',
+                      'a03bd522-3c81-4ecf-bfb8-f4832f7794e0', '8c94878e-0689-4ea4-9c6e-ebb859e4ecc2',
+                      '6cc82240-35ca-495d-a050-0481a0e7b5c4', '5cd427cf-2e90-46f9-98bb-7dcebd4e64cc',
+                      'a08de1c6-da94-445b-85e7-f20c4a967ce2', '10ff66bb-1343-4316-88fd-2b3dec325628')
+    expect: scalar_eq
+    value: 10
+    note: Prod before 0a. 0 here on prod means the wrong host or an earlier apply.
+
+sweep:
+  # The predicates the two keys will enforce, over every row (no deleted_at filter, L-058), before 0a.
+  # The ten pinned containers are the only expected exception, and 0a folds them first.
+  - name: sweep_plants_every_row_names_a_space
+    sql: |
+      SELECT g.id, g.workspace_id
+        FROM public.plants g
+       WHERE NOT EXISTS (SELECT 1 FROM public.spaces s WHERE s.id = g.workspace_id)
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_plant_projects_every_row_outside_the_ten_names_a_space
+    sql: |
+      SELECT p.id, p.workspace_id
+        FROM public.plant_projects p
+       WHERE NOT EXISTS (SELECT 1 FROM public.spaces s WHERE s.id = p.workspace_id)
+         AND p.id NOT IN ('5ddfb9ab-0261-40f8-9528-e8c0cf5861f6', 'a377adc6-6d83-4bf1-a19e-c533be0b938e',
+                          '49be2767-0e6d-4bab-ba71-12ee293c5d0f', 'abc3a67a-7612-4224-96d6-2d0dfea20a7a',
+                          'a03bd522-3c81-4ecf-bfb8-f4832f7794e0', '8c94878e-0689-4ea4-9c6e-ebb859e4ecc2',
+                          '6cc82240-35ca-495d-a050-0481a0e7b5c4', '5cd427cf-2e90-46f9-98bb-7dcebd4e64cc',
+                          'a08de1c6-da94-445b-85e7-f20c4a967ce2', '10ff66bb-1343-4316-88fd-2b3dec325628')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ── 1.9, armed on -fold ──────────────────────────────────────────────────────────────────────────
+  # The falsifier. No container and no planting carries the nil workspace once the fold has run.
+  - name: post_fold_no_nil_workspace_rows
+    sql: |
+      SELECT 'plant_projects' AS t, p.id
+        FROM public.plant_projects p
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-fold')
+         AND p.workspace_id = '00000000-0000-0000-0000-000000000000'
+      UNION ALL
+      SELECT 'plants', g.id
+        FROM public.plants g
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-fold')
+         AND g.workspace_id = '00000000-0000-0000-0000-000000000000'
+    expect: rowcount_eq
+    value: 0
+
+  # The presence arm. A falsifier alone passes on a database where the ten were never there; this one
+  # says they ARE there and folded. Prod only: staging has none of them by design (read 17).
+  # A later Space move of one of these containers (Phase 4+) retires this gate in the same change.
+  - name: post_fold_pinned_ten_present_on_the_space
+    env: prod
+    sql: |
+      SELECT n
+        FROM (SELECT count(*) AS n
+                FROM public.plant_projects p
+               WHERE p.workspace_id = '00000000-0000-0000-0000-000000000001'
+                 AND p.id IN ('5ddfb9ab-0261-40f8-9528-e8c0cf5861f6', 'a377adc6-6d83-4bf1-a19e-c533be0b938e',
+                              '49be2767-0e6d-4bab-ba71-12ee293c5d0f', 'abc3a67a-7612-4224-96d6-2d0dfea20a7a',
+                              'a03bd522-3c81-4ecf-bfb8-f4832f7794e0', '8c94878e-0689-4ea4-9c6e-ebb859e4ecc2',
+                              '6cc82240-35ca-495d-a050-0481a0e7b5c4', '5cd427cf-2e90-46f9-98bb-7dcebd4e64cc',
+                              'a08de1c6-da94-445b-85e7-f20c4a967ce2', '10ff66bb-1343-4316-88fd-2b3dec325628')) x
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-fold')
+         AND n <> 10
+    expect: rowcount_eq
+    value: 0
+
+  # ── 1.8, armed on -fk-plants / -fk-projects ──────────────────────────────────────────────────────
+  # Exactly one foreign key on <table>.workspace_id, and it is single-column, to public.spaces(id),
+  # ON DELETE RESTRICT. A CASCADE would red v4-cascadesweep-001 too; this names the shape directly.
+  - name: post_fk_plants_workspace_restrict_to_spaces
+    sql: |
+      SELECT total, good
+        FROM (SELECT count(*) AS total,
+                     count(*) FILTER (WHERE c.conname = 'plants_workspace_id_fkey'
+                                        AND fn.nspname = 'public' AND f.relname = 'spaces'
+                                        AND c.confdeltype = 'r'
+                                        AND array_length(c.conkey, 1) = 1
+                                        AND array_length(c.confkey, 1) = 1
+                                        AND fa.attname = 'id') AS good
+                FROM pg_constraint c
+                JOIN pg_class r ON r.oid = c.conrelid
+                JOIN pg_namespace rn ON rn.oid = r.relnamespace
+                JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                JOIN pg_class f ON f.oid = c.confrelid
+                JOIN pg_namespace fn ON fn.oid = f.relnamespace
+                JOIN pg_attribute fa ON fa.attrelid = c.confrelid AND fa.attnum = c.confkey[1]
+               WHERE rn.nspname = 'public' AND r.relname = 'plants'
+                 AND c.contype = 'f' AND a.attname = 'workspace_id') x
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-fk-plants')
+         AND (total <> 1 OR good <> 1)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_fk_plant_projects_workspace_restrict_to_spaces
+    sql: |
+      SELECT total, good
+        FROM (SELECT count(*) AS total,
+                     count(*) FILTER (WHERE c.conname = 'plant_projects_workspace_id_fkey'
+                                        AND fn.nspname = 'public' AND f.relname = 'spaces'
+                                        AND c.confdeltype = 'r'
+                                        AND array_length(c.conkey, 1) = 1
+                                        AND array_length(c.confkey, 1) = 1
+                                        AND fa.attname = 'id') AS good
+                FROM pg_constraint c
+                JOIN pg_class r ON r.oid = c.conrelid
+                JOIN pg_namespace rn ON rn.oid = r.relnamespace
+                JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                JOIN pg_class f ON f.oid = c.confrelid
+                JOIN pg_namespace fn ON fn.oid = f.relnamespace
+                JOIN pg_attribute fa ON fa.attrelid = c.confrelid AND fa.attnum = c.confkey[1]
+               WHERE rn.nspname = 'public' AND r.relname = 'plant_projects'
+                 AND c.contype = 'f' AND a.attname = 'workspace_id') x
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-fk-projects')
+         AND (total <> 1 OR good <> 1)
+    expect: rowcount_eq
+    value: 0
+
+  # ── 1.10, armed on -validate ─────────────────────────────────────────────────────────────────────
+  - name: post_fks_convalidated
+    sql: |
+      SELECT r.relname, c.conname, c.convalidated
+        FROM pg_constraint c
+        JOIN pg_class r ON r.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = r.relnamespace
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-validate')
+         AND n.nspname = 'public'
+         AND (r.relname, c.conname) IN (('plants', 'plants_workspace_id_fkey'),
+                                        ('plant_projects', 'plant_projects_workspace_id_fkey'))
+         AND NOT c.convalidated
+      UNION ALL
+      SELECT 'missing', k.conname, NULL
+        FROM (VALUES ('plants', 'plants_workspace_id_fkey'),
+                     ('plant_projects', 'plant_projects_workspace_id_fkey')) AS k(relname, conname)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-validate')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class r ON r.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = r.relnamespace
+                          WHERE n.nspname = 'public' AND r.relname = k.relname AND c.conname = k.conname)
+    expect: rowcount_eq
+    value: 0
+
+  # The all-row census over every OTHER base table with a workspace_id column (Phase 0 read 5: entity,
+  # care_profile, garden_shared_state, merge_event, reparent_event, seen_event, treatment_association),
+  # found in the catalog so a new one is covered the day it lands. No key on these in Phase 1; this is
+  # what says their rows name a Space. All rows, no deleted_at filter. Stray copies (ctas_ / snap_
+  # prefixes, read 5 and staging's snap_ifl001_*) are excluded by name: they are snapshots, not tenancy.
+  # Each table is read through query_to_xml, so no relation is named in this SQL.
+  - name: post_workspace_census_every_row_names_a_space
+    sql: |
+      SELECT c.relname, x.n
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace ns ON ns.oid = c.relnamespace
+        CROSS JOIN LATERAL (
+          SELECT (xpath('/table/row/n/text()', query_to_xml(format(
+                   'SELECT count(*) AS n FROM public.%I t '
+                   'WHERE NOT EXISTS (SELECT 1 FROM public.spaces s WHERE s.id = t.workspace_id)',
+                   c.relname), false, false, '')))[1]::text::bigint AS n) x
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-validate')
+         AND ns.nspname = 'public' AND c.relkind IN ('r', 'p')
+         AND a.attname = 'workspace_id' AND NOT a.attisdropped
+         AND c.relname NOT IN ('plants', 'plant_projects')
+         AND c.relname !~ '^(ctas|snap)_'
+         AND x.n > 0
+    expect: rowcount_eq
+    value: 0
+
+  # The census is only as good as its discovery: if the catalog walk stopped finding the seven, the gate
+  # above would pass on nothing. This names them.
+  - name: post_workspace_census_covers_the_seven
+    sql: |
+      SELECT k.relname
+        FROM (VALUES ('entity'), ('care_profile'), ('garden_shared_state'), ('merge_event'),
+                     ('reparent_event'), ('seen_event'), ('treatment_association')) AS k(relname)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-validate')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_attribute a
+                           JOIN pg_class c ON c.oid = a.attrelid
+                           JOIN pg_namespace ns ON ns.oid = c.relnamespace
+                          WHERE ns.nspname = 'public' AND c.relkind IN ('r', 'p')
+                            AND c.relname = k.relname
+                            AND a.attname = 'workspace_id' AND NOT a.attisdropped)
+    expect: rowcount_eq
+    value: 0
+
+  # ── the stamps follow their objects (armed on the OBJECT, not on the stamp) ──────────────────────
+  # A key with no stamp means its gates above never armed; a later stamp with no -fold means the order
+  # was broken. Vacuous on a database with neither.
+  - name: post_stamps_follow_their_objects
+    sql: |
+      SELECT 'plants_workspace_id_fkey without -fk-plants' AS problem
+       WHERE EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_class r ON r.oid = c.conrelid
+                       JOIN pg_namespace n ON n.oid = r.relnamespace
+                      WHERE n.nspname = 'public' AND r.relname = 'plants' AND c.conname = 'plants_workspace_id_fkey')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-fk-plants')
+      UNION ALL
+      SELECT 'plant_projects_workspace_id_fkey without -fk-projects'
+       WHERE EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_class r ON r.oid = c.conrelid
+                       JOIN pg_namespace n ON n.oid = r.relnamespace
+                      WHERE n.nspname = 'public' AND r.relname = 'plant_projects'
+                        AND c.conname = 'plant_projects_workspace_id_fkey')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-fk-projects')
+      UNION ALL
+      SELECT 'a key stamp without -fold'
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version IN ('5.1.5-spacefk-001-fk-plants', '5.1.5-spacefk-001-fk-projects',
+                                        '5.1.5-spacefk-001-validate'))
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-fold')
+      UNION ALL
+      SELECT '-validate without both key stamps'
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-validate')
+         AND (NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-fk-plants')
+              OR NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-fk-projects'))
+    expect: rowcount_eq
+    value: 0

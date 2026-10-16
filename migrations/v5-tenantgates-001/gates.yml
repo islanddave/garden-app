@@ -1,0 +1,267 @@
+# gates.yml
+# v5-tenantgates-001: multi-space Phase 1 gates with no DDL of their own.
+#   1.17 post_no_second_owner_until_approved   V5-SPACEISOLATION-001
+#   1.14 post_sentinel_callers                 V5-SITECONSTANTS-001 (the database half; the code ratchet is lane C1's)
+#   1.11 post_photo_tenancy_no_conflict        V5-PHOTOSPACEBACKFILL-001 (check only, no backfill)
+# Stamp 5.1.5-tenantgates-001, written by 0a-tenantgates.sql and nothing else (review DSA I3). README.md has the
+# reads each gate was built from.
+#
+# ANY pre/post assertion failing during the apply is a HARD ABORT.
+#
+# ── EVERY post GATE IS SELF-ARMING ────────────────────────────────────────────────────────────────
+#   gate-invariants runs `gate_runner.py --all --phase post --continuous-only` against live prod and live
+#   staging on every migrations/** push and on a Tuesday cron. Each post gate returns rows only when stamp
+#   5.1.5-tenantgates-001 exists (1.11: and v5-spacefk-001's 5.1.5-spacefk-001-fold, by exact equality) AND its
+#   invariant is violated. No `::regclass`: relations by pg_class/pg_proc joined to pg_namespace. Every relation
+#   named (spaces, schema_version, photos, plants, plant_projects, event_log) exists on prod, staging and every
+#   fork of either. 0a refuses to write the stamp where an armed gate would red at once.
+#
+# ── ENV: both, every gate ─────────────────────────────────────────────────────────────────────────
+#   1.17: Phase 0 read 1 / read 26 (E3a), re-read 2026-10-16: one spaces row on each env, the same id and owner.
+#   1.14: the pg_proc read below gave the same two functions, same bodies, on both envs.
+#   1.11: staging has 8 live photos, all resolved, so the check has something to test there too.
+#
+# REHEARSED on a throwaway local PostgreSQL 17.10 loaded with prod's schema, stamps and photo parent graph
+# (README.md). Not run against staging or prod as an applied migration.
+
+pre:
+  - name: pre_not_already_applied
+    note: continuous false; false by design once 0a runs.
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.1.5-tenantgates-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # The 1.17 predicate, unarmed (E3a: read every spaces row before arming). 0a refuses on the same thing.
+  - name: pre_one_space_one_owner
+    sql: |
+      SELECT s.id::text
+        FROM public.spaces s
+       CROSS JOIN (SELECT d.created_by FROM public.spaces d
+                    WHERE d.id = '00000000-0000-0000-0000-000000000001') dave
+       WHERE (s.id IS DISTINCT FROM '00000000-0000-0000-0000-000000000001'
+              OR s.created_by IS DISTINCT FROM dave.created_by)
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version LIKE 'phase7-approved-%')
+      UNION ALL
+      SELECT 'original Space absent or ownerless'
+       WHERE NOT EXISTS (SELECT 1 FROM public.spaces d
+                          WHERE d.id = '00000000-0000-0000-0000-000000000001' AND d.created_by IS NOT NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # The 1.14 predicate, unarmed. 0a refuses on the same thing.
+  - name: pre_sentinel_callers_are_the_list
+    sql: |
+      SELECT n.nspname || '.' || p.proname
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE (p.prosrc ~ '00000000-0000-0000-0000-000000000001' OR p.prosrc ~* 'sentinel_workspace\s*\(')
+         AND NOT (p.pronargs = 0 AND n.nspname = 'gv' AND p.proname IN ('entity_cultivar_ins', 'sentinel_workspace'))
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # ── 1.11 RECORDS: the photo tenancy buckets ─────────────────────────────────────────────────────
+  # Records, not gates: rowcount_gte 0 never reds; the count is in the runner's detail, the ids in the rows (run
+  # the SQL by hand to see them). Live photos only. A photo's parents resolve to a workspace by the mapping in
+  # README.md: plant -> plants.workspace_id; project -> plant_projects.workspace_id; event -> its plant's and its
+  # project's; photos.space_id -> that Space; location and inventory parents carry none. Not armed: they read the
+  # same before and after the fold, which is the point of running them on both sides of it.
+  #   prod 2026-10-16 (pre-fold): resolved 1584, conflict 7, tenancy_person_bound 331, tenancy_location_only 156,
+  #   tenancy_unresolved 0 (2078 live of 2096). staging: resolved 8, nothing else.
+  - name: sweep_record_photo_tenancy_conflicts
+    note: >
+      Live photos whose parents resolve to two workspaces. Prod before the fold: 7, every one a photo on a nil-
+      workspace container whose event's planting is in the original Space (README.md lists them). 0 after it.
+    sql: |
+      WITH live AS (
+        SELECT ph.id, ph.plant_id, ph.project_id, ph.event_id, ph.space_id
+          FROM public.photos ph WHERE ph.deleted_at IS NULL
+      ), resolved AS (
+        SELECT l.id AS photo_id, pl.workspace_id FROM live l JOIN public.plants pl ON pl.id = l.plant_id
+        UNION ALL
+        SELECT l.id, pp.workspace_id FROM live l JOIN public.plant_projects pp ON pp.id = l.project_id
+        UNION ALL
+        SELECT l.id, pl.workspace_id
+          FROM live l JOIN public.event_log e ON e.id = l.event_id JOIN public.plants pl ON pl.id = e.plant_id
+        UNION ALL
+        SELECT l.id, pp.workspace_id
+          FROM live l JOIN public.event_log e ON e.id = l.event_id JOIN public.plant_projects pp ON pp.id = e.project_id
+        UNION ALL
+        SELECT l.id, l.space_id FROM live l WHERE l.space_id IS NOT NULL
+      )
+      SELECT r.photo_id::text, string_agg(DISTINCT r.workspace_id::text, ' | ') AS workspaces
+        FROM resolved r GROUP BY r.photo_id HAVING count(DISTINCT r.workspace_id) > 1
+    expect: rowcount_gte
+    value: 0
+
+  - name: sweep_record_photo_tenancy_resolved_per_space
+    note: One row per workspace; the photo count is in the column.
+    sql: |
+      WITH live AS (
+        SELECT ph.id, ph.plant_id, ph.project_id, ph.event_id, ph.space_id
+          FROM public.photos ph WHERE ph.deleted_at IS NULL
+      ), resolved AS (
+        SELECT l.id AS photo_id, pl.workspace_id FROM live l JOIN public.plants pl ON pl.id = l.plant_id
+        UNION ALL
+        SELECT l.id, pp.workspace_id FROM live l JOIN public.plant_projects pp ON pp.id = l.project_id
+        UNION ALL
+        SELECT l.id, pl.workspace_id
+          FROM live l JOIN public.event_log e ON e.id = l.event_id JOIN public.plants pl ON pl.id = e.plant_id
+        UNION ALL
+        SELECT l.id, pp.workspace_id
+          FROM live l JOIN public.event_log e ON e.id = l.event_id JOIN public.plant_projects pp ON pp.id = e.project_id
+        UNION ALL
+        SELECT l.id, l.space_id FROM live l WHERE l.space_id IS NOT NULL
+      ), one AS (
+        SELECT r.photo_id, min(r.workspace_id::text) AS workspace_id
+          FROM resolved r GROUP BY r.photo_id HAVING count(DISTINCT r.workspace_id) = 1
+      )
+      SELECT one.workspace_id, count(*) AS photos FROM one GROUP BY one.workspace_id
+    expect: rowcount_gte
+    value: 0
+
+  # The three buckets for a live photo with no workspace-bearing parent (no plant, no project, no event with a
+  # plant or project, no space_id). person_bound first: an inventory item belongs to a person, wherever it sits.
+  - name: sweep_record_photo_tenancy_person_bound
+    note: tenancy_person_bound = an inventory_item_id parent and nothing workspace-bearing.
+    sql: |
+      SELECT 'tenancy_person_bound', ph.id::text
+        FROM public.photos ph
+       WHERE ph.deleted_at IS NULL AND ph.inventory_item_id IS NOT NULL
+         AND ph.plant_id IS NULL AND ph.project_id IS NULL AND ph.space_id IS NULL
+         AND NOT EXISTS (SELECT 1 FROM public.event_log e
+                          WHERE e.id = ph.event_id AND (e.plant_id IS NOT NULL OR e.project_id IS NOT NULL))
+    expect: rowcount_gte
+    value: 0
+
+  - name: sweep_record_photo_tenancy_location_only
+    note: tenancy_location_only = a location (the photo's own, or its event's), no inventory item, nothing workspace-bearing.
+    sql: |
+      SELECT 'tenancy_location_only', ph.id::text
+        FROM public.photos ph
+       WHERE ph.deleted_at IS NULL AND ph.inventory_item_id IS NULL
+         AND ph.plant_id IS NULL AND ph.project_id IS NULL AND ph.space_id IS NULL
+         AND NOT EXISTS (SELECT 1 FROM public.event_log e
+                          WHERE e.id = ph.event_id AND (e.plant_id IS NOT NULL OR e.project_id IS NOT NULL))
+         AND (ph.location_id IS NOT NULL
+              OR EXISTS (SELECT 1 FROM public.event_log e WHERE e.id = ph.event_id AND e.location_id IS NOT NULL))
+    expect: rowcount_gte
+    value: 0
+
+  - name: sweep_record_photo_tenancy_unresolved
+    note: >
+      tenancy_unresolved = no parent that names a workspace, a person or a place: the pending_tag intake rows
+      photos_must_have_parent allows. Prod and staging 2026-10-16: 0 live.
+    sql: |
+      SELECT 'tenancy_unresolved', ph.id::text, ph.intake_status
+        FROM public.photos ph
+       WHERE ph.deleted_at IS NULL AND ph.inventory_item_id IS NULL AND ph.location_id IS NULL
+         AND ph.plant_id IS NULL AND ph.project_id IS NULL AND ph.space_id IS NULL
+         AND NOT EXISTS (SELECT 1 FROM public.event_log e
+                          WHERE e.id = ph.event_id
+                            AND (e.plant_id IS NOT NULL OR e.project_id IS NOT NULL OR e.location_id IS NOT NULL))
+    expect: rowcount_gte
+    value: 0
+
+post:
+  # ── 1.17 ─────────────────────────────────────────────────────────────────────────────────────────
+  # V202 :274, violation-shaped. Arm 1: any Space that is not the original one, or is owned by anyone but the
+  # original Space's owner (a NULL owner included: IS DISTINCT FROM), while no phase7-approved-* stamp exists.
+  # Arm 2 is not waived by the approval: the original Space must exist with an owner, or arm 1's CROSS JOIN
+  # would be empty and the gate vacuously green. (An ownerless original Space is in arm 2 for the same reason:
+  # with a NULL anchor arm 1 compares against nothing.)
+  # OVERLAP, expected: v4-spaceowner no_space_left_without_an_owner reds on any NULL-owner Space, and
+  # sentinel_space_owned_by_expected_sub reds when the original Space is deleted; both red on this gate's
+  # throwaway controls too (README.md).
+  - name: post_no_second_owner_until_approved
+    sql: |
+      SELECT s.id::text
+        FROM public.spaces s
+       CROSS JOIN (SELECT d.created_by FROM public.spaces d
+                    WHERE d.id = '00000000-0000-0000-0000-000000000001') dave
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-tenantgates-001')
+         AND (s.id IS DISTINCT FROM '00000000-0000-0000-0000-000000000001'
+              OR s.created_by IS DISTINCT FROM dave.created_by)
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version LIKE 'phase7-approved-%')
+      UNION ALL
+      SELECT 'original Space absent or ownerless'
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-tenantgates-001')
+         AND NOT EXISTS (SELECT 1 FROM public.spaces d
+                          WHERE d.id = '00000000-0000-0000-0000-000000000001' AND d.created_by IS NOT NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # ── 1.14 ─────────────────────────────────────────────────────────────────────────────────────────
+  # Function bodies (pg_proc.prosrc, every schema) that hold the original Space's id or call
+  # sentinel_workspace(), against a SHRINKING list. Read 2026-10-16 on prod and staging, read-only (README.md):
+  #   gv.entity_cultivar_ins  LISTED: stamps gv.sentinel_workspace() on every new cultivar entity row.
+  #                           Phase 4 step 4.7 rewrites it to copy its cultivar's workspace; that change removes
+  #                           this entry in the same push (the stale arm reds until it does).
+  #   gv.sentinel_workspace   EXCLUDED by name: it DEFINES the value (its body is the literal). Pinned by
+  #                           md5(prosrc), so the exclusion covers that body only and goes stale, red, when
+  #                           Phase 5 drops or changes it.
+  # Arms: an unlisted caller; a listed entry that no longer matches (shrink the list); the definer changed.
+  # Defaults (pg_attrdef: entity.workspace_id DEFAULT gv.sentinel_workspace() and eight literal defaults) are
+  # out of scope here: Phase 5's post_no_workspace_default (sheet §3R "1.14 list").
+  - name: post_sentinel_callers
+    sql: |
+      WITH listed (nspname, proname) AS (
+        VALUES ('gv', 'entity_cultivar_ins')
+      ), callers AS (
+        SELECT n.nspname::text AS nspname, p.proname::text AS proname, p.pronargs
+          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE p.prosrc ~ '00000000-0000-0000-0000-000000000001' OR p.prosrc ~* 'sentinel_workspace\s*\('
+      )
+      SELECT 'unlisted caller ' || c.nspname || '.' || c.proname
+        FROM callers c
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-tenantgates-001')
+         AND NOT (c.pronargs = 0 AND c.nspname = 'gv' AND c.proname = 'sentinel_workspace')
+         AND NOT EXISTS (SELECT 1 FROM listed l
+                          WHERE l.nspname = c.nspname AND l.proname = c.proname AND c.pronargs = 0)
+      UNION ALL
+      SELECT 'stale entry ' || l.nspname || '.' || l.proname
+        FROM listed l
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-tenantgates-001')
+         AND NOT EXISTS (SELECT 1 FROM callers c
+                          WHERE c.nspname = l.nspname AND c.proname = l.proname AND c.pronargs = 0)
+      UNION ALL
+      SELECT 'excluded definer gv.sentinel_workspace() absent or changed'
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-tenantgates-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = 'gv' AND p.proname = 'sentinel_workspace' AND p.pronargs = 0
+                            AND md5(p.prosrc) = 'd6b97956568e3c2a65bdb195d09eccbc')
+    expect: rowcount_eq
+    value: 0
+
+  # ── 1.11 ─────────────────────────────────────────────────────────────────────────────────────────
+  # Every live photo's parents resolve to ONE workspace (mapping: sweep records above, README.md). A photo with
+  # no workspace-bearing parent is in a bucket, not a conflict. Armed on this directory's stamp AND, by exact
+  # equality, on v5-spacefk-001's 5.1.5-spacefk-001-fold: before the fold prod has 7 conflicts, every one the
+  # nil-workspace seam the fold removes (review DSA I2). Vacuous before; 0 after.
+  - name: post_photo_tenancy_no_conflict
+    sql: |
+      WITH live AS (
+        SELECT ph.id, ph.plant_id, ph.project_id, ph.event_id, ph.space_id
+          FROM public.photos ph WHERE ph.deleted_at IS NULL
+      ), resolved AS (
+        SELECT l.id AS photo_id, pl.workspace_id FROM live l JOIN public.plants pl ON pl.id = l.plant_id
+        UNION ALL
+        SELECT l.id, pp.workspace_id FROM live l JOIN public.plant_projects pp ON pp.id = l.project_id
+        UNION ALL
+        SELECT l.id, pl.workspace_id
+          FROM live l JOIN public.event_log e ON e.id = l.event_id JOIN public.plants pl ON pl.id = e.plant_id
+        UNION ALL
+        SELECT l.id, pp.workspace_id
+          FROM live l JOIN public.event_log e ON e.id = l.event_id JOIN public.plant_projects pp ON pp.id = e.project_id
+        UNION ALL
+        SELECT l.id, l.space_id FROM live l WHERE l.space_id IS NOT NULL
+      )
+      SELECT r.photo_id::text
+        FROM resolved r
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-tenantgates-001')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spacefk-001-fold')
+       GROUP BY r.photo_id
+      HAVING count(DISTINCT r.workspace_id) > 1
+    expect: rowcount_eq
+    value: 0

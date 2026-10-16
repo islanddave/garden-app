@@ -57,6 +57,11 @@ rehearsal's planted violations caught in the first draft.
 **Partial-apply policy:** if F's apply fails, stop; 1b stays applied (it is 1a-compatible) and F is fixed forward.
 0r is for "applied, F's code not yet on dev" only.
 
+**0r ordering (added 2026-10-16, multi-space Phase 1 step 1.1, V5-SPACEREPOINTGUARD-001):** `migrations/v5-spaceguard-001`
+binds `trg_audit_spaces_upd` to `audit_stmt_update_no_soft_delete()`, and this 0r drops that function without CASCADE
+(`0r-rollback.sql:175`), so with spaceguard applied this 0r fails and changes nothing. Run
+`migrations/v5-spaceguard-001/0r-rollback.sql` FIRST, then this one. The shipped `0r-rollback.sql` here is not edited.
+
 ### Sitting-day steps this lane could NOT run (brief: no database but local PG 17 and CI forks)
 06 §5.1's "same-day Neon fork of prod" items, to be run at the sitting on the prod branch (step 3 of the train):
 (a) `--phase sweep` above (every F CHECK predicate that can meet data) → 0 rows; (b) `view-parity.sql` before/after →
