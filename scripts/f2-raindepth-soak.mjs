@@ -16,7 +16,7 @@
 //
 //   npm install --prefix lambda/daily-plan --no-save --legacy-peer-deps
 //   CARE_CADENCE_SCOPES_ENABLED=true CARE_RAIN_CREDIT_ENABLED=true CARE_TODAY_AWARE_ENABLED=true \
-//   FROST_ALERT_ENABLED=true OWNER_FALLBACK_SUB=<sub> SYSTEM_CLERK_SUB=<sub> \
+//   FROST_ALERT_ENABLED=true SYSTEM_CLERK_SUB=<sub> \
 //   ENV_FILE=<path/to/.env.local> TODAY=YYYY-MM-DD OUT=summary.json [OUT2=explain.json] \
 //   [OUT3=detail.json EXPLAIN_IDS=<uuid,uuid>] node scripts/f2-raindepth-soak.mjs
 // Resolved from the Lambda's OWN dependency tree (npm install --prefix lambda/daily-plan --no-save)
