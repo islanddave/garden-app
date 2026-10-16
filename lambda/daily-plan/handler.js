@@ -878,6 +878,34 @@ function mergeAlertsSent(...lists) {
   return out;
 }
 
+// V5-SPACEISOLATION-001 (multi-space 6a) — daily_plan is one row per (user_id, plan_date) and names no Space, so a
+// user with plantings in TWO Spaces gets one plan per Space in run(), and the later Space's upsert (on conflict ...
+// do update) would replace the earlier one's whole row with no trace. Not live (Phase 0 read 8: no user is in more
+// than one Space); this keeps it from going silent when one is. The FIRST group to write the pair keeps the row's
+// items. A later group in the SAME invocation writes those items back with the two alerts_sent lists unioned (a frost
+// send for either Space stays recorded, so neither re-sends) and `multi_space_collision: true`, a conditional key:
+// absent on every single-group row, so those stay byte-identical. No DDL, no PLAN_SCHEMA_VERSION bump (readers select
+// named keys). `written` is per invocation (run() declares it beside frostPublished): at module scope it would survive
+// a warm Lambda, and every later hourly run would find its pairs taken and freeze the day at the first run's plan.
+function firstGroupItems(written, { userId, planDate, spaceId }, items) {
+  const pair = JSON.stringify([userId, planDate]);
+  const first = written.get(pair);
+  if (!first) {
+    written.set(pair, { spaceId, items, logged: false });
+    return { items, collision: false };
+  }
+  const sent = (first.items.alerts_sent || items.alerts_sent)
+    ? { alerts_sent: mergeAlertsSent(first.items.alerts_sent, items.alerts_sent).slice(-ALERTS_SENT_MAX) } : {};
+  const merged = { ...first.items, ...sent, multi_space_collision: true };
+  if (!first.logged) {
+    console.error(JSON.stringify({ msg: 'daily-plan-multispace-collision', user: userId, plan_date: planDate,
+      first_space: first.spaceId, space: spaceId }));
+    first.logged = true;
+  }
+  first.items = merged;
+  return { items: merged, collision: true };
+}
+
 // BUG-FROSTALERTNOAPP-001 — the WHEN and HOW COLD, persisted so a client can word the alert.
 //
 // Until now an alerts_sent entry carried key/tier/level/at only. Every one of those is about the
@@ -1887,6 +1915,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   const frostRun = resolveFrostRun(event, { etHour });
   const frostSeason = isFrostSeason(today);                       // §3-7 Sep 1 – Nov 15
   const frostPublished = new Set();       // one publish per dedup key per invocation, across users
+  const planWritten = new Map();          // V5-SPACEISOLATION-001: (user_id, plan_date) rows written by this invocation
   const frostFailures = [];               // §3-7: collected, then THROWN after the plan is durable
   const plans = [];
   const bySpace = {};
@@ -2208,28 +2237,34 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           // Capped here rather than only on a send: the merged list can pass the cap with no send this run.
           alertsSent = alertsSent.slice(-ALERTS_SENT_MAX);
         }
+        // V5-LEAFWETNESS-001 `leaf_wetness`: a GARDEN-level key, same conditional-spread rule. THIS LINE
+        // IS THE WHOLE FEATURE — the row below is an explicit named-key allowlist, not a spread of
+        // `plan`, so a key the engine computes and this literal omits is silently discarded on write and
+        // the Today line can never render. That is precisely how the first cut of this shipped: engine,
+        // component, mount and 16,050 tests all green, and the feature 100% inert. G-PARITY cannot catch
+        // it either — the goldens compare STORED payloads, so a key that never reaches a row leaves them
+        // green for the wrong reason. Caught by the pre-promote pass; guarded now by the end-to-end case
+        // in leafWetnessWiring.test.js, which drives run() and reads the key back off the written row.
+        //
+        // V5-DROUGHTSPACE-001 `drought`: a SPACE-level key, spread CONDITIONALLY so a non-firing day
+        // writes a byte-identical row. Both users in a Space get the same object because it is a fact
+        // about the garden, not about a caretaker — which is exactly what makes it one line rather
+        // than a per-plant note. Additive on an existing row, read by name, so PLAN_SCHEMA_VERSION is
+        // NOT bumped: three reader Lambdas pin that literal and deploy in one unordered wave.
+        //
+        // V5-SPACEISOLATION-001: firstGroupItems returns this literal unchanged unless an earlier Space's group in
+        // this invocation already wrote the user's row, in which case it returns that group's items (see there).
+        const written = firstGroupItems(planWritten, { userId: user_id, planDate: today, spaceId },
+          { schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, prior_runs: priorRuns, ...(alertsSent ? { alerts_sent: alertsSent } : {}), ...(gardenDrought ? { drought: gardenDrought } : {}), ...(plan.leaf_wetness ? { leaf_wetness: plan.leaf_wetness } : {}), ...userPlan.tasks });
         await pg.query(
           `insert into daily_plan (user_id, plan_date, items, generated_at)
            values ($1,$2,$3, now())
            on conflict (user_id, plan_date) do update set items=excluded.items, generated_at=now()`,
-          // V5-LEAFWETNESS-001 `leaf_wetness`: a GARDEN-level key, same conditional-spread rule. THIS LINE
-          // IS THE WHOLE FEATURE — the row below is an explicit named-key allowlist, not a spread of
-          // `plan`, so a key the engine computes and this literal omits is silently discarded on write and
-          // the Today line can never render. That is precisely how the first cut of this shipped: engine,
-          // component, mount and 16,050 tests all green, and the feature 100% inert. G-PARITY cannot catch
-          // it either — the goldens compare STORED payloads, so a key that never reaches a row leaves them
-          // green for the wrong reason. Caught by the pre-promote pass; guarded now by the end-to-end case
-          // in leafWetnessWiring.test.js, which drives run() and reads the key back off the written row.
-          //
-          // V5-DROUGHTSPACE-001 `drought`: a SPACE-level key, spread CONDITIONALLY so a non-firing day
-          // writes a byte-identical row. Both users in a Space get the same object because it is a fact
-          // about the garden, not about a caretaker — which is exactly what makes it one line rather
-          // than a per-plant note. Additive on an existing row, read by name, so PLAN_SCHEMA_VERSION is
-          // NOT bumped: three reader Lambdas pin that literal and deploy in one unordered wave.
-          [user_id, today, JSON.stringify({ schema_version: PLAN_SCHEMA_VERSION, weather: { ...plan.weather, hot: plan.hot }, hydrology: (Object.keys(stationProvBySpace[spaceId] || {}).length ? { ...plan.hydrology, station: stationProvBySpace[spaceId] } : plan.hydrology), coords: coordsBySpace[spaceId] ?? null, substrate: userPlan.substrate, counts: userPlan.counts, prior_runs: priorRuns, ...(alertsSent ? { alerts_sent: alertsSent } : {}), ...(gardenDrought ? { drought: gardenDrought } : {}), ...(plan.leaf_wetness ? { leaf_wetness: plan.leaf_wetness } : {}), ...userPlan.tasks })]);
+          [user_id, today, JSON.stringify(written.items)]);
         // BUG-TODAYWATER-001: record yesterday's observed rain on yesterday's row. Fail-open (returns
         // false, never throws) and touches ONLY (user_id, prevPlanDate) — today's upsert above is final.
-        await backfillYesterdayActual(pg, user_id, today, hyBySpace[spaceId], stationProvBySpace[spaceId]);
+        // V5-SPACEISOLATION-001: only from the group that kept the row, so a later Space's rain cannot overwrite it.
+        if (!written.collision) await backfillYesterdayActual(pg, user_id, today, hyBySpace[spaceId], stationProvBySpace[spaceId]);
       }
     }
   }
