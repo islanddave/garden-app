@@ -1,7 +1,7 @@
 {
-  "version": "5.2.0",
+  "version": "5.2.1",
   "date": "2026-10-16",
   "highlights": [
-    "The new Today page is now the standard Today on every phone. Showing the rest of the household's care is in More › Controls. For now the old page is still there: More › Debug & smoke › turn off the New Today row on that phone."
+    "Behind the scenes: the app's server functions now run on Node 22, ahead of AWS's deadline, and new alarms watch for household-sharing problems."
   ]
 }

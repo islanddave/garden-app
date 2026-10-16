@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.2.1",
+    "date": "2026-10-16",
+    "highlights": [
+      "Behind the scenes: the app's server functions now run on Node 22, ahead of AWS's deadline, and new alarms watch for household-sharing problems."
+    ]
+  },
+  {
     "version": "5.2.0",
     "date": "2026-10-16",
     "highlights": [
