@@ -12,6 +12,7 @@
 //   * firstGroupItems always returns the incoming items (the second group overwrites)  -> 2 RED
 //   * planWritten hoisted to module scope (survives a warm invocation)                  -> 4 RED (the two-run()
 //     case alone, run with -t, reds by itself; the others red because the set leaks across this file's cases)
+//   * Spaces walked in the plantings query's row order, not id order (QA I1)               -> 1 RED (fix pass)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import handler from './handler.js';
 
@@ -95,6 +96,24 @@ describe('V5-SPACEISOLATION-001 — one user, two Spaces, one daily_plan row', (
     expect(collisionLogs(err)).toEqual([{ msg: 'daily-plan-multispace-collision', user: DAVE, plan_date: TODAY,
       first_space: SP_A, space: SP_B }]);
     // yesterday's rain is written by the group that kept the row only
+    expect(backfills(pg)).toEqual([DAVE]);
+  });
+
+  it('the lowest Space id keeps the row whatever order the plantings query returns', async () => {
+    // QA I1: the plantings query has no ORDER BY, so row order can change between hourly runs. run() walks the
+    // Spaces sorted by id, so the same Space wins every run and yesterday's rain is backfilled by that Space only.
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const pg = await drive({
+      plantings: [planting('b1', SP_B, DAVE, 'pepper'), planting('a1', SP_A, DAVE)],
+      spaces: [space(SP_B, DAVE), space(SP_A, DAVE)],
+    });
+    const [first, second] = upserts(pg);
+    expect(first.raw).toContain('"a1"');
+    expect(first.raw).not.toContain('"b1"');
+    expect(second.items).toEqual({ ...first.items, alerts_sent: [SENT_A, SENT_B], multi_space_collision: true });
+    expect(collisionLogs(err)).toEqual([{ msg: 'daily-plan-multispace-collision', user: DAVE, plan_date: TODAY,
+      first_space: SP_A, space: SP_B }]);
     expect(backfills(pg)).toEqual([DAVE]);
   });
 
