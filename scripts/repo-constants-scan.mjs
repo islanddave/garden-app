@@ -30,6 +30,7 @@
 // The text rule's reader shapes are listed at READER_TEXT below.
 import { readFileSync, readdirSync, statSync, existsSync, realpathSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { join, relative, resolve, dirname, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as acorn from 'acorn'
@@ -223,13 +224,21 @@ export const MAC = /(?<![0-9A-Fa-f:-])[0-9A-Fa-f]{2}([:-])(?:[0-9A-Fa-f]{2}\1){4
 // Not after `<digit>:`, so the seconds of a timestamp (`05:22:01.245082`) are not a coordinate.
 const DECIMAL4 = /(?<![\w.]|\d:)-?\d{1,3}\.\d{4,}(?![\w.])/g
 
+// sha256 (hex) of a finding's literal: how a list of known findings names one without repeating it. It keeps the
+// literal out of the list and out of a failure message; it is NOT secrecy (a 4-decimal coordinate or a MAC under a
+// known vendor prefix can be brute-forced from its hash), and need not be: a pinned literal is already in the
+// scanned file.
+export const literalHash = (s) => createHash('sha256').update(s).digest('hex')
+
+// [{ file, line, kind: 'mac' | 'latlng', literal, hash }] for one file's text.
 export function publicLiteralFindings(rel, text) {
   const out = []
+  const hit = (i, kind, literal) => out.push({ file: rel, line: i + 1, kind, literal, hash: literalHash(literal) })
   text.split('\n').forEach((line, i) => {
-    for (const m of line.matchAll(MAC)) out.push(`${rel}:${i + 1} MAC-shaped literal ${m[0]}`)
+    for (const m of line.matchAll(MAC)) hit(i, 'mac', m[0])
     for (const m of line.matchAll(DECIMAL4)) {
       const v = Math.abs(Number(m[0]))
-      if (v >= 1 && v <= 180) out.push(`${rel}:${i + 1} lat/lng-shaped literal ${m[0]} (4+ decimals)`)
+      if (v >= 1 && v <= 180) hit(i, 'latlng', m[0])
     }
   })
   return out
@@ -241,15 +250,15 @@ export function scanPublicLiterals(dirs, { root = ROOT } = {}) {
   return { files, findings }
 }
 
-// { rel: { mac, latlng } } occurrence counts, so a list of known findings never repeats the literal itself.
-export function countPublicFindings(findings) {
+// { rel: { mac: [hash…], latlng: [hash…] } }, each list distinct and sorted: the shape a known-findings list pins.
+export function pinPublicFindings(findings) {
   const out = {}
-  for (const f of findings) {
-    const [, file, kind] = f.match(/^(\S+?):\d+ (MAC|lat\/lng)-shaped/)
-    const k = kind === 'MAC' ? 'mac' : 'latlng'
+  for (const { file, kind, hash } of findings) {
     out[file] ??= {}
-    out[file][k] = (out[file][k] || 0) + 1
+    out[file][kind] ??= []
+    if (!out[file][kind].includes(hash)) out[file][kind].push(hash)
   }
+  for (const kinds of Object.values(out)) for (const list of Object.values(kinds)) list.sort()
   return out
 }
 
@@ -359,9 +368,13 @@ function printDave() {
 
 // The 1.13 directory list lives in its test; the printer takes it as arguments.
 function printPublic(dirs) {
-  console.log('// 1.13 KNOWN_AT_BASE counts (lambda/public-repo-literals.static.test.js)')
-  for (const [file, c] of Object.entries(countPublicFindings(scanPublicLiterals(dirs).findings))) {
-    console.log(`  '${file}': ${JSON.stringify(c).replace(/"/g, '')},`)
+  console.log('// 1.13 KNOWN_AT_BASE sha256 pins (lambda/public-repo-literals.static.test.js); carry `reason` over by hand')
+  for (const [file, kinds] of Object.entries(pinPublicFindings(scanPublicLiterals(dirs).findings))) {
+    console.log(`  '${file}': {`)
+    for (const [kind, hashes] of Object.entries(kinds)) {
+      console.log(`    ${kind}: [\n${hashes.map((h) => `      '${h}',`).join('\n')}\n    ],`)
+    }
+    console.log('  },')
   }
 }
 
