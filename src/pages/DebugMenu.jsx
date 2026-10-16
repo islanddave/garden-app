@@ -36,7 +36,7 @@ import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { useTodayV2Flag, writeTodayV2Flag } from '../lib/todayV2Flag.js'
-import { TODAY_V2_PREVIEW_ROW } from '../lib/featureFlags.js'
+import { TODAY_V2_PREVIEW_ROW, TODAY_V2_DEFAULT } from '../lib/featureFlags.js'
 
 const APP_VERSION = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null) || '0.0.0'
 
@@ -254,7 +254,9 @@ export default function DebugMenu() {
           <span style={{ flex: 1, minWidth: 0 }}>
             <span style={{ display: 'block', fontSize: '0.95rem', fontWeight: 600, color: P.dark }}>New Today on this phone</span>
             <span style={{ display: 'block', fontSize: '0.78rem', color: P.mid, lineHeight: 1.4, marginTop: 2 }}>
-              Now the standard Today page. Only this phone changes; turn it off to use the old page.
+              {TODAY_V2_DEFAULT
+                ? 'Now the standard Today page. Only this phone changes; turn it off to use the old page.'
+                : 'Only this phone changes; turn it on to use the new Today page, off for the old one.'}
             </span>
           </span>
           <span aria-hidden="true" style={{

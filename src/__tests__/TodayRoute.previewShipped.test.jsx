@@ -55,7 +55,7 @@ describe('the row and the default as shipped (D14 row visible to both users; S8b
     expect(screen.queryByTestId('today-v1')).toBeNull()
   })
 
-  it('a phone that turned the preview on before S8b ("1" stored) stays on the redesign', () => {
+  it('a phone that turned the preview on before S8b ("1" stored) is on the redesign (here via the default too; "1" itself is pinned in TodayRoute.test, default undone)', () => {
     localStorage.setItem('garden.todayV2', '1')
     render(<TodayRoute />)
     expect(screen.getByTestId('today-v2')).toBeTruthy()

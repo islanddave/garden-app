@@ -56,9 +56,10 @@ export const CLIENT_PREF_KEYS = [
   'nav.barLayout.v1',
   'nav.morePins.v1',
   'nav.morePins.pending.v1',
-  // V5-TODAYREDESIGN-001 S2 — the Debug & smoke "New Today (preview) on this phone" switch (todayV2Flag.js).
+  // V5-TODAYREDESIGN-001 S2 — the Debug & smoke "New Today on this phone" switch (todayV2Flag.js).
   // A device choice, but a PERSON's choice on a shared phone: left behind, the next person to sign in
-  // lands on the previous person's preview page. Plan-v2 §6.10.
+  // lands on the previous person's choice of page. Plan-v2 §6.10. Since S8b the scrub means "no choice", so
+  // after a sign-out the phone shows the default page (the redesign) until the row is turned off again.
   'garden.todayV2',
   // V5-TODAYREDESIGN-001 (integration 2, 2026-09-29; the orchestrator's call on S6's decision 2) — the household view
   // switch, SHOW_OTHERS_KEY (lib/householdView.js): per-DEVICE and never scrubbed before, so on a shared

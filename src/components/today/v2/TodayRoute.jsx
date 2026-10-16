@@ -1,6 +1,7 @@
 import React from 'react'
 import Today from '../../../pages/Today.jsx'
 import TodayV2 from '../../../pages/TodayV2.jsx'
+import ErrorBoundary from '../../ErrorBoundary.jsx'
 import { useTodayV2Flag } from '../../../lib/todayV2Flag.js'
 import { TODAY_V2_PREVIEW_ROW, TODAY_V2_DEFAULT } from '../../../lib/featureFlags.js'
 
@@ -15,7 +16,15 @@ import { TODAY_V2_PREVIEW_ROW, TODAY_V2_DEFAULT } from '../../../lib/featureFlag
 // fetch in a dead zone would leave /today unrecoverable until a reload the service worker may not allow.
 // The redesign also has to paint first time behind the flag (plan-v2 §6.4) without a chunk-loading frame.
 // tests/harness/todaymeasure.jsx mounts this same chooser for gate:today-shape:v2.
+//
+// Until S8c (L8) a redesign that throws while rendering, in an effect or in a lifecycle method falls back to the OLD
+// page, not the route's error screen (a throw in an event handler or async code reaches no boundary, as before).
+// Before S8b only phones that chose the preview could reach a V2 crash; now every phone lands here. The fallback is
+// SILENT on the phone: the app has no remote error reporting and ErrorBoundary logs to the console only (scope
+// "today-v2"), so a post-release check must confirm the redesign itself (its jump bar), not just that Today loads.
+// If the old page throws too, only the route boundary logs, with the old page's error. L8 removes this boundary.
 export default function TodayRoute() {
   const on = useTodayV2Flag()
-  return (TODAY_V2_PREVIEW_ROW ? on : TODAY_V2_DEFAULT) ? <TodayV2 /> : <Today />
+  if (!(TODAY_V2_PREVIEW_ROW ? on : TODAY_V2_DEFAULT)) return <Today />
+  return <ErrorBoundary scope="today-v2" fallback={<Today />}><TodayV2 /></ErrorBoundary>
 }

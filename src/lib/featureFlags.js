@@ -493,10 +493,13 @@ export const SEED_BULK_EXTRACT_ENABLED = false
 export const TODAY_V2_PREVIEW_ROW = true
 
 // V5-TODAYREDESIGN-001 S8b (L7) — the page /today shows on a phone that has made no choice on the row above (and on
-// every phone while the row is hidden). TRUE = the redesign, the default since L7 on Dave's ship phrase. FALSE is
-// the forward undo of L7: every phone without a stored choice goes back to the old page, and a phone that chose
-// one keeps it. Client-only and two-way: an older bundle reads only a stored '1' as the redesign (todayV2Flag.js),
-// so no revert floor is needed. Removed with the old page at S8c (L8).
+// every phone while the row is hidden). TRUE = the redesign, the default since L7 on Dave's ship phrase.
+// UNDOING L7: the release of record is undone by scripts/forward-undo.py, which REVERTS v5.2.0's commits (there is no
+// revert-floors entry for it, deliberately: the change is client-only and two-way, because a pre-L7 bundle reads
+// only a stored '1' as the redesign, so '0' and no key both give it the old page). Setting this FALSE instead also
+// works — every phone without a stored choice goes back to the old page, a phone that chose one keeps it, and the
+// Debug row's subtitle follows — but it must change TodayRoute.previewShipped.test.jsx's pin in the same commit.
+// Removed with the old page at S8c (L8).
 export const TODAY_V2_DEFAULT = true
 
 // V5-SOWFREEZELINES-001 (D3 of the Seeds-home design; Dave 2026-09-18: "leave for now until that design is

@@ -4,21 +4,23 @@
 // The chooser and the row as they are WITH the preview row shown (featureFlags TODAY_V2_PREVIEW_ROW true, as it
 // ships by Dave's D14 — mocked on here, so these cases hold whichever way it ships). The shipped value and the
 // row's subtitle are pinned in TodayRoute.previewShipped.test.jsx; the false branch (no row, a stored choice
-// ignored) in TodayRoute.previewHidden.test.jsx. featureFlags TODAY_V2_DEFAULT is NOT mocked here: the default
-// cases below read the shipped value, which previewShipped pins true.
+// ignored) in TodayRoute.previewHidden.test.jsx. featureFlags TODAY_V2_DEFAULT is mocked through a getter set to TRUE
+// before each case, so these mechanics hold whichever way it ships; the shipped value is previewShipped's single pin.
+// One case sets it false (the default undone).
 import React, { useState } from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 vi.mock('../pages/Today.jsx', () => ({ default: () => <div data-testid="today-v1" /> }))
-vi.mock('../pages/TodayV2.jsx', () => ({ default: () => <div data-testid="today-v2" /> }))
+const flags = vi.hoisted(() => ({ def: true, v2Throws: false }))
+vi.mock('../pages/TodayV2.jsx', () => ({
+  default: () => { if (flags.v2Throws) throw new Error('TodayV2 render failed'); return <div data-testid="today-v2" /> },
+}))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: vi.fn(async () => ({})) }) }))
-const flags = vi.hoisted(() => ({ def: null }))
-vi.mock('../lib/featureFlags.js', async (orig) => {
-  const real = await orig()
-  return { ...real, TODAY_V2_PREVIEW_ROW: true, get TODAY_V2_DEFAULT() { return flags.def ?? real.TODAY_V2_DEFAULT } }
-})
+vi.mock('../lib/featureFlags.js', async (orig) => ({
+  ...(await orig()), TODAY_V2_PREVIEW_ROW: true, get TODAY_V2_DEFAULT() { return flags.def },
+}))
 
 import TodayRoute from '../components/today/v2/TodayRoute.jsx'
 import DebugMenu from '../pages/DebugMenu.jsx'
@@ -26,7 +28,7 @@ import TodaySection from '../components/today/v2/TodaySection.jsx'
 import { readTodayV2Flag, writeTodayV2Flag, TODAY_V2_FLAG_KEY } from '../lib/todayV2Flag.js'
 import { clearClientPrefs } from '../lib/clientPrefs.js'
 
-beforeEach(() => { localStorage.clear(); sessionStorage.clear(); flags.def = null })
+beforeEach(() => { localStorage.clear(); sessionStorage.clear(); flags.def = true; flags.v2Throws = false })
 afterEach(() => cleanup())
 
 describe('the per-device switch', () => {
@@ -94,6 +96,29 @@ describe('the per-device switch', () => {
     localStorage.setItem('garden.todayV2', '0')
     render(<TodayRoute />)
     expect(screen.getByTestId('today-v1')).toBeTruthy()
+    for (const junk of ['', 'true', 'on']) {
+      localStorage.setItem('garden.todayV2', junk)
+      expect(readTodayV2Flag()).toBe(false)
+    }
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
+    try { expect(readTodayV2Flag()).toBe(false) } finally { get.mockRestore() }
+  })
+
+  it('the server snapshot is the default too (renderToStaticMarkup)', async () => {
+    const { renderToStaticMarkup } = await import('react-dom/server')
+    expect(renderToStaticMarkup(<TodayRoute />)).toContain('today-v2')
+    flags.def = false
+    expect(renderToStaticMarkup(<TodayRoute />)).toContain('today-v1')
+  })
+
+  it('a redesign that throws while rendering falls back to the old Today, not an error screen', () => {
+    flags.v2Throws = true
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      render(<TodayRoute />)
+      expect(screen.getByTestId('today-v1')).toBeTruthy()
+      expect(err.mock.calls.some((c) => String(c[0]).includes('[ErrorBoundary scope=today-v2]'))).toBe(true)
+    } finally { err.mockRestore() }
   })
 
   it('App\'s /today element is the chooser', async () => {
@@ -119,6 +144,15 @@ describe('Debug & smoke — "New Today on this phone"', () => {
     fireEvent.click(t)
     expect(localStorage.getItem('garden.todayV2')).toBe('1')
     expect(t.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('with the default undone the row reads Off and its subtitle says how to turn the new page on', () => {
+    flags.def = false
+    mount()
+    const t = screen.getByTestId('debug-today-v2')
+    expect(t.getAttribute('aria-pressed')).toBe('false')
+    expect(t.textContent).toContain('turn it on to use the new Today page, off for the old one.')
+    expect(t.textContent).not.toContain('Now the standard Today page')
   })
 
   it('the On / Off pill is hidden from the accessible name', () => {
