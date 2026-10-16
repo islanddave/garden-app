@@ -1,7 +1,7 @@
 {
-  "version": "5.2.2",
+  "version": "5.2.3",
   "date": "2026-10-16",
   "highlights": [
-    "Behind-the-scenes groundwork for gardens with more than one owner: stronger safety checks, nothing you'll see change."
+    "Behind-the-scenes groundwork for gardens with more than one owner: database safety guards, nothing you'll see change."
   ]
 }
