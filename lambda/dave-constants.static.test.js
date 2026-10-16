@@ -7,7 +7,13 @@
 // real. This list is where they are today, per non-test file and per kind, and it may only shrink:
 //   * a file not listed, or a count above its entry — NEW Dave-specific code; read it from the DB / the Space;
 //   * a count below its entry, or a listed file with none left — STALE; lower or delete the entry.
-// No entry is permanent. One carries a `reason` for why it is still here.
+// No entry is permanent. An entry may carry a `reason` for why it is still here.
+//
+// HOUSEHOLD COPIES. lambda/household.js and every lambda/<dir>/household.js copy are ONE entry (HOUSEHOLD_CLASS),
+// holding the highest count of each kind across the copies. Each Lambda zips alone, so a new household-scoped
+// Lambda ships another copy; that is not new Dave-specific code, and lambda/household-copies-sync.test.js already
+// holds every copy byte-identical to the canonical. So a new copy does not red here, a copy whose readers rise does,
+// and a reader in any file that is not a household.js copy (householdScope.js, an index.js) is per file as above.
 //
 // What counts (scripts/repo-constants-scan.mjs, scanDaveConstants): JS is parsed (acorn + acorn-jsx), so a comment
 // or a string that merely names an env var never counts; a READER is `process.env.X`, `process.env['X']`,
@@ -24,29 +30,19 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { scanDaveConstants, daveCounts, SENTINEL_UUID, KINDS } from '../scripts/repo-constants-scan.mjs'
 
+// lambda/household.js and its per-Lambda copies, one entry (see HOUSEHOLD COPIES in the header).
+const HOUSEHOLD_COPY = /^lambda\/(?:[^/]+\/)?household\.js$/
+const HOUSEHOLD_CLASS = 'lambda/household.js + lambda/<dir>/household.js copies'
+
 const DAVE_CONSTANTS = {
-  'lambda/critter/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/daily-plan-read/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
+  [HOUSEHOLD_CLASS]: {
+    GARDEN_HOUSEHOLD_IDS: 2,
+    reason: 'householdScope(): the one household read every scoped Lambda shares, copied per Lambda dir because each '
+      + 'zips alone; its byte-sameness is lambda/household-copies-sync.test.js. Goes when householdScope reads the Space',
+  },
   'lambda/daily-plan/householdScope.js': { GARDEN_HOUSEHOLD_IDS: 1 },
-  'lambda/dashboard/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
   'lambda/events/critterAward.js': { literal: 1, SENTINEL_WORKSPACE: 2 },
-  'lambda/events/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/evidence-ingest/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/facebook-share/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/findings/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/harvests/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/inventory-items/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/locations/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/members/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/photos/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/plants/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/preservation/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/projects/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
   'lambda/shared-state/index.js': { literal: 1, SENTINEL_WORKSPACE: 5, GARDEN_HOUSEHOLD_IDS: 1 },
-  'lambda/storage-location/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/tags/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
-  'lambda/varieties/household.js': { GARDEN_HOUSEHOLD_IDS: 2 },
   'scripts/merge-run.mjs': { GARDEN_HOUSEHOLD_IDS: 1 },
   'scripts/seed-recipes.mjs': { GARDEN_HOUSEHOLD_IDS: 1 },
   'scripts/weather-observability.sh': {
@@ -54,6 +50,18 @@ const DAVE_CONSTANTS = {
     reason: 'self-test fixture (:129) copying the frost dedup-read WARN log line, Space id included; it goes when '
       + 'the self-test uses a made-up Space id',
   },
+}
+
+// The household.js copies folded into one HOUSEHOLD_CLASS entry holding the highest count of each kind across them,
+// so a new copy changes nothing and a copy whose readers rise still reds. Every other file stays per file.
+function collapse(found) {
+  const out = {}
+  for (const [file, counts] of Object.entries(found)) {
+    if (!HOUSEHOLD_COPY.test(file)) { out[file] = counts; continue }
+    out[HOUSEHOLD_CLASS] ??= {}
+    for (const [k, v] of Object.entries(counts)) out[HOUSEHOLD_CLASS][k] = Math.max(out[HOUSEHOLD_CLASS][k] || 0, v)
+  }
+  return out
 }
 
 // Every (file, kind) whose count differs from the list, with what to do about it.
@@ -80,10 +88,11 @@ describe('Dave-constant ratchet (1.14)', () => {
 
   it('found the known inventory (anti-vacuity)', () => {
     expect(found['lambda/household.js']).toEqual({ GARDEN_HOUSEHOLD_IDS: 2 })
+    expect(Object.keys(found).filter((f) => HOUSEHOLD_COPY.test(f)).length).toBeGreaterThan(10)
   })
 
   it('the tree matches the list exactly (new file reds, rising count reds, stale entry reds)', () => {
-    expect(ratchet(found, DAVE_CONSTANTS)).toEqual([])
+    expect(ratchet(collapse(found), DAVE_CONSTANTS)).toEqual([])
   })
 
   it('entries hold only counted kinds and an optional reason; none is permanent', () => {
@@ -130,6 +139,32 @@ describe('Dave-constant ratchet (1.14)', () => {
       expect(ratchet(f, {})).toHaveLength(2)
       expect(ratchet({}, { 'lambda/gone.js': { literal: 1 } })[0]).toMatch(/STALE entry; remove/)
       expect(ratchet({ 'a.js': { literal: 1 } }, { 'a.js': { literal: 2 } })[0]).toMatch(/STALE entry; lower it to 1/)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('a new household.js copy is the same class (no red); a rising copy or a reader elsewhere still reds', () => {
+    const root = mkdtempSync(join(tmpdir(), 'daveconst-'))
+    const reader = 'export const ids = () => process.env.GARDEN_HOUSEHOLD_IDS || process.env.GARDEN_HOUSEHOLD_IDS\n'
+    const list = { [HOUSEHOLD_CLASS]: { GARDEN_HOUSEHOLD_IDS: 2 } }
+    try {
+      for (const d of ['', 'plants/', 'brandnew/']) {
+        mkdirSync(join(root, 'lambda', d), { recursive: true })
+        writeFileSync(join(root, `lambda/${d}household.js`), reader)
+      }
+      expect(ratchet(collapse(scanDaveConstants({ root })), list)).toEqual([])
+      // a reader in a file that is not a household.js copy is per file, so it is NEW
+      writeFileSync(join(root, 'lambda/brandnew/index.js'), 'const ids = process.env.GARDEN_HOUSEHOLD_IDS\n')
+      expect(ratchet(collapse(scanDaveConstants({ root })), list)).toEqual([
+        'lambda/brandnew/index.js GARDEN_HOUSEHOLD_IDS: 1 — NEW file holding a Dave constant; read it from the DB / the Space instead',
+      ])
+      rmSync(join(root, 'lambda/brandnew/index.js'))
+      // a copy that reads more than the class allows reds the class (the sync test reds it too)
+      writeFileSync(join(root, 'lambda/brandnew/household.js'), `${reader}const more = process.env.GARDEN_HOUSEHOLD_IDS\n`)
+      expect(ratchet(collapse(scanDaveConstants({ root })), list)).toEqual([
+        `${HOUSEHOLD_CLASS} GARDEN_HOUSEHOLD_IDS: 3 > 2 — count ROSE; read it from the DB / the Space instead`,
+      ])
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
