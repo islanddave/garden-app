@@ -210,6 +210,9 @@ const STEPS = [
   ['variety_blend_component',     `DELETE FROM variety_blend_component WHERE created_by LIKE ${NS} OR blend_variety_id IN (${NS_VARIETIES}) OR component_variety_id IN (${NS_VARIETIES})`],
   ['plant_varieties',            `DELETE FROM plant_varieties WHERE created_by LIKE ${NS} OR name LIKE ${NS} OR crop_type_slug LIKE ${NS}`],
   ['crop_types',                  `DELETE FROM crop_types WHERE slug LIKE ${NS} OR created_by LIKE ${NS}`],
+  // v5-spacefk-001 (reparent-workspace.int.test.js): reparent_event has no FK (prod and staging, 2026-10-16), so
+  // this is for residue, not order; it runs before plant_projects because its subject arm reads them.
+  ['reparent_event',              `DELETE FROM reparent_event WHERE moved_by LIKE ${NS} OR subject_id IN (${NS_PROJECTS})`],
   ['container_closure',           `DELETE FROM container_closure WHERE ancestor_id IN (${NS_PROJECTS}) OR descendant_id IN (${NS_PROJECTS})`],
   ['inactive_project_dismissals', `DELETE FROM inactive_project_dismissals WHERE user_id LIKE ${NS} OR project_id IN (${NS_PROJECTS})`],
   ['tasks',                       `DELETE FROM tasks WHERE created_by LIKE ${NS} OR project_id IN (${NS_PROJECTS})`],
