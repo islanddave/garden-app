@@ -881,7 +881,7 @@ function mergeAlertsSent(...lists) {
 // V5-SPACEISOLATION-001 (multi-space 6a) — daily_plan is one row per (user_id, plan_date) and names no Space, so a
 // user with plantings in TWO Spaces gets one plan per Space in run(), and the later Space's upsert (on conflict ...
 // do update) would replace the earlier one's whole row with no trace. Not live (Phase 0 read 8: no user is in more
-// than one Space); this keeps it from going silent when one is. The FIRST group to write the pair keeps the row's
+// than one Space); this keeps it from going silent when one is. The FIRST group (lowest Space id) to write the pair keeps the row's
 // items. A later group in the SAME invocation writes those items back with the two alerts_sent lists unioned (a frost
 // send for either Space stays recorded, so neither re-sends) and `multi_space_collision: true`, a conditional key:
 // absent on every single-group row, so those stay byte-identical. No DDL, no PLAN_SCHEMA_VERSION bump (readers select
@@ -1920,7 +1920,11 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   const plans = [];
   const bySpace = {};
   for (const p of plantings) (bySpace[p.workspace_id] ||= []).push(p);
-  for (const [spaceId, rows] of Object.entries(bySpace)) {
+  // V5-SPACEISOLATION-001: Spaces in id order (string compare), not the plantings query's row order (no ORDER BY,
+  // and an UPDATE can move a row), so the "first group" firstGroupItems keeps is the same Space every run, and so is
+  // the group that backfills yesterday's rain onto that row. One Space: one entry, unchanged.
+  const spaceOrder = Object.entries(bySpace).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const [spaceId, rows] of spaceOrder) {
     // BUG-INGROUND39FSLIVER-001 — the frost decision is made BEFORE the plan, so the in-ground cold card
     // can drop only for a planting this decision names (engine.coldFor). The evaluating runs (14-17 ET)
     // compute it exactly as before: a throw (an invalid FROST_BAND_THRESHOLDS_JSON inside summarize)
