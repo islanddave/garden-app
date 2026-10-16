@@ -21,6 +21,9 @@
 //       Rounding a residence coordinate is not scrubbing it; a single allowed pair is.
 //   (c) two cheap credential shapes that would be catastrophic and are free to check: `sk_live_` /
 //       `pk_live_` and a JWT header prefix.
+//   (d) any MAC-shaped string (six hex pairs, `:` or `-` separated) outside the declared fake block
+//       FAKE_MAC_PREFIX. A weather-station MAC is the key the station API is queried by; a prod dump
+//       carries the real one in `station_mac`, and it rode into four tracked files before this rule.
 // Real plant names and location paths are DELIBERATELY NOT refused — see the note at ALLOWED below.
 //
 // THE SELF-TEST IS NOT OPTIONAL EITHER. A scanner that has never been shown to fire is a claim.
@@ -39,6 +42,14 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 // consumer stays exercised. Spelled to the same precision the fixtures carry so an exact compare is
 // meaningful; a scrub that "rounds" a real coordinate would pass a proximity test and fail this one.
 export const SYNTHETIC_SITE = { lat: 39.8283, lng: -98.5795 }
+
+// The allowed MAC block. `AA:` has the locally-administered bit set, so no vendor ever ships a device
+// under it. The scrubber assigns `AA:BB:CC:DD:EE:01`, `:02`, … by frequency; `AA:BB:CC:DD:EE:FF` is
+// the repo's older hand-written fake (lambda/daily-plan tests, tests/harness/wx*.jsx), kept distinct.
+export const FAKE_MAC_PREFIX = 'AA:BB:CC:DD:EE:'
+export const FAKE_STATION_MAC = `${FAKE_MAC_PREFIX}01`
+export const MAC_RE = /\b[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}\b/g
+const isFakeMac = (s) => s.toUpperCase().replace(/-/g, ':').startsWith(FAKE_MAC_PREFIX)
 
 // Scanned surfaces. The instrument's own source is included: a harness entry that hardcodes a sub to
 // make a band render is the same exposure as a fixture that carries one.
@@ -81,6 +92,12 @@ const TEXT_RULES = [
     re: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
     why: 'an email address. Nothing on the Today page renders one; a fixture that carries one is carrying a person, not a layout.',
   },
+  {
+    id: 'mac',
+    re: MAC_RE,
+    allow: isFakeMac,
+    why: `a real-shaped device MAC (a weather-station id). The only permitted MACs are the declared fake block ${FAKE_MAC_PREFIX}xx; scrub it with scripts/layout-gate/todayshape-fixture-scrub.mjs.`,
+  },
 ]
 
 const findings = []
@@ -94,7 +111,7 @@ function scanText(rel, text) {
     rule.re.lastIndex = 0
     const hits = new Set()
     let m
-    while ((m = rule.re.exec(text))) hits.add(m[0])
+    while ((m = rule.re.exec(text))) if (!rule.allow?.(m[0])) hits.add(m[0])
     for (const h of hits) note(rel, rule, redact(h))
   }
 }
@@ -151,8 +168,10 @@ if (RUN_AS_CLI && process.argv.includes('--self-test')) {
     'eyJhbGciOiJIUzI1NiIsInR5cCI6.eyJzdWIiOiIxMjM0NTY3ODkwIn0',
     'postgresql://user:pw@host/db',
     'someone.else@example.org',
+    'station_mac: 3c-71-bf-0a-12-9e',
   ].join('\n')
-  const negative = 'harness_user\nharness_member_jen\nplanting_id\nuser_short\nplanted @ 10am'
+  const negative = 'harness_user\nharness_member_jen\nplanting_id\nuser_short\nplanted @ 10am\n'
+    + `${FAKE_STATION_MAC} AA:BB:CC:DD:EE:FF aa-bb-cc-dd-ee-02 at 10:30:00 edfc68f5-a28a-484a-8be6-dd00b4067dde`
   const before = findings.length
   scanText('<self-test positive>', positive)
   const firedIds = new Set(findings.slice(before).map(f => f.rule.id))

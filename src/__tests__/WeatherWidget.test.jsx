@@ -541,11 +541,11 @@ describe('WeatherWidget — DRG-WXSTATION-002 weather-station source on Today (V
 // `today_observed_in` exactly ZERO times, so the whole gauge path shipped unexercised — the failure class the
 // suite is least able to notice, because the other 46 tests stay green either way.
 describe('WeatherWidget — a measurement outranks a forecast (BUG-RAINCARDFORECASTONLY-001)', () => {
-  // 2026-09-06 15:30 ET, verbatim from prod daily_plan.items->hydrology.
+  // 2026-09-06 15:30 ET, verbatim from prod daily_plan.items->hydrology (station_mac replaced with a fake).
   const gauged = {
     recent_precip_in: 0.05, today_precip_in: 0.29, today_observed_in: 0.29, today_remaining_in: 0,
     today_pop: 40, tomorrow_precip_in: 0, tomorrow_pop: 0, rain_coming: false,
-    station: { station_fresh: true, today_source: 'station', station_mac: 'F8:B3:B7:82:1F:0D' },
+    station: { station_fresh: true, today_source: 'station', station_mac: 'AA:BB:CC:DD:EE:01' },
   }
 
   it('prints the measured amount, not the PoP-weighted forecast', () => {

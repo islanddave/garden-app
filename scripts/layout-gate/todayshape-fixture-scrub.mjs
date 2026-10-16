@@ -20,6 +20,10 @@
 //   · every lat/lng/lon/latitude/longitude key -> the single declared synthetic site (see
 //     SYNTHETIC_SITE in todayshape-fixture-preflight.mjs). Rounding a residence coordinate is not
 //     scrubbing it.
+//   · every MAC-shaped string (MAC_RE in todayshape-fixture-preflight.mjs — in practice the weather
+//     station's `station_mac`) outside the declared fake block -> `AA:BB:CC:DD:EE:01`, `:02`, …,
+//     assigned by frequency across the corpus like the subs, so two real stations stay two stations.
+//     A MAC already inside the fake block (FAKE_MAC_PREFIX) is left as it is.
 //
 // WHAT IT DELIBERATELY LEAVES ALONE — plant names, cultivar names and location paths. They are
 // horticultural, not credential-shaped, they are already throughout the repo's own tracked tests
@@ -31,7 +35,7 @@
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, statSync } from 'node:fs'
 import { join, resolve, dirname, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SYNTHETIC_SITE } from './todayshape-fixture-preflight.mjs'
+import { SYNTHETIC_SITE, FAKE_MAC_PREFIX, MAC_RE } from './todayshape-fixture-preflight.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const argOf = (flag, dflt) => { const i = process.argv.indexOf(flag); return i > -1 ? process.argv[i + 1] : dflt }
@@ -57,20 +61,31 @@ if (!SRC.length) { console.error(`[scrub] nothing to scrub in ${FROM}`); process
 
 // Pass 1: build the pseudonym map from the WHOLE corpus, not per file. A per-file map would give the
 // same sub two different pseudonyms in two files and break every join the page makes across them.
+// MACs are keyed normalised (upper-case, `:`) so `f8-b3-…` and `F8:B3:…` are one station.
+const normMac = (s) => s.toUpperCase().replace(/-/g, ':')
 const freq = new Map()
+const macFreq = new Map()
 for (const abs of SRC) {
   const text = readFileSync(abs, 'utf8')
   SUB_RE.lastIndex = 0
   let m
   while ((m = SUB_RE.exec(text))) freq.set(m[0], (freq.get(m[0]) || 0) + 1)
+  MAC_RE.lastIndex = 0
+  while ((m = MAC_RE.exec(text))) {
+    const k = normMac(m[0])
+    if (!k.startsWith(FAKE_MAC_PREFIX)) macFreq.set(k, (macFreq.get(k) || 0) + 1)
+  }
 }
 const ranked = [...freq.entries()].sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
 const MAP = new Map(ranked.map(([sub], i) => [sub, i === 0 ? 'harness_user' : `harness_member_${i + 1}`]))
+const macRanked = [...macFreq.entries()].sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
+const MAC_MAP = new Map(macRanked.map(([mac], i) => [mac, FAKE_MAC_PREFIX + (i + 1).toString(16).toUpperCase().padStart(2, '0')]))
 
 // Pass 2: rewrite.
 let wrote = 0
 let subHits = 0
 let geoHits = 0
+let macHits = 0
 const scrubGeo = (v) => {
   if (Array.isArray(v)) return v.map(scrubGeo)
   if (v && typeof v === 'object') {
@@ -91,6 +106,7 @@ for (const abs of SRC) {
   const rel = relative(FROM, abs)
   let text = readFileSync(abs, 'utf8')
   text = text.replace(SUB_RE, (s) => { subHits++; return MAP.get(s) || 'harness_unknown' })
+  text = text.replace(MAC_RE, (s) => { const fake = MAC_MAP.get(normMac(s)); if (!fake) return s; macHits++; return fake })
   if (abs.endsWith('.json')) {
     // Re-serialize COMPACT (no pretty-print). These are wire payloads served to a fetch stub, not
     // documents; JSON.stringify with no spacer keeps the diff honest about size and matches how the
@@ -105,5 +121,6 @@ for (const abs of SRC) {
 
 console.log(`[scrub] ${DRY ? 'DRY RUN — ' : ''}${wrote} file(s) ${FROM} -> ${TO}`)
 for (const [sub, alias] of MAP) console.log(`[scrub]   ${sub.slice(0, 9)}…(${freq.get(sub)} hits) -> ${alias}`)
-console.log(`[scrub] ${subHits} sub occurrence(s), ${geoHits} coordinate value(s) replaced with the declared synthetic site.`)
+for (const [mac, alias] of MAC_MAP) console.log(`[scrub]   ${mac.slice(0, 5)}…(${macFreq.get(mac)} hits) -> ${alias}`)
+console.log(`[scrub] ${subHits} sub occurrence(s), ${geoHits} coordinate value(s) replaced with the declared synthetic site, ${macHits} MAC occurrence(s) replaced with the declared fake block.`)
 console.log('[scrub] NOW RUN: node scripts/layout-gate/todayshape-fixture-preflight.mjs  (this script is not the guard; that one is)')

@@ -10,7 +10,7 @@ import { createRoot } from 'react-dom/client'
 import WeatherWidget from '../../src/components/today/WeatherWidget.jsx'
 
 const weather = { tonightLow: 55, highToday: 70, code: 3, hot: false, short: 'Patchy Fog then Partly Sunny' }
-const station = { station_fresh: true, today_source: 'station', station_mac: 'F8:B3:B7:82:1F:0D', station_age_min: 5 }
+const station = { station_fresh: true, today_source: 'station', station_mac: 'AA:BB:CC:DD:EE:01', station_age_min: 5 }
 
 // 15:30 ET run — rain finished, gauge total 0.29"
 const settled = { recent_precip_in: 0.05, today_precip_in: 0.29, today_observed_in: 0.29, today_remaining_in: 0,
