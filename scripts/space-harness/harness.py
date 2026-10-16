@@ -306,13 +306,16 @@ def table_diffs(conn_a, conn_b, cfg, snap_a, snap_b, allowed, binds):
 
 
 def eval_binds(conn, binds_sql, params):
-    out = {}
+    """Named values read on B after the change ({name: sql}). Returns (values, problems):
+    a bind that finds nothing means the control's subject is missing."""
+    out, problems = {}, []
     for name, sql in (binds_sql or {}).items():
         rows = ck._rows(conn, sql, params)
         if len(rows) != 1 or rows[0][0] is None:
-            raise HarnessFault(f"bind ${name} returned {len(rows)} rows (one non-null value needed)")
+            problems.append(f"bind ${name} returned {len(rows)} rows (one non-null value needed)")
+            continue
         out[name] = str(rows[0][0])
-    return out
+    return out, problems
 
 
 def row_control_counts(pc, conns, binds):
@@ -387,7 +390,8 @@ def do_run(args, src, use):
                     v["faults"].append(f"arm {s} ran {arms[s].get('head')}, not {heads[s]}")
             if (arms["a"].get("error") or "").split("\n")[0] != (arms["b"].get("error") or "").split("\n")[0]:
                 v["diffs"].append({"kind": "run_error", "a": arms["a"].get("error"), "b": arms["b"].get("error")})
-        binds.update(eval_binds(conns["b"], use.get("binds"), binds))
+        found, bind_problems = eval_binds(conns["b"], use.get("binds"), binds)
+        binds.update(found)
         v["binds"] = sorted(binds)
         snap_a, snap_b = ck.snapshot(conns["a"], cfg), ck.snapshot(conns["b"], cfg)
         unexpected, allowed_seen = table_diffs(conns["a"], conns["b"], cfg, snap_a, snap_b,
@@ -401,10 +405,15 @@ def do_run(args, src, use):
             if calls["unexpected_only_a"] or calls["unexpected_only_b"]:
                 v["diffs"].append({"kind": "calls", "only_a": calls["unexpected_only_a"],
                                    "only_b": calls["unexpected_only_b"]})
-        counts = row_control_counts(pc, conns, binds) if pc["kind"] == "row" else None
-        v["positive_control"] = evaluate_control(pc, binds, arms, counts)
+        try:
+            counts = row_control_counts(pc, conns, binds) if pc["kind"] == "row" else None
+            v["positive_control"] = evaluate_control(pc, binds, arms, counts)
+        except Exception as ex:  # a control that cannot be evaluated was not seen
+            v["positive_control"] = {"name": pc["name"], "kind": pc["kind"], "ok": False,
+                                     "reason": "; ".join(bind_problems) or str(ex)}
         if not v["positive_control"]["ok"]:
-            v["faults"].append(f"positive control: {v['positive_control']['reason']} (harness fault, never a pass)")
+            v["faults"].append(f"positive control '{pc['name']}': {v['positive_control']['reason']} "
+                               f"(harness fault, never a pass)")
     finally:
         for c in conns.values():
             c.close()
@@ -438,6 +447,8 @@ def emit(v, out_path):
         print(f"  self-test 0: {'A = B' if st0['ok'] else 'A != B'} over {st0['tables']} tables; "
               f"volatile tables excluded {st0['excluded_tables']}; "
               f"columns excluded on {len(st0['excluded_columns'])} tables (full list in --out)")
+        for d in st0["diffs"]:
+            print(f"    A != B: {d['table']} ({d['kind']})")
     if v.get("stray"):
         print(f"  stray write: target={v['stray'].get('target')} ok={v['stray']['ok']}")
     return EXIT[v["verdict"]]
