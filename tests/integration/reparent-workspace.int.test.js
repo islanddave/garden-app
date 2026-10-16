@@ -8,8 +8,9 @@
 // (the local rehearsal's red control, migrations/v5-spacefk-001/README.md). Here a container in the folded
 // shape, the shape every container has after the fold, is moved and undone through the projects handler, and
 // each reparent_event row is read back: it carries the container's own Space, the one Space there is, and that
-// value is a row in spaces. A 409 for a stale version is the one-time cost the README names for a page loaded
-// before the fold.
+// value is a row in spaces. A second pair sits on a fixture Space whose id is not the sentinel, so "copies" is
+// proved rather than "writes the one Space". A 409 for a stale version is the one-time cost the README names for a
+// page loaded before the fold.
 //
 // No nil-workspace fixture: after 0b/0c the database refuses one (23503), and this file must pass on both sides
 // of that apply. reparent_event has no foreign key (prod and staging, 2026-10-16), so its rows are torn down
@@ -27,6 +28,10 @@ const SPACE = '00000000-0000-0000-0000-000000000001'
 
 let savedEnv
 let parent, child
+// QA MINOR: a second container pair on a fixture Space whose id is not the sentinel, so a reparentCore that wrote a
+// constant instead of copying the container's own workspace_id reds. created_by = USER: the spaces step of the
+// global sweep (_cleanup.js NS_SPACES) takes it on a failed run, and nothing hangs off it but these two containers.
+let fixtureSpace, otherParent, otherChild
 const ops = []
 
 const call = (method, path, body) => callHandler(projectsHandler, { method, path, body, userId: USER })
@@ -42,6 +47,13 @@ beforeAll(async () => {
   setTestUserId(USER)
   parent = (await insertProject({ name: `int-rpws-parent-${RUN}`, createdBy: USER, kind: 'category' })).id
   child = (await insertProject({ name: `int-rpws-child-${RUN}`, createdBy: USER, kind: 'category' })).id
+  fixtureSpace = (await directSql`
+    INSERT INTO spaces (name, created_by) VALUES (${`int-rpws-space-${RUN}`}, ${USER}) RETURNING id`)[0].id
+  const onFixtureSpace = async (name) => (await directSql`
+    INSERT INTO plant_projects (name, slug, kind, created_by, workspace_id)
+    VALUES (${name}, ${name}, 'category', ${USER}, ${fixtureSpace}) RETURNING id`)[0].id
+  otherParent = await onFixtureSpace(`int-rpws-oparent-${RUN}`)
+  otherChild = await onFixtureSpace(`int-rpws-ochild-${RUN}`)
 })
 
 afterAll(async () => {
@@ -50,6 +62,7 @@ afterAll(async () => {
   await settle('reparent-workspace', [
     () => directSql`DELETE FROM reparent_event WHERE moved_by = ${USER} OR op_id = ANY(${ops}::uuid[])`,
     () => directSql`DELETE FROM plant_projects WHERE created_by = ${USER}`,
+    () => directSql`DELETE FROM spaces WHERE created_by = ${USER}`,
   ])
 })
 
@@ -88,6 +101,19 @@ describe('V5-SPACESENTINELDOC-001 — a reparent copies the container\'s Space i
     expect(res.body.parent_project_id).toBeNull()
     expect(await eventOf(op)).toMatchObject({ subject_id: child, old_parent_id: parent, new_parent_id: null,
       workspace_id: SPACE, names_a_space: true })
+  })
+
+  it('a container on another Space: the event row carries THAT Space, not the sentinel', async () => {
+    expect(fixtureSpace).not.toBe(SPACE)
+    const op = randomUUID()
+    ops.push(op)
+    const res = await call('POST', `/api/projects/${otherChild}/reparent`,
+      { op_id: op, new_parent_id: otherParent, expected_version: await version(otherChild) })
+    expect(res.status, JSON.stringify(res.body)).toBe(200)
+    expect(await eventOf(op)).toEqual({
+      subject_id: otherChild, old_parent_id: null, new_parent_id: otherParent, moved_by: USER,
+      workspace_id: fixtureSpace, names_a_space: true,
+    })
   })
 
   it('a page holding an older version gets 409 "Version conflict — reload and retry" and writes no event', async () => {
