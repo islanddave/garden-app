@@ -408,3 +408,10 @@ def test_parity_rule_is_declared_for_the_household_key_and_not_a_function():
     rules = clc.load_env_parity()
     assert {"key": "GARDEN_HOUSEHOLD_IDS", "min_entries": 2}.items() <= rules[0].items()
     assert "env_parity" not in clc.load_manifest()
+
+def test_a_malformed_parity_rule_is_an_input_error(tmp_path):
+    import pytest
+    p = tmp_path / "m.json"
+    p.write_text('{"env_parity": [{"min_entries": 2}]}')
+    with pytest.raises(ValueError):
+        clc.load_env_parity(str(p))

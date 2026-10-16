@@ -93,10 +93,15 @@ def load_eventbridge(path=MANIFEST):
 
 
 def load_env_parity(path=MANIFEST):
-    """Return the declared cross-function env rules: [{key, min_entries?}, ...] (OPS-HOUSEHOLDALARMS-001)."""
+    """Return the declared cross-function env rules: [{key, min_entries?}, ...] (OPS-HOUSEHOLDALARMS-001).
+    Raises ValueError on a malformed rule, so main() exits 2 (input error), never 1 (drift)."""
     with open(path) as fh:
         raw = json.load(fh)
-    return raw.get("env_parity") or []
+    rules = raw.get("env_parity") or []
+    for r in rules:
+        if not isinstance(r, dict) or not isinstance(r.get("key"), str) or not isinstance(r.get("min_entries", 1), int):
+            raise ValueError("malformed env_parity rule: %r" % (r,))
+    return rules
 
 
 def check_env_parity(rules, manifest, live_by_name):
@@ -399,7 +404,14 @@ def main(argv=None):
     violations = []
     for n in names:
         violations.extend(check_function(n, manifest[n], live_by_name[n]))
-    violations.extend(check_env_parity(load_env_parity(), manifest, live_by_name))
+    try:
+        parity_rules = load_env_parity(args.manifest)
+    except (OSError, ValueError) as exc:
+        print("::error::env_parity unreadable: %s" % exc)
+        return 2
+    violations.extend(check_env_parity(parity_rules, manifest, live_by_name))
+    if args.function:
+        print("note: env_parity compared only the %d function(s) named by --function." % len(names))
 
     # OPS-DEPLOYCOESILENT-001 — the assertions the env manifest structurally cannot make.
     #
@@ -449,8 +461,8 @@ def main(argv=None):
     urls_checked = 0 if args.live_json else sum(1 for n in names if "url" in manifest[n])
     rules_checked = 0 if (args.live_json or args.function) else len(load_eventbridge(args.manifest))
     print("lambda config OK: %d function(s) match the declared manifest "
-          "(%d Function URL/CORS expectation(s), %d EventBridge rule(s) asserted)."
-          % (len(names), urls_checked, rules_checked))
+          "(%d Function URL/CORS expectation(s), %d EventBridge rule(s), %d env_parity rule(s) asserted)."
+          % (len(names), urls_checked, rules_checked, len(parity_rules)))
     return 0
 
 

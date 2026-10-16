@@ -29,20 +29,33 @@
 # Period 3600, 24 evaluation periods, 1 datapoint to alarm, threshold 0, missing = notBreaching: the
 # alarm goes to ALARM on the first hour with any line and stays there until 24 hours pass with none,
 # so a condition that repeats on every hourly daily-plan run sends ONE email per episode, not one per
-# gap in the schedule. There is no OK action: the email is the start of an episode, the console shows
-# its end.
+# gap in the schedule (its largest gap is 4 h). For the user-driven lines (membership, evidence tier,
+# fk reject) a recurrence after 24 quiet hours is a new episode and a new email, and a condition that
+# never stops sends one email and no reminder. There is no OK action: the email is the start of an
+# episode, the console shows its end. household-membership-denied does not split reason env-missing
+# (misconfiguration) from non-member (a third account): read the line's `reason`.
 #
 # ORDERING (same doctrine as weather-observability.sh): `provision` makes inert filters; `test-patterns`
 # proves every pattern against the literal the code emits AND against neighbours it must not match;
-# `alarm` refuses unless test-patterns passes. There is no liveness step: these lines are rare by
-# design, so a zero is the healthy reading, and the pattern proof is what stands in for traffic.
+# `alarm` refuses unless test-patterns passes, every filter `provision` should have made is live with
+# the proven pattern, and every target function still logs in Text format (the format the patterns were
+# proven on). There is no liveness step: these lines are rare by design, so a zero is the healthy
+# reading, and the pattern proof is what stands in for traffic. scripts/test_household_observability.py
+# pins FK_FUNCTIONS and each msg literal to the code that emits it.
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
+ACCOUNT=769788341849
 NS="Garden/Household"
-SNS_TOPIC="${SNS_TOPIC:-arn:aws:sns:us-east-1:769788341849:garden-ops-alerts}"
+SNS_TOPIC="${SNS_TOPIC:-arn:aws:sns:${REGION}:${ACCOUNT}:garden-ops-alerts}"
 
-# The dirs that CALL warnRejectedFk (git grep on dev). The other ten dirs that ship household.js only
+require_account() {
+  local got
+  got=$(aws sts get-caller-identity --query Account --output text) || { echo "cannot read the AWS identity" >&2; exit 1; }
+  [ "$got" = "$ACCOUNT" ] || { echo "refusing: credentials are for account $got, not $ACCOUNT" >&2; exit 1; }
+}
+
+# The dirs that CALL warnRejectedFk (git grep on dev). The other nine dirs that ship household.js only
 # carry the definition; a filter on their log groups would be dead.
 FK_FUNCTIONS="events evidence-ingest inventory-items locations photos plants preservation projects varieties"
 
@@ -76,6 +89,7 @@ each_filter() {   # callback with: name fn metric msg (authz-fk-reject expanded 
 }
 
 provision() {
+  require_account
   echo "provisioning metric filters (inert until '$0 alarm')"
   each_filter emit_filter
   echo "filters provisioned. Run '$0 test-patterns', then '$0 alarm'."
@@ -84,7 +98,8 @@ provision() {
 # Server-side proof (aws logs test-metric-filter): each pattern matches the line its code emits, with
 # the real Text-format prefix, and matches nothing else. Needs no traffic.
 test_patterns() {
-  local fails=0 T PFX
+  local fails=0 T PFX ERRF
+  ERRF=$(mktemp)
   T=$(printf '\t')
   PFX="2026-10-16T13:00:12.000Z${T}4b8305ac-1609-4ed1-8ed6-74cd042724c4${T}"
 
@@ -92,7 +107,7 @@ test_patterns() {
     local got
     got=$(aws logs test-metric-filter --region "$REGION" \
             --filter-pattern "$(pattern "$2")" --log-event-messages "$3" \
-            --query 'length(matches)' --output text 2>/dev/null) || got="error"
+            --query 'length(matches)' --output text 2>"$ERRF") || got="error: $(head -1 "$ERRF")"
     if [ "$got" = "$4" ]; then echo "  ok    $1"; else echo "  FAIL  $1 (expected $4, got $got)"; fails=$((fails+1)); fi
   }
 
@@ -155,8 +170,46 @@ EvidenceTierDenied|garden-household-evidence-tier-denied|garden-evidence-ingest 
 AuthzFkReject|garden-household-authz-fk-reject|A write named a parent row outside the caller's household and was refused with a 400 (warnRejectedFk, 9 functions). A client bug or a household membership misconfiguration.
 "
 
+# The filter provision made is live, with the proven pattern, metric and namespace. Prints one line per
+# filter; returns non-zero if any is missing or different.
+verify_filter() {   # filter-name, function dir, metric, msg
+  local got want
+  want="$(pattern "$4")|$3|${NS}"
+  got=$(aws logs describe-metric-filters --region "$REGION" --log-group-name "/aws/lambda/garden-$2" \
+          --filter-name-prefix "$1" \
+          --query "metricFilters[?filterName=='$1'] | [0].[filterPattern, metricTransformations[0].metricName, metricTransformations[0].metricNamespace]" \
+          --output text 2>/dev/null | tr '\t' '|') || got="unreadable"
+  if [ "$got" = "$want" ]; then echo "  live    garden-$2/$1"; return 0; fi
+  echo "  WRONG   garden-$2/$1 (live: ${got:-absent})"; return 1
+}
+
+verify_filters() {
+  local bad=0 name fn metric msg f
+  while IFS='|' read -r name fn metric msg; do
+    [ -n "$name" ] || continue
+    verify_filter "$name" "$fn" "$metric" "$msg" || bad=1
+  done <<< "$FILTERS"
+  for f in $FK_FUNCTIONS; do verify_filter household-authz-fk-reject "$f" AuthzFkReject authz-fk-reject || bad=1; done
+  return "$bad"
+}
+
+# The patterns were proven on the Text-format line ("<ts>\t<reqId>\t<LEVEL>\t{json}"). A function moved to
+# JSON log format would need the patterns proven again first.
+verify_log_format() {
+  local bad=0 fn fmt
+  for fn in shared-state daily-plan evidence-ingest $FK_FUNCTIONS; do
+    fmt=$(aws lambda get-function-configuration --region "$REGION" --function-name "garden-$fn" \
+            --query 'LoggingConfig.LogFormat' --output text 2>/dev/null) || fmt="unreadable"
+    [ "$fmt" = "Text" ] || { echo "  log format garden-$fn: $fmt (want Text)"; bad=1; }
+  done
+  return "$bad"
+}
+
 alarm() {
+  require_account
   test_patterns || { echo "refusing to arm alarms on unproven patterns." >&2; exit 1; }
+  verify_filters || { echo "refusing to arm: a filter is missing or differs from the proven pattern (run provision)." >&2; exit 1; }
+  verify_log_format || { echo "refusing to arm: a function no longer logs in Text format." >&2; exit 1; }
   echo "arming alarms -> ${SNS_TOPIC}"
   local metric name desc
   while IFS='|' read -r metric name desc; do
@@ -172,27 +225,28 @@ alarm() {
 }
 
 status() {   # read-only: what exists now
-  local name fn metric msg n
-  show() {
-    n=$(aws logs describe-metric-filters --region "$REGION" --log-group-name "/aws/lambda/garden-$2" \
-          --filter-name-prefix "$1" --query 'length(metricFilters)' --output text)
-    echo "  filter garden-$2/$1: $n"
-  }
-  each_filter show
+  verify_filters || true
   aws cloudwatch describe-alarms --region "$REGION" --alarm-name-prefix garden-household- \
     --query 'MetricAlarms[].[AlarmName,StateValue]' --output text
 }
 
+# Alarms first, then filters, and every delete tolerates "already gone", so a second teardown or one after
+# a partial provision still completes instead of stopping at the first missing filter.
 teardown() {
-  rm_filter() {
-    aws logs delete-metric-filter --region "$REGION" --log-group-name "/aws/lambda/garden-$2" --filter-name "$1" \
-      && echo "  removed garden-$2/$1"
-  }
-  each_filter rm_filter
+  require_account
   local names
   names=$(printf '%s\n' "$ALARMS" | cut -d'|' -f2 | grep . | tr '\n' ' ')
   # shellcheck disable=SC2086  # one alarm name per word, by construction
-  aws cloudwatch delete-alarms --region "$REGION" --alarm-names $names && echo "  removed alarms"
+  if aws cloudwatch delete-alarms --region "$REGION" --alarm-names $names; then echo "  removed alarms"
+  else echo "  alarms: delete refused (see above)"; fi
+  rm_filter() {
+    if aws logs delete-metric-filter --region "$REGION" --log-group-name "/aws/lambda/garden-$2" --filter-name "$1" 2>/dev/null; then
+      echo "  removed garden-$2/$1"
+    else
+      echo "  absent  garden-$2/$1"
+    fi
+  }
+  each_filter rm_filter
 }
 
 case "${1:-}" in

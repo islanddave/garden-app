@@ -59,7 +59,12 @@
     "                keys assert nothing. targets matters on its own: a rule that exists but has zero",
     "                targets fires into nothing, and describe-rule alone cannot show that.",
     "                NOTE this key is reserved in check-lambda-config.py (RESERVED_TOP_LEVEL) so that",
-    "                load_manifest() keeps returning FUNCTIONS ONLY."
+    "                load_manifest() keeps returning FUNCTIONS ONLY.",
+    "",
+    "  env_parity    TOP-LEVEL, reserved like eventbridge. A list of {key, min_entries?}: every function whose",
+    "                env declares `key` must carry byte-equal values with at least min_entries comma-separated",
+    "                entries. Compared by sha256 prefix; the value never enters the repo or a log",
+    "                (OPS-HOUSEHOLDALARMS-001)."
   ],
   "garden-daily-plan": {
     "runtime": "nodejs22.x",
