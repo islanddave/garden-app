@@ -1,0 +1,20 @@
+{
+ "name": "D1: one null-coordinate Space committed on B (V102 Step 11 shape)",
+ "binds": {
+  "indoor": "SELECT id::text FROM public.spaces WHERE name = 'Indoor' AND id <> gv.sentinel_workspace()"
+ },
+ "positive_control": {
+  "name": "space-wx for the new Space: on B, not on A",
+  "kind": "log",
+  "match": { "msg": "space-wx", "space": "$indoor" },
+  "present_on": "b",
+  "absent_on": "a"
+ },
+ "allowed_diffs": [
+  { "table": "public.spaces", "where": "id = %(indoor)s::uuid", "side": "b" },
+  { "table": "public.audit_events", "where": "table_name = 'spaces' AND row_id = %(indoor)s::uuid", "side": "b" }
+ ],
+ "allowed_call_diffs": [],
+ "volatile_columns": {},
+ "jsonb_volatile_keys": {}
+}

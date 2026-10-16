@@ -11,7 +11,7 @@ import {
   startLocalWsProxy, runArm,
 } from './arm-lib.mjs'
 
-const FAKE_MAC = 'AA:BB:CC:DD:EE:FF'.toLowerCase().replace(/[a-f]/g, '0') // built, so no MAC-shaped literal sits in the file
+const FAKE_MAC = Array.from({ length: 6 }, (_, i) => `0${i}`).join(':') // built at run time: no MAC-shaped literal in the file
 const fixture = { geocode: { lat: 42.5, lng: -72.7 }, nws: { tonightLow: 50 }, precip: { today_precip_in: 0 }, rainForecast: null, station: null }
 
 describe('recording stubs', () => {
@@ -34,7 +34,7 @@ describe('recording stubs', () => {
   it('weather fetchers serve the fixture and record a 1-decimal grid cell', async () => {
     const rec = makeRecorder()
     const s = recordingStubs(rec, fixture)
-    const nws = await s.fetchNWS(42.5123, -72.7088)
+    const nws = await s.fetchNWS(42.51, -72.71)
     nws.tonightLow = 1
     expect((await s.fetchNWS(42.5, -72.7)).tonightLow).toBe(50) // a copy each time
     expect(rec.calls[0].destination).toBe('grid:42.5,-72.7')

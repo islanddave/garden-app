@@ -397,7 +397,18 @@ def test_cli_code_mode_needs_both_shas(tmp_path):
 
 
 def test_no_sentinel_literal_in_the_harness():
-    for name in os.listdir(HERE):
-        if name.endswith((".py", ".mjs", ".json")) and not name.startswith("test_") and ".test." not in name:
-            src = open(os.path.join(HERE, name)).read()
-            assert "00000000-0000-0000-0000-00000000000" not in src, name
+    """The sentinel Space id is read from gv.sentinel_workspace(); no file here spells it."""
+    needle = "-".join(["0" * 8, "0" * 4, "0" * 4, "0" * 4, "0" * 11])
+    for root, _, files in os.walk(HERE):
+        for name in files:
+            if name.endswith((".py", ".mjs", ".json", ".md")):
+                assert needle not in open(os.path.join(root, name)).read(), name
+
+
+def test_the_example_use_is_valid():
+    with open(os.path.join(HERE, "fixtures", "use.example-d1.json")) as fh:
+        use = json.load(fh)
+    assert harness.validate_use(use) == []
+    with open(harness.DEFAULT_FIXTURE) as fh:
+        fx = json.load(fh)
+    assert set(fx) >= {"geocode", "nws", "precip", "rainForecast", "station"}
