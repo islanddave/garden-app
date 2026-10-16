@@ -359,7 +359,8 @@ function printSite() {
 }
 
 function printDave() {
-  console.log('// 1.14 DAVE_CONSTANTS (lambda/dave-constants.static.test.js); carry `reason` fields over by hand')
+  console.log('// 1.14 DAVE_CONSTANTS (lambda/dave-constants.static.test.js); carry `reason` fields over by hand, and keep '
+    + 'the household.js copies as the one HOUSEHOLD_CLASS entry')
   for (const [file, counts] of Object.entries(scanDaveConstants())) {
     const body = Object.entries(counts).map(([k, v]) => `${k}: ${v}`).join(', ')
     console.log(`  '${file}': { ${body} },`)
