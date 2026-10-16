@@ -19,8 +19,8 @@
 // `reason`; carry any `reason` field over by hand.
 //
 // WHAT "NON-TEST" MEANS here (isTestPath): a *.test.* / *.spec.* file, anything under __tests__/, __mocks__/,
-// __fixtures__/ or fixtures/, and Python test_*.py / *_test.py / conftest.py. Walks skip node_modules, .git, dist,
-// coverage and Python caches.
+// __fixtures__/ or fixtures/, and Python test_*.py / *_test.py / conftest.py. Walks read tracked files only
+// (`git ls-files`, see walk) and skip node_modules, .git, dist, coverage and Python caches.
 //
 // HOW JS IS READ. .js/.jsx/.mjs/.cjs files are parsed with acorn + acorn-jsx (transitive dependencies, as in
 // lambda/lambda-source-parses.test.js and src/__tests__/clientRouteLambdaContract.test.js) and only string
@@ -28,7 +28,8 @@
 // parse, and every other text file (.sh, .py, .sql, .ts, .json, ...), falls back to the TEXT RULE: whole-line
 // comments (`#` for sh/py, `//` and `/* */` lines for ts, `--` for sql) are dropped, then the line is matched.
 // The text rule's reader shapes are listed at READER_TEXT below.
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync, existsSync, realpathSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { join, relative, resolve, dirname, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as acorn from 'acorn'
@@ -54,8 +55,29 @@ export function isTestPath(rel) {
   return /(^|\/)(__tests__|__mocks__|__fixtures__|fixtures)\//.test(rel)
 }
 
+// The top of the git work tree `root` is, or null when root is not one (a planted fixture tree under tmpdir).
+function gitTop(root) {
+  try {
+    const top = execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    return realpathSync(top) === realpathSync(root) ? top : null
+  } catch {
+    return null
+  }
+}
+
 // Every file under each root (repo-relative, forward slashes). A missing root yields nothing, not an error.
+// In a git work tree this is the TRACKED files (`git ls-files`, as scripts/test_check_lambda_config.py reads), so an
+// untracked scratch file or a gitignored recorder dump (tests/harness/_todaymeasure/out/raw) reds neither locally
+// nor differently from CI's clean checkout. A root that is not the top of a work tree (the planted fixture trees the
+// tests build under tmpdir) is walked on the filesystem.
 export function walk(roots, { root = ROOT, textOnly = true } = {}) {
+  if (gitTop(root)) {
+    const listed = execFileSync('git', ['-C', root, 'ls-files', '-z', '--', ...roots], { encoding: 'utf8', maxBuffer: 64 << 20 })
+    return listed.split('\0').filter((rel) => rel
+      && !rel.split('/').some((seg) => SKIP_DIRS.has(seg))
+      && (!textOnly || TEXT_EXT.has(extname(rel)))
+      && existsSync(join(root, rel))).sort()
+  }
   const out = []
   const visit = (abs) => {
     for (const entry of readdirSync(abs)) {
