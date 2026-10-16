@@ -157,6 +157,8 @@ export function describeAuthzMatrix(cfg) {
 //                    created_by: the victim's own fixtures legitimately reference their own parents,
 //                    so an unscoped count is non-zero before the first request and asserts nothing.
 //   okStatus         (opt) expected own-parent status, default 201
+//   foreignError     (opt) (column) => RegExp the foreign-parent 400's error must match — pins that
+//                    the 400 came from THIS column's gate and not from an unrelated earlier reject
 //   cleanup          (opt) async ({ VICTIM, ATTACKER, victimIds, attackerIds }) => void
 export function describeForeignParentMatrix(cfg) {
   const RUN = testRunId()
@@ -200,6 +202,9 @@ export function describeForeignParentMatrix(cfg) {
           String(body?.error ?? ''),
           `${cfg.name} ${column}: the 400 must not distinguish "not found" from "forbidden" — that distinction is itself an existence oracle. Got: ${JSON.stringify(body)}`,
         ).not.toMatch(/not found|forbidden|denied|no permission|unauthor/i)
+        if (cfg.foreignError) {
+          expect(String(body?.error ?? ''), `${cfg.name} ${column}: 400 for the wrong reason`).toMatch(cfg.foreignError(column))
+        }
         const leaked = await cfg.countReferencing(column, foreign, { VICTIM, ATTACKER })
         expect(
           leaked,

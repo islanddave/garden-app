@@ -137,32 +137,34 @@ async function gardenPointerError(sql, rows, userId, householdIds) {
 //   2. insert the new set
 //   3. write the parent cache from ordinal 0
 //
-// ⚠ These are three statements and the Neon HTTP driver gives no transaction across them. That is
-// stated rather than papered over: a failure between 1 and 2 leaves a jar with no sources and a
-// nulled parent cache, which is RECOVERABLE (re-submit) and is the direction that cannot lie — an
-// emptied list reads as "unrecorded", never as a wrong provenance. A failure between 2 and 3 leaves
-// the children right and the parent cache stale, so step 3 is written to be idempotent and the
-// client is told to re-read. The alternative ordering (parent first) would leave a parent claiming a
-// provenance no child supports, which is the direction that DOES lie.
+// All three run in ONE sql.transaction, in that order, behind the actor GUC (BUG-LAMBDAERRPATHS-001
+// I9). Every value is known before the batch is built — the rows are normalized, the garden pointers
+// checked and the parent cache computed from the rows, not read back — so nothing has to run between
+// the statements. A failure anywhere (a nonexistent variety_id is still only shape-checked, so row k
+// can 23503) rolls the whole replace back and the old list stays live. Before this the soft-delete
+// and the INSERTs ran as separate statements, and a failure on row k left the jar with rows 0..k-1
+// and a stale parent cache. Refusals (400) all happen before the batch, so a refused PUT writes nothing.
 async function replaceSources(sql, putUp, body, userId, householdIds) {
   const submitted = body?.sources;
 
-  // An explicit empty list is a legitimate request: "I do not know what went into this after all."
-  // It clears the children AND the parent cache, and normalizeSourceRows refuses [] precisely so
-  // this branch has to be written on purpose rather than falling out of a loop that ran zero times.
-  if (Array.isArray(submitted) && submitted.length === 0) {
-    await sql`
+  const softDelete = () => sql`
       UPDATE preservation_source SET deleted_at = NOW()
       WHERE preservation_log_id = ${putUp.id}::uuid
         AND user_id = ANY(${householdIds})
         AND deleted_at IS NULL
     `;
+
+  // An explicit empty list is a legitimate request: "I do not know what went into this after all."
+  // It clears the children AND the parent cache, and normalizeSourceRows refuses [] precisely so
+  // this branch has to be written on purpose rather than falling out of a loop that ran zero times.
+  if (Array.isArray(submitted) && submitted.length === 0) {
     const cache = parentCache([]);
     // Put-Up release 1b: preservation_log carries trg_audit_preservation_log_upd, so its writes ride the
     // actor GUC in one transaction (lambda/audit-actor-guc.test.js) — whether or not this statement
     // touches a watched column today.
     await sql.transaction([
       sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+      softDelete(),
       sql`
       UPDATE preservation_log
       SET source_kind = ${cache.source_kind}::text,
@@ -183,21 +185,21 @@ async function replaceSources(sql, putUp, body, userId, householdIds) {
   const refused = await gardenPointerError(sql, rows, userId, householdIds);
   if (refused) return { status: 400, body: { error: refused } };
 
-  await sql`
-    UPDATE preservation_source SET deleted_at = NOW()
-    WHERE preservation_log_id = ${putUp.id}::uuid
-      AND user_id = ANY(${householdIds})
-      AND deleted_at IS NULL
-  `;
-
-  // ⚠ EVERY NULL PARAMETER CARRIES AN EXPLICIT ::cast. Neon cannot infer a type for a null bound
-  // parameter and answers `could not determine data type of parameter` — a 500, not a 400, and one
-  // that only appears for the rows that happen to omit a column. Bought-ingredient rows omit four of
-  // these at once, so this is the COMMON path here, not an edge.
-  // user_id is copied from the PARENT rather than from the caller: a household member editing
-  // another member's jar must not silently re-own its sources.
-  for (const r of rows) {
-    await sql`
+  // Step 3. Unconditional and total — every one of the six columns is assigned, including the nulls.
+  // A COALESCE-preserving update here would be a bug, not a kindness: it would retain a plant_id
+  // from a previous edit whose source row is now soft-deleted, which is the "false-provenance
+  // generator" shape v4-putupprov-001's own header rejects a DEFAULT for.
+  const cache = parentCache(rows);
+  await sql.transaction([
+    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    softDelete(),
+    // ⚠ EVERY NULL PARAMETER CARRIES AN EXPLICIT ::cast. Neon cannot infer a type for a null bound
+    // parameter and answers `could not determine data type of parameter` — a 500, not a 400, and one
+    // that only appears for the rows that happen to omit a column. Bought-ingredient rows omit four of
+    // these at once, so this is the COMMON path here, not an edge.
+    // user_id is copied from the PARENT rather than from the caller: a household member editing
+    // another member's jar must not silently re-own its sources.
+    ...rows.map((r) => sql`
       INSERT INTO preservation_source
         (preservation_log_id, user_id, ordinal, source_kind, source_label, display_label,
          provenance_grade, crop_type_slug, variety_id, plant_id, harvest_log_id,
@@ -208,16 +210,7 @@ async function replaceSources(sql, putUp, body, userId, householdIds) {
          ${r.provenance_grade}::text, ${r.crop_type_slug}::text, ${r.variety_id}::uuid,
          ${r.plant_id}::uuid, ${r.harvest_log_id}::uuid,
          ${r.quantity_value}::numeric, ${r.quantity_unit}::text, ${r.note}::text)
-    `;
-  }
-
-  // Step 3. Unconditional and total — every one of the six columns is assigned, including the nulls.
-  // A COALESCE-preserving update here would be a bug, not a kindness: it would retain a plant_id
-  // from a previous edit whose source row is now soft-deleted, which is the "false-provenance
-  // generator" shape v4-putupprov-001's own header rejects a DEFAULT for.
-  const cache = parentCache(rows);
-  await sql.transaction([
-    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    `),
     sql`
     UPDATE preservation_log
     SET source_kind = ${cache.source_kind}::text,

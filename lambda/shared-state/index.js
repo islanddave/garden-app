@@ -49,6 +49,8 @@ function todayUTC() {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const KEY_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+const PAYLOAD_MAX_CHARS = 2048;
+const TALLY_BY_MAX = 100;
 
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -110,6 +112,14 @@ export const handler = async (event) => {
       const date = body.date ?? todayUTC();
       if (!DATE_RE.test(date)) return resp(400, { error: 'date must be YYYY-MM-DD' });
       if (body.payload === undefined || body.payload === null) return resp(400, { error: 'payload is required' });
+      // BUG-LAMBDAVALIDATION-001 (I28): the shared row is read by every member's Today page, so it
+      // gets a shape and a size. The one client sends { id } (~40 chars); no key is required.
+      if (typeof body.payload !== 'object' || Array.isArray(body.payload)) {
+        return resp(400, { error: 'payload must be an object' });
+      }
+      if (JSON.stringify(body.payload).length > PAYLOAD_MAX_CHARS) {
+        return resp(400, { error: `payload must be at most ${PAYLOAD_MAX_CHARS} characters` });
+      }
       const rows = await sql`
         INSERT INTO garden_shared_state (workspace_id, kind, natural_key, payload)
         VALUES (${SENTINEL_WORKSPACE}::uuid, 'featured_of_day', ${date}, ${JSON.stringify(body.payload)}::jsonb)
@@ -143,6 +153,10 @@ export const handler = async (event) => {
       const key = decodeURIComponent(tallyInc[1]);
       if (!KEY_RE.test(key)) return resp(400, { error: 'invalid natural_key' });
       const body = JSON.parse(event.body ?? '{}');
+      // BUG-LAMBDAVALIDATION-001 (I28): an integer `by` is capped; anything else still counts as 1.
+      if (Number.isInteger(body.by) && body.by > TALLY_BY_MAX) {
+        return resp(400, { error: `by must be at most ${TALLY_BY_MAX}` });
+      }
       const by = Number.isInteger(body.by) && body.by > 0 ? body.by : 1;
       // Atomic single-statement increment. The row-level lock taken on the ON CONFLICT
       // UPDATE serializes concurrent +by writes so none are lost (the migration dry-run

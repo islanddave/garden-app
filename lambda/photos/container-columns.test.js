@@ -44,7 +44,8 @@ const HANDLERS = readdirSync(__dirname)
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
 const AUDIT_COLUMNS = {
-  container: ['created_by', 'deleted_at', 'display_name', 'id'],
+  // archived_at: T3b archive leftover (location / space / unscoped gallery branches).
+  container: ['archived_at', 'created_by', 'deleted_at', 'display_name', 'id'],
 };
 
 const CONTAINER_COLUMNS = AUDIT_COLUMNS.container;

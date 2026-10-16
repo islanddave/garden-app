@@ -38,10 +38,17 @@ describe('dashboard handlers — Household Mode scope widening', () => {
     expect(matches.length).toBe(13);
   });
 
-  it('14 informational ownership filter sites stay widened to = ANY(${householdIds})', () => {
+  it('15 informational ownership filter sites stay widened to = ANY(${householdIds})', () => {
     // V4-SEARCH-002: +6 search-builder scope sites (varieties stays global-read, unscoped).
+    // T3b I29: +1, queryCounts location_count (it counted every household's locations).
     const matches = SRC.match(/created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
-    expect(matches.length).toBe(14);
+    expect(matches.length).toBe(15);
+  });
+
+  it('queryCounts location_count is household-scoped (I29)', () => {
+    const i = SRC.indexOf('export function queryCounts');
+    const block = SRC.slice(i, SRC.indexOf('export function', i + 1));
+    expect(block).toMatch(/FROM locations\s+WHERE deleted_at IS NULL AND created_by = ANY\(\$\{householdIds\}\)\s+\) AS location_count/);
   });
 
   it('queryFavoriteCount stays per-user (user_id, no householdIds)', () => {

@@ -15,6 +15,7 @@ import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { validateEvidenceInput } from './validate.js';
+import { adminOnlyFields, isAdmin } from './tierGate.js';
 import { householdScope, warnRejectedFk } from './household.js';
 import { loadOwnedPlantingRef } from './authz-parents.js';
 
@@ -68,6 +69,14 @@ export const handler = async (event) => {
 
   const v = validateEvidenceInput(body);
   if (!v.ok) return resp(v.status, { error: v.error });
+
+  // I40: dave_confirmed (any of tier / source_tier / provenance) and source_record_id are admin-only.
+  // Before the entity lookup, so the 403 says nothing about whether the entity exists.
+  const adminFields = adminOnlyFields(v.value);
+  if (adminFields.length && !isAdmin(userId, process.env)) {
+    console.warn(JSON.stringify({ msg: 'evidence-tier-denied', userId, fields: adminFields }));
+    return resp(403, { error: 'Forbidden' });
+  }
 
   const sql = neon(secrets.NEON_DATABASE_URL);
   try {

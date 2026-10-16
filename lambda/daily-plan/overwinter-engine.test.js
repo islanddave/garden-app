@@ -3,7 +3,7 @@
 // Real-path: engine.generatePlan with the engine's own bundled cadence + fert model, no mocked engine
 // internals (same posture as nocalwater.test.js). Every assertion names the source mutation that turns
 // it red — the guards in this file must be able to fail, and each comment says how.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -429,5 +429,70 @@ describe('the card states the regime\'s own moisture test', () => {
     expect(r.note).toMatch(/lift the pot/i);
     expect(r.note).toMatch(/until it feels heavier/i);
     expect(r.reason).toMatch(/until it feels heavier/i);
+  });
+});
+
+// BUG-LAMBDAERRPATHS-001 (I4). generatePlan runs once per Space with no try around it, so a throw out
+// of overwinterState used to end the nightly run for every Space. Now it degrades one planting.
+describe('a bad stored window degrades one planting, never the plan', () => {
+  let warn;
+  let error;
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+  const logged = (spy, msg) => spy.mock.calls
+    .map(([s]) => { try { return JSON.parse(s); } catch { return null; } })
+    .filter((o) => o && o.msg === msg);
+  const warned = (msg) => logged(warn, msg);
+  const errored = (msg) => logged(error, msg);
+  // protected_quiescent is a manual-exit regime, so on WINTER (outside a '2-3' window) the engine reaches
+  // the exit-reminder date maths, which is where '2026-2-3' threw a RangeError.
+  const garage = (ow2) => P({ id: 'g1', name: 'Garage Fig', status: 'vegetative', last_water: '2026-11-16',
+    last_hand_water: '2026-11-16', db_cadence: { ...KALE, overwintering: ow2 } });
+  const held = (u, id) => owRows(u).some((r) => r.id === id) && !inAnyWaterList(u, id)
+    && !u.tasks.fertilize.some((r) => r.id === id);
+
+  // Mutation: put back the bare `o.until.slice(-5)` in overwinterProfile and generatePlan throws.
+  // Mutation: delete the overwinter-bad-date warn in engine.js and the count goes 1 -> 0.
+  it('runs the default window for an unreadable until and warns once for that planting', () => {
+    const control = owRows(planFor([garage({ regime: 'protected_quiescent' })]))[0];
+    const u = planFor([garage({ regime: 'protected_quiescent', until: '2-3' }), owned({ regime: 'protected_productive' })]);
+    expect(held(u, 'g1')).toBe(true);
+    expect(held(u, 'k1')).toBe(true);
+    expect(owRows(u).find((r) => r.id === 'g1').window_until).toBe(control.window_until);
+    expect(warned('overwinter-bad-date')).toEqual([{ msg: 'overwinter-bad-date', planting: 'g1', fields: ['until'] }]);
+    expect(warned('overwinter-state-throw')).toEqual([]);
+  });
+
+  // Any other throw: the planting falls back to the default window and STAYS held out of water and
+  // feed. Mutation: delete the try/catch and generatePlan throws. Mutation: set `_ow = null` in the
+  // catch instead of re-evaluating, and the dormant fig is carded for water (60 days) and fertilizer.
+  it('falls back to the default window on a throw, never to "not overwintering"', () => {
+    const boom = { regime: 'protected_quiescent', get until() { throw new RangeError('boom'); } };
+    const u = planFor([garage(boom), owned({ regime: 'protected_productive' })]);
+    expect(held(u, 'g1')).toBe(true);
+    expect(held(u, 'k1')).toBe(true);
+    const t = warned('overwinter-state-throw');
+    expect(t.length).toBe(1);
+    expect(t[0]).toMatchObject({ planting: 'g1', error: 'boom' });
+  });
+
+  // If even the default window throws, that planting is skipped for the night and the rest of the
+  // plan stands. Mutation: delete the inner try/catch and generatePlan throws. The skip logs at ERROR
+  // (the first throw stays a warn), so the error-log alarm path sees dropped cards. Mutation: log the
+  // fallback line with console.warn again and the errored/warned split goes red.
+  it('skips the planting when the default window throws too', () => {
+    const boom = { get regime() { throw new TypeError('worse'); } };
+    const u = planFor([garage(boom), owned({ regime: 'protected_productive' })]);
+    expect(held(u, 'k1')).toBe(true);
+    expect(owRows(u).some((r) => r.id === 'g1')).toBe(false);
+    expect(inAnyWaterList(u, 'g1')).toBe(false);
+    expect(u.tasks.fertilize.some((r) => r.id === 'g1')).toBe(false);
+    expect(warned('overwinter-state-throw').map((o) => !!o.fallback)).toEqual([false]);
+    expect(errored('overwinter-state-throw')).toEqual([
+      { msg: 'overwinter-state-throw', planting: 'g1', fallback: true, error: 'worse' },
+    ]);
   });
 });

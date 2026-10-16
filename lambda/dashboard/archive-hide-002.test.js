@@ -84,3 +84,20 @@ describe('dashboard — BUG-ARCHIVEHIDE-002 I32, header photo search', () => {
     expect(q).toMatch(/NOT LIKE 'vendor-image--%'/);
   });
 });
+
+// T3b archive leftover — a photo hung off an ARCHIVED container (photos.project_id) still reached
+// header search: searchPhotos joined no container at all. The join carries `pp.deleted_at IS NULL`
+// IN THE ON CLAUSE (a deleted container is "no container", so its photo stays visible, as in the
+// Library, which never hides on a deleted container) and the archive term sits in the WHERE.
+describe('dashboard — T3b archive leftover, header photo search hides ARCHIVED-container photos', () => {
+  // MUTATION: delete `AND pp.archived_at IS NULL` from searchPhotos -> RED.
+  it('filters photos on an archived container', () => {
+    expect(fn('searchPhotos')).toMatch(/\n\s+AND pp\.archived_at IS NULL\n/);
+  });
+  // MUTATION: move `AND pp.deleted_at IS NULL` from the ON into the WHERE (or drop it) -> RED.
+  it('LEFT JOINs container with deleted_at in the ON clause, alias pp', () => {
+    const q = fn('searchPhotos');
+    expect(q).toMatch(/LEFT JOIN public\.container pp ON pp\.id = p\.project_id AND pp\.deleted_at IS NULL\n/);
+    expect(q).not.toMatch(/WHERE[\s\S]*pp\.deleted_at/);
+  });
+});

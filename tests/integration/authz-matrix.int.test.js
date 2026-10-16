@@ -309,12 +309,15 @@ describeForeignParentMatrix({
   columns: ['project_id', 'plant_id', 'event_id', 'location_id', 'inventory_item_id'],
   seedParents: seedAllParents,
   // A distinct storage_path per call: no content_hash is sent, so the ON CONFLICT dedupe path
-  // (which answers 200 + duplicate:true, not 201) is never reached.
+  // (which answers 200 + duplicate:true, not 201) is never reached. T3b I34: an upload-grammar key
+  // (was `inbox/fp/…`, which POST now 400s since `fp` is not the caller's sub — every foreign arm
+  // would have passed for the wrong reason). foreignError pins the parent gate's own message.
   request: (patch) => ({
     method: 'POST',
     path: '/api/photos',
-    body: { storage_path: `inbox/fp/${FP_RUN}-${Object.keys(patch)[0]}-${Math.random().toString(36).slice(2, 8)}.jpg`, ...patch },
+    body: { storage_path: `standalone/${FP_RUN}-${Object.keys(patch)[0].replace(/_/g, '-')}-${Math.random().toString(36).slice(2, 8)}.jpg`, ...patch },
   }),
+  foreignError: (column) => new RegExp(`^${column} does not match an? [a-z ]+ you can use$`),
   countReferencing: async (column, id, subs) => {
     const by = subs.ATTACKER
     const q = {

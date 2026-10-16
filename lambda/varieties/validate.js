@@ -180,8 +180,10 @@ export function validateBody(body, { requireName = true } = {}) {
       if (body[k].trim().length > 200) return `${k} must be <= 200 characters`;
     }
   }
-  // SEEDINV integer fields (weeks + germination days), scoville-style checks.
-  for (const k of ['start_indoor_weeks_min', 'start_indoor_weeks_max', 'days_to_germ_min', 'days_to_germ_max']) {
+  // SEEDINV integer fields (weeks + germination days), scoville-style checks. DTM joined them in
+  // BUG-LAMBDAVALIDATION-001 (I25): it had only the both-sent ordering check above, so -5 or 2.5
+  // reached the column.
+  for (const k of ['days_to_maturity_min', 'days_to_maturity_max', 'start_indoor_weeks_min', 'start_indoor_weeks_max', 'days_to_germ_min', 'days_to_germ_max']) {
     if (body[k] != null) {
       const n = Number(body[k]);
       if (!Number.isInteger(n) || n < 0) return `${k} must be a non-negative integer or null`;

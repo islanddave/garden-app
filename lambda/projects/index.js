@@ -358,7 +358,8 @@ export const handler = async (event) => {
       }
       if (method === 'POST') {
         const body = JSON.parse(event.body ?? '{}');
-        if (!body.name) return resp(400, { error: 'name is required' });
+        // BUG-LAMBDAVALIDATION-001 (I38): `!body.name` let '   ' through and 500'd on a number.
+        if (typeof body.name !== 'string' || !body.name.trim()) return resp(400, { error: 'name is required' });
         const rows = await sql`
           INSERT INTO project_types (name, category, description, icon, created_by)
           VALUES (
@@ -702,6 +703,14 @@ export const handler = async (event) => {
         // Field-presence test (not truthy test) lets callers set it to null to clear.
         const hasFeatured = Object.prototype.hasOwnProperty.call(body, 'featured_photo_id');
         const hasAssignee = Object.prototype.hasOwnProperty.call(body, 'assignee_user_id');
+        // BUG-LAMBDAVALIDATION-001 (I39): assignee_user_id was written verbatim, so any string (a
+        // stranger's sub, an object) could land in the column the dashboard's "assigned to me" tiles
+        // read. A non-null value must be one of the caller's household ids; null still clears. For a
+        // non-member householdIds is [caller], so they can assign only themselves.
+        if (hasAssignee && body.assignee_user_id != null
+          && !(typeof body.assignee_user_id === 'string' && householdIds.includes(body.assignee_user_id))) {
+          return resp(400, { error: 'assignee_user_id must be a household member' });
+        }
         if (hasFeatured && body.featured_photo_id != null) {
           const linkRows = await sql`
             SELECT 1 FROM photos
@@ -988,7 +997,10 @@ export const handler = async (event) => {
 
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
-      if (!body.name) return resp(400, { error: 'name is required' });
+      // BUG-LAMBDAVALIDATION-001 (I38): `!body.name` let '   ' through (a blank-named container) and
+      // 500'd on a number at body.name.toLowerCase() below. Same rule as the PUT's BUG-BLANKNAME-001
+      // guard; the POST keeps its own message.
+      if (typeof body.name !== 'string' || !body.name.trim()) return resp(400, { error: 'name is required' });
       // V1.2a-4 S1 (PROJ-RESCOPE): validate kind enum server-side. A null/absent
       // kind is coalesced to a default below (S6) so alive rows are never kind=NULL.
       const ALLOWED_KINDS = ['campaign', 'category', 'cultivar'];

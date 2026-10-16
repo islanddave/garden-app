@@ -59,7 +59,7 @@ describe('photos Lambda — Household Mode uploaded_by -> created_by switch', ()
     const matches = CODE.match(/created_by = ANY\(\$\{householdIds\}\)/g) ?? [];
     expect(matches.length,
       'photos/index.js household-scope site count changed. A DROP is a cross-tenant leak; an ADD ' +
-      'needs this count bumped deliberately.').toBe(23); // 23 at d9afab95
+      'needs this count bumped deliberately.').toBe(24); // 23 at d9afab95; 24 at T3b (foreignStorageKey probe, I34/I35)
   });
 
   it('UPDATE locations auto-promote arm carries the ownership predicate (BUG-PHOTOLOCAUTHZ-001)', () => {

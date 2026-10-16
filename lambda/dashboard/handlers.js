@@ -196,7 +196,7 @@ export function queryCounts(sql, userId) {
         (
           SELECT COUNT(*)::int
           FROM locations
-          WHERE deleted_at IS NULL
+          WHERE deleted_at IS NULL AND created_by = ANY(${householdIds})
         ) AS location_count
     `;
 }
@@ -890,6 +890,10 @@ export async function handleDashboard(sql, userId) {
     queryActivityDays(sql, userId),
     queryGiveAttention(sql, userId),
   ]);
+  // I33 (BUG-LAMBDAERRPATHS-001): the fallbacks were silent to the client — a failed tile rendered as a
+  // real zero. `degraded` names them (top level, only when non-empty); every tile failing is an outage,
+  // not a dashboard, so it 503s with a sentence the client's error state can show (api.js reads .error).
+  const degraded = [];
   const [
     recentEvents,
     counts,
@@ -906,8 +910,12 @@ export async function handleDashboard(sql, userId) {
     if (r.status === 'fulfilled') return r.value;
     console.error('[dashboard] tile query failed — served fallback (per-tile isolation, DRG-WATERRECON-002)',
       { userId, tile: TILE_NAMES[i], error: r.reason?.message ?? String(r.reason) });
+    degraded.push(TILE_NAMES[i]);
     return TILE_FALLBACKS[i];
   });
+  if (degraded.length === TILE_NAMES.length) {
+    return resp(503, { error: 'The dashboard could not load. Try again in a minute.', degraded });
+  }
 
   const storedStats = userStatsRows[0] ?? {
     current_streak: 0,
@@ -922,9 +930,11 @@ export async function handleDashboard(sql, userId) {
   const act = activityDaysRows?.[0] ?? { today: null, days: [] };
   const activityDays = (act.days ?? []).map((d) => String(d).slice(0, 10));
   const computedStreak = computeStreak(activityDays, act.today, STREAK_GRACE_DAYS);
+  // I33: a failed activity_days tile must not compute a streak of 0 from no days; null = unknown
+  // (the client's `?? 0` renders it as today did, and nothing is announced).
   const userStats = {
     ...storedStats,
-    current_streak: computedStreak.current,
+    current_streak: degraded.includes('activity_days') ? null : computedStreak.current,
     longest_streak: Math.max(computedStreak.longest, storedStats.longest_streak ?? 0),
     last_active_date: activityDays.length ? activityDays[0] : storedStats.last_active_date,
   };
@@ -954,6 +964,7 @@ export async function handleDashboard(sql, userId) {
     heads_up: headsUp,
     inactive_projects_count: inactiveCountRows[0]?.count ?? 0,
     give_attention: giveAttnRows[0] ?? null,
+    ...(degraded.length ? { degraded } : {}),
   });
 }
 
@@ -1215,6 +1226,7 @@ export function searchPhotos(sql, userId, pat) {
   return sql`
       SELECT p.id, p.caption, p.project_id, p.plant_id, p.created_at
       FROM photos p
+      LEFT JOIN public.container pp ON pp.id = p.project_id AND pp.deleted_at IS NULL
       WHERE p.created_by = ANY(${householdIds})
         AND p.deleted_at IS NULL
         AND COALESCE(p.original_filename, '') NOT LIKE 'vendor-image--%'
@@ -1231,6 +1243,10 @@ export function searchPhotos(sql, userId, pat) {
           WHERE ea.id = p.event_id AND ea.deleted_at IS NULL
             AND gne.archived_at IS NOT NULL
         )
+        -- T3b archive leftover: a photo on an ARCHIVED container is hidden, as in the Library's
+        -- unscoped list. deleted_at sits in the JOIN, so a deleted container counts as no container
+        -- and its photo stays visible (Library parity); no container at all passes.
+        AND pp.archived_at IS NULL
         AND p.caption IS NOT NULL AND p.caption <> ''
         AND p.caption ILIKE ${pat} ESCAPE '\\'
       ORDER BY p.created_at DESC
@@ -1256,13 +1272,17 @@ export async function handleSearch(sql, userId, rawQ) {
     searchPhotos(sql, userId, pat),
   ]);
   const results = {};
+  // I33: a failed section is named at the TOP level, never inside `results` (Search.jsx spreads
+  // results into its section list, so a key there would render as a section).
+  const degraded = [];
   settled.forEach((s, i) => {
     if (s.status === 'fulfilled') {
       results[SEARCH_SECTIONS[i]] = s.value;
     } else {
       console.error('search section failed:', SEARCH_SECTIONS[i], s.reason?.message ?? String(s.reason));
       results[SEARCH_SECTIONS[i]] = [];
+      degraded.push(SEARCH_SECTIONS[i]);
     }
   });
-  return resp(200, { query: q, results });
+  return resp(200, { query: q, results, ...(degraded.length ? { degraded } : {}) });
 }

@@ -1,7 +1,7 @@
 {
-  "version": "5.1.2",
+  "version": "5.1.3",
   "date": "2026-10-15",
   "highlights": [
-    "Archived plantings stay out of the dashboard, search, harvest totals and share pages, and custom project types stay inside your household."
+    "Behind-the-scenes hardening: stricter checks on who can see and change garden photos, tags and assignments, and the daily plan keeps going if one plant has a bad overwinter date."
   ]
 }

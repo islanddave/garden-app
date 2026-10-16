@@ -18,6 +18,10 @@ describe.skipIf(!HAS_TAGS)('AUTHZ entity-tags /api/entity-tags — attach househ
   const OWNER = `authz_et_owner_${RUN}`
   const FOREIGN = `authz_et_foreign_${RUN}`
   let projectId, ownerTagId, foreignTagId, ownerLinkId
+  // I24: a `system` (derived) tag is visible to EVERY caller by the tag-visibility predicate alone, so
+  // it is the tag that proves the single read is gated on the ENTITY. Attached to OWNER's project
+  // (`direct`) and to the cultivar of OWNER's planting (`projected`).
+  let sysTagId, cultivarId, plantingId, goneplantingId
 
   beforeAll(async () => {
     projectId = (await insertProject({ name: 'authz-et-' + OWNER, createdBy: OWNER })).id
@@ -29,12 +33,35 @@ describe.skipIf(!HAS_TAGS)('AUTHZ entity-tags /api/entity-tags — attach househ
       INSERT INTO public.tag (facet, label, slug, owner_id, created_by, visibility)
       VALUES ('group', ${'authz-foreign-tag-' + RUN}, ${'authz-foreign-tag-' + RUN}, ${FOREIGN}, ${FOREIGN}, 'shared') RETURNING id`
     foreignTagId = ft[0].id
+    const st = await directSql`
+      INSERT INTO public.tag (facet, label, slug, source, owner_id, created_by, visibility)
+      VALUES ('type', ${'authz-sys-tag-' + RUN}, ${'authz-sys-tag-' + RUN}, 'derived', 'system', ${OWNER}, 'shared') RETURNING id`
+    sysTagId = st[0].id
+    const cv = await directSql`
+      INSERT INTO plant_varieties (name, created_by) VALUES (${'authz-et-cv-' + RUN}, ${OWNER}) RETURNING id`
+    cultivarId = cv[0].id
+    const pl = await directSql`
+      INSERT INTO plants (project_id, name, created_by, variety_id)
+      VALUES (${projectId}, ${'authz-et-plant-' + RUN}, ${OWNER}, ${cultivarId}) RETURNING id`
+    plantingId = pl[0].id
+    const gp = await directSql`
+      INSERT INTO plants (project_id, name, created_by, variety_id)
+      VALUES (${projectId}, ${'authz-et-plant-gone-' + RUN}, ${OWNER}, ${cultivarId}) RETURNING id`
+    goneplantingId = gp[0].id
+    await directSql`
+      INSERT INTO public.entity_tag (tag_id, entity_type, entity_id, created_by)
+      VALUES (${sysTagId}, 'project', ${projectId}, ${OWNER}), (${sysTagId}, 'cultivar', ${cultivarId}, ${OWNER})`
   })
 
   afterAll(async () => {
     // entity_tag.tag_id -> tag(id) is ON DELETE RESTRICT (regardless of deleted_at): clear links first.
     await directSql`DELETE FROM public.entity_tag WHERE created_by IN (${OWNER}, ${FOREIGN})`
     await directSql`DELETE FROM public.tag        WHERE owner_id  IN (${OWNER}, ${FOREIGN})`
+    await directSql`DELETE FROM public.tag        WHERE owner_id = 'system' AND created_by = ${OWNER}`
+    await directSql`DELETE FROM entity WHERE entity_type = 'planting' AND planting_ref_id IN (${plantingId}, ${goneplantingId})`
+    await directSql`DELETE FROM plants            WHERE created_by = ${OWNER}`
+    await directSql`DELETE FROM entity WHERE cultivar_ref_id = ${cultivarId}`
+    await directSql`DELETE FROM plant_varieties   WHERE created_by = ${OWNER}`
     await directSql`DELETE FROM plant_projects    WHERE created_by = ${OWNER}`
   })
 
@@ -58,15 +85,59 @@ describe.skipIf(!HAS_TAGS)('AUTHZ entity-tags /api/entity-tags — attach househ
     })
     expect(status).toBe(200)
     expect(body.direct.map((t) => t.id)).toContain(ownerTagId)
+    expect(body.direct.map((t) => t.id)).toContain(sysTagId) // positive control for the next test
   })
 
-  it('non-owner-read: foreign GET -> 200 but owner tag NOT leaked', async () => {
+  // I24: before the entity gate, FOREIGN's `direct` carried the system tag (visibility arm
+  // `t.owner_id = 'system'`), so asserting only "ownerTagId absent" was vacuous. Now: empty.
+  it('non-owner-read: foreign GET -> 200 with EMPTY direct and projected (I24)', async () => {
     setTestUserId(FOREIGN)
     const { status, body } = await callHandler(tagsHandler, {
       method: 'GET', path: `/api/entity-tags?entity_type=project&entity_id=${projectId}`,
     })
     expect(status).toBe(200)
     expect(body.direct.map((t) => t.id)).not.toContain(ownerTagId)
+    expect(body).toEqual({ direct: [], projected: [] })
+  })
+
+  it('I24 planting: OWNER sees the projected cultivar tag; FOREIGN gets empty arrays', async () => {
+    setTestUserId(OWNER)
+    const own = await callHandler(tagsHandler, {
+      method: 'GET', path: `/api/entity-tags?entity_type=plant&entity_id=${plantingId}`,
+    })
+    expect(own.status).toBe(200)
+    expect(own.body.projected.map((t) => t.id)).toContain(sysTagId)
+
+    setTestUserId(FOREIGN)
+    const foreign = await callHandler(tagsHandler, {
+      method: 'GET', path: `/api/entity-tags?entity_type=plant&entity_id=${plantingId}`,
+    })
+    expect(foreign.status).toBe(200)
+    expect(foreign.body).toEqual({ direct: [], projected: [] })
+  })
+
+  it('I24 planting: a soft-deleted own planting returns empty arrays', async () => {
+    await directSql`UPDATE plants SET deleted_at = NOW() WHERE id = ${goneplantingId}`
+    setTestUserId(OWNER)
+    const { status, body } = await callHandler(tagsHandler, {
+      method: 'GET', path: `/api/entity-tags?entity_type=plant&entity_id=${goneplantingId}`,
+    })
+    expect(status).toBe(200)
+    expect(body).toEqual({ direct: [], projected: [] })
+  })
+
+  it('I24: malformed entity_id -> the same 200-empty body; unknown entity_type -> 400', async () => {
+    setTestUserId(OWNER)
+    const bad = await callHandler(tagsHandler, {
+      method: 'GET', path: '/api/entity-tags?entity_type=plant&entity_id=not-a-uuid',
+    })
+    expect(bad.status).toBe(200)
+    expect(bad.body).toEqual({ direct: [], projected: [] })
+    const et = await callHandler(tagsHandler, {
+      method: 'GET', path: `/api/entity-tags?entity_type=garden&entity_id=${projectId}`,
+    })
+    expect(et.status).toBe(400)
+    expect(et.body.error).toMatch(/entity_type must be one of/)
   })
 
   it('non-owner-write ENTITY axis (BUG-TAGENTOWN-001): foreign tag -> OWNER project = 404, no link', async () => {
