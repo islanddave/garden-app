@@ -1,7 +1,7 @@
 {
-  "version": "5.1.4",
-  "date": "2026-10-15",
+  "version": "5.2.0",
+  "date": "2026-10-16",
   "highlights": [
-    "Behind the scenes: releases are safer — a failed release step now leaves the live app untouched, and release records note exactly which server code shipped."
+    "The new Today page is now the standard Today on every phone. For now the old page is still there: on a phone, More › Debug & smoke › turn off “New Today on this phone”."
   ]
 }

@@ -1,8 +1,8 @@
-// V5-TODAYREDESIGN-001 — the preview switch with featureFlags TODAY_V2_PREVIEW_ROW FALSE, mocked here: the way to
-// hide the row again. It ships TRUE by Dave's D14 (2026-09-29; TodayRoute.previewShipped.test.jsx pins that), so
-// this file keeps the other branch working: Debug & smoke shows no "New Today (preview)" row and /today ignores a
-// stored garden.todayV2 (a phone that turned the preview on earlier is not held on the unfinished page with no
-// row to turn it off). The row and the chooser with the constant TRUE are TodayRoute.test.jsx's.
+// V5-TODAYREDESIGN-001 — the switch with featureFlags TODAY_V2_PREVIEW_ROW FALSE, mocked here: the way to hide the
+// row. It ships TRUE (TodayRoute.previewShipped.test.jsx pins that), so this file keeps the other branch working:
+// Debug & smoke shows no "New Today on this phone" row and /today ignores a stored garden.todayV2 and shows
+// TODAY_V2_DEFAULT, so no phone is held on a page it has no row to leave. TODAY_V2_DEFAULT is mocked both ways
+// below. The row and the chooser with the constant TRUE are TodayRoute.test.jsx's.
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
@@ -11,14 +11,19 @@ import { MemoryRouter } from 'react-router-dom'
 vi.mock('../pages/Today.jsx', () => ({ default: () => <div data-testid="today-v1" /> }))
 vi.mock('../pages/TodayV2.jsx', () => ({ default: () => <div data-testid="today-v2" /> }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: vi.fn(async () => ({})) }) }))
-vi.mock('../lib/featureFlags.js', async (orig) => ({ ...(await orig()), TODAY_V2_PREVIEW_ROW: false }))
+const flags = vi.hoisted(() => ({ def: true }))
+vi.mock('../lib/featureFlags.js', async (orig) => ({
+  ...(await orig()),
+  TODAY_V2_PREVIEW_ROW: false,
+  get TODAY_V2_DEFAULT() { return flags.def },
+}))
 
 import TodayRoute from '../components/today/v2/TodayRoute.jsx'
 import DebugMenu from '../pages/DebugMenu.jsx'
 import { TODAY_V2_PREVIEW_ROW } from '../lib/featureFlags.js'
 import { readTodayV2Flag } from '../lib/todayV2Flag.js'
 
-beforeEach(() => { localStorage.clear(); sessionStorage.clear() })
+beforeEach(() => { localStorage.clear(); sessionStorage.clear(); flags.def = true })
 afterEach(() => cleanup())
 
 describe('the preview row hidden (TODAY_V2_PREVIEW_ROW mocked false)', () => {
@@ -26,14 +31,24 @@ describe('the preview row hidden (TODAY_V2_PREVIEW_ROW mocked false)', () => {
     expect(TODAY_V2_PREVIEW_ROW).toBe(false)
   })
 
-  it('Debug & smoke renders no "New Today (preview)" row', () => {
+  it('Debug & smoke renders no "New Today on this phone" row', () => {
     render(<MemoryRouter><DebugMenu /></MemoryRouter>)
     expect(screen.getByText('Debug & smoke')).toBeTruthy()
     expect(screen.queryByTestId('debug-today-v2')).toBeNull()
-    expect(screen.queryByRole('button', { name: /New Today \(preview\)/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /New Today/ })).toBeNull()
   })
 
-  it('/today stays the current Today with garden.todayV2 stored "1" — the stale flag is ignored, not deleted', () => {
+  it('default on: /today is the redesign with garden.todayV2 stored "0" — the stored choice is ignored, not deleted', () => {
+    localStorage.setItem('garden.todayV2', '0')
+    expect(readTodayV2Flag()).toBe(false)
+    render(<TodayRoute />)
+    expect(screen.getByTestId('today-v2')).toBeTruthy()
+    expect(screen.queryByTestId('today-v1')).toBeNull()
+    expect(localStorage.getItem('garden.todayV2')).toBe('0')
+  })
+
+  it('default off (the forward undo): /today is the old Today with "1" stored — ignored, not deleted', () => {
+    flags.def = false
     localStorage.setItem('garden.todayV2', '1')
     expect(readTodayV2Flag()).toBe(true)
     render(<TodayRoute />)

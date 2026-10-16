@@ -44,7 +44,7 @@ import { useShowOthers, memberFirstName } from '../lib/householdView.js'
 import { SOW_DATED_LINES_FROZEN } from '../lib/featureFlags.js'
 
 // TodayV2 — the redesigned Today (V5-TODAYREDESIGN-001; plan-v2 §1, §2.1–2.2, §4–§6). Behind the per-device
-// switch (TodayRoute), off by default: this page is DARK until Dave flips the default (S8b).
+// switch (TodayRoute), on by default since S8b (L7); the Debug & smoke row turns it off per phone until S8c.
 //
 // S2 IS THE SKELETON: the Seeds frame, the title row (1.3rem green "Today" + Expand/Collapse all), the date,
 // the loading / error / no-plan states, one page-level status region, and the SECTIONS — in their fixed

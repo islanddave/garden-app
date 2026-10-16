@@ -57,7 +57,7 @@ import SettingsControls from './pages/SettingsControls.jsx'
 import Findings from './pages/Findings.jsx'
 import About from './pages/About.jsx'
 import ReleaseNotes from './pages/ReleaseNotes.jsx'
-// V5-TODAYREDESIGN-001 S2 — /today's element chooses the current Today or the redesign, per device (off by default).
+// V5-TODAYREDESIGN-001 S2 — /today's element chooses the redesigned Today or the old one, per device (the redesign by default since S8b).
 import TodayRoute from './components/today/v2/TodayRoute.jsx'
 import CaptureFlow from './pages/CaptureFlow.jsx'
 import AddSeeds from './pages/AddSeeds.jsx'

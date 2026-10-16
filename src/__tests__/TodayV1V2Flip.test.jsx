@@ -64,6 +64,9 @@ const settle = () => act(async () => { for (let i = 0; i < 12; i++) await new Pr
 
 beforeEach(() => {
   localStorage.clear(); sessionStorage.clear()
+  // Each case starts on the old page and flips to the redesign; since S8b the redesign is the default, so the
+  // phone's "old page" choice is stored first, as the Debug row stores it.
+  localStorage.setItem('garden.todayV2', '0')
   __resetDailyPlanSeed()
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(TODAY + 'T14:30:00.000Z'))

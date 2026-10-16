@@ -1,10 +1,11 @@
 // V5-TODAYREDESIGN-001 S2 — /today's chooser and the per-device switch behind it (plan-v2 §6.4, §6.10), the
-// Debug & smoke row that flips it (visible to both users, default off), sign-out's scrub of every V2 key,
+// Debug & smoke row that flips it (visible to both users, default ON since S8b / L7), sign-out's scrub of every V2 key,
 // and TodaySection as a controlled section.
 // The chooser and the row as they are WITH the preview row shown (featureFlags TODAY_V2_PREVIEW_ROW true, as it
 // ships by Dave's D14 — mocked on here, so these cases hold whichever way it ships). The shipped value and the
-// row's "Early preview" subtitle are pinned in TodayRoute.previewShipped.test.jsx; the false branch (no row, a
-// stored flag ignored) in TodayRoute.previewHidden.test.jsx.
+// row's subtitle are pinned in TodayRoute.previewShipped.test.jsx; the false branch (no row, a stored choice
+// ignored) in TodayRoute.previewHidden.test.jsx. featureFlags TODAY_V2_DEFAULT is NOT mocked here: the default
+// cases below read the shipped value, which previewShipped pins true.
 import React, { useState } from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
@@ -13,7 +14,11 @@ import { MemoryRouter } from 'react-router-dom'
 vi.mock('../pages/Today.jsx', () => ({ default: () => <div data-testid="today-v1" /> }))
 vi.mock('../pages/TodayV2.jsx', () => ({ default: () => <div data-testid="today-v2" /> }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: vi.fn(async () => ({})) }) }))
-vi.mock('../lib/featureFlags.js', async (orig) => ({ ...(await orig()), TODAY_V2_PREVIEW_ROW: true }))
+const flags = vi.hoisted(() => ({ def: null }))
+vi.mock('../lib/featureFlags.js', async (orig) => {
+  const real = await orig()
+  return { ...real, TODAY_V2_PREVIEW_ROW: true, get TODAY_V2_DEFAULT() { return flags.def ?? real.TODAY_V2_DEFAULT } }
+})
 
 import TodayRoute from '../components/today/v2/TodayRoute.jsx'
 import DebugMenu from '../pages/DebugMenu.jsx'
@@ -21,35 +26,73 @@ import TodaySection from '../components/today/v2/TodaySection.jsx'
 import { readTodayV2Flag, writeTodayV2Flag, TODAY_V2_FLAG_KEY } from '../lib/todayV2Flag.js'
 import { clearClientPrefs } from '../lib/clientPrefs.js'
 
-beforeEach(() => { localStorage.clear(); sessionStorage.clear() })
+beforeEach(() => { localStorage.clear(); sessionStorage.clear(); flags.def = null })
 afterEach(() => cleanup())
 
 describe('the per-device switch', () => {
-  it('is off by default and stores "1" / nothing', () => {
+  it('is on by default and stores "1" / "0"; anything else reads as no choice', () => {
     expect(TODAY_V2_FLAG_KEY).toBe('garden.todayV2')
+    expect(readTodayV2Flag()).toBe(true)
+    writeTodayV2Flag(false)
+    expect(localStorage.getItem('garden.todayV2')).toBe('0')
     expect(readTodayV2Flag()).toBe(false)
     writeTodayV2Flag(true)
     expect(localStorage.getItem('garden.todayV2')).toBe('1')
-    writeTodayV2Flag(false)
-    expect(localStorage.getItem('garden.todayV2')).toBeNull()
+    expect(readTodayV2Flag()).toBe(true)
+    for (const junk of ['', 'true', 'false', 'on', '01']) {
+      localStorage.setItem('garden.todayV2', junk)
+      expect(readTodayV2Flag()).toBe(true)
+    }
   })
 
-  it('TodayRoute mounts the current Today by default and the redesign when the switch is on, from the first render', () => {
+  it('storage that throws reads as no choice (the default) and a write does not throw', () => {
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked') })
+    try {
+      expect(readTodayV2Flag()).toBe(true)
+      expect(() => writeTodayV2Flag(false)).not.toThrow()
+    } finally { get.mockRestore(); set.mockRestore() }
+  })
+
+  it('TodayRoute mounts the redesign by default, the old Today when the switch is off, from the first render', () => {
     const a = render(<TodayRoute />)
-    expect(screen.getByTestId('today-v1')).toBeTruthy()
+    expect(screen.getByTestId('today-v2')).toBeTruthy()
+    expect(screen.queryByTestId('today-v1')).toBeNull()
     a.unmount()
+    localStorage.setItem('garden.todayV2', '0')
+    const b = render(<TodayRoute />)
+    expect(screen.getByTestId('today-v1')).toBeTruthy()
+    expect(screen.queryByTestId('today-v2')).toBeNull()
+    b.unmount()
     localStorage.setItem('garden.todayV2', '1')
     render(<TodayRoute />)
     expect(screen.getByTestId('today-v2')).toBeTruthy()
-    expect(screen.queryByTestId('today-v1')).toBeNull()
   })
 
   it('follows a flip while mounted, and another tab\'s flip (storage event)', () => {
     render(<TodayRoute />)
-    act(() => writeTodayV2Flag(true))
-    expect(screen.getByTestId('today-v2')).toBeTruthy()
+    act(() => writeTodayV2Flag(false))
+    expect(screen.getByTestId('today-v1')).toBeTruthy()
     localStorage.removeItem('garden.todayV2')
     act(() => { window.dispatchEvent(new StorageEvent('storage', { key: 'garden.todayV2' })) })
+    expect(screen.getByTestId('today-v2')).toBeTruthy()
+    localStorage.setItem('garden.todayV2', '0')
+    act(() => { window.dispatchEvent(new StorageEvent('storage', { key: 'garden.todayV2' })) })
+    expect(screen.getByTestId('today-v1')).toBeTruthy()
+  })
+
+  it('with the default undone (TODAY_V2_DEFAULT false): no choice → the old Today, "1" → the redesign, "0" → the old', () => {
+    flags.def = false
+    expect(readTodayV2Flag()).toBe(false)
+    const a = render(<TodayRoute />)
+    expect(screen.getByTestId('today-v1')).toBeTruthy()
+    a.unmount()
+    localStorage.setItem('garden.todayV2', '1')
+    const b = render(<TodayRoute />)
+    expect(screen.getByTestId('today-v2')).toBeTruthy()
+    b.unmount()
+    localStorage.setItem('garden.todayV2', '0')
+    render(<TodayRoute />)
     expect(screen.getByTestId('today-v1')).toBeTruthy()
   })
 
@@ -61,34 +104,34 @@ describe('the per-device switch', () => {
   })
 })
 
-describe('Debug & smoke — "New Today (preview) on this phone"', () => {
+describe('Debug & smoke — "New Today on this phone"', () => {
   const mount = () => render(<MemoryRouter><DebugMenu /></MemoryRouter>)
 
-  it('is a toggle, off by default, with a stable plain name', () => {
+  it('is a toggle, on by default, with a stable plain name', () => {
     mount()
-    const t = screen.getByRole('button', { name: /^New Today \(preview\) on this phone/ })
-    expect(t.getAttribute('aria-pressed')).toBe('false')
+    const t = screen.getByRole('button', { name: /^New Today on this phone/ })
+    expect(t.getAttribute('aria-pressed')).toBe('true')
     expect(t.getBoundingClientRect).toBeTruthy()
+    fireEvent.click(t)
+    expect(localStorage.getItem('garden.todayV2')).toBe('0')
+    expect(t.getAttribute('aria-pressed')).toBe('false')
+    expect(t.textContent).toContain('Off')
     fireEvent.click(t)
     expect(localStorage.getItem('garden.todayV2')).toBe('1')
     expect(t.getAttribute('aria-pressed')).toBe('true')
-    expect(t.textContent).toContain('On')
-    fireEvent.click(t)
-    expect(localStorage.getItem('garden.todayV2')).toBeNull()
-    expect(t.getAttribute('aria-pressed')).toBe('false')
   })
 
   it('the On / Off pill is hidden from the accessible name', () => {
     mount()
     const t = screen.getByTestId('debug-today-v2')
-    expect(t.querySelector('[aria-hidden="true"]').textContent).toBe('Off')
+    expect(t.querySelector('[aria-hidden="true"]').textContent).toBe('On')
     expect(t.style.minHeight).toBe('48px')
   })
 })
 
 describe('sign-out scrubs every V2 key', () => {
   it('the switch, the mirror, first-seen, and the tab-scoped visit / filters / logged families', () => {
-    localStorage.setItem('garden.todayV2', '1')
+    localStorage.setItem('garden.todayV2', '0')
     localStorage.setItem('today-sections:user_a', '{"v":1,"s":{},"dirty":[]}')
     localStorage.setItem('today-seen:user_a', '{}')
     sessionStorage.setItem('today-visit:user_a:2026-09-24:v2', '{}')
