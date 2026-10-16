@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.1.4",
+    "date": "2026-10-15",
+    "highlights": [
+      "Behind the scenes: releases are safer — a failed release step now leaves the live app untouched, and release records note exactly which server code shipped."
+    ]
+  },
+  {
     "version": "5.1.3",
     "date": "2026-10-15",
     "highlights": [
