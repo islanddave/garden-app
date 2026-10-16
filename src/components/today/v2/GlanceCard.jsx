@@ -91,15 +91,16 @@ export default function GlanceCard({
                 <span style={srOnly}>Weather: </span>
                 <span style={rowA}>
                   <ConditionIcon code={weather.code} />
-                  <span style={tempPair}>
+                  {/* A plan with no high or no night low prints nothing for it, never "null°" (the old page's rule). */}
+                  {Number.isFinite(weather.highToday) && <span style={tempPair}>
                     <span style={hiStyle}>{`${weather.highToday}°`}</span>
                     <Icon name="care.sun" size={16} title="day high" style={{ marginTop: 3 }} />
-                  </span>
-                  <span style={{ ...tempPair, marginLeft: 2 }}>
+                  </span>}
+                  {Number.isFinite(low) && <span style={{ ...tempPair, marginLeft: 2 }}>
                     <span style={loStyle}>{`${low}°`}</span>
                     {/* WeatherWidget's crescent, copied: it has no registry twin (see its note there). */}
                     <svg width="11" height="11" viewBox="0 0 24 24" style={{ marginTop: 2 }} role="img" aria-label="night low"><path d="M20 14.5A8 8 0 1 1 10.5 4 6.3 6.3 0 0 0 20 14.5Z" fill={P.mid} /></svg>
-                  </span>
+                  </span>}
                   {/* V5-WXCOLDBAND-001: the forecast's cold end, only when it is colder than this low. */}
                   <ColdRangeNote coldRange={coldRange} planDate={planDate} lowShown={low} phrase={COLD_PHRASE} />
                   {/* The words and the arrow are siblings: the arrow is a glyph the Roboto pin lacks (font-census.mjs

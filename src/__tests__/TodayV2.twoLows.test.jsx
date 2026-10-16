@@ -144,11 +144,10 @@ describe('the grid — plan low x entry x the REAL callout: ONE number for tonig
   })
 })
 
-// FINDING at S8c (the old file's grid asserted the card printed nothing for a plan with no low and no trigger): the
-// redesign's glance row A prints `${low}°` unconditionally (GlanceCard.jsx), so such a plan reads "null°". Reported
-// in the L8 hand-back; pinned as a known failure so the fix flips this to a plain `it`.
+// Ported at S8c from the old page's grid (a plan with no low and no trigger prints nothing for the low). The redesign
+// printed `${low}°` unconditionally, so such a plan read "null°"; fixed in GlanceCard.jsx in the L8 release.
 describe('a plan with no tonight low and no frost trigger', () => {
-  it.fails('row A prints no night low — never "null°"', () => {
+  it('row A prints no night low — never "null°"', () => {
     planState.current = mountData(planFor(null, []))
     render(<MemoryRouter><TodayV2 /></MemoryRouter>)
     expect(screen.getByTestId('today-glance').querySelector('[aria-expanded]').textContent).not.toMatch(/null°/)
