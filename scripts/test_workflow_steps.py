@@ -1716,7 +1716,9 @@ PG_RUNNER = "ubuntu-26.04"
 CACHE_SHA = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"  # actions/cache v6.1.0, and its restore/ and save/ sub-actions
 MISS_IF = "steps.pg17-cache.outputs.cache-hit != 'true'"  # never `== 'false'`: a plain miss leaves cache-hit unset
 # The promote's refusal also runs after a restore that hit its time limit (a failed step), to print the remedy.
-PROMOTE_MISS_IF = "${{ !cancelled() && " + MISS_IF + " }}"
+# `outcome != 'skipped'`: after an earlier refusal (preflight, skew, schema gate) the restore is skipped and
+# cache-hit is unset, and the refusal must not add a false "cache miss" ::error (re-check of 973e0aca).
+PROMOTE_MISS_IF = "${{ !cancelled() && steps.pg17-cache.outcome != 'skipped' && " + MISS_IF + " }}"
 WARM = "pg17-cache-warm.yml"
 WARM_HIT_VERIFY = "Verify the cached pg17 client (hit)"
 WARM_FETCH = "Fetch pg17 client from the postgres:17 image (miss, or force_refetch)"

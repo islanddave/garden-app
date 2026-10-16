@@ -649,9 +649,10 @@ jobs:
       # pulled postgres:17 from Docker Hub here (and before that apt.postgresql.org, which hung 46 minutes after
       # the FF on 2026-08-18); a miss is now a refusal with nothing moved. `!=`, never `== 'false'`: on a plain
       # miss the action leaves cache-hit unset. `!cancelled()`, not the implicit success(): a restore that hit its
-      # time limit has failed, and this step still prints the remedy (and still exits 1).
+      # time limit has failed, and this step still prints the remedy (and still exits 1). `outcome != 'skipped'`: after
+      # an earlier refusal the restore never ran, and this step must not add a false cache-miss error to it.
       - name: Refuse a pg17 client cache miss (the promote fetches nothing)
-        if: ${{ !cancelled() && steps.pg17-cache.outputs.cache-hit != 'true' }}
+        if: ${{ !cancelled() && steps.pg17-cache.outcome != 'skipped' && steps.pg17-cache.outputs.cache-hit != 'true' }}
         run: |
           set -uo pipefail
           echo "::error title=Snapshot tooling (pre-FF)::no pg17 client in the Actions cache (key pg17-client-postgres17-image-v1-runner-ubuntu-26.04: a miss, or a restore the cache service could not serve), and the promote does not fetch one — nothing has moved (main has NOT been touched): re-run the failed jobs once the cache is warm, or re-dispatch if warming it moved dev. Warmed by a push to dev (a commit that touches .github/workflows/pg17-cache-warm.yml): re-dispatch promote-gate on the new dev HEAD once its CI is green (a re-run refuses a moved dev); warmed by a dispatch of pg17-cache-warm.yml (once it is on main): re-run the failed jobs; backup.yml's daily run also refills main's entry. If an entry is suspected corrupt, first delete that key on BOTH refs/heads/dev and refs/heads/main (a dev run falls back to main's entry). Not a verdict on the promoted code."
