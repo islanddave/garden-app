@@ -169,7 +169,7 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
   afterAll(async () => {
     if (savedEnv === undefined) delete process.env[ENV_KEY]; else process.env[ENV_KEY] = savedEnv;
     const users = [USER_A, USER_B, USER_C, USER_D, USER_E];
-    await settle('season-stats.int', [
+    const failed = await settle('season-stats.int', [
       // Both foreign keys on a parent link are ON DELETE RESTRICT: it goes before its lot and its planting.
       () => directSql`DELETE FROM seed_lot_parent_planting WHERE created_by = ANY(${users}::text[])`,
       () => directSql`DELETE FROM inventory_items WHERE created_by = ANY(${users}::text[])`,
@@ -182,7 +182,10 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
       () => directSql`DELETE FROM plants WHERE created_by = ANY(${users}::text[])`,
       () => directSql`DELETE FROM entity WHERE cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ANY(${users}::text[]))`,
       () => directSql`DELETE FROM plant_varieties WHERE created_by = ANY(${users}::text[])`,
-      // weather_daily goes with its space (ON DELETE CASCADE).
+      // V4-SPACESOFTDEL-001 (multi-space 1.3a): the weather rows go first, by hand. migrations/v5-spaceguard-001's
+      // spaces_delete_guard refuses to delete a Space any weather_daily row still names, where the ON DELETE
+      // CASCADE used to take them with it.
+      () => directSql`DELETE FROM weather_daily WHERE space_id IN (SELECT id FROM spaces WHERE created_by = ANY(${users}::text[]))`,
       () => directSql`DELETE FROM spaces WHERE created_by = ANY(${users}::text[])`,
       // public.source carries trg_audit_source_del, so bind the audit actor the way lambda/varieties does.
       () => directSql.transaction([
@@ -191,6 +194,9 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
       ]),
       () => directSql`DELETE FROM plant_projects WHERE created_by = ANY(${users}::text[])`,
     ]);
+    // settle() only logs a failed step, and the global sweep's failures are not fatal either, so a refused
+    // delete would otherwise leave this file green with its rows behind it.
+    expect(failed, 'season-stats teardown steps failed').toEqual([]);
   });
 
   it('returns the v1 envelope with all eight sections', async () => {
