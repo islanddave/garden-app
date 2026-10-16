@@ -457,6 +457,13 @@
       ]
     }
   },
+  "env_parity": [
+    {
+      "_note": "OPS-HOUSEHOLDALARMS-001. Every function whose env declares GARDEN_HOUSEHOLD_IDS must carry byte-equal values with at least 2 comma-separated entries. check-lambda-config.py compares sha256 prefixes and counts only; the value never enters the repo or a log.",
+      "key": "GARDEN_HOUSEHOLD_IDS",
+      "min_entries": 2
+    }
+  ],
   "eventbridge": [
     {
       "name": "garden-daily-plan-hourly",

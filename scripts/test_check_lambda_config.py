@@ -375,3 +375,36 @@ def test_retired_rules_are_not_declared():
     assert not (RETIRED_RULES & names), (
         "manifest re-declares retired rule(s) %s that deploy-lambda.yml invariant 3b asserts "
         "ABSENT — the two gates now demand opposite live states" % sorted(RETIRED_RULES & names))
+
+
+# --- env_parity (OPS-HOUSEHOLDALARMS-001) --------------------------------------
+
+HH = {"key": "GARDEN_HOUSEHOLD_IDS", "min_entries": 2}
+DECL = {"garden-a": {"env": {"GARDEN_HOUSEHOLD_IDS": True}}, "garden-b": {"env": {"GARDEN_HOUSEHOLD_IDS": True}},
+        "garden-c": {"env": {}}}
+
+
+def test_parity_clean_when_every_carrier_is_byte_equal():
+    v = {"garden-a": live(GARDEN_HOUSEHOLD_IDS="u1,u2"), "garden-b": live(GARDEN_HOUSEHOLD_IDS="u1,u2"),
+         "garden-c": live(GARDEN_HOUSEHOLD_IDS="other")}  # undeclared on c: not compared
+    assert clc.check_env_parity([HH], DECL, v) == []
+
+def test_parity_reports_a_differing_copy_by_hash_never_by_value():
+    v = {"garden-a": live(GARDEN_HOUSEHOLD_IDS="u1,u2"), "garden-b": live(GARDEN_HOUSEHOLD_IDS="u1,u3")}
+    out = clc.check_env_parity([HH], DECL, v)
+    assert len(out) == 1 and "differs across functions" in out[0]
+    assert "garden-a" in out[0] and "garden-b" in out[0] and "u1" not in out[0] and "u3" not in out[0]
+
+def test_parity_reports_a_single_entry_copy():
+    v = {"garden-a": live(GARDEN_HOUSEHOLD_IDS=" u1 , "), "garden-b": live(GARDEN_HOUSEHOLD_IDS=" u1 , ")}
+    out = clc.check_env_parity([HH], DECL, v)
+    assert len(out) == 2 and all("has 1 entry" in o for o in out) and not any("u1" in o for o in out)
+
+def test_parity_leaves_an_absent_key_to_the_per_function_check():
+    v = {"garden-a": live(GARDEN_HOUSEHOLD_IDS="u1,u2"), "garden-b": live(), "garden-c": None}
+    assert clc.check_env_parity([HH], DECL, v) == []
+
+def test_parity_rule_is_declared_for_the_household_key_and_not_a_function():
+    rules = clc.load_env_parity()
+    assert {"key": "GARDEN_HOUSEHOLD_IDS", "min_entries": 2}.items() <= rules[0].items()
+    assert "env_parity" not in clc.load_manifest()

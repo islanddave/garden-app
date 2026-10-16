@@ -51,6 +51,7 @@ USAGE
 """
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -65,7 +66,7 @@ ABSENT = object()  # distinct from None, which is a legitimate manifest value me
 # would imply they are droppable prose, and a future reader trimming "_"-keys would delete an
 # assertion. load_manifest() must keep returning FUNCTIONS ONLY: three tests and the --function
 # argument check depend on every key it yields being a real Lambda.
-RESERVED_TOP_LEVEL = {"eventbridge"}
+RESERVED_TOP_LEVEL = {"eventbridge", "env_parity"}
 
 
 def load_manifest(path=MANIFEST):
@@ -89,6 +90,48 @@ def load_eventbridge(path=MANIFEST):
     with open(path) as fh:
         raw = json.load(fh)
     return raw.get("eventbridge") or []
+
+
+def load_env_parity(path=MANIFEST):
+    """Return the declared cross-function env rules: [{key, min_entries?}, ...] (OPS-HOUSEHOLDALARMS-001)."""
+    with open(path) as fh:
+        raw = json.load(fh)
+    return raw.get("env_parity") or []
+
+
+def check_env_parity(rules, manifest, live_by_name):
+    """Values the manifest can only declare as `true` (present, any value) because they must not be in
+    the repo, yet must be the SAME bytes on every function that carries them. GARDEN_HOUSEHOLD_IDS is
+    the case: one function with a stale or single-entry copy fail-closes that function to the caller
+    alone while every per-function check stays green. Pure. Reports sha256 prefixes and entry counts
+    only, never a value. A function whose own check already reports the key absent is left to that
+    check; a function not in `live_by_name` (a --function subset) is not compared.
+    """
+    violations = []
+    for rule in rules:
+        key, need = rule["key"], rule.get("min_entries", 1)
+        seen = {}
+        for fn in sorted(live_by_name):
+            spec_env = (manifest.get(fn) or {}).get("env") or {}
+            if key not in spec_env or spec_env[key] is None or live_by_name[fn] is None:
+                continue
+            val = ((live_by_name[fn].get("Environment") or {}).get("Variables") or {}).get(key)
+            if val is None:
+                continue
+            digest = hashlib.sha256(val.encode()).hexdigest()[:12]
+            seen[fn] = digest
+            entries = [e for e in (p.strip() for p in val.split(",")) if e]
+            if len(entries) < need:
+                violations.append("%s: env %s has %d entr%s (sha256 %s), %s requires at least %d"
+                                  % (fn, key, len(entries), "y" if len(entries) == 1 else "ies", digest,
+                                     "env_parity", need))
+        if len(set(seen.values())) > 1:
+            groups = {}
+            for fn, d in seen.items():
+                groups.setdefault(d, []).append(fn)
+            violations.append("env %s differs across functions (must be byte-equal): %s" % (
+                key, "; ".join("sha256 %s on %s" % (d, ", ".join(fns)) for d, fns in sorted(groups.items()))))
+    return violations
 
 
 def check_function(name, expected, live):
@@ -356,6 +399,7 @@ def main(argv=None):
     violations = []
     for n in names:
         violations.extend(check_function(n, manifest[n], live_by_name[n]))
+    violations.extend(check_env_parity(load_env_parity(), manifest, live_by_name))
 
     # OPS-DEPLOYCOESILENT-001 — the assertions the env manifest structurally cannot make.
     #
