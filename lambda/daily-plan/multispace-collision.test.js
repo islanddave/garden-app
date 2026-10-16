@@ -13,6 +13,9 @@
 //   * planWritten hoisted to module scope (survives a warm invocation)                  -> 4 RED (the two-run()
 //     case alone, run with -t, reds by itself; the others red because the set leaks across this file's cases)
 //   * Spaces walked in the plantings query's row order, not id order (QA I1)               -> 1 RED (fix pass)
+//   * `.slice(-ALERTS_SENT_MAX)` removed from the union                                    -> 1 RED (fix pass)
+//   * `if (!first.logged)` -> `if (true)` (logs on every collision)                       -> 1 RED (fix pass)
+//   * `first.items = merged` deleted (a third Space merges against the original items)    -> 1 RED (fix pass)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import handler from './handler.js';
 
@@ -36,12 +39,12 @@ const space = (id, owner) => ({ id, postal_code: null, weather_lat: 42.5, weathe
 const SENT_A = { key: `${SP_A}|${TODAY}|imminent|1`, at: '2026-10-02T18:00:00.000Z' };
 const SENT_B = { key: `${SP_B}|${TODAY}|imminent|1`, at: '2026-10-02T18:05:00.000Z' };
 
-function mockPg({ plantings, spaces }) {
+function mockPg({ plantings, spaces, sentRows = [{ alerts_sent: [SENT_A] }, { alerts_sent: [SENT_B] }] }) {
   return {
     query: vi.fn(async (sql) => {
       if (/from plants/.test(sql)) return { rows: plantings };
       if (/from spaces/.test(sql)) return { rows: spaces };
-      if (/items->'alerts_sent'/.test(sql)) return { rows: [{ alerts_sent: [SENT_A] }, { alerts_sent: [SENT_B] }] };
+      if (/items->'alerts_sent'/.test(sql)) return { rows: sentRows };
       return { rows: [] };
     }),
   };
@@ -115,6 +118,45 @@ describe('V5-SPACEISOLATION-001 — one user, two Spaces, one daily_plan row', (
     expect(collisionLogs(err)).toEqual([{ msg: 'daily-plan-multispace-collision', user: DAVE, plan_date: TODAY,
       first_space: SP_A, space: SP_B }]);
     expect(backfills(pg)).toEqual([DAVE]);
+  });
+
+  it('a third Space unions against the row as already merged, and the collision logs once', async () => {
+    // QA MINOR: kills `first.items = merged` deleted (the third write would miss B's send) and `if (!first.logged)`
+    // -> `if (true)` (two logs). The mock's own-row read returns [], so each group carries only its Space's sends.
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    const SP_C = 'sp-c';
+    const SENT_C = { key: `${SP_C}|${TODAY}|imminent|1`, at: '2026-10-02T18:10:00.000Z' };
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const pg = await drive({
+      plantings: [planting('a1', SP_A, DAVE), planting('b1', SP_B, DAVE, 'pepper'), planting('c1', SP_C, DAVE, 'bean')],
+      spaces: [space(SP_A, DAVE), space(SP_B, DAVE), space(SP_C, DAVE)],
+      sentRows: [{ alerts_sent: [SENT_A] }, { alerts_sent: [SENT_B] }, { alerts_sent: [SENT_C] }],
+    });
+    const [first, , third] = upserts(pg);
+    expect(third.items).toEqual({ ...first.items, alerts_sent: [SENT_A, SENT_B, SENT_C], multi_space_collision: true });
+    expect(collisionLogs(err)).toEqual([{ msg: 'daily-plan-multispace-collision', user: DAVE, plan_date: TODAY,
+      first_space: SP_A, space: SP_B }]);
+  });
+
+  it('the unioned alerts_sent is re-capped at ALERTS_SENT_MAX, dropping the oldest entries of the first Space', async () => {
+    // QA MINOR: kills `.slice(-ALERTS_SENT_MAX)` removed from the union. 7 + 7 sends: the row keeps 12, and the cap
+    // drops the FIRST Space's two oldest (mergeAlertsSent keeps first-list order). Pinned as it is, not endorsed.
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    expect(handler.ALERTS_SENT_MAX).toBe(12);
+    const sends = (sp, minute) => Array.from({ length: 7 }, (_, i) => (
+      { key: `${sp}|${TODAY}|imminent|${i + 1}`, at: `2026-10-02T18:${String(minute + i).padStart(2, '0')}:00.000Z` }));
+    const manyA = sends(SP_A, 0);
+    const manyB = sends(SP_B, 30);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const pg = await drive({
+      plantings: [planting('a1', SP_A, DAVE), planting('b1', SP_B, DAVE, 'pepper')],
+      spaces: [space(SP_A, DAVE), space(SP_B, DAVE)],
+      sentRows: [{ alerts_sent: manyA }, { alerts_sent: manyB }],
+    });
+    const [first, second] = upserts(pg);
+    expect(first.items.alerts_sent).toEqual(manyA);
+    expect(second.items.alerts_sent).toHaveLength(12);
+    expect(second.items.alerts_sent).toEqual([...manyA.slice(2), ...manyB]);
   });
 
   it('flag off: no alerts_sent key appears on the collided row either', async () => {
