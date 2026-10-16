@@ -328,8 +328,8 @@ def test_manifest_does_not_require_the_retired_owner_key():
     """Release A leaves it UNDECLARED (unchecked) so the promote is green while the live key is still
     set; release B, after the live --unset, declares it null (must be absent). Never true again."""
     env = clc.load_manifest()["garden-daily-plan"]["env"]
-    assert env.get(_RETIRED_OWNER_KEY, None) is None, \
-        "the manifest requires the retired %s present" % _RETIRED_OWNER_KEY
+    assert _RETIRED_OWNER_KEY in env and env[_RETIRED_OWNER_KEY] is None, \
+        "release B: the manifest must declare the retired %s null (must be absent live)" % _RETIRED_OWNER_KEY
 
 
 # --- Function URL / CORS (OPS-DEPLOYCOESILENT-001) ----------------------------

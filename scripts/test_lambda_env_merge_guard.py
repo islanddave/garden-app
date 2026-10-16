@@ -8,7 +8,7 @@ WHY THIS EXISTS
       --environment 'Variables={CARE_WATER_LEDGER_ENABLED=true}'
 
 does not read "set one flag", it reads "delete the other eight" — on garden-daily-plan that is
-FROST_TOPIC_ARN, OWNER_FALLBACK_SUB, SYSTEM_CLERK_SUB, DRY_RUN and the three live CARE_* flags,
+FROST_TOPIC_ARN, SYSTEM_CLERK_SUB, DRY_RUN and the three live CARE_* flags,
 all gone, HTTP 200 throughout, no error anywhere. scripts/lambda-env-set.sh exists precisely to
 make that impossible (baseline-completeness refusal, RevisionId optimistic concurrency, verified
 read-back), and deploy-lambda.yml's env steps read-merge with jq. But nothing STOPPED the naive
