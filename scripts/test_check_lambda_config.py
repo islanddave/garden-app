@@ -217,7 +217,7 @@ def test_deploy_workflow_sets_the_household_key_the_manifest_declares():
     inv = os.path.join(os.path.dirname(__file__), "..", ".github", "workflows", "verify-lambda-invariants.yml")
     with open(inv) as fh:
         loops = [l for l in fh.read().splitlines()
-                 if l.strip().startswith("for k in DRY_RUN SYSTEM_CLERK_SUB OWNER_FALLBACK_SUB")]
+                 if l.strip().startswith("for k in DRY_RUN SYSTEM_CLERK_SUB AWN_STATIONS_JSON")]
     assert len(loops) == 1 and "GARDEN_HOUSEHOLD_IDS" in loops[0].split(";")[0].split(), \
         "verify-lambda-invariants' daily-plan invariant-1 key loop must assert GARDEN_HOUSEHOLD_IDS"
 
@@ -236,6 +236,93 @@ def test_manifest_declares_every_env_var_daily_plan_reads():
                     found |= set(re.findall(r"process\.env\.([A-Z][A-Z0-9_]*)", fh.read()))
     declared = set(clc.load_manifest()["garden-daily-plan"]["env"])
     assert found - declared == set(), "daily-plan reads undeclared env: %s" % sorted(found - declared)
+
+
+# --- OWNER_FALLBACK_SUB retirement (V5-SITECONSTANTS-001) --------------------
+
+# The retired key. Built, not spelled, so this file never becomes the reader it scans for.
+_RETIRED_OWNER_KEY = "OWNER_" + "FALLBACK_SUB"
+_CODE_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".py", ".sh", ".bash")
+
+
+def _owner_key_readers(text):
+    """process.env.K / process.env['K'] / { K } = process.env / os.environ[...] / getenv / $K, on
+    executable lines only. A mention in a comment is not a reader."""
+    import re
+    k = re.escape(_RETIRED_OWNER_KEY)
+    code = "\n".join(l for l in text.splitlines()
+                     if not l.strip().startswith(("#", "//", "*", "/*")))
+    pats = [r"process\.env\s*\.\s*" + k + r"\b",
+            r"process\.env\s*\[\s*['\"`]" + k + r"['\"`]\s*\]",
+            r"\{[^}]*\b" + k + r"\b[^}]*\}\s*=\s*process\.env\b",
+            r"os\.environ(?:\.get)?\s*[\[(]\s*['\"]" + k + r"['\"]",
+            r"getenv\s*\(\s*['\"]" + k + r"['\"]",
+            r"\$\{?" + k + r"\b"]
+    return [m.group(0) for p in pats for m in re.finditer(p, code)]
+
+
+def _is_test_path(p):
+    base = os.path.basename(p)
+    parts = p.split("/")
+    return (".test." in base or ".spec." in base or base.startswith("test_")
+            or "tests" in parts[:-1] or "__tests__" in parts[:-1])
+
+
+def test_owner_key_reader_detector_can_fail():
+    """The scan below is only evidence if the detector reds on each reader shape."""
+    k = _RETIRED_OWNER_KEY
+    for bad in ("const o = process.env.%s;" % k,
+                "const o = process.env['%s'];" % k,
+                "const { DRY_RUN, %s } = process.env;" % k,
+                "o = os.environ.get('%s')" % k,
+                "echo \"$%s\"" % k):
+        assert _owner_key_readers(bad), "detector missed: %s" % bad
+    assert _owner_key_readers("// the old %s env is no longer read" % k) == []
+
+
+def test_no_non_test_code_reads_the_retired_owner_key():
+    """V5-SITECONSTANTS-001 — the single-owner fallback sub is retired: the daily-plan handler stopped
+    reading it in BUG-AUTHZLAMBDA-001 and the manifest no longer declares it. A reader coming back
+    would silently depend on a key the live account is about to lose. The two vitest files that
+    vi.stubEnv() it (owner-scope, cadence-observability) do so to PROVE it is ignored; tests are out
+    of scope here."""
+    import subprocess
+    repo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    out = subprocess.run(["git", "-C", repo, "ls-files"], capture_output=True, text=True, check=True)
+    hits = []
+    for p in out.stdout.splitlines():
+        if not p.endswith(_CODE_SUFFIXES) or _is_test_path(p):
+            continue
+        try:
+            with open(os.path.join(repo, p)) as fh:
+                found = _owner_key_readers(fh.read())
+        except (OSError, UnicodeDecodeError):
+            continue
+        hits += ["%s: %s" % (p, h) for h in found]
+    assert hits == [], "non-test code reads the retired %s: %s" % (_RETIRED_OWNER_KEY, hits)
+
+
+def test_no_deploy_step_writes_the_retired_owner_key():
+    """Release A: no workflow step adds the key back, so the later live --unset stays unset."""
+    wfdir = os.path.join(os.path.dirname(__file__), "..", ".github", "workflows")
+    hits = []
+    for name in sorted(os.listdir(wfdir)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        with open(os.path.join(wfdir, name)) as fh:
+            for i, l in enumerate(fh.read().splitlines(), 1):
+                if not l.strip().startswith("#") and _RETIRED_OWNER_KEY in l:
+                    hits.append("%s:%d" % (name, i))
+    assert hits == [], "a workflow still names the retired %s on an executable line: %s" % (
+        _RETIRED_OWNER_KEY, hits)
+
+
+def test_manifest_does_not_require_the_retired_owner_key():
+    """Release A leaves it UNDECLARED (unchecked) so the promote is green while the live key is still
+    set; release B, after the live --unset, declares it null (must be absent). Never true again."""
+    env = clc.load_manifest()["garden-daily-plan"]["env"]
+    assert env.get(_RETIRED_OWNER_KEY, None) is None, \
+        "the manifest requires the retired %s present" % _RETIRED_OWNER_KEY
 
 
 # --- Function URL / CORS (OPS-DEPLOYCOESILENT-001) ----------------------------

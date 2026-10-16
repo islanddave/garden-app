@@ -884,12 +884,16 @@ jobs:
             echo "timeout=120 set on $FN"
           fi
 
-      - name: Set daily-plan DRY_RUN + OWNER_FALLBACK_SUB + RAIN_AUTOLOG_ENABLED env
+      # V5-SITECONSTANTS-001 (release A): this step no longer re-adds the retired single-owner fallback
+      # key. The handler stopped reading it in BUG-AUTHZLAMBDA-001 (unassigned rows go to each Space's
+      # own owner), so re-adding it only kept a hardcoded owner id alive on every daily-plan deploy. The
+      # merge below still PRESERVES whatever is live; removing the key from the live map is a separate,
+      # one-key lambda-env-set.sh --unset, never done here.
+      - name: Set daily-plan DRY_RUN + RAIN_AUTOLOG_ENABLED env
         if: matrix.function == 'daily-plan'
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration; idempotent
         run: |
           FN=garden-daily-plan
-          OWNER=user_3D2gM0hIl03gjW3JM2DjtPzm0jI
           CURRENT=$(aws lambda get-function-configuration --function-name "$FN" --query 'Environment.Variables.DRY_RUN' --output text 2>/dev/null || echo "None")
           # OPS-LAMBDAENVWIPE-001: widest-open of the seven — no value-check at all, so this read is
           # followed by an unconditional write on EVERY daily-plan deploy. `|| echo "{}"` meant one
@@ -900,11 +904,11 @@ jobs:
             exit 1
           fi
           if [[ "$CURRENT" == "None" || -z "$CURRENT" ]]; then
-            echo "First deploy: DRY_RUN=true + OWNER_FALLBACK_SUB (dormant)."
-            UPDATED=$(echo "$EXISTING" | jq --arg o "$OWNER" '. + {DRY_RUN:"true", OWNER_FALLBACK_SUB:$o}')
+            echo "First deploy: DRY_RUN=true."
+            UPDATED=$(echo "$EXISTING" | jq '. + {DRY_RUN:"true"}')
           else
-            echo "DRY_RUN=$CURRENT preserved; ensuring OWNER_FALLBACK_SUB present."
-            UPDATED=$(echo "$EXISTING" | jq --arg o "$OWNER" 'if has("OWNER_FALLBACK_SUB") then . else . + {OWNER_FALLBACK_SUB:$o} end')
+            echo "DRY_RUN=$CURRENT preserved."
+            UPDATED="$EXISTING"
           fi
           # BUG-RAINAUTOLOGCLIFF-001 — RAIN_AUTOLOG_ENABLED must exist as a VALUE, never be inferred
           # from an absence. rainLog.js arms on anything that is not the exact string 'false', so the

@@ -24,8 +24,8 @@ name: Verify Lambda invariants
 #
 # The deploy matrix tolerates partial config failures (many of its env steps are continue-on-error);
 # this is the backstop that fails loudly when the safety invariants do not hold in the LIVE account:
-#   (1) garden-daily-plan env contains ALL of DRY_RUN / SYSTEM_CLERK_SUB / OWNER_FALLBACK_SUB /
-#       AWN_STATIONS_JSON — guards the set-not-merge wipe hazard, where a transient read failure in any
+#   (1) garden-daily-plan env contains ALL of DRY_RUN / SYSTEM_CLERK_SUB / AWN_STATIONS_JSON /
+#       GARDEN_HOUSEHOLD_IDS — guards the set-not-merge wipe hazard, where a transient read failure in any
 #       env-merge step replaces the entire Variables map with a partial one;
 #   (1b) AWN_STATIONS_JSON SHAPE, not just presence — station.js ships an EMPTY default on purpose
 #       (public repo: the record is the gauge MAC and the house coordinate), so a wiped env does NOT
@@ -117,7 +117,7 @@ jobs:
           # drops the engine to forecast hydrology. This assertion is the only thing that catches that.
           # GARDEN_HOUSEHOLD_IDS (BUG-AUTHZLAMBDA-001): household(Space) fails closed to the Space owner
           # without it, so a wipe silently drops the other member's plantings from the plan.
-          for k in DRY_RUN SYSTEM_CLERK_SUB OWNER_FALLBACK_SUB AWN_STATIONS_JSON GARDEN_HOUSEHOLD_IDS; do
+          for k in DRY_RUN SYSTEM_CLERK_SUB AWN_STATIONS_JSON GARDEN_HOUSEHOLD_IDS; do
             v=$(echo "$ENVJSON" | jq -r --arg k "$k" '.[$k] // empty')
             if [[ -z "$v" ]]; then
               echo "::error::INVARIANT 1 BROKEN: $FN env is missing key $k (set-not-merge wipe hazard)"
