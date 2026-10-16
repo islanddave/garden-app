@@ -16,6 +16,10 @@
 //
 // Regenerate the list: `node scripts/repo-constants-scan.mjs site`.
 import { describe, it, expect } from 'vitest'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { scanSiteConstants, scanNilUuid, siteConstantsInJs, walk } from '../scripts/repo-constants-scan.mjs'
 
 // Recon §1.4 at 51a97146, plus SITE_FACTOR (src/lib/maturityCalibration.js: time-to-harvest fitted "at this
@@ -52,6 +56,23 @@ describe('site constants (1.4)', () => {
 
   it('the nil UUID appears in no non-test file under lambda/, src/, scripts/ (baseline 0)', () => {
     expect(scanNilUuid()).toEqual({})
+  })
+
+  // QA MINOR / RIA MINOR: the three scanners read tracked files, as CI's clean checkout does, so an untracked scratch
+  // file or a gitignored dump never reds locally. A tree that is not a work tree (the planted fixtures) is walked.
+  it('walk reads tracked files in a git work tree, every file in a plain tree', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'walk-')))
+    try {
+      mkdirSync(join(root, 'lambda/x'), { recursive: true })
+      for (const f of ['tracked.js', 'untracked.js', 'ignored.js']) writeFileSync(join(root, 'lambda/x', f), 'const A = 1\n')
+      expect(walk(['lambda'], { root })).toEqual(['lambda/x/ignored.js', 'lambda/x/tracked.js', 'lambda/x/untracked.js'])
+      writeFileSync(join(root, '.gitignore'), 'ignored.js\n')
+      execFileSync('git', ['init', '-q'], { cwd: root })
+      execFileSync('git', ['add', 'lambda/x/tracked.js'], { cwd: root })
+      expect(walk(['lambda'], { root })).toEqual(['lambda/x/tracked.js'])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   // The detector itself, so a green run above cannot be a blind one.
