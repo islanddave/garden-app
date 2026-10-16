@@ -40,14 +40,16 @@ const mountData = (plan) => ({ data: { has_plan: true, plan_date: PLAN_DATE, gen
 // line keeps its own figure.
 const v2Line = (line) => (line == null ? null : line.replace(/^(Frost possible tonight) — low -?\d+°F\./, '$1.'))
 const fresh = () => { localStorage.clear(); sessionStorage.clear() }   // Details and Protect opened here are remembered
-const bareTemps = (root) => [...root.querySelectorAll('*')].filter((el) => !el.children.length && /^-?\d+(?:\.\d+)?°$/.test((el.textContent || '').trim())).map((el) => el.textContent.trim())
+// Row A's night low, raw (L8 review MINOR): its own testid's textContent, '' when the card prints none — so a
+// "null°", "NaN°" or "undefined°" reads as itself, never as the empty low a plan with no low expects.
+const nightLow = (root) => root.querySelector('[data-testid="glance-night-low"]')?.textContent ?? ''
 
 // What the page says about tonight's low: row A of the closed glance card, then — Details opened — the frost line,
 // and Protect tonight's opened body (it lists no figure of its own, so any it carries is a second low).
 function readPage() {
   const glance = screen.getByTestId('today-glance')
   const toggle = glance.querySelector('[aria-expanded]')
-  const card = bareTemps(toggle)[1] ?? null
+  const card = nightLow(toggle)
   if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
   const line = screen.queryAllByTestId('frost-alert-line').map((el) => el.textContent)[0] ?? null
   const sec = screen.queryByTestId('today-sec-protect')
@@ -57,7 +59,7 @@ function readPage() {
     if (h.getAttribute('aria-expanded') !== 'true') fireEvent.click(h)
     protect = (within(sec).queryAllByTestId('protect-row').map((r) => r.textContent).join(' | ').match(/-?\d+(?:\.\d+)?°F?/g) || [])
   }
-  return { card: card == null ? null : card.slice(0, -1), line, protect }
+  return { card, line, protect }
 }
 
 const impressions = () => api.fetch.mock.calls.filter((c) => c[0] === CUE_IMPRESSIONS_PATH).map((c) => JSON.parse(c[1].body))
@@ -69,7 +71,7 @@ describe('the spec table on Today — rows 1-12: the card and the frost line pri
     planState.current = mountData(planFor(row.low, row.entries, row.hy))
     render(<MemoryRouter><TodayV2 /></MemoryRouter>)
     const page = readPage()
-    expect(page.card).toBe(row.after.card === '' ? null : row.after.card)
+    expect(page.card).toBe(row.after.card === '' ? '' : row.after.card + '°')
     expect(page.line).toBe(v2Line(row.after.line))
     if (page.protect) expect(page.protect).toEqual([])
   })
@@ -108,7 +110,7 @@ describe('the spec table on Today — rows 1-12: the card and the frost line pri
     const page = readPage()
     expect(container.textContent).not.toMatch(/\*|adjusted|NWS|Open-Meteo forecast low|advisory low|station/i)
     // Control: the page did change — the card prints the agreed 38 (not the plan's 43), and the line no second one.
-    expect(page.card).toBe('38')
+    expect(page.card).toBe('38°')
     expect(page.line).toBe('Frost possible tonight. Plan cover for tender plants.')
   })
 })
@@ -126,14 +128,14 @@ describe('the grid — plan low x entry x the REAL callout: ONE number for tonig
         const where = `plan low ${low} x ${name}`
         if (tonightLow != null) {
           const T = Math.round(low == null ? tonightLow : Math.min(low, tonightLow))
-          expect(page.card, where).toBe(String(T))
+          expect(page.card, where).toBe(T + '°')
           expect(page.line, where).toBe('Frost possible tonight. Plan cover for tender plants.')
           expect([...new Set([...nums(page.card), ...nums(page.line)])], where).toEqual([T])
           if (page.protect) expect(page.protect, where).toEqual([])
           on++
         } else {
           // No trigger: exactly the plan's own low, as stored.
-          expect(page.card, where).toBe(low == null ? null : String(low))
+          expect(page.card, where).toBe(low == null ? '' : low + '°')
           off++
         }
         unmount()
@@ -150,6 +152,8 @@ describe('a plan with no tonight low and no frost trigger', () => {
   it('row A prints no night low — never "null°"', () => {
     planState.current = mountData(planFor(null, []))
     render(<MemoryRouter><TodayV2 /></MemoryRouter>)
-    expect(screen.getByTestId('today-glance').querySelector('[aria-expanded]').textContent).not.toMatch(/null°/)
+    const toggle = screen.getByTestId('today-glance').querySelector('[aria-expanded]')
+    expect(toggle.textContent).not.toMatch(/null°/)
+    expect(nightLow(toggle)).toBe('')
   })
 })

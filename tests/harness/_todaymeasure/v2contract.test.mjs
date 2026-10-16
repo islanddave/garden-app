@@ -270,6 +270,18 @@ describe('today-v2 contract table', () => {
       if (new Set(m.killers).size < 2) expect(m.oneKiller, n).toBeTruthy()
     }
   })
+  // L8 review (QA IMPORTANT-3): with every slice landed the mutation runner fails a mutant red on one killer unless the
+  // catalogue names ONE expected family and says why; and it counts as armed every family an armed check or
+  // KILLER_FAMILIES names. Pinned here so a catalogue edit fails in the unit suite, not forty minutes into Chrome.
+  it('every armed real-Chrome mutant expects ≥ 2 families the gates emit, or names one with its oneKiller reason', () => {
+    const armed = new Set([...STATES.flatMap((s) => s.checks.filter(isArmed).map((c) => c.family)), ...SHELL.filter(isArmed).map((c) => c.family), ...KILLER_FAMILIES])
+    for (const [n, m] of Object.entries(MUTANTS_V2)) {
+      if (m.kind !== 'chrome') continue
+      for (const k of m.killers) expect(armed.has(k), `${n}: ${k}`).toBe(true)
+      if (new Set(m.killers).size < 2) expect(m.oneKiller, n).toBeTruthy()
+      if (m.oneKiller) expect(m.killers, n).toHaveLength(1)
+    }
+  })
   it('every armed real-Chrome mutant\'s pattern occurs exactly once in its file', () => {
     const root = join(HERE, '..', '..', '..')
     const armed = Object.entries(MUTANTS_V2).filter(([, m]) => m.kind === 'chrome' && isArmed(m))

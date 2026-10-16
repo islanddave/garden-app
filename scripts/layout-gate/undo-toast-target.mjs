@@ -167,7 +167,7 @@ async function attach(wsUrl) {
       m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result)
     }
   }
-  // The timeout is CLEARED when the reply lands (2026-09-25, as today-shape.mjs does). Left armed, every
+  // The timeout is CLEARED when the reply lands (2026-09-25, as today-shape-v2.mjs does). Left armed, every
   // answered call held a 90s timer on the event loop, so a green run sat ~90s after PASS before node
   // could exit — in CI, a minute and a half of every green build.
   const send = (method, params = {}, sessionId) => new Promise((res, rej) => {

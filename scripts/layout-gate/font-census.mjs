@@ -25,11 +25,14 @@ const MARK = 'data-font-census'
 // of them with Roboto-painted ASCII ('v', '...') left all 9 group cards [3332, 54 x8], all 9 chevron
 // header rows (52px), all 4 chooser buttons (36px) and the page (6620px) exactly where they were —
 // the rows and buttons that hold them are fixed-size. Their glyph RECTS still follow the host font's
-// ascent and descent, so the Today gate's ink count skips them (today-shape.mjs, INK). A new entry
-// here needs the same measurement, not an assumption.
+// ascent and descent, so the v1 Today gate's ink count skipped them (today-shape.mjs, retired with the
+// old page at S8c). A new entry here needs the same measurement, not an assumption.
+// L8 review: '⋯' left with the old page's bulk chooser (CareNeeded.jsx, deleted at S8c) — no production
+// .jsx paints it now, so a host-painted '⋯' is a census failure again until someone measures a new one.
 export const HOST_FONT_OK = {
-  '▾': '▾ — the care-group disclosure chevron (CareNeeded.jsx), inside a 52px header row',
-  '⋯': '⋯ — the bulk "Choose which … to log" button (CareNeeded.jsx), 34x36 fixed',
+  // Measured on the old page's 52px care-group header (CareNeeded.jsx, deleted at S8c); it now paints in
+  // FacetGroupHeader's open band and GlanceCard's "Details ▾", each measured again below.
+  '▾': '▾ — a disclosure chevron (FacetGroupHeader, GlanceCard "Details"), inside a 48px-min control',
   // V5-TODAYREDESIGN-001 S2 — the redesigned Today's CLOSED band chevron (FacetGroupHeader native mode; ▾ is
   // its open glyph). Inside a 48px-min band button whose content is shorter than 48. Measured 2026-09-28 at
   // 426x836 through gate:today-shape:v2: with ▸/▾ swapped for Roboto '>'/'v', v2-busy / v2-remembered /

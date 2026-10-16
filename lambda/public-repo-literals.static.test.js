@@ -37,8 +37,9 @@ const STRICT_DIRS = [
 const PINNED_DIR = 'tests/harness'
 const DIRS = [...STRICT_DIRS, PINNED_DIR]
 
-// The station MAC is one literal in three files (one hash).
-const STATION_MAC = 'f33ef8fdfbe54e00b60180b1faf5dd150d33986aa0eb6d0b491254cc572ece75'
+// The fake that replaced the station MAC (BUG-HARNESSMACLEAK-001): one literal in three files (one hash), the first of
+// the fake block todayshape-fixture-scrub.mjs writes (AA..EE, then :01, :02, …).
+const FAKE_STATION_MAC = 'd251c62a47a278147552e94daf9013209fc1ec52a753ecbfa2425b8ad94da385'
 const DUMP_PLACEHOLDER_LATLNG = [
   'a51acbe2313bdfba201fe356699731122e272828893a373da17ffff8a324e4f8',
   'c60e5e9bf6f91308e34462771766a9f61aaa8b3fec9615f98235badf8fc8ea0d',
@@ -54,14 +55,15 @@ const HARVEST_AVERAGES = [
   'd008775fa2a756eb3b8b889ffaf30501879a32c176c9ec2926e2720ac07ce7d4',
   'ed305013f6f9b47eb3ea713e1153f0cedf0555ef63b1a7d234932cf5267f9553',
 ]
-const REAL_MAC = 'station_mac copied from a production dump; BUG-HARNESSMACLEAK-001 replaces it with a fake (delete the '
-  + 'mac pin then). The dumps\' lat/lng is the centre of the contiguous US, a placeholder'
+const FAKE_STATION = 'obviously fake MAC (AA..EE then 01) that replaced the station_mac copied from a production dump '
+  + '(BUG-HARNESSMACLEAK-001)'
+const DUMP_FAKES = FAKE_STATION + '. The dumps\' lat/lng is the centre of the contiguous US, a placeholder'
 const HARVEST_FP = 'false positive: computed averages in days, not coordinates'
 
 const KNOWN_AT_BASE = {
-  'tests/harness/raincard.jsx': { mac: [STATION_MAC], reason: REAL_MAC },
-  'tests/harness/_todaymeasure/dailyplan.dave.json': { mac: [STATION_MAC], latlng: DUMP_PLACEHOLDER_LATLNG, reason: REAL_MAC },
-  'tests/harness/_todaymeasure/dailyplan.jen.json': { mac: [STATION_MAC], latlng: DUMP_PLACEHOLDER_LATLNG, reason: REAL_MAC },
+  'tests/harness/raincard.jsx': { mac: [FAKE_STATION_MAC], reason: FAKE_STATION },
+  'tests/harness/_todaymeasure/dailyplan.dave.json': { mac: [FAKE_STATION_MAC], latlng: DUMP_PLACEHOLDER_LATLNG, reason: DUMP_FAKES },
+  'tests/harness/_todaymeasure/dailyplan.jen.json': { mac: [FAKE_STATION_MAC], latlng: DUMP_PLACEHOLDER_LATLNG, reason: DUMP_FAKES },
   'tests/harness/_todaymeasure/README.md': {
     latlng: ['6418cb4858d8b6a376a1d99f2078b73074ba57707ca16305ed2c49953f83e0bb', DUMP_PLACEHOLDER_LATLNG[1]],
     reason: 'the README describes the dumps\' placeholder coordinates',

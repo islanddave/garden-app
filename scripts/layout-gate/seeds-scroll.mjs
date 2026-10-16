@@ -130,7 +130,7 @@
 //   3. CI pins node 20.19.0, which has no global WebSocket — resolveWebSocket(), never a bare global.
 //   4. Fonts differ on the Linux runner, so every position is measured in the run and compared with
 //      itself; no pixel value is spelled here except the chrome heights, which are read from the source.
-//   5. A port that already answers belongs to somebody else (today-shape.mjs) — refused up front.
+//   5. A port that already answers belongs to somebody else (today-shape-v2.mjs) — refused up front.
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

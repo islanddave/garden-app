@@ -1,5 +1,5 @@
 // V5-TODAYREDESIGN-001 S2 — TOP_CHROME_HEIGHT_PX (constants.js) and TopChrome's own BAR_H must be one number.
-// Read off TopChrome's SOURCE with the same pattern the layout gates use (today-shape.mjs:118 and six
+// Read off TopChrome's SOURCE with the same pattern the layout gates use (today-shape-v2.mjs:57 and its
 // siblings), because BAR_H is a module-private literal those gates depend on and cannot be imported.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'

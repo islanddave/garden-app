@@ -10,8 +10,8 @@
 //             the exact source text in the same commit (patterns are EXACT source text; the plugin THROWS on a
 //             miss — a mutant that silently fails to apply would score SURVIVED, the one result that lies).
 //   killers   the §9.1 families expected to kill it (≥ 2 independent ones once all are armed).
-//   oneKiller (optional) why ONE family is all that can see this mutant, for good — the runner prints it instead of
-//             "under-guarded by schedule", which would promise a second family that no slice is going to arm.
+//   oneKiller (optional) why ONE family is all that can see this mutant, for good — the runner lists it instead of
+//             failing it. Since S8c (every slice landed) a mutant red on one killer WITHOUT it fails the matrix.
 //   kind      'chrome' (served mutated, the gate must red) or 'unit-table' (§13 Simplify 3: trigger-predicate
 //             mutants became cells of the triggers.js unit table, today-v2-contract.mjs TRIGGER_CELLS).
 //
@@ -361,7 +361,7 @@ export const MUTANTS_V2 = {
   // replaced the full-height chip cell: the shortened button is now every row's main action (Needs care's Water / Feed
   // / Checked and Protect's Brought in), still read for size by this family alone.
   rainWaterChipShort: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/PlantCareRow.jsx', find: "  minHeight: T.buttonMinHeight, padding: '0 8px', backgroundColor: P.greenPale, borderRadius: T.radiusButton,\n", replace: "  height: 32, alignSelf: 'center', padding: '0 8px', backgroundColor: P.greenPale, borderRadius: T.radiusButton,\n", killers: ['rain-wait-floors'], oneKiller: 'the row keeps its height (its link holds 48px), so no height floor or census moves; the button size is read by this family alone', defect: 'the Water button on a row is 32px tall, under the 48px tap floor' },
-  rainToggleShort: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/RainHold.jsx', find: "const textLink = { flexShrink: 0, minHeight: T.buttonMinHeight, minWidth: T.buttonMinHeight,", replace: "const textLink = { flexShrink: 0, minHeight: 30, minWidth: 30,", killers: ['rain-wait-floors'], oneKiller: 'the line it sits on keeps its own 48px, so the open card is no shorter; the control size is read by this family alone', defect: "the waiting list's Show / Hide is 30px tall, under the 48px tap floor" },
+  rainToggleShort: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/RainHold.jsx', find: "const textLink = { flexShrink: 0, minHeight: T.buttonMinHeight, minWidth: T.buttonMinHeight,", replace: "const textLink = { flexShrink: 0, minHeight: 30, minWidth: 30,", killers: ['rain-wait-floors'], oneKiller: 'the line it sits on keeps its own 48px, so the open card is no shorter; the control size is read by this family alone. The second guard is jsdom (TodayV2RainHold.test.jsx "the Show / Hide control is T.buttonMinHeight (48) tall and wide"), which this matrix does not run', defect: "the waiting list's Show / Hide is 30px tall, under the 48px tap floor" },
   dropRegionInOwner_basisStamp: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '{basis && <p data-testid="today-basis-stamp"', replace: '{false && basis && <p data-testid="today-basis-stamp"', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'basisStamp' (today-basis-stamp) is deleted inside the glance details" },
   // L3: re-pointed at the merged deep-soak line (DryLine) and the compact leaf-wetness mount.
   dropRegionInOwner_droughtLine: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<DryLine plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'droughtLine' (drought-line) is deleted inside the glance details" },

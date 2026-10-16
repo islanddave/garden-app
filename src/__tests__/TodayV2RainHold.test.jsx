@@ -50,6 +50,7 @@ import * as store from '../components/today/v2/needsCareStore.js'
 import { applyGrafts } from '../../tests/harness/_todaymeasure/v2wire.js'
 import { FORECAST_SAT_KINDS } from '../lib/rainHold.js'
 import { COHORT_CAP } from '../lib/todayV2/spots.js'
+import { T } from '../components/forms/formStyles.js'
 
 const PAYLOAD = F('dailyplan.dave.json')
 const PLANTS = (() => { const p = F('plants.json'); return Array.isArray(p) ? p : p.plants })()
@@ -135,6 +136,16 @@ describe('the open card — two honest lines', () => {
     expect(toggle().contains(rows[0])).toBe(false)
     expect(rows[0].closest('button')).toBeNull()
     expect(glance().contains(rows[0])).toBe(true)
+  })
+
+  // L8 review (QA IMPORTANT-4): the jsdom second killer of the catalogue's rainToggleShort — the Show / Hide control
+  // keeps the 48px tap floor both ways (the line it sits on is 48 tall by itself, so the card's height never says).
+  it('the Show / Hide control is T.buttonMinHeight (48) tall and wide', async () => {
+    await mount(ALL.slice(0, 3))
+    const t = screen.getByTestId('rain-waiting-toggle')
+    expect(T.buttonMinHeight).toBe(48)
+    expect(t.style.minHeight).toBe(`${T.buttonMinHeight}px`)
+    expect(t.style.minWidth).toBe(`${T.buttonMinHeight}px`)
   })
 
   it('8 waiting shows itself; 9 waits behind Show, and Show / Hide is the visit\'s', async () => {

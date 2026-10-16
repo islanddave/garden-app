@@ -166,10 +166,11 @@ move every gate's numbers at once and needs every budget re-recorded; it is a ch
 **What it cannot pin**, and how that is caught: generic families (`system-ui`, `sans-serif`,
 `monospace`) cannot be aliased, and a glyph Roboto lacks falls through to the host's fallback.
 `scripts/layout-gate/font-census.mjs` asks Chrome (`CSS.getPlatformFontsForNode`) which font painted
-each element under `#root`; both gates fail on any host-font text except two symbols Roboto 5.3.0
-does not carry — `▾` (the care-group chevron) and `⋯` (the bulk chooser) — which were measured to move
-no box. Their glyph rects still take the host font's height, so the Today gate leaves them out of its
-ink count (on busyfull they were the whole 54.5% / 54.4% Mac–CI difference). To pin another entry:
+each element under `#root`; both gates fail on any host-font text except the few symbols Roboto 5.3.0
+does not carry that are listed, each measured to move no box, in its `HOST_FONT_OK` (the disclosure
+chevrons; the old page's `⋯` bulk chooser left with it at S8c). Their glyph rects still take the host
+font's height, so the v1 Today gate left them out of its ink count (on busyfull they were the whole
+54.5% / 54.4% Mac–CI difference). To pin another entry:
 import `./robotoPin.js` first, re-record its baselines, and run the census on it; a new family in a
 pinned surface's stack belongs in `ALIASES`.
 

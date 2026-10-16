@@ -1415,6 +1415,9 @@ try {
     const pend = state.checks.filter(c => !isArmed(c, LANDED, ARM_ALL))
     armedCount += armed.length
     for (const c of pend) pending.push({ state: state.name, family: c.family, armedAt: c.armedAt })
+    // L8 review (QA MINOR): a REGIONS_V2 row whose slice has not landed is skipped by the region-headcount checker, so it
+    // is PENDING too — zero PENDING covers the region rows as v2contract.test.mjs does, not only the state checks.
+    for (const r of REGIONS_V2.filter(x => (x.state === state.name || x.state === '*') && !isArmed(x, LANDED, ARM_ALL))) pending.push({ state: state.name, family: `region-headcount:${r.id}`, armedAt: r.armedAt })
     const ctx = { state, budget, topsAtReady, topsSettled }
     for (const c of armed) {
       const F = (msg) => fail(at, c.family, msg)

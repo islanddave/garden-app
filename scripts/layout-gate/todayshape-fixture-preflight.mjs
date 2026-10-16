@@ -8,7 +8,7 @@
 // WHY IT RUNS BEFORE ANYTHING ELSE. Every other thing this lane built can be undone by a later
 // commit. Committing a live `user_*` sub or a residence coordinate cannot: git keeps the object,
 // and a rewrite of published history is a different and much larger operation. So this is the one
-// check that is ordered FIRST — it runs as step 0 of gate:today-shape, and it is its own CI step so
+// check that is ordered FIRST — it runs as step 0 of gate:today-shape:v2, and it is its own CI step so
 // a fixture re-dump that reintroduces a sub reds the build in ~200ms without booting a browser.
 //
 // WHAT IT REFUSES, and why these two classes and not "PII" in general:

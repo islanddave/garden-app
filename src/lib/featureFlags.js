@@ -485,8 +485,7 @@ export const SEED_BULK_EXTRACT_ENABLED = false
 // the redesigned Today's Sow link row keeps its door ("All sow windows ›") and shows NO dated "Sow X by …" line —
 // it does not even ask for the candidates. COMPILE-TIME: flip FALSE to un-freeze (the C3 dated 2027 re-prompt, or
 // Dave restarting planning) and the row shows the engine's closing windows above its door again; nothing else
-// changes. It never touches frost alerts. V1 Today's CultivationLead does not read it: V1 keeps its lines until V1
-// is removed (S8c), since its gate:today-shape must stay green unmodified.
+// changes. It never touches frost alerts. (V1 Today's CultivationLead never read it; V1 was removed at S8c.)
 export const SOW_DATED_LINES_FROZEN = true
 
 // V5-SEEDMULTIPARENT-001 release 2b — a jar of saved seed can name MORE THAN ONE parent planting. This ONE

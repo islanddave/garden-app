@@ -97,7 +97,7 @@ export default function GlanceCard({
                     <Icon name="care.sun" size={16} title="day high" style={{ marginTop: 3 }} />
                   </span>}
                   {Number.isFinite(low) && <span style={{ ...tempPair, marginLeft: 2 }}>
-                    <span style={loStyle}>{`${low}°`}</span>
+                    <span data-testid="glance-night-low" style={loStyle}>{`${low}°`}</span>
                     {/* WeatherWidget's crescent, copied: it has no registry twin (see its note there). */}
                     <svg width="11" height="11" viewBox="0 0 24 24" style={{ marginTop: 2 }} role="img" aria-label="night low"><path d="M20 14.5A8 8 0 1 1 10.5 4 6.3 6.3 0 0 0 20 14.5Z" fill={P.mid} /></svg>
                   </span>}

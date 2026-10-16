@@ -185,6 +185,81 @@ describe('Needs care on Dave\'s 09-24 plan', () => {
   })
 })
 
+// L8 review (QA IMPORTANT-1/2): the per-row Skip and the one-tap row's in-flight guard, specified on the redesign's own
+// row — ported from the retired CareNeeded.test.jsx / CareNeededSkipUndo.test.jsx ("skip suppresses a row for today
+// without writing an event", "a skip puts an Undo on screen that names the plant", "Undo brings the row back and
+// takes it out of the stored set") and CareNeededMoistureCheck.test.jsx's "the in-flight guard" (BUG-BULKDOUBLELOGINFLIGHT-001).
+describe('a Bag Area row: Skip, and two taps inside one batch', () => {
+  const openBag = async () => { fireEvent.click(within(spot('Bag Area')).getAllByRole('button', { expanded: false })[0]); await settle() }
+  const rowOf = (n) => [...document.querySelectorAll('[data-testid="care-exceptions-row"]')].find((r) => r.textContent.includes(n))
+  const doneRow = (key) => document.querySelector(`[data-testid="care-row-done"][data-key="${key}"]`)
+
+  it('Skip <plant> today posts nothing, leaves "<plant> · skipped" with an Undo naming it, and stores the key; Undo brings the row back and drops the key', async () => {
+    await mount(); await openBag()
+    const row = rowOf('Red Acre Cabbage')
+    const key = row.getAttribute('data-key')
+    fireEvent.click(within(row).getByRole('button', { name: 'Skip Red Acre Cabbage today' }))
+    await settle()
+    expect(wire.posts.length).toBe(0)
+    expect(rowOf('Red Acre Cabbage')).toBeUndefined()
+    const done = doneRow(key)
+    expect(done.textContent).toContain('Red Acre Cabbage · skipped')
+    const undo = within(done).getByRole('button', { name: 'Undo: Red Acre Cabbage skipped' })
+    expect(readSkipped().has(key)).toBe(true)
+    expect(readSkipped().size).toBe(1)
+    fireEvent.click(undo)
+    await settle()
+    expect(doneRow(key)).toBeNull()
+    expect(rowOf('Red Acre Cabbage').getAttribute('data-key')).toBe(key)
+    expect(readSkipped().has(key)).toBe(false)
+    expect(wire.posts.length).toBe(0)
+    expect(wire.deletes.length).toBe(0)
+  })
+
+  it('with writes held (a seeded Back remount), the row\'s Skip is inert: nothing stored, no done line', async () => {
+    planState.current = { data: PAYLOAD, loading: false, error: null, reload: vi.fn(), seedPending: true }
+    await mount(); await openBag()
+    const row = rowOf('Red Acre Cabbage')
+    const key = row.getAttribute('data-key')
+    const skip = within(row).getByRole('button', { name: 'Skip Red Acre Cabbage today' })
+    expect(skip.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(skip)
+    await settle()
+    expect(readSkipped().size).toBe(0)
+    expect(doneRow(key)).toBeNull()
+    expect(rowOf('Red Acre Cabbage').getAttribute('data-key')).toBe(key)
+    expect(wire.posts.length).toBe(0)
+  })
+
+  // Two clicks inside ONE act: React has not re-rendered between them, so only the run's in-flight claim
+  // (excludeInFlight on the one-tap row path) keeps the second from posting the same planting again.
+  it('Moist tapped twice in one batch posts once', async () => {
+    await mount(); await openBag()
+    const b = within(rowOf('Red Acre Cabbage')).getByRole('button', { name: 'Checked Red Acre Cabbage — still moist' })
+    act(() => { b.click(); b.click() })
+    await settle()
+    expect(wire.posts.map((p) => p.event_type)).toEqual(['moisture_check'])
+  })
+
+  it('Log Water tapped twice in one batch posts once', async () => {
+    await mount(); await openBag()
+    const b = within(rowOf('Red Acre Cabbage')).getByRole('button', { name: 'Log Water for Red Acre Cabbage' })
+    act(() => { b.click(); b.click() })
+    await settle()
+    expect(wire.posts.map((p) => p.event_type)).toEqual(['watering'])
+  })
+
+  it('Moist then Water on the same row in one batch posts once — the check in flight blocks the Water', async () => {
+    await mount(); await openBag()
+    const r = rowOf('Red Acre Cabbage')
+    const m = within(r).getByRole('button', { name: 'Checked Red Acre Cabbage — still moist' })
+    const w = within(r).getByRole('button', { name: 'Log Water for Red Acre Cabbage' })
+    act(() => { m.click(); w.click() })
+    await settle()
+    expect(wire.posts.map((p) => p.event_type)).toEqual(['moisture_check'])
+  })
+})
+
 // Finish plan §3.5 (Dave's D17, 2026-10-14): the jump bar's Water / Feed / Check cells ARE Needs care's task filter —
 // one set, one task or all. The task row that used to sit inside Needs care is gone; its spot chips stay. Drives the
 // real cells and reads the real list.

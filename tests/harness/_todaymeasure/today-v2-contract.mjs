@@ -573,7 +573,10 @@ export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibi
   // BUG-DEFERNOSTRESSOVERRIDE-001: tap sizes of the "Waiting for rain" list in the open glance card.
   'rain-wait-floors',
   // Pre-L7 QA (prepromote-v5-qa.md IMPORTANT 1): an opened spot's L5 anatomy, its controls' boxes, and their reach.
-  'spot-anatomy', 'spot-floors', 'spot-reach']
+  'spot-anatomy', 'spot-floors', 'spot-reach',
+  // L8 review (QA IMPORTANT-3): a family only a check's own flow emits — group-water-all's "every spot keeps its slot".
+  // Named here so the mutation runner counts it as armed (mutate-today-shape-v2.mjs).
+  'spot-order']
 
 // §13 Simplify 3: the trigger-predicate mutants (ignoreRemembered, rememberedBeatsUrgent, staleAutoOpens,
 // chillOpensEveryNight, headsupAlwaysOpen, householdAlwaysOpen, glanceOpenByDefault) are no longer real-Chrome

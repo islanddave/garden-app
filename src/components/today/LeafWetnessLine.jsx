@@ -3,7 +3,8 @@
 // ONE ambient line for the whole garden, on the screen Dave already opens daily. Nothing on a day the
 // signal is quiet — which, measured against the 122-day archive, is 77% of days (28 of 122 qualify).
 //
-// MOUNTED IN Today.jsx IN THE SAME CHANGE AS THIS FILE. Stated here because the sibling DroughtLine
+// MOUNTED IN Today.jsx IN THE SAME CHANGE AS THIS FILE (since S8c, L8: in the redesign's GlanceCard.jsx, compact;
+// the old Today.jsx is gone). Stated here because the sibling DroughtLine
 // shipped UNMOUNTED and its header still carries the "⚠ NOT MOUNTED" warning it was written with —
 // "shipped but never rendered" is the failure this project keeps hitting, and the mount assertion in
 // leafWetnessLine.test.jsx exists so this one cannot regress into it silently.

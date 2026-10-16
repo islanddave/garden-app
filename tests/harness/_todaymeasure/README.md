@@ -143,6 +143,6 @@ npm run gate:today-shape:preflight
 "Viewport (CSS px)"). The gate was built at 390x844, the iPhone 12/13/14 preset, while the width was
 an open question. Android's Display size setting moves the CSS width on the same hardware, so if the
 phone's setting changes, re-read the row and re-point with
-`GATE_VIEWPORT_W=<w> GATE_VIEWPORT_H=<h> npm run gate:today-shape:record` plus the defaults in the
-gate. The budget records the viewport and the pinned clock it was captured at, and the gate refuses
+`GATE_VIEWPORT_W=<w> GATE_VIEWPORT_H=<h> npm run gate:today-shape:v2:record` plus the defaults in the
+gate (`VIEWPORT` in scripts/layout-gate/today-shape-v2.mjs). The budget records the viewport and the pinned clock it was captured at, and the gate refuses
 a mismatch on either rather than comparing across them.

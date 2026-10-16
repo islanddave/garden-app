@@ -100,14 +100,15 @@ describe('Today — /api/plants is fetched once per paint, not once per section'
   // redesign. A member's section (HouseholdSection → useNeedsCare) mounts at the ready point, after the page's own
   // /api/plants read has settled, and useCachedFetch revalidates on every mount, so the in-flight dedup cannot
   // collapse it: TWO /api/plants (and two /api/locations) per paint with the household view on. The old page
-  // mounted its household lists in the same render as its own. Reported in the L8 hand-back; pinned as a known
-  // failure so the fix flips this to a plain `it` (it.fails goes red the day the dedup holds).
-  it.fails('with the household view on, a member\'s section adds no second /api/plants request', async () => {
+  // mounted its household lists in the same render as its own. Ledger BUG-TODAYHOUSEHOLDREFETCH-001. Pinned EXACTLY
+  // (L8 review MINOR): the fix (1) and a worsening (3+) both go red, and the precondition — her section is on the page —
+  // is asserted where a failure cannot pass for the known one. The fix changes the 2 to a 1 and drops the label.
+  it('KNOWN BUG (ledger BUG-TODAYHOUSEHOLDREFETCH-001): with the household view on, a member\'s section adds a second /api/plants request — exactly 2 today', async () => {
     writeShowOthers(true)
     planState.current = { data: { ...planState.current.data, household_plans: [{ user_id: 'member_jen', plan: JEN }] }, loading: false, error: null, reload: vi.fn() }
     await mount()
     expect(screen.getByTestId('today-household')).toBeTruthy()
-    expect(callsTo('/api/plants')).toBe(1)
+    expect(callsTo('/api/plants')).toBe(2)
   })
 
   it('a revisit paints from the cache and revalidates once, not once per section', async () => {
