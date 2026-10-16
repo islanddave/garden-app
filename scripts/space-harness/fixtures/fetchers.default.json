@@ -1,0 +1,13 @@
+{
+ "_note": "Default C-HARNESS fetcher fixture: one dry, mild day. Both arms read the same values. A live use passes its own recorded fixture with --fixture; keep coordinates at 2 decimals or fewer and no station id here (the 1.13 literal scan covers this directory).",
+ "etHour": 15,
+ "geocode": { "lat": 42.5, "lng": -72.7 },
+ "nws": { "tonightLow": 55, "highToday": 70, "code": 1, "short": "Mostly Sunny", "unit": "F" },
+ "precip": {
+  "recent_precip_in": 0, "today_precip_in": 0, "today_pop": 5,
+  "upcoming_precip_in": 0, "tomorrow_precip_in": 0, "tomorrow_pop": 5,
+  "today_observed_in": 0, "today_remaining_in": 0
+ },
+ "rainForecast": null,
+ "station": null
+}
