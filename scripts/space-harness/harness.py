@@ -658,7 +658,10 @@ def do_run(args, src, use, env=None):
         if not v["positive_control"]["ok"]:
             v["faults"].append(f"positive control '{pc['name']}': {v['positive_control']['reason']} "
                                f"(harness fault, never a pass)")
-        v["diffs"] += needle_hits(use.get("needles_absent"), binds, arms, conns)
+        try:
+            v["diffs"] += needle_hits(use.get("needles_absent"), binds, arms, conns)
+        except HarnessFault as ex:    # a needle that cannot be looked for was not looked for: never a pass
+            v["faults"].append(f"needles_absent: {ex}")
         if b_equals_a(v, arms):
             v["faults"].append("B = A: nothing tells B from A (no row, call, log or control difference)")
     finally:
@@ -696,8 +699,9 @@ def emit(v, out_path):
         print(f"  arm {s}: exit={a.get('exit')} rows={a.get('rows')} calls={a.get('calls')} "
               f"error={(a.get('error') or '-').splitlines()[0][:200]}")
     for c in v.get("allowed_diff_counts") or []:
-        print(f"  allowed {c['table']} [{c['where']}] side={c['side']}: matched a={c['matched_a']} "
-              f"b={c['matched_b']}, removed a={c['removed_a']} b={c['removed_b']}")
+        print(f"  allowed {c['table']} [{c['where']}] side={c['side']}: " + (
+            "table did not differ" if c["matched_a"] is None else
+            f"matched a={c['matched_a']} b={c['matched_b']}, removed a={c['removed_a']} b={c['removed_b']}"))
     if v.get("positive_control"):
         pc = v["positive_control"]
         print(f"  positive control '{pc['name']}' ({pc['kind']}): counts={pc.get('counts')} ok={pc['ok']}")

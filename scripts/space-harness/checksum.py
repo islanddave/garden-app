@@ -272,7 +272,8 @@ def stray_write_selftest(conn_b, snap_a, cfg, target=None, tables=None):
             problems.append(f"{fq} has no row to write a stray change to")
         elif not any(stray_set(n, t) for n, t in plan_tables[fq]["kept"]):
             problems.append(f"{fq} has no compared column a stray write can change")
-    cands = stray_candidates(snap_a, plan_tables, target, [t for t in tables if t not in absent])
+    unfit = {p.split(" ", 1)[0] for p in problems}
+    cands = stray_candidates(snap_a, plan_tables, target, [t for t in tables if t not in absent and t not in unfit])
     tried, hits = [], []
     _exec(conn_b, "BEGIN")
     try:

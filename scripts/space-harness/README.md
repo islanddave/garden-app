@@ -5,11 +5,12 @@ prod forked at the same point, and gives one of three verdicts:
 
 | Verdict | Exit | Meaning |
 |---|---|---|
-| PASS | 0 | A and B matched before the change, the instrument saw a stray write, the named positive control was seen where it should be (and not where it should not), and every difference is one the use allows. |
-| DIFF | 1 | The change did something the use does not allow: a business row, an alert or an outbound call differs. Do not apply. |
-| FAULT | 3 | The instrument cannot vouch for itself: A ≠ B before the change, the stray write was invisible, the positive control is missing (or the use names none), the sentinel could not be read, or anything crashed. **Never a pass.** Record it and make a new pair. |
-| (usage) | 2 | Bad arguments. |
-| REFUSED | 4 | A precondition said do not start: the fleet is full, the minute is too close to :00, a pair name is taken, or an offline URL is not loopback. |
+| PASS | 0 | A and B matched before the change, the instrument saw a stray write in every table the use measures, both arms ran `run()` to success, the named positive control was seen on its side and not on the other, something told B from A, and every difference is one the use allows. |
+| DIFF | 1 | The change did something the use does not allow: a business row, an alert (topic, subject or body) or an outbound call differs, or a `needles_absent` needle was found. Do not apply. |
+| FAULT | 3 | The instrument cannot vouch for itself: A and B are one database, A ≠ B before the change, a stray write was invisible (or a measured table has no row to write to), an arm exited with anything but success, the positive control is missing or seen on both sides, **B = A** (no change given, one SHA twice, or nothing tells B from A), the sentinel could not be read, or anything crashed. **Never a pass.** Record it and make a new pair. |
+| (usage) | 2 | Bad arguments (including `--base-sha` = `--candidate-sha`, and `--pair` with `--local-pg`). |
+| REFUSED | 4 | A precondition said do not start: the fleet budget, the minute is too close to :00, a pair name is taken, the pair record does not match what Neon says, the two URLs are one database, or an offline URL is not loopback. |
+| DATA-ONLY | 5 | `--no-arms`: the data comparison passed but `run()` was not measured. Not a pass. |
 
 ## Files
 
@@ -28,18 +29,42 @@ prod forked at the same point, and gives one of three verdicts:
 
 - **Tables.** Every base table in `public` (a use can add schemas), except the volatile tables `app_events`,
   `ux_events` and `rate_limit_buckets`.
-- **Columns.** Business columns only. A column is left out when it is named `created_at`, `updated_at` or
-  `generated_at`, when its DEFAULT draws a fresh value (`gen_random_uuid()`, `uuid_generate_v4()`, `now()`,
-  `nextval()`, ...), or when the use names it in `volatile_columns`. jsonb keys named in `jsonb_volatile_keys`
-  are stripped (`daily_plan.plan → prior_runs` by default). Every exclusion is written to the verdict file.
+- **Columns.** Every column except `created_at` and `updated_at`, and the ones the use names in
+  `volatile_columns` (an explicit list per use, printed with the verdict, table by table). A DEFAULT of `now()`
+  or `gen_random_uuid()` is never a reason to leave a column out: the code writes such columns too
+  (`event_log.event_date`), and a fork carries equal values in them. Rows both arms insert get different ids
+  and timestamps: name those columns (`daily_plan.id`, `daily_plan.generated_at`, ... — the example use shows
+  the ones the offline rehearsal needed). jsonb keys named in `jsonb_volatile_keys` are stripped
+  (`daily_plan.plan → prior_runs` by default).
 - **Order.** Each row's business columns form one text value; a table's checksum is the md5 of its row md5s
   ordered by that value (`COLLATE "C"`). The business key is the whole business row, so two tables match only
   when they hold the same multiset of business rows, whatever their uuids and timestamps.
 - **Calls.** Each arm records every outbound effect by destination: `publishAlert` (`sns:<topic>`), AWN
   (`fetchStation` and any fetch to `api.ambientweather.net`, recorded as `awn:<sha256 tag>`, never the device
   id), Graph (any fetch to `graph.facebook.com`, `graph:<node>/<edge>`, never the token), the weather fetchers
-  (`grid:<lat>,<lng>` at 1 decimal) and any other host (`fetch:<host>`). Global `fetch` is replaced for the
-  run: nothing reaches the network. Alert lists and call lists are compared as multisets.
+  (`grid:<lat>,<lng>` at 2 decimals) and any other host (`fetch:<host>`). Global `fetch` is replaced for the
+  run, and every TCP connect (`node:net`, `tls`, `http`, `https`, an SDK, a WebSocket, a second pg client) passes
+  a guard that allows only the arm's own database (and, offline, its in-process proxy); anything else is
+  recorded as a `net` call and refused. Calls are compared as multisets of (stub, destination, subject, a
+  hash of the message body).
+- **Allowed differences.** Each `allowed_diffs` entry reports how many rows its predicate matched on each side
+  and how many differing rows it removed, so a broad predicate cannot blind a table without showing it.
+- **The stray write.** Before the change, one value is changed (inside a transaction that is rolled back) in
+  every table the use measures — its row control's table, `allowed_diffs` tables, `volatile_columns` and
+  `jsonb_volatile_keys` tables, `needles_absent` row tables, `stray_target`, and `daily_plan` when arms run —
+  and each must show as a diff. A measured table with no row is a FAULT: seed it (offline) or drop it.
+
+## The arms' environment
+
+Each arm gets only `PATH`, `HOME`, `TMPDIR`, `TZ`, `LANG`, `LC_ALL`, its own URL (`HARNESS_DSN`),
+`AWS_EC2_METADATA_DISABLED=true`, and the Lambda's flags: the values in `scripts/lambda-config-expected.json`
+(`garden-daily-plan.env`, the checked-in copy of the live function's configuration that
+`check-lambda-config.py` enforces). A string is set as it is, `null` is unset, and `true` (present, value varies:
+`SYSTEM_CLERK_SUB`, `OWNER_FALLBACK_SUB`, `GARDEN_HOUSEHOLD_IDS`, `AWN_STATIONS_JSON`) is taken from the
+operator's environment only when exported there. A use's `flags` override the manifest, and `requires_flags`
+FAULTs a run whose arms would have a needed flag off. Never `NEON_*`, `*DATABASE_URL*`, `AWS_*` or anything
+secret-shaped; an arm that reports such a key it was not given is a FAULT. The effective flag map (no
+passed-through value) is printed and written to the verdict.
 
 ## The use file
 
@@ -56,11 +81,18 @@ prod forked at the same point, and gives one of three verdicts:
 }
 ```
 
+- Unknown keys are refused (a typo such as `stray_targett` would otherwise fall back silently).
 - `positive_control` is **required and named**. Kinds:
   - `log`: a console JSON line whose keys include `match` (e.g. `{"msg": "space-wx", "space": "$indoor"}`);
   - `destination`: a recorded call of `stub` whose fields include `match` (e.g. `{"destination": "sns:ops"}`);
   - `row`: `SELECT count(*) FROM <table> WHERE <where>` on each branch.
-  It must be seen on `present_on` (default `b`) and not on `absent_on` (default `a`; `null` = no check).
+  It must be seen on `present_on` (default `b`) and NOT on the other side. `absent_on` can only name that other
+  side: B = A must fault, and no use can switch that off. With arms, a row control must not already be true
+  before the arms run (it would show the data change, not `run()`).
+- `needles_absent`: `[{"needle": "$indoor", "sides": ["a"], "surfaces": ["console", "calls",
+  "rows:public.daily_plan"], "destination": "sns:<topic>"}]` — a needle found on a listed side and surface is a
+  DIFF (`destination` limits `calls` to one destination, e.g. "B's Space never in Dave's alert").
+- `flags` / `requires_flags`: see "The arms' environment".
 - `binds` are read on B after the change, each one value. `sentinel` is always bound, from
   `gv.sentinel_workspace()` on both branches (they must agree). No Space id is ever written in this
   directory: refer to `$sentinel` / `$name` in `match`, and `%(name)s` in SQL (`%%` for a literal `%`).
@@ -104,8 +136,11 @@ runs only when the fleet allows (build sheet P20: `list` shows 6 or fewer tempor
 counts against the same budget as the day's `--slug ms1` safety copy. Neither branch is ever deleted by the
 harness; both expire one day after creation.
 
-1. **Fleet.** `python3 scripts/neon_safety_branch.py --env-file ../garden-app/.env.local list`. Six or
-   fewer temporary branches, or wait. (`harness.py fleet` refuses at 9.)
+1. **Fleet.** `python3 scripts/space-harness/harness.py fleet --env-file ../garden-app/.env.local`. It counts
+   self-cleaning branches the way integrity-weekly does (`neon_branch_select.self_cleaning`) and refuses when
+   they + 2 for the pair + 1 held for the day's `--slug ms1` sitting copy (until it exists) exceed
+   `NEON_MAX_EXPIRING` (default 6): 3 or fewer before the sitting copy, 4 or fewer after it. (Row 1.12's
+   "refuse at 9" and P20's "6 or fewer" both miss that integrity-weekly caps expiring branches at 6.)
 2. **Minute.** Between :10 and :50 UTC (the hourly writers run at :00). `pair` refuses outside it.
 3. **Pair.**
    `python3 scripts/space-harness/harness.py pair --step 1.12 --env-file ../garden-app/.env.local --out $S/pair.json`
@@ -114,17 +149,21 @@ harness; both expire one day after creation.
    `parent_timestamp` when A reports no LSN). `pair.json` holds ids and hosts, no password.
 4. **Driver.** Each arm loads `@neondatabase/serverless` and `ws` from its tree's `lambda/daily-plan/node_modules`:
    `npm install --prefix <tree>/lambda/daily-plan --no-save --legacy-peer-deps`, or pass `--driver` and `--ws`.
-5. **Environment.** Both arms inherit one environment. Export the prod engine flags and
-   `GARDEN_HOUSEHOLD_IDS`/`SYSTEM_CLERK_SUB` exactly as the live Lambda has them (the `f2-raindepth-soak.mjs`
-   note applies: without the flags the arms are not the shipped behaviour). Pass a recorded fetcher fixture
-   with `--fixture` if the default dry day is not the point.
+5. **Environment.** The flags come from the manifest (see "The arms' environment"). Export
+   `GARDEN_HOUSEHOLD_IDS`, `SYSTEM_CLERK_SUB`, `OWNER_FALLBACK_SUB` and `AWN_STATIONS_JSON` as the live Lambda has
+   them if the use needs them (name them in `requires_flags`). Pass a recorded fetcher fixture with `--fixture`
+   if the default dry day is not the point; keep it free of station ids and of coordinates past 2 decimals.
 6. **Run.** Data change:
    `harness.py run --pair $S/pair.json --env-file ../garden-app/.env.local --use <use.json> --b-sql <change.sql> --today <YYYY-MM-DD> --out $S/verdict.json`.
    Code change: replace `--b-sql` with `--base-sha <base> --candidate-sha <candidate>` (two clean detached
    worktrees are added under `--trees-dir` and removed afterwards unless `--keep-trees`).
-   Each URL is asked of the Neon API for the pair's own endpoint (`branch_id`, `endpoint_id`, `neondb`,
-   `neondb_owner`, `pooled=false`) and refused unless its host is that endpoint and not one of
-   `PROTECTED_ENDPOINTS` in `tests/integration/_cleanup.js`.
+   Before any URL is asked for, each side is read back from the Neon API (`GET branches/{id}`,
+   `GET endpoints/{id}`): the branch must be named `sitting-harness-…-<side>-prod-preapply-<date>`, be a child
+   of prod that expires within 48 hours, and not be default or protected; the endpoint must belong to it, be at
+   the recorded host and not be one of `PROTECTED_ENDPOINTS` (`tests/integration/_cleanup.js`); A and B must
+   differ in branch, endpoint and host. Then each URL is asked for that endpoint (`branch_id`, `endpoint_id`,
+   `neondb`, `neondb_owner`, `pooled=false`) and refused unless its host is that endpoint. Once connected, an
+   advisory-lock probe proves the two URLs are two databases.
 7. **Read the verdict.** `run` does, in order: self-test 0 (A = B), the stray-write self-test (one UPDATE on
    B inside a transaction, read, rolled back, then B = A again), the sentinel read, the change on B, arm A,
    arm B, the binds, checksums, call lists, the positive control. PASS / DIFF / FAULT as above.

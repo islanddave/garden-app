@@ -19,7 +19,8 @@
  "allowed_call_diffs": [],
  "volatile_columns": {
   "public.daily_plan": ["id", "generated_at"],
-  "public.audit_events": ["id", "ts"]
+  "public.audit_events": ["id", "ts"],
+  "public.plant_anchor_derivation": ["id"]
  },
  "jsonb_volatile_keys": {}
 }
