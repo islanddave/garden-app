@@ -49,7 +49,7 @@
     "lambda": 5,
     "lambda/achievements": 1,
     "lambda/critter": 4,
-    "lambda/daily-plan": 2,
+    "lambda/daily-plan": 3,
     "lambda/daily-plan-read": 3,
     "lambda/dashboard": 7,
     "lambda/events": 10,
@@ -91,7 +91,8 @@
     ],
     "lambda/daily-plan": [
       "locations-columns.test.js",
-      "select-columns.test.js"
+      "select-columns.test.js",
+      "spaces-columns.test.js"
     ],
     "lambda/daily-plan-read": [
       "event-log-columns.test.js",
@@ -282,5 +283,13 @@
     "unit_test_files_total": 1496,
     "_definition": "git ls-files matching .(test|spec).[cm]?[jt]sx? and not under tests/integration/ (the unit run's exclude in vitest.config.ts). Total 1496 = src 967, lambda 519, scripts 5, migrations 3, tests 2. Outside src and not .jsx: 529."
   },
-  "raises": []
+  "raises": [
+    {
+      "what": "lambda/daily-plan",
+      "from": 2,
+      "to": 3,
+      "why": "spaces-columns.test.js declares the daily-plan `spaces` read (multi-space Phase 1 step 1.6). Neither existing file can take the key: locations-columns.test.js is keyed but pins its key set to exactly ['locations'] (locations-columns.test.js:134, 'One relation, one file'), and select-columns.test.js declares AUDIT_TABLES = ['weather_daily'] and asserts it (select-columns.test.js:72), so the auditor would cross-product spaces columns onto weather_daily.",
+      "work_item": "BUG-SPACESREADUNSCOPED-001"
+    }
+  ]
 }
