@@ -6,7 +6,7 @@
 //
 // The single-group row is byte-identical to before the guard: recorded on the base (51a97146) and replayed after it
 // for one user flag off and on, two users in one Space, and two Spaces with two owners (lane C2 record-and-replay,
-// project-state/_multispace-20261015/lanes/C2.md). The cases below pin the behaviour that replay cannot see.
+// project-state/_multispace-20261015/lanes/C2.log). The cases below pin the behaviour that replay cannot see.
 //
 // MUTATION LOG — 2026-10-16, lane t3-ms1-c2. Each applied alone, this file run, RED observed, handler.js restored:
 //   * firstGroupItems always returns the incoming items (the second group overwrites)  -> 2 RED
