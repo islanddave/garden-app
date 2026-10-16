@@ -6,19 +6,21 @@
 //   node scripts/layout-gate/today-shape-v2.mjs --self-test      # arm every check against an EMPTY V2; must red the census
 //   node scripts/layout-gate/today-shape-v2.mjs --record         # write the v2 budget for the ARMED floors (clean tree only)
 //
-// WHAT IT IS. The plan-v2 §9.1 contract — 21 states, assertions (a)–(m), the REGIONS map — held as DATA in
-// tests/harness/_todaymeasure/today-v2-contract.mjs and run here against tests/harness/todaymeasure.html?v2=1
-// (the real TodayRoute chooser under the real AuthProvider and PrefsProvider, only the wire stubbed), served by
-// tests/harness/vite.harness.v2.mjs. A NEW script: scripts/layout-gate/today-shape.mjs (v1) stays byte-identical
-// and keeps gating the default route until S8c; the helpers below are COPIED from it, to be unified at S8c.
+// WHAT IT IS. The plan-v2 §9.1 contract — 22 states, assertions (a)–(m), the REGIONS map — held as DATA in
+// tests/harness/_todaymeasure/today-v2-contract.mjs and run here against tests/harness/todaymeasure.html (the real
+// TodayV2 page under the real AuthProvider and PrefsProvider, only the wire stubbed), served by
+// tests/harness/vite.harness.v2.mjs. Since S8c (L8) it is THE Today gate: the old page, its gate
+// (scripts/layout-gate/today-shape.mjs), that gate's budget, recorder and mutation matrix are gone, and the helpers
+// below that were COPIED from it are now the only copy.
 //
-// ARMED vs PENDING. Every check names the slice(s) whose surface it measures. Checks whose slices have not
-// landed (today-v2-contract.mjs LANDED) are PENDING: printed, counted, never passed. What is armed at S0 is the
-// instrument itself: viewport, clock, timezone, font pin, stubbed weather, no live request, a complete fixture
-// ledger, the V2 flag and seeds written, the critter origin served, and the prefs GET observed exactly once
-// (seam b). The census that will judge the V2 surface is proved able to fail BEFORE it arms by --self-test.
+// ARMED vs PENDING. Every check names the slice(s) whose surface it measures; a check is PENDING while one of
+// them has not landed (today-v2-contract.mjs LANDED). Every slice has landed since S8c, so a PENDING check is a
+// FAILURE now ([instrument], below), never a note: plan-v2 §8 S8c's DoD is zero PENDING. The instrument is armed
+// on every state: viewport, clock, timezone, font pin, stubbed weather, no live request, a complete fixture
+// ledger, the state's seeds written, the critter origin served, and the prefs GET observed exactly once (seam b).
+// The census is proved able to fail by --self-test.
 //
-// REFUSALS CARRIED OVER FROM v1 (today-shape.mjs:465-535, 744-764, 841-854): the fixture preflight runs first;
+// REFUSALS CARRIED OVER FROM the retired v1 gate: the fixture preflight runs first;
 // a page that does not self-report innerWidth === 426 is VOID (macOS floors an OS window at ~500px, so geometry
 // comes from Emulation.setDeviceMetricsOverride, never --window-size); a clock that is not pinned, a host font,
 // a live third-party request or a missing fixture is a failure, never a note; --record refuses a dirty tree.
@@ -1053,7 +1055,7 @@ async function spotRetry(c, at, F) {
 // NOT asserted, because it is known open and would be a false pass or a standing red: a Cover all left mid-run draws
 // no done line on Back (MINOR-1, same on prod); Feed all leaves no done line and no Undo (MINOR-4); the `alive`
 // gap (Q4) — the away flow releases its held POST 300 ms after the away page is up, well clear of it.
-const stateUrl = (state, extra = '') => `http://localhost:${PORT}/tests/harness/todaymeasure.html?state=${state.name}&v2=1&badge=0&clock=${encodeURIComponent(state.clock)}${SELF_TEST ? '&v2stub=1' : ''}${extra}`
+const stateUrl = (state, extra = '') => `http://localhost:${PORT}/tests/harness/todaymeasure.html?state=${state.name}&badge=0&clock=${encodeURIComponent(state.clock)}${SELF_TEST ? '&v2stub=1' : ''}${extra}`
 const TQ = (id, extra = '') => `[data-testid="${id}${SUFFIX}"]${extra}`
 const qs = (q) => `document.querySelector(${JSON.stringify(q)})`
 const attrQ = (v) => String(v).replace(/["\\]/g, '\\$&')
@@ -1388,8 +1390,8 @@ try {
       fail(at, 'void', `VOID — page self-reports ${m.vw}x${m.vh} (screen.width ${m.screenW}, visual viewport ${m.vvW}px); emulation did not take, so every number here is from the wrong layout (never --window-size)`); continue
     }
     if (m.harness.error) fail(at, 'instrument', `the page raised "${m.harness.error}" while mounting`)
-    if (!v2?.requested || v2.problem) fail(at, 'instrument', `the V2 seam did not engage: ${v2?.problem || 'v2 not requested'}`)
-    if (v2.flag !== '1') fail(at, 'instrument', `localStorage garden.todayV2 is ${JSON.stringify(v2.flag)}, expected "1" (seam a)`)
+    if (!v2 || v2.problem) fail(at, 'instrument', `the harness did not take the contract state: ${v2?.problem || 'no __h.v2() report'}`)
+    if (!SELF_TEST && v2?.route !== 'present') fail(at, 'instrument', `the harness mounted route '${v2?.route}', not the page App mounts at /today`)
     if (!v2.critterOrigin) fail(at, 'instrument', 'VITE_API_CRITTERS is not defined — the harness is not on vite.harness.v2.mjs, so the prefs GET can never go out')
     if (!m.harness.clock.pinned) fail(at, 'instrument', `the clock is NOT pinned (${m.harness.clock.now})`)
     else if (m.harness.clock.iso !== state.clock) fail(at, 'instrument', `the clock is pinned to ${m.harness.clock.iso}, the contract says ${state.clock}`)
@@ -1403,7 +1405,7 @@ try {
     for (const p of m.harness.liveRequests || []) fail(at, 'instrument', `a third-party request ESCAPED the harness to the live network — ${p}`)
     for (const f of m.harness.fixtures.filter(f => !f.ok || f.bytes === 0)) fail(at, 'fixture', `fixture ${f.name} is unusable (${f.why || 'zero bytes'})`)
     for (const need of ['v2-grafts.json', 'locations.full.json', state.prefs]) if (!m.harness.fixtures.some(f => f.name === need && f.ok)) fail(at, 'fixture', `fixture ${need} was not loaded — the state is not the one the contract names`)
-    const wantSeeds = 1 + (state.local?.todaySeen ? 1 : 0) + (state.local?.mirror ? 1 : 0) + (state.local?.showOthers ? 1 : 0) + (state.local?.skipped ? 1 : 0)
+    const wantSeeds = (state.local?.todaySeen ? 1 : 0) + (state.local?.mirror ? 1 : 0) + (state.local?.showOthers ? 1 : 0) + (state.local?.skipped ? 1 : 0)
     if ((v2.seeds || []).length !== wantSeeds) fail(at, 'instrument', `${(v2.seeds || []).length} device seed(s) written (${(v2.seeds || []).join(', ')}), the contract asks for ${wantSeeds}`)
     if (state.redate && v2.planDate !== state.redate) fail(at, 'instrument', `the plan is dated ${v2.planDate}, the contract re-dates it to ${state.redate}`)
     if (SELF_TEST && v2.route !== 'stub') fail(at, 'instrument', `--self-test expected the stub V2 mounted, got route '${v2.route}'`)
@@ -1460,12 +1462,14 @@ try {
   try { rmSync(udd, { recursive: true, force: true }) } catch { /* best effort */ }
 }
 
-// ── PENDING, printed loudly and counted — never passed.
+// ── PENDING: since S8c every slice has landed, so a check still PENDING is a contract that names a slice
+// that does not exist (or a LANDED list someone shortened). Each is a failure — not measured is not passed.
 const byState = {}
 for (const p of pending) (byState[p.state] ||= []).push(`${p.family}@${[].concat(p.armedAt).join('+')}`)
 if (pending.length) {
-  console.log(`\n[today-shape-v2] PENDING — ${pending.length} check(s) across ${Object.keys(byState).length} state(s) are NOT MEASURED and NOT PASSED (their slices have not landed):`)
+  console.log(`\n[today-shape-v2] PENDING — ${pending.length} check(s) across ${Object.keys(byState).length} state(s) are NOT MEASURED and NOT PASSED:`)
   for (const [s, list] of Object.entries(byState)) console.log(`  ⏸ ${s}: ${list.join(', ')}`)
+  if (!SELF_TEST && !PROBE_NOTHING) for (const p of pending) fail(`${p.state}@${VIEWPORT.w}x${VIEWPORT.h}`, 'instrument', `[${p.family}] is PENDING (arms at ${[].concat(p.armedAt).join('+')}) — every slice has landed since S8c, so zero PENDING is the contract`)
 }
 
 if (RECORD) {
@@ -1501,5 +1505,5 @@ if (failures.length) {
   process.exit(1)
 }
 if (PROBE_NOTHING) { console.error('\n[today-shape-v2] FAIL — and this one is the real defect: every v2 anchor pointed at nothing and the gate found nothing to complain about.'); process.exit(1) }
-console.log(`\n[today-shape-v2] PASS — ${armedCount} armed check(s) green over ${RUN_STATES.length} state(s) plus the instrument on every state; ${pending.length} PENDING (listed above: not measured, not passed).`)
+console.log(`\n[today-shape-v2] PASS — ${armedCount} armed check(s) green over ${RUN_STATES.length} state(s) plus the instrument on every state; ${pending.length} PENDING.`)
 process.exit(0)

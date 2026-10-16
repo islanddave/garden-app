@@ -35,7 +35,11 @@ describe('today-v2 contract table', () => {
     for (const s of STATES) expect(s.checks.some((c) => c.family === 'prefs-instrument' && isArmed(c))).toBe(true)
     // S3 and S4 landed in parallel (wave 3), merged by the integrator; S4g, S5 and S6 (wave 4, in parallel) on that
     // merge, merged by the second integrator (build-int2.md).
-    expect(LANDED).toEqual(['S0', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6'])
+    expect(LANDED).toEqual(['S0', 'S1', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6', 'S7', 'S8'])
+    // S8c (L8): every slice has landed, so nothing in the contract is PENDING — and the gates fail on one that is.
+    expect(LANDED).toEqual(SLICES)
+    for (const c of all) expect(isArmed(c), `${c.family || c.id} @ ${[].concat(c.armedAt).join('+')}`).toBe(true)
+    for (const [n, m] of Object.entries(MUTANTS_V2)) if (m.kind === 'chrome') expect(isArmed(m) && !!m.file && !!m.find, n).toBe(true)
   })
   // S3 arms the glance + bar everywhere a plan exists, and split the checks that also measure a later slice: the S3
   // half is armed, the rest keeps its later slice. Pinned so the split cannot quietly arm (or drop) either half.
@@ -328,17 +332,19 @@ describe('v2 grafts and the re-dating helper', () => {
   it('stale serves the plan one day back', () => {
     expect(applyGrafts(D, PLANTS, ['stale'], G).payload.plan_date).toBe('2026-09-23')
   })
-  it('seeds the flag always, and first-seen for every served cold card', () => {
+  // S8c: the old per-device switch (garden.todayV2) is gone with the old page, so no state seeds it.
+  it('seeds no page switch, and first-seen for every served cold card', () => {
     const s = STATES.find((x) => x.name === 'v2-busy-seen')
     const seeds = Object.fromEntries(localSeeds(s, D, 'harness_user'))
-    expect(seeds['garden.todayV2']).toBe('1')
+    expect(seeds).not.toHaveProperty('garden.todayV2')
+    expect(localSeeds(STATES.find((x) => x.name === 'v2-busy'), D, 'harness_user')).toEqual([])
     expect(Object.keys(JSON.parse(seeds['today-seen:harness_user']).chill)).toHaveLength(D.plan.cold.length)
   })
   it('skips every served cold card for the clock\'s day under careStore\'s key and row keys (review I1)', () => {
     const s = STATES.find((x) => x.name === 'v2-frost-noprotect')
     const seeds = localSeeds(s, D, 'harness_user')
-    expect(seeds.map(([k]) => k)).toEqual(['garden.todayV2', 'today-skipped:2026-09-24'])
-    expect(JSON.parse(seeds[1][1])).toEqual(D.plan.cold.map((c) => c.id + ':cold'))
+    expect(seeds.map(([k]) => k)).toEqual(['today-skipped:2026-09-24'])
+    expect(JSON.parse(seeds[0][1])).toEqual(D.plan.cold.map((c) => c.id + ':cold'))
     expect(D.plan.cold).toHaveLength(5)
   })
   it('resolves interaction targets to the contract anchors, and refuses an unknown one', () => {

@@ -96,7 +96,8 @@ describe('BUG-EVENTPUBFALSE-001 — no create path may hardcode is_public', () =
     // the moment the default changes).
     expect(producersThatHardcodeIsPublic()).toEqual([
       // Moved, not added: CareNeeded's eventBody() was lifted here with its write paths
-      // (V5-TODAYREDESIGN-001 S1), and CareNeeded.jsx no longer posts to /api/events at all.
+      // (V5-TODAYREDESIGN-001 S1); CareNeeded.jsx itself went with the old Today page at S8c, and the
+      // redesign's Today writes through this same eventBody().
       'components/today/useCareActions.js', // :34 CREATE BODY — eventBody(), is_public: true
       'pages/CaptureFlow.jsx',             // :438 CREATE BODY — the 'event' branch, is_public: true
       'pages/ProjectDetail.jsx',           // :127 FORM DEFAULT — the POST at :486 sends the variable

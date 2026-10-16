@@ -9,12 +9,16 @@
 // Two sources of toasts, both through the REAL provider the app mounts at its root:
 //   1. CALLERS — one toast per production caller of showUndo, raised through useToast() with the
 //      message that caller builds. Every caller renders the same UndoToast, so what differs per
-//      caller is only how its message wraps beside the controls, and whether it carries EventNew's
-//      detail line. The long shapes are there on purpose: a wrap is what makes a toast tall.
-//   2. STACK — the tallest stack Today can build, from real taps on real CareNeeded rows: Water,
-//      Skip, Feed (three toasts, Skip's is low priority), then a Moist check, which makes the Skip
-//      toast give way. The tapped rows carry the longest real names from the live care list
-//      (careskip.jsx's fixture), so their toasts wrap the way the long rows do.
+//      caller is only how its message wraps beside the controls, and whether it carries a detail
+//      line. The long shapes are there on purpose: a wrap is what makes a toast tall.
+//   2. STACK — the tallest stack the provider can hold: three of the tallest caller shapes (each with
+//      a detail line) at the cap, one of them priority 'low', then a fourth, which must take the low
+//      toast's slot rather than a log's.
+// V5-TODAYREDESIGN-001 S8c (L8): until the old Today page was removed, both came from real taps on real
+// CareNeeded rows (Water, Skip, Feed, then Moist). The redesigned Today raises no toast for a care write —
+// its done lines carry Undo (useNeedsCare / useProtect hand useCareActions a SILENT toast) — so no Today
+// tap reaches this layer any more, and the stack is raised through the provider instead. The low-priority
+// rule is the provider's own (ToastContext evictForCap); useCareActions' Skip still declares it.
 //
 // FONT (OPS-UNDOTOASTGATECI-001): text is laid out in Roboto, what Dave's Android renders, here and on
 // the CI runner alike, so a wrap measured on the Mac is the wrap CI measures. The import is FIRST and
@@ -22,9 +26,6 @@
 import './robotoPin.js'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { MemoryRouter } from 'react-router-dom'
-import CareNeeded from '../../src/components/today/CareNeeded.jsx'
-import { AuthProvider } from '../../src/context/AuthContext.jsx'
 import { ToastProvider, useToast } from '../../src/context/ToastContext.jsx'
 import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
 
@@ -35,73 +36,26 @@ import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
 document.documentElement.style.setProperty('--bottom-nav-height', BOTTOM_NAV_HEIGHT_PX + 'px')
 document.getElementById('nav').style.height = BOTTOM_NAV_HEIGHT_PX + 'px'
 
-// A fresh day every load: a skip from a previous run must not hide a row before anything is measured.
-for (const k of Object.keys(localStorage)) if (k.startsWith('today-')) localStorage.removeItem(k)
-
-const water = (id, name, overdue) => ({
-  id, name, crop: 'lettuce', project: 'Bag Area 2026', project_id: 'pr-bag',
-  overdue_by: overdue, in_ground: false, interval: 3, days_since: overdue + 3,
-})
-// The three long water names and the Feed name are real plantings from the live care list
-// (careskip.jsx: p50 13 characters, p90 24, max 52). The fill rows are toaststack.jsx's real names
-// from Dave's 2026-09-10 report; they are there so the page behind the stack is rows, as on Today.
-const FILL = ['Purple Basil', 'Lettuce Leaf Basil', 'Holy Basil', 'Tulsi Basil', 'Lemon Verbena',
-  'Megatron Jalapeños', 'Sweet Basil', 'Yatsufusa', 'Tatli Kil Sivri', 'Capeliente', 'Cowhorn',
-  'Ristra Cayenne II', 'King of the North', 'Petra']
-const PLAN = {
-  hydrology: { tomorrow_precip_in: 0.05, tomorrow_pop: 10, today_observed_in: 0 },
-  rain_skipped: [],
-  water_due: [
-    water('w-52', 'Onion — scallion-type (thick blue-green, ID pending)', 3),
-    water('w-41', 'Marvel of Four Seasons Butterhead Lettuce', 2),
-    water('w-24', 'Cherokee Purple Tomato 2', 1),
-    ...FILL.map((name, i) => water('w-f' + i, name, i % 3)),
-  ],
-  no_history: [],
-  fertilize: [{ id: 'f-32', name: 'Sunny Susy White Halo Thunbergia', crop: 'thunbergia', project: 'Bag Area 2026', project_id: 'pr-bag', item: 'MG', apply: 'half strength' }],
-  pest: [], cold: [], dormant: [],
-}
-const ALL_IDS = [...PLAN.water_due, ...PLAN.fertilize].map(r => r.id)
-const PLANTS = ALL_IDS.map(id => ({ id, location_id: 'loc-bag', container_type: null, featured_photo_view_url: null, featured_photo_id: null }))
-const LOCATIONS = [{ id: 'loc-bag', name: 'Pasture Bag Area', full_path: 'Pasture Bag Area' }]
-
-// The four taps the STACK scenario makes, by the row control's real aria-label.
-const TAPS = [
-  'Log Water for Marvel of Four Seasons Butterhead Lettuce',
-  'Skip Onion — scallion-type (thick blue-green, ID pending) today',
-  'Log Feed for Sunny Susy White Halo Thunbergia',
-  'Checked Cherokee Purple Tomato 2 — still moist',
-]
-
-// Every production caller of showUndo (grep `showUndo(` under src/, 2026-09-24: CareNeeded x4,
-// Dashboard, InactiveProjects, EventNew), by the message template it builds. Names are real where
+// Every production caller of showUndo (grep `showUndo(` under src/, 2026-10-16: Dashboard,
+// InactiveProjects, EventNew, SeasonEnd — useCareActions builds four more shapes, but the only page that
+// mounts it hands it a SILENT toast since S8c), by the message template it builds. Names are real where
 // the caller's source is data; elsewhere the template is filled at its longest realistic shape.
 const CALLERS = [
-  { caller: 'Today one-tap log (CareNeeded logRow)', message: 'Logged Water for Habanero' },
-  { caller: 'Today one-tap log, longest live name', message: 'Logged Water for Onion — scallion-type (thick blue-green, ID pending)' },
-  { caller: 'Today one-tap log, coalesced run', message: 'Logged Water for 12 plants' },
-  { caller: 'Today moisture check (CareNeeded moistRow)', message: 'Checked Marvel of Four Seasons Butterhead Lettuce — still moist' },
-  { caller: 'Today Skip (CareNeeded skipRow, low priority)', message: 'Skipped Onion — scallion-type (thick blue-green, ID pending) for today', priority: 'low' },
-  { caller: 'Today bulk log, partial failure (CareNeeded runBulk)', message: 'Logged 59 — 1 failed' },
   { caller: 'Dashboard, back from Log Event', message: 'Logged event for Peppers 2026' },
   { caller: 'Inactive projects, dismiss', message: 'Dismissed Peppers 2026' },
   { caller: 'Log Event, planting + water depth line', message: 'Logged event — Cayenne #1', detail: 'Deep — soaked to runoff' },
   { caller: 'Log Event, no planting + photo failure + depth line', message: "Logged event for Peppers 2026 — no planting attached — but 2 of 3 photos didn't upload", detail: 'Deep — soaked to runoff' },
+  { caller: 'Season end, a batch ended', message: 'Ended 12 plantings', detail: "They leave Today's list at its next update, within a few hours." },
 ]
 
-const posts = []
-const realFetch = window.fetch.bind(window)
-window.fetch = async (input, init = {}) => {
-  const url = typeof input === 'string' ? input : input.url
-  const path = url.startsWith('http') ? new URL(url).pathname : url
-  if (!path.startsWith('/api/')) return realFetch(input, init)
-  let body = []
-  if (path === '/api/plants') body = PLANTS
-  else if (path === '/api/locations/with-path') body = LOCATIONS
-  else if (path === '/api/events' && init.method === 'POST') { posts.push(JSON.parse(init.body)); body = { id: 'ev-' + posts.length } }
-  await new Promise(r => setTimeout(r, 30))       // a plausible mobile round trip
-  return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
-}
+// The STACK: three tall shapes at the cap — the LOW one in the middle, so a front-trim (the oldest goes)
+// would keep it and only the priority rule removes it — then a fourth, a normal log.
+const STACK = [
+  { message: "Logged event for Peppers 2026 — no planting attached — but 2 of 3 photos didn't upload", detail: 'Deep — soaked to runoff' },
+  { message: 'Skipped Onion — scallion-type (thick blue-green, ID pending) for today', priority: 'low' },
+  { message: 'Ended 12 plantings', detail: "They leave Today's list at its next update, within a few hours." },
+]
+const FOURTH = { message: 'Logged event — Cayenne #1', detail: 'Deep — soaked to runoff' }
 
 let firstError = null
 window.addEventListener('error', e => { firstError ??= e.message })
@@ -114,25 +68,17 @@ function ToastApiBridge() {
 }
 
 createRoot(document.getElementById('root')).render(
-  <AuthProvider>
-    <ToastProvider>
-      <ToastApiBridge />
-      <MemoryRouter initialEntries={['/today']}>
-        <CareNeeded plan={PLAN} />
-      </MemoryRouter>
-    </ToastProvider>
-  </AuthProvider>
+  <ToastProvider>
+    <ToastApiBridge />
+  </ToastProvider>
 )
 
 const r1 = n => Math.round(n * 10) / 10
 const rect = el => el.getBoundingClientRect()
 const settle = (ms = 150) => new Promise(r => setTimeout(r, ms))
-const buttonLabelled = label => [...document.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === label)
 const isUndo = b => b.textContent.trim() === 'Undo'
-// Undo toasts only. CareNeeded also owns a visually-hidden role="status" live region (1x1, clipped)
-// carrying the same "Logged …" words; it has no Undo, so it never counts.
+// Undo toasts only: a role="status" region with no Undo in it never counts.
 const undoToasts = () => [...document.querySelectorAll('[role="status"]')].filter(s => [...s.querySelectorAll('button')].some(isUndo))
-const labelOf = e => e.getAttribute('aria-label') || (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40)
 
 // The run of CSS px through the control's centre, along one axis, whose hit-test lands INSIDE the
 // control. Read from elementFromPoint, never from the box: a box can exist and still not take the tap
@@ -221,25 +167,7 @@ function measureStack(side) {
   for (let i = 1; i < boxes.length; i++) if (boxes[i].top < boxes[i - 1].bottom - 0.5) overlaps++
   const top = boxes.length ? boxes[0].top : null
   const bottom = boxes.length ? boxes[boxes.length - 1].bottom : null
-  // Every LIST control on screen, and how much of each the stack hides. Two traps, both hit while
-  // building this: the toast layer renders inside #root (so its own Undo/Dismiss must be excluded),
-  // and a centre-point hit-test lets a row dodge the count by centring in the 8px gap between two
-  // toasts while most of it is buried. So: area overlap against the toast boxes, which never overlap
-  // each other. `covered` = at least half hidden; `touched` = any of it hidden.
-  const inToast = e => ts.some(t => t.contains(e))
-  const controls = [...document.getElementById('root').querySelectorAll('button, a[href]')].filter(e => {
-    if (inToast(e) || !e.checkVisibility()) return false
-    const q = rect(e)
-    return q.height > 0 && q.bottom > 0 && q.top < innerHeight
-  })
-  const hidden = e => {
-    const q = rect(e)
-    let a = 0
-    for (const t of boxes) a += Math.max(0, Math.min(q.right, t.right) - Math.max(q.left, t.left)) * Math.max(0, Math.min(q.bottom, t.bottom) - Math.max(q.top, t.top))
-    return a / (q.width * q.height)
-  }
-  const covered = controls.filter(e => hidden(e) >= 0.5)
-  const touched = controls.filter(e => hidden(e) > 0)
+  // (Until S8c this also counted the Today list controls the stack hid; there is no list behind it now.)
   return {
     count: ts.length,
     toasts: ts.map(t => measureToast(t, side)),
@@ -247,8 +175,6 @@ function measureStack(side) {
     stackH: top == null ? 0 : r1(bottom - top),
     navTop: r1(nav.top), clearanceAboveNav: bottom == null ? null : r1(nav.top - bottom),
     overlaps,
-    controlsOnScreen: controls.length, controlsCovered: covered.length, controlsTouched: touched.length,
-    coveredLabels: covered.map(labelOf),
   }
 }
 
@@ -256,12 +182,6 @@ function measureStack(side) {
 async function until(pred, what, ms = 3000) {
   for (let t = 0; t < ms; t += 50) { if (pred()) return; await settle(50) }
   throw new Error('timed out waiting for ' + what)
-}
-
-// CareNeeded auto-expands groups against a row budget; open every collapsed group so each tapped
-// row is rendered and the page behind the stack is full of rows.
-function expandAll() {
-  for (const b of document.getElementById('root').querySelectorAll('button[aria-expanded="false"]')) b.click()
 }
 
 let booted = false
@@ -298,28 +218,23 @@ window.__h = {
     await settle()
   },
   clear() { while (raised.length) api.dismiss(raised.pop()) },
-  // The real Today sequence. Returns the stack after three taps (Water, Skip, Feed) and after the
-  // fourth (Moist), when the low-priority Skip toast is the one that gives way.
+  // The STACK: three toasts raised one after another at the cap (the low one second), then the fourth,
+  // when the low-priority toast is the one that gives way. No timer (duration 0) on any of them.
   async stack(side) {
     window.__h.clear()
     await until(() => undoToasts().length === 0, 'an empty stack')
-    const tap = async (label, expect) => {
-      const b = buttonLabelled(label)
-      if (!b) throw new Error('no row control labelled ' + JSON.stringify(label))
-      b.click()
-      await until(() => undoToasts().length === expect, expect + ' toast(s) after ' + JSON.stringify(label))
+    for (let i = 0; i < STACK.length; i++) {
+      raised.push(api.showUndo({ ...STACK[i], detail: STACK[i].detail ?? null, onUndo: () => {}, duration: 0 }))
+      await until(() => undoToasts().length === i + 1, (i + 1) + ' toast(s)')
       await settle()
     }
-    await tap(TAPS[0], 1); await tap(TAPS[1], 2); await tap(TAPS[2], 3)
     const three = measureStack(side)
     return { three }
   },
   async stackGiveWay(side) {
-    const b = buttonLabelled(TAPS[3])
-    if (!b) throw new Error('no row control labelled ' + JSON.stringify(TAPS[3]))
     const before = undoToasts().map(t => t.firstElementChild.firstElementChild.textContent)
-    b.click()
-    await until(() => undoToasts().some(t => /still moist/.test(t.textContent)), 'the Moist toast')
+    raised.push(api.showUndo({ ...FOURTH, onUndo: () => {}, duration: 0 }))
+    await until(() => undoToasts().some(t => t.textContent.includes(FOURTH.message)), 'the fourth toast')
     await settle()
     return { before, after: measureStack(side) }
   },
@@ -338,14 +253,11 @@ window.__h = {
     }
   },
   badge(text, bad = false) { const el = document.getElementById('verdict'); el.textContent = text; el.style.background = bad || firstError ? '#a4161a' : '#2d6a4f' },
-  posts: () => posts.length,
 }
 
 let ticks = 0
 const boot = () => {
-  expandAll()
-  const present = TAPS.every(l => buttonLabelled(l)) && api
-  if (!present) { if (++ticks < 60) setTimeout(boot, 150); else window.__h.badge('ERROR: rows never rendered', true); return }
+  if (!api) { if (++ticks < 60) setTimeout(boot, 150); else window.__h.badge('ERROR: the toast provider never mounted', true); return }
   booted = true
   window.__h.badge(`innerWidth ${innerWidth} · innerHeight ${innerHeight} · dpr ${devicePixelRatio} · scrollW ${document.documentElement.scrollWidth} · ready`)
 }

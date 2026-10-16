@@ -270,8 +270,9 @@ jobs:
         # UNSCRUBBED raw dumps next to them, gitignored) and this repo is public. The preflight refuses
         # Clerk subs, live keys, JWTs, Postgres URLs, emails and real coordinates in the tracked
         # fixtures; its self-test first proves every matcher fires on a known positive. No browser,
-        # no fonts, under a second. The gate itself runs with the real-Chrome gates below ("Today
-        # page shape at 426x836"), since its budget moved to the pinned Roboto (V5-TODAYSHAPECI-001).
+        # no fonts, under a second. The gate itself runs with the real-Chrome gates below ("Today V2
+        # contract, instrument and self-test"), which runs this preflight again as its own step 0. Since
+        # V5-TODAYREDESIGN-001 S8c (L8) that is THE Today gate; the old page's gate retired with the page.
         run: npm run gate:today-shape:preflight:self-test && npm run gate:today-shape:preflight
 
       - name: Garden-render golden (V4-GARDENIA-001 / DESIGNSYS §7)
@@ -986,46 +987,16 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:iconwire4
 
-      - name: Today page shape at 426x836 (V5-TODAYSHAPE-001)
-        # jsdom has no layout engine, so the unit suite cannot see a list that is present and takes no
-        # space: height:0 + overflow:hidden on CareNeeded's row panel hid 70 care rows (73% of the
-        # page) and 9,239 of 9,241 unit tests stayed green (2026-09-08). This drives the REAL Today page
-        # in real Chrome at Dave's handset viewport (426x836 @ DPR 3, self-reported by the page) in five
-        # states (busyfull, busy, quiet, noplan, and storage: a week later, inside the sweet-potato
-        # check window with jars due, the only state where StorageDeadlineAlert and the use-soon band
-        # render) on prod-derived, scrubbed fixtures, with each state's clock pinned, the timezone
-        # forced and Open-Meteo stubbed at the wire. It asserts that every care row
-        # and expanded panel is visible after its clipping ancestors; exact row, group, panel, control
-        # and region counts; floors before ceilings (scroll height, content bottom, ink, controls);
-        # region order by measured position (a CSS reorder passes DOM order); and no sideways scroll.
-        #
-        # Its budget (tests/harness/_todaymeasure/today-shape-budget.json) is ABSOLUTE geometry, so the
-        # harness entry lays its text out in Roboto from the exact-pinned @fontsource/roboto
-        # (tests/harness/robotoPin.js): what Dave's Android renders, and the same glyphs on the Mac that
-        # records the budget and on this runner. Unpinned, this runner would lay the page out in DejaVu
-        # Sans, and a DejaVu-proxy run grew it 2.7% past its ceiling. The gate refuses a run whose pin
-        # did not load, a page where Chrome reports text painted in a host font
-        # (CSS.getPlatformFontsForNode; the two symbols Roboto lacks are allowlisted after being
-        # measured to move no box), and a budget recorded in another font build.
-        #
-        # Verified non-vacuous 2026-09-25 on the Roboto budget: `npm run mutate:today-shape` turns it
-        # red on all 26 mutants, each on >=2 independent killers (clipRowPanel, the zero-height panel,
-        # among them), and `npm run gate:today-shape:probe-nothing` exits 1. The matrix stays out of CI
-        # (~5 min); run it after any change to the gate, its anchors, the fixtures, the font or Today's
-        # composition. NO continue-on-error, per the policy note above. ~17 s locally.
-        env:
-          GATE_CHROME_FLAGS: --no-sandbox
-        run: npm run gate:today-shape
-
       - name: Undo toast tap targets, glyph and stack (BUG-UNDOTOASTTAPTARGET-001)
         # The shared UndoToast (src/context/ToastContext.jsx), behind every "Logged … · Undo" message,
         # in real Chrome at 426x836 @ DPR 3 (tests/harness/undotap.{html,jsx}: the real ToastProvider
-        # and CareNeeded under a 56px nav stand-in). For every production caller's message shape and on
-        # a real Water/Skip/Feed stack: Undo takes a tap across a full 48x48 square (hit-tested on a 5x5
-        # grid) while its painted pill stays under 48px and the toast does not grow to buy it; × is 48px
-        # tall, reaches the toast's edge, sits >= 8px clear of Undo, and keeps its glyph out of the
-        # toast's right padding; three toasts do not overlap and end above the nav; a fourth takes the
-        # low-priority Skip toast's slot. CI's toast unit tests pin style declarations only: mutant U1
+        # under a 56px nav stand-in; until S8c of V5-TODAYREDESIGN-001 the old Today's care list too).
+        # For every production caller's message shape and on a stack of three at the cap: Undo takes a
+        # tap across a full 48x48 square (hit-tested on a 5x5 grid) while its painted pill stays under
+        # 48px and the toast does not grow to buy it; × is 48px tall, reaches the toast's edge, sits
+        # >= 8px clear of Undo, and keeps its glyph out of the toast's right padding; three toasts do
+        # not overlap and end above the nav; a fourth takes the low-priority toast's slot, not a log's.
+        # CI's toast unit tests pin style declarations only: mutant U1
         # (× loses the padding that holds its glyph, which slides 14px to the edge) failed 0 of 35.
         # Verified non-vacuous 2026-09-25: U1 exits 1 on all 13 toasts, and the pre-fix code (dev
         # 3c83e8b02877bcec3744c441f514010fd14fbffc via --baseline) exits 1 with 65 failures. Same
@@ -1203,13 +1174,13 @@ jobs:
           "$BIN" --version
 
       - name: Today V2 contract, instrument and self-test (V5-TODAYREDESIGN-001)
-        # The Today redesign's gate (plan-v2 §9.1), dual-run beside the v1 step above until S8c (§9.2):
-        # v1 keeps gating the default route, unmodified; this runs the V2 route (the ?v2=1 seam of
-        # tests/harness/todaymeasure.jsx, on tests/harness/vite.harness.v2.mjs) over the 20 contract
-        # states in tests/harness/_todaymeasure/today-v2-contract.mjs. Checks whose slice has not landed
-        # are printed PENDING and counted, never passed; the instrument (viewport, clock, font pin,
-        # stubbed weather, no live request, fixture ledger, the V2 flag and seeds, the prefs GET) is armed
-        # on every state from S0. Then two proofs the contract can fail, both of which must hold:
+        # THE Today gate since S8c (L8) of the redesign (plan-v2 §9.1): the old page, its gate (the "Today
+        # page shape at 426x836" step that ran beside this one) and its budget are gone. It drives the real
+        # TodayV2 (tests/harness/todaymeasure.jsx, on tests/harness/vite.harness.v2.mjs) over the 22 contract
+        # states in tests/harness/_todaymeasure/today-v2-contract.mjs. Every slice has landed, so a check
+        # still PENDING fails the run; the instrument (viewport, clock, font pin, stubbed weather, no live
+        # request, fixture ledger, the state's seeds, the prefs GET) holds on every state. Then two proofs
+        # the contract can fail, both of which must hold:
         # --probe-nothing blinds every v2 anchor and MUST exit 1, and --self-test arms every check against
         # an EMPTY V2 stub and passes only if the census reds every state while the instrument holds.
         # The probe is inverted with an explicit `if`, NOT a bare `! cmd`: steps run `bash -e`, and errexit
@@ -1228,10 +1199,11 @@ jobs:
 
       - name: Today V2 in the app shell (V5-TODAYREDESIGN-001)
         # tests/harness/todayshell.{html,jsx}: real TopChrome, the nav band, the REAL page-scroll manager
-        # called as AppShell calls it. Armed from S0: the shell itself (measured page band = 836 - 52 - 56,
-        # TopChrome sticky at y=0, scrollRestoration manual, a production-shaped /api/members roster, the
-        # prefs GET) plus a drift guard against App.jsx and main.jsx. Sticky, jump landing and the Back
-        # round trip are PENDING until S3/S4. --probe-nothing MUST exit 1 (explicit `if`, as above).
+        # called as AppShell calls it: the shell itself (measured page band = 836 - 52 - 56, TopChrome
+        # sticky at y=0, scrollRestoration manual, a production-shaped /api/members roster, the prefs GET),
+        # a drift guard against App.jsx (TodayV2 mounted at /today from a static import) and main.jsx, and
+        # sticky, jump landing and the Back round trip. Zero PENDING since S8c.
+        # --probe-nothing MUST exit 1 (explicit `if`, as above).
         # NO continue-on-error.
         env:
           GATE_CHROME_FLAGS: --no-sandbox

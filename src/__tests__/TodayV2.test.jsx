@@ -183,6 +183,18 @@ describe('TodayV2 page states', () => {
     expect(line.textContent).toContain('Hydrangea')
   })
 
+  // S8c (L8): the old list's "survives a day that does have care due" (CareNeededFeedSuppressed.test.jsx), here: on a
+  // day with work, the line is the foot of the opened Needs care body — never only on an empty day.
+  it('D-5: a day with care due still says it, at the foot of the opened Needs care body', () => {
+    planState.current = { data: { has_plan: true, plan_date: D, plan: { ...PLAN, feed_suppressed: [row('s1', { name: 'Hydrangea' })] } }, loading: false, error: null, reload: vi.fn() }
+    mount()
+    expect(screen.queryByTestId('care-empty')).toBeNull()
+    fireEvent.click(band('care'))
+    const line = screen.getByTestId('care-feed-suppressed')
+    expect(line.textContent).toContain('No feed schedule: 1 planting')
+    expect(screen.getByTestId('today-sec-care').contains(line)).toBe(true)
+  })
+
   // Finish plan D-9: the stale marker lived only inside the glance card, which a plan with no weather does not have.
   it('D-9: yesterday\'s plan with no weather still says how old it is', () => {
     planState.current = { data: { has_plan: true, plan_date: '2020-01-01', generated_at: null, plan: { water_due: [], dormant: [] } }, loading: false, error: null, reload: vi.fn() }

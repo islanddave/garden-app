@@ -85,6 +85,8 @@ const PHOTOIMG_ALLOWED = new Set([
   // 840-device-px box vs an 800px-longest-edge derivative) and are on the primitive regardless.
   // components/today/CareNeeded.jsx — MIGRATED (BUG-TIERLESSPHOTOS-001). It was the worst
   // size-to-box ratio in the app: the featured ORIGINAL into a 30px row thumb on the landing route.
+  // Removed with the old Today page at V5-TODAYREDESIGN-001 S8c; the redesign's row thumb is
+  // components/today/v2/PlantCareRow.jsx (PlantThumb, tier=THUMB), held to the primitive below.
   // pages/Garden.jsx — MIGRATED (BUG-TIERLESSPHOTOS-001). tier=THUMB is requested but currently
   // resolves to [full], because GET /api/projects does not send a featured photo at all.
   // pages/PlantingDetail.jsx — MIGRATED (BUG-TIERLESSPHOTOS-001). The photos grid was the worst
@@ -288,14 +290,15 @@ describe('photo drift guard: one object, one primitive (V4-PHOTOMODEL-001)', () 
     // built for, and it must not quietly slide back to an allow-listed wrapper. PlantingTile joined
     // with V4-PHOTOUI-001 — it is the highest-volume photo surface in the app (24 tiles per Garden
     // group), so a silent slide back is the one that costs the most.
-    // CareNeeded / GrowthStrip / Garden joined with BUG-TIERLESSPHOTOS-001. CareNeeded is the one
-    // to watch: it is on Today, the post-login landing route, at ~200 rows.
+    // CareNeeded / GrowthStrip / Garden joined with BUG-TIERLESSPHOTOS-001. CareNeeded was the one
+    // to watch: it was on Today, the post-login landing route, at ~200 rows. S8c (L8) removed it with the old
+    // page; the redesign's Today row (PlantCareRow's PlantThumb) holds its place here.
     // PlantingDetail / ProjectDetail joined with BUG-TIERLESSPHOTOS-001 and are the last two pages
     // that were still hand-picking a source; PlantingDetail's grid was the largest single payload
     // in the app at ~99.5 MB for a 24-photo planting.
     for (const rel of ['pages/PhotoLibrary.jsx', 'components/PhotosWall.jsx',
                        'components/PutUpPhotoThumb.jsx', 'pages/EventDetail.jsx',
-                       'components/PlantingTile.jsx', 'components/today/CareNeeded.jsx',
+                       'components/PlantingTile.jsx', 'components/today/v2/PlantCareRow.jsx',
                        'components/planting/GrowthStrip.jsx', 'pages/Garden.jsx',
                        'pages/PlantingDetail.jsx', 'pages/ProjectDetail.jsx']) {
       const code = stripComments(readFileSync(join(SRC, rel), 'utf8'))

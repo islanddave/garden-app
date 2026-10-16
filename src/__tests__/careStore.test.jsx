@@ -1,7 +1,7 @@
 // V5-TODAYREDESIGN-001 S1 — the Today care store (careStore.js) and the per-list hook over it
 // (useCareActions.js), lifted out of CareNeeded.jsx so the V2 Today and the household list share them.
-// CareNeededSharedSkips / CareNeededSkipUndo pin the same contract through the rendered V1 list; this
-// file pins it at the seam the V2 page will consume, where no CareNeeded is mounted to carry it:
+// CareNeededSharedSkips / CareNeededSkipUndo pinned the same contract through the old page's rendered list until
+// S8c (L8) removed it; this file pins it at the seam the redesigned page consumes:
 //   · two instances share ONE set (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001),
 //   · the Undo veto: a key undone on this device is never re-added by the server merge today, and a
 //     fresh skip lifts it (BUG-TODAYSKIPNOUNDO-001),
@@ -96,6 +96,67 @@ describe('careStore — two instances share one set', () => {
     expect(keysOf(b.result.current.rows)).toEqual(['p1:water_due'])
     await flushMicrotasks()
     a.unmount(); b.unmount()
+  })
+})
+
+// V4-TODAYLOC-002 / V4-USERPREFS-001 — the suppress set is durable and cross-device. Ported from CareNeeded.test.jsx
+// ("skip persistence") at S8c (L8), where it ran through the old list; the same useCareActions + careStore path is
+// what the redesign's Skip and Not today write through. (The other-day server set is 'careStore — the Undo veto'
+// below.)
+describe('careStore — skip persistence (V4-TODAYLOC-002)', () => {
+  it('writes the skip to localStorage, NOT sessionStorage — it must survive a tab close', async () => {
+    const rows = buildCareNeeded(plan(['p1', 'p2']))
+    const h = renderHook(() => useCareActions({ allRows: rows, ...deps() }))
+    await flushMicrotasks()
+    act(() => { h.result.current.skipRow(rows.find(r => r.plantingId === 'p2')) })
+    expect(stored()).toEqual(['p2:water_due'])
+    expect(sessionStorage.getItem(skipKeyName())).toBeNull()
+    h.unmount()
+  })
+
+  it('a skip present in localStorage hides the row on a COLD mount', async () => {
+    const rows = buildCareNeeded(plan(['p1', 'p2']))
+    const first = renderHook(() => useCareActions({ allRows: rows, ...deps() }))
+    await flushMicrotasks()
+    act(() => { first.result.current.skipRow(rows.find(r => r.plantingId === 'p2')) })
+    first.unmount()
+    const again = renderHook(() => useCareActions({ allRows: rows, ...deps() }))
+    await flushMicrotasks()
+    expect(keysOf(again.result.current.rows)).toEqual(['p1:water_due'])   // the tree DID build rows — not vacuous
+    again.unmount()
+  })
+
+  it('syncs the WHOLE set to the server after the local write', async () => {
+    const rows = buildCareNeeded(plan(['p1', 'p2']))
+    const h = renderHook(() => useCareActions({ allRows: rows, ...deps() }))
+    await flushMicrotasks()
+    act(() => { h.result.current.skipRow(rows.find(r => r.plantingId === 'p1')) })
+    act(() => { h.result.current.skipRow(rows.find(r => r.plantingId === 'p2')) })
+    const arg = prefsMock.saveTodaySkipped.mock.calls.at(-1)[0]
+    expect([...arg.keys].sort()).toEqual(['p1:water_due', 'p2:water_due'])
+    expect(arg.date).toBe(todayLocalISO())
+    h.unmount()
+  })
+
+  it('UNIONS the server set into local — a remote skip must not erase a local one', async () => {
+    act(() => { skipMany(['p2:water_due'], getToken) })
+    prefsMock.fetchNotificationPrefs.mockResolvedValue({ today_skipped: { date: todayLocalISO(), keys: ['p1:water_due'] } })
+    const h = renderHook(() => useCareActions({ allRows: buildCareNeeded(plan(['p1', 'p2', 'p3'])), ...deps() }))
+    await flushMicrotasks(); await flushMicrotasks()
+    expect(stored()).toEqual(['p1:water_due', 'p2:water_due'])
+    expect(keysOf(h.result.current.rows)).toEqual(['p3:water_due'])
+    h.unmount()
+  })
+
+  // fetchNotificationPrefs answers null for a failed read as for an absent one (notificationPrefsClient.js).
+  it('a failed or absent prefs read (null) leaves the local set untouched', async () => {
+    act(() => { skipMany(['p2:water_due'], getToken) })
+    prefsMock.fetchNotificationPrefs.mockResolvedValue(null)
+    const h = renderHook(() => useCareActions({ allRows: buildCareNeeded(plan(['p1', 'p2'])), ...deps() }))
+    await flushMicrotasks(); await flushMicrotasks()
+    expect(stored()).toEqual(['p2:water_due'])
+    expect(keysOf(h.result.current.rows)).toEqual(['p1:water_due'])
+    h.unmount()
   })
 })
 

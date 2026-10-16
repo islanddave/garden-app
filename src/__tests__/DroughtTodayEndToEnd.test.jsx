@@ -5,8 +5,9 @@
 // "cannot fire" from the plan table. The chain has four hops and each had its own green suite:
 //   droughtSignal.js + handler.run()   -> the stored row      (lambda/daily-plan/droughtsignal.test.js)
 //   daily-plan-read                    -> `plan` in the body  (static source guards only)
-//   <DroughtLine> / CareNeeded's list  -> the screen          (DroughtLine.test.jsx, CareNeededDrought.test.jsx)
-//   Today.jsx                          -> mounts both         (TodayDroughtMount.test.js, a source grep)
+//   the page's drought line + dry list -> the screen          (GlanceCard.test.jsx; DroughtLine.test.jsx and
+//                                                               CareNeededDrought.test.jsx until S8c)
+//   the page                           -> mounts them         (TodayDroughtMount.test.js, a source grep)
 // but every seam between them was bridged by a HAND-COPIED payload. The client suites assert against a
 // fixture that says in a comment it is "the exact shape droughtSignal.gardenDrought emits", which is a
 // claim, not a check: rename `dry_days` on the server, update the server test, and every suite stays
@@ -42,43 +43,51 @@
 //     file exists for. droughtsignal.test.js reds on its own shape assertions, which a deliberate
 //     rename would update in the same commit.)
 //   daily-plan-read PLAN_SCHEMA_VERSION 1 -> 2 (the read Lambda refuses the stored row)        4 red
-//   Today.jsx — `<DroughtLine plan={plan.drought} />` (right component, wrong prop)            1 red
-//   CareNeeded.jsx — `<DroughtList plan={plan} />` removed                                     1 red
+//   (old page) Today.jsx — `<DroughtLine plan={plan.drought} />` (right component, wrong prop) 1 red
+//   (old page) CareNeeded.jsx — `<DroughtList plan={plan} />` removed                          1 red
 //   droughtSignal.js DRY_DAYS 20 -> 21 (the real 08-24 run is exactly 20)                      3 red
 //   droughtSignal.js DRY_DAYS 20 -> 10 (the silent half must be able to fail)                  2 red
 //   handler.js — evaluate asOf the plan date instead of prevPlanDate (no settled row there, so
 //     the counter reads `insufficient` every night: silent for the WRONG reason)              4 red
 //     The peak-day render test stays green under that last one, as it must: silence cannot tell
 //     "never fired" from "cannot fire". The sweep's `status: 'ok'` + exact day counts are what can.
+//
+// V5-TODAYREDESIGN-001 S8c (L8): hop 3 is now the redesigned Today — the old page and its DroughtLine / DroughtList
+// are gone. The redesign merges the line and the list into ONE line in the glance card's details (finish plan §3.2,
+// GlanceCard DryLine), worded from the structured fields: "No deep soak in N days — check soil at root depth:
+// <names>." So the screen assertion reads the day count the SERVER wrote and the held-off planting's name.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, within, fireEvent } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 
-const { planState, fetchMock, toastMock } = vi.hoisted(() => ({
+const { planState, fetchMock, prefsState, auth } = vi.hoisted(() => ({
   planState: { current: null },
   fetchMock: vi.fn(async () => ({ accepted: 1 })),
-  toastMock: { show: vi.fn(), showUndo: vi.fn(), dismiss: vi.fn() },
+  prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
+  auth: { user: { id: 'user_e2e' } },
 }))
+const api = vi.hoisted(() => ({ value: { fetch: (...a) => fetchMock(...a), getToken: async () => 't' } }))
 
-// The same harness seams LeafWetnessLine.test.jsx mounts Today through. useDailyPlan is replaced by the
-// read Lambda's own response body below, so the page renders exactly what the server served.
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
+// useDailyPlan is replaced by the read Lambda's own response body below, so the page renders exactly what the
+// server served.
+vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => api.value }))
 vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: () => planState.current }))
 // The stored row carries real coords, and this hook would otherwise go to Open-Meteo from a unit test.
 // It feeds only the display-only live rain figure, never the drought line.
 vi.mock('../hooks/useLiveRain.js', () => ({ useLiveRain: () => ({ liveHydrology: null, refreshedAt: null }) }))
-vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
-  useLocation: () => ({ pathname: '/today' }),
-  useNavigate: () => vi.fn(),
+vi.mock('../context/PrefsContext.jsx', () => ({ usePrefs: () => prefsState.current }))
+vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth }))
+vi.mock('../hooks/useCachedFetch.js', () => ({ useCachedFetch: (path) => ({ data: path === '/api/plants' ? [] : { locations: [] }, loading: false, error: null }) }))
+vi.mock('../components/today/v2/useTodayBands.js', () => ({
+  useTodayBands: () => ({ settled: true, watch: { data: null, failed: false, reload() {} }, compose: { data: null, settled: true, reload() {} }, soon: { data: null, failed: false, reload() {} }, sow: { items: null, settled: true }, harvest: { present: false, summary: null }, putup: { present: false, summary: null } }),
 }))
-vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))
 
 import dailyPlan from '../../lambda/daily-plan/handler.js'
 import { handler as readPlan } from '../../lambda/daily-plan-read/index.js'
 import { stubState, resetStubs } from '../../lambda/_test-stubs/state.js'
 import { buildDroughtLine } from '../lib/droughtLine.js'
-import Today from '../pages/Today.jsx'
+import TodayV2 from '../pages/TodayV2.jsx'
 
 const SPACE = '00000000-0000-0000-0000-000000000001'
 const USER = 'user_e2e'
@@ -186,10 +195,13 @@ async function serve(items, planDate) {
   return JSON.parse(res.body)
 }
 
-// Hop 3: the real Today page, fed exactly the body the read Lambda returned.
+// Hop 3: the real Today page, fed exactly the body the read Lambda returned, its glance card's details opened (the
+// drought line lives behind that tap — D1).
 function renderToday(body) {
-  planState.current = { data: body, loading: false, error: null }
-  return render(<Today />)
+  planState.current = { data: body, loading: false, error: null, reload: vi.fn() }
+  const view = render(<MemoryRouter><TodayV2 /></MemoryRouter>)
+  fireEvent.click(screen.getByTestId('today-glance').querySelector('[aria-expanded]'))
+  return view
 }
 
 async function chain(planDate) {
@@ -223,16 +235,16 @@ describe('FIRES — the real 2026-08-04..08-23 run reaches the screen', () => {
     expect(line.dryDays).toBe(20)
   })
 
-  it('Today renders the server\'s own sentence, once, and lists the held-off planting', async () => {
+  it('Today renders the server\'s day count, once, and names the held-off planting', async () => {
     const { stored, body } = await chain('2026-08-24')
     renderToday(body)
     const lines = screen.getAllByTestId('drought-line')
     expect(lines).toHaveLength(1)
-    expect(lines[0].textContent).toBe(stored.drought.note)
-    expect(lines[0].getAttribute('data-drought-days')).toBe('20')
+    expect(lines[0].getAttribute('data-drought-days')).toBe(String(stored.drought.dry_days))
+    expect(lines[0].textContent).toMatch(/^No deep soak in 20 days — check soil at root depth: /)
     const list = screen.getByTestId('care-drought-list')
-    expect(within(list).getByText('Blueberry')).toBeTruthy()
-    expect(list.textContent).toMatch(/No deep soak \(≥0\.60 in\) in 20 days/)
+    expect(lines[0].contains(list)).toBe(true)
+    expect(within(list).getByText(/Blueberry/)).toBeTruthy()
   })
 })
 
@@ -252,8 +264,9 @@ describe('SILENT — every plan date since it reached prod, on the rain that act
   it('the peak day (2026-09-13, 10 dry days) renders a real plan with no drought line and no list', async () => {
     const { body } = await chain('2026-09-13')
     renderToday(body)
-    // The page rendered a PLAN, so the absences below are the engine's silence, not a blank page.
-    expect(screen.getByTestId('today-plan-stack')).toBeTruthy()
+    // The page rendered a PLAN (its weather card opened), so the absences below are the engine's silence, not a
+    // blank page.
+    expect(screen.getByTestId('today-weather')).toBeTruthy()
     expect(screen.queryByTestId('today-noplan-card')).toBe(null)
     expect(screen.queryByTestId('drought-line')).toBe(null)
     expect(screen.queryByTestId('care-drought-list')).toBe(null)

@@ -1,9 +1,8 @@
 // todayMutantsV2.mjs — the defect catalogue for gate:today-shape:v2's mutation proof (V5-TODAYREDESIGN-001).
 //
 // A DATA FILE, read by tests/harness/vite.harness.v2mutant.mjs (applies one mutant, in memory) and
-// scripts/mutate-today-shape-v2.mjs (enumerates, runs the gate per mutant, counts killer families). A NEW file:
-// tests/harness/todayMutants.mjs (v1) belongs to MAIN's lane-warmed and is not touched; the two retire together
-// at S8c.
+// scripts/mutate-today-shape-v2.mjs (enumerates, runs the gate per mutant, counts killer families). Since S8c (L8)
+// the only Today catalogue: the v1 one (tests/harness/todayMutants.mjs) retired with the old page and its gate.
 //
 // SHAPE: name → { armedAt, file, find, replace, defect, killers, kind }
 //   armedAt   the slice that writes the source this mutant edits. Until it lands, `file`/`find` are null and the

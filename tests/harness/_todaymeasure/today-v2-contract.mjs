@@ -51,7 +51,10 @@
 // glance card's cold-side cue and frost lines fold into it — the cue's pick words become the pick link, the frost
 // sentence waits behind Details — so v2-frost's first screen no longer contains them; the rows L3 restated are marked
 // "L3:" below, each with its reason.
-export const LANDED = ['S0', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6']
+// S8c (L8, 2026-10-16): the old page is removed and EVERY slice has landed — S1 (the care store) and S7 (the server
+// layer of Layer 1) armed no check of their own, S8 is the phone comparison, the default flip and this removal. The
+// gates now FAIL on a PENDING check rather than listing it (plan-v2 §8 S8c's DoD: zero PENDING).
+export const LANDED = ['S0', 'S1', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6', 'S7', 'S8']
 export const SLICES = ['S0', 'S1', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6', 'S7', 'S8']
 
 export function isArmed(check, landed = LANDED, armAll = false) {
@@ -101,7 +104,7 @@ const S924 = AT('2026-09-24')
 // Common checks every state with a plan carries (the §9.1 (a)/(e)/(h)/(j) floor of the contract).
 const common = ({ plan = true, glanceClosed = true } = {}) => [
   { family: 'prefs-instrument', armedAt: 'S0', why: 'the prefs GET is observed exactly once (seam b); a V2 that never reads prefs cannot honour Layer 1' },
-  { family: 'version', armedAt: 'S2', why: 'data-today-version="2" — the V2 route mounted, not V1' },
+  { family: 'version', armedAt: 'S2', why: 'data-today-version="2" — the redesigned page mounted (the old one until S8c)' },
   { family: 'prefs-loaded-attr', armedAt: 'S2', why: 'data-prefs-loaded matches the observed GET' },
   // L4 (D16): the jump bar was the one box allowed to scroll sideways; it no longer is.
   { family: 'no-hscroll', armedAt: 'S2', why: '(h) no horizontal overflow — nothing scrolls sideways, the jump bar included (D16: its cells wrap, never scroll)' },

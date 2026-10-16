@@ -1,6 +1,11 @@
 // BUG-TIERLESSPHOTOS-001 — Today's care rows serve the THUMBNAIL, not the original.
 //
-// CareNeeded's enrichment used to read `thumb: pl.featured_photo_view_url` — a field named thumb
+// V5-TODAYREDESIGN-001 S8c (L8): ported from CareNeeded.thumbTier.test.jsx when the old Today page and its care
+// list were removed. The row is now the redesign's PlantCareRow (its PlantThumb, a 40px box), over the row as
+// Needs care joins it — buildCareNeeded + spots.js enrichRows, the join useNeedsCare makes from /api/plants.
+// Every case below is the old file's, on that path.
+//
+// The old list's enrichment used to read `thumb: pl.featured_photo_view_url` — a field named thumb
 // holding the full ORIGINAL, painted into a 30 CSS-px box (79 device px at dpr 2.625) on the
 // post-login landing route, on a list that runs to ~200 rows. /api/plants signs the thumbs/
 // companion on the SAME row and it was never read.
@@ -18,11 +23,10 @@
 // measurement is a real-Chrome run, reported in _perfdesign_20260826/phototier-report.md.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, waitFor, act, fireEvent, cleanup } from '@testing-library/react'
+import { render, waitFor, act, cleanup } from '@testing-library/react'
 
-const { fetchMock, toastMock, getTokenMock } = vi.hoisted(() => ({
+const { fetchMock, getTokenMock } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
-  toastMock: { show: vi.fn(), showUndo: vi.fn(), dismiss: vi.fn() },
   getTokenMock: vi.fn(async () => 'tok'),
 }))
 
@@ -30,14 +34,10 @@ vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
 }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: getTokenMock }) }))
-vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))
-vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
-  ...(await orig()),
-  fetchNotificationPrefs: vi.fn(async () => null),
-  saveTodaySkipped: vi.fn(async () => null),
-}))
 
-import CareNeeded from '../components/today/CareNeeded.jsx'
+import PlantCareRow from '../components/today/v2/PlantCareRow.jsx'
+import { buildCareNeeded } from '../lib/careNeeded.js'
+import { enrichRows } from '../lib/todayV2/spots.js'
 import { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
 // A cross-origin photo now spends one absorbed CORS attempt before an error reaches the heal.
 // failPhotoLoad says "the image failed" and is blind to the flag; PhotoImg.cors.test.jsx owns the retry.
@@ -64,28 +64,27 @@ const withThumb = () => ({
 // ships independently of the 26-Lambda matrix, so that is a real production state too.
 const noThumbField = () => { const { featured_photo_thumb_url: _drop, ...rest } = withThumb(); return rest }
 
-const plantsReturning = (rows) => fetchMock.mockImplementation((path) => {
-  if (path === '/api/plants') return Promise.resolve(rows)
-  if (path === '/api/locations/with-path') return Promise.resolve([])
-  return Promise.resolve({ id: 'ev-new' })
-})
-
-// The row thumb is the only <img> CareNeeded renders.
+// The row thumb is the only <img> the row renders.
 const rowImg = (c) => c.querySelector('img')
 const src = (c) => rowImg(c)?.getAttribute('src') ?? null
 const viewUrlCalls = () => fetchMock.mock.calls.filter(c => String(c[0]).includes('/api/photos/view-url/'))
 
-// Enrichment lands only after BOTH /api/plants and /api/locations/with-path settle, so every case
-// has to wait for the thumb rather than assert on the first paint.
-async function renderWithPhoto(rows) {
-  plantsReturning(rows)
-  const view = render(<CareNeeded plan={plan()} />)
+// The row as Needs care hands it to PlantCareRow: the plan's row joined to the /api/plants row (`plants`). The
+// row makes no request of its own for the picture — the thumb came down on the plant list.
+const noop = () => {}
+function renderRow(plants) {
+  fetchMock.mockImplementation(() => Promise.resolve([]))
+  const [row] = enrichRows(buildCareNeeded(plan()), { plan: plan(), plants, locations: { locations: [] } })
+  return render(<PlantCareRow row={row} onLog={noop} onSkip={noop} onMoist={noop} onRetry={noop} />)
+}
+async function renderWithPhoto(plants) {
+  const view = renderRow(plants)
   await waitFor(() => expect(rowImg(view.container)).toBeTruthy())
   return view
 }
 
 beforeEach(() => {
-  fetchMock.mockReset(); toastMock.show.mockReset(); toastMock.showUndo.mockReset()
+  fetchMock.mockReset()
   __resetPhotoImgCache()
   localStorage.clear(); sessionStorage.clear()
   cleanup()
@@ -139,11 +138,11 @@ describe('a 404-ing thumb still shows a photo (16.5% of live rows)', () => {
     expect(viewUrlCalls()).toHaveLength(0)
   })
 
-  it('a planting with no featured photo renders no <img> at all, not a broken one', async () => {
-    plantsReturning([{ id: 'p1', location_id: null, container_type: 'pot', featured_photo_view_url: null }])
-    const { container, findByText } = render(<CareNeeded plan={plan()} />)
+  it('a planting with no featured photo renders no <img> at all, not a broken one — the sprout box instead', async () => {
+    const { container, findByText } = renderRow([{ id: 'p1', location_id: null, container_type: 'pot', featured_photo_view_url: null }])
     await findByText('Bhut Jolokia')
     await act(async () => {})
     expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('[data-testid="plant-thumb"]').getAttribute('data-photo')).toBe('none')
   })
 })

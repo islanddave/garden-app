@@ -136,7 +136,10 @@ const code = (rel) => strip(readFileSync(resolve(REPO, rel), 'utf8'));
 
 // Every frost*.js module of this Lambda, plus radiativeFrost.js (frostEval requires it).
 const LAMBDA_FROST = ['lambda/daily-plan/frostEval.js', 'lambda/daily-plan/frostClass.js', 'lambda/daily-plan/radiativeFrost.js'];
-const CLIENT_FROST = ['src/lib/frostAlertLine.js', 'src/lib/tonightLow.js', 'src/components/today/FrostAlertLine.jsx'];
+// The page's three: the line builder, the one low per night, and where the redesigned Today words and places the
+// lines (lib/todayV2/alerts.js — components/today/FrostAlertLine.jsx until V5-TODAYREDESIGN-001 S8c removed it
+// with the old page).
+const CLIENT_FROST = ['src/lib/frostAlertLine.js', 'src/lib/tonightLow.js', 'src/lib/todayV2/alerts.js'];
 const FLAGS = 'src/lib/featureFlags.js';
 // The sowing freeze by the two names that carry it: the constant, and `sowLines`, the prop it travels under
 // once the page has read it (TodayV2: `sowLines: !SOW_DATED_LINES_FROZEN`). Not the module it lives in:

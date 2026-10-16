@@ -13,7 +13,7 @@
 // is also a forward flag-off build, and gate:save-seed-sheet's list and add-form cases, and gate:seed-detail's
 // "still says" line, are that flag's screens. All four gates load this file, so all four now see both on.
 //
-// A separate file for the reason vite.harness.mutant.mjs gives: every other harness entry and every other gate
+// A separate file for the reason vite.harness.v2mutant.mjs gives: every other harness entry and every other gate
 // keeps the base config, so they go on measuring the build as it ships. A run is on this config iff it was
 // pointed here.
 import base from './vite.harness.config.mjs'

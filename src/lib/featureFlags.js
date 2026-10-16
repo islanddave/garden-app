@@ -480,28 +480,6 @@ export const PHOTO_MULTI_ATTACH_ENABLED = true
 // Seeds › My seeds in the same change, or bulk intake ships unreachable in the installed PWA.
 export const SEED_BULK_EXTRACT_ENABLED = false
 
-// V5-TODAYREDESIGN-001 — the Debug & smoke row "New Today on this phone" is VISIBLE to both users (Dave's D14,
-// 2026-09-29, project-state/design-todayux-V100-20260928.md round 4, when it was the preview's way in). Since S8b
-// (L7) the redesign is the default and the row is the way back to the old page, per phone, until S8c removes the
-// old page. FALSE stays a working branch, the way to hide the row: DebugMenu renders no row, and TodayRoute ignores
-// a stored `garden.todayV2` and shows TODAY_V2_DEFAULT, so no phone is held on a page it has no row to leave. The
-// stored choice is ignored, not deleted; sign-out still scrubs it (clientPrefs CLIENT_PREF_KEYS).
-// TodayRoute.previewShipped.test.jsx pins both values and the row; TodayRoute.previewHidden.test.jsx pins the
-// false branch with the constant mocked false.
-// The V2 gates measure the page through the real chooser: tests/harness/vite.harness.v2.mjs serves this module
-// with the constant true whichever way it ships (and throws if it cannot find it), so ?v2=1 reaches TodayV2 there.
-export const TODAY_V2_PREVIEW_ROW = true
-
-// V5-TODAYREDESIGN-001 S8b (L7) — the page /today shows on a phone that has made no choice on the row above (and on
-// every phone while the row is hidden). TRUE = the redesign, the default since L7 on Dave's ship phrase.
-// UNDOING L7: the release of record is undone by scripts/forward-undo.py, which REVERTS v5.2.0's commits (there is no
-// revert-floors entry for it, deliberately: the change is client-only and two-way, because a pre-L7 bundle reads
-// only a stored '1' as the redesign, so '0' and no key both give it the old page). Setting this FALSE instead also
-// works — every phone without a stored choice goes back to the old page, a phone that chose one keeps it, and the
-// Debug row's subtitle follows — but it must change TodayRoute.previewShipped.test.jsx's pin in the same commit.
-// Removed with the old page at S8c (L8).
-export const TODAY_V2_DEFAULT = true
-
 // V5-SOWFREEZELINES-001 (D3 of the Seeds-home design; Dave 2026-09-18: "leave for now until that design is
 // finalized", so it folds into the Today redesign, V5-TODAYREDESIGN-001 S6). While the 2027 sowing freeze holds,
 // the redesigned Today's Sow link row keeps its door ("All sow windows ›") and shows NO dated "Sow X by …" line —

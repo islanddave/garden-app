@@ -30,8 +30,7 @@ vi.mock('../context/AuthContext.jsx', () => ({
   useAuth: () => ({ user: { id: 'u' }, loading: false }),
   useAuthOptional: () => ({ user: { id: 'u' }, loading: false }),
 }))
-// /today is whichever page TodayRoute picks (the redesign by default since V5-TODAYREDESIGN-001 S8b), so both stand in.
-vi.mock('../pages/Today.jsx', () => ({ default: () => <div data-testid="today-page" /> }))
+// /today is TodayV2 (the only Today page since V5-TODAYREDESIGN-001 S8c); a stand-in here.
 vi.mock('../pages/TodayV2.jsx', () => ({ default: () => <div data-testid="today-page" /> }))
 vi.mock('../pages/Seeds.jsx', () => ({ default: () => <div data-testid="seeds-page" /> }))
 

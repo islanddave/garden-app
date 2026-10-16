@@ -254,7 +254,8 @@ const SHEET_SITES = [
   // in-flight write), so the registered role="dialog" surface is still Sheet's and no DIALOG_SURFACES
   // entry is owed. pages/SowNow.jsx left this list in the same change; the count of sites is unchanged.
   'components/seed/SowSheet.jsx',
-  'components/today/CareNeeded.jsx',
+  // V5-TODAYREDESIGN-001 S8c (L8) — a REMOVAL: components/today/CareNeeded.jsx (the old Today's care list, whose
+  // scoped bulk "choose" sheet was a <Sheet>) went with the old page. The redesign's Today opens no Sheet.
   'pages/AddSeeds.jsx',
   'pages/EventDetail.jsx',
   'pages/Garden.jsx',

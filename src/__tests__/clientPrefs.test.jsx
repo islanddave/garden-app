@@ -114,6 +114,8 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     // 'today-sections:' (the remembered open/closed mirror) and 'today-seen:' (chill first-seen, S5).
     // Widened by V5-TODAYREDESIGN-001 integration 2 (2026-09-29): 'garden.today.showOthers', the household view
     // switch both Today pages read — a person's choice on a shared phone, like 'garden.todayV2'.
+    // S8c (L8) removed the old page and its switch, and 'garden.todayV2' STAYS: nothing reads it any more, but a
+    // phone that stored a choice still has the value, and sign-out must still clear it (pinned below).
     expect(CLIENT_PREF_KEYS).toEqual([
       'croprank.v1', 'logone.lastPlant', 'lastHarvestUnit',
       'quicklog.defaultAllSelected', 'garden.releasesSeenVersion', 'ui.handedness',
@@ -139,11 +141,11 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
 
   // The census that would have caught the miss above: every dated 'today-…:' storage family the Today
   // care list writes must be scrubbed at sign-out. Read off the SOURCE so a new family added without
-  // an entry here fails the suite — of every file that holds the care list's state: CareNeeded, and
-  // the careStore / useCareActions its skip store and write paths were lifted into
-  // (V5-TODAYREDESIGN-001 S1). Non-vacuous: careStore writes two families today.
-  it('every today-…: storage family CareNeeded writes is in the prefix list', () => {
-    const src = ['CareNeeded.jsx', 'careStore.js', 'useCareActions.js']
+  // an entry here fails the suite — of every file that holds the care list's state: the careStore /
+  // useCareActions the old page's CareNeeded lifted its skip store and write paths into (V5-TODAYREDESIGN-001
+  // S1; CareNeeded itself went with the old page at S8c). Non-vacuous: careStore writes two families today.
+  it('every today-…: storage family the care store writes is in the prefix list', () => {
+    const src = ['careStore.js', 'useCareActions.js', 'AmbientCareLists.jsx']
       .map(f => readFileSync(resolve(process.cwd(), 'src/components/today', f), 'utf8')).join('\n')
     const families = [...new Set([...src.matchAll(/'(today-[a-z-]+:)'/g)].map(m => m[1]))]
     expect(families.sort()).toEqual(['today-skipped:', 'today-unskipped:'])
@@ -151,7 +153,8 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
   })
 
   // V5-TODAYREDESIGN-001 S2 — the same census over the REDESIGNED Today: every file under today/v2, the V2
-  // hooks and the flag module, read as a directory walk so a file a later slice adds is covered without
+  // hooks and the page (the flag module too, until S8c removed it), read as a directory walk so a file a later
+  // slice adds is covered without
   // editing this test. A family may sit in either store's list (the session families are walked from
   // sessionStorage), but it must sit in one. Non-vacuous: useTodaySections.js writes 'today-sections:'.
   it('every today-…: storage family the redesigned Today writes is cleared at sign-out', async () => {
@@ -160,19 +163,26 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     const v2dir = resolve(process.cwd(), 'src/components/today/v2')
     const files = [
       ...readdirSync(v2dir).map(f => resolve(v2dir, f)),
-      ...['src/hooks/useTodaySections.js', 'src/hooks/useTodayVisit.js', 'src/lib/todayV2Flag.js', 'src/pages/TodayV2.jsx']
+      ...['src/hooks/useTodaySections.js', 'src/hooks/useTodayVisit.js', 'src/pages/TodayV2.jsx']
         .map(f => resolve(process.cwd(), f)),
     ]
     const src = files.map(f => readFileSync(f, 'utf8')).join('\n')
     const families = [...new Set([...src.matchAll(/'(today-[a-z-]+:)'/g)].map(m => m[1]))]
     expect(families).toContain('today-sections:')
     for (const f of families) expect([...CLIENT_PREF_KEY_PREFIXES, ...CLIENT_SESSION_KEY_PREFIXES]).toContain(f)
-    expect(src).toContain("'garden.todayV2'")
+  })
+
+  // S8c (L8): the old page's per-device switch is gone, and its stored value is still scrubbed at sign-out — the next
+  // person on a shared phone inherits nothing of it.
+  it('a stale garden.todayV2 from before S8c is cleared at sign-out', () => {
     expect(CLIENT_PREF_KEYS).toContain('garden.todayV2')
+    localStorage.setItem('garden.todayV2', '0')
+    clearClientPrefs()
+    expect(localStorage.getItem('garden.todayV2')).toBeNull()
   })
 
   // V5-TODAYREDESIGN-001 integration 2 — the household view switch is scrubbed at sign-out, so the next person on a
-  // shared phone starts with it OFF (V1's pill and the redesigned Today read the same switch). Read through
+  // shared phone starts with it OFF (V1's pill read it until S8c; the redesigned Today reads it). Read through
   // householdView's own constant and reader, so a renamed key that survived sign-out would red here.
   it('clears the household view switch, by householdView\'s own key', async () => {
     const { SHOW_OTHERS_KEY, readShowOthers, writeShowOthers } = await import('../lib/householdView.js')

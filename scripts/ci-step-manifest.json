@@ -867,20 +867,6 @@
           "env": {
             "GATE_CHROME_FLAGS": "--no-sandbox"
           },
-          "name": "Today page shape at 426x836 (V5-TODAYSHAPE-001)",
-          "other": {},
-          "run": [
-            "npm run gate:today-shape"
-          ],
-          "shell": null,
-          "uses": null,
-          "with": null,
-          "working-directory": null
-        },
-        {
-          "env": {
-            "GATE_CHROME_FLAGS": "--no-sandbox"
-          },
           "name": "Undo toast tap targets, glyph and stack (BUG-UNDOTOASTTAPTARGET-001)",
           "other": {},
           "run": [

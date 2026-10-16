@@ -9,7 +9,7 @@
 //   · failures stay on the list and are named; `undoMany` deletes exactly the successes, ≤ 4 in flight,
 //     and never un-fades a row whose delete it cannot confirm.
 // No jest-dom (L-182).
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 
 vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
@@ -310,5 +310,59 @@ describe('BUG-WATERDEPTHSINGLEEVENT-001 — the one-tap body records the default
 
   it.each(['fertilizing', 'observation', 'brought_inside'])('a %s row carries none', (type) => {
     expect(eventBody(row(type)).metadata).toBeNull()
+  })
+})
+
+// BUG-TODAYGROUPREORDER-001 — a new plan day, reset IN PLACE. Ported from TodayGroupOrderWake.test.jsx at S8c (L8):
+// that file drove it through the old page's CareNeeded; the reset lives here, in useCareActions, which the
+// redesign's Needs care, Protect tonight and household sections all write through. A fade is kept only when its
+// write is dated the NEW plan day (a log made after midnight on the list still showing yesterday's plan); a write
+// still in flight keeps its guard across the change, so a second tap cannot log it twice.
+describe('a new plan day while mounted resets the fades in place', () => {
+  const D1 = '2026-09-24', D2 = '2026-09-25'
+  const at = (iso) => vi.setSystemTime(new Date(iso))
+  function mountDay(p, fetch) {
+    const allRows = buildCareNeeded(p)
+    const hook = renderHook(({ planDate }) => useCareActions({ allRows, planDate, fetch, getToken: async () => 't', toast: { show: vi.fn(), showUndo: vi.fn() }, announce: vi.fn() }), { initialProps: { planDate: D1 } })
+    return { hook, allRows }
+  }
+  const keys = (rows) => rows.map((r) => r.key).sort()
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('the next day\'s plan: a row logged yesterday is due again — yesterday\'s fade hides nothing', async () => {
+    at(D1 + 'T14:00:00'); const s = server()
+    const { hook, allRows } = mountDay(plan(2), s.fetch)
+    await act(async () => { await hook.result.current.logRow(allRows[0]) })
+    expect(keys(hook.result.current.rows)).toEqual(['p1:water_due'])
+    at(D2 + 'T07:00:00')
+    hook.rerender({ planDate: D2 })
+    expect(keys(hook.result.current.rows)).toEqual(['p0:water_due', 'p1:water_due'])
+    hook.unmount()
+  })
+
+  it('a log made after midnight on the list still showing yesterday\'s plan stays logged when today\'s plan lands', async () => {
+    at(D2 + 'T00:30:00'); const s = server()
+    const { hook, allRows } = mountDay(plan(2), s.fetch)         // the list still on yesterday's plan
+    await act(async () => { await hook.result.current.logRow(allRows[0]) })
+    expect(s.posts[0].body.event_date).toBe(D2)
+    hook.rerender({ planDate: D2 })
+    expect(keys(hook.result.current.rows)).toEqual(['p1:water_due'])
+    hook.unmount()
+  })
+
+  it('a log still in flight when the next day\'s plan lands is logged ONCE', async () => {
+    at(D1 + 'T23:59:00')
+    let release
+    const fetch = vi.fn((path, init) => (init && init.method === 'POST' ? new Promise((r) => { release = () => r({ id: 'ev-1' }) }) : Promise.resolve({ ok: true })))
+    const { hook, allRows } = mountDay(plan(1), fetch)
+    let first
+    act(() => { first = hook.result.current.logRow(allRows[0]) })
+    at(D2 + 'T00:01:00')
+    hook.rerender({ planDate: D2 })
+    await act(async () => { await hook.result.current.logRow(allRows[0]) })   // the second tap, on the new day's list
+    await act(async () => { release(); await first })
+    expect(fetch.mock.calls.filter(([p, i]) => p === '/api/events' && i.method === 'POST')).toHaveLength(1)
+    hook.unmount()
   })
 })

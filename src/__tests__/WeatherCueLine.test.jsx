@@ -13,24 +13,28 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 
-const { planState, fetchMock, toastMock } = vi.hoisted(() => ({
+const { planState, fetchMock, prefsState, auth } = vi.hoisted(() => ({
   planState: { current: null },
   fetchMock: vi.fn(async () => ({ accepted: 1 })),
-  toastMock: { show: vi.fn(), showUndo: vi.fn(), dismiss: vi.fn() },
+  prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
+  auth: { user: { id: 'u' } },
 }))
+const api = vi.hoisted(() => ({ value: { fetch: (...a) => fetchMock(...a), getToken: async () => 't' } }))
 
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
+// The page mount below is the redesigned Today (V5-TODAYREDESIGN-001 S8c, L8: the old page's mount went with it).
+vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => api.value }))
 vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: () => planState.current }))
-vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
-  useLocation: () => ({ pathname: '/today' }),
-  useNavigate: () => vi.fn(),
+vi.mock('../context/PrefsContext.jsx', () => ({ usePrefs: () => prefsState.current }))
+vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth }))
+vi.mock('../hooks/useCachedFetch.js', () => ({ useCachedFetch: (path) => ({ data: path === '/api/plants' ? [] : { locations: [] }, loading: false, error: null }) }))
+vi.mock('../components/today/v2/useTodayBands.js', () => ({
+  useTodayBands: () => ({ settled: true, watch: { data: null, failed: false, reload() {} }, compose: { data: null, settled: true, reload() {} }, soon: { data: null, failed: false, reload() {} }, sow: { items: null, settled: true }, harvest: { present: false, summary: null }, putup: { present: false, summary: null } }),
 }))
-vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))
 
 import WeatherCueLine from '../components/today/WeatherCueLine.jsx'
-import Today from '../pages/Today.jsx'
+import TodayV2 from '../pages/TodayV2.jsx'
 import { P } from '../lib/constants.js'
 import { CUE_IMPRESSIONS_PATH } from '../lib/weatherCueImpressions.js'
 import { WX_CUE_MODEL_VERSION, CHECK_CLAUSE } from '../lib/weatherCue.js'
@@ -185,6 +189,8 @@ describe('(c) it stays out of the gold/warn visual family', () => {
   })
 })
 
+// No cold cards on the plan, so no Protect tonight section takes the cue (finish plan §3.3): it is the glance card's
+// own line, under the card, in its short form (row A states the low).
 describe('the wiring — Today actually mounts it', () => {
   const planWith = (callout) => ({
     data: {
@@ -195,13 +201,14 @@ describe('the wiring — Today actually mounts it', () => {
         water_due: [], no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
       },
     },
-    loading: false, error: null,
+    loading: false, error: null, reload: vi.fn(),
   })
+  const mount = () => render(<MemoryRouter><TodayV2 /></MemoryRouter>)
 
   it('renders the cue on Today and bills the impression', () => {
     planState.current = planWith(FREEZE)
-    render(<Today />)
-    expect(screen.getByTestId('weather-cue-line').textContent).toBe(FREEZE.text)
+    mount()
+    expect(screen.getByTestId('weather-cue-line').dataset.cue).toBe('freeze')
     expect(impressions()).toHaveLength(1)
     expect(lastBody()).toEqual({
       cue: 'freeze', form: 'imperative', model_version: WX_CUE_MODEL_VERSION, plan_generated_at: GEN,
@@ -210,14 +217,15 @@ describe('the wiring — Today actually mounts it', () => {
 
   it('renders nothing on Today, and bills nothing, when the engine was silent', () => {
     planState.current = planWith(null)
-    render(<Today />)
+    mount()
+    expect(screen.getByTestId('today-glance')).toBeTruthy()   // the page drew the plan — not vacuous
     expect(screen.queryByTestId('weather-cue-line')).toBeNull()
     expect(impressions()).toHaveLength(0)
   })
 
   it('bills nothing when there is no plan at all', () => {
-    planState.current = { data: { has_plan: false, plan: null, plan_date: DAY }, loading: false, error: null }
-    render(<Today />)
+    planState.current = { data: { has_plan: false, plan: null, plan_date: DAY }, loading: false, error: null, reload: vi.fn() }
+    mount()
     expect(screen.queryByTestId('weather-cue-line')).toBeNull()
     expect(impressions()).toHaveLength(0)
   })

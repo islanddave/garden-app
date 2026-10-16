@@ -35,7 +35,7 @@ import HarvestWatchBand from '../components/HarvestWatchBand.jsx'
 import ComposeHarvestBand from '../components/ComposeHarvestBand.jsx'
 import PutUpUseSoonBand from '../components/PutUpUseSoonBand.jsx'
 import CultivationLead from '../components/today/CultivationLead.jsx'
-import { DormantList, FeedSuppressedList } from '../components/today/CareNeeded.jsx'
+import { DormantList, FeedSuppressedList } from '../components/today/AmbientCareLists.jsx'
 import HouseholdSection, { householdKey } from '../components/today/v2/HouseholdSection.jsx'
 import { useTodayBands } from '../components/today/v2/useTodayBands.js'
 import { useHandednessSync } from '../hooks/useHandedness.js'
@@ -43,8 +43,8 @@ import { useMembers } from '../hooks/useMembers.js'
 import { useShowOthers, memberFirstName } from '../lib/householdView.js'
 import { SOW_DATED_LINES_FROZEN } from '../lib/featureFlags.js'
 
-// TodayV2 — the redesigned Today (V5-TODAYREDESIGN-001; plan-v2 §1, §2.1–2.2, §4–§6). Behind the per-device
-// switch (TodayRoute), on by default since S8b (L7); the Debug & smoke row turns it off per phone until S8c.
+// TodayV2 — the redesigned Today (V5-TODAYREDESIGN-001; plan-v2 §1, §2.1–2.2, §4–§6). App.jsx mounts it at /today,
+// a static import; since S8c (L8) it is the only Today page — the old one and its per-device switch are gone.
 //
 // S2 IS THE SKELETON: the Seeds frame, the title row (1.3rem green "Today" + Expand/Collapse all), the date,
 // the loading / error / no-plan states, one page-level status region, and the SECTIONS — in their fixed
@@ -163,8 +163,8 @@ export default function TodayV2() {
     ...hhPresent,
   ], [protect.count, headsup.count, care.length, resting.length, bands.harvest.present, bands.putup.present, hhPresent])
 
-  // ── the glance card's weather: computed exactly as V1's Today.jsx computes it, so the two pages cannot
-  // disagree — the live rain overlay (display only), the one low per night (V5-FROSTTWOMODELS-001), the frost
+  // ── the glance card's weather: computed exactly as the old page (Today.jsx, until S8c) computed it, so a
+  // phone that moved from one to the other read the same numbers — the live rain overlay (display only), the one low per night (V5-FROSTTWOMODELS-001), the frost
   // line's current lows (V5-TODAYFROSTWARMEDADVISORY-001) and the engine cue re-worded at that low.
   const { liveHydrology, refreshedAt } = useLiveRain(plan?.weather_coords ?? plan?.coords)
   const agreed = useMemo(() => agreedTonightLow(plan), [plan])

@@ -73,7 +73,7 @@ function writeReveal(n) {
 
 // Shared tail-control styling: full-width <button> ≥48px (52 matches CareNeeded's group headers),
 // count in the LABEL, chevron as the only ornament. Copied pattern from
-// src/components/today/CareNeeded.jsx (aria-expanded + aria-controls) — copied, not refactored.
+// src/components/today/CareNeeded.jsx (aria-expanded + aria-controls; removed with the old Today page at S8c) — copied, not refactored.
 const tailButtonStyle = {
   display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left',
   minHeight: 52, padding: '12px 2px', background: 'none', border: 'none',

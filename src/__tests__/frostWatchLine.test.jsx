@@ -1,4 +1,4 @@
-// V5-TODAYRADIATIVEWATCH-001 — the radiative "Frost watch" on Today: the pure rule and the MOUNT.
+// V5-TODAYRADIATIVEWATCH-001 — the radiative "Frost watch" on Today: the pure rule (the mount: see below).
 //
 // THE GAP (FROST_RADIATIVE_ENABLED=true in prod). A radiative imminent email ("Garden alert - Frost watch tonight
 // (low 41F)") fires ABOVE the trip point, at a plan low of 39-42F, where the weather cue says "Cold night" or nothing
@@ -18,27 +18,14 @@
 //   - a forced (rehearsal) entry never renders (BUG-FROSTREHEARSALSWALLOWS-001);
 //   - entries stored before the change carry no `trip` and render exactly as they did.
 // Same slot, same element, same style: no modal, toast, banner, badge or tap target (frost alerts stay email-only).
-import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
 
-const { planState, fetchMock, toastMock } = vi.hoisted(() => ({
-  planState: { current: null },
-  fetchMock: vi.fn(async () => ({ accepted: 1 })),
-  toastMock: { show: vi.fn(), showUndo: vi.fn(), dismiss: vi.fn() },
-}))
-
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
-vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: () => planState.current }))
-vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
-  useLocation: () => ({ pathname: '/today' }),
-  useNavigate: () => vi.fn(),
-}))
-vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))
-
-import Today from '../pages/Today.jsx'
-import FrostAlertLine from '../components/today/FrostAlertLine.jsx'
+// V5-TODAYREDESIGN-001 S8c (L8): this file also held the old Today page's MOUNT blocks ("Today — the watch line,
+// mounted", "Today — (4) mounted", "Today — the frost lines mounted", F1's "Today: both advisory nights mounted"),
+// which rendered the old page and its FrostAlertLine; both went with the old page. The rules below are the builders'
+// (lib/frostAlertLine.js), unchanged. The redesigned page's mount of the same lines is GlanceCardFrostLines.test.jsx
+// (the three cases + D15), TodayV2.twoLows.test.jsx (one low per night across the page) and
+// TodayV2.frostWarmedWake.test.jsx (the (4) ladder through the real plan load and its wakes).
 import {
   buildFrostAlertLine, buildFrostAlertLines, pickAdvisory, pickFrostLines, resolveNight, tonightLineLow, currentLows,
   FREEZE_BELOW_F, ADVISORY_TRIP_F,
@@ -171,73 +158,6 @@ describe('one low per night, with a watch naming tonight', () => {
     expect(without.some((r) => / \(low [^()]*\)$/.test(r))).toBe(true)
     expect(withWatch.some((r) => / \(low [^()]*\)$/.test(r))).toBe(false)
     expect(withWatch).toEqual(without.map((r) => r.replace(/ \(low [^()]*\)$/, '')))
-  })
-})
-
-// ── the mount: what Today renders from a stored plan ─────────────────────────────────────────────────────────────
-const mountData = (plan) => ({ data: { has_plan: true, plan_date: PLAN_DATE, generated_at: GEN, plan }, loading: false, error: null })
-function readPage(container) {
-  const q = within(container)
-  return {
-    card: q.getByTestId('weather-night-low').textContent,
-    cue: q.queryByTestId('weather-cue-line')?.textContent ?? null,
-    line: q.queryByTestId('frost-alert-line')?.textContent ?? null,
-  }
-}
-
-beforeEach(() => { fetchMock.mockClear(); planState.current = null })
-
-describe('Today — the watch line, mounted from plan.alerts_sent', () => {
-  it('THE GAP: a radiative imminent email at plan low 41 -> "Cold night (41°F)" cue AND the watch line', () => {
-    planState.current = mountData(planFor(41, [watch(41)]))
-    const { container } = render(<Today />)
-    expect(readPage(container)).toEqual({ card: '41°', cue: coldText(41), line: WATCH('tonight', 41) })
-    const el = screen.getByTestId('frost-alert-line')
-    expect(el.dataset.frostTier).toBe('imminent')
-    expect(el.dataset.frostNightOffset).toBe('0')
-  })
-
-  it('the forecast warmed after the email (plan low 44): one low for tonight on the card, cue and line', () => {
-    planState.current = mountData(planFor(44, [watch(41)]))
-    const { container } = render(<Today />)
-    expect(readPage(container)).toEqual({ card: '41°', cue: coldText(41), line: WATCH('tonight', 41) })
-  })
-
-  it('a radiative-only advisory for tomorrow night: the watch words, tonight untouched', () => {
-    planState.current = mountData(planFor(47, [tomorrowNight(42, { trip: 'radiative' })]))
-    const { container } = render(<Today />)
-    expect(readPage(container)).toEqual({ card: '47°', cue: coolText(47), line: WATCH('tomorrow night', 42) })   // V5-CHILLBAND-001: 47 on Oct 9 speaks
-  })
-
-  it('unchanged: a threshold imminent send (freeze cue, no line), and an old radiative advisory with no trip', () => {
-    planState.current = mountData(planFor(36, [imminent(36)]))
-    const a = render(<Today />)
-    expect(readPage(a.container)).toEqual({ card: '36°', cue: freezeText(36), line: null })
-    a.unmount()
-    planState.current = mountData(planFor(47, [tonight(42)]))
-    const b = render(<Today />)
-    expect(readPage(b.container)).toEqual({ card: '42°', cue: coldText(42), line: POSSIBLE('tonight', 42) })   // the cool cue, re-worded at the agreed 42
-  })
-
-  it('a rehearsal renders nothing on Today', () => {
-    planState.current = mountData(planFor(55, [tonight(45, { run: 'forced' })]))
-    const { container } = render(<Today />)
-    expect(readPage(container)).toEqual({ card: '55°', cue: null, line: null })
-  })
-
-  it('the same element in the same slot: directly after the cue, one line, no new control, same ink and rule', () => {
-    planState.current = mountData(planFor(41, [watch(41)]))
-    const { container } = render(<Today />)
-    const cue = screen.getByTestId('weather-cue-line')
-    const line = screen.getByTestId('frost-alert-line')
-    expect(cue.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(container.querySelectorAll('[data-testid="frost-alert-line"]')).toHaveLength(1)
-    expect(line.querySelectorAll('*')).toHaveLength(0)                                    // text only: no icon, badge or button
-    expect(line.getAttribute('role')).toBeNull()
-    // Same inline style as an advisory line (FrostAlertLine.test.jsx pins that style out of the warn family).
-    const { container: adv } = render(<FrostAlertLine alertsSent={[tonight(38)]} />)
-    expect(line.getAttribute('style')).toBe(adv.querySelector('[data-testid="frost-alert-line"]').getAttribute('style'))
-    expect(line.getAttribute('style')).toMatch(/border-left/)
   })
 })
 
@@ -471,8 +391,9 @@ const hyLows = (d1, over = {}) => ({ ...DRY, forecast_lows: [d1, 45.3, 47.1], fo
 const ADV = (lowF = 37.6, over = {}) => tonight(lowF, { at: at('18:05'), ...over })                  // 2:05 PM EDT
 const PROTECT = (over = {}) => ({ ...imminent(38), run: 'intraday-pm', at: at('19:00'), ...over })    // 3 PM EDT
 const LADDER = [ADV(), PROTECT()]
-// Everything Today prints about tonight from one stored plan, through the helpers Today itself calls (the mount block
-// below proves Today wires them this way): the card's figure, the cue's words, the frost lines.
+// Everything Today prints about tonight from one stored plan, through the helpers the page itself calls (the
+// redesign's mount tests named at the top prove it wires them this way): the card's figure, the cue's words, the
+// frost lines as built.
 function screenOf(plan) {
   const agreed = agreedTonightLow(plan)
   const cue = agreeCallout(plan.weather.callout, agreed, PLAN_DATE)
@@ -657,81 +578,6 @@ describe('ADVISORY_TRIP_F is the Lambda\'s advisory trip, not a guess (PARITY)',
   })
 })
 
-describe('Today — (4) mounted: the retirement reaches the card, the cue and the frost line together', () => {
-  const readAll = (container) => {
-    const q = within(container)
-    return {
-      card: q.getByTestId('weather-night-low').textContent,
-      cue: q.queryByTestId('weather-cue-line')?.textContent ?? null,
-      lines: q.queryAllByTestId('frost-alert-line').map((el) => el.textContent),
-    }
-  }
-
-  it('THE GAP mounted: the ladder with the stored lows -> 44 on the card, the cool cue, and the warmed line alone', () => {
-    planState.current = mountData(planFor(44, LADDER, hyLows(41.2)))
-    const { container } = render(<Today />)
-    expect(readAll(container)).toEqual({ card: '44°', cue: coldText(44), lines: [WARMED(44, '3 PM')] })
-  })
-
-  it('the same plan WITHOUT the stored lows (a row the Lambda half has not written): exactly today\'s screen', () => {
-    planState.current = mountData(planFor(44, LADDER))
-    const { container } = render(<Today />)
-    expect(readAll(container)).toEqual({ card: '38°', cue: freezeText(38), lines: [POSSIBLE('tonight', 38)] })
-  })
-
-  it('an advisory-only night mounted (Dave\'s scope): 50 on the card, no cue, the warmed line citing 2:05 PM', () => {
-    planState.current = mountData(planFor(50, [ADV()], hyLows(45)))
-    const { container } = render(<Today />)
-    expect(readAll(container)).toEqual({ card: '50°', cue: null, lines: [WARMED(50, '2:05 PM')] })
-    const el = screen.getByTestId('frost-alert-line')
-    expect([el.dataset.frostTier, el.dataset.frostNightOffset]).toEqual(['advisory', '0'])
-  })
-})
-
-describe('Today — the frost lines mounted from plan.alerts_sent (V5-TODAYFROSTLINEGAPS-001)', () => {
-  const readAll = (container) => {
-    const q = within(container)
-    return {
-      card: q.getByTestId('weather-night-low').textContent,
-      cue: q.queryByTestId('weather-cue-line')?.textContent ?? null,
-      lines: q.queryAllByTestId('frost-alert-line').map((el) => el.textContent),
-    }
-  }
-
-  it('(1) a watch and an advisory for tomorrow night: two lines under the cue, tonight first, the same element twice', () => {
-    planState.current = mountData(planFor(41, [tomorrowNight(34, { at: at('18:00') }), watch(41, { at: at('19:00') })]))
-    const { container } = render(<Today />)
-    expect(readAll(container)).toEqual({ card: '41°', cue: coldText(41), lines: [WATCH('tonight', 41), POSSIBLE('tomorrow night', 34)] })
-    const cue = screen.getByTestId('weather-cue-line')
-    const [a, b] = screen.getAllByTestId('frost-alert-line')
-    expect(cue.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect([a.dataset.frostNightOffset, b.dataset.frostNightOffset]).toEqual(['0', '1'])
-    expect(a.parentElement).toBe(cue.parentElement)                                       // items of Today's column, no wrapper
-    expect(b.parentElement).toBe(cue.parentElement)
-    expect(b.getAttribute('style')).toBe(a.getAttribute('style'))
-    for (const el of [a, b]) expect(el.querySelectorAll('*')).toHaveLength(0)
-  })
-
-  it('(2) the watch with a colder second forecast: one low, 35, on the card, the cue and the line', () => {
-    planState.current = mountData(planFor(41, [watch(41, { colder: colderTonight(35) })]))
-    const { container } = render(<Today />)
-    expect(readAll(container)).toEqual({ card: '35°', cue: freezeText(35), lines: [ASLOW('tonight', 35)] })
-  })
-
-  it('(3) a threshold email, the plan since warmed to 44: the plan\'s low everywhere, and the warmed line', () => {
-    planState.current = mountData(planFor(44, [{ ...imminent(36), at: at('19:00') }]))
-    const { container } = render(<Today />)
-    expect(readAll(container)).toEqual({ card: '44°', cue: coldText(44), lines: [WARMED(44, '3 PM')] })
-  })
-
-  it('(3) while the plan low still freezes (39): the cue covers it and there is no line', () => {
-    planState.current = mountData(planFor(39, [{ ...imminent(36), at: at('19:00') }]))
-    const { container } = render(<Today />)
-    expect(readAll(container)).toEqual({ card: '39°', cue: freezeText(39), lines: [] })
-  })
-})
-
 // ══ Follow-up F1 (Dave, AskUserQuestion 2026-09-21 ~14:00 ET): TWO LINES FOR PLAIN ADVISORIES TOO ═════════════════════
 // When tonight's line is a "Frost possible tonight" ADVISORY and an advisory for a LATER night also exists that plan
 // date, Today shows both, tonight first, regardless of which was sent last (QA probes P1/P2). Kept: never two lines about
@@ -816,15 +662,5 @@ describe('F1 — advisories are ranked per night: tonight\'s and a later night\'
     // ...and a WARMER tonight advisory still yields tonight to the watch, beside the later night
     expect(texts([tonight(42, { at: at('18:00') }), tomorrowNight(34, { at: at('20:00') }), watch(41, { at: at('21:00') })]))
       .toEqual([WATCH('tonight', 41), POSSIBLE('tomorrow night', 34)])
-  })
-
-  it('Today: both advisory nights mounted, tonight first, the card and the cue on tonight\'s agreed 38', () => {
-    planState.current = mountData(planFor(43, [tonight(37.6, { at: at('18:00') }), tomorrowNight(36.4, { at: at('20:00') })]))
-    const { container } = render(<Today />)
-    const q = within(container)
-    expect(q.getByTestId('weather-night-low').textContent).toBe('38°')
-    expect(q.getByTestId('weather-cue-line').textContent).toBe(freezeText(38))
-    expect(q.getAllByTestId('frost-alert-line').map((el) => [el.textContent, el.dataset.frostNightOffset]))
-      .toEqual([[POSSIBLE('tonight', 38), '0'], [POSSIBLE('tomorrow night', 36), '1']])
   })
 })

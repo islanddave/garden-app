@@ -1,37 +1,43 @@
 // V5-LEAFWETNESS-001 — the foliar infection-window line, component + wiring.
 //
 // THE MOUNT IS ASSERTED BY RENDERING Today, NOT BY GREPPING IT. The sibling guard for the drought
-// line (TodayDroughtMount.test.js) is a static source assertion, and says why: Today.jsx was owned by
-// a concurrent session at the time. That constraint does not apply here, and by this codebase's own
-// standard a source-text assertion is a discipline wearing a test's clothes — it passes against a
-// component that is imported, rendered, and handed the wrong prop. FrostAlertLine.test.jsx already
-// mounts Today with a plan-shaped payload; this file follows that, so the assertion that fails is the
-// one that matters: the line did not reach the screen.
+// line (TodayDroughtMount.test.js) is a static source assertion. By this codebase's own standard a
+// source-text assertion is a discipline wearing a test's clothes — it passes against a component that
+// is imported, rendered, and handed the wrong prop — so this file mounts the page with a plan-shaped
+// payload, and the assertion that fails is the one that matters: the line did not reach the screen.
+// (V5-TODAYREDESIGN-001 S8c, L8: the page is the redesigned Today; the old page's mount went with it.)
 //
 // This is the failure the project keeps hitting — DroughtLine shipped inert with three passing suites
 // beneath it, because nothing in a unit suite fails when a component is merely never mounted.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 
-const { planState, fetchMock, toastMock } = vi.hoisted(() => ({
+const { planState, fetchMock, prefsState, auth } = vi.hoisted(() => ({
   planState: { current: null },
   fetchMock: vi.fn(async () => ({ accepted: 1 })),
-  toastMock: { show: vi.fn(), showUndo: vi.fn(), dismiss: vi.fn() },
+  prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
+  auth: { user: { id: 'u' } },
 }))
+const api = vi.hoisted(() => ({ value: { fetch: (...a) => fetchMock(...a), getToken: async () => 't' } }))
 
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
+vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => api.value }))
 vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: () => planState.current }))
-vi.mock('react-router-dom', () => ({
+vi.mock('react-router-dom', async (orig) => ({
+  ...(await orig()),
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
-  useLocation: () => ({ pathname: '/today' }),
-  useNavigate: () => vi.fn(),
 }))
-vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))
+vi.mock('../context/PrefsContext.jsx', () => ({ usePrefs: () => prefsState.current }))
+vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth }))
+vi.mock('../hooks/useCachedFetch.js', () => ({ useCachedFetch: (path) => ({ data: path === '/api/plants' ? [] : { locations: [] }, loading: false, error: null }) }))
+vi.mock('../components/today/v2/useTodayBands.js', () => ({
+  useTodayBands: () => ({ settled: true, watch: { data: null, failed: false, reload() {} }, compose: { data: null, settled: true, reload() {} }, soon: { data: null, failed: false, reload() {} }, sow: { items: null, settled: true }, harvest: { present: false, summary: null }, putup: { present: false, summary: null } }),
+}))
 
 import LeafWetnessLine from '../components/today/LeafWetnessLine.jsx'
 import { buildLeafWetnessLine } from '../lib/leafWetnessLine.js'
-import Today from '../pages/Today.jsx'
+import TodayV2 from '../pages/TodayV2.jsx'
 import GlanceCard from '../components/today/v2/GlanceCard.jsx'
 
 const DAY = '2026-09-08'
@@ -147,7 +153,7 @@ describe('the builder rejects payloads it cannot honestly render', () => {
   })
 })
 
-describe('the wiring — Today actually mounts it', () => {
+describe('the wiring — Today actually mounts it (behind the glance card\'s Details)', () => {
   const planWith = (leafWetness) => ({
     data: {
       has_plan: true, plan_date: DAY, generated_at: GEN,
@@ -158,20 +164,27 @@ describe('the wiring — Today actually mounts it', () => {
         ...(leafWetness ? { leaf_wetness: leafWetness } : {}),
       },
     },
-    loading: false, error: null,
+    loading: false, error: null, reload: vi.fn(),
   })
+  const mountOpen = () => {
+    render(<MemoryRouter><TodayV2 /></MemoryRouter>)
+    fireEvent.click(screen.getByTestId('today-glance').querySelector('[aria-expanded]'))
+  }
 
   it('renders the line on Today from plan.leaf_wetness', () => {
-    // THE ASSERTION THAT MATTERS. Deleting the <LeafWetnessLine> element from Today.jsx, or handing
-    // it the wrong prop, reddens this and nothing else in the suite.
+    // THE ASSERTION THAT MATTERS. Deleting the <LeafWetnessLine> element from GlanceCard.jsx, or the glance card
+    // from TodayV2.jsx, or handing either the wrong prop, reddens this.
+    localStorage.clear()
     planState.current = planWith(WET())
-    render(<Today />)
+    mountOpen()
     expect(screen.getByTestId('leaf-wetness-line').textContent).toMatch(/scout/i)
   })
 
   it('renders nothing on Today when the key is absent entirely', () => {
+    localStorage.clear()
     planState.current = planWith(null)
-    render(<Today />)
+    mountOpen()
+    expect(screen.getByTestId('today-weather')).toBeTruthy()   // the details did open — not vacuous
     expect(screen.queryByTestId('leaf-wetness-line')).toBeNull()
   })
 })

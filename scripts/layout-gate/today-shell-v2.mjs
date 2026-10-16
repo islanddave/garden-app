@@ -12,10 +12,10 @@
 //     BOTTOM_NAV_HEIGHT_PX and --bottom-nav-height says so; the band between them is FIRST_SCREEN (728 today)
 //     MEASURED, not computed; history.scrollRestoration is 'manual' when SCROLL_MANAGER_ENABLED (main.jsx's
 //     boot line ran); /api/members was answered production-shaped (2 members, never []); the prefs GET went
-//     out to the stub critter origin; and the drift guard below holds.
-//   PENDING until their slices land (today-v2-contract.mjs SHELL): (f) sticky, (g) jump landing, (m) Back.
-// Every PENDING check is printed and counted, never passed. A new script; nothing in page-scroll.mjs or
-// pagescroll.jsx (the SEEDS session's) is touched — the helpers below are copies.
+//     out to the stub critter origin; and the drift guard below holds (App.jsx mounting TodayV2 at /today among it).
+//   And the platform checks (today-v2-contract.mjs SHELL): (f) sticky, (g) jump landing, (m) Back. Every slice has
+// landed since S8c (L8), so a check still PENDING is a FAILURE ([shell-instrument]): zero PENDING is the contract.
+// Nothing in page-scroll.mjs or pagescroll.jsx (the SEEDS session's) is touched — the helpers below are copies.
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -75,7 +75,12 @@ function drift() {
   const pad = "paddingBottom: user ? 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))'"
   if (!app.includes(pad)) out.push('App.jsx\'s content wrapper no longer reserves calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px)) — the shell copies that padding')
   if (!shell.includes("paddingBottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))'")) out.push('tests/harness/todayshell.jsx no longer reserves the nav band the way App.jsx does')
-  // The payload builders todayshell.jsx copies from todaymeasure.jsx (unified at S8c).
+  // S8c (L8): /today is TodayV2 itself, from a static import (never React.lazy, V4-LAZYRETRY-001), and that is what
+  // todayshell.jsx mounts — so the page this gate measures is the page App mounts.
+  if (!/\nimport TodayV2 from '\.\/pages\/TodayV2\.jsx'\n/.test(app) || !/\{ path: '\/today',\s+element: <Protected><ErrorBoundary scope="route" fallback=\{<RouteFallback \/>\}><TodayV2 \/><\/ErrorBoundary><\/Protected> \}/.test(app)) out.push('src/App.jsx no longer mounts TodayV2 at /today from a static import inside the route boundary — tests/harness/todayshell.jsx mounts it that way')
+  if (!/\nimport TodayV2 from '\.\.\/\.\.\/src\/pages\/TodayV2\.jsx'\n/.test(shell)) out.push('tests/harness/todayshell.jsx no longer imports TodayV2, the page App mounts at /today')
+  // The payload builders todayshell.jsx copies from todaymeasure.jsx (one module for both is deferred past S8c; this
+  // guard holds the copy until then).
   const body = (text, name) => { const m = text.match(new RegExp(`function ${name}\\(([^)]*)\\) \\{([\\s\\S]*?)\\n\\}`)); return m ? m[0].replace(/\s+/g, ' ').trim() : null }
   const tm = src('tests/harness/todaymeasure.jsx')
   for (const fn of ['rebase', 'graftBusyfull']) { const a = body(tm, fn), b = body(shell, fn); if (!a || !b) out.push(`could not read ${fn}() in ${a ? 'todayshell.jsx' : 'todaymeasure.jsx'} — the copy guard cannot compare it`); else if (a !== b) out.push(`tests/harness/todayshell.jsx ${fn}() no longer matches todaymeasure.jsx — re-copy it`) }
@@ -283,7 +288,7 @@ try {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: VIEWPORT.w, height: VIEWPORT.h, deviceScaleFactor: VIEWPORT.dpr, mobile: true }, cdp.sessionId)
     await cdp.send('Emulation.setTimezoneOverride', { timezoneId: 'America/New_York' }, cdp.sessionId)
     await cdp.send('Emulation.setLocaleOverride', { locale: 'en-US' }, cdp.sessionId)
-    const url = `http://localhost:${PORT}/tests/harness/todayshell.html?state=${name}&v2=1&clock=${encodeURIComponent(st.clock)}`
+    const url = `http://localhost:${PORT}/tests/harness/todayshell.html?state=${name}&clock=${encodeURIComponent(st.clock)}`
     const nav = await cdp.send('Page.navigate', { url }, cdp.sessionId)
     if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
     await sleep(200)
@@ -429,12 +434,11 @@ try {
       if (m.top && m.nav && Math.abs((m.nav.top - m.top.bottom) - FIRST_SCREEN) > 0.5) F(`the measured page band is ${m.nav.top - m.top.bottom}px, the gate's FIRST_SCREEN is ${FIRST_SCREEN} — the first-screen arithmetic no longer describes the shell`)
       if (MANAGER_ON && m.restoration !== 'manual') F(`history.scrollRestoration is '${m.restoration}' with the manager ON — main.jsx's boot line did not run, so Chrome's native restore would be measured`)
       // S2: whenever the roster is ASKED for it is answered production-shaped (the drift guard above pins the
-      // answer). The mounted page need not ask: V1 Today reads it on mount, the V2 skeleton does not until its
-      // household sections (S6) — a check that demanded a request would fail the page for a read it has no use for.
+      // answer). The mounted page need not ask — a check that demanded a request would fail the page for a read it
+      // has no use for.
       if (m.h.v2.members.count !== 2 || m.h.v2.members.served !== m.h.membersGets) F(`/api/members was asked ${m.h.membersGets}x and answered ${m.h.v2.members.served}x with ${m.h.v2.members.count} member(s) — production-shaped means the two-person roster, every time it is asked`)
       if (!m.h.v2.critterOrigin) F('VITE_API_CRITTERS is not defined — the shell is not on vite.harness.v2.mjs')
       if (m.h.prefsGets < 1 || m.h.v2.prefs.served !== m.h.prefsGets) F(`prefs GET observed ${m.h.prefsGets}x, answered from ${m.h.v2.prefs.fixture} ${m.h.v2.prefs.served}x`)
-      if (m.h.v2.flag !== '1') F(`garden.todayV2 is ${JSON.stringify(m.h.v2.flag)}, expected "1"`)
       if (!m.h.clock.pinned || m.h.clock.iso !== st.clock) F(`the clock is ${m.h.clock.pinned ? 'pinned to ' + m.h.clock.iso : 'NOT pinned'}, the contract says ${st.clock}`)
       if (m.h.clock.tz !== 'America/New_York') F(`timezone ${m.h.clock.tz}, expected America/New_York`)
       if (!m.fontPin || !m.fontPin.ok) F('the Roboto pin is not in force')
@@ -453,8 +457,9 @@ try {
 }
 
 if (pending.length) {
-  console.log(`\n[today-shell-v2] PENDING — ${pending.length} shell check(s) NOT MEASURED and NOT PASSED (their slices have not landed):`)
+  console.log(`\n[today-shell-v2] PENDING — ${pending.length} shell check(s) NOT MEASURED and NOT PASSED:`)
   for (const p of pending) console.log(`  ⏸ ${p}`)
+  if (!PROBE_NOTHING) for (const p of pending) fail('pending', 'shell-instrument', `${p} — every slice has landed since S8c, so zero PENDING is the contract`)
 }
 if (failures.length) {
   console.error(PROBE_NOTHING ? '\n[today-shell-v2] FAIL — EXPECTED. --probe-nothing blinded every shell anchor and the checks caught it. Exit 1 is correct for this arm.' : '\n[today-shell-v2] FAIL')
@@ -462,5 +467,5 @@ if (failures.length) {
   process.exit(1)
 }
 if (PROBE_NOTHING) { console.error('\n[today-shell-v2] FAIL — the real defect: every shell anchor pointed at nothing and nothing complained.'); process.exit(1) }
-console.log(`\n[today-shell-v2] PASS — the shell instrument holds; ${pending.length} shell check(s) PENDING (listed above: not measured, not passed).`)
+console.log(`\n[today-shell-v2] PASS — the shell instrument holds; ${pending.length} shell check(s) PENDING.`)
 process.exit(0)

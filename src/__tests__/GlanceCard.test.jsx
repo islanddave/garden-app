@@ -35,11 +35,11 @@ const QUIET = { ...D.plan, water_due: [], no_history: [], fertilize: [], pest: [
 // The live overlay the gate's harness serves (its Open-Meteo stubs): 0.04″ @ 18% today, 0.22″ @ 60% tomorrow.
 const LIVE = { today_precip_in: 0.04, today_pop: 18, tomorrow_precip_in: 0.22, tomorrow_pop: 60 }
 
-function Harness({ plan = BUSYFULL, stale = null, initialOpen = false, liveHydrology = null, protectShown = false }) {
+function Harness({ plan = BUSYFULL, stale = null, initialOpen = false, liveHydrology = null, protectShown = false, generatedAt = D.generated_at }) {
   const [open, setOpen] = useState(initialOpen)
   const agreed = agreedTonightLow(plan)
   return (
-    <GlanceCard plan={plan} generatedAt={D.generated_at} planDate={D.plan_date} liveHydrology={liveHydrology} agreed={agreed} current={currentLows(plan)}
+    <GlanceCard plan={plan} generatedAt={generatedAt} planDate={D.plan_date} liveHydrology={liveHydrology} agreed={agreed} current={currentLows(plan)}
       cueCallout={agreeCallout(plan.weather?.callout, agreed, D.plan_date)} stale={stale} open={open} onToggle={() => setOpen((o) => !o)} protectShown={protectShown} />
   )
 }
@@ -219,6 +219,17 @@ describe('open — MF2: the weather card ONCE, in place of rows A–C', () => {
     expect(screen.getByTestId('drought-line').textContent).toMatch(/^No deep soak in at least 21 days — check soil at root depth: /)
     expect(screen.getByTestId('drought-line').textContent).not.toMatch(/rain/i)
   })
+  // V4-TODAYBASIS-001, ported from Today.test.jsx at S8c (L8): the basis stamp states the overnight batch's time,
+  // and never invents one.
+  it('no basis stamp when the plan carries no generated_at, or an unparseable one', () => {
+    for (const generatedAt of [null, 'not-a-date']) {
+      render(<Harness initialOpen generatedAt={generatedAt} />)
+      expect(screen.getByTestId('today-weather')).toBeTruthy()       // the details did open — not vacuous
+      expect(screen.queryByTestId('today-basis-stamp')).toBeNull()
+      cleanup()
+    }
+  })
+
   it('closing again restores rows A–C and unmounts the details', () => {
     render(<Harness />)
     fireEvent.click(toggle())

@@ -4,8 +4,9 @@
 //   node scripts/mutate-today-shape-v2.mjs                 # every ARMED chrome mutant
 //   node scripts/mutate-today-shape-v2.mjs prefsClientDark # named ones
 //
-// scripts/mutate-today-shape-check.mjs's discipline (control first; a mutant that never applied is not
-// evidence; ≥ 2 INDEPENDENT killer families per mutant), over the v2 catalogue (tests/harness/todayMutantsV2.mjs)
+// The v1 runner's discipline (scripts/mutate-today-shape-check.mjs, retired with the old page at S8c): control
+// first; a mutant that never applied is not evidence; ≥ 2 INDEPENDENT killer families per mutant — over the v2
+// catalogue (tests/harness/todayMutantsV2.mjs)
 // and served through tests/harness/vite.harness.v2mutant.mjs. Two differences, both forced by a contract that
 // arms slice by slice:
 //   · PENDING mutants (their slice has not landed, so there is no source to mutate) and unit-table mutants
@@ -15,6 +16,8 @@
 //     "UNDER-GUARDED BY SCHEDULE" (loud, named, with the slice that arms the next family) and does not fail the
 //     matrix — its slice's DoD re-runs it with both families armed. A mutant that SURVIVES, never APPLIED, or
 //     reds only via instrument/crash still fails the matrix.
+//   Since S8c (L8) every slice has landed (today-v2-contract.mjs LANDED), so a PENDING mutant is a problem too:
+//     plan-v2 §8 S8c's DoD is zero PENDING.
 // COST: one Vite boot + one Chrome + 20 page loads per mutant, plus the control. A command, not a CI step.
 import { spawnSync } from 'node:child_process'
 import { resolve, dirname } from 'node:path'
@@ -80,6 +83,7 @@ for (const [n, why] of Object.entries(RETIRED_V2)) console.log(`| \`${n}\` | —
 
 const problems = []
 const underGuarded = []
+for (const [n, m] of pendingM) problems.push(`${n}: PENDING (arms at ${[].concat(m.armedAt).join('+')}) — every slice has landed since S8c, so a mutant with no source pattern is a hole, not a schedule`)
 for (const r of rows) {
   if (!r.applied) problems.push(`${r.name}: the mutation never applied — not evidence of anything`)
   else if (!r.red) problems.push(`${r.name}: SURVIVED. The gate does not see "${r.m.defect}"`)

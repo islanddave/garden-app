@@ -1,6 +1,11 @@
 // V4-DORMANTRESUME-001 — the Dormant list on Today and its Resume action. No jest-dom (L-182):
 // role/attr/text + toBe/toBeTruthy/toBeNull only. Each assertion names the source mutation that
 // turns it red.
+//
+// V5-TODAYREDESIGN-001 S8c (L8): ported from CareNeededDormant.test.jsx when the old Today page and its care list
+// were removed. DormantList moved to components/today/AmbientCareLists.jsx; the redesign mounts it `bare` as
+// Resting's rows (TodayV2.s6.test.jsx "Resting — DormantList bare" pins the mount, the count and the held
+// resumed set; DormantList.bare.test.jsx the seams). Each case below renders the list itself, bare as Today does.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
@@ -16,13 +21,8 @@ vi.mock('react-router-dom', () => ({
 }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: getTokenMock }) }))
 vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))
-vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
-  ...(await orig()),
-  fetchNotificationPrefs: vi.fn(async () => null),
-  saveTodaySkipped: vi.fn(async () => null),
-}))
 
-import CareNeeded from '../components/today/CareNeeded.jsx'
+import { DormantList } from '../components/today/AmbientCareLists.jsx'
 
 // Real prod row shape (daily_plan.items->'dormant', 2026-08-20) plus the `reason` discriminator.
 const GARLIC = {
@@ -46,41 +46,27 @@ const emptyPlan = (dormant) => ({
 beforeEach(() => {
   cleanup()
   fetchMock.mockReset(); toastMock.show.mockReset(); toastMock.showUndo.mockReset()
-  fetchMock.mockImplementation((path) =>
-    (path === '/api/plants' || path === '/api/locations/with-path')
-      ? Promise.resolve([])
-      : Promise.resolve({ ok: true }))
-  sessionStorage.clear(); localStorage.clear()
+  fetchMock.mockImplementation(() => Promise.resolve({ ok: true }))
 })
 
-describe('dormant plantings are visible on Today', () => {
-  // Mutation: delete the <DormantList /> render and this goes red. That is the shipped state before
-  // this row — the plan carries the bucket and no surface reads it.
-  it('lists a dormant planting even when nothing needs care', async () => {
-    render(<CareNeeded plan={emptyPlan([GARLIC])} />)
-    expect(screen.getByText('All caught up')).toBeTruthy()
+// The old list's "even when nothing needs care" / "alongside a day that does have care due" were about where
+// it sat in CareNeeded's ternary. In the redesign the list is Resting's body, a section of its own whatever
+// Needs care holds — TodayV2.test.jsx ("Resting names its plants") and TodayV2.s6.test.jsx pin that.
+describe('dormant plantings are listed', () => {
+  it('lists a dormant planting', () => {
+    render(<DormantList plan={emptyPlan([GARLIC])} bare />)
     expect(screen.getByText('Garlic')).toBeTruthy()
-    expect(screen.getByText('Dormant')).toBeTruthy()
+    expect(screen.getByTestId('care-dormant')).toBeTruthy()
   })
 
-  // Mutation: move <DormantList /> inside the `total === 0` arm of the ternary and this goes red —
-  // a dormant planting would vanish again on any day something else needed water.
-  it('lists it alongside a day that does have care due', async () => {
-    const p = emptyPlan([GARLIC])
-    p.water_due = [{ id: 'p1', name: 'Bhut Jolokia', crop: 'pepper', project: 'Peppers', project_id: 'prP', overdue_by: 3, in_ground: false }]
-    render(<CareNeeded plan={p} />)
-    await screen.findByText('Needs care today')
-    expect(screen.getByText('Garlic')).toBeTruthy()
-  })
-
-  it('renders nothing at all when the bucket is empty', () => {
-    render(<CareNeeded plan={emptyPlan([])} />)
-    expect(screen.queryByText('Dormant')).toBeNull()
+  it('renders nothing at all when the bucket is empty, or there is no plan', () => {
+    expect(render(<DormantList plan={emptyPlan([])} bare />).container.innerHTML).toBe('')
+    expect(render(<DormantList plan={null} bare />).container.innerHTML).toBe('')
   })
 
   // The name links to the planting, so the list is a way IN to the record and not a dead end.
   it('links each row to its planting', () => {
-    render(<CareNeeded plan={emptyPlan([GARLIC])} />)
+    render(<DormantList plan={emptyPlan([GARLIC])} bare />)
     expect(screen.getByText('Garlic').getAttribute('href')).toBe('/plantings/' + GARLIC.id)
   })
 })
@@ -90,7 +76,7 @@ describe('Resume', () => {
   // live consequence is a Resume button on the one plant class whose care note says watering it
   // now kills it.
   it('is offered for status dormancy and withheld from the cadence-flag class', () => {
-    render(<CareNeeded plan={emptyPlan([GARLIC, LITHOPS])} />)
+    render(<DormantList plan={emptyPlan([GARLIC, LITHOPS])} bare />)
     expect(screen.getByText('Lithops')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Resume Garlic' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Resume Lithops' })).toBeNull()
@@ -99,7 +85,7 @@ describe('Resume', () => {
   // Mutation: change the body to any other status, or the method to POST, and this goes red.
   // Same endpoint + payload as the hero StatusPicker: one status write path in the app, not two.
   it('writes status=vegetative through PUT /api/plants/:id', async () => {
-    render(<CareNeeded plan={emptyPlan([GARLIC])} />)
+    render(<DormantList plan={emptyPlan([GARLIC])} bare />)
     fireEvent.click(screen.getByRole('button', { name: 'Resume Garlic' }))
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(c => c[0] === '/api/plants/' + GARLIC.id)
@@ -110,7 +96,7 @@ describe('Resume', () => {
   })
 
   it('drops the row and confirms once the write lands', async () => {
-    render(<CareNeeded plan={emptyPlan([GARLIC])} />)
+    render(<DormantList plan={emptyPlan([GARLIC])} bare />)
     fireEvent.click(screen.getByRole('button', { name: 'Resume Garlic' }))
     await waitFor(() => expect(screen.queryByText('Garlic')).toBeNull())
     expect(toastMock.show.mock.calls.some(c => c[0].message === 'Garlic is growing again')).toBe(true)
@@ -124,7 +110,7 @@ describe('Resume', () => {
       path === '/api/plants/' + GARLIC.id
         ? Promise.reject(new Error('offline'))
         : Promise.resolve([]))
-    render(<CareNeeded plan={emptyPlan([GARLIC])} />)
+    render(<DormantList plan={emptyPlan([GARLIC])} bare />)
     fireEvent.click(screen.getByRole('button', { name: 'Resume Garlic' }))
     await waitFor(() => expect(toastMock.show.mock.calls.some(c => c[0].tone === 'error')).toBe(true))
     expect(screen.getByText('Garlic')).toBeTruthy()
@@ -135,7 +121,7 @@ describe('Resume', () => {
   // Mutation: default resumable to true in dormantRows and this goes red.
   it('is withheld from a pre-discriminator plan row', () => {
     const legacy = { id: 'old1', name: 'Asparagus', note: 'Dormant — skip routine care' }
-    render(<CareNeeded plan={emptyPlan([legacy])} />)
+    render(<DormantList plan={emptyPlan([legacy])} bare />)
     expect(screen.getByText('Asparagus')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Resume Asparagus' })).toBeNull()
   })

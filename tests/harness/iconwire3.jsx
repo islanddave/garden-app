@@ -134,7 +134,7 @@ window.__h = {
   docOverflows: () => document.documentElement.scrollWidth > window.innerWidth,
 }
 
-// Live verdict strip, same pattern as inventory.jsx / careneeded.jsx.
+// Live verdict strip, same pattern as inventory.jsx.
 let ticks = 0
 const paint = () => {
   const el = document.getElementById('verdict')

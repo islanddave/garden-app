@@ -1,7 +1,7 @@
 // flagOffTransform.mjs — BUG-DETAILPAGESCARRYSCROLL-001: the ROLLBACK BUILD, served in memory.
 //
 // src/lib/featureFlags.js with SCROLL_MANAGER_ENABLED = false, and nothing written to the working tree — the
-// in-memory seam of tests/harness/vite.harness.mutant.mjs, for the same reason (a SIGKILL between a write and its
+// in-memory seam of tests/harness/vite.harness.v2mutant.mjs, for the same reason (a SIGKILL between a write and its
 // restore would leave a flipped flag on disk looking exactly like intentional work). Used by:
 //   tests/harness/vite.harness.flagoff.mjs   the real-Chrome gates   npm run gate:page-scroll:flag-off
 //                                                                    npm run gate:seeds-scroll:flag-off

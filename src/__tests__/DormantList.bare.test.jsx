@@ -1,8 +1,8 @@
 // V5-TODAYREDESIGN-001 S6 — DormantList's two optional seams for the redesigned Today's Resting section:
 // `bare` (rows only; the section is the heading and holds the explainer; Resume at the 44px floor) and a
 // caller-held resumed set (`resumed` + `onResumed`: Today V2 unmounts a closed section, so a set kept inside the
-// list would forget a resume on the next open). V1 without either: CareNeededDormant.test.jsx, unedited, and an
-// identity proof against f47337da's CareNeeded.jsx (S6 build report).
+// list would forget a resume on the next open). Without either, as the old Today page mounted it: DormantList.test.jsx
+// (ported from CareNeededDormant.test.jsx at S8c, when the list moved to AmbientCareLists.jsx).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
@@ -17,7 +17,7 @@ vi.mock('react-router-dom', () => ({
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }) }))
 vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))
 
-import { DormantList } from '../components/today/CareNeeded.jsx'
+import { DormantList } from '../components/today/AmbientCareLists.jsx'
 
 const GARLIC = { id: 'g1', crop: 'garlic', name: 'Garlic', project: 'Garlic', project_id: 'pg', reason: 'status' }
 const FIG = { id: 'f1', crop: 'fig', name: 'Fig', project: 'Fig', project_id: 'pf', reason: 'status' }

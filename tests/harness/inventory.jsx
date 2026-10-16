@@ -6,7 +6,7 @@
 // long item name beside a qty, a unit, a cost and a Low badge" is not a question that suite can
 // answer, and it is the question Dave's "very, very raw" complaint was about.
 //
-// Separate entry from main.jsx / careneeded.jsx / editdeeplink.jsx, per the established pattern
+// Separate entry from main.jsx / editdeeplink.jsx, per the established pattern
 // here, so nothing in those moves.
 //
 // The fixture is shaped to put the row under its worst text pressure rather than to look tidy:
@@ -184,7 +184,7 @@ window.__h = {
   docOverflows: () => document.documentElement.scrollWidth > window.innerWidth,
 }
 
-// Live verdict strip, same pattern as careneeded.jsx.
+// Live verdict strip (the pattern the retired careneeded.jsx set).
 let ticks = 0
 const paint = () => {
   const el = document.getElementById('verdict')

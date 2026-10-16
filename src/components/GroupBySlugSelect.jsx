@@ -14,7 +14,7 @@
 // is no ARIA pattern to get wrong.
 //
 // SCOPE: GroupByControl is deliberately NOT modified. It has a second consumer — Today's CareNeeded
-// (components/today/CareNeeded.jsx:344), whose 2-option row is fine as chips and whose suite pins
+// (the old Today page's components/today/CareNeeded.jsx, removed at V5-TODAYREDESIGN-001 S8c), whose 2-option row is fine as chips and whose suite pins
 // role="group" + the "Group by" accessible name (__tests__/CareNeeded.test.jsx:46). Changing it in
 // place would silently re-skin Today and break a test named after another surface. This is a Garden-
 // only sibling; Today keeps the chip row untouched.

@@ -23,25 +23,29 @@
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 
-const { planState, fetchMock, toastMock } = vi.hoisted(() => ({
+const { planState, fetchMock, prefsState, auth } = vi.hoisted(() => ({
   planState: { current: null },
   fetchMock: vi.fn(async () => ({ id: 'ev' })),
-  toastMock: { show: vi.fn(), showUndo: vi.fn(), dismiss: vi.fn() },
+  prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
+  auth: { user: { id: 'u' } },
 }))
+const api = vi.hoisted(() => ({ value: { fetch: (...a) => fetchMock(...a), getToken: async () => 't' } }))
 
+// The page below is the redesigned Today (V5-TODAYREDESIGN-001 S8c, L8: the old page's mount went with it).
 vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: () => planState.current }))
-vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
-  useLocation: () => ({ pathname: '/today' }),
-  useNavigate: () => vi.fn(),
+vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => api.value }))
+vi.mock('../context/PrefsContext.jsx', () => ({ usePrefs: () => prefsState.current }))
+vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth }))
+vi.mock('../hooks/useCachedFetch.js', () => ({ useCachedFetch: (path) => ({ data: path === '/api/plants' ? [] : { locations: [] }, loading: false, error: null }) }))
+vi.mock('../components/today/v2/useTodayBands.js', () => ({
+  useTodayBands: () => ({ settled: true, watch: { data: null, failed: false, reload() {} }, compose: { data: null, settled: true, reload() {} }, soon: { data: null, failed: false, reload() {} }, sow: { items: null, settled: true }, harvest: { present: false, summary: null }, putup: { present: false, summary: null } }),
 }))
-vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock }) }))
-vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMock }))
 
 import WeatherWidget from '../components/today/WeatherWidget.jsx'
-import Today from '../pages/Today.jsx'
+import TodayV2 from '../pages/TodayV2.jsx'
 
 const weather = { tonightLow: 68, highToday: 86, code: 3, hot: false }
 
@@ -144,8 +148,10 @@ describe('BUG-TODAYWATER-001 layer 2 — the two incident mornings no longer dis
   })
 })
 
+// On the redesign the verdict is the glance card's row C (and the opened weather card says the same — finish plan
+// D-2), and the list is Needs care, whose header counts the same rows.
 describe('BUG-TODAYWATER-001 — Today wires the list it renders into the headline that describes it', () => {
-  beforeEach(() => { planState.current = null; sessionStorage.clear() })
+  beforeEach(() => { planState.current = null; sessionStorage.clear(); localStorage.clear() })
 
   const planWith = (n, hydrology = MEASURED_SOAK) => ({
     data: {
@@ -160,24 +166,28 @@ describe('BUG-TODAYWATER-001 — Today wires the list it renders into the headli
         no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
       },
     },
-    loading: false, error: null,
+    loading: false, error: null, reload: vi.fn(),
   })
+  const mount = () => render(<MemoryRouter><TodayV2 /></MemoryRouter>)
 
   it('the reported screen: watering list rendered, so the headline above it does not say "All set"', () => {
     planState.current = planWith(18)
-    const { container } = render(<Today />)
+    const { container } = mount()
     // The contradiction, both halves in one assertion pair: the list IS on screen…
-    expect(screen.getByText('Needs care today')).toBeTruthy()
-    expect(screen.getByText('Planting 0')).toBeTruthy()
-    // …and the headline above it no longer denies it.
-    expect(container.textContent).not.toMatch(/All set/i)
+    expect(screen.getByTestId('care-heading').textContent).toMatch(/Needs care/)
+    expect(screen.getByTestId('today-sec-care').getAttribute('data-count')).toBe('18')
+    // …and the headline above it no longer denies it, closed or opened.
+    expect(screen.getByTestId('today-verdict').textContent).toMatch(/Rain may cover today's list — 18 still due\./)
+    fireEvent.click(screen.getByTestId('today-glance').querySelector('[aria-expanded]'))
+    expect(container.textContent).not.toMatch(/All set|Nothing to water/i)
     expect(container.textContent).toMatch(/Rain may cover today's list — 18 still due\./)
   })
 
-  it('a genuinely clear day keeps the reassuring sentence', () => {
+  it('a genuinely clear day keeps the reassuring sentence, and draws no Needs care', () => {
     planState.current = planWith(0)
-    const { container } = render(<Today />)
-    expect(container.textContent).toMatch(/All set — no watering needed today\./)
+    mount()
+    expect(screen.queryByTestId('today-sec-care')).toBeNull()
+    expect(screen.getByTestId('today-verdict').textContent).toMatch(/^Nothing to water today\./)
   })
 })
 

@@ -56,16 +56,16 @@ export const CLIENT_PREF_KEYS = [
   'nav.barLayout.v1',
   'nav.morePins.v1',
   'nav.morePins.pending.v1',
-  // V5-TODAYREDESIGN-001 S2 — the Debug & smoke "New Today on this phone" switch (todayV2Flag.js).
-  // A device choice, but a PERSON's choice on a shared phone: left behind, the next person to sign in
-  // lands on the previous person's choice of page. Plan-v2 §6.10. Since S8b the scrub means "no choice", so
-  // after a sign-out the phone shows the default page (the redesign) until the row is turned off again.
+  // V5-TODAYREDESIGN-001 S2 — the Debug & smoke "New Today on this phone" switch, REMOVED with the old Today page
+  // at S8c (L8): nothing reads or writes this key any more. It stays on this list so a sign-out still scrubs the
+  // value a phone stored while the switch existed — a stale key left behind is a stray per-person record on a
+  // shared phone (plan-v2 §6.10), and an older cached bundle would still read it.
   'garden.todayV2',
   // V5-TODAYREDESIGN-001 (integration 2, 2026-09-29; the orchestrator's call on S6's decision 2) — the household view
   // switch, SHOW_OTHERS_KEY (lib/householdView.js): per-DEVICE and never scrubbed before, so on a shared
-  // phone the next person to sign in inherited the last person's choice and could be shown the other's care — V1's
-  // pill sets it and the redesigned Today reads the same switch (SF6). Cleared like garden.todayV2, consistent with
-  // SF11: after a sign-out the household view starts OFF, on V1 and V2 alike. By import, not a literal:
+  // phone the next person to sign in inherited the last person's choice and could be shown the other's care — the
+  // Settings › Controls row sets it (the old Today's pill did, until S8c) and Today reads it (SF6). Cleared like
+  // garden.todayV2, consistent with SF11: after a sign-out the household view starts OFF. By import, not a literal:
   // householdView.js is the one file that spells the key (householdView.test.js pins that) and imports only React,
   // so there is no cycle.
   SHOW_OTHERS_KEY,

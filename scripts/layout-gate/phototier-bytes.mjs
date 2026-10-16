@@ -13,8 +13,9 @@
 // budget against the pre-fix request shape and is EXPECTED to fail — it is how the ceiling gets
 // re-proven non-vacuous, deliberately kept out of the `gate:` namespace so nothing wires it.
 //
-// WHAT IT DOES NOT COVER, stated so a green run is not over-read: the harness mounts CareNeeded
-// (--surface today) and GrowthStrip (--surface growth) and NOTHING ELSE. The PlantingDetail photo
+// WHAT IT DOES NOT COVER, stated so a green run is not over-read: the harness mounts Today's care rows
+// (--surface today: the redesign's PlantCareRow over the rows as Needs care joins them, since S8c of
+// V5-TODAYREDESIGN-001 — the old page's CareNeeded before it) and GrowthStrip (--surface growth) and NOTHING ELSE. The PlantingDetail photo
 // grid, the Lightbox filmstrip, EventDetail's thumbs and ProjectDetail's 40px rows are guarded by
 // photoPrimitive.static.test.js clauses 3 and 4, not by a byte measurement.
 //

@@ -9,7 +9,11 @@
 // the HTTP cache cannot collapse N photos into one request and flatter the result. The static
 // server behind imgbase ignores the query and serves the same bytes.
 //
-// ?surface=today   -> CareNeeded, the post-login landing route (30px row thumbs)
+// ?surface=today   -> Today's care rows, the post-login landing route: the redesign's row anatomy
+//                     (PlantCareRow, 40px thumbs) over the rows as Needs care joins them (buildCareNeeded +
+//                     spots.js enrichRows, the join useNeedsCare makes) — what an OPENED spot shows. A closed
+//                     spot mounts no row, so it requests no image at all. (Until V5-TODAYREDESIGN-001 S8c this
+//                     mounted the old page's CareNeeded list and its 30px thumbs.)
 // ?surface=growth  -> GrowthStrip, a planting's milestone strip (64px) + compare stage
 // ?tier=none       -> omit the thumb URL from every fixture row. That is byte-for-byte what the
 //                     pre-fix code requested (it read featured_photo_view_url / view_url
@@ -19,7 +23,9 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
-import CareNeeded from '../../src/components/today/CareNeeded.jsx'
+import PlantCareRow from '../../src/components/today/v2/PlantCareRow.jsx'
+import { buildCareNeeded } from '../../src/lib/careNeeded.js'
+import { enrichRows } from '../../src/lib/todayV2/spots.js'
 import GrowthStrip from '../../src/components/planting/GrowthStrip.jsx'
 import { AuthProvider } from '../../src/context/AuthContext.jsx'
 
@@ -35,7 +41,7 @@ const orig = (n) => `${IMGBASE}/orig.jpg?p=${n}`
 // static server's 404 path, so this reproduces it exactly rather than simulating it.
 const thumb = (n) => (n < MISS ? `${IMGBASE}/missing/thumb.jpg?p=${n}` : `${IMGBASE}/thumb.jpg?p=${n}`)
 
-const LOCATIONS = [{ id: 'loc-a', name: 'Pasture Bag Area', full_path: 'Pasture Bag Area' }]
+const LOCATIONS = [{ id: 'loc-a', name: 'Pasture Bag Area', parent_id: null, covered: false }]
 const NAMES = ['Bhut Jolokia', 'Sungold', 'Genovese Basil', 'Lacinato Kale', 'Wild Bergamot']
 
 const WATER = Array.from({ length: COUNT }, (_, i) => ({
@@ -56,6 +62,11 @@ const PLAN = {
   rain_skipped: [], water_due: WATER,
   no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
 }
+const ROWS = enrichRows(buildCareNeeded(PLAN), { plan: PLAN, plants: PLANTS, locations: { locations: LOCATIONS } })
+const noop = () => {}
+function TodayRows() {
+  return <div role="list">{ROWS.map((r) => <PlantCareRow key={r.key} row={r} onLog={noop} onSkip={noop} onMoist={noop} onRetry={noop} />)}</div>
+}
 
 // The shape GET /api/photos?attachedTo= returns, oldest-first as PlantingDetail hands it over.
 const GROWTH = Array.from({ length: COUNT }, (_, i) => ({
@@ -64,6 +75,8 @@ const GROWTH = Array.from({ length: COUNT }, (_, i) => ({
   ...(WITH_THUMB ? { thumb_url: thumb(i) } : {}),
 }))
 
+// Any /api/ read still answers from here (nothing on the today surface fetches since S8c — its rows are joined
+// above — but a provider that asks must never reach the network).
 const realFetch = window.fetch.bind(window)
 window.fetch = async (input, init = {}) => {
   const url = typeof input === 'string' ? input : input.url
@@ -71,7 +84,7 @@ window.fetch = async (input, init = {}) => {
   if (!path.startsWith('/api/')) return realFetch(input, init)
   let body = []
   if (path === '/api/plants') body = PLANTS
-  else if (path === '/api/locations/with-path') body = LOCATIONS
+  else if (path === '/api/locations') body = { locations: LOCATIONS }
   await new Promise(r => setTimeout(r, 30))
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
 }
@@ -83,7 +96,7 @@ window.addEventListener('unhandledrejection', e => { firstError ??= String(e.rea
 createRoot(document.getElementById('root')).render(
   <AuthProvider>
     <MemoryRouter initialEntries={['/today']}>
-      {SURFACE === 'growth' ? <GrowthStrip photos={GROWTH} /> : <CareNeeded plan={PLAN} />}
+      {SURFACE === 'growth' ? <GrowthStrip photos={GROWTH} /> : <TodayRows />}
     </MemoryRouter>
   </AuthProvider>
 )

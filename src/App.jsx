@@ -57,8 +57,10 @@ import SettingsControls from './pages/SettingsControls.jsx'
 import Findings from './pages/Findings.jsx'
 import About from './pages/About.jsx'
 import ReleaseNotes from './pages/ReleaseNotes.jsx'
-// V5-TODAYREDESIGN-001 S2 — /today's element chooses the redesigned Today or the old one, per device (the redesign by default since S8b).
-import TodayRoute from './components/today/v2/TodayRoute.jsx'
+// V5-TODAYREDESIGN-001 S8c (L8) — /today is the redesigned Today; the old page and its per-device switch are gone.
+// A STATIC import, never React.lazy (V4-LAZYRETRY-001, below): /today is the app's first screen and must paint
+// first time, with no chunk to fail in a dead zone.
+import TodayV2 from './pages/TodayV2.jsx'
 import CaptureFlow from './pages/CaptureFlow.jsx'
 import AddSeeds from './pages/AddSeeds.jsx'
 import Seeds from './pages/Seeds.jsx'
@@ -407,7 +409,7 @@ export function renderRoutes({ overlay, user, loading }) {
     { path: '/projects/:id/plantings/:plantingId', element: <ScopedPlantingRedirect /> },
     { path: '/achievements',  element: <Protected><Achievements /></Protected> },
     { path: '/findings',      element: <Protected><Findings /></Protected> },
-    { path: '/today',         element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><TodayRoute /></ErrorBoundary></Protected> },
+    { path: '/today',         element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><TodayV2 /></ErrorBoundary></Protected> },
     { path: '/capture',       element: <Protected><CaptureFlow /></Protected> },
     // V4-COLLECTIONSPLIT-001 — the loading boundary belongs HERE, at the route, not at the shell:
     // a shell-level boundary would blank TopChrome/BottomNav while the chunk lands.

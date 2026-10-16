@@ -38,9 +38,10 @@
 //
 // ── PATH CHOICE. ──
 // WARM_PATHS names the four origins Today (POST_LOGIN_ROUTE, and the '/' and '*' redirect target)
-// fetches above the fold, in render order: StorageDeadlineAlert + CareNeeded → /api/plants,
-// CultivationLead → /api/inventory-items, WeatherWidget's read model → /api/daily-plan,
-// CareNeeded's location paths → /api/locations. Below-the-fold bands (harvests, preservation) and
+// fetches above the fold: Needs care, Protect tonight and Heads-up → /api/plants (one shared read),
+// the Sow link row's lines → /api/inventory-items, the plan read behind the glance card → /api/daily-plan,
+// Needs care's and Protect's spots → /api/locations (named for the old page's CareNeeded and
+// StorageDeadlineAlert until V5-TODAYREDESIGN-001 S8c; the same four). Below-the-fold bands (harvests, preservation) and
 // /api/members are deliberately out: each costs an invocation on every cold boot and the Clerk
 // window is not unbounded. Adding one means showing it is above the fold, not that it exists.
 // Distinct from useCacheLifecycle's BOOT_WARM_PATHS, which warms the DATA CACHE post-auth and is

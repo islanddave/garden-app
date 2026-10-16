@@ -48,7 +48,7 @@ function writeReveal(n) {
 }
 
 // Full-width tail control, ≥48px (52 matches CareNeeded's group headers); count in the LABEL,
-// never a pill. Pattern copied from src/components/today/CareNeeded.jsx — copied, not refactored.
+// never a pill. Pattern copied from src/components/today/CareNeeded.jsx (removed with the old Today page at S8c) — copied, not refactored.
 const tailButtonStyle = {
   display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left',
   minHeight: 52, padding: '12px 2px', background: 'none', border: 'none',

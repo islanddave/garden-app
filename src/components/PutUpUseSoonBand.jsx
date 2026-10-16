@@ -99,7 +99,7 @@ function UseSoonBand({ feed, bare }) {
 
   const { shown, more } = putUpSoonSlice(items)
 
-  // data-testid: a region anchor for the Today layout gate (scripts/layout-gate/today-shape.mjs). It
+  // data-testid: a region anchor for the Today layout gate (scripts/layout-gate/today-shape-v2.mjs). It
   // adds no node, no style and no behaviour.
   return (
     <section

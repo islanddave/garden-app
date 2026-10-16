@@ -1,4 +1,4 @@
-// v2wire.js — the Today V2 states' wire and device state, for the harness entries (todaymeasure ?v2=1 and
+// v2wire.js — the Today V2 states' wire and device state, for the harness entries (todaymeasure and
 // todayshell). V5-TODAYREDESIGN-001 S0.
 //
 // PURE FUNCTIONS ONLY: nothing here touches window at import, so the node side (the grafts' unit test) can
@@ -73,9 +73,10 @@ export function applyGrafts(payload, plants, names, G) {
 }
 
 // Device state for a state, written BEFORE mount. Returns the entries to write (the entry writes them), so
-// this stays pure: [key, value] pairs. `userId` is the harness Clerk stub's id.
+// this stays pure: [key, value] pairs. `userId` is the harness Clerk stub's id. (Until S8c the first entry was
+// always the old per-device switch, garden.todayV2 = '1'; the redesign is now the only page, so there is none.)
 export function localSeeds(state, payload, userId) {
-  const out = [['garden.todayV2', '1']]
+  const out = []
   const L = state.local || {}
   if (L.todaySeen) {
     const chill = {}

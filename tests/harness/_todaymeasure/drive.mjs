@@ -2,7 +2,7 @@
 // drive.mjs — drive the real Today page in real Chrome at a TRUE 426x836 @ DPR 3 (Dave's handset,
 // read 2026-09-24) and record what it does.
 //
-//   node tests/harness/_todaymeasure/drive.mjs [--out DIR] [--states busy,quiet,noplan]
+//   node tests/harness/_todaymeasure/drive.mjs [--out DIR] [--states v2-busy,v2-quiet,v2-noplan]
 //
 // Not a gate: it asserts nothing about right or wrong, it RECORDS. The only thing it refuses to
 // proceed on is an unproven instrument — if the page does not self-report the requested innerWidth, or if it
@@ -22,7 +22,7 @@ import { resolveWebSocket } from '../../../scripts/layout-gate/cdp-socket.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '../../..')
-// 5324 / 9434 — clear of every layout gate's defaults (see scripts/layout-gate/today-shape.mjs).
+// 5324 / 9434 — clear of every layout gate's defaults (see scripts/layout-gate/today-shape-v2.mjs).
 const PORT = Number(process.env.TM_PORT || 5324)
 const CDP_PORT = Number(process.env.TM_CDP_PORT || 9434)
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
@@ -35,7 +35,10 @@ const VIEWPORT = {
 
 const argOf = (flag, dflt) => { const i = process.argv.indexOf(flag); return i > -1 ? process.argv[i + 1] : dflt }
 const OUT = resolve(argOf('--out', join(HERE, 'out')))
-const STATES = argOf('--states', 'busy,quiet,noplan').split(',').filter(Boolean)
+// V5-TODAYREDESIGN-001 S8c (L8): the harness mounts only the redesigned page, so a state is a row of
+// today-v2-contract.mjs (it was the old page's fixture names until then). Each row's own clock is not passed here:
+// the page's default pin (2026-09-24 10:30 ET) is the busy/quiet/noplan rows' clock.
+const STATES = argOf('--states', 'v2-busy,v2-quiet,v2-noplan').split(',').filter(Boolean)
 
 async function startHarness() {
   const bin = resolve(ROOT, 'node_modules/vite/bin/vite.js')
@@ -77,7 +80,7 @@ async function attach(wsUrl) {
     if (m.id != null && pending.has(m.id)) { const { res, rej, timer } = pending.get(m.id); clearTimeout(timer); pending.delete(m.id); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result) }
   }
   const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
-    // Cleared on reply (see scripts/layout-gate/today-shape.mjs): an armed 120s timer per answered
+    // Cleared on reply (as scripts/layout-gate/today-shape-v2.mjs does): an armed 120s timer per answered
     // call held the process open for two minutes after the last capture.
     const mid = ++id
     const timer = setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error(`CDP timeout: ${method}`)) } }, 120000)
@@ -110,11 +113,11 @@ try {
     // runner and one taken on a New York laptop describe the same page. The date subtitle and the
     // "as of 5:30 AM" stamp are rendered in the HOST timezone, and different copy is a different
     // wrap is a different height. Without these two the recorder and scripts/layout-gate/
-    // today-shape.mjs would silently disagree, which is worse than either being wrong alone.
+    // today-shape-v2.mjs would silently disagree, which is worse than either being wrong alone.
     await cdp.send('Emulation.setTimezoneOverride', { timezoneId: 'America/New_York' }, cdp.sessionId)
     await cdp.send('Emulation.setLocaleOverride', { locale: 'en-US' }, cdp.sessionId)
     await cdp.send('Page.navigate', { url: `http://localhost:${PORT}/tests/harness/todaymeasure.html?state=${state}` }, cdp.sessionId)
-    await cdp.evalIn(`(async()=>{for(let i=0;i<250;i++){if(window.__h&&window.__h.ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('today never rendered (${state})')})()`)
+    await cdp.evalIn(`(async()=>{for(let i=0;i<250;i++){if(window.__h&&window.__h.v2ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('today never rendered (${state})')})()`)
     await cdp.evalIn(`new Promise(r=>setTimeout(r,2500))`)   // self-fetching bands + live rain settle
 
     const vp = await cdp.evalIn(`window.__h.viewport()`)

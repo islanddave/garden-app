@@ -562,11 +562,6 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:iconwire4
 
-      - name: Today page shape at 426x836 (V5-TODAYSHAPE-001)
-        env:
-          GATE_CHROME_FLAGS: --no-sandbox
-        run: npm run gate:today-shape
-
       - name: Undo toast tap targets, glyph and stack (BUG-UNDOTOASTTAPTARGET-001)
         env:
           GATE_CHROME_FLAGS: --no-sandbox

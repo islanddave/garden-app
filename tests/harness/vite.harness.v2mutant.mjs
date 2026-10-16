@@ -3,10 +3,16 @@
 //   TODAY_SHAPE_V2_MUT=prefsClientDark GATE_HARNESS_CONFIG=tests/harness/vite.harness.v2mutant.mjs \
 //     node scripts/layout-gate/today-shape-v2.mjs            (what scripts/mutate-today-shape-v2.mjs does)
 //
-// vite.harness.mutant.mjs's shape and reasons, over vite.harness.v2.mjs instead of the base config: a separate
-// file so no switch on a shared config can be left on; in memory so no exit path leaves a mutated src/ file;
-// THROWS when the pattern is missing or the file never enters the module graph, because a mutant that did not
-// apply and scored SURVIVED is the one result in a matrix that actively misleads.
+// The shape and reasons of the retired v1 mutant config (vite.harness.mutant.mjs, removed with the old Today page at
+// S8c), over vite.harness.v2.mjs:
+//   A SEPARATE FILE, not a flag on the shared config: vite.harness.config.mjs is loaded by every other layout gate
+//     and every manual harness session, and a mutation switch living there is a switch that can be left on. This
+//     file spreads the v2 config and adds exactly one plugin, so a run is mutant if and only if it was pointed here.
+//   IN MEMORY, never by writing the file: this worktree sits beside many siblings, and a SIGKILL between a write and
+//     its restore would leave a mutated src/ file on disk looking exactly like intentional work. Transforming in
+//     the module graph cannot leave a mutated tree behind under any exit path.
+//   THROWS when the pattern is missing or the file never enters the module graph, because a mutant that did not
+//     apply and scored SURVIVED is the one result in a matrix that actively misleads.
 import base from './vite.harness.v2.mjs'
 import { MUTANTS_V2 } from './todayMutantsV2.mjs'
 

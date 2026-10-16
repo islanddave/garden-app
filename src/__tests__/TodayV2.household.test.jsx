@@ -3,7 +3,7 @@
 // Plan-v2 §1.6, §2.9, §13 SF6 and the orchestrator's note: shown only while THIS device has the household view on
 // (V1's switch, lib/householdView.js readShowOthers — the one reader S5 shares), closed by default, never opened
 // by a trigger, NO cold rows (a member's tender plants belong to Protect tonight, "(Jen)", S5), the same row
-// anatomy, and the SAME shared skip set V1's household list reads. `include=household` on every plan read is
+// anatomy, and the SAME shared skip set V1's household list read (until S8c). `include=household` on every plan read is
 // pinned in TodayV2.includeHousehold.test.jsx. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -40,7 +40,6 @@ vi.mock('../hooks/useCachedFetch.js', () => ({
 }))
 
 import TodayV2 from '../pages/TodayV2.jsx'
-import CareNeeded from '../components/today/CareNeeded.jsx'
 import { readSkipped } from '../components/today/careStore.js'
 import { householdKey, householdSummary } from '../components/today/v2/HouseholdSection.jsx'
 import { TRIGGER_CELLS } from '../../tests/harness/_todaymeasure/today-v2-contract.mjs'
@@ -185,7 +184,7 @@ describe('the same row anatomy and the SAME shared skip set', () => {
     expect(within(body).getByRole('button', { name: 'Not today: House' })).toBeTruthy()
   })
 
-  it('a Skip in her section lands in careStore\'s ONE set under V1\'s row key, and V1\'s household list for her hides the row', async () => {
+  it('a Skip in her section lands in careStore\'s ONE set under the row key, and a remount still hides the row', async () => {
     localStorage.setItem('garden.today.showOthers', '1')
     await mount()
     const daveCount = sec('care').getAttribute('data-count')
@@ -197,14 +196,18 @@ describe('the same row anatomy and the SAME shared skip set', () => {
     const housePlantings = JEN.water_due.concat(JEN.fertilize).filter((r) => PLANTS.find((p) => p.id === r.id)?.location_id?.startsWith('7ee03125'))
     expect(housePlantings.length).toBeGreaterThan(0)
     for (const r of JEN.water_due.filter((x) => housePlantings.includes(x))) expect(skipped.has(r.id + ':water_due')).toBe(true)
-    expect(sec(HH).getAttribute('data-count')).not.toBe('15')
+    const herCount = sec(HH).getAttribute('data-count')
+    expect(herCount).not.toBe('15')
     expect(sec('care').getAttribute('data-count')).toBe(daveCount) // Dave's own list untouched
     cleanup()
-    // V1's household list for her (CareNeeded list=<member>) reads the same store: those rows are gone there too.
-    render(<MemoryRouter><CareNeeded plan={JEN} planDate={TODAY} list={JEN_ID} /></MemoryRouter>)
-    await settle()
-    expect(document.body.textContent).not.toMatch(/Green Fittonia/)
-    expect(document.body.textContent).toMatch(/Scallion/) // her Deck rows were not skipped
+    // Until S8c the old page's household list for her (CareNeeded list=<member>) read the same store and hid those
+    // rows too; the reader left is this page, and the skip holds across a remount of it.
+    await mount()
+    expect(sec(HH).getAttribute('data-count')).toBe(herCount)
+    // The header tap above was remembered (Layer 1), so the remount opens her section by itself.
+    if (header(HH).getAttribute('aria-expanded') !== 'true') { fireEvent.click(header(HH)); await settle() }
+    expect(within(sec(HH)).queryByRole('button', { name: /^Not today: House/ })).toBeNull()  // House is all skipped
+    expect(sec(HH).textContent).toMatch(/Deck/) // her Deck rows were not skipped
   })
 
   it('a write on her planting goes through the one events path with her planting and project', async () => {

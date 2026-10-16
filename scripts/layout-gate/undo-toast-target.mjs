@@ -8,8 +8,10 @@
 // MEASURES, in real Chrome at Dave's phone viewport — 426x836 CSS px, DPR 3, mobile emulation via
 // Emulation.setDeviceMetricsOverride, never --window-size (macOS Chrome floors a window at ~500px and
 // crops) — on tests/harness/undotap.html: every production caller's undo toast, one at a time, and the
-// tallest stack Today can build from real row taps. It refuses to report unless the page itself says
-// innerWidth 426 x innerHeight 836, and burns that into the top of every PNG.
+// tallest stack the provider holds. It refuses to report unless the page itself says innerWidth 426 x
+// innerHeight 836, and burns that into the top of every PNG. (Until S8c of V5-TODAYREDESIGN-001 the stack
+// came from real taps on the old Today's care rows; the redesigned Today raises no toast for a care write,
+// so the stack is raised through the real provider — see undotap.jsx.)
 //
 // ASSERTS (skipped with --measure-only):
 //   (a) TARGET — on every caller's toast the Undo control's box is >= TAP x TAP, it takes a tap across
@@ -25,8 +27,8 @@
 //       the toast's right edge (the padding there is target, not dead space), and sits >= MIN_TARGET_GAP
 //       px clear of Undo. The gap is the part that matters most: Undo reverses the action, x throws the
 //       undo away, so a thumb that misses Undo must land on nothing rather than on x.
-//   (d) STACK — Water, Skip, Feed tapped on real rows is 3 toasts, none overlapping, ending above the
-//       bottom nav; a fourth (Moist) takes a slot from the low-priority Skip toast, not from a log.
+//   (d) STACK — three of the tallest caller shapes at the cap (one priority 'low') are 3 toasts, none
+//       overlapping, ending above the bottom nav; a fourth takes the low-priority toast's slot, not a log's.
 //   (e) NAME — the Undo control's accessible name is still exactly "Undo".
 //   (f) GLYPH — the × glyph stays out of the toast's right padding band (its right edge at least the
 //       toast's padding-right inside the toast's edge). × takes that padding as TAP area while its glyph
@@ -61,8 +63,8 @@ import { fontCensus, fmtCensus, fontProbe } from './font-census.mjs'
 // Read from the token, never spelled here: a gate carrying its own copy of the target is a gate that
 // keeps passing after someone lowers the real one. buttonMinHeight is the frozen 48 tap target.
 const TAP = T.buttonMinHeight
-// Material's minimum spacing between two touch targets. Not a token in this codebase; the Today Skip
-// fix (BUG-TODAYSKIPNOUNDO-001, CareNeeded.jsx SKIP_GAP) used the same 8.
+// Material's minimum spacing between two touch targets. Not a token in this codebase; the old Today's Skip
+// fix (BUG-TODAYSKIPNOUNDO-001, its SKIP_GAP) used the same 8.
 const MIN_TARGET_GAP = 8
 
 const arg = (k, d = null) => { const i = process.argv.indexOf(k); return i > -1 ? process.argv[i + 1] : d }
@@ -233,7 +235,7 @@ try {
   cdp = await attach(chrome.version.webSocketDebuggerUrl)
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: VIEWPORT.w, height: VIEWPORT.h, deviceScaleFactor: VIEWPORT.dpr, mobile: true }, cdp.sessionId)
   await cdp.send('Page.navigate', { url: `http://localhost:${PORT}/tests/harness/undotap.html` }, cdp.sessionId)
-  await cdp.evalIn(`(async()=>{for(let i=0;i<200;i++){if(window.__h&&window.__h.ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('rows never rendered: '+(window.__h&&window.__h.error()))})()`)
+  await cdp.evalIn(`(async()=>{for(let i=0;i<200;i++){if(window.__h&&window.__h.ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('the toast provider never mounted: '+(window.__h&&window.__h.error()))})()`)
   await sleep(500)
 
   // NON-VACUITY first: a measurement from the wrong viewport is a measurement of a different layout.
@@ -250,15 +252,15 @@ try {
 
   const callers = await cdp.evalIn(`window.__h.measureCallers(${TAP})`)
   result.callers = callers
-  if (callers.length < 10) fail(`only ${callers.length} caller shapes measured — the census is thinner than the ten production message shapes`)
+  if (callers.length < 5) fail(`only ${callers.length} caller shapes measured — the census is thinner than the five production message shapes`)
   for (const m of callers) {
     console.log(`[undo-toast-target] ${LABEL} · ${m.caller}: ${fmt(m)}`)
     checkToast(m.caller, m)
   }
 
-  // Three caller shapes together (the cap), outlined, for the eye: shortest, EventNew's worst, Skip.
-  await cdp.evalIn('window.__h.raise([0, 9, 4])')
-  // Who PAINTED the toasts and the rows behind them — the pin loading above does not prove it. Taken
+  // Three caller shapes together (the cap), outlined, for the eye: shortest, EventNew's worst, Season end.
+  await cdp.evalIn('window.__h.raise([0, 3, 4])')
+  // Who PAINTED the toasts — the pin loading above does not prove it. Taken
   // with three toasts up, before the outline layer (it carries no text) is drawn.
   const census = await fontCensus(cdp, '#root')
   result.fonts = census
@@ -274,7 +276,7 @@ try {
 
   const { three } = await cdp.evalIn(`window.__h.stack(${TAP})`)
   result.stack = three
-  await cdp.evalIn(`window.__h.badge('innerWidth '+innerWidth+' · innerHeight '+innerHeight+' · dpr '+devicePixelRatio+' · ${LABEL} · Water, Skip, Feed · stack y${three.stackTop}-${three.stackBottom} · nav y${three.navTop} · list controls half+ hidden ${three.controlsCovered}/${three.controlsOnScreen}, any part ${three.controlsTouched}')`)
+  await cdp.evalIn(`window.__h.badge('innerWidth '+innerWidth+' · innerHeight '+innerHeight+' · dpr '+devicePixelRatio+' · ${LABEL} · stack of three · y${three.stackTop}-${three.stackBottom} · nav y${three.navTop}')`)
   result.shots.push(await cdp.shot(join(OUT, `undotap-stack-${LABEL}-426x836.png`)))
   await cdp.evalIn('window.__h.outline(true)')
   result.shots.push(await cdp.shot(join(OUT, `undotap-stack-hitbox-${LABEL}-426x836.png`)))
@@ -282,17 +284,17 @@ try {
   const give = await cdp.evalIn(`window.__h.stackGiveWay(${TAP})`)
   result.giveWay = give
 
-  console.log(`[undo-toast-target] ${LABEL} · stack Water+Skip+Feed: ${three.count} toasts y${three.stackTop}-${three.stackBottom} (h${three.stackH}) · nav top y${three.navTop} · clearance ${three.clearanceAboveNav}px · overlaps ${three.overlaps} · list controls half+ hidden ${three.controlsCovered}/${three.controlsOnScreen}, any part ${three.controlsTouched}`)
+  console.log(`[undo-toast-target] ${LABEL} · stack of three: ${three.count} toasts y${three.stackTop}-${three.stackBottom} (h${three.stackH}) · nav top y${three.navTop} · clearance ${three.clearanceAboveNav}px · overlaps ${three.overlaps}`)
   for (const m of three.toasts) console.log(`[undo-toast-target] ${LABEL} ·   ${JSON.stringify(m.message)}: ${fmt(m)}`)
-  console.log(`[undo-toast-target] ${LABEL} · after Moist: ${give.after.count} toasts ${JSON.stringify(give.after.toasts.map(t => t.message))} y${give.after.stackTop}-${give.after.stackBottom}`)
+  console.log(`[undo-toast-target] ${LABEL} · after the fourth: ${give.after.count} toasts ${JSON.stringify(give.after.toasts.map(t => t.message))} y${give.after.stackTop}-${give.after.stackBottom}`)
 
-  if (three.count !== 3) fail(`stack: Water, Skip, Feed produced ${three.count} toasts, not 3 — the stack under test never formed`)
+  if (three.count !== 3) fail(`stack: three raised toasts show as ${three.count}, not 3 — the stack under test never formed`)
   if (three.overlaps) fail(`stack: ${three.overlaps} toast(s) overlap the one above`)
   if (three.clearanceAboveNav < 0) fail(`stack: bottom y${three.stackBottom} runs ${-three.clearanceAboveNav}px into the nav (top y${three.navTop})`)
   if (three.stackTop < 0) fail(`stack: top y${three.stackTop} is off the top of the screen`)
   for (const m of three.toasts) checkToast(`stack ${JSON.stringify(m.message)}`, m)
-  if (give.after.count !== 3) fail(`after Moist: ${give.after.count} toasts, not 3`)
-  if (give.after.toasts.some(t => /^Skipped /.test(t.message))) fail(`after Moist: the low-priority Skip toast is still up — a log Undo gave way instead`)
+  if (give.after.count !== 3) fail(`after the fourth: ${give.after.count} toasts, not 3`)
+  if (give.after.toasts.some(t => /^Skipped /.test(t.message))) fail(`after the fourth: the low-priority Skip toast is still up — a log Undo gave way instead`)
 
   result.error = await cdp.evalIn('window.__h.error()')
   if (result.error) fail(`page error: ${result.error}`)

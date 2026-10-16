@@ -8,7 +8,7 @@
 //   REAL:  TopChrome; the page-scroll manager, called exactly as AppShell calls it (today-shell-v2.mjs's
 //          drift guard fails otherwise) with main.jsx's boot line; the providers App mounts around the page
 //          (Auth on the Clerk stub, Mode, Favorites, Prefs, Toast, DismissRegistry, Overlay) under BrowserRouter;
-//          the /today element, the same TodayRoute chooser todaymeasure ?v2=1 mounts (V1 Today until S2).
+//          the /today element, TodayV2 — the page App mounts there (S8c: the only Today page) and todaymeasure mounts.
 //   STAND-INS: BottomNav — a 56px fixed band (BOTTOM_NAV_HEIGHT_PX) that writes --bottom-nav-height in a
 //          layout effect as BottomNav does; and the planting page, one screen with a heading, because (m) only
 //          asks where Today comes BACK to.
@@ -17,7 +17,7 @@
 // returns — never an empty list; an empty roster hid a Garden bug from its gate, and Today's household lens
 // and its first /api/daily-plan request both read it.
 //
-//   /tests/harness/todayshell.html?state=v2-busy&v2=1&clock=2026-09-24T14:30:00.000Z
+//   /tests/harness/todayshell.html?state=v2-busy&clock=2026-09-24T14:30:00.000Z
 import './robotoPin.js'
 import React, { useLayoutEffect } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -33,7 +33,7 @@ import { usePageScrollManager, PageScrollProvider, applyBrowserScrollRestoration
 import { SCROLL_MANAGER_ENABLED } from '../../src/lib/featureFlags.js'
 import TopChrome from '../../src/components/TopChrome.jsx'
 import ErrorBoundary from '../../src/components/ErrorBoundary.jsx'
-import Today from '../../src/pages/Today.jsx'
+import TodayV2 from '../../src/pages/TodayV2.jsx'
 import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
 import { stateByName } from './_todaymeasure/today-v2-contract.mjs'
 import { buildV2State, localSeeds, selectorFor, flipState, flipAttr } from './_todaymeasure/v2wire.js'
@@ -79,7 +79,7 @@ const V2GRAFTS = await j(F + 'v2-grafts.json')
 const LOCATIONS_FULL = await j(F + 'locations.full.json')
 const V2PREFS = V2STATE ? await j(F + V2STATE.prefs) : null
 
-// ── the v1 payload builders, COPIED from todaymeasure.jsx (unified at S8c). today-shell-v2.mjs's drift guard
+// ── the fixture payload builders, COPIED from todaymeasure.jsx (one shared module is deferred past S8c). today-shell-v2.mjs's drift guard
 // compares rebase() and graftBusyfull() with the originals, so a change there cannot leave this copy behind.
 function rebase(payload) {
   if (!payload?.entries?.length) return payload
@@ -132,7 +132,7 @@ const EMPTY = !FIX.startsWith('busy')
 const WIRE = V2STATE && V2GRAFTS ? buildV2State(V2STATE, { payload: PAYLOAD_BY_FIX[FIX], plants: STORAGE ? STORAGE_PLANTS : (EMPTY ? [] : PLANTS) }, V2GRAFTS, V2PREFS) : null
 
 // A first visit on a clean device, except on the reload the gate asks for (Back returns within one document,
-// so this runs once per flow). Then the state's seeds, as todaymeasure ?v2=1 writes them.
+// so this runs once per flow). Then the state's seeds, as todaymeasure writes them.
 try { localStorage.clear(); sessionStorage.clear() } catch { /* ignore */ }
 if (FIX === 'busyhh') { try { localStorage.setItem('garden.today.showOthers', '1') } catch { /* ignore */ } }
 const SEEDS = WIRE ? localSeeds(V2STATE, WIRE.payload, 'harness_user') : []
@@ -180,15 +180,10 @@ const errors = []
 window.addEventListener('error', (e) => errors.push(String(e.message || e)))
 window.addEventListener('unhandledrejection', (e) => errors.push(`unhandled rejection: ${e.reason?.message ?? e.reason}`))
 
-// ── the /today element: the same chooser todaymeasure ?v2=1 mounts ─────────────────────────────────────────
-const V2_ROUTE = import.meta.glob('../../src/components/today/v2/TodayRoute.jsx')
-let TodayEl = Today
-let route = 'absent'
-if (params.get('v2stub') === '1') { TodayEl = (await import('./stubs/TodayV2Stub.jsx')).default; route = 'stub' }
-else {
-  const loaders = Object.values(V2_ROUTE)
-  if (loaders.length === 1) { const m = await loaders[0](); TodayEl = m.default || m.TodayRoute; route = 'present' }
-}
+// ── the /today element: TodayV2, as App mounts it (or the self-test's empty stub, ?v2stub=1) ─────────────────
+const V2STUB = params.get('v2stub') === '1'
+const TodayEl = V2STUB ? (await import('./stubs/TodayV2Stub.jsx')).default : TodayV2
+const route = V2STUB ? 'stub' : 'present'
 
 function PlantingStandIn() {
   const loc = useLocation()
@@ -257,8 +252,7 @@ window.__h = {
   route: () => route,
   ready: () => {
     if (location.pathname !== '/today') return !!document.querySelector('[data-testid="harness-planting"]')
-    if (route === 'absent') { const t = document.querySelector('[data-testid="today-title"]'); return !!t && !document.body.textContent.includes('Loading…') }
-    // The real V2 at its ready point (plan-v2 §6.4; the sections paint there), as todaymeasure's v2ready.
+    // The real page at its ready point (plan-v2 §6.4; the sections paint there), as todaymeasure's v2ready.
     if (route === 'present') return !!document.querySelector('[data-today-version="2"][data-today-ready="true"]')
     return !!document.querySelector('[data-today-version="2"]')
   },
@@ -268,7 +262,7 @@ window.__h = {
   fixtures: () => fixtures,
   clock: () => ({ pinned: !!window.__pinnedClock, ...(window.__pinnedClock || {}), now: new Date().toISOString(), tz: Intl.DateTimeFormat().resolvedOptions().timeZone }),
   weatherStubbed: () => true,
-  v2: () => ({ state: V2STATE?.name ?? null, fixture: FIX, route, seeds: SEEDS.map(([k]) => k), flag: (() => { try { return localStorage.getItem('garden.todayV2') } catch { return null } })(), prefs: { fixture: V2STATE?.prefs ?? null, served: prefsServed }, members: { served: membersServed, count: MEMBERS.members.length }, critterOrigin: import.meta.env.VITE_API_CRITTERS || null }),
+  v2: () => ({ state: V2STATE?.name ?? null, fixture: FIX, route, seeds: SEEDS.map(([k]) => k), prefs: { fixture: V2STATE?.prefs ?? null, served: prefsServed }, members: { served: membersServed, count: MEMBERS.members.length }, critterOrigin: import.meta.env.VITE_API_CRITTERS || null }),
   // The shell's own geometry — what the platform contract is measured against.
   chrome: () => {
     const top = document.querySelector('header[data-app-chrome="top"]')
@@ -282,7 +276,7 @@ window.__h = {
   },
   scrollY: () => Math.round(window.scrollY),
   harnessUrl: () => HARNESS_URL,
-  // The same interaction driver as todaymeasure ?v2=1 (hit-tested tap; aria-expanded — aria-pressed for a
+  // The same interaction driver as todaymeasure (hit-tested tap; aria-expanded — aria-pressed for a
   // `task-filter:` chip — must flip).
   async act(step) {
     const out = { step, ok: false, void: null, before: null, after: null }

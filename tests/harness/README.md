@@ -156,7 +156,8 @@ declarations are untouched; they just resolve to Roboto, as on the phone. A `fon
 would have missed `WeatherWidget`'s inline stack. `window.__fontPin` reports what loaded.
 
 **Scoped, not global.** Only `todaymeasure.jsx` and `undotap.jsx` import it — the two entries whose
-gates run in CI on this pin (`gate:today-shape`, `gate:undo-toast`) — and, since 2026-09-29,
+gates run in CI on this pin (`gate:today-shape:v2`, `gate:undo-toast`; `todayshell.jsx` for
+`gate:today-shell:v2` too) — and, since 2026-09-29,
 `putupferment.jsx` (the ferment walks; its gate refuses a run where the pin did not load). Every other entry, and every
 other layout gate, still measures in the host's font exactly as before, because nothing they load
 changed (`appGlobalStyle.js` and `vite.harness.config.mjs` are untouched). Pinning globally would
@@ -361,13 +362,16 @@ servers on one port measure each other's code). Findings:
 ## `undotap.*` — the shared undo toast's tap targets, added 2026-09-24
 
 Every undo toast in the app is `ToastContext`'s `UndoToast` (BUG-UNDOTOASTTAPTARGET-001). This entry
-mounts the real `ToastProvider` around the real `CareNeeded`, and a bottom-nav stand-in whose
+mounts the real `ToastProvider`, and a bottom-nav stand-in whose
 `--bottom-nav-height` is set **inline on `<html>` from `BOTTOM_NAV_HEIGHT_PX`**, the way `BottomNav`
 does it. (A `:root` rule in the entry's own `<style>` loses to the injected global style's
 `--bottom-nav-height: 0px`, which lands later in `<head>`.) `__h.measureCallers(48)` raises one toast
-per production caller's message shape; `__h.stack(48)` taps Water, Skip and Feed on real rows.
-Targets are read by hit-testing (`elementFromPoint` extents and a 5x5 grid), not from boxes, and the
-stack census counts list controls by area hidden, excluding the toasts' own buttons.
+per production caller's message shape; `__h.stack(48)` raises three tall shapes at the cap (one priority
+`low`) and `__h.stackGiveWay(48)` a fourth, which must take the low toast's slot. Targets are read by
+hit-testing (`elementFromPoint` extents and a 5x5 grid), not from boxes. Until V5-TODAYREDESIGN-001 S8c
+(L8) the entry mounted the old Today's `CareNeeded` and built the stack from real Water / Skip / Feed taps;
+the redesigned Today raises no toast for a care write (its done lines carry Undo), so the stack is raised
+through the provider.
 
 `scripts/layout-gate/undo-toast-target.mjs` is the instrument, `npm run gate:undo-toast`, in CI's
 build-and-test since 2026-09-25 (OPS-UNDOTOASTGATECI-001): it emulates 426x836 at DPR 3, refuses to
@@ -421,6 +425,17 @@ CI's build-and-test right after `gate:putup` (~81 s locally); `npm run gate:putu
 exits 1 on all ten walk/viewport pairs.
 
 ## Retired entries
+
+**`careneeded.*`, `careskip.*`, `toaststack.*` — removed 2026-10-16, V5-TODAYREDESIGN-001 S8c (L8).** All three
+mounted the old Today page's `CareNeeded` list, removed with that page. `careneeded` checked its section
+headers (a long location name beside the count and the section bulk button at 390px) and that a log did not
+reorder the sections (BUG-TODAYCAREREORDER-001); `careskip` checked the row's Skip target and the Skip undo
+toast; `toaststack` checked a run of one-tap logs coalescing into one readable toast. The redesign has no
+section bulk header (spots and groups instead), raises no toast for a care write (done lines with Undo), and
+its row anatomy is `PlantCareRow`. What those entries asked is now `gate:today-shape:v2`'s, on the
+prod-derived fixtures: no-hscroll and floors on every state, the held spot order (`spotReorderOnLog`), the
+row and spot-bulk flows (trusted-taps), and the Skip / Not-today paths. The provider's own stack is
+`undotap.*`'s.
 
 **`photostrips.*` — removed 2026-08-30, V4-PHOTOBULK-001 D4b.** It measured the staged-photo strip
 *inside a planting card* and found the defect that killed that design: ten staged files grew the card

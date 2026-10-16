@@ -1,9 +1,12 @@
 // todaymeasure — MEASUREMENT harness for the real /today surface at Dave's geometry.
 //
 // Purpose: characterise the Today page as it actually RENDERS, so a design crucible argues from
-// pixels rather than from reading Today.jsx. Nothing under src/ is modified or re-implemented: this
-// mounts the REAL `Today` page component inside the REAL router and the REAL AuthProvider, and only
-// the wire (window.fetch) is stubbed.
+// pixels rather than from reading TodayV2.jsx. Nothing under src/ is modified or re-implemented: this
+// mounts the REAL `TodayV2` page component (the page App mounts at /today) inside the REAL router, the
+// REAL AuthProvider and the REAL PrefsProvider, and only the wire (window.fetch) is stubbed.
+// V5-TODAYREDESIGN-001 S8c (L8): the old Today page is gone, and with it the ?v2=1 seam that chose between
+// the two — every run is a v2 contract state (today-v2-contract.mjs). The STATES below are the v1 payloads
+// those states start from (a row's `fixture`), not pages of their own.
 //
 // DATA IS PROD, NOT INVENTED. The payloads in ./_todaymeasure/ are dumped from live prod Neon,
 // read-only, by ./_todaymeasure/dump-prod.mjs for Dave's household on 2026-09-24 (the 10:00 ET plan
@@ -12,17 +15,17 @@
 // a page that nobody has. (Carried unchanged from the 2026-09-08 dump: harvests.json and
 // harvests.batchwindow.json — see _todaymeasure/bands-notes.md.)
 //
-// STATES, because the complaint has two halves and they are different design problems:
-//   ?state=busy     — today, as it really is for Dave (the default)
-//   ?state=busyfull — today PLUS every conditional line and band Today can show, grafted from the
-//                     latest real day each one occurred (busyfull-grafts.json, provenance per key)
-//   ?state=busyhh   — busy with the household lens open (recorder only, not in the gate budget)
-//   ?state=quiet    — a plan exists but every list in it is empty and every band is empty
-//   ?state=noplan   — has_plan false: the first-run / engine-hasn't-run empty state
-//   ?state=storage  — `quiet`, one week on (clock and plan dated 2026-10-01, see todaymeasure.html),
-//                     plus the two regions no 2026-09-24 payload can show: StorageDeadlineAlert inside
-//                     the sweet-potato check window and PutUpUseSoonBand with jars in their window,
-//                     each from real prod rows with one field moved (storage-grafts.json)
+// FIXTURES (a contract state's `fixture`; the URL names the state, ?state=v2-busy), because the complaint
+// has two halves and they are different design problems:
+//   busy     — today, as it really is for Dave
+//   busyfull — today PLUS every conditional line and band Today can show, grafted from the
+//              latest real day each one occurred (busyfull-grafts.json, provenance per key)
+//   busyhh   — busy plus Jen's plan, for the household sections
+//   quiet    — a plan exists but every list in it is empty and every band is empty
+//   noplan   — has_plan false: the first-run / engine-hasn't-run empty state
+//   storage  — `quiet`, one week on (the plan re-dated to 2026-10-01), plus the two regions no
+//              2026-09-24 payload can show: a storage window open (Heads-up) and PutUpUseSoonBand with
+//              jars in their window, each from real prod rows with one field moved (storage-grafts.json)
 //
 // window.__h is the measurement surface. It reports geometry, computed CSS and an ink profile; it
 // never asserts. Analysis happens in _todaymeasure/drive.mjs and downstream, so a change of opinion
@@ -35,7 +38,7 @@ import './robotoPin.js'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom'
-import Today from '../../src/pages/Today.jsx'
+import TodayV2 from '../../src/pages/TodayV2.jsx'
 import { AuthProvider } from '../../src/context/AuthContext.jsx'
 import { PrefsProvider } from '../../src/context/PrefsContext.jsx'
 import { PageScrollProvider } from '../../src/hooks/usePageScrollManager.js'
@@ -48,13 +51,10 @@ const realFetch = window.fetch.bind(window)
 const params = new URLSearchParams(location.search)
 const STATE = params.get('state') || 'busy'
 
-// ── V2 SEAMS (V5-TODAYREDESIGN-001 S0, plan-v2 §8 S0 a–c). INERT unless the URL says ?v2=1, so every v1
-// run — gate:today-shape, its mutants, the recorder — takes exactly the path it took before. With ?v2=1:
-//   (a) the state is a row of today-v2-contract.mjs (v2-frost, v2-busy, …); the device is cleared, then
-//       `garden.todayV2`='1' and the state's local seeds are written before mount, and the page mounts the
-//       same TodayRoute chooser App mounts (src/components/today/v2/TodayRoute.jsx — S2 writes it; until
-//       then there is no chooser, so V1 Today mounts, exactly as App would, and __h.v2().route says
-//       'absent'). ?v2stub=1 mounts tests/harness/stubs/TodayV2Stub.jsx instead: the gate's self-test.
+// ── V2 SEAMS (V5-TODAYREDESIGN-001 S0, plan-v2 §8 S0 a–c; since S8c every run takes them):
+//   (a) the state is a row of today-v2-contract.mjs (v2-frost, v2-busy, …); the device is cleared, then the
+//       state's local seeds are written before mount, and the page mounts TodayV2, the page App mounts at
+//       /today. ?v2stub=1 mounts tests/harness/stubs/TodayV2Stub.jsx instead: the gate's self-test.
 //   (b) PrefsProvider is mounted and GET /api/notifications/prefs is answered from the state's prefs
 //       fixture. It only goes out when VITE_API_CRITTERS is set, which tests/harness/vite.harness.v2.mjs
 //       does; __h.requests() shows the GET and __h.v2().prefs counts it.
@@ -62,10 +62,10 @@ const STATE = params.get('state') || 'busy'
 //   (d) ?routes=1 (the gate's trusted-taps flows only) mounts the same root under TWO routes, /today and /away,
 //       so a run can leave Today and come Back; __h.go(to) navigates. Without it the tree is the one-route tree
 //       every measured state has always had. __h.wire() counts the event writes and can hold their answers.
-// FIX is the v1 payload a state starts from: STATE itself for v1, the contract row's fixture for v2.
-const V2 = params.get('v2') === '1'
-const V2STATE = V2 ? stateByName(STATE) : null
-const V2PROBLEM = V2 && !V2STATE ? `?v2=1 with state '${STATE}', which is not a row of today-v2-contract.mjs` : null
+// FIX is the v1 payload a state starts from: the contract row's fixture. A state that is not a row is a
+// problem the gate reports (__h.v2().problem), never a page measured quietly.
+const V2STATE = stateByName(STATE)
+const V2PROBLEM = V2STATE ? null : `state '${STATE}' is not a row of today-v2-contract.mjs`
 const FIX = V2STATE ? V2STATE.fixture : STATE
 
 // A 4x4 sage PNG. Photo URLs in the dumped rows are S3 presigns that expire and cannot be replayed;
@@ -112,16 +112,16 @@ const GRAFTS = (await j('/tests/harness/_todaymeasure/busyfull-grafts.json'))
 const STORAGE_GRAFTS = (await j('/tests/harness/_todaymeasure/storage-grafts.json'))
 // V5-WXCOLDBAND-001: the real cold range for the fixture's night (cold-range.json), busyfull only.
 const COLD_RANGE = (await j('/tests/harness/_todaymeasure/cold-range.json'))?.value ?? null
-// V2 only (seam a/b): the engine-built grafts, GET /api/locations in full, and this state's prefs body.
-const V2GRAFTS = V2 ? await j('/tests/harness/_todaymeasure/v2-grafts.json') : null
-const LOCATIONS_FULL = V2 ? await j('/tests/harness/_todaymeasure/locations.full.json') : null
+// Seam a/b: the engine-built grafts, GET /api/locations in full, and this state's prefs body.
+const V2GRAFTS = await j('/tests/harness/_todaymeasure/v2-grafts.json')
+const LOCATIONS_FULL = await j('/tests/harness/_todaymeasure/locations.full.json')
 const V2PREFS = V2STATE ? await j(`/tests/harness/_todaymeasure/${V2STATE.prefs}`) : null
 // A v2 state is a first visit on a clean device: nothing an earlier state in the same browser wrote may
 // leak into it (the gate runs every state in one Chrome profile). Its own seeds are written below.
-// HARNESS HYGIENE (V5-TODAYREDESIGN-001 S2, the S1b finding): V1's care list holds its section order and open
-// set per tab + user + plan day (src/components/today/visitLayout.js, 'today-visit:' in sessionStorage), and
-// the v1 gate drives ONE signed-in tab through its states — so without this, busy measured the layout busyfull
-// left behind (a Back restore) instead of a fresh visit. Every state now boots a fresh visit, v1 and v2 alike.
+// HARNESS HYGIENE (V5-TODAYREDESIGN-001 S2, the S1b finding): the visit holds its section order and open set per
+// tab + user + plan day ('today-visit:' in sessionStorage, src/components/today/visitLayout.js), and the gate
+// drives ONE signed-in tab through its states — so without this, a state measured the layout the one before it
+// left behind (a Back restore) instead of a fresh visit. Every state boots a fresh visit.
 // ?keepVisit=1 keeps the visit keys: that is how a back-restore check measures a return.
 const KEEP_VISIT = params.get('keepVisit') === '1'
 const dropSession = (keep) => {
@@ -130,14 +130,8 @@ const dropSession = (keep) => {
   for (const k of drop) sessionStorage.removeItem(k)
 }
 const isVisitKey = (k) => k.startsWith('today-visit:')
-if (V2) { try { localStorage.clear(); dropSession((k) => KEEP_VISIT && isVisitKey(k)) } catch { /* ignore */ } }
-else if (!KEEP_VISIT) { try { dropSession((k) => !isVisitKey(k)) } catch { /* ignore */ } }
-
-// The household lens is ONE TAP from the default and Dave has a second caretaker, so what it costs
-// in scroll is a real number, not a hypothetical. localStorage is seeded before mount because the
-// component reads it in a useState initialiser.
-if (FIX === 'busyhh') { try { localStorage.setItem('garden.today.showOthers', '1') } catch { /* ignore */ } }
-else { try { localStorage.removeItem('garden.today.showOthers') } catch { /* ignore */ } }
+try { localStorage.clear(); dropSession((k) => KEEP_VISIT && isVisitKey(k)) } catch { /* ignore */ }
+// The household view (garden.today.showOthers) is one of a state's local seeds (v2-household), written below.
 
 // ComposeHarvestBand is gated on TWO clocks — the read model's 24h `created_since` and the
 // component's own 18h MAX_BATCH_AGE_MS — and Dave's last logged pick before this dump (2026-09-23
@@ -230,7 +224,7 @@ const STORAGE = FIX === 'storage'
 const EMPTY = !FIX.startsWith('busy')
 const requests = []
 
-// V2 (seam a): the contract row's payload = its fixture's v1 payload, re-dated and grafted (v2wire.js).
+// Seam a: the contract row's payload = its fixture's payload, re-dated and grafted (v2wire.js).
 const V2WIRE = V2STATE && V2GRAFTS
   ? buildV2State(V2STATE, { payload: PAYLOAD_BY_FIX[FIX], plants: STORAGE ? STORAGE_PLANTS : (EMPTY ? [] : PLANTS) }, V2GRAFTS, V2PREFS)
   : null
@@ -257,7 +251,7 @@ const etDayOffset = (n) => new Date(Date.now() + n * 86400000).toLocaleDateStrin
 // PER-STATE WEATHER (v2 only; BUG-RAINTOMORROWMISLABEL-001 b). A contract row may carry `wx` — any of
 // precipitation_sum, precipitation_probability_max (the five-day arrays below) and models (the five model
 // columns of the second stub, [D0, D1, D2] each) — and the two stubs answer with those instead. Every state
-// without `wx`, and every v1 state, gets the fixed numbers it always got. __h.v2().wx says which was served.
+// without `wx` gets the fixed numbers it always got. __h.v2().wx says which was served.
 const WX_STATE = V2STATE?.wx || null
 const OPEN_METEO_STUB = {
   daily: {
@@ -310,23 +304,23 @@ const stubFetch = async (input, init = {}) => {
   let ms = 20
   if (p === '/api/daily-plan') body = PAYLOAD
   // First names only (privacy sweep 2026-09-24). Today prints only the first token of a member's
-  // display_name (Today.jsx nameFor), so a surname here buys no geometry and exposes a person.
+  // display_name (lib/householdView.js memberFirstName), so a surname here buys no geometry and exposes a person.
   else if (p === '/api/members') body = { members: EMPTY ? [] : [{ id: 'harness_user', display_name: 'Dave' }, { id: 'member_jen', display_name: 'Jen' }] }
   else if (p === '/api/plants') body = V2WIRE ? V2WIRE.plants : (STORAGE ? STORAGE_PLANTS : (EMPTY ? [] : PLANTS))
   else if (p === '/api/locations/with-path') body = LOCATIONS
-  // V2 only (seam b): GET /api/locations in full (covered/heated/parent_id) and the prefs read.
-  else if (V2 && p === '/api/locations') body = LOCATIONS_FULL
-  else if (V2 && p === '/api/notifications/prefs' && (init.method || 'GET').toUpperCase() === 'GET') { prefsServed++; body = V2PREFS; ms = Math.max(ms, V2WIRE?.prefsDelayMs || 0) }
+  // Seam b: GET /api/locations in full (covered/heated/parent_id) and the prefs read.
+  else if (p === '/api/locations') body = LOCATIONS_FULL
+  else if (p === '/api/notifications/prefs' && (init.method || 'GET').toUpperCase() === 'GET') { prefsServed++; body = V2PREFS; ms = Math.max(ms, V2WIRE?.prefsDelayMs || 0) }
   else if (p === '/api/preservation/use-soon') body = STORAGE ? (STORAGE_GRAFTS?.use_soon?.value ?? { items: [] }) : (EMPTY ? [] : (USESOON ?? []))
   else if (p === '/api/harvests/watch') body = EMPTY ? [] : (WATCH ?? [])
   else if (p === '/api/harvests') body = EMPTY ? [] : (FIX === 'busyfull' ? rebase(BATCHWIN) : (HARVESTS ?? []))
   else if (p === '/api/inventory-items/sow-candidates') body = EMPTY ? [] : (SOWCAND ?? [])
-  // V2 only (S4): a logged event answers with an id, as the events Lambda does, so a V2 Undo has something to
+  // S4: a logged event answers with an id, as the events Lambda does, so an Undo has something to
   // DELETE (gate:today-shape:v2 group-water-all runs the MF3 round trip). DELETE /api/events/:id answers 200.
   // S4g: the gate can make the next N of these POSTs fail (__h.failPosts), as a dropped write in the garden
   // does — MF3's "Not logged · Retry" has no other way to appear on a stubbed wire. The count is consumed in
   // CALL order, so which rows of a run fail is fixed by the run's own order.
-  else if (V2 && p === '/api/events' && (init.method || 'GET').toUpperCase() === 'POST') {
+  else if (p === '/api/events' && (init.method || 'GET').toUpperCase() === 'POST') {
     if (v2FailPosts > 0) {
       v2FailPosts--
       await new Promise(r => setTimeout(r, ms))
@@ -341,7 +335,7 @@ const stubFetch = async (input, init = {}) => {
 var v2EventSeq = 0
 var v2FailPosts = 0
 
-// V2 only (gate:today-shape:v2 trusted-taps): the event writes, counted at the wire — every POST /api/events by
+// gate:today-shape:v2 trusted-taps: the event writes, counted at the wire — every POST /api/events by
 // the planting and type it logs (so "each plant posted exactly once" is a count, not an inference from a done
 // line), every DELETE /api/events/:id — and a way to HOLD answers: after __h.wire({ holdAfter: n }) the next n
 // POSTs answer as usual and each one after that waits, unanswered, until __h.wire({ release: true }). A held POST
@@ -349,7 +343,6 @@ var v2FailPosts = 0
 // to end while Today is away or its section is closed. Nothing is held, and no answer changes, unless a gate asks.
 const v2Wire = { posts: 0, deletes: 0, inflight: 0, holdFrom: Infinity, held: [], keys: {} }
 const v2EventWrite = (input, init) => {
-  if (!V2) return null
   const url = typeof input === 'string' ? input : input.url
   const m = String(init.method || 'GET').toUpperCase()
   let path = ''
@@ -379,24 +372,16 @@ let firstError = null
 window.addEventListener('error', e => { firstError ??= e.message })
 window.addEventListener('unhandledrejection', e => { firstError ??= String(e.reason?.message ?? e.reason) })
 
-// V2 (seam a): the chooser App mounts, found by glob so its ABSENCE (before S2) is a fact this page
-// reports rather than a build error. A literal path: the glob matches that one file or nothing.
-const V2_ROUTE = import.meta.glob('../../src/components/today/v2/TodayRoute.jsx')
-let V2Root = null
-let v2Route = null
-if (V2) {
-  if (params.get('v2stub') === '1') { V2Root = (await import('./stubs/TodayV2Stub.jsx')).default; v2Route = 'stub' }
-  else {
-    const loaders = Object.values(V2_ROUTE)
-    if (loaders.length === 1) { const m = await loaders[0](); V2Root = m.default || m.TodayRoute; v2Route = 'present' }
-    else { V2Root = Today; v2Route = 'absent' }
-  }
-}
+// Seam a: the page App mounts at /today (S8c: TodayV2 itself, a static import there and here), or the self-test's
+// empty stub. __h.v2().route says which: 'present' or 'stub'.
+const V2STUB = params.get('v2stub') === '1'
+const V2Root = V2STUB ? (await import('./stubs/TodayV2Stub.jsx')).default : TodayV2
+const v2Route = V2STUB ? 'stub' : 'present'
 
 // (d) ?routes=1: the same root under /today, and an empty page at /away. The Back mount gets what App's shell gives
 // a page come back to — PageScrollProvider with isReturn true — the scaffolding the vitest Back cases use
 // (TodayV2 reads it to seed itself from the visit). Only the gate's trusted-taps flows ask for it.
-const ROUTES = V2 && params.get('routes') === '1'
+const ROUTES = params.get('routes') === '1'
 let todayMounts = 0
 let harnessNav = null
 function HarnessToday() {
@@ -413,7 +398,7 @@ function HarnessRoutes() {
   )
 }
 
-createRoot(document.getElementById('root')).render(V2 ? (
+createRoot(document.getElementById('root')).render(
   <AuthProvider>
     <PrefsProvider>
       <MemoryRouter initialEntries={['/today']}>
@@ -421,13 +406,7 @@ createRoot(document.getElementById('root')).render(V2 ? (
       </MemoryRouter>
     </PrefsProvider>
   </AuthProvider>
-) : (
-  <AuthProvider>
-    <MemoryRouter initialEntries={['/today']}>
-      <Today />
-    </MemoryRouter>
-  </AuthProvider>
-))
+)
 
 // ── measurement ────────────────────────────────────────────────────────────────────────────────
 const BADGE = document.getElementById('hbadge')
@@ -661,21 +640,19 @@ window.__h = {
   showBadge() { BADGE.style.display = ''; return true },
   // ── V2 seams (see the note at the top). Reported, never asserted — the gate asserts.
   v2: () => ({
-    requested: V2, problem: V2PROBLEM, state: V2STATE?.name ?? null, fixture: FIX, route: v2Route,
-    flag: (() => { try { return localStorage.getItem('garden.todayV2') } catch { return null } })(),
+    problem: V2PROBLEM, state: V2STATE?.name ?? null, fixture: FIX, route: v2Route,
     seeds: V2SEEDS.map(([k]) => k), grafts: V2STATE?.grafts || [], redate: V2STATE?.redate || null,
     wx: WX_STATE ? 'state' : 'default',
     planDate: PAYLOAD?.plan_date ?? null,
     prefs: { fixture: V2STATE?.prefs ?? null, delayMs: V2WIRE?.prefsDelayMs ?? 0, served: prefsServed, bytes: V2PREFS ? JSON.stringify(V2PREFS).length : 0 },
     critterOrigin: import.meta.env.VITE_API_CRITTERS || null,
   }),
-  // Ready: the chooser's V2 at its READY point (plan-v2 §6.4, data-today-ready — the sections paint there; the
-  // version anchor alone paints at mount, before the plan lands, and a measurement taken then would read an
-  // empty page), the stub on its version anchor, else V1's own readiness.
+  // Ready: the page at its READY point (plan-v2 §6.4, data-today-ready — the sections paint there; the version
+  // anchor alone paints at mount, before the plan lands, and a measurement taken then would read an empty page),
+  // or the stub on its version anchor.
   v2ready() {
-    if (v2Route === 'present') return !!document.querySelector('[data-today-version="2"][data-today-ready="true"]')
     if (v2Route === 'stub') return !!document.querySelector('[data-today-version="2"]')
-    return this.ready()
+    return !!document.querySelector('[data-today-version="2"][data-today-ready="true"]')
   },
   expanded: (target) => { try { return document.querySelector(selectorFor(target))?.getAttribute('aria-expanded') ?? null } catch { return null } },
   // S4g: the next `n` POST /api/events answer 503 (0 clears). Returns how many of the LAST request were still
