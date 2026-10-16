@@ -97,6 +97,9 @@ const NS_LOCATIONS = `SELECT id FROM locations WHERE created_by LIKE ${NS} OR na
 // V4-CASCADESWEEP-001: photos.inventory_item_id is ON DELETE RESTRICT, and inventory_items is swept
 // AFTER photos — so the photos sweep has to be able to resolve namespaced inventory items too.
 const NS_INVENTORY = `SELECT id FROM inventory_items WHERE created_by LIKE ${NS} OR user_id LIKE ${NS} OR name LIKE ${NS} OR variety_id IN (${NS_VARIETIES})`
+// V4-SPACESOFTDEL-001 (multi-space 1.3a). The spaces step's own predicate, character for character, so
+// every Space that step deletes has had its weather and theme rows removed first.
+const NS_SPACES    = `SELECT id FROM spaces WHERE created_by LIKE ${NS} OR name LIKE ${NS}`
 
 const SAMPLE_PRED = `created_by LIKE ${NS} OR cultivar_id IN (${NS_VARIETIES}) OR source_event_id IN (${NS_EVENTLOG})`
 
@@ -212,6 +215,16 @@ const STEPS = [
   ['tasks',                       `DELETE FROM tasks WHERE created_by LIKE ${NS} OR project_id IN (${NS_PROJECTS})`],
   ['plant_projects',              `DELETE FROM plant_projects WHERE created_by LIKE ${NS} OR name LIKE ${NS} OR slug LIKE ${NS}`],
   ['locations',                   `DELETE FROM locations WHERE created_by LIKE ${NS} OR name LIKE ${NS} OR slug LIKE ${NS}`],
+  // V4-SPACESOFTDEL-001 (multi-space 1.3a). A Space's weather and theme rows used to go with it by ON DELETE
+  // CASCADE. migrations/v5-spaceguard-001 puts spaces_delete_guard on spaces: BEFORE DELETE, it refuses
+  // while ANY row in a table with a foreign key to spaces still names the Space. So the three CASCADE
+  // children go first, by the spaces step's own predicate (NS_SPACES), or that step fails and leaks the
+  // Space. Never by lifting the guard: a static test (src/__tests__/integrationCleanupTriggers.static.test.js)
+  // reds on any DISABLE of a spaces or weather trigger under tests/integration. photos.space_id is RESTRICT
+  // and is swept above. weather_cold_range is skipped on a fork without the table.
+  ['weather_daily',               `DELETE FROM weather_daily WHERE space_id IN (${NS_SPACES})`],
+  ['weather_cold_range',          `DELETE FROM weather_cold_range WHERE space_id IN (${NS_SPACES})`],
+  ['spacetheme',                  `DELETE FROM spacetheme WHERE space_id IN (${NS_SPACES})`],
   ['spaces',                      `DELETE FROM spaces WHERE created_by LIKE ${NS} OR name LIKE ${NS}`],
   ['storage_location',            `DELETE FROM storage_location WHERE user_id LIKE ${NS}`],
   // Side-effect / telemetry tables. NONE of these were torn down by any test file before this fix —
@@ -344,6 +357,13 @@ export async function countFixtureResidue(sql) {
     ['pantry_item', `user_id LIKE ${NS}`],
     ['recipe', `user_id LIKE ${NS}`],
     ['recipe_type', `user_id LIKE ${NS}`],
+    // V4-SPACESOFTDEL-001 (multi-space 1.3a). Once spaces_delete_guard is on the fork, a Space whose children
+    // were not swept first is REFUSED, not deleted, and the sweep only logs that. Without these probes the
+    // leak would leave the run green. The three child probes name which table held the Space back.
+    ['spaces', `created_by LIKE ${NS} OR name LIKE ${NS}`],
+    ['weather_daily', `space_id IN (${NS_SPACES})`],
+    ['weather_cold_range', `space_id IN (${NS_SPACES})`],
+    ['spacetheme', `space_id IN (${NS_SPACES})`],
   ]
   const out = {}
   let total = 0

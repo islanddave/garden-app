@@ -317,13 +317,25 @@ post:
   #   every morning, the card is blank, and "blank" is also what a sleeping Mac looks like. If the
   #   writer's access is ever built on a policy instead of a grant, that decision replaces this half
   #   of the gate on purpose.
+  #   AMENDED 2026-10-16 (multi-space Phase 1, step 1.3b; V4-SPACESOFTDEL-001): ONE trigger is allowed,
+  #   pinned by all three of name, type and function: weather_cold_range_truncate_guard, tgtype 34
+  #   (BEFORE | TRUNCATE, statement level), calling public.guard_space_truncate(). It refuses TRUNCATE
+  #   and writes nothing, so it does not touch the writer's INSERT. It is added by
+  #   migrations/v5-spaceguard-001, whose own gates hold it present and enabled. Written TOLERANT, so this
+  #   gate is green both before that migration is applied and after: it ships to main before the DDL,
+  #   because the Tuesday gate-invariants cron runs main's copy. Any OTHER trigger, or this one renamed,
+  #   retyped or re-pointed at another function, is still a finding, named by tgname.
   - name: post_no_trigger_and_no_row_security
     sql: |
       SELECT g.tgname::text AS finding
         FROM pg_trigger g
-        JOIN pg_class t     ON t.oid = g.tgrelid
-        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_class t      ON t.oid = g.tgrelid
+        JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_proc p       ON p.oid = g.tgfoid
+        JOIN pg_namespace pn ON pn.oid = p.pronamespace
        WHERE t.relname = 'weather_cold_range' AND NOT g.tgisinternal
+         AND NOT (g.tgname = 'weather_cold_range_truncate_guard' AND g.tgtype = 34
+                  AND pn.nspname = 'public' AND p.proname = 'guard_space_truncate')
          AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
       UNION ALL
       SELECT 'row security is enabled'
