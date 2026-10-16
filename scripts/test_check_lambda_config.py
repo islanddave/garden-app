@@ -214,6 +214,13 @@ def test_manifest_declares_every_env_var_daily_plan_reads():
 
 # --- OWNER_FALLBACK_SUB retirement (V5-SITECONSTANTS-001) --------------------
 
+# KNOWN LIMITS (accepted, QA review of the code piece): the zero-reader detector below matches the literal reader
+# shapes only, so it does not see the key read through an alias or a computed name:
+#   * `const K = '<key>'; process.env[K]` (a computed member with a variable);
+#   * `const e = process.env; e.<key>` (process.env held in another name).
+# lambda/dave-constants.static.test.js (1.14) shares both blind spots. They take a deliberate rewrite to reach, and
+# review is the backstop.
+#
 # The retired key. Built, not spelled, so this file never becomes the reader it scans for.
 _RETIRED_OWNER_KEY = "OWNER_" + "FALLBACK_SUB"
 _CODE_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".py", ".sh", ".bash")

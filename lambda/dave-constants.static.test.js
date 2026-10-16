@@ -23,6 +23,14 @@
 // exempt by name from the SENTINEL_WORKSPACE and reader kinds — it drives whole throwaway Spaces and must read the
 // household env to do it — but not from the literal (sheet §3R: the harness reads the sentinel from the DB).
 //
+// KNOWN LIMITS (accepted, QA review of the code piece). The detector reads literal shapes, so these evade it:
+//   * `process.env[K]` with K a const holding the env name (a computed member with a variable);
+//   * `const e = process.env; e.OWNER_FALLBACK_SUB` (process.env held in another name; `env`/`ENV`/`environ` are
+//     the only alias names recognised);
+//   * the sentinel built at runtime, e.g. ['…-', '…1'].join('') or a template with an expression.
+// The first two are shared by the C4 zero-reader test (scripts/test_check_lambda_config.py). Each takes a
+// deliberate rewrite to reach, and review is the backstop.
+//
 // Regenerate (after a removal): `node scripts/repo-constants-scan.mjs dave`, paste, carry `reason` over by hand.
 import { describe, it, expect } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
