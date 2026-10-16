@@ -1,7 +1,7 @@
 {
-  "version": "5.2.3",
+  "version": "5.3.0",
   "date": "2026-10-16",
   "highlights": [
-    "Behind-the-scenes groundwork for gardens with more than one owner: database safety guards, nothing you'll see change."
+    "The old Today page is gone: the new Today page is now the only one, on every phone (a phone that had switched back moves to the new page). Fixed: the weather card on Today no longer shows “null°” on a day with no night low."
   ]
 }
