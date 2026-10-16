@@ -33,7 +33,10 @@ only when, for EVERY release function (lambda_fleet.release_functions(), pinned 
   3. the marker's Lambda inputs equal dev_sha's: the same seven identities promote-gate always
      compared (tree of lambda/, blobs of the recipe/manifest/checker/event-type inputs, and the
      root package.json digest that ignores `version`). The recipe blob is read at `recipe=`, every
-     other input at `src=`, because that is where each one came from when the zip was built.
+     other input at `src=`, because that is where each one came from when the zip was built;
+  4. its live Runtime is the `runtime` dev_sha's scripts/lambda-config-expected.json declares for it
+     (OPS-LAMBDANODE22-001): only a deploy-lambda leg moves Runtime, so a function left on, or put
+     back on, another runtime must not let the promote skip the legs.
 Anything else — no marker, a mismatch, a function that does not exist yet, an unreadable function,
 an input that cannot be resolved on either side — is NOT a proof, and the promote deploys all 26.
 That is the pre-v4.137 behaviour, costs about six minutes, and is idempotent.
@@ -239,7 +242,7 @@ def decide(dev_sha, functions, configs, ident, runtimes=None):
     maps a function to the runtime dev_sha's manifest declares for it (OPS-LAMBDANODE22-001); a live
     Runtime that differs is NOT CURRENT, because only a deploy-lambda leg moves it. Pure: all I/O is in
     the arguments, so every branch is testable against recorded responses."""
-    lines, stale, unknown, groups = [], [], [], {}
+    lines, stale, unknown, groups, off_runtime = [], [], [], {}, []
     if not re.fullmatch(r"[0-9a-f]{40}", dev_sha or ""):
         return UNKNOWN, [f"dev_sha {dev_sha!r} is not a 40-hex commit sha"]
     if not functions:
@@ -265,7 +268,7 @@ def decide(dev_sha, functions, configs, ident, runtimes=None):
             continue
         want_rt = (runtimes or {}).get(fn)
         if want_rt and cfg.get("Runtime") != want_rt:
-            stale.append(fn)
+            off_runtime.append(fn)
             lines.append(f"  {fn}: runtime {cfg.get('Runtime')} is not the declared {want_rt}")
             continue
         marker = parse_marker(cfg.get("Description"))
@@ -304,10 +307,12 @@ def decide(dev_sha, functions, configs, ident, runtimes=None):
             else:
                 lines.append(f"  {path}: SAME")
 
-    if stale or moved:
+    if stale or moved or off_runtime:
         why = []
         if stale:
             why.append(f"{len(stale)} function(s) not provably running a marked build: {', '.join(stale)}")
+        if off_runtime:
+            why.append(f"{len(off_runtime)} function(s) not on their declared runtime: {', '.join(off_runtime)}")
         if moved:
             why.append(f"Lambda inputs differ from dev_sha: {', '.join(sorted(set(moved)))}")
         lines.append("VERDICT: NOT CURRENT — deploy (" + "; ".join(why) + ")")

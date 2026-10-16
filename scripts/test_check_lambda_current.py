@@ -110,7 +110,7 @@ def test_a_runtime_that_is_not_the_declared_one_forces_a_deploy():
     configs["garden-tags"]["Runtime"] = "nodejs20.x"
     want = {fn: "nodejs22.x" for fn in FNS}
     code, lines = cc.decide(DEV, FNS, configs, Idents(default=None), want)
-    assert code == cc.NOT_CURRENT and "garden-tags" in lines[-1]
+    assert code == cc.NOT_CURRENT and "not on their declared runtime: garden-tags" in lines[-1]
     assert any("garden-tags: runtime nodejs20.x is not the declared nodejs22.x" in l for l in lines)
     configs["garden-tags"]["Runtime"] = "nodejs22.x"
     assert cc.decide(DEV, FNS, configs, Idents(default=None), want)[0] == cc.CURRENT
@@ -253,6 +253,19 @@ def test_cli_exit_codes(tmp_path, monkeypatch):
     configs["garden-plants"] = cfg("")
     assert cc.main(["--dev-sha", DEV, "--live-json", _live_json(tmp_path, configs)]) == 1
     assert cc.main(["--dev-sha", DEV, "--live-json", str(tmp_path / "absent.json")]) == 2
+    # OPS-LAMBDANODE22-001: main() wires dev_sha's declared runtimes into decide(); without that a fleet
+    # still on the old runtime would read CURRENT and the promote would skip the move.
+    configs = all_marked(DEV)
+    configs["garden-tags"]["Runtime"] = "nodejs20.x"
+    assert cc.main(["--dev-sha", DEV, "--live-json", _live_json(tmp_path, configs)]) == 1
+
+
+def test_cli_unreadable_declared_runtimes_is_unknown(tmp_path, monkeypatch, capsys):
+    real = cc.lambda_fleet.release_functions()
+    monkeypatch.setattr(cc.lambda_fleet, "release_functions", lambda: real)
+    monkeypatch.setattr(cc.lambda_fleet, "MANIFEST", str(tmp_path / "gone.json"))
+    assert cc.main(["--dev-sha", DEV, "--live-json", _live_json(tmp_path, all_marked(DEV))]) == 2
+    assert "declared runtimes unreadable" in capsys.readouterr().out
 
 
 def test_cli_github_failure_is_unknown(tmp_path, monkeypatch):

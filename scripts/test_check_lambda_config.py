@@ -42,12 +42,14 @@ def test_runtime_unreadable_is_reported_not_skipped():
 def test_unstated_runtime_is_not_asserted():
     assert clc.check_function("x", {"env": {}}, dict(live(), Runtime="nodejs18.x")) == []
 
-def test_every_release_function_declares_the_node22_runtime():
+def test_every_release_function_declares_a_node_runtime():
     # One source for the deploy step (jq .runtime) and this guard: an entry without it would make the
-    # step's `jq -e` fail and leave that function unasserted.
+    # step's `jq -e` fail and leave that function unasserted. Any nodejsNN.x is allowed, so a one-function
+    # runtime rollback stays a single reviewed manifest edit.
+    import re
     m = clc.load_manifest()
-    assert m and all(spec.get("runtime") == "nodejs22.x" for spec in m.values()), \
-        sorted(fn for fn, spec in m.items() if spec.get("runtime") != "nodejs22.x")
+    bad = sorted(fn for fn, spec in m.items() if not re.fullmatch(r"nodejs[0-9]+\.x", spec.get("runtime") or ""))
+    assert m and not bad, bad
 
 
 # --- the absent-vs-false distinction (the bug this file exists for) ----------

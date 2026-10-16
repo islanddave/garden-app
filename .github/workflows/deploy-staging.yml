@@ -159,16 +159,21 @@ jobs:
           KEY: garden-${{ matrix.function }}
         run: |
           set -euo pipefail
-          WANT=$(jq -er --arg f "$KEY" '.[$f].runtime' scripts/lambda-config-expected.json)
+          WANT=$(jq -er --arg f "$KEY" '.[$f].runtime' scripts/lambda-config-expected.json) \
+            || { echo "::error::$KEY: no runtime declared in scripts/lambda-config-expected.json"; exit 1; }
           ERR=$(mktemp)
           if ! CUR=$(aws lambda get-function-configuration --function-name "$FN" --query Runtime --output text 2>"$ERR"); then
-            if grep -q ResourceNotFoundException "$ERR"; then echo "$FN does not exist yet: its create step sets $WANT"; exit 0; fi
+            if grep -q ResourceNotFoundException "$ERR"; then echo "$FN does not exist yet: its create step sets the runtime, and the next deploy applies $WANT if that differs"; exit 0; fi
             cat "$ERR"; echo "::error::$FN: could not read Runtime; left unchanged"; exit 1
           fi
           if [ "$CUR" = "$WANT" ]; then echo "$FN already on $WANT"; exit 0; fi
           echo "Moving $FN runtime $CUR -> $WANT"
-          aws lambda update-function-configuration --function-name "$FN" --runtime "$WANT" >/dev/null
-          aws lambda wait function-updated --function-name "$FN"
+          if ! aws lambda update-function-configuration --function-name "$FN" --runtime "$WANT" >/dev/null; then
+            echo "::error::$FN: runtime update to $WANT refused"; exit 1
+          fi
+          if ! aws lambda wait function-updated --function-name "$FN"; then
+            echo "::error::$FN: did not settle after the runtime update to $WANT"; exit 1
+          fi
           GOT=$(aws lambda get-function-configuration --function-name "$FN" --query '[Runtime,LastUpdateStatus]' --output text)
           if [ "$GOT" != "$(printf '%s\tSuccessful' "$WANT")" ]; then echo "::error::$FN: Runtime/LastUpdateStatus read '$GOT' after the update, want $WANT/Successful"; exit 1; fi
           echo "$FN runtime $WANT"
@@ -183,6 +188,7 @@ jobs:
           ZIP_FILE="fileb://lambda/${{ matrix.function }}.zip"
           if aws lambda get-function --function-name "$FN" 2>/dev/null; then
             echo "Updating existing function: $FN"
+            aws lambda wait function-updated --function-name "$FN"  # settle a runtime move first (normally a no-op)
             aws lambda update-function-code \
               --function-name "$FN" \
               --zip-file "$ZIP_FILE"
@@ -190,7 +196,7 @@ jobs:
             echo "Creating new function: $FN"
             aws lambda create-function \
               --function-name "$FN" \
-              --runtime nodejs22.x \
+              --runtime "$(jq -er --arg f "garden-${{ matrix.function }}" '.[$f].runtime' scripts/lambda-config-expected.json)" \
               --handler index.handler \
               --role arn:aws:iam::769788341849:role/garden-app-lambda-exec \
               --zip-file "$ZIP_FILE" \

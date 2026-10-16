@@ -14,8 +14,8 @@
     "SCHEMA \u2014 per function name (the live name, e.g. 'garden-plants'):",
     "  memory   int    required MemorySize in MB",
     "  timeout  int    required Timeout in seconds (optional; omit to not assert)",
-    "  runtime  str    Runtime, exact match (optional; omit to not assert). Also the TARGET: deploy-lambda.yml",
-    "                  and deploy-staging.yml read it to move a function's runtime, and check-lambda-current",
+    "  runtime  str    REQUIRED for every function: Runtime, exact match. Also the TARGET: deploy-lambda.yml",
+    "                  and deploy-staging.yml read it to move and to create a function, and check-lambda-current",
     "                  deploys any function not on it (OPS-LAMBDANODE22-001). A runtime rollback is an edit here.",
     "  env      obj    per-KEY expectation. NOT exhaustive \u2014 unlisted keys are ignored, which is",
     "                  deliberate: SECRET_REFRESH / FORCE_COLD_START are operational churn.",
@@ -229,7 +229,7 @@
     "runtime": "nodejs22.x",
     "memory": 2048,
     "timeout": 30,
-    "_note": "Created by infra/photocdn.yaml (CFN), not by deploy-lambda.yml's create branch \u2014 which would produce x86_64/256MB. Asserted here so a CFN placeholder-revert is caught by the deploy rather than days later.",
+    "_note": "Created by infra/photocdn.yaml (CFN), not by deploy-lambda.yml's create branch \u2014 which would produce x86_64/256MB. Its `runtime` below is also set in infra/photocdn.yaml (Runtime): change both in the same commit, or the next stack update moves it back and every promote reads it NOT CURRENT. Asserted here so a CFN placeholder-revert is caught by the deploy rather than days later.",
     "env": {
       "ORIGINALS_BUCKET": "garden-photos-prod",
       "DERIVATIVES_BUCKET": "garden-photos-derivatives-769788341849"
