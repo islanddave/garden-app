@@ -7,14 +7,19 @@
   "name": "space-wx for the new Space: on B, not on A",
   "kind": "log",
   "match": { "msg": "space-wx", "space": "$indoor" },
-  "present_on": "b",
-  "absent_on": "a"
+  "present_on": "b"
  },
+ "needles_absent": [
+  { "needle": "$indoor", "sides": ["a"], "surfaces": ["console", "calls", "rows:public.daily_plan"] }
+ ],
  "allowed_diffs": [
   { "table": "public.spaces", "where": "id = %(indoor)s::uuid", "side": "b" },
   { "table": "public.audit_events", "where": "table_name = 'spaces' AND row_id = %(indoor)s::uuid", "side": "b" }
  ],
  "allowed_call_diffs": [],
- "volatile_columns": {},
+ "volatile_columns": {
+  "public.daily_plan": ["id", "generated_at"],
+  "public.audit_events": ["id", "ts"]
+ },
  "jsonb_volatile_keys": {}
 }

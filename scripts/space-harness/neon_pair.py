@@ -13,9 +13,20 @@ A's fork point: Neon's create-branch request takes `branch.parent_lsn` or
 object reports both back). A's `parent_lsn` is sent when A has one, otherwise
 its `parent_timestamp`; never both. Self-test 0 still proves A = B afterwards.
 
-FLEET. `neon_safety_branch.py list` runs first (in-process, its own main()); 9
-or more temporary branches refuses (integrity-weekly's cap is 10). The pair
-counts against the same budget as the per-day safety copy.
+FLEET. `neon_safety_branch.py list` runs first (in-process, its own main()),
+then the branches are classified the way integrity-weekly does: a branch with
+a usable expiry is self-cleaning (`neon_branch_select.self_cleaning`) and is
+capped by NEON_MAX_EXPIRING (default 6, `neon_branch_select.py:263`), not by
+the branch cap. The pair adds 2 such branches, and the day's sitting safety
+copy (`--slug ms1`) draws on the same budget, so a slot is held for it until
+it exists: refuse when expiring + 2 + (that copy absent ? 1 : 0) > the limit.
+
+THE PAIR'S IDENTITY. Before any URL is asked for, each side's branch and
+endpoint are read back from the Neon API (GET branches/{id}, GET
+endpoints/{id}): the branch must be named as a harness side, be a prod child
+that expires within 2 days, not be default or protected; the endpoint must
+belong to it, carry the recorded host and not be a protected endpoint; and
+A and B must differ in branch, endpoint and host.
 
 NEVER deletes a branch or an endpoint: both branches expire by themselves.
 URLs carry a password: they stay in memory and reach a child process only
@@ -43,8 +54,13 @@ import neon_api_check as nac  # noqa: E402
 import neon_branch_select as nbs  # noqa: E402
 import neon_safety_branch as nsb  # noqa: E402
 
-FLEET_REFUSE_AT = 9
+FLEET_MAX_EXPIRING = 6      # neon_branch_select.py:263 (NEON_MAX_EXPIRING), integrity-weekly's alert
+FLEET_MAX_TTL_DAYS = 14     # neon_branch_select.py:262 (NEON_MAX_TTL_DAYS)
+PAIR_BRANCHES = 2
+SITTING_SLUG = "ms1"        # the day's sitting safety copy (build sheet section 3R) shares the budget
 PAIR_DAYS = 1
+PAIR_MAX_EXPIRY_HOURS = 48
+PAIR_NAME_RE = re.compile(r"^sitting-harness-[a-z0-9-]+-\d{4}-(?P<side>[ab])-prod-preapply-\d{8}$")
 # V201 §0 C-HARNESS 1: fork outside the hourly writers at :00.
 MINUTE_WINDOW = (10, 50)
 STEP_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -81,8 +97,11 @@ def protected_endpoints(path=CLEANUP_JS):
     return eps
 
 
-def fleet_check(env, refuse_at=FLEET_REFUSE_AT):
-    """Count temporary branches with the tool's own `list`. Returns the names."""
+def fleet_check(env, now=None, sitting_slug=SITTING_SLUG):
+    """The tool's own `list`, then integrity-weekly's classification. Refuses when
+    the pair (and the day's sitting copy, until it exists) would take the
+    self-cleaning branches over NEON_MAX_EXPIRING. Returns the counts."""
+    now = now or nsb._utcnow()
     rc, out, err = _tool(["list"], env)
     if rc != 0:
         raise HarnessFault(f"fleet check: neon_safety_branch.py list exited {rc}: {nac.one_line(err)}")
@@ -94,10 +113,19 @@ def fleet_check(env, refuse_at=FLEET_REFUSE_AT):
         if not lines or not all(hits):
             raise HarnessFault(f"fleet check: cannot read the list output: {nac.one_line(out)}")
         names = [m.group(1) for m in hits]
-    if len(names) >= refuse_at:
-        raise Refused(f"fleet: {len(names)} temporary branches (refuse at {refuse_at}); "
-                      f"let some expire first")
-    return names
+    limit = int(env.get("NEON_MAX_EXPIRING") or FLEET_MAX_EXPIRING)
+    ttl = int(env.get("NEON_MAX_TTL_DAYS") or FLEET_MAX_TTL_DAYS)
+    branches = nsb._branches(env)
+    expiring = [b.get("name") for b in branches if nbs.self_cleaning(b, now, ttl)]
+    sitting = copy_name(sitting_slug, now)
+    reserve = 0 if any(b.get("name") == sitting for b in branches) else 1
+    counts = {"temporary": names, "expiring": len(expiring), "pair": PAIR_BRANCHES,
+              "reserved_for_sitting_copy": reserve, "limit": limit}
+    if len(expiring) + PAIR_BRANCHES + reserve > limit:
+        raise Refused(f"fleet: {len(expiring)} self-cleaning branches + {PAIR_BRANCHES} for the pair"
+                      + (f" + 1 held for today's {sitting}" if reserve else "")
+                      + f" > {limit} (NEON_MAX_EXPIRING); let some expire first")
+    return counts
 
 
 def pair_slugs(step, now):
@@ -176,7 +204,7 @@ def create_pair(env, step, now=None, any_minute=False, sleep=time.sleep):
         raise Refused(f"minute :{now.minute:02d} UTC is outside :{MINUTE_WINDOW[0]}-:{MINUTE_WINDOW[1]} "
                       f"(hourly writers run at :00)")
     prod = env.get("NEON_PROD_BRANCH_ID") or nbs.DEFAULT_PROD_BRANCH
-    fleet = fleet_check(env)
+    fleet = fleet_check(env, now=now)
     slug_a, slug_b = pair_slugs(step, now)
     name_a, name_b = copy_name(slug_a, now), copy_name(slug_b, now)
     taken = {b.get("name") for b in nsb._branches(env)}
@@ -207,7 +235,7 @@ def create_pair(env, step, now=None, any_minute=False, sleep=time.sleep):
         raise HarnessFault(f"B {b['id']} reports {field}={b[field]}, asked for {value}")
     _wait_ops(env, body.get("operations"), sleep=sleep)
 
-    rec = {"step": step, "created_at": nsb._ts(now), "fleet_before": len(fleet), "prod": prod,
+    rec = {"step": step, "created_at": nsb._ts(now), "fleet_before": fleet["expiring"], "prod": prod,
            "fork": {"field": field, "value": value}, "a": {}, "b": {}}
     for side, br, slug in (("a", a, slug_a), ("b", b, slug_b)):
         ep_id, host = attach_endpoint(env, br["id"], sleep=sleep)
@@ -215,6 +243,55 @@ def create_pair(env, step, now=None, any_minute=False, sleep=time.sleep):
                      "parent_lsn": br.get("parent_lsn"), "parent_timestamp": br.get("parent_timestamp"),
                      "endpoint_id": ep_id, "host": host}
     return rec
+
+
+def _get(env, path, key):
+    status, body = nsb.api(env, "GET", path)
+    obj = body.get(key) if isinstance(body, dict) else None
+    if status != 200 or not isinstance(obj, dict):
+        raise HarnessFault(f"GET {path} ({status}): {nac.one_line(body)}")
+    return obj
+
+
+def verify_side(env, side, side_rec, protected, now=None):
+    """Read one side's branch and endpoint back from the Neon API and accept them only
+    as this pair's own harness side. pair.json is a hand-editable file: nothing in it
+    is trusted until Neon says the same."""
+    now = now or nsb._utcnow()
+    prod = env.get("NEON_PROD_BRANCH_ID") or nbs.DEFAULT_PROD_BRANCH
+    bid, eid = side_rec.get("id"), side_rec.get("endpoint_id")
+    if not bid or not eid or not side_rec.get("host"):
+        raise Refused(f"{side}: the pair record needs id, endpoint_id and host")
+    if bid == prod:
+        raise Refused(f"{side}: {bid} is the prod branch")
+    br = _get(env, f"branches/{bid}", "branch")
+    name = br.get("name") or ""
+    m = PAIR_NAME_RE.match(name)
+    if br.get("id") != bid or not m or m.group("side") != side or name != side_rec.get("name"):
+        raise Refused(f"{side}: branch {bid} is '{name}', not this pair's harness {side} branch")
+    if br.get("parent_id") != prod:
+        raise Refused(f"{side}: branch {bid} is not a child of prod")
+    if br.get("default") or br.get("primary") or br.get("protected"):
+        raise Refused(f"{side}: branch {bid} is a default or protected branch")
+    h = nbs._expiry_hours(br, now)
+    if h is None or not 0 < h <= PAIR_MAX_EXPIRY_HOURS:
+        raise Refused(f"{side}: branch {bid} does not expire within {PAIR_MAX_EXPIRY_HOURS}h")
+    ep = _get(env, f"endpoints/{eid}", "endpoint")
+    host = str(ep.get("host") or "").lower()
+    if ep.get("id") != eid or ep.get("branch_id") != bid or host != str(side_rec["host"]).lower():
+        raise Refused(f"{side}: endpoint {eid} is not {bid}'s endpoint at the recorded host")
+    if any(p.lower() == eid.lower() or p.lower() in host for p in protected):
+        raise Refused(f"{side}: endpoint {eid} is a PROTECTED long-lived endpoint")
+    return br, ep
+
+
+def verify_pair(env, rec, protected, now=None):
+    """Both sides verified, and A and B are two different branches, endpoints and hosts."""
+    a, b = rec.get("a") or {}, rec.get("b") or {}
+    for key in ("id", "endpoint_id", "host"):
+        if a.get(key) and str(a.get(key)).lower() == str(b.get(key) or "").lower():
+            raise Refused(f"A and B have the same {key}: one database cannot measure a change")
+    return {s: verify_side(env, s, r, protected, now) for s, r in (("a", a), ("b", b))}
 
 
 def branch_url(env, side_rec, protected=None):

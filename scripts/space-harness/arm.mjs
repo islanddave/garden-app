@@ -1,8 +1,9 @@
 // C-HARNESS arm CLI. Called by harness.py, once per branch:
 //   HARNESS_DSN=<url> node scripts/space-harness/arm.mjs --tree <worktree> --today YYYY-MM-DD \
-//     --fixture <fetchers.json> --out <arm.json> [--local-pg] [--driver <dir>] [--ws <dir>] [--echo]
-// The URL is read from the environment only (never argv, never printed). The result goes to --out;
-// the handler's console is captured into it (and echoed to stderr with --echo), never mixed into stdout.
+//     --fixture <fetchers.json> --out <arm.json> --nonce <run nonce> [--local-pg] [--driver <dir>] [--ws <dir>] [--echo]
+// The URL is read from the environment only (never argv, never printed). The result goes to --out, with
+// the nonce in it (harness.py reads no file without this run's nonce); the handler's console is captured
+// into it (and echoed to stderr with --echo), never mixed into stdout.
 import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { runArm } from './arm-lib.mjs'
@@ -16,13 +17,14 @@ function parse(argv) {
     else if (k === '--today') o.today = v()
     else if (k === '--fixture') o.fixture = v()
     else if (k === '--out') o.out = v()
+    else if (k === '--nonce') o.nonce = v()
     else if (k === '--driver') o.driverDir = path.resolve(v())
     else if (k === '--ws') o.wsDir = path.resolve(v())
     else if (k === '--local-pg') o.localPg = true
     else if (k === '--echo') o.echo = true
     else throw new Error(`unknown argument ${k}`)
   }
-  for (const k of ['tree', 'today', 'fixture', 'out']) if (!o[k]) throw new Error(`--${k} is required`)
+  for (const k of ['tree', 'today', 'fixture', 'out', 'nonce']) if (!o[k]) throw new Error(`--${k} is required`)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(o.today)) throw new Error('--today must be YYYY-MM-DD')
   return o
 }

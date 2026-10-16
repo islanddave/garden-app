@@ -6,8 +6,11 @@
 //   * publishAlert, fetchStation (AWN) and the weather fetchers are recording stubs fed from one
 //     fixture file, and each call records its DESTINATION (SNS topic, station, grid cell);
 //   * global fetch is replaced by a guard that records the destination (Graph, AWN or any host) and
-//     answers 503, so a code path that fetches by itself is seen and never reaches the network.
-// A station MAC is recorded only as a short sha256 tag, and a grid cell at 1 decimal, so an arm's
+//     answers 503, so a code path that fetches by itself is seen and never reaches the network;
+//   * every TCP connect (net, tls, node:http/https, an SDK, a WebSocket, a second pg client) passes one
+//     guard on net.Socket.prototype.connect that allows only the arm's own database (and, offline, the
+//     in-process proxy); any other target is recorded as a `net` call and refused.
+// A station MAC is recorded only as a short sha256 tag, and a grid cell at 2 decimals, so an arm's
 // output can be kept beside a public repo without a device id or a precise location in it.
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
@@ -20,7 +23,7 @@ import { format } from 'node:util'
 
 export const tag = (s) => createHash('sha256').update(String(s)).digest('hex').slice(0, 12)
 const cell = (lat, lng) => (Number.isFinite(+lat) && Number.isFinite(+lng)
-  ? `grid:${(+lat).toFixed(1)},${(+lng).toFixed(1)}` : 'grid:none')
+  ? `grid:${(+lat).toFixed(2)},${(+lng).toFixed(2)}` : 'grid:none')
 
 export function makeRecorder() {
   const calls = []
@@ -85,6 +88,27 @@ export function installFetchGuard(rec, target = globalThis) {
   return () => { target.fetch = orig }
 }
 
+// The target of a net.Socket#connect call, in any of the shapes node passes it.
+export function connectTarget(args) {
+  let a = args[0]
+  if (Array.isArray(a)) a = a[0]
+  if (a && typeof a === 'object') return { host: a.path ? null : String(a.host || 'localhost'), port: a.path ? null : Number(a.port), path: a.path || null }
+  if (typeof a === 'number' || /^\d+$/.test(String(a))) return { host: typeof args[1] === 'string' ? args[1] : 'localhost', port: Number(a), path: null }
+  return { host: null, port: null, path: String(a) }
+}
+
+export function installNetGuard(rec, allow, SocketClass = net.Socket) {
+  const orig = SocketClass.prototype.connect
+  SocketClass.prototype.connect = function guardedConnect(...args) {
+    const t = connectTarget(args)
+    if (t.host && allow(t.host, t.port)) return orig.apply(this, args)
+    const destination = t.path ? `net:unix:${t.path}` : `net:${t.host}:${t.port}`
+    rec.record('net', destination, { refused: true })
+    throw new Error(`space-harness: network refused (${destination})`)
+  }
+  return () => { SocketClass.prototype.connect = orig }
+}
+
 export function parseJsonLine(line) {
   const t = String(line).trim()
   if (!t.startsWith('{')) return null
@@ -143,15 +167,23 @@ export async function loadDriver(tree, { driverDir, wsDir } = {}) {
 }
 
 // One arm. `handlerModule` lets a test pass a fake; a real arm requires <tree>/lambda/daily-plan/handler.js.
+const LOOPBACK = ['127.0.0.1', 'localhost', '::1']
+
 export async function runArm({ tree, dsn, today, fixture = {}, localPg = false, driverDir, wsDir, echo = null,
-  handlerModule = null, poolFactory = null, etHour = undefined }) {
+  handlerModule = null, poolFactory = null, etHour = undefined, nonce = null }) {
   const handlerPath = path.join(tree, 'lambda', 'daily-plan', 'handler.js')
   const out = {
-    tree, head: treeHead(tree), handler_path: handlerPath, today, dryRun: false,
+    nonce, tree, head: treeHead(tree), handler_path: handlerPath, today, dryRun: false,
     handler_sha256: null, result: null, error: null, console: [], calls: [], ms: null,
+    env_keys: Object.keys(process.env).sort(),
   }
   const rec = makeRecorder()
   out.calls = rec.calls
+  let db = null
+  try { const u = new URL(dsn); db = { host: u.hostname, port: Number(u.port || 5432) } } catch (_) { /* a fake pool */ }
+  let proxyPort = null
+  const restoreNet = installNetGuard(rec, (host, port) => Boolean(db) && (
+    (host === db.host && (!localPg || port === db.port)) || (localPg && LOOPBACK.includes(host) && port === proxyPort)))
   const restoreFetch = installFetchGuard(rec)
   const restoreConsole = captureConsole(out.console, { echo })
   let pool = null
@@ -176,6 +208,7 @@ export async function runArm({ tree, dsn, today, fixture = {}, localPg = false, 
         const u = new URL(dsn)
         if (!['127.0.0.1', 'localhost', '::1'].includes(u.hostname)) throw new Error('--local-pg takes a loopback DSN only')
         proxy = await startLocalWsProxy(d.WebSocketServer, u.hostname, u.port || '5432')
+        proxyPort = proxy.port
         d.neonConfig.wsProxy = (host, port) => `127.0.0.1:${proxy.port}/v1?address=${host}:${port}`
         d.neonConfig.useSecureWebSocket = false
         d.neonConfig.pipelineConnect = false
@@ -199,6 +232,7 @@ export async function runArm({ tree, dsn, today, fixture = {}, localPg = false, 
     restoreFetch()
     if (pool && pool.end) await pool.end().catch(() => {})
     if (proxy) await proxy.close()
+    restoreNet()
   }
   return out
 }

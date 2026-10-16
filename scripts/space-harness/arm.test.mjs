@@ -31,13 +31,14 @@ describe('recording stubs', () => {
     expect(JSON.stringify(rec.calls)).not.toContain(FAKE_MAC)
   })
 
-  it('weather fetchers serve the fixture and record a 1-decimal grid cell', async () => {
+  it('weather fetchers serve the fixture and record a 2-decimal grid cell', async () => {
     const rec = makeRecorder()
     const s = recordingStubs(rec, fixture)
     const nws = await s.fetchNWS(42.51, -72.71)
     nws.tonightLow = 1
     expect((await s.fetchNWS(42.5, -72.7)).tonightLow).toBe(50) // a copy each time
-    expect(rec.calls[0].destination).toBe('grid:42.5,-72.7')
+    expect(rec.calls[0].destination).toBe('grid:42.51,-72.71') // two Spaces a few km apart stay apart
+    expect(rec.calls[1].destination).toBe('grid:42.50,-72.70')
     await expect(recordingStubs(rec, {}).geocodeZip('01001')).rejects.toThrow(/no geocode/)
   })
 })
@@ -110,8 +111,41 @@ describe('runArm', () => {
     expect(a.console.map((c) => c.json.space)).toEqual(['base'])
     expect(b.console.map((c) => c.json.space)).toEqual(['candidate'])
     expect(b.calls.map((c) => [c.stub, c.destination])).toEqual([
-      ['fetchNWS', 'grid:42.5,-72.7'], ['publishAlert', 'sns:frost'], ['graph', 'graph:77/feed']])
+      ['fetchNWS', 'grid:42.50,-72.70'], ['publishAlert', 'sns:frost'], ['graph', 'graph:77/feed']])
     expect(b.result).toEqual({ rows: 1, plans: [{ user_id: 'u', space_id: 's', counts: { water: 1 } }] })
+  })
+
+  it('writes the run nonce and the names (never values) of its environment', async () => {
+    const r = await runArm({ tree: fakeTree(HANDLER('n')), dsn: 'x', today: '2026-10-16', fixture, poolFactory: pool, nonce: 'run-1-a' })
+    expect(r.nonce).toBe('run-1-a')
+    expect(r.env_keys).toEqual(Object.keys(process.env).sort())
+  })
+
+  // Reserved names and TEST-NET addresses only: even a run without the guard reaches nothing real.
+  it('refuses and records any connection but its own database: https, http, net, a second pg client', async () => {
+    const tree = fakeTree(`
+const https = require('node:https'), http = require('node:http'), net = require('node:net')
+module.exports = { async run(o) {
+  const tries = [
+    () => https.request('https://sns.aws.example/').end(),
+    () => http.get('http://192.0.2.1/latest/meta-data/'),
+    () => net.connect(5432, 'ep-somewhere.neon.example'),
+    () => net.connect({ host: '192.0.2.2', port: 443 }),
+  ]
+  const errs = []
+  for (const t of tries) { try { t() } catch (e) { errs.push(e.message) } }
+  console.log(JSON.stringify({ msg: 'tries', errs }))
+  const own = net.connect(1, '127.0.0.1'); own.on('error', () => {}); own.destroy()
+  throw new Error(errs[0])
+} }`)
+    const before = net.Socket.prototype.connect
+    const r = await runArm({ tree, dsn: 'postgresql://u@127.0.0.1:1/d', today: '2026-10-16', fixture, poolFactory: pool, localPg: true })
+    expect(net.Socket.prototype.connect).toBe(before)
+    expect(r.calls.filter((c) => c.stub === 'net').map((c) => c.destination)).toEqual([
+      'net:sns.aws.example:443', 'net:192.0.2.1:80',
+      'net:ep-somewhere.neon.example:5432', 'net:192.0.2.2:443'])
+    expect(r.console[0].json.errs).toHaveLength(4)
+    expect(r.error).toMatch(/network refused/)
   })
 
   it('records a run() failure instead of throwing', async () => {
