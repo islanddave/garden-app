@@ -216,6 +216,8 @@ def test_verify_reached_main_refuses_a_version_that_never_reached_main(monkeypat
 def test_verify_reached_main_refuses_when_it_cannot_tell(monkeypatch, resp):
     cfg = rt.Config(env=base_env())
     fr = FakeRequests()
+    slept = []
+    monkeypatch.setattr(rt, "_sleep", slept.append)
 
     def reply(url):
         if isinstance(resp, Exception):
@@ -225,6 +227,28 @@ def test_verify_reached_main_refuses_when_it_cannot_tell(monkeypatch, resp):
     monkeypatch.setattr(rt, "requests", fr)
     with pytest.raises(rt.RevertError, match="could not tell whether v2.5.0"):
         rt.verify_reached_main(cfg, good_manifest())
+    # Through _gh_read: a transport error or an unparseable body is tried GH_READ_ATTEMPTS times before the
+    # refusal; a definite non-200 or a reply with no status refuses at once. Never a pass either way.
+    retried = isinstance(resp, Exception) or resp.bad_json
+    assert len(fr.calls) == (rt.GH_READ_ATTEMPTS if retried else 1)
+    assert slept == ([rt.GH_READ_RETRY_S] * (rt.GH_READ_ATTEMPTS - 1) if retried else [])
+
+
+def test_verify_reached_main_rides_out_one_github_blip(monkeypatch):
+    """One transport error must not refuse an incident revert: _gh_read retries it."""
+    cfg = rt.Config(env=base_env())
+    fr = FakeRequests()
+    replies = [real_requests.ConnectionError("reset"), FakeResp(200, {"status": "ahead"})]
+
+    def reply(url):
+        r = replies.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+    fr.add("GET", f"/compare/{'a' * 40}...main", reply)
+    monkeypatch.setattr(rt, "requests", fr)
+    monkeypatch.setattr(rt, "_sleep", lambda s: None)
+    assert rt.verify_reached_main(cfg, good_manifest()) == "ahead" and len(fr.calls) == 2
 
 
 def test_run_refuses_a_never_shipped_target_before_the_prerevert_snap(monkeypatch):
@@ -2132,7 +2156,9 @@ def test_run_rehearsal_dump_path(monkeypatch):
     fr = FakeRequests()
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
-    fr.add("GET", "/compare/", FakeResp(200, {"status": "ahead"}))  # the target reached main
+    # The target reached main, asked of the REHEARSAL main (cfg.main_branch), never prod's main: only this route
+    # answers, so a compare against `...main` finds no route and fails the test.
+    fr.add("GET", f"/compare/{'a' * 40}...revert-rehearsal-main-1", FakeResp(200, {"status": "ahead"}))
     # absent until the dump path creates it; the restore-target guard then finds it by id
     made = []
     fr.add("GET", "/branches", lambda url: FakeResp(200, {"branches": made}))
@@ -2171,6 +2197,8 @@ def test_run_rehearsal_dump_path(monkeypatch):
     assert any(m == "POST" and u.endswith("/branches") for m, u in fr.calls)  # dump path
     assert any("br-polished-art-am12o4ue/restore" in u for m, u in fr.calls)  # reset STAGING, not prod
     assert any("revert-rehearsal-main-1" in u for m, u in fr.calls)
+    assert [u for m, u in fr.calls if "/compare/" in u] == [
+        f"https://api.github.com/repos/islanddave/garden-app/compare/{'a' * 40}...revert-rehearsal-main-1"]
 
 
 def test_config_snap_bucket_default_is_snapshots():

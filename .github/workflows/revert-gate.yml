@@ -72,8 +72,9 @@ name: revert-gate
 # with the garden-bot token and polls each to success inside its checkpoint — Lambdas first, the SPA only once
 # every Lambda leg is green, the promote's own order. Those run under the DEPLOY role; this job's snap role
 # changes no Lambda code and no CloudFront state on the forward path. The target manifest's lambda_versions are
-# NOT restored: a promote snaps before its own Lambda deploy, so that manifest holds the PREVIOUS release's
-# Lambda code. On any failure the rollback restores every release function from the PRE-REVERT snap (taken
+# NOT restored. Until 2026-10-15 a promote's manifest held the PREVIOUS release's Lambda code (it snaps before its
+# own Lambda deploy); since OPS-SNAPCAPTUREORDER-001 it records the shipped set (phase post-deploy) or, on an
+# SPA-only promote, the running set. The forward path still rebuilds from the tree. On any failure the rollback restores every release function from the PRE-REVERT snap (taken
 # minutes earlier, so it is what prod was running) and rebuilds the SPA from the restored tree.
 # timeout-minutes below is sized for forward + rollback worst case: a job killed mid-rollback leaves prod split,
 # which is worse than any failure the script can report. JOB BUDGET (R2): the first step writes the job's start to

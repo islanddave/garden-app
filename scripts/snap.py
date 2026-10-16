@@ -16,14 +16,19 @@ This is the commit-marker of a prod promote: if snap fails, the SHIP fails
 silently-absent snapshot is the exact trap this primitive closes.
 
 ORPHAN TAG. The tag is created last of the artifacts, just before the manifest
-(precheck_tag refuses a taken tag up front, read-only). A failure between the
-tag and the fast-forward, or a failed FF, leaves tag vX + manifest + Neon branch
-for a commit main never reached. While dev is unmoved, "Re-run failed jobs"
-completes it (every artifact is create-if-missing). Once dev moves, vX is burnt:
-release-tag-integrity forbids moving or deleting the tag, the skew gate refuses
-it, and revert-to.py refuses it as a target ("never reached main").
-forward-undo.py's previous_release (highest tag below vN whose commit is an
-ancestor of vN) does NOT know this and can pick such a burnt vX as vPREV.
+(precheck_tag refuses a taken tag up front, read-only). Between the tag and the
+fast-forward sit only this run's self_verify and manifest write, then the FF
+itself: promote-gate mints the FF's token before the snap, not after it. A
+failure in that window, or a failed FF, leaves tag vX + manifest + Neon branch
+for a commit main never reached. main() says so in its ::error. While dev is
+unmoved, "Re-run failed jobs" completes it (every artifact is
+create-if-missing). Once dev moves, vX is burnt: release-tag-integrity forbids
+moving or deleting the tag, the skew gate refuses it, and revert-to.py refuses
+it as a target ("never reached main"). forward-undo.py's previous_release
+(highest tag below vN whose commit is an ancestor of vN) does NOT know this and
+can pick such a burnt vX as vPREV. A burnt vX's snap-vX Neon branch also counts
+toward the retention K until it ages out, so each one displaces one shipped
+revert point from the prune's kept set until then.
 
 ------------------------------------------------------------------------------
 ENV CONTRACT (read at runtime; no secrets are hardcoded):
@@ -73,8 +78,12 @@ MODES (argv):
   --lambdas-only      after promote-gate's deploy-lambdas (job snap-lambdas):
                       re-publish the release functions and rewrite vX's manifest
                       with the versions that shipped (OPS-SNAPCAPTUREORDER-001).
-                      Reads only MAIN_SHA, SNAP_VERSION, SNAP_BUCKET and AWS
-                      credentials. Refuses a manifest pinned to another MAIN_SHA.
+                      Reads only MAIN_SHA, SNAP_VERSION, SNAP_BUCKET, AWS
+                      credentials, GH_TOKEN (or GITHUB_TOKEN) and
+                      GITHUB_REPOSITORY. Refuses a manifest pinned to another
+                      MAIN_SHA, and refuses, writing nothing, unless main's head
+                      is still MAIN_SHA (a late re-run would record a later
+                      release's code).
                       The first run keeps the pre-deploy map as
                       lambda_versions_pre_deploy / lambda_uncaptured_pre_deploy;
                       a re-run (phase already post-deploy) never touches them.
@@ -188,13 +197,19 @@ class PruneConfig:
 
 class LambdasOnlyConfig:
     """--lambdas-only (OPS-SNAPCAPTUREORDER-001): MAIN_SHA, SNAP_VERSION, SNAP_BUCKET, plus the AWS
-    credentials boto3 finds itself. No bot token, Neon key or DB URL: the job that runs it has none."""
+    credentials boto3 finds itself, and a read-only GitHub token (the job's own, GH_TOKEN or
+    GITHUB_TOKEN) with GITHUB_REPOSITORY to read main's head. No bot token, Neon key or DB URL: the
+    job that runs it has none."""
 
     def __init__(self, env=None):
         env = os.environ if env is None else env
         self.main_sha = Config._req(env, "MAIN_SHA")
         self.version = Config._req(env, "SNAP_VERSION")
         self.snap_bucket = env.get("SNAP_BUCKET") or "garden-snapshots-prod"
+        self.gh_token = env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")
+        if not self.gh_token:
+            raise SnapError("required env var GH_TOKEN (or GITHUB_TOKEN) is missing or empty")
+        self.repo = Config._req(env, "GITHUB_REPOSITORY")
 
 
 # --- helpers -----------------------------------------------------------------
@@ -233,6 +248,13 @@ def s3_key_for(kind, cfg):
 
 def gha_warning(msg):
     sys.stdout.write(f"::warning::{msg}\n")
+
+
+def gha_error(title, msg):
+    """One ::error annotation. %, CR and LF are escaped the way the runner unescapes them, so an API
+    body quoted in `msg` cannot end the annotation early."""
+    msg = str(msg).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    sys.stdout.write(f"::error title={title}::{msg}\n")
 
 
 def gha_step_summary(lines):
@@ -981,15 +1003,32 @@ def run(cfg, s3=None, lambda_client=None, prune=True, phase=None):
     phase labels what lambda_versions are (manifest.lambda_versions_phase):
     "pre-deploy" from promote-gate (the previous release's code; snap-lambdas
     moves it to "post-deploy"), "pre-revert" from revert-to.py (what prod
-    serves). None leaves the key out (snap-rehearsal, older callers)."""
+    serves). None leaves the key out (snap-rehearsal, older callers).
+
+    A manifest for this same sha that snap-lambdas already moved to
+    post-deploy ("Re-run all jobs" or a re-dispatch of a shipped promote)
+    keeps its Lambda fields and phase as they are: a fresh capture would
+    record the shipped code labelled pre-deploy and drop the real pre-deploy
+    map, and snap-lambdas would not run again to fix it (the Lambdas are
+    current, so their deploy is skipped).
+
+    cfg.tag_exists is True once tag vX is known to exist (found by the
+    precheck, or made by ensure_tag): main() uses it to say whether a failure
+    left vX behind."""
     s3 = s3 or boto3.client("s3")
+    cfg.tag_exists = False
 
     validate(cfg.version)
 
     # Guard vX reuse with different content before doing any work: the manifest,
     # and (read-only) the tag.
-    precheck_existing_manifest(s3, cfg)
-    precheck_tag(cfg)
+    existing = precheck_existing_manifest(s3, cfg)
+    carried = None
+    if (existing and existing.get("main_sha") == cfg.main_sha
+            and existing.get("lambda_versions_phase") == "post-deploy"):
+        carried = {k: existing[k] for k in POST_DEPLOY_CARRIED_KEYS if k in existing}
+    if precheck_tag(cfg) is not None:
+        cfg.tag_exists = True
 
     # (b) Neon branch + LSN
     neon_branch_id, neon_lsn = ensure_neon_branch(cfg)
@@ -998,12 +1037,18 @@ def run(cfg, s3=None, lambda_client=None, prune=True, phase=None):
     globals_key = dump_globals_to_s3(s3, cfg)
     # (d)(i) photos version ids
     photo_key = capture_photo_versions(s3, cfg)
-    # (d)(ii) lambda versions — every release function; uncaptured ones recorded, not fatal
-    lambda_versions, lambda_uncaptured = publish_lambda_versions(cfg, lambda_client=lambda_client)
+    # (d)(ii) lambda versions — every release function; uncaptured ones recorded, not fatal. Not
+    # re-captured over a post-deploy manifest of this sha (see the docstring).
+    if carried is None:
+        lambda_versions, lambda_uncaptured = publish_lambda_versions(cfg, lambda_client=lambda_client)
+    else:
+        lambda_versions = carried.get("lambda_versions", {})
+        lambda_uncaptured = carried.get("lambda_uncaptured", {})
     # (a) tag, LAST of the artifacts (BUG-PROMOTEFFORDER-001): the tag is the one artifact that can
     # never be removed (release-tag-integrity), so every fallible capture runs before it. A failure
     # above leaves no tag, and a promote refused there burns no version.
     tag = ensure_tag(cfg)
+    cfg.tag_exists = True
 
     # self-verify EVERY artifact before the manifest commit-marker
     self_verify(s3, cfg, dump_key, globals_key, photo_key, neon_branch_id, tag)
@@ -1027,6 +1072,8 @@ def run(cfg, s3=None, lambda_client=None, prune=True, phase=None):
     }
     if phase:
         manifest["lambda_versions_phase"] = phase
+    if carried is not None:
+        manifest.update(carried)  # the shipped set, its pre-deploy map and phase post-deploy, unchanged
     manifest_key = write_manifest(s3, cfg, manifest)
 
     # Retention prune AFTER a successful, fully-verified snap.
@@ -1053,6 +1100,30 @@ def run(cfg, s3=None, lambda_client=None, prune=True, phase=None):
 # rewrite a manifest that lacks one, and never drops one.
 REQUIRED_MANIFEST_KEYS = ("git_tag", "main_sha", "neon_branch", "dump_s3_key", "lambda_versions", "cf_dist")
 LAMBDA_PHASES_BEFORE_DEPLOY = (None, "pre-deploy")  # None = a manifest from before the phase key
+# What run() keeps from a post-deploy manifest of the same sha instead of re-capturing.
+POST_DEPLOY_CARRIED_KEYS = ("lambda_versions", "lambda_uncaptured", "lambda_versions_pre_deploy",
+                            "lambda_uncaptured_pre_deploy", "lambda_versions_phase",
+                            "lambda_versions_captured_at")
+
+
+class MainMovedError(SnapError):
+    """--lambdas-only: main is past this release, so what runs now is not this release's code."""
+
+
+def read_main_head(cfg):
+    """main's head commit (refs/heads/main) via the GitHub API. Unreadable is a SnapError, never a pass."""
+    try:
+        r = requests.get(f"{GITHUB_API}/repos/{cfg.repo}/git/ref/heads/main",
+                         headers=gh_headers(cfg), timeout=HTTP_TIMEOUT)
+    except requests.RequestException as e:
+        raise SnapError(f"could not read main's head ({type(e).__name__}: {e}); nothing written")
+    if r.status_code != 200:
+        raise SnapError(f"could not read main's head: GitHub answered {r.status_code}: {r.text[:200]}; "
+                        f"nothing written")
+    try:
+        return r.json()["object"]["sha"]
+    except (ValueError, KeyError, TypeError) as e:
+        raise SnapError(f"could not read main's head from GitHub's reply ({type(e).__name__}); nothing written")
 
 
 def read_manifest_strict(s3, cfg):
@@ -1098,6 +1169,13 @@ def lambdas_only(cfg, s3=None, lambda_client=None):
     if phase not in LAMBDA_PHASES_BEFORE_DEPLOY + ("post-deploy",):
         raise SnapError(f"manifest for {cfg.version} has lambda_versions_phase {phase!r}; only a "
                         f"promote's manifest (pre-deploy or post-deploy) is updated here")
+    # publish_version records whatever runs NOW: after a later promote or a revert has deployed, that
+    # is not this release's code. main still at MAIN_SHA means nothing has deployed over it since.
+    head = read_main_head(cfg)
+    if head != cfg.main_sha:
+        raise MainMovedError(
+            f"main has moved past this release: main is at {head}, {cfg.version} is {cfg.main_sha}; the "
+            f"recorded versions would not be this release's; nothing written")
     versions, uncaptured = publish_lambda_versions(cfg, lambda_client=lambda_client)
     updated = dict(manifest)
     if phase in LAMBDA_PHASES_BEFORE_DEPLOY:
@@ -1111,15 +1189,29 @@ def lambdas_only(cfg, s3=None, lambda_client=None):
     return {"manifest_key": key, "manifest": updated, "rerun": phase == "post-deploy"}
 
 
+def _lambdas_only_error(cause, main_moved=False):
+    """The ::error for a red snap-lambdas: prod is fine either way; only the remedy differs."""
+    version = os.environ.get("SNAP_VERSION") or "vX"
+    if main_moved:
+        remedy = (f"prod is fine; {version}'s manifest keeps the versions it has. Do not re-run: a re-run "
+                  f"refuses the same way while main is past this release")
+    else:
+        remedy = (f"prod is fine (the Lambdas deployed; the SPA deploy is its own job); only {version}'s "
+                  f"snapshot manifest is not updated. Re-run failed jobs")
+    gha_error("snap-lambdas", f"{cause} — {remedy}.")
+
+
 def main_lambdas_only(env=None):
     try:
         cfg = LambdasOnlyConfig(env=env)
         result = lambdas_only(cfg)
     except SnapError as e:
         sys.stderr.write(f"[snap] lambdas-only FAIL: {e}\n")
+        _lambdas_only_error(e, main_moved=isinstance(e, MainMovedError))
         return 1
     except Exception as e:  # noqa: BLE001 — any unexpected error is a red job, never a silent pass
         sys.stderr.write(f"[snap] lambdas-only FAIL (unexpected): {type(e).__name__}: {e}\n")
+        _lambdas_only_error(f"{type(e).__name__}: {e}")
         return 1
     m = result["manifest"]
     sys.stdout.write(
@@ -1183,6 +1275,18 @@ def parse_args(argv):
     return args
 
 
+def _snap_error(cfg, cause):
+    """The ::error for a red snap. In promote-gate it runs before the fast-forward, so main is never
+    touched; whether tag vX now exists decides the remedy (see ORPHAN TAG in the module docstring)."""
+    version = getattr(cfg, "version", None) or os.environ.get("SNAP_VERSION") or "vX"
+    if getattr(cfg, "tag_exists", False):
+        remedy = (f"tag {version} exists: re-run the failed jobs while dev is still at this SHA; if dev has "
+                  f"moved, {version} is burnt: bump on dev and promote the new SHA")
+    else:
+        remedy = f"this run created no tag {version}: re-run the failed jobs"
+    gha_error("snap (pre-FF)", f"{cause} — main has NOT been touched; {remedy}.")
+
+
 def main(argv=None):
     """argv=None is the no-argument call: the full snap with its prune, as before argparse."""
     args = parse_args([] if argv is None else argv)
@@ -1190,15 +1294,18 @@ def main(argv=None):
         return main_prune_only()
     if args.lambdas_only:
         return main_lambdas_only()
+    cfg = None
     try:
         cfg = Config()
         result = run(cfg, prune=not args.no_prune, phase=args.phase)
     except SnapError as e:
         # Unrecoverable -> FAIL THE SHIP.
         sys.stderr.write(f"[snap] FAIL: {e}\n")
+        _snap_error(cfg, e)
         return 1
     except Exception as e:  # noqa: BLE001 — defensive: any unexpected error fails the ship
         sys.stderr.write(f"[snap] FAIL (unexpected): {type(e).__name__}: {e}\n")
+        _snap_error(cfg, f"{type(e).__name__}: {e}")
         return 1
     sys.stdout.write(
         f"[snap] OK {result['manifest']['git_tag']} -> "

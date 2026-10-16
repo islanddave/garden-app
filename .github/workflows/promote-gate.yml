@@ -282,8 +282,9 @@ jobs:
     # after the FF every time. Since the snap moved above the FF (BUG-PROMOTEFFORDER-001, 2026-10-15) the job limit
     # can strand main only by landing in the post-FF prune (seconds; step limit 2). Landing between the end of the
     # snap and the FF leaves tag vX with main unmoved: re-run the failed jobs while dev is unmoved, else vX is burnt.
-    # After the smoke the job now spends the Lambda decision, the snap (20-49 s over six promotes), a token, the FF
-    # (bounded at about 2.5 min) and the prune: well inside the ~10 above.
+    # After the smoke the job now spends the Lambda decision, a token, the snap (20-49 s over six promotes), the FF
+    # (bounded at about 2.5 min) and the prune: well inside the ~10 above. The token is minted before the snap, so
+    # only the FF itself sits between tag vX and the FF.
     timeout-minutes: 60
     steps:
       - name: Mint garden-bot installation token
@@ -609,7 +610,7 @@ jobs:
       # pg_dumpall is run as well as pg_dump; the imports are tried by the python3 that will run snap.py. The
       # restore is an action and prints no remedy of ours: a restore that errors is, by that action's design, its
       # own annotation and a miss, so with its two fixed inputs only its time limit can red it. The step after it
-      # turns every miss into a refusal with the remedy.
+      # turns every miss, and that timed-out restore too (`!cancelled()`), into a refusal with the remedy.
       #
       # NO FETCH (OPS-SCHEMACHECKAPT-001, 2026-10-15). The promote no longer pulls postgres:17 from Docker Hub on a
       # miss: the pg17 client comes from the Actions cache or the promote refuses, nothing moved. The entry is
@@ -647,12 +648,13 @@ jobs:
       # OPS-SCHEMACHECKAPT-001: the promote path fetches no Postgres client from the internet. The old miss path
       # pulled postgres:17 from Docker Hub here (and before that apt.postgresql.org, which hung 46 minutes after
       # the FF on 2026-08-18); a miss is now a refusal with nothing moved. `!=`, never `== 'false'`: on a plain
-      # miss the action leaves cache-hit unset.
+      # miss the action leaves cache-hit unset. `!cancelled()`, not the implicit success(): a restore that hit its
+      # time limit has failed, and this step still prints the remedy (and still exits 1).
       - name: Refuse a pg17 client cache miss (the promote fetches nothing)
-        if: steps.pg17-cache.outputs.cache-hit != 'true'
+        if: ${{ !cancelled() && steps.pg17-cache.outputs.cache-hit != 'true' }}
         run: |
           set -uo pipefail
-          echo "::error title=Snapshot tooling (pre-FF)::no pg17 client in the Actions cache (key pg17-client-postgres17-image-v1-runner-ubuntu-26.04: a miss, or a restore the cache service could not serve), and the promote does not fetch one — nothing has moved (main has NOT been touched): re-run the failed jobs once the cache is warm. To warm it, push a commit to dev that touches .github/workflows/pg17-cache-warm.yml, or dispatch pg17-cache-warm.yml once it is on main. If an entry is suspected corrupt, first delete that key on BOTH refs/heads/dev and refs/heads/main (a dev run falls back to main's entry). Not a verdict on the promoted code."
+          echo "::error title=Snapshot tooling (pre-FF)::no pg17 client in the Actions cache (key pg17-client-postgres17-image-v1-runner-ubuntu-26.04: a miss, or a restore the cache service could not serve), and the promote does not fetch one — nothing has moved (main has NOT been touched): re-run the failed jobs once the cache is warm, or re-dispatch if warming it moved dev. Warmed by a push to dev (a commit that touches .github/workflows/pg17-cache-warm.yml): re-dispatch promote-gate on the new dev HEAD once its CI is green (a re-run refuses a moved dev); warmed by a dispatch of pg17-cache-warm.yml (once it is on main): re-run the failed jobs; backup.yml's daily run also refills main's entry. If an entry is suspected corrupt, first delete that key on BOTH refs/heads/dev and refs/heads/main (a dev run falls back to main's entry). Not a verdict on the promoted code."
           exit 1
 
       # Both binaries scripts/snap.py runs (its step puts this directory first on PATH). A cache HIT can be the
@@ -663,7 +665,7 @@ jobs:
           set -uo pipefail
           for tool in pg_dump pg_dumpall; do
             if ! "/usr/lib/postgresql/17/bin/$tool" --version; then
-              echo "::error title=Snapshot tooling (pre-FF)::/usr/lib/postgresql/17/bin/$tool does not run, and scripts/snap.py calls it just before the fast-forward — nothing has moved (main has NOT been touched): re-run the failed jobs. If it fails the same way again the cached copy is bad: delete the Actions cache entry pg17-client-postgres17-image-v1-runner-ubuntu-26.04 on BOTH refs/heads/dev and refs/heads/main (a dev run falls back to main's entry), warm it again (push a commit to dev that touches .github/workflows/pg17-cache-warm.yml, or dispatch pg17-cache-warm.yml once it is on main), then re-run the failed jobs. Not a verdict on the promoted code."
+              echo "::error title=Snapshot tooling (pre-FF)::/usr/lib/postgresql/17/bin/$tool does not run, and scripts/snap.py calls it just before the fast-forward — nothing has moved (main has NOT been touched): re-run the failed jobs. If it fails the same way again the cached copy is bad: delete the Actions cache entry pg17-client-postgres17-image-v1-runner-ubuntu-26.04 on BOTH refs/heads/dev and refs/heads/main (a dev run falls back to main's entry), warm it again, then: warmed by a push to dev (a commit that touches .github/workflows/pg17-cache-warm.yml): re-dispatch promote-gate on the new dev HEAD once its CI is green (a re-run refuses a moved dev); warmed by a dispatch of pg17-cache-warm.yml (once it is on main): re-run the failed jobs; backup.yml's daily run also refills main's entry. Not a verdict on the promoted code."
               exit 1
             fi
           done
@@ -891,6 +893,16 @@ jobs:
           fi
           echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
+      # A fresh token for the FF. The first was minted at the start of the job and lives 60 minutes, as long as
+      # the job's own limit. Minted HERE, before the snap, not between the snap and the FF: a mint failure then
+      # refuses with no tag made, and nothing fallible but the FF itself sits between tag vX and the FF.
+      - name: Mint garden-bot installation token (fast-forward)
+        id: bot-ff
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547  # v1
+        with:
+          app-id: ${{ secrets.GARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.GARDEN_BOT_PRIVATE_KEY }}
+
       # THE SNAP RUNS BEFORE THE FAST-FORWARD (BUG-PROMOTEFFORDER-001, 2026-10-15). It needs no moved main: it
       # tags MAIN_SHA = dev_sha through the API and snapshots prod, which does not depend on main. A snap failure
       # therefore refuses the promote with main and prod untouched; until this change it left main advanced with
@@ -920,15 +932,6 @@ jobs:
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/snap.py --no-prune --phase pre-deploy
-
-      # A fresh token for the FF. The first was minted at the start of the job and lives 60 minutes; the FF is
-      # now the job's last-but-one step, where that token is oldest (up to the job's whole 60).
-      - name: Mint garden-bot installation token (fast-forward)
-        id: bot-ff
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547  # v1
-        with:
-          app-id: ${{ secrets.GARDEN_BOT_APP_ID }}
-          private-key: ${{ secrets.GARDEN_BOT_PRIVATE_KEY }}
 
       # THE COMMIT POINT. Every read and write is bounded (--max-time 20) and every curl ends in `|| X=`, so no
       # transport error or hang ends this step without its own ::error (GitHub runs it as `bash -e`). main
@@ -1080,7 +1083,7 @@ jobs:
   #   * A RED snap-lambdas makes the run's conclusion failure while PROD IS FINE: main moved, the Lambdas deployed,
   #     and the SPA deploy (which runs beside this job) is judged by its own job; only the manifest still reads
   #     pre-deploy. Remedy: "Re-run failed jobs". It is idempotent: a re-run keeps the pre-deploy map and only
-  #     refreshes lambda_versions.
+  #     refreshes lambda_versions. Once main has moved past this release a re-run refuses and writes nothing.
   snap-lambdas:
     needs: [resolve, promote, deploy-lambdas]
     if: ${{ !cancelled() && needs.promote.result == 'success' && needs.deploy-lambdas.outputs.deploy_result == 'success' }}
@@ -1118,8 +1121,13 @@ jobs:
           role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
           aws-region: us-east-1
 
+      # snap.py refuses, writing nothing, unless main's head is still MAIN_SHA: a late "Re-run failed jobs" after
+      # a later promote or a revert has deployed would otherwise record THAT code as this release's. The job's own
+      # token reads main's ref (contents: read); it is never the bot's.
       - name: Record the shipped Lambda versions in the snapshot manifest
         env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           MAIN_SHA: ${{ needs.resolve.outputs.dev_sha }}
           SNAP_VERSION: ${{ needs.resolve.outputs.snap_version }}
           SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}

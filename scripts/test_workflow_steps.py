@@ -1715,13 +1715,15 @@ PG_KEY = "pg17-client-postgres17-image-v1-runner-ubuntu-26.04"
 PG_RUNNER = "ubuntu-26.04"
 CACHE_SHA = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"  # actions/cache v6.1.0, and its restore/ and save/ sub-actions
 MISS_IF = "steps.pg17-cache.outputs.cache-hit != 'true'"  # never `== 'false'`: a plain miss leaves cache-hit unset
+# The promote's refusal also runs after a restore that hit its time limit (a failed step), to print the remedy.
+PROMOTE_MISS_IF = "${{ !cancelled() && " + MISS_IF + " }}"
 WARM = "pg17-cache-warm.yml"
 WARM_HIT_VERIFY = "Verify the cached pg17 client (hit)"
 WARM_FETCH = "Fetch pg17 client from the postgres:17 image (miss, or force_refetch)"
 WARM_FORCE_REFUSE = "Refuse to pretend force_refetch replaced an existing entry"
 NOT_MOVED = "nothing has moved (main has NOT been touched): re-run the failed jobs"
 # The promote job's timeout comment, in minutes: what a slowest-passing promote spends before the tooling, and
-# what it allows after the smoke gate for the Lambda decision, the snap, the fresh token, the FF and the prune. The rest
+# what it allows after the smoke gate for the Lambda decision, the fresh token, the snap, the FF and the prune. The rest
 # is derived below.
 BEFORE_TOOLING_MIN, AFTER_SMOKE_MIN = 4, 10
 # A step that fetches tooling: an installer, a registry client or a downloader in its body, or any action at all
@@ -1782,9 +1784,9 @@ def test_snapshot_tooling_steps_run_on_every_path_and_cannot_be_advisory():
     for name in TOOLING:
         step = steps[name]
         assert "continue-on-error" not in step, name
-        # The miss refusal runs on anything but a hit and is skipped by nothing else; the other four have no
-        # condition at all.
-        assert step.get("if") == (MISS_IF if name == PG_MISS else None), name
+        # The miss refusal runs on anything but a hit, a timed-out restore included, and is skipped only by a
+        # cancel; the other four have no condition at all.
+        assert step.get("if") == (PROMOTE_MISS_IF if name == PG_MISS else None), name
         assert "uses" in step or _declared_shell(wf, "promote", step) is None, name
     # Restore only (never actions/cache, whose post step saves), at the pinned SHA. No fail-on-cache-miss: the
     # action would end the job in its own text and skip the refusal that carries the remedy.
@@ -1808,7 +1810,7 @@ def test_the_promote_gate_fetches_no_postgres_client_and_refuses_a_miss():
             assert not found, (job_id, step.get("name"), found and found.group())
     steps, names = _promote_steps()
     miss = steps[names.index(PG_MISS)]
-    assert names.index(PG_MISS) == names.index(PG_CACHE) + 1 and miss["if"] == MISS_IF
+    assert names.index(PG_MISS) == names.index(PG_CACHE) + 1 and miss["if"] == PROMOTE_MISS_IF
     assert miss["run"].splitlines()[-1].strip() == "exit 1"
     # The scan is not blind: the warmer it points to does all of this.
     warm = _workflow(WARM)["jobs"]["warm"]["steps"]
@@ -2032,14 +2034,15 @@ def test_snapshot_tooling_every_stall_ends_inside_its_step_and_all_of_them_insid
 
 
 # The move left a gap: the tooling is proven, then the smoke, the credentials and the Lambda decision run for 5 to
-# 35 minutes, then snap.py uses it, then a fresh token and the FF, then the never-fatal prune (BUG-PROMOTEFFORDER-001).
+# 35 minutes, then a fresh token, then snap.py uses it, then the FF, then the never-fatal prune (BUG-PROMOTEFFORDER-001).
+# The token is minted before the snap, so nothing fallible but the FF itself sits between tag vX and the FF.
 # The pins above place the five steps; these three pin the gap and what follows the FF, so a step that puts a death
 # back after the fast-forward is a reviewed edit to this file.
 AWS_CREDS = "Configure AWS credentials (snap role, OIDC)"
 LAM_DECISION = "Decide Lambda deploy from deploy markers on the running functions (pre-FF; fail-closed)"
 MINT_FF = "Mint garden-bot installation token (fast-forward)"
 PRUNE = "Prune old snapshot branches (post-FF; never fatal)"
-FROM_TOOLING_TO_END = TOOLING + [SMOKE, AWS_CREDS, LAM_DECISION, SNAP, MINT_FF, FF, PRUNE]
+FROM_TOOLING_TO_END = TOOLING + [SMOKE, AWS_CREDS, LAM_DECISION, MINT_FF, SNAP, FF, PRUNE]
 SPAN_PINNED = """
 The promote job's steps from the snapshot tooling to the end of the job are pinned by name and order.
 Why: the tooling is proven before the fast-forward so that its failure cannot leave main advanced with no snapshot
@@ -2053,7 +2056,8 @@ Before changing the list, check the new or moved step:
     advanced with nothing deployed, so the snap and everything that can refuse runs above it.
 """
 # Between the tooling and the snap, the one action allowed and why. May only shrink.
-GAP_ACTIONS = {AWS_CREDS: "aws-actions/configure-aws-credentials"}  # exports AWS_* only; snap.py's own credentials
+GAP_ACTIONS = {AWS_CREDS: "aws-actions/configure-aws-credentials",  # exports AWS_* only; snap.py's own credentials
+               MINT_FF: "actions/create-github-app-token"}  # a step output only (the FF's token), no env or PATH
 # What would undo the tooling: another interpreter or PATH for later steps, or a write under the pg17 directory.
 UNDOES_TOOLING = re.compile(
     r"GITHUB_PATH|GITHUB_ENV|PYTHONPATH|PYTHONHOME|PYTHONNOUSERSITE|/usr/lib/postgresql|\bpip3?\b|\bsudo\b")
@@ -2206,7 +2210,9 @@ def test_snap_lambdas_runs_after_a_good_lambda_deploy_and_nothing_waits_for_it()
     assert steps[1]["timeout-minutes"] <= 5 and steps[1]["run"].count("timeout -k ") == 3
     creds = {s["name"]: s for s in jobs["promote"]["steps"] if "name" in s}[AWS_CREDS]
     assert steps[2]["uses"] == creds["uses"] and steps[2]["with"] == creds["with"]
-    assert set(steps[3]["env"]) == {"MAIN_SHA", "SNAP_VERSION", "SNAP_BUCKET", "TMPDIR"}
+    assert set(steps[3]["env"]) == {"MAIN_SHA", "SNAP_VERSION", "SNAP_BUCKET", "TMPDIR", "GH_TOKEN", "GITHUB_REPOSITORY"}
+    # main's head is read with the job's own token (contents: read above), never the bot's or a secret.
+    assert steps[3]["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert steps[3]["env"]["MAIN_SHA"] == "${{ needs.resolve.outputs.dev_sha }}"
 
 
@@ -2342,6 +2348,7 @@ def test_pg17_verify_step_refuses_unmoved_and_names_the_binary_and_the_cache_ent
     assert f"delete the Actions cache entry {PG_KEY}" in error
     # A dev-ref run falls back to main's entry, and a miss is refused: delete both, then warm, then re-run.
     assert "BOTH refs/heads/dev and refs/heads/main" in error and f".github/workflows/{WARM}" in error
+    assert "re-dispatch promote-gate on the new dev HEAD once its CI is green (a re-run refuses a moved dev)" in error
     assert "fetches a fresh one" not in error
 
 
@@ -2349,8 +2356,11 @@ def test_pg17_cache_miss_step_refuses_unmoved_and_says_how_to_warm(tmp_path):
     proc, log, _ = _run_tooling(tmp_path, PG_MISS)
     error = _refused_unmoved(proc)
     assert log == [] and PG_KEY in error and "the promote does not fetch one" in error
-    assert f"push a commit to dev that touches .github/workflows/{WARM}" in error
-    assert f"dispatch {WARM} once it is on main" in error
+    # Warmed by a push, dev has moved and a re-run refuses it: re-dispatch. Warmed by a dispatch: re-run.
+    assert f"Warmed by a push to dev (a commit that touches .github/workflows/{WARM}): re-dispatch promote-gate on " \
+        "the new dev HEAD once its CI is green (a re-run refuses a moved dev)" in error
+    assert f"warmed by a dispatch of {WARM} (once it is on main): re-run the failed jobs" in error
+    assert "backup.yml's daily run also refills main's entry" in error
     assert "BOTH refs/heads/dev and refs/heads/main" in error
 
 

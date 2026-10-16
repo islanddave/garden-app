@@ -33,10 +33,13 @@ SPEC B2 STEP MAP (repo-version-env-spec-V100-20260602.md §3 B2):
      then FF-promote it to `main`. Then REBUILD vX from that tree (OPS-REVERTRESTORE-001):
      dispatch deploy-lambda.yml on main and wait for every Lambda leg, THEN dispatch
      deploy.yml (the SPA) and wait — the promote's own order. Nothing else redeploys
-     on a main move. manifest.lambda_versions is NOT restored forward: a promote snaps
-     BEFORE its own Lambda deploy, so vX's manifest holds v(X-1)'s Lambda code
-     (measured on v4.128.0, 2026-09-11). Snapshot versions are restored only by
-     rollback(), from the PRE-REVERT snap, which records what prod is running.
+     on a main move. manifest.lambda_versions is NOT restored forward. Until
+     2026-10-15 a promote's manifest held v(X-1)'s Lambda code (it snaps BEFORE its
+     own Lambda deploy; measured on v4.128.0, 2026-09-11). Since
+     OPS-SNAPCAPTUREORDER-001 it records the shipped set (phase post-deploy) or, on
+     an SPA-only promote, the running set; the forward path still rebuilds from the
+     tree. Snapshot versions are restored only by rollback(), from the PRE-REVERT
+     snap, which records what prod is running.
   5. ORDERING + ABORT: stage + validate the DB target FIRST, then cut over
      code+DB TOGETHER; if either leg fails, roll back to the pre-revert snap
      (DB, code, every release Lambda, SPA rebuild — see rollback()).
@@ -473,19 +476,12 @@ def verify_reached_main(cfg, manifest):
     ran in prod, and verify_tag passes it. Reverting to it would ship that tree through the
     emergency path. GET /compare/{main_sha}...{main}: `ahead` (main has moved on past it) or
     `identical` passes; `behind` or `diverged` (main lacks the commit) refuses; anything unreadable
-    refuses."""
+    refuses. Read through _gh_read, so a transport blip is retried before an incident revert is
+    refused; a non-200 or a reply that is still unreadable is None, which refuses."""
     tag = cfg.target_version
     sha = manifest["main_sha"]
-    try:
-        r = requests.get(
-            f"{GITHUB_API}/repos/{cfg.repo}/compare/{sha}...{cfg.main_branch}",
-            headers=gh_headers(cfg), timeout=HTTP_TIMEOUT,
-        )
-        body = r.json() if r.status_code == 200 else None
-        status = body.get("status") if isinstance(body, dict) else None
-    except _GH_TRANSPORT_ERRORS as e:
-        raise RevertError(f"could not tell whether {tag} ({sha}) reached {cfg.main_branch} "
-                          f"({type(e).__name__}: {e}); refusing")
+    body = _gh_read(cfg, f"/compare/{sha}...{cfg.main_branch}")
+    status = body.get("status") if isinstance(body, dict) else None
     if status in ("ahead", "identical"):
         return status
     if status in ("behind", "diverged"):
@@ -494,8 +490,8 @@ def verify_reached_main(cfg, manifest):
             f"(compare status {status}). A promote snapped it and never fast-forwarded, so it never ran "
             f"in prod; refusing to revert to it. Pick a version that shipped")
     raise RevertError(
-        f"could not tell whether {tag} ({sha}) reached {cfg.main_branch} (compare HTTP {r.status_code}, "
-        f"status {status!r}); refusing")
+        f"could not tell whether {tag} ({sha}) reached {cfg.main_branch} (compare unreadable after "
+        f"{GH_READ_ATTEMPTS} tries, or answered with status {status!r}); refusing")
 
 
 # --- step 2: pre-revert snap + RPO -------------------------------------------
@@ -2114,9 +2110,11 @@ def run(cfg, s3=None, lambda_client=None):
             )
 
         # ... then the code: main to the target tree, then the target's OWN Lambdas, then its SPA
-        # (the promote's order). manifest.lambda_versions is deliberately NOT used here: a promote
-        # snaps before its own Lambda deploy, so the target's manifest holds the PREVIOUS release's
-        # Lambda code (measured 2026-09-11). The target's tree is the authority for its code.
+        # (the promote's order). manifest.lambda_versions is deliberately NOT used here. Until
+        # 2026-10-15 a promote's manifest held the PREVIOUS release's Lambda code (it snaps before
+        # its own Lambda deploy; measured 2026-09-11); since OPS-SNAPCAPTUREORDER-001 it records the
+        # shipped set (phase post-deploy) or, on an SPA-only promote, the running set. Either way the
+        # forward path rebuilds from the tree: the target's tree is the authority for its code.
         revert_sha = create_revert_commit_on_dev(cfg, manifest)
         progress["revert_sha"] = revert_sha
         ff_main(cfg, revert_sha)

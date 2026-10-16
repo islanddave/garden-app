@@ -1130,6 +1130,30 @@ def test_prune_only_prunes_and_exits_0(monkeypatch, capsys):
     boto.assert_not_called()  # no SNAP_VERSION / MAIN_SHA: no manifest record, no AWS
 
 
+def test_prune_only_runs_the_real_prune_through_prune_config(monkeypatch, capsys):
+    """No stub between main_prune_only and prune_old_branches: an attribute prune reads that PruneConfig lacks
+    would only ever show as a ::warning on every promote, so this runs the two together over mocked HTTP."""
+    _only_env(monkeypatch, dict(PRUNE_ENV, SNAP_RETENTION="2"))
+    branches = [{"id": PROD_ID, "name": "production", "created_at": "2026-01-01T00:00:00Z", "default": True},
+                _branch("snap-v1", "2026-01-02T00:00:00Z"), _branch("snap-v2", "2026-01-03T00:00:00Z"),
+                _branch("snap-v3", "2026-01-04T00:00:00Z"),
+                _branch("snap-other", "2026-01-01T00:00:00Z", parent_id="br-staging")]
+    get = mock.Mock(return_value=_resp(200, {"branches": branches}))
+    delete = mock.Mock(return_value=_resp(200))
+    monkeypatch.setattr(snap.requests, "get", get)
+    monkeypatch.setattr(snap.requests, "delete", delete)
+    boto = mock.Mock()
+    monkeypatch.setattr(snap.boto3, "client", boto)
+    assert snap.main(["--prune-only"]) == 0
+    assert get.call_args.args[0] == "https://console.neon.tech/api/v2/projects/proj-123/branches"
+    assert get.call_args.kwargs["headers"]["Authorization"] == "Bearer neon_xxx"
+    (call,) = delete.call_args_list  # three snaps of prod, K=2: exactly the oldest goes
+    assert call.args[0] == "https://console.neon.tech/api/v2/projects/proj-123/branches/br-snap-v1-2026-01-02T00:00:00Z"
+    out = capsys.readouterr().out
+    assert "[snap] prune-only OK (pruned 1, skipped 0 old branches)" in out and "::warning::" not in out
+    boto.assert_not_called()  # no SNAP_VERSION / MAIN_SHA: no manifest record
+
+
 @pytest.mark.parametrize("failure", ["config", "prune"])
 def test_prune_only_never_fails(monkeypatch, capsys, failure):
     env = {} if failure == "config" else dict(PRUNE_ENV)
@@ -1204,7 +1228,8 @@ def test_main_rejects_flags_that_do_not_go_together(argv):
     assert e.value.code == 2
 
 
-LO_ENV = {"MAIN_SHA": "a" * 40, "SNAP_VERSION": "v1.2.3", "SNAP_BUCKET": "garden-snapshots-prod"}
+LO_ENV = {"MAIN_SHA": "a" * 40, "SNAP_VERSION": "v1.2.3", "SNAP_BUCKET": "garden-snapshots-prod",
+          "GH_TOKEN": "ghs_job", "GITHUB_REPOSITORY": "owner/garden-app"}
 MANIFEST_KEY = ("garden-snapshots-prod", "snapshots/v1.2.3.json")
 
 
@@ -1254,8 +1279,16 @@ def _lambda_client(version):
     return client
 
 
+def _main_at(monkeypatch, sha="a" * 40, status=200):
+    """GitHub's refs/heads/main read; returns the mock so a test can see the URL and the token."""
+    get = mock.Mock(return_value=_resp(status, {"ref": "refs/heads/main", "object": {"sha": sha}}, text="nope"))
+    monkeypatch.setattr(snap.requests, "get", get)
+    return get
+
+
 def _lo(monkeypatch, s3, version="176"):
     monkeypatch.setattr(snap, "release_lambda_functions", lambda: ["garden-plants", "garden-a", "garden-new"])
+    _main_at(monkeypatch)
     return snap.lambdas_only(snap.LambdasOnlyConfig(env=dict(LO_ENV)), s3=s3, lambda_client=_lambda_client(version))
 
 
@@ -1316,6 +1349,7 @@ def test_lambdas_only_treats_a_manifest_with_no_phase_as_pre_deploy(monkeypatch)
     ({"lambda_versions_phase": "pre-revert"}, "lambda_versions_phase 'pre-revert'"),
 ])
 def test_lambdas_only_refuses_and_writes_nothing(monkeypatch, over, match):
+    _main_at(monkeypatch)
     s3 = _S3(_promote_manifest(**over))
     client = _lambda_client("176")
     with pytest.raises(snap.SnapError, match=match):
@@ -1337,12 +1371,40 @@ def test_lambdas_only_a_missing_manifest_is_its_own_error(monkeypatch):
         _lo(monkeypatch, _S3(None))
 
 
-def test_lambdas_only_config_reads_only_its_three_keys():
-    cfg = snap.LambdasOnlyConfig(env={"MAIN_SHA": "a" * 40, "SNAP_VERSION": "v1.2.3", "SNAP_BUCKET": ""})
+def test_lambdas_only_config_reads_only_its_keys():
+    cfg = snap.LambdasOnlyConfig(env=dict(LO_ENV, SNAP_BUCKET=""))
     assert (cfg.main_sha, cfg.version, cfg.snap_bucket) == ("a" * 40, "v1.2.3", "garden-snapshots-prod")
-    for key in ("MAIN_SHA", "SNAP_VERSION"):
+    assert (cfg.gh_token, cfg.repo) == ("ghs_job", "owner/garden-app")
+    for key in ("MAIN_SHA", "SNAP_VERSION", "GH_TOKEN", "GITHUB_REPOSITORY"):
         with pytest.raises(snap.SnapError, match=key):
             snap.LambdasOnlyConfig(env={k: v for k, v in LO_ENV.items() if k != key})
+    # The job's token under Actions' other name is as good.
+    no_gh = {k: v for k, v in LO_ENV.items() if k != "GH_TOKEN"}
+    assert snap.LambdasOnlyConfig(env=dict(no_gh, GITHUB_TOKEN="ghs_other")).gh_token == "ghs_other"
+
+
+def test_lambdas_only_reads_mains_head_with_the_jobs_token(monkeypatch):
+    s3 = _S3(_promote_manifest())
+    _lo(monkeypatch, s3)
+    get = snap.requests.get
+    (call,) = get.call_args_list
+    assert call.args[0] == "https://api.github.com/repos/owner/garden-app/git/ref/heads/main"
+    assert call.kwargs["headers"]["Authorization"] == "Bearer ghs_job"
+
+
+@pytest.mark.parametrize("sha,status,match", [
+    ("b" * 40, 200, "main has moved past this release: main is at b+, v1.2.3 is a+; the recorded versions "
+                    "would not be this release's; nothing written"),
+    ("a" * 40, 404, "could not read main's head: GitHub answered 404"),
+], ids=["main-moved", "main-unreadable"])
+def test_lambdas_only_refuses_unless_main_is_still_this_release(monkeypatch, sha, status, match):
+    monkeypatch.setattr(snap, "release_lambda_functions", lambda: ["garden-plants"])
+    _main_at(monkeypatch, sha, status)
+    s3, client = _S3(_promote_manifest()), _lambda_client("176")
+    with pytest.raises(snap.SnapError, match=match) as e:
+        snap.lambdas_only(snap.LambdasOnlyConfig(env=dict(LO_ENV)), s3=s3, lambda_client=client)
+    assert isinstance(e.value, snap.MainMovedError) is (status == 200)
+    assert s3.puts == [] and client.publish_version.call_count == 0
 
 
 def _snap_lambdas_step_env():
@@ -1357,11 +1419,17 @@ def _snap_lambdas_step_env():
 def test_lambdas_only_runs_with_exactly_the_env_snap_lambdas_passes(monkeypatch, tmp_path, capsys):
     """The only proof of the job's env contract before prod: main(['--lambdas-only']) with exactly the keys the
     workflow step sets (expressions replaced by values; an unset repo var renders as ""), boto3 stubbed."""
-    values = {"MAIN_SHA": "a" * 40, "SNAP_VERSION": "v1.2.3", "SNAP_BUCKET": "", "TMPDIR": str(tmp_path)}
-    env = {k: values[k] for k in _snap_lambdas_step_env()}  # a KeyError here = a key this test does not know
+    values = {"MAIN_SHA": "a" * 40, "SNAP_VERSION": "v1.2.3", "SNAP_BUCKET": "", "TMPDIR": str(tmp_path),
+              "GH_TOKEN": "ghs_job", "GITHUB_REPOSITORY": "owner/garden-app"}
+    step_env = _snap_lambdas_step_env()
+    env = {k: values[k] for k in step_env}  # a KeyError here = a key this test does not know
+    # The job's own read-only token, never the bot's or a secret: main's ref is all it reads.
+    assert step_env["GH_TOKEN"] == "${{ github.token }}"
     _only_env(monkeypatch, env)
-    for key in ("GH_TOKEN", "NEON_API_KEY", "NEON_BACKUP_URL", "PHOTOS_BUCKET", "GITHUB_REPOSITORY"):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    for key in ("NEON_API_KEY", "NEON_BACKUP_URL", "PHOTOS_BUCKET"):
         assert key not in snap.os.environ
+    _main_at(monkeypatch)
     s3, client = _S3(_promote_manifest()), _lambda_client("176")
     monkeypatch.setattr(snap.boto3, "client", lambda name: {"s3": s3, "lambda": client}[name])
     assert snap.main(["--lambdas-only"]) == 0, capsys.readouterr()
@@ -1375,4 +1443,101 @@ def test_main_lambdas_only_fails_red_on_a_refusal(monkeypatch, capsys):
     monkeypatch.setattr(snap.boto3, "client", lambda name: {"s3": _S3(_promote_manifest(main_sha="b" * 40)),
                                                             "lambda": _lambda_client("1")}[name])
     assert snap.main(["--lambdas-only"]) == 1
-    assert "lambdas-only FAIL: manifest for v1.2.3 is pinned" in capsys.readouterr().err
+    out, err = capsys.readouterr()
+    assert "lambdas-only FAIL: manifest for v1.2.3 is pinned" in err
+    (error,) = [ln for ln in out.splitlines() if ln.startswith("::error")]
+    assert error.startswith("::error title=snap-lambdas::manifest for v1.2.3 is pinned")
+    assert error.endswith("prod is fine (the Lambdas deployed; the SPA deploy is its own job); only v1.2.3's "
+                          "snapshot manifest is not updated. Re-run failed jobs.")
+
+
+def test_main_lambdas_only_after_main_moved_says_prod_is_fine_and_not_to_re_run(monkeypatch, capsys):
+    _only_env(monkeypatch, dict(LO_ENV))
+    _main_at(monkeypatch, "c" * 40)
+    s3 = _S3(_promote_manifest())
+    monkeypatch.setattr(snap.boto3, "client", lambda name: {"s3": s3, "lambda": _lambda_client("1")}[name])
+    assert snap.main(["--lambdas-only"]) == 1
+    out, err = capsys.readouterr()
+    assert "lambdas-only FAIL: main has moved past this release" in err and s3.puts == []
+    (error,) = [ln for ln in out.splitlines() if ln.startswith("::error")]
+    assert error.startswith("::error title=snap-lambdas::main has moved past this release")
+    assert "prod is fine" in error and "Do not re-run" in error and "Re-run failed jobs" not in error
+
+
+# --- main(): the ::error a red snap leaves (promote-gate, pre-FF) ----------------------------------------------
+
+@pytest.mark.parametrize("failing,tagged", [("dump", False), ("verify", True), ("manifest", True)])
+def test_main_a_failed_snap_says_main_is_untouched_and_whether_the_tag_exists(monkeypatch, capsys, failing, tagged):
+    _only_env(monkeypatch, dict(BASE_ENV))
+    monkeypatch.setattr(snap.boto3, "client", lambda name: mock.Mock())
+    _patch_run_steps(monkeypatch, [])
+
+    def boom(*a, **k):
+        raise snap.SnapError(f"{failing} broke 50% of\nit")
+    monkeypatch.setattr(snap, {"dump": "dump_to_s3", "verify": "self_verify", "manifest": "write_manifest"}[failing],
+                        boom)
+    if failing != "manifest":
+        monkeypatch.setattr(snap, "write_manifest", lambda s, c, m: "k")
+    assert snap.main(["--no-prune", "--phase", "pre-deploy"]) == 1
+    out, err = capsys.readouterr()
+    assert f"[snap] FAIL: {failing} broke" in err  # the stderr line stays
+    (error,) = [ln for ln in out.splitlines() if ln.startswith("::error")]
+    # One line: the cause's own % and newline are escaped, never a second, broken annotation.
+    assert error.startswith(f"::error title=snap (pre-FF)::{failing} broke 50%25 of%0Ait — main has NOT been touched; ")
+    if tagged:
+        assert error.endswith("tag v1.2.3 exists: re-run the failed jobs while dev is still at this SHA; if dev has "
+                              "moved, v1.2.3 is burnt: bump on dev and promote the new SHA.")
+    else:
+        assert error.endswith("this run created no tag v1.2.3: re-run the failed jobs.")
+
+
+def test_main_a_tag_found_by_the_precheck_counts_as_existing(monkeypatch, capsys):
+    """A re-run whose first attempt already tagged: a capture failure now still leaves vX behind."""
+    _only_env(monkeypatch, dict(BASE_ENV))
+    monkeypatch.setattr(snap.boto3, "client", lambda name: mock.Mock())
+    _patch_run_steps(monkeypatch, [])
+    monkeypatch.setattr(snap, "precheck_tag", lambda c: "a" * 40)
+    monkeypatch.setattr(snap, "dump_to_s3", lambda s, c: (_ for _ in ()).throw(snap.SnapError("dump broke")))
+    assert snap.main(["--no-prune"]) == 1
+    assert "tag v1.2.3 exists: re-run the failed jobs" in capsys.readouterr().out
+
+
+def test_main_a_config_failure_still_annotates(monkeypatch, capsys):
+    _only_env(monkeypatch, {k: v for k, v in BASE_ENV.items() if k != "NEON_BACKUP_URL"})
+    assert snap.main(["--no-prune"]) == 1
+    (error,) = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("::error")]
+    assert "NEON_BACKUP_URL" in error and error.endswith("this run created no tag v1.2.3: re-run the failed jobs.")
+
+
+# --- run() over a post-deploy manifest of the same sha (Re-run all jobs / re-dispatch of a shipped promote) ------
+
+def test_run_carries_a_post_deploy_manifests_lambda_fields_forward(monkeypatch):
+    shipped = _promote_manifest(lambda_versions={"garden-plants": "176"}, lambda_uncaptured={},
+                                lambda_versions_pre_deploy={"garden-plants": "175"},
+                                lambda_uncaptured_pre_deploy={"garden-new": "ResourceNotFoundException: x"},
+                                lambda_versions_phase="post-deploy",
+                                lambda_versions_captured_at="2026-10-15T01:00:00Z")
+    order, manifests = [], []
+    _patch_run_steps(monkeypatch, order)
+    monkeypatch.setattr(snap, "precheck_existing_manifest", lambda s, c: dict(shipped))
+    monkeypatch.setattr(snap, "write_manifest", lambda s, c, m: manifests.append(json.loads(json.dumps(m))) or "k")
+    snap.run(make_cfg(), s3=mock.Mock(), lambda_client=mock.Mock(), prune=False, phase="pre-deploy")
+    assert "lambda" not in order  # no fresh capture: it would be the shipped code labelled pre-deploy
+    for key in snap.POST_DEPLOY_CARRIED_KEYS:
+        assert manifests[0][key] == shipped[key], key
+    assert manifests[0]["lambda_versions_phase"] == "post-deploy"
+
+
+@pytest.mark.parametrize("existing", [
+    {"phase": "pre-deploy"}, {"phase": None}, {"phase": "post-deploy", "main_sha": None},
+], ids=["pre-deploy", "no-phase", "post-deploy-unpinned"])
+def test_run_re_captures_over_anything_but_a_post_deploy_manifest_of_this_sha(monkeypatch, existing):
+    old = _promote_manifest(lambda_versions_phase=existing["phase"] or _DROP,
+                            main_sha=existing.get("main_sha", "a" * 40) or _DROP)
+    order, manifests = [], []
+    _patch_run_steps(monkeypatch, order)
+    monkeypatch.setattr(snap, "precheck_existing_manifest", lambda s, c: dict(old))
+    monkeypatch.setattr(snap, "write_manifest", lambda s, c, m: manifests.append(dict(m)) or "k")
+    snap.run(make_cfg(), s3=mock.Mock(), lambda_client=mock.Mock(), prune=False, phase="pre-deploy")
+    assert "lambda" in order and manifests[0]["lambda_versions"] == {"garden-plants": "3"}
+    assert manifests[0]["lambda_versions_phase"] == "pre-deploy" and "lambda_versions_pre_deploy" not in manifests[0]
