@@ -21,8 +21,8 @@ prod forked at the same point, and gives one of three verdicts:
 | `arm.mjs`, `arm-lib.mjs` | One arm: a non-dry daily-plan `run()` from one tree's own `lambda/daily-plan/handler.js`, against one branch, with recording stubs. |
 | `fixtures/fetchers.default.json` | The default weather fixture both arms read (2-decimal coordinates at most, no station id). |
 | `fixtures/use.example-d1.json` | A use in the V102 Step 11 (D1) shape. |
-| `test_space_harness.py`, `arm.test.mjs` | Unit tests: no network, no database. |
-| `test_space_harness_pg.py` | The self-tests on two real local Postgres clusters (skipped unless given). |
+| `../test_space_harness.py`, `arm.test.mjs` | Unit tests: no network, no database. |
+| `../test_space_harness_pg.py` | The self-tests on two real local Postgres clusters (skipped unless given). |
 
 ## What is compared
 
@@ -80,7 +80,7 @@ LC_ALL=C $BIN/pg_ctl -D $S/b -o "-p 55455 -c unix_socket_directories= -c listen_
 SPACE_HARNESS_PG_A=postgresql://postgres@127.0.0.1:55445/postgres \
 SPACE_HARNESS_PG_B=postgresql://postgres@127.0.0.1:55455/postgres \
 SPACE_HARNESS_DRIVER=<an installed @neondatabase/serverless dir> SPACE_HARNESS_WS=<repo>/node_modules/ws \
-  python3 -m pytest -q scripts/space-harness/
+  python3 -m pytest -q scripts/test_space_harness.py scripts/test_space_harness_pg.py
 ```
 
 For a run of the real `handler.js`, load prod's schema read-only (`pg_dump "$GARDEN_RO_DATABASE_URL"
@@ -145,10 +145,11 @@ from this LSN.") and `branch.parent_timestamp` (RFC 3339); the Branch object rep
 ## Tests
 
 ```sh
-python3 -m pytest -q scripts/space-harness/test_space_harness.py   # no network, no database
-npx vitest run scripts/space-harness/arm.test.mjs                  # no network, no database
-python3 -m pytest -q scripts/space-harness/test_space_harness_pg.py  # needs the two local clusters (above)
+python3 -m pytest -q scripts/test_space_harness.py      # no network, no database
+npx vitest run scripts/space-harness/arm.test.mjs      # no network, no database
+python3 -m pytest -q scripts/test_space_harness_pg.py   # needs the two local clusters (above)
 ```
 
-`arm.test.mjs` runs in CI's unit run (the vitest node project takes `scripts/**`). The pytest files are
-outside ci.yml's `scripts/test_*.py` glob.
+The pytest files sit in `scripts/` so ci.yml's `python3 -m pytest -q scripts/test_*.py` collects them; the PG
+file skips itself there (no psycopg, no clusters). `arm.test.mjs` runs in CI's unit run (the vitest node project
+takes `scripts/**`).

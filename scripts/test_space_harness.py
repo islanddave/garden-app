@@ -4,7 +4,7 @@ database: neon_safety_branch.api is replaced by a fake Neon that both the tool
 and the harness call, and the instrument's pure parts are tested directly.
 The real-PG self-tests are test_space_harness_pg.py (skipped without clusters).
 
-    python3 -m pytest -q scripts/space-harness/test_space_harness.py
+    python3 -m pytest -q scripts/test_space_harness.py
 """
 import datetime as dt
 import json
@@ -14,7 +14,7 @@ import urllib.parse
 
 import pytest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "space-harness")
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 

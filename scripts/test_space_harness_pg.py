@@ -5,7 +5,7 @@ recreates its own database, space_harness_pytest, on both):
 
     SPACE_HARNESS_PG_A=postgresql://postgres@127.0.0.1:55445/postgres \\
     SPACE_HARNESS_PG_B=postgresql://postgres@127.0.0.1:55455/postgres \\
-    python3 -m pytest -q scripts/space-harness/test_space_harness_pg.py
+    python3 -m pytest -q scripts/test_space_harness_pg.py
 
 The arm test also needs the Lambda driver: SPACE_HARNESS_DRIVER (an installed
 @neondatabase/serverless directory) and SPACE_HARNESS_WS (a ws package directory).
@@ -18,7 +18,7 @@ import uuid
 
 import pytest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "space-harness")
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
