@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.1",
+    "date": "2026-10-16",
+    "highlights": [
+      "Behind the scenes: finishes the groundwork for gardens with more than one owner by retiring an old single-owner setting from the server's records. Nothing you'll see change."
+    ]
+  },
+  {
     "version": "5.3.0",
     "date": "2026-10-16",
     "highlights": [
