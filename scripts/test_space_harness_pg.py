@@ -202,6 +202,22 @@ def test_b_equals_a_is_a_fault_never_a_pass(pair, tmp_path):
     assert rc == harness.EXIT["FAULT"] and "also seen on a" in v["positive_control"]["reason"]
 
 
+def test_with_arms_a_row_control_the_data_change_alone_satisfies_faults(pair, tmp_path):
+    """The Indoor row exists once INDOOR commits: it says nothing about run(). (No driver here: the old
+    harness ran both arms anyway, both failed alike, and the run PASSED.)"""
+    tree = tmp_path / "no-driver-tree"
+    (tree / "lambda" / "daily-plan").mkdir(parents=True)
+    (tree / "lambda" / "daily-plan" / "handler.js").write_text("module.exports = { async run() { return {} } }")
+    rc, v = run(tmp_path, ROW_USE, INDOOR, "--tree", str(tree))
+    assert rc == harness.EXIT["FAULT"] and "already seen before the arms ran" in v["faults"][0], v
+
+
+def test_a_column_the_change_adds_is_a_diff(pair, tmp_path):
+    rc, v = run(tmp_path, ROW_USE, INDOOR + " ALTER TABLE public.plants ADD COLUMN note text;", "--no-arms")
+    assert rc == harness.EXIT["DIFF"]
+    assert [(d["table"], d["kind"]) for d in v["diffs"]] == [("public.plants", "columns")]
+
+
 def test_two_urls_for_one_database_fault(pair, tmp_path, monkeypatch):
     monkeypatch.setenv("SH_B2", pair["a"].replace("127.0.0.1", "localhost"))
     rc, v = verb("selftest0", tmp_path, src=["--a-dsn-env", "SH_A", "--b-dsn-env", "SH_B2", "--local-pg"])
