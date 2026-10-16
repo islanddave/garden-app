@@ -194,3 +194,14 @@ def test_the_target_follows_the_manifest(tmp_path):
     proc, calls = _run(tmp_path, live="nodejs22.x", after="nodejs20.x", manifest_runtime="nodejs20.x")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert _updates(calls)[0][-1] == "nodejs20.x"
+
+
+@pytest.mark.parametrize("steps,prefix", [(PROD_STEPS, "Deploy or create ${{ matrix.function }}"),
+                                          (STG_STEPS, "Deploy or create ${{ matrix.function }}-staging")],
+                         ids=["prod", "staging"])
+def test_the_code_update_settles_first_and_the_create_reads_the_manifest(steps, prefix):
+    body = next(s for s in steps if s.get("name") == prefix)["run"]
+    assert body.index("wait function-updated") < body.index("update-function-code")
+    assert "jq -er" in body and '--runtime "$RT"' in body and "nodejs2" not in body
+    if steps is PROD_STEPS:  # prod tolerates a Failed last update so the code update can repair it
+        assert '|| echo "::warning::$FUNCTION_NAME: last update not Successful' in body

@@ -194,9 +194,11 @@ jobs:
               --zip-file "$ZIP_FILE"
           else
             echo "Creating new function: $FN"
+            RT=$(jq -er --arg f "garden-${{ matrix.function }}" '.[$f].runtime' scripts/lambda-config-expected.json) \
+              || { echo "::error::$FN: no runtime declared in scripts/lambda-config-expected.json"; exit 1; }
             aws lambda create-function \
               --function-name "$FN" \
-              --runtime "$(jq -er --arg f "garden-${{ matrix.function }}" '.[$f].runtime' scripts/lambda-config-expected.json)" \
+              --runtime "$RT" \
               --handler index.handler \
               --role arn:aws:iam::769788341849:role/garden-app-lambda-exec \
               --zip-file "$ZIP_FILE" \
@@ -209,7 +211,8 @@ jobs:
         # The prod function is created by infra/photocdn.yaml (CFN), not by a deploy workflow —
         # deploy-lambda.yml only ever update-function-code's it, so its create branch has never run
         # for this function and would produce the wrong shape. There is no staging CFN stack, so the
-        # create branch here reproduces the CFN properties by hand: nodejs22.x + arm64 (an x86_64
+        # create branch here reproduces the CFN properties by hand (its runtime literal is coupled to the manifest's
+        # garden-photocdn-derivative `runtime` and infra/photocdn.yaml: change all three together): nodejs22.x + arm64 (an x86_64
         # function module-load-fails on the arm64 sharp zip) and MemorySize 2048.
         # ORIGINALS_BUCKET is set AT CREATE rather than left to the config step below because
         # index.mjs defaults it to 'garden-photos-prod' — an unset staging function reads PROD

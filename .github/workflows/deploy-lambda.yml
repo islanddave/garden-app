@@ -245,8 +245,8 @@ jobs:
       # an env map, so nothing else in the configuration can be overwritten. It runs BEFORE the code
       # update so the leg never needs AWS to accept a code update on a deprecated runtime; the previous
       # code runs on the new runtime for the seconds until the update lands. The promote's staging gate runs
-      # this body too, but only its no-op branch once staging is already on the target; the move branch was
-      # exercised on staging by putting one function back first (OPS-LAMBDANODE22-001 S2b). continue-on-error like the other config-ensure steps: verify-lambda-invariants
+      # this body too, but only its no-op branch once staging is already on the target, so the move branch is
+      # proven on staging by putting one function back first (OPS-LAMBDANODE22-001 S2b). continue-on-error like the other config-ensure steps: verify-lambda-invariants
       # asserts `runtime` from the same manifest after every promote, so a failure here reds the run
       # without withholding the SPA; it also withholds the deploy marker (the marker step's `if:`), and
       # check-lambda-current reads a runtime that is not the declared one as NOT CURRENT, so the next
@@ -287,15 +287,20 @@ jobs:
           # Check if function exists; create on first deploy, update thereafter
           if aws lambda get-function --function-name "$FUNCTION_NAME" 2>/dev/null; then
             echo "Updating existing function: $FUNCTION_NAME"
-            aws lambda wait function-updated --function-name "$FUNCTION_NAME"  # settle a runtime move first (normally a no-op)
+            # Settle a runtime move first (normally a no-op). Tolerated: a function whose last update is Failed
+            # still gets the code update that repairs it; one still InProgress fails it closed (ResourceConflict).
+            aws lambda wait function-updated --function-name "$FUNCTION_NAME" \
+              || echo "::warning::$FUNCTION_NAME: last update not Successful; trying the code update anyway"
             aws lambda update-function-code \
               --function-name "$FUNCTION_NAME" \
               --zip-file "$ZIP_FILE"
           else
             echo "Creating new function: $FUNCTION_NAME"
+            RT=$(jq -er --arg f "$FUNCTION_NAME" '.[$f].runtime' scripts/lambda-config-expected.json) \
+              || { echo "::error::$FUNCTION_NAME: no runtime declared in scripts/lambda-config-expected.json"; exit 1; }
             aws lambda create-function \
               --function-name "$FUNCTION_NAME" \
-              --runtime "$(jq -er --arg f "$FUNCTION_NAME" '.[$f].runtime' scripts/lambda-config-expected.json)" \
+              --runtime "$RT" \
               --handler index.handler \
               --role ${{ vars.LAMBDA_EXECUTION_ROLE_ARN }} \
               --zip-file "$ZIP_FILE" \
