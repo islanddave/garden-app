@@ -1,7 +1,7 @@
 {
-  "version": "5.3.1",
-  "date": "2026-10-16",
+  "version": "5.3.2",
+  "date": "2026-10-17",
   "highlights": [
-    "Behind the scenes: finishes the groundwork for gardens with more than one owner by retiring an old single-owner setting from the server's records. Nothing you'll see change."
+    "Today loads a little faster with the household view on: other people's sections now reuse the page's plant and spot lists instead of fetching them again."
   ]
 }

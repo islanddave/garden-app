@@ -34,7 +34,7 @@ const api = vi.hoisted(() => ({
         { id: 'p-sp1', name: 'Beauregard', status: 'vegetative', location_id: 'loc1', container_type: 'in_ground', featured_photo_id: null, featured_photo_view_url: null, variety_ref: { id: 'v2', name: 'Beauregard', crop_type_slug: 'sweet_potato' } },
         { id: 'j1', name: 'Jen Basil', status: 'vegetative', location_id: 'loc1', container_type: 'pot', featured_photo_id: null, featured_photo_view_url: null, variety_ref: { id: 'v4', name: 'Basil', crop_type_slug: 'basil' } },
       ]
-      if (path === '/api/locations') return { locations: [{ id: 'loc1', name: 'Bed 3', parent_id: null, covered: false }] }
+      if (path === '/api/locations') return { locations: [{ id: 'loc1', name: w.locName || 'Bed 3', parent_id: null, covered: false }] }
       if (path === '/api/members') return { members: [{ id: 'user_dave', display_name: 'Dave' }, { id: 'member_jen', display_name: 'Jen' }] }
       if (path === '/api/harvests/watch?limit=200') return { candidates: [], snoozed: [] }
       if (String(path).startsWith('/api/harvests?')) return { entries: [], aggregates: null }
@@ -50,7 +50,7 @@ vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({ ...(await orig()
 vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => api.value }))
 
 import TodayV2 from '../pages/TodayV2.jsx'
-import { __resetDataCache } from '../lib/dataCache.js'
+import { __resetDataCache, refreshAll } from '../lib/dataCache.js'
 import { IMAGE_LIST_CACHE_ENABLED } from '../lib/featureFlags.js'
 import { writeShowOthers } from '../lib/householdView.js'
 import * as store from '../components/today/v2/needsCareStore.js'
@@ -76,7 +76,7 @@ beforeEach(() => {
   store.__resetTodayLogged()
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(TODAY + 'T14:30:00.000Z'))
-  wire.calls = []; wire.seq = 0
+  wire.calls = []; wire.seq = 0; wire.locName = null
   planState.current = { data: { has_plan: true, plan_date: TODAY, plan: plan(), household_plans: [] }, loading: false, error: null, reload: vi.fn() }
 })
 afterEach(() => { cleanup(); vi.useRealTimers() })
@@ -96,19 +96,43 @@ describe('Today — /api/plants is fetched once per paint, not once per section'
     expect(callsTo('/api/plants')).toBe(1)
   })
 
-  // FINDING at S8c (the port of the old file's "household lens still issues ONE request"): it does NOT hold on the
-  // redesign. A member's section (HouseholdSection → useNeedsCare) mounts at the ready point, after the page's own
-  // /api/plants read has settled, and useCachedFetch revalidates on every mount, so the in-flight dedup cannot
-  // collapse it: TWO /api/plants (and two /api/locations) per paint with the household view on. The old page
-  // mounted its household lists in the same render as its own. Ledger BUG-TODAYHOUSEHOLDREFETCH-001. Pinned EXACTLY
-  // (L8 review MINOR): the fix (1) and a worsening (3+) both go red, and the precondition — her section is on the page —
-  // is asserted where a failure cannot pass for the known one. The fix changes the 2 to a 1 and drops the label.
-  it('KNOWN BUG (ledger BUG-TODAYHOUSEHOLDREFETCH-001): with the household view on, a member\'s section adds a second /api/plants request — exactly 2 today', async () => {
+  // BUG-TODAYHOUSEHOLDREFETCH-001 (found at S8c, the port of the old file's "household lens still issues ONE
+  // request"): a member's section (HouseholdSection → useNeedsCare) mounts at the ready point, after the page's own
+  // reads have settled, and useCachedFetch revalidates on every mount, so the in-flight dedup could not collapse it —
+  // TWO /api/plants and two /api/locations per paint with the household view on. The section now takes the page's
+  // reads (useNeedsCare `lists`). Her section is asserted present AND joined to spots off those reads (Bed 3 is a
+  // location; with no locations her spot would be the project, Herbs), so a section that simply read nothing cannot
+  // pass. Opening it mounts her Needs care body, which must not read either.
+  it('with the household view on, a member\'s section adds no /api/plants or /api/locations request', async () => {
     writeShowOthers(true)
     planState.current = { data: { ...planState.current.data, household_plans: [{ user_id: 'member_jen', plan: JEN }] }, loading: false, error: null, reload: vi.fn() }
     await mount()
-    expect(screen.getByTestId('today-household')).toBeTruthy()
-    expect(callsTo('/api/plants')).toBe(2)
+    const hh = screen.getByTestId('today-household')
+    expect(callsTo('/api/plants')).toBe(1)
+    expect(callsTo('/api/locations')).toBe(1)
+    fireEvent.click(hh.querySelector('[aria-expanded]'))
+    await settle()
+    expect(hh.querySelector('[data-testid="care-spot"]').getAttribute('data-spot')).toBe('Bed 3')
+    expect(callsTo('/api/plants')).toBe(1)
+    expect(callsTo('/api/locations')).toBe(1)
+  })
+
+  // The other half of the fix: her section no longer subscribes to the two lists itself, so a background refresh
+  // reaches it only through the page's re-render. A memoised section, or `lists` captured once in a ref or state,
+  // would freeze her spots and still pass the count above (review-hhrefetch MINOR 2).
+  it('a background refresh still reaches a member\'s open section through the page\'s reads', async () => {
+    writeShowOthers(true)
+    planState.current = { data: { ...planState.current.data, household_plans: [{ user_id: 'member_jen', plan: JEN }] }, loading: false, error: null, reload: vi.fn() }
+    await mount()
+    const hh = screen.getByTestId('today-household')
+    fireEvent.click(hh.querySelector('[aria-expanded]'))
+    await settle()
+    expect(hh.querySelector('[data-testid="care-spot"]').getAttribute('data-spot')).toBe('Bed 3')
+    wire.locName = 'Bed 9'
+    await act(async () => { refreshAll() })
+    await settle()
+    expect(callsTo('/api/locations')).toBe(2)
+    expect(hh.querySelector('[data-testid="care-spot"]').getAttribute('data-spot')).toBe('Bed 9')
   })
 
   it('a revisit paints from the cache and revalidates once, not once per section', async () => {

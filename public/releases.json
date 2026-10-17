@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.2",
+    "date": "2026-10-17",
+    "highlights": [
+      "Today loads a little faster with the household view on: other people's sections now reuse the page's plant and spot lists instead of fetching them again."
+    ]
+  },
+  {
     "version": "5.3.1",
     "date": "2026-10-16",
     "highlights": [

@@ -30,10 +30,17 @@ const CARE_NEEDS = new Set(['water_due', 'no_history', 'fertilize', 'pest', 'ove
 const SILENT = { show() {}, showUndo() {} }
 const NOOP = () => {}
 
-export function useNeedsCare({ plan, planDate, userId, stale }) {
+//
+// `lists` (BUG-TODAYHOUSEHOLDREFETCH-001): the two reads of an owner already holding them — { plants, locations },
+// the `lists` this hook returns. A member's section (HouseholdSection) mounts at the ready point, after the page's
+// reads have settled, and useCachedFetch revalidates on every mount, so its own reads were a second /api/plants and
+// /api/locations per visit. Handed the page's, it reads nothing itself (a null path is useCachedFetch's IDLE mode).
+export function useNeedsCare({ plan, planDate, userId, stale, lists = null }) {
   const { fetch, getToken } = useApiFetch()
-  const plants = useCachedFetch('/api/plants')
-  const locations = useCachedFetch('/api/locations')
+  const ownPlants = useCachedFetch(lists ? null : '/api/plants')
+  const ownLocations = useCachedFetch(lists ? null : '/api/locations')
+  const plants = lists ? lists.plants : ownPlants
+  const locations = lists ? lists.locations : ownLocations
   const settled = !plants.loading && !locations.loading
   const logKey = loggedKey(userId, planDate)
   // Writes this mount makes land in the hook's own fades; `held` is what other mounts logged or still hold.
@@ -110,6 +117,7 @@ export function useNeedsCare({ plan, planDate, userId, stale }) {
 
   return {
     plan, settled, rows, allEnriched, count: rows.length, reasons, trigger, summary, spotCount, actions, getToken, logKey, claim,
+    lists: { plants, locations },
     rain, rainCovered, loggedToday, filters, setFilters, task,
     caughtUp: { title: CAUGHT_UP_TITLE, summary: caughtUpSummary({ logged: loggedToday, waiting: rain.live.size, rain: rainCovered }) },
     // Spots are LOCATIONS only when both reads answered (enrichRows); otherwise they are projects, with no group

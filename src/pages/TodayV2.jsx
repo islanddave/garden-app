@@ -511,7 +511,7 @@ export default function TodayV2() {
                 const h = household.find((x) => x.key === key)
                 return h ? (
                   <HouseholdSection
-                    key={key} sectionKey={key} name={h.name} plan={h.plan} planDate={planDate} viewerId={userId} stale={stale}
+                    key={key} sectionKey={key} name={h.name} plan={h.plan} planDate={planDate} viewerId={userId} stale={stale} lists={needs.lists}
                     record={record} update={update} announce={announce} open={isOpen(key)} onToggle={() => toggle(key)} writesHeld={writesHeld}
                   />
                 ) : null

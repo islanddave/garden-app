@@ -36,9 +36,11 @@ export function householdSummary(rows) {
   return TASK_WORDS.filter(([t]) => n[t] > 0).map(([t, w]) => `${w} ${n[t]}`).join(' · ') || 'All caught up.'
 }
 
-export default function HouseholdSection({ sectionKey, name, plan, planDate, viewerId, stale, record, update, announce, open, onToggle, writesHeld }) {
+// `lists`: the page's /api/plants + /api/locations reads (its useNeedsCare's `lists`), so this section mounting at the
+// ready point issues no request of its own (BUG-TODAYHOUSEHOLDREFETCH-001).
+export default function HouseholdSection({ sectionKey, name, plan, planDate, viewerId, stale, lists, record, update, announce, open, onToggle, writesHeld }) {
   const listId = `${viewerId || 'anon'}~${sectionKey}`
-  const needs = useNeedsCare({ plan, planDate, userId: listId, stale })
+  const needs = useNeedsCare({ plan, planDate, userId: listId, stale, lists })
 
   const snapshot = needs.snapshot
   useEffect(() => {
