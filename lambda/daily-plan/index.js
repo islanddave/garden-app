@@ -8,7 +8,7 @@
 //    matches handler's pg. openmeteo-indices.test.js guards the indexing against drift.
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 const { SNSClient, PublishCommand } = require('@aws-sdk/client-sns'); // V4-FROST-001 F3 delivery channel (D1/D3)
-// Lambda nodejs20 has NO global WebSocket. The pinned @neondatabase/serverless@^0.10.0 neon() http client has
+// Written for Lambda nodejs20, which had NO global WebSocket (nodejs22 since v5.2.1 has one; Pool still uses ws). The pinned @neondatabase/serverless@^0.10.0 neon() http client has
 // NO .query(text,params) method (that was added in 1.x), and Pool needs an explicit WebSocket constructor.
 // Fix: Pool + ws via neonConfig.webSocketConstructor. Pool.query(text,params)->{rows} matches handler's pg
 // contract. Both failure modes caught by live DRY_RUN invokes; this combo validated against prod. (busy-brave-hamilton)
@@ -422,7 +422,7 @@ async function getAwnKeys() {
   return _awn;
 }
 async function awnGet(url) {
-  const r = await fetch(url, { signal: AbortSignal.timeout(8000) }); // < 30s Lambda ceiling (verified nodejs20, no VPC)
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000) }); // < 30s Lambda ceiling (verified nodejs20; nodejs22 since v5.2.1; no VPC)
   if (!r.ok) throw new Error(`AWN ${r.status}`);
   return r.json();
 }

@@ -226,7 +226,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Dependency manifest re-resolves (strict peers)
@@ -410,7 +410,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Install dependencies
@@ -445,7 +445,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Install dependencies
@@ -488,7 +488,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Install dependencies
@@ -496,16 +496,18 @@ jobs:
 
       # ── The real-Chrome layout gates (OPS-LAYOUTGATESUNWIRED-001) ───────────────────────
       # The WebSocket blocker that kept these unwired is FIXED, not worked around. The gates
-      # attached over a bare global WebSocket, which this job's pinned node-version '20.19.0'
-      # does not have (measured: `npx node@20.19.0 -e "typeof WebSocket"` -> undefined, and the
+      # attached over a bare global WebSocket, which this job's then-pinned node-version '20.19.0'
+      # did not have (measured: `npx node@20.19.0 -e "typeof WebSocket"` -> undefined, and the
       # gate exited 1 with "WebSocket is not defined"). scripts/layout-gate/cdp-socket.mjs now
       # prefers the global and falls back to `ws`, which is a DECLARED devDependency rather than
       # the jsdom transitive it used to be reachable as. Both gates were then re-run under a real
       # Node 20.19.0 and PASS with measurements identical to the Node 26 run.
       #
       # The CI Node version was deliberately NOT bumped to get a global WebSocket: package.json
-      # declares "engines": { "node": "20.x" }, so a bump would run the whole suite and the build
-      # outside the declared engine range to fix a two-line transport problem.
+      # declared "engines": { "node": "20.x" }, so a bump would have run the whole suite and the build
+      # outside the declared engine range to fix a two-line transport problem. (Since OPS-CINODE22-001
+      # CI, .nvmrc and engines are on Node 22, the Lambdas' runtime; 22 has a global WebSocket, and
+      # cdp-socket.mjs still prefers it and falls back to `ws`.)
       #
       # NO continue-on-error on either step, by policy. This repo already carries deploy steps
       # that report success when they fail; a pseudo-gate here would be worse than the honest gap
@@ -862,7 +864,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Install dependencies
@@ -1039,7 +1041,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Install dependencies
@@ -1156,7 +1158,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Install dependencies

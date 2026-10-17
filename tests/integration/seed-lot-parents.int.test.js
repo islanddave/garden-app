@@ -37,7 +37,8 @@
 // after another on ONE backend: a handler request stuck behind a lock stalls every other query of the
 // test, the pg_blocking_pids() poll included, and two handler calls "in parallel" are in fact one after
 // the other. (The first draft of this file hung for ten minutes on exactly that.) On Node 20.19 (undici
-// 6.21, what CI and the Lambdas' runtimes use) a second query gets a second connection. The cases below
+// 6.21, CI's and the Lambdas' runtime until 2026-10) a second query gets a second connection; Node 22.23.3
+// (undici 6.28.1, both since OPS-CINODE22-001) is not measured for it. The cases below
 // must not depend on which, so a request that is meant to wait is sent on a connection of its own:
 // onOwnConnection() runs it with a private https.Agent, routed through the driver's own
 // neonConfig.fetchFunction hook. That gives each such request its own backend, which is what two Lambda

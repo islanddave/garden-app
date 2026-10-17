@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.3",
+    "date": "2026-10-17",
+    "highlights": [
+      "Behind the scenes: the app's tests and builds now run on Node 22, the same version as its server functions. Nothing you'll see change."
+    ]
+  },
+  {
     "version": "5.3.2",
     "date": "2026-10-17",
     "highlights": [

@@ -136,7 +136,7 @@ name: CI Next — the canary and soak copy of ci.yml's legs (non-gating)
 #   dist/ (Build -> Verify build output -> Harvest-window chunk split)   all three in `static`, in that order
 #   coverage/coverage-summary.json (npm test -> the measured floor)      both in `unit-utc-cov`, in that order
 #   CHROME_PATH in GITHUB_ENV (Resolve Chrome -> every real-Chrome gate) repeated in each gate leg
-#   node 20.19.0 and node_modules (setup-node, npm ci)                   repeated in each leg that runs node
+#   node 22.23.3 and node_modules (setup-node, npm ci)                   repeated in each leg that runs node
 #   PyYAML (the pytest step -> gate_runner.py)                           installed in `static`
 #   Pillow (inside the Photo-tier step's own body -> itself)             moves with that step
 #   refs/remotes/origin/main (the fetch -> the release-version guard)    both in `static`
@@ -270,7 +270,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Dependency manifest re-resolves (strict peers)
@@ -373,7 +373,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Install dependencies
@@ -404,7 +404,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Install dependencies
@@ -449,7 +449,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Install dependencies
@@ -530,7 +530,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Install dependencies
@@ -588,7 +588,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Install dependencies
@@ -625,7 +625,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '20.19.0'
+          node-version: '22.23.3'
           cache: 'npm'
 
       - name: Install dependencies

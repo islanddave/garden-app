@@ -28,7 +28,7 @@ shape whatever ci-next.yml says:
   own_steps     the steps the legs carry that the serial job did not: the PyYAML install and the TZ sentinel, by
                 body and by place; and the canary, one per leg, first, keyed to its leg, in ci-next.yml ONLY. No
                 ci.yml step carries an `if:` or reads the inputs context.
-  setup         each leg has what the serial job handed its steps implicitly: checkout first; node 20.19.0 and
+  setup         each leg has what the serial job handed its steps implicitly: checkout first; node 22.23.3 and
                 node_modules for steps that run node (and neither for pytest); CHROME_PATH for the real-Chrome
                 gates; origin/main for the release-version guard; PyYAML for gate_runner.py; and the two artefact
                 chains kept whole and in order (dist/, coverage/coverage-summary.json).
@@ -115,7 +115,7 @@ UNIT_RULE = ("the unit passes of ci.yml and of ci-next.yml are %r in unit-utc-co
 # package.json is the short way) would read as a switch in a config that has none.
 RETIRED_KEY_FILES = [".github/workflows/ci-next.yml", "scripts/test_ci_next.py"]
 REPEATABLE = ("checkout", "setup-node", "npm-ci", "chrome", "fetch-main")
-NODE_PIN = {"node-version": "20.19.0", "cache": "npm"}
+NODE_PIN = {"node-version": "22.23.3", "cache": "npm"}
 DRY_RUN = "npm install --dry-run --package-lock-only"
 NODE_COMMAND = re.compile(r"(?:^|[\s;&|(])(?:npm|npx|node)\s")
 NODE_BY_NAME = {"Dependency audit (blocking on moderate, WS-B M6)"}  # audit-gate.py shells out to `npm audit`
@@ -130,7 +130,7 @@ HANDOFF = re.compile(r"GITHUB_ENV|GITHUB_PATH|\bapt-get\b|\bapt\s+install\b|\bpi
                      r"|\bnpm\s+(?:i|install)\b[^\n;&|]*\s(?:-g|--global)\b")
 HANDOFFS = {
     "actions/checkout": "the working tree: repeated in every leg",
-    "actions/setup-node": "node 20.19.0 on PATH: repeated in every leg that runs node (all but pytest)",
+    "actions/setup-node": "node 22.23.3 on PATH: repeated in every leg that runs node (all but pytest)",
     "Python script tests (pytest)": "pip installs pytest, requests, boto3, pyyaml: the pytest leg runs this step and "
                                     "nothing else needs them",
     PYYAML: "pip installs pyyaml for gate_runner.py: static, the only leg that runs it",
