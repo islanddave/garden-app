@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.5",
+    "date": "2026-10-18",
+    "highlights": [
+      "Behind the scenes: the app's test tooling can now split its coverage run across several machines and merge the results exactly, groundwork for faster checks before each release. Nothing you'll see change."
+    ]
+  },
+  {
     "version": "5.3.4",
     "date": "2026-10-18",
     "highlights": [

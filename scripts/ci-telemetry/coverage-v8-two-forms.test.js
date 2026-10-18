@@ -1,8 +1,8 @@
 // The unit run's coverage provider (coverage-v8-two-forms.mjs): which form it takes a script to be in, how each form
 // is converted, what it refuses, and the tests that hold it to the installed vitest.
 //
-// The provider subclasses the INSTALLED @vitest/coverage-v8 provider and replaces five of its methods, so it leans
-// on how those five call one another, and none of that is public API. A vitest upgrade must not be able to break
+// The provider subclasses the INSTALLED @vitest/coverage-v8 provider and replaces six of its methods, so it leans
+// on how those six call one another, and none of that is public API. A vitest upgrade must not be able to break
 // it quietly. `the installed @vitest/coverage-v8` asks the package itself for its version and for every member and
 // call the provider names, and `a real coverage run` puts four modules (one loaded through vite, by Node, and both
 // ways in one worker; one that a worker leaves half loaded; one only vite loads; one only Node loads) through
@@ -19,8 +19,8 @@ import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import provider, {
-  fileLength, formOf, splitForms, whyNotSameItems, adoptMaps, negativeHits, twoForms,
-  STOCK_PROVIDER, STOCK_CLASS, READ_AT, OVERRIDES, CALLS, ERROR_PREFIX, ANNOTATION,
+  fileLength, formOf, splitForms, whyNotSameItems, adoptMaps, negativeHits, twoForms, alignRuns, restoreLineEnds,
+  STOCK_PROVIDER, STOCK_CLASS, READ_AT, OVERRIDES, CALLS, ERROR_PREFIX, ANNOTATION, LOADED_AS, LOADINGS,
 } from './coverage-v8-two-forms.mjs'
 
 const REREAD = 'coverage-v8-two-forms.mjs leans on the inside of @vitest/coverage-v8 and the installed one no longer ' +
@@ -423,6 +423,98 @@ describe('negative hit counts', () => {
   })
 })
 
+// One file's reading in a shard's map, as its blob carries it: JSON, so an end at EOL comes back as null.
+const reading = (loadedAs, shape) => JSON.parse(JSON.stringify({ ...converted(shape), [LOADED_AS]: loadedAs }))
+const shards = (...files) => files.map((one) => mapOf(one))
+const ENGINE = '/repo/lambda/daily-plan/engine.js'
+
+describe('a merge of shards (alignRuns)', () => {
+  it('gives a reading of a file one shard only required the item maps of a shard that imported it, counts untouched', () => {
+    const runs = shards({ [ENGINE]: reading('vite', { column: 3, hits: 2 }) }, { [ENGINE]: reading('node', { column: 0, hits: 5 }) })
+    expect(alignRuns(runs)).toEqual([])
+    const [vite, node] = runs.map((run) => run.data[ENGINE])
+    expect(node.statementMap).toBe(vite.statementMap)
+    expect(node.fnMap).toBe(vite.fnMap)
+    expect(node.branchMap).toBe(vite.branchMap)
+    expect(hitsOf(node)).toEqual(hitsOf(converted({ hits: 5 })))
+    expect(hitsOf(vite)).toEqual(hitsOf(converted({ hits: 2 })))
+    expect([vite, node].map((data) => LOADED_AS in data)).toEqual([false, false])
+  })
+
+  it('takes the maps of the first shard that imported it, whichever order the shards come in', () => {
+    const runs = shards(
+      { [ENGINE]: reading('node', { column: 0 }) },
+      { [ENGINE]: reading('vite', { column: 3 }) },
+      { [ENGINE]: reading('vite', { column: 5 }) },
+    )
+    expect(alignRuns(runs)).toEqual([])
+    expect(runs[0].data[ENGINE].statementMap).toBe(runs[1].data[ENGINE].statementMap)
+    expect(runs[2].data[ENGINE].statementMap[0].start.column).toBe(5)
+  })
+
+  it('leaves an unloaded reading out wherever another shard loaded the file, through vite or only by Node', () => {
+    const viaVite = shards({ [ENGINE]: reading('unloaded', { column: 3, hits: 0 }) }, { [ENGINE]: reading('vite', { column: 3 }) })
+    expect(alignRuns(viaVite)).toEqual([])
+    expect(viaVite.map((run) => run.files())).toEqual([[], [ENGINE]])
+    const byNode = shards({ [ENGINE]: reading('node', { column: 0 }) }, { [ENGINE]: reading('unloaded', { column: 3, hits: 0 }) })
+    expect(alignRuns(byNode)).toEqual([])
+    expect(byNode.map((run) => run.files())).toEqual([[ENGINE], []])
+    // The file's own maps: no shard had vite's to give.
+    expect(byNode[0].data[ENGINE].statementMap[0].start.column).toBe(0)
+  })
+
+  it('keeps every reading of a file no shard loaded, and every reading of a file loaded the same way in each', () => {
+    for (const form of LOADINGS) {
+      const runs = shards({ [ENGINE]: reading(form, { column: 3 }) }, { [ENGINE]: reading(form, { column: 3 }) })
+      expect(alignRuns(runs), form).toEqual([])
+      expect(runs.map((run) => run.files()), form).toEqual([[ENGINE], [ENGINE]])
+    }
+  })
+
+  it('names a reading that does not list the items of the shard that imported the file, and leaves it out', () => {
+    const runs = shards({ [ENGINE]: reading('vite', { column: 3 }) }, { [ENGINE]: reading('node', { statements: 4 }) })
+    const problems = alignRuns(runs)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain(ENGINE)
+    expect(problems[0]).toMatch(/was loaded through vite in one shard and only by Node in another/)
+    expect(problems[0]).toMatch(/statementMap has 4 items read from the file and 3 read from vite's text/)
+    expect(problems[0]).toMatch(/left out of the merged report, so its figures are too low/)
+    expect(runs.map((run) => run.files())).toEqual([[ENGINE], []])
+  })
+
+  it('names a file a blob does not say how its run loaded, and merges it as istanbul would', () => {
+    const { [LOADED_AS]: _, ...unsaid } = reading('vite', { column: 0 })
+    const runs = shards({ [ENGINE]: reading('vite', { column: 3 }) }, { [ENGINE]: unsaid })
+    const problems = alignRuns(runs)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toMatch(/does not say how 1 of the 2 runs merged loaded it/)
+    expect(runs.map((run) => run.files())).toEqual([[ENGINE], [ENGINE]])
+  })
+
+  it('puts back the ends of line a blob wrote as null, so that two readings of one item still match', () => {
+    // An item that ends at the end of its line in both conversions, the start a column apart.
+    const ends = (column) => ({ statements: 1, fns: [], branches: [], starts: { statementMap: [[1, column, 1, EOL]] } })
+    const runs = shards({ [ENGINE]: reading('vite', ends(3)) }, { [ENGINE]: reading('node', ends(0)) })
+    expect(runs[1].data[ENGINE].statementMap[0].end.column).toBeNull()
+    expect(alignRuns(runs)).toEqual([])
+    expect(runs[1].data[ENGINE].statementMap).toBe(runs[0].data[ENGINE].statementMap)
+    expect(runs[0].data[ENGINE].statementMap[0].end.column).toBe(EOL)
+  })
+
+  it('puts back an end of line in every place of a file, and nothing that was not one', () => {
+    const data = JSON.parse(JSON.stringify(converted({ starts: {
+      statementMap: [[1, 0, 1, EOL]], fnMap: [[2, 0, 2, EOL]], branchMap: [[3, 0, 3, EOL]],
+    } })))
+    data.branchMap[1].locations.push({})
+    restoreLineEnds(data)
+    expect(data.statementMap[0].end.column).toBe(EOL)
+    expect([data.fnMap[0].loc.end.column, data.fnMap[0].decl.end.column]).toEqual([EOL, EOL])
+    expect([data.branchMap[0].loc.end.column, ...data.branchMap[0].locations.map((arm) => arm.end.column)]).toEqual([EOL, EOL, EOL])
+    expect(data.statementMap[1].end.column).toBe(9)
+    expect(data.branchMap[1].locations.at(-1)).toEqual({})
+  })
+})
+
 // As istanbul merges two readings of one file: hit for hit where they hold the same items; where they do not,
 // every item of both (`twice`), which is what a file loaded both ways came to before its Node reading took the
 // vite reading's maps.
@@ -434,7 +526,7 @@ const mergeFile = (kept, next) => {
   return { ...kept, s: sum('s'), f: sum('f'), b: sum('b') }
 }
 
-// A stand-in for the stock provider class: the calls the real one makes between the five methods (the provider's
+// A stand-in for the stock provider class: the calls the real one makes between the six methods (the provider's
 // header lists them), and nothing else of it. What a script "converts" to comes from `table`, by form, and the
 // form is told from the transform it hands getSources: vite's when that was asked, the file's when it was not.
 // Like the stock class it keeps ONE start offset per URL, the last it was handed, and merges what each pass
@@ -449,6 +541,9 @@ class StandIn {
   conversions = []
   returned = []
   events = []
+  // Files the uncovered-file pass adds when no script of them was read: vite's text, every count 0.
+  uncovered = []
+  reported = null
 
   async generateCoverage() {
     const files = {}
@@ -462,12 +557,30 @@ class StandIn {
       },
       onDebug: () => {},
     })
+    for (const url of this.uncovered) files[url] ??= converted({ column: 3, hits: 0 })
     this.events.push('coverage generated')
     return mapOf(files)
   }
 
-  async generateReports() {
+  async generateReports(coverageMap) {
+    this.reported = structuredClone(coverageMap.data)
     this.events.push('reports written')
+  }
+
+  // As istanbul's map merges another map, or a blob's plain { file: data }.
+  createCoverageMap() {
+    const map = mapOf({})
+    map.merge = (other) => {
+      const files = other.data && typeof other.files === 'function' ? other.data : other
+      for (const [file, data] of Object.entries(files)) map.data[file] = mergeFile(map.data[file], data)
+    }
+    return map
+  }
+
+  async mergeReports(coverageMaps) {
+    const coverageMap = this.createCoverageMap()
+    for (const coverage of coverageMaps) coverageMap.merge(coverage)
+    await this.generateReports(coverageMap, true)
   }
 
   async readCoverageFiles({ onFileRead, onFinished }) {
@@ -520,7 +633,7 @@ describe('the provider class', () => {
     process.exitCode = exitCode
   })
 
-  it('is the class it was handed, under the stock name, with exactly the five methods replaced', () => {
+  it('is the class it was handed, under the stock name, with exactly the six methods replaced', () => {
     const made = new TwoForms()
     expect(made).toBeInstanceOf(StandIn)
     expect(made.name).toBe('v8')
@@ -740,6 +853,73 @@ describe('the provider class', () => {
     await expect(made.generateCoverage({ allTestsRun: true })).rejects.toThrow('conversion failed')
     expect((await made.getSources(FILE_A, async () => ({ code: 'VITE TEXT' }), [])).code).toBe('VITE TEXT')
   })
+
+  it('says in the map it hands out how the run loaded each file, and leaves that out of the reports', async () => {
+    const made = new TwoForms()
+    made.uncovered = [FILE_A, FILE_B, FILE_C, 'file:///repo/untouched.js']
+    made.passes = [['', 'ssr', [{ result: [script(FILE_A, WRAPPER, 1042), script(FILE_A, WRAPPER, 500), script(FILE_B, WRAPPER, 777), script(FILE_C, 0, 200)] }]]]
+    const coverageMap = await made.generateCoverage({ allTestsRun: true })
+    expect(Object.fromEntries(coverageMap.files().map((file) => [file, coverageMap.data[file][LOADED_AS]]))).toEqual({
+      [FILE_A]: 'vite', [FILE_B]: 'vite', [FILE_C]: 'node', 'file:///repo/untouched.js': 'unloaded',
+    })
+    await made.generateReports(coverageMap, true)
+    expect(Object.values(made.reported).map((data) => LOADED_AS in data)).toEqual([false, false, false, false])
+  })
+
+  it('merges shards\' blobs as one run would have made them, and reports the merged map once', async () => {
+    // Shard 1 imports FILE_A and only requires FILE_C; shard 2 only requires FILE_A and does not load FILE_C.
+    const shard = async (passes, uncovered) => {
+      const made = new TwoForms()
+      made.passes = passes
+      made.uncovered = uncovered
+      return JSON.parse(JSON.stringify((await made.generateCoverage({ allTestsRun: true })).data))
+    }
+    const blobs = [
+      await shard([['', 'ssr', [{ result: [script(FILE_A, WRAPPER, 1042), script(FILE_C, 0, 200)] }]]], [FILE_A, FILE_C]),
+      await shard([['', 'ssr', [{ result: [script(FILE_A, 0, 500)] }]]], [FILE_A, FILE_C]),
+    ]
+    expect(blobs.map((blob) => [blob[FILE_A][LOADED_AS], blob[FILE_C][LOADED_AS]])).toEqual([['vite', 'node'], ['node', 'unloaded']])
+    const made = new TwoForms()
+    await made.mergeReports(blobs)
+    expect(made.events).toEqual(['reports written'])
+    expect(made.twoFormsProblems).toEqual([])
+    expect(made.errors).toEqual([])
+    expect(process.exitCode).toBe(exitCode)
+    const merged = made.reported
+    expect(Object.keys(merged).sort()).toEqual([FILE_A, FILE_C].sort())
+    // Item for item, no list twice: FILE_A on vite's maps with both shards' hits, FILE_C on the file's own.
+    expect(merged[FILE_A].twice).toBeUndefined()
+    expect(merged[FILE_A].statementMap[0].start.column).toBe(3)
+    expect(hitsOf(merged[FILE_A])).toEqual(hitsOf(converted({ hits: 2 })))
+    expect(merged[FILE_C].statementMap[0].start.column).toBe(0)
+    expect(hitsOf(merged[FILE_C])).toEqual(hitsOf(converted({ hits: 1 })))
+    expect([merged[FILE_A], merged[FILE_C]].map((data) => LOADED_AS in data)).toEqual([false, false])
+  })
+
+  it('fails a merge on a reading it cannot align and on a negative count in the merged map, after the reports', async () => {
+    const made = new TwoForms()
+    const blobs = [
+      { [FILE_A]: reading('vite', { column: 3 }), [FILE_B]: { ...reading('vite', { column: 3 }), b: { 0: [3, -3], 1: [1, 1] } } },
+      { [FILE_A]: reading('node', { statements: 4 }) },
+    ]
+    await made.mergeReports(blobs)
+    expect(made.twoFormsProblems).toHaveLength(2)
+    expect(made.twoFormsProblems[0]).toMatch(/was loaded through vite in one shard and only by Node in another/)
+    expect(made.twoFormsProblems[1]).toMatch(/^1 hit count\(s\) below zero in /)
+    expect(made.twoFormsProblems[1]).toContain(FILE_B)
+    expect(made.errors).toEqual(made.twoFormsProblems.map((problem) => ERROR_PREFIX + problem))
+    expect(made.events).toEqual(['reports written'])
+    expect(hitsOf(made.reported[FILE_A])).toEqual(hitsOf(converted({ hits: 1 })))
+    expect(process.exitCode).toBe(1)
+
+    // The next merge says its own.
+    process.exitCode = exitCode
+    made.errors.length = 0
+    await made.mergeReports([{ [FILE_A]: reading('vite', { column: 3 }) }])
+    expect(made.twoFormsProblems).toEqual([])
+    expect(made.errors).toEqual([])
+    expect(process.exitCode).toBe(exitCode)
+  })
 })
 
 // What the fixture run must report for only-node.js, by the calls required.case.mjs makes: called(1), called(2).
@@ -958,6 +1138,59 @@ describe.each([
     // script of it has no start offset. Read as Node's, at 0 against the file, that script adds a hit to every
     // line here: early 2, late 3.
     expect(read('late.mjs'), said).toEqual({ functions: { early: 1, late: 2 }, arms: {}, statements: { 5: [1], 9: [2], 12: [1] } })
+  })
+})
+
+// The same cases in four shards, one case file each (`--shard=i/4 --reporter=blob`), then `--merge-reports`: the
+// shape a unit run in shards takes. The shard of required.case.mjs only requires forms.js, which the other shards
+// import, and only-node.js is unloaded in three shards of four: istanbul's merge alone made forms.js 13 statements
+// for 12 and 9 branches for 6 (measured 2026-10-18). Read under the two-project config, the unit run's shape: under
+// the one-project one, vitest 4.1.11's --merge-reports gets an empty module back when it loads the provider and
+// stops before merging.
+describe('a real coverage run of scripts/fixtures/coverage-two-forms in four shards, merged', () => {
+  const config = `${FIXTURE}/vitest.projects.config.mjs`
+  const vitest = (...args) => spawnSync(process.execPath, [resolve(process.cwd(), 'node_modules/vitest/vitest.mjs'), 'run', '--config', config, ...args],
+    { cwd: process.cwd(), encoding: 'utf8', timeout: 240000, env: { PATH: process.env.PATH, HOME: process.env.HOME, NO_COLOR: '1' } })
+  const finalOf = (reports) => {
+    try {
+      return Object.fromEntries(Object.entries(JSON.parse(readFileSync(join(reports, 'coverage-final.json'), 'utf8')))
+        .map(([file, data]) => [relative(process.cwd(), file), data]))
+    } catch {
+      return {}
+    }
+  }
+  let out
+  let runs
+  let said
+  beforeAll(() => {
+    out = mkdtempSync(join(tmpdir(), 'coverage-two-forms-shards-'))
+    runs = { single: vitest('--coverage', `--coverage.reportsDirectory=${join(out, 'single')}`) }
+    for (const i of [1, 2, 3, 4]) {
+      runs[`shard ${i}`] = vitest('--coverage', `--coverage.reportsDirectory=${join(out, `shard-${i}`)}`, `--shard=${i}/4`,
+        '--reporter=blob', `--outputFile=${join(out, 'blobs', `blob-${i}-4.json`)}`)
+    }
+    runs.merged = vitest(`--merge-reports=${join(out, 'blobs')}`, '--coverage', `--coverage.reportsDirectory=${join(out, 'merged')}`)
+    said = `${REREAD}The runs said:\n` + Object.entries(runs).map(([name, run]) => `--- ${name}\n${run.stdout}\n${run.stderr}`).join('\n')
+  }, 240000)
+  afterAll(() => rmSync(out, { recursive: true, force: true }))
+
+  it('runs each shard and the merge clean, and the merge reports the four modules', () => {
+    expect(Object.fromEntries(Object.entries(runs).map(([name, run]) => [name, run.status])), said)
+      .toEqual({ single: 0, 'shard 1': 0, 'shard 2': 0, 'shard 3': 0, 'shard 4': 0, merged: 0 })
+    expect(Object.values(runs).map((run) => run.stdout + run.stderr).join('\n'), said).not.toContain(ERROR_PREFIX)
+    expect(runs.merged.stdout, said).toMatch(/Tests +7 passed \(7\)/)
+    expect(Object.keys(finalOf(join(out, 'merged'))).sort(), said)
+      .toEqual(['forms.js', 'late.mjs', 'only-node.js', 'only-vite.mjs'].map((name) => `${FIXTURE}/${name}`))
+  })
+
+  it('reports every module as the single run does: the same items at the same places, the same counts', () => {
+    const [single, merged] = [finalOf(join(out, 'single')), finalOf(join(out, 'merged'))]
+    for (const file of Object.keys(single)) {
+      const [one, many] = [single[file], merged[file]]
+      expect(many, `${file}\n${said}`).toBeDefined()
+      for (const key of [...MAPS, 's', 'f', 'b']) expect([file, key, many[key]], said).toEqual([file, key, one[key]])
+      expect(Object.keys(many).sort(), said).toEqual(Object.keys(one).sort())
+    }
   })
 })
 

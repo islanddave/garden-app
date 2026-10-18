@@ -38,6 +38,22 @@
 // A failure of 4 or 5 is reported the way vitest reports a coverage threshold: an ERROR line and exit code 1, after
 // the reports are written, with the test summary intact; on a GitHub runner one ::error annotation as well.
 //
+// A RUN IN SHARDS (`--shard=i/n --reporter=blob`, then `--merge-reports`; OPS-CICOVERAGESHARDS-001, plan A4). Each
+// shard's map is made as above and carried in its blob; vitest's merge is istanbul's, which adds two maps of a file
+// item for item only where their items stand at the same places, and keeps the items of both where they do not. A
+// file's places depend on how THAT run loaded it: through vite (vite's maps; a Node load of it in the same run takes
+// them, step 4), by Node only (the file's own maps), or not at all (vite's text of it, read by the stock provider's
+// uncovered-file pass, every count 0). One run is all of those at once for the suite, so a file that one shard only
+// requires and another imports came out of the merge with both lists: measured 2026-10-14, two shards of the suite
+// against one run, statements 38,778 for 38,701 and branches 37,255 for 37,157, all of it in three files of
+// lambda/daily-plan (_promotepath-20261002/LANE-20261014.log). So each file of the map this provider hands out
+// says how its run loaded it (LOADED_AS, one key on the file's data that the blob carries and no report does), and
+// the merge
+// (mergeReports, alignRuns) does what one run would have: vite's maps where any shard loaded the file through vite,
+// a Node-only reading taking them under the same check as step 4 (a file that fails it is named, the merge fails,
+// and that reading is left out); the file's own maps where shards only required it; and an unloaded reading, all
+// zeros, left out wherever some shard loaded the file. A blob whose files do not say is named and fails the merge.
+//
 // WHAT 5 IS, AND IS NOT. It is a tripwire for ONE symptom of a gross misreading. A count can only come out below
 // zero in the else that an `if` does not have: ast-v8-to-istanbul gives that arm the `if`'s count less the
 // consequent's (the one subtraction in it; every other count is V8's own, painted on). Ranges read against a text
@@ -114,13 +130,24 @@ export const STOCK_CLASS = 'V8CoverageProvider'
 export const READ_AT = '4.1.11'
 // The stock methods this replaces. Each replacement calls the one it replaces, and they are every member of the
 // stock class this file touches; CALLS is which of them the stock class must still call from which.
-export const OVERRIDES = ['generateCoverage', 'generateReports', 'readCoverageFiles', 'convertCoverage', 'getSources']
+export const OVERRIDES = ['generateCoverage', 'generateReports', 'readCoverageFiles', 'convertCoverage', 'getSources',
+  'mergeReports']
 export const CALLS = [
   ['generateCoverage', 'this.readCoverageFiles('],
   ['generateCoverage', 'this.convertCoverage('],
   ['convertCoverage', 'this.getSources('],
   ['convertCoverage', 'startOffset'],
+  // The uncovered-file pass reads its files through getSources and never through convertCoverage, which is how a
+  // file it adds is told from a loaded one (LOADED_AS).
+  ['generateCoverage', 'this.getCoverageMapForUncoveredFiles('],
+  ['getCoverageMapForUncoveredFiles', 'this.getSources('],
+  // mergeReports merges the maps it is handed and reports them through generateReports, where the merged map's
+  // negative counts are looked for.
+  ['mergeReports', '.merge('],
+  ['mergeReports', 'this.generateReports('],
 ]
+// The key on a file's data in the map this provider hands out: how the run loaded the file. Read by the merge.
+export const LOADED_AS = 'twoFormsLoadedAs'
 export const ERROR_PREFIX = 'ERROR: coverage-v8-two-forms: '
 export const ANNOTATION = '::error title=coverage-v8-two-forms::'
 
@@ -359,6 +386,75 @@ export function negativeHits(coverageMap) {
   return found
 }
 
+// How a run loaded a file (LOADED_AS): through vite, by Node only, or not at all (the uncovered-file pass's reading).
+export const LOADINGS = ['vite', 'node', 'unloaded']
+
+// A blob is JSON, which has no Infinity: a place at the end of its line (a column of Infinity, see `placed`) comes
+// back from it with a column of null. Put back as it was in the run, in every place of a file's item maps.
+export function restoreLineEnds(data) {
+  const put = (at) => {
+    if (at && at.column === null) at.column = Infinity
+  }
+  const extent = (loc) => {
+    if (!loc) return
+    put(loc.start)
+    put(loc.end)
+  }
+  for (const item of Object.values(data.statementMap || {})) extent(item)
+  for (const fn of Object.values(data.fnMap || {})) {
+    extent(fn.loc)
+    extent(fn.decl)
+  }
+  for (const branch of Object.values(data.branchMap || {})) {
+    extent(branch.loc)
+    for (const arm of branch.locations || []) extent(arm)
+  }
+  return data
+}
+
+// Make the maps of the shards of one run (each a map this provider handed out, as its blob carried it) merge as the
+// one run's map would have come out (A RUN IN SHARDS, in the header): a Node-only reading of a file that another
+// shard loaded through vite takes that shard's item maps, under the check of step 4; an unloaded reading of a file
+// some shard loaded is left out (its counts are all zero); and LOADED_AS is taken off every file, whose line ends
+// the blob wrote as null are put back (restoreLineEnds). Works on the maps it is handed. Returns the problems found,
+// one line each.
+export function alignRuns(runs) {
+  const problems = []
+  const filesOf = runs.map((run) => new Set(run.files()))
+  const drop = runs.map(() => new Set())
+  for (const file of [...new Set(filesOf.flatMap((files) => [...files]))].sort()) {
+    const readings = []
+    runs.forEach((run, at) => {
+      if (filesOf[at].has(file)) readings.push({ at, data: restoreLineEnds(run.fileCoverageFor(file).data) })
+    })
+    const unsaid = readings.filter(({ data }) => !LOADINGS.includes(data[LOADED_AS]))
+    if (unsaid.length > 0) {
+      problems.push(`${file} does not say how ${unsaid.length} of the ${runs.length} runs merged loaded it, so it ` +
+        'was merged as istanbul merges, and two readings of it at different places are both in the report. Each ' +
+        `blob must be made by this provider. See ${HERE}.`)
+    }
+    const [vite, node, unloaded] = LOADINGS.map((form) => readings.filter(({ data }) => data[LOADED_AS] === form))
+    if (vite.length > 0) {
+      const maps = itemMapsOf(vite[0].data)
+      for (const { at, data } of node) {
+        const why = adoptMaps(data, maps)
+        if (why) {
+          drop[at].add(file)
+          problems.push(`${file} was loaded through vite in one shard and only by Node in another, and its two ` +
+            `conversions do not list the same items: ${why}. What Node ran of it in that shard is left out of the ` +
+            `merged report, so its figures are too low. See ${HERE}.`)
+        }
+      }
+    }
+    if (vite.length + node.length > 0) for (const { at } of unloaded) drop[at].add(file)
+    for (const { data } of readings) delete data[LOADED_AS]
+  }
+  runs.forEach((run, at) => {
+    if (drop[at].size > 0) run.filter((file) => !drop[at].has(file))
+  })
+  return problems
+}
+
 // The stock provider class, converting each source form on its own. A function of the class so that the tests can
 // hand it a stand-in.
 export function twoForms(StockProvider) {
@@ -366,7 +462,9 @@ export function twoForms(StockProvider) {
     twoFormsProblems = []
     #annotated = false
     #nodePass = false
+    #merging = false
     #viteMaps = new Map()
+    #nodeOnly = new Set()
     #lengths = new Map()
 
     #lengthOf = (url) => {
@@ -388,24 +486,60 @@ export function twoForms(StockProvider) {
       process.exitCode = 1
     }
 
-    async generateCoverage(options) {
-      this.twoFormsProblems = []
-      this.#annotated = false
-      this.#viteMaps = new Map()
-      this.#lengths = new Map()
-      const coverageMap = await super.generateCoverage(options)
+    #negatives(coverageMap) {
       for (const [file, negative] of negativeHits(coverageMap)) {
         this.twoFormsProblems.push(`${negative} hit count(s) below zero in ${file}. V8's ranges for it were read ` +
           `against a text they were not counted in, so its figures are wrong. See ${HERE}.`)
       }
+    }
+
+    async generateCoverage(options) {
+      this.twoFormsProblems = []
+      this.#annotated = false
+      this.#viteMaps = new Map()
+      this.#nodeOnly = new Set()
+      this.#lengths = new Map()
+      const coverageMap = await super.generateCoverage(options)
+      // How this run loaded each file, for a merge of shards (A RUN IN SHARDS). A file neither converted from vite's
+      // scripts nor from Node's alone came from the uncovered-file pass, which converts nothing.
+      for (const file of coverageMap.files()) {
+        coverageMap.fileCoverageFor(file).data[LOADED_AS] =
+          this.#viteMaps.has(file) ? 'vite' : this.#nodeOnly.has(file) ? 'node' : 'unloaded'
+      }
+      this.#negatives(coverageMap)
       this.#report()
       return coverageMap
     }
 
-    // Said again after the coverage table, where vitest prints a missed threshold.
+    // Said again after the coverage table, where vitest prints a missed threshold. A merge of shards looks for
+    // negative counts here, in the merged map, the one generateCoverage never sees.
     async generateReports(coverageMap, allTestsRun) {
+      if (this.#merging) this.#negatives(coverageMap)
+      // LOADED_AS is for the blob, which vitest has written by now (at the end of the run, before it reports
+      // coverage); the reports do not carry it. Were a vitest to write the blob later, the merge would name every
+      // file as not saying how it was loaded and fail.
+      for (const file of coverageMap.files()) delete coverageMap.fileCoverageFor(file).data[LOADED_AS]
       await super.generateReports(coverageMap, allTestsRun)
       this.#report()
+    }
+
+    // `--merge-reports`: the blobs' maps, aligned as one run's would be (alignRuns), then merged and reported by
+    // the stock method.
+    async mergeReports(coverageMaps) {
+      this.twoFormsProblems = []
+      this.#annotated = false
+      const runs = coverageMaps.map((coverage) => {
+        const run = this.createCoverageMap()
+        run.merge(coverage)
+        return run
+      })
+      this.twoFormsProblems.push(...alignRuns(runs))
+      this.#merging = true
+      try {
+        await super.mergeReports(runs)
+      } finally {
+        this.#merging = false
+      }
     }
 
     async readCoverageFiles({ onFileRead, onFinished, onDebug }) {
@@ -449,6 +583,7 @@ export function twoForms(StockProvider) {
         }
         // A file only Node loaded has no vite maps to take: its own are the only ones in the report.
         const vite = this.#viteMaps.get(file)
+        if (!vite) this.#nodeOnly.add(file)
         const why = vite ? adoptMaps(data, vite) : null
         if (why) {
           refused.add(file)

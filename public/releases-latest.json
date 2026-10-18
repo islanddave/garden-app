@@ -1,7 +1,7 @@
 {
-  "version": "5.3.4",
+  "version": "5.3.5",
   "date": "2026-10-18",
   "highlights": [
-    "Behind the scenes: the test copy of the app now runs with its own, narrower permissions, so it can no longer read the live app's keys. Nothing you'll see change."
+    "Behind the scenes: the app's test tooling can now split its coverage run across several machines and merge the results exactly, groundwork for faster checks before each release. Nothing you'll see change."
   ]
 }
