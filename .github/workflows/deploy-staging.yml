@@ -182,6 +182,9 @@ jobs:
         # First-deploy support per VARIETY-REF Session 2 — mirrors deploy-lambda.yml
         # create-or-update pattern (closes Pending D1 from carry-forward backlog).
         # Existing functions update; missing functions are created with default config.
+        # OPS-LAMBDAROLESPLIT-001: staging functions run as garden-app-lambda-exec-staging (staging secrets,
+        # garden-photos-staging, staging log groups), never the prod exec role, which reads prod's secrets bundle.
+        # The update path never sets Role; the existing functions were moved by hand when the role was split.
         if: matrix.function != 'photocdn-derivative'
         run: |
           FN="garden-${{ matrix.function }}-staging"
@@ -200,7 +203,7 @@ jobs:
               --function-name "$FN" \
               --runtime "$RT" \
               --handler index.handler \
-              --role arn:aws:iam::769788341849:role/garden-app-lambda-exec \
+              --role arn:aws:iam::769788341849:role/garden-app-lambda-exec-staging \
               --zip-file "$ZIP_FILE" \
               --timeout 30 \
               --memory-size 256 \
@@ -233,7 +236,7 @@ jobs:
               --runtime nodejs22.x \
               --architectures arm64 \
               --handler index.handler \
-              --role arn:aws:iam::769788341849:role/garden-app-lambda-exec \
+              --role arn:aws:iam::769788341849:role/garden-app-lambda-exec-staging \
               --zip-file "$ZIP_FILE" \
               --timeout 30 \
               --memory-size 2048 \
@@ -261,6 +264,17 @@ jobs:
             --query 'State' --output text)
           [[ "$STATE" == "Active" ]] || { echo "FATAL: $FN state=$STATE (expected Active)"; exit 1; }
           echo "✅ $FN is $STATE"
+
+      - name: Assert staging exec role on ${{ matrix.function }}-staging
+        # OPS-LAMBDAROLESPLIT-001: a staging function on the prod exec role can read prod's secrets bundle.
+        # Read-only. Reds the leg on drift; repair is by hand (this deploy role cannot pass the prod role).
+        run: |
+          set -euo pipefail
+          FN="garden-${{ matrix.function }}-staging"
+          WANT="arn:aws:iam::769788341849:role/garden-app-lambda-exec-staging"
+          GOT=$(aws lambda get-function-configuration --function-name "$FN" --query Role --output text)
+          if [ "$GOT" != "$WANT" ]; then echo "::error::$FN runs as $GOT, want $WANT"; exit 1; fi
+          echo "$FN role ok"
 
       - name: Ensure S3_PHOTOS_BUCKET env for ${{ matrix.function }}-staging
         # Idempotent: only updates if value differs. Mirrors deploy-lambda.yml step.

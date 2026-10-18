@@ -1,7 +1,7 @@
 {
-  "version": "5.3.3",
-  "date": "2026-10-17",
+  "version": "5.3.4",
+  "date": "2026-10-18",
   "highlights": [
-    "Behind the scenes: the app's tests and builds now run on Node 22, the same version as its server functions. Nothing you'll see change."
+    "Behind the scenes: the test copy of the app now runs with its own, narrower permissions, so it can no longer read the live app's keys. Nothing you'll see change."
   ]
 }

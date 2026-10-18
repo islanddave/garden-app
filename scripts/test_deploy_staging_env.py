@@ -423,3 +423,34 @@ def test_the_scan_tells_a_whole_map_read_from_a_single_key_probe():
     whole = "E" + read + "\\\n  --query 'Environment.Variables' --output json)"
     assert whole_map_reads(probe) == [] and len(whole_map_reads(whole)) == 1
     assert not _STATUS_TESTED.match(whole_map_reads(whole)[0])
+
+
+# ── OPS-LAMBDAROLESPLIT-001: staging functions run as the staging exec role ─────────────────────────────────────────
+
+STAGING_EXEC = "arn:aws:iam::769788341849:role/garden-app-lambda-exec-staging"
+
+
+def test_staging_creates_pass_the_staging_exec_role_never_the_prod_one():
+    """A staging function created with the prod exec role can read prod's secrets bundle (owner DSN, live Clerk key)
+    and write garden-photos-prod. Both create sites must name the staging role, by exact string: the prod role's
+    name is a prefix of the staging role's."""
+    steps = _workflow(WORKFLOW)["jobs"][JOB]["steps"]
+    creates = [s["run"] for s in steps if "aws lambda create-function " in s.get("run", "")]
+    assert len(creates) == 2, "a create site was added or removed: decide its role here"
+    for run in creates:
+        assert "--role " + STAGING_EXEC + " \\\n" in run
+        assert not re.search(r"role/garden-app-lambda-exec(?!-staging)", run)
+
+
+def test_every_leg_asserts_the_staging_exec_role_after_the_health_check():
+    """The only continuous check of the boundary: every staging deploy (and so every promote's staging gate) reds
+    when a staging function runs as any other role. Unconditional, never continue-on-error."""
+    steps = _workflow(WORKFLOW)["jobs"][JOB]["steps"]
+    names = [s.get("name") for s in steps]
+    health = names.index("Health check ${{ matrix.function }}-staging")
+    i = names.index("Assert staging exec role on ${{ matrix.function }}-staging")
+    assert health < i < min(names.index(site.name) for site in SITES)
+    step = steps[i]
+    assert "if" not in step and "continue-on-error" not in step
+    assert 'WANT="' + STAGING_EXEC + '"' in step["run"]
+    assert "--query Role --output text" in step["run"] and 'if [ "$GOT" != "$WANT" ]' in step["run"]
