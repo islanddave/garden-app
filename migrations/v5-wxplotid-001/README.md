@@ -181,10 +181,12 @@ replica`: 189 stamps, 1 Space, 1 plot, 162 + 6 weather rows. Then:
 python3 migrations/v5-wxplotid-001/rehearse_local.py --port 55491 --base-db base
 ```
 
-**Result 2026-10-19: 158/158 PASS, exit 0.** Pre 7/7 on the base; C-CONV before on both corpora and envs, no ERROR, the
-corpora agree; 0a exit 0 with the pre-gate counts printed (162 and 6, none elsewhere); post 6/6 with the receipt;
-C-CONV after: base corpus newly red = the five, edited corpus {} / {}. Arming: 11 census writers × 2 Spaces (Dave's and
-a plot-less fixture Space) succeed, all 11 refused 23514 by the NOT VALID CHECK mutant; handler.js and the backfill
+**Result 2026-10-19 at this directory's HEAD: 168/168 PASS, exit 0** (158/158 before its own files were tracked: the
+census rule then also finds this directory's fixture inserts). Pre 7/7 on the base; C-CONV before on both corpora and
+envs, no ERROR, the corpora agree; 0a exit 0 with the pre-gate counts printed (162 and 6, none elsewhere); post 6/6 with
+the receipt; C-CONV after: base corpus newly red = the five, edited corpus {} / {}. Arming: every census writer whose
+column list does not name `plot_id` (11 at `a2083805`, 16 with this directory's fixtures) × 2 Spaces (Dave's and a
+plot-less fixture Space) succeeds, and each is refused 23514 by the NOT VALID CHECK mutant; handler.js and the backfill
 script, exact text, new day (plot NULL) and backfilled day (keeps Plot 1); wn3_send.py's INSERT as a seven-grant role:
 1 / 0 / 0 rows. Keys: a cross-Space plot 23503 on insert and on update, NULL unchecked, Plot 1 delete P0001
 `plots_delete_guard`, Plot 1 moved to another Space 23503, with the delete guard dropped the key itself 23503 (RESTRICT).
