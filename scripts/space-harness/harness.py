@@ -9,8 +9,10 @@ is never a pass. See README.md beside this file for the live session.
 
 VERBS
   fleet [--env-file F]
-      neon_safety_branch.py list, then refuses when the self-cleaning branches + 2
-      (+ 1 held for the day's sitting copy) exceed NEON_MAX_EXPIRING (default 6).
+      neon_safety_branch.py list, then prints both caps and refuses when either is
+      over: the self-cleaning branches + 2 (+ 1 held for the day's sitting copy)
+      exceed NEON_MAX_EXPIRING (default 6), or all branches minus self-cleaning
+      strays exceed SNAP_KEEP + 4 (10; NEON_MAX_BRANCHES overrides).
   pair --step S [--env-file F] [--out pair.json] [--any-minute]
       Fleet check, A = `neon_safety_branch.py create --slug harness-<S>-<HHMM>-a
       --days 1`, B from prod at A's parent_lsn (or parent_timestamp), one
@@ -774,9 +776,11 @@ def main(argv=None, env=None):
         return EXIT["USAGE"] if ex.code else 0
     try:
         if args.verb == "fleet":
-            c = np_.fleet_check(nsb_env(args, env))
-            print(f"fleet ok: {c['expiring']} self-cleaning branches + {c['pair']} for a pair + "
-                  f"{c['reserved_for_sitting_copy']} held for the sitting copy <= {c['limit']}")
+            c = np_.fleet_counts(nsb_env(args, env))
+            for line in c["caps"]:
+                print(line)
+            np_.refuse_over(c)
+            print("fleet ok")
             return 0
         if args.verb == "pair":
             rec = np_.create_pair(nsb_env(args, env), args.step, any_minute=args.any_minute)

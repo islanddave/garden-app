@@ -145,6 +145,54 @@ def test_fleet_tool_failure_is_a_fault(monkeypatch):
         npair.fleet_check(ENV)
 
 
+def counted_fleet(fake, counted):
+    """production + staging (from FakeNeon) + 6 retention-owned snaps, then no-expiry
+    strays up to `counted` counted branches. The fake's self-cleaning temps are not counted."""
+    fake.branches += [br(f"snap-v5.3.{i}", expires_at=None, created=f"2026-10-0{i + 1}T10:00:00Z")
+                      for i in range(6)]
+    fake.branches += [br(f"revert-stage-v0.0.9{i}", expires_at=None) for i in range(counted - 8)]
+    return fake
+
+
+def test_fleet_second_cap_refuses_eleven_counted_passes_ten(neon):
+    """R24 / 2.0d positive control: integrity-weekly also caps all branches minus self-cleaning
+    strays at SNAP_KEEP + 4 (repo var SNAP_RETENTION = 6, so 10): 10 passes, 11 refuses."""
+    assert npair.FLEET_SNAP_KEEP + 4 == 10
+    fake = counted_fleet(neon(temps=3), 10)
+    c = npair.fleet_check(ENV)
+    assert (c["counted"], c["branch_limit"], c["expiring"]) == (10, 10, 3)
+    alerts, _ = nbs.hygiene_alerts(fake.branches, 6, 10, 7, set(), now=NOW)
+    assert not [a for a in alerts if "count" in a]
+    fake = counted_fleet(neon(temps=3), 11)
+    with pytest.raises(npair.Refused, match=r"cap 2: 14 branches - 3 self-cleaning strays = 11 > 10"):
+        npair.fleet_check(ENV)
+    alerts, _ = nbs.hygiene_alerts(fake.branches, 6, 10, 7, set(), now=NOW)
+    assert [a for a in alerts if a.startswith("neon-branches: count 11 > max 10")]
+    assert not fake.writes()
+
+
+def test_fleet_second_cap_counts_the_way_the_weekly_check_does(neon):
+    """A kept snap that carries an expiry is not a stray, so it is counted (cap 1 still sees it
+    as self-cleaning); a seventh, over-retention snap is counted too."""
+    fake = counted_fleet(neon(temps=0), 10)
+    fake.branches[2]["expires_at"] = "2026-10-20T10:00:00Z"
+    c = npair.fleet_check(ENV)
+    assert (c["counted"], c["expiring"]) == (10, 1)
+    fake.branches.append(br("snap-v5.3.9", expires_at=None, created="2026-10-09T10:00:00Z"))
+    with pytest.raises(npair.Refused, match="= 11 > 10"):
+        npair.fleet_check(ENV)
+    _, state = nbs.hygiene_alerts(fake.branches, 6, 10, 7, set(), now=NOW)
+    assert state["branch_count"] - len(state["expiring_ids"]) == 11
+
+
+def test_fleet_second_cap_reads_snap_keep_and_the_override(neon):
+    counted_fleet(neon(temps=0), 11)
+    assert npair.fleet_check(dict(ENV, SNAP_KEEP="7"))["branch_limit"] == 11
+    assert npair.fleet_check(dict(ENV, NEON_MAX_BRANCHES="12"))["branch_limit"] == 12
+    with pytest.raises(npair.Refused, match="cap 2"):
+        npair.fleet_check(dict(ENV, NEON_MAX_BRANCHES="10"))
+
+
 # ------------------------------------------------------------ the pair
 
 def test_pair_forks_b_at_a_parent_lsn(neon):
@@ -272,6 +320,24 @@ def test_pair_cli_writes_no_secret(neon, tmp_path, monkeypatch, capsys):
 def test_fleet_cli_refuses_with_exit_4(neon):
     neon(temps=9)
     assert harness.main(["fleet"], env=ENV) == harness.EXIT["REFUSED"]
+
+
+def test_fleet_cli_prints_both_caps(neon, capsys):
+    """Both caps, each with its count, limit and verdict, pass or refuse; either one over refuses."""
+    counted_fleet(neon(temps=3), 10)
+    assert harness.main(["fleet"], env=ENV) == 0
+    out = capsys.readouterr().out
+    assert re.search(r"cap 1: 3 self-cleaning branches .* = 6 <= 6 \(NEON_MAX_EXPIRING\) PASS", out)
+    assert re.search(r"cap 2: 13 branches - 3 self-cleaning strays = 10 <= 10 \(SNAP_KEEP 6 \+ 4\) PASS", out)
+    counted_fleet(neon(temps=3), 11)
+    assert harness.main(["fleet"], env=ENV) == harness.EXIT["REFUSED"]
+    cap = capsys.readouterr()
+    assert re.search(r"cap 1: .* PASS", cap.out) and re.search(r"cap 2: .* = 11 > 10 .* REFUSE", cap.out)
+    assert "REFUSED: fleet: cap 2" in cap.err
+    counted_fleet(neon(temps=4), 10)
+    assert harness.main(["fleet"], env=ENV) == harness.EXIT["REFUSED"]
+    cap = capsys.readouterr()
+    assert re.search(r"cap 1: 4 .* = 7 > 6 .* REFUSE", cap.out) and re.search(r"cap 2: .* PASS", cap.out)
 
 
 # ------------------------------------------------------------ the instrument (pure)

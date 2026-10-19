@@ -141,6 +141,10 @@ harness; both expire one day after creation.
    they + 2 for the pair + 1 held for the day's `--slug ms1` sitting copy (until it exists) exceed
    `NEON_MAX_EXPIRING` (default 6): 3 or fewer before the sitting copy, 4 or fewer after it. (Row 1.12's
    "refuse at 9" and P20's "6 or fewer" both miss that integrity-weekly caps expiring branches at 6.)
+   It also checks the weekly rule's second cap, counted by `neon_branch_select.hygiene_alerts` itself: all
+   branches minus self-cleaning strays at most `SNAP_KEEP + 4` (repo var `SNAP_RETENTION` = 6, so 10;
+   `SNAP_KEEP` or `NEON_MAX_BRANCHES` in the environment override). It prints one line per cap, each with
+   its count, limit and PASS or REFUSE, and refuses (exit 4) when either is over (row 2.0d).
 2. **Minute.** Between :10 and :50 UTC (the hourly writers run at :00). `pair` refuses outside it.
 3. **Pair.**
    `python3 scripts/space-harness/harness.py pair --step 1.12 --env-file ../garden-app/.env.local --out $S/pair.json`

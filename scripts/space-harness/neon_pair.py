@@ -20,6 +20,9 @@ capped by NEON_MAX_EXPIRING (default 6, `neon_branch_select.py:263`), not by
 the branch cap. The pair adds 2 such branches, and the day's sitting safety
 copy (`--slug ms1`) draws on the same budget, so a slot is held for it until
 it exists: refuse when expiring + 2 + (that copy absent ? 1 : 0) > the limit.
+The weekly check's second cap is read too, by its own `hygiene_alerts`: all
+branches minus self-cleaning strays must stay within SNAP_KEEP + 4 (10), and
+the fleet check refuses when either cap is over.
 
 THE PAIR'S IDENTITY. Before any URL is asked for, each side's branch and
 endpoint are read back from the Neon API (GET branches/{id}, GET
@@ -56,6 +59,10 @@ import neon_safety_branch as nsb  # noqa: E402
 
 FLEET_MAX_EXPIRING = 6      # neon_branch_select.py:263 (NEON_MAX_EXPIRING), integrity-weekly's alert
 FLEET_MAX_TTL_DAYS = 14     # neon_branch_select.py:262 (NEON_MAX_TTL_DAYS)
+# integrity-weekly.yml passes SNAP_KEEP from the repo var SNAP_RETENTION (6 on 2026-10-19), so its
+# branch cap is SNAP_KEEP + 4 = 10 (neon_branch_select.py:259). Its CLI default (10) is not that value.
+FLEET_SNAP_KEEP = 6
+FLEET_STRAY_MAX_AGE_DAYS = 7  # neon_branch_select.py:260; feeds only alerts the fleet check does not read
 PAIR_BRANCHES = 2
 SITTING_SLUG = "ms1"        # the day's sitting safety copy (build sheet section 3R) shares the budget
 PAIR_DAYS = 1
@@ -97,10 +104,14 @@ def protected_endpoints(path=CLEANUP_JS):
     return eps
 
 
-def fleet_check(env, now=None, sitting_slug=SITTING_SLUG):
-    """The tool's own `list`, then integrity-weekly's classification. Refuses when
-    the pair (and the day's sitting copy, until it exists) would take the
-    self-cleaning branches over NEON_MAX_EXPIRING. Returns the counts."""
+def fleet_counts(env, now=None, sitting_slug=SITTING_SLUG):
+    """The tool's own `list`, then integrity-weekly's classification, both caps.
+    Cap 1: the pair (and the day's sitting copy, until it exists) must not take
+    the self-cleaning branches over NEON_MAX_EXPIRING. Cap 2: all branches minus
+    self-cleaning strays must not exceed SNAP_KEEP + 4 (or NEON_MAX_BRANCHES),
+    counted by neon_branch_select.hygiene_alerts itself (:160-163). The pair and
+    the sitting copy are self-cleaning strays, so they do not move cap 2.
+    Returns the counts and one line per cap; refuses nothing (fleet_check does)."""
     now = now or nsb._utcnow()
     rc, out, err = _tool(["list"], env)
     if rc != 0:
@@ -119,12 +130,45 @@ def fleet_check(env, now=None, sitting_slug=SITTING_SLUG):
     expiring = [b.get("name") for b in branches if nbs.self_cleaning(b, now, ttl)]
     sitting = copy_name(sitting_slug, now)
     reserve = 0 if any(b.get("name") == sitting for b in branches) else 1
-    counts = {"temporary": names, "expiring": len(expiring), "pair": PAIR_BRANCHES,
-              "reserved_for_sitting_copy": reserve, "limit": limit}
-    if len(expiring) + PAIR_BRANCHES + reserve > limit:
-        raise Refused(f"fleet: {len(expiring)} self-cleaning branches + {PAIR_BRANCHES} for the pair"
-                      + (f" + 1 held for today's {sitting}" if reserve else "")
-                      + f" > {limit} (NEON_MAX_EXPIRING); let some expire first")
+    keep = int(env.get("SNAP_KEEP") or FLEET_SNAP_KEEP)
+    branch_limit = int(env.get("NEON_MAX_BRANCHES") or 0) or keep + 4
+    _, state = nbs.hygiene_alerts(
+        branches, keep, branch_limit, FLEET_STRAY_MAX_AGE_DAYS, set(),
+        prefix=env.get("SNAP_BRANCH_PREFIX") or "snap-",
+        prod_branch_id=env.get("NEON_PROD_BRANCH_ID") or nbs.DEFAULT_PROD_BRANCH,
+        now=now, max_ttl_days=ttl, max_expiring=limit)
+    counted = state["branch_count"] - len(state["expiring_ids"])   # neon_branch_select.py:163
+    need = len(expiring) + PAIR_BRANCHES + reserve
+    cap1_ok, cap2_ok = need <= limit, counted <= branch_limit
+    caps = [
+        f"cap 1: {len(expiring)} self-cleaning branches + {PAIR_BRANCHES} for the pair"
+        + (f" + 1 held for today's {sitting}" if reserve else "")
+        + f" = {need} {'<=' if cap1_ok else '>'} {limit} (NEON_MAX_EXPIRING) {'PASS' if cap1_ok else 'REFUSE'}",
+        f"cap 2: {state['branch_count']} branches - {len(state['expiring_ids'])} self-cleaning strays"
+        + f" = {counted} {'<=' if cap2_ok else '>'} {branch_limit}"
+        + (" (NEON_MAX_BRANCHES)" if env.get("NEON_MAX_BRANCHES") else f" (SNAP_KEEP {keep} + 4)")
+        + f" {'PASS' if cap2_ok else 'REFUSE'}",
+    ]
+    return {"temporary": names, "expiring": len(expiring), "pair": PAIR_BRANCHES,
+            "reserved_for_sitting_copy": reserve, "limit": limit,
+            "branches": state["branch_count"], "counted": counted, "branch_limit": branch_limit,
+            "caps": caps, "refuse": [c for c, ok in zip(caps, (cap1_ok, cap2_ok)) if not ok]}
+
+
+def fleet_check(env, now=None, sitting_slug=SITTING_SLUG):
+    """fleet_counts, then refuse when either cap is over. Returns the counts."""
+    return refuse_over(fleet_counts(env, now=now, sitting_slug=sitting_slug))
+
+
+def refuse_over(counts):
+    """Refused when either cap in fleet_counts' result is over; else the counts."""
+    if counts["refuse"]:
+        fix = []
+        if counts["refuse"][0].startswith("cap 1"):
+            fix.append("let some self-cleaning branches expire first")
+        if counts["refuse"][-1].startswith("cap 2"):
+            fix.append("a no-expiry branch needs an expiry (neon_safety_branch.py expire) or a deletion")
+        raise Refused("fleet: " + "; ".join(counts["refuse"]) + "; " + " and ".join(fix))
     return counts
 
 
