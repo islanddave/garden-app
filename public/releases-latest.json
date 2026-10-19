@@ -1,7 +1,7 @@
 {
-  "version": "5.3.11",
+  "version": "5.3.12",
   "date": "2026-10-19",
   "highlights": [
-    "Tapping Save again after a slow save no longer logs the same event twice."
+    "Groundwork for more than one garden: new safety checks and the files that will tie weather to a plot. Nothing changes in the app yet."
   ]
 }
