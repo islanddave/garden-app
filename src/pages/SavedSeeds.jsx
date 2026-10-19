@@ -780,8 +780,14 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
 
   const readCount = () => parseCountInput(qtyInput, advancing?.toStage)
 
+  // BUG-SEEDSTAGEDOUBLETAP-001 — a synchronous re-entry guard. `busy` disables Save, but only once
+  // React has rendered it, and a second call in the same frame still reads the old closure. The
+  // stage POST is append-only (no DELETE route), so a second call while one is out returns at once.
+  // The route also refuses a repeat of the newest entry; this keeps the second request from leaving.
+  const stageInFlight = useRef(false)
+
   async function submitStage() {
-    if (!advancing) return
+    if (!advancing || stageInFlight.current) return
     // Refuse BEFORE any request. The stage POST is not undoable — seed_lot_stage_log has no DELETE
     // route — so a submit that would land the stage and then reject something else is the one
     // ordering that cannot be backed out.
@@ -798,6 +804,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     const count = readCount()
     if (count.error) { setQtyErr(count.error); return }
     setQtyErr(null)
+    stageInFlight.current = true
     setBusy(true)
     try {
       await fetch(`/api/inventory-items/${advancing.item.id}/seed-stage`, {
@@ -925,6 +932,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     } catch (e) {
       show({ message: e?.message || 'Could not save that.' })
     } finally {
+      stageInFlight.current = false
       setBusy(false)
     }
   }

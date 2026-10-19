@@ -810,9 +810,14 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
   // is. The name stays here because a disabled control is the conventional answer for a field the
   // user can see is blank; the variety is the one that maps to a DB CHECK.
   const canSave = !!name.trim() && !busy
+  // BUG-SEEDSTAGEDOUBLETAP-001 — `busy` above is React state, so a second call in the same frame
+  // reads the old closure and goes through. This ref is set before the first await and cleared in
+  // the finally: one save of THIS sheet at a time. A save from another sheet of the same draft is a
+  // different question, and seedLotKey.js answers it.
+  const saveInFlight = useRef(false)
 
   async function save() {
-    if (busy) return
+    if (busy || saveInFlight.current) return
     // chk_inventory_seed_requires_variety refuses `category='seeds' AND variety_id IS NULL`, and
     // validateCreate 400s on it first. Both would tell us what we already know, so nothing leaves
     // the client — the user gets the answer here instead of after a round trip. A mix has no id
@@ -866,6 +871,7 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
       setError('Acquired from is the same as the origin — leave it blank when they match.')
       return
     }
+    saveInFlight.current = true
     setBusy(true)
     setError(null)
     // Both are read by the catch: which request stopped the save decides one sentence (a 405 means
@@ -1164,6 +1170,7 @@ export default function SaveSeedSheet({ planting, onClose, onSaved, onSavedAfter
     } finally {
       // A no-op after the ending above. Reached first only by a save that stopped short of it.
       intent?.ended(null, false)
+      saveInFlight.current = false
       setBusy(false)
     }
   }

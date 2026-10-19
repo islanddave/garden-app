@@ -24,6 +24,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
 import { handler } from '../../lambda/inventory-items/index.js'
+import { etDay } from '../../lambda/inventory-items/seed-stage-date.js'
 
 const RUN = testRunId()
 const USER = `user_int_seed_${RUN}`
@@ -786,5 +787,109 @@ describe('one writer — the wide PUT and the create cannot move a lot\'s stage'
     expect(two.ptr).toBe('stored')
     expect(two.log.map((r) => r.stage)).toEqual(['stored', 'drying'])
     expect(await history(lot.id)).toHaveLength(2)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// A REPEAT IS NOT A SECOND ENTRY (BUG-SEEDSTAGEDOUBLETAP-001). Prod lot 69832d29 got two `stored`
+// rows 8 s apart, same picked day, no note — a re-tap after the client stopped waiting on a write
+// that had committed. The route now compares the request against the lot's NEWEST entry only and
+// answers a repeat 200 with the entry that stands, writing nothing. The predicate is pinned in
+// lambda/inventory-items/seed-stage-repeat.test.js; these are the halves only a real Postgres shows:
+// how many rows the log holds, and that two requests in flight at once still write one.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('a repeat of the newest entry writes no row', () => {
+  const logOf = async (lotId) => (await stored(lotId)).log
+
+  it('the same picked past day, twice: 201 then 200 with the same entry, one row', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    const first = await stage(lot.id, { stage: 'stored', entered_at: '2026-09-01T12:00:00' })
+    expect(first.status, JSON.stringify(first.body)).toBe(201)
+    const again = await stage(lot.id, { stage: 'stored', entered_at: '2026-09-01T12:00:00' })
+    expect(again.status, JSON.stringify(again.body)).toBe(200)
+    expect(again.body).toEqual(first.body)
+    expect(await logOf(lot.id)).toHaveLength(1)
+    await expectStageInStep(lot.id)
+  })
+
+  it('"today" twice within seconds — the day marker, and no entered_at at all: one row each', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    const today = `${etDay(new Date())}T12:00:00`
+    expect((await stage(lot.id, { stage: 'drying', entered_at: today })).status).toBe(201)
+    const again = await stage(lot.id, { stage: 'drying', entered_at: today })
+    // 201 only if Eastern midnight fell between the two calls (then the second is a different day).
+    if (etDay(new Date()) === today.slice(0, 10)) {
+      expect(again.status, JSON.stringify(again.body)).toBe(200)
+      expect(await logOf(lot.id)).toHaveLength(1)
+    }
+
+    // SaveSeedSheet's intake shape: no entered_at, the database's NOW().
+    const { body: lot2 } = await createSeedLot()
+    expect((await stage(lot2.id, { stage: 'fermenting', seed_process: 'wet' })).status).toBe(201)
+    const again2 = await stage(lot2.id, { stage: 'fermenting', seed_process: 'wet' })
+    expect(again2.status, JSON.stringify(again2.body)).toBe(200)
+    expect(await logOf(lot2.id)).toHaveLength(1)
+    await expectStageInStep(lot2.id)
+  })
+
+  it('"today" again after the window is a new entry — the 120 s bound is on when the entry was made', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    expect((await stage(lot.id, { stage: 'drying' })).status).toBe(201)
+    // Made ten minutes ago, as far as the check can tell. entered_at is left where it is, so this
+    // isolates the created_at bound: the entered_at bound alone would still call it a repeat.
+    await directSql`UPDATE seed_lot_stage_log SET created_at = created_at - INTERVAL '10 minutes' WHERE inventory_item_id = ${lot.id}`
+    expect((await stage(lot.id, { stage: 'drying' })).status).toBe(201)
+    expect(await logOf(lot.id)).toHaveLength(2)
+  })
+
+  it('going BACK to an older stage and date still writes: only the newest entry is compared', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    expect((await stage(lot.id, { stage: 'drying', entered_at: '2026-09-05T12:00:00' })).status).toBe(201)
+    expect((await stage(lot.id, { stage: 'stored', entered_at: '2026-09-10T12:00:00' })).status).toBe(201)
+    // Word for word the FIRST entry, which is no longer the newest.
+    const back = await stage(lot.id, { stage: 'drying', entered_at: '2026-09-05T12:00:00' })
+    expect(back.status, JSON.stringify(back.body)).toBe(201)
+    const log = await logOf(lot.id)
+    expect(log.map((r) => r.stage)).toEqual(['drying', 'stored', 'drying'])
+    expect(log[0].id).toBe(back.body.id)
+    await expectStageInStep(lot.id)
+  })
+
+  it('a different note is a new entry, and so is a different stage on the same day', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    expect((await stage(lot.id, { stage: 'stored', entered_at: '2026-09-01T12:00:00' })).status).toBe(201)
+    expect((await stage(lot.id, { stage: 'stored', entered_at: '2026-09-01T12:00:00', note: 'moved to the cold jar' })).status).toBe(201)
+    // The same note again IS a repeat of the newest entry.
+    expect((await stage(lot.id, { stage: 'stored', entered_at: '2026-09-01T12:00:00', note: 'moved to the cold jar' })).status).toBe(200)
+    expect((await stage(lot.id, { stage: 'drying', entered_at: '2026-09-01T12:00:00', note: 'moved to the cold jar' })).status).toBe(201)
+    const log = await logOf(lot.id)
+    expect(log.map((r) => r.stage)).toEqual(['drying', 'stored', 'stored'])
+    await expectStageInStep(lot.id)
+  })
+
+  it('two identical requests IN FLIGHT AT ONCE write one row — the lot lock serialises them', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    const body = { stage: 'stored', entered_at: '2026-09-01T12:00:00' }
+    const answers = await Promise.all([stage(lot.id, body), stage(lot.id, body)])
+    expect(answers.map((a) => a.status).sort()).toEqual([200, 201])
+    expect(answers[0].body.id).toBe(answers[1].body.id)
+    expect(await logOf(lot.id)).toHaveLength(1)
+    await expectStageInStep(lot.id)
+  })
+
+  it('a repeat for a lot that is not yours is still 404, and writes nothing', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    expect((await stage(lot.id, { stage: 'stored', entered_at: '2026-09-01T12:00:00' })).status).toBe(201)
+    setTestUserId(FOREIGN_USER)
+    expect((await stage(lot.id, { stage: 'stored', entered_at: '2026-09-01T12:00:00' })).status).toBe(404)
+    setTestUserId(USER)
+    expect(await logOf(lot.id)).toHaveLength(1)
   })
 })
