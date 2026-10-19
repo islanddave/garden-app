@@ -31,11 +31,14 @@ import { resolve, join, relative } from 'node:path'
 const ROOT = process.cwd()
 const INTEGRATION = resolve(ROOT, 'tests/integration')
 
-// Tables whose triggers integration cleanup may never lift.
-const GUARDED_TABLES = ['spaces', 'weather_daily', 'weather_cold_range', 'spacetheme']
-// The trigger functions behind those guards (migrations/v5-spaceguard-001/0a-guards.sql), including the audit
-// function behind trg_audit_spaces_*. Dropping one, CASCADE or not, removes the guard.
-const GUARD_FUNCTIONS = ['guard_spaces_delete', 'guard_space_truncate', 'guard_spaces_repoint', 'audit_stmt_insert']
+// Tables whose triggers integration cleanup may never lift. plots: migrations/v5-plottier-001 (multi-space 3.1)
+// puts the same three guards on it (plots_delete_guard, plots_truncate_guard, plots_repoint_guard).
+const GUARDED_TABLES = ['spaces', 'weather_daily', 'weather_cold_range', 'spacetheme', 'plots']
+// The trigger functions behind those guards (migrations/v5-spaceguard-001/0a-guards.sql,
+// migrations/v5-plottier-001/0a-plots.sql), including the audit function behind trg_audit_spaces_* and
+// trg_audit_plots_ins. Dropping one, CASCADE or not, removes the guard.
+const GUARD_FUNCTIONS = ['guard_spaces_delete', 'guard_space_truncate', 'guard_spaces_repoint', 'audit_stmt_insert',
+  'guard_plots_delete', 'guard_plots_repoint']
 // The only DISABLE TRIGGER integration code may issue, as table.trigger. Adding a pair is a reviewed change to this
 // list, and the test below refuses any pair on a guarded table or naming a guard.
 const SANCTIONED = ['cultivar_weight_sample.trg_cws_immutable']
@@ -147,6 +150,9 @@ describe('integration cleanup lifts no trigger but the one sanctioned DISABLE, a
     ["await sql('DROP FUNCTION public.guard_spaces_delete() CASCADE')", 'DROP FUNCTION guard_spaces_delete'],
     ["await sql('DROP FUNCTION IF EXISTS guard_space_truncate, guard_spaces_repoint')", 'DROP FUNCTION guard_space_truncate'],
     ["await sql(`DROP TRIGGER ${g} ON ${t}`)", 'DROP TRIGGER ${g} ON ${t}'],
+    ["await sql('ALTER TABLE plots DISABLE TRIGGER plots_delete_guard')", 'plots.plots_delete_guard'],
+    ["await sql('DROP TRIGGER plots_truncate_guard ON public.plots')", 'DROP TRIGGER plots_truncate_guard ON plots'],
+    ["await sql('DROP FUNCTION public.guard_plots_repoint() CASCADE')", 'DROP FUNCTION guard_plots_repoint'],
   ])('a planted %s is refused', (planted, expected) => {
     const findings = scanSource(planted)
     expect(findings.length, `no finding for ${planted}`).toBeGreaterThan(0)

@@ -50,7 +50,23 @@ CREATE TABLE public.daily_plan (user_id text NOT NULL, plan_date date NOT NULL, 
 CREATE TABLE public.event_log (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), title text NOT NULL,
                                event_date timestamptz NOT NULL DEFAULT now());
 CREATE TABLE public.notes (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), body text);
+CREATE TABLE public.plots (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                           workspace_id uuid NOT NULL REFERENCES public.spaces (id) ON DELETE RESTRICT,
+                           name text NOT NULL, postal_code text, lat numeric NOT NULL, lng numeric NOT NULL,
+                           timezone text NOT NULL, is_default boolean NOT NULL DEFAULT false, created_by text NOT NULL,
+                           created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+                           deleted_at timestamptz, UNIQUE (id, workspace_id));
+CREATE UNIQUE INDEX plots_one_default_per_space ON public.plots (workspace_id) WHERE is_default AND deleted_at IS NULL;
 """
+
+# V5-SPACEPLOTTIER-001 (multi-space 3.1, migrations/v5-plottier-001): every Space-creating path makes the Space's
+# default plot in the same transaction, so every Space this file creates comes with one, in the same statement.
+# The sentinel Space's plot has a fixed id so A and B hold the same row, like a fork.
+SENTINEL_SPACE = """
+WITH s AS (INSERT INTO public.spaces (id, name, created_by) VALUES (gv.sentinel_workspace(), 'Garden', %(owner)s)
+           RETURNING id, name, created_by)
+INSERT INTO public.plots (id, workspace_id, name, lat, lng, timezone, is_default, created_by)
+SELECT %(plot)s, id, name, 42.5, -72.6, 'America/New_York', true, created_by FROM s"""
 
 
 def _dsn(admin, db):
@@ -61,7 +77,7 @@ def _dsn(admin, db):
 @pytest.fixture
 def pair(monkeypatch):
     """A and B: the same schema and the same rows (same ids), like a fork."""
-    sentinel = str(uuid.uuid4())
+    sentinel, plot = str(uuid.uuid4()), str(uuid.uuid4())
     space, plants = str(uuid.uuid4()), [(str(uuid.uuid4()), n) for n in ("Tomato", "Basil", "Kale")]
     out = {}
     for side in ("a", "b"):
@@ -71,8 +87,7 @@ def pair(monkeypatch):
         out[side] = _dsn(ADMIN[side], DB)
         with psycopg.connect(out[side], autocommit=True) as c:
             c.execute(SCHEMA.replace("%(sentinel)s", ck.qlit(sentinel)))
-            c.execute("INSERT INTO public.spaces (id, name, created_by) VALUES (gv.sentinel_workspace(), 'Garden', %s)",
-                      (OWNER,))
+            c.execute(SENTINEL_SPACE, {"owner": OWNER, "plot": plot})
             for pid, name in plants:
                 c.execute("INSERT INTO public.plants (id, name, workspace_id) VALUES (%s, %s, gv.sentinel_workspace())",
                           (pid, name))
@@ -114,14 +129,34 @@ def run(tmp_path, use, b_sql=None, *extra):
     return rc, json.loads((tmp_path / "v.json").read_text())
 
 
-INDOOR = "INSERT INTO public.spaces (name, created_by) VALUES ('Indoor', 'user_pytestowner');"
+INDOOR = ("WITH s AS (INSERT INTO public.spaces (name, created_by) VALUES ('Indoor', 'user_pytestowner') "
+          "RETURNING id, name, created_by) "
+          "INSERT INTO public.plots (workspace_id, name, lat, lng, timezone, is_default, created_by) "
+          "SELECT id, name, 42.5, -72.6, 'America/New_York', true, created_by FROM s;")
+INDOOR_DIFFS = [{"table": "public.spaces", "where": "name = 'Indoor'", "side": "b"},
+                {"table": "public.plots", "where": "name = 'Indoor'", "side": "b"}]
 ROW_USE = {
     "name": "row control: the Indoor Space exists on B only",
     "binds": {"indoor": "SELECT id::text FROM public.spaces WHERE name = 'Indoor'"},
     "positive_control": {"name": "Indoor row on B only", "kind": "row", "table": "public.spaces",
                          "where": "id = %(indoor)s::uuid"},
-    "allowed_diffs": [{"table": "public.spaces", "where": "name = 'Indoor'", "side": "b"}],
+    "allowed_diffs": INDOOR_DIFFS,
 }
+
+
+def test_every_space_this_file_makes_has_its_default_plot(pair):
+    """3.1: a Space and its default plot are made together, and one fails with the other."""
+    sql_b(pair, INDOOR)
+    for side, want in (("a", [("Garden", 1)]), ("b", [("Garden", 1), ("Indoor", 1)])):
+        with psycopg.connect(pair[side]) as c:
+            got = c.execute("SELECT s.name, count(p.id) FROM public.spaces s LEFT JOIN public.plots p "
+                            "ON p.workspace_id = s.id AND p.is_default AND p.deleted_at IS NULL "
+                            "GROUP BY s.name ORDER BY s.name").fetchall()
+        assert got == want, side
+    with pytest.raises(psycopg.errors.NotNullViolation):
+        sql_b(pair, INDOOR.replace("'Indoor'", "'Shed'").replace("'America/New_York'", "NULL"))
+    with psycopg.connect(pair["b"]) as c:
+        assert c.execute("SELECT count(*) FROM public.spaces WHERE name = 'Shed'").fetchone()[0] == 0
 
 
 def test_selftest0_a_equals_b_despite_volatile_tables_and_keys(pair, tmp_path):
@@ -161,8 +196,9 @@ def test_the_stray_write_lands_on_every_table_the_use_measures(pair, tmp_path):
     use = dict(ROW_USE, volatile_columns={"public.plants": ["name", "version"]})
     rc, v = run(tmp_path, use, INDOOR, "--no-arms")
     assert v["stray"]["ok"], v["stray"]
-    assert sorted(t.rsplit(".", 1)[0] for t in v["stray"]["targets"]) == ["public.plants", "public.spaces"]
-    assert {d["table"] for d in v["stray"]["diff_during"]} >= {"public.plants", "public.spaces"}
+    assert sorted(t.rsplit(".", 1)[0] for t in v["stray"]["targets"]) == ["public.plants", "public.plots",
+                                                                         "public.spaces"]
+    assert {d["table"] for d in v["stray"]["diff_during"]} >= {"public.plants", "public.plots", "public.spaces"}
 
 
 def test_a_measured_table_with_no_row_faults(pair, tmp_path):
@@ -182,13 +218,16 @@ def test_no_arms_is_data_only_never_a_pass(pair, tmp_path):
     rc, v = run(tmp_path, ROW_USE, INDOOR, "--no-arms")
     assert rc == harness.EXIT["DATA-ONLY"] and v["verdict"] == "DATA-ONLY", v
     assert v["positive_control"]["counts"] == {"a": 0, "b": 1}
-    assert [d["table"] for d in v["allowed_diffs"]] == ["public.spaces"] and v["diffs"] == []
+    assert [d["table"] for d in v["allowed_diffs"]] == ["public.plots", "public.spaces"] and v["diffs"] == []
 
 
 def test_allowed_diffs_report_the_rows_they_removed(pair, tmp_path):
-    use = dict(ROW_USE, allowed_diffs=[{"table": "public.spaces", "where": "true", "side": "b"}])
+    use = dict(ROW_USE, allowed_diffs=[{"table": "public.spaces", "where": "true", "side": "b"},
+                                       {"table": "public.plots", "where": "true", "side": "b"}])
     rc, v = run(tmp_path, use, INDOOR, "--no-arms")
     assert v["allowed_diff_counts"] == [{"table": "public.spaces", "where": "true", "side": "b", "matched_a": 1,
+                                         "matched_b": 2, "removed_a": 0, "removed_b": 1},
+                                        {"table": "public.plots", "where": "true", "side": "b", "matched_a": 1,
                                          "matched_b": 2, "removed_a": 0, "removed_b": 1}]
 
 
@@ -279,7 +318,7 @@ def test_arms_reach_each_branch_through_the_lambda_driver(pair, tmp_path, monkey
     use = {"name": "arm: space-wx for Indoor on B only",
            "binds": {"indoor": "SELECT id::text FROM public.spaces WHERE name = 'Indoor'"},
            "positive_control": {"name": "space-wx Indoor", "kind": "log", "match": {"msg": "space-wx", "space": "$indoor"}},
-           "allowed_diffs": [{"table": "public.spaces", "where": "name = 'Indoor'", "side": "b"}],
+           "allowed_diffs": INDOOR_DIFFS,
            "allowed_call_diffs": [{"stub": "publishAlert", "destination": "sns:ops"}]}
     rc, v = run(tmp_path, use, INDOOR, "--tree", str(tree), *DRIVER)
     assert rc == 0, v
@@ -308,6 +347,7 @@ def test_arms_that_both_throw_fault_even_when_the_rows_look_right(pair, tmp_path
            "positive_control": {"name": "Indoor plan row", "kind": "row", "table": "public.daily_plan",
                                 "where": "user_id = %(indoor)s"},
            "allowed_diffs": [{"table": "public.spaces", "where": "name = 'Indoor'"},
+                             {"table": "public.plots", "where": "name = 'Indoor'"},
                              {"table": "public.daily_plan", "where": "user_id = %(indoor)s"}]}
     rc, v = run(tmp_path, use, INDOOR, "--tree", str(tree), *DRIVER)
     assert rc == harness.EXIT["FAULT"], v
