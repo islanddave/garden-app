@@ -36,7 +36,8 @@
 # app-level rate budget; a per-request pre-flight check would not be.
 #
 # Subcommands:
-#   check             poll Graph debug_token, classify, emit CloudWatch metrics, alert to SNS on ALERT
+#   check             poll Graph debug_token, classify, emit CloudWatch metrics, alert to SNS on ALERT;
+#                     a reply with no data twice alerts to SNS as UNVERIFIED and exits 1
 #   selftest          exercise the classifier against fixtures — no network, no AWS, no credentials
 #   alarms            provision the two content alarms (idempotent, safe before any data exists)
 #   alarms-staleness  provision the monitor-is-down alarm; REFUSES until the feeder has actually run
@@ -51,6 +52,7 @@ OUT="${OUT:-meta-token-report.json}"
 
 # Days of runway below which we alert. 21 leaves three weeks for a 5-10 minute manual re-auth.
 ALERT_DAYS="${ALERT_DAYS:-21}"
+RETRY_SECS="${RETRY_SECS:-30}"
 WARN_DAYS="${WARN_DAYS:-35}"
 
 # Required for Facebook Page photo publishing (all on Meta's do-not-expire list).
@@ -83,6 +85,27 @@ missing_from() {
     esac
   done
   printf '%s' "$out"
+}
+
+debug_token() { # <input_token> <app_id> <app_secret> -> raw Graph reply
+  curl -sS -G "https://graph.facebook.com/${GRAPH_VERSION}/debug_token" \
+    --data-urlencode "input_token=$1" \
+    --data-urlencode "access_token=$2|$3"
+}
+
+# stdin = a debug_token reply. Prints nothing when it carries `data`; otherwise one JSON value saying
+# why not (Graph's error object, or a string). Never echoes a non-JSON body, which could be anything.
+unverified_reason() {
+  python3 -c '
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except ValueError:
+    print(json.dumps("reply is not JSON")); sys.exit()
+if isinstance(d, dict) and "error" not in d and isinstance(d.get("data"), dict):
+    sys.exit()
+e = d.get("error") if isinstance(d, dict) else None
+print(json.dumps(e if e else "reply has no data"))'
 }
 
 selftest() {
@@ -126,16 +149,29 @@ check() {
   app_secret="$(printf '%s' "$secret" | python3 -c 'import sys,json;print(json.load(sys.stdin)["app_secret"])')"
   page_token="$(printf '%s' "$secret" | python3 -c 'import sys,json;print(json.load(sys.stdin)["page_token"])')"
 
-  local resp
-  resp="$(curl -sS -G "https://graph.facebook.com/${GRAPH_VERSION}/debug_token" \
-            --data-urlencode "input_token=${page_token}" \
-            --data-urlencode "access_token=${app_id}|${app_secret}")"
+  local resp reason
+  resp="$(debug_token "$page_token" "$app_id" "$app_secret")"
+  reason="$(printf '%s' "$resp" | unverified_reason)"
+  if [ -n "$reason" ]; then
+    log "debug_token answered without data; retrying once in ${RETRY_SECS}s"
+    sleep "$RETRY_SECS"
+    resp="$(debug_token "$page_token" "$app_id" "$app_secret")"
+    reason="$(printf '%s' "$resp" | unverified_reason)"
+  fi
 
-  if printf '%s' "$resp" | python3 -c 'import sys,json;d=json.load(sys.stdin);sys.exit(0 if "error" in d else 1)'; then
-    log "::warning::debug_token returned an error — reporting UNVERIFIED, not alerting"
-    printf '%s' "$resp" | python3 -c 'import sys,json;print(json.dumps({"status":"UNVERIFIED","graph_error":json.load(sys.stdin)["error"]}))' > "$OUT"
+  # No data twice = the grant's health is UNKNOWN, and that must be loud (BUG-METAWATCHUNVERIFIEDSILENT-001):
+  # this path used to exit 0 with no email and no metric, so only the 2-day staleness alarm could see it.
+  # No metric is written on purpose: MetaTokenValid's SampleCount feeds that staleness alarm, and a
+  # datapoint from a run that verified nothing would quiet it.
+  if [ -n "$reason" ]; then
+    REASON="$reason" python3 -c 'import os,json;print(json.dumps({"status":"UNVERIFIED","graph_error":json.loads(os.environ["REASON"])}))' > "$OUT"
     cat "$OUT"
-    return 0
+    aws sns publish --region "$REGION" --topic-arn "$SNS_TOPIC" \
+      --subject "garden-app: Meta credential UNVERIFIED" \
+      --message "The daily Facebook/Instagram credential check could not read the token's health: Graph debug_token answered without data, twice. Posting may or may not work; this check cannot tell. Report: $(cat "$OUT")" >/dev/null \
+      || log "::error::SNS publish failed as well"
+    log "::error::debug_token answered without data twice: credential health is UNVERIFIED"
+    return 1
   fi
 
   # Pull the fields out once, as a tab-separated line, so no secret ever reaches the log.
