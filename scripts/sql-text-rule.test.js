@@ -14,8 +14,9 @@
 // (`#`, `//`, `--`, `*`) never count; prose such as "INSERT into a column" does not match, since a table name must
 // be followed by `(` or by SELECT / VALUES / DEFAULT / OVERRIDING / WITH / TABLE.
 //
-// WHAT IT COVERS at 2f238983: 279 tracked files under scripts/; 5 non-test INSERTs, into tag (two COW runner
-// scripts, ALLOWED), public.schema_version (exempt) and weather_daily (exempt). UPDATE and DELETE are not covered:
+// WHAT IT COVERS at 2f238983: 164 non-test text files under scripts/, holding 4 INSERTs: into tag (two COW runner
+// scripts, ALLOWED), public.schema_version (cal1/gen-refweight-seed.mjs, exempt) and weather_daily
+// (backfill-weather-daily.mjs, exempt). UPDATE and DELETE are not covered:
 // a scripts-side write that changes a row's Space is not a shape that exists today, and the scope of those
 // statements is 5.1's question for lambda/**. Positive control below: a fixture script with `insert into photos (`
 // and no workspace_id reds.
