@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.6",
+    "date": "2026-10-19",
+    "highlights": [
+      "Behind the scenes: a new check reads every database query in the app before each release, the first step toward separate gardens."
+    ]
+  },
+  {
     "version": "5.3.5",
     "date": "2026-10-18",
     "highlights": [
