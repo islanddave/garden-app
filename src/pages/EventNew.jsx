@@ -864,6 +864,10 @@ export default function EventNew({ harvestSession = false } = {}) {
   const [projects,     setProjects]     = useState([])
   const [locations,    setLocations]    = useState([])
   const [saving,       setSaving]       = useState(false)
+  // BUG-EVENTSREPEATTAP-001 — `saving` is React state, so a second submit in the same frame (two
+  // Enters, two clicks before Save re-renders disabled) reads the old closure and posts again. This
+  // ref is the synchronous half of the same guard; see handleSubmit.
+  const submitInFlight = useRef(false)
   const [error,        setError]        = useState(null)
   const [showPrivate,  setShowPrivate]  = useState(false)
   // BUG-POSTSAVEVALIDATION-001 — bumped by resetForNext() to mark the planting picker fresh again.
@@ -1719,13 +1723,22 @@ export default function EventNew({ harvestSession = false } = {}) {
   // permanently unsubmittable state. Verified: exactly one `return` sits inside that window and it
   // resets first.
   //
+  // BUG-EVENTSREPEATTAP-001 — `saving` alone does not hold a second call in the SAME frame: until
+  // React re-renders, that call runs in the closure where `saving` is still false (two Enters, or two
+  // clicks before Save re-renders disabled, measured: two POSTs). `submitInFlight` is set with
+  // setSaving(true), after every refusal above it and before the first await, and released at the
+  // same two exits `saving` resets at. Not a finally: the window has no try of its own, and a throw
+  // inside it would leave `saving` true anyway, so releasing the ref alone would un-wedge nothing.
+  // The server also answers a re-sent event with the row that stands (lambda/events repeatGuard.js);
+  // this keeps the second request from leaving at all.
+  //
   // AN IDEMPOTENCY KEY IS DELIBERATELY NOT HERE. B5 asks for one alongside these two, but it is a
   // server contract (the events Lambda would have to honour and de-duplicate it), and nothing can
   // fire a duplicate save programmatically until the voice flow's S3 slice exists. Adding a key the
   // server ignores would look like protection and be none.
   async function handleSubmit(e, { keepMode = 'type' } = {}) {
     e.preventDefault()
-    if (saving) return { ok: false, reason: 'in_flight' }
+    if (saving || submitInFlight.current) return { ok: false, reason: 'in_flight' }
     if (!form.event_type)  { setError('Select an event type above.'); return { ok: false, reason: 'no_event_type' } }
     // V4-LOGTARGET-001 invariant: this gate is also what enforces plant_id ⇒ project_id
     // at submit — a POST can never leave here as {project_id:'', plant_id:X} (the server's
@@ -1788,6 +1801,7 @@ export default function EventNew({ harvestSession = false } = {}) {
     }
 
     if (form.event_type === 'watering') ux.tap()  // submit tap (watering flow only)
+    submitInFlight.current = true
     setSaving(true)
     setError(null)
 
@@ -1886,6 +1900,7 @@ export default function EventNew({ harvestSession = false } = {}) {
         }),
       })
     } catch (err) {
+      submitInFlight.current = false
       setSaving(false)
       setError(friendlyError(err))
       return { ok: false, reason: 'post_failed' }
@@ -2004,6 +2019,7 @@ export default function EventNew({ harvestSession = false } = {}) {
     }
     const photoTotal = photoItems.length
 
+    submitInFlight.current = false
     setSaving(false)
     if (form.event_type === 'watering') ux.complete({ outcome: 'logged' })  // M1 watering complete
 

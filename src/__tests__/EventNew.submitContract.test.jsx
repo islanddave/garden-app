@@ -163,6 +163,42 @@ describe('EventNew — submit re-entrancy (gate B5)', () => {
   })
 })
 
+// BUG-EVENTSREPEATTAP-001 — two submits in the SAME frame. The cases above press the second Enter
+// after a render, when `saving` has already flipped. `saving` is React state, so a second call that
+// lands before that render runs in the closure the first one ran in, reads it false, and posts again.
+// Both presses land in ONE act here, so nothing renders between them; only a ref set before the
+// first await stops the second.
+describe('EventNew — two submits before a re-render post once (BUG-EVENTSREPEATTAP-001)', () => {
+  it('two Enters in one frame send ONE POST', async () => {
+    dataRef.postHangs = true
+    renderEventNew()
+    await flushLoad()
+    chooseProject()
+    fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '3' } })
+    const w = screen.getByLabelText('Harvest weight')
+    fireEvent.change(w, { target: { value: '231' } })
+    await act(async () => {
+      fireEvent.keyDown(w, { key: 'Enter' })
+      fireEvent.keyDown(w, { key: 'Enter' })
+    })
+    expect(postCalls).toHaveLength(1)
+  })
+
+  it('Save clicked twice in one frame sends ONE POST', async () => {
+    dataRef.postHangs = true
+    renderEventNew()
+    await flushLoad()
+    chooseProject()
+    fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '3' } })
+    const save = screen.getByRole('button', { name: 'Save' })
+    await act(async () => {
+      fireEvent.click(save)
+      fireEvent.click(save)
+    })
+    expect(postCalls).toHaveLength(1)
+  })
+})
+
 // ── The return contract, guarded at the source ────────────────────────────────────────────────
 //
 // The contract cannot be observed from outside the component: handleSubmit is passed to onSubmit /
@@ -189,7 +225,27 @@ describe('EventNew — handleSubmit return contract (condition C6)', () => {
   }
 
   it('guards re-entrancy before doing anything else', () => {
-    expect(handleSubmitBody()).toMatch(/e\.preventDefault\(\)\s*\n\s*if \(saving\) return \{ ok: false, reason: 'in_flight' \}/)
+    // BUG-EVENTSREPEATTAP-001 added the ref half of the same check (same-frame second call).
+    expect(handleSubmitBody()).toMatch(/e\.preventDefault\(\)\s*\n\s*if \(saving \|\| submitInFlight\.current\) return \{ ok: false, reason: 'in_flight' \}/)
+  })
+
+  it('the ref is taken after every refusal, with setSaving(true), and released wherever saving is', () => {
+    // BUG-EVENTSREPEATTAP-001. Taken any earlier, a refused submit would leave it held and the form
+    // could never submit again; released at fewer exits than `saving`, the same.
+    const body = handleSubmitBody()
+    const take = body.indexOf('submitInFlight.current = true')
+    expect(take, 'the ref is never taken').toBeGreaterThan(-1)
+    expect(body.slice(take)).toMatch(/^submitInFlight\.current = true\s*\n\s*setSaving\(true\)/)
+    const refusals = [...body.matchAll(/return \{ ok: false, reason: '([a-z_]+)' \}/g)]
+      .filter((m) => m[1] !== 'post_failed')
+    expect(refusals.length).toBeGreaterThanOrEqual(9)
+    for (const m of refusals) expect(m.index, `refusal '${m[1]}' comes after the ref is taken`).toBeLessThan(take)
+    const resets = [...body.matchAll(/setSaving\(false\)/g)]
+    const releases = [...body.matchAll(/submitInFlight\.current = false\s*\n\s*setSaving\(false\)/g)]
+    expect(resets.length).toBe(2)
+    expect(releases.length).toBe(resets.length)
+    // The first await is the POST, after the take.
+    expect(body.indexOf('await ')).toBeGreaterThan(take)
   })
 
   it('every return in handleSubmit is typed — no path answers undefined', () => {
