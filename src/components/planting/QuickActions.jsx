@@ -90,6 +90,10 @@ export default function QuickActions({ planting, onLogged, ownLots, onSeedAdded,
   const [seedOpen, setSeedOpen] = useState(false)
   const navigate = useOverlayNavigate()
   const photoInputRef = useRef(null)
+  // BUG-SEEDSTAGEDOUBLETAP-001 — `sprouting` is React state, so two taps before the button re-renders
+  // disabled both read it false and post two germination entries. Set before the await, cleared in
+  // the finally. (The server's germinated_at is set-once; the event row is not.)
+  const sproutInFlight = useRef(false)
 
   if (!planting) return null
   const projectId = planting.project_id
@@ -147,7 +151,8 @@ export default function QuickActions({ planting, onLogged, ownLots, onSeedAdded,
   // `onClick={handleSprout}` — the latter would hand this function a React SyntheticEvent as
   // `when` and serialise garbage into event_date.
   async function handleSprout(when) {
-    if (sprouting) return
+    if (sprouting || sproutInFlight.current) return
+    sproutInFlight.current = true
     setSprouting(true)
     try {
       const ev = await fetch('/api/events', {
@@ -163,6 +168,7 @@ export default function QuickActions({ planting, onLogged, ownLots, onSeedAdded,
     } catch (err) {
       toast.show({ message: "Couldn't log germination", tone: 'error' })
     } finally {
+      sproutInFlight.current = false
       setSprouting(false)
     }
   }

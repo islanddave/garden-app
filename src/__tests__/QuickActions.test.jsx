@@ -3,7 +3,7 @@
 // former inline status <select> and its tests were removed from here.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const { navigateSpy, setPendingSpy } = vi.hoisted(() => ({ navigateSpy: vi.fn(), setPendingSpy: vi.fn() }))
@@ -260,5 +260,37 @@ describe('BUG-GERMDATEBATCH-001 — the sprout tap sends its own date', () => {
     expect(screen.queryByRole('button', { name: /earlier date/i })).toBeNull()
     renderQA({ planting: { ...PL, germinated_at: '2026-07-01' } })
     expect(screen.queryByRole('button', { name: /earlier date/i })).toBeNull()
+  })
+})
+
+// BUG-SEEDSTAGEDOUBLETAP-001 — two taps of "It sprouted!" before the button re-renders disabled are
+// one germination entry. `sprouting` is React state and both taps read it false; the ref is what stops
+// the second. Both clicks land in ONE act, so nothing renders between them.
+describe('It sprouted! — one tap in flight at a time', () => {
+  const germinations = () => apiFetchSpy.mock.calls.filter(([p, o]) => p === '/api/events'
+    && o?.method === 'POST' && JSON.parse(o.body).event_type === 'germination')
+
+  it('two clicks before a render send ONE germination POST', async () => {
+    let finish
+    apiFetchSpy.mockImplementation(() => new Promise((r) => { finish = r }))
+    renderQA()
+    await act(async () => {
+      const btn = screen.getByRole('button', { name: /Mark this planting as sprouted/i })
+      fireEvent.click(btn)
+      fireEvent.click(btn)
+    })
+    expect(germinations()).toHaveLength(1)
+    await act(async () => { finish({ id: 'ev2', event_type: 'germination' }) })
+    expect(germinations()).toHaveLength(1)
+  })
+
+  it('the guard lets go when the request ends: a tap after a failed one is sent', async () => {
+    apiFetchSpy.mockRejectedValueOnce(new Error('Request timed out'))
+    renderQA()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Mark this planting as sprouted/i })) })
+    await waitFor(() => expect(screen.getByRole('button', { name: /Mark this planting as sprouted/i }).disabled).toBe(false))
+    apiFetchSpy.mockResolvedValueOnce({ id: 'ev3', event_type: 'germination' })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Mark this planting as sprouted/i })) })
+    expect(germinations()).toHaveLength(2)
   })
 })
