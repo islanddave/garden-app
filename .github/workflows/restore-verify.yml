@@ -9,8 +9,10 @@ name: restore-verify (scheduled)
 # runner (also kills the daily scratch-branch churn and the branch cost).
 # scripts/restore-verify.py asserts the target is empty pre-restore, then after
 # restore asserts schemas {public,gv,extensions}, the extensions/gv function
-# inventories, the public trigger inventory, and core row counts — expected
-# inventory grounded by read-only SELECTs against live prod at run time.
+# inventories, the trigger inventory, and core row counts. Tables, triggers and
+# functions are compared with the lists written beside the dump when it was taken
+# (<dump>.tables.json, <dump>.catalog.json; 2.0c); row counts, and dumps older
+# than their lists, with read-only SELECTs against live prod at run time.
 #
 # Gate 0.3: TWO legs — the durable daily bucket AND the snap bucket
 # (garden-snapshots-prod/db/snap-*), whose dumps had NEVER been restore-tested.

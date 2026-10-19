@@ -1216,6 +1216,10 @@ exec "$@"
     "psql": r'''#!/bin/bash
 [ -n "$STUB_PSQL_FAIL" ] && { echo "psql: error: connection refused" >&2; exit 2; }
 sql="${@: -1}"
+case "$sql" in *pg_trigger*)
+  [ -n "$STUB_CATALOG_FAIL" ] && { echo "psql: error: connection refused" >&2; exit 2; }
+  printf '%s\n' "${STUB_CATALOG-$STUB_CATALOG_DEFAULT}"; exit 0;;
+esac
 key=$(printf '%s' "$sql" | sed -n "s/.*'dump_key', '\([^']*\)'.*/\1/p")
 at=$(printf '%s' "$sql" | sed -n "s/.*'taken_at', '\([^']*\)'.*/\1/p")
 printf '{"format" : 1, "dump_key" : "%s", "taken_at" : "%s", "tables" : %s}\n' "$key" "$at" "${STUB_TABLES:-$STUB_TABLES_DEFAULT}"
@@ -1267,6 +1271,7 @@ def _run_backup(tmp_path, **stub_env):
     s3dir.mkdir(exist_ok=True)
     e = dict(os.environ, PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}", STUB_S3=str(s3dir),
              GITHUB_ENV=str(tmp_path / "github_env"), STUB_TABLES_DEFAULT=json.dumps(STUB_LISTED),
+             STUB_CATALOG_DEFAULT=json.dumps(_lists()),
              STUB_TIMEOUT_LOG=str(tmp_path / "timeout.log"), RUNNER_TEMP=str(tmp_path / "work"), **stub_env)
     results = []
     for name in (DUMP_STEP, UPLOAD_STEP, VERIFY_STEP):
@@ -1313,7 +1318,9 @@ def test_daily_backup_bounds_the_table_list_read(tmp_path):
     results, _, _ = _run_backup(tmp_path)
     assert [rc for _, rc, _ in results] == [0, 0, 0], results
     calls = (tmp_path / "timeout.log").read_text().splitlines()
-    assert len(calls) == 1 and re.fullmatch(r"k=[1-9]\d* duration=[1-9]\d* cmd=psql", calls[0]), calls
+    # the table list and the catalog list (2.0c), each bounded
+    assert len(calls) == 2, calls
+    assert all(re.fullmatch(r"k=[1-9]\d* duration=[1-9]\d* cmd=psql", c) for c in calls), calls
 
 
 def test_daily_backup_still_dumps_when_the_failed_list_cannot_be_removed(tmp_path):
@@ -1373,3 +1380,58 @@ def test_daily_backup_without_a_good_list_is_red_but_the_dump_is_up_and_verified
     assert out.index("Upload verified: ") < out.index("::error::Table list FAILED")
     assert "Table list verified" not in out
     assert "is uploaded and verified; only its table list is not" in out
+
+
+# --- the daily writer's catalog list (2.0c) -----------------------------------
+
+def test_daily_backup_reads_the_catalog_with_the_one_sql_text_and_the_pin(tmp_path):
+    body, _ = _backup_bodies(tmp_path)
+    dump = body(DUMP_STEP)
+    assert f'-c "{rv.CATALOG_LIST_SQL}"' in dump
+    assert '-c "SET search_path TO pg_catalog"' in dump
+    # read BEFORE pg_dump, like the table list
+    assert dump.index(rv.CATALOG_LIST_SQL) < dump.index('pg_dump "postgresql://stub"')
+
+
+def test_daily_backup_writes_a_catalog_list_the_reader_accepts(tmp_path):
+    results, s3dir, day = _run_backup(tmp_path)
+    assert [rc for _, rc, _ in results] == [0, 0, 0], results
+    dump_key = f"db/garden-{day}.dump"
+    cat_key = rv.cataloglist_key_for(dump_key)
+    doc = json.loads((s3dir / cat_key).read_text())
+    assert rv._cataloglist_problem(doc, dump_key) is None and _is_utc_stamp(doc["taken_at"])
+    assert (f"Catalog list verified: {cat_key} " in results[2][2]
+            and "2 triggers, 2 gv functions, 2 extensions functions" in results[2][2])
+    pages = [{"Contents": [{"Key": dump_key, "LastModified": D(2026, 10, 12), "Size": 7998970},
+                           {"Key": cat_key, "LastModified": D(2026, 10, 12), "Size": 1}]}]
+    s3 = FakeS3(pages, {(BUCKET, cat_key): (s3dir / cat_key).read_bytes()})
+    assert rv.load_cataloglist(s3, rv.Config(env=env()), dump_key)["gv_functions"] == set(CAT_GV)
+    assert not list((tmp_path / "work").glob("*.raw"))
+
+
+def _no_count(name):
+    lists = _lists()
+    del lists[name]["count"]
+    return json.dumps(lists)
+
+
+@pytest.mark.parametrize("stub_env", [
+    dict(STUB_CATALOG_FAIL="1"),
+    dict(STUB_CATALOG=""),
+    dict(STUB_CATALOG="not json"),
+    dict(STUB_AWS_FAIL_SUFFIX=".catalog.json"),
+    dict(STUB_CATALOG=json.dumps({k: v for k, v in _lists().items() if k != "gv_functions"})),
+    dict(STUB_CATALOG=json.dumps(_lists(trg=[]))),
+    dict(STUB_CATALOG=_no_count("triggers")),
+    dict(STUB_CATALOG=_no_count("gv_functions")),
+    dict(STUB_CATALOG=_no_count("extensions_functions")),
+], ids=["read-fails", "no-output", "not-json", "upload-fails", "gv-list-absent", "empty-triggers",
+        "triggers-no-count", "gv-no-count", "extensions-no-count"])
+def test_daily_backup_without_a_good_catalog_list_is_red_but_the_dump_is_up_and_verified(tmp_path, stub_env):
+    results, s3dir, day = _run_backup(tmp_path, **stub_env)
+    assert [(n, rc) for n, rc, _ in results] == [(DUMP_STEP, 0), (UPLOAD_STEP, 0), (VERIFY_STEP, 1)], results
+    assert (s3dir / "db" / f"garden-{day}.dump").exists()
+    out = results[2][2]
+    assert out.index("Upload verified: ") < out.index("Table list verified") < out.index("::error::Catalog list FAILED")
+    assert "Catalog list verified" not in out
+    assert "is uploaded and verified; only its catalog list is not" in out

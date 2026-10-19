@@ -107,6 +107,15 @@ jobs:
         # not skipped either: "Verify upload" fails the job at its end, after the dump
         # itself is uploaded and proven. Same SELECT as scripts/snap.py TABLE_LIST_SQL
         # and scripts/restore-verify.py qualified_table_set().
+        # CATALOG LIST (V5-SPACETENANCYKEY-001 step 2.0c, RIA I2): the non-internal
+        # triggers and the gv / extensions functions, each list with its count, written
+        # beside the dump as db/garden-YYYYMMDD.catalog.json. restore-verify compares
+        # the restored triggers and functions with THIS list, not live prod, so trigger
+        # DDL no longer has to wait for the day's restore-verify run. Read right after
+        # the table list and the same way (before pg_dump, fails the job only at the end
+        # of "Verify upload"). The SELECT is scripts/restore-verify.py CATALOG_LIST_SQL
+        # verbatim (= scripts/snap.py's), after the same search_path pin, so the
+        # regclass/regproc text matches the restore's; jq adds the envelope.
         # $RUNNER_TEMP, not /tmp, for every file this job writes (OPS-UBUNTU26MOVE-001): on
         # ubuntu-26.04 /tmp is a RAM-backed tmpfs capped at ~7.8G; $RUNNER_TEMP is the
         # runner's work disk (ext4, ~90G free) on both images and is emptied after the job.
@@ -123,6 +132,18 @@ jobs:
             echo "::error::Table list for $S3_KEY could NOT be read from prod -- the dump continues, and 'Verify upload' will fail this job at its end"
             rm -f "$TABLES_FILE" || true
           fi
+          CATALOG_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).catalog.json"
+          CATALOG_TAKEN_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          if ! timeout -k 5 120 psql "${{ secrets.NEON_BACKUP_URL }}" -X -q -tA -v ON_ERROR_STOP=1 \
+            -c "SET search_path TO pg_catalog" \
+            -c "SELECT json_build_object('triggers', (SELECT json_build_object('count', count(*), 'rows', COALESCE(json_agg(json_build_array(t.tgname, t.tgrelid::regclass::text, t.tgtype, t.tgfoid::regproc::text, t.tgenabled) ORDER BY t.tgrelid::regclass::text, t.tgname), '[]'::json)) FROM pg_trigger t WHERE NOT t.tgisinternal), 'gv_functions', (SELECT json_build_object('count', count(*), 'rows', COALESCE(json_agg(p.oid::regprocedure::text ORDER BY p.oid::regprocedure::text), '[]'::json)) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'gv'), 'extensions_functions', (SELECT json_build_object('count', count(*), 'rows', COALESCE(json_agg(p.oid::regprocedure::text ORDER BY p.oid::regprocedure::text), '[]'::json)) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'extensions'))" \
+            > "$CATALOG_FILE.raw" \
+            || ! jq -ce --arg k "$S3_KEY" --arg t "$CATALOG_TAKEN_AT" '{format: 1, dump_key: $k, taken_at: $t} + .' \
+            "$CATALOG_FILE.raw" > "$CATALOG_FILE"; then
+            echo "::error::Catalog list for $S3_KEY could NOT be read from prod -- the dump continues, and 'Verify upload' will fail this job at its end"
+            rm -f "$CATALOG_FILE" || true
+          fi
+          rm -f "$CATALOG_FILE.raw" || true
           pg_dump "${{ secrets.NEON_BACKUP_URL }}" \
             --no-owner \
             --no-privileges \
@@ -153,6 +174,13 @@ jobs:
             aws s3 cp "$TABLES_FILE" "s3://${{ vars.BACKUP_BUCKET_NAME }}/$TABLES_S3_KEY" \
               && touch "$TABLES_FILE.uploaded" \
               || echo "::error::Upload of $TABLES_S3_KEY FAILED -- 'Verify upload' will fail this job at its end"
+          fi
+          CATALOG_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).catalog.json"
+          CATALOG_S3_KEY="db/garden-$(date +%Y%m%d).catalog.json"
+          if [ -s "$CATALOG_FILE" ]; then
+            aws s3 cp "$CATALOG_FILE" "s3://${{ vars.BACKUP_BUCKET_NAME }}/$CATALOG_S3_KEY" \
+              && touch "$CATALOG_FILE.uploaded" \
+              || echo "::error::Upload of $CATALOG_S3_KEY FAILED -- 'Verify upload' will fail this job at its end"
           fi
 
       - name: Verify upload (restorability floor)
@@ -242,10 +270,34 @@ jobs:
             exit 1
           fi
           echo "Table list verified: $TABLES_S3_KEY (${TBL_BYTES} bytes, $(jq '.tables | length' "$TABLES_FILE") tables)"
+          # Catalog list (2.0c): the same three checks. Each list must be there, carry a
+          # count equal to its rows, and not be empty (scripts/restore-verify.py
+          # _cataloglist_problem). Once one has been written, restore-verify reds every
+          # later dump without one.
+          CATALOG_FILE="$RUNNER_TEMP/garden-$(date +%Y%m%d).catalog.json"
+          CATALOG_S3_KEY="db/garden-$(date +%Y%m%d).catalog.json"
+          CATALOG_FAIL="the DUMP $S3_KEY is uploaded and verified; only its catalog list is not. restore-verify will red this dump"
+          if ! jq -e --arg k "$S3_KEY" '.format == 1 and .dump_key == $k and (.taken_at | type == "string" and length > 0) and all(.triggers, .gv_functions, .extensions_functions; type == "object" and (.count | type == "number") and (.rows | type == "array") and .count == (.rows | length) and .count > 0)' "$CATALOG_FILE" > /dev/null; then
+            echo "::error::Catalog list FAILED — $CATALOG_FILE is missing or malformed (the prod read in the dump step failed, or a list is absent, empty or without its count); $CATALOG_FAIL"
+            exit 1
+          fi
+          if ! CAT_BYTES=$(aws s3api list-objects-v2 --bucket "${{ vars.BACKUP_BUCKET_NAME }}" --prefix "$CATALOG_S3_KEY" --query 'Contents[0].Size' --output text); then
+            echo "::error::Catalog list FAILED — could not query S3 for $CATALOG_S3_KEY; $CATALOG_FAIL"
+            exit 1
+          fi
+          if [ ! -f "$CATALOG_FILE.uploaded" ]; then
+            echo "::error::Catalog list FAILED — the upload of $CATALOG_S3_KEY did not succeed in 'Upload to S3' (S3 has '${CAT_BYTES}' bytes under that key: nothing, or an older list); $CATALOG_FAIL"
+            exit 1
+          fi
+          if [ -z "$CAT_BYTES" ] || [ "$CAT_BYTES" = "None" ]; then
+            echo "::error::Catalog list FAILED — object $CATALOG_S3_KEY not found in S3; $CATALOG_FAIL"
+            exit 1
+          fi
+          echo "Catalog list verified: $CATALOG_S3_KEY (${CAT_BYTES} bytes; $(jq -r '[.triggers.count, .gv_functions.count, .extensions_functions.count] | "\(.[0]) triggers, \(.[1]) gv functions, \(.[2]) extensions functions"' "$CATALOG_FILE"))"
 
       - name: Cleanup local dump
         if: always()
-        run: rm -f "${RUNNER_TEMP:?}"/garden-*.dump "${RUNNER_TEMP:?}"/garden-*.globals.sql "${RUNNER_TEMP:?}"/garden-*.tables.json "${RUNNER_TEMP:?}"/garden-*.tables.json.uploaded
+        run: rm -f "${RUNNER_TEMP:?}"/garden-*.dump "${RUNNER_TEMP:?}"/garden-*.globals.sql "${RUNNER_TEMP:?}"/garden-*.tables.json "${RUNNER_TEMP:?}"/garden-*.tables.json.uploaded "${RUNNER_TEMP:?}"/garden-*.catalog.json "${RUNNER_TEMP:?}"/garden-*.catalog.json.raw "${RUNNER_TEMP:?}"/garden-*.catalog.json.uploaded
 
 # S3 lifecycle rules must be configured on the backup bucket (infrastructure step, not here):
 #   - Retain last 14 daily dumps
