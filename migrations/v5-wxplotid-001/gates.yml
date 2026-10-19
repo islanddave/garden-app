@@ -1,0 +1,286 @@
+# gates.yml
+# v5-wxplotid-001: V5-SPACEPLOTTIER-001 (multi-space Phase 3 step 3.2a, plot_id on the weather tables).
+# Stamp 5.3.12-wxplotid-001. README.md has the apply order, the writers, the C-CONV pre-scan and why.
+#
+# ANY pre/post assertion failing during the apply is a HARD ABORT.
+#
+# ── EVERY post GATE IS SELF-ARMING ────────────────────────────────────────────────────────────────
+#   gate-invariants runs `gate_runner.py --all --phase post --continuous-only` against live prod and live
+#   staging on every migrations/** push and on a Tuesday cron, with no skip-if-unapplied logic. So each
+#   post gate returns rows only when stamp 5.3.12-wxplotid-001 exists AND its invariant is violated:
+#   vacuous before the apply, asserting after it. The one exception is post_schema_version_recorded, armed on
+#   the objects 0a creates (it cannot arm on the row it checks for).
+#   No `::regclass` anywhere: every relation is matched by pg_class.relname joined to pg_namespace.
+#   NO GATE NAMES plot_id AS AN IDENTIFIER OUTSIDE query_to_xml. PostgreSQL resolves a column named in the
+#   SQL text at parse time, before any EXISTS runs, so `w.plot_id` in a plain query would ERROR 42703 on
+#   every database before the apply (and after 0r), not pass vacuously. Catalog gates compare the name as a
+#   string; the data gates read rows through query_to_xml inside a CASE on the stamp (the v5-plottier-001
+#   idiom), whose inner text is parsed only when the stamp exists.
+#
+# ── THE EDITED GATES OF OTHER DIRECTORIES (C-CONV, V204 §2.2 and §3.0) ────────────────────────────
+#   v4-weatherdaily-001 post_no_extra_columns, v5-wxcoldband-001 post_no_column_outside_the_eight,
+#   post_primary_key_is_the_only_unique_index, post_exactly_one_fk_cascade_validated_to_spaces, and
+#   v5-plottier-001 post_plots_guard_functions_pinned each accept this step's objects only once its stamp
+#   exists (tolerant form). They reach main by promote before the sitting. README.md "C-CONV pre-scan".
+#
+# REHEARSED on a throwaway local PostgreSQL 17.10 loaded with prod's schema and a read-only copy of prod's
+# spaces, plots, weather and stamps (README.md "Rehearsal"). Not run against staging or prod as an applied
+# migration.
+
+pre:
+  - name: pre_not_already_applied
+    note: >
+      A stamp without the objects would arm every post gate against nothing. continuous false: false by
+      design once 0a runs.
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.3.12-wxplotid-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_plottier_applied
+    note: >
+      The keys reference plots (id, workspace_id): v5-plottier-001's stamp and its UNIQUE (id, workspace_id),
+      column for column.
+    sql: |
+      SELECT 'stamp 5.3.6-plottier-001'
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+      UNION ALL
+      SELECT 'plots_id_workspace_id_key'
+       WHERE NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'plots' AND t.relkind = 'r'
+                            AND c.conname = 'plots_id_workspace_id_key' AND c.contype = 'u'
+                            AND ARRAY(SELECT a.attname::text
+                                        FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+                                        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+                                       ORDER BY k.ord) = ARRAY['id', 'workspace_id'])
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_names_free
+    note: >
+      No column, constraint or relation already carries a name 0a creates (0a step 0 refuses the same thing).
+      continuous false: false by design once 0a runs.
+    sql: |
+      SELECT 'column ' || t.relname || '.plot_id'
+        FROM pg_attribute a
+        JOIN pg_class t     ON t.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname IN ('weather_daily', 'weather_cold_range') AND a.attname = 'plot_id' AND NOT a.attisdropped
+      UNION ALL
+      SELECT 'constraint ' || c.conname
+        FROM pg_constraint c
+       WHERE c.conname IN ('weather_daily_plot_id_space_id_fkey', 'weather_cold_range_plot_id_space_id_fkey')
+      UNION ALL
+      SELECT 'relation ' || c.relname
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+       WHERE c.relname IN ('weather_daily_plot_id_date_key', 'weather_cold_range_plot_id_night_date_init_time_key')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # DEFINITION PRE-GATE (V204 §3.0, DSA-18). 0a replaces guard_plots_repoint's body; it was written from 3.1's,
+  # whose md5 v5-plottier-001 pins. Read live 2026-10-19 on prod and staging: 0845482dfbb48a94ec3cd81bddd6d62f.
+  - name: pre_guard_plots_repoint_is_the_3_1_body
+    note: >
+      0a step 0 refuses the same thing. continuous false: 0a changes the body on purpose.
+    sql: |
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+                          WHERE p.proname = 'guard_plots_repoint' AND p.pronargs = 0
+                            AND md5(p.prosrc) = '0845482dfbb48a94ec3cd81bddd6d62f')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # THE BACKFILL PRE-GATE, run per env before the apply; 0a step 0 runs it again inside the transaction and
+  # prints the counts (NOTICE), with NO_EVIDENCE for a table that has no row. Dave's Space is the one spaces
+  # row: read 2026-10-19, one on prod and one on staging (V204 §0). Prod: 162 weather_daily and 6
+  # weather_cold_range rows, all of it. Staging: 0 weather_daily (NO_EVIDENCE) and 1 weather_cold_range.
+  - name: pre_daves_space_is_the_one_spaces_row
+    note: >
+      A second Space means this step must be re-planned, not re-run. continuous false: a pre-apply read.
+    sql: |
+      SELECT count(*) FROM public.spaces
+    expect: scalar_eq
+    value: 1
+    continuous: false
+
+  - name: pre_weather_rows_name_only_daves_space
+    note: >
+      One row per (table, Space) whose weather rows name a Space other than Dave's, with the count. With
+      more or fewer than one Space every weather row is listed (the subquery is empty). continuous false.
+    sql: |
+      SELECT 'weather_daily ' || w.space_id::text || ': ' || count(*)
+        FROM public.weather_daily w
+       WHERE w.space_id NOT IN (SELECT s.id FROM public.spaces s
+                                 WHERE (SELECT count(*) FROM public.spaces) = 1)
+       GROUP BY w.space_id
+      UNION ALL
+      SELECT 'weather_cold_range ' || c.space_id::text || ': ' || count(*)
+        FROM public.weather_cold_range c
+       WHERE c.space_id NOT IN (SELECT s.id FROM public.spaces s
+                                 WHERE (SELECT count(*) FROM public.spaces) = 1)
+       GROUP BY c.space_id
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_daves_space_has_one_live_default_plot
+    note: >
+      The backfill's target. One row per Space without exactly one live default plot. continuous false.
+    sql: |
+      SELECT s.id::text
+        FROM public.spaces s
+       WHERE (SELECT count(*) FROM public.plots p
+               WHERE p.workspace_id = s.id AND p.is_default AND p.deleted_at IS NULL) <> 1
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  # ARMED ON THE DDL, NOT ON ITSELF. 0a writes the objects and the row in one transaction, so a row here
+  # means someone hand-applied the DDL or deleted the stamp: the state that silences every gate below.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE (EXISTS (SELECT 1 FROM pg_attribute a
+                        JOIN pg_class t     ON t.oid = a.attrelid
+                        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                       WHERE t.relname IN ('weather_daily', 'weather_cold_range')
+                         AND a.attname = 'plot_id' AND NOT a.attisdropped)
+              OR EXISTS (SELECT 1 FROM pg_constraint c
+                          WHERE c.conname IN ('weather_daily_plot_id_space_id_fkey',
+                                              'weather_cold_range_plot_id_space_id_fkey')))
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+    expect: rowcount_eq
+    value: 0
+
+  # plot_id on both tables is a uuid with NO default. A default would stamp a plot nobody chose on every row a
+  # deployed writer adds (and a literal plot is a literal Space). Nullability is not pinned: 3.2d makes the
+  # column NOT NULL on purpose, after every writer stamps it.
+  - name: post_plot_id_columns_uuid_without_default
+    sql: |
+      SELECT want.relname
+        FROM (VALUES ('weather_daily'), ('weather_cold_range')) AS want(relname)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = want.relname
+                            AND c.column_name = 'plot_id' AND c.data_type = 'uuid'
+                            AND c.column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # The two keys into plots, read from the catalog columns (no search_path dependence): (plot_id, space_id) ->
+  # public.plots TABLE (id, workspace_id), in that order, ON DELETE RESTRICT ('r'), ON UPDATE NO ACTION ('a'),
+  # MATCH SIMPLE ('s', so a NULL plot_id is not checked: the deployed writers send none until 3.2b/3.2c). NOT
+  # VALID is allowed while plot_id is NULLable; once 3.2d makes it NOT NULL (the same file VALIDATEs), the key
+  # must be validated. One row per key that is missing or differs, naming it.
+  - name: post_plot_keys_exact
+    sql: |
+      SELECT want.conname
+        FROM (VALUES ('weather_daily', 'weather_daily_plot_id_space_id_fkey'),
+                     ('weather_cold_range', 'weather_cold_range_plot_id_space_id_fkey')) AS want(relname, conname)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_constraint c
+                 JOIN pg_class t      ON t.oid = c.conrelid
+                 JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+                 JOIN pg_class tgt    ON tgt.oid = c.confrelid
+                 JOIN pg_namespace tn ON tn.oid = tgt.relnamespace AND tn.nspname = 'public'
+                WHERE t.relname = want.relname AND c.conname = want.conname AND c.contype = 'f'
+                  AND tgt.relname = 'plots' AND tgt.relkind = 'r'
+                  AND ARRAY(SELECT a.attname::text
+                              FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+                              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+                             ORDER BY k.ord) = ARRAY['plot_id', 'space_id']
+                  AND ARRAY(SELECT a.attname::text
+                              FROM unnest(c.confkey) WITH ORDINALITY AS k(attnum, ord)
+                              JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum
+                             ORDER BY k.ord) = ARRAY['id', 'workspace_id']
+                  AND c.confdeltype = 'r' AND c.confupdtype = 'a' AND c.confmatchtype = 's'
+                  AND (c.convalidated
+                       OR NOT EXISTS (SELECT 1 FROM pg_attribute pa
+                                       WHERE pa.attrelid = c.conrelid AND pa.attname = 'plot_id'
+                                         AND pa.attnotnull)))
+    expect: rowcount_eq
+    value: 0
+
+  # The two plot keys as unique indexes, valid, exactly these columns, no predicate, NULLS DISTINCT (the text
+  # pg_get_indexdef printed on the rehearsal's PostgreSQL 17.10). 3.3a names them as ON CONFLICT arbiters and
+  # 3.4 turns them into the primary keys with ADD PRIMARY KEY USING INDEX, which refuses a partial or
+  # NULLS NOT DISTINCT index; 3.4 re-pins this gate when it renames them.
+  - name: post_plot_unique_indexes_exact
+    sql: |
+      SELECT want.idxname
+        FROM (VALUES ('weather_daily', 'weather_daily_plot_id_date_key',
+                      'CREATE UNIQUE INDEX weather_daily_plot_id_date_key ON public.weather_daily USING btree (plot_id, date)'),
+                     ('weather_cold_range', 'weather_cold_range_plot_id_night_date_init_time_key',
+                      'CREATE UNIQUE INDEX weather_cold_range_plot_id_night_date_init_time_key ON public.weather_cold_range USING btree (plot_id, night_date, init_time)'))
+             AS want(relname, idxname, def)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_index ix
+                 JOIN pg_class ic    ON ic.oid = ix.indexrelid
+                 JOIN pg_class t     ON t.oid = ix.indrelid
+                 JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                WHERE t.relname = want.relname AND ic.relname = want.idxname
+                  AND ix.indisunique AND ix.indisvalid AND pg_get_indexdef(ix.indexrelid) = want.def)
+    expect: rowcount_eq
+    value: 0
+
+  # ── DATA GATES. Rows read through query_to_xml behind the stamp (header). ─────────────────────────
+  # A ROW'S PLOT IS OF ITS OWN SPACE. The key says so for every row written or updated since 0a, the backfill
+  # included; NOT VALID means the catalog does not yet claim it for older rows (all of which had no plot when
+  # the key was added). This says it for every row, until 3.2d's VALIDATE makes it the catalog's word too. A row
+  # here means a write that bypassed the key (triggers disabled, session_replication_role = replica). One row
+  # per offending weather row: table, Space, day or night, plot.
+  - name: post_weather_plot_is_of_the_rows_own_space
+    sql: |
+      SELECT x::text
+        FROM unnest(CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+                         THEN xpath('/table/row/v/text()', query_to_xml(
+                                'SELECT ''weather_daily '' || w.space_id::text || '' '' || w."date"::text '
+                                '       || '': plot '' || w.plot_id::text AS v '
+                                '  FROM public.weather_daily w '
+                                ' WHERE w.plot_id IS NOT NULL '
+                                '   AND NOT EXISTS (SELECT 1 FROM public.plots p '
+                                '                    WHERE p.id = w.plot_id AND p.workspace_id = w.space_id) '
+                                'UNION ALL '
+                                'SELECT ''weather_cold_range '' || c.space_id::text || '' '' || c.night_date::text '
+                                '       || '': plot '' || c.plot_id::text '
+                                '  FROM public.weather_cold_range c '
+                                ' WHERE c.plot_id IS NOT NULL '
+                                '   AND NOT EXISTS (SELECT 1 FROM public.plots p '
+                                '                    WHERE p.id = c.plot_id AND p.workspace_id = c.space_id)',
+                                false, false, ''))
+                         ELSE ARRAY[]::xml[] END) AS x
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPT ─────────────────────────────────────────────────────────────────────────
+  # Run right after 0a. There is one Space, and every weather row of it carries its live default plot (the
+  # backfill ran and missed nothing). Zero weather rows passes: that is NO_EVIDENCE (staging's weather_daily),
+  # printed by 0a, not a failure. continuous false: the first row the deployed hourly writer adds after the
+  # apply has no plot until 3.2b's promote, as designed.
+  - name: post_receipt_daves_space_weather_carries_its_default_plot
+    continuous: false
+    sql: |
+      SELECT 'weather rows of Dave''s Space without its default plot, or not one Space'
+       WHERE CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+                  THEN (xpath('/table/row/n/text()', query_to_xml(
+                         'SELECT (SELECT count(*) FROM public.weather_daily w '
+                         '         WHERE w.plot_id IS DISTINCT FROM ( '
+                         '           SELECT p.id FROM public.plots p '
+                         '            WHERE p.workspace_id = w.space_id AND p.is_default AND p.deleted_at IS NULL)) '
+                         '     + (SELECT count(*) FROM public.weather_cold_range c '
+                         '         WHERE c.plot_id IS DISTINCT FROM ( '
+                         '           SELECT p.id FROM public.plots p '
+                         '            WHERE p.workspace_id = c.space_id AND p.is_default AND p.deleted_at IS NULL)) '
+                         '     + (SELECT count(*) WHERE (SELECT count(*) FROM public.spaces) <> 1) AS n',
+                         false, false, '')))[1]::text::bigint > 0
+                  ELSE false END
+    expect: rowcount_eq
+    value: 0

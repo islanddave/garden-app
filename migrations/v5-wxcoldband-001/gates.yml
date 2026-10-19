@@ -176,12 +176,19 @@ post:
   # a column that says otherwise invites a writer that needs UPDATE).
   # A NOT-IN list and not a count, per OPS-GATEFROZENCOUNT-001: a later column added on purpose is
   # one edit to this list. Keep the list NULL-free.
+  # WIDENED 2026-10-19 (V5-SPACEPLOTTIER-001, multi-space 3.2a, migrations/v5-wxplotid-001): NINE
+  # columns once stamp 5.3.12-wxplotid-001 exists, the ninth being plot_id (the plot the night was
+  # forecast for). TOLERANT (V204 §3.0): plot_id is admitted only with that stamp, which its 0a writes in
+  # the same transaction as the column, so this is green before the apply and after it, and red on a
+  # plot_id with no stamp and on any other column. The name stays: it is what gate-invariants reports.
   - name: post_no_column_outside_the_eight
     sql: |
       SELECT c.column_name FROM information_schema.columns c
        WHERE c.table_schema = 'public' AND c.table_name = 'weather_cold_range'
          AND c.column_name NOT IN ('space_id', 'night_date', 'init_time', 'p10_min_f', 'p50_min_f',
                                    'leads_read', 'leads_expected', 'created_at')
+         AND NOT (c.column_name = 'plot_id'
+                  AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001'))
          AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
     expect: rowcount_eq
     value: 0
@@ -226,6 +233,13 @@ post:
   # second arbiter nobody named (v4-weatherdaily-001's reason for a natural key). A plain index, added
   # later with a query plan to justify it, is not this gate's business. One row per extra unique
   # index, naming it.
+  # WIDENED 2026-10-19 (V5-SPACEPLOTTIER-001, multi-space 3.2a, migrations/v5-wxplotid-001): once stamp
+  # 5.3.12-wxplotid-001 exists the key is the primary key PLUS the one named plot key,
+  # weather_cold_range_plot_id_night_date_init_time_key, unique, valid and exactly (plot_id, night_date,
+  # init_time) with no predicate and NULLS DISTINCT (3.3a names it as the arbiter, 3.4 makes it the primary
+  # key USING INDEX). TOLERANT (V204 §3.0): before the stamp the pkey alone, as before; after it the named
+  # index is admitted only in that exact shape, and its absence is a row too. Any other unique index stays
+  # a row either side. 3.4 re-pins this gate when it moves the primary key.
   - name: post_primary_key_is_the_only_unique_index
     sql: |
       SELECT ic.relname::text
@@ -235,7 +249,22 @@ post:
         JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
        WHERE t.relname = 'weather_cold_range' AND ix.indisunique
          AND ic.relname <> 'weather_cold_range_pkey'
+         AND NOT (ic.relname = 'weather_cold_range_plot_id_night_date_init_time_key'
+                  AND ix.indisvalid
+                  AND pg_get_indexdef(ix.indexrelid)
+                      = 'CREATE UNIQUE INDEX weather_cold_range_plot_id_night_date_init_time_key ON public.weather_cold_range USING btree (plot_id, night_date, init_time)'
+                  AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001'))
          AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
+      UNION ALL
+      SELECT 'missing: weather_cold_range_plot_id_night_date_init_time_key'
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_index ix
+                           JOIN pg_class ic    ON ic.oid = ix.indexrelid
+                           JOIN pg_class t     ON t.oid = ix.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'weather_cold_range'
+                            AND ic.relname = 'weather_cold_range_plot_id_night_date_init_time_key')
     expect: rowcount_eq
     value: 0
 
@@ -246,27 +275,69 @@ post:
   #   (b) it is the ONLY foreign key on the table. A key to plants or inventory_items would make this
   #       a merge surface and a delete-guard case; a key to anything else is a design decision with
   #       its own delete action to argue.
+  # WIDENED 2026-10-19 (V5-SPACEPLOTTIER-001, multi-space 3.2a, migrations/v5-wxplotid-001; V204 §2.2): the
+  # design decision (b) asks for was made. Once stamp 5.3.12-wxplotid-001 exists the table has exactly TWO
+  # foreign keys: (a) unchanged, and the plot key weather_cold_range_plot_id_space_id_fkey, (plot_id,
+  # space_id) -> public.plots TABLE (id, workspace_id), in that column order, ON DELETE RESTRICT ('r'), ON
+  # UPDATE NO ACTION ('a'), MATCH SIMPLE ('s': a NULL plot_id is not checked, which is what keeps the deployed
+  # writer working until 3.2c). 0a adds it NOT VALID; it may stay NOT VALID while plot_id is NULLable and must
+  # be validated once plot_id is NOT NULL, because 3.2d validates the key and sets NOT NULL in one file.
+  # (V204 words that arm as "after 3.2d's schema_version row"; 3.2d's stamp is not named yet, and NOT NULL is
+  # the same event. 3.2d may re-key the arm on its stamp.) TOLERANT (V204 §3.0): before the stamp exactly the
+  # old assertion; after it the plot key is required in that exact shape. One row per finding, naming it.
   - name: post_exactly_one_fk_cascade_validated_to_spaces
     sql: |
-      SELECT 1
-       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001')
-         AND (   NOT EXISTS (SELECT 1 FROM pg_constraint c
-                               JOIN pg_class t      ON t.oid = c.conrelid
-                               JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
-                               JOIN pg_class tgt    ON tgt.oid = c.confrelid
-                               JOIN pg_namespace tn ON tn.oid = tgt.relnamespace AND tn.nspname = 'public'
-                               JOIN pg_attribute a  ON a.attrelid = c.conrelid  AND a.attnum = c.conkey[1]
-                               JOIN pg_attribute ta ON ta.attrelid = c.confrelid AND ta.attnum = c.confkey[1]
-                              WHERE t.relname = 'weather_cold_range' AND c.contype = 'f'
-                                AND c.conname = 'weather_cold_range_space_id_fkey'
-                                AND cardinality(c.conkey) = 1 AND a.attname = 'space_id'
-                                AND tgt.relname = 'spaces' AND tgt.relkind = 'r'
-                                AND ta.attname = 'id'
-                                AND c.confdeltype = 'c' AND c.convalidated)
-              OR (SELECT count(*) FROM pg_constraint c
-                    JOIN pg_class t     ON t.oid = c.conrelid
-                    JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
-                   WHERE t.relname = 'weather_cold_range' AND c.contype = 'f') <> 1)
+      WITH fk AS (
+        SELECT c.conname::text AS conname, c.confdeltype, c.confupdtype, c.confmatchtype, c.convalidated,
+               tn.nspname::text AS target_schema, tgt.relname::text AS target, tgt.relkind,
+               ARRAY(SELECT a.attname::text
+                       FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+                       JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+                      ORDER BY k.ord) AS cols,
+               ARRAY(SELECT a.attname::text
+                       FROM unnest(c.confkey) WITH ORDINALITY AS k(attnum, ord)
+                       JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum
+                      ORDER BY k.ord) AS refcols
+          FROM pg_constraint c
+          JOIN pg_class t      ON t.oid = c.conrelid
+          JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+          JOIN pg_class tgt    ON tgt.oid = c.confrelid
+          JOIN pg_namespace tn ON tn.oid = tgt.relnamespace
+         WHERE t.relname = 'weather_cold_range' AND c.contype = 'f'
+      ), armed AS (
+        SELECT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-wxcoldband-001') AS cold,
+               EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001') AS plot,
+               EXISTS (SELECT 1 FROM pg_attribute a
+                         JOIN pg_class t     ON t.oid = a.attrelid
+                         JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                        WHERE t.relname = 'weather_cold_range' AND a.attname = 'plot_id'
+                          AND NOT a.attisdropped AND a.attnotnull) AS plot_id_not_null
+      )
+      SELECT 'missing or different: weather_cold_range_space_id_fkey'
+        FROM armed
+       WHERE armed.cold
+         AND NOT EXISTS (SELECT 1 FROM fk
+                          WHERE fk.conname = 'weather_cold_range_space_id_fkey'
+                            AND fk.cols = ARRAY['space_id'] AND fk.target_schema = 'public'
+                            AND fk.target = 'spaces' AND fk.relkind = 'r' AND fk.refcols = ARRAY['id']
+                            AND fk.confdeltype = 'c' AND fk.convalidated)
+      UNION ALL
+      SELECT 'missing or different: weather_cold_range_plot_id_space_id_fkey'
+        FROM armed
+       WHERE armed.cold AND armed.plot
+         AND NOT EXISTS (SELECT 1 FROM fk
+                          WHERE fk.conname = 'weather_cold_range_plot_id_space_id_fkey'
+                            AND fk.cols = ARRAY['plot_id', 'space_id'] AND fk.target_schema = 'public'
+                            AND fk.target = 'plots' AND fk.relkind = 'r'
+                            AND fk.refcols = ARRAY['id', 'workspace_id']
+                            AND fk.confdeltype = 'r' AND fk.confupdtype = 'a' AND fk.confmatchtype = 's'
+                            AND (fk.convalidated OR NOT armed.plot_id_not_null))
+      UNION ALL
+      SELECT 'other foreign key: ' || fk.conname
+        FROM fk, armed
+       WHERE armed.cold
+         AND fk.conname <> 'weather_cold_range_space_id_fkey'
+         AND NOT (armed.plot AND fk.conname = 'weather_cold_range_plot_id_space_id_fkey')
     expect: rowcount_eq
     value: 0
 

@@ -324,10 +324,18 @@ post:
 
   # The two guard bodies, not SECURITY DEFINER (they read, and run as the caller), search_path pinned. md5
   # values: see the header.
+  # EDITED 2026-10-19 (V5-SPACEPLOTTIER-001, multi-space 3.2a, migrations/v5-wxplotid-001): 3.2a's 0a replaces
+  # guard_plots_repoint's body to read plot_id (behind its own md5 pre-gate on 0845482d...), in the same
+  # transaction as stamp 5.3.12-wxplotid-001. TOLERANT (V204 §3.0): the body this gate wants is 3.1's while that
+  # stamp is absent and 3.2a's (467a31ca...) once it exists, so it is green before and after the apply and red on
+  # either body in the other state. guard_plots_delete is unchanged.
   - name: post_plots_guard_functions_pinned
     sql: |
       SELECT want.proname
-        FROM (VALUES ('guard_plots_repoint', '0845482dfbb48a94ec3cd81bddd6d62f'),
+        FROM (VALUES ('guard_plots_repoint',
+                      CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+                           THEN '467a31ca4b105064f4996442d900c7e3'
+                           ELSE '0845482dfbb48a94ec3cd81bddd6d62f' END),
                      ('guard_plots_delete',  '4f7edd92691a0a37f5788d524893613e'))
              AS want(proname, body_md5)
        WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')

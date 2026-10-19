@@ -131,6 +131,13 @@ post:
       applied when `gate-invariants.yml` went red with `rowcount=5`; the five columns are intended
       and the repair is naming them, never neutralising the gate. Before widening any table, grep
       migrations/*/gates.yml for its name and read every closed-world gate you find.
+
+      WIDENED 2026-10-19 (V5-SPACEPLOTTIER-001, multi-space 3.2a, migrations/v5-wxplotid-001) with
+      plot_id, in the TOLERANT form V204 §3.0 asks of an edited gate: plot_id is admitted only once
+      stamp 5.3.12-wxplotid-001 exists, which its 0a writes in the same transaction as the column. So
+      the gate is green before that apply (no plot_id) and after it (plot_id and the stamp), and red on
+      a plot_id with no stamp (hand-applied DDL) and on any other column, as before. This edit ships to
+      main before the sitting (gate-invariants' cron runs main's copy).
     sql: |
       SELECT column_name FROM information_schema.columns
        WHERE table_schema='public' AND table_name='weather_daily'
@@ -138,6 +145,8 @@ post:
                                  'precip_source','et0_source','created_at','updated_at',
                                  'daylight_s','sunshine_s','solar_mj_m2','wind_max_mph',
                                  'precip_hours')
+         AND NOT (column_name = 'plot_id'
+                  AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001'))
     expect: rowcount_eq
     value: 0
     continuous: true    # flipped 2026-08-12: applied to staging (rehearsed 0r) + prod; sweep may assert
