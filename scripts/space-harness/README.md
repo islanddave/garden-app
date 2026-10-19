@@ -133,12 +133,12 @@ driver through an in-process WebSocket proxy that forwards to that one address.
 
 The live pair creates two Neon branches and two endpoints. It is a session step, not a lane step, and it
 runs only when the fleet allows (build sheet P20: `list` shows 6 or fewer temporary branches). The pair
-counts against the same budget as the day's `--slug ms1` safety copy. Neither branch is ever deleted by the
+counts against the same budget as the day's `--slug ms2` safety copy. Neither branch is ever deleted by the
 harness; both expire one day after creation.
 
 1. **Fleet.** `python3 scripts/space-harness/harness.py fleet --env-file ../garden-app/.env.local`. It counts
    self-cleaning branches the way integrity-weekly does (`neon_branch_select.self_cleaning`) and refuses when
-   they + 2 for the pair + 1 held for the day's `--slug ms1` sitting copy (until it exists) exceed
+   they + 2 for the pair + 1 held for the day's `--slug ms2` sitting copy (until it exists) exceed
    `NEON_MAX_EXPIRING` (default 6): 3 or fewer before the sitting copy, 4 or fewer after it. (Row 1.12's
    "refuse at 9" and P20's "6 or fewer" both miss that integrity-weekly caps expiring branches at 6.)
    It also checks the weekly rule's second cap, counted by `neon_branch_select.hygiene_alerts` itself: all

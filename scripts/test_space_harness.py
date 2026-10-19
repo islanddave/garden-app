@@ -120,7 +120,7 @@ def test_fleet_budget_holds_a_slot_for_the_sitting_copy(neon):
 
 def test_fleet_budget_once_the_sitting_copy_exists(neon):
     fake = neon(temps=3)
-    fake.branches.append(br("sitting-ms1-prod-preapply-20261016"))
+    fake.branches.append(br("sitting-ms2-prod-preapply-20261016"))
     assert npair.fleet_check(ENV)["reserved_for_sitting_copy"] == 0       # 4 + 2 = 6 fits
     fake.branches.append(br("sitting-other-prod-preapply-20261016"))
     with pytest.raises(npair.Refused, match="5 self-cleaning"):

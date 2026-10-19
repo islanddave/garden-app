@@ -18,7 +18,7 @@ then the branches are classified the way integrity-weekly does: a branch with
 a usable expiry is self-cleaning (`neon_branch_select.self_cleaning`) and is
 capped by NEON_MAX_EXPIRING (default 6, `neon_branch_select.py:263`), not by
 the branch cap. The pair adds 2 such branches, and the day's sitting safety
-copy (`--slug ms1`) draws on the same budget, so a slot is held for it until
+copy (`--slug ms2`) draws on the same budget, so a slot is held for it until
 it exists: refuse when expiring + 2 + (that copy absent ? 1 : 0) > the limit.
 The weekly check's second cap is read too, by its own `hygiene_alerts`: all
 branches minus self-cleaning strays must stay within SNAP_KEEP + 4 (10), and
@@ -64,7 +64,7 @@ FLEET_MAX_TTL_DAYS = 14     # neon_branch_select.py:262 (NEON_MAX_TTL_DAYS)
 FLEET_SNAP_KEEP = 6
 FLEET_STRAY_MAX_AGE_DAYS = 7  # neon_branch_select.py:260; feeds only alerts the fleet check does not read
 PAIR_BRANCHES = 2
-SITTING_SLUG = "ms1"        # the day's sitting safety copy (build sheet section 3R) shares the budget
+SITTING_SLUG = "ms2"        # the day's sitting safety copy (V204 §2.8: Phase 2+ sittings use --slug ms2) shares the budget
 PAIR_DAYS = 1
 PAIR_MAX_EXPIRY_HOURS = 48
 PAIR_NAME_RE = re.compile(r"^sitting-harness-[a-z0-9-]+-\d{4}-(?P<side>[ab])-prod-preapply-\d{8}$")
