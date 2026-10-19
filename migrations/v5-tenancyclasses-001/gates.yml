@@ -1,6 +1,6 @@
 # gates.yml
 # v5-tenancyclasses-001: V5-SPACETENANCYKEY-001 (multi-space plan V204 step 2.0b, §2.1): the relkind gate.
-# Stamp 5.3.6-tenancyclasses-001. README.md has the apply order, the arming decision and the C-CONV pre-scan.
+# Stamp 5.3.8-tenancyclasses-001. README.md has the apply order, the arming decision and the C-CONV pre-scan.
 #
 # ── WHAT IT ASSERTS ───────────────────────────────────────────────────────────────────────────────
 #   The live catalog and lambda/tenancy-classes.json name the same relations. Every relation of relkind r, p, v,
@@ -32,7 +32,7 @@ pre:
   - name: pre_not_already_applied
     note: continuous false; false by design once 0a runs.
     sql: |
-      SELECT version FROM public.schema_version WHERE version = '5.3.6-tenancyclasses-001'
+      SELECT version FROM public.schema_version WHERE version = '5.3.8-tenancyclasses-001'
     expect: rowcount_eq
     value: 0
     continuous: false
@@ -194,7 +194,7 @@ post:
       V204 §2.1 / step 2.0b relkind gate, continuous, both envs. Red = a relation exists that
       lambda/tenancy-classes.json does not class (add its row, the snapshot and these VALUES in the push that
       creates it, pending on its stamp), or a classed relation is gone or changed relkind (stale row). Armed on
-      5.3.6-tenancyclasses-001.
+      5.3.8-tenancyclasses-001.
     sql: |
       WITH tenancy_classes (nspname, relname, relkind, class, tenancy_column, pending_stamp) AS (
         VALUES
@@ -330,12 +330,12 @@ post:
       )
       SELECT 'unclassed ' || l.nspname || '.' || l.relname || ' (relkind ' || l.relkind || ')' AS finding
         FROM live l
-         WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-tenancyclasses-001')
+         WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.8-tenancyclasses-001')
            AND NOT EXISTS (SELECT 1 FROM tenancy_classes k WHERE k.nspname = l.nspname AND k.relname = l.relname)
       UNION ALL
       SELECT 'stale ' || k.nspname || '.' || k.relname || ' (relkind ' || k.relkind || ')'
         FROM tenancy_classes k
-         WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-tenancyclasses-001')
+         WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.8-tenancyclasses-001')
            AND (k.pending_stamp IS NULL OR EXISTS (SELECT 1 FROM public.schema_version v WHERE v.version = k.pending_stamp))
            AND NOT EXISTS (SELECT 1 FROM live l WHERE l.nspname = k.nspname AND l.relname = k.relname AND l.relkind = k.relkind)
     expect: rowcount_eq

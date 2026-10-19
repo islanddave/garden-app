@@ -9,7 +9,7 @@ relations. The repo half is `lambda/tenancy-classes.test.js` (every relation the
 row against the prod catalog's `attnotnull`, read from the committed snapshot `tests/tenancy-catalog.prod.json`; the
 VALUES lists here equal to the file, N16).
 
-Stamp **`5.3.6-tenancyclasses-001`** (`<next version>-<dir>`, as `v5-plottier-001`; rename at push time if the release
+Stamp **`5.3.8-tenancyclasses-001`** (`<next version>-<dir>`, as `v5-plottier-001`; rename at push time if the release
 number moves).
 
 | file | what it does |
@@ -32,7 +32,7 @@ live AS (relkind r/p/v/m/f, every schema but pg_catalog, information_schema, pg_
                                       unless its pending_stamp is set and not yet in schema_version
 ```
 
-Both arms behind `EXISTS (… schema_version WHERE version = '5.3.6-tenancyclasses-001')`. No `::regclass`. The copy
+Both arms behind `EXISTS (… schema_version WHERE version = '5.3.8-tenancyclasses-001')`. No `::regclass`. The copy
 patterns are anchored regexes on `relname` (a LIKE would read `_` as a wildcard), the same list as the class file's
 `copyPatterns`; the test pins every gate's predicates to it. No other gate in the tree excludes copies by pattern
 today (grep below), so this is the only consumer.

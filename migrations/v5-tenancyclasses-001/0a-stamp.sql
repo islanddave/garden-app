@@ -1,5 +1,5 @@
 -- 0a-stamp.sql
--- schema_version: 5.3.6-tenancyclasses-001
+-- schema_version: 5.3.8-tenancyclasses-001
 -- V5-SPACETENANCYKEY-001 (multi-space plan V204 step 2.0b, §2.1): arms the relkind gate
 --   post_tenancy_classes_closed_world. Plan: project-state/_multispace-20261015/multispace-prep-plan-V204-20261019.0900.md.
 --
@@ -176,7 +176,7 @@ END $$;
 
 -- ── 1. The stamp. Arming and applying are one event. ─────────────────────────────────────────────
 INSERT INTO public.schema_version (version, description)
-VALUES ('5.3.6-tenancyclasses-001',
+VALUES ('5.3.8-tenancyclasses-001',
         'TENANCYCLASSES: V5-SPACETENANCYKEY-001 (2.0b). Arms post_tenancy_classes_closed_world: the live catalog '
         'and lambda/tenancy-classes.json name the same relations. No DDL; no other data.')
 ON CONFLICT (version) DO NOTHING;

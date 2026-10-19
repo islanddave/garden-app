@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.8",
+    "date": "2026-10-19",
+    "highlights": [
+      "Behind the scenes: every table is now classed by who owns its data, and the nightly backup check compares a restore with the backup's own list of triggers and functions."
+    ]
+  },
+  {
     "version": "5.3.7",
     "date": "2026-10-19",
     "highlights": [

@@ -35,7 +35,7 @@ import yaml
 
 HERE = Path(__file__).resolve().parent
 TREE = HERE.parent.parent
-STAMP = '5.3.6-tenancyclasses-001'
+STAMP = '5.3.8-tenancyclasses-001'
 PLOTTIER = TREE / 'migrations' / 'v5-plottier-001' / '0a-plots.sql'
 PSQL = os.environ.get('PSQL', '/opt/homebrew/opt/postgresql@17/bin/psql')
 GATE = 'post_tenancy_classes_closed_world'
