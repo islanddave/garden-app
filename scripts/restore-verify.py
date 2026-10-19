@@ -25,8 +25,17 @@ read-only SELECTs against live prod — never hardcoded):
   - FULL-SCOPE dumps additionally: schemas {public, gv, extensions} all exist;
     the extensions-schema function inventory (uuid_generate_v4 etc — all PLAIN
     functions in prod, so pg_dump carries them), the gv.* function inventory
-    (~11 fns), and the non-internal trigger inventory on public tables all
-    match prod (missing = HARD; extra = warn).
+    (~11 fns), and the non-internal trigger inventory all match the CATALOG
+    LIST written beside the dump when it was taken (<key minus .dump>.catalog.json;
+    V5-SPACETENANCYKEY-001 step 2.0c, RIA I2): listed but missing from restore =
+    HARD; in restore but not listed = warn. Live prod is not consulted for them,
+    so a trigger prod gains after the dump no longer reds that dump's verify.
+    The list is REQUIRED (absent, stale, empty or missing a count = HARD) once
+    its writer was live on this leg, i.e. the same bucket+prefix holds a
+    non-rehearsal catalog list written no later than the dump. A dump with no
+    such list before it predates the writer: it falls back to the live
+    comparison (public triggers, function names; missing = HARD, extra = warn)
+    and says so in one line, the table list's own rollout rule.
 
 TRANSITION BOUNDARY (full-scope dump rollout): dumps produced by the pre-fix
 dumper are public-only (--schema=public). Scope is detected PER DUMP by probing
@@ -299,6 +308,142 @@ def load_tablelist(s3, cfg, dump_key):
     return {"key": key, "taken_at": doc["taken_at"], "tables": set(doc["tables"])}
 
 
+# --- S3: the dump-time catalog list (2.0c) ------------------------------------
+
+CATALOG_LIST_FORMAT = 1
+CATALOG_LISTS = ("triggers", "gv_functions", "extensions_functions")
+# ONE text, run verbatim by both writers (backup.yml, snap.py CATALOG_LIST_SQL)
+# and by catalog_lists() on the restore, always after `SET search_path TO
+# pg_catalog`: with nothing else on the path, regclass/regproc/regprocedure
+# print schema-qualified, so prod and the restore render the same rows. Each
+# list carries its own count; a list whose count is absent or disagrees with
+# its rows is not trusted.
+CATALOG_LIST_SQL = (
+    "SELECT json_build_object("
+    "'triggers', (SELECT json_build_object('count', count(*), 'rows', COALESCE(json_agg("
+    "json_build_array(t.tgname, t.tgrelid::regclass::text, t.tgtype, t.tgfoid::regproc::text, t.tgenabled) "
+    "ORDER BY t.tgrelid::regclass::text, t.tgname), '[]'::json)) "
+    "FROM pg_trigger t WHERE NOT t.tgisinternal), "
+    "'gv_functions', (SELECT json_build_object('count', count(*), 'rows', COALESCE(json_agg("
+    "p.oid::regprocedure::text ORDER BY p.oid::regprocedure::text), '[]'::json)) "
+    "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'gv'), "
+    "'extensions_functions', (SELECT json_build_object('count', count(*), 'rows', COALESCE(json_agg("
+    "p.oid::regprocedure::text ORDER BY p.oid::regprocedure::text), '[]'::json)) "
+    "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'extensions'))"
+)
+
+
+def cataloglist_key_for(dump_key):
+    """<dump key minus .dump>.catalog.json, beside the table list."""
+    base = dump_key[: -len(".dump")] if dump_key.endswith(".dump") else dump_key
+    return base + ".catalog.json"
+
+
+def _catalog_row_ok(name, row):
+    if name == "triggers":
+        return (isinstance(row, list) and len(row) == 5
+                and all(isinstance(row[i], str) and row[i] for i in (0, 1, 3, 4))
+                and isinstance(row[2], int) and not isinstance(row[2], bool))
+    return isinstance(row, str) and bool(row)
+
+
+def _cataloglist_problem(doc, dump_key):
+    """Why this parsed catalog list cannot be trusted, or None. Each list must be
+    there, carry its count, match it, and not be empty: comparing against
+    nothing passes anything."""
+    if not isinstance(doc, dict):
+        return "not a JSON object"
+    if doc.get("format") != CATALOG_LIST_FORMAT:
+        return f"format {doc.get('format')!r} != {CATALOG_LIST_FORMAT}"
+    if doc.get("dump_key") != dump_key:
+        return f"written for dump {doc.get('dump_key')!r}, not {dump_key!r}"
+    if not isinstance(doc.get("taken_at"), str) or not doc["taken_at"]:
+        return "no taken_at"
+    for name in CATALOG_LISTS:
+        lst = doc.get(name)
+        if not isinstance(lst, dict):
+            return f"{name} list absent"
+        count = lst.get("count")
+        if not isinstance(count, int) or isinstance(count, bool):
+            return f"{name} list has no count line"
+        rows = lst.get("rows")
+        if not isinstance(rows, list):
+            return f"{name} rows absent or not a list"
+        if count != len(rows):
+            return f"{name} count {count} != {len(rows)} rows"
+        if not rows:
+            return f"{name} list is empty"
+        bad = [r for r in rows if not _catalog_row_ok(name, r)]
+        if bad:
+            return f"{name} rows of the wrong shape: {bad[:3]}"
+    return None
+
+
+def _catalog_sets(doc):
+    """{list name: set of rows}; trigger rows as tuples."""
+    return {name: {tuple(r) if isinstance(r, list) else r for r in doc[name]["rows"]}
+            for name in CATALOG_LISTS}
+
+
+def load_cataloglist(s3, cfg, dump_key):
+    """The catalog list written with THIS dump, or None when the dump predates
+    the writer on this leg (fallback to live, the table list's rollout rule).
+
+    Same listing, presence and freshness rules as load_tablelist. What differs
+    is absence: the list is REQUIRED once any non-rehearsal catalog list in this
+    bucket+prefix was written no later than the dump (the writer was live here
+    by then); a required list that is absent or older than its dump raises.
+    A list that is there but cannot be read or parsed raises, required or not."""
+    key = cataloglist_key_for(dump_key)
+    paginator = s3.get_paginator("list_objects_v2")
+    listed = dumped = None
+    earlier = []
+    for page in paginator.paginate(Bucket=cfg.backup_bucket, Prefix=cfg.dump_prefix):
+        for obj in page.get("Contents", []):
+            if obj["Key"] == key:
+                listed = obj
+            elif obj["Key"] == dump_key:
+                dumped = obj
+            if obj["Key"].endswith(".catalog.json") and not _is_rehearsal_key(obj["Key"], cfg.rehearsal_version):
+                earlier.append(obj)
+    dump_at = (dumped or {}).get("LastModified")
+    # Undatable entries count: refusing the fallback is the strict side.
+    precedent = sorted(o["Key"] for o in earlier
+                       if dump_at is None or o.get("LastModified") is None or o["LastModified"] <= dump_at)
+    list_at = (listed or {}).get("LastModified")
+    why = None
+    if listed is None:
+        why = "absent"
+    elif list_at is None or dump_at is None:
+        why = (f"written {list_at}, which cannot be shown to be newer than its dump "
+               f"(written {dump_at})")
+    elif list_at < dump_at:
+        why = f"written {list_at}, OLDER than its dump (written {dump_at}): left by an earlier run"
+    if why is not None:
+        if precedent:
+            raise VerifyError(
+                f"catalog list {key} for this dump is {why}, but the catalog writer was live on this "
+                f"leg by then ({precedent[-1]} was written no later than the dump) -- refusing to "
+                f"fall back to live prod"
+            )
+        if listed is not None:
+            sys.stdout.write(f"::warning::[restore-verify] catalog list {key} is {why}: NOT used\n")
+        return None
+    try:
+        doc = json.loads(s3.get_object(Bucket=cfg.backup_bucket, Key=key)["Body"].read())
+    except Exception as e:  # noqa: BLE001 — unreadable must red, whatever the cause
+        raise VerifyError(
+            f"catalog list {key} exists but cannot be read ({type(e).__name__}: {e}) — "
+            f"refusing to treat it as absent or empty"
+        )
+    problem = _cataloglist_problem(doc, dump_key)
+    if problem:
+        raise VerifyError(
+            f"catalog list {key} is malformed ({problem}) — refusing to treat it as absent or empty"
+        )
+    return {"key": key, "taken_at": doc["taken_at"], **_catalog_sets(doc)}
+
+
 # --- psql introspection (used against BOTH the scratch target and prod) ------
 
 def _psql_scalar(url, sql):
@@ -366,6 +511,27 @@ def trigger_set(url):
         "WHERE NOT t.tgisinternal AND n.nspname='public';",
     )
     return set(t for t in out.split(",") if t)
+
+
+def catalog_lists(url):
+    """The restored database's catalog lists: CATALOG_LIST_SQL, after the same
+    search_path pin the writers use. {list name: set of rows}."""
+    proc = subprocess.run(
+        ["psql", url, "-X", "-q", "-tA", "-v", "ON_ERROR_STOP=1",
+         "-c", "SET search_path TO pg_catalog", "-c", CATALOG_LIST_SQL],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise VerifyError(f"psql catalog-list read failed: {proc.stderr.strip()}")
+    try:
+        doc = json.loads(proc.stdout)
+    except ValueError as e:
+        raise VerifyError(f"catalog-list read returned no JSON ({e})")
+    if not isinstance(doc, dict) or any(not isinstance(doc.get(n), dict)
+                                        or not isinstance(doc[n].get("rows"), list)
+                                        for n in CATALOG_LISTS):
+        raise VerifyError("catalog-list read returned an unexpected shape")
+    return _catalog_sets(doc)
 
 
 def row_counts(url, tables):
@@ -472,17 +638,20 @@ def restore_dump(cfg, dump_path, target_uri):
 
 # --- coherence check ---------------------------------------------------------
 
-def assess(cfg, restored_uri, full_scope, tablelist=None):
+def assess(cfg, restored_uri, full_scope, tablelist=None, catalog=None):
     """Compare the restored scratch database against the dump's own table list
-    (tablelist, from load_tablelist) and live prod. Returns (ok: bool, report:
-    dict). ok=False means a HARD incoherence (alert). tablelist=None is the
-    fallback for a dump with no list: the table-set is compared with live prod.
-    Everything else is grounded from prod at runtime (read-only), list or not."""
+    (tablelist, from load_tablelist), its own catalog list (catalog, from
+    load_cataloglist) and live prod. Returns (ok: bool, report: dict). ok=False
+    means a HARD incoherence (alert). tablelist=None is the fallback for a dump
+    with no list: the table-set is compared with live prod; catalog=None the
+    same for triggers and functions. Row counts are grounded from prod at
+    runtime (read-only), lists or not."""
     report = {"hard_failures": [], "warnings": [], "info": [], "full_scope": full_scope}
     # What classify_failure() reads. ahead_failures = the hard failures that
     # "prod gained a table since the dump" fully explains.
     facts = {"table_source": "live" if tablelist is None else "list",
-             "missing_tables": [], "row_failures": [], "ahead_failures": []}
+             "struct_source": "live" if catalog is None else "list",
+             "missing_tables": [], "missing_objects": [], "row_failures": [], "ahead_failures": []}
     report["facts"] = facts
 
     prod_tables = table_set(cfg.neon_backup_url)
@@ -584,6 +753,27 @@ def assess(cfg, restored_uri, full_scope, tablelist=None):
             report["hard_failures"].append(
                 f"schemas missing from restore: {sorted(missing_schemas)}"
             )
+    if full_scope and catalog is not None:
+        # 2.0c: against the lists written with the dump, never live prod. A
+        # trigger or function prod gained after the dump is in neither the list
+        # nor the restore, so it cannot red; one the restore lost still does.
+        restored = catalog_lists(restored_uri)
+        for name in CATALOG_LISTS:
+            lost = catalog[name] - restored[name]
+            unlisted = restored[name] - catalog[name]
+            report[f"{name}_counts"] = {"listed": len(catalog[name]), "restored": len(restored[name])}
+            if lost:
+                report["hard_failures"].append(
+                    f"{name} in this dump's catalog list ({catalog['key']}) but MISSING from "
+                    f"restore: {sorted(lost)} (they existed in prod when the dump was taken)"
+                )
+                facts["missing_objects"].append(name)
+            if unlisted:
+                report["warnings"].append(
+                    f"{name} in restore but not in the dump's catalog list: {sorted(unlisted)} "
+                    f"(created between the list read and the dump's snapshot)"
+                )
+    elif full_scope:
         for schema in ("extensions", "gv"):
             prod_fns = func_set(cfg.neon_backup_url, schema)
             rest_fns = func_set(restored_uri, schema) if schema in restored_schemas else set()
@@ -657,6 +847,11 @@ def classify_failure(report):
     if facts.get("table_source") == "list" and missing:
         return "TABLES LOST BY RESTORE", (
             f"{missing} existed in prod when the dump was taken and are absent from the restore"
+        )
+    if facts.get("struct_source") == "list" and facts.get("missing_objects"):
+        return "OBJECTS LOST BY RESTORE", (
+            f"{facts['missing_objects']} rows in the dump's catalog list are absent from the restore "
+            f"(first: {first})"
         )
     if rows:
         return "ROW COUNTS FAR BELOW FLOOR (wrong dump?)", (
@@ -749,6 +944,22 @@ def _verify(cfg, s3, dump):
             f"taken {tablelist['taken_at']}) — the restore is compared with the list written "
             f"with this dump\n"
         )
+    catalog = load_cataloglist(s3, cfg, dump_key)
+    if catalog is None:
+        struct_source = "LIVE prod (fallback: the dump predates its catalog list)"
+        sys.stdout.write(
+            f"::notice::[restore-verify] no catalog list for this dump ({cataloglist_key_for(dump_key)}) "
+            f"and none earlier on this leg — the dump predates the catalog writer; triggers and "
+            f"functions are compared with LIVE prod instead\n"
+        )
+    else:
+        struct_source = f"the dump-time list {catalog['key']}"
+        sys.stdout.write(
+            f"[restore-verify] catalog list {catalog['key']} ("
+            + ", ".join(f"{len(catalog[n])} {n}" for n in CATALOG_LISTS)
+            + f", taken {catalog['taken_at']}) — triggers and functions are compared with the "
+            f"lists written with this dump\n"
+        )
     ensure_empty_target(cfg.scratch_url)
     with tempfile.TemporaryDirectory() as td:
         path = os.path.join(td, "verify.dump")
@@ -772,7 +983,7 @@ def _verify(cfg, s3, dump):
         else:
             sys.stdout.write("[restore-verify] no globals file for this dump (ok — restore is --no-owner)\n")
         restore_dump(cfg, path, cfg.scratch_url)
-    ok, report = assess(cfg, cfg.scratch_url, full_scope, tablelist=tablelist)
+    ok, report = assess(cfg, cfg.scratch_url, full_scope, tablelist=tablelist, catalog=catalog)
     if globals_report and globals_report["unexpected"]:
         report["warnings"].append(
             f"globals restore: {len(globals_report['unexpected'])} unexpected error(s); "
@@ -784,7 +995,7 @@ def _verify(cfg, s3, dump):
         sys.stdout.write(f"[restore-verify] WARN: {w}\n")
     if not ok:
         klass, detail = classify_failure(report)
-        emit_verdict(klass, detail, dump, table_source)
+        emit_verdict(klass, detail, dump, f"{table_source}; triggers and functions with {struct_source}")
         for f in report["hard_failures"]:
             sys.stderr.write(f"[restore-verify] FAIL: {f}\n")
         raise _verdict_done(VerifyError(

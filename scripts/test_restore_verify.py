@@ -434,7 +434,7 @@ def _run_fixture(monkeypatch, assess_result):
     monkeypatch.setattr(rv, "probe_dump_scope", lambda p: (True, {"gv", "extensions"}))
     monkeypatch.setattr(rv, "find_globals_key", lambda *a: None)
     monkeypatch.setattr(rv, "restore_dump", lambda *a, **k: None)
-    monkeypatch.setattr(rv, "assess", lambda cfg2, uri, full_scope, tablelist=None: assess_result)
+    monkeypatch.setattr(rv, "assess", lambda cfg2, uri, full_scope, tablelist=None, catalog=None: assess_result)
     return cfg, s3
 
 
@@ -886,6 +886,312 @@ def test_age_format():
     assert rv._age(D(2026, 10, 8), now) == "1h02m"
     assert rv._age(D(2026, 10, 5), now) == "3d01h"
     assert rv._age(None, now) == "unknown age"
+
+
+# --- dump-time catalog list (2.0c, RIA I2): triggers + gv/extensions functions --
+
+CAT = "db/garden-20261008.catalog.json"
+CAT_TRG = [["prevent_ownership_transfer", "public.event_log", 7, "public.prevent_ownership_transfer", "O"],
+           ["set_updated_at", "public.plants", 19, "public.set_updated_at", "O"]]
+CAT_GV = ["gv.bump_version()", "gv.slugify(text)"]
+CAT_EXT = ["extensions.uuid_generate_v4()", "extensions.uuid_nil()"]
+
+
+def _lists(trg=None, gv=None, ext=None):
+    rows = {"triggers": CAT_TRG if trg is None else trg,
+            "gv_functions": CAT_GV if gv is None else gv,
+            "extensions_functions": CAT_EXT if ext is None else ext}
+    return {n: {"count": len(r), "rows": r} for n, r in rows.items()}
+
+
+def _cat_doc(dump_key=DUMP, **over):
+    doc = {"format": 1, "dump_key": dump_key, "taken_at": "2026-10-08T14:13:21Z", **_lists()}
+    doc.update(over)
+    return doc
+
+
+def _cat_body(dump_key=DUMP, **over):
+    return json.dumps(_cat_doc(dump_key, **over)).encode()
+
+
+def _cat(**lists):
+    return {"key": CAT, "taken_at": "2026-10-08T14:13:21Z", **rv._catalog_sets(_lists(**lists))}
+
+
+def _restored(monkeypatch, **lists):
+    """What catalog_lists() reads from the restore."""
+    monkeypatch.setattr(rv, "catalog_lists", lambda url: rv._catalog_sets(_lists(**lists)))
+
+
+def _s3_cat(cat_body=None, cat_at=None, earlier=(), table_body=None):
+    """The dump, optionally its table list, its catalog list (cat_body=None: none),
+    and other catalog lists already under the prefix as (key, LastModified)."""
+    contents = [{"Key": DUMP, "LastModified": D(2026, 10, 8), "Size": 7901527}]
+    objects = {(BUCKET, DUMP): b"D"}
+    if table_body is not None:
+        contents.append({"Key": LIST, "LastModified": D(2026, 10, 8), "Size": len(table_body)})
+        objects[(BUCKET, LIST)] = table_body
+    if cat_body is not None:
+        contents.append({"Key": CAT, "LastModified": cat_at or D(2026, 10, 8), "Size": len(cat_body)})
+        objects[(BUCKET, CAT)] = cat_body
+    for key, at in earlier:
+        contents.append({"Key": key, "LastModified": at, "Size": 10})
+    return FakeS3([{"Contents": contents}], objects)
+
+
+YESTERDAY_CAT = ("db/garden-20261007.catalog.json", D(2026, 10, 7))
+
+
+def test_one_catalog_sql_text_and_it_pins_nothing_but_the_catalog_columns():
+    sql = rv.CATALOG_LIST_SQL
+    for col in ("t.tgname", "t.tgrelid::regclass", "t.tgtype", "t.tgfoid::regproc", "t.tgenabled",
+                "NOT t.tgisinternal", "n.nspname = 'gv'", "n.nspname = 'extensions'"):
+        assert col in sql
+    assert sql.count("'count', count(*)") == 3
+    assert rv.CATALOG_LISTS == ("triggers", "gv_functions", "extensions_functions")
+
+
+def test_cataloglist_key_sits_beside_the_dump():
+    assert rv.cataloglist_key_for(DUMP) == CAT
+    assert rv.cataloglist_key_for("db/snap-v5.3.6.dump") == "db/snap-v5.3.6.catalog.json"
+
+
+def test_catalog_list_present_is_loaded_as_sets():
+    cat = rv.load_cataloglist(_s3_cat(_cat_body()), rv.Config(env=env()), DUMP)
+    assert cat["key"] == CAT and cat["taken_at"] == "2026-10-08T14:13:21Z"
+    assert ("set_updated_at", "public.plants", 19, "public.set_updated_at", "O") in cat["triggers"]
+    assert cat["gv_functions"] == set(CAT_GV) and cat["extensions_functions"] == set(CAT_EXT)
+
+
+def test_assess_with_catalog_coherent_ok(monkeypatch):
+    cfg = rv.Config(env=env())
+    counts = {t: 100 for t in CORE}
+    _patch_introspect(monkeypatch, CORE, CORE, counts, dict(counts))
+    _restored(monkeypatch)
+    ok, rep = rv.assess(cfg, "postgresql://scratch", True, tablelist=_tl(CORE), catalog=_cat())
+    assert ok and not rep["hard_failures"] and not rep["warnings"]
+    assert rep["facts"]["struct_source"] == "list"
+
+
+def test_control_trigger_added_after_the_dump_no_longer_reds(monkeypatch):
+    # POSITIVE CONTROL (RIA I2): prod gains a trigger on a table the dump already
+    # held, after the dump. Compared with live prod (today) that reds the day's
+    # verify; compared with the dump's own catalog list it does not.
+    cfg = rv.Config(env=env())
+    counts = {t: 100 for t in CORE}
+    _patch_introspect(monkeypatch, CORE, CORE, counts, dict(counts))
+    _prod_trg(monkeypatch, {"plants:audit_stmt_update:audit_stmt_update"})
+    ok_live, _ = rv.assess(cfg, "postgresql://scratch", True, tablelist=_tl(CORE))
+    assert not ok_live  # the red this step removes
+    _restored(monkeypatch)
+    ok, rep = rv.assess(cfg, "postgresql://scratch", True, tablelist=_tl(CORE), catalog=_cat())
+    assert ok and not rep["hard_failures"] and not rep["warnings"]
+
+
+def test_control_trigger_dropped_from_the_restore_still_reds(monkeypatch):
+    # POSITIVE CONTROL: a listed trigger the restore lacks reds, even when prod has
+    # since dropped it too (the live comparison could not see that loss).
+    cfg = rv.Config(env=env())
+    counts = {t: 100 for t in CORE}
+    _patch_introspect(monkeypatch, CORE, CORE, counts, dict(counts), rest_trg={TRG_KEEP})
+    monkeypatch.setattr(rv, "trigger_set", lambda url: {TRG_KEEP})
+    _restored(monkeypatch, trg=[CAT_TRG[1]])
+    ok, rep = rv.assess(cfg, "postgresql://scratch", True, tablelist=_tl(CORE), catalog=_cat())
+    assert not ok and len(rep["hard_failures"]) == 1
+    assert "triggers in this dump's catalog list" in rep["hard_failures"][0]
+    assert "prevent_ownership_transfer" in rep["hard_failures"][0]
+    assert rv.classify_failure(rep)[0] == "OBJECTS LOST BY RESTORE"
+
+
+TRG_KEEP = "plants:set_updated_at:set_updated_at"
+
+
+def test_control_gv_function_added_after_the_dump_no_longer_reds(monkeypatch):
+    cfg = rv.Config(env=env())
+    counts = {t: 100 for t in CORE}
+    _patch_introspect(monkeypatch, CORE, CORE, counts, dict(counts))
+    prod_fns = {"extensions": FNS["extensions"], "gv": FNS["gv"] | {"entity_cultivar_ins"}}
+    monkeypatch.setattr(rv, "func_set", lambda url, schema: (prod_fns if "prod" in url else FNS).get(schema, set()))
+    ok_live, _ = rv.assess(cfg, "postgresql://scratch", True, tablelist=_tl(CORE))
+    assert not ok_live
+    _restored(monkeypatch)
+    ok, rep = rv.assess(cfg, "postgresql://scratch", True, tablelist=_tl(CORE), catalog=_cat())
+    assert ok and not rep["hard_failures"]
+
+
+def test_control_gv_function_dropped_from_the_restore_still_reds(monkeypatch):
+    cfg = rv.Config(env=env())
+    counts = {t: 100 for t in CORE}
+    _patch_introspect(monkeypatch, CORE, CORE, counts, dict(counts))
+    _restored(monkeypatch, gv=["gv.bump_version()"])
+    ok, rep = rv.assess(cfg, "postgresql://scratch", True, tablelist=_tl(CORE), catalog=_cat())
+    assert not ok and len(rep["hard_failures"]) == 1
+    assert "gv_functions" in rep["hard_failures"][0] and "gv.slugify(text)" in rep["hard_failures"][0]
+
+
+def test_a_changed_trigger_is_lost_not_renamed(monkeypatch):
+    # tgenabled / tgtype / function are part of the row: a trigger restored disabled reds.
+    cfg = rv.Config(env=env())
+    counts = {t: 100 for t in CORE}
+    _patch_introspect(monkeypatch, CORE, CORE, counts, dict(counts))
+    _restored(monkeypatch, trg=[CAT_TRG[0], CAT_TRG[1][:4] + ["D"]])
+    ok, rep = rv.assess(cfg, "postgresql://scratch", True, tablelist=_tl(CORE), catalog=_cat())
+    assert not ok and any("set_updated_at" in f for f in rep["hard_failures"])
+    assert any("in restore but not in the dump's catalog list" in w for w in rep["warnings"])
+
+
+def test_unlisted_object_in_the_restore_warns_only(monkeypatch):
+    cfg = rv.Config(env=env())
+    counts = {t: 100 for t in CORE}
+    _patch_introspect(monkeypatch, CORE, CORE, counts, dict(counts))
+    _restored(monkeypatch, ext=CAT_EXT + ["extensions.uuid_ns_dns()"])
+    ok, rep = rv.assess(cfg, "postgresql://scratch", True, tablelist=_tl(CORE), catalog=_cat())
+    assert ok and any("uuid_ns_dns" in w for w in rep["warnings"])
+
+
+def test_control_no_catalog_list_when_one_is_expected_fails():
+    # POSITIVE CONTROL: yesterday's dump on this leg already had a catalog list,
+    # so the writer was live: today's dump without one is a FAIL, not a fallback.
+    s3 = _s3_cat(earlier=[YESTERDAY_CAT])
+    with pytest.raises(rv.VerifyError) as e:
+        rv.load_cataloglist(s3, rv.Config(env=env()), DUMP)
+    assert f"catalog list {CAT} for this dump is absent" in str(e.value)
+    assert "refusing to fall back to live prod" in str(e.value)
+    assert s3.gets == []
+
+
+def test_a_stale_catalog_list_is_absent_and_reds_when_one_is_expected():
+    # an earlier run's list beside a re-run's dump: it is its own precedent
+    s3 = _s3_cat(_cat_body(), cat_at=D(2026, 10, 8) - dt.timedelta(seconds=1))
+    with pytest.raises(rv.VerifyError) as e:
+        rv.load_cataloglist(s3, rv.Config(env=env()), DUMP)
+    assert "OLDER than its dump" in str(e.value)
+
+
+def test_backward_compat_a_dump_older_than_the_writer_falls_back():
+    # no catalog list for this dump and none written before it: the dump predates
+    # the writer on this leg (every dump and snap made before 2.0c)
+    assert rv.load_cataloglist(_s3_cat(), rv.Config(env=env()), DUMP) is None
+    # a later dump's list is not a precedent for this one
+    later = [("db/garden-20261009.catalog.json", D(2026, 10, 9))]
+    assert rv.load_cataloglist(_s3_cat(earlier=later), rv.Config(env=env()), DUMP) is None
+
+
+def test_backward_compat_snap_leg_made_before_the_change_falls_back():
+    cfg = rv.Config(env=env(BACKUP_BUCKET="garden-snapshots-prod", DUMP_PREFIX="db/snap-"))
+    snap_dump = "db/snap-v5.3.6.dump"
+    s3 = FakeS3([{"Contents": [
+        {"Key": snap_dump, "LastModified": D(2026, 10, 19), "Size": 9},
+        {"Key": "db/snap-v5.3.6.tables.json", "LastModified": D(2026, 10, 19), "Size": 9},
+        # a staging rehearsal (dev's snap.py) wrote a catalog list first: not this leg's writer
+        {"Key": "db/snap-v0.0.900.catalog.json", "LastModified": D(2026, 10, 18), "Size": 9}]}])
+    assert rv.load_cataloglist(s3, cfg, snap_dump) is None
+
+
+def test_first_catalog_list_on_a_leg_is_used():
+    s3 = _s3_cat(_cat_body(), cat_at=D(2026, 10, 8) + dt.timedelta(seconds=40))
+    assert rv.load_cataloglist(s3, rv.Config(env=env()), DUMP)["key"] == CAT
+
+
+@pytest.mark.parametrize("name", ["triggers", "gv_functions", "extensions_functions"])
+def test_control_a_list_missing_its_count_line_fails(name):
+    lst = dict(_lists()[name]); del lst["count"]
+    with pytest.raises(rv.VerifyError) as e:
+        rv.load_cataloglist(_s3_cat(_cat_body(**{name: lst})), rv.Config(env=env()), DUMP)
+    assert f"{name} list has no count line" in str(e.value)
+
+
+def _without(name):
+    doc = _cat_doc(); del doc[name]
+    return json.dumps(doc).encode()
+
+
+@pytest.mark.parametrize("body, why", [
+    (_without("triggers"), "triggers list absent"),
+    (_without("gv_functions"), "gv_functions list absent"),
+    (_without("extensions_functions"), "extensions_functions list absent"),
+    (_cat_body(triggers={"count": 0, "rows": []}), "triggers list is empty"),
+    (_cat_body(gv_functions={"count": 0, "rows": []}), "gv_functions list is empty"),
+    (_cat_body(extensions_functions={"count": 0, "rows": []}), "extensions_functions list is empty"),
+    (_cat_body(triggers={"count": 3, "rows": CAT_TRG}), "triggers count 3 != 2 rows"),
+    (_cat_body(gv_functions={"count": "2", "rows": CAT_GV}), "gv_functions list has no count line"),
+    (_cat_body(gv_functions={"count": True, "rows": ["gv.x()"]}), "gv_functions list has no count line"),
+    (_cat_body(triggers={"count": 1, "rows": [["t", "public.plants", 7, "public.f"]]}), "wrong shape"),
+    (_cat_body(gv_functions={"count": 1, "rows": [""]}), "wrong shape"),
+    (_cat_body(format=2), "format"),
+    (_cat_body(dump_key="db/garden-20261007.dump"), "written for dump"),
+    (_cat_body(taken_at=""), "no taken_at"),
+    (b"", "cannot be read"),
+    (b"[]", "not a JSON object"),
+], ids=["no-triggers", "no-gv", "no-extensions", "empty-triggers", "empty-gv", "empty-extensions",
+        "count-mismatch", "count-not-int", "count-bool", "trigger-row-short", "fn-row-empty",
+        "format", "other-dump", "no-taken-at", "empty-file", "array"])
+def test_a_catalog_list_that_is_there_but_bad_fails_even_without_a_precedent(body, why):
+    with pytest.raises(rv.VerifyError) as e:
+        rv.load_cataloglist(_s3_cat(body), rv.Config(env=env()), DUMP)
+    assert why in str(e.value)
+
+
+def test_run_with_catalog_trigger_added_after_the_dump_is_green(monkeypatch, capsys):
+    s3 = _s3_cat(_cat_body(), table_body=_list_body(_pub(CORE)), earlier=[YESTERDAY_CAT])
+    cfg = _run_real(monkeypatch, s3, CORE, CORE)
+    _prod_trg(monkeypatch, {"plants:audit_stmt_update:audit_stmt_update"})
+    _restored(monkeypatch)
+    rep = rv.run(cfg, s3=s3)
+    out, err = capsys.readouterr()
+    assert not rep["hard_failures"] and not _verdicts(err)
+    assert (f"catalog list {CAT} (2 triggers, 2 gv_functions, 2 extensions_functions, "
+            f"taken 2026-10-08T14:13:21Z)") in out
+    assert "FELL BACK" not in out
+
+
+def test_run_with_catalog_lost_trigger_reds_classified(monkeypatch, capsys):
+    s3 = _s3_cat(_cat_body(), table_body=_list_body(_pub(CORE)))
+    cfg = _run_real(monkeypatch, s3, CORE, CORE)
+    _restored(monkeypatch, trg=[CAT_TRG[1]])
+    with pytest.raises(rv.VerifyError):
+        rv.run(cfg, s3=s3)
+    v = _verdicts(capsys.readouterr().err)
+    assert len(v) == 1 and "[OBJECTS LOST BY RESTORE]" in v[0] and "prevent_ownership_transfer" in v[0]
+    assert f"triggers and functions with the dump-time list {CAT}" in v[0]
+
+
+def test_run_without_an_expected_catalog_reds_before_any_restore(monkeypatch, capsys):
+    s3 = _s3_cat(table_body=_list_body(_pub(CORE)), earlier=[YESTERDAY_CAT])
+    cfg = _run_real(monkeypatch, s3, CORE, CORE)
+    restored = {"n": 0}
+    monkeypatch.setattr(rv, "restore_dump", lambda *a, **k: restored.__setitem__("n", 1))
+    with pytest.raises(rv.VerifyError):
+        rv.run(cfg, s3=s3)
+    v = _verdicts(capsys.readouterr().err)
+    assert len(v) == 1 and "[OTHER]" in v[0] and "absent" in v[0] and DUMP in v[0]
+    assert restored["n"] == 0
+
+
+def test_run_old_dump_says_it_fell_back_for_triggers(monkeypatch, capsys):
+    s3 = _s3_cat(table_body=_list_body(_pub(CORE)))
+    cfg = _run_real(monkeypatch, s3, CORE, CORE)
+    monkeypatch.setattr(rv, "catalog_lists", lambda url: pytest.fail("no list: live comparison only"))
+    rv.run(cfg, s3=s3)
+    out, err = capsys.readouterr()
+    (line,) = [ln for ln in out.splitlines() if "catalog list" in ln]
+    assert line.startswith("::notice::[restore-verify] ") and "compared with LIVE prod instead" in line
+    assert not _verdicts(err)
+
+
+def test_catalog_lists_reads_the_restore_with_the_writers_pin(monkeypatch):
+    seen = []
+
+    def fake_run(cmd, **kw):
+        seen.append(cmd)
+        r = type("R", (), {})()
+        r.returncode, r.stderr, r.stdout = 0, "", json.dumps(_lists())
+        return r
+    monkeypatch.setattr(rv.subprocess, "run", fake_run)
+    got = rv.catalog_lists("postgresql://scratch")
+    assert got == rv._catalog_sets(_lists())
+    (cmd,) = seen
+    assert cmd[-4:] == ["-c", "SET search_path TO pg_catalog", "-c", rv.CATALOG_LIST_SQL]
 
 
 # --- the daily writer: backup.yml's own run: bodies, pg/aws stubbed ----------
