@@ -242,15 +242,30 @@ def test_ensure_neon_branch_uses_prefix(monkeypatch):
 # --- dump idempotent skip ----------------------------------------------------
 
 PSQL_TABLES = "public.plants\ngv.audit\npublic.event_log\n"
+CATALOG_LISTS = {
+    "triggers": {"count": 1, "rows": [["set_updated_at", "public.plants", 19, "public.set_updated_at", "O"]]},
+    "gv_functions": {"count": 1, "rows": ["gv.bump_version()"]},
+    "extensions_functions": {"count": 1, "rows": ["extensions.uuid_generate_v4()"]},
+}
+PSQL_CATALOG = json.dumps(CATALOG_LISTS) + "\n"
 
 
-def _fake_pg(cmds, psql_rc=0, psql_out=PSQL_TABLES, psql_raises=None, dump_rc=0):
-    """subprocess.run for dump_to_s3: psql answers the table-list read, pg_dump
-    (args, no shell) writes a non-empty file at its -f path."""
+def _fake_pg(cmds, psql_rc=0, psql_out=PSQL_TABLES, psql_raises=None, dump_rc=0,
+             catalog_rc=0, catalog_out=PSQL_CATALOG, catalog_raises=None):
+    """subprocess.run for dump_to_s3: psql answers the table-list read (psql_*)
+    and the catalog-list read (catalog_*), pg_dump (args, no shell) writes a
+    non-empty file at its -f path."""
     def fake_run(cmd, **kw):
         cmds.append(cmd)
         fake_run.kwargs[cmd[0]] = kw
         r = mock.Mock(); r.stderr = ""
+        if cmd[0] == "psql" and snap.CATALOG_LIST_SQL in cmd:
+            if catalog_raises:
+                raise catalog_raises(cmd, kw.get("timeout")) if catalog_raises is snap.subprocess.TimeoutExpired \
+                    else catalog_raises(2, "No such file or directory", "psql")
+            r.returncode, r.stdout = catalog_rc, catalog_out
+            r.stderr = "psql: error: boom" if catalog_rc else ""
+            return r
         if cmd[0] == "psql":
             if psql_raises:
                 raise psql_raises(cmd, kw.get("timeout")) if psql_raises is snap.subprocess.TimeoutExpired \
@@ -789,11 +804,11 @@ def test_dump_to_s3_writes_the_table_list_beside_the_dump(monkeypatch):
     monkeypatch.setattr(snap, "utc_now_iso", lambda: "2026-10-12T16:53:00Z")
     assert snap.dump_to_s3(s3, cfg) == "db/snap-v1.2.3.dump"
     # read BEFORE pg_dump: a table created in the gap is then in the dump, not the list
-    assert [c[0] for c in cmds] == ["psql", "pg_dump"]
+    assert [c[0] for c in cmds] == ["psql", "psql", "pg_dump"]
     assert cmds[0][1] == cfg.neon_backup_url and snap.TABLE_LIST_SQL in cmds[0]
     # put AFTER the dump upload: a list never sits beside a dump that is not there
-    assert [c[0] for c in s3.method_calls] == ["upload_file", "put_object"]
-    kw = s3.put_object.call_args.kwargs
+    assert [c[0] for c in s3.method_calls] == ["upload_file", "put_object", "put_object"]
+    kw = s3.put_object.call_args_list[0].kwargs
     assert kw["Bucket"] == "garden-snapshots-prod" and kw["Key"] == "db/snap-v1.2.3.tables.json"
     assert json.loads(kw["Body"]) == {
         "format": 1, "dump_key": "db/snap-v1.2.3.dump", "taken_at": "2026-10-12T16:53:00Z",
@@ -835,7 +850,7 @@ def test_table_list_document_is_what_restore_verify_accepts(monkeypatch):
     # the reader requires its core tables in a list (a short list excuses the rest)
     cfg, s3, _ = _dump_with(monkeypatch, psql_out="gv.audit\n" + "".join(f"public.{t}\n" for t in rv.SANITY_TABLES))
     dump_key = snap.dump_to_s3(s3, cfg)
-    kw = s3.put_object.call_args.kwargs
+    kw = s3.put_object.call_args_list[0].kwargs
     assert kw["Key"] == rv.tablelist_key_for(dump_key)
     assert rv._tablelist_problem(json.loads(kw["Body"]), dump_key) is None
     assert snap.TABLE_LIST_FORMAT == rv.TABLELIST_FORMAT
@@ -864,7 +879,7 @@ def test_table_list_read_failure_warns_and_the_dump_still_ships(monkeypatch, cap
     cfg, s3, cmds = _dump_with(monkeypatch, **fake)
     assert snap.dump_to_s3(s3, cfg) == "db/snap-v1.2.3.dump"
     s3.upload_file.assert_called_once()
-    s3.put_object.assert_not_called()
+    assert [c.kwargs["Key"] for c in s3.put_object.call_args_list] == ["db/snap-v1.2.3.catalog.json"]
     out = capsys.readouterr().out
     assert out.count("::warning::") == 1 and "table list" in out and "NOT written" in out and why in out
     # the connection string (and so the password) is in the psql argv: never in the message
@@ -873,7 +888,11 @@ def test_table_list_read_failure_warns_and_the_dump_still_ships(monkeypatch, cap
 
 def test_table_list_put_failure_warns_and_the_dump_still_ships(monkeypatch, capsys):
     s3 = mock.Mock()
-    s3.put_object.side_effect = RuntimeError("AccessDenied")
+
+    def put(**kw):
+        if kw["Key"].endswith(".tables.json"):
+            raise RuntimeError("AccessDenied")
+    s3.put_object.side_effect = put
     cfg, s3, _ = _dump_with(monkeypatch, s3=s3)
     assert snap.dump_to_s3(s3, cfg) == "db/snap-v1.2.3.dump"
     s3.upload_file.assert_called_once()
@@ -904,6 +923,92 @@ def test_table_list_key_lookup_never_raises(monkeypatch):
         raise RuntimeError("500")
     monkeypatch.setattr(snap, "s3_object_exists", boom)
     assert snap.table_list_key_if_present(mock.Mock(), make_cfg()) is None
+
+
+# --- catalog list beside the dump (V5-SPACETENANCYKEY-001 step 2.0c) ----------
+
+def _rv():
+    import importlib.util
+    import os
+    spec = importlib.util.spec_from_file_location(
+        "restore_verify", os.path.join(os.path.dirname(os.path.abspath(snap.__file__)), "restore-verify.py"))
+    rv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rv)
+    return rv
+
+
+def _puts(s3):
+    return {c.kwargs["Key"]: c.kwargs for c in s3.put_object.call_args_list}
+
+
+def test_catalog_list_sql_is_restore_verifys_text():
+    rv = _rv()
+    assert snap.CATALOG_LIST_SQL == rv.CATALOG_LIST_SQL
+    assert snap.CATALOG_LISTS == rv.CATALOG_LISTS and snap.CATALOG_LIST_FORMAT == rv.CATALOG_LIST_FORMAT
+
+
+def test_dump_to_s3_writes_the_catalog_list_beside_the_dump(monkeypatch):
+    cfg, s3, cmds = _dump_with(monkeypatch)
+    monkeypatch.setattr(snap, "utc_now_iso", lambda: "2026-10-19T16:53:00Z")
+    dump_key = snap.dump_to_s3(s3, cfg)
+    # read BEFORE pg_dump, after the search_path pin restore-verify reads with
+    (cat_cmd,) = [c for c in cmds if snap.CATALOG_LIST_SQL in c]
+    assert cmds.index(cat_cmd) < [c[0] for c in cmds].index("pg_dump")
+    assert cat_cmd[1] == cfg.neon_backup_url
+    assert cat_cmd[-4:] == ["-c", "SET search_path TO pg_catalog", "-c", snap.CATALOG_LIST_SQL]
+    assert snap.subprocess.run.kwargs["psql"]["timeout"] == snap.TABLE_LIST_TIMEOUT
+    kw = _puts(s3)["db/snap-v1.2.3.catalog.json"]
+    assert kw["Bucket"] == "garden-snapshots-prod"
+    assert json.loads(kw["Body"]) == {"format": 1, "dump_key": "db/snap-v1.2.3.dump",
+                                      "taken_at": "2026-10-19T16:53:00Z", **CATALOG_LISTS}
+    # and restore-verify accepts it as this dump's list
+    rv = _rv()
+    assert kw["Key"] == rv.cataloglist_key_for(dump_key)
+    assert rv._cataloglist_problem(json.loads(kw["Body"]), dump_key) is None
+
+
+@pytest.mark.parametrize("fake, why", [
+    (dict(catalog_rc=1), "psql catalog-list read failed"),
+    (dict(catalog_out=""), "no JSON"),
+    (dict(catalog_out=json.dumps({k: v for k, v in CATALOG_LISTS.items() if k != "gv_functions"})),
+     "no usable gv_functions list"),
+    (dict(catalog_out=json.dumps({**CATALOG_LISTS, "triggers": {"count": 0, "rows": []}})),
+     "no usable triggers list"),
+    (dict(catalog_out=json.dumps({**CATALOG_LISTS, "extensions_functions": {"rows": ["extensions.x()"]}})),
+     "no usable extensions_functions list"),
+    (dict(catalog_raises=FileNotFoundError), "psql could not be run"),
+    (dict(catalog_raises=snap.subprocess.TimeoutExpired), "timed out"),
+], ids=["psql-fails", "empty", "gv-absent", "triggers-empty", "extensions-no-count", "no-psql", "timeout"])
+def test_catalog_list_read_failure_warns_and_the_dump_still_ships(monkeypatch, capsys, fake, why):
+    cfg, s3, _ = _dump_with(monkeypatch, **fake)
+    assert snap.dump_to_s3(s3, cfg) == "db/snap-v1.2.3.dump"
+    s3.upload_file.assert_called_once()
+    assert list(_puts(s3)) == ["db/snap-v1.2.3.tables.json"]  # never written empty or partial
+    out = capsys.readouterr().out
+    assert out.count("::warning::") == 1 and "catalog list" in out and "NOT written" in out and why in out
+    assert cfg.neon_backup_url not in out and "u:p@" not in out
+
+
+def test_catalog_list_put_failure_warns_and_the_dump_still_ships(monkeypatch, capsys):
+    s3 = mock.Mock()
+
+    def put(**kw):
+        if kw["Key"].endswith(".catalog.json"):
+            raise RuntimeError("AccessDenied")
+    s3.put_object.side_effect = put
+    cfg, s3, _ = _dump_with(monkeypatch, s3=s3)
+    assert snap.dump_to_s3(s3, cfg) == "db/snap-v1.2.3.dump"
+    out = capsys.readouterr().out
+    assert out.count("::warning::") == 1 and "catalog list" in out and "NOT written (RuntimeError writing it)" in out
+
+
+def test_catalog_list_warn_never_raises(monkeypatch):
+    def boom(msg):
+        raise UnicodeEncodeError("ascii", msg, 0, 1, "ordinal not in range(128)")
+    monkeypatch.setattr(snap, "gha_warning", boom)
+    cfg, s3, _ = _dump_with(monkeypatch, catalog_rc=1)
+    assert snap.read_catalog_list_or_warn(cfg) == (None, None)
+    assert snap.dump_to_s3(s3, cfg) == "db/snap-v1.2.3.dump"
 
 
 # --- manifest written LAST ---------------------------------------------------

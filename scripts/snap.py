@@ -59,9 +59,9 @@ ENV CONTRACT (read at runtime; no secrets are hardcoded):
 
 Dependencies: boto3 (S3/Lambda), requests (Neon + GitHub REST), pg_dump +
 pg_dumpall (pg17 client) via subprocess. psql (same pg17 bin directory) is used
-ONLY for the table list beside the dump, and that write can never fail the ship
-(see write_table_list_or_warn), so promote-gate's pre-FF tooling proof does not
-cover it.
+ONLY for the table and catalog lists beside the dump, and those writes can never
+fail the ship (see write_table_list_or_warn), so promote-gate's pre-FF tooling
+proof does not cover it.
 
 Idempotency: every artifact is create-if-missing. If it already exists it is
 SKIPPED, not errored, so a partial snap completes cleanly on re-run. BUT if a
@@ -241,6 +241,7 @@ def s3_key_for(kind, cfg):
         "dump": f"db/snap-{v}.dump",
         "globals": f"db/snap-{v}.globals.sql",
         "tables": f"db/snap-{v}.tables.json",
+        "catalog": f"db/snap-{v}.catalog.json",
         "photo_versionids": f"photos/snap-{v}.versionids.json",
         "manifest": f"snapshots/{v}.json",
     }[kind]
@@ -617,6 +618,100 @@ def table_list_key_if_present(s3, cfg):
         return None
 
 
+# The triggers and the gv / extensions functions prod has when the dump is taken
+# (V5-SPACETENANCYKEY-001 step 2.0c), each list with its count. restore-verify.py
+# compares the restored triggers and functions with THIS list, not live prod.
+# Read, warned and written exactly like the table list (it never fails the ship),
+# but restore-verify REQUIRES it once one has been written on the snap leg, so a
+# lost one reds that snap's verify: the warning says so. CATALOG_LIST_SQL is
+# restore-verify.py's text verbatim (test_snap pins it), run after the same
+# search_path pin, so the regclass/regproc text matches the restore's.
+CATALOG_LIST_FORMAT = 1
+CATALOG_LISTS = ("triggers", "gv_functions", "extensions_functions")
+CATALOG_LIST_SQL = (
+    "SELECT json_build_object("
+    "'triggers', (SELECT json_build_object('count', count(*), 'rows', COALESCE(json_agg("
+    "json_build_array(t.tgname, t.tgrelid::regclass::text, t.tgtype, t.tgfoid::regproc::text, t.tgenabled) "
+    "ORDER BY t.tgrelid::regclass::text, t.tgname), '[]'::json)) "
+    "FROM pg_trigger t WHERE NOT t.tgisinternal), "
+    "'gv_functions', (SELECT json_build_object('count', count(*), 'rows', COALESCE(json_agg("
+    "p.oid::regprocedure::text ORDER BY p.oid::regprocedure::text), '[]'::json)) "
+    "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'gv'), "
+    "'extensions_functions', (SELECT json_build_object('count', count(*), 'rows', COALESCE(json_agg("
+    "p.oid::regprocedure::text ORDER BY p.oid::regprocedure::text), '[]'::json)) "
+    "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'extensions'))"
+)
+
+
+def read_catalog_list(cfg):
+    """{list name: {count, rows}} for CATALOG_LISTS, over the DIRECT connection
+    string. Raises SnapError; the message never carries the command line."""
+    try:
+        proc = subprocess.run(
+            ["psql", cfg.neon_backup_url, "-X", "-q", "-tA", "-v", "ON_ERROR_STOP=1",
+             "-c", "SET search_path TO pg_catalog", "-c", CATALOG_LIST_SQL],
+            capture_output=True, text=True, timeout=TABLE_LIST_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise SnapError(f"psql catalog-list read timed out after {TABLE_LIST_TIMEOUT}s")
+    except OSError as e:
+        raise SnapError(f"psql could not be run ({type(e).__name__}: {e.strerror})")
+    if proc.returncode != 0:
+        raise SnapError(f"psql catalog-list read failed (rc={proc.returncode}): {(proc.stderr or '').strip()[:300]}")
+    try:
+        doc = json.loads(proc.stdout or "")
+    except ValueError:
+        raise SnapError("catalog-list read returned no JSON")
+    for name in CATALOG_LISTS:
+        lst = doc.get(name) if isinstance(doc, dict) else None
+        rows = lst.get("rows") if isinstance(lst, dict) else None
+        if not isinstance(rows, list) or not rows or lst.get("count") != len(rows):
+            raise SnapError(f"catalog-list read returned no usable {name} list")
+    return {name: doc[name] for name in CATALOG_LISTS}
+
+
+def _catalog_list_warn(cfg, why):
+    """NEVER raises (see _table_list_warn)."""
+    try:
+        key = s3_key_for("catalog", cfg)
+        msg = (f"snap: catalog list s3://{cfg.snap_bucket}/{key} NOT written ({why}) -- the snap "
+               f"itself is complete; restore-verify will red this snap's verify once the catalog "
+               f"writer has run on the snap leg (it requires the list from then on)")
+        gha_warning(msg)
+        gha_step_summary(["### snap: catalog list NOT written", f"- {msg}"])
+    except Exception:  # noqa: BLE001 — see docstring
+        pass
+
+
+def read_catalog_list_or_warn(cfg):
+    """(lists, taken_at) or (None, None). NEVER raises."""
+    try:
+        return read_catalog_list(cfg), utc_now_iso()
+    except SnapError as e:
+        _catalog_list_warn(cfg, str(e))
+    except Exception as e:  # noqa: BLE001 — type only: an arbitrary message may carry the URL
+        _catalog_list_warn(cfg, f"unexpected {type(e).__name__} reading it")
+    return None, None
+
+
+def write_catalog_list_or_warn(s3, cfg, dump_key, lists, taken_at):
+    """Put the catalog list beside the dump it was read for. Returns the key, or
+    None. WARNS, NEVER FAILS THE SHIP, for the table list's reasons."""
+    if lists is None:
+        return None
+    key = s3_key_for("catalog", cfg)
+    try:
+        body = json.dumps(
+            {"format": CATALOG_LIST_FORMAT, "dump_key": dump_key, "taken_at": taken_at, **lists},
+            sort_keys=True,
+        ).encode()
+        s3.put_object(Bucket=cfg.snap_bucket, Key=key, Body=body, ContentType="application/json")
+    except Exception as e:  # noqa: BLE001 — see docstring
+        _catalog_list_warn(cfg, f"{type(e).__name__} writing it")
+        return None
+    return key
+
+
 def dump_to_s3(s3, cfg):
     """Fresh pg_dump (pg17, DIRECT endpoint, -Fc) at snap time → S3. Idempotent:
     skip if the dump object already exists. Returns the S3 key.
@@ -641,6 +736,7 @@ def dump_to_s3(s3, cfg):
         return key  # idempotent skip
 
     tables, tables_taken_at = read_table_list_or_warn(cfg)
+    catalog, catalog_taken_at = read_catalog_list_or_warn(cfg)
     with tempfile.TemporaryDirectory() as td:
         dump_path = os.path.join(td, f"snap-{cfg.version}.dump")
         cmd = [
@@ -661,6 +757,7 @@ def dump_to_s3(s3, cfg):
             raise SnapError("pg_dump produced no output / empty dump")
         s3.upload_file(dump_path, cfg.snap_bucket, key)
     write_table_list_or_warn(s3, cfg, key, tables, tables_taken_at)
+    write_catalog_list_or_warn(s3, cfg, key, catalog, catalog_taken_at)
     return key
 
 
