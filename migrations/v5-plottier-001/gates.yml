@@ -1,0 +1,486 @@
+# gates.yml
+# v5-plottier-001: V5-SPACEPLOTTIER-001 (multi-space Phase 3 step 3.1, public.plots and Plot 1).
+# Stamp 5.3.6-plottier-001. README.md has the apply order, the C-CONV pre-scan and why.
+#
+# ANY pre/post assertion failing during the apply is a HARD ABORT.
+#
+# ── EVERY post GATE IS SELF-ARMING ────────────────────────────────────────────────────────────────
+#   gate-invariants runs `gate_runner.py --all --phase post --continuous-only` against live prod and live
+#   staging on every migrations/** push and on a Tuesday cron, with no skip-if-unapplied logic. So each
+#   post gate returns rows only when stamp 5.3.6-plottier-001 exists AND its invariant is violated:
+#   vacuous before the apply, asserting after it. The one exception is post_schema_version_recorded, armed on
+#   the objects 0a creates (it cannot arm on the row it checks for).
+#   No `::regclass` anywhere: every relation is matched by pg_class.relname joined to pg_namespace.
+#   A gate that reads public.plots' ROWS reads them through query_to_xml inside a CASE on the stamp (the
+#   v5-recipes-001 / v5-platformoperators-001 idiom): PostgreSQL resolves a relation named in the SQL text at
+#   parse time, so a plain FROM public.plots would ERROR 42P01, not pass vacuously, before the apply and
+#   after 0r. Gates that name a row return one row per offender: unnest(xpath(...)) over the inner query's rows.
+#
+# ── TRIGGER INVENTORIES FILTER NOT tgisinternal AND ASSERT tgenabled = 'O' ────────────────────────
+#   The foreign key into spaces adds internal RI triggers on plots and spaces, and 3.2a's keys into plots add
+#   more; 'O' because session_replication_role cannot be set by the app's role (Phase 0 read 22).
+#
+# ── THE GUARD BODIES ARE PINNED BY md5(prosrc) ────────────────────────────────────────────────────
+#   Read off the rehearsal's PostgreSQL 17.10 after applying 0a (README.md "Rehearsal"). prosrc is the text
+#   between the dollar quotes, byte for byte, so these change only when 0a's bodies change: then re-read them
+#   on purpose, here. 3.2a replaces guard_plots_repoint's body behind a definition pre-gate on this md5.
+#
+# REHEARSED on a throwaway local PostgreSQL 17.10 loaded with prod's schema, stamps, Space and weather rows
+# (README.md). Not run against staging or prod as an applied migration.
+
+pre:
+  - name: pre_not_already_applied
+    note: >
+      A stamp without the objects would arm every post gate against nothing. continuous false: false by
+      design once 0a runs.
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.3.6-plottier-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_names_free
+    note: >
+      No relation, function or trigger already carries a name 0a creates (0a step 0 refuses the same thing).
+      continuous false, as above.
+    sql: |
+      SELECT 'relation ' || c.relname
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname IN ('plots', 'plots_one_default_per_space')
+      UNION ALL
+      SELECT 'function ' || p.proname
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname IN ('guard_plots_repoint', 'guard_plots_delete')
+      UNION ALL
+      SELECT 'trigger ' || g.tgname
+        FROM pg_trigger g
+       WHERE NOT g.tgisinternal
+         AND g.tgname IN ('trg_audit_plots_ins', 'trg_audit_plots_upd', 'trg_audit_plots_del',
+                          'plots_repoint_guard', 'plots_delete_guard', 'plots_truncate_guard')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_spaceguard_applied
+    note: >
+      0a binds public.audit_stmt_insert and public.guard_space_truncate, both made by v5-spaceguard-001.
+    sql: |
+      SELECT 'stamp 5.1.5-spaceguard-001'
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.1.5-spaceguard-001')
+      UNION ALL
+      SELECT want.proname
+        FROM (VALUES ('audit_stmt_insert'), ('audit_stmt_update'), ('audit_stmt_delete'),
+                     ('audit_watched_slice'), ('guard_space_truncate')) AS want(proname)
+       WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = 'public' AND p.proname = want.proname)
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_every_space_has_a_place_and_an_owner
+    note: >
+      Plot 1's lat, lng and created_by are NOT NULL and are copied from spaces. One row per Space that lacks
+      one (0a step 0 refuses the same thing, naming them). Read 2026-10-19: prod's one Space has all three;
+      STAGING's has weather_lat, weather_lng and postal_code NULL, so this reds on staging until the session
+      decides (README.md "Staging"). continuous false: a pre-apply read.
+    sql: |
+      SELECT s.id::text
+        FROM public.spaces s
+       WHERE s.weather_lat IS NULL OR s.weather_lng IS NULL OR s.created_by IS NULL
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_foreign_keys_into_spaces_are_single_column_on_id
+    note: >
+      plots.workspace_id joins them; spaces_delete_guard reads single-column keys on spaces.id only.
+    sql: |
+      SELECT c.conname::text
+        FROM pg_constraint c
+        JOIN pg_class p      ON p.oid = c.confrelid
+        JOIN pg_namespace pn ON pn.oid = p.relnamespace AND pn.nspname = 'public'
+        LEFT JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = c.confkey[1]
+       WHERE c.contype = 'f' AND p.relname = 'spaces'
+         AND (cardinality(c.conkey) <> 1 OR cardinality(c.confkey) <> 1 OR pa.attname IS DISTINCT FROM 'id')
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ARMED ON THE DDL, NOT ON ITSELF. 0a writes the objects and the row in one transaction, so a row here
+  # means someone hand-applied the DDL or deleted the stamp: the state that silences every gate below.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE (EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                       WHERE n.nspname = 'public' AND c.relname = 'plots')
+              OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                          WHERE n.nspname = 'public' AND p.proname IN ('guard_plots_repoint', 'guard_plots_delete')))
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+    expect: rowcount_eq
+    value: 0
+
+  # CLOSED WORLD on the columns (V204 §2.2, DSA-35): each by name, type, NOT NULL and default, and no other.
+  # timezone has NO default on purpose: Plot 1's zone is a literal in 0a only, and a later plot names its own.
+  - name: post_plots_columns_exact
+    sql: |
+      WITH have AS (
+        SELECT a.attname::text AS attname, format_type(a.atttypid, a.atttypmod) AS typ, a.attnotnull AS nn,
+               coalesce(pg_get_expr(d.adbin, d.adrelid), '') AS dflt
+          FROM pg_attribute a
+          JOIN pg_class t     ON t.oid = a.attrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+          LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+         WHERE t.relname = 'plots' AND a.attnum > 0 AND NOT a.attisdropped
+      ), want(attname, typ, nn, dflt) AS (
+        VALUES ('id',           'uuid',                     true,  'gen_random_uuid()'),
+               ('workspace_id', 'uuid',                     true,  ''),
+               ('name',         'text',                     true,  ''),
+               ('postal_code',  'text',                     false, ''),
+               ('lat',          'numeric',                  true,  ''),
+               ('lng',          'numeric',                  true,  ''),
+               ('timezone',     'text',                     true,  ''),
+               ('is_default',   'boolean',                  true,  'false'),
+               ('created_by',   'text',                     true,  ''),
+               ('created_at',   'timestamp with time zone', true,  'now()'),
+               ('updated_at',   'timestamp with time zone', true,  'now()'),
+               ('deleted_at',   'timestamp with time zone', false, '')
+      )
+      SELECT 'missing or different: ' || w.attname
+        FROM want w
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+         AND NOT EXISTS (SELECT 1 FROM have h
+                          WHERE h.attname = w.attname AND h.typ = w.typ AND h.nn = w.nn AND h.dflt = w.dflt)
+      UNION ALL
+      SELECT 'extra column: ' || h.attname
+        FROM have h
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+         AND NOT EXISTS (SELECT 1 FROM want w WHERE w.attname = h.attname)
+    expect: rowcount_eq
+    value: 0
+
+  # The keys, closed world, each validated: the PRIMARY KEY the audit writers name, UNIQUE (id, workspace_id) the
+  # composite keys of 3.2a/3.5/3.6 reference, and the single-column RESTRICT key into spaces that
+  # spaces_delete_guard reads. The key into spaces is printed with or without its schema, by search_path.
+  - name: post_plots_constraints_exact
+    sql: |
+      WITH have AS (
+        SELECT c.conname::text AS conname, pg_get_constraintdef(c.oid) AS def, c.convalidated
+          FROM pg_constraint c
+          JOIN pg_class t     ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+         WHERE t.relname = 'plots'
+      ), want(conname, def) AS (
+        VALUES ('plots_pkey',                'PRIMARY KEY (id)'),
+               ('plots_id_workspace_id_key', 'UNIQUE (id, workspace_id)'),
+               ('plots_workspace_id_fkey',   'FOREIGN KEY (workspace_id) REFERENCES spaces(id) ON DELETE RESTRICT')
+      )
+      SELECT 'missing or different: ' || w.conname
+        FROM want w
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+         AND NOT EXISTS (SELECT 1 FROM have h
+                          WHERE h.conname = w.conname AND h.convalidated
+                            AND (h.def = w.def OR replace(h.def, 'REFERENCES public.spaces(', 'REFERENCES spaces(') = w.def))
+      UNION ALL
+      SELECT 'extra constraint: ' || h.conname
+        FROM have h
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+         AND NOT EXISTS (SELECT 1 FROM want w WHERE w.conname = h.conname)
+    expect: rowcount_eq
+    value: 0
+
+  # The one-default rule's index, unique, valid and partial on live default rows, and no other index on plots
+  # beyond the two its keys own. A dropped WHERE (one plot per Space, ever) or a dropped deleted_at arm (a
+  # soft-deleted default blocks its replacement) reds here.
+  - name: post_plots_indexes_exact
+    sql: |
+      WITH have AS (
+        SELECT ic.relname::text AS idxname, pg_get_indexdef(i.indexrelid) AS def, i.indisunique, i.indisvalid
+          FROM pg_index i
+          JOIN pg_class t     ON t.oid = i.indrelid
+          JOIN pg_class ic    ON ic.oid = i.indexrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+         WHERE t.relname = 'plots'
+      ), want(idxname, def) AS (
+        VALUES ('plots_pkey',                  'CREATE UNIQUE INDEX plots_pkey ON public.plots USING btree (id)'),
+               ('plots_id_workspace_id_key',   'CREATE UNIQUE INDEX plots_id_workspace_id_key ON public.plots USING btree (id, workspace_id)'),
+               ('plots_one_default_per_space', 'CREATE UNIQUE INDEX plots_one_default_per_space ON public.plots USING btree (workspace_id) WHERE (is_default AND (deleted_at IS NULL))')
+      )
+      SELECT 'missing or different: ' || w.idxname
+        FROM want w
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+         AND NOT EXISTS (SELECT 1 FROM have h
+                          WHERE h.idxname = w.idxname AND h.def = w.def AND h.indisunique AND h.indisvalid)
+      UNION ALL
+      SELECT 'extra index: ' || h.idxname
+        FROM have h
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+         AND NOT EXISTS (SELECT 1 FROM want w WHERE w.idxname = h.idxname)
+    expect: rowcount_eq
+    value: 0
+
+  # The six triggers 0a puts on plots, each by name, timing/level/event (tgtype), function, OF-column list and
+  # enabled state. One row per trigger that is missing or differs, naming it. tgtype: 4 AFTER INSERT statement,
+  # 16 AFTER UPDATE statement, 8 AFTER DELETE statement, 19 BEFORE UPDATE row, 11 BEFORE DELETE row, 34 BEFORE
+  # TRUNCATE statement. Binding trg_audit_plots_upd to audit_stmt_update_no_soft_delete (a soft delete then
+  # audits as a plain UPDATE, or not at all) reds here.
+  - name: post_plots_triggers_exact_and_enabled
+    sql: |
+      SELECT want.tgname
+        FROM (VALUES ('trg_audit_plots_ins',   4, 'audit_stmt_insert',    ''),
+                     ('trg_audit_plots_upd',  16, 'audit_stmt_update',    ''),
+                     ('trg_audit_plots_del',   8, 'audit_stmt_delete',    ''),
+                     ('plots_repoint_guard',  19, 'guard_plots_repoint',  'lat,lng,postal_code,timezone'),
+                     ('plots_delete_guard',   11, 'guard_plots_delete',   ''),
+                     ('plots_truncate_guard', 34, 'guard_space_truncate', ''))
+             AS want(tgname, tgtype, proname, of_cols)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_trigger g
+                 JOIN pg_class t      ON t.oid = g.tgrelid
+                 JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+                 JOIN pg_proc p       ON p.oid = g.tgfoid
+                 JOIN pg_namespace pn ON pn.oid = p.pronamespace AND pn.nspname = 'public'
+                WHERE t.relname = 'plots' AND NOT g.tgisinternal
+                  AND g.tgname = want.tgname AND g.tgtype = want.tgtype
+                  AND p.proname = want.proname AND g.tgenabled = 'O'
+                  AND coalesce((SELECT string_agg(a.attname::text, ',' ORDER BY a.attname)
+                                  FROM unnest(g.tgattr::int2[]) AS k(attnum)
+                                  JOIN pg_attribute a ON a.attrelid = g.tgrelid AND a.attnum = k.attnum), '')
+                      = want.of_cols)
+    expect: rowcount_eq
+    value: 0
+
+  # CLOSED WORLD on plots: no non-internal trigger besides the six above. A BEFORE UPDATE trigger that rewrote a
+  # coordinate would not be seen by plots_repoint_guard (an UPDATE OF list sees the SET list, not changes other
+  # triggers make), so a new trigger here is a decision, made by amending this list in the same push.
+  - name: post_plots_has_no_other_trigger
+    sql: |
+      SELECT g.tgname::text
+        FROM pg_trigger g
+        JOIN pg_class t     ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'plots' AND NOT g.tgisinternal
+         AND g.tgname NOT IN ('trg_audit_plots_ins', 'trg_audit_plots_upd', 'trg_audit_plots_del',
+                              'plots_repoint_guard', 'plots_delete_guard', 'plots_truncate_guard')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+    expect: rowcount_eq
+    value: 0
+
+  # The audit triggers are statement-level and carry the transition tables their functions read. Without them
+  # the function sees no rows and writes nothing while every presence gate stays green.
+  - name: post_plots_audit_triggers_have_transition_tables
+    sql: |
+      SELECT g.tgname::text
+        FROM pg_trigger g
+        JOIN pg_class t     ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'plots' AND NOT g.tgisinternal
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+         AND (   (g.tgname = 'trg_audit_plots_upd'
+                  AND pg_get_triggerdef(g.oid) NOT LIKE '%REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT%')
+              OR (g.tgname = 'trg_audit_plots_del'
+                  AND pg_get_triggerdef(g.oid) NOT LIKE '%REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT%')
+              OR (g.tgname = 'trg_audit_plots_ins'
+                  AND pg_get_triggerdef(g.oid) NOT LIKE '%REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT%'))
+    expect: rowcount_eq
+    value: 0
+
+  # THE ANTI-SILENT-GAP GATE. Every column of plots is watched by trg_audit_plots_upd (read live from its
+  # arguments) or in the ignored list: id (it IS audit_events.row_id), created_at (never changes), updated_at
+  # (moves on unwatched writes), deleted_at (audit_stmt_update records its change itself, SOFT_DELETE / RESTORE).
+  # And every watched name is a real column: audit_watched_slice projects a missing key to JSON null on both
+  # sides, so a typo stops being watched in silence. Shape: v4-harvestaudit-001.
+  - name: post_plots_column_classification_is_complete
+    sql: |
+      WITH targs AS (
+        SELECT btrim(x, ' ''') AS col
+          FROM pg_trigger g
+          JOIN pg_class t     ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(g.oid) FROM 'audit_stmt_update\(([^)]*)\)'), ',') AS x
+         WHERE t.relname = 'plots' AND g.tgname = 'trg_audit_plots_upd'
+      )
+      SELECT 'unclassified column ' || ic.column_name
+        FROM information_schema.columns ic
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+         AND ic.table_schema = 'public' AND ic.table_name = 'plots'
+         AND ic.column_name NOT IN ('id', 'created_at', 'updated_at', 'deleted_at')
+         AND NOT EXISTS (SELECT 1 FROM targs WHERE targs.col = ic.column_name)
+      UNION ALL
+      SELECT 'watched name is not a column: ' || targs.col
+        FROM targs
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+         AND targs.col <> ''
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns ic
+                          WHERE ic.table_schema = 'public' AND ic.table_name = 'plots'
+                            AND ic.column_name = targs.col)
+    expect: rowcount_eq
+    value: 0
+
+  # The two guard bodies, not SECURITY DEFINER (they read, and run as the caller), search_path pinned. md5
+  # values: see the header.
+  - name: post_plots_guard_functions_pinned
+    sql: |
+      SELECT want.proname
+        FROM (VALUES ('guard_plots_repoint', '0845482dfbb48a94ec3cd81bddd6d62f'),
+                     ('guard_plots_delete',  '4f7edd92691a0a37f5788d524893613e'))
+             AS want(proname, body_md5)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+                WHERE p.proname = want.proname AND md5(p.prosrc) = want.body_md5
+                  AND NOT p.prosecdef AND p.pronargs = 0
+                  AND p.proconfig::text LIKE '%search_path=pg_catalog, public%')
+    expect: rowcount_eq
+    value: 0
+
+  # THE SILENT-DENY GUARD (v5-sourceentity-001): plots ships with RLS off. RLS on with no policy is deny-all for
+  # every non-owner role (garden_ro reads plots through its default SELECT grant) and fails by returning no rows.
+  - name: post_plots_rls_off_or_policied
+    sql: |
+      SELECT t.relname::text
+        FROM pg_class t
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE t.relname = 'plots' AND t.relrowsecurity
+         AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = t.oid)
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+    expect: rowcount_eq
+    value: 0
+
+  # ── DATA GATES, CONTINUOUS. Rows read through query_to_xml behind the stamp (header). ─────────────
+  # V204 §2.2: EVERY LIVE SPACE HAS EXACTLY ONE LIVE DEFAULT PLOT. One row per Space with none (or, past the
+  # index, more than one), naming it and the count. From 3.1 every Space-creating path makes the default plot in
+  # the same transaction, so a Space without one is a creating path that skipped it. Positive control
+  # (README.md): a planted Space with no plot reds; giving it a default plot greens. spaces has no deleted_at
+  # today, so every Space is live; the step that adds spaces.deleted_at adds `AND s.deleted_at IS NULL` here.
+  - name: post_every_live_space_has_exactly_one_live_default_plot
+    sql: |
+      SELECT x::text
+        FROM unnest(CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+                         THEN xpath('/table/row/v/text()', query_to_xml(
+                                'SELECT s.id::text || '': '' || count(p.id) || '' live default plot(s)'' AS v '
+                                '  FROM public.spaces s '
+                                '  LEFT JOIN public.plots p '
+                                '    ON p.workspace_id = s.id AND p.is_default AND p.deleted_at IS NULL '
+                                ' GROUP BY s.id '
+                                'HAVING count(p.id) <> 1',
+                                false, false, ''))
+                         ELSE ARRAY[]::xml[] END) AS x
+    expect: rowcount_eq
+    value: 0
+
+  # PLOT 1 IS THE SPACE'S PLACE. Each Space's live default plot has the Space's (weather_lat, weather_lng,
+  # postal_code), compared as values (numeric to numeric), NULL equal to NULL. Until 3.3b every weather reader
+  # reads the Space's columns and every weather row is recorded at them; 3.2a attributes that history to the
+  # default plot. Red: one side moved without the other (an escape template run on one table only), or the
+  # default flag moved to a plot somewhere else. A Space with no default plot is the gate above's, not this
+  # one's. 3.7 (which drops the three spaces columns) retires this gate in its own push.
+  - name: post_default_plot_place_equals_space_place
+    sql: |
+      SELECT x::text
+        FROM unnest(CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+                         THEN xpath('/table/row/v/text()', query_to_xml(
+                                'SELECT s.id::text || '': plot '' || p.id::text AS v '
+                                '  FROM public.spaces s '
+                                '  JOIN public.plots p '
+                                '    ON p.workspace_id = s.id AND p.is_default AND p.deleted_at IS NULL '
+                                ' WHERE (p.lat, p.lng, p.postal_code) '
+                                '       IS DISTINCT FROM (s.weather_lat, s.weather_lng, s.postal_code)',
+                                false, false, ''))
+                         ELSE ARRAY[]::xml[] END) AS x
+    expect: rowcount_eq
+    value: 0
+
+  # C-AUDIT is not silently failing: every plot has its INSERT audit row (audit_stmt_insert swallows any failure
+  # as a WARNING, so a broken writer leaves a plot with no trail and only this sees it).
+  - name: post_every_plot_has_its_insert_audit_row
+    sql: |
+      SELECT x::text
+        FROM unnest(CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+                         THEN xpath('/table/row/v/text()', query_to_xml(
+                                'SELECT p.id::text AS v FROM public.plots p '
+                                ' WHERE NOT EXISTS (SELECT 1 FROM public.audit_events a '
+                                '                    WHERE a.table_name = ''plots'' AND a.row_id = p.id '
+                                '                      AND a.action = ''INSERT'')',
+                                false, false, ''))
+                         ELSE ARRAY[]::xml[] END) AS x
+    expect: rowcount_eq
+    value: 0
+
+  # C-GUARD DATA GATE. Each plot's (lat, lng, postal_code, timezone) equals the after_jsonb of its newest plots
+  # audit row (INSERT, UPDATE, SOFT_DELETE or RESTORE). No audit row = a finding. The four ONLY: a write that
+  # touches no watched column writes no audit row and must stay green. Rows written in one transaction share ts,
+  # so the plot matches if ANY row of its newest group does. Red here means a place moved without the audit
+  # trigger seeing it: triggers disabled wholesale, or the escape template run with DISABLE TRIGGER USER/ALL
+  # instead of the one guard. Shape: v5-spaceguard-001 post_space_coordinates_match_newest_audit.
+  - name: post_plot_place_matches_newest_audit
+    sql: |
+      SELECT x::text
+        FROM unnest(CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+                         THEN xpath('/table/row/v/text()', query_to_xml(
+                                'WITH newest AS ( '
+                                '  SELECT a.row_id, max(a.ts) AS ts FROM public.audit_events a '
+                                '   WHERE a.table_name = ''plots'' AND a.after_jsonb IS NOT NULL '
+                                '   GROUP BY a.row_id) '
+                                'SELECT p.id::text AS v FROM public.plots p '
+                                ' WHERE NOT EXISTS ( '
+                                '   SELECT 1 FROM newest nw '
+                                '     JOIN public.audit_events a '
+                                '       ON a.table_name = ''plots'' AND a.row_id = nw.row_id AND a.ts = nw.ts '
+                                '      AND a.after_jsonb IS NOT NULL '
+                                '    WHERE nw.row_id = p.id '
+                                '      AND jsonb_build_object(''lat'', p.lat, ''lng'', p.lng, '
+                                '                             ''postal_code'', p.postal_code, ''timezone'', p.timezone) '
+                                '        = jsonb_build_object(''lat'', a.after_jsonb -> ''lat'', ''lng'', a.after_jsonb -> ''lng'', '
+                                '                             ''postal_code'', a.after_jsonb -> ''postal_code'', '
+                                '                             ''timezone'', a.after_jsonb -> ''timezone''))',
+                                false, false, ''))
+                         ELSE ARRAY[]::xml[] END) AS x
+    expect: rowcount_eq
+    value: 0
+
+  # Every plot's zone is one PostgreSQL knows (pg_timezone_names): a typo would silently shift every calendar day
+  # a 3.3b reader computes for it. No CHECK can say this (the zone list is not immutable), so a gate does.
+  - name: post_plot_timezones_are_known
+    sql: |
+      SELECT x::text
+        FROM unnest(CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+                         THEN xpath('/table/row/v/text()', query_to_xml(
+                                'SELECT p.id::text || '': '' || p.timezone AS v FROM public.plots p '
+                                ' WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_timezone_names z '
+                                '                    WHERE z.name = p.timezone)',
+                                false, false, ''))
+                         ELSE ARRAY[]::xml[] END) AS x
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPT ─────────────────────────────────────────────────────────────────────────
+  # Run right after 0a. Every plot is a Plot 1 this migration wrote (its INSERT audit row carries the migration
+  # actor) as its Space's live default, copied from that Space (name, owner, the zone literal), one per Space,
+  # and at least one Space exists (so the count cannot pass as 0 = 0). continuous false: the first plot anyone
+  # adds makes it false, as designed.
+  - name: post_receipt_every_plot_is_a_plot_1_this_migration_wrote
+    continuous: false
+    sql: |
+      SELECT 'plots are not exactly one migration-written Plot 1 per Space'
+       WHERE CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001')
+                  THEN (xpath('/table/row/n/text()', query_to_xml(
+                         'SELECT (SELECT count(*) FROM public.spaces s '
+                         '         WHERE NOT EXISTS ( '
+                         '           SELECT 1 FROM public.plots p '
+                         '             JOIN public.audit_events a '
+                         '               ON a.table_name = ''plots'' AND a.row_id = p.id AND a.action = ''INSERT'' '
+                         '              AND a.actor_clerk_sub = ''migration:v5-plottier-001'' '
+                         '            WHERE p.workspace_id = s.id AND p.is_default AND p.deleted_at IS NULL '
+                         '              AND p.name = s.name AND p.created_by = s.created_by '
+                         '              AND p.timezone = ''America/New_York'')) '
+                         '     + (SELECT count(*) FROM public.plots p '
+                         '         WHERE NOT EXISTS (SELECT 1 FROM public.audit_events a '
+                         '                            WHERE a.table_name = ''plots'' AND a.row_id = p.id '
+                         '                              AND a.action = ''INSERT'' '
+                         '                              AND a.actor_clerk_sub = ''migration:v5-plottier-001'')) '
+                         '     + (SELECT count(*) WHERE NOT EXISTS (SELECT 1 FROM public.spaces)) AS n',
+                         false, false, '')))[1]::text::bigint > 0
+                  ELSE false END
+    expect: rowcount_eq
+    value: 0
