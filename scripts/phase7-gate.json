@@ -95,7 +95,7 @@
         "1.16": ["5.1.5-platformoperators-001"],
         "1.17": ["5.1.5-tenantgates-001"],
         "2.0b": ["5.3.8-tenancyclasses-001"],
-        "2.0e": [],
+        "2.0e": ["5.3.12-tenancykeys-001"],
         "2.1": [],
         "2.2": [],
         "2.3": [],
@@ -103,7 +103,7 @@
         "2.4a": [],
         "2.6": [],
         "3.1": ["5.3.6-plottier-001"],
-        "3.2a": [],
+        "3.2a": ["5.3.12-wxplotid-001"],
         "3.2d": [],
         "3.3b": [],
         "3.4": [],
@@ -165,8 +165,9 @@
         {"id": "suite-tests", "kind": "tests", "files": [
           {"path": "lambda/sql-census.static.test.js", "min_tests": 15},
           {"path": "lambda/tenancy-classes.test.js", "min_tests": 9},
-          {"path": "scripts/sql-text-rule.test.js", "min_tests": 2}
-        ], "pending": ["2.0e", "2.2", "4.1", "4.3", "4.5", "5.1", "5.2"], "note": "pending: tenancy-keys (2.0e), tenancy-insert (2.2), fixture ratchet (4.1), 4.3 ratchet and stranger, route coverage and role matrix (4.5), SQL-scope (5.1), cross-Space suite (5.2)"},
+          {"path": "scripts/sql-text-rule.test.js", "min_tests": 2},
+          {"path": "lambda/tenancy-keys.static.test.js", "min_tests": 16}
+        ], "pending": ["2.2", "4.1", "4.3", "4.5", "5.1", "5.2"], "note": "pending: tenancy-insert (2.2), fixture ratchet (4.1), 4.3 ratchet and stranger, route coverage and role matrix (4.5), SQL-scope (5.1), cross-Space suite (5.2)"},
         {"id": "route-coverage", "kind": "zero", "name": "route_coverage_uncovered"},
         {"id": "role-matrix", "kind": "fact", "name": "role_matrix_pass"},
         {"id": "householdscope-ratchet", "kind": "zero", "name": "householdScope_ratchet"},
