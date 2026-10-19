@@ -92,8 +92,28 @@ ENVS = ("prod", "staging", "both")
 
 # Every key the strict schema admits. Anything else is an error, not a shrug:
 # a typo'd key ("expects:", "envs:") would otherwise silently disable a gate.
-ITEM_KEYS = {"name", "sql", "expect", "value", "note", "env", "manual", "retired", "continuous"}
+ITEM_KEYS = {"name", "sql", "expect", "value", "note", "env", "manual", "retired", "continuous",
+             "offenders"}
 EXPECT_KINDS = {"rowcount_eq", "rowcount_gte", "scalar_eq"}
+
+# OFFENDERS -- A RED GATE NAMES WHAT TRIPPED IT (CH-20261019-01, weekly review P01)
+# -------------------------------------------------------------------------------
+# A violation-count gate used to say only "expected rowcount_eq=0, got rowcount=3". The standing
+# care-decision gates go red BY DESIGN whenever Dave enters a planting or crop type with no watering
+# or harvest decision yet, so the red itself is routine; what it did not say is WHICH rows. On
+# 2026-10-12..10-14 two separate sessions opened live Neon just to learn that it was the three Deck
+# pots and the daisy / millet crop types.
+#
+# `offenders:` is a SELECT column list. The listing query is the gate's OWN sql with only its leading
+# `SELECT 1` / `SELECT count(*)` replaced by those columns: FROM, JOIN and WHERE are the predicate's
+# bytes, so the rows listed are the rows the verdict counted and the two cannot drift apart. It is
+# MESSAGE ONLY: it runs after the verdict, only on a FAIL, in its own rolled-back transaction, and
+# nothing it returns or raises can change the status (a listing that errors says so in the detail and
+# the FAIL stands). A gate without `offenders:` runs exactly as before.
+OFFENDERS_CAP = 10
+_COUNTED_LEAD = re.compile(r"^SELECT\s+(1|count\(\s*\*\s*\))\s+FROM\b", re.IGNORECASE)
+# Shapes where "the rows the count counted" is not the same as "the rows of the FROM/WHERE".
+_NOT_ROW_FOR_ROW = re.compile(r"\b(GROUP\s+BY|HAVING|UNION|INTERSECT|EXCEPT)\b", re.IGNORECASE)
 
 # Layer-1 read-only guard. A gate body must START with one of these.
 _SQL_LEAD = re.compile(r"^\(?\s*(SELECT|WITH)\b", re.IGNORECASE)
@@ -184,6 +204,39 @@ def validate_sql_readonly(sql, where):
             "The gate runner is read-only by construction."
         )
     return body
+
+
+def derive_offenders_sql(body, expect, value, offenders, where):
+    """Build the listing query for a gate's `offenders:` columns. Raises GateSchemaError.
+
+    Only a violation count can name its violations: rowcount_eq 0 over `SELECT 1 FROM ...`, or
+    scalar_eq 0 over `SELECT count(*) FROM ...`. Anything else is refused at load time rather than
+    listed approximately, because a list that is not row-for-row with the count misleads.
+    """
+    if not isinstance(offenders, str) or not offenders.strip():
+        raise GateSchemaError(f"{where}: 'offenders' must be a non-empty SELECT column list")
+    if expect not in ("rowcount_eq", "scalar_eq") or isinstance(value, bool) or value != 0:
+        raise GateSchemaError(
+            f"{where}: 'offenders' needs a violation count (rowcount_eq or scalar_eq, value 0); "
+            f"this gate is {expect}={value!r}"
+        )
+    m = _COUNTED_LEAD.match(body)
+    lead = "1" if expect == "rowcount_eq" else "count(*)"
+    if not m or (m.group(1) == "1") != (expect == "rowcount_eq"):
+        raise GateSchemaError(
+            f"{where}: 'offenders' needs the sql to begin `SELECT {lead} FROM` so the listing can "
+            "reuse its FROM and WHERE unchanged"
+        )
+    if _NOT_ROW_FOR_ROW.search(body):
+        raise GateSchemaError(
+            f"{where}: 'offenders' cannot list a gate using GROUP BY, HAVING or a set operation; "
+            "its rows are not the rows it counts"
+        )
+    # A trailing `;` is legal on a gate body and illegal inside the subquery below.
+    listing = "SELECT " + offenders.strip() + " FROM" + body[m.end():].rstrip().rstrip(";")
+    validate_sql_readonly(listing, f"{where} (offenders)")
+    return (f"SELECT count(*) OVER () AS _total, _o.* FROM ({listing}) AS _o "
+            f"ORDER BY 2 LIMIT {OFFENDERS_CAP}")
 
 
 def load_gate_file(path):
@@ -278,8 +331,8 @@ def load_gate_file(path):
                 # A manual gate is a human runbook step. It carries no SQL and
                 # cannot pass or fail automatically -- but it MUST stay visible,
                 # so it is loaded and reported rather than dropped.
-                if "sql" in item:
-                    raise GateSchemaError(f"{where}: manual gate must not carry 'sql'")
+                if "sql" in item or "offenders" in item:
+                    raise GateSchemaError(f"{where}: manual gate must not carry 'sql' or 'offenders'")
                 if not item.get("note"):
                     raise GateSchemaError(f"{where}: manual gate requires a 'note' describing it")
                 gates.append({
@@ -308,11 +361,13 @@ def load_gate_file(path):
                 )
 
             body = validate_sql_readonly(sql, where)
+            offenders_sql = (derive_offenders_sql(body, expect, value, item["offenders"], where)
+                             if "offenders" in item else None)
             gates.append({
                 "phase": phase, "name": name, "manual": False, "sql": body,
                 "expect": expect, "value": value, "note": item.get("note"),
                 "env": env, "retired": retired, "continuous": continuous,
-                "path": str(path),
+                "path": str(path), "offenders_sql": offenders_sql,
             })
     return gates
 
@@ -473,13 +528,58 @@ def run_gates(conn, gates, env, strict_env, continuous_only=False):
         first = fetched[0][0] if rows and fetched[0] else None
         ok, actual = compare(g["expect"], g["value"], rows, first)
         status = "PASS" if ok else "FAIL"
+        detail = f"expected {g['expect']}={g['value']!r}, got {actual}"
+        listed = {}
+        # The verdict is final above this line; the listing only adds words to a FAIL.
+        if status == "FAIL" and g.get("offenders_sql"):
+            listed, suffix = list_offenders(conn, g["offenders_sql"])
+            detail += suffix
         results.append({
             **base,
             "status": status,
-            "detail": f"expected {g['expect']}={g['value']!r}, got {actual}",
+            "detail": detail,
+            **listed,
             **(session if status != "PASS" or _search_path_drifted(session) else {}),
         })
     return results
+
+
+def _offender_line(cols):
+    """`label (detail, detail)` -- the first listed column names the row, the rest qualify it."""
+    label = "(no name)" if cols[0] is None else str(cols[0])
+    extra = [str(c) for c in cols[1:] if c is not None]
+    return f"{label} ({', '.join(extra)})" if extra else label
+
+
+def list_offenders(conn, offenders_sql):
+    """Name the rows a FAILED violation-count gate counted. Returns (result fields, detail suffix).
+
+    Never raises and never touches the status: a listing that cannot run says so in the detail and
+    the FAIL stands. Re-pins search_path first, because this is a new transaction and may land on a
+    different pooled connection than the gate did.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(SESSION_PIN_SQL, prepare=False)
+            cur.execute(offenders_sql)
+            fetched = cur.fetchall()
+        conn.rollback()
+        if not fetched:
+            return ({"offenders": [], "offenders_total": 0},
+                    "; offenders: none found on a second read (the rows changed after the check ran)")
+        total = int(fetched[0][0])
+        shown = [_offender_line(row[1:]) for row in fetched]
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        code = getattr(exc, "sqlstate", None) or type(exc).__name__
+        return ({"offenders_error": code},
+                f"; offenders could not be listed ({code}); the verdict stands")
+    more = total - len(shown)
+    return ({"offenders": shown, "offenders_total": total},
+            f"; {total} offender(s): " + "; ".join(shown) + (f" and {more} more" if more > 0 else ""))
 
 
 def discover(migration, all_flag):

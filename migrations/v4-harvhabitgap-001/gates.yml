@@ -209,6 +209,16 @@ post:
            'vietnamese_coriander','viola','yarrow','yogurt')
     expect: scalar_eq
     value: 0
+    # Message only (CH-20261019-01): a red names each crop type and the live plantings on it, with
+    # ids. The verdict is the sql above; gate_runner.py runs these columns over its FROM/WHERE only
+    # after a FAIL, so this list needs no copy of the slug list and cannot drift from it.
+    offenders: |
+      'crop type ' || c.slug AS crop_type,
+      coalesce((SELECT 'live plantings: ' || string_agg(coalesce(p.name, '(no name)') || ' id ' || p.id, ', '
+                                                        ORDER BY p.name)
+                  FROM public.plants p JOIN public.plant_varieties v ON v.id = p.variety_id
+                 WHERE v.crop_type_slug = c.slug AND p.deleted_at IS NULL AND p.archived_at IS NULL),
+               'no live planting') AS plantings
 
   # THE HANDBACK (added 2026-09-03, OPS-FROZENALLOWLISTGATES-001). unseeded_vocabulary's own note has
   # always said "Left NULL rather than guessed; seed them when something is actually planted" — and
@@ -255,6 +265,12 @@ post:
               AND p.deleted_at IS NULL AND v.deleted_at IS NULL)
     expect: scalar_eq
     value: 0
+    # Message only (CH-20261019-01), as on the gate above; the plantings are the ones its EXISTS reads.
+    offenders: |
+      'crop type ' || c.slug AS crop_type,
+      (SELECT 'plantings: ' || string_agg(coalesce(p.name, '(no name)') || ' id ' || p.id, ', ' ORDER BY p.name)
+         FROM public.plants p JOIN public.plant_varieties v ON v.id = p.variety_id
+        WHERE v.crop_type_slug = c.slug AND p.deleted_at IS NULL AND v.deleted_at IS NULL) AS plantings
     note: |
       Red here is NOT a defect to be silenced — it is the handback firing. The remedy is to decide
       the slug: seed it into by_crop_type with a real harvest_habit (it is planted now, so there is

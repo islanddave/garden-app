@@ -64,6 +64,12 @@ post:
                       WHERE version = '4.89.0-cadencerefill-20260901')
     expect: rowcount_eq
     value: 0
+    # Message only (CH-20261019-01): a red names each planting, its cultivar and id. The verdict is
+    # the sql above; gate_runner.py runs these columns over its FROM/WHERE only after a FAIL.
+    offenders: |
+      p.name AS planting,
+      (SELECT 'cultivar ' || v.name FROM public.plant_varieties v WHERE v.id = p.variety_id) AS cultivar,
+      'id ' || p.id AS id
 
   - name: post_no_live_planting_rests_on_an_unresearched_placeholder
     note: >
@@ -93,6 +99,11 @@ post:
                       WHERE version = '4.89.0-cadencerefill-20260901')
     expect: rowcount_eq
     value: 0
+    # Message only (CH-20261019-01), as on the gate above.
+    offenders: |
+      p.name AS planting,
+      (SELECT 'cultivar ' || v.name FROM public.plant_varieties v WHERE v.id = p.variety_id) AS cultivar,
+      'id ' || p.id AS id
 
   - name: post_collards_silence_is_still_intact
     note: >

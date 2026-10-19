@@ -7,6 +7,7 @@ did not run. So the bulk of these tests are about the LOUD-vs-SILENT contract --
 every malformed input must raise, and no code path may ever turn a gate into a
 silent pass.
 """
+import re
 import sys
 from pathlib import Path
 
@@ -460,6 +461,191 @@ def test_the_session_reset_is_never_server_prepared():
     conn = FakeConn([[]] * 7)
     gr.run_gates(conn, [_gate(f"g{i}") for i in range(7)], "prod", False)
     assert conn.pin_prepare_flags == [False] * 7
+
+
+# ------------------- offenders: a red gate names what tripped it (CH-20261019-01) ----
+
+COUNT_GATE = """
+post:
+  - name: post_no_gap
+    sql: |
+      SELECT 1 FROM public.plants p
+       WHERE p.deleted_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM public.care_profile cp WHERE cp.scope_id = p.variety_id)
+    expect: rowcount_eq
+    value: 0
+{offenders}"""
+
+SCALAR_GATE = """
+post:
+  - name: post_no_null
+    sql: |
+      SELECT count(*) FROM public.crop_types c
+       WHERE c.harvest_habit IS NULL AND c.slug NOT IN ('aloe','begonia');
+    expect: scalar_eq
+    value: 0
+{offenders}"""
+
+PLANT_COLS = "    offenders: p.name, 'id ' || p.id\n"
+
+
+def _load(tmp_path, template, offenders=""):
+    return gr.load_gate_file(write(tmp_path, template.format(offenders=offenders)))[0]
+
+
+class RecordingCursor(FakeCursor):
+    def execute(self, sql, prepare=None):
+        if sql != gr.SESSION_PIN_SQL:
+            self.conn.executed.append(sql)
+        return super().execute(sql, prepare)
+
+
+class RecordingConn(FakeConn):
+    def __init__(self, outcomes, **kw):
+        super().__init__(outcomes, **kw)
+        self.executed = []
+    def cursor(self):
+        return RecordingCursor(self.outcomes.pop(0), self)
+
+
+def test_offenders_listing_reuses_the_gates_own_from_and_where(tmp_path):
+    """The listed rows are the counted rows: only the projection differs, so they cannot drift."""
+    for template, lead, cols in ((COUNT_GATE, "SELECT 1 FROM", "SELECT p.name, 'id ' || p.id FROM"),
+                                 (SCALAR_GATE, "SELECT count(*) FROM", "SELECT c.slug FROM")):
+        g = _load(tmp_path, template, f"    offenders: {cols[7:-5]}\n")
+        tail = g["sql"].rstrip(";")[len(lead):]
+        assert g["sql"].startswith(lead)
+        assert f"({cols}{tail}) AS _o" in g["offenders_sql"]
+        assert g["offenders_sql"].endswith(f"ORDER BY 2 LIMIT {gr.OFFENDERS_CAP}")
+
+
+def test_offenders_changes_nothing_the_verdict_reads(tmp_path):
+    for template in (COUNT_GATE, SCALAR_GATE):
+        plain = _load(tmp_path, template)
+        listed = _load(tmp_path, template, "    offenders: c.slug\n" if template is SCALAR_GATE else PLANT_COLS)
+        assert plain["offenders_sql"] is None and listed["offenders_sql"]
+        for key in ("sql", "expect", "value", "env", "continuous", "phase", "name"):
+            assert plain[key] == listed[key], key
+
+
+@pytest.mark.parametrize("sql,expect,value,offenders,fragment", [
+    ("SELECT 1 FROM t", "rowcount_gte", 1, "t.id", "needs a violation count"),
+    ("SELECT 1 FROM t", "rowcount_eq", 1, "t.id", "needs a violation count"),
+    ("SELECT count(*) FROM t", "scalar_eq", "false", "t.id", "needs a violation count"),
+    ("SELECT 1 FROM t", "scalar_eq", 0, "t.id", "begin `SELECT count(*) FROM`"),
+    ("SELECT count(*) FROM t", "rowcount_eq", 0, "t.id", "begin `SELECT 1 FROM`"),
+    ("SELECT t.id FROM t", "rowcount_eq", 0, "t.id", "begin `SELECT 1 FROM`"),
+    ("SELECT 1 FROM t GROUP BY t.k", "rowcount_eq", 0, "t.k", "GROUP BY"),
+    ("SELECT count(*) FROM t UNION SELECT count(*) FROM u", "scalar_eq", 0, "t.id", "set operation"),
+    ("SELECT 1 FROM t", "rowcount_eq", 0, "", "non-empty"),
+    ("SELECT 1 FROM t", "rowcount_eq", 0, "t.id; DELETE FROM t", "statements"),
+])
+def test_offenders_refused_where_a_list_would_not_be_the_counted_rows(tmp_path, sql, expect, value,
+                                                                       offenders, fragment):
+    body = (f"post:\n  - name: g\n    sql: \"{sql}\"\n    expect: {expect}\n    value: {value}\n"
+            f"    offenders: \"{offenders}\"\n")
+    with pytest.raises(gr.GateSchemaError, match=re.escape(fragment)):
+        gr.load_gate_file(write(tmp_path, body))
+
+
+def test_a_manual_gate_may_not_carry_offenders(tmp_path):
+    body = "post:\n  - {name: m, manual: true, note: x, offenders: p.id}\n"
+    with pytest.raises(gr.GateSchemaError, match="must not carry"):
+        gr.load_gate_file(write(tmp_path, body))
+
+
+def test_a_red_gate_names_each_offender_with_its_id(tmp_path, capsys):
+    g = _load(tmp_path, COUNT_GATE, PLANT_COLS)
+    listing = [(3, "Hardy Mums", "cultivar Garden Chrysanthemum", "id 11111111-aaaa"),
+               (3, "Ornamental Millet", None, "id 22222222-bbbb"),
+               (3, None, "id 33333333-cccc")]
+    conn = RecordingConn([[(1,), (1,), (1,)], listing])
+    res = gr.run_gates(conn, [g], "prod", False)[0]
+    assert res["status"] == "FAIL"
+    assert res["detail"] == (
+        "expected rowcount_eq=0, got rowcount=3; 3 offender(s): "
+        "Hardy Mums (cultivar Garden Chrysanthemum, id 11111111-aaaa); "
+        "Ornamental Millet (id 22222222-bbbb); (no name) (id 33333333-cccc)")
+    assert res["offenders_total"] == 3 and len(res["offenders"]) == 3
+    assert conn.executed == [g["sql"], g["offenders_sql"]]
+    assert conn.rollbacks == 2                       # the listing is its own rolled-back transaction
+    gr.render([res], "prod")
+    assert "Hardy Mums (cultivar Garden Chrysanthemum, id 11111111-aaaa)" in capsys.readouterr().out
+
+
+def test_the_listing_is_capped_and_says_how_many_more(tmp_path):
+    g = _load(tmp_path, SCALAR_GATE, "    offenders: c.slug\n")
+    listing = [(14, f"slug_{i:02d}") for i in range(gr.OFFENDERS_CAP)]
+    res = gr.run_gates(FakeConn([[(14,)], listing]), [g], "prod", False)[0]
+    assert res["detail"].endswith("slug_09 and 4 more")
+    assert res["detail"].startswith("expected scalar_eq=0, got scalar=14; 14 offender(s): slug_00; slug_01;")
+
+
+@pytest.mark.parametrize("template,offenders,verdict_rows", [
+    (COUNT_GATE, PLANT_COLS, []),                       # pass
+    (COUNT_GATE, PLANT_COLS, [(1,)]),                   # fail
+    (COUNT_GATE, PLANT_COLS, [(1,)] * 25),              # fail, many
+    (SCALAR_GATE, "    offenders: c.slug\n", [(0,)]),  # pass
+    (SCALAR_GATE, "    offenders: c.slug\n", [(2,)]),  # fail
+    (SCALAR_GATE, "    offenders: c.slug\n", []),      # fail: no scalar
+])
+def test_the_pass_fail_decision_is_identical_with_and_without_offenders(tmp_path, template, offenders,
+                                                                         verdict_rows):
+    plain = _load(tmp_path, template)
+    listed = _load(tmp_path, template, offenders)
+    before = gr.run_gates(FakeConn([verdict_rows]), [plain], "prod", False)[0]
+    conn = RecordingConn([verdict_rows, [(1, "x")]])
+    after = gr.run_gates(conn, [listed], "prod", False)[0]
+    assert after["status"] == before["status"]
+    assert after["detail"].startswith(before["detail"])
+    if before["status"] == "PASS":
+        assert conn.executed == [listed["sql"]]       # a green gate never runs the listing
+        assert after == before
+
+
+def test_a_listing_that_errors_leaves_the_fail_standing_and_the_next_gate_clean(tmp_path):
+    g = _load(tmp_path, COUNT_GATE, PLANT_COLS)
+    conn = FakeConn([[(1,)], FakePgError("42703", 'column p.nmae does not exist'), []])
+    res = gr.run_gates(conn, [g, {**g, "name": "next"}], "prod", False)
+    assert [r["status"] for r in res] == ["FAIL", "PASS"]
+    assert res[0]["detail"] == ("expected rowcount_eq=0, got rowcount=1; "
+                                "offenders could not be listed (42703); the verdict stands")
+    assert res[0]["offenders_error"] == "42703"
+    assert conn.rollbacks == 3
+
+
+def test_rows_gone_by_the_listing_are_said_not_hidden(tmp_path):
+    g = _load(tmp_path, COUNT_GATE, PLANT_COLS)
+    res = gr.run_gates(FakeConn([[(1,)], []]), [g], "prod", False)[0]
+    assert res["status"] == "FAIL"
+    assert res["detail"].endswith("offenders: none found on a second read (the rows changed after the check ran)")
+
+
+# The standing care-decision gates that go red, by design, when a planting or crop type arrives with
+# no watering or harvest decision. Each must name its rows in the red message (weekly review P01).
+CARE_DECISION_GATES = {
+    "v4-cadencerefill-001": ["post_no_live_planting_lacks_a_cadence_profile",
+                             "post_no_live_planting_rests_on_an_unresearched_placeholder"],
+    "v4-harvhabitgap-001": ["post_every_null_habit_is_a_recorded_decision",
+                            "post_no_unseeded_slug_has_a_live_planting"],
+}
+
+
+@pytest.mark.parametrize("migration,name", [(m, n) for m, ns in CARE_DECISION_GATES.items() for n in ns])
+def test_each_care_decision_gate_names_its_rows_when_red(migration, name):
+    gates = {g["name"]: g for g in gr.load_gate_file(gr.MIGRATIONS_DIR / migration / "gates.yml")}
+    g = gates[name]
+    assert g["offenders_sql"], f"{migration}::{name} has no `offenders:`, so its red names nothing"
+    lead = re.match(r"SELECT\s+(1|count\(\*\))\s+FROM", g["sql"], re.IGNORECASE)
+    assert lead, name
+    assert g["sql"][lead.end():].rstrip(";") + ") AS _o" in g["offenders_sql"]   # same FROM/WHERE
+    planting = (2, "Prairie Sun Yellow Daisies", "cultivar Prairie Sun", "id 7c0f-uuid")
+    verdict = [(1,), (1,)] if g["expect"] == "rowcount_eq" else [(2,)]
+    res = gr.run_gates(FakeConn([verdict, [planting, (2, "Hardy Mums", None, "id 9d1e-uuid")]]),
+                       [g], "prod", False)[0]
+    assert res["status"] == "FAIL"
+    assert "Prairie Sun Yellow Daisies (cultivar Prairie Sun, id 7c0f-uuid); Hardy Mums (id 9d1e-uuid)" \
+        in res["detail"]
 
 
 # --------------------------------------------- the real corpus still loads ----
