@@ -1,0 +1,296 @@
+{
+  "_doc": "Phase 7 second-owner gate (multi-space plan V204 §4, step 2.0f; V5-SPACEISOLATION-001). 'steps' is the closed-world step map: every id in scripts/multispace-steps.json maps to a G id, a list of G ids, or {\"excluded\": \"<reason>\"}; exclusions are ids, never ranges. 'items' holds each G item's checks, judged by scripts/phase7-gate.py against recorded inputs. scripts/test_phase7_gate_map.py is the authority for the map's shape.",
+  "plan": "multispace-prep-plan-V204-20261019.0900.md",
+  "steps": {
+    "1.0": {"excluded": "names the reader of a red gate-invariants run; no second-owner exposure (V202 §4)"},
+    "1.1": {"excluded": "Dave's Space safety: spaces audit trigger (V202 §4)"},
+    "1.2": {"excluded": "Dave's Space safety: weather repoint guard (V202 §4)"},
+    "1.3a": {"excluded": "Dave's Space safety: test cleanup ahead of the delete guard (V202 §4, 1.1-1.3)"},
+    "1.3b": {"excluded": "Dave's Space safety: spaces delete guard (V202 §4, 1.1-1.3)"},
+    "1.4": {"excluded": "site-constant allowlist test; no second-owner exposure (V202 §4)"},
+    "1.6": {"excluded": "spaces columns contract test; no second-owner exposure (V202 §4)"},
+    "1.7": {"excluded": "daily-plan collision guard; no second-owner exposure (V202 §4); retired by 5.3"},
+    "1.8": {"excluded": "fold FKs, Dave's Space only (V202 §4, 1.8-1.10); G1 reads its stamps"},
+    "1.9": {"excluded": "container fold, Dave's Space only (V202 §4, 1.8-1.10); G1 reads its stamp"},
+    "1.10": {"excluded": "FK VALIDATE, Dave's Space only (V202 §4, 1.8-1.10); G1 reads its stamp"},
+    "1.11": {"excluded": "photo tenancy check; no second-owner exposure (V202 §4)"},
+    "1.12": "G6",
+    "1.13": {"excluded": "public-repo literal test; no second-owner exposure (V202 §4)"},
+    "1.14": "G2",
+    "1.15": "G3",
+    "1.16": "G8",
+    "1.17": "G12",
+    "1.18": {"excluded": "libpg-query spike; no second-owner exposure (V202 §4)"},
+    "2.0a": "G5",
+    "2.0b": "G5",
+    "2.0c": {"excluded": "ops tooling (restore-verify)"},
+    "2.0d": {"excluded": "ops tooling (harness fleet cap)"},
+    "2.0e": "G5",
+    "2.0f": {"excluded": "the gate's own tooling"},
+    "2.1": {"excluded": "structural, covered by G1/G5"},
+    "2.2": "G5",
+    "2.3": {"excluded": "structural, covered by G1/G5"},
+    "2.4-pre": "G8",
+    "2.4a": "G8",
+    "2.6": "G8",
+    "2.7": ["G6", "G7"],
+    "2.4-post": {"excluded": "post-Phase-7 cleanup, after G8 passes"},
+    "3.1": {"excluded": "Dave's plots only"},
+    "3.2a": {"excluded": "Dave's plots only"},
+    "3.2b": {"excluded": "Dave's plots only"},
+    "3.2c": {"excluded": "Dave's plots only"},
+    "3.2d": {"excluded": "Dave's plots only"},
+    "3.3a": {"excluded": "Dave's plots only"},
+    "3.3b": "G6",
+    "3.4": {"excluded": "Dave's plots only"},
+    "3.5": {"excluded": "Dave's plots only"},
+    "3.6": "G11",
+    "3.7": {"excluded": "Dave's plots only"},
+    "4.0": {"excluded": "G5 through 4.3"},
+    "4.1": "G5",
+    "4.2": {"excluded": "G14's precondition"},
+    "4.3": "G5",
+    "4.4": "G14",
+    "4.5": "G5",
+    "4.6": "G15",
+    "4.7": "G8",
+    "5.1": "G5",
+    "5.2": "G5",
+    "5.3": "G5",
+    "5.4": ["G4", "G11"],
+    "5.5": "G13",
+    "5.6": "G3",
+    "5.7a": "G2",
+    "5.7": "G2",
+    "5.8": "G2",
+    "5.9": "G9",
+    "5.10": "G9",
+    "5.11": "G9",
+    "5.12": {"excluded": "consistency, not isolation"},
+    "5.13": "G17",
+    "6.1": {"excluded": "a document"},
+    "6.1b": "G3",
+    "6.2": "G4",
+    "6.3": "G4",
+    "6.4": "G16",
+    "6.5": "G4",
+    "6.6": "G10",
+    "6.7": "G16"
+  },
+  "items": {
+    "G1": {
+      "title": "Migrations",
+      "checks": [
+        {"id": "stamps", "kind": "schema_version", "envs": ["prod", "staging"]}
+      ],
+      "migrations": {
+        "1.1": ["5.1.5-spaceguard-001"],
+        "1.2": ["5.1.5-spaceguard-001"],
+        "1.3b": ["5.1.5-spaceguard-001"],
+        "1.8": ["5.1.5-spacefk-001-fk-plants", "5.1.5-spacefk-001-fk-projects"],
+        "1.9": ["5.1.5-spacefk-001-fold"],
+        "1.10": ["5.1.5-spacefk-001-validate"],
+        "1.11": ["5.1.5-tenantgates-001"],
+        "1.14": ["5.1.5-tenantgates-001"],
+        "1.16": ["5.1.5-platformoperators-001"],
+        "1.17": ["5.1.5-tenantgates-001"],
+        "2.0b": ["5.3.8-tenancyclasses-001"],
+        "2.0e": [],
+        "2.1": [],
+        "2.2": [],
+        "2.3": [],
+        "2.4-pre": [],
+        "2.4a": [],
+        "2.6": [],
+        "3.1": ["5.3.6-plottier-001"],
+        "3.2a": [],
+        "3.2d": [],
+        "3.3b": [],
+        "3.4": [],
+        "3.5": [],
+        "3.6": [],
+        "3.7": [],
+        "4.1": [],
+        "4.7": [],
+        "5.1": [],
+        "5.3": [],
+        "5.7": [],
+        "5.9": [],
+        "5.10": [],
+        "6.2": [],
+        "6.6": []
+      },
+      "not_migrations": {
+        "1.4": "a CI test; no migration directory",
+        "1.15": "env and manifest retirement; no DDL",
+        "2.4-post": "post-Phase-7 cleanup; it runs after this gate",
+        "5.6": "env retirement in two promotes; no DDL",
+        "6.5": "env and manifest retirement; no DDL"
+      }
+    },
+    "G2": {
+      "title": "No Dave defaults",
+      "checks": [
+        {"id": "no-default-gate", "kind": "gate", "name": "post_no_workspace_default", "envs": ["prod", "staging"]},
+        {"id": "sentinel-callers-gate", "kind": "gate", "name": "post_sentinel_callers", "envs": ["prod", "staging"]},
+        {"id": "dave-constant-allowlist", "kind": "zero", "name": "dave_constant_allowlist_entries_besides_self_test"},
+        {"id": "fixture-stamp-ratchet", "kind": "zero", "name": "fixture_stamp_ratchet"},
+        {"id": "prosrc-default-writers", "kind": "zero", "name": "prosrc_default_reliant_function_writers"}
+      ]
+    },
+    "G3": {
+      "title": "Env retired",
+      "checks": [
+        {"id": "manifest-household-ids-null", "kind": "fact", "name": "manifest_GARDEN_HOUSEHOLD_IDS_null"},
+        {"id": "manifest-admin-subs-null", "kind": "fact", "name": "manifest_ADMIN_CLERK_SUBS_null"},
+        {"id": "household-ids-readers", "kind": "zero", "name": "readers_GARDEN_HOUSEHOLD_IDS"},
+        {"id": "admin-subs-readers", "kind": "zero", "name": "readers_ADMIN_CLERK_SUBS"},
+        {"id": "env-parity-gone", "kind": "fact", "name": "env_parity_rule_gone"}
+      ]
+    },
+    "G4": {
+      "title": "Integrations off, alert routing",
+      "checks": [
+        {"id": "integration-fallback-tests", "kind": "tests", "files": [], "pending": ["6.2"], "note": "integration-fallback.test.js, min 6, including the env-segment case"},
+        {"id": "env-segment-case", "kind": "fact", "name": "integration_fallback_env_segment_case"},
+        {"id": "non-dave-kinds-refused", "kind": "fact", "name": "secret_bearing_and_fb_ig_kinds_refused_for_non_dave"},
+        {"id": "dave-space-id-refs", "kind": "zero", "name": "DAVE_SPACE_ID_references"},
+        {"id": "sns-literal-census", "kind": "fact", "name": "sns_literal_census_pass"},
+        {"id": "operator-endpoint-hash", "kind": "fact", "name": "operator_topic_endpoint_hash_pass"}
+      ]
+    },
+    "G5": {
+      "title": "Isolation suite",
+      "checks": [
+        {"id": "suite-tests", "kind": "tests", "files": [
+          {"path": "lambda/sql-census.static.test.js", "min_tests": 15},
+          {"path": "lambda/tenancy-classes.test.js", "min_tests": 9},
+          {"path": "scripts/sql-text-rule.test.js", "min_tests": 2}
+        ], "pending": ["2.0e", "2.2", "4.1", "4.3", "4.5", "5.1", "5.2"], "note": "pending: tenancy-keys (2.0e), tenancy-insert (2.2), fixture ratchet (4.1), 4.3 ratchet and stranger, route coverage and role matrix (4.5), SQL-scope (5.1), cross-Space suite (5.2)"},
+        {"id": "route-coverage", "kind": "zero", "name": "route_coverage_uncovered"},
+        {"id": "role-matrix", "kind": "fact", "name": "role_matrix_pass"},
+        {"id": "householdscope-ratchet", "kind": "zero", "name": "householdScope_ratchet"},
+        {"id": "stranger-arm", "kind": "fact", "name": "stranger_arm_pass"},
+        {"id": "writer-allowlist", "kind": "zero", "name": "writer_allowlist_entries"},
+        {"id": "sql-scope-allowlist", "kind": "zero", "name": "sql_scope_allowlist_entries"},
+        {"id": "mutation-survivors", "kind": "zero", "name": "mutation_survivors"},
+        {"id": "unique-index-gate", "kind": "gate", "name": "post_s_unique_indexes_carry_workspace", "envs": ["prod", "staging"]},
+        {"id": "unique-index-arms", "kind": "fact", "name": "unique_index_gate_d_and_base_capable_arms"},
+        {"id": "spaces-constraints-prod", "kind": "fact", "name": "spaces_4_1_constraints_catalog_prod"},
+        {"id": "spaces-constraints-staging", "kind": "fact", "name": "spaces_4_1_constraints_catalog_staging"},
+        {"id": "spaces-mutants-branch", "kind": "fact", "name": "spaces_4_1_mutants_refused_on_branch"}
+      ]
+    },
+    "G6": {
+      "title": "Populated second Space",
+      "checks": [
+        {"id": "artifact-binding", "kind": "binding", "name": "harness_artifact", "note": "bound = the artifact's hash; current = phase7-gate.py --binding-hash at the candidate"},
+        {"id": "harness-verdict", "kind": "fact", "name": "harness_verdict_pass"},
+        {"id": "positive-controls", "kind": "controls", "name": "positive_controls", "note": "B logs space-wx, weather-daily-write, frost-eval with space: <B>; daily_plan rows with workspace_id = B"},
+        {"id": "b-shape", "kind": "fact", "name": "b_own_plot_other_grid_cell_plantings_frost_member_weather_rows"},
+        {"id": "b-integrations-off", "kind": "fact", "name": "b_integrations_all_off"},
+        {"id": "needles-unique", "kind": "fact", "name": "needles_unique"},
+        {"id": "both-directions", "kind": "fact", "name": "both_directions_clean"},
+        {"id": "b-graph-awn", "kind": "zero", "name": "b_graph_awn_calls"},
+        {"id": "b-frost-publish", "kind": "zero", "name": "b_frost_publishes"},
+        {"id": "b-ops-operator-only", "kind": "fact", "name": "b_ops_alerts_only_operator_topic"},
+        {"id": "endpoint-check", "kind": "fact", "name": "operator_topic_endpoint_hash_pass"},
+        {"id": "seed-md5", "kind": "present", "name": "seed_sql_md5"},
+        {"id": "b-branch", "kind": "present", "name": "b_branch_id"}
+      ]
+    },
+    "G7": {
+      "title": "Public website",
+      "checks": [
+        {"id": "needle-build", "kind": "fact", "name": "gam_site_needle_build_no_b_needle_dave_present"},
+        {"id": "export-predicate", "kind": "fact", "name": "export_sql_workspace_predicate"},
+        {"id": "gam-site-sha", "kind": "present", "name": "gam_site_sha"},
+        {"id": "seed-md5-equals-g6", "kind": "equal", "name": "seed_sql_md5", "with": "G6"},
+        {"id": "b-branch-equals-g6", "kind": "equal", "name": "b_branch_id", "with": "G6"}
+      ]
+    },
+    "G8": {
+      "title": "Pooled data",
+      "checks": [
+        {"id": "pooled-tests", "kind": "tests", "files": [], "pending": ["2.6", "4.7"], "note": "weights (2.6); catalog leak and operator-only catalog, refusals and success paths (4.7)"},
+        {"id": "creator-rule-2-4a", "kind": "fact", "name": "creator_rule_rehearsal_artifact_2_4a"},
+        {"id": "creator-rule-4-7", "kind": "fact", "name": "creator_rule_rerun_4_7"},
+        {"id": "entity-arm", "kind": "fact", "name": "entity_arm_pass"},
+        {"id": "evidence-arm", "kind": "fact", "name": "evidence_arm_pass"},
+        {"id": "source-s", "kind": "fact", "name": "source_is_s"},
+        {"id": "rescope-link", "kind": "fact", "name": "rescope_link_moved"},
+        {"id": "no-base-to-s-gate", "kind": "gate", "name": "post_no_base_to_s_reference", "envs": ["prod", "staging"]},
+        {"id": "catalog-writes", "kind": "zero", "name": "catalog_writes_outside_catalogWrite"}
+      ]
+    },
+    "G9": {
+      "title": "Backstops",
+      "checks": [
+        {"id": "composite-fks", "kind": "fact", "name": "composite_fks_convalidated"},
+        {"id": "cross-parent-triggers", "kind": "fact", "name": "cross_parent_triggers_present"},
+        {"id": "owner-dsn-http", "kind": "zero", "name": "owner_dsn_reads_in_http_files"},
+        {"id": "db-role-owner-24h", "kind": "zero", "name": "db_role_neondb_owner_24h"},
+        {"id": "db-role-coverage", "kind": "fact", "name": "db_role_every_http_function_present_24h"},
+        {"id": "iam-probes", "kind": "fact", "name": "simulate_principal_policy_probes_pass"},
+        {"id": "grants-gate", "kind": "gate", "name": "post_garden_app_grants_match_class", "envs": ["prod", "staging"]},
+        {"id": "owner-rotation", "kind": "fact", "name": "neondb_owner_rotation_recorded"},
+        {"id": "probe-42501", "kind": "fact", "name": "probe_42501_pass"},
+        {"id": "alarms", "kind": "fact", "name": "metric_filters_and_alarms_exist"}
+      ]
+    },
+    "G10": {
+      "title": "Containment",
+      "checks": [
+        {"id": "suspend-artifact", "kind": "fact", "name": "suspend_unsuspend_artifact_pass"}
+      ]
+    },
+    "G11": {
+      "title": "Station and frost",
+      "checks": [
+        {"id": "station-binding", "kind": "fact", "name": "explicit_station_binding_live"},
+        {"id": "frost-own-row", "kind": "fact", "name": "every_space_frost_from_own_frost_alerts_row"},
+        {"id": "frost-no-row-loud", "kind": "fact", "name": "space_without_frost_row_fails_loudly"}
+      ]
+    },
+    "G12": {
+      "title": "No early tenant",
+      "checks": [
+        {"id": "second-owner-gate", "kind": "gate", "name": "post_no_second_owner_until_approved", "envs": ["prod", "staging"]}
+      ]
+    },
+    "G13": {
+      "title": "Photo keys",
+      "checks": [
+        {"id": "release-n1", "kind": "fact", "name": "release_n_plus_1_live"},
+        {"id": "bucket-smoke", "kind": "fact", "name": "real_bucket_staging_smoke_artifact_for_sha"}
+      ]
+    },
+    "G14": {
+      "title": "Switch bleed",
+      "checks": [
+        {"id": "switch-tests", "kind": "tests", "files": [], "pending": ["4.4"], "note": "delayed-resolve and capture-replay tests"}
+      ]
+    },
+    "G15": {
+      "title": "Invite consent",
+      "checks": [
+        {"id": "invite-tests", "kind": "tests", "files": [], "pending": ["4.6"], "note": "unverified-address and explicit-accept tests"},
+        {"id": "clerk-probe", "kind": "fact", "name": "staging_clerk_probe_artifact"}
+      ]
+    },
+    "G16": {
+      "title": "Create path",
+      "checks": [
+        {"id": "other-space-inserts", "kind": "zero", "name": "other_insert_into_spaces"},
+        {"id": "create-tests", "kind": "tests", "files": [], "pending": ["6.4", "6.7"], "note": "operator-route test including the 409 before approval (6.7); the audit-actor test (6.4)"}
+      ]
+    },
+    "G17": {
+      "title": "Share route",
+      "checks": [
+        {"id": "slug-tests", "kind": "tests", "files": [], "pending": ["5.13"], "note": "slug test"},
+        {"id": "census-row-scoped", "kind": "fact", "name": "share_census_row_scoped"}
+      ]
+    }
+  }
+}
