@@ -178,4 +178,4 @@ def test_the_independent_check_catches_what_it_is_for(name):
 
 def test_check_mode_passes_on_this_tree(capsys):
     assert gen.main(["--check"]) == 0
-    assert "matches .github/workflows/ci.yml (9 jobs, " in capsys.readouterr().out
+    assert "matches .github/workflows/ci.yml (13 jobs, " in capsys.readouterr().out

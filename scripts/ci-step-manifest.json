@@ -388,12 +388,258 @@
     },
     {
       "informational": {
-        "timeout-minutes": 30
+        "timeout-minutes": 20
+      },
+      "job": "unit-utc-cov-1",
+      "job_keys": {
+        "env": null,
+        "other": {},
+        "runs-on": "ubuntu-26.04"
+      },
+      "steps": [
+        {
+          "env": null,
+          "name": null,
+          "other": {},
+          "run": null,
+          "shell": null,
+          "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": null,
+          "other": {},
+          "run": null,
+          "shell": null,
+          "uses": "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+          "with": {
+            "cache": "npm",
+            "node-version": "22.23.3"
+          },
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": "Install dependencies",
+          "other": {},
+          "run": [
+            "npm ci --legacy-peer-deps"
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": "Unit tests with coverage, shard 1 of 3 (no threshold, no report)",
+          "other": {},
+          "run": [
+            "npx vitest run --coverage --shard=1/3 --coverage.reporter=none \\",
+            "  --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 \\",
+            "  --coverage.thresholds.branches=0 --coverage.thresholds.statements=0 \\",
+            "  --reporter=default --reporter=github-actions --reporter=blob --outputFile.blob=vitest-blobs/blob-1-3.json",
+            ""
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": "Upload shard 1 of 3's blob for the merge",
+          "other": {},
+          "run": null,
+          "shell": null,
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "if-no-files-found": "error",
+            "name": "vitest-blob-utc-1",
+            "overwrite": true,
+            "path": "vitest-blobs/blob-1-3.json",
+            "retention-days": 3
+          },
+          "working-directory": null
+        }
+      ]
+    },
+    {
+      "informational": {
+        "timeout-minutes": 20
+      },
+      "job": "unit-utc-cov-2",
+      "job_keys": {
+        "env": null,
+        "other": {},
+        "runs-on": "ubuntu-26.04"
+      },
+      "steps": [
+        {
+          "env": null,
+          "name": null,
+          "other": {},
+          "run": null,
+          "shell": null,
+          "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": null,
+          "other": {},
+          "run": null,
+          "shell": null,
+          "uses": "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+          "with": {
+            "cache": "npm",
+            "node-version": "22.23.3"
+          },
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": "Install dependencies",
+          "other": {},
+          "run": [
+            "npm ci --legacy-peer-deps"
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": "Unit tests with coverage, shard 2 of 3 (no threshold, no report)",
+          "other": {},
+          "run": [
+            "npx vitest run --coverage --shard=2/3 --coverage.reporter=none \\",
+            "  --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 \\",
+            "  --coverage.thresholds.branches=0 --coverage.thresholds.statements=0 \\",
+            "  --reporter=default --reporter=github-actions --reporter=blob --outputFile.blob=vitest-blobs/blob-2-3.json",
+            ""
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": "Upload shard 2 of 3's blob for the merge",
+          "other": {},
+          "run": null,
+          "shell": null,
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "if-no-files-found": "error",
+            "name": "vitest-blob-utc-2",
+            "overwrite": true,
+            "path": "vitest-blobs/blob-2-3.json",
+            "retention-days": 3
+          },
+          "working-directory": null
+        }
+      ]
+    },
+    {
+      "informational": {
+        "timeout-minutes": 20
+      },
+      "job": "unit-utc-cov-3",
+      "job_keys": {
+        "env": null,
+        "other": {},
+        "runs-on": "ubuntu-26.04"
+      },
+      "steps": [
+        {
+          "env": null,
+          "name": null,
+          "other": {},
+          "run": null,
+          "shell": null,
+          "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": null,
+          "other": {},
+          "run": null,
+          "shell": null,
+          "uses": "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+          "with": {
+            "cache": "npm",
+            "node-version": "22.23.3"
+          },
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": "Install dependencies",
+          "other": {},
+          "run": [
+            "npm ci --legacy-peer-deps"
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": "Unit tests with coverage, shard 3 of 3 (no threshold, no report)",
+          "other": {},
+          "run": [
+            "npx vitest run --coverage --shard=3/3 --coverage.reporter=none \\",
+            "  --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 \\",
+            "  --coverage.thresholds.branches=0 --coverage.thresholds.statements=0 \\",
+            "  --reporter=default --reporter=github-actions --reporter=blob --outputFile.blob=vitest-blobs/blob-3-3.json",
+            ""
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": "Upload shard 3 of 3's blob for the merge",
+          "other": {},
+          "run": null,
+          "shell": null,
+          "uses": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "with": {
+            "if-no-files-found": "error",
+            "name": "vitest-blob-utc-3",
+            "overwrite": true,
+            "path": "vitest-blobs/blob-3-3.json",
+            "retention-days": 3
+          },
+          "working-directory": null
+        }
+      ]
+    },
+    {
+      "informational": {
+        "timeout-minutes": 15
       },
       "job": "unit-utc-cov",
       "job_keys": {
         "env": null,
-        "other": {},
+        "other": {
+          "needs": [
+            "unit-utc-cov-1",
+            "unit-utc-cov-2",
+            "unit-utc-cov-3"
+          ]
+        },
         "runs-on": "ubuntu-26.04"
       },
       "steps": [
@@ -446,10 +692,41 @@
         },
         {
           "env": null,
-          "name": "Run unit tests with coverage",
+          "name": "Download the three shards' blobs",
+          "other": {},
+          "run": null,
+          "shell": null,
+          "uses": "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+          "with": {
+            "merge-multiple": true,
+            "path": "vitest-blobs",
+            "pattern": "vitest-blob-utc-*"
+          },
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": "Merge the three shards, with the coverage thresholds",
           "other": {},
           "run": [
-            "npm test"
+            "set -euo pipefail",
+            "FOUND=\"\"",
+            "[ ! -d vitest-blobs ] || FOUND=\"$(cd vitest-blobs && printf '%s ' *)\"",
+            "if [ \"$FOUND\" != \"blob-1-3.json blob-2-3.json blob-3-3.json \" ]; then",
+            "  echo \"::error title=Coverage merge::want exactly the blobs of shards 1, 2 and 3 of 3 in vitest-blobs, found: ${FOUND:-none}. Two would pass two thirds of the suite as the whole. Blobs are kept 3 days: on an older run, re-run all jobs.\"",
+            "  exit 1",
+            "fi",
+            "npx vitest run --merge-reports=vitest-blobs --coverage | tee \"$RUNNER_TEMP/merge.log\"",
+            "npx vitest list --filesOnly | sed -nE 's/^\\[[a-z]+\\] //p' > \"$RUNNER_TEMP/listed.txt\"",
+            "LISTED=\"$(wc -l < \"$RUNNER_TEMP/listed.txt\" | tr -d ' ')\"",
+            "WANT=\"files_sha256=$(LC_ALL=C sort -u \"$RUNNER_TEMP/listed.txt\" | sha256sum | cut -d' ' -f1) files=$LISTED\"",
+            "GOT=\"$(sed -nE 's/^::notice title=test-ids UTC::.* (files_sha256=[0-9a-f]{64}) .* (files=[0-9]+) .*$/\\1 \\2/p' \"$RUNNER_TEMP/merge.log\")\"",
+            "if [ \"$GOT\" != \"$WANT\" ]; then",
+            "  echo \"::error title=Coverage merge::the merged run's test files are not the suite's: merged ${GOT:-with no test-ids notice}, vitest list --filesOnly $WANT. The shards lost or repeated a file.\"",
+            "  exit 1",
+            "fi",
+            "echo \"Coverage merge: the three shards ran the suite's $LISTED test files, each once.\"",
+            ""
           ],
           "shell": null,
           "uses": null,
@@ -472,9 +749,9 @@
     },
     {
       "informational": {
-        "timeout-minutes": 30
+        "timeout-minutes": 20
       },
-      "job": "unit-ny",
+      "job": "unit-ny-1",
       "job_keys": {
         "env": null,
         "other": {},
@@ -545,10 +822,97 @@
           "env": {
             "TZ": "America/New_York"
           },
-          "name": "Unit tests under America/New_York TZ (date-fragility guard)",
+          "name": "Unit tests under America/New_York TZ (date-fragility guard), shard 1 of 2",
           "other": {},
           "run": [
-            "npx vitest run --no-coverage"
+            "npx vitest run --no-coverage --shard=1/2"
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        }
+      ]
+    },
+    {
+      "informational": {
+        "timeout-minutes": 20
+      },
+      "job": "unit-ny-2",
+      "job_keys": {
+        "env": null,
+        "other": {},
+        "runs-on": "ubuntu-26.04"
+      },
+      "steps": [
+        {
+          "env": null,
+          "name": null,
+          "other": {},
+          "run": null,
+          "shell": null,
+          "uses": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": null,
+          "other": {},
+          "run": null,
+          "shell": null,
+          "uses": "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+          "with": {
+            "cache": "npm",
+            "node-version": "22.23.3"
+          },
+          "working-directory": null
+        },
+        {
+          "env": null,
+          "name": "Install dependencies",
+          "other": {},
+          "run": [
+            "npm ci --legacy-peer-deps"
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": {
+            "TZ": "America/New_York"
+          },
+          "name": "TZ sentinel — America/New_York resolves on this runner",
+          "other": {},
+          "run": [
+            "set -euo pipefail",
+            "node -e '",
+            "const zone = Intl.DateTimeFormat().resolvedOptions().timeZone",
+            "const jan = new Date(2026, 0, 15, 12).getTimezoneOffset()",
+            "const jul = new Date(2026, 6, 15, 12).getTimezoneOffset()",
+            "console.log(`TZ=${process.env.TZ} resolved as ${zone}; minutes behind UTC: January ${jan}, July ${jul}`)",
+            "if (process.env.TZ !== \"America/New_York\" || zone !== \"America/New_York\" || jan !== 300 || jul !== 240) {",
+            "  console.log(\"::error title=TZ sentinel::America/New_York did not resolve (want zone America/New_York, January 300, July 240). The suite below would run in another zone and prove nothing about date fragility.\")",
+            "  process.exit(1)",
+            "}",
+            "'",
+            ""
+          ],
+          "shell": null,
+          "uses": null,
+          "with": null,
+          "working-directory": null
+        },
+        {
+          "env": {
+            "TZ": "America/New_York"
+          },
+          "name": "Unit tests under America/New_York TZ (date-fragility guard), shard 2 of 2",
+          "other": {},
+          "run": [
+            "npx vitest run --no-coverage --shard=2/2"
           ],
           "shell": null,
           "uses": null,
@@ -1094,8 +1458,12 @@
           "needs": [
             "static",
             "pytest",
+            "unit-utc-cov-1",
+            "unit-utc-cov-2",
+            "unit-utc-cov-3",
             "unit-utc-cov",
-            "unit-ny",
+            "unit-ny-1",
+            "unit-ny-2",
             "gates-a",
             "gates-b",
             "gates-c",
@@ -1113,7 +1481,7 @@
           "other": {},
           "run": [
             "set -euo pipefail",
-            "EXPECTED_LEGS=\"static pytest unit-utc-cov unit-ny gates-a gates-b gates-c gate-probes\"",
+            "EXPECTED_LEGS=\"static pytest unit-utc-cov-1 unit-utc-cov-2 unit-utc-cov-3 unit-utc-cov unit-ny-1 unit-ny-2 gates-a gates-b gates-c gate-probes\"",
             "export EXPECTED_LEGS",
             "python3 - <<'PY'",
             "import json, os, sys",
@@ -1135,7 +1503,7 @@
             "    fail(\"legs reported %s, expected exactly %s\" % (sorted(needs), expected))",
             "results = {leg: needs[leg].get(\"result\") if isinstance(needs[leg], dict) else None for leg in expected}",
             "for leg in expected:",
-            "    print(\"%-13s %s\" % (leg, results[leg]))",
+            "    print(\"%-15s %s\" % (leg, results[leg]))",
             "bad = [\"%s=%s\" % (leg, results[leg]) for leg in expected if results[leg] != \"success\"]",
             "if bad:",
             "    fail(\"not every leg succeeded: \" + \", \".join(bad))",

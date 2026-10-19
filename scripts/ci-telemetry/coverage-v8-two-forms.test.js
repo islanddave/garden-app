@@ -14,7 +14,7 @@
 // V8's own record of a module (only-node.v8.json): the stand-in data everywhere else is built by hand.
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -1191,6 +1191,57 @@ describe('a real coverage run of scripts/fixtures/coverage-two-forms in four sha
       for (const key of [...MAPS, 's', 'f', 'b']) expect([file, key, many[key]], said).toEqual([file, key, one[key]])
       expect(Object.keys(many).sort(), said).toEqual(Object.keys(one).sort())
     }
+  })
+})
+
+// ci.yml's coverage shards and their merge (plan A4, OPS-CICOVERAGESHARDS-001) with the flags ci.yml gives them, under
+// thresholds these cases miss, as a third of the suite misses vitest.config.ts's: a shard must pass and write no
+// report, and only because of its flags (the control shard, without the zeros, fails); the merge must write its report,
+// check the thresholds and fail. The verdict of the unit pass rests on all of that and on nothing in ci.yml's text, so a
+// vitest that changed what the flags mean reds here. scripts/test_ci_next.py holds this list to ci.yml's command.
+const CI_SHARD_COVERAGE_FLAGS = ['--coverage.reporter=none', '--coverage.thresholds.lines=0',
+  '--coverage.thresholds.functions=0', '--coverage.thresholds.branches=0', '--coverage.thresholds.statements=0']
+describe('ci.yml\'s coverage shard and merge commands, under thresholds a shard cannot meet', () => {
+  const config = `${FIXTURE}/vitest.thresholds.config.mjs`
+  const vitest = (...args) => spawnSync(process.execPath, [resolve(process.cwd(), 'node_modules/vitest/vitest.mjs'), 'run', '--config', config, ...args],
+    { cwd: process.cwd(), encoding: 'utf8', timeout: 240000, env: { PATH: process.env.PATH, HOME: process.env.HOME, NO_COLOR: '1' } })
+  const reportOf = (name) => join(out, name, 'coverage-final.json')
+  let out
+  let runs
+  let said
+  beforeAll(() => {
+    out = mkdtempSync(join(tmpdir(), 'coverage-two-forms-ci-flags-'))
+    runs = {}
+    for (const i of [1, 2, 3, 4]) {
+      runs[`shard ${i}`] = vitest('--coverage', `--coverage.reportsDirectory=${join(out, `shard-${i}`)}`, `--shard=${i}/4`,
+        ...CI_SHARD_COVERAGE_FLAGS, '--reporter=blob', `--outputFile.blob=${join(out, 'blobs', `blob-${i}-4.json`)}`)
+    }
+    runs.control = vitest('--coverage', `--coverage.reportsDirectory=${join(out, 'control')}`, '--shard=1/4',
+      '--coverage.reporter=json', '--reporter=blob', `--outputFile.blob=${join(out, 'control-blob', 'blob-1-4.json')}`)
+    runs.merged = vitest(`--merge-reports=${join(out, 'blobs')}`, '--coverage', `--coverage.reportsDirectory=${join(out, 'merged')}`)
+    said = `${REREAD}The runs said:\n` + Object.entries(runs).map(([name, run]) => `--- ${name}\n${run.stdout}\n${run.stderr}`).join('\n')
+  }, 240000)
+  afterAll(() => rmSync(out, { recursive: true, force: true }))
+
+  it('passes each shard on its tests alone and writes it no report, only its blob', () => {
+    for (const i of [1, 2, 3, 4]) {
+      expect([i, runs[`shard ${i}`].status], said).toEqual([i, 0])
+      expect([i, existsSync(reportOf(`shard-${i}`))], said).toEqual([i, false])
+      expect([i, existsSync(join(out, 'blobs', `blob-${i}-4.json`))], said).toEqual([i, true])
+    }
+    expect(Object.values(runs).map((run) => run.stdout + run.stderr).join('\n'), said).not.toContain(ERROR_PREFIX)
+  })
+
+  it('fails the same shard without the zeros: the flags, not the cases, are what pass it', () => {
+    expect(runs.control.status, said).toBe(1)
+    expect(runs.control.stdout + runs.control.stderr, said).toMatch(/ERROR: Coverage for \w+ \([\d.]+%\) does not meet global threshold \(100%\)/)
+  })
+
+  it('checks the thresholds at the merge, after writing its report, and fails', () => {
+    expect(runs.merged.status, said).toBe(1)
+    expect(runs.merged.stdout, said).toMatch(/Tests +7 passed \(7\)/)
+    expect(runs.merged.stdout + runs.merged.stderr, said).toMatch(/ERROR: Coverage for lines \([\d.]+%\) does not meet global threshold \(100%\)/)
+    expect(existsSync(reportOf('merged')), said).toBe(true)
   })
 })
 

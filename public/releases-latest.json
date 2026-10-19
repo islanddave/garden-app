@@ -1,7 +1,7 @@
 {
-  "version": "5.3.6",
+  "version": "5.3.7",
   "date": "2026-10-19",
   "highlights": [
-    "Behind the scenes: a new check reads every database query in the app before each release, and the groundwork for more than one plot per garden is in place."
+    "Behind the scenes: the checks that run before each release now split their longest test runs across several machines at once, so a fix is ready to ship several minutes sooner. Nothing you'll see change."
   ]
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Freeze ci.yml's jobs as a manifest: every job, and every step's WHOLE mapping, in order.
 
-WHY THIS EXISTS. ci.yml is eight parallel legs behind one aggregator job, `build-and-test`, which is what the
+WHY THIS EXISTS. ci.yml is twelve legs behind one aggregator job, `build-and-test`, which is what the
 promote reads. A step that is dropped, reordered, moved to another leg, given an `if:` or handed a different `env`
 would still leave a green check, and so would a leg dropped from the aggregator's `needs`. This manifest is the
 conservation instrument: what every job runs today, written down, so that each CI edit shows as a difference. (It

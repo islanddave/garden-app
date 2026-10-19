@@ -263,6 +263,24 @@ def test_a_red_leg_under_a_green_aggregator_is_the_aggregators_call_not_this_scr
     assert verdict(runs(run(1, conclusion="failure")), {1: jobs(*rows)})[0] == "refuse"
 
 
+A4_LEGS = [(leg, "completed", "success") for leg in (
+    "static", "pytest", "unit-utc-cov-1", "unit-utc-cov-2", "unit-utc-cov-3", "unit-utc-cov", "unit-ny-1", "unit-ny-2",
+    "gates-a", "gates-b", "gates-c", "gate-probes")]
+
+
+def test_the_a4_shape_passes_green_and_refuses_a_red_shard_whose_merge_was_skipped():
+    """Plan A4 (OPS-CICOVERAGESHARDS-001) put twelve legs under the aggregator, and the merge leg `unit-utc-cov` needs
+    the three coverage shards: a red shard leaves it `skipped`, the aggregator red and the run red. The preflight
+    still asks one question, of the aggregator."""
+    assert verdict(runs(run(1)), {1: jobs(*A4_LEGS, GREEN_JOB)})[:2] == (
+        "pass", "run 1 is the newest of 1 and its job build-and-test succeeded")
+    red = {"unit-utc-cov-2": "failure", "unit-utc-cov": "skipped"}
+    rows = [(leg, status, red.get(leg, conclusion)) for leg, status, conclusion in A4_LEGS]
+    assert verdict(runs(run(1, conclusion="failure")), {1: jobs(*rows, (JOB, "completed", "failure"))})[0] == "refuse"
+    assert verdict(runs(run(1)), {1: jobs(*rows, (JOB, "completed", "failure"))})[:2] == (
+        "refuse", "job build-and-test of run 1 is completed/failure, need completed/success")
+
+
 def test_an_unreadable_jobs_read_keeps_the_runs_it_had_already_read():
     def read_jobs(_run_id):
         raise pp.Unreadable("no usable answer from runs/1/jobs (HTTP 502)")

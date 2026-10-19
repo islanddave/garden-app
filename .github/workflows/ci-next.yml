@@ -1,6 +1,6 @@
 name: CI Next — the canary and soak copy of ci.yml's legs (non-gating)
 
-# ci.yml's eight legs and its aggregator, kept here for the two things ci.yml must not be able to do: a forced-red
+# ci.yml's twelve legs and its aggregator, kept here for the two things ci.yml must not be able to do: a forced-red
 # CANARY (workflow_dispatch) and a SOAK (repeated runs of one unchanged SHA on the branch `ci-next-soak`). It gates
 # nothing and it runs on NO dev push. promote-gate.yml reads ci.yml's `build-and-test` and nothing in this file; the
 # aggregator here is `build-and-test-next`, and no job here is named build-and-test, integration-tests or
@@ -14,7 +14,7 @@ name: CI Next — the canary and soak copy of ci.yml's legs (non-gating)
 # header says why).
 #
 # READING A RED HERE. This workflow gates nothing and promote-gate.yml reads ci.yml only, so a red leg here turns the
-# commit's rollup red while the gate is green. Do not push to `ci-next-soak` while a promote is running: its 8 legs
+# commit's rollup red while the gate is green. Do not push to `ci-next-soak` while a promote is running: its 12 legs
 # compete with the promote's 26-leg Lambda matrix for runners. A canary dispatch is read as "red expected", and a
 # typo in `canary_red_leg` gives a normal green run.
 #
@@ -29,7 +29,9 @@ name: CI Next — the canary and soak copy of ci.yml's legs (non-gating)
 #
 # What the legs carry that the serial job's steps did not, in both files, each pinned by the same test:
 #   - `Install PyYAML ...` in `static` (the serial job's migration gate validation got PyYAML from the pytest step);
-#   - the TZ sentinel in `unit-ny`;
+#   - the TZ sentinel, in each of `unit-ny-1` and `unit-ny-2`;
+#   - plan A4's hand-off between legs: each coverage shard's blob upload, and the download and merge in
+#     `unit-utc-cov`, the one leg with `needs`;
 #   - the aggregator's one step.
 #
 # THE A3 TRIAL. `Run unit tests with coverage` (unit-utc-cov) and
@@ -134,7 +136,8 @@ name: CI Next — the canary and soak copy of ci.yml's legs (non-gating)
 #
 # What the serial job handed from step to step, and where each hand-off lives now:
 #   dist/ (Build -> Verify build output -> Harvest-window chunk split)   all three in `static`, in that order
-#   coverage/coverage-summary.json (npm test -> the measured floor)      both in `unit-utc-cov`, in that order
+#   coverage/coverage-summary.json (npm test -> the measured floor)      both in `unit-utc-cov`, in that order;
+#     since plan A4 the merge of the three shards' blobs writes it, and the blobs cross legs as artifacts
 #   CHROME_PATH in GITHUB_ENV (Resolve Chrome -> every real-Chrome gate) repeated in each gate leg
 #   node 22.23.3 and node_modules (setup-node, npm ci)                   repeated in each leg that runs node
 #   PyYAML (the pytest step -> gate_runner.py)                           installed in `static`
@@ -165,7 +168,7 @@ on:
     # that carries the file to main; the copy on the dispatched ref is the one that runs.
     inputs:
       canary_red_leg:
-        description: 'Canary only: the id of ONE leg to force red (static, pytest, unit-utc-cov, unit-ny, gates-a, gates-b, gates-c, gate-probes). Empty = a normal run.'
+        description: 'Canary only: the id of ONE leg to force red (static, pytest, unit-utc-cov-1, unit-utc-cov-2, unit-utc-cov-3, unit-utc-cov, unit-ny-1, unit-ny-2, gates-a, gates-b, gates-c, gate-probes). Empty = a normal run.'
         required: false
         default: ''
         type: string
@@ -353,15 +356,137 @@ jobs:
             || python3 -m pip install --quiet --break-system-packages pytest requests boto3 pyyaml
           python3 -m pytest -q scripts/test_*.py
 
-  # The UTC pass with coverage, between the two halves of the coverage ratchet: the measured floor reads the
-  # coverage/coverage-summary.json this leg's own `npm test` writes. Measured in the one-project shape (jsdom for
-  # every file, before the A3 trial), on the soak (ci-next-soak run 37559095399, dev f792a200, 1,482 files, ten
-  # attempts): job median 17.95 min, six of ten over 17.8, the vitest step 661-1,095 s (gardening-docs
-  # project-state/_promotepath-20261002/scout-a8-and-slowdown-20261007.md, lines 351-355, with the run at 47 and the
-  # range at 62). For the two projects the A3 scout inferred about 3 min less; that is not yet measured on a runner.
-  unit-utc-cov:
+  # THE UTC PASS WITH COVERAGE: three shards and a merge (OPS-CICOVERAGESHARDS-001, plan A4; the proof is gardening-docs
+  # project-state/_promotepath-20261002/A4-PROOF-20261018.md). As one leg it was the long pole: median 17.4 min over 15
+  # dev pushes, 2026-10-15..18. Each shard runs a third of the test files (`--shard=i/3`: vitest's own split, by a hash
+  # of each file's path, so every runner draws the same thirds) and writes a BLOB: its test results and its coverage
+  # map, in which the provider records how that run loaded each file (scripts/ci-telemetry/coverage-v8-two-forms.mjs,
+  # "A RUN IN SHARDS"). A shard is no verdict on coverage: its map is a third of the suite's. So it checks no threshold
+  # (the four set to 0) and writes no report (`--coverage.reporter=none`: no partial table in its log for a reader to
+  # take as the figure). Its tests still fail it, and so does the provider's own check of its map. The command-line
+  # reporters replace vitest.config.ts's, so a shard prints no test-ids notice; the merge prints the pass's one.
+  # The blob reaches the merge leg as an artifact: overwrite, so a re-run of a shard replaces its blob; error when the
+  # shard wrote none; kept 3 days, long enough for a re-run of the merge.
+  unit-utc-cov-1:
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 20
+    steps:
+      - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
+        if: inputs.canary_red_leg == 'unit-utc-cov-1'
+        run: |
+          echo "::error title=ci-next canary::canary_red_leg=unit-utc-cov-1: this leg is forced red on request, and build-and-test-next must go red with it."
+          exit 1
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.23.3'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Unit tests with coverage, shard 1 of 3 (no threshold, no report)
+        run: |
+          npx vitest run --coverage --shard=1/3 --coverage.reporter=none \
+            --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 \
+            --coverage.thresholds.branches=0 --coverage.thresholds.statements=0 \
+            --reporter=default --reporter=github-actions --reporter=blob --outputFile.blob=vitest-blobs/blob-1-3.json
+
+      - name: Upload shard 1 of 3's blob for the merge
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vitest-blob-utc-1
+          path: vitest-blobs/blob-1-3.json
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+
+  # As unit-utc-cov-1, for the second third.
+  unit-utc-cov-2:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
+        if: inputs.canary_red_leg == 'unit-utc-cov-2'
+        run: |
+          echo "::error title=ci-next canary::canary_red_leg=unit-utc-cov-2: this leg is forced red on request, and build-and-test-next must go red with it."
+          exit 1
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.23.3'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Unit tests with coverage, shard 2 of 3 (no threshold, no report)
+        run: |
+          npx vitest run --coverage --shard=2/3 --coverage.reporter=none \
+            --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 \
+            --coverage.thresholds.branches=0 --coverage.thresholds.statements=0 \
+            --reporter=default --reporter=github-actions --reporter=blob --outputFile.blob=vitest-blobs/blob-2-3.json
+
+      - name: Upload shard 2 of 3's blob for the merge
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vitest-blob-utc-2
+          path: vitest-blobs/blob-2-3.json
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+
+  # As unit-utc-cov-1, for the last third.
+  unit-utc-cov-3:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
+        if: inputs.canary_red_leg == 'unit-utc-cov-3'
+        run: |
+          echo "::error title=ci-next canary::canary_red_leg=unit-utc-cov-3: this leg is forced red on request, and build-and-test-next must go red with it."
+          exit 1
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.23.3'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Unit tests with coverage, shard 3 of 3 (no threshold, no report)
+        run: |
+          npx vitest run --coverage --shard=3/3 --coverage.reporter=none \
+            --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 \
+            --coverage.thresholds.branches=0 --coverage.thresholds.statements=0 \
+            --reporter=default --reporter=github-actions --reporter=blob --outputFile.blob=vitest-blobs/blob-3-3.json
+
+      - name: Upload shard 3 of 3's blob for the merge
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vitest-blob-utc-3
+          path: vitest-blobs/blob-3-3.json
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+
+  # The UTC pass's VERDICT: the three blobs merged as one run (`vitest run --merge-reports --coverage`, which reproduces
+  # the single run's coverage, A4-PROOF-20261018.md), the thresholds in vitest.config.ts, and the two halves of the
+  # coverage ratchet around it, as the one leg ran them: the measured floor reads the coverage/coverage-summary.json the
+  # merge writes. The only leg with `needs`, and no `if:`, so a red shard leaves it `skipped`, which the aggregator reads
+  # as red. Its log carries the coverage table (scripts/ci-telemetry/coverage-rows.py reads this leg's log) and the
+  # pass's test-ids notice, over every test of the three shards.
+  unit-utc-cov:
+    needs: [unit-utc-cov-1, unit-utc-cov-2, unit-utc-cov-3]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
     steps:
       - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
         if: inputs.canary_red_leg == 'unit-utc-cov'
@@ -382,22 +507,49 @@ jobs:
       - name: Coverage ratchet enforcement
         run: python3 scripts/check-coverage-ratchet.py
 
-      - name: Run unit tests with coverage
-        run: npm test
+      - name: Download the three shards' blobs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: vitest-blob-utc-*
+          path: vitest-blobs
+          merge-multiple: true
+
+      - name: Merge the three shards, with the coverage thresholds
+        run: |
+          set -euo pipefail
+          FOUND=""
+          [ ! -d vitest-blobs ] || FOUND="$(cd vitest-blobs && printf '%s ' *)"
+          if [ "$FOUND" != "blob-1-3.json blob-2-3.json blob-3-3.json " ]; then
+            echo "::error title=Coverage merge::want exactly the blobs of shards 1, 2 and 3 of 3 in vitest-blobs, found: ${FOUND:-none}. Two would pass two thirds of the suite as the whole. Blobs are kept 3 days: on an older run, re-run all jobs."
+            exit 1
+          fi
+          npx vitest run --merge-reports=vitest-blobs --coverage | tee "$RUNNER_TEMP/merge.log"
+          npx vitest list --filesOnly | sed -nE 's/^\[[a-z]+\] //p' > "$RUNNER_TEMP/listed.txt"
+          LISTED="$(wc -l < "$RUNNER_TEMP/listed.txt" | tr -d ' ')"
+          WANT="files_sha256=$(LC_ALL=C sort -u "$RUNNER_TEMP/listed.txt" | sha256sum | cut -d' ' -f1) files=$LISTED"
+          GOT="$(sed -nE 's/^::notice title=test-ids UTC::.* (files_sha256=[0-9a-f]{64}) .* (files=[0-9]+) .*$/\1 \2/p' "$RUNNER_TEMP/merge.log")"
+          if [ "$GOT" != "$WANT" ]; then
+            echo "::error title=Coverage merge::the merged run's test files are not the suite's: merged ${GOT:-with no test-ids notice}, vitest list --filesOnly $WANT. The shards lost or repeated a file."
+            exit 1
+          fi
+          echo "Coverage merge: the three shards ran the suite's $LISTED test files, each once."
 
       - name: Coverage ratchet — measured floor (WS-B M4)
         run: python3 scripts/check-coverage-ratchet.py --measured
 
-  # The same suite under the app's own timezone, behind a sentinel that the zone resolved. No coverage, so this
-  # is also the only pass whose time is free of instrumentation. ~12 min median, 14.5 min on a slow runner.
-  unit-ny:
+  # The same suite under the app's own timezone, behind a sentinel that the zone resolved, in two shards (plan A4: as
+  # one leg, median 13.8 min, the long pole once the coverage pass was sharded). No coverage, so no merge: each shard's
+  # tests are its verdict, the aggregator needs both, and `--shard=i/2` splits as the coverage shards do. Each shard
+  # repeats the sentinel, and prints its own test-ids notice, for its half of the files. No coverage also makes this
+  # the only pass whose time is free of instrumentation.
+  unit-ny-1:
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
-        if: inputs.canary_red_leg == 'unit-ny'
+        if: inputs.canary_red_leg == 'unit-ny-1'
         run: |
-          echo "::error title=ci-next canary::canary_red_leg=unit-ny: this leg is forced red on request, and build-and-test-next must go red with it."
+          echo "::error title=ci-next canary::canary_red_leg=unit-ny-1: this leg is forced red on request, and build-and-test-next must go red with it."
           exit 1
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -411,9 +563,6 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: TZ sentinel — America/New_York resolves on this runner
-        # The step below is only a date-fragility guard if TZ takes effect. An unknown or unreadable zone does not
-        # fail: node falls back to UTC and the whole suite passes as a second UTC run. This asks node (the runtime
-        # the tests use) what the zone resolved to and for its January and July offsets, EST 300 and EDT 240.
         env:
           TZ: America/New_York
         run: |
@@ -429,8 +578,50 @@ jobs:
           }
           '
 
-      - name: Unit tests under America/New_York TZ (date-fragility guard)
-        run: npx vitest run --no-coverage
+      - name: Unit tests under America/New_York TZ (date-fragility guard), shard 1 of 2
+        run: npx vitest run --no-coverage --shard=1/2
+        env:
+          TZ: America/New_York
+
+  # As unit-ny-1, for the other half.
+  unit-ny-2:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - name: Canary — force this leg red (workflow_dispatch input canary_red_leg only)
+        if: inputs.canary_red_leg == 'unit-ny-2'
+        run: |
+          echo "::error title=ci-next canary::canary_red_leg=unit-ny-2: this leg is forced red on request, and build-and-test-next must go red with it."
+          exit 1
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.23.3'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: TZ sentinel — America/New_York resolves on this runner
+        env:
+          TZ: America/New_York
+        run: |
+          set -euo pipefail
+          node -e '
+          const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+          const jan = new Date(2026, 0, 15, 12).getTimezoneOffset()
+          const jul = new Date(2026, 6, 15, 12).getTimezoneOffset()
+          console.log(`TZ=${process.env.TZ} resolved as ${zone}; minutes behind UTC: January ${jan}, July ${jul}`)
+          if (process.env.TZ !== "America/New_York" || zone !== "America/New_York" || jan !== 300 || jul !== 240) {
+            console.log("::error title=TZ sentinel::America/New_York did not resolve (want zone America/New_York, January 300, July 240). The suite below would run in another zone and prove nothing about date fragility.")
+            process.exit(1)
+          }
+          '
+
+      - name: Unit tests under America/New_York TZ (date-fragility guard), shard 2 of 2
+        run: npx vitest run --no-coverage --shard=2/2
         env:
           TZ: America/New_York
 
@@ -670,7 +861,8 @@ jobs:
   # success", never "no result is failure". The pinned list is what makes a leg dropped from `needs` (or a new
   # leg nobody listed) a red rather than a quieter green. No `name:` on this job: its id is the check-run name.
   build-and-test-next:
-    needs: [static, pytest, unit-utc-cov, unit-ny, gates-a, gates-b, gates-c, gate-probes]
+    needs: [static, pytest, unit-utc-cov-1, unit-utc-cov-2, unit-utc-cov-3, unit-utc-cov, unit-ny-1, unit-ny-2,
+            gates-a, gates-b, gates-c, gate-probes]
     if: always()
     runs-on: ubuntu-26.04
     timeout-minutes: 5
@@ -680,7 +872,7 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
-          EXPECTED_LEGS="static pytest unit-utc-cov unit-ny gates-a gates-b gates-c gate-probes"
+          EXPECTED_LEGS="static pytest unit-utc-cov-1 unit-utc-cov-2 unit-utc-cov-3 unit-utc-cov unit-ny-1 unit-ny-2 gates-a gates-b gates-c gate-probes"
           export EXPECTED_LEGS
           python3 - <<'PY'
           import json, os, sys
@@ -702,7 +894,7 @@ jobs:
               fail("legs reported %s, expected exactly %s" % (sorted(needs), expected))
           results = {leg: needs[leg].get("result") if isinstance(needs[leg], dict) else None for leg in expected}
           for leg in expected:
-              print("%-13s %s" % (leg, results[leg]))
+              print("%-15s %s" % (leg, results[leg]))
           bad = ["%s=%s" % (leg, results[leg]) for leg in expected if results[leg] != "success"]
           if bad:
               fail("not every leg succeeded: " + ", ".join(bad))

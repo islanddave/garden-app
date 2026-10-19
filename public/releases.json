@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.7",
+    "date": "2026-10-19",
+    "highlights": [
+      "Behind the scenes: the checks that run before each release now split their longest test runs across several machines at once, so a fix is ready to ship several minutes sooner. Nothing you'll see change."
+    ]
+  },
+  {
     "version": "5.3.6",
     "date": "2026-10-19",
     "highlights": [

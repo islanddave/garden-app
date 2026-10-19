@@ -15,18 +15,19 @@ plus one job listing per completed run (about 500 calls for two weeks). Job file
 same command again fetches only what is missing. It exits 1 and lists the problems in `meta.json` if any listing
 could not be read or looks truncated; `report.py` then prints **INCOMPLETE DATA** at the top. `--logs N` also
 downloads the job logs of the N newest successful ci.yml dev pushes, which is what the silent-tail table is
-measured from: one log per job, so nine a run since the switch (plan A2.3) and one before it.
+measured from: one log per job, so thirteen a run since plan A4, nine since the switch (plan A2.3) and one before it.
 
 `report.py` reads that directory and nothing else. It prints:
 
 - **ci.yml per dev push**: median and p90 wall, the 10 newest successful runs, success / failure / cancelled,
   re-runs, first-push-green rate, time to first red, queue time, the same by week, and ci.yml by trigger.
 - **ci.yml per-step medians**, over successful first-attempt dev pushes, one row per (job, step) and one sum per
-  job. Since the switch a run is eight legs and the aggregator `build-and-test`: a setup step that every leg
-  repeats has a row per leg, the serial job of before the switch keeps its own rows under `build-and-test`, and
-  the aggregator's are under `build-and-test (aggregator)`. The legs run side by side, so a run's work time is
-  its slowest leg's sum, not the total. A report made before this change pooled by step name alone: do not set
-  its step table against one made after.
+  job. Since the switch a run is eight legs and the aggregator `build-and-test`, and since plan A4 twelve: a setup
+  step that every leg repeats has a row per leg, the serial job of before the switch keeps its own rows under
+  `build-and-test`, and the aggregator's are under `build-and-test (aggregator)`. The legs run side by side, so a
+  run's work time is its slowest leg's sum, not the total, except that the merge leg `unit-utc-cov` starts only when
+  the three coverage shards have finished: that path is the slowest shard plus the merge. A report made before this
+  change pooled by step name alone: do not set its step table against one made after.
 - **promote-gate.yml** and **deploy-staging.yml**: wall, and the split by job (span and runner-seconds).
 - **Runner-minutes by workflow**, with the minutes spent on cancelled runs, failed runs and superseded attempts,
   and any run with a job queued more than 300 s.

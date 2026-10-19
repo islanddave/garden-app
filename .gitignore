@@ -22,6 +22,8 @@ __pycache__/
 # tracked until 2026-08-03; 462 stale files rode along on any `git add -A` (one unintended
 # 221k-line deletion shipped inside a care-engine commit and CI stayed green through it).
 coverage/
+# The coverage shards' blobs (ci.yml, plan A4), when the shard and merge commands are run locally.
+vitest-blobs/
 
 # CodeGraph local index — machine-local, never committed
 .codegraph/

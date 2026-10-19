@@ -267,11 +267,11 @@ SET_ASIDE = (
                  "project-state/_promotepath-20261002/DECISIONS.md"},
 )
 ENTRY_FIELDS = ("sha", "workflow", "run_id", "red_attempt", "green_attempt", "cause", "fixed_by", "decision")
-# timeout-minutes of every job: ci-next.yml's as the file has them, and ci.yml's as its one serial job had it until
-# the switch (the rows this script counts are from before it; ci.yml's jobs today are the legs, and no row with a
-# verdict on both sides has them). The jobs API does not report a job's timeout, so this is the bound a cancelled
-# job's duration is held against; scripts/test_shadow_agree.py keeps ci-next.yml's entry equal to the file and
-# ci.yml's frozen.
+# timeout-minutes of every job: ci-next.yml's as the file had them until plan A4 split its two unit legs into shards
+# (OPS-CICOVERAGESHARDS-001), and ci.yml's as its one serial job had it until the switch (the rows this script counts
+# are from before the switch; ci.yml's jobs today are the legs, and no row with a verdict on both sides has them). The
+# jobs API does not report a job's timeout, so this is the bound a cancelled job's duration is held against;
+# scripts/test_shadow_agree.py keeps both entries frozen.
 TIMEOUT_MIN = {
     "ci.yml": {"build-and-test": 90},
     "ci-next.yml": {"static": 15, "pytest": 15, "unit-utc-cov": 30, "unit-ny": 30, "gates-a": 15, "gates-b": 15,
@@ -281,8 +281,9 @@ SERIAL = {"workflow": "ci.yml", "verdict_job": "build-and-test", "aggregates": F
 SHADOW = {"workflow": "ci-next.yml", "verdict_job": "build-and-test-next", "aggregates": True}
 # zone -> (the ci.yml job that ran that pass, the ci-next.yml job that ran it)
 PASSES = {"UTC": ("build-and-test", "unit-utc-cov"), "America/New_York": ("build-and-test", "unit-ny")}
-# zone -> the name of the step that runs that pass, the same in ci.yml's serial job as it was and in the leg.
-# scripts/test_shadow_agree.py keeps these equal to the legs of the two workflow files.
+# zone -> the name of the step that runs that pass, the same in ci.yml's serial job as it was and in the leg. Both
+# names, and the leg ids above, are those the shadow ran under: plan A4 has since split each pass into shard legs
+# with new names, and scripts/test_shadow_agree.py holds these to the old ones.
 PASS_STEPS = {"UTC": "Run unit tests with coverage",
               "America/New_York": "Unit tests under America/New_York TZ (date-fragility guard)"}
 OK, EXEMPT, BLOCK = "OK", "EXEMPT", "BLOCK"                          # one pass of one SHA

@@ -157,6 +157,10 @@ export default defineConfig({
         // in lockstep with active_target and add tests to clear the new bar.
         // Raised 2026-10-09 (Dave: "Raise to 80"), once the two-forms provider made the reading true: measured on
         // dev 8c96e353, lines 94.76 / funcs 92.82 / branches 85.93 / stmts 91.64. Floor = 80 on the two that sat under it.
+        // ci.yml's coverage shards (plan A4) set these four keys to 0 on the command line, so a third of the suite
+        // checks nothing; the merge checks them. A key added here (a glob, perFile, 100, autoUpdate) would reach every
+        // shard: add its neutral form to the shards' command too (ci.yml, ci-next.yml, COV_PASS_RUN in
+        // scripts/test_ci_next.py).
         lines:      82,
         functions:  80,
         branches:   80,

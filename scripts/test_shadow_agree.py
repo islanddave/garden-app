@@ -1683,21 +1683,15 @@ def test_a_row_red_on_both_sides_at_one_step_with_equal_ids_qualifies_and_is_the
         + EXEMPT_TAIL)
 
 
-def test_the_pass_step_names_are_the_two_workflow_files():
-    def steps(workflow, job):
-        with open(os.path.join(HERE, "..", ".github", "workflows", workflow), encoding="utf-8") as fh:
-            return [step.get("name") for step in yaml.safe_load(fh)["jobs"][job]["steps"]]
-
-    # Since the switch (plan A2.3) ci.yml holds the legs too, under the same ids, and its serial job is gone: the
-    # serial side of PASSES names that job as it was for the rows counted before the switch, and the step names
-    # are held to the same-named leg of BOTH files.
+def test_the_pass_step_names_are_those_the_shadow_ran():
+    # The shadow's runs are all from before plan A4 (OPS-CICOVERAGESHARDS-001), which split each pass into shard legs
+    # (unit-utc-cov-1..3 and a merge leg unit-utc-cov; unit-ny-1, unit-ny-2) with new step names. This tool reads
+    # those older runs, so PASSES and PASS_STEPS keep the job ids and step names they ran under, and are held here
+    # to them rather than to the workflow files as they are now (scripts/test_ci_next.py holds those).
     assert set(sa.PASS_STEPS) == set(sa.PASSES)
     for name, (serial_job, shadow_job) in sa.PASSES.items():
         assert serial_job == sa.SERIAL["verdict_job"] == "build-and-test"
-        for workflow in ("ci.yml", "ci-next.yml"):
-            assert steps(workflow, shadow_job).count(sa.PASS_STEPS[name]) == 1, (workflow, name)
-            for other in set(sa.PASSES) - {name}:  # each leg runs its own pass and not the other
-                assert sa.PASS_STEPS[other] not in steps(workflow, shadow_job), (workflow, name)
+    assert sa.PASSES == {"UTC": ("build-and-test", "unit-utc-cov"), NY: ("build-and-test", "unit-ny")}
     assert sa.PASS_STEPS == {"UTC": "Run unit tests with coverage",
                              NY: "Unit tests under America/New_York TZ (date-fragility guard)"}
 
@@ -2364,18 +2358,21 @@ def test_the_queue_times_are_taken_over_every_run_whichever_side_of_the_opening_
 
 # ── the supersede bound and timeouts ────────────────────────────────────────────────────────────────────────────
 
-def test_the_timeout_table_is_ci_next_yml_as_it_is_and_the_serial_job_as_it_was():
-    """ci-next.yml's entry is held to the file. ci.yml's is FROZEN at its one serial job's 90 minutes: the rows this
-    tool counts are dev pushes from before the switch (plan A2.3), when that job was ci.yml. Today ci.yml's jobs are
-    the legs, with ci-next.yml's timeouts leg for leg, and its `build-and-test` is a 5-minute aggregator: writing
-    that 5 here would read every old serial run cancelled after five minutes as timed out."""
+def test_the_timeout_table_is_each_file_as_the_shadow_ran_it():
+    """Both entries are FROZEN at the shapes the shadow's runs had: every row this tool counts is a dev push from
+    before the switch (plan A2.3), and ci-next.yml has run on no dev push since. ci.yml's entry is its one serial
+    job's 90 minutes: today its `build-and-test` is a 5-minute aggregator, and writing that 5 here would read every
+    old serial run cancelled after five minutes as timed out. ci-next.yml's is its eight legs as they were until plan
+    A4 (OPS-CICOVERAGESHARDS-001) split the two unit legs into shards. The two files as they are now still carry the
+    same timeouts leg for leg (scripts/test_ci_next.py holds them whole)."""
     def timeouts(workflow):
         with open(os.path.join(HERE, "..", ".github", "workflows", workflow), encoding="utf-8") as fh:
             return {name: job.get("timeout-minutes") for name, job in yaml.safe_load(fh)["jobs"].items()}
 
     shadow, serial = sa.SHADOW["workflow"], sa.SERIAL["workflow"]
     assert set(sa.TIMEOUT_MIN) == {serial, shadow} == {"ci.yml", "ci-next.yml"}
-    assert sa.TIMEOUT_MIN[shadow] == timeouts(shadow)
+    assert sa.TIMEOUT_MIN[shadow] == {"static": 15, "pytest": 15, "unit-utc-cov": 30, "unit-ny": 30, "gates-a": 15,
+                                      "gates-b": 15, "gates-c": 25, "gate-probes": 15, "build-and-test-next": 5}
     assert sa.TIMEOUT_MIN[serial] == {"build-and-test": 90}
     legs = {name: minutes for name, minutes in timeouts(shadow).items() if name != sa.SHADOW["verdict_job"]}
     assert {name: minutes for name, minutes in timeouts(serial).items() if name != "build-and-test"} == legs

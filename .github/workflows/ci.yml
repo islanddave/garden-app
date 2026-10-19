@@ -5,10 +5,12 @@ name: CI — Build and Unit Tests
 # `workflow_dispatch` runs on the SHA and never a `pull_request` run. (`push: [dev]` was taken out on 2026-05-01,
 # pipeline hardening sprint Step 1, and came back with the promote of 2026-06-03.)
 #
-# THE SHAPE (plan A2.3, the switch: gardening-docs project-state/_promotepath-20261002/PLAN-V003.md §4). Eight
-# parallel legs and one aggregator job whose id is `build-and-test`. promote-gate.yml reads that job, by that id,
+# THE SHAPE (plan A2.3, the switch: gardening-docs project-state/_promotepath-20261002/PLAN-V003.md §4). Twelve
+# legs and one aggregator job whose id is `build-and-test`. promote-gate.yml reads that job, by that id,
 # through scripts/promote-preflight.py; it is green only when every leg reported and every one succeeded. Until the
 # switch the same steps were one serial job of that name, and the legs ran beside it in ci-next.yml as a shadow.
+# The switch made eight legs; plan A4 (OPS-CICOVERAGESHARDS-001) split the UTC coverage pass into three shards and a
+# merge leg, and the America/New_York pass into two shards, because those two legs were the long poles.
 #   - NO workflow_dispatch here, ever. The preflight counts a dispatched run on any branch at the SHA, and a
 #     forced-red canary cannot be re-run green: one at dev's head would leave that commit unpromotable. The canary
 #     and the soak branch live in ci-next.yml, which holds these same legs and runs on no dev push.
@@ -19,7 +21,9 @@ name: CI — Build and Unit Tests
 #   - NO continue-on-error, no `if:` on a leg or a step, no matrix, no job-level env: a leg that fails under
 #     continue-on-error reads `success` in `needs`, and a skipped leg is not a pass.
 #   - What a step hands to a later one stays inside its leg; each leg repeats the setup it needs (checkout,
-#     setup-node, npm ci, Chrome, the origin/main fetch). ci-next.yml's header lists the hand-offs.
+#     setup-node, npm ci, Chrome, the origin/main fetch). ci-next.yml's header lists the hand-offs. ONE exception:
+#     the three coverage shards hand their blobs to the merge leg `unit-utc-cov` as artifacts, and that leg is the
+#     only one with `needs` (no `if:`: a red shard makes it `skipped`, and the aggregator reads that as red).
 #   - The two unit steps run vitest.config.ts as it is: two projects, the server-side test files in `node` and
 #     the rest under jsdom, in every run. The owner's decision (2026-10-11, row `switch-unit-shape` of DECISIONS.md
 #     beside the plan) had two halves: that two-project shape is the gating one, and the A3 trial's env key is
@@ -27,7 +31,7 @@ name: CI — Build and Unit Tests
 #     scripts/test_ci_next.py holds the key out of both workflow files.
 # A lane's branch runs this file only on a pull request (a push runs it on dev alone), and GitHub takes a pull
 # request's workflow from the merge of the branch into its base (documented behaviour, not observed here): a lane
-# cut from a dev older than the switch gets these nine jobs once its base holds them. What such a lane keeps is its
+# cut from a dev older than the switch gets these jobs once its base holds them. What such a lane keeps is its
 # own older ci-next.yml on workflow_dispatch. The preflight counts neither kind of run and passes either shape.
 #
 # READING A RED `build-and-test`. Read the RUN's conclusion and the legs before the aggregator.
@@ -59,6 +63,17 @@ name: CI — Build and Unit Tests
 #     because no single check-run named `build-and-test` comes from one job (gardening-deploy.md, "Items 2 and 3
 #     are decided by the workflow's runs").
 #   - A revert is a dev push like any other. It ships nothing and authorises no promote.
+#
+# ROLLBACK OF A4 (the shards), for a red of SHAPE: a shard or the merge leg red in a step it only repeats, or in the
+# artifact upload or download, red again on a re-run; or the merge's blob check red with all three shards green on a
+# run under 3 days old (older, the blobs have expired: re-run all jobs, which is no rollback). A4 is the one commit whose
+# subject starts `ci: shard the two unit passes` (the provider commit before it names the same ledger row and is NOT
+# it). It also bumped the version. Revert it forward keeping the release files: `git revert --no-commit <sha>`,
+# `git checkout HEAD -- package.json public/releases.json public/releases-latest.json`, then
+# `node scripts/add-release.mjs <next> "<note>"` with <next> one patch above dev's package.json version (never re-run
+# add-release on a version dev already carries and main does not: it replaces that version's notes; add a sentence to
+# them by hand instead), then the two checks and the gate-file review as above. It brings back the one-leg passes
+# (17.4 and 13.8 min medians before A4) and changes no test.
 
 on:
   push:
@@ -396,15 +411,119 @@ jobs:
             || python3 -m pip install --quiet --break-system-packages pytest requests boto3 pyyaml
           python3 -m pytest -q scripts/test_*.py
 
-  # The UTC pass with coverage, between the two halves of the coverage ratchet: the measured floor reads the
-  # coverage/coverage-summary.json this leg's own `npm test` writes. Measured in the one-project shape (jsdom for
-  # every file, before the A3 trial), on the soak (ci-next-soak run 37559095399, dev f792a200, 1,482 files, ten
-  # attempts): job median 17.95 min, six of ten over 17.8, the vitest step 661-1,095 s (gardening-docs
-  # project-state/_promotepath-20261002/scout-a8-and-slowdown-20261007.md, lines 351-355, with the run at 47 and the
-  # range at 62). For the two projects the A3 scout inferred about 3 min less; that is not yet measured on a runner.
-  unit-utc-cov:
+  # THE UTC PASS WITH COVERAGE: three shards and a merge (OPS-CICOVERAGESHARDS-001, plan A4; the proof is gardening-docs
+  # project-state/_promotepath-20261002/A4-PROOF-20261018.md). As one leg it was the long pole: median 17.4 min over 15
+  # dev pushes, 2026-10-15..18. Each shard runs a third of the test files (`--shard=i/3`: vitest's own split, by a hash
+  # of each file's path, so every runner draws the same thirds) and writes a BLOB: its test results and its coverage
+  # map, in which the provider records how that run loaded each file (scripts/ci-telemetry/coverage-v8-two-forms.mjs,
+  # "A RUN IN SHARDS"). A shard is no verdict on coverage: its map is a third of the suite's. So it checks no threshold
+  # (the four set to 0) and writes no report (`--coverage.reporter=none`: no partial table in its log for a reader to
+  # take as the figure). Its tests still fail it, and so does the provider's own check of its map. The command-line
+  # reporters replace vitest.config.ts's, so a shard prints no test-ids notice; the merge prints the pass's one.
+  # The blob reaches the merge leg as an artifact: overwrite, so a re-run of a shard replaces its blob; error when the
+  # shard wrote none; kept 3 days, long enough for a re-run of the merge.
+  unit-utc-cov-1:
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.23.3'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Unit tests with coverage, shard 1 of 3 (no threshold, no report)
+        run: |
+          npx vitest run --coverage --shard=1/3 --coverage.reporter=none \
+            --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 \
+            --coverage.thresholds.branches=0 --coverage.thresholds.statements=0 \
+            --reporter=default --reporter=github-actions --reporter=blob --outputFile.blob=vitest-blobs/blob-1-3.json
+
+      - name: Upload shard 1 of 3's blob for the merge
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vitest-blob-utc-1
+          path: vitest-blobs/blob-1-3.json
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+
+  # As unit-utc-cov-1, for the second third.
+  unit-utc-cov-2:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.23.3'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Unit tests with coverage, shard 2 of 3 (no threshold, no report)
+        run: |
+          npx vitest run --coverage --shard=2/3 --coverage.reporter=none \
+            --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 \
+            --coverage.thresholds.branches=0 --coverage.thresholds.statements=0 \
+            --reporter=default --reporter=github-actions --reporter=blob --outputFile.blob=vitest-blobs/blob-2-3.json
+
+      - name: Upload shard 2 of 3's blob for the merge
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vitest-blob-utc-2
+          path: vitest-blobs/blob-2-3.json
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+
+  # As unit-utc-cov-1, for the last third.
+  unit-utc-cov-3:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.23.3'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Unit tests with coverage, shard 3 of 3 (no threshold, no report)
+        run: |
+          npx vitest run --coverage --shard=3/3 --coverage.reporter=none \
+            --coverage.thresholds.lines=0 --coverage.thresholds.functions=0 \
+            --coverage.thresholds.branches=0 --coverage.thresholds.statements=0 \
+            --reporter=default --reporter=github-actions --reporter=blob --outputFile.blob=vitest-blobs/blob-3-3.json
+
+      - name: Upload shard 3 of 3's blob for the merge
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vitest-blob-utc-3
+          path: vitest-blobs/blob-3-3.json
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+
+  # The UTC pass's VERDICT: the three blobs merged as one run (`vitest run --merge-reports --coverage`, which reproduces
+  # the single run's coverage, A4-PROOF-20261018.md), the thresholds in vitest.config.ts, and the two halves of the
+  # coverage ratchet around it, as the one leg ran them: the measured floor reads the coverage/coverage-summary.json the
+  # merge writes. The only leg with `needs`, and no `if:`, so a red shard leaves it `skipped`, which the aggregator reads
+  # as red. Its log carries the coverage table (scripts/ci-telemetry/coverage-rows.py reads this leg's log) and the
+  # pass's test-ids notice, over every test of the three shards.
+  unit-utc-cov:
+    needs: [unit-utc-cov-1, unit-utc-cov-2, unit-utc-cov-3]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -422,10 +541,40 @@ jobs:
         # B2 from pipeline-consolidation-plan-20260501.md (boss VP add).
         run: python3 scripts/check-coverage-ratchet.py
 
-      - name: Run unit tests with coverage
-        run: npm test
-        # vitest exits non-zero if coverage thresholds (in vitest.config.ts) not met.
-        # Path A baseline: thresholds at 0%; schedule ratchets up per coverage-ratchet.json.
+      - name: Download the three shards' blobs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: vitest-blob-utc-*
+          path: vitest-blobs
+          merge-multiple: true
+
+      - name: Merge the three shards, with the coverage thresholds
+        # vitest merges whatever blobs the directory holds and has no idea how many shards there were, so two blobs
+        # would pass two thirds of the suite as the whole of it. The check first holds the directory to exactly the
+        # three. Then vitest exits non-zero on a failed test in any blob, on a threshold the merged coverage misses
+        # (vitest.config.ts) and on the provider's ERROR line (a blob it did not make, or a reading it could not align).
+        # Last, the files the three shards ran must be the suite's, each once: the merge's test-ids notice
+        # (files_sha256, the sorted unique test files, and files, how many ran) against `vitest list --filesOnly` from
+        # this checkout. vitest's split is by a hash of each path and the same on every runner; this is what turns a
+        # vitest whose split was not into a red. The NY shards use the same split. No notice is a red too.
+        run: |
+          set -euo pipefail
+          FOUND=""
+          [ ! -d vitest-blobs ] || FOUND="$(cd vitest-blobs && printf '%s ' *)"
+          if [ "$FOUND" != "blob-1-3.json blob-2-3.json blob-3-3.json " ]; then
+            echo "::error title=Coverage merge::want exactly the blobs of shards 1, 2 and 3 of 3 in vitest-blobs, found: ${FOUND:-none}. Two would pass two thirds of the suite as the whole. Blobs are kept 3 days: on an older run, re-run all jobs."
+            exit 1
+          fi
+          npx vitest run --merge-reports=vitest-blobs --coverage | tee "$RUNNER_TEMP/merge.log"
+          npx vitest list --filesOnly | sed -nE 's/^\[[a-z]+\] //p' > "$RUNNER_TEMP/listed.txt"
+          LISTED="$(wc -l < "$RUNNER_TEMP/listed.txt" | tr -d ' ')"
+          WANT="files_sha256=$(LC_ALL=C sort -u "$RUNNER_TEMP/listed.txt" | sha256sum | cut -d' ' -f1) files=$LISTED"
+          GOT="$(sed -nE 's/^::notice title=test-ids UTC::.* (files_sha256=[0-9a-f]{64}) .* (files=[0-9]+) .*$/\1 \2/p' "$RUNNER_TEMP/merge.log")"
+          if [ "$GOT" != "$WANT" ]; then
+            echo "::error title=Coverage merge::the merged run's test files are not the suite's: merged ${GOT:-with no test-ids notice}, vitest list --filesOnly $WANT. The shards lost or repeated a file."
+            exit 1
+          fi
+          echo "Coverage merge: the three shards ran the suite's $LISTED test files, each once."
 
       - name: Coverage ratchet — measured floor (WS-B M4)
         # The pre-test ratchet step above compares only the CONFIG thresholds to
@@ -435,11 +584,16 @@ jobs:
         # milestone decision) immediately protects it. No-op while active_target is 0.
         run: python3 scripts/check-coverage-ratchet.py --measured
 
-  # The same suite under the app's own timezone, behind a sentinel that the zone resolved. No coverage, so this
-  # is also the only pass whose time is free of instrumentation. ~12 min median, 14.5 min on a slow runner.
-  unit-ny:
+  # The same suite under the app's own timezone, behind a sentinel that the zone resolved, in two shards (plan A4: as
+  # one leg, median 13.8 min, the long pole once the coverage pass was sharded). No coverage, so no merge: each shard's
+  # tests are its verdict, the aggregator needs both, and `--shard=i/2` splits as the coverage shards do. Each shard
+  # repeats the sentinel, and prints its own test-ids notice, for its half of the files: two digests cannot be put
+  # together, so "the NY files are the UTC files" is now read from the counts (the two NY notices' files and tests add up
+  # to the merge's). The merge's file check holds the split itself. No coverage also makes this the only pass whose time
+  # is free of instrumentation.
+  unit-ny-1:
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -470,12 +624,48 @@ jobs:
           }
           '
 
-      - name: Unit tests under America/New_York TZ (date-fragility guard)
-        # Wave 0 / WS-B M2: the UTC pass (the `unit-utc-cov` leg; UTC is the GHA default) hid a
+      - name: Unit tests under America/New_York TZ (date-fragility guard), shard 1 of 2
+        # Wave 0 / WS-B M2: the UTC pass (the coverage shards; UTC is the GHA default) hid a
         # class of TZ-fragile date assertions that only fail in a UTC-negative zone like
         # the app's own EDT/EST (plantingMaturity ageDays, Collection "Seen" caption).
         # Re-run the suite under the app's real timezone so that class fails CI, not prod.
-        run: npx vitest run --no-coverage
+        run: npx vitest run --no-coverage --shard=1/2
+        env:
+          TZ: America/New_York
+
+  # As unit-ny-1, for the other half.
+  unit-ny-2:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.23.3'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: TZ sentinel — America/New_York resolves on this runner
+        env:
+          TZ: America/New_York
+        run: |
+          set -euo pipefail
+          node -e '
+          const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+          const jan = new Date(2026, 0, 15, 12).getTimezoneOffset()
+          const jul = new Date(2026, 6, 15, 12).getTimezoneOffset()
+          console.log(`TZ=${process.env.TZ} resolved as ${zone}; minutes behind UTC: January ${jan}, July ${jul}`)
+          if (process.env.TZ !== "America/New_York" || zone !== "America/New_York" || jan !== 300 || jul !== 240) {
+            console.log("::error title=TZ sentinel::America/New_York did not resolve (want zone America/New_York, January 300, July 240). The suite below would run in another zone and prove nothing about date fragility.")
+            process.exit(1)
+          }
+          '
+
+      - name: Unit tests under America/New_York TZ (date-fragility guard), shard 2 of 2
+        run: npx vitest run --no-coverage --shard=2/2
         env:
           TZ: America/New_York
 
@@ -1224,7 +1414,8 @@ jobs:
   # leg nobody listed) a red rather than a quieter green. No `name:` on this job: its id is the check-run name,
   # and `build-and-test` is the name promote-gate.yml asks scripts/promote-preflight.py for.
   build-and-test:
-    needs: [static, pytest, unit-utc-cov, unit-ny, gates-a, gates-b, gates-c, gate-probes]
+    needs: [static, pytest, unit-utc-cov-1, unit-utc-cov-2, unit-utc-cov-3, unit-utc-cov, unit-ny-1, unit-ny-2,
+            gates-a, gates-b, gates-c, gate-probes]
     if: always()
     runs-on: ubuntu-26.04
     timeout-minutes: 5
@@ -1234,7 +1425,7 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
-          EXPECTED_LEGS="static pytest unit-utc-cov unit-ny gates-a gates-b gates-c gate-probes"
+          EXPECTED_LEGS="static pytest unit-utc-cov-1 unit-utc-cov-2 unit-utc-cov-3 unit-utc-cov unit-ny-1 unit-ny-2 gates-a gates-b gates-c gate-probes"
           export EXPECTED_LEGS
           python3 - <<'PY'
           import json, os, sys
@@ -1256,7 +1447,7 @@ jobs:
               fail("legs reported %s, expected exactly %s" % (sorted(needs), expected))
           results = {leg: needs[leg].get("result") if isinstance(needs[leg], dict) else None for leg in expected}
           for leg in expected:
-              print("%-13s %s" % (leg, results[leg]))
+              print("%-15s %s" % (leg, results[leg]))
           bad = ["%s=%s" % (leg, results[leg]) for leg in expected if results[leg] != "success"]
           if bad:
               fail("not every leg succeeded: " + ", ".join(bad))
