@@ -1,7 +1,7 @@
 {
-  "version": "5.3.10",
+  "version": "5.3.11",
   "date": "2026-10-19",
   "highlights": [
-    "The daily Facebook credential check now emails an alert when Facebook will not answer it, instead of passing quietly."
+    "Tapping Save again after a slow save no longer logs the same event twice."
   ]
 }

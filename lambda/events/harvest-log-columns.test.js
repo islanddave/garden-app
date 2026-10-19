@@ -48,8 +48,11 @@ const HANDLERS = readdirSync(__dirname)
 // The keyed form binds columns to ONE relation, so this file cannot assert its list onto whatever
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
+// `notes` joined with BUG-EVENTSREPEATTAP-001 (the POST's repeat check compares h.notes). Not re-read
+// on prod for this commit: it is the column the same POST's new_harvest CTE has INSERTed on every
+// harvest since migrations/v1-2a-2 created the table with it, so a prod without it would 42703 there.
 const AUDIT_COLUMNS = {
-  harvest_log: ['deleted_at', 'disposition', 'event_id', 'id', 'quality_rating', 'quantity', 'unit', 'weight_basis', 'weight_estimated', 'weight_grams'],
+  harvest_log: ['deleted_at', 'disposition', 'event_id', 'id', 'notes', 'quality_rating', 'quantity', 'unit', 'weight_basis', 'weight_estimated', 'weight_grams'],
 };
 
 const HARVEST_LOG_COLUMNS = AUDIT_COLUMNS.harvest_log;
@@ -103,7 +106,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/events harvest_log column contract'
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(6);
+    // 7: BUG-EVENTSREPEATTAP-001's repeat check reads harvest_log inside the POST's write CTE.
+    expect(STATEMENTS).toHaveLength(7);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['h', 'h2']);
   });

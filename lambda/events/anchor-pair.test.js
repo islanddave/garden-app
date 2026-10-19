@@ -78,8 +78,10 @@ describe('the derivation is USED — not merely present', () => {
   // write sites read the derived binding, and that nothing re-introduces a body-sourced project_id.
   it('POST derives projectId through deriveEventProjectId and binds THAT', () => {
     expect(SRC).toMatch(/const projectId = deriveEventProjectId\(\{[\s\S]{0,220}?requestedProjectId,\s*\}\);/);
+    // BUG-EVENTSREPEATTAP-001: INSERT ... SELECT with an explicit id first, so project_id is the
+    // second column and the second select item.
     expect(SRC, 'the POST INSERT must bind the derived projectId')
-      .toMatch(/INSERT INTO event_log[\s\S]*?VALUES \(\s*\$\{projectId\}/);
+      .toMatch(/INSERT INTO event_log\s*\(id, project_id,[\s\S]*?SELECT\s*\$\{newEventId\}::uuid,\s*\$\{projectId\}::uuid,/);
   });
 
   it('PUT derives newProjectId through deriveEventProjectId and binds THAT', () => {

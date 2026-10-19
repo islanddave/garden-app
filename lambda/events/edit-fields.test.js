@@ -181,13 +181,15 @@ describe('the GET returns what the PUT writes — read and write ship together',
     // itself from the GET body, so a round-trip would blank five populated columns, and every
     // client-only test would still pass.
     //
-    // Anchored on `e.private_notes,` — the ONLY occurrence of that token in the file, and it sits
-    // in this select list. `pp.display_name AS project_name` appears FIVE times (the feed route at
+    // Anchored on `e.title, e.notes, e.private_notes,` — the ONLY occurrence of that run in the
+    // file, and it sits in this select list. (`e.private_notes,` alone was unique until the POST's
+    // repeat check, BUG-EVENTSREPEATTAP-001, selected it too; that select has no e.title.)
+    // `pp.display_name AS project_name` appears FIVE times (the feed route at
     // :585 is the first), so an indexOf on it slices the wrong route and the assertion fails for a
     // reason that has nothing to do with the code under test.
-    const i = SRC.indexOf('e.private_notes,');
+    const i = SRC.indexOf('e.title, e.notes, e.private_notes,');
     expect(i, 'the by-id GET select marker must be unique and present').toBeGreaterThan(-1);
-    expect(SRC.indexOf('e.private_notes,', i + 1), 'marker must be unique').toBe(-1);
+    expect(SRC.indexOf('e.title, e.notes, e.private_notes,', i + 1), 'marker must be unique').toBe(-1);
     const block = SRC.slice(i, SRC.indexOf('FROM event_log', i));
     for (const col of TREATMENT_COLS) {
       expect(block, `GET must return ${col}`).toMatch(new RegExp(`e\\.${col}`));

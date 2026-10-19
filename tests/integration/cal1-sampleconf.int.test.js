@@ -338,7 +338,11 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
   // weight to the single-sample number. Because the resolver is the single derivation locus and PUT
   // calls it unchanged, fixing the ranking closes this path too. These two tests prove that.
   it('EDIT PATH: an unrelated edit does not rewrite a correct weight to the single-sample value', async () => {
-    const created = await postHarvest('provisional', { quantity: 5, unit: 'count' })
+    // The note keeps this harvest distinct from the PROVISIONAL case's identical 5 count on the same
+    // planting above: without it, inside 45 s, the server answers 200 with THAT row
+    // (BUG-EVENTSREPEATTAP-001) and this test would edit a row it did not create.
+    const created = await postHarvest('provisional', { quantity: 5, unit: 'count', notes: 'edit-path' })
+    expect(created.status, JSON.stringify(created.body)).toBe(201)
     const eventId = created.body.id
     const before = Number(created.body.harvest.weight_grams)
     expect(before, `POST should store the curated 1750 g, got ${before} g`).toBeCloseTo(1750, 3)

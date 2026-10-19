@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.11",
+    "date": "2026-10-19",
+    "highlights": [
+      "Tapping Save again after a slow save no longer logs the same event twice."
+    ]
+  },
+  {
     "version": "5.3.10",
     "date": "2026-10-19",
     "highlights": [

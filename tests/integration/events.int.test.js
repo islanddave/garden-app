@@ -89,11 +89,17 @@ describe('PUT /api/events/:id — BUG-HARVESTEDIT-001', () => {
 
   const put = (id, body) => callHandler(handler, { method: 'PUT', path: `/api/events/${id}`, body, userId: USER })
 
+  // BUG-EVENTSREPEATTAP-001: each call carries its own note. The bodies are otherwise identical and
+  // dated "now", so a second makeHarvest() within 45 s of one whose row no edit changed (the refused
+  // retype below) is a repeat by the server's rule: 200 with the first row, not a new 201.
+  let harvestSeq = 0
   async function makeHarvest({ quantity = 5, unit = 'count' } = {}) {
+    harvestSeq += 1
     const res = await callHandler(handler, {
       method: 'POST', path: '/api/events', userId: USER,
       body: {
         project_id: hProjectId, event_type: 'harvest', event_date: new Date().toISOString(),
+        notes: `int-harvest-${harvestSeq}`,
         harvest: { quantity, unit, quality_rating: 4 },
       },
     })
@@ -334,9 +340,11 @@ describe('PUT /api/events/:id — BUG-HARVESTEDIT-001', () => {
   it('refuses to convert a plain event INTO a harvest', async () => {
     // The other direction: there is no harvest_log row to update, and inventing one here would
     // duplicate the create path's CTE badly.
+    // The note keeps this body distinct from the GET test's below (BUG-EVENTSREPEATTAP-001).
     const created = await callHandler(handler, {
       method: 'POST', path: '/api/events', userId: USER,
-      body: { project_id: hProjectId, event_type: 'observation', event_date: new Date().toISOString() },
+      body: { project_id: hProjectId, event_type: 'observation', event_date: new Date().toISOString(),
+              notes: 'int-refuse-convert' },
     })
     const id = created.body.id ?? created.body.eventId
     const res = await put(id, {
@@ -378,7 +386,8 @@ describe('PUT /api/events/:id — BUG-HARVESTEDIT-001', () => {
   it('GET on a non-harvest event returns harvest null, not an error', async () => {
     const created = await callHandler(handler, {
       method: 'POST', path: '/api/events', userId: USER,
-      body: { project_id: hProjectId, event_type: 'observation', event_date: new Date().toISOString() },
+      body: { project_id: hProjectId, event_type: 'observation', event_date: new Date().toISOString(),
+              notes: 'int-get-nonharvest' },
     })
     const id = created.body.id ?? created.body.eventId
     const res = await callHandler(handler, { method: 'GET', path: `/api/events/${id}`, userId: USER })
@@ -996,5 +1005,168 @@ describe('GET /api/events?plant_id= without project_id — planting-scoped (BUG-
     const { status, body } = await callHandler(handler, { method: 'GET', path: '/api/events' })
     expect(status).toBe(200)
     expect(body.map((r) => r.id)).toContain(noiseEventId)
+  })
+})
+
+// BUG-EVENTSREPEATTAP-001 — a re-sent event is not written twice.
+//
+// Prod carries watering pairs 0.2-2.8 s apart, a harvest written three times 21 s and 25 s apart, and
+// Red Raspberries 0.15 cup twice at 25 s (both live, so the season total doubled). api.js gives up at
+// 15 s with the form still filled in, and Save works again. The POST now takes an advisory lock keyed
+// on the event and skips the INSERT when the same user wrote the same event (every written field,
+// the same day or both "now") from this path in the last 45 s, answering 200 with that row.
+// event-repeat.test.js proves what is bound; these prove what Postgres keeps. Each case has its own
+// planting, so no case can see another's rows.
+describe('POST /api/events — the same event re-sent within 45 s writes one row (BUG-EVENTSREPEATTAP-001)', () => {
+  let rpProject
+  const today = () => new Date().toISOString().slice(0, 10)
+  const post = (body) => {
+    setTestUserId(USER)
+    return callHandler(handler, { method: 'POST', path: '/api/events', body })
+  }
+  async function planting(tag, quantity = null) {
+    const [p] = await directSql`
+      INSERT INTO plants (project_id, name, created_by)
+      VALUES (${rpProject}, ${`int-repeat-${tag}-${RUN}`}, ${USER}) RETURNING id`
+    if (quantity != null) await directSql`UPDATE plants SET quantity = ${quantity} WHERE id = ${p.id}`
+    return p.id
+  }
+  const rows = async (plantId) => (await directSql`
+    SELECT count(*)::int AS live, (SELECT count(*)::int FROM event_log WHERE plant_id = ${plantId}) AS total
+      FROM event_log WHERE plant_id = ${plantId} AND deleted_at IS NULL`)[0]
+
+  beforeAll(async () => {
+    rpProject = (await insertProject({ name: 'int-evt-repeat-' + RUN, createdBy: USER })).id
+  })
+  afterAll(async () => {
+    // The project-keyed cache row; the file-level afterAll takes the events, plantings and project.
+    await directSql`DELETE FROM entity_memory WHERE project_id = ${rpProject}`
+  })
+
+  it('a re-tap of a bare-dated watering answers 200 with the first row, and one row stands', async () => {
+    const p = await planting('seq')
+    const body = { plant_id: p, event_type: 'watering', event_date: today(),
+      metadata: { water_depth: 'normal', water_depth_set: false } }
+    const a = await post(body)
+    const b = await post(body)
+    expect(a.status, JSON.stringify(a.body)).toBe(201)
+    expect(b.status, JSON.stringify(b.body)).toBe(200)
+    expect(b.body.id).toBe(a.body.id)
+    expect(b.body.repeated).toBe(true)
+    expect(b.body.xp_gained).toBe(0)
+    expect(a.body).not.toHaveProperty('repeated')
+    expect(await rows(p)).toEqual({ live: 1, total: 1 })
+  })
+
+  it('a past day re-sent is matched exactly: one row', async () => {
+    const p = await planting('pastday')
+    const body = { plant_id: p, event_type: 'fruit_set', event_date: '2026-09-20' }
+    expect((await post(body)).status).toBe(201)
+    expect((await post(body)).status).toBe(200)
+    expect(await rows(p)).toEqual({ live: 1, total: 1 })
+  })
+
+  it('a body with no event_date (server-stamped, a different instant each time) re-sent: one row', async () => {
+    const p = await planting('stamped')
+    const body = { plant_id: p, event_type: 'watering' }
+    const a = await post(body)
+    const b = await post(body)
+    expect([a.status, b.status]).toEqual([201, 200])
+    expect(await rows(p)).toEqual({ live: 1, total: 1 })
+    // The cache was moved by the written row only: a repeat's later instant did not advance it.
+    const [em] = await directSql`SELECT last_watered_at FROM entity_memory WHERE plant_id = ${p}`
+    const [ev] = await directSql`SELECT event_date FROM event_log WHERE id = ${a.body.id}`
+    expect(new Date(em.last_watered_at).toISOString()).toBe(new Date(ev.event_date).toISOString())
+  })
+
+  it('a different note is a different event: two rows', async () => {
+    const p = await planting('notes')
+    const a = await post({ plant_id: p, event_type: 'watering', event_date: today(), notes: 'deep soak' })
+    const b = await post({ plant_id: p, event_type: 'watering', event_date: today(), notes: 'top up' })
+    expect([a.status, b.status]).toEqual([201, 201])
+    expect(await rows(p)).toEqual({ live: 2, total: 2 })
+  })
+
+  it('a re-log after the first was undone writes: the repeat check reads live rows only', async () => {
+    const p = await planting('undone')
+    const body = { plant_id: p, event_type: 'pruning', event_date: today() }
+    const a = await post(body)
+    expect(a.status).toBe(201)
+    const undo = await callHandler(handler, { method: 'DELETE', path: `/api/events/${a.body.id}` })
+    expect(undo.status).toBe(200)
+    const b = await post(body)
+    expect(b.status).toBe(201)
+    expect(b.body.id).not.toBe(a.body.id)
+    expect(await rows(p)).toEqual({ live: 1, total: 2 })
+  })
+
+  it('photo events are never merged: one event per photo is how a multi-photo upload arrives', async () => {
+    const p = await planting('photo')
+    const body = { plant_id: p, event_type: 'photo', event_date: today() }
+    const a = await post(body)
+    const b = await post(body)
+    expect([a.status, b.status]).toEqual([201, 201])
+    expect(await rows(p)).toEqual({ live: 2, total: 2 })
+  })
+
+  it('outside the window it is a second event: the first row made 46 s ago does not match', async () => {
+    const p = await planting('window')
+    const body = { plant_id: p, event_type: 'observation', event_date: today() }
+    const a = await post(body)
+    expect(a.status).toBe(201)
+    await directSql`UPDATE event_log SET created_at = now() - interval '46 seconds' WHERE id = ${a.body.id}`
+    const b = await post(body)
+    expect(b.status).toBe(201)
+    expect(await rows(p)).toEqual({ live: 2, total: 2 })
+  })
+
+  it('a repeated loss takes the plants away once: one ledger row, quantity 10 -> 8, not 6', async () => {
+    const p = await planting('loss', 10)
+    const body = { plant_id: p, event_type: 'reduction_lost', event_date: today(),
+      metadata: { qty_reduced: 2, loss_reason: 'pest' } }
+    const a = await post(body)
+    const b = await post(body)
+    expect([a.status, b.status], JSON.stringify(b.body)).toEqual([201, 200])
+    expect(b.body.plant_reduction).toBeNull()
+    expect(await rows(p)).toEqual({ live: 1, total: 1 })
+    const [pl] = await directSql`SELECT quantity::int AS quantity, qty_lost::int AS qty_lost FROM plants WHERE id = ${p}`
+    expect(pl).toEqual({ quantity: 8, qty_lost: 2 })
+  })
+
+  it('a repeated harvest (the 0.15 cup case) leaves one event and ONE harvest_log row, and answers with it', async () => {
+    const p = await planting('harvest')
+    const body = { plant_id: p, event_type: 'harvest', event_date: today(), harvest: { quantity: 0.15, unit: 'cup' } }
+    const a = await post(body)
+    const b = await post(body)
+    expect([a.status, b.status], JSON.stringify(b.body)).toEqual([201, 200])
+    expect(b.body.harvest).toBeTruthy()
+    expect(b.body.harvest.unit).toBe('cup')
+    expect(Number(b.body.harvest.quantity)).toBe(0.15)
+    expect(await rows(p)).toEqual({ live: 1, total: 1 })
+    const [h] = await directSql`
+      SELECT count(*)::int AS n FROM harvest_log hl JOIN event_log el ON el.id = hl.event_id WHERE el.plant_id = ${p}`
+    expect(h.n).toBe(1)
+  })
+
+  it('a harvest weighed the second time is a different harvest: two rows', async () => {
+    const p = await planting('harvest-weighed')
+    const a = await post({ plant_id: p, event_type: 'harvest', event_date: today(), harvest: { quantity: 3, unit: 'count' } })
+    const b = await post({ plant_id: p, event_type: 'harvest', event_date: today(),
+      harvest: { quantity: 3, unit: 'count', weight: 337, weight_unit: 'g' } })
+    expect([a.status, b.status]).toEqual([201, 201])
+    expect(await rows(p)).toEqual({ live: 2, total: 2 })
+  })
+
+  it('two identical requests IN FLIGHT AT ONCE: the lock serialises them, one row, one 201 and one 200', async () => {
+    const p = await planting('concurrent')
+    const body = { plant_id: p, event_type: 'watering', event_date: today() }
+    setTestUserId(USER)
+    const [a, b] = await Promise.all([
+      callHandler(handler, { method: 'POST', path: '/api/events', body }),
+      callHandler(handler, { method: 'POST', path: '/api/events', body }),
+    ])
+    expect([a.status, b.status].sort(), JSON.stringify([a.body, b.body])).toEqual([200, 201])
+    expect(a.body.id).toBe(b.body.id)
+    expect(await rows(p)).toEqual({ live: 1, total: 1 })
   })
 })

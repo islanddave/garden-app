@@ -161,9 +161,11 @@ describe('the PUT returns what it now writes — write and read-back ship togeth
   });
 
   it('the by-id GET still returns e.metadata — the edit form seeds from it', () => {
-    const i = SRC.indexOf('e.private_notes,');
+    // e.title leads the marker: the POST's repeat check (BUG-EVENTSREPEATTAP-001) also selects
+    // `e.private_notes,` but never e.title.
+    const i = SRC.indexOf('e.title, e.notes, e.private_notes,');
     expect(i, 'the by-id GET select marker must be unique and present').toBeGreaterThan(-1);
-    expect(SRC.indexOf('e.private_notes,', i + 1), 'marker must be unique').toBe(-1);
+    expect(SRC.indexOf('e.title, e.notes, e.private_notes,', i + 1), 'marker must be unique').toBe(-1);
     expect(SRC.slice(i, SRC.indexOf('FROM event_log', i))).toMatch(/e\.metadata/);
   });
 });

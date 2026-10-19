@@ -37,6 +37,7 @@ import {
 import { awardCritterServer, readUserPrefs as readPrefsForCritter, readSpeciesPrefs as readSpeciesPrefsForCritter } from './critterAward.js';
 import { applyBatchSideEffects } from './batchSideEffects.js';
 import { resolveSeedLotRewards } from './seedLotRewards.js';
+import { REPEAT_WINDOW_SECONDS, isRepeatGuarded, repeatLockKey } from './repeatGuard.js';
 import { randomUUID } from 'node:crypto';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -3248,51 +3249,160 @@ export const handler = async (event) => {
       `;
       const userTz = tzRows[0].tz;
 
-      // ── Step 2: atomic transaction — set_config + dual-write CTE + entity_memory UPSERT ──────
-      // Statement 2 (CTE): event_log + harvest_log (conditional) via WITH new_event AS / new_harvest AS.
+      // ── Step 2: atomic transaction — set_config + repeat lock + dual-write CTE + entity_memory UPSERT
+      // Statement 1: BUG-EVENTSREPEATTAP-001 advisory lock (below).
+      // Statement 2 (CTE): event_log + harvest_log (conditional) via WITH new_event AS / new_harvest AS,
+      // both skipped when `dup` finds the same event already written (below).
       // F3 quantity_numeric synced for harvest events. F15 explicit RETURNING allow-list (no *).
       // F12 JS extraction: harvest_row stripped from row, exposed as `harvest` key.
       // Statement 3: entity_memory UPSERT with last_issue_at (F2 — present in INSERT col list, VALUES,
       // and ON CONFLICT branch). B1 prod vocabulary: 'watering' / 'fertilizing' / 'pruning' /
       // 'observation' / 'harvest' verbatim.
+      //
+      // BUG-EVENTSREPEATTAP-001 — A REPEAT IS NOT A SECOND EVENT. Prod carries watering pairs 0.2-2.8 s
+      // apart, a harvest written three times 21 s and 25 s apart, and Red Raspberries 0.15 cup twice at
+      // 25 s with both rows live (a doubled season total). api.js gives up at 15 s, the form is still
+      // filled in, and Save works again: the re-tap re-sends a write that already committed. Window,
+      // guarded types and lock key live in ./repeatGuard.js.
+      //
+      // THE PREDICATE (`dup`). A repeat is an earlier LIVE row from THIS path (source 'app') by this
+      // user, made in the last REPEAT_WINDOW_SECONDS, whose every written field equals what this
+      // request would write (IS NOT DISTINCT FROM, so NULL matches NULL; projectId is the DERIVED one),
+      // and whose event_date is either
+      //   (a) identical — EventNew sends a bare day, anchored at noon UTC, so its re-send is exact; or
+      //   (b) within the window of this one, when this one is itself "now" (a body with no event_date
+      //       is stamped with the server clock above, which differs per request).
+      // For a harvest the harvest_log row must match too: unit, quality, notes, disposition, and the
+      // weight. The weight is compared with what public.resolve_harvest_weight would give THIS request
+      // (the same call new_harvest makes): a typed weight resolves to (grams, false, 'measured'), so it
+      // matches only a row the user weighed at the same grams; no typed weight never resolves to
+      // 'measured' for a count unit, so it never matches a weighed row. For a weight unit (g/kg/lb/oz)
+      // the stored row cannot say who supplied the grams, and equal grams is the whole test.
+      // `photo` is not guarded: one photo event per photo is how multi-photo uploads arrive.
+      //
+      // ON A REPEAT nothing is inserted (WHERE NOT EXISTS (SELECT 1 FROM dup)), the statement answers
+      // with the standing row instead, flagged `repeated`, and the route returns 200 with it below.
+      // The row id is generated HERE rather than by the column default so the later statements in this
+      // transaction can tell whether THIS request wrote the row — the ones that are not idempotent on
+      // a repeat carry `AND EXISTS (... WHERE id = newEventId)`.
+      //
+      // THE LOCK (statement 1) is what makes the check hold for two requests in flight at once: each
+      // would otherwise read the log before the other's row exists, and both insert. It is taken
+      // before the CTE; the second request waits there until the first commits, and its CTE — a NEW
+      // statement, so under READ COMMITTED a fresh snapshot (prod's default; the driver sends no
+      // isolation header) — then sees the first row. Gated off for photo, so those never wait.
+      // INSERT ... SELECT does not type its parameters from the target columns the way VALUES did, so
+      // every bound value in the CTE carries an explicit cast.
+      const repeatGuarded = isRepeatGuarded(eventType);
+      const repeatKey = repeatLockKey({
+        userId, plantId: body.plant_id ?? null, projectId, locationId: body.location_id ?? null, eventType,
+      });
+      const newEventId = randomUUID();
       const txResult = await sql.transaction([
         sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${repeatKey}, 0)) WHERE ${repeatGuarded}::boolean`,
         sql`
-          WITH new_event AS (
+          WITH dup AS (
+            SELECT
+              e.id, e.project_id, e.location_id, e.plant_id, e.event_type, e.event_date,
+              e.notes, e.private_notes, e.quantity, e.quantity_numeric, e.is_public,
+              e.logged_by, e.created_by, e.metadata,
+              e.flagged_as_issue, e.severity, e.resolved_at, e.resolved_by, e.source,
+              e.treatment_product_id, e.treatment_product_text, e.treatment_category, e.treatment_amount, e.pest_target,
+              e.created_at, e.updated_at,
+              (SELECT row_to_json(hr) FROM (
+                 SELECT h.id, h.quantity, h.unit, h.quality_rating, h.notes,
+                        h.weight_grams, h.weight_estimated, h.weight_basis, h.disposition
+                   FROM public.harvest_log h
+                  WHERE h.event_id = e.id
+                    AND h.deleted_at IS NULL
+              ) hr) AS harvest_row
+              FROM public.event_log e
+             WHERE ${repeatGuarded}::boolean
+               AND e.source = ${EVENT_SOURCE_SINGLE}::text
+               AND e.deleted_at IS NULL
+               AND e.created_by = ${userId}::text
+               AND e.created_at > now() - ${REPEAT_WINDOW_SECONDS}::int * INTERVAL '1 second'
+               AND e.plant_id IS NOT DISTINCT FROM ${body.plant_id ?? null}::uuid
+               AND e.project_id IS NOT DISTINCT FROM ${projectId}::uuid
+               AND e.location_id IS NOT DISTINCT FROM ${body.location_id ?? null}::uuid
+               AND e.event_type = ${eventType}::text
+               AND e.notes IS NOT DISTINCT FROM ${body.notes ?? null}::text
+               AND e.private_notes IS NOT DISTINCT FROM ${body.private_notes ?? null}::text
+               AND e.quantity IS NOT DISTINCT FROM ${body.quantity ?? null}::text
+               AND e.quantity_numeric IS NOT DISTINCT FROM ${harvestQty}::numeric
+               AND e.is_public IS NOT DISTINCT FROM ${body.is_public ?? true}::boolean
+               AND e.metadata IS NOT DISTINCT FROM ${metadata}::jsonb
+               AND e.flagged_as_issue IS NOT DISTINCT FROM ${flagged}::boolean
+               AND e.severity IS NOT DISTINCT FROM ${severity}::smallint
+               AND e.treatment_product_id IS NOT DISTINCT FROM ${treatmentProductId}::uuid
+               AND e.treatment_product_text IS NOT DISTINCT FROM ${treatmentProductText}::text
+               AND e.treatment_category IS NOT DISTINCT FROM ${treatmentCategory}::text
+               AND e.treatment_amount IS NOT DISTINCT FROM ${treatmentAmount}::text
+               AND e.pest_target IS NOT DISTINCT FROM ${pestTarget}::text
+               AND (
+                 e.event_date = ${eventDate}::timestamptz
+                 OR (
+                   abs(extract(epoch FROM ${eventDate}::timestamptz - now())) <= ${REPEAT_WINDOW_SECONDS}::int
+                   AND abs(extract(epoch FROM e.event_date - ${eventDate}::timestamptz)) <= ${REPEAT_WINDOW_SECONDS}::int
+                 )
+               )
+               AND (NOT ${isHarvest}::boolean OR EXISTS (
+                 SELECT 1
+                   FROM public.harvest_log h,
+                   LATERAL public.resolve_harvest_weight(
+                     e.plant_id, ${harvestUnit}::text, ${harvestQty}::numeric,
+                     NULLIF(${harvestUserGrams}::numeric, 0)
+                   ) rw
+                  WHERE h.event_id = e.id
+                    AND h.deleted_at IS NULL
+                    AND h.unit = ${harvestUnit}::text
+                    AND h.quality_rating IS NOT DISTINCT FROM ${harvestQuality}::smallint
+                    AND h.notes IS NOT DISTINCT FROM ${harvestNotes}::text
+                    AND h.disposition IS NOT DISTINCT FROM ${harvestDisposition}::text
+                    AND h.weight_grams IS NOT DISTINCT FROM rw.weight_grams
+                    AND h.weight_estimated IS NOT DISTINCT FROM rw.weight_estimated
+                    AND h.weight_basis IS NOT DISTINCT FROM rw.weight_basis
+               ))
+             ORDER BY e.created_at DESC, e.id DESC
+             LIMIT 1
+          ),
+          new_event AS (
             INSERT INTO event_log
-              (project_id, location_id, plant_id, event_type, event_date,
+              (id, project_id, location_id, plant_id, event_type, event_date,
                notes, private_notes, quantity, quantity_numeric, is_public,
                logged_by, created_by, metadata, source,
                flagged_as_issue, severity,
                treatment_product_id, treatment_product_text, treatment_category, treatment_amount, pest_target)
-            VALUES (
-              ${projectId},
-              ${body.location_id ?? null},
-              ${body.plant_id ?? null},
-              ${eventType},
+            SELECT
+              ${newEventId}::uuid,
+              ${projectId}::uuid,
+              ${body.location_id ?? null}::uuid,
+              ${body.plant_id ?? null}::uuid,
+              ${eventType}::text,
               ${eventDate}::timestamptz,
-              ${body.notes ?? null},
-              ${body.private_notes ?? null},
-              ${body.quantity ?? null},
+              ${body.notes ?? null}::text,
+              ${body.private_notes ?? null}::text,
+              ${body.quantity ?? null}::text,
               ${harvestQty}::numeric,
-              ${body.is_public ?? true},
-              ${userId},
-              ${userId},
-              ${metadata},
+              ${body.is_public ?? true}::boolean,
+              ${userId}::text,
+              ${userId}::text,
+              ${metadata}::jsonb,
               -- V4-EVENTSOURCE-001: provenance recorded at the write. This is what makes app_events
               -- droppable later WITHOUT losing the only "did this come through the app?" surface in
               -- the schema (packet item 10 Option B). Do not drop app_events until this has landed
               -- AND the drift repair has completed — daily_xp_capped is still the only measurement
               -- of forfeited XP anywhere.
-              ${EVENT_SOURCE_SINGLE},
-              ${flagged},
-              ${severity},
-              ${treatmentProductId},
-              ${treatmentProductText},
-              ${treatmentCategory},
-              ${treatmentAmount},
-              ${pestTarget}
-            )
+              ${EVENT_SOURCE_SINGLE}::text,
+              ${flagged}::boolean,
+              ${severity}::smallint,
+              ${treatmentProductId}::uuid,
+              ${treatmentProductText}::text,
+              ${treatmentCategory}::text,
+              ${treatmentAmount}::text,
+              ${pestTarget}::text
+             WHERE NOT EXISTS (SELECT 1 FROM dup)
             RETURNING
               id, project_id, location_id, plant_id, event_type, event_date,
               notes, private_notes, quantity, quantity_numeric, is_public,
@@ -3336,10 +3446,14 @@ export const handler = async (event) => {
             WHERE ${isHarvest}::boolean = true
             RETURNING id, quantity, unit, quality_rating, notes, weight_grams, weight_estimated, weight_basis, disposition
           )
+          -- Exactly one row either way: new_event is empty precisely when dup is not.
           SELECT
             ne.*,
-            (SELECT row_to_json(nh) FROM new_harvest nh) AS harvest_row
+            (SELECT row_to_json(nh) FROM new_harvest nh) AS harvest_row,
+            false AS repeated
           FROM new_event ne
+          UNION ALL
+          SELECT d.*, true AS repeated FROM dup d
         `,
         sql`
           -- BUG-EMPROJGUARD-001 (POST path): self-guard on project_id, mirroring the plant-keyed
@@ -3348,6 +3462,10 @@ export const handler = async (event) => {
           -- an unguarded NULL would insert a ZERO-parent row, violate exactly_one_parent, and abort
           -- the whole transaction — converting the old guaranteed 400 into a 500. These two fixes
           -- MUST ship together.
+          -- BUG-EVENTSREPEATTAP-001: and only when THIS request wrote the event (the EXISTS on its
+          -- id). A repeat writes no row, so it must not move the cache either: a server-stamped
+          -- re-send carries a LATER event_date than the row that stands, and would advance
+          -- last_watered_at / next_water_at past anything in the log.
           INSERT INTO entity_memory
             (project_id, last_event_at,
              last_watered_at, last_fertilized_at, last_pruned_at, last_observed_at, last_harvested_at,
@@ -3363,6 +3481,7 @@ export const handler = async (event) => {
             CASE WHEN ${eventType} IN ('watering','rain')      THEN ${eventDate}::timestamptz + INTERVAL '4 days' ELSE NULL END,
             CASE WHEN ${flagged}::boolean = true     THEN ${eventDate}::timestamptz ELSE NULL END
           WHERE ${projectId}::uuid IS NOT NULL
+            AND EXISTS (SELECT 1 FROM public.event_log WHERE id = ${newEventId}::uuid)
           ON CONFLICT (project_id) DO UPDATE SET
             last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
             last_watered_at    = CASE WHEN ${eventType} IN ('watering','rain')      THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
@@ -3403,6 +3522,7 @@ export const handler = async (event) => {
           -- events. Harmless only while reads stay project-keyed; Step D's cutover would have turned
           -- it into a silent Findings regression with nothing failing and nothing logging.
           -- next_water_at stays out on purpose: the nightly engine owns "due", not this writer.
+          -- BUG-EVENTSREPEATTAP-001: gated on THIS request having written the event, as above.
           INSERT INTO entity_memory
             (plant_id, last_event_at,
              last_watered_at, last_fertilized_at, last_pruned_at, last_observed_at, last_harvested_at,
@@ -3416,6 +3536,7 @@ export const handler = async (event) => {
             CASE WHEN ${eventType} IN ('harvest','first_harvest')    THEN ${eventDate}::timestamptz ELSE NULL END,
             CASE WHEN ${flagged}::boolean = true                     THEN ${eventDate}::timestamptz ELSE NULL END
           WHERE ${body.plant_id ?? null}::uuid IS NOT NULL
+            AND EXISTS (SELECT 1 FROM public.event_log WHERE id = ${newEventId}::uuid)
           ON CONFLICT (plant_id) WHERE plant_id IS NOT NULL DO UPDATE SET
             last_event_at      = GREATEST(COALESCE(entity_memory.last_event_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz),
             last_watered_at    = CASE WHEN ${eventType} IN ('watering','rain')         THEN GREATEST(COALESCE(entity_memory.last_watered_at,    ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_watered_at    END,
@@ -3433,6 +3554,13 @@ export const handler = async (event) => {
             last_issue_at      = CASE WHEN ${flagged}::boolean = true                  THEN GREATEST(COALESCE(entity_memory.last_issue_at,      ${eventDate}::timestamptz), ${eventDate}::timestamptz) ELSE entity_memory.last_issue_at      END,
             updated_at = NOW()
         `,
+        // BUG-EVENTSREPEATTAP-001 — the statements below run on a repeat too, and need no gate: the
+        // three status advances are forward-only by their source-status predicate, germinated_at and
+        // transplanted_at are set-once (IS NULL), and the anchor supersede retires only an
+        // unsuperseded row. Each is a no-op the second time by its own WHERE, so the repeat leaves
+        // the planting exactly as the first write did. The ONE exception is the loss reduction,
+        // which subtracts, and carries the same EXISTS gate as the entity_memory upserts above.
+        //
         // V3-FRUITSET-001: logging a `fruit_set` event on a specific planting auto-advances
         // it to 'fruiting' (forward-only). garden_node has no RLS, so ownership is scoped
         // explicitly (L-087). No-op on every non-fruit_set event (the ${eventType} gate) and
@@ -3534,6 +3662,10 @@ export const handler = async (event) => {
         // when it has no container) for the same reason the status advances do: garden_node has no
         // RLS (L-087) and an inner join silently drops the 4 live container-less plantings
         // (BUG-STATUSADVNOPROJ-001).
+        //
+        // BUG-EVENTSREPEATTAP-001: the last conjunct. A repeated loss writes no ledger row, so it
+        // must not take the plants away a second time — the rollup would then disagree with the
+        // history it summarises. Appended LAST so every existing bind keeps its position.
         sql`
           UPDATE public.garden_node p
              SET quantity    = GREATEST(p.quantity - ${reductionQty}::int, 1),
@@ -3547,6 +3679,7 @@ export const handler = async (event) => {
                             WHERE pp.id = p.container_id
                               AND pp.created_by = ANY(${householdIds}))
                    OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})) )
+             AND EXISTS (SELECT 1 FROM public.event_log WHERE id = ${newEventId}::uuid)
         `,
         // CAL-2 germination capture — logging a `germination` event on a specific planting stamps
         // germinated_at (the event date) the FIRST time only (set-once via `germinated_at IS NULL`).
@@ -3675,11 +3808,39 @@ export const handler = async (event) => {
       ]);
 
       // F12 — JS-side extraction of harvest sub-row from the joined CTE row.
-      const newEvent = txResult[1][0];
+      // BUG-EVENTSREPEATTAP-001: statement 2 now (the lock is 1); `repeated` is stripped so the 201
+      // body is unchanged.
+      const { repeated, ...newEvent } = txResult[2][0];
       const harvest = newEvent.harvest_row;
       delete newEvent.harvest_row;
       newEvent.harvest = harvest;
       const eventId = newEvent.id;
+
+      // BUG-EVENTSREPEATTAP-001 — A REPEAT ANSWERS NOW, with the event that stands. Everything below
+      // is a consequence of writing an event (the calibration sample, seed-lot rewards, the critter
+      // roll, streak, XP, achievements, telemetry), and this request wrote none, so none of it runs.
+      // The 201 body's other keys carry their documented degraded values, so a client reading them
+      // sees "nothing new" rather than a missing key; `repeated: true` is the only addition. Every
+      // POST /api/events caller in src/ reads the body only through res.ok, so 200 and 201 look the
+      // same to them. One structured line per skip, so CloudWatch can count how often it fires.
+      if (repeated === true) {
+        console.log(JSON.stringify({
+          evt: 'event_repeat_skipped',
+          event_type: eventType,
+          gap_ms: Date.now() - new Date(newEvent.created_at).getTime(),
+        }));
+        return resp(200, {
+          ...newEvent,
+          newly_earned_achievements: [],
+          updated_streak: null,
+          xp_gained: 0,
+          daily_xp_remaining: null,
+          level: null,
+          leveled_up: false,
+          plant_reduction: null,
+          repeated: true,
+        });
+      }
 
       // V4-HARVDUAL-001 Slice C — auto-capture the calibration sample. A harvest logged with BOTH a
       // count and a weight IS a per-variety measurement ("5 San Marzano, 337 g" = 67.4 g/fruit), and
