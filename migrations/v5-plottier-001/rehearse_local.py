@@ -14,11 +14,13 @@ WHAT IT RUNS, in order, and what each step must show (any miss is a FAIL line an
    5. C-CONV after; newly red = after - before  -> exactly EXPECTED_NEWLY_RED (empty), per env
    6. behaviour cases and mutants: C-AUDIT writers and actors; C-GUARD cases, the DROP COLUMN control and three
       body mutants; C-BLOCK (a Space with a plot, composite and single-column keys into plots, NULL key, TRUNCATE,
-      drop-the-guard); the one-default index; NOT NULL (DSA-35); every data gate's positive control, red then
-      green; the self-arm of each standing gate; a gate-level red for each structural mutant. Each in a
-      transaction that is rolled back.
-   7. the staging shape (the Space has no place): pre gate red, 0a refuses naming the Space, nothing changed
-   8. 0a refusals: a name collision                                 -> refuses, nothing changed
+      drop-the-guard); the one-default index; NOT NULL and the both-or-neither CHECK (DSA-35 as amended); a
+      coordinate-less Space with its coordinate-less default plot (gates green); every data gate's positive
+      control, red then green; the self-arm of each standing gate; a gate-level red for each structural mutant.
+      Each in a transaction that is rolled back.
+   7. the staging shape (the Space has no place): pre gates PASS; C-CONV before/after on both envs -> newly red
+      empty; 0a exit 0; Plot 1 has no place; post gates PASS; giving it a first place under weather -> P0001
+   8. 0a refusals: a name collision, a Space with half a place, a Space with no owner -> refuses, nothing changed
    9. 0r refusals: an added plot, a changed Plot 1, a key into plots -> each refuses, nothing dropped
   10. 0r                                        -> exit 0; catalog fingerprint equal to the base's
   11. 0a twice more, then 0r -> 0a once more    -> exit 0 each; fingerprint equal to step 3's; one Plot 1 per Space
@@ -376,18 +378,54 @@ def block_cases(conn, space):
 # ── Table shape, the one-default rule and the data gates ─────────────────────────────────────────
 def shape_and_gate_cases(conn, space):
     p1 = plot1(conn, space)
-    with case(conn):
-        st, _ = err_of(conn, 'INSERT INTO public.plots (workspace_id, name, lat, lng, timezone, is_default, created_by) '
-                             "VALUES (%s, 'rh', NULL, -71, 'America/New_York', true, %s)", (space, OWNER))
-        check('DSA-35: a NULL-lat default-plot insert raises 23502', st == '23502', str(st))
-    for col in ('name', 'lng', 'timezone', 'created_by'):
+    # DSA-35 as amended 2026-10-19: lat and lng are NULL together or not at all.
+    for label, lat, lng in (('lat NULL, lng set', None, -71), ('lng NULL, lat set', 41, None)):
         with case(conn):
-            vals = {'name': "'rh'", 'lng': '-71', 'timezone': "'America/New_York'", 'created_by': f"'{OWNER}'"}
+            st, msg = err_of(conn, 'INSERT INTO public.plots (workspace_id, name, lat, lng, timezone, is_default, '
+                                   "created_by) VALUES (%s, 'rh', %s, %s, 'America/New_York', false, %s)",
+                             (space, lat, lng, OWNER))
+            check(f'CHECK mutant refused: a plot with {label} raises 23514 plots_lat_lng_both_or_neither',
+                  st == '23514', f'{st} {msg[:70]}')
+    with case(conn):
+        q = new_plot(conn, space, 'rh-half', lat=41, lng=-71)
+        st, _ = err_of(conn, 'UPDATE public.plots SET lng = NULL WHERE id = %s', (q,))
+        check('CHECK mutant refused: an UPDATE leaving only lat raises 23514', st == '23514', str(st))
+        st, _ = err_of(conn, 'UPDATE public.plots SET lat = NULL, lng = NULL WHERE id = %s', (q,))
+        check('CHECK: a non-default plot losing both coordinates is admitted', st is None, str(st))
+    for col in ('name', 'timezone', 'created_by'):
+        with case(conn):
+            vals = {'name': "'rh'", 'timezone': "'America/New_York'", 'created_by': f"'{OWNER}'"}
             vals[col] = 'NULL'
-            st, _ = err_of(conn, f"INSERT INTO public.plots (workspace_id, lat, name, lng, timezone, created_by) "
-                                 f"VALUES (%s, 41, {vals['name']}, {vals['lng']}, {vals['timezone']}, {vals['created_by']})",
+            st, _ = err_of(conn, f"INSERT INTO public.plots (workspace_id, lat, lng, name, timezone, created_by) "
+                                 f"VALUES (%s, 41, -71, {vals['name']}, {vals['timezone']}, {vals['created_by']})",
                            (space,))
-            check(f'DSA-35: NULL {col} raises 23502', st == '23502', str(st))
+            check(f'NOT NULL: NULL {col} raises 23502', st == '23502', str(st))
+    # A COORDINATE-LESS SPACE (staging's shape, the harness D1 shape): its default plot has no place, and every
+    # data gate stays green for it.
+    with case(conn):
+        s0 = new_space(conn, 'rh-no-place')
+        q = new_plot(conn, s0, 'rh-no-place', default=True, lat=None, lng=None, zip_=None)
+        row = conn.execute('SELECT lat, lng, postal_code FROM public.plots WHERE id = %s', (q,)).fetchone()
+        check('coordinate-less Space: its default plot is admitted with lat, lng and postal_code NULL',
+              row == (None, None, None), str(row))
+        for g in ('post_every_live_space_has_exactly_one_live_default_plot', 'post_default_plot_place_equals_space_place',
+                  'post_every_plot_has_its_insert_audit_row', 'post_plot_place_matches_newest_audit',
+                  'post_plot_timezones_are_known'):
+            check(f'coordinate-less Space: {g} green (NULL = NULL)', gate_rows(conn, g) == [])
+        conn.execute('UPDATE public.plots SET lat = 41, lng = -71 WHERE id = %s', (q,))
+        r = gate_rows(conn, 'post_default_plot_place_equals_space_place')
+        check('coordinate-less Space: its plot given a place alone reds the place gate (NULL on one side only)',
+              len(r) == 1 and r[0][0].startswith(str(s0)), str(r))
+        conn.execute('UPDATE public.spaces SET weather_lat = 41, weather_lng = -71 WHERE id = %s', (s0,))
+        check('coordinate-less Space: the Space given the same place greens it',
+              gate_rows(conn, 'post_default_plot_place_equals_space_place') == [])
+    with case(conn):
+        s0 = new_space(conn, 'rh-no-place-wx')
+        q = new_plot(conn, s0, 'rh-no-place-wx', default=True, lat=None, lng=None, zip_=None)
+        add_cold(conn, s0)
+        st, msg = err_of(conn, 'UPDATE public.plots SET lat = 41, lng = -71 WHERE id = %s', (q,))
+        check('C-GUARD a coordinate-less default plot given its first place under weather: P0001 (NULL -> value)',
+              st == 'P0001' and msg.startswith('plots_repoint_guard'), f'{st} {msg[:50]}')
     with case(conn):
         st, _ = err_of(conn, 'INSERT INTO public.plots (workspace_id, name, lat, lng, timezone, created_by) '
                              "VALUES (gen_random_uuid(), 'rh', 41, -71, 'America/New_York', %s)", (OWNER,))
@@ -470,9 +508,13 @@ def shape_and_gate_cases(conn, space):
     structural = [
         ('post_plots_columns_exact', 'ALTER TABLE public.plots ADD COLUMN zz text'),
         ('post_plots_columns_exact', 'ALTER TABLE public.plots ALTER COLUMN timezone SET DEFAULT \'UTC\''),
-        ('post_plots_columns_exact', 'ALTER TABLE public.plots ALTER COLUMN lat DROP NOT NULL'),
+        ('post_plots_columns_exact', 'ALTER TABLE public.plots ALTER COLUMN lat SET NOT NULL'),
         ('post_plots_column_classification_is_complete', 'ALTER TABLE public.plots ADD COLUMN zz text'),
         ('post_plots_constraints_exact', 'ALTER TABLE public.plots DROP CONSTRAINT plots_id_workspace_id_key'),
+        ('post_plots_constraints_exact', 'ALTER TABLE public.plots DROP CONSTRAINT plots_lat_lng_both_or_neither'),
+        ('post_plots_constraints_exact',
+         'ALTER TABLE public.plots DROP CONSTRAINT plots_lat_lng_both_or_neither, ADD CONSTRAINT '
+         'plots_lat_lng_both_or_neither CHECK (lat IS NOT NULL OR lng IS NULL)'),
         ('post_plots_constraints_exact',
          'ALTER TABLE public.plots DROP CONSTRAINT plots_workspace_id_fkey, ADD CONSTRAINT plots_workspace_id_fkey '
          'FOREIGN KEY (workspace_id) REFERENCES public.spaces (id) ON DELETE CASCADE'),
@@ -560,24 +602,46 @@ def main():
         post = cl.gates(a0, HERE)
         check('6 post gates after every case (all rolled back): every gate PASS', not bad(post), str(sorted(bad(post))))
 
-        # 7. the staging shape: the Space has no place
+        # 7. the staging shape: the Space has no place (staging's live Space, read 2026-10-19). The whole corpus
+        #    runs before and after 0a on this shape too, on both envs.
         cl.clone(args.base_db, stg)
         with psycopg.connect(cl.url(stg), autocommit=True) as c:
             c.execute('ALTER TABLE public.spaces DISABLE TRIGGER spaces_repoint_guard')
             c.execute('UPDATE public.spaces SET weather_lat = NULL, weather_lng = NULL, postal_code = NULL')
             c.execute('ALTER TABLE public.spaces ENABLE TRIGGER spaces_repoint_guard')
-            space = the_space(c)
-            fp_stg = fingerprint(c)
         pre = cl.gates(stg, HERE, phase='pre')
-        check('7 staging shape: pre_every_space_has_a_place_and_an_owner is red (and only it)',
-              {n for (_, _, n) in bad(pre)} == {'pre_every_space_has_a_place_and_an_owner'}, str(sorted(bad(pre))))
+        check('7 staging shape: every pre gate PASS (a Space with no coordinates is admitted)', not bad(pre),
+              str(sorted(bad(pre))))
+        stg_before = {env: cl.gates(stg, env=env) for env in ('prod', 'staging')}
+        for env, g in stg_before.items():
+            errs = sorted(k for k, v in g.items() if v == 'ERROR')
+            check(f'7 staging shape C-CONV before ({env}): no gate ERRORs', not errs, str(errs))
         rc, err = cl.psql_file(stg, HERE / '0a-plots.sql')
-        check('7 staging shape: 0a refuses, naming the Space and its NULL columns',
-              rc != 0 and f'{space} (weather_lat, weather_lng NULL)' in err, err[-200:])
+        check('7 staging shape: 0a applies: exit 0', rc == 0, err[-300:])
         with psycopg.connect(cl.url(stg)) as c:
-            check('7 staging shape: nothing changed (fingerprint equal)', fingerprint(c) == fp_stg)
+            row = c.execute('SELECT p.lat, p.lng, p.postal_code, p.is_default, p.name = s.name, '
+                            'p.created_by = s.created_by, p.timezone FROM public.plots p '
+                            'JOIN public.spaces s ON s.id = p.workspace_id').fetchall()
+            check('7 staging shape: Plot 1 has lat, lng, postal_code NULL; default; name and owner copied',
+                  row == [(None, None, None, True, True, True, 'America/New_York')], str(row))
+            with case(c):
+                st, msg = err_of(c, 'UPDATE public.plots SET lat = 41, lng = -71')
+                check('7 staging shape: giving Plot 1 its first place while weather names the Space: P0001',
+                      st == 'P0001' and msg.startswith('plots_repoint_guard'), f'{st} {msg[:50]}')
+        post = cl.gates(stg, HERE)
+        check('7 staging shape: post gates after 0a: every gate PASS, receipt included', not bad(post),
+              str(sorted(bad(post))))
+        for env in ('prod', 'staging'):
+            after = cl.gates(stg, env=env)
+            newly = {(d, n) for (d, p, n) in bad(after) - bad(stg_before[env])}
+            green = {(d, n) for (d, p, n) in bad(stg_before[env]) - bad(after)}
+            check(f'7 staging shape C-CONV newly red ({env}) = expected {sorted(EXPECTED_NEWLY_RED)}',
+                  newly == EXPECTED_NEWLY_RED, str(sorted(newly)))
+            check(f'7 staging shape C-CONV newly green ({env}) = none', not green, str(sorted(green)))
+            errs = sorted(k for k, v in after.items() if v == 'ERROR')
+            check(f'7 staging shape C-CONV after ({env}): no gate ERRORs', not errs, str(errs))
 
-        # 8. 0a refusal: a name collision
+        # 8. 0a refusals: a name collision; a Space with half a place and a Space with no owner
         cl.clone(args.base_db, a1)
         with psycopg.connect(cl.url(a1), autocommit=True) as c:
             c.execute('CREATE FUNCTION public.guard_plots_delete() RETURNS trigger LANGUAGE plpgsql '
@@ -587,6 +651,21 @@ def main():
         with psycopg.connect(cl.url(a1)) as c:
             check('8 0a refuses on a name collision, nothing changed',
                   rc != 0 and 'function guard_plots_delete' in err and fingerprint(c) == fp, err[-150:])
+        cl.drop(a1)
+        cl.clone(args.base_db, a1)
+        with psycopg.connect(cl.url(a1), autocommit=True) as c:
+            half = new_space(c, 'rh-half-place', lat=41)
+            owner = c.execute("INSERT INTO public.spaces (name) VALUES ('rh-no-owner') RETURNING id").fetchone()[0]
+            fp = fingerprint(c)
+        pre = cl.gates(a1, HERE, phase='pre')
+        check('8 half a place / no owner: pre_every_space_has_an_owner_and_both_coordinates_or_neither red (and only it)',
+              {n for (_, _, n) in bad(pre)} == {'pre_every_space_has_an_owner_and_both_coordinates_or_neither'},
+              str(sorted(bad(pre))))
+        rc, err = cl.psql_file(a1, HERE / '0a-plots.sql')
+        with psycopg.connect(cl.url(a1)) as c:
+            check('8 0a refuses naming both Spaces (half a place; no owner), nothing changed',
+                  rc != 0 and f'{half} (only one of weather_lat, weather_lng set)' in err
+                  and f'{owner} (created_by NULL)' in err and fingerprint(c) == fp, err[-250:])
         cl.drop(a1)
 
         # 9. 0r refusals, each on a fresh clone of the applied database

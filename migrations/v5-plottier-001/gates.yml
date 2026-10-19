@@ -76,16 +76,17 @@ pre:
     expect: rowcount_eq
     value: 0
 
-  - name: pre_every_space_has_a_place_and_an_owner
+  - name: pre_every_space_has_an_owner_and_both_coordinates_or_neither
     note: >
-      Plot 1's lat, lng and created_by are NOT NULL and are copied from spaces. One row per Space that lacks
-      one (0a step 0 refuses the same thing, naming them). Read 2026-10-19: prod's one Space has all three;
-      STAGING's has weather_lat, weather_lng and postal_code NULL, so this reds on staging until the session
-      decides (README.md "Staging"). continuous false: a pre-apply read.
+      Plot 1 is copied from spaces: created_by is NOT NULL on plots, and plots_lat_lng_both_or_neither needs
+      both coordinates or neither. One row per Space that breaks either (0a step 0 refuses the same thing,
+      naming them). A Space with no coordinates passes: its Plot 1 has no place. Read 2026-10-19: prod's one
+      Space has both; staging's has neither (and no postal_code), and both have an owner. continuous false: a
+      pre-apply read.
     sql: |
       SELECT s.id::text
         FROM public.spaces s
-       WHERE s.weather_lat IS NULL OR s.weather_lng IS NULL OR s.created_by IS NULL
+       WHERE s.created_by IS NULL OR (s.weather_lat IS NULL) <> (s.weather_lng IS NULL)
     expect: rowcount_eq
     value: 0
     continuous: false
@@ -118,8 +119,10 @@ post:
     expect: rowcount_eq
     value: 0
 
-  # CLOSED WORLD on the columns (V204 §2.2, DSA-35): each by name, type, NOT NULL and default, and no other.
-  # timezone has NO default on purpose: Plot 1's zone is a literal in 0a only, and a later plot names its own.
+  # CLOSED WORLD on the columns (V204 §2.2, DSA-35, as amended 2026-10-19): each by name, type, NOT NULL and
+  # default, and no other. lat and lng are NULLable (a plot with no place has no weather); the CHECK in the next
+  # gate pairs them. timezone has NO default on purpose: Plot 1's zone is a literal in 0a only, and a later plot
+  # names its own.
   - name: post_plots_columns_exact
     sql: |
       WITH have AS (
@@ -135,8 +138,8 @@ post:
                ('workspace_id', 'uuid',                     true,  ''),
                ('name',         'text',                     true,  ''),
                ('postal_code',  'text',                     false, ''),
-               ('lat',          'numeric',                  true,  ''),
-               ('lng',          'numeric',                  true,  ''),
+               ('lat',          'numeric',                  false, ''),
+               ('lng',          'numeric',                  false, ''),
                ('timezone',     'text',                     true,  ''),
                ('is_default',   'boolean',                  true,  'false'),
                ('created_by',   'text',                     true,  ''),
@@ -157,9 +160,10 @@ post:
     expect: rowcount_eq
     value: 0
 
-  # The keys, closed world, each validated: the PRIMARY KEY the audit writers name, UNIQUE (id, workspace_id) the
-  # composite keys of 3.2a/3.5/3.6 reference, and the single-column RESTRICT key into spaces that
-  # spaces_delete_guard reads. The key into spaces is printed with or without its schema, by search_path.
+  # The constraints, closed world, each validated: the PRIMARY KEY the audit writers name, UNIQUE (id, workspace_id)
+  # the composite keys of 3.2a/3.5/3.6 reference, the single-column RESTRICT key into spaces that
+  # spaces_delete_guard reads, and the CHECK that a plot has both coordinates or neither (half a place is never
+  # one). The key into spaces is printed with or without its schema, by search_path.
   - name: post_plots_constraints_exact
     sql: |
       WITH have AS (
@@ -171,7 +175,8 @@ post:
       ), want(conname, def) AS (
         VALUES ('plots_pkey',                'PRIMARY KEY (id)'),
                ('plots_id_workspace_id_key', 'UNIQUE (id, workspace_id)'),
-               ('plots_workspace_id_fkey',   'FOREIGN KEY (workspace_id) REFERENCES spaces(id) ON DELETE RESTRICT')
+               ('plots_workspace_id_fkey',   'FOREIGN KEY (workspace_id) REFERENCES spaces(id) ON DELETE RESTRICT'),
+               ('plots_lat_lng_both_or_neither', 'CHECK (((lat IS NULL) = (lng IS NULL)))')
       )
       SELECT 'missing or different: ' || w.conname
         FROM want w
@@ -370,7 +375,9 @@ post:
     value: 0
 
   # PLOT 1 IS THE SPACE'S PLACE. Each Space's live default plot has the Space's (weather_lat, weather_lng,
-  # postal_code), compared as values (numeric to numeric), NULL equal to NULL. Until 3.3b every weather reader
+  # postal_code), compared as values (numeric to numeric) with IS NOT DISTINCT FROM, so NULL equals NULL: a Space
+  # with no coordinates and its Plot 1 with none are equal (staging's shape), and NULL on one side only is red.
+  # Until 3.3b every weather reader
   # reads the Space's columns and every weather row is recorded at them; 3.2a attributes that history to the
   # default plot. Red: one side moved without the other (an escape template run on one table only), or the
   # default flag moved to a plot somewhere else. A Space with no default plot is the gate above's, not this
@@ -384,8 +391,8 @@ post:
                                 '  FROM public.spaces s '
                                 '  JOIN public.plots p '
                                 '    ON p.workspace_id = s.id AND p.is_default AND p.deleted_at IS NULL '
-                                ' WHERE (p.lat, p.lng, p.postal_code) '
-                                '       IS DISTINCT FROM (s.weather_lat, s.weather_lng, s.postal_code)',
+                                ' WHERE NOT ((p.lat, p.lng, p.postal_code) '
+                                '            IS NOT DISTINCT FROM (s.weather_lat, s.weather_lng, s.postal_code))',
                                 false, false, ''))
                          ELSE ARRAY[]::xml[] END) AS x
     expect: rowcount_eq

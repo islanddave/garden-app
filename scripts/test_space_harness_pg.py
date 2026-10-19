@@ -52,21 +52,22 @@ CREATE TABLE public.event_log (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), ti
 CREATE TABLE public.notes (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), body text);
 CREATE TABLE public.plots (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
                            workspace_id uuid NOT NULL REFERENCES public.spaces (id) ON DELETE RESTRICT,
-                           name text NOT NULL, postal_code text, lat numeric NOT NULL, lng numeric NOT NULL,
+                           name text NOT NULL, postal_code text, lat numeric, lng numeric,
                            timezone text NOT NULL, is_default boolean NOT NULL DEFAULT false, created_by text NOT NULL,
                            created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-                           deleted_at timestamptz, UNIQUE (id, workspace_id));
+                           deleted_at timestamptz, UNIQUE (id, workspace_id), CHECK ((lat IS NULL) = (lng IS NULL)));
 CREATE UNIQUE INDEX plots_one_default_per_space ON public.plots (workspace_id) WHERE is_default AND deleted_at IS NULL;
 """
 
 # V5-SPACEPLOTTIER-001 (multi-space 3.1, migrations/v5-plottier-001): every Space-creating path makes the Space's
 # default plot in the same transaction, so every Space this file creates comes with one, in the same statement.
+# These Spaces have no coordinates (the D1 shape), so neither do their plots: a plot with no place has no weather.
 # The sentinel Space's plot has a fixed id so A and B hold the same row, like a fork.
 SENTINEL_SPACE = """
 WITH s AS (INSERT INTO public.spaces (id, name, created_by) VALUES (gv.sentinel_workspace(), 'Garden', %(owner)s)
            RETURNING id, name, created_by)
 INSERT INTO public.plots (id, workspace_id, name, lat, lng, timezone, is_default, created_by)
-SELECT %(plot)s, id, name, 42.5, -72.6, 'America/New_York', true, created_by FROM s"""
+SELECT %(plot)s, id, name, NULL, NULL, 'America/New_York', true, created_by FROM s"""
 
 
 def _dsn(admin, db):
@@ -132,7 +133,7 @@ def run(tmp_path, use, b_sql=None, *extra):
 INDOOR = ("WITH s AS (INSERT INTO public.spaces (name, created_by) VALUES ('Indoor', 'user_pytestowner') "
           "RETURNING id, name, created_by) "
           "INSERT INTO public.plots (workspace_id, name, lat, lng, timezone, is_default, created_by) "
-          "SELECT id, name, 42.5, -72.6, 'America/New_York', true, created_by FROM s;")
+          "SELECT id, name, NULL, NULL, 'America/New_York', true, created_by FROM s;")
 INDOOR_DIFFS = [{"table": "public.spaces", "where": "name = 'Indoor'", "side": "b"},
                 {"table": "public.plots", "where": "name = 'Indoor'", "side": "b"}]
 ROW_USE = {

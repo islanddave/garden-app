@@ -10,10 +10,14 @@
 --   nothing here changes what any user sees.
 --
 -- WHAT IT ADDS
---   * public.plots (V204 §2.2, DSA-35): id uuid PRIMARY KEY DEFAULT gen_random_uuid(); workspace_id uuid NOT NULL
---     -> spaces(id) ON DELETE RESTRICT; name text NOT NULL; postal_code text; lat numeric NOT NULL; lng numeric
---     NOT NULL; timezone text NOT NULL; is_default boolean NOT NULL DEFAULT false; created_by text NOT NULL;
---     created_at and updated_at timestamptz NOT NULL DEFAULT now(); deleted_at timestamptz.
+--   * public.plots (V204 §2.2, DSA-35, as amended by the session 2026-10-19): id uuid PRIMARY KEY DEFAULT
+--     gen_random_uuid(); workspace_id uuid NOT NULL -> spaces(id) ON DELETE RESTRICT; name text NOT NULL;
+--     postal_code text; lat numeric; lng numeric; timezone text NOT NULL; is_default boolean NOT NULL DEFAULT false;
+--     created_by text NOT NULL; created_at and updated_at timestamptz NOT NULL DEFAULT now(); deleted_at timestamptz.
+--     plots_lat_lng_both_or_neither: CHECK ((lat IS NULL) = (lng IS NULL)). A plot with no coordinates means "no
+--     weather", exactly as a coordinate-less spaces row does today (daily-plan/handler.js weatherForSpace returns
+--     null): a Space with no place is a supported state (staging's Space, the harness D1 shape, a new owner before
+--     they set one), and it still has its default plot. Half a place is never one, so the CHECK refuses it.
 --     lat and lng are numeric, the type of spaces.weather_lat / weather_lng, so Plot 1 equals its Space exactly.
 --     UNIQUE (id, workspace_id) is the target of the composite keys 3.2a, 3.5 and 3.6 add ((plot_id, space_id) ->
 --     plots(id, workspace_id)): a row's Space is then its plot's Space by a DB fact.
@@ -40,7 +44,9 @@
 --     plot's place is frozen exactly when, and for the same rows as, the Space's. A non-default plot has no weather
 --     recorded for it and moves freely. 3.2a, which adds plot_id, replaces this body to read it, behind a
 --     definition pre-gate on this body's md5 (V204 §3.0). The OF list is a recorded dependency, so DROP COLUMN lat
---     refuses instead of leaving a body that raises 42703. The escape template is in COMMENT ON FUNCTION.
+--     refuses instead of leaving a body that raises 42703. The escape template is in COMMENT ON FUNCTION. Giving a
+--     coordinate-less default plot its first place while its Space has weather (staging holds one weather_cold_range
+--     row) counts as a move, exactly as NULL -> value does for spaces_repoint_guard.
 --   * C-BLOCK:
 --       plots_delete_guard, BEFORE DELETE FOR EACH ROW -> public.guard_plots_delete(). It walks every foreign key
 --       whose referenced table is public.plots (read from the catalog at each delete, so 3.2a's, 3.5's and 3.6's
@@ -57,9 +63,10 @@
 --     No literal coordinates and no literal Space anywhere in this file (N12). timezone is the one literal: spaces
 --     has no timezone column and app_config no zone key; the deployed code compiles the zone in
 --     (lambda/inventory-items/seed-stage-date.js ET_TZ, lambda/daily-plan/rainForecast.js). It lives here only, not
---     as a column DEFAULT. Written under the migration actor, so each Plot 1 carries its INSERT audit row.
---     Step 0 refuses on the first apply when any Space lacks weather_lat, weather_lng or created_by: those columns
---     are NOT NULL here, and a raw 23502 halfway through would name no Space.
+--     as a column DEFAULT (accepted by the session, 2026-10-19). Written under the migration actor, so each Plot 1
+--     carries its INSERT audit row. A Space with no coordinates gets a Plot 1 with NULL lat and lng (staging's, read
+--     2026-10-19). Step 0 refuses on the first apply when a Space lacks created_by (NOT NULL here) or has exactly
+--     one of weather_lat / weather_lng (the CHECK): a raw 23502 or 23514 halfway through would name no Space.
 --
 -- WHY THE DEPLOYED CODE IS UNAFFECTED (the house test), read at garden-app 2f238983 (v5.3.5): no code names plots
 --   (git grep -i -E '(from|into|join|update)[[:space:]]+(public\.)?plots\b' -- lambda src scripts tests: 0). The
@@ -175,19 +182,20 @@ BEGIN
     RAISE EXCEPTION 'v5-plottier-001 0a refused, nothing changed: audit_events_action_check does not admit INSERT, SOFT_DELETE and RESTORE.';
   END IF;
 
-  -- Plot 1's NOT NULL columns, on the first apply: every Space has a place and an owner to copy.
+  -- Plot 1's copy, on the first apply: every Space has an owner, and either both coordinates or neither. A Space
+  -- with neither is admitted (its Plot 1 has no place, so no weather); half a place is not.
   IF NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.6-plottier-001') THEN
-    SELECT string_agg(s.id::text || ' (' || concat_ws(', ',
-             CASE WHEN s.weather_lat IS NULL THEN 'weather_lat' END,
-             CASE WHEN s.weather_lng IS NULL THEN 'weather_lng' END,
-             CASE WHEN s.created_by IS NULL THEN 'created_by' END) || ' NULL)', '; ' ORDER BY s.id)
+    SELECT string_agg(s.id::text || ' (' || concat_ws('; ',
+             CASE WHEN s.created_by IS NULL THEN 'created_by NULL' END,
+             CASE WHEN (s.weather_lat IS NULL) <> (s.weather_lng IS NULL)
+                  THEN 'only one of weather_lat, weather_lng set' END) || ')', '; ' ORDER BY s.id)
       INTO v_missing
       FROM public.spaces s
-     WHERE s.weather_lat IS NULL OR s.weather_lng IS NULL OR s.created_by IS NULL;
+     WHERE s.created_by IS NULL OR (s.weather_lat IS NULL) <> (s.weather_lng IS NULL);
     IF v_missing IS NOT NULL THEN
       RAISE EXCEPTION 'v5-plottier-001 0a refused, nothing changed: Plot 1 cannot be copied from these Space(s): %.', v_missing
-        USING HINT = 'plots.lat, lng and created_by are NOT NULL (V204 §2.2, DSA-35). Give the Space its place first, '
-                  || 'by the spaces_repoint_guard escape template if weather names it, with the owner''s approval.';
+        USING HINT = 'plots.created_by is NOT NULL and plots_lat_lng_both_or_neither needs both coordinates or neither. '
+                  || 'Fix the Space first, by the spaces_repoint_guard escape template if weather names it, with the owner''s approval.';
     END IF;
   END IF;
 END $$;
@@ -198,8 +206,8 @@ CREATE TABLE IF NOT EXISTS public.plots (
   workspace_id uuid        NOT NULL,
   name         text        NOT NULL,
   postal_code  text,
-  lat          numeric     NOT NULL,
-  lng          numeric     NOT NULL,
+  lat          numeric,
+  lng          numeric,
   timezone     text        NOT NULL,
   is_default   boolean     NOT NULL DEFAULT false,
   created_by   text        NOT NULL,
@@ -208,7 +216,8 @@ CREATE TABLE IF NOT EXISTS public.plots (
   deleted_at   timestamptz,
   CONSTRAINT plots_pkey PRIMARY KEY (id),
   CONSTRAINT plots_id_workspace_id_key UNIQUE (id, workspace_id),
-  CONSTRAINT plots_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.spaces (id) ON DELETE RESTRICT
+  CONSTRAINT plots_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.spaces (id) ON DELETE RESTRICT,
+  CONSTRAINT plots_lat_lng_both_or_neither CHECK ((lat IS NULL) = (lng IS NULL))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS plots_one_default_per_space
@@ -218,6 +227,7 @@ COMMENT ON TABLE public.plots IS 'V5-SPACEPLOTTIER-001 (v5-plottier-001, multi-s
 COMMENT ON COLUMN public.plots.workspace_id IS 'The Space (spaces.id, ON DELETE RESTRICT). UNIQUE (id, workspace_id) is the target of the composite keys that make a weather or location row''s Space its plot''s Space.';
 COMMENT ON COLUMN public.plots.is_default IS 'The Space''s default plot: location-less plantings and, until 3.3b, all of the Space''s weather. At most one live per Space (plots_one_default_per_space).';
 COMMENT ON COLUMN public.plots.timezone IS 'IANA zone name for the plot''s calendar days. Plot 1''s value is a literal in 0a-plots.sql: spaces has no zone column.';
+COMMENT ON COLUMN public.plots.lat IS 'Latitude, NULL together with lng (plots_lat_lng_both_or_neither): a plot with no place has no weather, as a spaces row with no coordinates has none today.';
 
 -- ── 2. C-AUDIT. ───────────────────────────────────────────────────────────────────────────────────
 DROP TRIGGER IF EXISTS trg_audit_plots_ins ON public.plots;
@@ -355,7 +365,8 @@ INSERT INTO public.schema_version (version, description)
 VALUES ('5.3.6-plottier-001',
         'PLOTTIER: V5-SPACEPLOTTIER-001 (multi-space Phase 3 3.1). New public.plots (id uuid PK, workspace_id NOT NULL '
         '-> spaces RESTRICT, name, postal_code, lat, lng, timezone, is_default, created_by, created_at, updated_at, '
-        'deleted_at), UNIQUE (id, workspace_id), plots_one_default_per_space; audit triggers trg_audit_plots_ins '
+        'deleted_at), UNIQUE (id, workspace_id), CHECK lat/lng both or neither NULL, plots_one_default_per_space; '
+        'audit triggers trg_audit_plots_ins '
         '(audit_stmt_insert), _upd (audit_stmt_update: workspace_id, name, postal_code, lat, lng, timezone, '
         'is_default, created_by), _del (audit_stmt_delete); plots_repoint_guard (BEFORE UPDATE OF lat, lng, '
         'postal_code, timezone -> guard_plots_repoint); plots_delete_guard (BEFORE DELETE -> guard_plots_delete, '
