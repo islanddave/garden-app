@@ -1,0 +1,54 @@
+{
+  "_doc": "see lambda/sql-census.static.test.js",
+  "refused": [
+    {
+      "id": "lambda/daily-plan/handler.js:logRainEvents:1f40bb3d38",
+      "ctx": "cmp",
+      "src": "s.id",
+      "rule": "unreviewed-root",
+      "reason": "s.id, the spaces row of the per-Space loop (the Space itself, never a request value): until the daily-plan 4.3 lane"
+    },
+    {
+      "id": "lambda/events/critterAward.js:incrementSightingTally:7fdf5e6290",
+      "ctx": "insert",
+      "src": "SENTINEL_WORKSPACE",
+      "rule": "string-const",
+      "reason": "SENTINEL_WORKSPACE, a string const: allowlisted until the events 4.3 lane (N17), which stamps the tally from the resolved scope"
+    },
+    {
+      "id": "lambda/plants/merge.js:mergeCore:31ea64e447",
+      "ctx": "insert",
+      "src": "winner.workspace_id",
+      "rule": "unreviewed-root",
+      "reason": "winner.workspace_id, the winner plant row read in this function: a parent-row candidate for the reviewed list (2.2)"
+    },
+    {
+      "id": "lambda/shared-state/index.js:handler:96d9721011",
+      "ctx": "cmp",
+      "src": "SENTINEL_WORKSPACE",
+      "rule": "string-const",
+      "reason": "SENTINEL_WORKSPACE, a string const: until the shared-state 4.3 lane"
+    },
+    {
+      "id": "lambda/shared-state/index.js:handler:c8d514128a",
+      "ctx": "insert",
+      "src": "SENTINEL_WORKSPACE",
+      "rule": "string-const",
+      "reason": "SENTINEL_WORKSPACE, a string const: until the shared-state 4.3 lane"
+    },
+    {
+      "id": "lambda/shared-state/index.js:handler:bb038f2789",
+      "ctx": "cmp",
+      "src": "SENTINEL_WORKSPACE",
+      "rule": "string-const",
+      "reason": "SENTINEL_WORKSPACE, a string const: until the shared-state 4.3 lane"
+    },
+    {
+      "id": "lambda/shared-state/index.js:handler:92b67c050d",
+      "ctx": "insert",
+      "src": "SENTINEL_WORKSPACE",
+      "rule": "string-const",
+      "reason": "SENTINEL_WORKSPACE, a string const: until the shared-state 4.3 lane"
+    }
+  ]
+}

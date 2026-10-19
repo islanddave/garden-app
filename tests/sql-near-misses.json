@@ -1,0 +1,150 @@
+{
+  "_doc": "see lambda/sql-census.static.test.js",
+  "nearMisses": [
+    {
+      "id": "lambda/events/index.js:handler:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/events/index.js:handler:near:32f68a60ce#2",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/facebook-share/altText.js:<module>:near:8bc6957b56",
+      "text": "with animal damage",
+      "why": "prose (alt text)"
+    },
+    {
+      "id": "lambda/facebook-share/altText.js:<module>:near:193d5fe79e",
+      "text": "with frost damage",
+      "why": "prose (alt text)"
+    },
+    {
+      "id": "lambda/facebook-share/altText.js:<module>:near:dbcadf1995",
+      "text": "with heat damage",
+      "why": "prose (alt text)"
+    },
+    {
+      "id": "lambda/facebook-share/index.js:graphDelete:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/favorites/index.js:handler:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/harvests/watch-route.js:matchWatchRoute:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/inventory-items/index.js:handler:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/locations/index.js:handler:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/photos/index.js:handler:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/plants/index.js:handler:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/plants/merge.js:<module>:near:099af53f60",
+      "text": "delete",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/preservation/index.js:handler:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/preservation/kitchenRoutes.js:handleKitchenRoute:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/preservation/kitchenRoutes.js:handleKitchenRoute:near:32f68a60ce#2",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/preservation/kitchenRoutes.js:handleKitchenRoute:near:32f68a60ce#3",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/preservation/pantryRoutes.js:handlePantryRoute:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/preservation/recipeRoutes.js:handleRecipeRoute:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/preservation/recipeRoutes.js:handleRecipeRoute:near:32f68a60ce#2",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/projects/index.js:handler:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/projects/index.js:handler:near:32f68a60ce#2",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/storage-location/index.js:handler:near:3ac340832f",
+      "text": "update",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/storage-location/index.js:handler:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/storage-location/index.js:handler:near:099af53f60",
+      "text": "delete",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/storage-location/index.js:handler:near:099af53f60#2",
+      "text": "delete",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/tags/index.js:handler:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/tags/index.js:handler:near:32f68a60ce#2",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    },
+    {
+      "id": "lambda/varieties/index.js:handler:near:32f68a60ce",
+      "text": "DELETE",
+      "why": "HTTP method string"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "_doc": "see lambda/sql-census.static.test.js",
+  "splices": [
+    {
+      "id": "lambda/daily-plan/handler.js:writeWeatherDaily:d8b8ef08c3",
+      "inlined": [
+        "WEATHER_DAILY_CONFLICT_SET"
+      ],
+      "repaired": [],
+      "reason": "WEATHER_DAILY_CONFLICT_SET, the weather_daily ON CONFLICT (space_id, \"date\") clause, spliced as a const"
+    },
+    {
+      "id": "lambda/daily-plan/handler.js:<module>:f3646f9a94",
+      "inlined": [
+        "REDERIVE_CTE",
+        "ANCHOR_MODEL_VERSION",
+        "REDERIVE_REASON",
+        "STORED_TIER_RANK",
+        "STORED_TIER_RANK"
+      ],
+      "repaired": [],
+      "reason": "the anchor re-derive CTE and its constants, spliced as consts"
+    },
+    {
+      "id": "lambda/daily-plan/handler.js:<module>:4f34fe1785",
+      "inlined": [
+        "REDERIVE_CTE",
+        "ANCHOR_MODEL_VERSION"
+      ],
+      "repaired": [],
+      "reason": "the anchor re-derive CTE and its constants, spliced as consts"
+    },
+    {
+      "id": "lambda/daily-plan/handler.js:run:5d8f7f31dd",
+      "inlined": [
+        "cinhCte",
+        "cinhJoin",
+        "cinhArm"
+      ],
+      "repaired": [],
+      "reason": "the cover-inherit CTE, join and arm (COVER_INHERIT_CTE), spliced only when inheritance is on; the census parses the non-empty variant"
+    },
+    {
+      "id": "lambda/findings/materialize.js:buildUpsertFinding:ad5c6e2c3d",
+      "inlined": [],
+      "repaired": [
+        "COLS.join(', ') as ident",
+        "setClause as assign"
+      ],
+      "reason": "column list and DO UPDATE SET clause built from the COLS and SEMANTIC arrays; values are $1..$23 in the values array"
+    }
+  ]
+}
