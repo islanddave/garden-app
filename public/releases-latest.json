@@ -1,7 +1,7 @@
 {
-  "version": "5.3.9",
+  "version": "5.3.10",
   "date": "2026-10-19",
   "highlights": [
-    "A seed stage change saved twice by a re-tap now saves once, and a second tap while Save is working does nothing."
+    "The daily Facebook credential check now emails an alert when Facebook will not answer it, instead of passing quietly."
   ]
 }

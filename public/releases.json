@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.10",
+    "date": "2026-10-19",
+    "highlights": [
+      "The daily Facebook credential check now emails an alert when Facebook will not answer it, instead of passing quietly."
+    ]
+  },
+  {
     "version": "5.3.9",
     "date": "2026-10-19",
     "highlights": [
