@@ -755,9 +755,12 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // (clearRecord) or another crop (clearForSwitch).
   const pendingSaveRef = useRef(null)
   const applyOneUtteranceRef = useRef(null)
+  // BUG-EVENTSREPEATTAP-001 — the ledger as it stands, for the save path's banner after its await.
+  const rowsRef = useRef([])
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { qtyRef.current = qty }, [qty])
   useEffect(() => { weightRef.current = weight }, [weight])
+  useEffect(() => { rowsRef.current = rows }, [rows])
   // OPS-CROPTYPEALIASCLIENT-001 — DECORATE THE ROWS, don't thread a map through the matchers.
   //
   // plantingAliases() is consumed by six call sites, four of them exported pure helpers that take
@@ -1277,8 +1280,19 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // correct it later if it is wrong") and it has to say which values were guesses.
       const said = `${q.value} ${q.unit}${w ? ` · ${w.value} ${w.unit}` : ' · no weight was said'}`
         + (assumed.length ? ` (${assumed.map(assumedPhrase).join(', ')})` : '')
-      say('ok', `Saved ${label} — ${said}${switchNote}`)
-      setRows((r) => [...r, { kind: 'save', eventId, label, said, at: Date.now() }])
+      // BUG-EVENTSREPEATTAP-001 — THE SERVER KEPT ONE ROW. A pick identical to one saved in the last 45 s
+      // answers 200 `repeated` with THAT row's id. When the ledger already shows it live, a second row would
+      // say "saved" twice, count one harvest too many, and its Undo would 404 after the first's. So no row,
+      // and the banner says what happened. An id the ledger does not hold (the first attempt failed here
+      // after the server had written it) is this save's only row, and is added as usual.
+      const liveSaveOf = (r) => r.some((x) => x.kind === 'save' && !x.undone && x.eventId === eventId)
+      const keptOnce = res?.repeated === true && eventId != null && liveSaveOf(rowsRef.current)
+      say('ok', keptOnce
+        ? `Already saved — ${label} · ${said}. It matched the save just before it, so it is kept once.${switchNote}`
+        : `Saved ${label} — ${said}${switchNote}`)
+      setRows((r) => (res?.repeated === true && eventId != null && liveSaveOf(r)
+        ? r
+        : [...r, { kind: 'save', eventId, label, said, at: Date.now() }]))
       for (const s of flight.slots) savedSlotsRef.current.add(s)
       settleSendingLosses()
       // PE-1 — CLEAR ONLY WHAT WAS SAVED. This cleared the whole record, and the record is not only what was

@@ -1694,3 +1694,80 @@ describe('BUG-VOICEREFUSEDNEXT-001 — a refused "next" does not swallow the nex
     expect(statusText()).toBe('Heard "next" twice in a moment — saved once.')
   })
 })
+
+// BUG-EVENTSREPEATTAP-001 — the events route keeps ONE row for a pick identical to one saved in the last
+// 45 s and answers 200 `repeated: true` with THAT row's id. A real second identical pick (same crop, same
+// count, no weight) is exactly that. The ledger must not show the one row twice: "Saved" twice, a total
+// one harvest high, and an Undo that 404s once the first is undone.
+describe('a save the server kept once (BUG-EVENTSREPEATTAP-001)', () => {
+  const KEPT = 'Already saved — Suyo Long · 3 count · no weight was said. It matched the save just before it, so it is kept once.'
+  const answer = (over) => apiFetchSpy.mockImplementation((url) => {
+    if (String(url).startsWith('/api/plants')) return Promise.resolve({ plants: PLANTS })
+    return Promise.resolve({ ...createdEvent(), ...over() })
+  })
+  const liveUndos = () => screen.queryAllByLabelText(/Undo Suyo Long/)
+  beforeEach(() => { haptics.hapticSaveCommitted.mockClear() })
+
+  it('a repeated answer whose id the ledger already shows adds NO row, and says it was kept once', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long three count next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+    expect(screen.getAllByTestId('voice-harvest-row')).toHaveLength(1)
+
+    answer(() => ({ repeated: true }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500) })   // past the write cooldown
+    await speak(rec, 'Suyo Long three count next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    expect(harvestPosts()).toHaveLength(2)
+    expect(screen.getAllByTestId('voice-harvest-row')).toHaveLength(1)
+    expect(liveUndos()).toHaveLength(1)
+    expect(statusText()).toBe(KEPT)
+    // Still the save haptic: the harvest IS saved.
+    expect(haptics.hapticSaveCommitted).toHaveBeenCalledTimes(2)
+    // …and the record is cleared as for any save, so the next crop starts empty.
+    expect(record()).not.toContain('3 count')
+    vi.useRealTimers()
+  })
+
+  it('a repeated answer with an id the ledger does NOT hold (the first attempt timed out here) adds its one row', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    apiFetchSpy.mockImplementation((url) => {
+      if (String(url).startsWith('/api/plants')) return Promise.resolve({ plants: PLANTS })
+      return Promise.reject(Object.assign(new Error('Request timed out'), { status: 0, timeout: true }))
+    })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long three count next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+    expect(screen.queryAllByTestId('voice-harvest-row')).toHaveLength(0)
+    expect(statusText()).toContain('NOT SAVED')
+
+    answer(() => ({ repeated: true }))
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    expect(harvestPosts()).toHaveLength(2)
+    expect(screen.getAllByTestId('voice-harvest-row')).toHaveLength(1)
+    expect(statusText()).toBe('Saved Suyo Long — 3 count · no weight was said')
+    vi.useRealTimers()
+  })
+
+  it('CONTROL: two ordinary saves (201, new ids) still add two rows and say "Saved" each time', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let n = 0
+    answer(() => ({ id: `evt-${(n += 1)}` }))
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long three count next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
+    await speak(rec, 'Suyo Long three count next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    expect(harvestPosts()).toHaveLength(2)
+    expect(screen.getAllByTestId('voice-harvest-row')).toHaveLength(2)
+    expect(liveUndos()).toHaveLength(2)
+    expect(statusText()).toBe('Saved Suyo Long — 3 count · no weight was said')
+    vi.useRealTimers()
+  })
+})

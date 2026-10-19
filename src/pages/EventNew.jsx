@@ -225,6 +225,8 @@ const PLANTING_CHOOSER_SELECTOR = '[aria-label="Plant or group"]'
 const PICKER_PATH = '/api/plants?view=picker'
 // V4-HARVTRAYVIEWPORT-001: aria-controls target for the weigh-in tray's Show more/fewer disclosure.
 const HARVEST_TRAY_ID = 'harvest-session-tray'
+// BUG-EVENTSREPEATTAP-001: the session save the server kept once (see the setSessionRows site).
+const KEPT_ONCE_NOTICE = 'That matched your last save, so it was kept once.'
 // BUG-TRAYFETCHSILENT-001: a REJECTION marker, deliberately not `null`. Both tray loaders used to
 // `.catch(() => null)`, and `null` is also what a successful-but-empty response reads as downstream
 // (`readyD?.candidates`, `harvD?.entries`) — so the merge could not tell "the fetch failed" from
@@ -2171,7 +2173,18 @@ export default function EventNew({ harvestSession = false } = {}) {
       } else if (sessionRow) {
         // V4-HARVSESSION-001: the session ledger IS the confirmation + undo surface — the
         // transient toast would duplicate it and pull attention from the next pile on the scale.
-        setSessionRows(rows => [...rows, sessionRow])
+        //
+        // BUG-EVENTSREPEATTAP-001: a pick identical to one saved in the last 45 s answers 200 `repeated`
+        // with THAT row's id (the session date is sticky, so the dates always match). When the ledger
+        // already holds it live, a second row would over-count the strip, duplicate the row key, and its
+        // Undo would 404 after the first's: no row, and the notice says why. An id the ledger does not
+        // hold (the first attempt failed here after the server wrote it) is appended as usual, and the
+        // next ordinary save clears this notice so it never outlives the save it described.
+        const liveRowOf = rows => rows.some(r => !r.undone && r.eventId === eventId)
+        const keptOnce = result?.repeated === true && liveRowOf(sessionRows)
+        if (keptOnce) setNotice(KEPT_ONCE_NOTICE)
+        else setNotice(n => (n === KEPT_ONCE_NOTICE ? null : n))
+        setSessionRows(rows => (result?.repeated === true && liveRowOf(rows) ? rows : [...rows, sessionRow]))
         // BD-044: the queue auto-advance stood here; it went with the queue.
       } else {
         // Non-overlay (full page) DELIBERATELY keeps the global operational toast: outside the

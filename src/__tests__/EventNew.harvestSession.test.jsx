@@ -23,6 +23,8 @@ const { apiFetchSpy, navigateSpy, postCalls, deleteCalls, dataRef, searchParamsR
     plants: [],
     postError: null,
     deleteError: null,
+    // BUG-EVENTSREPEATTAP-001: when set, (n) => the POST answer for the nth POST.
+    postAnswer: null,
   },
   searchParamsRef: { current: new URLSearchParams() },
 }))
@@ -75,6 +77,7 @@ function wireApiFetch() {
     if (options.method === 'POST' && path === '/api/events') {
       postCalls.push(JSON.parse(options.body))
       if (dataRef.postError) return Promise.reject(dataRef.postError)
+      if (dataRef.postAnswer) return Promise.resolve(dataRef.postAnswer(postCalls.length))
       return Promise.resolve({
         id: `evt-${postCalls.length}`,
         updated_streak: 1, xp_gained: 10, newly_earned_achievements: [],
@@ -125,6 +128,7 @@ beforeEach(() => {
   dataRef.plants = []
   dataRef.postError = null
   dataRef.deleteError = null
+  dataRef.postAnswer = null
   localStorage.clear()
   wireApiFetch()
 })
@@ -252,5 +256,64 @@ describe('EventNew — weigh-in session mode (V4-HARVSESSION-001)', () => {
     expect(screen.getByText('Logged event for Tomatoes 2026 — no planting attached')).toBeTruthy()
     // The picker (with its flag doorway) is present — the lock is session-only.
     expect(screen.queryByTestId('harvest-session-lock')).toBeNull()
+  })
+})
+
+// BUG-EVENTSREPEATTAP-001 — the events route keeps ONE row for a pick identical to one saved in the last
+// 45 s and answers 200 `repeated: true` with THAT row's id. The session date is sticky, so a real second
+// identical pile on the scale is exactly that. The ledger must not list the one row twice: the strip
+// would count a harvest the database does not hold, React would see two rows keyed by one id, and the
+// second Undo would 404 after the first.
+describe('EventNew — a session save the server kept once (BUG-EVENTSREPEATTAP-001)', () => {
+  const KEPT = 'That matched your last save, so it was kept once.'
+  const ok = (n) => ({ id: `evt-${n}`, updated_streak: 1, xp_gained: 10, newly_earned_achievements: [] })
+  const repeatOf = (id) => ({ id, repeated: true, updated_streak: null, xp_gained: 0, newly_earned_achievements: [] })
+
+  it('a repeated answer whose id the ledger already holds adds NO row, and says it was kept once', async () => {
+    renderEventNew('session=harvest')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    dataRef.postAnswer = (n) => (n === 1 ? ok(1) : repeatOf('evt-1'))
+    await saveHarvest({ qty: '1' })
+    await saveHarvest({ qty: '1' })
+
+    expect(postCalls.length).toBe(2)
+    const strip = screen.getByTestId('harvest-session-strip')
+    expect(strip.textContent).toContain('This session: 1 harvest')
+    expect(screen.getAllByRole('button', { name: /Undo Tomatoes 2026 harvest/ })).toHaveLength(1)
+    expect(screen.getByText(KEPT)).toBeTruthy()
+  })
+
+  it('a repeated answer with an id the ledger does NOT hold (the first attempt failed here) adds its one row', async () => {
+    renderEventNew('session=harvest')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    dataRef.postError = Object.assign(new Error('Request timed out'), { status: 0, timeout: true })
+    await saveHarvest({ qty: '1' })
+    expect(screen.queryByTestId('harvest-session-strip')).toBeNull()
+
+    dataRef.postError = null
+    dataRef.postAnswer = () => repeatOf('evt-1')
+    await saveHarvest({ qty: '1' })
+
+    expect(postCalls.length).toBe(2)
+    expect(screen.getByTestId('harvest-session-strip').textContent).toContain('This session: 1 harvest')
+    expect(screen.queryByText(KEPT)).toBeNull()
+  })
+
+  it('CONTROL: ordinary saves (new ids) each add a row, and clear a kept-once notice left by an earlier one', async () => {
+    renderEventNew('session=harvest')
+    await flushLoad()
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    dataRef.postAnswer = (n) => (n === 2 ? repeatOf('evt-1') : ok(n))
+    await saveHarvest({ qty: '1' })
+    await saveHarvest({ qty: '1' })
+    expect(screen.getByText(KEPT)).toBeTruthy()
+    await saveHarvest({ qty: '2' })
+
+    expect(postCalls.length).toBe(3)
+    expect(screen.getByTestId('harvest-session-strip').textContent).toContain('This session: 2 harvests')
+    expect(screen.getAllByRole('button', { name: /Undo Tomatoes 2026 harvest/ })).toHaveLength(2)
+    expect(screen.queryByText(KEPT)).toBeNull()
   })
 })
