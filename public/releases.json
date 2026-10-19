@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.9",
+    "date": "2026-10-19",
+    "highlights": [
+      "A seed stage change saved twice by a re-tap now saves once, and a second tap while Save is working does nothing."
+    ]
+  },
+  {
     "version": "5.3.8",
     "date": "2026-10-19",
     "highlights": [

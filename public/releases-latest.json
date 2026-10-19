@@ -1,7 +1,7 @@
 {
-  "version": "5.3.8",
+  "version": "5.3.9",
   "date": "2026-10-19",
   "highlights": [
-    "Behind the scenes: every table is now classed by who owns its data, and the nightly backup check compares a restore with the backup's own list of triggers and functions."
+    "A seed stage change saved twice by a re-tap now saves once, and a second tap while Save is working does nothing."
   ]
 }
