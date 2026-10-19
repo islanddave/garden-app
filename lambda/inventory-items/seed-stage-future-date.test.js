@@ -57,7 +57,8 @@ describe('WAVE-2 S3d — a seed lot cannot be dated into the future', () => {
     const { status, body } = parse(await handler(stagePost({ stage: 'drying', entered_at: `${when}T12:00:00` })));
     expect(body.error).toBeUndefined();
     expect(status).toBe(201);
-    expect(stubState.sqlCalls).toHaveLength(1);
+    // The lot lock, then the write (BUG-SEEDSTAGEDOUBLETAP-001).
+    expect(stubState.sqlCalls).toHaveLength(2);
   });
 
   it('refuses a lot dated next year — 400, and nothing is written', async () => {
@@ -93,16 +94,16 @@ describe('WAVE-2 S3d — a seed lot cannot be dated into the future', () => {
       stage: 'stored', entered_at: isoOffset(-400 * 24 * HOUR),
     })));
     expect(status).toBe(201);
-    expect(stubState.sqlCalls).toHaveLength(1);
+    expect(stubState.sqlCalls).toHaveLength(2);
   });
 
   it('leaves an omitted entered_at alone — the DB still defaults it to now()', async () => {
     const { status } = parse(await handler(stagePost({ stage: 'fermenting' })));
     expect(status).toBe(201);
-    expect(stubState.sqlCalls).toHaveLength(1);
+    expect(stubState.sqlCalls).toHaveLength(2);
     // COALESCE(NULL::timestamptz, NOW()) — the absent case must not be dragged into the new branch.
-    expect(stubState.sqlCalls[0].text).toMatch(/COALESCE\(\?::timestamptz, NOW\(\)\)/);
-    expect(stubState.sqlCalls[0].values).toContain(null);
+    expect(stubState.sqlCalls[1].text).toMatch(/COALESCE\(\?::timestamptz, NOW\(\)\)/);
+    expect(stubState.sqlCalls[1].values).toContain(null);
   });
 
   it('names a malformed date instead of 500ing through the catch', async () => {

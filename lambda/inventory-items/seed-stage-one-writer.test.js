@@ -292,8 +292,11 @@ describe('seed_stage has one writer — driven through the handler', () => {
     stubState.sqlHandler = () => [{ id: 'log-1', inventory_item_id: ITEM, stage: 'stored' }];
     const { status } = parse(await handler(req('POST', `/api/inventory-items/${ITEM}/seed-stage`, { stage: 'stored' })));
     expect(status).toBe(201);
-    expect(stubState.sqlCalls).toHaveLength(1);
-    const [cte] = stubState.sqlCalls;
+    // The lot lock, then the CTE (BUG-SEEDSTAGEDOUBLETAP-001). The lock assigns nothing.
+    expect(stubState.sqlCalls).toHaveLength(2);
+    const [lock, cte] = stubState.sqlCalls;
+    expect(lock.text).toMatch(/FOR UPDATE\s*$/);
+    expect(lock.text).not.toMatch(/seed_stage/);
     expect(boundAfter(cte, /SET seed_stage = /)).toBe('stored');
     expect(boundAfter(cte, /INSERT INTO public\.seed_lot_stage_log \(inventory_item_id, stage, entered_at, note, created_by\)\s+SELECT upd\.id, /)).toBe('stored');
   });

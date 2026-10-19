@@ -192,10 +192,11 @@ describe('POST /:id/seed-stage binds the resolved instant, never the zoneless li
     headers: { authorization: 'Bearer stub-token' },
     body: JSON.stringify(body),
   });
-  // The value bound into `COALESCE(?::timestamptz, NOW())`. The stub joins the template on '?', so a
-  // placeholder's value is indexed by the count of '?' before it.
+  // The value bound into the INSERT's `COALESCE(?::timestamptz, NOW())`. The stub joins the template
+  // on '?', so a placeholder's value is indexed by the count of '?' before it. Searched from the
+  // INSERT: the repeat check before it binds the same value too (BUG-SEEDSTAGEDOUBLETAP-001).
   const boundEnteredAt = (call) => {
-    const i = call.text.indexOf('COALESCE(?::timestamptz, NOW())');
+    const i = call.text.indexOf('COALESCE(?::timestamptz, NOW())', call.text.indexOf('INSERT INTO public.seed_lot_stage_log'));
     expect(i, 'the INSERT no longer binds entered_at through COALESCE').toBeGreaterThan(-1);
     return call.values[(call.text.slice(0, i + 'COALESCE('.length).match(/\?/g) ?? []).length];
   };
@@ -209,8 +210,9 @@ describe('POST /:id/seed-stage binds the resolved instant, never the zoneless li
   it('an earlier day is bound as noon Eastern on it', async () => {
     const res = await handler(stagePost({ stage: 'stored', entered_at: '2026-09-01T12:00:00' }));
     expect(res.statusCode).toBe(201);
-    expect(stubState.sqlCalls).toHaveLength(1);
-    expect(boundEnteredAt(stubState.sqlCalls[0])).toBe('2026-09-01T16:00:00.000Z');
+    // [0] is the lot lock, [1] the write (BUG-SEEDSTAGEDOUBLETAP-001).
+    expect(stubState.sqlCalls).toHaveLength(2);
+    expect(boundEnteredAt(stubState.sqlCalls[1])).toBe('2026-09-01T16:00:00.000Z');
   });
 
   it("today's Eastern day is bound as the request instant (reads the wall clock)", async () => {
@@ -226,7 +228,7 @@ describe('POST /:id/seed-stage binds the resolved instant, never the zoneless li
       const after = Date.now();
       if (etDay(new Date(after)) !== today) continue;
       expect(res.statusCode).toBe(201);
-      const bound = boundEnteredAt(stubState.sqlCalls[0]);
+      const bound = boundEnteredAt(stubState.sqlCalls[1]);
       expect(bound).toMatch(/Z$/);
       expect(Date.parse(bound)).toBeGreaterThanOrEqual(before);
       expect(Date.parse(bound)).toBeLessThanOrEqual(after);
@@ -252,7 +254,7 @@ describe('POST /:id/seed-stage binds the resolved instant, never the zoneless li
       expect(JSON.parse(res.body).error).toBeUndefined();
       expect(res.statusCode).toBe(201);
       // Ahead of now by construction: noon tomorrow is after midnight tonight, which is after now.
-      expect(boundEnteredAt(stubState.sqlCalls[0])).toBe(etNoon(tomorrow).toISOString());
+      expect(boundEnteredAt(stubState.sqlCalls[1])).toBe(etNoon(tomorrow).toISOString());
       return;
     }
     throw new Error('Eastern midnight fell inside both attempts');

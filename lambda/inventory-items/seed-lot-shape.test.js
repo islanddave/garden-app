@@ -60,10 +60,12 @@ describe('BUG-SEEDPROCFORCED-001 — POST /:id/seed-stage carries the process', 
       stage: 'drying', entered_at: '2026-09-01T12:00:00', seed_process: 'dry',
     })));
     expect(status).toBe(201);
-    // One statement, not two: the CTE is what stops a stage-log entry and the lot's seed_stage
-    // separating. Counting first — indexing [0] of an empty array asserts nothing.
-    expect(stubState.sqlCalls).toHaveLength(1);
-    const call = stubState.sqlCalls[0];
+    // One write statement, not two: the CTE is what stops a stage-log entry and the lot's seed_stage
+    // separating. The lot lock runs before it (BUG-SEEDSTAGEDOUBLETAP-001) and writes nothing.
+    // Counting first — indexing an empty array asserts nothing.
+    expect(stubState.sqlCalls).toHaveLength(2);
+    expect(stubState.sqlCalls[0].text).toMatch(/FOR UPDATE\s*$/);
+    const call = stubState.sqlCalls[1];
     expect(call.text).toMatch(/WITH upd AS \(\s*UPDATE public\.inventory_items/);
     expect(call.text).toMatch(/seed_process\s*=\s*CASE[\s\S]*?ELSE seed_process\s*END/);
     expect(boundAfter(call, /SET seed_stage = /)).toBe('drying');
@@ -73,8 +75,8 @@ describe('BUG-SEEDPROCFORCED-001 — POST /:id/seed-stage carries the process', 
 
   it('leaves an existing process ALONE when the key is absent — a plain advance', async () => {
     await handler(stagePost({ stage: 'stored', entered_at: '2026-09-01T12:00:00' }));
-    expect(stubState.sqlCalls).toHaveLength(1);
-    const call = stubState.sqlCalls[0];
+    expect(stubState.sqlCalls).toHaveLength(2);
+    const call = stubState.sqlCalls[1];
     // The ELSE arm re-reads the stored column, and the guard is genuinely OFF for this body — a
     // CASE wired to a constant true would satisfy the shape assertion and still clear the process.
     expect(call.text).toMatch(/ELSE seed_process\s*END/);

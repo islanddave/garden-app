@@ -828,13 +828,60 @@ export const handler = async (event) => {
         return resp(400, { error: `seed_process must be one of ${SEED_PROCESSES.join(', ')}` });
       }
 
-      // ONE STATEMENT, so the two writes cannot separate. A stage log entry without the matching
-      // seed_stage on the lot would show history the list view contradicts; the reverse would move
-      // the lot with no record of when or why. A CTE gives atomicity without reaching for the
-      // driver's transaction API, and it inherits the guard for free: if the UPDATE matches nothing
-      // — wrong household, deleted row, or a non-seed item — `upd` is empty, the INSERT selects from
-      // it and writes nothing, and the route 404s having changed exactly zero rows.
-      const rows = await sql`
+      // BUG-SEEDSTAGEDOUBLETAP-001 — A REPEAT IS NOT A SECOND ENTRY. Prod lot 69832d29 got two
+      // `stored` rows 8 s apart, same picked day, no note, and the log has no DELETE route, so every
+      // duplicate costs a hand delete. The likeliest path is not a same-frame double tap (Save is
+      // disabled while busy) but a re-tap after the client gave up: api.js stops waiting at 15 s, a
+      // cold Lambda + Neon start can commit the first write and still miss that, and the sheet stays
+      // open with Save enabled again. So the server decides, against the lot's NEWEST entry only, by
+      // the readers' key (the GET arm's ORDER BY). Never against any row: going BACK to an older
+      // stage and date is a correction, newest entry wins, and it must still write.
+      //
+      // THE PREDICATE. A repeat is a newest entry with the same stage, a note IS NOT DISTINCT FROM
+      // this one, and either
+      //   (a) the identical entered_at — a picked past day resolves to that day's noon ET every time,
+      //       so a re-send of it is exact; re-writing the newest entry word for word says nothing new
+      //       however long after it comes; or
+      //   (b) this request was dated by its own instant (today's day marker -> `now`, or no entered_at
+      //       -> NOW()), so two taps differ by however far apart they were: entered_at within 120 s
+      //       of this one AND the entry made within the last 120 s. Both bounds, so a lot that really
+      //       is re-entered later the same day still gets its row, and the window is the 15 s timeout
+      //       with room for a slow re-tap rather than a rule about a whole day.
+      // `atRequestInstant` is read off the resolved value rather than re-deriving the day rule:
+      // seed-stage-date.js returns `now` itself for today, and null for absent.
+      //
+      // On a repeat nothing is appended and the answer is 200 with the entry that stands, in the 201
+      // body's shape. The lot UPDATE still runs — the same stage set again, and a seed_process sent
+      // with the repeat applied by the presence rule above — so the cache-equals-head invariant
+      // holds either way.
+      const atRequestInstant = enteredAt == null || enteredAt === now.toISOString();
+
+      // TWO STATEMENTS, ONE TRANSACTION, and the lock is what makes the check hold. Two requests in
+      // flight at once would otherwise both read the newest entry from the same pre-insert state —
+      // a data-modifying CTE reads one snapshot for all its parts, and the UPDATE waiting on the
+      // other's row lock does not refresh it — and both append. So the lot is locked FOR UPDATE
+      // first (the seed-additions write's own first statement, for the same reason); the second
+      // request waits there, and its CTE then starts after the first committed. The driver sends no
+      // Neon-Batch-Isolation-Level header unless asked (@neondatabase/serverless 0.10.4), so this is
+      // Postgres's default READ COMMITTED, where each statement takes a fresh snapshot: the second
+      // CTE sees the first one's entry and answers 200.
+      //
+      // The CTE is still ONE statement, so the two writes cannot separate. A stage log entry without
+      // the matching seed_stage on the lot would show history the list view contradicts; the reverse
+      // would move the lot with no record of when or why. It inherits the guard for free: if the
+      // UPDATE matches nothing — wrong household, deleted row, or a non-seed item — `upd` is empty,
+      // so are `newest`, `dup` and the INSERT, and the route 404s having changed exactly zero rows.
+      const [, rows] = await sql.transaction([
+        sql`
+          SELECT i.id
+            FROM public.inventory_items i
+           WHERE i.id = ${itemId}
+             AND i.created_by = ANY(${householdIds})
+             AND i.deleted_at IS NULL
+             AND i.category = 'seeds'
+             FOR UPDATE
+        `,
+        sql`
         WITH upd AS (
           UPDATE public.inventory_items
              SET seed_stage = ${body.stage},
@@ -848,14 +895,43 @@ export const handler = async (event) => {
              AND deleted_at IS NULL
              AND category = 'seeds'
           RETURNING id
+        ),
+        newest AS (
+          SELECT l.id, l.inventory_item_id, l.stage, l.entered_at, l.note, l.created_at
+            FROM public.seed_lot_stage_log l
+            JOIN upd ON upd.id = l.inventory_item_id
+           ORDER BY l.created_at DESC, l.entered_at DESC, l.id DESC
+           LIMIT 1
+        ),
+        dup AS (
+          SELECT n.id, n.inventory_item_id, n.stage, n.entered_at, n.note
+            FROM newest n
+           WHERE n.stage = ${body.stage}
+             AND n.note IS NOT DISTINCT FROM ${note}
+             AND (
+               n.entered_at = COALESCE(${enteredAt}::timestamptz, NOW())
+               OR (
+                 ${atRequestInstant}::boolean
+                 AND n.created_at > NOW() - INTERVAL '120 seconds'
+                 AND abs(extract(epoch FROM n.entered_at - COALESCE(${enteredAt}::timestamptz, NOW()))) <= 120
+               )
+             )
+        ),
+        ins AS (
+          INSERT INTO public.seed_lot_stage_log (inventory_item_id, stage, entered_at, note, created_by)
+          SELECT upd.id, ${body.stage}, COALESCE(${enteredAt}::timestamptz, NOW()), ${note}, ${userId}
+            FROM upd
+           WHERE NOT EXISTS (SELECT 1 FROM dup)
+          RETURNING id, inventory_item_id, stage, entered_at, note
         )
-        INSERT INTO public.seed_lot_stage_log (inventory_item_id, stage, entered_at, note, created_by)
-        SELECT upd.id, ${body.stage}, COALESCE(${enteredAt}::timestamptz, NOW()), ${note}, ${userId}
-          FROM upd
-        RETURNING id, inventory_item_id, stage, entered_at, note
-      `;
-      if (!rows.length) return resp(404, { error: 'Not found' });
-      return resp(201, rows[0]);
+        SELECT ins.id, ins.inventory_item_id, ins.stage, ins.entered_at, ins.note, false AS repeated FROM ins
+        UNION ALL
+        SELECT dup.id, dup.inventory_item_id, dup.stage, dup.entered_at, dup.note, true AS repeated FROM dup
+      `,
+      ]);
+      if (!rows?.length) return resp(404, { error: 'Not found' });
+      const { repeated, ...entry } = rows[0];
+      return resp(repeated === true ? 200 : 201, entry);
     }
 
     // ── V5-SEEDMULTIPARENT-001 — which PLANTINGS did this lot come from? The SET route. ────────────
