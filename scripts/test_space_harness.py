@@ -711,7 +711,11 @@ def test_arm_env_carries_no_operator_secret():
 def test_arm_flags_follow_the_lambda_manifest():
     op = {"SYSTEM_CLERK_SUB": "user_sys", "NEON_DATABASE_URL": "postgres://prod"}
     env, eff = harness.arm_flags({}, op)
-    assert env["FROST_ALERT_ENABLED"] == "true" and env["SYSTEM_CLERK_SUB"] == "user_sys"
+    # The manifest's value, not a literal: FROST_ALERT_ENABLED is flipped off out of season and on again for it.
+    with open(harness.LAMBDA_MANIFEST) as fh:
+        frost = json.load(fh)[harness.LAMBDA_FUNCTION]["env"]["FROST_ALERT_ENABLED"]
+    assert frost in ("true", "false")
+    assert env["FROST_ALERT_ENABLED"] == frost and env["SYSTEM_CLERK_SUB"] == "user_sys"
     assert eff["SYSTEM_CLERK_SUB"] == "set from the operator's environment"     # value never in the verdict
     assert eff["CARE_WATER_LEDGER_ENABLED"] is None and "CARE_WATER_LEDGER_ENABLED" not in env
     assert eff["SECRET_NAME"] == "withheld" and "NEON_DATABASE_URL" not in env

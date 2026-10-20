@@ -76,7 +76,7 @@
       "OWNER_FALLBACK_SUB": null,
       "SYSTEM_CLERK_SUB": true,
       "FROST_TOPIC_ARN": "arn:aws:sns:us-east-1:769788341849:garden-ops-alerts",
-      "FROST_ALERT_ENABLED": "true",
+      "FROST_ALERT_ENABLED": "false",
       "CARE_CADENCE_SCOPES_ENABLED": "true",
       "CARE_TODAY_AWARE_ENABLED": "true",
       "CARE_RAIN_CREDIT_ENABLED": "true",
