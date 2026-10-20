@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.13",
+    "date": "2026-10-20",
+    "highlights": [
+      "Space key files for 22 tables; weather days record their plot"
+    ]
+  },
+  {
     "version": "5.3.12",
     "date": "2026-10-19",
     "highlights": [
