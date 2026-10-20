@@ -12,7 +12,9 @@
 // declares AUDIT_TABLES = ['weather_daily'], and the auditor cross-products every *COLUMNS array against
 // every declared table, so `spaces` there would demand weather_daily.postal_code. locations-columns.test.js
 // is keyed but pins its key set to exactly ['locations'] (its auditor-shape case). One relation, one file.
-// `plots` is not declared here: it waits for multi-space step 3.2b.
+// `plots` is the exception, declared here by multi-space step 3.2b (V5-SPACEPLOTTIER-001): the Space tier's
+// child, read once, by the weather_daily upsert's plot_id stamp (handler.js writeWeatherDaily). Its
+// reads must carry an alias (`plots pl`) so each column is attributable.
 //
 // HOW CI CONSUMES IT: as locations-columns.test.js says — scripts/dev-main-schema-audit.py Phase 1 globs
 // lambda/**/*columns.test.js, regex-parses the AUDIT_COLUMNS literal out of this file's TEXT, and checks
@@ -26,6 +28,10 @@
 //   * the Space read selects a new `name` (the column-add mutant)       -> 2 RED
 //   * contract drops `created_by` / declares an unread `name`           -> 2 RED each
 //   * the plantings join reads a new `sp.name`                          -> 1 RED (the aliased arm is load-bearing)
+// 2026-10-20, lane 3.2b (the plots key), same procedure:
+//   * the plot_id stamp reads a new `pl.name`                           -> 1 RED
+//   * contract drops `deleted_at`                                       -> 1 RED
+//   * the stamp loses its alias (`from plots where …`)                  -> 1 RED
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, basename } from 'node:path';
@@ -34,9 +40,10 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // L-081 KEYED contract: the columns of the per-run Space read, which are also a superset of the plantings
-// join's (`sp.id`, `sp.created_by`).
+// join's (`sp.id`, `sp.created_by`). `plots`: the columns of the weather_daily plot_id stamp.
 const AUDIT_COLUMNS = {
   spaces: ['id', 'postal_code', 'weather_lat', 'weather_lng', 'created_by'],
+  plots: ['id', 'workspace_id', 'is_default', 'deleted_at'],
 };
 
 // JS `//` comments first, then SQL `--` comments (same rules as locations-columns.test.js).
@@ -80,6 +87,22 @@ function spacesReads(stmt) {
   return { refs: refs.length, cols, unattributed };
 }
 
+// A `plots` relation reference. Alias required: the stamp is a subquery inside an INSERT, so no bare form
+// is attributable.
+const PLOTS_REF = /\b(?:from|join)\s+(?:public\.)?plots\b(?:\s+(?:as\s+)?(?!(?:on|where|left|right|inner|join|using|cross|full|natural|group|order|limit|union)\b)([a-z_][a-z0-9_]*))?/gi;
+
+function plotsReads(stmt) {
+  const s = sqlDecomment(stmt);
+  const cols = new Set();
+  const unattributed = [];
+  const refs = [...s.matchAll(PLOTS_REF)];
+  for (const m of refs) {
+    if (!m[1]) { unattributed.push(s.trim().slice(0, 120)); continue; }
+    for (const c of s.matchAll(new RegExp(`\\b${m[1]}\\.([a-z_][a-z0-9_]*)\\b`, 'gi'))) cols.add(c[1].toLowerCase());
+  }
+  return { refs: refs.length, cols, unattributed };
+}
+
 describe('BUG-SPACESREADUNSCOPED-001 — daily-plan `spaces` column contract (L-081 Phase 1)', () => {
   it('declares exactly the spaces columns the daily-plan SQL reads — no more, no fewer', () => {
     const read = new Set();
@@ -101,6 +124,20 @@ describe('BUG-SPACESREADUNSCOPED-001 — daily-plan `spaces` column contract (L-
     expect(bare[0].match(BARE_SELECT)[1].split(',').map((c) => c.trim())).toEqual(AUDIT_COLUMNS.spaces);
   });
 
+  it('declares exactly the plots columns the daily-plan SQL reads (V5-SPACEPLOTTIER-001)', () => {
+    const read = new Set();
+    let bearing = 0;
+    for (const [file, stmt] of sourceStatements()) {
+      const r = plotsReads(stmt);
+      expect(r.unattributed, `${file}: an unaliased plots reference this guard cannot attribute — alias it`).toEqual([]);
+      if (r.refs) bearing++;
+      for (const c of r.cols) read.add(c);
+    }
+    // non-vacuity: the weather_daily upsert's plot_id stamp
+    expect(bearing).toBeGreaterThanOrEqual(1);
+    expect([...read].sort()).toEqual([...AUDIT_COLUMNS.plots].sort());
+  });
+
   it('exposes the contract in the shape scripts/dev-main-schema-audit.py parses, under its Phase 1 glob', () => {
     // The auditor reads TEXT: replicate its own regexes against this file. The closing `};` is load-bearing.
     const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
@@ -108,8 +145,9 @@ describe('BUG-SPACESREADUNSCOPED-001 — daily-plan `spaces` column contract (L-
     expect(decl).not.toBeNull();
     expect(decl[1]).not.toMatch(/\bconst\b/);
     const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
-    expect(pairs.map((m) => m[1])).toEqual(['spaces']);
+    expect(pairs.map((m) => m[1])).toEqual(['spaces', 'plots']);
     expect([...pairs[0][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1])).toEqual(AUDIT_COLUMNS.spaces);
+    expect([...pairs[1][2].matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1])).toEqual(AUDIT_COLUMNS.plots);
     const audit = readFileSync(join(__dirname, '..', '..', 'scripts', 'dev-main-schema-audit.py'), 'utf8');
     const glob = audit.match(/^PHASE1_GLOB\s*=\s*"([^"]+)"/m)[1];
     expect(new RegExp(`^${glob.replace(/\./g, '\\.').replace(/\*/g, '.*')}$`).test(basename(fileURLToPath(import.meta.url)))).toBe(true);
