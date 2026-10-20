@@ -141,7 +141,7 @@ python3 scripts/gate_runner.py --all --env prod --phase post --continuous-only -
    no row-filter stem), which does not stop a publish. (`plant_varieties` `:691`/`:820` gain theirs at 2.4a.)
 4. **Push B, after the prod DDL** (prepared on branch `ms2/21-post`): the class file's 22 rows move to
    `S has key` on `workspace_id`, the catalog snapshot is regenerated from prod, and the six VALUES blocks with it.
-   Its README section "After the sitting" has the exact commands. Until push B lands, CI stays green: nothing in
+   Section "After the sitting (push B)" below has the exact commands. Until push B lands, CI stays green: nothing in
    CI reads the live catalog against the class file, and the snapshot it reads is the committed one.
 5. **integration-test.yml on a dev SHA after the staging DDL** must be green with FIXTURE LEAK 0 (its throwaway
    branch is cut from staging, so it is the first CI run that sees the columns; `_cleanup.js` below).
@@ -333,6 +333,45 @@ run is a no-op.
   `post_tenancykey_column_shape` in that push.
 * A **Space move** writer adds `workspace_id` to `preservation_log`'s audit list (and edits the two exact-list
   gates there).
+
+## After the sitting (push B)
+
+Lands only after the prod DDL (all 25 stamps on prod and staging). It changes no SQL here; it makes the repo's
+catalog instruments agree with the database:
+
+* `lambda/tenancy-classes.json`: the 22 rows move from `S needs key` to `S has key`, column `workspace_id`,
+  `notnull: true` (their notes kept).
+* `tests/tenancy-catalog.prod.json`: regenerated from prod. Against the pre-sitting snapshot it differs by exactly:
+  the 22 tables gain `workspace_id` (`notnull: true`, `fk: public.spaces`); `treatment_association`,
+  `garden_shared_state` and `seen_event` show `fk: public.spaces` on their `workspace_id`; and `public.plots`
+  appears (step 3.1 is applied on both envs; its class row stays pending-tolerant).
+* The six VALUES blocks: `migrations/v5-tenancyclasses-001/gates.yml` (2) and `0a-stamp.sql` (1) from
+  `node tests/lib/tenancyClasses.mjs --values`; `migrations/v5-tenancykeys-001/gates.yml` (2) and `0a-stamp.sql` (1)
+  from `node tests/lib/tenancyKeys.mjs --values` (its class list; the exemption list does not change: no index was
+  added). Both gates' verdicts are the same before and after (relation set and relkind; the S arm already accepts
+  `workspace_id`), so they are tolerant in either order.
+* Three kept controls in 2.0b's and 2.0e's tests named today's state and move with it:
+  `lambda/tenancy-classes.test.js` (its "missing workspace_id row" example was `locations`, now `crop_types`, which
+  is C base only and never gains the column) and two expected messages in `lambda/tenancy-keys.static.test.js`
+  (`favorites` and `locations` now read `S has key`).
+
+Branch `ms2/21-post` carries all three, with the snapshot made from the post-DDL rehearsal database. Before it is
+pushed, the session regenerates the snapshot from real prod and confirms it is the same file:
+
+```bash
+# in the ms2/21-post checkout, after the prod DDL; URLs by key name from .env.local, never printed
+NEON_DATABASE_URL="$(grep -m1 '^NEON_DATABASE_URL=' .env.local | cut -d= -f2-)" \
+  python3 scripts/tenancy-catalog-snapshot.py                       # rewrites tests/tenancy-catalog.prod.json (read-only)
+git diff --exit-code tests/tenancy-catalog.prod.json                # must be empty: prod = the rehearsal
+NEON_STAGING_URL="$(grep -m1 '^NEON_STAGING_URL=' .env.local | cut -d= -f2-)" \
+  python3 scripts/tenancy-catalog-snapshot.py --env staging --check # 0 differences
+node tests/lib/tenancyClasses.mjs --values   # equal to the three tenancy-classes VALUES blocks (the test says if not)
+node tests/lib/tenancyKeys.mjs --values      # equal to the three tenancy-keys blocks
+npx vitest run lambda/tenancy-classes.test.js lambda/tenancy-keys.static.test.js migrations/v5-tenancykey-001
+```
+
+If the prod snapshot differs from the committed one, commit prod's (it is the authority) and read the difference
+before anything else: a column or key on prod that the rehearsal did not make.
 
 ## Rehearsal (local PostgreSQL 17 only)
 

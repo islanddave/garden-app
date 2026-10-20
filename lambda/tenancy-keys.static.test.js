@@ -95,7 +95,7 @@ describe('every ON CONFLICT arbiter the census finds carries the tenancy key or 
     expect(fav.arbiters).toEqual([{ index: 'favorites_user_id_entity_type_entity_id_key', by: 'exemption class 6' }])
     expect(pref.how).toBe('exempt by class (Person)')
     const [red] = conflictVerdicts(c, classes, snapshot, without(exemptions, 'favorites_user_id_entity_type_entity_id_key'))
-    expect(red.problem).toBe(`arbiter favorites_user_id_entity_type_entity_id_key on public.favorites (S needs key) carries no tenancy key and is not in ${EXEMPTIONS_FILE}`)
+    expect(red.problem).toBe(`arbiter favorites_user_id_entity_type_entity_id_key on public.favorites (S has key) carries no tenancy key and is not in ${EXEMPTIONS_FILE}`)
   })
 })
 
@@ -115,7 +115,7 @@ describe('the exemption file against the committed unique-index snapshot (closed
 
   it('control: deleting one class-6 row reds, naming the index', () => {
     const errs = exemptionErrors(classes, snapshot, without(exemptions, 'idx_locations_root_slug'))
-    expect(errs).toEqual([`public.locations.idx_locations_root_slug (S needs key; slug) carries no tenancy key and is not in ${EXEMPTIONS_FILE}`])
+    expect(errs).toEqual([`public.locations.idx_locations_root_slug (S has key; slug) carries no tenancy key and is not in ${EXEMPTIONS_FILE}`])
   })
 
   it('control: an entry the rule does not need, a stale entry and a class-6 entry with no 5.3 row each red', () => {

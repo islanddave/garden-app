@@ -91,11 +91,12 @@ describe('tenancy-classes.json against the catalog (attnotnull sync)', () => {
     const c = clone(classes)
     c.relations['public.plants'].notnull = false
     c.relations['public.zz_gone'] = { kind: 'r', class: 'P' }
-    c.relations['public.locations'] = { kind: 'r', class: 'S has key', column: 'workspace_id', notnull: true }
+    // crop_types (C base only) never carries workspace_id; locations did not either, until multi-space 2.1.
+    c.relations['public.crop_types'] = { kind: 'r', class: 'S has key', column: 'workspace_id', notnull: true }
     const errs = syncErrors(c, snapshot)
     expect(errs).toContain('public.plants: workspace_id notnull false, catalog attnotnull true')
     expect(errs.some((e) => e.startsWith('public.zz_gone: classed but not in the catalog snapshot'))).toBe(true)
-    expect(errs).toContain('public.locations: tenancy column workspace_id does not exist')
+    expect(errs).toContain('public.crop_types: tenancy column workspace_id does not exist')
   })
 })
 
