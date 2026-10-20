@@ -218,6 +218,13 @@ const STEPS = [
   ['tasks',                       `DELETE FROM tasks WHERE created_by LIKE ${NS} OR project_id IN (${NS_PROJECTS})`],
   ['plant_projects',              `DELETE FROM plant_projects WHERE created_by LIKE ${NS} OR name LIKE ${NS} OR slug LIKE ${NS}`],
   ['locations',                   `DELETE FROM locations WHERE created_by LIKE ${NS} OR name LIKE ${NS} OR slug LIKE ${NS}`],
+  // V5-SPACETENANCYKEY-001 (multi-space 2.1, migrations/v5-tenancykey-001): these two gain a RESTRICT key into
+  // spaces, so they go before the spaces step like every other table that has one (plan V204 §3.0, MF3). Today
+  // no fixture row in them names a test Space (inserts take the one Space by DEFAULT); this keeps the order true
+  // once writers stamp the active Space. Their own children (pantry_item, preservation_log, kitchen_stage_log)
+  // are swept above.
+  ['storage_location',            `DELETE FROM storage_location WHERE user_id LIKE ${NS}`],
+  ['event_batches',               `DELETE FROM event_batches WHERE created_by LIKE ${NS} OR idempotency_key LIKE ${NS}`],
   // V4-SPACESOFTDEL-001 (multi-space 1.3a). A Space's weather and theme rows used to go with it by ON DELETE
   // CASCADE. migrations/v5-spaceguard-001 puts spaces_delete_guard on spaces: BEFORE DELETE, it refuses
   // while ANY row in a table with a foreign key to spaces still names the Space. So the three CASCADE
@@ -229,15 +236,14 @@ const STEPS = [
   ['weather_cold_range',          `DELETE FROM weather_cold_range WHERE space_id IN (${NS_SPACES})`],
   ['spacetheme',                  `DELETE FROM spacetheme WHERE space_id IN (${NS_SPACES})`],
   ['spaces',                      `DELETE FROM spaces WHERE created_by LIKE ${NS} OR name LIKE ${NS}`],
-  ['storage_location',            `DELETE FROM storage_location WHERE user_id LIKE ${NS}`],
   // Side-effect / telemetry tables. NONE of these were torn down by any test file before this fix —
   // they leaked on every single run (audit_events, rate_limit_buckets, event_batches, critter_state).
+  // (event_batches is swept above, before spaces: multi-space 2.1 gives it a key into spaces.)
   ['xp_events',                   `DELETE FROM xp_events WHERE user_id LIKE ${NS}`],
   ['user_stats',                  `DELETE FROM user_stats WHERE user_id LIKE ${NS}`],
   ['app_events',                  `DELETE FROM app_events WHERE user_clerk_sub LIKE ${NS}`],
   ['audit_events',                `DELETE FROM audit_events WHERE actor_clerk_sub LIKE ${NS}`],
   ['rate_limit_buckets',          `DELETE FROM rate_limit_buckets WHERE actor_clerk_sub LIKE ${NS}`],
-  ['event_batches',               `DELETE FROM event_batches WHERE created_by LIKE ${NS} OR idempotency_key LIKE ${NS}`],
 ].map(([table, stmt]) => [table, assertGuarded(stmt)])
 
 /** The static statements, by step name, in sweep order — read-only, for the sweep's own order proofs. */
