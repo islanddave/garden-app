@@ -8,6 +8,10 @@
 #   handler.js  writeWeatherDaily()  catch -> console.warn  'weather_daily write failed — plan
 #                                             unaffected', return 0
 #
+# writeWeatherDaily also has a PER-ROW catch (BUG-WXWRITEOVERWRITE-001): a row that fails for any reason
+# other than a missing relation is skipped with console.warn 'weather_daily row skipped — plan unaffected'
+# and the loop carries on; the run's 'weather-daily-write' summary line counts them as `skipped`.
+#
 # Both are correct fail-open choices: the nightly plan is already durable when they run and must
 # never be lost to a station outage or a late migration. But fail-open without an instrument means
 # "no rain logged last night" and "the rain logger crashed last night" are the same picture from the
@@ -49,6 +53,12 @@
 # weather_daily read) are transient degradation that is expected to blip on a provider hiccup.
 # Metering them would add spend and train dismissal without adding a signal anyone would act on.
 #
+# V5-SPACEPLOTTIER-001 (3.2b) — the row-skipped line gets a filter, and no alarm. 3.2b makes every
+# weather_daily write stamp plot_id from the Space's default plot, under a composite FK to plots, and 3.2d
+# then sets plot_id NOT NULL: a stamp the database refuses (23503, or 23502 after 3.2d) arrives as a row
+# skip, which the 'weather_daily write failed' filter cannot see (that line is the missing-relation exit
+# only). WeatherDailyRowSkipped reads 0 on a healthy run, and the plot-tier steps (3.2b-3.3a) read it.
+#
 # OPS-SPACEALERTSREADLOG-001 — ONE metric on the FROST path rides this script as the exception, because it is
 # the same log group and the same provisioning discipline, and because nothing else would ever see it.
 # handler.js readAlertsSent and readSpaceAlertsSent fail OPEN: a failed read returns [] and the run carries
@@ -89,6 +99,9 @@ provision() {
   # continues "— plan unaffected" with an em dash, and there is no reason to put a non-ASCII
   # character inside a filter pattern.
   emit_filter weather-daily-write-failed  '"weather_daily write failed"' WeatherDailyWriteFailed
+  # FAILURE, per row (V5-SPACEPLOTTIER-001). handler.js writeWeatherDaily's per-row catch: one day's upsert
+  # was refused and the loop went on. ASCII prefix only, for the em-dash reason above.
+  emit_filter weather-daily-row-skipped   '"weather_daily row skipped"'  WeatherDailyRowSkipped
   # FAILURE (frost path, OPS-SPACEALERTSREADLOG-001). handler.js readAlertsSent and readSpaceAlertsSent catches:
   # the frost dedup store could not be read, so the next frost email may go out twice. ASCII phrase only, for
   # the same em-dash reason as above.
@@ -122,7 +135,8 @@ test_patterns() {
   local L_OK="${PFX}INFO${T}{\"msg\":\"rain-log\",\"today\":\"2026-08-29\",\"day\":\"2026-08-28\",\"logged\":0,\"skipped\":\"below_threshold\",\"amount_in\":0,\"ms\":9}"
   local L_ERR="${PFX}ERROR${T}{\"msg\":\"rain-log ERROR\",\"today\":\"2026-08-29\",\"error\":\"relation weather_daily does not exist\"}"
   local L_WDFAIL="${PFX}WARN${T}{\"msg\":\"weather_daily write failed — plan unaffected\",\"space\":\"11111111-2222-3333-4444-555555555555\",\"error\":\"boom\"}"
-  local L_WDOK="${PFX}INFO${T}{\"msg\":\"weather-daily-write\",\"space\":\"x\",\"rows\":3,\"null_et0\":0,\"null_precip\":0,\"gauge_yesterday\":true}"
+  local L_WDOK="${PFX}INFO${T}{\"msg\":\"weather-daily-write\",\"space\":\"x\",\"rows\":3,\"skipped\":0,\"dates\":[\"2026-10-18\",\"2026-10-19\"],\"null_et0\":0,\"null_precip\":0,\"gauge_yesterday\":true}"
+  local L_WDSKIP="${PFX}WARN${T}{\"msg\":\"weather_daily row skipped — plan unaffected\",\"space\":\"x\",\"date\":\"2026-10-19\",\"error\":\"insert or update on table \\\"weather_daily\\\" violates foreign key constraint\"}"
   local L_WDREAD="${PFX}WARN${T}{\"msg\":\"weather_daily read failed — ledger degrades to demand 1.0\",\"space\":\"x\",\"error\":\"boom\"}"
   local L_FROST="${PFX}ERROR${T}{\"msg\":\"frost alert publish FAILED\",\"space\":\"x\",\"user\":\"u\",\"dedup_key\":\"k\",\"error\":\"boom\"}"
   # OPS-SPACEALERTSREADLOG-001 — the two fail-open frost dedup reads, and the healthy frost lines around them.
@@ -137,6 +151,7 @@ test_patterns() {
   check "runs ~ failed rain-log"       '"rain-log"'                   "$L_ERR"     1
   check "failures ~ rain-log ERROR"    '"rain-log ERROR"'             "$L_ERR"     1
   check "wd-write ~ write failed"      '"weather_daily write failed"' "$L_WDFAIL"  1
+  check "wd-skip ~ row skipped"        '"weather_daily row skipped"'  "$L_WDSKIP"  1
   check "frost-dedup ~ space read"     '"alerts_sent read failed"'    "$L_SPACEFAIL" 1
   check "frost-dedup ~ per-user read"  '"alerts_sent read failed"'    "$L_USERFAIL"  1
 
@@ -147,6 +162,10 @@ test_patterns() {
   check "failures !~ frost failure"    '"rain-log ERROR"'             "$L_FROST"   0
   check "wd-write !~ healthy write"    '"weather_daily write failed"' "$L_WDOK"    0
   check "wd-write !~ read failed"      '"weather_daily write failed"' "$L_WDREAD"  0
+  check "wd-write !~ row skipped"      '"weather_daily write failed"' "$L_WDSKIP"  0
+  check "wd-skip !~ healthy write"     '"weather_daily row skipped"'  "$L_WDOK"    0
+  check "wd-skip !~ write failed"      '"weather_daily row skipped"'  "$L_WDFAIL"  0
+  check "wd-skip !~ read failed"       '"weather_daily row skipped"'  "$L_WDREAD"  0
   check "runs !~ weather-daily-write"  '"rain-log"'                   "$L_WDOK"    0
   check "runs !~ frost failure"        '"rain-log"'                   "$L_FROST"   0
   check "frost-dedup !~ frost-eval"    '"alerts_sent read failed"'    "$L_FROSTEVAL" 0
@@ -269,7 +288,8 @@ alarm_liveness() {
 # Everything this script creates, removed. Nothing here touches app behaviour, so the teardown is
 # complete and leaves no residue beyond the metrics' own retention.
 teardown() {
-  for f in weather-rainlog-runs weather-rainlog-failed weather-daily-write-failed frost-dedup-read-failed; do
+  for f in weather-rainlog-runs weather-rainlog-failed weather-daily-write-failed weather-daily-row-skipped \
+           frost-dedup-read-failed; do
     aws logs delete-metric-filter --region "$REGION" --log-group-name "$LOG_GROUP" --filter-name "$f" \
       && echo "  removed filter $f"
   done
