@@ -225,15 +225,18 @@ for (const s of spaces) {
     // only the precip arms matched; et0_in/tmax_f/tmin_f were last-writer-wins in both files, so
     // this script overwrote the nightly writer's better-sourced values on every overlapping day.
     // weather-daily-conflict-sync.test.js now compares the two texts, so the claim is enforced
-    // rather than asserted. Edit one, edit both.
+    // rather than asserted. Edit one, edit both. The plot_id stamp is mirrored too (V5-SPACEPLOTTIER-001,
+    // see the note above writeWeatherDaily in handler.js): the live default plot of THIS row's Space, from the same
+    // value that supplies space_id; NULL for a Space with no default plot.
     const out = await sql`
       insert into weather_daily (space_id, "date", et0_in, tmax_f, tmin_f, precip_in, precip_source, et0_source,
-                                 daylight_s, sunshine_s, solar_mj_m2, wind_max_mph, precip_hours)
+                                 daylight_s, sunshine_s, solar_mj_m2, wind_max_mph, precip_hours, plot_id)
       values (${s.id}::uuid, ${r.date}::date, ${r.et0_in}::numeric, ${r.tmax_f}::numeric,
               ${r.tmin_f}::numeric, ${r.precip_in}::numeric,
               ${r.precip_in == null ? null : SOURCE}::text, ${r.et0_in == null ? null : SOURCE}::text,
               ${r.daylight_s}::numeric, ${r.sunshine_s}::numeric, ${r.solar_mj_m2}::numeric,
-              ${r.wind_max_mph}::numeric, ${r.precip_hours}::numeric)
+              ${r.wind_max_mph}::numeric, ${r.precip_hours}::numeric,
+              (select pl.id from plots pl where pl.workspace_id = ${s.id}::uuid and pl.is_default and pl.deleted_at is null))
       on conflict (space_id, "date") do update set
            -- BUG-WXWRITEOVERWRITE-001 — QUALITY-RANKED, PER FIELD. This guard used to cover precip_in
            -- alone; et0_in, tmax_f and tmin_f were last-writer-wins, so any better-sourced value in
@@ -319,6 +322,12 @@ for (const s of spaces) {
                                   > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
                                then coalesce(weather_daily.precip_hours, excluded.precip_hours)
                                else coalesce(excluded.precip_hours, weather_daily.precip_hours) end,
+           -- V5-SPACEPLOTTIER-001 (3.2b) — plot_id is the row's identity, not a measurement, so it is
+           -- not ranked: a stored plot is never replaced, and a stored NULL (a row written between
+           -- v5-wxplotid-001 and this code, or while the Space had no default plot) takes the
+           -- incoming stamp. The nightly run re-upserts D-2 and D-1, which is what heals those rows.
+           -- The arbiter stays (space_id, "date") until 3.3a moves both writers to (plot_id, "date").
+           plot_id = coalesce(weather_daily.plot_id, excluded.plot_id),
            updated_at = now()
       returning precip_source, et0_source`;
     totalWrote++;

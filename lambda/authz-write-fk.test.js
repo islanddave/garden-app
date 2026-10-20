@@ -318,6 +318,11 @@ const NOT_IN_SITES = [
   // never off caller input. There is no request through which a caller could name another
   // household's space, so there is no cross-household write to gate.
   'daily-plan::space_id',
+  // daily-plan::plot_id — the same weather_daily upsert, stamped by V5-SPACEPLOTTIER-001 (3.2b). Not a
+  // parameter at all: the value is a scalar subquery over public.plots keyed on the space_id bind
+  // above (the live default plot of that Space), so it inherits space_id's argument, and the
+  // composite FK (plot_id, space_id) -> plots(id, workspace_id) refuses a plot of any other Space.
+  'daily-plan::plot_id',
   // daily-plan::plant_id — plant_anchor_derivation's FK, added by V4-ANCHORRESWEEP-001's
   // re-derivation INSERT. Same argument as space_id above and stronger: the value is never a
   // parameter of any kind. The statement is issued as pg.query(sql) with NO binds at all, and the

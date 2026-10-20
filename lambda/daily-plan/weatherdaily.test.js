@@ -118,6 +118,7 @@ const CONFLICT_ARM = new RegExp(
   + ' > coalesce\\(array_position\\(array\\[([^\\]]*)\\], coalesce\\(excluded\\.(\\w+), \'\'\\)\\), 0\\)'
   + ' then (weather_daily\\.\\1|coalesce\\(weather_daily\\.\\1, excluded\\.\\1\\))'
   + ' else coalesce\\(excluded\\.\\1, weather_daily\\.\\1\\) end', 'g');
+const PLOT_ARM = 'plot_id = coalesce(weather_daily.plot_id, excluded.plot_id)';
 
 function parseConflictSet(sql) {
   const set = normalizeSql(sql).split(/on conflict \(space_id, "date"\) do update set /i)[1];
@@ -136,8 +137,11 @@ function parseConflictSet(sql) {
   // ANTI-VACUITY. Every top-level assignment must be one this parser understood, plus updated_at. An
   // arm the regex silently skipped is a column this test cannot see — which is precisely how one
   // slips back to last-writer-wins with the suite still green.
+  // plot_id (V5-SPACEPLOTTIER-001, 3.2b) is the one unranked arm: an identity, not a measurement. It is
+  // accepted ONLY in its exact keep-the-stored-plot form; any other plot_id arm is unrecognised.
   const assigned = (set.match(/(?:^|, )(\w+) = /g) || []).map((s) => s.replace(/[,\s=]/g, ''));
-  const unparsed = assigned.filter((c) => c !== 'updated_at' && !(c in out));
+  const plotArmOk = set.includes(PLOT_ARM);
+  const unparsed = assigned.filter((c) => c !== 'updated_at' && !(c in out) && !(c === 'plot_id' && plotArmOk));
   if (unparsed.length) throw new Error(`unrecognised conflict arm(s), not rank-guarded: ${unparsed.join(', ')}`);
   return out;
 }
@@ -380,6 +384,21 @@ describe('writeWeatherDaily — what reaches the database', () => {
       expect(policy[col].order).toEqual(['openmeteo_archive', 'openmeteo_live', 'gauge_merged']);
     }
     expect(normalizeSql(sql)).toContain('updated_at = now()');
+  });
+
+  it('stamps plot_id from the same Space\'s live default plot, with no bind of its own (V5-SPACEPLOTTIER-001)', async () => {
+    // The stamp re-reads $1, the space_id bind, so it cannot name another Space's plot; a NULL from a
+    // plot-less Space is legal until 3.2d. The bind array keeps its 13 positions (asserted above by index).
+    const pg = recordingPg();
+    await writeWeatherDaily(pg, SPACE, TODAY, hydrology(), {});
+    const { sql, params } = wdInserts(pg)[0];
+    const n = normalizeSql(sql);
+    expect(n).toMatch(/insert into weather_daily \([^)]*, precip_hours, plot_id\)/);
+    expect(n).toContain('$13::numeric, (select pl.id from plots pl where pl.workspace_id = $1::uuid'
+      + ' and pl.is_default and pl.deleted_at is null)) on conflict (space_id, "date") do update set');
+    expect(params).toHaveLength(13);
+    // Never overwrites a stored plot; fills a stored NULL. The arbiter is still (space_id, "date").
+    expect(n).toContain(`${PLOT_ARM}, updated_at = now()`);
   });
 
   // ── BUG-WXWRITEOVERWRITE-001, the behaviour half ────────────────────────────────────────────────

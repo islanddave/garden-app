@@ -288,7 +288,22 @@ const WEATHER_DAILY_CONFLICT_SET =
                                   > coalesce(array_position(array['openmeteo_archive','openmeteo_live','gauge_merged'], coalesce(excluded.et0_source, '')), 0)
                                then coalesce(weather_daily.precip_hours, excluded.precip_hours)
                                else coalesce(excluded.precip_hours, weather_daily.precip_hours) end,
+           -- V5-SPACEPLOTTIER-001 (3.2b) — plot_id is the row's identity, not a measurement, so it is
+           -- not ranked: a stored plot is never replaced, and a stored NULL (a row written between
+           -- v5-wxplotid-001 and this code, or while the Space had no default plot) takes the
+           -- incoming stamp. The nightly run re-upserts D-2 and D-1, which is what heals those rows.
+           -- The arbiter stays (space_id, "date") until 3.3a moves both writers to (plot_id, "date").
+           plot_id = coalesce(weather_daily.plot_id, excluded.plot_id),
            updated_at = now()`;
+
+// V5-SPACEPLOTTIER-001 (3.2b) — the plot_id each weather_daily writer stamps: the live default plot of
+// the SAME Space the row is written for. It is a scalar subquery inside the INSERT, so it costs no
+// extra round trip, and it binds the very parameter that supplies space_id, so it cannot name a plot
+// of another Space (the composite FK (plot_id, space_id) -> plots(id, workspace_id) would refuse one
+// with 23503 regardless). At most one row: plots carries a partial unique index on (workspace_id)
+// WHERE is_default AND deleted_at IS NULL. A Space with no default plot gets NULL, which MATCH SIMPLE
+// accepts until 3.2d sets NOT NULL. Mirrored in scripts/backfill-weather-daily.mjs and pinned by
+// weather-daily-conflict-sync.test.js.
 
 // Upsert the completed days from one Space's hydrology bag. Returns the number of rows written; never
 // throws, never returns a rejected promise. `prov` is the Space's station provenance bag, which is the
@@ -330,12 +345,14 @@ async function writeWeatherDaily(pg, spaceId, today, hy, prov) {
         // V5-WXBACKFILLVARS-001 APPENDS $9..$13 at the END of both lists. Existing positions are
         // load-bearing in the suite (weatherdaily.test.js reads params[1], params[5], params[6] by
         // index), and more importantly a re-ordered column list is the kind of edit that reads as
-        // cosmetic and silently writes tmin into precip.
+        // cosmetic and silently writes tmin into precip. plot_id (V5-SPACEPLOTTIER-001) is appended
+        // LAST and takes no bind of its own: its stamp re-reads $1, so the array below is unchanged.
         await pg.query(
           `insert into weather_daily (space_id, "date", et0_in, tmax_f, tmin_f, precip_in, precip_source, et0_source,
-                                      daylight_s, sunshine_s, solar_mj_m2, wind_max_mph, precip_hours)
+                                      daylight_s, sunshine_s, solar_mj_m2, wind_max_mph, precip_hours, plot_id)
          values ($1::uuid, $2::date, $3::numeric, $4::numeric, $5::numeric, $6::numeric, $7::text, $8::text,
-                 $9::numeric, $10::numeric, $11::numeric, $12::numeric, $13::numeric)
+                 $9::numeric, $10::numeric, $11::numeric, $12::numeric, $13::numeric,
+                 (select pl.id from plots pl where pl.workspace_id = $1::uuid and pl.is_default and pl.deleted_at is null))
          ${WEATHER_DAILY_CONFLICT_SET}`,
           [spaceId, d.date, d.et0_in ?? null, d.tmax_f ?? null, d.tmin_f ?? null,
            precip ?? null, precipSource, et0Source,

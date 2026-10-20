@@ -9,6 +9,13 @@
       "reason": "s.id, the spaces row of the per-Space loop (the Space itself, never a request value): until the daily-plan 4.3 lane"
     },
     {
+      "id": "lambda/daily-plan/handler.js:writeWeatherDaily:4ef3d48e44",
+      "ctx": "cmp",
+      "src": "spaceId",
+      "rule": "unreviewed-root",
+      "reason": "spaceId, the s.id of the per-Space loop passed in by run() (the Space itself, never a request value), compared to plots.workspace_id to stamp the row's default plot (V5-SPACEPLOTTIER-001 3.2b): until the daily-plan 4.3 lane"
+    },
+    {
       "id": "lambda/events/critterAward.js:incrementSightingTally:7fdf5e6290",
       "ctx": "insert",
       "src": "SENTINEL_WORKSPACE",

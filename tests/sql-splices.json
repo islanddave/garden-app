@@ -2,7 +2,7 @@
   "_doc": "see lambda/sql-census.static.test.js",
   "splices": [
     {
-      "id": "lambda/daily-plan/handler.js:writeWeatherDaily:d8b8ef08c3",
+      "id": "lambda/daily-plan/handler.js:writeWeatherDaily:4ef3d48e44",
       "inlined": [
         "WEATHER_DAILY_CONFLICT_SET"
       ],

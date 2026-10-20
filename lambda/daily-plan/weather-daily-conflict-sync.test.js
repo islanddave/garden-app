@@ -23,8 +23,42 @@ const BACKFILL = readFileSync(join(ROOT, 'scripts/backfill-weather-daily.mjs'), 
 
 // From `on conflict` through the `updated_at = now()` that closes the SET list. Bounded on both ends
 // deliberately: an unbounded tail reads the rest of the file and would compare two things that are
-// not the policy (source-text guards need a length bound).
-const POLICY = /on conflict \(space_id, "date"\) do update set\b[\s\S]*?updated_at = now\(\)/;
+// not the policy (source-text guards need a length bound). V5-SPACEPLOTTIER-001 (3.2b): the block must
+// also END in the plot_id arm, and the tempered `(?:(?!updated_at = now\(\))[\s\S])` keeps the match
+// from running past the first `updated_at = now()` to find one, so a writer without the arm has no
+// policy at all here rather than a longer one.
+const POLICY = /on conflict \(space_id, "date"\) do update set\b(?:(?!updated_at = now\(\))[\s\S])*?plot_id = coalesce\(weather_daily\.plot_id, excluded\.plot_id\),\s*updated_at = now\(\)/;
+
+// V5-SPACEPLOTTIER-001 (3.2b) — the INSERT half, which POLICY does not reach: the column list and the
+// VALUES list up to the conflict clause (the handler splices it as ${WEATHER_DAILY_CONFLICT_SET}).
+const INSERT = /insert into weather_daily \(([^)]*)\)\s*values \(([\s\S]*?)\)\s*(?:\$\{WEATHER_DAILY_CONFLICT_SET\}|on conflict)/;
+
+// Top-level commas only: the stamp is a parenthesised subquery and the backfill's `${…}` binds can
+// hold anything.
+const splitTop = (s) => {
+  const out = [];
+  let depth = 0, cur = '';
+  for (const ch of s) {
+    if ('({['.includes(ch)) depth++;
+    if (')}]'.includes(ch)) depth--;
+    if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; } else cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+};
+
+// The stamp with the Space bind written as SPACE, so the two writers' texts compare equal. It must bind
+// the SAME value as the space_id slot: anything else could name a plot of another Space.
+const STAMP = '(select pl.id from plots pl where pl.workspace_id = SPACE and pl.is_default and pl.deleted_at is null)';
+
+const stampOf = (src, label) => {
+  const m = src.match(INSERT);
+  if (!m) throw new Error(`no weather_daily INSERT found in ${label}`);
+  const cols = splitTop(m[1]);
+  const vals = splitTop(m[2]).map((v) => v.replace(/\s+/g, ' '));
+  const at = cols.indexOf('plot_id');
+  return { cols, vals, at, stamp: at < 0 ? null : vals[at].split(vals[0]).join('SPACE') };
+};
 
 const extract = (src, label) => {
   const m = src.match(POLICY);
@@ -76,5 +110,19 @@ describe('weather_daily — one conflict policy, two writers', () => {
     // author that the literal is negotiable. What must hold is the RELATIONSHIP.
     expect(arrays.length).toBe(GUARDED.length * 2);
     for (const a of arrays) expect(a).toBe("array['openmeteo_archive','openmeteo_live','gauge_merged']");
+  });
+
+  // V5-SPACEPLOTTIER-001 (3.2b). A stamp in one writer only would leave the other writing NULL plots
+  // until 3.2d's NOT NULL turns every one of its writes into a 23502.
+  it('both writers stamp plot_id with the live default plot of the row\'s own Space', () => {
+    const h = stampOf(HANDLER, 'lambda/daily-plan/handler.js');
+    const b = stampOf(BACKFILL, 'scripts/backfill-weather-daily.mjs');
+    for (const w of [h, b]) {
+      expect(w.cols[0]).toBe('space_id');
+      expect(w.vals[0]).toMatch(/::uuid$/);
+      expect(w.cols.length).toBe(w.vals.length);
+      expect(w.stamp).toBe(STAMP);
+    }
+    expect(h.cols).toEqual(b.cols);
   });
 });
