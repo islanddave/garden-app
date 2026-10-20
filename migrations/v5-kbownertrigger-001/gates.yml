@@ -297,6 +297,15 @@ post:
   # The frozen count gate this file must leave exactly where it found it. Same query as
   # pre_no_frozen_gate_moves; the pair is what makes "this migration adds no columns" a measurement
   # instead of a claim in a header comment.
+  #
+  # TOLERANT FORM, 2026-10-20 (V5-SPACETENANCYKEY-001, multi-space step 2.1). kitchen_batch gains
+  # workspace_id (migrations/v5-tenancykey-001/06-kitchen-batch.sql). The view names its columns
+  # (v5-recipes-001), so it does not carry the new one and the bare count would move 41 = 33 + 8 to
+  # 41 <> 34 + 8. Once that file's stamp 5.3.13-tenancykey-001-kitchen-batch exists, workspace_id is
+  # left out of BOTH counts (the view's too, so the plan's later rewrite of this view that appends it
+  # keeps the gate green) and must exist on kitchen_batch (second arm); before the stamp the query is
+  # the original. pre_no_frozen_gate_moves keeps the original form: it is this file's apply-window
+  # receipt, never run after the apply.
   - name: post_no_frozen_gate_moved
     continuous: false
     sql: |
@@ -304,8 +313,21 @@ post:
        WHERE EXISTS (SELECT 1 FROM public.schema_version
                       WHERE version = '5.0.0-kbownertrigger-20260904')
          AND (SELECT count(*) FROM information_schema.columns
-               WHERE table_schema='public' AND table_name='v_kitchen_batch_current')
+               WHERE table_schema='public' AND table_name='v_kitchen_batch_current'
+                 AND NOT (column_name = 'workspace_id'
+                          AND EXISTS (SELECT 1 FROM public.schema_version
+                                       WHERE version = '5.3.13-tenancykey-001-kitchen-batch')))
           <> (SELECT count(*) FROM information_schema.columns
-               WHERE table_schema='public' AND table_name='kitchen_batch') + 8
+               WHERE table_schema='public' AND table_name='kitchen_batch'
+                 AND NOT (column_name = 'workspace_id'
+                          AND EXISTS (SELECT 1 FROM public.schema_version
+                                       WHERE version = '5.3.13-tenancykey-001-kitchen-batch'))) + 8
+      UNION ALL
+      SELECT 2
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.3.13-tenancykey-001-kitchen-batch')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='kitchen_batch'
+                            AND column_name = 'workspace_id')
     expect: rowcount_eq
     value: 0

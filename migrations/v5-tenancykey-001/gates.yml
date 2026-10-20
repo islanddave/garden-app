@@ -1,0 +1,290 @@
+# gates.yml
+# v5-tenancykey-001: V5-SPACETENANCYKEY-001 (multi-space plan V204 step 2.1, §2.1): workspace_id on the 22
+#   "S, needs key" tables, and a key into spaces on those 22 plus the three that already carry the column
+#   (treatment_association, garden_shared_state, seen_event). One SQL file per table, one stamp per file:
+#   5.3.13-tenancykey-001-<table> (files 01-22) and 5.3.13-tenancykey-001-fk-<table> (files 23-25). README.md
+#   has the order, the sitting steps and the C-CONV pre-scan.
+#
+# ── THE VALUES LIST IS owner-classes.json's TABLE LIST ───────────────────────────────────────────────────────
+#   (n, relname, stamp, adds_column), one row per file, between the BEGIN/END markers (here and in
+#   0r-rollback.sql). tenancykey.test.js holds every marked block equal to `node generate.mjs --values`.
+#
+# ── EVERY post GATE ARMS PER TABLE ON THAT TABLE'S OWN EXACT STAMP ─────────────────────────────────────────
+#   gate-invariants runs `gate_runner.py --all --phase post --continuous-only` on live prod and staging. Each
+#   row of a post gate is tested only when `EXISTS (SELECT 1 FROM public.schema_version sv WHERE sv.version =
+#   k.stamp)` holds for that row's literal stamp: vacuous before its file runs, asserting permanently after.
+#   A file writes its stamp in the same transaction as its DDL, so a partly applied run (the runner stopped at
+#   a refusal) arms exactly the tables it changed. The objects gate is the converse, armed on the object.
+#   NO ::regclass: every relation is found through pg_class by name.
+#
+# ── WHAT THESE GATES DO NOT COVER ────────────────────────────────────────────────────────────────────────────
+#   * convalidated. The keys are NOT VALID here; step 2.3 validates them after its all-row sweep and arms its
+#     own convalidated gate on its own stamp. Nothing here asserts either state, so 2.3 changes no gate here.
+#   * Rows naming a Space. v5-spacefk-001's post_workspace_census_every_row_names_a_space finds every
+#     workspace_id table in the catalog, so it covers the 22 from the moment they have the column.
+#   * Owners. The files' own pre-gate (owner-classes.json) refuses before DDL; it is not a standing gate.
+
+pre:
+  # Receipts for the apply window only (continuous: false): each is false once the files have run.
+  - name: pre_the_default_space_exists
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.spaces WHERE id = '00000000-0000-0000-0000-000000000001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_no_workspace_column_yet
+    continuous: false
+    note: >
+      None of the 22 has a workspace_id column before its file (read 2026-10-20 on prod and staging: none has).
+      Lists any that does: a column made by something else, which the file would refuse.
+    sql: |
+      SELECT k.relname
+        FROM (VALUES
+          -- BEGIN tenancykey tables
+          (1, 'locations', '5.3.13-tenancykey-001-locations', true),
+          (2, 'photos', '5.3.13-tenancykey-001-photos', true),
+          (3, 'inventory_items', '5.3.13-tenancykey-001-inventory-items', true),
+          (4, 'storage_location', '5.3.13-tenancykey-001-storage-location', true),
+          (5, 'preservation_log', '5.3.13-tenancykey-001-preservation-log', true),
+          (6, 'kitchen_batch', '5.3.13-tenancykey-001-kitchen-batch', true),
+          (7, 'pantry_item', '5.3.13-tenancykey-001-pantry-item', true),
+          (8, 'recipe', '5.3.13-tenancykey-001-recipe', true),
+          (9, 'tag', '5.3.13-tenancykey-001-tag', true),
+          (10, 'critter_state', '5.3.13-tenancykey-001-critter-state', true),
+          (11, 'findings', '5.3.13-tenancykey-001-findings', true),
+          (12, 'tasks', '5.3.13-tenancykey-001-tasks', true),
+          (13, 'event_batches', '5.3.13-tenancykey-001-event-batches', true),
+          (14, 'daily_plan', '5.3.13-tenancykey-001-daily-plan', true),
+          (15, 'favorites', '5.3.13-tenancykey-001-favorites', true),
+          (16, 'voice_alias', '5.3.13-tenancykey-001-voice-alias', true),
+          (17, 'proj_rescope_events', '5.3.13-tenancykey-001-proj-rescope-events', true),
+          (18, 'weather_cue_impression', '5.3.13-tenancykey-001-weather-cue-impression', true),
+          (19, 'cultivar_weight_sample', '5.3.13-tenancykey-001-cultivar-weight-sample', true),
+          (20, 'cultivar_weight_void', '5.3.13-tenancykey-001-cultivar-weight-void', true),
+          (21, 'source', '5.3.13-tenancykey-001-source', true),
+          (22, 'slug_redirects', '5.3.13-tenancykey-001-slug-redirects', true),
+          (23, 'treatment_association', '5.3.13-tenancykey-001-fk-treatment-association', false),
+          (24, 'garden_shared_state', '5.3.13-tenancykey-001-fk-garden-shared-state', false),
+          (25, 'seen_event', '5.3.13-tenancykey-001-fk-seen-event', false)
+          -- END tenancykey tables
+             ) AS k(n, relname, stamp, adds_column)
+        JOIN pg_class c ON c.relname = k.relname
+        JOIN pg_namespace ns ON ns.oid = c.relnamespace AND ns.nspname = 'public'
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'workspace_id' AND NOT a.attisdropped
+       WHERE k.adds_column
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_workspace_key_yet
+    continuous: false
+    sql: |
+      SELECT k.relname, x.conname
+        FROM (VALUES
+          -- BEGIN tenancykey tables
+          (1, 'locations', '5.3.13-tenancykey-001-locations', true),
+          (2, 'photos', '5.3.13-tenancykey-001-photos', true),
+          (3, 'inventory_items', '5.3.13-tenancykey-001-inventory-items', true),
+          (4, 'storage_location', '5.3.13-tenancykey-001-storage-location', true),
+          (5, 'preservation_log', '5.3.13-tenancykey-001-preservation-log', true),
+          (6, 'kitchen_batch', '5.3.13-tenancykey-001-kitchen-batch', true),
+          (7, 'pantry_item', '5.3.13-tenancykey-001-pantry-item', true),
+          (8, 'recipe', '5.3.13-tenancykey-001-recipe', true),
+          (9, 'tag', '5.3.13-tenancykey-001-tag', true),
+          (10, 'critter_state', '5.3.13-tenancykey-001-critter-state', true),
+          (11, 'findings', '5.3.13-tenancykey-001-findings', true),
+          (12, 'tasks', '5.3.13-tenancykey-001-tasks', true),
+          (13, 'event_batches', '5.3.13-tenancykey-001-event-batches', true),
+          (14, 'daily_plan', '5.3.13-tenancykey-001-daily-plan', true),
+          (15, 'favorites', '5.3.13-tenancykey-001-favorites', true),
+          (16, 'voice_alias', '5.3.13-tenancykey-001-voice-alias', true),
+          (17, 'proj_rescope_events', '5.3.13-tenancykey-001-proj-rescope-events', true),
+          (18, 'weather_cue_impression', '5.3.13-tenancykey-001-weather-cue-impression', true),
+          (19, 'cultivar_weight_sample', '5.3.13-tenancykey-001-cultivar-weight-sample', true),
+          (20, 'cultivar_weight_void', '5.3.13-tenancykey-001-cultivar-weight-void', true),
+          (21, 'source', '5.3.13-tenancykey-001-source', true),
+          (22, 'slug_redirects', '5.3.13-tenancykey-001-slug-redirects', true),
+          (23, 'treatment_association', '5.3.13-tenancykey-001-fk-treatment-association', false),
+          (24, 'garden_shared_state', '5.3.13-tenancykey-001-fk-garden-shared-state', false),
+          (25, 'seen_event', '5.3.13-tenancykey-001-fk-seen-event', false)
+          -- END tenancykey tables
+             ) AS k(n, relname, stamp, adds_column)
+        JOIN pg_class c ON c.relname = k.relname
+        JOIN pg_namespace ns ON ns.oid = c.relnamespace AND ns.nspname = 'public'
+        JOIN pg_constraint x ON x.conrelid = c.oid AND x.conname = k.relname || '_workspace_id_fkey'
+    expect: rowcount_eq
+    value: 0
+
+  # The three key-only tables: every row names a Space before the key exists (their files refuse otherwise).
+  - name: pre_key_only_tables_every_row_names_a_space
+    continuous: false
+    sql: |
+      SELECT 'treatment_association' AS relname, t.workspace_id FROM public.treatment_association t
+       WHERE NOT EXISTS (SELECT 1 FROM public.spaces s WHERE s.id = t.workspace_id)
+      UNION ALL
+      SELECT 'garden_shared_state', t.workspace_id FROM public.garden_shared_state t
+       WHERE NOT EXISTS (SELECT 1 FROM public.spaces s WHERE s.id = t.workspace_id)
+      UNION ALL
+      SELECT 'seen_event', t.workspace_id FROM public.seen_event t
+       WHERE NOT EXISTS (SELECT 1 FROM public.spaces s WHERE s.id = t.workspace_id)
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # Files 01-22: the column exists as uuid NOT NULL with the DEFAULT that every deployed column-less INSERT
+  # relies on (README.md "Arming census"). A later step that drops the DEFAULT (Phase 5, after every writer
+  # names the column) edits this gate in its own push; its C-CONV pre-scan finds it by workspace_id.
+  - name: post_tenancykey_column_shape
+    sql: |
+      SELECT k.relname, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull,
+             pg_get_expr(d.adbin, d.adrelid) AS column_default
+        FROM (VALUES
+          -- BEGIN tenancykey tables
+          (1, 'locations', '5.3.13-tenancykey-001-locations', true),
+          (2, 'photos', '5.3.13-tenancykey-001-photos', true),
+          (3, 'inventory_items', '5.3.13-tenancykey-001-inventory-items', true),
+          (4, 'storage_location', '5.3.13-tenancykey-001-storage-location', true),
+          (5, 'preservation_log', '5.3.13-tenancykey-001-preservation-log', true),
+          (6, 'kitchen_batch', '5.3.13-tenancykey-001-kitchen-batch', true),
+          (7, 'pantry_item', '5.3.13-tenancykey-001-pantry-item', true),
+          (8, 'recipe', '5.3.13-tenancykey-001-recipe', true),
+          (9, 'tag', '5.3.13-tenancykey-001-tag', true),
+          (10, 'critter_state', '5.3.13-tenancykey-001-critter-state', true),
+          (11, 'findings', '5.3.13-tenancykey-001-findings', true),
+          (12, 'tasks', '5.3.13-tenancykey-001-tasks', true),
+          (13, 'event_batches', '5.3.13-tenancykey-001-event-batches', true),
+          (14, 'daily_plan', '5.3.13-tenancykey-001-daily-plan', true),
+          (15, 'favorites', '5.3.13-tenancykey-001-favorites', true),
+          (16, 'voice_alias', '5.3.13-tenancykey-001-voice-alias', true),
+          (17, 'proj_rescope_events', '5.3.13-tenancykey-001-proj-rescope-events', true),
+          (18, 'weather_cue_impression', '5.3.13-tenancykey-001-weather-cue-impression', true),
+          (19, 'cultivar_weight_sample', '5.3.13-tenancykey-001-cultivar-weight-sample', true),
+          (20, 'cultivar_weight_void', '5.3.13-tenancykey-001-cultivar-weight-void', true),
+          (21, 'source', '5.3.13-tenancykey-001-source', true),
+          (22, 'slug_redirects', '5.3.13-tenancykey-001-slug-redirects', true),
+          (23, 'treatment_association', '5.3.13-tenancykey-001-fk-treatment-association', false),
+          (24, 'garden_shared_state', '5.3.13-tenancykey-001-fk-garden-shared-state', false),
+          (25, 'seen_event', '5.3.13-tenancykey-001-fk-seen-event', false)
+          -- END tenancykey tables
+             ) AS k(n, relname, stamp, adds_column)
+        LEFT JOIN (pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace AND ns.nspname = 'public')
+               ON c.relname = k.relname
+        LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'workspace_id' AND NOT a.attisdropped
+        LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+       WHERE k.adds_column
+         AND EXISTS (SELECT 1 FROM public.schema_version sv WHERE sv.version = k.stamp)
+         AND (a.attname IS NULL
+              OR format_type(a.atttypid, NULL) <> 'uuid'
+              OR NOT a.attnotnull
+              OR pg_get_expr(d.adbin, d.adrelid) IS DISTINCT FROM '''00000000-0000-0000-0000-000000000001''::uuid')
+    expect: rowcount_eq
+    value: 0
+
+  # All 25: exactly one foreign key on <table>.workspace_id; it is <table>_workspace_id_fkey, single column, to
+  # public.spaces(id), ON DELETE RESTRICT. Single column is C-BLOCK (spaces_delete_guard reads single-column keys
+  # only; v5-spaceguard-001 post_foreign_keys_into_spaces_are_single_column_on_id); RESTRICT keeps
+  # v4-cascadesweep-001 and v4-evtanchordel-001 green. Validated or not is step 2.3's to assert.
+  - name: post_tenancykey_key_shape
+    sql: |
+      SELECT k.relname, x.total, x.good
+        FROM (VALUES
+          -- BEGIN tenancykey tables
+          (1, 'locations', '5.3.13-tenancykey-001-locations', true),
+          (2, 'photos', '5.3.13-tenancykey-001-photos', true),
+          (3, 'inventory_items', '5.3.13-tenancykey-001-inventory-items', true),
+          (4, 'storage_location', '5.3.13-tenancykey-001-storage-location', true),
+          (5, 'preservation_log', '5.3.13-tenancykey-001-preservation-log', true),
+          (6, 'kitchen_batch', '5.3.13-tenancykey-001-kitchen-batch', true),
+          (7, 'pantry_item', '5.3.13-tenancykey-001-pantry-item', true),
+          (8, 'recipe', '5.3.13-tenancykey-001-recipe', true),
+          (9, 'tag', '5.3.13-tenancykey-001-tag', true),
+          (10, 'critter_state', '5.3.13-tenancykey-001-critter-state', true),
+          (11, 'findings', '5.3.13-tenancykey-001-findings', true),
+          (12, 'tasks', '5.3.13-tenancykey-001-tasks', true),
+          (13, 'event_batches', '5.3.13-tenancykey-001-event-batches', true),
+          (14, 'daily_plan', '5.3.13-tenancykey-001-daily-plan', true),
+          (15, 'favorites', '5.3.13-tenancykey-001-favorites', true),
+          (16, 'voice_alias', '5.3.13-tenancykey-001-voice-alias', true),
+          (17, 'proj_rescope_events', '5.3.13-tenancykey-001-proj-rescope-events', true),
+          (18, 'weather_cue_impression', '5.3.13-tenancykey-001-weather-cue-impression', true),
+          (19, 'cultivar_weight_sample', '5.3.13-tenancykey-001-cultivar-weight-sample', true),
+          (20, 'cultivar_weight_void', '5.3.13-tenancykey-001-cultivar-weight-void', true),
+          (21, 'source', '5.3.13-tenancykey-001-source', true),
+          (22, 'slug_redirects', '5.3.13-tenancykey-001-slug-redirects', true),
+          (23, 'treatment_association', '5.3.13-tenancykey-001-fk-treatment-association', false),
+          (24, 'garden_shared_state', '5.3.13-tenancykey-001-fk-garden-shared-state', false),
+          (25, 'seen_event', '5.3.13-tenancykey-001-fk-seen-event', false)
+          -- END tenancykey tables
+             ) AS k(n, relname, stamp, adds_column)
+        CROSS JOIN LATERAL (
+          SELECT count(*) AS total,
+                 count(*) FILTER (WHERE c.conname = k.relname || '_workspace_id_fkey'
+                                    AND fn.nspname = 'public' AND f.relname = 'spaces'
+                                    AND c.confdeltype = 'r'
+                                    AND cardinality(c.conkey) = 1 AND cardinality(c.confkey) = 1
+                                    AND fa.attname = 'id') AS good
+            FROM pg_constraint c
+            JOIN pg_class r ON r.oid = c.conrelid
+            JOIN pg_namespace rn ON rn.oid = r.relnamespace
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+            JOIN pg_class f ON f.oid = c.confrelid
+            JOIN pg_namespace fn ON fn.oid = f.relnamespace
+            JOIN pg_attribute fa ON fa.attrelid = c.confrelid AND fa.attnum = c.confkey[1]
+           WHERE rn.nspname = 'public' AND r.relname = k.relname
+             AND c.contype = 'f' AND a.attname = 'workspace_id') x
+       WHERE EXISTS (SELECT 1 FROM public.schema_version sv WHERE sv.version = k.stamp)
+         AND (x.total <> 1 OR x.good <> 1)
+    expect: rowcount_eq
+    value: 0
+
+  # Armed on the OBJECT, not on the stamp: a workspace_id column on one of the 22, or a key of this
+  # directory's name on any of the 25, without its stamp means the gates above never armed for it (something
+  # other than this directory made it). Vacuous on a database with neither.
+  - name: post_tenancykey_objects_have_their_stamps
+    sql: |
+      WITH k (n, relname, stamp, adds_column) AS (
+        VALUES
+          -- BEGIN tenancykey tables
+          (1, 'locations', '5.3.13-tenancykey-001-locations', true),
+          (2, 'photos', '5.3.13-tenancykey-001-photos', true),
+          (3, 'inventory_items', '5.3.13-tenancykey-001-inventory-items', true),
+          (4, 'storage_location', '5.3.13-tenancykey-001-storage-location', true),
+          (5, 'preservation_log', '5.3.13-tenancykey-001-preservation-log', true),
+          (6, 'kitchen_batch', '5.3.13-tenancykey-001-kitchen-batch', true),
+          (7, 'pantry_item', '5.3.13-tenancykey-001-pantry-item', true),
+          (8, 'recipe', '5.3.13-tenancykey-001-recipe', true),
+          (9, 'tag', '5.3.13-tenancykey-001-tag', true),
+          (10, 'critter_state', '5.3.13-tenancykey-001-critter-state', true),
+          (11, 'findings', '5.3.13-tenancykey-001-findings', true),
+          (12, 'tasks', '5.3.13-tenancykey-001-tasks', true),
+          (13, 'event_batches', '5.3.13-tenancykey-001-event-batches', true),
+          (14, 'daily_plan', '5.3.13-tenancykey-001-daily-plan', true),
+          (15, 'favorites', '5.3.13-tenancykey-001-favorites', true),
+          (16, 'voice_alias', '5.3.13-tenancykey-001-voice-alias', true),
+          (17, 'proj_rescope_events', '5.3.13-tenancykey-001-proj-rescope-events', true),
+          (18, 'weather_cue_impression', '5.3.13-tenancykey-001-weather-cue-impression', true),
+          (19, 'cultivar_weight_sample', '5.3.13-tenancykey-001-cultivar-weight-sample', true),
+          (20, 'cultivar_weight_void', '5.3.13-tenancykey-001-cultivar-weight-void', true),
+          (21, 'source', '5.3.13-tenancykey-001-source', true),
+          (22, 'slug_redirects', '5.3.13-tenancykey-001-slug-redirects', true),
+          (23, 'treatment_association', '5.3.13-tenancykey-001-fk-treatment-association', false),
+          (24, 'garden_shared_state', '5.3.13-tenancykey-001-fk-garden-shared-state', false),
+          (25, 'seen_event', '5.3.13-tenancykey-001-fk-seen-event', false)
+          -- END tenancykey tables
+      )
+      SELECT k.relname, 'workspace_id column without its stamp' AS problem
+        FROM k
+        JOIN pg_class c ON c.relname = k.relname
+        JOIN pg_namespace ns ON ns.oid = c.relnamespace AND ns.nspname = 'public'
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'workspace_id' AND NOT a.attisdropped
+       WHERE k.adds_column
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version sv WHERE sv.version = k.stamp)
+      UNION ALL
+      SELECT k.relname, 'key without its stamp'
+        FROM k
+        JOIN pg_class c ON c.relname = k.relname
+        JOIN pg_namespace ns ON ns.oid = c.relnamespace AND ns.nspname = 'public'
+        JOIN pg_constraint x ON x.conrelid = c.oid AND x.conname = k.relname || '_workspace_id_fkey'
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version sv WHERE sv.version = k.stamp)
+    expect: rowcount_eq
+    value: 0

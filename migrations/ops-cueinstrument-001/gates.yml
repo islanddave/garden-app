@@ -109,11 +109,28 @@ post:
 
       The allowlist must stay NULL-free: `x NOT IN (…, NULL)` is NULL for every x, so a single NULL
       element would make this gate return zero rows against ANY table shape and go vacuously green.
+
+      TOLERANT FORM, 2026-10-20 (V5-SPACETENANCYKEY-001, multi-space step 2.1, file
+      migrations/v5-tenancykey-001/18-weather-cue-impression.sql). The cue gains workspace_id, the
+      Space it was shown in. The intended set is the eight plus workspace_id once that file's stamp
+      5.3.13-tenancykey-001-weather-cue-impression exists, and the eight alone before it: so the
+      gate is green before and after the apply, a workspace_id without the stamp still reds, and
+      after the stamp a MISSING workspace_id reds too (second arm), which makes the set exact again.
     sql: |
-      SELECT column_name FROM information_schema.columns
+      SELECT column_name::text FROM information_schema.columns
        WHERE table_schema='public' AND table_name='weather_cue_impression'
          AND column_name NOT IN ('id','user_id','shown_on','cue','form','model_version',
                                  'plan_generated_at','created_at')
+         AND NOT (column_name = 'workspace_id'
+                  AND EXISTS (SELECT 1 FROM public.schema_version
+                               WHERE version = '5.3.13-tenancykey-001-weather-cue-impression'))
+      UNION ALL
+      SELECT 'workspace_id (missing)'
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.3.13-tenancykey-001-weather-cue-impression')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='weather_cue_impression'
+                            AND column_name = 'workspace_id')
     expect: rowcount_eq
     value: 0
     continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)
@@ -193,9 +210,40 @@ post:
     note: >
       Deliberate. Deviation 1 in 0a: the cue is garden-wide and names no planting, so there is no
       honest FK target. An FK appearing here means someone added an invented plant_id.
+
+      TOLERANT FORM, 2026-10-20 (V5-SPACETENANCYKEY-001, multi-space step 2.1). "Garden-wide" is
+      now "Space-wide", and the Space is an honest target: migrations/v5-tenancykey-001/
+      18-weather-cue-impression.sql adds weather_cue_impression_workspace_id_fkey (workspace_id ->
+      spaces(id), ON DELETE RESTRICT, single column). Once its stamp
+      5.3.13-tenancykey-001-weather-cue-impression exists that one key, in exactly that shape, is
+      the only FK allowed, and it must exist (second arm); before the stamp no FK is allowed, as
+      before. Any other FK still reds, named. Catalog joins, not ::regclass.
     sql: |
-      SELECT 1 FROM pg_constraint
-       WHERE conrelid='public.weather_cue_impression'::regclass AND contype='f'
+      SELECT c.conname::text
+        FROM pg_constraint c
+        JOIN pg_class r ON r.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = r.relnamespace
+        LEFT JOIN pg_class f ON f.oid = c.confrelid
+        LEFT JOIN pg_namespace fn ON fn.oid = f.relnamespace
+        LEFT JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+        LEFT JOIN pg_attribute fa ON fa.attrelid = c.confrelid AND fa.attnum = c.confkey[1]
+       WHERE n.nspname = 'public' AND r.relname = 'weather_cue_impression' AND c.contype = 'f'
+         AND NOT (c.conname = 'weather_cue_impression_workspace_id_fkey'
+                  AND cardinality(c.conkey) = 1 AND a.attname = 'workspace_id'
+                  AND fn.nspname = 'public' AND f.relname = 'spaces' AND fa.attname = 'id'
+                  AND c.confdeltype = 'r'
+                  AND EXISTS (SELECT 1 FROM public.schema_version
+                               WHERE version = '5.3.13-tenancykey-001-weather-cue-impression'))
+      UNION ALL
+      SELECT 'weather_cue_impression_workspace_id_fkey (missing)'
+       WHERE EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '5.3.13-tenancykey-001-weather-cue-impression')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class r ON r.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = r.relnamespace
+                          WHERE n.nspname = 'public' AND r.relname = 'weather_cue_impression'
+                            AND c.contype = 'f' AND c.conname = 'weather_cue_impression_workspace_id_fkey')
     expect: rowcount_eq
     value: 0
     continuous: true    # flipped 2026-09-02 — prod apply landed (receipt 5.0.0-cueinstrument-20260902)

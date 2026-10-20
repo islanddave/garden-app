@@ -1,0 +1,176 @@
+{
+  "_doc": [
+    "Owner classes for v5-tenancykey-001 (V5-SPACETENANCYKEY-001, multi-space plan V204 step 2.1): who may own a row in each table that gains workspace_id.",
+    "Every SQL file of this directory refuses, changing nothing, if any distinct owner value of any row (soft-deleted included) of its table is not in the running env's section. The files embed this file: generate.mjs writes them and tenancykey.test.js holds them equal.",
+    "classes: match is 'exact' (value = owner), 'like' (owner LIKE value; every _ is escaped as \\_ because LIKE reads a bare _ as any one character) or 'null' (owner IS NULL). envs lists the sections a class is in; tables, when given, limits it to those tables.",
+    "tables: one SQL file per row, in order (n). owner names the column(s) read; parent names a join where the table has no owner column. fkOnly: the table already has workspace_id; the file adds the key only and its guard is that every row names a Space.",
+    "fingerprint: a schema_version stamp only that env carries, and one only the other env carries. A file run with the wrong -v env on a database refuses.",
+    "Built from a read-only census of prod and staging, 2026-10-20 ~14:00Z (lane log lanes-p2/2.1.log). The sitting's step 0 re-runs it (README.md, 'Sitting')."
+  ],
+  "ledger": "V5-SPACETENANCYKEY-001",
+  "step": "2.1",
+  "stampPrefix": "5.3.13-tenancykey-001-",
+  "space": "00000000-0000-0000-0000-000000000001",
+  "fingerprint": {
+    "prod": { "present": "4.0.0-pot-001", "absent": "4.23.9-cascadesweep-001-rollback" },
+    "staging": { "present": "4.23.9-cascadesweep-001-rollback", "absent": "4.0.0-pot-001" }
+  },
+  "classes": [
+    {
+      "id": "dave",
+      "match": "exact",
+      "value": "user_3D2gM0hIl03gjW3JM2DjtPzm0jI",
+      "envs": ["prod", "staging"],
+      "reason": "Dave, the one Space's owner: spaces.created_by of ...0001 on both envs. Owns rows in every table that has rows on prod."
+    },
+    {
+      "id": "jen",
+      "match": "exact",
+      "value": "user_3E2xA85kQhr1vSZhiv4W1GLudJV",
+      "envs": ["prod", "staging"],
+      "reason": "Jen, the household's second member: prod user_notification_prefs holds exactly Dave and her. Prod rows in critter_state, daily_plan, event_batches, favorites; none on staging today."
+    },
+    {
+      "id": "system",
+      "match": "exact",
+      "value": "system",
+      "envs": ["prod", "staging"],
+      "reason": "The literal system owner: tag.owner_id on every row, tag.created_by and source.created_by for seeded catalog rows; also the first managed-principal pattern of lambda/varieties/authz.js (MANAGED_PRINCIPAL_PATTERNS)."
+    },
+    {
+      "id": "system_clerk_sub",
+      "match": "exact",
+      "value": "user_3D7uvqWjyxdq3jgVwTZs0mKT7Xd",
+      "envs": ["prod", "staging"],
+      "reason": "SYSTEM_CLERK_SUB, the daily-plan run's own actor (lambda/daily-plan/handler.js default; recon B read the Lambda's env equal to it). No row in these tables today; listed because the plan names it and the hourly run may write one."
+    },
+    {
+      "id": "dave_dev",
+      "match": "exact",
+      "value": "user_3CxBEbOgG0fmeGmB6D0ohTju0wv",
+      "envs": ["prod", "staging"],
+      "reason": "Dave's dev-Clerk sub, the staging smoke account: staging rows in cultivar_weight_sample, favorites, inventory_items, locations, photos, source; on prod 2 soft-deleted locations rows (history, not debris)."
+    },
+    {
+      "id": "managed_rescue_intake",
+      "match": "like",
+      "value": "rescue-intake-%",
+      "envs": ["prod", "staging"],
+      "reason": "Managed principal (lambda/varieties/authz.js MANAGED_PRINCIPAL_PATTERNS): intake batches. Prod tag.created_by rescue-intake-longriver-20260712, 8 rows."
+    },
+    {
+      "id": "managed_data_audit",
+      "match": "like",
+      "value": "data-audit-%",
+      "envs": ["prod", "staging"],
+      "reason": "Managed principal (lambda/varieties/authz.js MANAGED_PRINCIPAL_PATTERNS): data-audit migrations. No row in these tables today."
+    },
+    {
+      "id": "managed_data_correction",
+      "match": "like",
+      "value": "data-correction-%",
+      "envs": ["prod", "staging"],
+      "reason": "Managed principal (lambda/varieties/authz.js MANAGED_PRINCIPAL_PATTERNS): data-correction migrations. No row in these tables today."
+    },
+    {
+      "id": "pipeline_cal1_seed",
+      "match": "exact",
+      "value": "cal1-seed",
+      "envs": ["prod", "staging"],
+      "reason": "Pipeline label (recon B section 3 #5): the CAL-1 seed load of cultivar_weight_sample, 9 prod rows."
+    },
+    {
+      "id": "pipeline_harvweightest",
+      "match": "exact",
+      "value": "migration:v4-harvweightest-001",
+      "envs": ["prod", "staging"],
+      "reason": "Pipeline label (recon B section 3 #5): migration v4-harvweightest-001, 4 prod rows each in cultivar_weight_sample and cultivar_weight_void."
+    },
+    {
+      "id": "pipeline_res008",
+      "match": "exact",
+      "value": "res008-backfill",
+      "envs": ["prod", "staging"],
+      "reason": "Pipeline label (recon B section 3 #5): the RES-008 backfill, 3 prod cultivar_weight_void rows."
+    },
+    {
+      "id": "pipeline_mainsync13",
+      "match": "exact",
+      "value": "agent:mainsync13-20260928",
+      "envs": ["prod", "staging"],
+      "reason": "Pipeline label (recon B section 3 #5): an agent correction of 2026-09-28, 1 prod cultivar_weight_void row."
+    },
+    {
+      "id": "integration_fixture",
+      "match": "like",
+      "value": "%int-test-%",
+      "envs": ["staging"],
+      "reason": "Integration fixture identities (tests/integration/_harness.js testRunId: int-test-<ms>-<base36>, the marker tests/integration/_cleanup.js sweeps). They belong on CI's throwaway branches of staging; a leak onto staging itself (BUG-INTFIXTURELEAK-001) carries this marker. Never prod. None on staging today."
+    },
+    {
+      "id": "staging_null_location_owner",
+      "match": "null",
+      "envs": ["staging"],
+      "tables": ["locations"],
+      "reason": "Staging locations created with no owner: 11 rows with created_by NULL (recon B section 3 #5; re-read 2026-10-20). Staging only: every prod locations row has an owner."
+    }
+  ],
+  "tables": [
+    { "n": 1, "table": "locations", "owner": ["created_by"] },
+    { "n": 2, "table": "photos", "owner": ["created_by"], "note": "space_id stays the attachment parent; workspace_id is the row's Space." },
+    { "n": 3, "table": "inventory_items", "owner": ["user_id", "created_by"] },
+    { "n": 4, "table": "storage_location", "owner": ["user_id"] },
+    { "n": 5, "table": "preservation_log", "owner": ["user_id"] },
+    { "n": 6, "table": "kitchen_batch", "owner": ["user_id"] },
+    { "n": 7, "table": "pantry_item", "owner": ["user_id"] },
+    { "n": 8, "table": "recipe", "owner": ["user_id"] },
+    { "n": 9, "table": "tag", "owner": ["owner_id", "created_by"] },
+    { "n": 10, "table": "critter_state", "owner": ["created_by"] },
+    {
+      "n": 11,
+      "table": "findings",
+      "owner": [],
+      "parent": {
+        "label": "garden_node_id->plants.created_by",
+        "from": "public.findings t LEFT JOIN public.plants p ON p.id = t.garden_node_id",
+        "value": "p.created_by"
+      },
+      "note": "No owner column: a finding is its planting's (garden_node_id NOT NULL, FK plants ON DELETE RESTRICT)."
+    },
+    { "n": 12, "table": "tasks", "owner": ["created_by"] },
+    { "n": 13, "table": "event_batches", "owner": ["created_by"] },
+    { "n": 14, "table": "daily_plan", "owner": ["user_id"] },
+    { "n": 15, "table": "favorites", "owner": ["user_id"] },
+    { "n": 16, "table": "voice_alias", "owner": ["user_id"] },
+    { "n": 17, "table": "proj_rescope_events", "owner": ["actor"], "note": "No created_by: actor is who ran the rescope." },
+    { "n": 18, "table": "weather_cue_impression", "owner": ["user_id"] },
+    { "n": 19, "table": "cultivar_weight_sample", "owner": ["created_by"] },
+    { "n": 20, "table": "cultivar_weight_void", "owner": ["created_by"] },
+    {
+      "n": 21,
+      "table": "source",
+      "owner": ["created_by"],
+      "auditWatch": {
+        "trigger": "trg_audit_source_upd",
+        "before": ["name", "kind", "locality", "address", "website_url", "notes", "created_by", "created_at", "deleted_at", "instagram_url", "facebook_url"],
+        "beforeMd5": "6680e278331fbcc28bbb5242b10a2f35",
+        "afterMd5": "109d579db13a5f4b329bf2b60dd3c1d4",
+        "reason": "v5-sourceentity-001 post_audit_update_watches_every_mutable_column requires every source column but id, match_key and updated_at in this trigger's watched list, so that no column is editable without history. workspace_id is mutable (a later Space move writes it), so it is watched, as v5-sourcecontact-001 did for its two columns. Re-created in the same transaction as the column, behind a definition pre-gate: the md5 of the trigger's catalog fingerprint (type, enabled, function, transition tables, arguments) read on prod and staging 2026-10-20."
+      }
+    },
+    {
+      "n": 22,
+      "table": "slug_redirects",
+      "owner": [],
+      "parent": {
+        "label": "target->created_by",
+        "from": "public.slug_redirects t LEFT JOIN public.plant_projects pp ON t.target_entity_type = 'project' AND pp.id = t.target_entity_id LEFT JOIN public.plant_varieties pv ON t.target_entity_type = 'variety' AND pv.id = t.target_entity_id LEFT JOIN public.plants g ON t.target_entity_type = 'planting' AND g.id = t.target_entity_id",
+        "value": "CASE t.target_entity_type WHEN 'project' THEN pp.created_by WHEN 'variety' THEN pv.created_by WHEN 'planting' THEN g.created_by END"
+      },
+      "note": "No owner column: a redirect is its target's (target_entity_type project, variety or planting). An 'archived' target or a missing target has no owner and refuses."
+    },
+    { "n": 23, "table": "treatment_association", "fkOnly": true },
+    { "n": 24, "table": "garden_shared_state", "fkOnly": true },
+    { "n": 25, "table": "seen_event", "fkOnly": true }
+  ]
+}
