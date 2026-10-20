@@ -99,12 +99,17 @@ describe('owner-classes.json keeps its own rules', () => {
     ['a class with no reason', (o) => { o.classes[0].reason = '' }, /needs a reason/],
     ['NULL allowed on prod', (o) => { o.classes.find((c) => c.match === 'null').envs = ['prod', 'staging'] }, /staging locations only/],
     ['a test-sub pattern on prod', (o) => { o.classes.find((c) => c.id === 'integration_fixture').envs.push('prod') }, /staging only/],
-    ['an S needs key table forgotten', (o) => { o.tables = o.tables.filter((t) => t.table !== 'tag') }, /public\.tag: 'S needs key'/],
+    // The class file is cloned and tag set back to 'S needs key', so this control holds before and after push B.
+    ['an S needs key table forgotten', (o, c) => {
+      o.tables = o.tables.filter((t) => t.table !== 'tag').map((t, i) => ({ ...t, n: i + 1 }))
+      c.relations['public.tag'] = { kind: 'r', class: 'S needs key' }
+    }, /public\.tag: 'S needs key'/],
     ['a table that is not S', (o) => { o.tables[0].table = 'xp_events' }, /xp_events/],
   ])('control: %s reds', (_label, mutate, pattern) => {
     const o = clone(oc)
-    mutate(o)
-    expect(ownerClassErrors(o, classes).join('\n')).toMatch(pattern)
+    const c = clone(classes)
+    mutate(o, c)
+    expect(ownerClassErrors(o, c).join('\n')).toMatch(pattern)
   })
 
   it('after the apply (push B) a key-adding row may read S has key on workspace_id', () => {
