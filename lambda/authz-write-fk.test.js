@@ -493,6 +493,11 @@ const NOT_IN_SITES = [
   'plants::target_id',          // UPDATE critter_state/treatment_association (cf. events::target_id)
   'plants::op_id',              // text idempotency key, no FK at all (cf. projects::op_id)
   'plants::workspace_id',       // copied off the winner's own row (cf. projects::workspace_id)
+  // V5-SPACETENANCYKEY-001 2.2 (parent-derived stamps) — recipe.workspace_id (recipeRoutes.js fromBatch) and
+  // preservation_log.workspace_id (kitchenRoutes.js putUp). NOT body-settable: each is a column copied in SQL off
+  // the parent row the same statement reads under the household predicate (the batch `b`, joined to kitchen_batch;
+  // the `gate` row the put-up's own UPDATE returned). No request key reaches either.
+  'preservation::workspace_id',
   // V4-OVERWINTERCARE-001 — care_profile.scope_id, written by setOverwinterCore (plants/
   // overwinterAttr.js) at scope='leaf'. Not body-settable: the value is the ROUTE's path segment,
   // and the body carries only a regime string and two MM-DD dates, all of which are validated

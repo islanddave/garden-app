@@ -370,6 +370,11 @@ const EXPECTED_CONTAINER_READERS = [
   { key: 'projects/index.js :: read t.workspace_id -> tgt (cte tgt)', stmt: 'insert into reparent_event' },
   { key: 'daily-plan/handler.js :: read c.workspace_id -> container',
     stmt: 'from event_log e left join garden_node n on n.id = e.plant_id' },
+  // V5-SPACETENANCYKEY-001 2.2 (parent-derived stamps): the admin-classify audit row takes its project's Space, read
+  // in the pre CTE with the pre-image and copied into proj_rescope_events, as reparentCore copies it into
+  // reparent_event. Reviewed: a copy of the row's own Space, never a request value.
+  { key: 'projects/index.js :: read workspace_id -> container', stmt: 'insert into proj_rescope_events' },
+  { key: 'projects/index.js :: read workspace_id -> pre (cte pre)', stmt: 'insert into proj_rescope_events' },
 ];
 
 const REAL = census(SRC);
@@ -399,7 +404,7 @@ describe('V5-SPACESENTINELDOC-001 — who reads a container\'s workspace_id', ()
     expect(bad.map((r) => `${r.file}:${r.line} ${r.ref} [${r.rel}]`)).toEqual([]);
   });
 
-  it('the readers of a container\'s workspace_id are exactly the reparent copy and the rain cap', () => {
+  it('the readers of a container\'s workspace_id are exactly the reparent copy, the rescope audit copy and the rain cap', () => {
     const got = containerReaders(REAL);
     // Re-pinned here (and in the migration README): the lines this run found.
     const where = got.map((r) => `${key(r)} @ ${r.file}:${r.line}`);
