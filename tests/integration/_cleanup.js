@@ -235,6 +235,11 @@ const STEPS = [
   ['weather_daily',               `DELETE FROM weather_daily WHERE space_id IN (${NS_SPACES})`],
   ['weather_cold_range',          `DELETE FROM weather_cold_range WHERE space_id IN (${NS_SPACES})`],
   ['spacetheme',                  `DELETE FROM spacetheme WHERE space_id IN (${NS_SPACES})`],
+  // V5-SPACEPLOTTIER-001 (multi-space 3.2d): a fixture Space with weather has a default plot, because every weather
+  // row names one (plot_id NOT NULL, (plot_id, space_id) a key into plots). plots.workspace_id is RESTRICT into
+  // spaces and plots_delete_guard refuses a plot any weather row names, so: weather (above), plots, then spaces.
+  // Skipped on a fork without the table.
+  ['plots',                       `DELETE FROM plots WHERE workspace_id IN (${NS_SPACES})`],
   ['spaces',                      `DELETE FROM spaces WHERE created_by LIKE ${NS} OR name LIKE ${NS}`],
   // Side-effect / telemetry tables. NONE of these were torn down by any test file before this fix —
   // they leaked on every single run (audit_events, rate_limit_buckets, event_batches, critter_state).
@@ -368,11 +373,12 @@ export async function countFixtureResidue(sql) {
     ['recipe_type', `user_id LIKE ${NS}`],
     // V4-SPACESOFTDEL-001 (multi-space 1.3a). Once spaces_delete_guard is on the fork, a Space whose children
     // were not swept first is REFUSED, not deleted, and the sweep only logs that. Without these probes the
-    // leak would leave the run green. The three child probes name which table held the Space back.
+    // leak would leave the run green. The child probes name which table held the Space back (plots: 3.2d).
     ['spaces', `created_by LIKE ${NS} OR name LIKE ${NS}`],
     ['weather_daily', `space_id IN (${NS_SPACES})`],
     ['weather_cold_range', `space_id IN (${NS_SPACES})`],
     ['spacetheme', `space_id IN (${NS_SPACES})`],
+    ['plots', `workspace_id IN (${NS_SPACES})`],
   ]
   const out = {}
   let total = 0

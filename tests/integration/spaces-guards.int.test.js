@@ -17,7 +17,8 @@
 //     shape that reaches it (value to value, to NULL, from NULL, ON CONFLICT DO UPDATE, several rows), and
 //     passes when the triple is unchanged or the Space has no weather.
 //   * 1.3b: a Space whose only child is one row of any referencing table refuses to delete (P0001,
-//     spaces_delete_guard, naming the table) and keeps its child; a childless Space deletes; TRUNCATE of
+//     spaces_delete_guard, naming the table) and keeps its child (a weather row comes with the default plot it
+//     names from multi-space 3.2d, so that chain is asserted link by link); a childless Space deletes; TRUNCATE of
 //     either weather table refuses. The TRUNCATE runs in a transaction that is forced to roll back, so even a
 //     missing guard empties nothing. TRUNCATE ... CASCADE and DROP COLUMN are rehearsal-only (they lock
 //     tables other files are using).
@@ -87,11 +88,31 @@ async function newSpace(label, { lat = null, lng = null, zip = null } = {}) {
     VALUES (${`int-spaceguard-${label}-${RUN}`}, ${USER}, ${lat}, ${lng}, ${zip}) RETURNING id`
   return rows[0].id
 }
-const addWeather = (spaceId) => directSql`
-  INSERT INTO weather_daily (space_id, date, tmax_f, tmin_f, precip_in) VALUES (${spaceId}, '2001-06-01', 80, 60, 0.1)`
-const addColdRange = (spaceId) => directSql`
-  INSERT INTO weather_cold_range (space_id, night_date, init_time, p10_min_f, leads_read, leads_expected)
-  VALUES (${spaceId}, '2001-10-01', '2001-10-01T00:00:00Z', 30, 15, 15)`
+// V5-SPACEPLOTTIER-001 (multi-space 3.2d): a weather row names its Space's default plot. (plot_id, space_id) is a key
+// into plots (migrations/v5-wxplotid-001) and plot_id is NOT NULL from migrations/v5-wxplotnotnull-001, so the Space
+// gets its default plot first, made the way 3.1 made Plot 1: from the Space's own place, so the two agree. The row
+// stamps it the way the deployed writers do (lambda/daily-plan/handler.js writeWeatherDaily): the Space's live
+// default plot, read from the same Space id.
+const ensureDefaultPlot = (spaceId) => directSql`
+  INSERT INTO plots (workspace_id, name, postal_code, lat, lng, timezone, is_default, created_by)
+  SELECT s.id, s.name, s.postal_code, s.weather_lat, s.weather_lng, 'America/New_York', true, s.created_by
+    FROM spaces s
+   WHERE s.id = ${spaceId}
+     AND NOT EXISTS (SELECT 1 FROM plots p WHERE p.workspace_id = s.id AND p.is_default AND p.deleted_at IS NULL)`
+const addWeather = async (spaceId) => {
+  await ensureDefaultPlot(spaceId)
+  return directSql`
+  INSERT INTO weather_daily (space_id, plot_id, date, tmax_f, tmin_f, precip_in)
+  VALUES (${spaceId}, (SELECT p.id FROM plots p WHERE p.workspace_id = ${spaceId} AND p.is_default AND p.deleted_at IS NULL),
+          '2001-06-01', 80, 60, 0.1)`
+}
+const addColdRange = async (spaceId) => {
+  await ensureDefaultPlot(spaceId)
+  return directSql`
+  INSERT INTO weather_cold_range (space_id, plot_id, night_date, init_time, p10_min_f, leads_read, leads_expected)
+  VALUES (${spaceId}, (SELECT p.id FROM plots p WHERE p.workspace_id = ${spaceId} AND p.is_default AND p.deleted_at IS NULL),
+          '2001-10-01', '2001-10-01T00:00:00Z', 30, 15, 15)`
+}
 
 // The error a statement raised, as { code, message }; null when it did not raise.
 async function errorOf(promise) {
@@ -128,6 +149,8 @@ describe.skipIf(!APPLIED)('spaces guards and audit (v5-spaceguard-001)', () => {
       async () => { for (const { id } of await mine()) await directSql`DELETE FROM weather_daily WHERE space_id = ${id}` },
       async () => { for (const { id } of await mine()) await directSql`DELETE FROM weather_cold_range WHERE space_id = ${id}` },
       async () => { for (const { id } of await mine()) await directSql`DELETE FROM spacetheme WHERE space_id = ${id}` },
+      // The default plots the weather rows name (plots_delete_guard refuses while weather names one, so after them).
+      async () => { for (const { id } of await mine()) await directSql`DELETE FROM plots WHERE workspace_id = ${id}` },
       () => directSql`DELETE FROM spaces WHERE created_by = ${USER}`,
     ])
     expect(failed, 'spaces-guards teardown steps failed').toEqual([])
@@ -284,8 +307,32 @@ describe.skipIf(!APPLIED)('spaces guards and audit (v5-spaceguard-001)', () => {
       expect((await directSql(`SELECT count(*)::int AS n FROM public.${table} WHERE space_id = $1`, [id]))[0].n).toBe(1)
     }
 
-    it('only child a weather_daily row: refused, both kept', onlyChild('weather_daily', addWeather))
-    it('only child a weather_cold_range row: refused, both kept', onlyChild('weather_cold_range', addColdRange))
+    // From 3.2d a weather row is never a Space's only child: it names the Space's default plot, which names the
+    // Space. So the chain is asserted link by link: the plot refuses to go while the weather row names it
+    // (plots_delete_guard, naming the weather table), and the Space refuses to go while its plot names it
+    // (spaces_delete_guard reads its children in table-name order, so it names plots). Nothing is deleted.
+    const weatherChild = (table, add) => async () => {
+      const id = await newSpace(`only-${table}`)
+      await add(id)
+      const plots = await directSql`SELECT id FROM plots WHERE workspace_id = ${id}`
+      expect(plots).toHaveLength(1)
+      const p = await errorOf(directSql`DELETE FROM plots WHERE id = ${plots[0].id}`)
+      expect(p?.code).toBe('P0001')
+      expect(p?.message).toMatch(/^plots_delete_guard: /)
+      expect(p?.message).toContain(`public.${table}`)
+      const e = await errorOf(directSql`DELETE FROM spaces WHERE id = ${id}`)
+      expect(e?.code).toBe('P0001')
+      expect(e?.message).toMatch(/^spaces_delete_guard: /)
+      expect(e?.message).toContain('public.plots')
+      expect((await directSql`SELECT count(*)::int AS n FROM spaces WHERE id = ${id}`)[0].n).toBe(1)
+      expect((await directSql`SELECT count(*)::int AS n FROM plots WHERE workspace_id = ${id}`)[0].n).toBe(1)
+      expect((await directSql(`SELECT count(*)::int AS n FROM public.${table} WHERE space_id = $1`, [id]))[0].n).toBe(1)
+    }
+
+    it('a weather_daily row and the default plot it names: the plot and the Space each refuse, all kept',
+      weatherChild('weather_daily', addWeather))
+    it('a weather_cold_range row and the default plot it names: the plot and the Space each refuse, all kept',
+      weatherChild('weather_cold_range', addColdRange))
     it('only child a spacetheme row: refused, both kept',
       onlyChild('spacetheme', (id) => directSql`INSERT INTO spacetheme (space_id) VALUES (${id})`))
     it('only child a photo: refused by the guard before the RESTRICT key', onlyChild('photos', (id) => directSql`

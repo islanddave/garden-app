@@ -1,0 +1,249 @@
+# gates.yml
+# v5-wxplotnotnull-001: V5-SPACEPLOTTIER-001 (multi-space Phase 3 step 3.2d, the weather plot key validated and
+# plot_id NOT NULL). Two files, two stamps: 5.3.14-wxplotnotnull-001-weather-daily (0a) and
+# 5.3.14-wxplotnotnull-001-weather-cold-range (0b). README.md has the sitting order, the writers and why.
+#
+# ANY pre/sweep/post assertion failing during a sitting is a HARD ABORT. A sitting for ONE file reads that file's
+# gates (the `note` of each says which); once 0a is applied, pre_weather_daily_not_already_applied is red by design.
+#
+# ── THE PHASES, IN SITTING ORDER ─────────────────────────────────────────────────────────────────────
+#   pre    BEFORE the backfill re-run. The precondition V204 names ("the newest rows after 3.2b/c carry plot_id")
+#          can only be read before the backfill: afterwards every row carries a plot whoever wrote it.
+#   sweep  AFTER the backfill re-run, right before the file: the all-row sweep (no deleted_at filter, L-058).
+#   post   self-armed on each table's own stamp.
+#
+# ── EVERY post GATE IS SELF-ARMING AND CATALOG-ONLY ──────────────────────────────────────────────────
+#   gate-invariants runs `--all --phase post --continuous-only` on live prod and staging with no skip-if-unapplied
+#   logic: each post gate returns rows only when its table's stamp exists and the invariant is broken (the recorder,
+#   post_schema_version_recorded, is armed on the DDL instead). No `::regclass`. The pre and sweep gates read rows
+#   through query_to_xml inside a CASE on 3.2a's stamp (the v5-wxplotid-001 idiom), so a database without plot_id
+#   reads them vacuously instead of raising 42703.
+#
+# REHEARSED on a throwaway local PostgreSQL 17.10 loaded with prod's schema and a read-only copy of its weather rows
+# (rehearse_local.py). Not run against staging or prod as an applied migration.
+
+pre:
+  - name: pre_weather_daily_not_already_applied
+    note: >
+      0a's sitting. continuous false: false by design once 0a runs.
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.3.14-wxplotnotnull-001-weather-daily'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_weather_cold_range_not_already_applied
+    note: >
+      0b's sitting. continuous false: false by design once 0b runs.
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.3.14-wxplotnotnull-001-weather-cold-range'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_wxplotid_applied
+    note: >
+      Both sittings. v5-wxplotid-001 (3.2a): its stamp, plot_id on both tables, both plot keys. One row per missing
+      piece.
+    sql: |
+      SELECT 'stamp 5.3.12-wxplotid-001'
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+      UNION ALL
+      SELECT 'column ' || want.relname || '.plot_id'
+        FROM (VALUES ('weather_daily'), ('weather_cold_range')) AS want(relname)
+       WHERE NOT EXISTS (SELECT 1 FROM pg_attribute a
+                           JOIN pg_class t     ON t.oid = a.attrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = want.relname AND a.attname = 'plot_id' AND NOT a.attisdropped)
+      UNION ALL
+      SELECT 'key ' || want.conname
+        FROM (VALUES ('weather_daily', 'weather_daily_plot_id_space_id_fkey'),
+                     ('weather_cold_range', 'weather_cold_range_plot_id_space_id_fkey')) AS want(relname, conname)
+       WHERE NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = want.relname AND c.conname = want.conname AND c.contype = 'f')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_cold_range_writer_holds_plot_id
+    note: >
+      0b's sitting. 3.2c is recorded (stamp 5.3.14-wxwriterplot-001) and garden_wx_writer holds INSERT on
+      weather_cold_range.plot_id: without it the job cannot write a row once plot_id is NOT NULL.
+    sql: |
+      SELECT 'stamp 5.3.14-wxwriterplot-001'
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.14-wxwriterplot-001')
+      UNION ALL
+      SELECT 'garden_wx_writer INSERT on weather_cold_range.plot_id'
+       WHERE NOT EXISTS (SELECT 1 FROM pg_roles r, pg_attribute a
+                           JOIN pg_class t     ON t.oid = a.attrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE r.rolname = 'garden_wx_writer' AND t.relname = 'weather_cold_range'
+                            AND a.attname = 'plot_id' AND NOT a.attisdropped
+                            AND has_column_privilege(r.oid, t.oid, a.attnum, 'INSERT'))
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # V204 row 3.2d's precondition, per table. READ BEFORE THE BACKFILL RE-RUN (header). A row here: the newest row a
+  # deployed writer wrote has no plot, so that writer still sends none and NOT NULL would refuse its next row. No
+  # row at all in the table passes (staging's weather_daily: NO_EVIDENCE, nothing to refuse).
+  - name: pre_newest_weather_daily_row_carries_plot_id
+    note: >
+      0a's sitting, step 1. The newest row by updated_at (the hourly writer re-upserts D-2 and D-1 every run, so this
+      is its latest write). Red until 3.2b (v5.3.13) is live; prod read 2026-10-21: green.
+    sql: |
+      SELECT x::text
+        FROM unnest(CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+                         THEN xpath('/table/row/v/text()', query_to_xml(
+                                'SELECT ''weather_daily '' || w."date"::text || '' (updated '' || w.updated_at::text '
+                                '       || '') has no plot_id'' AS v '
+                                '  FROM (SELECT * FROM public.weather_daily ORDER BY updated_at DESC, "date" DESC '
+                                '         LIMIT 1) w '
+                                ' WHERE w.plot_id IS NULL',
+                                false, false, ''))
+                         ELSE ARRAY[]::xml[] END) AS x
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_newest_cold_range_row_carries_plot_id
+    note: >
+      0b's sitting, step 1. The newest row by created_at: the last night the job sent. Red until the job is switched
+      (3.2c) and has sent one night; prod read 2026-10-21: red (nights 2026-10-20 and 2026-10-21 have no plot).
+    sql: |
+      SELECT x::text
+        FROM unnest(CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+                         THEN xpath('/table/row/v/text()', query_to_xml(
+                                'SELECT ''weather_cold_range '' || c.night_date::text || '' (sent '' '
+                                '       || c.created_at::text || '') has no plot_id'' AS v '
+                                '  FROM (SELECT * FROM public.weather_cold_range ORDER BY created_at DESC, '
+                                '               night_date DESC LIMIT 1) c '
+                                ' WHERE c.plot_id IS NULL',
+                                false, false, ''))
+                         ELSE ARRAY[]::xml[] END) AS x
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_helper_check_names_free
+    note: >
+      Both sittings. Each file adds and drops <table>_plot_id_not_null_chk; its step 0 refuses the same thing.
+    sql: |
+      SELECT c.conname::text FROM pg_constraint c
+       WHERE c.conname IN ('weather_daily_plot_id_not_null_chk', 'weather_cold_range_plot_id_not_null_chk')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+sweep:
+  # AFTER the backfill re-run (migrations/v5-wxplotid-001/0a-wxplotid.sql), right before the file. Every row, no
+  # deleted_at filter (the tables have none, and a key does not know what a soft delete is: L-058). Each file's step 0
+  # runs the same sweep again inside its transaction.
+  - name: sweep_no_null_plot_id
+    note: >
+      One row per table with rows that have no plot_id, with the count. A 0b-only sitting reads the
+      weather_cold_range row.
+    sql: |
+      SELECT x::text
+        FROM unnest(CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+                         THEN xpath('/table/row/v/text()', query_to_xml(
+                                'SELECT ''weather_daily: '' || count(*) || '' row(s) without plot_id'' AS v '
+                                '  FROM public.weather_daily w WHERE w.plot_id IS NULL HAVING count(*) > 0 '
+                                'UNION ALL '
+                                'SELECT ''weather_cold_range: '' || count(*) || '' row(s) without plot_id'' '
+                                '  FROM public.weather_cold_range c WHERE c.plot_id IS NULL HAVING count(*) > 0',
+                                false, false, ''))
+                         ELSE ARRAY[]::xml[] END) AS x
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: sweep_no_cross_space_pair
+    note: >
+      One row per weather row whose (plot_id, space_id) is not a plot of that Space: VALIDATE would raise 23503 on it.
+      Only a write past the key can leave one (triggers off).
+    sql: |
+      SELECT x::text
+        FROM unnest(CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.12-wxplotid-001')
+                         THEN xpath('/table/row/v/text()', query_to_xml(
+                                'SELECT ''weather_daily '' || w.space_id::text || '' '' || w."date"::text '
+                                '       || '': plot '' || w.plot_id::text AS v '
+                                '  FROM public.weather_daily w '
+                                ' WHERE w.plot_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.plots p '
+                                '        WHERE p.id = w.plot_id AND p.workspace_id = w.space_id) '
+                                'UNION ALL '
+                                'SELECT ''weather_cold_range '' || c.space_id::text || '' '' || c.night_date::text '
+                                '       || '': plot '' || c.plot_id::text '
+                                '  FROM public.weather_cold_range c '
+                                ' WHERE c.plot_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.plots p '
+                                '        WHERE p.id = c.plot_id AND p.workspace_id = c.space_id)',
+                                false, false, ''))
+                         ELSE ARRAY[]::xml[] END) AS x
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  # ARMED ON THE DDL, NOT ON ITSELF. Each file sets NOT NULL and writes its stamp in one transaction, so a row here
+  # means plot_id was made NOT NULL by hand (or the stamp deleted): the state that silences the gates below.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT t.relname::text || '.plot_id is NOT NULL without stamp ' || want.version
+        FROM (VALUES ('weather_daily', '5.3.14-wxplotnotnull-001-weather-daily'),
+                     ('weather_cold_range', '5.3.14-wxplotnotnull-001-weather-cold-range')) AS want(relname, version)
+        JOIN pg_class t     ON t.relname = want.relname
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attname = 'plot_id' AND NOT a.attisdropped
+       WHERE a.attnotnull
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version v WHERE v.version = want.version)
+    expect: rowcount_eq
+    value: 0
+
+  # V204 §2.2: "until 3.2d's schema_version row exists the plots FK may be convalidated = false, after it must be
+  # validated" -- keyed here on each table's own stamp (v5-wxcoldband-001's and v5-wxplotid-001's key gates key the
+  # same arm on attnotnull, which is the same event in these files). Per table whose stamp exists: plot_id NOT NULL
+  # and its plot key validated. One row per finding.
+  - name: post_plot_id_not_null_and_key_validated
+    sql: |
+      SELECT want.relname || '.plot_id is NULLable'
+        FROM (VALUES ('weather_daily', '5.3.14-wxplotnotnull-001-weather-daily'),
+                     ('weather_cold_range', '5.3.14-wxplotnotnull-001-weather-cold-range')) AS want(relname, version)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version v WHERE v.version = want.version)
+         AND NOT EXISTS (SELECT 1 FROM pg_attribute a
+                           JOIN pg_class t     ON t.oid = a.attrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = want.relname AND a.attname = 'plot_id' AND NOT a.attisdropped
+                            AND a.attnotnull)
+      UNION ALL
+      SELECT want.conname || ' is missing or NOT VALID'
+        FROM (VALUES ('weather_daily', 'weather_daily_plot_id_space_id_fkey', '5.3.14-wxplotnotnull-001-weather-daily'),
+                     ('weather_cold_range', 'weather_cold_range_plot_id_space_id_fkey',
+                      '5.3.14-wxplotnotnull-001-weather-cold-range')) AS want(relname, conname, version)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version v WHERE v.version = want.version)
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t     ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = want.relname AND c.conname = want.conname AND c.contype = 'f'
+                            AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # DSA-20: the helper CHECK does not outlive its file. weather_cold_range is also held by v5-wxcoldband-001
+  # post_three_checks_validated_and_no_others (no fourth CHECK); weather_daily's own gate counts its four named
+  # CHECKs and admits a fifth, so this is what says it for weather_daily. Either the helper's name or its text, on a
+  # table whose stamp exists. One row per CHECK.
+  - name: post_no_plot_id_helper_check
+    sql: |
+      SELECT t.relname::text || ': ' || c.conname::text
+        FROM (VALUES ('weather_daily', '5.3.14-wxplotnotnull-001-weather-daily'),
+                     ('weather_cold_range', '5.3.14-wxplotnotnull-001-weather-cold-range')) AS want(relname, version)
+        JOIN pg_class t      ON t.relname = want.relname
+        JOIN pg_namespace n  ON n.oid = t.relnamespace AND n.nspname = 'public'
+        JOIN pg_constraint c ON c.conrelid = t.oid AND c.contype = 'c'
+       WHERE EXISTS (SELECT 1 FROM public.schema_version v WHERE v.version = want.version)
+         AND (c.conname = want.relname || '_plot_id_not_null_chk'
+              OR pg_get_constraintdef(c.oid) = 'CHECK ((plot_id IS NOT NULL))')
+    expect: rowcount_eq
+    value: 0

@@ -33,6 +33,15 @@ WHAT IT RUNS, in order, and what each step must show (any miss is a FAIL line an
 
 Usage:
   python3 migrations/v5-wxplotid-001/rehearse_local.py --port 55491 --base-db base
+
+HISTORICAL FROM 3.2b ON (amended 2026-10-21, multi-space 3.2c/3.2d lane; pre-promote v5.3.13 MINOR-1). This rehearses
+3.2a against the writers deployed when 3.2a ran, so it reads them AT BASE_SHA, not from this tree: the census by rule
+(`git grep ... BASE_SHA`), handler.js, backfill-weather-daily.mjs, and wn3_send.py's INSERT as copied 2026-10-19
+(WN3_SEND=<path> reads a file instead). From 3.2b the tree's writers stamp plot_id and re-read their Space bind, and
+from 3.2c the job names plot_id, so the tree's text would fail its "plot_id NULL" cases by design. --base-db must be a
+pre-3.2a database (a post-3.2a one with this directory's 0r applied will do). The extractor (_to_psycopg) now maps a
+repeated $n, or a repeated ${expr}, to ONE named bind (binds() makes the mapping), which is what lets a later step's
+rehearsal (v5-wxplotnotnull-001/rehearse_local.py) run the tree's current statements.
 """
 import argparse
 import ast
@@ -57,7 +66,8 @@ OLD_MD5 = '0845482dfbb48a94ec3cd81bddd6d62f'            # 3.1's guard_plots_repo
 NEW_MD5 = '467a31ca4b105064f4996442d900c7e3'            # this step's
 OWNER = 'user_rehearse_wxplotid'
 PSQL = os.environ.get('PSQL', '/opt/homebrew/opt/postgresql@17/bin/psql')
-WN3_SEND = Path(os.environ.get('WN3_SEND', str(TREE.parent / 'project-state' / 'tools' / 'wn3_send.py')))
+# Historical (docstring): the 2026-10-19 copy below, unless WN3_SEND names a file to read instead.
+WN3_SEND = Path(os.environ['WN3_SEND']) if os.environ.get('WN3_SEND') else None
 # C-CONV: the existing gates this step turns red in their BASE_SHA form, by (dir, name). README.md "C-CONV pre-scan".
 # Each ships edited, in the tolerant form, so the edited corpus's newly-red set is empty.
 EXPECTED_NEWLY_RED = {
@@ -291,14 +301,23 @@ def plot_of_daily(conn, space, day):
 
 
 # ── The writers, by rule (RIA-B4) ─────────────────────────────────────────────────────────────────
-def writer_census():
-    """git grep the rule over lambda scripts tests migrations. Returns [(path, line, table|None, [cols]|None)]."""
-    r = subprocess.run(['git', '-C', str(TREE), 'grep', '-n', '-i', '-E', CENSUS_RULE, '--',
-                        'lambda', 'scripts', 'tests', 'migrations'], capture_output=True, text=True)
+def at_rev(path, rev=BASE_SHA):
+    """A file's text at `rev` (the writers this rehearsal is about: docstring, HISTORICAL)."""
+    return subprocess.run(['git', '-C', str(TREE), 'show', f'{rev}:{path}'], capture_output=True, text=True,
+                          check=True).stdout
+
+
+def writer_census(rev=BASE_SHA):
+    """git grep the rule over lambda scripts tests migrations at `rev` (None: the working tree).
+    Returns [(path, line, table|None, [cols]|None)]."""
+    r = subprocess.run(['git', '-C', str(TREE), 'grep', '-n', '-i', '-E', CENSUS_RULE] + ([rev] if rev else [])
+                       + ['--', 'lambda', 'scripts', 'tests', 'migrations'], capture_output=True, text=True)
     hits = []
     for row in r.stdout.splitlines():
+        if rev:
+            row = row.split(':', 1)[1]   # git grep <rev> prefixes each hit with "<rev>:"
         path, lineno, _ = row.split(':', 2)
-        lines = (TREE / path).read_text().splitlines()
+        lines = (at_rev(path, rev) if rev else (TREE / path).read_text()).splitlines()
         tail = '\n'.join(lines[int(lineno) - 1:int(lineno) + 3])
         tail = re.sub(r"""['"]\s*\n\s*f?['"]""", '', tail)   # adjacent string literals across a line break
         m = re.search(r'insert\s+into\s+(?:public\.)?(weather_daily|weather_cold_range)\s*\(([^)]*)\)', tail, re.I)
@@ -335,35 +354,52 @@ def census_insert(table, cols, space, i):
 
 
 def _to_psycopg(sql, dollar):
+    """A driver's SQL text as psycopg named placeholders. dollar: $1..$n (a node-postgres query), each number one
+    bind however often it appears (3.2b's stamp re-reads $1: MINOR-1). Otherwise ${expr} interpolations (a neon
+    tagged template), one bind per distinct expression text, numbered in order of first appearance (the backfill's
+    stamp repeats ${s.id}). Returns (sql, number of distinct binds); pass the values through binds()."""
     sql = sql.replace('%', '%%')
     if dollar:
-        nums = [int(n) for n in re.findall(r'\$(\d+)', sql)]
+        nums = sorted({int(n) for n in re.findall(r'\$(\d+)', sql)})
         assert nums == list(range(1, len(nums) + 1)), nums
-        return re.sub(r'\$\d+', '%s', sql), len(nums)
-    parts = re.split(r'\$\{[^}]*\}', sql)
-    return '%s'.join(parts), len(parts) - 1
+        return re.sub(r'\$(\d+)', r'%(p\1)s', sql), len(nums)
+    order = []
+
+    def name(m):
+        if m.group(0) not in order:
+            order.append(m.group(0))
+        return f'%(p{order.index(m.group(0)) + 1})s'
+    return re.sub(r'\$\{[^}]*\}', name, sql), len(set(re.findall(r'\$\{[^}]*\}', sql)))
 
 
-def handler_statement():
-    """lambda/daily-plan/handler.js's hourly upsert, exactly as the Lambda sends it (conflict set spliced in)."""
-    src = (TREE / 'lambda' / 'daily-plan' / 'handler.js').read_text()
+def binds(values):
+    """Positional values (bind 1, 2, ...) as the named binds _to_psycopg writes."""
+    return {f'p{i + 1}': v for i, v in enumerate(values)}
+
+
+def handler_statement(src=None):
+    """lambda/daily-plan/handler.js's hourly upsert, exactly as the Lambda sends it (conflict set spliced in).
+    src: the file's text (default: at BASE_SHA, docstring HISTORICAL)."""
+    src = src if src is not None else at_rev('lambda/daily-plan/handler.js')
     conflict = re.search(r'const WEATHER_DAILY_CONFLICT_SET =\s*`(.*?)`;', src, re.S).group(1)
     insert = re.search(r'`(insert into weather_daily \(.*?)\$\{WEATHER_DAILY_CONFLICT_SET\}`', src, re.S).group(1)
     return _to_psycopg(insert + conflict, dollar=True)
 
 
-def backfill_statement():
-    """scripts/backfill-weather-daily.mjs's upsert, its ${...} interpolations as parameters in order."""
-    src = (TREE / 'scripts' / 'backfill-weather-daily.mjs').read_text()
+def backfill_statement(src=None):
+    """scripts/backfill-weather-daily.mjs's upsert, its distinct ${...} interpolations as binds in order.
+    src: the file's text (default: at BASE_SHA)."""
+    src = src if src is not None else at_rev('scripts/backfill-weather-daily.mjs')
     return _to_psycopg(re.search(r'const out = await sql`(.*?)`;', src, re.S).group(1), dollar=False)
 
 
-def wn3_statement():
-    """wn3_send.py's INSERT (off-repo), read from the file when it is here, else the copy read 2026-10-19."""
-    if WN3_SEND.exists():
-        m = re.search(r'^INSERT = (\(.*?\))\n', WN3_SEND.read_text(), re.S | re.M)
-        return ast.literal_eval(m.group(1)), str(WN3_SEND)
-    return WN3_INSERT_COPY, 'copy (wn3_send.py not found)'
+def wn3_statement(path=None):
+    """wn3_send.py's INSERT (off-repo): from `path` or WN3_SEND when given, else the copy read 2026-10-19."""
+    path = path or WN3_SEND
+    if path and Path(path).exists():
+        m = re.search(r'^INSERT = (\(.*?\))\n', Path(path).read_text(), re.S | re.M)
+        return ast.literal_eval(m.group(1)), str(path)
+    return WN3_INSERT_COPY, 'copy read 2026-10-19 (3.2a\'s deployed job)'
 
 
 def daily_params(space, day):
@@ -417,10 +453,10 @@ def arming_cases(conn, space):
     old_day = conn.execute('SELECT max("date")::text FROM public.weather_daily WHERE space_id = %s',
                            (space,)).fetchone()[0]
     with case(conn):
-        st, msg = err_of(conn, sql, daily_params(space, '2031-07-01'))
+        st, msg = err_of(conn, sql, binds(daily_params(space, '2031-07-01')))
         check('6 handler.js upsert, a new day: succeeds after 0a, plot_id NULL', st is None
               and plot_of_daily(conn, space, '2031-07-01') == (None,), f'{st} {msg[:60]}')
-        st, msg = err_of(conn, sql, daily_params(space, old_day))
+        st, msg = err_of(conn, sql, binds(daily_params(space, old_day)))
         check('6 handler.js upsert, a backfilled day (DO UPDATE): succeeds, the row keeps Plot 1',
               st is None and plot_of_daily(conn, space, old_day) == (p1,), f'{st} {msg[:60]}')
     sql, n = backfill_statement()
@@ -428,12 +464,12 @@ def arming_cases(conn, space):
     with case(conn):
         prm = daily_params(space, '2031-07-02')
         prm[6], prm[7] = 'openmeteo_archive', 'openmeteo_archive'
-        st, msg = err_of(conn, sql, prm)
+        st, msg = err_of(conn, sql, binds(prm))
         check('6 backfill-weather-daily.mjs upsert, a new day: succeeds, plot_id NULL', st is None
               and plot_of_daily(conn, space, '2031-07-02') == (None,), f'{st} {msg[:60]}')
         prm = daily_params(space, old_day)
         prm[6], prm[7] = 'openmeteo_archive', 'openmeteo_archive'
-        st, msg = err_of(conn, sql, prm)
+        st, msg = err_of(conn, sql, binds(prm))
         check('6 backfill-weather-daily.mjs upsert, a backfilled day: succeeds, the row keeps Plot 1',
               st is None and plot_of_daily(conn, space, old_day) == (p1,), f'{st} {msg[:60]}')
     stmt, src = wn3_statement()

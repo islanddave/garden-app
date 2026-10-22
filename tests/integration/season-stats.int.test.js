@@ -126,13 +126,19 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
     // which the 86 F cap and the 50 F floor turn into 18 degree-days.
     ids.space = (await directSql`
       INSERT INTO spaces (name, created_by) VALUES (${`int-stats-space-${RUN}`}, ${USER_A}) RETURNING id`)[0].id;
+    // V5-SPACEPLOTTIER-001 (multi-space 3.2d): weather rows name their Space's default plot ((plot_id, space_id) is
+    // a key into plots, and plot_id is NOT NULL from migrations/v5-wxplotnotnull-001). The Space has no place, so
+    // neither has its plot (a coordinate-less default plot is a supported state: V204 §2.2, DSA-35).
+    ids.plot = (await directSql`
+      INSERT INTO plots (workspace_id, name, timezone, is_default, created_by)
+      VALUES (${ids.space}::uuid, ${`int-stats-plot-${RUN}`}, 'America/New_York', true, ${USER_A}) RETURNING id`)[0].id;
     await directSql`
-      INSERT INTO weather_daily (space_id, date, tmax_f, tmin_f, precip_in)
-      SELECT ${ids.space}::uuid, d::date, 80, 60, 0.1
+      INSERT INTO weather_daily (space_id, plot_id, date, tmax_f, tmin_f, precip_in)
+      SELECT ${ids.space}::uuid, ${ids.plot}::uuid, d::date, 80, 60, 0.1
         FROM generate_series('2026-06-01'::date, '2026-06-30'::date, interval '1 day') d`;
     await directSql`
-      INSERT INTO weather_daily (space_id, date, tmax_f, tmin_f, precip_in)
-      VALUES (${ids.space}::uuid, '2026-07-01'::date, 95, 45, 0)`;
+      INSERT INTO weather_daily (space_id, plot_id, date, tmax_f, tmin_f, precip_in)
+      VALUES (${ids.space}::uuid, ${ids.plot}::uuid, '2026-07-01'::date, 95, 45, 0)`;
 
     ids.plantA = await mkPlanting(USER_A, ids.projA, { name: `int-stats-pa-${RUN}`, sourceId: ids.srcA, transplantedAt: '2026-06-01', varietyId: ids.cv });
     ids.plantB = await mkPlanting(USER_B, ids.projB, { name: `int-stats-pb-${RUN}`, sourceId: ids.srcB, varietyId: ids.cv });
@@ -186,6 +192,9 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
       // spaces_delete_guard refuses to delete a Space any weather_daily row still names, where the ON DELETE
       // CASCADE used to take them with it.
       () => directSql`DELETE FROM weather_daily WHERE space_id IN (SELECT id FROM spaces WHERE created_by = ANY(${users}::text[]))`,
+      // Multi-space 3.2d: the default plot those rows named (RESTRICT into spaces; plots_delete_guard refuses while
+      // weather names it, so after them).
+      () => directSql`DELETE FROM plots WHERE workspace_id IN (SELECT id FROM spaces WHERE created_by = ANY(${users}::text[]))`,
       () => directSql`DELETE FROM spaces WHERE created_by = ANY(${users}::text[])`,
       // public.source carries trg_audit_source_del, so bind the audit actor the way lambda/varieties does.
       () => directSql.transaction([
