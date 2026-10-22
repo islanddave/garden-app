@@ -158,7 +158,9 @@ jobs:
         #
         # DOWNLOAD RETRIES (OPS-PROMOTEGATEERREXIT2-001): --retry alone retries a timeout, a DNS failure and HTTP
         # 408/429/5xx but NOT a refused connection, which failed this required check at once (curl exit 7, measured
-        # with curl 8.7); --retry-connrefused adds it. A reset or an empty reply (curl 56/52) is still not retried.
+        # with curl 8.7); --retry-connrefused adds it. A reset or an empty reply (curl 56/52) was still not retried;
+        # --retry-all-errors (curl >= 7.71) now retries every failure, those and an HTTP error under -f included,
+        # still at most 3 times (OPS-PROMOTEGATEERREXIT3-001).
         # The sha256 checks below still decide what may run, so a retried download cannot weaken them.
         env:
           ACTIONLINT_VERSION: 1.7.12
@@ -170,9 +172,9 @@ jobs:
           set -euo pipefail
           T="$RUNNER_TEMP/wflint"
           mkdir -p "$T"
-          curl -sSfL --retry 3 --retry-connrefused -o "$T/actionlint.tgz" \
+          curl -sSfL --retry 3 --retry-connrefused --retry-all-errors -o "$T/actionlint.tgz" \
             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -sSfL --retry 3 --retry-connrefused -o "$T/shellcheck.tgz" \
+          curl -sSfL --retry 3 --retry-connrefused --retry-all-errors -o "$T/shellcheck.tgz" \
             "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
           echo "${ACTIONLINT_SHA256}  $T/actionlint.tgz" | sha256sum -c -
           echo "${SHELLCHECK_SHA256}  $T/shellcheck.tgz" | sha256sum -c -

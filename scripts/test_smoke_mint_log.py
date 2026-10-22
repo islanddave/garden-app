@@ -311,6 +311,31 @@ def test_what_else_reaches_curls_stderr_still_reaches_the_scripts(tmp_path, shel
 
 
 @EACH_SHELL
+def test_a_unit_separator_on_curls_stderr_does_not_reach_the_token(tmp_path, shell, clerk):
+    """OPS-GATETIMERGUARD-001 part 5. The stderr once came back in band, split from the token at the first \\037, so
+    a \\037 in that noise moved the split: the token came back as `<noise tail><status>\\037<jwt>` and the log read
+    http=000. The stderr now goes to a temp file, so no byte in it can reach stdout, and the file is gone after."""
+    server = clerk((200, '{"jwt":"%s"}' % JWT))
+    noisy = tmp_path / "sep"
+    (noisy / "bin").mkdir(parents=True)
+    (noisy / "tmp").mkdir()
+    (noisy / "bin" / "curl").write_text(
+        "#!/bin/bash\nprintf 'noise\\037tail\\n' >&2\n"
+        f'a=()\nfor x in "$@"; do a+=("${{x/https:\\/\\/api.clerk.com\\//http://127.0.0.1:{server.port}/}}"); done\n'
+        f'exec {shlex.quote(REAL_CURL)} -q "${{a[@]}}"\n')
+    (noisy / "bin" / "curl").chmod(0o755)
+    (noisy / "driver.sh").write_text("set -euo pipefail\n" + current() + "mint_session_token\n")
+    env = dict(os.environ, PATH=f"{noisy / 'bin'}{os.pathsep}{os.environ['PATH']}", NO_PROXY="*",
+               CLERK_SECRET_KEY_STAGING=SECRET, CLERK_SESSION_ID=SESSION, TMPDIR=str(noisy / "tmp"))
+    proc = subprocess.run([shell, str(noisy / "driver.sh")], env=env, capture_output=True, timeout=120)
+    assert proc.returncode == 0 and len(server.requests) == 1, proc.stderr
+    assert proc.stdout == (JWT + "\n").encode()                         # the bare JWT, nothing of the noise
+    assert proc.stderr == ("noise\037tail\n[mint] http=200 shape=ok caller=main:%d\n"
+                           % (1 + current().count("\n") + 1)).encode()
+    assert list((noisy / "tmp").iterdir()) == []                        # the temp file is removed
+
+
+@EACH_SHELL
 def test_without_curl_the_function_still_returns_empty_and_exit_0(tmp_path, shell):
     """Both functions, with no curl to run: same stdout, same status; the shell's own complaint is kept."""
     results = {}

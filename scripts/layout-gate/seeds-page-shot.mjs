@@ -390,9 +390,8 @@ async function attach(wsUrl) {
       for (const fn of listeners) fn(m)
     }
   }
-  // Each call's 90s timeout is CLEARED when its answer lands. The siblings leave theirs armed, so a
-  // PASSING run (which exits naturally rather than through process.exit) idles until the last one
-  // fires — measured on gate:seeds-saved: ~90 of its ~99 s are that wait, after PASS is printed.
+  // Each call's 90s timeout is CLEARED when its answer lands, so a PASSING run (which exits naturally
+  // rather than through process.exit) is not held open by a timer that can no longer fire usefully.
   const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
     const mid = ++id
     const timer = setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error(`CDP timeout: ${method}`)) } }, 90000)

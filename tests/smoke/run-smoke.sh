@@ -453,30 +453,33 @@ auth_request() {
 # validation, no new exit path: a caller gets what it got before. A retry or a hard stop is a separate, gated
 # change (B6b), to be decided on what these lines show.
 # How: the pipeline is the old one plus `-w '%{stderr}%{http_code}'`, which makes curl write the status to its
-# own stderr, so the body jq reads is untouched. `2>&3` carries that status around the token capture into the
-# outer one, where it lands first; the unit separator (\037) splits the two. The `x` keeps the pipeline's
-# trailing newlines, which $(...) would strip, so stdout is replayed exactly.
+# own stderr, so the body jq reads is untouched. That stderr goes out of band, to a temp file on fd 3: no byte the
+# token or the stderr can hold (\037 included) can move the line between them, as the in-band separator this
+# replaced could. The file is read and removed before the token is written. If mktemp fails, curl's stderr goes
+# straight to the script's, as in the original, and the status logs as 000; the token is unchanged either way.
+# The `x` keeps the pipeline's trailing newlines, which $(...) would strip, so stdout is replayed exactly.
 mint_session_token() {
-  local mint_sep=$'\037' mint_nl=$'\n' mint_out mint_err mint_code mint_tok mint_seen mint_shape
-  mint_out=$(
-    {
-      mint_tok=$(
-        curl -s --max-time 30 --connect-timeout 10 \
-          -X POST \
-          -H "Authorization: Bearer $CLERK_SECRET_KEY_STAGING" \
-          -H "Content-Type: application/json" \
-          -d '{}' \
-          -w '%{stderr}%{http_code}' \
-          "https://api.clerk.com/v1/sessions/${CLERK_SESSION_ID}/tokens" 2>&3 \
-          | jq -r '.jwt // empty' 2>/dev/null || echo ""
-        printf x
-      )
-      printf '%s%s' "$mint_sep" "$mint_tok"
-    } 3>&1
-  )
-  mint_err=${mint_out%%"$mint_sep"*}  # all of curl's stderr; the status, written last, is its final 3 characters
-  mint_tok=${mint_out#*"$mint_sep"}
+  local mint_nl=$'\n' mint_errf mint_fd=3 mint_err="" mint_code mint_tok mint_seen mint_shape
+  mint_errf=$(mktemp 2>/dev/null) || mint_errf=""
+  [[ -n "$mint_errf" ]] || mint_fd=2
+  {
+    mint_tok=$(
+      curl -s --max-time 30 --connect-timeout 10 \
+        -X POST \
+        -H "Authorization: Bearer $CLERK_SECRET_KEY_STAGING" \
+        -H "Content-Type: application/json" \
+        -d '{}' \
+        -w '%{stderr}%{http_code}' \
+        "https://api.clerk.com/v1/sessions/${CLERK_SESSION_ID}/tokens" 2>&"$mint_fd" \
+        | jq -r '.jwt // empty' 2>/dev/null || echo ""
+      printf x
+    )
+  } 3>"${mint_errf:-/dev/null}" || true  # an fd 3 that will not open skips the call; it never ends the script
   mint_tok=${mint_tok%x}
+  if [[ -n "$mint_errf" ]]; then
+    mint_err=$(<"$mint_errf") || mint_err=""  # all of curl's stderr; the status, written last, is its final 3 characters
+    rm -f -- "$mint_errf" || true
+  fi
   mint_code=000
   case "$mint_err" in
     *[0-9][0-9][0-9]) mint_code=${mint_err: -3}; mint_err=${mint_err%???} ;;
@@ -558,6 +561,48 @@ if [[ -n "${STAGING_API_STORAGE_LOCATIONS:-}" ]]; then
   check_reachable "lambda:storage-locations" "$STAGING_API_STORAGE_LOCATIONS"
 else
   echo "   (storage-locations reachability skipped — STAGING_API_STORAGE_LOCATIONS unset)"
+fi
+# facebook-share (OPS-STAGINGSURFACEGAP-001). Its handler checks auth before the FB_SHARE_ENABLED kill switch,
+# so an unauthenticated call answers 401 (probed 2026-10-22): the Lambda is up and its module loads.
+if [[ -n "${STAGING_API_FACEBOOK_SHARE:-}" ]]; then
+  check_reachable "lambda:facebook-share" "$STAGING_API_FACEBOOK_SHARE"
+else
+  echo "   (facebook-share reachability skipped — STAGING_API_FACEBOOK_SHARE unset)"
+fi
+
+# SPA build identity (OPS-STAGINGSURFACEGAP-001). deploy-staging's Build step stamps public/sw.js with
+# CACHE_VERSION = 'vstg-<short sha>' and hands that exact short SHA here as STAGING_BUILD_SHORT_SHA. sw.js is a
+# no-cache root file, so CloudFront serving any other stamp means this smoke is not testing the build it was
+# dispatched for. A mismatch is re-read up to SW_TRIES times, 10 s apart, so an invalidation still propagating
+# cannot red a promote by itself. This proves the SPA build ONLY: the smoke job has no AWS credentials, so the
+# code the staging Lambdas run is not asserted here. Unset (a hand run, another caller) is a skip, never a fail.
+if [[ -n "${STAGING_BUILD_SHORT_SHA:-}" && -n "${STAGING_CF_ORIGIN:-}" ]]; then
+  SW_WANT="'vstg-${STAGING_BUILD_SHORT_SHA}'"
+  SW_TRIES=6
+  SW_OK=false
+  SW_SEEN=""
+  for sw_i in $(seq 1 "$SW_TRIES"); do
+    SW_BODY=$(curl -sf --max-time 15 --connect-timeout 10 -H 'Cache-Control: no-cache' \
+      "${STAGING_CF_ORIGIN%/}/sw.js?smoke=${TEST_RUN_ID}-${sw_i}") || SW_BODY=""
+    if [[ "$SW_BODY" == *"$SW_WANT"* ]]; then
+      SW_OK=true
+      break
+    fi
+    SW_SEEN=$(printf '%s\n' "$SW_BODY" | grep -oE "CACHE_VERSION = '[^']*'" | head -1) || SW_SEEN=""
+    echo "   (spa:build-sha try $sw_i/$SW_TRIES: sw.js has ${SW_SEEN:-no readable CACHE_VERSION}, want $SW_WANT)"
+    if [[ "$sw_i" -lt "$SW_TRIES" ]]; then
+      sleep 10
+    fi
+  done
+  if [[ "$SW_OK" == "true" ]]; then
+    echo "✅ PASS [spa:build-sha] ${STAGING_CF_ORIGIN%/}/sw.js carries $SW_WANT — proves the SPA build only; Lambda code identity on staging is not asserted"
+    PASS=$((PASS+1))
+  else
+    echo "❌ FAIL [spa:build-sha] ${STAGING_CF_ORIGIN%/}/sw.js never carried $SW_WANT in $SW_TRIES tries (last: ${SW_SEEN:-no readable CACHE_VERSION}) — staging is not serving the SPA build this smoke was dispatched for (SPA only; Lambda identity is not asserted)"
+    FAIL=$((FAIL+1))
+  fi
+else
+  echo "   (spa:build-sha skipped — STAGING_BUILD_SHORT_SHA or STAGING_CF_ORIGIN unset; nothing about the build is asserted)"
 fi
 echo ""
 

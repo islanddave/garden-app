@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.15",
+    "date": "2026-10-22",
+    "highlights": [
+      "Behind-the-scenes: test deploys now check they are testing the right build, and a few deploy steps handle network hiccups better."
+    ]
+  },
+  {
     "version": "5.3.14",
     "date": "2026-10-21",
     "highlights": [

@@ -74,25 +74,51 @@ env:
   STAGING_API_FINDINGS:        https://xadazkudo5dyzaz67nmud2wsh40mbepo.lambda-url.us-east-1.on.aws/
   STAGING_API_DAILY_PLAN_READ: https://5fblg7acway22fxx5svtqsc4ta0ipgpl.lambda-url.us-east-1.on.aws/
   # Declared EMPTY on purpose so the env reference is not an undefined-var silent-empty (the
-  # STAGING_API_TAGS lesson) and so the Validate step can WARN on them instead of ignoring them.
-  #   ACHIEVEMENTS — genuinely absent: garden-achievements-staging does not exist and achievements
-  #   is still prod-only in the matrix below.
-  #   FACEBOOK_SHARE — ship-then-wire as of OPS-STAGINGMATRIX-001: facebook-share joined the deploy
-  #   matrix, so the first run of this workflow CREATES garden-facebook-share-staging and its
-  #   Function URL. That URL is not knowable until then; the "Ensure Function URL exists" step
-  #   echoes it — paste it here to light up the /share surface (and its smoke reachability) on staging.
+  # STAGING_API_TAGS lesson) and so the Validate step can WARN on it instead of ignoring it.
+  # Genuinely absent: garden-achievements-staging does not exist and achievements is still prod-only
+  # in the matrix below.
   STAGING_API_ACHIEVEMENTS: ""
-  STAGING_API_FACEBOOK_SHARE: ""
+  # facebook-share joined the deploy matrix in OPS-STAGINGMATRIX-001, and that matrix's first run
+  # created garden-facebook-share-staging and its Function URL. WIRED 2026-10-22
+  # (OPS-STAGINGSURFACEGAP-001): URL read from `aws lambda get-function-url-config`, probed 401
+  # (alive + auth-gated). It lights up /share on staging and the smoke's facebook-share reachability.
+  STAGING_API_FACEBOOK_SHARE: https://hzswsu5vcmef7uivk2ctvmy7ry0pkapr.lambda-url.us-east-1.on.aws/
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
   STAGING_CF_DIST_ID:  E3K5KH9B8CTPQS
   STAGING_CF_ORIGIN:   https://dg6mmjhepoyt9.cloudfront.net
 
 jobs:
+  # ── Refuse a dispatch from the wrong ref (OPS-STAGINGSURFACEGAP-001) ─────
+  # The `staging` environment's branch policy rejects a run on any other ref, and a hand
+  # `gh workflow run deploy-staging.yml` without --ref dispatches on the repository's default branch,
+  # so that run died at deploy-lambdas on a policy refusal that did not name the fix. This job carries
+  # no `environment:`, so it runs first and names it; every job that declares `environment: staging`
+  # sits behind it (deploy-lambdas directly, deploy-frontend through it). promote-gate dispatches
+  # with "ref":"dev" and passes.
+  ref-guard:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 2
+    steps:
+      - name: Require dispatch from dev or staging
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          case "$REF" in
+            refs/heads/dev|refs/heads/staging)
+              echo "dispatch ref $REF: ok"
+              ;;
+            *)
+              echo "::error::deploy-staging was dispatched on ${REF:-(no ref)}; the staging environment accepts only dev or staging. Dispatch with --ref dev: gh workflow run deploy-staging.yml --ref dev -f dev_sha=<sha>"
+              exit 1
+              ;;
+          esac
+
   # ── Deploy staging Lambda functions ──────────────────────────────────────
   deploy-lambdas:
     runs-on: ubuntu-26.04
     environment: staging  # OIDC subject claim for garden-app-github-deploy-staging trust
+    needs: ref-guard
     strategy:
       matrix:
         # OPS-STAGINGMATRIX-001: facebook-share + photocdn-derivative joined 2026-08-16. Both were
@@ -556,7 +582,7 @@ jobs:
           fi
           # Ship-then-wire: a net-new staging function's URL is not knowable until this step creates
           # it. Echo it so it can be pasted into the STAGING_API_* block at the top of this file
-          # (the reason STAGING_API_FACEBOOK_SHARE ships empty on the first run).
+          # (how STAGING_API_FACEBOOK_SHARE was wired, after its first run).
           if ! aws lambda get-function-url-config --function-name "$FN" --query 'FunctionUrl' --output text; then
             echo "::error::$FN — no Function URL readable after this step (never created, or GetFunctionUrlConfig failing). Its staging surface is unreachable and STAGING_API_* for it cannot be wired. Check lambda:CreateFunctionUrlConfig on garden-app-github-deploy-staging."
             exit 1
@@ -635,6 +661,7 @@ jobs:
       artifact-hash:   ${{ steps.build.outputs.artifact-hash }}
       asset-filename:  ${{ steps.build.outputs.asset-filename }}
       commit-sha:      ${{ steps.build.outputs.commit-sha }}
+      sw-short-sha:    ${{ steps.build.outputs.sw-short-sha }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -702,7 +729,10 @@ jobs:
         id: build
         run: |
           # SW staleness fix (2.1.1): unique CACHE_VERSION per staging build (forces SW update -> purge old caches)
-          sed -i -E "s/const CACHE_VERSION = '[^']*'/const CACHE_VERSION = 'vstg-$(git rev-parse --short HEAD)'/" public/sw.js
+          # The short SHA is computed once and also handed to the smoke as an output, so the smoke
+          # asserts the exact string stamped here rather than assuming an abbreviation length.
+          SW_SHORT_SHA=$(git rev-parse --short HEAD)
+          sed -i -E "s/const CACHE_VERSION = '[^']*'/const CACHE_VERSION = 'vstg-${SW_SHORT_SHA}'/" public/sw.js
           grep -nE "^const CACHE_VERSION" public/sw.js
           npm run build
           ARTIFACT_HASH=$(sha256sum dist/index.html | awk '{print $1}')
@@ -711,6 +741,7 @@ jobs:
           echo "artifact-hash=$ARTIFACT_HASH"  >> "$GITHUB_OUTPUT"
           echo "asset-filename=$ASSET_FILE"    >> "$GITHUB_OUTPUT"
           echo "commit-sha=$COMMIT_SHA"        >> "$GITHUB_OUTPUT"
+          echo "sw-short-sha=$SW_SHORT_SHA"    >> "$GITHUB_OUTPUT"
           echo "Build artifact hash : $ARTIFACT_HASH"
           echo "Hashed asset file   : $ASSET_FILE"
           echo "Commit SHA          : $COMMIT_SHA"
@@ -885,13 +916,16 @@ jobs:
           STAGING_API_PRESERVATION: ${{ env.STAGING_API_PRESERVATION }}
           STAGING_API_STORAGE_LOCATIONS: ${{ env.STAGING_API_STORAGE_LOCATIONS }}
           STAGING_API_HARVESTS: ${{ env.STAGING_API_HARVESTS }}
-          # OPS-STAGINGMATRIX-001: plumbed ahead of its consumer. Empty until the first staging deploy
-          # of facebook-share creates the Function URL and it is pasted into the env block above;
-          # run-smoke.sh has no facebook-share check yet. Its handler answers 401 for an
-          # unauthenticated request (auth is evaluated before the FB_SHARE_ENABLED kill switch), so a
-          # plain check_reachable will pass once both halves land.
+          # OPS-STAGINGSURFACEGAP-001: Phase 1's check_reachable for facebook-share. Its handler
+          # answers 401 for an unauthenticated request (auth is evaluated before the FB_SHARE_ENABLED
+          # kill switch), which check_reachable counts as up.
           STAGING_API_FACEBOOK_SHARE: ${{ env.STAGING_API_FACEBOOK_SHARE }}
           COMMIT_SHA:            ${{ needs.deploy-frontend.outputs.commit-sha }}
+          # OPS-STAGINGSURFACEGAP-001: the exact short SHA the Build step stamped into sw.js
+          # (CACHE_VERSION = 'vstg-<this>'). Phase 1 re-reads $STAGING_CF_ORIGIN/sw.js and fails unless
+          # it carries that stamp: proof of the SPA build only, not of the Lambda code.
+          STAGING_BUILD_SHORT_SHA: ${{ needs.deploy-frontend.outputs.sw-short-sha }}
+          STAGING_CF_ORIGIN:     ${{ env.STAGING_CF_ORIGIN }}
           # Phase 2 (authenticated CRUD) — set these GHA secrets to enable:
           # CLERK_SECRET_KEY_STAGING = sk_test_... (Clerk dev instance secret key)
           # CLERK_TEST_USER_ID       = user_...    (existing user in dev Clerk instance)

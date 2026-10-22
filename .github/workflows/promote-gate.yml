@@ -706,6 +706,9 @@ jobs:
           # A failed read now goes to `unreadable`, which prints the reply's head (each reply is tee'd to
           # /tmp/poll.json) and still FAILS CLOSED, annotated, once MAXBAD reads in a row have failed (about a minute
           # at the 10 s polls). A good read resets the count. A failed read never counts as progress or as a pass.
+          # The locate and jobs polls index d['workflow_runs'] / d['jobs'] rather than .get(...,[]): a readable JSON
+          # error body (401, 403, a rate limit) lacks the key, so it KeyErrors into `unreadable` with its body printed,
+          # instead of parsing as "no match" and counting as a good read (OPS-PROMOTEGATEERREXIT3-001).
           MAXBAD=6
           BAD=0
           unreadable() {
@@ -763,7 +766,7 @@ jobs:
           RUN_ID=""
           for i in $(seq 1 30); do
             sleep 10
-            if RUN_ID=$(apiq "https://api.github.com/repos/$REPO/actions/workflows/deploy-staging.yml/runs?event=workflow_dispatch&per_page=20" | tee /tmp/poll.json | python3 -c "import sys,json,datetime as t; d=json.load(sys.stdin); sha='$DEV_SHA'; ok=lambda r: sha in (r.get('display_title') or '') or r.get('head_sha')==sha; rs=[r for r in d.get('workflow_runs',[]) if ok(r) and t.datetime.strptime(r['created_at'],'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=t.timezone.utc).timestamp()>=$DISPATCH_EPOCH-30]; print(max(rs,key=lambda r:r['created_at'])['id'] if rs else '')"); then
+            if RUN_ID=$(apiq "https://api.github.com/repos/$REPO/actions/workflows/deploy-staging.yml/runs?event=workflow_dispatch&per_page=20" | tee /tmp/poll.json | python3 -c "import sys,json,datetime as t; d=json.load(sys.stdin); sha='$DEV_SHA'; ok=lambda r: sha in (r.get('display_title') or '') or r.get('head_sha')==sha; rs=[r for r in d['workflow_runs'] if ok(r) and t.datetime.strptime(r['created_at'],'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=t.timezone.utc).timestamp()>=$DISPATCH_EPOCH-30]; print(max(rs,key=lambda r:r['created_at'])['id'] if rs else '')"); then
               BAD=0
             else
               RUN_ID=""
@@ -805,7 +808,7 @@ jobs:
           # window, exactly as before -- it just stops calling a slow API a red smoke test.
           CONC="MISSING"
           for i in $(seq 1 24); do
-            if CONC=$(apiq "https://api.github.com/repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=50" | tee /tmp/poll.json | python3 -c "import sys,json; d=json.load(sys.stdin); j=next((x for x in d.get('jobs',[]) if x['name']=='smoke-tests'),None); print(j['conclusion'] if j and j.get('status')=='completed' else 'MISSING')"); then
+            if CONC=$(apiq "https://api.github.com/repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=50" | tee /tmp/poll.json | python3 -c "import sys,json; d=json.load(sys.stdin); j=next((x for x in d['jobs'] if x['name']=='smoke-tests'),None); print(j['conclusion'] if j and j.get('status')=='completed' else 'MISSING')"); then
               BAD=0
             else
               CONC="MISSING"

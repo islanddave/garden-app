@@ -716,6 +716,35 @@ def test_smoke_step_fails_closed_after_exactly_maxbad_unreadable_replies(tmp_pat
     assert api.reads(route) == maxbad
 
 
+ERROR_BODY = _json({"message": "Bad credentials", "documentation_url": "https://docs.github.com/rest"}, 401)
+
+
+@PROMOTE_SHELLS
+@pytest.mark.parametrize("poll,route,what", [
+    ("runs", RUNS, "locating the deploy-staging run"),
+    ("jobs", JOBS, "reading the jobs of run 123"),
+], ids=["locate", "jobs"])
+def test_smoke_step_a_readable_error_body_is_an_unreadable_reply_with_its_body_printed(tmp_path, github, shell,
+                                                                                         poll, route, what):
+    """OPS-PROMOTEGATEERREXIT3-001: JSON without `workflow_runs` / `jobs` once parsed as "no match", a GOOD read, so
+    the body never reached `unreadable` and MAXBAD never counted it. One costs one poll and is printed; MAXBAD in a
+    row fail closed."""
+    good = {"runs": RUNS_OK, "jobs": SMOKE_GREEN}[poll]
+    api = _smoke_api(github, **{poll: (ERROR_BODY, good)})
+    proc = _run_promote_step(tmp_path, SMOKE, api, shell)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"unreadable API reply while {what} (1/{_maxbad()} in a row): " in proc.stdout
+    assert '"message": "Bad credentials"' in proc.stdout and api.reads(route) == 2
+    api = _smoke_api(github, **{poll: (ERROR_BODY,)})
+    (tmp_path / "again").mkdir()
+    proc = _run_promote_step(tmp_path / "again", SMOKE, api, shell)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    errors = _errors(proc)
+    assert len(errors) == 1 and errors[0].startswith(f"::error::GitHub API unreadable {_maxbad()} times in a row "
+                                                     f"while {what} — "), errors
+    assert api.reads(route) == _maxbad()
+
+
 @PROMOTE_SHELLS
 @pytest.mark.parametrize("jobs", [(SMOKE_RED,), (HTML_502, SMOKE_RED)], ids=["red", "unreadable-then-red"])
 def test_smoke_step_a_real_smoke_failure_stays_red(tmp_path, github, shell, jobs):
@@ -1197,11 +1226,15 @@ def test_preflight_a_reply_cannot_write_a_workflow_command_of_its_own(tmp_path, 
 def test_deploy_staging_job_graph_is_what_the_promote_staging_gate_reads():
     wf = _workflow("deploy-staging.yml")
     jobs = wf["jobs"]
-    assert list(jobs) == ["deploy-lambdas", "deploy-frontend", "db-schema-check", "smoke-tests"]
+    assert list(jobs) == ["ref-guard", "deploy-lambdas", "deploy-frontend", "db-schema-check", "smoke-tests"]
     as_list = lambda needs: [needs] if isinstance(needs, str) else list(needs or [])  # noqa: E731
     assert {job: as_list(body.get("needs")) for job, body in jobs.items()} == {
-        "deploy-lambdas": [], "deploy-frontend": ["deploy-lambdas"], "db-schema-check": ["deploy-frontend"],
-        "smoke-tests": ["db-schema-check", "deploy-frontend"]}
+        "ref-guard": [], "deploy-lambdas": ["ref-guard"], "deploy-frontend": ["deploy-lambdas"],
+        "db-schema-check": ["deploy-frontend"], "smoke-tests": ["db-schema-check", "deploy-frontend"]}
+    # OPS-STAGINGSURFACEGAP-001: the ref guard is the only root, and it is outside the staging environment, so a
+    # dispatch on the wrong ref fails there, readably, before any job the environment's branch policy would refuse.
+    assert "environment" not in jobs["ref-guard"]
+    assert all("environment" not in body or as_list(body.get("needs")) for body in jobs.values())
     for job, body in jobs.items():  # a skipped or advisory job would let the run conclude without the smoke
         assert "if" not in body and "continue-on-error" not in body and "name" not in body, job
     # ...and so would an advisory STEP: `smoke-tests = success` must mean every step of the chain passed. The Lambda
@@ -1211,11 +1244,26 @@ def test_deploy_staging_job_graph_is_what_the_promote_staging_gate_reads():
     # both shared-state smoke blocks, so the smoke still fails red rather than passing on a skipped step).
     advisory = {job: [s.get("name") for s in body["steps"] if "continue-on-error" in s] for job, body in jobs.items()}
     assert {job: len(names) for job, names in advisory.items()} == {
-        "deploy-lambdas": 7, "deploy-frontend": 0, "db-schema-check": 0, "smoke-tests": 0}, advisory
+        "ref-guard": 0, "deploy-lambdas": 7, "deploy-frontend": 0, "db-schema-check": 0, "smoke-tests": 0}, advisory
     assert "inputs.dev_sha" in wf["run-name"] and wf["run-name"].startswith("staging ")
     legs = len(jobs["deploy-lambdas"]["strategy"]["matrix"]["function"])
     assert jobs["deploy-lambdas"]["strategy"]["fail-fast"] is False
     assert legs + len(jobs) - 1 < 50  # the gate reads the run's jobs with per_page=50
+
+
+@pytest.mark.parametrize("ref,ok", [("refs/heads/dev", True), ("refs/heads/staging", True), ("refs/heads/main", False),
+                                    ("refs/heads/lane-x", False), ("refs/tags/v5.3.15", False), ("", False)],
+                         ids=["dev", "staging", "main", "lane-branch", "tag", "empty"])
+def test_deploy_staging_ref_guard_passes_dev_and_staging_and_names_the_fix_otherwise(tmp_path, ref, ok):
+    _, step = _step("deploy-staging.yml", "ref-guard", "Require dispatch from dev or staging")
+    assert step["env"] == {"REF": "${{ github.ref }}"}
+    proc = _run_as_runner(tmp_path, step["run"], dict(os.environ, REF=ref))
+    assert proc.returncode == (0 if ok else 1), proc.stdout + proc.stderr
+    errors = _errors(proc)
+    if ok:
+        assert errors == [] and f"dispatch ref {ref}: ok" in proc.stdout
+    else:
+        assert len(errors) == 1 and "Dispatch with --ref dev" in errors[0], errors
 
 
 # ── revert-rehearsal.yml: setup stops on a target tag it could not create ───────────────────────────────────────

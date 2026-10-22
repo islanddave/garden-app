@@ -1,7 +1,7 @@
 {
-  "version": "5.3.14",
-  "date": "2026-10-21",
+  "version": "5.3.15",
+  "date": "2026-10-22",
   "highlights": [
-    "New rows take their Space from the row they belong to; the cold-range writer can record its plot; build tool updates"
+    "Behind-the-scenes: test deploys now check they are testing the right build, and a few deploy steps handle network hiccups better."
   ]
 }
