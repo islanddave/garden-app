@@ -56,12 +56,12 @@ SELECT n.nspname::text, p.proname::text, pg_get_function_identity_arguments(p.oi
 
 
 def read_functions(env):
-    import psycopg
-
     var = "NEON_DATABASE_URL" if env == "prod" else "NEON_STAGING_URL"
     url = os.environ.get(var)
     if not url:
         raise SystemExit(f"FATAL: {var} is not set (needed for --env {env}). Never pass a URL on the command line.")
+    import psycopg  # after the URL check: CI's pytest leg has no psycopg
+
     with psycopg.connect(url) as conn:
         conn.read_only = True
         with conn.cursor() as cur:

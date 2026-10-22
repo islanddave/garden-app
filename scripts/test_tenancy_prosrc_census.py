@@ -32,7 +32,9 @@ def bodies_from_committed():
     return out
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed for the analysis")
+# CI's pytest leg runs without node_modules; the same re-analysis runs there in lambda/tenancy-prosrc.static.test.js.
+@pytest.mark.skipif(shutil.which("node") is None or not (ROOT / "node_modules" / "libpg-query").is_dir(),
+                    reason="node and libpg-query are needed for the analysis (vitest covers it in CI)")
 def test_analysis_of_the_committed_bodies_gives_the_committed_rows():
     census = mod.analyse(bodies_from_committed(), "prod")
     got = {f["function"]: (f.get("inserts"), f.get("dynamic")) for f in census["functions"]}
@@ -40,12 +42,11 @@ def test_analysis_of_the_committed_bodies_gives_the_committed_rows():
     assert got == want
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed for the analysis")
 def test_render_round_trips_and_names_its_generator():
-    census = mod.analyse(bodies_from_committed(), "prod")
-    text = mod.render(census)
+    text = mod.render(COMMITTED)
+    assert text == (ROOT / "tests" / "tenancy-prosrc.prod.json").read_text()
     back = json.loads(text)
-    assert back["functions"] == census["functions"]
+    assert back["functions"] == COMMITTED["functions"]
     assert "scripts/tenancy-prosrc-census.py" in back["_doc"][0]
     assert text.endswith("}\n")
 
