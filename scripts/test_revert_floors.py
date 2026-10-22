@@ -268,6 +268,38 @@ def test_the_token_rename_floor_refuses_older_code_once_it_ships(monkeypatch):
     assert "below the revert floor v4.160.0" in str(e.value)
 
 
+def test_the_weather_plot_floors_refuse_older_code_once_v5_3_14_ships(monkeypatch):
+    """V5-SPACEPLOTTIER-001 3.2c and 3.2d (V204 §3.0 revert floors, positive control): once prod runs v5.3.14,
+    a target below v5.3.14 is refused (the 3.2c floor governs: older code's 1a strips the job's plot_id
+    grant), and v5.3.14 itself is allowed. Neither entry names a switch."""
+    by_floor = {e["floor"]: e for e in rf.load()}
+    assert by_floor["v5.3.14"]["since"] == "v5.3.14" and by_floor["v5.3.13"]["since"] == "v5.3.14"
+    assert {by_floor[f]["ledger"] for f in ("v5.3.14", "v5.3.13")} == {"V5-SPACEPLOTTIER-001"}
+    monkeypatch.setattr(rt, "requests", FakeRequests(prod_routes("5.3.14")))
+    for target in ("v5.3.13", "v5.3.12", "v5.2.2"):
+        with pytest.raises(rt.RevertError) as e:
+            rt.require_target_above_floor(cfg_for(target))
+        assert "below the revert floor v5.3.14" in str(e.value) and "no switch exists" in str(e.value)
+        assert "V5-SPACEPLOTTIER-001" in str(e.value)
+    assert rt.require_target_above_floor(cfg_for("v5.3.14")) is None
+
+
+def test_before_v5_3_14_ships_the_weather_plot_floors_are_not_in_force(monkeypatch):
+    monkeypatch.setattr(rt, "requests", FakeRequests(prod_routes("5.3.13")))
+    assert rt.require_target_above_floor(cfg_for("v5.3.12")) is None
+
+
+def test_the_not_null_floor_alone_refuses_code_that_stamps_no_plot_id(monkeypatch, tmp_path):
+    """MINOR-2 of the v5.3.13 pre-promote pass: on its own, the 3.2d entry refuses v5.3.12 (its writers name
+    no plot_id, 23502 on every weather_daily row after NOT NULL) and allows v5.3.13, the first that stamps."""
+    p = tmp_path / "revert-floors.json"
+    p.write_text(json.dumps({"floors": [e for e in rf.load() if e["floor"] != "v5.3.14"]}))
+    monkeypatch.setattr(rt, "requests", FakeRequests(prod_routes("5.3.14")))
+    with pytest.raises(rt.RevertError, match=r"below the revert floor v5\.3\.13"):
+        rt.require_target_above_floor(cfg_for("v5.3.12"), floors_path=str(p))
+    assert rt.require_target_above_floor(cfg_for("v5.3.13"), floors_path=str(p)) is None
+
+
 def test_the_floor_in_force_follows_the_version_prod_runs(monkeypatch):
     """Before v4.156.0 shipped only the v4.135.0 floor was in force: v4.150.0 passes, v4.134.0 is
     refused, and its entry has no switch to name."""
