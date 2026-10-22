@@ -23,13 +23,6 @@
       "reason": "SENTINEL_WORKSPACE, a string const: allowlisted until the events 4.3 lane (N17), which stamps the tally from the resolved scope"
     },
     {
-      "id": "lambda/plants/merge.js:mergeCore:31ea64e447",
-      "ctx": "insert",
-      "src": "winner.workspace_id",
-      "rule": "unreviewed-root",
-      "reason": "winner.workspace_id, the winner plant row read in this function: a parent-row candidate for the reviewed list (2.2)"
-    },
-    {
       "id": "lambda/shared-state/index.js:handler:96d9721011",
       "ctx": "cmp",
       "src": "SENTINEL_WORKSPACE",

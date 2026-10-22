@@ -7,7 +7,8 @@
 //
 //   lambda/sql-census.static.test.js   2.0a  unparseable = 0, near-misses, splices, the sql-tag cross-check,
 //                                            the workspace_id slot allowlist and the slot-map controls
-//   (2.2 lambda/tenancy-insert.static.test.js and 5.1's scope test build on the slot map below.)
+//   lambda/tenancy-insert.static.test.js  2.2  every INSERT into an S table names workspace_id from a passing slot
+//                                            (tests/lib/tenancyInsert.mjs); 5.1's scope test builds on it too.
 //
 // REGENERATING THE LISTS. `node tests/lib/sqlCensus.mjs` prints the summary; `--near-misses`, `--splices` and
 // `--ws-slots` print the paste-ready current entries (no `reason`: carry reasons over by hand); `--root <dir>`
@@ -673,9 +674,10 @@ export const splicesOf = (census) =>
     repaired: s.record.splices.map((x) => `${x.expr} as ${x.as}`),
   }))
 
-// workspace_id bindings with their slot-rule verdicts, one row per binding.
+// workspace_id bindings with their slot-rule verdicts, one row per binding. opts is classifySlot's, or a function of
+// the statement returning them (the reviewed parents are per file and function: tests/tenancy-insert-allowlist.json).
 export const workspaceSlotsOf = (census, opts) =>
-  census.statements.flatMap((s) => s.workspaceBindings.map((b) => ({ id: s.id, file: s.file, fn: s.fn, ctx: b.ctx, src: b.value?.src ?? null, origin: b.value?.origin ?? null, ...classifySlot(b.value, opts) })))
+  census.statements.flatMap((s) => s.workspaceBindings.map((b) => ({ id: s.id, file: s.file, fn: s.fn, ctx: b.ctx, src: b.value?.src ?? null, origin: b.value?.origin ?? null, ...classifySlot(b.value, typeof opts === 'function' ? opts(s) : opts) })))
 
 // ---------- CLI ----------
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

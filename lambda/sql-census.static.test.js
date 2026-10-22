@@ -100,7 +100,10 @@ describe('SQL census: the four CI conditions', () => {
 describe('SQL census: the workspace_id slot allowlist', () => {
   it('lists every refused workspace_id value by id with a reason; the list only shrinks', () => {
     const entries = listed('sql-workspace-slots.json').refused
-    const refused = workspaceSlotsOf(census).filter((r) => r.verdict === 'refuse')
+    // Parent-row variables reviewed in 2.2 (tests/tenancy-insert-allowlist.json reviewedParents) are accepted.
+    const reviewed = listed('tenancy-insert-allowlist.json').reviewedParents ?? []
+    const opts = (s) => ({ reviewedParents: reviewed.filter((r) => r.file === s.file && r.fn === s.fn).map((r) => r.root) })
+    const refused = workspaceSlotsOf(census, opts).filter((r) => r.verdict === 'refuse')
     const have = new Set(refused.map((r) => r.id))
     const want = new Set(entries.map((e) => e.id))
     const problems = []

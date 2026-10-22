@@ -1,0 +1,63 @@
+{
+  "_doc": [
+    "Decisions for the prosrc census (V5-SPACETENANCYKEY-001, multi-space plan V204 step 2.2, DSA-21, MF1). Read by lambda/tenancy-prosrc.static.test.js.",
+    "One entry per S table of lambda/tenancy-classes.json (views resolved to their base table) and for public.entity: the function writers of that table in tests/tenancy-prosrc.prod.json, each with a status.",
+    "status stamped: the census shows the INSERT naming workspace_id from `value`, a column of the parent row it reads. status rewritten: `file` replaces the body (definition pre-gate from_md5, new body to_md5, stamp); the census shows from_md5 until the sitting and to_md5 after, and the file's body must name workspace_id from `value`. status allowlisted: DEFAULT-reliant or stamped from a refused value until `lane` clears it.",
+    "The allowlisted entries are the DB-function half of the writer allowlist (the Lambda half is tests/tenancy-insert-allowlist.json); both must be empty for G5, and 5.7's G2 precondition is a census with no DEFAULT-reliant function writer.",
+    "A new S table in the class file needs an entry here (writers [] when no function writes it); a re-run census that finds a new function writer needs a writer entry. The test names both."
+  ],
+  "tables": {
+    "public.critter_state": {"writers": []},
+    "public.cultivar_weight_sample": {"writers": [
+      {"function": "public.reattribute_plant_weight_samples(p_plant_id uuid, p_user text)", "status": "rewritten",
+       "file": "migrations/v5-tenancystamp-001/02-reattribute-plant-weight-samples.sql", "stamp": "5.3.14-tenancystamp-001-reattribute-plant-weight-samples",
+       "from_md5": "d9bd4ee654ae3d2f8f9e3cae0b495640", "to_md5": "2b881bb13ecf5e9f0b6d0701f3f850e1", "value": "v_workspace",
+       "reason": "the re-filed sample takes its planting's workspace_id, read into v_workspace by the SELECT that already reads the planting for its cultivar"},
+      {"function": "public.record_harvest_weight_sample(p_event_id uuid, p_plant_id uuid, p_unit text, p_qty numeric, p_grams numeric, p_user text)", "status": "allowlisted",
+       "lane": "2.6 lane",
+       "reason": "the autocapture INSERT (migrations/v4-cal1-slicec-001/0f-autocapture.sql:94-98): row 2.6 stamps it from the planting, with the per-Space weight views"}
+    ]},
+    "public.cultivar_weight_void": {"writers": [
+      {"function": "public.reattribute_plant_weight_samples(p_plant_id uuid, p_user text)", "status": "rewritten",
+       "file": "migrations/v5-tenancystamp-001/02-reattribute-plant-weight-samples.sql", "stamp": "5.3.14-tenancystamp-001-reattribute-plant-weight-samples",
+       "from_md5": "d9bd4ee654ae3d2f8f9e3cae0b495640", "to_md5": "2b881bb13ecf5e9f0b6d0701f3f850e1", "value": "m.workspace_id",
+       "reason": "a void takes the workspace_id of the sample it voids (the mis CTE row)"},
+      {"function": "public.void_event_weight_samples(p_event_id uuid, p_user text, p_reason text)", "status": "rewritten",
+       "file": "migrations/v5-tenancystamp-001/01-void-event-weight-samples.sql", "stamp": "5.3.14-tenancystamp-001-void-event-weight-samples",
+       "from_md5": "cc33df74a8d622bebe772002210f836e", "to_md5": "886bb851e921341bc2d3af0f89f9c718", "value": "s.workspace_id",
+       "reason": "a void takes the workspace_id of the sample row it voids"}
+    ]},
+    "public.daily_plan": {"writers": []},
+    "public.entity": {"writers": [
+      {"function": "gv.entity_cultivar_ins()", "status": "allowlisted", "lane": "2.4a lane",
+       "reason": "hard-stamps gv.sentinel_workspace(); 2.4a rewrites it to copy NEW.workspace_id / NEW.is_base from its variety, in the same file as entity's CHECK (MF1, F5)"},
+      {"function": "gv.entity_planting_ins()", "status": "stamped", "value": "new.workspace_id",
+       "reason": "the planting row's own workspace_id (V204 §2.1 'DB functions that stamp the key'); 2.4a adds is_base = false (F2). No crop or critter_species entity writer exists in pg_proc (census 2026-10-22)"}
+    ]},
+    "public.event_batches": {"writers": []},
+    "public.favorites": {"writers": []},
+    "public.findings": {"writers": []},
+    "public.garden_shared_state": {"writers": []},
+    "public.inventory_items": {"writers": []},
+    "public.kitchen_batch": {"writers": []},
+    "public.locations": {"writers": []},
+    "public.pantry_item": {"writers": []},
+    "public.photos": {"writers": []},
+    "public.plant_projects": {"writers": []},
+    "public.plants": {"writers": []},
+    "public.plots": {"writers": []},
+    "public.preservation_log": {"writers": []},
+    "public.proj_rescope_events": {"writers": []},
+    "public.recipe": {"writers": []},
+    "public.seen_event": {"writers": []},
+    "public.slug_redirects": {"writers": []},
+    "public.source": {"writers": []},
+    "public.spacetheme": {"writers": []},
+    "public.storage_location": {"writers": []},
+    "public.tag": {"writers": []},
+    "public.tasks": {"writers": []},
+    "public.treatment_association": {"writers": []},
+    "public.voice_alias": {"writers": []},
+    "public.weather_cue_impression": {"writers": []}
+  }
+}
