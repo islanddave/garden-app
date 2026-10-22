@@ -11,7 +11,7 @@ gates listed below). Class: **pre-deploy additive**.
 | `0a-wxplotid.sql` | `plot_id` on both weather tables, the composite keys into plots (NOT VALID), the plot unique indexes, the backfill of Dave's Space behind its pre-gate, `guard_plots_repoint()` reading `plot_id`, the stamp |
 | `0r-rollback.sql` | puts 3.1's guard body back and drops the indexes, keys and columns; refuses while later steps or non-derivable data depend on `plot_id` |
 | `gates.yml` | 7 pre gates (the backfill pre-gate and the definition pre-gate among them); 6 post gates, each self-armed on the stamp, one apply-window receipt |
-| `rehearse_local.py` | the local PostgreSQL 17 rehearsal (below) |
+| `rehearse_local.py` | the local PostgreSQL 17 rehearsal (below). **Historical from 3.2b on** (amended 2026-10-21, pre-promote v5.3.13 MINOR-1): it reads the writers at its base `a2083805` (3.2b's stamp re-reads `$1`, 3.2c's job names `plot_id`), needs a pre-3.2a `--base-db` (a post-3.2a one with `0r` applied will do), and its extractor maps a repeated bind to one, which `v5-wxplotnotnull-001/rehearse_local.py` reuses on the current writers. Re-run on such a base 2026-10-21: 156/158, the 2 reds being its step-2 base-SHA-vs-tree corpus comparison on a post-2.1 database (2.1's own tolerant edits), not this step |
 | `rehearse_fork.py` | the same rehearsal on a prod fork, for the session to run (below) |
 
 Not applied to staging or prod. No JS writer is changed here (3.2b does that).

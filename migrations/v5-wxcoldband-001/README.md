@@ -23,7 +23,7 @@ them, and what could not be checked from here, is under "The writer's login".
 | `0r-rollback.sql` | Drops the table and the stamp. Guarded: refuses while any row exists. |
 | `gates.yml` | 3 `pre`, 2 `sweep`, 9 standing `post`. Every `post` gate is catalog-only and self-armed on the stamp. The three CHECK bodies are pinned by name, validation and the exact text PostgreSQL 17 prints for them. |
 | `rehearse_local.py` | The three files above on a throwaway local Postgres, re-runnable: the whole sequence, every line of the constraint table, the INSERT-only writer sketched below, what is locked on `spaces`, and a planted defect for every gate. `python3 migrations/v5-wxcoldband-001/rehearse_local.py`, about 40 s. Writes only to the cluster it creates. |
-| `1a-writer-role.sql` | The role `garden_wx_writer`: LOGIN, NOINHERIT, CONNECTION LIMIT 2, no other attribute, a member of nothing, `INSERT` on the seven columns the job sends (never `created_at`), no password. One transaction, re-runnable, run by the table's owner. Ends in an assertion that rolls the whole file back if the role could do anything more, naming each privilege, its grantor and whether PUBLIC gave it. Revokes nothing from PUBLIC. No stamp. |
+| `1a-writer-role.sql` | The role `garden_wx_writer`: LOGIN, NOINHERIT, CONNECTION LIMIT 2, no other attribute, a member of nothing, `INSERT` on the seven columns the job sends (never `created_at`), no password. One transaction, re-runnable, run by the table's owner. Ends in an assertion that rolls the whole file back if the role could do anything more, naming each privilege, its grantor and whether PUBLIC gave it. Revokes nothing from PUBLIC. No stamp. W3b (multi-space 3.2c): `plot_id` too, while stamp `5.3.14-wxwriterplot-001` exists. |
 | `1r-writer-role-rollback.sql` | Revokes the grant and drops the role. Refuses while the role owns anything. Re-runnable; works after `0r` too. |
 | `rehearse_writer_role.py` | `1a`, `1r` and `scripts/wx-writer-role.py` on a throwaway local Postgres, run by a NON-superuser owner as Neon's is: 71 checks, about 20 s. `python3 migrations/v5-wxcoldband-001/rehearse_writer_role.py`. Port 55498, so it can run beside `rehearse_local.py`. `scripts/test_wx_writer_role.py` runs it where `initdb` is on PATH. |
 | `scripts/wx-writer-role.py` | `apply`, `verify`, `rollback` with `--env staging` or `--env prod --i-have-daves-ok`. See "The writer's login". |
@@ -209,6 +209,14 @@ every line is PASS.
 - **If staging is recreated**, `apply --env staging` again.
 - **Rollback:** unload the Mac job, then `python3 scripts/wx-writer-role.py rollback --env staging` (prod:
   `--env prod --i-have-daves-ok`). It runs `1r` and removes the `.env.local` line.
+
+**Multi-space 3.2c (V5-SPACEPLOTTIER-001, 2026-10-21): the job names `plot_id` too.** The grant is
+`migrations/v5-wxwriterplot-001` (stamp `5.3.14-wxwriterplot-001`), applied by `wx-writer-role.py grant`, which also
+writes the job's `WX_WRITER_SPACE_ID_<ENV>` / `WX_WRITER_PLOT_ID_<ENV>` keys; neither it nor the new `reassert` (1a
+again, no new password) rotates the password. `1a` gained **W3b**: while that stamp exists it grants and asserts
+`plot_id` as an eighth column, so the restore advice above (and any `apply`) keeps the job's column. Read 2026-10-21:
+**staging's role holds no grant at all** (prod holds the seven); `reassert --env staging` restores it. That
+directory's README has the sitting order.
 
 **Not verified, because nothing here can reach Neon:**
 
