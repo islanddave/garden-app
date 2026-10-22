@@ -373,9 +373,12 @@ async function fromBatch(sql, batchId, body, userId, householdIds) {
   try {
     rows = await sql`
       WITH b AS (
+        -- kb only for the batch's workspace_id (the view does not carry it): the recipe a batch hands over lives in
+        -- the batch's Space (V5-SPACETENANCYKEY-001 2.2, parent-derived).
         SELECT v.id, v.label, v.kind, v.notes, v.brine_note, v.recipe_ref, v.vessel_label, v.vessel_size,
-               v.vessel_unit, v.vessel_count, v.no_salt
+               v.vessel_unit, v.vessel_count, v.no_salt, kb.workspace_id
         FROM v_kitchen_batch_current v
+        JOIN kitchen_batch kb ON kb.id = v.id
         WHERE v.id = ${batchId}::uuid
           AND v.user_id = ANY(${householdIds})
           AND v.deleted_at IS NULL
@@ -414,7 +417,7 @@ async function fromBatch(sql, batchId, body, userId, householdIds) {
       ), r AS (
         INSERT INTO recipe (
           user_id, name, kind, recipe_type_id, notes, vessel_label, vessel_size, vessel_unit, vessel_count, no_salt,
-          mash_in_g, made_g, bottle_label, bottle_size, bottle_unit, bottle_cooked, idempotency_key
+          mash_in_g, made_g, bottle_label, bottle_size, bottle_unit, bottle_cooked, idempotency_key, workspace_id
         )
         SELECT ${userId}::text, COALESCE(${name}::text, left(btrim(b.label), 120)), b.kind, ${body.recipe_type_id ?? null}::uuid,
                NULLIF(left(concat_ws(E'\n\n',
@@ -424,7 +427,7 @@ async function fromBatch(sql, batchId, body, userId, householdIds) {
                  'Next time: ' || nx.next_time), 20000), ''),
                b.vessel_label, b.vessel_size, b.vessel_unit, b.vessel_count, b.no_salt,
                sit.mash_in_g, sit.made_g, jar.bottle_label, jar.bottle_size, jar.bottle_unit, jar.bottle_cooked,
-               ${body.idempotency_key}::uuid
+               ${body.idempotency_key}::uuid, b.workspace_id
         FROM b CROSS JOIN sit CROSS JOIN nx LEFT JOIN jar ON true
         RETURNING id
       ), l AS (

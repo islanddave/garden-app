@@ -211,8 +211,10 @@ describe('POST /:id/put-up — what it sends', () => {
     await handleKitchenRoute({ sql, ...post(sitting()) });
     const w = sql.calls[4].norm;
     const jars = w.slice(w.indexOf('), jars AS ('), w.indexOf('), lines AS ('));
-    expect(jars).toContain('shu_est_basis, cooked, created_at )');
-    expect(jars).toContain("now() + (r.ord - 1)::float8 * interval '1 microsecond' FROM stage st CROSS JOIN unnest(");
+    expect(jars).toContain('shu_est_basis, cooked, created_at, workspace_id )');
+    expect(jars).toContain("now() + (r.ord - 1)::float8 * interval '1 microsecond', g.workspace_id FROM stage st JOIN gate g ON g.id = st.batch_id CROSS JOIN unnest(");
+    // V5-SPACETENANCYKEY-001 2.2: a jar's Space is its batch's, read off the gated batch row.
+    expect(w).toContain('AND closed_at IS NULL RETURNING id, workspace_id ), stage AS (');
     expect(jars).toContain(') WITH ORDINALITY AS r(id, label,');
     expect(jars).toContain('shu_est_basis, cooked, ord)');
     const read = sql.calls.find((c) => c.norm.includes('WHERE p.put_up_stage_id = ? ::uuid'));

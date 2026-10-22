@@ -606,14 +606,15 @@ export const handler = async (event) => {
       // `ln` (NOT `p`) so this adds NO 4th `FROM ... p` read block → select-columns.test.js
       // (exactly-3-blocks) stays green. Explicit ::timestamptz cast resolves the
       // 42P18 "could not determine data type" parse failure (L-086). workspace_id is
-      // left to the column DEFAULT sentinel (do NOT set it here).
+      // the planting's own (V5-SPACETENANCYKEY-001 2.2, parent-derived): a seen mark lives in
+      // the Space of the planting it marks, never a request value and never the column DEFAULT.
       // BUG-PLANTLESSWRITE-001: LEFT JOIN + project-less ownership arm (see the canonical
       // predicate note above the PUT pre-flight). An INNER JOIN here 404s every project-less
       // planting; the `ln.container_id IS NULL` conjunct keeps own-created_by from ever
       // reaching a planting that sits inside someone else's container.
       const ins = await sql`
-        INSERT INTO seen_event (leaf_id, seen_at, source)
-        SELECT ln.id, COALESCE(${seenAt}::timestamptz, now()), ${source}
+        INSERT INTO seen_event (leaf_id, seen_at, source, workspace_id)
+        SELECT ln.id, COALESCE(${seenAt}::timestamptz, now()), ${source}, ln.workspace_id
         FROM public.garden_node ln
         LEFT JOIN public.container pp ON pp.id = ln.container_id
         WHERE ln.id = ${plantId} AND ln.deleted_at IS NULL AND ln.archived_at IS NULL

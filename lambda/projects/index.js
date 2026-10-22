@@ -643,23 +643,25 @@ export const handler = async (event) => {
         // Single CTE: audit INSERT pulls pre_state from plant_projects, UPDATE
         // changes it. If WHERE matches no row, both CTEs return empty → no
         // orphan audit. WHERE has no `created_by = userId` — admin overrides ownership.
+        // The audit row's workspace_id is the project's own (V5-SPACETENANCYKEY-001 2.2,
+        // parent-derived), read in `pre` with the rest of the pre-image.
         const rows = await sql`
           WITH pre AS (
             SELECT id, classification AS kind, parent_id AS parent_project_id, display_name AS name,
-                   target_end_date, kind_set_at
+                   target_end_date, kind_set_at, workspace_id
             FROM public.container
             WHERE id = ${projectId} AND deleted_at IS NULL
           ),
           audit AS (
             INSERT INTO proj_rescope_events
-              (project_id, action, pre_state, pre_state_schema_version, actor)
+              (project_id, action, pre_state, pre_state_schema_version, actor, workspace_id)
             SELECT id, 'admin_classify',
                    jsonb_build_object(
                      'kind', kind,
                      'parent_project_id', parent_project_id,
                      'name', name
                    ),
-                   1, ${userId}
+                   1, ${userId}, workspace_id
             FROM pre
             RETURNING project_id
           )

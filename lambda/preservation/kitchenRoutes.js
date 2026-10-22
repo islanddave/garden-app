@@ -1470,7 +1470,7 @@ async function putUp(sql, batchId, body, userId, householdIds) {
           AND user_id = ANY(${householdIds})
           AND deleted_at IS NULL
           AND closed_at IS NULL
-        RETURNING id
+        RETURNING id, workspace_id
       ), stage AS (
         INSERT INTO kitchen_stage_log (
           id, batch_id, stage_kind, entered_at, entered_precision, amount, amount_unit, mash_in_g,
@@ -1509,12 +1509,14 @@ async function putUp(sql, batchId, body, userId, householdIds) {
       ), jars AS (
         -- A WEIGHED row (one container, a mass unit) is seeded with its grams, so a later draw moves
         -- remaining_amount from a real start (06 §1.4 "Seeding").
+        -- A jar lives in its batch's Space: workspace_id is the gated batch row's (V5-SPACETENANCYKEY-001 2.2,
+        -- parent-derived; g is the one row gate returned, joined on the stage row's batch_id).
         INSERT INTO preservation_log (
           id, user_id, batch_id, put_up_stage_id, label, container_label, method,
           preserved_at, preserved_at_approx, preserved_at_precision,
           quantity_value, quantity_unit, package_count, remaining_count, remaining_amount, storage_location_id,
           use_by_target, use_by_basis, is_raw, in_oil, texture, ph_reading, ph_read_at,
-          shu_est_low, shu_est_high, shu_est_basis, cooked, created_at
+          shu_est_low, shu_est_high, shu_est_basis, cooked, created_at, workspace_id
         )
         SELECT r.id, ${userId}::text, st.batch_id, st.id, r.label, r.container_label, ${body.method}::text,
                ${plan.jar_day}::date, ${plan.approx}::boolean, ${plan.jar_precision}::text,
@@ -1528,8 +1530,10 @@ async function putUp(sql, batchId, body, userId, householdIds) {
                -- B′: the rows' own order, 1 µs apart. One statement's DEFAULT now() tied every jar, so
                -- readSitting's ORDER BY created_at, id returned them in uuid order — and the completion
                -- stub reads jars[0] as the FIRST row's label hint (putItUp.js completionStub).
-               now() + (r.ord - 1)::float8 * interval '1 microsecond'
+               now() + (r.ord - 1)::float8 * interval '1 microsecond',
+               g.workspace_id
         FROM stage st
+        JOIN gate g ON g.id = st.batch_id
         CROSS JOIN unnest(
           ${c.jar.id}::uuid[], ${c.jar.label}::text[], ${c.jar.container_label}::text[],
           ${c.jar.quantity_value}::numeric[], ${c.jar.quantity_unit}::text[], ${c.jar.package_count}::int[],

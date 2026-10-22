@@ -56,7 +56,7 @@ const AUDIT_COLUMNS = {
     'archived_at', 'assignee_user_id', 'classification', 'created_at', 'created_by', 'deleted_at',
     'description', 'display_name', 'featured_photo_id', 'id', 'is_public', 'kind_set_at',
     'location_id', 'parent_id', 'slug', 'species', 'start_date', 'status', 'target_end_date',
-    'type', 'updated_at', 'variety', 'version'
+    'type', 'updated_at', 'variety', 'version', 'workspace_id'
   ],
 };
 
@@ -117,10 +117,12 @@ const UNALIASED_ARMS = [
     // PROJ-RESCOPE's pre-state CTE: the snapshot written into proj_rescope_events before an
     // admin reclassify. These five columns ARE the audit record, so a rename here silently changes
     // what a rescope is recoverable from.
-    pin: /SELECT id, classification AS kind, parent_id AS parent_project_id, display_name AS name,\s+target_end_date, kind_set_at\s+FROM public\.container/,
+    // workspace_id (V5-SPACETENANCYKEY-001 2.2) is not part of that record: it stamps the audit row
+    // with the project's own Space.
+    pin: /SELECT id, classification AS kind, parent_id AS parent_project_id, display_name AS name,\s+target_end_date, kind_set_at, workspace_id\s+FROM public\.container/,
     columns: [
       'id', 'classification', 'parent_id', 'display_name', 'target_end_date', 'kind_set_at',
-      'deleted_at'
+      'workspace_id', 'deleted_at'
     ],
   },
   {
