@@ -459,7 +459,7 @@ auth_request() {
 # straight to the script's, as in the original, and the status logs as 000; the token is unchanged either way.
 # The `x` keeps the pipeline's trailing newlines, which $(...) would strip, so stdout is replayed exactly.
 mint_session_token() {
-  local mint_nl=$'\n' mint_errf mint_fd=3 mint_err="" mint_code mint_tok mint_seen mint_shape
+  local mint_nl=$'\n' mint_errf mint_fd=3 mint_err="" mint_code mint_tok="" mint_seen mint_shape
   mint_errf=$(mktemp 2>/dev/null) || mint_errf=""
   [[ -n "$mint_errf" ]] || mint_fd=2
   {
@@ -573,8 +573,11 @@ fi
 # SPA build identity (OPS-STAGINGSURFACEGAP-001). deploy-staging's Build step stamps public/sw.js with
 # CACHE_VERSION = 'vstg-<short sha>' and hands that exact short SHA here as STAGING_BUILD_SHORT_SHA. sw.js is a
 # no-cache root file, so CloudFront serving any other stamp means this smoke is not testing the build it was
-# dispatched for. A mismatch is re-read up to SW_TRIES times, 10 s apart, so an invalidation still propagating
-# cannot red a promote by itself. This proves the SPA build ONLY: the smoke job has no AWS credentials, so the
+# dispatched for. Freshness rests on that origin `no-cache`: CloudFront revalidates sw.js with S3 on each request
+# (observed as RefreshHit, 2026-10-22). The query string is not in this distribution's cache key and CloudFront
+# ignores a client's Cache-Control by default, so the `?smoke=` query and the no-cache header are belt and braces
+# only. A mismatch is re-read up to SW_TRIES times, 10 s apart, so a revalidation still catching up cannot red
+# a promote by itself. This proves the SPA build ONLY: the smoke job has no AWS credentials, so the
 # code the staging Lambdas run is not asserted here. Unset (a hand run, another caller) is a skip, never a fail.
 if [[ -n "${STAGING_BUILD_SHORT_SHA:-}" && -n "${STAGING_CF_ORIGIN:-}" ]]; then
   SW_WANT="'vstg-${STAGING_BUILD_SHORT_SHA}'"

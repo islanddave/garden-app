@@ -806,8 +806,11 @@ jobs:
           # Retry until the job RESOLVES (present AND completed). Only a resolved non-success is a
           # real failure. This does NOT weaken the gate: an unresolved job still exits 1 after the
           # window, exactly as before -- it just stops calling a slow API a red smoke test.
+          # 12 reads 10 s apart: the same ~2 min window as the 24 x 5 s it replaced, so MAXBAD unreadable reads in a
+          # row take ~60 s here as in the other two polls (a JSON error body now counts as unreadable; at 5 s apart
+          # six of them refused in ~30 s, inside a secondary rate limit's usual ~60 s ask).
           CONC="MISSING"
-          for i in $(seq 1 24); do
+          for i in $(seq 1 12); do
             if CONC=$(apiq "https://api.github.com/repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=50" | tee /tmp/poll.json | python3 -c "import sys,json; d=json.load(sys.stdin); j=next((x for x in d['jobs'] if x['name']=='smoke-tests'),None); print(j['conclusion'] if j and j.get('status')=='completed' else 'MISSING')"); then
               BAD=0
             else
@@ -815,8 +818,8 @@ jobs:
               unreadable "reading the jobs of run $RUN_ID"
             fi
             [ "$CONC" != "MISSING" ] && break
-            echo "  ...jobs API has not caught up (smoke-tests unresolved), retry $i/24"
-            sleep 5
+            echo "  ...jobs API has not caught up (smoke-tests unresolved), retry $i/12"
+            sleep 10
           done
           echo "smoke-tests conclusion = $CONC"
           if [ "$CONC" != "success" ]; then
