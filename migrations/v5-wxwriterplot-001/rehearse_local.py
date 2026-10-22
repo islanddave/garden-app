@@ -76,6 +76,13 @@ class Rig:
         self.cl = R.Cluster(port)
         self.pw = secrets.token_urlsafe(24)
 
+    def clone(self, src, dst):
+        """CREATE DATABASE ... TEMPLATE, owned like the source: on Neon the owner role owns the database, and so
+        holds CREATE on schema public (CREATE INDEX needs it)."""
+        owner = self.su('postgres', 'SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = %s', (src,))[0][0]
+        self.cl.admin(f'DROP DATABASE IF EXISTS {dst}')
+        self.cl.admin(f'CREATE DATABASE {dst} TEMPLATE {src} OWNER {owner}')
+
     def url(self, db, user='postgres', pw=None):
         return f'postgresql://{user}{":" + pw if pw else ""}@127.0.0.1:{self.port}/{db}'
 
@@ -196,7 +203,7 @@ def main():
     tmp = tempfile.TemporaryDirectory(prefix='rh-wxwp-')
     try:
         # 1. prod's shape
-        rig.cl.clone(args.base_db, a)
+        rig.clone(args.base_db, a)
         rc, err = rig.as_owner(a, ONE_A)
         check('1 1a as the owner (NOSUPERUSER, as on Neon): exit 0, the role holds the seven', rc == 0
               and insert_cols(a, rig) == (SEVEN, False), err[-200:])
@@ -269,7 +276,7 @@ def main():
         old_1a = Path(tmp.name) / '1a-at-base.sql'
         old_1a.write_text(subprocess.run(['git', '-C', str(TREE), 'show', f'{BASE_SHA}:migrations/v5-wxcoldband-001/'
                                           '1a-writer-role.sql'], capture_output=True, text=True, check=True).stdout)
-        rig.cl.clone(a, b)
+        rig.clone(a, b)
         rc, err = rig.as_owner(b, old_1a)
         with psycopg.connect(rig.url(b)) as conn:
             red = gate_rows(conn, MINE, 'post_writer_inserts_exactly_the_eight')
@@ -284,7 +291,7 @@ def main():
         rig.cl.drop(b)
 
         # 7. staging's shape: the role exists, holds nothing here
-        rig.cl.clone(args.base_db, c)
+        rig.clone(args.base_db, c)
         state = grant_state(c, rig)
         pre = rig.gates(c, HERE, phase='pre')
         check("7 staging's shape: pre_writer_holds_exactly_1a_seven red (no INSERT on each of the seven), the rest PASS",
@@ -300,7 +307,7 @@ def main():
         rig.cl.drop(c)
 
         # 8. scripts/wx-writer-role.py end to end
-        rig.cl.clone(args.base_db, s)
+        rig.clone(args.base_db, s)
         rig.as_owner(s, ONE_A)
         env_file = Path(tmp.name) / 'env.local'
         writer_line = f'WX_WRITER_DATABASE_URL_STAGING={rig.writer_url(s)}'
@@ -340,7 +347,7 @@ def main():
         rig.cl.drop(s)
 
         # 9. 0r
-        rig.cl.clone(a, b)
+        rig.clone(a, b)
         rig.su(b, 'UPDATE public.weather_cold_range c SET plot_id = p.id FROM public.plots p WHERE c.plot_id IS NULL '
                   'AND p.workspace_id = c.space_id AND p.is_default AND p.deleted_at IS NULL')
         rig.su(b, 'ALTER TABLE public.weather_cold_range ALTER COLUMN plot_id SET NOT NULL')
