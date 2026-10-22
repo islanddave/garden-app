@@ -1,0 +1,141 @@
+# gates.yml
+# v5-tenancystamp-001: V5-SPACETENANCYKEY-001 (multi-space Phase 2 step 2.2, parent-derived stamps in DB functions).
+# Stamps 5.3.14-tenancystamp-001-void-event-weight-samples (01) and
+#        5.3.14-tenancystamp-001-reattribute-plant-weight-samples (02).
+# README.md has the sitting order, the arming check, the C-CONV pre-scan and the rehearsal.
+#
+# ANY pre/post assertion failing during the apply is a HARD ABORT.
+#
+# ── EVERY post GATE IS SELF-ARMING ────────────────────────────────────────────────────────────────
+#   gate-invariants runs `gate_runner.py --all --phase post --continuous-only` against live prod and live staging
+#   on every migrations/** push and on a Tuesday cron. Each post gate below returns rows only when its file's stamp
+#   exists AND the invariant is violated, except post_tenancystamp_bodies_have_their_stamps, which is armed on the
+#   bodies themselves (it cannot arm on the rows it checks for). No `::regclass`: catalog joins only.
+#   The data gate names workspace_id on cultivar_weight_void/_sample as plain identifiers: 2.1 gave both tables the
+#   column on prod and staging (stamps 5.3.13-tenancykey-001-cultivar-weight-void, -sample) before this directory.
+#
+# ── BODIES PINNED BY md5(prosrc) ──────────────────────────────────────────────────────────────────
+#   Read off the rehearsal's PostgreSQL 17.10 after each file (prosrc is the text between the dollar quotes, so the
+#   md5 is the file's own body: tests/lib/prosrcCensus.mjs --file prints the same). A later step that replaces
+#   either body edits its gate here, tolerant first (V204 §3.0), and its decision in tests/tenancy-prosrc-decisions.json.
+
+pre:
+  - name: pre_tenancystamp_2_1_columns_present
+    note: >
+      Files 01 and 02 copy workspace_id between cultivar_weight_sample, cultivar_weight_void and plants; 2.1 added it
+      to the first two. Step 0 of each file refuses the same thing. continuous false: a receipt for the sitting.
+    sql: |
+      SELECT 1
+       WHERE (SELECT count(*) FROM pg_attribute a
+                JOIN pg_class t ON t.oid = a.attrelid
+                JOIN pg_namespace n ON n.oid = t.relnamespace
+               WHERE n.nspname = 'public' AND t.relname IN ('cultivar_weight_void', 'cultivar_weight_sample', 'plants')
+                 AND a.attname = 'workspace_id' AND a.attnum > 0 AND NOT a.attisdropped) <> 3
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # DEFINITION PRE-GATES (V204 §3.0, DSA-18). Read live 2026-10-22 on prod and staging (identical):
+  #   void_event_weight_samples        cc33df74a8d622bebe772002210f836e  (v4-cal1-slicec-001 0f)
+  #   reattribute_plant_weight_samples d9bd4ee654ae3d2f8f9e3cae0b495640  (v4-harvweightest-001 0a)
+  # Each file's step 0 refuses the same thing; on a re-apply after its stamp it also accepts its own body.
+  - name: pre_void_event_weight_samples_is_the_body_01_was_written_from
+    note: >
+      continuous false: 01 changes the body on purpose.
+    sql: |
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+                          WHERE p.proname = 'void_event_weight_samples'
+                            AND md5(p.prosrc) IN ('cc33df74a8d622bebe772002210f836e', '886bb851e921341bc2d3af0f89f9c718'))
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_reattribute_plant_weight_samples_is_the_body_02_was_written_from
+    note: >
+      continuous false: 02 changes the body on purpose.
+    sql: |
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+                          WHERE p.proname = 'reattribute_plant_weight_samples'
+                            AND md5(p.prosrc) IN ('d9bd4ee654ae3d2f8f9e3cae0b495640', '2b881bb13ecf5e9f0b6d0701f3f850e1'))
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  # THE ARMING CHECK (V204 §3.0, DSA-25), per env before the apply: the rewrite writes the value the DEFAULT wrote.
+  # Every void's workspace_id equals its sample's, and every sample's equals its planting's (through its source
+  # event). Read 2026-10-22: prod 0 and staging 0 (README "Arming check"). continuous false: after the stamp the
+  # void arm is post_every_weight_void_carries_its_samples_space; the sample arm is 2.6's to keep.
+  - name: pre_child_rows_already_carry_their_parents_space
+    note: >
+      Rows returned = (table, id) of a child whose workspace_id differs from its parent's. 0 means the rewritten
+      bodies change no value a deployed reader sees.
+    sql: |
+      SELECT 'cultivar_weight_void' AS tbl, v.id::text
+        FROM public.cultivar_weight_void v
+        JOIN public.cultivar_weight_sample s ON s.id = v.sample_id
+       WHERE v.workspace_id IS DISTINCT FROM s.workspace_id
+      UNION ALL
+      SELECT 'cultivar_weight_sample', s.id::text
+        FROM public.cultivar_weight_sample s
+        JOIN public.event_log e ON e.id = s.source_event_id
+        JOIN public.plants pl ON pl.id = e.plant_id
+       WHERE s.workspace_id IS DISTINCT FROM pl.workspace_id
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  - name: post_void_event_weight_samples_body_pinned
+    note: >
+      After 01's stamp, public.void_event_weight_samples is exactly the body 01 wrote (its void takes the sample's
+      workspace_id). A later rewrite edits this gate, tolerant first.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.14-tenancystamp-001-void-event-weight-samples')
+         AND NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+                          WHERE p.proname = 'void_event_weight_samples'
+                            AND md5(p.prosrc) = '886bb851e921341bc2d3af0f89f9c718')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_reattribute_plant_weight_samples_body_pinned
+    note: >
+      After 02's stamp, public.reattribute_plant_weight_samples is exactly the body 02 wrote (void from the sample,
+      re-filed sample from the planting). A later rewrite edits this gate, tolerant first.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.14-tenancystamp-001-reattribute-plant-weight-samples')
+         AND NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+                          WHERE p.proname = 'reattribute_plant_weight_samples'
+                            AND md5(p.prosrc) = '2b881bb13ecf5e9f0b6d0701f3f850e1')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_tenancystamp_bodies_have_their_stamps
+    note: >
+      Armed on the bodies: a stamped body without its schema_version row (applied by hand, or the row deleted) would
+      leave the two pins above unarmed. Rows returned = the function whose stamp is missing.
+    sql: |
+      SELECT p.proname
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+       WHERE (p.proname = 'void_event_weight_samples' AND md5(p.prosrc) = '886bb851e921341bc2d3af0f89f9c718'
+              AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.14-tenancystamp-001-void-event-weight-samples'))
+          OR (p.proname = 'reattribute_plant_weight_samples' AND md5(p.prosrc) = '2b881bb13ecf5e9f0b6d0701f3f850e1'
+              AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.14-tenancystamp-001-reattribute-plant-weight-samples'))
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_every_weight_void_carries_its_samples_space
+    note: >
+      After 01's stamp, every cultivar_weight_void row lives in its sample's Space (both writers of voids stamp from
+      the sample). Rows returned = void ids whose workspace_id differs from their sample's. Both envs.
+    sql: |
+      SELECT v.id
+        FROM public.cultivar_weight_void v
+        JOIN public.cultivar_weight_sample s ON s.id = v.sample_id
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.14-tenancystamp-001-void-event-weight-samples')
+         AND v.workspace_id IS DISTINCT FROM s.workspace_id
+    expect: rowcount_eq
+    value: 0

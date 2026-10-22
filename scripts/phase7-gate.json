@@ -123,7 +123,10 @@
           "5.3.13-tenancykey-001-fk-garden-shared-state",
           "5.3.13-tenancykey-001-fk-seen-event"
         ],
-        "2.2": [],
+        "2.2": [
+          "5.3.14-tenancystamp-001-void-event-weight-samples",
+          "5.3.14-tenancystamp-001-reattribute-plant-weight-samples"
+        ],
         "2.3": [
           "5.3.14-tenancyvalidate-001-locations",
           "5.3.14-tenancyvalidate-001-photos",
