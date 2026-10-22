@@ -20,7 +20,10 @@ THE DATABASES IT BUILDS (roles are cluster-wide, so one case at a time holds the
                 attributes and grants put back after drift; the role over the wire; 1r, and again
   b_*           one planted state each that 1a must refuse, everything rolled back
   r_after_0r    1r with the table already gone
-  scripted*     scripts/wx-writer-role.py, every verb, with psql wrapped to record its argv
+  w3b           1a's W3b (multi-space 3.2c): with a plot_id column, the seven without stamp
+                5.3.14-wxwriterplot-001 and the eight with it
+  scripted*     scripts/wx-writer-role.py, every verb, with psql wrapped to record its argv (`grant`,
+                `reassert` and `ungrant` need plots and v5-wxplotid-001: v5-wxwriterplot-001/rehearse_local.py)
 
 WHAT IT CAN TOUCH. Only rehearse_local.Cluster's kind of cluster, on port 55498 (rehearse_local.py uses
 55497): 127.0.0.1 only, no unix socket, passwords minted for the run and never printed, stopped and
@@ -392,6 +395,40 @@ def rehearse(rig):
     chk("0r drops the empty table with the grant on it; 1r then drops the role, exit 0",
         code == 0 and res[0] == 0 and not exists(), said(err) + " / " + said(res[2]))
 
+    # ── E. 1a's W3b (V5-SPACEPLOTTIER-001, 3.2c): plot_id kept while 5.3.14-wxwriterplot-001 exists. ─
+    print("E. 1a with a plot_id column: the seven without 3.2c's stamp, the eight with it")
+    db = rig.new("w3b")
+    rig.owner(db, f"ALTER TABLE {T} ADD COLUMN plot_id uuid")
+    cols_of = lambda: rig.su(db, f"SELECT string_agg(attname, ',' ORDER BY attnum) FROM pg_attribute "  # noqa: E731
+                                 f"WHERE attrelid = '{T}'::regclass AND attnum > 0 AND NOT attisdropped "
+                                 f"AND has_column_privilege('{ROLE}', attrelid, attnum, 'INSERT')")
+    seven, eight = ",".join(rl.COLUMNS), ",".join(rl.COLUMNS + ("plot_id",))
+    res = rig.a(db)
+    chk("1a, a plot_id column and no 3.2c stamp: exit 0, INSERT on the seven and not plot_id (as before the amendment)",
+        res[0] == 0 and cols_of() == seven and "holds INSERT on the 7 columns" in res[2], said(res[2]))
+    rig.owner(db, f"GRANT INSERT (plot_id) ON {T} TO {ROLE}")
+    res = rig.a(db)
+    chk("... a plot_id grant made by hand, no stamp: 1a revokes it with the rest, exit 0, the seven",
+        res[0] == 0 and cols_of() == seven, said(res[2]))
+    rig.owner(db, "INSERT INTO public.schema_version (version, description) VALUES ('5.3.14-wxwriterplot-001', 'rehearsal')")
+    res = rig.a(db)
+    chk("... with 3.2c's stamp (W3b): exit 0, INSERT on the eight, the NOTICE says 8 columns",
+        res[0] == 0 and cols_of() == eight and "holds INSERT on the 8 columns" in res[2], said(res[2]))
+    applied = rig.state(db)
+    res = rig.a(db)
+    chk("... 1a again with the stamp: exit 0, schema with privileges and the role row unchanged",
+        res[0] == 0 and rig.state(db) == applied, said(res[2]))
+    rig.owner(db, f"GRANT INSERT (created_at) ON {T} TO {ROLE}")
+    res = rig.a(db)
+    chk("... created_at granted by hand with the stamp: 1a takes it back, exit 0, the eight",
+        res[0] == 0 and cols_of() == eight, said(res[2]))
+    rig.owner(db, "DELETE FROM public.schema_version WHERE version = '5.3.14-wxwriterplot-001'")
+    res = rig.a(db)
+    chk("... the stamp gone (3.2c rolled back): 1a revokes plot_id, exit 0, the seven", res[0] == 0 and cols_of() == seven,
+        said(res[2]))
+    rig.su("postgres", "DROP DATABASE w3b")
+    rig.drop_role()
+
     # ── D. scripts/wx-writer-role.py, every verb, through an env file made for the run. ──────────
     print("D. scripts/wx-writer-role.py")
     script_checks(rig, chk)
@@ -450,9 +487,11 @@ def script_checks(rig, chk):
     printed = out.splitlines()
     chk("apply --env staging: exit 0, every line PASS (or the role line, or an indented NOTICE)",
         code == 0 and printed and all(ln.startswith(("PASS ", "role garden_wx_writer", "     ")) for ln in printed)
-        and sum(ln.startswith("PASS ") for ln in printed) == 8, out.strip().replace("\n", " | ")[:600])
-    chk("... the four negative probes each PASS as 42501",
+        and sum(ln.startswith("PASS ") for ln in printed) == 10, out.strip().replace("\n", " | ")[:600])
+    chk("... the five negative probes each PASS as 42501",
         all(f"PASS {p} is denied (42501)" in out for p, _ in wx.PROBES), "")
+    chk("... the job's eight-column INSERT reported, not required, on a table with no plot_id (before v5-wxplotid-001)",
+        f"PASS {wx.PLOT_LABEL}: no plot_id column (42703)" in out, "")
     chk("... the stale line replaced by exactly one WX_WRITER_DATABASE_URL_STAGING line; every other line kept; mode 0640 kept",
         len(lines) == 1 and keep() == kept and stat.S_IMODE(env_file.stat().st_mode) == 0o640, f"{len(lines)} line(s)")
     owner_pg = wx.libpq_env(owner_url, "NEON_STAGING_URL")
@@ -463,7 +502,7 @@ def script_checks(rig, chk):
     chk("... and that URL is the job's login: the bare INSERT through it is accepted", res[0] == 0, said(res[2]))
     chk("... nothing printed carries the owner's or the writer's password, a URL or the host", clean(out + err))
     code, out, err = script("verify", "--env", "staging")
-    chk("verify --env staging: exit 0, five PASS lines", code == 0 and out.count("\nPASS ") == 5 and clean(out + err),
+    chk("verify --env staging: exit 0, seven PASS lines", code == 0 and out.count("\nPASS ") == 7 and clean(out + err),
         out.strip().replace("\n", " | ")[:400])
     old = dict(pg)
     code, out, err = script("apply", "--env", "staging")

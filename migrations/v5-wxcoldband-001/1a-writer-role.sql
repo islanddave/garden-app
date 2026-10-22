@@ -34,6 +34,13 @@
 --     list, no RETURNING; the foreign key to spaces needs nothing (PostgreSQL checks it as the table's
 --     owner); a re-run cannot correct a row.
 --
+--   * W3b. AND plot_id, ONCE 3.2c HAS GRANTED IT. AMENDED 2026-10-21 (V5-SPACEPLOTTIER-001, multi-space 3.2c,
+--     migrations/v5-wxwriterplot-001): that step grants INSERT (plot_id) and writes stamp 5.3.14-wxwriterplot-001,
+--     and from then on the job names plot_id. While that stamp exists this file grants plot_id too and asserts
+--     the eight, so a re-run (a restore, a password rotation through apply) cannot take the job's column away.
+--     Without the stamp this file does exactly what it did before the amendment: the seven, and a plot_id grant
+--     made by anything else is revoked with the rest.
+--
 --   * W4. NOTHING IS REVOKED FROM PUBLIC. A new role gets whatever PUBLIC holds, and taking something
 --     from PUBLIC changes it for every role in the database. The assertion counts PUBLIC's grants
 --     (has_*_privilege does) and, if any widens this role, refuses and names it "granted to PUBLIC";
@@ -48,8 +55,9 @@
 --       SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES and TRIGGER are false, and so is
 --       has_any_column_privilege SELECT, INSERT, UPDATE and REFERENCES, except INSERT on the seven
 --       columns of weather_cold_range;
---     on weather_cold_range, has_column_privilege INSERT is true on those seven and false on every
---       other column (created_at), and table-level INSERT is false;
+--     on weather_cold_range, has_column_privilege INSERT is true on those seven (eight with plot_id
+--       while 3.2c's stamp exists: W3b) and false on every other column (created_at), and table-level
+--       INSERT is false;
 --     every sequence there: no USAGE, SELECT or UPDATE;
 --     CREATE on no non-system schema, and CREATE on this database false;
 --     USAGE on schema public true (granted to the role here; Neon staging does not give it to PUBLIC);
@@ -69,7 +77,9 @@
 --   * SURVIVE A RESTORE. backup.yml dumps with --no-owner --no-privileges, and its globals dump carries
 --     roles with --no-role-passwords. After a restore the role may come back, but with no grant and no
 --     password: the job's INSERT is refused and the card is blank. Run this file again, then
---     scripts/wx-writer-role.py apply.
+--     scripts/wx-writer-role.py apply. (A restore keeps schema_version's rows, so W3b re-grants plot_id
+--     there too once 3.2c has run.) To re-assert the grant WITHOUT a new password:
+--     scripts/wx-writer-role.py reassert.
 --
 -- SAFETY / IDEMPOTENCY: one transaction. Re-running it converges on the same role, the same single
 --   grant and the same attributes, and does not touch the password. Exactly ONE COMMIT, at the end:
@@ -193,13 +203,25 @@ GRANT USAGE ON SCHEMA public TO garden_wx_writer;
 GRANT INSERT (space_id, night_date, init_time, p10_min_f, p50_min_f, leads_read, leads_expected)
   ON public.weather_cold_range TO garden_wx_writer;
 
+-- W3b: plot_id while 3.2c's stamp exists (header). EXECUTE, so the file still parses where plot_id does not exist.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.14-wxwriterplot-001') THEN
+    EXECUTE 'GRANT INSERT (plot_id) ON public.weather_cold_range TO garden_wx_writer';
+  END IF;
+END $$;
+
 -- ── 4. The assertion. Anything wider than the grant above rolls the whole file back. ──────────────
 DO $$
 DECLARE
   me       CONSTANT oid    := 'garden_wx_writer'::regrole;
   tbl      CONSTANT oid    := 'public.weather_cold_range'::regclass;
+  -- "seven" keeps its name: W3's seven, plus plot_id (W3b) while 3.2c's stamp exists.
   seven    CONSTANT text[] := ARRAY['space_id', 'night_date', 'init_time', 'p10_min_f', 'p50_min_f',
-                                    'leads_read', 'leads_expected'];
+                                    'leads_read', 'leads_expected']
+                              || CASE WHEN EXISTS (SELECT 1 FROM public.schema_version
+                                                    WHERE version = '5.3.14-wxwriterplot-001')
+                                      THEN ARRAY['plot_id'] ELSE '{}'::text[] END;
   r        pg_catalog.pg_roles%ROWTYPE;
   bad      text[] := '{}';
   x        record;
@@ -365,7 +387,8 @@ BEGIN
       cardinality(bad), array_to_string(bad, E'\n  ')
       USING HINT = 'A line "granted to PUBLIC" is something every role in this database holds. This file does not revoke from PUBLIC, because that changes every role: that is a decision for Dave. Anything else: find who granted it.';
   END IF;
-  RAISE NOTICE 'garden_wx_writer holds INSERT on the seven columns of public.weather_cold_range and nothing else that has_*_privilege can see.';
+  RAISE NOTICE 'garden_wx_writer holds INSERT on the % columns of public.weather_cold_range (%) and nothing else that has_*_privilege can see.',
+    cardinality(seven), array_to_string(seven, ', ');
 END $$;
 
 COMMIT;

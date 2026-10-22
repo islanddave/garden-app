@@ -21,9 +21,22 @@ VERBS
       Run again, it re-asserts the role and ROTATES the password: the job must read the new line.
   verify --env staging|prod
       The probes only, as garden_wx_writer, from WX_WRITER_DATABASE_URL_<ENV>.
+  reassert --env staging|prod
+      Run 1a-writer-role.sql as the owner, then the probes. NO new password: the job's line is left as it
+      is. For a role whose grant drifted or was lost (a restore), when its password still works.
+  grant --env staging|prod                      (V5-SPACEPLOTTIER-001, multi-space 3.2c)
+      1. Run migrations/v5-wxwriterplot-001/0a-writer-plot-grant.sql as the owner: INSERT on plot_id too.
+      2. As the owner, read the job's Space (the one public.spaces row) and that Space's live default plot,
+         and write them as WX_WRITER_SPACE_ID_<ENV> and WX_WRITER_PLOT_ID_<ENV>: the keys the cold-range job
+         reads, so no person copies a UUID. Refuses unless there is exactly one Space with exactly one live
+         default plot.
+      3. The probes, expecting INSERT naming plot_id to be allowed. NO new password.
+  ungrant --env staging|prod
+      Run migrations/v5-wxwriterplot-001/0r-rollback.sql as the owner (switch the job back to its
+      seven-column text first), remove the two keys, then the probes, expecting plot_id to be denied.
   rollback --env staging|prod
       Run 1r-writer-role-rollback.sql as the owner (stop the Mac job first), then remove the
-      WX_WRITER_DATABASE_URL_<ENV> line.
+      WX_WRITER_DATABASE_URL_<ENV> line and the two keys.
 
   --env prod refuses, for every verb, unless --i-have-daves-ok is given. Creating the role on prod,
   rotating its password and dropping it are prod database changes and need Dave's first-hand OK.
@@ -32,8 +45,14 @@ THE PROBES, as garden_wx_writer over the same connection path the job will use (
 owner URL names it):
   - it is connected as garden_wx_writer, has_column_privilege INSERT is true on the seven columns and
     false on created_at, and table-level INSERT is false (catalog functions only; no row is written);
-  - SELECT on weather_cold_range, SELECT on plants, UPDATE and DELETE on weather_cold_range (WHERE false)
-    each answer 42501 permission denied. Any other answer, success included, is a FAIL.
+  - SELECT on weather_cold_range, SELECT on plants, UPDATE and DELETE on weather_cold_range (WHERE false),
+    and an INSERT naming created_at (INSERT ... SELECT ... WHERE false: the privilege is checked before any
+    row, so none is written) each answer 42501 permission denied. Any other answer, success included, is a
+    FAIL.
+  - the job's own column list (3.2c: the seven and plot_id) as INSERT ... SELECT ... WHERE false ON CONFLICT
+    DO NOTHING: allowed once 3.2c's grant is made. `grant` requires it allowed, `ungrant` denied; the
+    other verbs require it allowed when WX_WRITER_PLOT_ID_<ENV> is in the env file (the job then sends
+    plot_id) and otherwise report which it is.
 
 SECRETS. A URL is read from the env file by KEY NAME (default: the repo's .env.local; it cannot be sourced
 by a shell) and reaches psql only through the child's environment, split into PGHOST, PGPASSWORD and the
@@ -58,6 +77,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
 
@@ -66,12 +86,31 @@ REPO = HERE.parent
 MIGRATION = REPO / "migrations" / "v5-wxcoldband-001"
 APPLY_SQL = MIGRATION / "1a-writer-role.sql"
 ROLLBACK_SQL = MIGRATION / "1r-writer-role-rollback.sql"
+PLOT_MIGRATION = REPO / "migrations" / "v5-wxwriterplot-001"
+GRANT_SQL = PLOT_MIGRATION / "0a-writer-plot-grant.sql"
+UNGRANT_SQL = PLOT_MIGRATION / "0r-rollback.sql"
 
 ROLE = "garden_wx_writer"
 OWNER_KEY = {"staging": "NEON_STAGING_URL", "prod": "NEON_DATABASE_URL"}
 WRITER_KEY = {"staging": "WX_WRITER_DATABASE_URL_STAGING", "prod": "WX_WRITER_DATABASE_URL_PROD"}
+# The cold-range job's Space and plot, by key name (3.2c). Written by `grant`, read by wn3_send.py.
+SPACE_KEY = {"staging": "WX_WRITER_SPACE_ID_STAGING", "prod": "WX_WRITER_SPACE_ID_PROD"}
+PLOT_KEY = {"staging": "WX_WRITER_PLOT_ID_STAGING", "prod": "WX_WRITER_PLOT_ID_PROD"}
 TABLE = "public.weather_cold_range"
 SEVEN = ("space_id", "night_date", "init_time", "p10_min_f", "p50_min_f", "leads_read", "leads_expected")
+# The job's INSERT column list from 3.2c on (wn3_send.py), in its order.
+JOB_COLUMNS = ("space_id", "plot_id", "night_date", "init_time", "p10_min_f", "p50_min_f", "leads_read",
+               "leads_expected")
+_TYPES = {"space_id": "uuid", "plot_id": "uuid", "night_date": "date", "init_time": "timestamptz",
+          "p10_min_f": "numeric", "p50_min_f": "numeric", "leads_read": "smallint", "leads_expected": "smallint",
+          "created_at": "timestamptz"}
+
+
+def insert_probe(cols, tail=""):
+    """INSERT naming exactly `cols`, from a SELECT of typed NULLs WHERE false: PostgreSQL checks the column
+    privileges when the statement starts, so it answers 42501 or succeeds without writing a row."""
+    nulls = ", ".join(f"NULL::{_TYPES[c]}" for c in cols)
+    return f"INSERT INTO {TABLE} ({', '.join(cols)}) SELECT {nulls} WHERE false" + tail
 
 # The URL query parameters passed on, each as the libpq environment variable that means the same thing.
 # Anything else in a URL is refused by name rather than silently dropped.
@@ -91,7 +130,19 @@ PROBES = (
     ("SELECT on public.plants", "SELECT 1 FROM public.plants LIMIT 0"),
     (f"UPDATE on {TABLE}", f"UPDATE {TABLE} SET p10_min_f = p10_min_f WHERE false"),
     (f"DELETE on {TABLE}", f"DELETE FROM {TABLE} WHERE false"),
+    (f"INSERT naming created_at on {TABLE}", insert_probe(
+        ("space_id", "night_date", "init_time", "p10_min_f", "leads_read", "leads_expected", "created_at"))),
 )
+PLOT_PROBE = insert_probe(JOB_COLUMNS, " ON CONFLICT DO NOTHING")
+PLOT_LABEL = "INSERT naming plot_id (the job's eight columns, bare ON CONFLICT DO NOTHING; no row written)"
+# Read as the OWNER by `grant`: the job's Space is the one spaces row, its plot that Space's live default plot.
+# One row per Space; the counts let the script refuse anything but exactly one of each.
+SPACE_PLOT_SQL = ("SELECT s.id, (SELECT count(*) FROM public.spaces), "
+                  "(SELECT count(*) FROM public.plots p WHERE p.workspace_id = s.id AND p.is_default "
+                  "AND p.deleted_at IS NULL), "
+                  "(SELECT p.id FROM public.plots p WHERE p.workspace_id = s.id AND p.is_default "
+                  "AND p.deleted_at IS NULL ORDER BY p.id LIMIT 1) "
+                  "FROM public.spaces s ORDER BY s.id")
 # Seconds to wait before each further try of the first login after a new password. Neon's proxy may
 # answer from what it knew of the role a moment ago (unverified); a local server never needs these.
 LOGIN_RETRY_WAITS = (2, 4, 8, 16)
@@ -265,7 +316,32 @@ def load_url(env_file, key):
         return None
 
 
-def probe(pg, retry_login=False):
+def plot_probe(pg, want):
+    """The job's eight-column INSERT (no row). want True: must be allowed; False: must be denied (42501);
+    None: either, reported. Returns whether it held."""
+    code, _, err = psql(pg, sql=PLOT_PROBE, verbosity="sqlstate")
+    state = sqlstate(err)
+    got = "allowed" if code == 0 else ("denied (42501)" if state == "42501" else
+                                       "no plot_id column (42703)" if state == "42703" else
+                                       f"psql exit {code}, SQLSTATE {state or 'none'}")
+    if want is True:
+        return say(code == 0, f"{PLOT_LABEL} is allowed", "" if code == 0 else got)
+    if want is False:
+        return say(code != 0 and state == "42501", f"{PLOT_LABEL} is denied (42501)",
+                   "" if state == "42501" else ("it SUCCEEDED" if code == 0 else got))
+    ok = code == 0 or state in ("42501", "42703")
+    return say(ok, f"{PLOT_LABEL}: {got}" + ("" if code == 0 else " (until `grant`, 3.2c)"), "" if ok else got)
+
+
+def want_plot(env, env_file):
+    """True when the env file carries the job's plot key (the job then names plot_id), else None."""
+    try:
+        return True if read_key(env_file, PLOT_KEY[env]) else None
+    except OSError:
+        return None
+
+
+def probe(pg, retry_login=False, want_plot_insert=None):
     """Connect as garden_wx_writer and prove what it can and cannot do. True if every probe holds."""
     waits = list(LOGIN_RETRY_WAITS) if retry_login else []
     tries = 1
@@ -282,6 +358,7 @@ def probe(pg, retry_login=False):
     good = say(out == IDENTITY_OK, f"logged in as {ROLE}; INSERT on the seven columns, not on created_at, not table-level"
                + (f" (login took {tries} tries)" if tries > 1 else ""),
                "" if out == IDENTITY_OK else f"got {scrub(out, pg)!r}, want {IDENTITY_OK!r}")
+    good &= plot_probe(pg, want_plot_insert)
     for label, sql in PROBES:
         code, out, err = psql(pg, sql=sql, verbosity="sqlstate")
         state = sqlstate(err)
@@ -313,14 +390,93 @@ def cmd_apply(env, env_file):
     if not say(read_key(env_file, WRITER_KEY[env]) == url,
                f"{WRITER_KEY[env]} written to {Path(env_file).name} (value not shown)"):
         return 1
-    return 0 if probe(libpq_env(url, WRITER_KEY[env]), retry_login=True) else 1
+    return 0 if probe(libpq_env(url, WRITER_KEY[env]), retry_login=True,
+                      want_plot_insert=want_plot(env, env_file)) else 1
 
 
 def cmd_verify(env, env_file):
     writer = load_url(env_file, WRITER_KEY[env])
     if not writer:
         return 1
-    return 0 if probe(writer[1]) else 1
+    return 0 if probe(writer[1], want_plot_insert=want_plot(env, env_file)) else 1
+
+
+def run_owner_file(owner_pg, path, what):
+    """psql -f `path` as the owner. Prints a PASS/FAIL line and psql's scrubbed messages; True on exit 0."""
+    code, _, err = psql(owner_pg, file=path)
+    ok = say(code == 0, f"{path.name} as the owner{what}", "" if code == 0 else f"psql exit {code}, nothing changed")
+    for ln in psql_lines(err, owner_pg):
+        print(f"     {ln}")
+    return ok
+
+
+def cmd_reassert(env, env_file):
+    """1a again, then the probes. The password is not touched: the job's line stays valid."""
+    owner = load_url(env_file, OWNER_KEY[env])
+    writer = load_url(env_file, WRITER_KEY[env]) if owner else None
+    if not (owner and writer):
+        return 1
+    if not run_owner_file(owner[1], APPLY_SQL, " (no new password)"):
+        return 1
+    return 0 if probe(writer[1], want_plot_insert=want_plot(env, env_file)) else 1
+
+
+def read_space_and_plot(owner_pg):
+    """(space id, plot id) as the owner reads them, or None after a FAIL line. Exactly one Space, and exactly
+    one live default plot of it; anything else is a decision for a person, not for this script."""
+    code, out, err = psql(owner_pg, sql=SPACE_PLOT_SQL, verbosity="sqlstate")
+    if code:
+        say(False, "read the job's Space and plot as the owner", f"psql exit {code}, SQLSTATE {sqlstate(err) or 'none'}")
+        return None
+    rows = [ln.split("|") for ln in out.splitlines() if ln.strip()]
+    if len(rows) != 1:
+        say(False, "the job's Space is the one public.spaces row", f"there are {len(rows)}: choose on purpose (V204 5.x)")
+        return None
+    space, _, n_default, plot = rows[0]
+    if n_default != "1" or not plot:
+        say(False, "the Space has exactly one live default plot", f"it has {n_default}")
+        return None
+    try:
+        return str(uuid.UUID(space)), str(uuid.UUID(plot))
+    except ValueError:
+        say(False, "the Space and plot ids are uuids", "")
+        return None
+
+
+def cmd_grant(env, env_file):
+    """3.2c: INSERT on plot_id, the job's Space and plot keys, then the probes (plot_id allowed)."""
+    owner = load_url(env_file, OWNER_KEY[env])
+    writer = load_url(env_file, WRITER_KEY[env]) if owner else None
+    if not (owner and writer):
+        return 1
+    if not run_owner_file(owner[1], GRANT_SQL, ": INSERT on plot_id (no new password)"):
+        return 1
+    ids = read_space_and_plot(owner[1])
+    if not ids:
+        return 1
+    for key, value in ((SPACE_KEY[env], ids[0]), (PLOT_KEY[env], ids[1])):
+        rewrite_key(env_file, key, value)
+        if not say(read_key(env_file, key) == value, f"{key}={value} written to {Path(env_file).name}"):
+            return 1
+    return 0 if probe(writer[1], want_plot_insert=True) else 1
+
+
+def cmd_ungrant(env, env_file):
+    """3.2c rollback: plot_id revoked, the two keys removed, then the probes (plot_id denied)."""
+    owner = load_url(env_file, OWNER_KEY[env])
+    writer = load_url(env_file, WRITER_KEY[env]) if owner else None
+    if not (owner and writer):
+        return 1
+    if not run_owner_file(owner[1], UNGRANT_SQL, ": INSERT on plot_id revoked"):
+        return 1
+    remove_job_keys(env, env_file)
+    return 0 if probe(writer[1], want_plot_insert=False) else 1
+
+
+def remove_job_keys(env, env_file):
+    for key in (SPACE_KEY[env], PLOT_KEY[env]):
+        found = rewrite_key(env_file, key, None)
+        say(read_key(env_file, key) is None, f"{key} {'removed from' if found else 'was not in'} {Path(env_file).name}")
 
 
 def cmd_rollback(env, env_file):
@@ -339,12 +495,13 @@ def cmd_rollback(env, env_file):
     found = rewrite_key(env_file, WRITER_KEY[env], None)
     say(read_key(env_file, WRITER_KEY[env]) is None,
         f"{WRITER_KEY[env]} {'removed from' if found else 'was not in'} {Path(env_file).name}")
+    remove_job_keys(env, env_file)
     return 0
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="garden_wx_writer, the cold-range writer's own login (V5-WXCOLDBAND-001)")
-    ap.add_argument("verb", choices=("apply", "verify", "rollback"))
+    ap.add_argument("verb", choices=("apply", "verify", "reassert", "grant", "ungrant", "rollback"))
     ap.add_argument("--env", required=True, choices=("staging", "prod"))
     ap.add_argument("--env-file", default=str(REPO / ".env.local"),
                     help="KEY=VALUE file the URLs are read from and the writer's URL is written to (default: the repo's .env.local)")
@@ -358,7 +515,8 @@ def main(argv=None):
         say(False, "psql is not on PATH")
         return 1
     print(f"role {ROLE}, --env {args.env}, {args.verb}")
-    verb = {"apply": cmd_apply, "verify": cmd_verify, "rollback": cmd_rollback}[args.verb]
+    verb = {"apply": cmd_apply, "verify": cmd_verify, "reassert": cmd_reassert, "grant": cmd_grant,
+            "ungrant": cmd_ungrant, "rollback": cmd_rollback}[args.verb]
     return verb(args.env, args.env_file)
 
 

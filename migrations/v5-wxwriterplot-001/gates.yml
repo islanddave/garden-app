@@ -1,0 +1,130 @@
+# gates.yml
+# v5-wxwriterplot-001: V5-SPACEPLOTTIER-001 (multi-space Phase 3 step 3.2c, garden_wx_writer may name plot_id).
+# Stamp 5.3.14-wxwriterplot-001. README.md has the sitting order, the C-CONV pre-scan and why.
+#
+# ANY pre/post assertion failing during the sitting is a HARD ABORT.
+#
+# ── EVERY post GATE IS SELF-ARMING AND CATALOG-ONLY ──────────────────────────────────────────────────
+#   gate-invariants runs `gate_runner.py --all --phase post --continuous-only` against live prod and live staging,
+#   with no skip-if-unapplied logic. So each post gate returns rows only when stamp 5.3.14-wxwriterplot-001 exists AND
+#   its invariant is violated. post_schema_version_recorded is armed on the grant instead (it cannot arm on the row it
+#   checks for).
+#   No `::regclass` and no column or role named as an identifier: the role is matched by pg_roles.rolname and each
+#   column by pg_attribute.attname, and has_column_privilege takes their oids and attnums. So a database with no
+#   garden_wx_writer (a fresh fork, a restore before 1a) or no plot_id column (before v5-wxplotid-001) reads vacuously
+#   instead of raising 42704 or 42703.
+#
+# ── WHAT THESE GATES DO NOT COVER ────────────────────────────────────────────────────────────────────
+#   The rest of the role (attributes, memberships, every other relation, sequences, schemas, SECURITY DEFINER
+#   routines) is 1a-writer-role.sql's assertion and `scripts/wx-writer-role.py verify`'s wire probes, not a gate.
+#   Whether the job sends plot_id is not visible to the database (3.2d's pre gate reads the newest row instead).
+#
+# REHEARSED on a throwaway local PostgreSQL 17.10 loaded with prod's schema (README.md "Rehearsal"). Not run against
+# staging or prod as an applied migration.
+
+pre:
+  - name: pre_not_already_applied
+    note: >
+      continuous false: false by design once 0a runs.
+    sql: |
+      SELECT version FROM public.schema_version WHERE version = '5.3.14-wxwriterplot-001'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_cold_range_and_plot_id_present
+    note: >
+      v5-wxcoldband-001 and v5-wxplotid-001 applied: their stamps and the plot_id column the grant names. One row per
+      missing piece.
+    sql: |
+      SELECT 'stamp ' || want.version
+        FROM (VALUES ('5.0.0-wxcoldband-001'), ('5.3.12-wxplotid-001')) AS want(version)
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version v WHERE v.version = want.version)
+      UNION ALL
+      SELECT 'column weather_cold_range.plot_id'
+       WHERE NOT EXISTS (SELECT 1 FROM pg_attribute a
+                           JOIN pg_class t     ON t.oid = a.attrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                          WHERE t.relname = 'weather_cold_range' AND a.attname = 'plot_id' AND NOT a.attisdropped)
+    expect: rowcount_eq
+    value: 0
+
+  # The starting state 0a's step 0 also demands: the role 1a made, holding INSERT on exactly its seven columns of
+  # weather_cold_range and no table-level INSERT. Read 2026-10-21: TRUE on prod; FALSE on staging, where the role
+  # exists but holds INSERT on no column at all (README.md "Staging"), so the staging sitting re-runs 1a first
+  # (`wx-writer-role.py reassert`). continuous false: 0a changes it on purpose.
+  - name: pre_writer_holds_exactly_1a_seven
+    sql: |
+      WITH me AS (SELECT r.oid FROM pg_roles r WHERE r.rolname = 'garden_wx_writer'),
+           tbl AS (SELECT t.oid FROM pg_class t
+                     JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                    WHERE t.relname = 'weather_cold_range' AND t.relkind = 'r'),
+           seven AS (SELECT unnest(ARRAY['space_id', 'night_date', 'init_time', 'p10_min_f', 'p50_min_f',
+                                         'leads_read', 'leads_expected']) AS col)
+      SELECT 'no role garden_wx_writer' WHERE NOT EXISTS (SELECT 1 FROM me)
+      UNION ALL
+      SELECT 'no INSERT on ' || s.col
+        FROM seven s, me, tbl
+       WHERE NOT EXISTS (SELECT 1 FROM pg_attribute a
+                          WHERE a.attrelid = tbl.oid AND a.attname = s.col AND NOT a.attisdropped
+                            AND has_column_privilege(me.oid, tbl.oid, a.attnum, 'INSERT'))
+      UNION ALL
+      SELECT 'INSERT on ' || a.attname
+        FROM me, tbl, pg_attribute a
+       WHERE a.attrelid = tbl.oid AND a.attnum > 0 AND NOT a.attisdropped
+         AND a.attname NOT IN (SELECT col FROM seven)
+         AND has_column_privilege(me.oid, tbl.oid, a.attnum, 'INSERT')
+      UNION ALL
+      SELECT 'table-level INSERT' FROM me, tbl WHERE has_table_privilege(me.oid, tbl.oid, 'INSERT')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  # ARMED ON THE GRANT, NOT ON ITSELF. 0a writes the grant and the row in one transaction, so a row here means
+  # someone granted plot_id by hand (or deleted the stamp): the state in which a re-run of 1a would revoke it.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 'garden_wx_writer holds INSERT on weather_cold_range.plot_id without stamp 5.3.14-wxwriterplot-001'
+        FROM pg_roles r, pg_attribute a
+        JOIN pg_class t     ON t.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+       WHERE r.rolname = 'garden_wx_writer' AND t.relname = 'weather_cold_range'
+         AND a.attname = 'plot_id' AND NOT a.attisdropped
+         AND has_column_privilege(r.oid, t.oid, a.attnum, 'INSERT')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.14-wxwriterplot-001')
+    expect: rowcount_eq
+    value: 0
+
+  # THE JOB'S GRANT, EXACTLY. Once the stamp exists the cold-range job names eight columns, so the role must hold
+  # INSERT on exactly these eight (1a's seven and plot_id): never created_at (the database's freshness stamp), never
+  # table-level. A missing one is the job refused (42501) every night and the card blank, which looks like a sleeping
+  # Mac; a re-run of 1a from before this step, or a restore (backup.yml dumps --no-privileges), would do it. One row
+  # per finding, naming it.
+  - name: post_writer_inserts_exactly_the_eight
+    sql: |
+      WITH armed AS (SELECT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.3.14-wxwriterplot-001') AS on_),
+           me AS (SELECT r.oid FROM pg_roles r WHERE r.rolname = 'garden_wx_writer'),
+           tbl AS (SELECT t.oid FROM pg_class t
+                     JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+                    WHERE t.relname = 'weather_cold_range' AND t.relkind = 'r'),
+           eight AS (SELECT unnest(ARRAY['space_id', 'plot_id', 'night_date', 'init_time', 'p10_min_f', 'p50_min_f',
+                                         'leads_read', 'leads_expected']) AS col)
+      SELECT 'no role garden_wx_writer' FROM armed WHERE armed.on_ AND NOT EXISTS (SELECT 1 FROM me)
+      UNION ALL
+      SELECT 'no INSERT on ' || e.col
+        FROM armed, eight e, me, tbl
+       WHERE armed.on_
+         AND NOT EXISTS (SELECT 1 FROM pg_attribute a
+                          WHERE a.attrelid = tbl.oid AND a.attname = e.col AND NOT a.attisdropped
+                            AND has_column_privilege(me.oid, tbl.oid, a.attnum, 'INSERT'))
+      UNION ALL
+      SELECT 'INSERT on ' || a.attname
+        FROM armed, me, tbl, pg_attribute a
+       WHERE armed.on_ AND a.attrelid = tbl.oid AND a.attnum > 0 AND NOT a.attisdropped
+         AND a.attname NOT IN (SELECT col FROM eight)
+         AND has_column_privilege(me.oid, tbl.oid, a.attnum, 'INSERT')
+      UNION ALL
+      SELECT 'table-level INSERT' FROM armed, me, tbl WHERE armed.on_ AND has_table_privilege(me.oid, tbl.oid, 'INSERT')
+    expect: rowcount_eq
+    value: 0
