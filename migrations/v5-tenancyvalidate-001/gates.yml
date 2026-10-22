@@ -1,0 +1,181 @@
+# gates.yml
+# v5-tenancyvalidate-001: V5-SPACETENANCYKEY-001 (multi-space plan V204 step 2.3, §3 row 2.3, §3.0): the all-row
+#   sweep and VALIDATE of the 25 keys v5-tenancykey-001 (step 2.1) added NOT VALID. One SQL file per key, one stamp
+#   per file: 5.3.14-tenancyvalidate-001-<table>. README.md has the order, the sitting and the C-CONV pre-scan.
+#
+# ── THE VALUES LIST IS THE KEY LIST OF v5-tenancykey-001 ────────────────────────────────────────────────────
+#   (n, relname, conname, key_stamp, stamp), one row per file, between the BEGIN/END markers (here and in
+#   0r-rollback.sql). validate.test.js holds every marked block equal to `node generate.mjs --values`, which reads
+#   v5-tenancykey-001/owner-classes.json: file NN here validates the key file NN there made.
+#
+# ── THE post GATE ARMS PER KEY ON THAT KEY'S OWN EXACT STAMP ────────────────────────────────────────────────
+#   gate-invariants runs `gate_runner.py --all --phase post --continuous-only` on live prod and staging. Each row
+#   is tested only when `EXISTS (SELECT 1 FROM public.schema_version sv WHERE sv.version = k.stamp)` holds for that
+#   row's literal stamp: vacuous before its file runs (the key NOT VALID passes), asserting convalidated = true
+#   permanently after. A file writes its stamp in the same transaction as its VALIDATE, so a partly applied run
+#   (the runner stopped at a refusal) arms exactly the keys it validated. NO ::regclass: every relation is found
+#   through pg_class by name.
+#
+# ── WHAT THESE GATES DO NOT COVER ────────────────────────────────────────────────────────────────────────────
+#   * The keys' shape (one key on workspace_id, single column, to spaces(id), RESTRICT):
+#     v5-tenancykey-001 post_tenancykey_key_shape, armed on 2.1's stamps. VALIDATE does not change it.
+#   * Rows naming a Space, continuously: v5-spacefk-001 post_workspace_census_every_row_names_a_space walks every
+#     workspace_id table, so it already reads all 25. After this step the validated keys say it as well.
+
+pre:
+  # Receipts for the apply window only (continuous: false). Each row is read only while its own stamp is absent,
+  # so both are vacuous once the files have run (they never red after the sitting, whatever phase is run).
+
+  # Every key this directory validates is the one 2.1 made, 2.1's stamp is present, and it is still NOT VALID.
+  - name: pre_tenancyvalidate_keys_are_2_1s_and_not_valid
+    continuous: false
+    note: >
+      Read 2026-10-22 on prod and staging: all 25 present, NOT VALID, ON DELETE RESTRICT, workspace_id -> spaces(id),
+      with their 25 stamps 5.3.13-tenancykey-001-*. Lists a key that is missing, already validated, or whose 2.1
+      stamp is absent; the file for it would refuse.
+    sql: |
+      SELECT k.relname, k.conname,
+             CASE WHEN NOT EXISTS (SELECT 1 FROM public.schema_version sv WHERE sv.version = k.key_stamp)
+                    THEN '2.1 stamp absent'
+                  WHEN x.oid IS NULL THEN 'key missing'
+                  ELSE 'already validated' END AS problem
+        FROM (VALUES
+          -- BEGIN tenancyvalidate keys
+          (1, 'locations', 'locations_workspace_id_fkey', '5.3.13-tenancykey-001-locations', '5.3.14-tenancyvalidate-001-locations'),
+          (2, 'photos', 'photos_workspace_id_fkey', '5.3.13-tenancykey-001-photos', '5.3.14-tenancyvalidate-001-photos'),
+          (3, 'inventory_items', 'inventory_items_workspace_id_fkey', '5.3.13-tenancykey-001-inventory-items', '5.3.14-tenancyvalidate-001-inventory-items'),
+          (4, 'storage_location', 'storage_location_workspace_id_fkey', '5.3.13-tenancykey-001-storage-location', '5.3.14-tenancyvalidate-001-storage-location'),
+          (5, 'preservation_log', 'preservation_log_workspace_id_fkey', '5.3.13-tenancykey-001-preservation-log', '5.3.14-tenancyvalidate-001-preservation-log'),
+          (6, 'kitchen_batch', 'kitchen_batch_workspace_id_fkey', '5.3.13-tenancykey-001-kitchen-batch', '5.3.14-tenancyvalidate-001-kitchen-batch'),
+          (7, 'pantry_item', 'pantry_item_workspace_id_fkey', '5.3.13-tenancykey-001-pantry-item', '5.3.14-tenancyvalidate-001-pantry-item'),
+          (8, 'recipe', 'recipe_workspace_id_fkey', '5.3.13-tenancykey-001-recipe', '5.3.14-tenancyvalidate-001-recipe'),
+          (9, 'tag', 'tag_workspace_id_fkey', '5.3.13-tenancykey-001-tag', '5.3.14-tenancyvalidate-001-tag'),
+          (10, 'critter_state', 'critter_state_workspace_id_fkey', '5.3.13-tenancykey-001-critter-state', '5.3.14-tenancyvalidate-001-critter-state'),
+          (11, 'findings', 'findings_workspace_id_fkey', '5.3.13-tenancykey-001-findings', '5.3.14-tenancyvalidate-001-findings'),
+          (12, 'tasks', 'tasks_workspace_id_fkey', '5.3.13-tenancykey-001-tasks', '5.3.14-tenancyvalidate-001-tasks'),
+          (13, 'event_batches', 'event_batches_workspace_id_fkey', '5.3.13-tenancykey-001-event-batches', '5.3.14-tenancyvalidate-001-event-batches'),
+          (14, 'daily_plan', 'daily_plan_workspace_id_fkey', '5.3.13-tenancykey-001-daily-plan', '5.3.14-tenancyvalidate-001-daily-plan'),
+          (15, 'favorites', 'favorites_workspace_id_fkey', '5.3.13-tenancykey-001-favorites', '5.3.14-tenancyvalidate-001-favorites'),
+          (16, 'voice_alias', 'voice_alias_workspace_id_fkey', '5.3.13-tenancykey-001-voice-alias', '5.3.14-tenancyvalidate-001-voice-alias'),
+          (17, 'proj_rescope_events', 'proj_rescope_events_workspace_id_fkey', '5.3.13-tenancykey-001-proj-rescope-events', '5.3.14-tenancyvalidate-001-proj-rescope-events'),
+          (18, 'weather_cue_impression', 'weather_cue_impression_workspace_id_fkey', '5.3.13-tenancykey-001-weather-cue-impression', '5.3.14-tenancyvalidate-001-weather-cue-impression'),
+          (19, 'cultivar_weight_sample', 'cultivar_weight_sample_workspace_id_fkey', '5.3.13-tenancykey-001-cultivar-weight-sample', '5.3.14-tenancyvalidate-001-cultivar-weight-sample'),
+          (20, 'cultivar_weight_void', 'cultivar_weight_void_workspace_id_fkey', '5.3.13-tenancykey-001-cultivar-weight-void', '5.3.14-tenancyvalidate-001-cultivar-weight-void'),
+          (21, 'source', 'source_workspace_id_fkey', '5.3.13-tenancykey-001-source', '5.3.14-tenancyvalidate-001-source'),
+          (22, 'slug_redirects', 'slug_redirects_workspace_id_fkey', '5.3.13-tenancykey-001-slug-redirects', '5.3.14-tenancyvalidate-001-slug-redirects'),
+          (23, 'treatment_association', 'treatment_association_workspace_id_fkey', '5.3.13-tenancykey-001-fk-treatment-association', '5.3.14-tenancyvalidate-001-treatment-association'),
+          (24, 'garden_shared_state', 'garden_shared_state_workspace_id_fkey', '5.3.13-tenancykey-001-fk-garden-shared-state', '5.3.14-tenancyvalidate-001-garden-shared-state'),
+          (25, 'seen_event', 'seen_event_workspace_id_fkey', '5.3.13-tenancykey-001-fk-seen-event', '5.3.14-tenancyvalidate-001-seen-event')
+          -- END tenancyvalidate keys
+             ) AS k(n, relname, conname, key_stamp, stamp)
+        LEFT JOIN (pg_constraint x
+                   JOIN pg_class c ON c.oid = x.conrelid
+                   JOIN pg_namespace ns ON ns.oid = c.relnamespace AND ns.nspname = 'public')
+               ON c.relname = k.relname AND x.conname = k.conname AND x.contype = 'f'
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version sv WHERE sv.version = k.stamp)
+         AND (NOT EXISTS (SELECT 1 FROM public.schema_version sv WHERE sv.version = k.key_stamp)
+              OR x.oid IS NULL OR x.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # THE ALL-ROW SWEEP (Migration Authoring Rule, L-058): every row, no deleted_at filter. Rows whose workspace_id
+  # names no Space, and NULL rows counted separately (a MATCH SIMPLE key passes a NULL). The files run the same
+  # sweep in their guard and refuse on either; this is its receipt in the gate log. Each table is read through
+  # query_to_xml, by the name in the VALUES list.
+  - name: pre_tenancyvalidate_all_row_sweep_is_zero
+    continuous: false
+    note: >
+      Read 2026-10-22 on prod and staging (owner role, READ ONLY transaction, every row): 0 rows naming no Space and
+      0 NULL on all 25 tables. Lists each table with either count above 0.
+    sql: |
+      SELECT k.relname, x.orphan, x.nulls
+        FROM (VALUES
+          -- BEGIN tenancyvalidate keys
+          (1, 'locations', 'locations_workspace_id_fkey', '5.3.13-tenancykey-001-locations', '5.3.14-tenancyvalidate-001-locations'),
+          (2, 'photos', 'photos_workspace_id_fkey', '5.3.13-tenancykey-001-photos', '5.3.14-tenancyvalidate-001-photos'),
+          (3, 'inventory_items', 'inventory_items_workspace_id_fkey', '5.3.13-tenancykey-001-inventory-items', '5.3.14-tenancyvalidate-001-inventory-items'),
+          (4, 'storage_location', 'storage_location_workspace_id_fkey', '5.3.13-tenancykey-001-storage-location', '5.3.14-tenancyvalidate-001-storage-location'),
+          (5, 'preservation_log', 'preservation_log_workspace_id_fkey', '5.3.13-tenancykey-001-preservation-log', '5.3.14-tenancyvalidate-001-preservation-log'),
+          (6, 'kitchen_batch', 'kitchen_batch_workspace_id_fkey', '5.3.13-tenancykey-001-kitchen-batch', '5.3.14-tenancyvalidate-001-kitchen-batch'),
+          (7, 'pantry_item', 'pantry_item_workspace_id_fkey', '5.3.13-tenancykey-001-pantry-item', '5.3.14-tenancyvalidate-001-pantry-item'),
+          (8, 'recipe', 'recipe_workspace_id_fkey', '5.3.13-tenancykey-001-recipe', '5.3.14-tenancyvalidate-001-recipe'),
+          (9, 'tag', 'tag_workspace_id_fkey', '5.3.13-tenancykey-001-tag', '5.3.14-tenancyvalidate-001-tag'),
+          (10, 'critter_state', 'critter_state_workspace_id_fkey', '5.3.13-tenancykey-001-critter-state', '5.3.14-tenancyvalidate-001-critter-state'),
+          (11, 'findings', 'findings_workspace_id_fkey', '5.3.13-tenancykey-001-findings', '5.3.14-tenancyvalidate-001-findings'),
+          (12, 'tasks', 'tasks_workspace_id_fkey', '5.3.13-tenancykey-001-tasks', '5.3.14-tenancyvalidate-001-tasks'),
+          (13, 'event_batches', 'event_batches_workspace_id_fkey', '5.3.13-tenancykey-001-event-batches', '5.3.14-tenancyvalidate-001-event-batches'),
+          (14, 'daily_plan', 'daily_plan_workspace_id_fkey', '5.3.13-tenancykey-001-daily-plan', '5.3.14-tenancyvalidate-001-daily-plan'),
+          (15, 'favorites', 'favorites_workspace_id_fkey', '5.3.13-tenancykey-001-favorites', '5.3.14-tenancyvalidate-001-favorites'),
+          (16, 'voice_alias', 'voice_alias_workspace_id_fkey', '5.3.13-tenancykey-001-voice-alias', '5.3.14-tenancyvalidate-001-voice-alias'),
+          (17, 'proj_rescope_events', 'proj_rescope_events_workspace_id_fkey', '5.3.13-tenancykey-001-proj-rescope-events', '5.3.14-tenancyvalidate-001-proj-rescope-events'),
+          (18, 'weather_cue_impression', 'weather_cue_impression_workspace_id_fkey', '5.3.13-tenancykey-001-weather-cue-impression', '5.3.14-tenancyvalidate-001-weather-cue-impression'),
+          (19, 'cultivar_weight_sample', 'cultivar_weight_sample_workspace_id_fkey', '5.3.13-tenancykey-001-cultivar-weight-sample', '5.3.14-tenancyvalidate-001-cultivar-weight-sample'),
+          (20, 'cultivar_weight_void', 'cultivar_weight_void_workspace_id_fkey', '5.3.13-tenancykey-001-cultivar-weight-void', '5.3.14-tenancyvalidate-001-cultivar-weight-void'),
+          (21, 'source', 'source_workspace_id_fkey', '5.3.13-tenancykey-001-source', '5.3.14-tenancyvalidate-001-source'),
+          (22, 'slug_redirects', 'slug_redirects_workspace_id_fkey', '5.3.13-tenancykey-001-slug-redirects', '5.3.14-tenancyvalidate-001-slug-redirects'),
+          (23, 'treatment_association', 'treatment_association_workspace_id_fkey', '5.3.13-tenancykey-001-fk-treatment-association', '5.3.14-tenancyvalidate-001-treatment-association'),
+          (24, 'garden_shared_state', 'garden_shared_state_workspace_id_fkey', '5.3.13-tenancykey-001-fk-garden-shared-state', '5.3.14-tenancyvalidate-001-garden-shared-state'),
+          (25, 'seen_event', 'seen_event_workspace_id_fkey', '5.3.13-tenancykey-001-fk-seen-event', '5.3.14-tenancyvalidate-001-seen-event')
+          -- END tenancyvalidate keys
+             ) AS k(n, relname, conname, key_stamp, stamp)
+        JOIN pg_class c ON c.relname = k.relname
+        JOIN pg_namespace ns ON ns.oid = c.relnamespace AND ns.nspname = 'public'
+        CROSS JOIN LATERAL (
+          SELECT (xpath('/table/row/o/text()', q))[1]::text::bigint AS orphan,
+                 (xpath('/table/row/z/text()', q))[1]::text::bigint AS nulls
+            FROM query_to_xml(format(
+                   'SELECT count(*) FILTER (WHERE t.workspace_id IS NOT NULL AND NOT EXISTS '
+                   '(SELECT 1 FROM public.spaces s WHERE s.id = t.workspace_id)) AS o, '
+                   'count(*) FILTER (WHERE t.workspace_id IS NULL) AS z FROM public.%I t',
+                   k.relname), false, false, '') AS q) x
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version sv WHERE sv.version = k.stamp)
+         AND (x.orphan > 0 OR x.nulls > 0)
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # Each of the 25 keys is there and convalidated = true once its file has run. Before its stamp the row is not
+  # read, so a NOT VALID key passes (the tolerant half); after it, NOT VALID or a missing key reds (the tightened
+  # half), e.g. a key dropped and re-added NOT VALID by hand. 0r-rollback.sql deletes the stamps it undoes, so the
+  # gate goes vacuous again with it.
+  - name: post_tenancyvalidate_keys_validated
+    sql: |
+      SELECT k.relname, k.conname,
+             CASE WHEN x.oid IS NULL THEN 'key missing' ELSE 'NOT VALID' END AS problem
+        FROM (VALUES
+          -- BEGIN tenancyvalidate keys
+          (1, 'locations', 'locations_workspace_id_fkey', '5.3.13-tenancykey-001-locations', '5.3.14-tenancyvalidate-001-locations'),
+          (2, 'photos', 'photos_workspace_id_fkey', '5.3.13-tenancykey-001-photos', '5.3.14-tenancyvalidate-001-photos'),
+          (3, 'inventory_items', 'inventory_items_workspace_id_fkey', '5.3.13-tenancykey-001-inventory-items', '5.3.14-tenancyvalidate-001-inventory-items'),
+          (4, 'storage_location', 'storage_location_workspace_id_fkey', '5.3.13-tenancykey-001-storage-location', '5.3.14-tenancyvalidate-001-storage-location'),
+          (5, 'preservation_log', 'preservation_log_workspace_id_fkey', '5.3.13-tenancykey-001-preservation-log', '5.3.14-tenancyvalidate-001-preservation-log'),
+          (6, 'kitchen_batch', 'kitchen_batch_workspace_id_fkey', '5.3.13-tenancykey-001-kitchen-batch', '5.3.14-tenancyvalidate-001-kitchen-batch'),
+          (7, 'pantry_item', 'pantry_item_workspace_id_fkey', '5.3.13-tenancykey-001-pantry-item', '5.3.14-tenancyvalidate-001-pantry-item'),
+          (8, 'recipe', 'recipe_workspace_id_fkey', '5.3.13-tenancykey-001-recipe', '5.3.14-tenancyvalidate-001-recipe'),
+          (9, 'tag', 'tag_workspace_id_fkey', '5.3.13-tenancykey-001-tag', '5.3.14-tenancyvalidate-001-tag'),
+          (10, 'critter_state', 'critter_state_workspace_id_fkey', '5.3.13-tenancykey-001-critter-state', '5.3.14-tenancyvalidate-001-critter-state'),
+          (11, 'findings', 'findings_workspace_id_fkey', '5.3.13-tenancykey-001-findings', '5.3.14-tenancyvalidate-001-findings'),
+          (12, 'tasks', 'tasks_workspace_id_fkey', '5.3.13-tenancykey-001-tasks', '5.3.14-tenancyvalidate-001-tasks'),
+          (13, 'event_batches', 'event_batches_workspace_id_fkey', '5.3.13-tenancykey-001-event-batches', '5.3.14-tenancyvalidate-001-event-batches'),
+          (14, 'daily_plan', 'daily_plan_workspace_id_fkey', '5.3.13-tenancykey-001-daily-plan', '5.3.14-tenancyvalidate-001-daily-plan'),
+          (15, 'favorites', 'favorites_workspace_id_fkey', '5.3.13-tenancykey-001-favorites', '5.3.14-tenancyvalidate-001-favorites'),
+          (16, 'voice_alias', 'voice_alias_workspace_id_fkey', '5.3.13-tenancykey-001-voice-alias', '5.3.14-tenancyvalidate-001-voice-alias'),
+          (17, 'proj_rescope_events', 'proj_rescope_events_workspace_id_fkey', '5.3.13-tenancykey-001-proj-rescope-events', '5.3.14-tenancyvalidate-001-proj-rescope-events'),
+          (18, 'weather_cue_impression', 'weather_cue_impression_workspace_id_fkey', '5.3.13-tenancykey-001-weather-cue-impression', '5.3.14-tenancyvalidate-001-weather-cue-impression'),
+          (19, 'cultivar_weight_sample', 'cultivar_weight_sample_workspace_id_fkey', '5.3.13-tenancykey-001-cultivar-weight-sample', '5.3.14-tenancyvalidate-001-cultivar-weight-sample'),
+          (20, 'cultivar_weight_void', 'cultivar_weight_void_workspace_id_fkey', '5.3.13-tenancykey-001-cultivar-weight-void', '5.3.14-tenancyvalidate-001-cultivar-weight-void'),
+          (21, 'source', 'source_workspace_id_fkey', '5.3.13-tenancykey-001-source', '5.3.14-tenancyvalidate-001-source'),
+          (22, 'slug_redirects', 'slug_redirects_workspace_id_fkey', '5.3.13-tenancykey-001-slug-redirects', '5.3.14-tenancyvalidate-001-slug-redirects'),
+          (23, 'treatment_association', 'treatment_association_workspace_id_fkey', '5.3.13-tenancykey-001-fk-treatment-association', '5.3.14-tenancyvalidate-001-treatment-association'),
+          (24, 'garden_shared_state', 'garden_shared_state_workspace_id_fkey', '5.3.13-tenancykey-001-fk-garden-shared-state', '5.3.14-tenancyvalidate-001-garden-shared-state'),
+          (25, 'seen_event', 'seen_event_workspace_id_fkey', '5.3.13-tenancykey-001-fk-seen-event', '5.3.14-tenancyvalidate-001-seen-event')
+          -- END tenancyvalidate keys
+             ) AS k(n, relname, conname, key_stamp, stamp)
+        LEFT JOIN (pg_constraint x
+                   JOIN pg_class c ON c.oid = x.conrelid
+                   JOIN pg_namespace ns ON ns.oid = c.relnamespace AND ns.nspname = 'public')
+               ON c.relname = k.relname AND x.conname = k.conname AND x.contype = 'f'
+       WHERE EXISTS (SELECT 1 FROM public.schema_version sv WHERE sv.version = k.stamp)
+         AND (x.oid IS NULL OR NOT x.convalidated)
+    expect: rowcount_eq
+    value: 0

@@ -100,12 +100,64 @@ def test_a_gap_in_the_numbering_refuses(tmp_path):
         tk.migration_files(tmp_path)
 
 
-def test_the_dry_run_block_is_read_only_sql():
-    for path, _ in tk.migration_files():
+@pytest.mark.parametrize("directory", sorted(tk.MIGRATIONS))
+def test_the_dry_run_block_is_read_only_sql(directory):
+    for path, _ in tk.migration_files(tk.REPO / "migrations" / directory):
         block = tk.pregate_block(path)
         assert block.startswith("DO $pregate$") and block.endswith("END $pregate$;")
         body = re.sub(r"'(?:[^']|'')*'", "''", block)  # string literals out: messages may say anything
-        assert not re.search(r"\b(ALTER|CREATE|DROP|INSERT|UPDATE|DELETE|LOCK|TRUNCATE|GRANT)\b", body), path.name
+        assert not re.search(r"\b(ALTER|CREATE|DROP|INSERT|UPDATE|DELETE|LOCK|TRUNCATE|GRANT|VALIDATE|COMMENT)\b",
+                             body), path.name
+        assert f"current_setting('{tk.MIGRATIONS[directory]}', true)" in block, path.name
+
+
+# ── v5-tenancyvalidate-001 (step 2.3) through the same runner ──────────────────────────────────────────────
+
+VALIDATE_DIR = tk.REPO / "migrations" / "v5-tenancyvalidate-001"
+
+
+def test_validate_files_follow_the_key_files_one_for_one():
+    keys, vals = tk.migration_files(), tk.migration_files(VALIDATE_DIR)
+    assert len(vals) == len(keys) == 25
+    for (kp, ks), (vp, vs) in zip(keys, vals):
+        assert vp.name[:3] == kp.name[:3], "file NN validates the key file NN made"
+        table = re.sub(r"^\d\d-(fk-)?", "", kp.name)[:-4]
+        assert vs == f"5.3.14-tenancyvalidate-001-{table}" and f"'{ks}'" in vp.read_text()
+
+
+def test_dir_must_be_known():
+    with pytest.raises(SystemExit) as e:
+        tk.main(["--env", "staging", "--dir", "v5-somethingelse-001"])
+    assert e.value.code == 2
+
+
+def test_validate_dry_run_sets_its_own_env_setting(monkeypatch, tmp_path, capsys):
+    db = FakeDb()
+    assert run(monkeypatch, tmp_path, db, "--dir", "v5-tenancyvalidate-001", "--dry-run") == 0
+    guards = [s for s, ro in db.sql if "$pregate$" in s]
+    assert len(guards) == 25 and all(ro for _, ro in db.sql) and db.ran == []
+    assert all("set_config('tenancyvalidate.env', 'staging', true)" in s for s in guards)
+    assert "v5-tenancyvalidate-001, --env staging" in capsys.readouterr().out
+
+
+def test_validate_stops_at_the_refused_file_and_resumes_there(monkeypatch, tmp_path, capsys):
+    files = [p.name for p, _ in tk.migration_files(VALIDATE_DIR)]
+    db = FakeDb(refuse={files[6]})
+    assert run(monkeypatch, tmp_path, db, "--dir", "v5-tenancyvalidate-001") == 1
+    assert db.ran == files[:7]
+    db.refuse.clear()
+    db.ran.clear()
+    assert run(monkeypatch, tmp_path, db, "--dir", "v5-tenancyvalidate-001") == 0
+    assert db.ran == files[6:]
+    assert f"resumes at {files[6]}" in capsys.readouterr().out
+
+
+def test_validate_on_prod_needs_daves_ok(monkeypatch, capsys):
+    monkeypatch.setattr(tk.subprocess, "run", boom)
+    monkeypatch.setattr(tk, "read_key", boom)
+    assert tk.main(["--env", "prod", "--dir", "v5-tenancyvalidate-001", "--env-file", "/nonexistent"],
+                   clock=at(14, 30)) == 1
+    assert "REFUSED" in capsys.readouterr().err
 
 
 # ── the run: order, stop at the first refusal, resume at the first missing stamp ──────────────────────────

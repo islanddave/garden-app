@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """
-tenancykey-apply.py — applies migrations/v5-tenancykey-001 (multi-space step 2.1, V5-SPACETENANCYKEY-001) to
-staging or prod, one file at a time, in order.
+tenancykey-apply.py — applies migrations/v5-tenancykey-001 (multi-space step 2.1, V5-SPACETENANCYKEY-001) or, with
+--dir v5-tenancyvalidate-001, migrations/v5-tenancyvalidate-001 (step 2.3: the all-row sweep and VALIDATE of 2.1's
+25 keys) to staging or prod, one file at a time, in order.
 
 WHAT IT DOES
-  --env staging|prod [--dry-run] [--env-file PATH] [--i-have-daves-ok] [--rehearsal]
+  --env staging|prod [--dir DIR] [--dry-run] [--env-file PATH] [--i-have-daves-ok] [--rehearsal]
+
+  --dir names one of MIGRATIONS (default v5-tenancykey-001). Both directories share the contract below: numbered
+  files 01..NN, one stamp each, psql -v env, and a $pregate$ guard block that sets nothing (the env reaches it
+  through the directory's own setting, MIGRATIONS[dir]).
 
   1. Finds the directory's numbered files (01-*.sql .. NN-*.sql, contiguous) and the one stamp each writes.
   2. Reads which of those stamps public.schema_version already holds.
@@ -14,7 +19,8 @@ WHAT IT DOES
      first file whose stamp is missing.
   --dry-run reads only. Inside BEGIN TRANSACTION READ ONLY it runs each pending file's guard block ($pregate$:
      env, fingerprint, the owner pre-gate) and reports PASS or REFUSED per file, then ROLLBACK. This is the
-     sitting's step 0, "read 45": the owner census re-run with the exact SQL the files carry.
+     sitting's step 0, "read 45": the owner census re-run with the exact SQL the files carry. For
+     v5-tenancyvalidate-001 the guard is the key check and the all-row sweep, so the dry run is the sweep.
 
 REFUSALS, before anything is read or run:
   --env prod without --i-have-daves-ok (applying is a prod database change: Dave's first-hand OK names this
@@ -46,6 +52,8 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 MIGRATION = REPO / "migrations" / "v5-tenancykey-001"
+# directory -> the setting its files read the env from (each file's first statement sets it from psql -v env).
+MIGRATIONS = {"v5-tenancykey-001": "tenancykey.env", "v5-tenancyvalidate-001": "tenancyvalidate.env"}
 OWNER_KEY = {"staging": "NEON_STAGING_URL", "prod": "NEON_DATABASE_URL"}
 FILE_RE = re.compile(r"^(\d\d)-[a-z0-9-]+\.sql$")
 STAMP_RE = re.compile(r"INSERT INTO public\.schema_version \(version, description\)\s*VALUES \('([^']+)'")
@@ -195,11 +203,11 @@ def applied_stamps(pg, stamps):
     return {ln for ln in out.splitlines() if ln}
 
 
-def dry_run(pg, env, pending):
+def dry_run(pg, env, pending, setting="tenancykey.env"):
     good = True
     for path, stamp in pending:
         sql = ("BEGIN TRANSACTION READ ONLY;\n"
-               f"SELECT set_config('tenancykey.env', '{env}', true) \\gset tk_\n"
+               f"SELECT set_config('{setting}', '{env}', true) \\gset tk_\n"
                f"{pregate_block(path)}\n"
                "ROLLBACK;\n")
         code, _, err = psql(pg, sql=sql, read_only=True)
@@ -234,8 +242,11 @@ def apply(pg, env, files, done, rehearsal, clock):
 
 
 def main(argv=None, clock=utcnow):
-    ap = argparse.ArgumentParser(description="apply migrations/v5-tenancykey-001 in order (V5-SPACETENANCYKEY-001)")
+    ap = argparse.ArgumentParser(description="apply migrations/v5-tenancykey-001 (or --dir) in order "
+                                             "(V5-SPACETENANCYKEY-001)")
     ap.add_argument("--env", required=True, choices=("staging", "prod"))
+    ap.add_argument("--dir", default="v5-tenancykey-001", choices=sorted(MIGRATIONS),
+                    help="the migration directory (default v5-tenancykey-001)")
     ap.add_argument("--env-file", default=str(REPO / ".env.local"),
                     help="KEY=VALUE file the URL is read from, by key name (default: the repo's .env.local)")
     ap.add_argument("--dry-run", action="store_true", help="read only: report each pending file's guard")
@@ -256,7 +267,7 @@ def main(argv=None, clock=utcnow):
         say(False, "psql is not on PATH")
         return 1
     try:
-        files = migration_files()
+        files = migration_files(REPO / "migrations" / args.dir)
     except ValueError as exc:
         say(False, "the migration files", str(exc))
         return 1
@@ -277,7 +288,7 @@ def main(argv=None, clock=utcnow):
     if args.rehearsal and pg["PGHOST"] not in LOOPBACK:
         print("REFUSED: --rehearsal is for a loopback host only. Nothing was run.", file=sys.stderr)
         return 1
-    print(f"v5-tenancykey-001, --env {args.env} ({key}), {len(files)} files"
+    print(f"{args.dir}, --env {args.env} ({key}), {len(files)} files"
           + (", dry run (read only)" if args.dry_run else "") + (", rehearsal" if args.rehearsal else ""), flush=True)
     done = applied_stamps(pg, [s for _, s in files])
     if done is None:
@@ -286,7 +297,7 @@ def main(argv=None, clock=utcnow):
     print(f"{len(done)} of {len(files)} stamps present; "
           + (f"resumes at {pending[0][0].name}" if pending else "nothing to apply"), flush=True)
     if args.dry_run:
-        return 0 if dry_run(pg, args.env, pending) else 1
+        return 0 if dry_run(pg, args.env, pending, MIGRATIONS[args.dir]) else 1
     return 0 if apply(pg, args.env, files, done, args.rehearsal, clock) else 1
 
 
