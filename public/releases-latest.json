@@ -1,7 +1,7 @@
 {
-  "version": "5.3.13",
-  "date": "2026-10-20",
+  "version": "5.3.14",
+  "date": "2026-10-21",
   "highlights": [
-    "Space key files for 22 tables; weather days record their plot"
+    "New rows take their Space from the row they belong to; the cold-range writer can record its plot; build tool updates"
   ]
 }
