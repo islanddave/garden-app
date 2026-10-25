@@ -32,6 +32,13 @@
 
 const _store = new Map()
 const _now = () => Date.now()
+// BUG-TODAYSECTIONSSTUCK-001: bumped by invalidateAll. A mounted reader subscribes to an entry OBJECT; once the store
+// is cleared that object is gone from the map, so nothing it waits on can ever commit to it. Readers watch the epoch
+// and re-subscribe + re-register + revalidate against the fresh entry (useCachedFetch).
+let _epoch = 0
+const _epochSubs = new Set()
+export function epoch() { return _epoch }
+export function subscribeEpoch(cb) { _epochSubs.add(cb); return () => { _epochSubs.delete(cb) } }
 const LRU_CAP = 60
 
 // SW-STALEAPI-001. public/sw.js answers an offline /api/* fetch from API_CACHE with a plain 200, and
@@ -151,7 +158,7 @@ export function revalidate(key) {
   const exec = Promise.resolve().then(fetcher).then(
     (fresh) => {
       const cur = _store.get(key)
-      if (!cur || cur.gen !== gen) return                 // gen-guard: invalidated mid-flight → discard
+      if (cur !== e || cur.gen !== gen) return            // gen-guard: invalidated mid-flight → discard; entry-guard: evicted by invalidateAll → discard
       const list = Array.isArray(fresh) ? fresh : (fresh ?? [])
       const data = _sameExceptUrls(cur.data, list) ? cur.data : list   // preserve unchanged rows' URLs
       // SW-STALEAPI-001. A cache-served response still yields usable data (status stays 'value' — an
@@ -168,7 +175,7 @@ export function revalidate(key) {
     },
     (err) => {
       const cur = _store.get(key)
-      if (!cur || cur.gen !== gen) return
+      if (cur !== e || cur.gen !== gen) return
       if (cur.status !== 'value') _commit(cur, { status: 'error', error: err })   // error only when no usable data
     },
   )
@@ -205,6 +212,8 @@ export function invalidatePrefix(pathPrefix) {
 export function invalidateAll() {
   for (const e of _store.values()) { e.gen += 1; e.inFlight = null }
   _store.clear()
+  _epoch += 1
+  for (const cb of [..._epochSubs]) cb()
 }
 
 // ── V4-IMGCACHE-002 D-2 — boot-warm / resume-revalidate / refresh ────────────────────────────────

@@ -290,7 +290,7 @@ export default function ProtectTonight({ protect, record, update, announce, writ
 // it is not the one every tender row shares (that one is said once, in the band's summary: "tender below 50°").
 function ProtectRow({ row, inCard, failed, pending, onSkip, onCover, onBring, held, sharedThreshold = null }) {
   const who = rowLabel(row)
-  const href = (row.projectId && row.plantingId) ? '/projects/' + row.projectId + '/plantings/' + row.plantingId : '/garden'
+  const href = row.plantingId ? '/plantings/' + row.plantingId : '/garden'
   const meta = [inCard ? null : row.spotName, row.threshold != null && row.threshold !== sharedThreshold ? `below ${row.threshold}°F` : null].filter(Boolean).join(' · ')
   return (
     <PlantRow as="li" testid="protect-row" rowKey={row.key} rowStyle={inCard ? inRow : cardRow} href={href} focusId={'protect:' + row.key}

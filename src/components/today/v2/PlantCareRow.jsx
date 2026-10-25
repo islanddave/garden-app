@@ -114,7 +114,7 @@ export default function PlantCareRow({ row, testid = 'care-row', reason, urgent,
       </div>
     )
   }
-  const detailHref = (row.projectId && row.plantingId) ? '/projects/' + row.projectId + '/plantings/' + row.plantingId : '/garden'
+  const detailHref = row.plantingId ? '/plantings/' + row.plantingId : '/garden'
   const line = reason != null ? reason : (!row.reasonRedundant ? row.reason : null)
   // The overdue words lead the meta (once — a redundant reason IS those words), after the warning mark.
   const late = urgent === false ? null : overdueWords(row)

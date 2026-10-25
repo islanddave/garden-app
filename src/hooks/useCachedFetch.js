@@ -43,14 +43,19 @@ export function useCachedFetch(path) {
   )
 
   // ── CACHED path (no-ops when key is null) ──
-  const subscribe = useCallback((cb) => (key ? cache.subscribe(key, cb) : _noopUnsub()), [key])
-  const getSnap = useCallback(() => (key ? cache.getSnapshot(key) : EMPTY_SNAP), [key])
+  // `ep` (BUG-TODAYSECTIONSSTUCK-001): invalidateAll replaces every entry. AuthContext runs it in a passive effect,
+  // which fires AFTER a child's, so a reader mounted in the same commit as the identity has already registered on the
+  // evicted entry. A new epoch re-subscribes, re-registers and revalidates on the fresh entry; without it `loading`
+  // stayed true until a remount (Today's sections below the weather card never appeared).
+  const ep = useSyncExternalStore(cache.subscribeEpoch, cache.epoch, cache.epoch)
+  const subscribe = useCallback((cb) => (key ? cache.subscribe(key, cb) : _noopUnsub()), [key, ep])
+  const getSnap = useCallback(() => (key ? cache.getSnapshot(key) : EMPTY_SNAP), [key, ep])
   const snap = useSyncExternalStore(subscribe, getSnap, getSnap)
   useEffect(() => {
     if (!key) return
     cache.register(key, fetcher)
-    cache.revalidate(key)            // serve cache (already in snap) + revalidate on every mount
-  }, [key, fetcher])
+    cache.revalidate(key)            // serve cache (already in snap) + revalidate on every mount and every eviction
+  }, [key, fetcher, ep])
 
   // ── PLAIN fallback (flag OFF only) ──
   const [local, setLocal] = useState({ data: undefined, loading: usePlain, error: null })

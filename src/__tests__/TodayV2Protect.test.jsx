@@ -121,8 +121,16 @@ describe('Protect tonight on the 09-24 plan (47°F, five protect cards, no alert
     expect(rows.some((r) => r.textContent.includes('below'))).toBe(false)
     // L3 + L5 integrated: the page states the threshold exactly once — the band summary's (L3), never a row's (L5).
     expect(document.body.textContent.match(/below 50°/g)).toHaveLength(1)
-    expect(rows[0].querySelector('a').getAttribute('href')).toBe(`/projects/${PAYLOAD.plan.cold[0].project_id}/plantings/${ID['Lemon Verbena']}`)
+    expect(rows[0].querySelector('a').getAttribute('href')).toBe(`/plantings/${ID['Lemon Verbena']}`)
     expect(screen.queryByTestId('protect-pick')).toBeNull()
+  })
+
+  // BUG-TODAYNOPROJECTLINK-001: a planting with no project (Penstemon on prod, 2026-10-24) opened Garden, not its page.
+  it('a planting with no project still opens its own page', async () => {
+    serve({ ...PAYLOAD, plan: { ...PAYLOAD.plan, cold: PAYLOAD.plan.cold.map((c, i) => (i === 0 ? { ...c, project_id: null, project: null } : c)) } })
+    await mount()
+    const href = rowOf('Lemon Verbena').querySelector('a').getAttribute('href')
+    expect(href).toBe(`/plantings/${ID['Lemon Verbena']}`)
   })
 
   it('L5 row anatomy: the picture box first in the body link (photo, or the sprout), then quiet Skip · outline Covered · soft-green Brought in', async () => {

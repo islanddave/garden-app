@@ -1,7 +1,7 @@
 {
-  "version": "5.3.15",
-  "date": "2026-10-22",
+  "version": "5.3.16",
+  "date": "2026-10-25",
   "highlights": [
-    "Behind-the-scenes: test deploys now check they are testing the right build, and a few deploy steps handle network hiccups better."
+    "Today’s lists now show up on the first load instead of sometimes needing a refresh, and tapping a plant that isn’t in a project (like Penstemon) opens its own page."
   ]
 }
