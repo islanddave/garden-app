@@ -151,15 +151,20 @@ def recorded(run_id, mutate=None, seen=None):
 LAST = {}   # the whole of the last run_verify's output, for the tests that read the summary line
 
 
-def run_verify(monkeypatch, tmp_path, capsys, *, sha, version, modified, promote_run=None, gh=None):
+def run_verify(monkeypatch, tmp_path, capsys, *, sha, version, modified, promote_run=None, gh=None,
+               headers=None):
     """do_verify with every CDN check green, so the exit code is the Lambda window's alone.
-    `modified` is {function: LastModified} overrides on top of 'everything predates the baseline'."""
+    `modified` is {function: LastModified} overrides on top of 'everything predates the baseline'.
+    `headers` replaces the index response headers (default: the live prod set, PROD_HEADERS)."""
     names = smoke.matrix_functions((ROOT / '.github/workflows/deploy-lambda.yml').read_text())
     base = tmp_path / 'base.json'
     base.write_text(json.dumps({'captured_at': BASELINE_AT.isoformat(), 'bundle_hash': 'OLDhash0',
                                 'version': '0.0.0', 'cache_version': 'v0.0.0-0000000'}))
 
-    def fetch(path, want_text=True):
+    def fetch(path, want_text=True, with_headers=False):
+        if path == '/' and with_headers:
+            return 200, '<script src="/assets/index-NEWhash1.js"></script>', \
+                (PROD_HEADERS if headers is None else headers)
         if path == '/':
             return 200, '<script src="/assets/index-NEWhash1.js"></script>'
         if path == '/releases.json':
@@ -341,7 +346,7 @@ class TestLambdaWindowAgainstThePromoteRun:
         assert rc == 3
         assert '[COULD NOT READ]' in line and 'HTTP 502' in line and 'run verify again' in line
         assert '[FAIL]' not in LAST['out'] and 'FAILED' not in LAST['out'] and 'PASSED' not in LAST['out']
-        assert 'smoke INCOMPLETE — 1 of 8 checks could not be read, none failed' in LAST['out']
+        assert 'smoke INCOMPLETE — 1 of 9 checks could not be read, none failed' in LAST['out']
 
     def test_a_real_failure_beside_an_unreadable_check_is_still_exit_1(self, monkeypatch, tmp_path, capsys):
         def gh(path):
@@ -351,7 +356,7 @@ class TestLambdaWindowAgainstThePromoteRun:
         rc, line, _ = run_verify(monkeypatch, tmp_path, capsys, sha=DEPLOY_SHA, version='4.179.0',
                                  modified=all_redeployed, promote_run=DEPLOY_RUN, gh=gh)
         assert rc == 1 and '[COULD NOT READ]' in line
-        assert 'smoke FAILED — 1 of 8 checks (1 more could not be read)' in LAST['out']
+        assert 'smoke FAILED — 1 of 9 checks (1 more could not be read)' in LAST['out']
 
     @pytest.mark.parametrize('proc, exc', [
         (dict(returncode=1, stdout='', stderr='gh: Server Error (HTTP 502)'), 'unreadable'),
@@ -383,3 +388,89 @@ class TestLambdaWindowAgainstThePromoteRun:
         # unproven (a false FAIL again), so the rename has to fail here first.
         wf = (ROOT / '.github/workflows/promote-gate.yml').read_text()
         assert f'      - name: {smoke.LAMBDA_DECISION_STEP}\n' in wf
+
+
+# ── security headers (SEC-06a) ───────────────────────────────────────────────────────────────────
+# The live prod set from response headers policy garden-app-security-headers-v1, as CloudFront sends it.
+
+PROD_HEADERS = {
+    'Content-Type': 'text/html',
+    'Strict-Transport-Security': 'max-age=300',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(self), microphone=(self), payment=(), usb=()',
+    'Server': 'CloudFront',
+}
+
+
+def _without(name):
+    return {k: v for k, v in PROD_HEADERS.items() if k.lower() != name}
+
+
+class TestSecurityHeaders:
+    @pytest.mark.parametrize('headers', [
+        PROD_HEADERS,
+        {k.lower(): v for k, v in PROD_HEADERS.items()},
+        dict(PROD_HEADERS, **{'Strict-Transport-Security': 'max-age=31536000'}),
+        dict(PROD_HEADERS, **{'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload'}),
+        dict(PROD_HEADERS, **{'Permissions-Policy': 'microphone=(self),camera=(self)'}),
+    ], ids=['live-prod-set', 'lowercase-names', 'hsts-one-year', 'hsts-with-directives',
+            'permissions-reordered-no-spaces'])
+    def test_passing_sets(self, headers):
+        assert smoke.check_security_headers(headers) == []
+
+    @pytest.mark.parametrize('headers, needle', [
+        (_without('strict-transport-security'), 'strict-transport-security'),
+        (dict(PROD_HEADERS, **{'Strict-Transport-Security': 'max-age=299'}), 'max-age'),
+        (dict(PROD_HEADERS, **{'Strict-Transport-Security': 'max-age=0'}), 'max-age'),
+        (dict(PROD_HEADERS, **{'Strict-Transport-Security': 'includeSubDomains'}), 'max-age'),
+        (_without('x-content-type-options'), 'x-content-type-options'),
+        (dict(PROD_HEADERS, **{'X-Content-Type-Options': 'sniff'}), 'x-content-type-options'),
+        (_without('x-frame-options'), 'x-frame-options'),
+        (dict(PROD_HEADERS, **{'X-Frame-Options': 'SAMEORIGIN'}), 'x-frame-options'),
+        (_without('referrer-policy'), 'referrer-policy'),
+        (dict(PROD_HEADERS, **{'Referrer-Policy': 'unsafe-url'}), 'referrer-policy'),
+        (_without('permissions-policy'), 'permissions-policy'),
+        (dict(PROD_HEADERS, **{'Permissions-Policy': 'camera=(), microphone=(self)'}), 'camera=(self)'),
+        (dict(PROD_HEADERS, **{'Permissions-Policy': 'camera=(self)'}), 'microphone=(self)'),
+        (dict(PROD_HEADERS, **{'x-amz-version-id': 'abc'}), 'x-amz-version-id'),
+        (dict(PROD_HEADERS, **{'X-Amz-Server-Side-Encryption': 'AES256'}), 'x-amz-server-side-encryption'),
+    ], ids=['hsts-missing', 'hsts-below-300', 'hsts-zero', 'hsts-no-max-age', 'nosniff-missing',
+            'nosniff-wrong', 'xfo-missing', 'xfo-sameorigin', 'referrer-missing', 'referrer-wrong',
+            'permissions-missing', 'camera-denied', 'microphone-missing', 's3-version-id-leaks',
+            's3-sse-leaks'])
+    def test_each_departure_is_one_named_failure(self, headers, needle):
+        fails = smoke.check_security_headers(headers)
+        assert len(fails) == 1 and needle in fails[0], fails
+
+    def test_an_empty_response_lists_every_required_header(self):
+        assert len(smoke.check_security_headers({})) == 5
+
+    def test_verify_passes_on_the_live_set(self, monkeypatch, tmp_path, capsys):
+        rc, _, _ = run_verify(monkeypatch, tmp_path, capsys, sha=DEPLOY_SHA, version='4.179.0',
+                              modified=all_redeployed, promote_run=DEPLOY_RUN, gh=recorded(DEPLOY_RUN))
+        assert rc == 0
+        assert '[PASS] security headers' in LAST['out']
+
+    def test_verify_fails_the_promote_when_a_header_is_gone(self, monkeypatch, tmp_path, capsys):
+        rc, _, _ = run_verify(monkeypatch, tmp_path, capsys, sha=DEPLOY_SHA, version='4.179.0',
+                              modified=all_redeployed, promote_run=DEPLOY_RUN, gh=recorded(DEPLOY_RUN),
+                              headers=_without('strict-transport-security'))
+        assert rc == 1
+        line = next(l for l in LAST['out'].splitlines() if 'security headers' in l)
+        assert '[FAIL]' in line and 'strict-transport-security' in line
+
+    def test_fetch_returns_headers_only_when_asked(self, monkeypatch):
+        class Resp:
+            status = 200
+            headers = {'Strict-Transport-Security': 'max-age=300'}
+            def read(self):
+                return b'<html>'
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+        monkeypatch.setattr(smoke.urllib.request, 'urlopen', lambda req, timeout: Resp())
+        assert smoke.fetch('/') == (200, '<html>')
+        assert smoke.fetch('/', with_headers=True) == (200, '<html>', {'strict-transport-security': 'max-age=300'})

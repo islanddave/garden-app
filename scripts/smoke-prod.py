@@ -79,12 +79,58 @@ class CheckUnreadable(CheckFailed):
     the release either: an outage at GitHub says nothing about what was deployed."""
 
 
-def fetch(path, want_text=True):
+def fetch(path, want_text=True, with_headers=False):
+    """(status, body), or (status, body, {lowercased header name: value}) when with_headers is set."""
     url = path if path.startswith('http') else PROD_ORIGIN + path
     req = urllib.request.Request(url, headers={'Cache-Control': 'no-cache', 'Pragma': 'no-cache'})
     with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
         body = r.read()
-        return r.status, (body.decode('utf-8', 'replace') if want_text else body)
+        out = (r.status, (body.decode('utf-8', 'replace') if want_text else body))
+        if with_headers:
+            return out + ({k.lower(): v for k, v in r.headers.items()},)
+        return out
+
+
+# SEC-06a: response headers policy garden-app-security-headers-v1 on the prod distribution. HSTS is
+# asserted as a floor, never an exact value: it is 300 s now and is to be raised to a year. The camera
+# and microphone must stay allowed for self (photo capture, voice harvest).
+HSTS_MIN_MAX_AGE = 300
+REQUIRED_HEADERS = (
+    ('x-content-type-options', 'nosniff'),
+    ('x-frame-options', 'DENY'),
+    ('referrer-policy', 'strict-origin-when-cross-origin'),
+)
+REQUIRED_PERMISSIONS = ('camera=(self)', 'microphone=(self)')
+FORBIDDEN_HEADERS = ('x-amz-version-id', 'x-amz-server-side-encryption')
+
+
+def check_security_headers(headers):
+    """Failures (a list of strings, empty when every header holds) for one response's headers."""
+    h = {k.lower(): v.strip() for k, v in headers.items()}
+    fails = []
+    hsts = h.get('strict-transport-security')
+    if hsts is None:
+        fails.append('strict-transport-security missing')
+    else:
+        m = re.search(r'(?:^|;)\s*max-age\s*=\s*"?(\d+)"?', hsts, re.I)
+        if not m or int(m.group(1)) < HSTS_MIN_MAX_AGE:
+            fails.append(f'strict-transport-security {hsts!r}: max-age must be at least {HSTS_MIN_MAX_AGE}')
+    for name, want in REQUIRED_HEADERS:
+        got = h.get(name)
+        if got is None:
+            fails.append(f'{name} missing')
+        elif got.lower() != want.lower():
+            fails.append(f'{name} is {got!r}, expected {want!r}')
+    perms = h.get('permissions-policy')
+    if perms is None:
+        fails.append('permissions-policy missing')
+    else:
+        directives = {d.strip().replace(' ', '') for d in perms.split(',')}
+        lost = [p for p in REQUIRED_PERMISSIONS if p not in directives]
+        if lost:
+            fails.append(f'permissions-policy {perms!r} lacks {", ".join(lost)}')
+    fails += [f'{name} present (an S3 header that should be stripped)' for name in FORBIDDEN_HEADERS if name in h]
+    return fails
 
 
 def bundle_hash(index_html):
@@ -344,6 +390,14 @@ def do_verify(args):
             raise CheckFailed(f'GET / returned {status}')
         return f'GET / 200, {len(html)} bytes'
 
+    def c_headers():
+        _, _, headers = fetch('/', with_headers=True)
+        fails = check_security_headers(headers)
+        if fails:
+            raise CheckFailed('; '.join(fails))
+        return f"{headers.get('strict-transport-security')}, {len(REQUIRED_HEADERS) + 1} more required, " \
+               f'{len(FORBIDDEN_HEADERS)} S3 headers absent'
+
     def c_bundle():
         _, html = fetch('/')
         now = bundle_hash(html)
@@ -415,6 +469,7 @@ def do_verify(args):
         return f'unauthenticated GET -> {status}'
 
     check('shell 200', c_shell)
+    check('security headers', c_headers)
     check('bundle hash changed', c_bundle)
     check('releases.json head version', c_release)
     check('releases-latest.json version', c_release_latest)
