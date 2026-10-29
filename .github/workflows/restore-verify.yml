@@ -1,45 +1,27 @@
 name: restore-verify (scheduled)
 
-# B3 (spec §3) — "an untested backup is not a backup" — Gate 0.2/0.3 rework.
+# "An untested backup is not a backup." Each leg restores the latest dump into a genuinely EMPTY postgres:17
+# service container (never a Neon branch: one created without parent_id is parented to production and
+# already holds every object the dump might lack, so the verify would be tautological).
+# scripts/restore-verify.py asserts the target is empty first, then the schemas {public,gv,extensions}, the
+# extensions/gv function inventories, the trigger inventory and core row counts. Tables, triggers and
+# functions are compared with the lists written beside the dump (<dump>.tables.json, <dump>.catalog.json);
+# row counts, and dumps older than their lists, with read-only SELECTs against live prod.
 #
-# Gate 0.2: the old design restored into a Neon scratch branch created WITHOUT
-# parent_id, which Neon parents to PRODUCTION — the branch already contained
-# every object the dump might be missing, so the verify was TAUTOLOGICAL. Now
-# each leg restores into a genuinely EMPTY postgres:17 SERVICE CONTAINER in the
-# runner (also kills the daily scratch-branch churn and the branch cost).
-# scripts/restore-verify.py asserts the target is empty pre-restore, then after
-# restore asserts schemas {public,gv,extensions}, the extensions/gv function
-# inventories, the trigger inventory, and core row counts. Tables, triggers and
-# functions are compared with the lists written beside the dump when it was taken
-# (<dump>.tables.json, <dump>.catalog.json; 2.0c); row counts, and dumps older
-# than their lists, with read-only SELECTs against live prod at run time.
+# TWO legs: the daily backup bucket and the snap bucket (db/snap-*). workflow_dispatch takes bucket/prefix
+# inputs for a one-off proof run.
 #
-# Gate 0.3: TWO legs — the durable daily bucket AND the snap bucket
-# (garden-snapshots-prod/db/snap-*), whose dumps had NEVER been restore-tested.
-# workflow_dispatch takes bucket/prefix inputs for a one-off proof run (pick
-# the dev ref in the Actions UI once this file is on main).
+# require_full_scope defaults to 1 here, so a legacy public-only dump is a hard failure. The default is
+# applied in SHELL (`${IN_REQUIRE_FULL_SCOPE:-1}`), so a dispatch that omits the key cannot downgrade the
+# gate while an explicit 0 still works. scripts/restore-verify.py itself defaults REQUIRE_FULL_SCOPE to "0",
+# so a direct local run stays lenient; only this workflow is strict.
 #
-# Transition boundary: CLOSED 2026-08-11. The script still detects scope per dump
-# via the archive TOC, but require_full_scope now DEFAULTS TO 1, so a legacy
-# public-only dump is a HARD failure rather than a warning. Evidence for the flip:
-# the newest dump on BOTH legs carries gv + extensions SCHEMA entries in its TOC
-# (db/garden-20260811.dump, db/snap-v4.9.0.dump — note the snap leg's newest dump at
-# the time of the last actual run was v4.8.0; both legs logged scope FULL).
-# The default is applied in SHELL (`${IN_REQUIRE_FULL_SCOPE:-1}`), not via a `||`
-# expression, so a dispatch that omits the key cannot silently downgrade the gate
-# (same footgun as promote-gate's require_integration, 2026-08-06) while an explicit
-# require_full_scope=0 still survives. Escape hatch preserved — see the env comment.
-# Note scripts/restore-verify.py:121 still defaults REQUIRE_FULL_SCOPE to "0", so a
-# DIRECT local invocation stays lenient; only this workflow is strict.
+# UNATTENDED: the restore-verify role's OIDC trust is scoped to the main ref, not an environment, so the
+# scheduled run does not pause. Blast radius: S3 GetObject, read-only prod SELECTs, a throwaway container.
+# RESTORE_VERIFY_ROLE_ARN needs s3:GetObject/ListBucket on BOTH buckets; the snap leg fails loudly
+# (AccessDenied) otherwise.
 #
-# UNATTENDED by design: the restore-verify role's OIDC trust is scoped to the
-# main ref (NOT environment:production), so the scheduled run does NOT pause.
-# Blast radius: S3 GetObject + read-only prod SELECTs + a throwaway container.
-# NOTE: RESTORE_VERIFY_ROLE_ARN needs s3:GetObject/ListBucket on BOTH buckets —
-# the snap leg fails loudly (AccessDenied) if the role only covers the daily one.
-#
-# Schedule is 08:00 UTC, ~1h after backup.yml (07:00 UTC), so the freshest
-# daily dump exists when this runs.
+# 08:00 UTC, an hour after backup.yml, so the day's dump exists.
 
 on:
   schedule:
@@ -108,11 +90,8 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     services:
-      # The genuinely-EMPTY restore target (Gate 0.2). postgres:17 tracks the
-      # latest 17.x — matches Neon (PG 17) and the pg17 client fetched below
-      # (OPS-SCHEMACHECKAPT-001 — docker cp off the same image, not PGDG apt).
-      # POSTGRES_PASSWORD is a throwaway for a job-lifetime loopback container,
-      # not a secret.
+      # The EMPTY restore target. postgres:17 matches Neon (PG 17) and the pg17 client fetched below.
+      # POSTGRES_PASSWORD is a throwaway for a job-lifetime loopback container, not a secret.
       postgres:
         image: postgres:17
         env:
@@ -141,13 +120,9 @@ jobs:
           key: pg17-client-postgres17-image-v1-runner-ubuntu-26.04
 
       - name: Fetch pg17 client from the postgres:17 image (cache miss only)
-        # OPS-SCHEMACHECKAPT-001: no more apt.postgresql.org (PGDG) -- see backup.yml for
-        # the full incident writeup. Neon + the `services.postgres` container above both
-        # run PG 17; pg_restore enforces a strict major-version match and the runner image
-        # ships pg18 (ubuntu-26.04; pg16 on 24.04), so this job still needs a pg17 client of its own -- but
-        # `postgres:17` is already the image the services container above pulls, so this
-        # throwaway `docker create` reuses the same locally-cached layers rather than
-        # adding a second image dependency.
+        # Not apt.postgresql.org (see backup.yml). pg_restore must match PG 17 exactly and the runner
+        # ships 16 or 18; postgres:17 is the image the service container above already pulls, so this
+        # reuses its cached layers.
         if: steps.pg17-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -173,17 +148,11 @@ jobs:
           NEON_BACKUP_URL: ${{ secrets.NEON_BACKUP_URL }}
           BACKUP_BUCKET: ${{ matrix.bucket }}
           DUMP_PREFIX: ${{ matrix.prefix }}
-          # Raw input into env, then default in SHELL below -- deliberately NOT
-          # `${{ inputs.require_full_scope || '1' }}`. Two expert reviews of this line
-          # DISAGREED on whether GH Actions treats the string '0' as truthy (and so
-          # whether require_full_scope=0 survives `||` at all). Rather than adjudicate
-          # expression-engine semantics, use the pattern promote-gate.yml:115+125 already
-          # proves: `${VAR:-1}` substitutes only on unset/empty, so '0' survives verbatim
-          # and the documented escape hatch demonstrably works. On `schedule` the input is
-          # null -> empty -> defaults to 1, which is the strict behaviour we want.
+          # Raw input into env, defaulted in SHELL below, deliberately NOT `${{ inputs.require_full_scope || '1' }}`:
+          # `${VAR:-1}` substitutes only on unset/empty, so an explicit '0' survives verbatim. On `schedule` the
+          # input is empty, so the default is the strict 1.
           IN_REQUIRE_FULL_SCOPE: ${{ inputs.require_full_scope }}
-          # restore-verify.py's tempfile download of the dump lands here, not in /tmp: on ubuntu-26.04
-          # /tmp is a RAM-backed tmpfs capped at ~7.8G, $RUNNER_TEMP is the work disk (OPS-UBUNTU26MOVE-001).
+          # The dump download lands on the work disk: /tmp on ubuntu-26.04 is a ~7.8G RAM-backed tmpfs.
           TMPDIR: ${{ runner.temp }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
