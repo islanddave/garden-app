@@ -18,6 +18,7 @@ import glob
 import importlib.util
 import json
 import os
+import re
 import sys
 import types
 
@@ -197,3 +198,37 @@ def test_every_real_column_contract_parses():
     unparsed = [os.path.relpath(f, os.path.join(HERE, "..")) for f in files if not audit.parse_test_file(
         audit.Path(f))]
     assert unparsed == [], f"the promote gate would refuse (exit 2) on these unparseable contracts: {unparsed}"
+
+
+_KEYED_OPEN = re.compile(r"const\s+AUDIT_COLUMNS\s*=\s*\{")
+# Valid JS (the `}` ends by ASI), but _AUDIT_COLUMNS_DECL needs `};`, so its lazy match runs on to the later `};`
+# and swallows the code between. The key still parses, so the non-empty check above passes it.
+OVERRUN_CONTRACT = ("const AUDIT_COLUMNS = {\n  t_prefs: ['created_by', 'a'],\n}\n\n"
+                    "const PREFS_COLUMNS = AUDIT_COLUMNS.t_prefs;\nconst PINS = { a: 1 };\n")
+
+
+def _keyed_contracts_read_past_their_block(paths):
+    """Keyed contracts the auditor does not read as their own block: no match, or a match holding a `const`."""
+    bad = []
+    for p in paths:
+        src = audit.Path(p).read_text()
+        if not _KEYED_OPEN.search(src):
+            continue
+        decl = audit._AUDIT_COLUMNS_DECL.search(src)
+        if decl is None or re.search(r"\bconst\b", decl.group(1)):
+            bad.append(p)
+    return bad
+
+
+def test_every_real_keyed_contract_is_read_as_its_own_block(tmp_path):
+    """The JS contracts stopped self-checking this; it is the only check that sees a block read past its `};`."""
+    seeded = tmp_path / "overrun-columns.test.js"
+    seeded.write_text(OVERRUN_CONTRACT)
+    assert audit.parse_test_file(seeded) == [("t_prefs", ["created_by", "a"])]
+    assert _keyed_contracts_read_past_their_block([str(seeded)]) == [str(seeded)]
+    files = sorted(glob.glob(os.path.join(HERE, "..", "lambda", "**", audit.PHASE1_GLOB), recursive=True))
+    files = [f for f in files if "node_modules" not in f]
+    keyed = [f for f in files if _KEYED_OPEN.search(audit.Path(f).read_text())]
+    assert len(keyed) >= 100, f"only {len(keyed)} keyed contracts found: the glob or the tree is wrong"
+    bad = [os.path.relpath(f, os.path.join(HERE, "..")) for f in _keyed_contracts_read_past_their_block(keyed)]
+    assert bad == [], f"the auditor reads past the AUDIT_COLUMNS block in: {bad}"
