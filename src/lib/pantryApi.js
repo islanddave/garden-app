@@ -67,13 +67,13 @@ export async function deletePantryItem(fetch, id) {
 // all_remaining; Gave it away = count_used n + given_away; Went bad = discarded, as a count or as all
 // that is left — the row sheet sends all_remaining whenever everything left went bad (what is left
 // right now, on a server of any age) and count_used n only for fewer. One of the two, never both.
-export async function useJar(fetch, body = {}) {
+export async function recordUse(fetch, body = {}) {
   const payload = { ...body, idempotency_key: body.idempotency_key ?? mintKey() }
   return fetch(PANTRY_USES_PATH, { method: 'POST', body: JSON.stringify(payload) })
 }
 
 // POST /api/pantry/uses/:id/undo {idempotency_key} → {use (the reversing row), jar}. `useId` is the
-// use being undone (the `use.id` useJar answered with).
+// use being undone (the `use.id` recordUse answered with).
 export async function undoUse(fetch, useId, { idempotencyKey } = {}) {
   return fetch(`${PANTRY_USES_PATH}/${encodeURIComponent(useId)}/undo`, {
     method: 'POST', body: JSON.stringify({ idempotency_key: idempotencyKey ?? mintKey() }),

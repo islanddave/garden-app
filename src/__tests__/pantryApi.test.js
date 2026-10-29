@@ -3,7 +3,7 @@
 // helper that calls the wrong route is the same defect wearing a nicer name.
 import { describe, it, expect, vi } from 'vitest'
 import {
-  pantryUrl, pantryRows, listPantry, createPantryItem, patchPantryItem, deletePantryItem, useJar, undoUse, ensurePlaceId,
+  pantryUrl, pantryRows, listPantry, createPantryItem, patchPantryItem, deletePantryItem, recordUse, undoUse, ensurePlaceId,
 } from '../lib/pantryApi.js'
 import { apiError } from './helpers/pantryFake.js'
 
@@ -67,10 +67,10 @@ describe('the bought-item writes', () => {
 })
 
 describe('uses', () => {
-  it('useJar POSTs /api/pantry/uses with a key per tap', async () => {
+  it('recordUse POSTs /api/pantry/uses with a key per tap', async () => {
     const f = spy({ use: { id: 'u1' }, jar: {} })
-    await useJar(f, { preservation_log_id: 'j1', count_used: 1 })
-    await useJar(f, { preservation_log_id: 'j1', all_remaining: true, fate: 'discarded' })
+    await recordUse(f, { preservation_log_id: 'j1', count_used: 1 })
+    await recordUse(f, { preservation_log_id: 'j1', all_remaining: true, fate: 'discarded' })
     expect(f.mock.calls[0][0]).toBe('/api/pantry/uses')
     expect(f.body(0)).toMatchObject({ preservation_log_id: 'j1', count_used: 1 })
     expect(f.body(1)).toMatchObject({ preservation_log_id: 'j1', all_remaining: true, fate: 'discarded' })
@@ -79,7 +79,7 @@ describe('uses', () => {
   })
   it('a retry passes the SAME key back in', async () => {
     const f = spy({})
-    await useJar(f, { preservation_log_id: 'j1', count_used: 1, idempotency_key: 'same' })
+    await recordUse(f, { preservation_log_id: 'j1', count_used: 1, idempotency_key: 'same' })
     expect(f.body().idempotency_key).toBe('same')
   })
   it('undoUse POSTs /api/pantry/uses/:id/undo with {idempotency_key} and nothing else', async () => {
