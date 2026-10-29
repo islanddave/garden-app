@@ -1,3 +1,4 @@
+// GUARD: security (household isolation)
 // HOUSEHOLD-MODE static-source guard (events Lambda) — SURGICAL widening.
 // Only event ENTITY reads/writes widen. Achievement / XP / streak queries (per-user)
 // MUST stay created_by = ${userId} / user_id = ${userId}. Static-source (L-072), DB-free.

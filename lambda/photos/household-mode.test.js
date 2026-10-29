@@ -1,3 +1,4 @@
+// GUARD: security (household isolation)
 // HOUSEHOLD-MODE static-source guard (photos Lambda) — uploaded_by -> created_by SWITCH.
 // Photos previously scoped by uploaded_by = ${userId}; Household Mode switches the SCOPE
 // FILTERS to created_by = ANY(${householdIds}) (created_by is canonical, populated).

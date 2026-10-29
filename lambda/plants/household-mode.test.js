@@ -1,3 +1,4 @@
+// GUARD: security (household isolation)
 // HOUSEHOLD-MODE static-source guard (plants Lambda).
 // Plants scope via parent project pp.created_by. Asserts widening, INSERT integrity,
 // import presence, and uploaded_by->created_by switch. Static-source (L-072), DB-free.

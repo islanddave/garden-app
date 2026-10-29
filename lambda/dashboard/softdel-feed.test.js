@@ -1,3 +1,4 @@
+// GUARD: ruling (DEC-TESTPOLICY-001: merge-only until tests/integration has a twin)
 // V4-SOFTDEL-001 F3 — queryRecentEvents (the Dashboard Log feed).
 //
 // This builder was the outlier in handlers.js: queryWaterDue, queryWaterDueFromPlan, queryHeadsUp

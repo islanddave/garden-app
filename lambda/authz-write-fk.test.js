@@ -1,3 +1,4 @@
+// GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 // V4-AUTHZSWEEP-001 — write-FK ownership sweep.
 //
 // THE BUG CLASS: a column like plants.location_id or container.parent_id is settable straight from a

@@ -1,3 +1,4 @@
+// GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 // DD3b — the WRITE half of INV-HERO: every set-featured validator must refuse a soft-deleted photo.
 //
 // WHY THIS EXISTS AS A SEPARATE, ENUMERATED GUARD. fetchSpaceHero's own comment ends: "do not delete

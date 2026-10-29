@@ -1,3 +1,4 @@
+// GUARD: food-safety (shelf-life floors)
 // SHELF_LIFE_MONTHS — the default must never outlast the shortest storage route the row declares.
 //
 // WHY THIS FILE EXISTS. `hot_sauce` shipped to production as

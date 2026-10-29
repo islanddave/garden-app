@@ -1,3 +1,4 @@
+// GUARD: food-safety (shelf-life table)
 // Put-Up release 1a (V4 §3.3) — the shelf-life engine, pinned as a LITERAL matrix of what it computes.
 //
 // WHY A LITERAL AND NOT A RULE. shelf-life-default-floor.test.js asserts rules over the table (a default

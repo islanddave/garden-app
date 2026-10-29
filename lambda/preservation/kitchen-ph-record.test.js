@@ -1,3 +1,4 @@
+// GUARD: food-safety (pH record)
 // V5-PHRECORD-001 — kitchen_stage_log.ph_reading / ph_read_at, validated and EXECUTED.
 //
 // WHAT THIS FILE IS ABOUT. The app may RECORD a measured pH, PROMPT someone to measure, and LINK to

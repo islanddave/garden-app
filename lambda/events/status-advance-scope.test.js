@@ -1,3 +1,4 @@
+// GUARD: security (household ownership predicate, no integration twin yet)
 // BUG-STATUSADVNOPROJ-001 — every planting status-advance UPDATE must scope household ownership
 // with the TWO-ARM predicate, never an inner join on container.
 //

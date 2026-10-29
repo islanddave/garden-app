@@ -1,3 +1,4 @@
+// GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 // HOUSEHOLD-MODE isolation guard (G3).
 // Asserts householdScope is imported in EXACTLY the 6 in-scope surfaces and in NONE of
 // the out-of-scope Lambdas. Catches accidental scope creep (a future edit that widens an

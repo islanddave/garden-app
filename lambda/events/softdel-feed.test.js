@@ -1,3 +1,4 @@
+// GUARD: ruling (DEC-TESTPOLICY-001: merge-only until tests/integration has a twin)
 // V4-SOFTDEL-001 F3 — a soft-deleted CONTAINER must take its events off every read surface.
 //
 // The bug: events/index.js had 8 sql templates joining public.container on an event's project_id.

@@ -1,3 +1,4 @@
+// GUARD: ruling (no rain on a deleted planting, so the events_to_deleted_plants census stays readable)
 // OPS-RAININSERTLIVEFILTER-001 — the rain autologger credits LIVE plantings only, guarded at WRITE TIME.
 // OPS-RAININSERTCONTAINERFILTER-001 — and only in a live container, or in none.
 // BUG-RAINONENDEDPLANTINGS-001 — and never an ended or failed one: exactly the plan's status set.

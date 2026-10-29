@@ -1,3 +1,4 @@
+// GUARD: ruling (v4-rainbackfill-001 post_no_rain_backfilled_onto_a_covered_planting; the synthetic fixtures are load-bearing)
 // BUG-RAINCOVEREDGATESTATIC-001 — the rain autologger's roof rule, guarded at WRITE TIME.
 //
 // WHY THIS FILE EXISTS. Until 2026-09-17 the only automated check on `handler.js`'s coverage
