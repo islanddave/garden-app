@@ -16,19 +16,14 @@
 // status-advance-scope.test.js beside it.
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { decommentSqlDashSpace, readHandlerSource } from '../_test-stubs/handlerSource.js';
 
 // Same decomment contract as the sibling guards: a construct NAMED IN A COMMENT is not that
 // construct. The statement this file guards is preceded by ~45 lines of prose that quote
 // `germinated_at IS NULL`, `p.germinated_at`, NOW() and the two-arm predicate verbatim, so without
 // this every "must not contain" assertion below would trip on its own documentation.
 
-const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+const SRC = readHandlerSource('events', { decomment: decommentSqlDashSpace });
 
 // Statement slices, same boundary contract as the sibling guards: SQL inside these templates
 // contains no backticks (one would terminate the template), so the closing-backtick lookahead is an

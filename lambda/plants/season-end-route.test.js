@@ -12,11 +12,8 @@
 //   · drop 'status_change' from the last_logged_at NOT IN list          -> "last_logged_at leaves out" RED
 //   · drop '/api/plants/season-end' from COLLECTION_PATHS               -> "is a literal route" RED
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
-import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
+import { decommentSqlDashSpace, readHandlerSource } from '../_test-stubs/handlerSource.js';
 
 vi.mock('@neondatabase/serverless', async () => {
   const { stubState: st } = await import('../_test-stubs/state.js');
@@ -37,8 +34,7 @@ vi.mock('@neondatabase/serverless', async () => {
 vi.stubEnv('S3_PHOTOS_BUCKET', 'stub-photos-bucket');
 const { handler } = await import('./index.js');
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+const SRC = readHandlerSource('plants', { decomment: decommentSqlDashSpace });
 
 const USER = 'user_stub_owner';
 const PLANT = '9f1c2b3a-4d5e-4f60-8a71-2b3c4d5e6f70';

@@ -18,18 +18,13 @@
 // lambda/_test-stubs, but the stub never evaluates SQL. Same approach as select-columns.test.js in
 // this directory.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { decommentSqlDashSpace, readHandlerSource } from '../_test-stubs/handlerSource.js';
 
 // A construct NAMED IN A COMMENT is not that construct. Load-bearing here beyond the usual reason:
 // the PUT arm carries a long comment that quotes the very assignment the last test forbids, so
 // without stripping comments that test would fail against correct code.
 
-const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+const SRC = readHandlerSource('inventory-items', { decomment: decommentSqlDashSpace });
 
 // The POST's INSERT ... VALUES ( ... ) and the PUT's UPDATE ... SET ... WHERE, isolated so a match
 // in one arm can never satisfy an assertion about the other.
