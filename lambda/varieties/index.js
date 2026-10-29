@@ -67,6 +67,7 @@ import {
   normalizeOriginText, touchesBreeding, breedingPairingError, fillsCultivarRank, CONSTRAINT_MESSAGES,
 } from './validate.js';
 import { applyDerive } from './crop-derive.js';
+import { checkRateLimit, withRetryAfter } from './rate-limit.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { managedPrincipalPatterns, canEditSource, canEditVariety } from './authz.js';
@@ -147,20 +148,6 @@ const NEW_CULTIVAR_PROFILE = {
        + 'bundled fallback exactly as it did before. _basis:"unresearched" means NOBODY HAS DECIDED '
        + 'YET — the opposite of a deliberately watering-free row like Collards.',
 };
-
-// Atomic conditional INSERT/UPDATE for rate limiting (per design doc C-S1-C).
-// Returns true if request is allowed; false if limit exceeded.
-async function checkRateLimit(sql, actor, bucketKey, limit) {
-  const rows = await sql`
-    INSERT INTO public.rate_limit_buckets (actor_clerk_sub, bucket_key, window_start, count)
-    VALUES (${actor}, ${bucketKey}, date_trunc('hour', NOW()), 1)
-    ON CONFLICT (actor_clerk_sub, bucket_key, window_start)
-    DO UPDATE SET count = public.rate_limit_buckets.count + 1
-    WHERE public.rate_limit_buckets.count < ${limit}
-    RETURNING count
-  `;
-  return rows.length > 0;
-}
 
 // BUG-VARIETIESLIMIT500-001 — the list cap, shared by both GET list branches. It was LIMIT 500 against
 // 495 live cultivars (2026-09-18): the unsearched list is what VarietyPicker and header Search filter
@@ -277,7 +264,7 @@ export const handler = async (event) => {
         if (err) return resp(400, { error: err });
 
         const allowed = await checkRateLimit(sql, userId, 'crop_types.create', 20);
-        if (!allowed) return resp(429, { error: 'Rate limit exceeded — 20/hour for crop_types.create' });
+        if (!allowed) return withRetryAfter(resp(429, { error: 'Rate limit exceeded — 20/hour for crop_types.create' }));
 
         // Collision set deliberately includes SOFT-DELETED rows: slug is the PK, so a resurrect
         // would violate it rather than politely conflict.
@@ -364,7 +351,7 @@ export const handler = async (event) => {
         if (err) return resp(400, { error: err });
 
         const allowed = await checkRateLimit(sql, userId, 'source.create', 20);
-        if (!allowed) return resp(429, { error: 'Rate limit exceeded — 20/hour for source.create' });
+        if (!allowed) return withRetryAfter(resp(429, { error: 'Rate limit exceeded — 20/hour for source.create' }));
 
         // kind is an FK into source_kind.slug, checked here as a LIVE slug rather than left to the
         // constraint: a soft-deleted kind still satisfies the FK, and a 23503 surfaces as a 500 the
@@ -485,7 +472,7 @@ export const handler = async (event) => {
         if (err) return resp(400, { error: err });
 
         const allowed = await checkRateLimit(sql, userId, 'source.update', 60);
-        if (!allowed) return resp(429, { error: 'Rate limit exceeded — 60/hour for source.update' });
+        if (!allowed) return withRetryAfter(resp(429, { error: 'Rate limit exceeded — 60/hour for source.update' }));
 
         // Soft-deleted reads as missing: this route edits live rows only, and restoring one is the
         // POST's job (it restores on a name match).
@@ -603,7 +590,7 @@ export const handler = async (event) => {
         if (err) return resp(400, { error: err });
 
         const allowed = await checkRateLimit(sql, userId, 'source_kind.create', 20);
-        if (!allowed) return resp(429, { error: 'Rate limit exceeded — 20/hour for source_kind.create' });
+        if (!allowed) return withRetryAfter(resp(429, { error: 'Rate limit exceeded — 20/hour for source_kind.create' }));
 
         // One read, two collision sets, and the asymmetry is deliberate: slugs come from EVERY row
         // (slug is the PK, so a soft-deleted row still occupies it and a resurrect would violate it
@@ -925,6 +912,8 @@ export const handler = async (event) => {
       if (out.derive) {
         try { await applyDerive(sql, out.derive); } catch (e) { console.error('TAGSUB derive (non-fatal) for cultivar', out.derive, e?.message ?? e); }
       }
+      // blend.js answers 429 only when spendCreate refuses.
+      if (out.status === 429) return withRetryAfter(resp(out.status, out.body));
       return resp(out.status, out.body);
     }
 
@@ -983,7 +972,7 @@ export const handler = async (event) => {
         if (cerr) return resp(400, { error: cerr });
 
         const allowed = await checkRateLimit(sql, userId, 'plant_varieties.update', 120);
-        if (!allowed) return resp(429, { error: 'Rate limit exceeded — 120/hour for plant_varieties.update' });
+        if (!allowed) return withRetryAfter(resp(429, { error: 'Rate limit exceeded — 120/hour for plant_varieties.update' }));
 
         // AUTHZ (BUG-AUTHZFKENUM-001): photo_id -> photos(id) was written verbatim from the body on
         // BOTH verbs while the DB FK proved only existence. NOT a read leak TODAY — live prod has
@@ -1242,7 +1231,7 @@ export const handler = async (event) => {
       }
 
       const allowed = await checkRateLimit(sql, userId, 'plant_varieties.create', 60);
-      if (!allowed) return resp(429, { error: 'Rate limit exceeded — 60/hour for plant_varieties.create' });
+      if (!allowed) return withRetryAfter(resp(429, { error: 'Rate limit exceeded — 60/hour for plant_varieties.create' }));
 
       // AUTHZ (BUG-AUTHZFKENUM-001): the create half of the photo_id gate — see the PUT arm above
       // for why an unset-in-prod column still has to be gated. Gating one verb is the shape of the

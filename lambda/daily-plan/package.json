@@ -2,7 +2,7 @@
   "name": "garden-lambda-daily-plan",
   "version": "1.0.0",
   "private": true,
-  "description": "Overnight Daily Plan generator (DRG-TODAY-001). CJS; entry index.handler. Staged; deploy-list wiring per AE-050 is HELD.",
+  "description": "Overnight Daily Plan generator (DRG-TODAY-001). CJS; entry index.handler. Deployed with the other functions and run on an EventBridge schedule, not over HTTP.",
   "main": "index.js",
   "dependencies": {
     "@neondatabase/serverless": "^0.10.0",

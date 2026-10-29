@@ -14,6 +14,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { checkRateLimit, withRetryAfter } from './rate-limit.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -53,20 +54,6 @@ export function validateBody(body) {
   return null;
 }
 
-// Atomic conditional INSERT/UPDATE for rate limiting (per varieties Lambda pattern).
-// Returns true if request is allowed; false if limit exceeded.
-export async function checkRateLimit(sql, actor, bucketKey, limit) {
-  const rows = await sql`
-    INSERT INTO public.rate_limit_buckets (actor_clerk_sub, bucket_key, window_start, count)
-    VALUES (${actor}, ${bucketKey}, date_trunc('hour', NOW()), 1)
-    ON CONFLICT (actor_clerk_sub, bucket_key, window_start)
-    DO UPDATE SET count = public.rate_limit_buckets.count + 1
-    WHERE public.rate_limit_buckets.count < ${limit}
-    RETURNING count
-  `;
-  return rows.length > 0;
-}
-
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return { statusCode: 204, headers: CORS, body: '' };
@@ -102,7 +89,7 @@ export const handler = async (event) => {
     if (verr) return resp(400, { error: verr });
 
     const allowed = await checkRateLimit(sql, userId, 'app_events.write', 1000);
-    if (!allowed) return resp(429, { error: 'Rate limit exceeded — 1000/hour for app_events.write' });
+    if (!allowed) return withRetryAfter(resp(429, { error: 'Rate limit exceeded — 1000/hour for app_events.write' }));
 
     const rows = await sql`
       INSERT INTO public.app_events (user_clerk_sub, event_name, event_source, session_id, metadata)

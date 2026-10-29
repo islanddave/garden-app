@@ -1,0 +1,64 @@
+{
+  "_about": "Master file -> its committed byte copies, read by scripts/gen-lambda-copies.mjs. Edit and commit the master, then run `node scripts/gen-lambda-copies.mjs --write`. Keys starting with _ are ignored.",
+  "copies": {
+    "lambda/household.js": [
+      "lambda/critter/household.js",
+      "lambda/daily-plan-read/household.js",
+      "lambda/dashboard/household.js",
+      "lambda/events/household.js",
+      "lambda/evidence-ingest/household.js",
+      "lambda/facebook-share/household.js",
+      "lambda/findings/household.js",
+      "lambda/harvests/household.js",
+      "lambda/inventory-items/household.js",
+      "lambda/locations/household.js",
+      "lambda/members/household.js",
+      "lambda/photos/household.js",
+      "lambda/plants/household.js",
+      "lambda/preservation/household.js",
+      "lambda/projects/household.js",
+      "lambda/storage-location/household.js",
+      "lambda/tags/household.js",
+      "lambda/varieties/household.js"
+    ],
+    "lambda/authz-parents.js": [
+      "lambda/events/authz-parents.js",
+      "lambda/evidence-ingest/authz-parents.js",
+      "lambda/photos/authz-parents.js",
+      "lambda/plants/authz-parents.js",
+      "lambda/projects/authz-parents.js",
+      "lambda/varieties/authz-parents.js"
+    ],
+    "lambda/photo-access.js": [
+      "lambda/inventory-items/photo-access.js",
+      "lambda/locations/photo-access.js",
+      "lambda/photos/photo-access.js",
+      "lambda/plants/photo-access.js",
+      "lambda/projects/photo-access.js"
+    ],
+    "lambda/http-response.js": [
+      "lambda/inventory-items/http-response.js",
+      "lambda/plants/http-response.js"
+    ],
+    "lambda/tags/crop-derive.js": [
+      "lambda/varieties/crop-derive.js"
+    ],
+    "src/lib/imageMetadataStrip.js": [
+      "lambda/facebook-share/imageMetadataStrip.js"
+    ],
+    "src/lib/critterSpecies.js": [
+      "lambda/critter/critterSpecies.js",
+      "lambda/events/critterSpecies.js"
+    ],
+    "lambda/plants/statusEvents.js": [
+      "lambda/projects/statusEvents.js"
+    ],
+    "lambda/rate-limit.js": [
+      "lambda/app-events/rate-limit.js",
+      "lambda/inventory-items/rate-limit.js",
+      "lambda/photos/rate-limit.js",
+      "lambda/tags/rate-limit.js",
+      "lambda/varieties/rate-limit.js"
+    ]
+  }
+}

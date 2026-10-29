@@ -17,6 +17,7 @@ import { normalizeViewTier, viewTierKey, PHOTO_VIEW_TIERS } from './viewTier.js'
 // importable from the repo root, so anything written here can only be covered by SQL-text
 // assertions. See photoDelete.js's header.
 import { softDeletePhoto, restorePhoto, listDeletedPhotos } from './photoDelete.js';
+import { checkRateLimit, withRetryAfter } from './rate-limit.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 // requestChecksumCalculation/responseChecksumValidation: newer SDK v3 versions (3.679+) default
@@ -99,6 +100,16 @@ async function getUploadUrl(photoId, ext, contentType) {
 async function foreignStorageKey(sql, key, householdIds) {
   const rows = await sql`SELECT 1 FROM photos WHERE storage_path = ${key} AND NOT (created_by = ANY(${householdIds})) LIMIT 1`;
   return rows.length > 0;
+}
+
+// SEC-13b: every upload URL issued and every object accepted counts one against the caller's hour (a batch one
+// per file), spent after the request is validated and before anything is signed or PUT. POST /api/photos
+// (register) is never limited: its bytes are already in S3, so a 429 there would strand them. Returns the 429
+// to send, or null. Tests: storage-key-guard.test.js; real Postgres: tests/integration/photos-intake.int.test.js.
+const UPLOAD_LIMIT_PER_HOUR = 2500;
+async function uploadLimitRefusal(sql, userId, objects) {
+  if (await checkRateLimit(sql, userId, 'photos.upload', UPLOAD_LIMIT_PER_HOUR, objects)) return null;
+  return withRetryAfter(resp(429, { error: `Rate limit exceeded — ${UPLOAD_LIMIT_PER_HOUR}/hour for photos.upload` }));
 }
 
 // Pre-signed GET URL — 15-minute expiry per architecture spec
@@ -585,6 +596,8 @@ export const handler = async (event) => {
         warnRejectedFk(userId, 'photos', 'storage_path', key);
         return resp(403, { error: 'Forbidden' });
       }
+      const refusal = await uploadLimitRefusal(sql, userId, 1);
+      if (refusal) return refusal;
       const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType });
       const upload_url = await getSignedUrl(s3, cmd, { expiresIn: 300 });
       return resp(200, { upload_url, key });
@@ -613,6 +626,8 @@ export const handler = async (event) => {
         warnRejectedFk(userId, 'photos', 'storage_path', key);
         return resp(403, { error: 'Forbidden' });
       }
+      const refusal = await uploadLimitRefusal(sql, userId, 1);
+      if (refusal) return refusal;
       const cmd = new PutObjectCommand({
         Bucket: BUCKET,
         Key: `thumbs/${key}`,
@@ -644,13 +659,21 @@ export const handler = async (event) => {
       // The Clerk sub becomes a path segment — validate rather than trust it.
       if (!SAFE_KEY_SEGMENT.test(userId)) return resp(400, { error: 'invalid user identifier' });
 
-      const uploads = [];
+      // Every file is validated before the batch spends one unit per file, and only then is anything signed.
+      const planned = [];
       for (const f of files) {
         const ext = String(f?.ext ?? 'jpg').toLowerCase();
         if (!SAFE_EXT.test(ext)) return resp(400, { error: `invalid ext: ${f?.ext}` });
         const contentType = typeof f?.content_type === 'string' && SAFE_CONTENT_TYPE.test(f.content_type)
           ? f.content_type
           : 'image/jpeg';
+        planned.push({ ext, contentType });
+      }
+      const refusal = await uploadLimitRefusal(sql, userId, planned.length);
+      if (refusal) return refusal;
+
+      const uploads = [];
+      for (const { ext, contentType } of planned) {
         const key = `inbox/${userId}/${randomUUID()}.${ext}`;
         const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType });
         uploads.push({
@@ -699,6 +722,8 @@ export const handler = async (event) => {
         return resp(400, { error: 'Invalid base64' });
       }
       if (!bytes.length) return resp(400, { error: 'Empty photo body' });
+      const refusal = await uploadLimitRefusal(sql, userId, thumbBytes?.length ? 2 : 1);
+      if (refusal) return refusal;
       await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: bytes, ContentType: relayType }));
       // Thumb is best-effort, same contract as step 2b: the read path falls back to view_url
       // when thumbs/<key> is absent, so a thumb failure must never fail the relay.

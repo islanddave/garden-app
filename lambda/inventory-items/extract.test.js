@@ -97,10 +97,10 @@ describe('buildAnthropicRequest', () => {
     expect(text).toContain('ORDER-XYZ pasted here');
   });
 
-  it('image mode: content = [base64 image block, text prompt]', () => {
+  it('image mode: content = [base64 image block, text prompt]; SEC-13b caps a packet photo at 4096 tokens', () => {
     const req = buildAnthropicRequest({ mode: 'image', image_base64: B64, media_type: 'image/webp' });
     expect(req.model).toBe('claude-sonnet-4-5');
-    expect(req.max_tokens).toBe(8192);
+    expect(req.max_tokens).toBe(4096);
     expect(req.messages).toHaveLength(1);
     const [img, txt] = req.messages[0].content;
     expect(img).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/webp', data: B64 } });
