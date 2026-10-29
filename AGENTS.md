@@ -37,13 +37,18 @@ export const FROM_CACHE = Symbol.for('garden-app.fromCache')
 ## Unused is not always dead
 Never delete or rename as "unused": the rollback tooling and everything it calls (`skip_version_bump`, `workflow_dispatch` on deploy workflows, `revert-floors.json`, `forward-undo.py`, `revert-to.py`, `snap.py`, `preflight-revert-iam.py`, `gh_api_check.py`, `lambda_fleet.py`, their tests, the revert and rehearsal workflows) and `iconwire3`. Never add a push-to-main trigger or `|| echo "{}"` to a deploy workflow.
 
-## Lambda (changes when D1 lands: a planned generator replaces the hand copying below)
+## Lambda
 - A function zip contains only its own folder, so never import `../` from a handler.
-- Shared modules are canonical at `lambda/authz-parents.js`, `lambda/household.js`, `lambda/http-response.js`, `lambda/photo-access.js`, `lambda/tags/crop-derive.js` and `src/lib/imageMetadataStrip.js`.
-- Each is copied into every function folder that uses it, guarded by `lambda/*-copies-sync.test.js`. Edit the canonical and every copy in the same change; never a copy alone.
+- Shared modules are canonical at `lambda/authz-parents.js`, `lambda/household.js`, `lambda/http-response.js`, `lambda/photo-access.js`, `lambda/rate-limit.js`, `lambda/tags/crop-derive.js`, `lambda/plants/statusEvents.js`, `src/lib/critterSpecies.js` and `src/lib/imageMetadataStrip.js`. `scripts/lambda-copies.json` lists every byte copy.
+- To change one: edit and commit the canonical, run `node scripts/gen-lambda-copies.mjs --write`, commit the copies with it. `--write` refuses a hand-edited copy, so drift stops for a human. After any rebase run `--check` only, never `--write`. A new copy: `cp` the canonical, list it in the manifest, run `--check`. Never edit a copy alone.
 - New handler code goes in a route module, as the preservation function does: `lambda/preservation/index.js` loads neon, clerk and aws, then delegates to sibling `*Routes.js` files (`jarRoutes.js`, `sourceRoutes.js`, `kitchenRoutes.js`).
   - A route module takes `sql` as an argument and imports only dependency-free siblings, so vitest can execute it.
   - It exports `handleXRoute({ sql, rawPath, method, rawBody, userId, householdIds })`, returning `{ status, body }`, or `null` for "not mine" so index.js falls through (`lambda/preservation/jarRoutes.js:56`, called at `lambda/preservation/index.js:271`).
+
+## Migrations
+- Never edit an applied migration's text: tests, gates and audits read it. Copy the shape of a recent bundle (`migrations/v5-spaceguard-001/`: `0a-*.sql`, `0r-rollback.sql`, `gates.yml`, `README.md`).
+- Comments in new migration files follow the Comments rules above: a short why block and the traps, no plan citations, ticket narrative or dates.
+- A Put-Up train `0a` file keeps `-- schema_version: <stamp>` on line 2 (`integration-test.yml` checks it).
 
 ## Tests
 Full policy: gardening-docs `project-state/_testpolicy-20261029/POLICY.md` (DEC-TESTPOLICY-001).
