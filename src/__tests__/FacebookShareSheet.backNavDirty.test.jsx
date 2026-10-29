@@ -27,7 +27,7 @@
 // `registered` is false, requestDismiss degrades to a bare onClose and the registry never sees this
 // surface at all — which is the configuration FacebookShareSheet.test.jsx runs in, and why its
 // close-button tests are green there and prove nothing about this. Feature flags are deliberately NOT
-// mocked: DISMISS_REGISTRY_ENABLED and BACKNAV_ENABLED are hard `true` in source, and if either is
+// mocked: DISMISS_REGISTRY_ENABLED is hard `true` in source, and if it is
 // flipped this guard genuinely stops working — red is the correct outcome.
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'

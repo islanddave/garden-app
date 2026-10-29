@@ -30,8 +30,8 @@
 // `registered` is false and Sheet's legacy keydown closes unconditionally, consulting neither dirty
 // nor the registry — the shape SowNow.formGuard.test.jsx runs in, and why its "Escape still closes a
 // dirty sheet" test is both green and honest there while this file asserts the opposite. Feature
-// flags are deliberately NOT mocked: DISMISS_REGISTRY_ENABLED and BACKNAV_ENABLED are hard `true`,
-// and if either is flipped this guard genuinely stops working — red is the correct outcome.
+// flags are deliberately NOT mocked: DISMISS_REGISTRY_ENABLED is hard `true`,
+// and if it is flipped this guard genuinely stops working — red is the correct outcome.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, within, act, waitFor } from '@testing-library/react'

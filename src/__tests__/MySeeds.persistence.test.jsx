@@ -14,11 +14,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor, cleanup, within } from '@testing-library/react'
 import { BrowserRouter, MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
 
-const flags = { DISMISS_REGISTRY_ENABLED: true, BACKNAV_ENABLED: true }
+const flags = { DISMISS_REGISTRY_ENABLED: true }
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
-  get BACKNAV_ENABLED() { return flags.BACKNAV_ENABLED },
 }))
 
 const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
@@ -59,7 +58,6 @@ const ROWS = [
 
 beforeEach(() => {
   flags.DISMISS_REGISTRY_ENABLED = true
-  flags.BACKNAV_ENABLED = true
   fetchSpy.mockReset()
   fetchSpy.mockImplementation((p, opts) => {
     if (opts?.method) return Promise.resolve({ ok: true })

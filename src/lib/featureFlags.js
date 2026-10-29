@@ -188,36 +188,6 @@ export const TODAY_BAND_HIDDEN = true
 // primitive whose worst failure mode (a stranded body-scroll lock) has no in-app recovery.
 export const DISMISS_REGISTRY_ENABLED = true
 
-// V4-BACKNAV-001 Slice 3a — the Android system Back is arbitrated by the dismiss registry, so Back
-// and Escape resolve to the SAME surface. One provider-owned marker per modal session (not one per
-// surface). Opted in via `armsBack` at, originally, 8 surfaces:
-// PlantingDetail Details, both Harvests pickers, Lightbox, CareNeeded bulk, TransplantDatePrompt,
-// AddSeeds row edit, SowNow sow sheet, PhotoModal — plus BottomNav's two sheets since v4.13.0
-// (next paragraph). `grep -rn armsBack src/` is the live list; this one is a summary.
-//
-// BottomNav's two sheets were EXCLUDED in Slice 3a and ARE INCLUDED AS OF v4.13.0
-// (BD-009 / BUG-BACKNAVMORE-001). The exclusion was real: every row in both sheets closes the sheet
-// AND navigates, so a plain push from an armed sheet strands the marker entry mid-stack — a
-// permanent dead Back on the app's most frequent path. Its cost was the shipped bug: Back over an
-// open sheet navigated the tab underneath instead of closing the sheet.
-// The orphaning is now solved on the NAVIGATION side rather than by refusing to arm: every
-// navigating row is a SheetRowLink (BottomNav.jsx), which replace-navigates when the session marker
-// is the current entry, collapsing that entry into the destination. Sign-out — the one row that is
-// not a SheetRowLink — applies the same gate at click time (BUG-SIGNOUTBACKRACE-001).
-// `armsBack` still DEFAULTS FALSE, so arming remains opt-in per render site; what changed is that
-// these two sheets now opt in. See src/lib/backNav.js for the rule and
-// src/__tests__/BottomNav.backNav.test.jsx for the pins.
-//
-// Scoped to an opaque history.state marker, NOT a URL. Needing a history entry is not the same as
-// needing a URL: a transient action menu must be poppable by Back but must never be deep-linkable
-// (a bookmarked "+LOG menu open" is incoherent). Conflating those two is what forces a false
-// route-promotion hybrid.
-//
-// Rollback is deleting the hook calls. Flag off ⇒ zero pushState calls, zero popstate listeners, and
-// history.length after boot identical to pre-change — pinned by the "flag OFF is provably inert"
-// suite in BackNav.history.test.jsx, which also carries the real-history harness self-test.
-export const BACKNAV_ENABLED = true
-
 // BUG-DETAILPAGESCARRYSCROLL-001 — ONE app-level page-scroll manager (src/hooks/usePageScrollManager.js,
 // decisions in src/lib/pageScroll.js). A page opened from a scrolled page opens at its top, and Back
 // returns to the exact place. Measured in real Chrome: 9 of 10 pages opened part-way down, because

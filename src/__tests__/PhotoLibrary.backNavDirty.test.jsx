@@ -28,8 +28,8 @@
 //
 // A REAL DismissRegistryProvider and REAL window.history, both load-bearing. Feature flags are
 // deliberately NOT mocked (unlike the sibling PhotoLibrary suites, which pin PROJECTS_HIDDEN for
-// their own reasons): DISMISS_REGISTRY_ENABLED and BACKNAV_ENABLED are hard `true` in source, and if
-// either is flipped this guard genuinely stops working — red is the correct outcome.
+// their own reasons): DISMISS_REGISTRY_ENABLED is hard `true` in source, and if
+// it is flipped this guard genuinely stops working — red is the correct outcome.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'

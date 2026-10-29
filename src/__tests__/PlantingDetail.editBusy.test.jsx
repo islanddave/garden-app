@@ -13,8 +13,8 @@
 // per-instance Escape handler (Sheet.jsx:123-126) — which closes unconditionally, consulting neither
 // dirty nor busy. An Escape assertion written in that harness would fail for the wrong reason and,
 // worse, could never pass. App.jsx:381 wraps the app in the provider, so THAT is the shape under
-// test. Feature flags are deliberately NOT mocked: DISMISS_REGISTRY_ENABLED and BACKNAV_ENABLED are
-// both `true` in featureFlags.js, and if either is ever flipped this guard genuinely stops working —
+// test. Feature flags are deliberately NOT mocked: DISMISS_REGISTRY_ENABLED is
+// `true` in featureFlags.js, and if it is ever flipped this guard genuinely stops working —
 // a red test is the correct outcome, not something to paper over with a mock.
 //
 // NON-VACUITY. `busy` and `dirty` are both true during the ordinary save of a form the user typed

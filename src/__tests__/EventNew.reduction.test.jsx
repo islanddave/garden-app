@@ -47,7 +47,6 @@ vi.mock('../lib/featureFlags.js', async (importActual) => ({
   PROJECTS_HIDDEN: true,
   PLANTING_REQUIRED_ENABLED: true,
   DISMISS_REGISTRY_ENABLED: true,
-  BACKNAV_ENABLED: true,
 }))
 
 vi.mock('react-router-dom', () => ({
