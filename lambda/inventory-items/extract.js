@@ -21,6 +21,16 @@ const MAX_FIELD_CHARS = 2000;
 // leave headroom for keys the save path merges in (sku/vendor/needs_confirmation).
 const MAX_METADATA_BYTES = 8000;
 
+// SEC-13b: what a packet photo needs. AddSeeds sends a JPEG of at most 1568px on the long edge at quality 0.85
+// (AddSeeds.jsx MAX_LONG_EDGE), at most ~1.64M base64 chars, and the model resizes past 1568px anyway.
+export const MAX_IMAGE_B64_CHARS = 2_000_000;
+// One packet with a full sow_profile is ~250-350 output tokens and a photo legibly holds ~10. A pasted order can
+// list MAX_PACKETS lines at ~150 tokens each, so text keeps 8192. Trap: a cut-off answer is not valid JSON (422);
+// the extract-seeds-usage log line's stop_reason "max_tokens" is what tells the two apart.
+const MAX_TOKENS = { image: 4096, text: 8192 };
+// Hourly calls per user, and shared by everyone (rate-limit.js GLOBAL_ACTOR) to cap the spend of all users together.
+export const EXTRACT_LIMIT = { bucket: 'extract_seeds.call', perUserPerHour: 20, globalPerHour: 40 };
+
 // V5-SEEDQTY-001 (2026-09-04) — TWO KEYS REMOVED from the metadata schema below, deliberately.
 // Neither had a reader anywhere in src/ or lambda/; both had this prompt as their only writer.
 //
@@ -112,7 +122,7 @@ export function buildAnthropicRequest(body) {
       ];
   return {
     model: 'claude-sonnet-4-5',
-    max_tokens: 8192,
+    max_tokens: MAX_TOKENS[body.mode],
     messages: [{ role: 'user', content }],
   };
 }

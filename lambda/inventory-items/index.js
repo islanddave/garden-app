@@ -6,7 +6,10 @@ import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
-import { validateExtractRequest, buildAnthropicRequest, parseExtractResponse } from './extract.js';
+import {
+  validateExtractRequest, buildAnthropicRequest, parseExtractResponse, MAX_IMAGE_B64_CHARS, EXTRACT_LIMIT,
+} from './extract.js';
+import { checkRateLimit, GLOBAL_ACTOR, withRetryAfter } from './rate-limit.js';
 // BUG-SEEDSTAGETZSHIFT-001 — the /seed-stage date rule, in a module a test can execute.
 import { resolveStageEnteredAt } from './seed-stage-date.js';
 // V4-SEEDORIGIN-001. A per-directory copy of the vocabulary canonically defined in
@@ -661,10 +664,33 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       const v = validateExtractRequest(body);
       if (!v.ok) return resp(v.status, { error: v.error });
-      // ~4.5MB binary image => ~6M base64 chars; anything bigger risks the Lambda
-      // payload/memory ceiling — reject before touching the upstream API.
-      if (body.mode === 'image' && body.image_base64.length > 6_000_000) {
+      // Bigger than a packet photo needs (extract.js): refused before it spends a bucket or reaches the model.
+      if (body.mode === 'image' && body.image_base64.length > MAX_IMAGE_B64_CHARS) {
         return resp(413, { error: 'image_too_large' });
+      }
+      // SEC-13b: the per-user then the shared bucket are spent BEFORE the key check and the model call, and a
+      // limiter error fails closed, so nothing refused can reach the paid API (lambda/rate-limit.test.js
+      // "extract-seeds:" rows). One usage line per request from here: counts and enums only, never the request
+      // text, the image or the model's answer.
+      const logUsage = (outcome, more = {}) => console.log(JSON.stringify({
+        tag: 'extract-seeds-usage', actor: userId, mode: body.mode, outcome,
+        upstream_status: null, input_tokens: null, output_tokens: null, stop_reason: null, ...more,
+      }));
+      let refused = null;
+      try {
+        if (!(await checkRateLimit(sql, userId, EXTRACT_LIMIT.bucket, EXTRACT_LIMIT.perUserPerHour))) {
+          refused = 'limited_user';
+        } else if (!(await checkRateLimit(sql, GLOBAL_ACTOR, EXTRACT_LIMIT.bucket, EXTRACT_LIMIT.globalPerHour))) {
+          refused = 'limited_global';
+        }
+      } catch (err) {
+        console.error('extract-seeds limiter failed', err?.code ?? err?.message ?? String(err));
+        logUsage('limiter_error');
+        return withRetryAfter(resp(503, { error: 'extractor_limiter_unavailable' }), 60);
+      }
+      if (refused) {
+        logUsage(refused);
+        return withRetryAfter(resp(429, { error: 'extractor_rate_limited' }));
       }
       let apiKey = secrets.ANTHROPIC_API_KEY;
       if (!apiKey) {
@@ -674,7 +700,10 @@ export const handler = async (event) => {
         const fresh = await getSecrets();
         apiKey = fresh.ANTHROPIC_API_KEY;
       }
-      if (!apiKey) return resp(501, { error: 'extractor_not_configured' });
+      if (!apiKey) {
+        logUsage('not_configured');
+        return resp(501, { error: 'extractor_not_configured' });
+      }
 
       const upstream = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -687,9 +716,17 @@ export const handler = async (event) => {
       });
       if (!upstream.ok) {
         console.error('extract-seeds upstream error', upstream.status);
+        logUsage('called', { upstream_status: upstream.status });
         return resp(502, { error: 'extractor_upstream', status: upstream.status });
       }
       const data = await upstream.json();
+      const count = (n) => (Number.isInteger(n) ? n : null);
+      logUsage('called', {
+        upstream_status: upstream.status,
+        input_tokens: count(data?.usage?.input_tokens),
+        output_tokens: count(data?.usage?.output_tokens),
+        stop_reason: /^[a-z_]{1,32}$/.test(data?.stop_reason ?? '') ? data.stop_reason : null,
+      });
       const modelText = (data.content ?? [])
         .filter((b) => b?.type === 'text')
         .map((b) => b.text)

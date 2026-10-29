@@ -2,7 +2,7 @@
 // SEC-13b (OPS-SECREVIEW-001): the checkRateLimit master, and the request limits that call it in one it.each table.
 // Trap: the stub never evaluates SQL, so the atomic count is proven on real Postgres in
 // tests/integration/app-events.int.test.js (parallel boundary) and photos-intake.int.test.js (per-object cost).
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { stubState, resetStubs } from './_test-stubs/state.js';
 import { checkRateLimit, GLOBAL_ACTOR, retryAfterSeconds, withRetryAfter } from './rate-limit.js';
 
@@ -90,7 +90,10 @@ describe('Retry-After', () => {
 });
 
 // ── The SEC-13b request-limit table (security PLAN 8b: one it.each for the boundaries and the allow-list) ──
+// Trap: inventory-items caches its secrets on the first call and re-reads them only when the key is missing, so a
+// row that needs NO key runs on a fresh module graph (fresh: true); a key cached by an earlier row would hide 501.
 const USER = 'user_sec13b_owner';
+const SECRETS = 'garden-app/secrets';
 const isLimiter = (t) => t.includes('INSERT INTO public.rate_limit_buckets');
 const u = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const leaf = (n, name) => ({
@@ -98,16 +101,39 @@ const leaf = (n, name) => ({
   blend_key: null, deleted_at: null, created_by: 'user_other', created_at: '2026-01-01T00:00:00Z',
 });
 
+// Markers that must never reach a log line: the image bytes, the pasted text and the model's answer.
+const MARK_B64 = 'U0VDMTNCLUlNQUdFLU1BUktFUg=='; // base64 of SEC13B-IMAGE-MARKER
+const MARK_TEXT = 'SEC13B-TEXT-MARKER';
+const MARK_MODEL = 'SEC13B-MODEL-MARKER';
+const USAGE_KEYS = ['actor', 'input_tokens', 'mode', 'outcome', 'output_tokens', 'stop_reason', 'tag', 'upstream_status'];
+const MODEL_OK = {
+  ok: true, status: 200,
+  body: { content: [{ type: 'text', text: `[{"name":"${MARK_MODEL}"}]` }], usage: { input_tokens: 1234, output_tokens: 56 }, stop_reason: 'end_turn' },
+};
+
 const HANDLERS = {
   tags: (await import('./tags/index.js')).handler,
   varieties: (await import('./varieties/index.js')).handler,
   appEvents: (await import('./app-events/index.js')).handler,
+  inventory: (await import('./inventory-items/index.js')).handler,
 };
 
-// deny: every bucket refuses; throw: the limiter's statement fails.
-function limiterAnswer(mode) {
+// deny: every bucket refuses; deny-user / deny-global: only that actor's bucket; throw: the statement fails.
+function limiterAnswer(mode, values) {
   if (mode === 'throw') throw Object.assign(new Error('connection terminated'), { code: 'ECONNRESET' });
-  return mode === 'deny' ? [] : [{ count: 1 }];
+  const refused = mode === 'deny'
+    || (mode === 'deny-user' && values[0] === USER)
+    || (mode === 'deny-global' && values[0] === GLOBAL_ACTOR);
+  return refused ? [] : [{ count: 1 }];
+}
+
+async function target(row) {
+  if (!row.fresh) return { handler: HANDLERS[row.fn], state: stubState };
+  vi.resetModules();
+  const fresh = await import('./_test-stubs/state.js');
+  fresh.resetStubs();
+  const { handler } = await import('./inventory-items/index.js');
+  return { handler, state: fresh.stubState };
 }
 
 const eventOf = (row) => ({
@@ -117,6 +143,24 @@ const eventOf = (row) => ({
   ...(row.query ? { queryStringParameters: row.query } : {}),
   ...(row.body === undefined ? {} : { body: JSON.stringify(row.body) }),
 });
+
+const show = (a) => {
+  if (typeof a === 'string') return a;
+  if (a instanceof Error) return `${a.message}\n${a.stack}`;
+  try { return JSON.stringify(a); } catch { return String(a); }
+};
+
+const IMAGE = { mode: 'image', image_base64: MARK_B64, media_type: 'image/jpeg' };
+const TEXT = { mode: 'text', text: `ORDER ${MARK_TEXT}` };
+const usage = (outcome, mode, more = {}) => ({
+  tag: 'extract-seeds-usage', actor: USER, mode, outcome,
+  upstream_status: null, input_tokens: null, output_tokens: null, stop_reason: null, ...more,
+});
+const extract = (name, more) => ({
+  name: `extract-seeds: ${name}`, fn: 'inventory', method: 'POST', path: '/api/inventory-items/extract-seeds',
+  key: true, model: 0, ...more,
+});
+const CALLED = { upstream_status: 200, input_tokens: 1234, output_tokens: 56, stop_reason: 'end_turn' };
 
 const ROWS = [
   {
@@ -148,6 +192,47 @@ const ROWS = [
     db: (text) => (text.includes('INSERT INTO public.app_events') ? [{ id: 'e1', created_at: 'now' }] : []),
     limiter: 'allow', status: 201,
   },
+  extract('the per-user bucket refuses -> 429, the model is not called (key set)', {
+    body: IMAGE, limiter: 'deny-user', status: 429, error: 'extractor_rate_limited', retryAfter: true,
+    limiterActors: [USER], usage: usage('limited_user', 'image'),
+  }),
+  extract('the global bucket refuses -> 429, the model is not called (key set)', {
+    body: IMAGE, limiter: 'deny-global', status: 429, error: 'extractor_rate_limited', retryAfter: true,
+    limiterActors: [USER, GLOBAL_ACTOR], usage: usage('limited_global', 'image'),
+  }),
+  extract('the limiter fails -> 503, the model is not called (fails closed)', {
+    body: IMAGE, limiter: 'throw', status: 503, error: 'extractor_limiter_unavailable', retryAfter: '60',
+    limiterActors: [USER], usage: usage('limiter_error', 'image'),
+  }),
+  extract('over the limit with no key -> 429, not 501 (limits come first)', {
+    fresh: true, key: false, body: IMAGE, limiter: 'deny-user', status: 429, error: 'extractor_rate_limited', retryAfter: true,
+    limiterActors: [USER], usage: usage('limited_user', 'image'),
+  }),
+  extract('under the limits with no key -> 501, the model is not called', {
+    fresh: true, key: false, body: IMAGE, limiter: 'allow', status: 501, error: 'extractor_not_configured',
+    limiterActors: [USER, GLOBAL_ACTOR], usage: usage('not_configured', 'image'),
+  }),
+  extract('an image under both limits -> one model call with max_tokens 4096', {
+    body: IMAGE, limiter: 'allow', status: 200, model: 1, maxTokens: 4096,
+    limiterActors: [USER, GLOBAL_ACTOR], usage: usage('called', 'image', CALLED),
+  }),
+  extract('pasted text under both limits -> one model call with max_tokens 8192', {
+    body: TEXT, limiter: 'allow', status: 200, model: 1, maxTokens: 8192,
+    limiterActors: [USER, GLOBAL_ACTOR], usage: usage('called', 'text', CALLED),
+  }),
+  extract('an upstream error -> 502; the usage line has its status and no tokens', {
+    body: IMAGE, limiter: 'allow', status: 502, error: 'extractor_upstream', model: 1, maxTokens: 4096,
+    upstream: { ok: false, status: 529, body: {} },
+    limiterActors: [USER, GLOBAL_ACTOR], usage: usage('called', 'image', { upstream_status: 529 }),
+  }),
+  extract('an image of exactly 2,000,000 base64 chars passes the size cap', {
+    body: { ...IMAGE, image_base64: 'A'.repeat(2_000_000) }, limiter: 'deny-user', status: 429,
+    error: 'extractor_rate_limited', retryAfter: true, limiterActors: [USER], usage: usage('limited_user', 'image'),
+  }),
+  extract('an image of 2,000,001 base64 chars -> 413 before any limiter statement', {
+    body: { ...IMAGE, image_base64: 'A'.repeat(2_000_001) }, limiter: 'allow', status: 413, error: 'image_too_large',
+    limiterActors: [], usage: null,
+  }),
 ];
 
 describe('SEC-13b request limits', () => {
@@ -155,18 +240,55 @@ describe('SEC-13b request limits', () => {
     resetStubs();
     stubState.verifyTokenResult = { sub: USER };
   });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it.each(ROWS)('$name', async (row) => {
-    stubState.sqlHandler = (text, values) => (isLimiter(text) ? limiterAnswer(row.limiter, values) : (row.db?.(text, values) ?? []));
-    const res = await HANDLERS[row.fn](eventOf(row));
+    const { handler, state } = await target(row);
+    state.verifyTokenResult = { sub: USER };
+    if (row.fn === 'inventory') state.secrets[SECRETS].ANTHROPIC_API_KEY = row.key ? 'sk-ant-stub' : undefined;
+    const limiterActors = [];
+    state.sqlHandler = (text, values) => {
+      if (!isLimiter(text)) return row.db?.(text, values) ?? [];
+      limiterActors.push(values[0]);
+      return limiterAnswer(row.limiter, values);
+    };
+    const up = row.upstream ?? MODEL_OK;
+    const fetchMock = vi.fn(async () => ({ ok: up.ok, status: up.status, json: async () => up.body }));
+    vi.stubGlobal('fetch', fetchMock);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await handler(eventOf(row));
+
     expect(res.statusCode, res.body).toBe(row.status);
     if (row.error !== undefined) expect(JSON.parse(res.body).error).toBe(row.error);
-    if (row.retryAfter) {
+    if (row.retryAfter === true) {
       const secs = Number(res.headers['Retry-After']);
       expect(secs).toBeGreaterThanOrEqual(1);
       expect(secs).toBeLessThanOrEqual(3600);
+    } else if (typeof row.retryAfter === 'string') {
+      expect(res.headers['Retry-After']).toBe(row.retryAfter);
     } else {
       expect(res.headers?.['Retry-After']).toBeUndefined();
     }
+    if (row.fn !== 'inventory') return;
+
+    expect(fetchMock).toHaveBeenCalledTimes(row.model);
+    if (row.maxTokens) expect(JSON.parse(fetchMock.mock.calls[0][1].body).max_tokens).toBe(row.maxTokens);
+    expect(limiterActors).toEqual(row.limiterActors);
+    const usageLines = log.mock.calls.map((a) => a[0])
+      .filter((s) => typeof s === 'string' && s.includes('"extract-seeds-usage"')).map((s) => JSON.parse(s));
+    if (row.usage) {
+      expect(usageLines).toHaveLength(1);
+      expect(Object.keys(usageLines[0]).sort()).toEqual(USAGE_KEYS);
+      expect(usageLines[0]).toEqual(row.usage);
+    } else {
+      expect(usageLines).toEqual([]);
+    }
+    const printed = [...log.mock.calls, ...err.mock.calls].flat().map(show).join('\n');
+    for (const mark of [MARK_B64, MARK_TEXT, MARK_MODEL]) expect(printed).not.toContain(mark);
   });
 });
