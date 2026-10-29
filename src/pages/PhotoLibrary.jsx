@@ -13,7 +13,6 @@ import ErrorBoundary from '../components/ErrorBoundary.jsx'
 import ProjectOptions from '../components/ProjectOptions.jsx'
 import PlantingSelect from '../components/forms/PlantingSelect.jsx'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
-// V5-PHOTOFILTERPARITY-001 (BD0901-01) — the three shared filter primitives this page had none of.
 import FilterChipRow from '../components/forms/FilterChipRow.jsx'
 import TagFilterBar from '../components/forms/TagFilterBar.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
@@ -30,72 +29,52 @@ import QuickTagCarousel from '../components/photo/QuickTagCarousel.jsx'
 import { useOptionalToast } from '../context/ToastContext.jsx'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
-// V4-PHOTOBULK-001. Higher than PhotoUpload/EventNew's 10 because this is the drain surface rather
-// than an in-context handful, and it matches the photos Lambda's own MAX_BATCH (index.js:47) so the
-// client cap and the server cap state the same number even though this path does not use that route.
+// Higher than PhotoUpload/EventNew's 10 because this is the drain surface; matches the photos
+// Lambda's MAX_BATCH (index.js) so client and server caps state one number, though this path does not
+// use that route.
 const MAX_STAGED = 20
 let stagedSeq = 0
 const nextStagedId = () => `pl-staged-${++stagedSeq}`
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
-// V4-PHOTOTODAYFILTER-001. etDay/HARVEST_TZ rather than a local date compare: "today" has to mean
-// the same garden day the harvest log uses, or a photo and the pick it documents can land on
-// different days across the midnight boundary.
+// etDay/HARVEST_TZ rather than a local date compare: "today" must be the same garden day the harvest
+// log uses, or a photo and the pick it documents can land on different days across midnight.
 import { etDay } from '../lib/harvestSummary.js'
 import { HARVEST_TZ } from '../lib/growYear.js'
-import { snapshotFiles } from '../lib/fileSnapshot.js'
+import { snapshotPicked, unreadableNotice } from '../lib/fileSnapshot.js'
 
 // Device-local memory of the zone filter, mirroring LogMany.jsx's SCOPE_KEY ('quicklog.lastScope').
 // Same namespaced-by-surface shape, same write-on-change / validate-on-restore contract.
 const LOC_FILTER_KEY = 'photos.lastLocationFilter'
 
-// V5-PHOTOFILTERPARITY-001 — byte-identical to EventNew's, PlantingSelect's and SavedSeeds' path
-// string, deliberately: dataCache keys on the path, so any drift here (a trailing slash, a reordered
-// param) silently mints a second cache bucket and the crop join stops riding the warm one.
+// Byte-identical to EventNew's, PlantingSelect's and SavedSeeds' path: dataCache keys on the path,
+// so any drift (a trailing slash, a reordered param) mints a second cache bucket.
 const PICKER_PATH = '/api/plants?view=picker'
 
-// ---- Photo Library ----
-// Browse all photos, upload standalone photos (event_id = null),
-// tag / un-tag photos against projects, locations, and plants.
-// Photos Lambda GET returns view_url (signed S3 URL) and project_name inline.
-// Filter modes 'standalone' and 'untagged' are applied client-side.
-// NOTE: photos Lambda POST requires only storage_path; the DB CHECK photos_must_have_parent
-// admits any one of project/location/plant/event. The upload form enforces one-of
-// project/space/planting (V4-PHOTOLOCFIND-001) — a bare parentless upload would violate the CHECK.
-//
-// V2-PHOTO-F1 Session 2 (2026-05-13): the upload used shared <PhotoUpload>, which owns the 3-step
-// presign/PUT/POST dance and fires it on pick.
-// BUG-PHOTOFIRST-001 (2026-08-02) SUPERSEDES that here: this page now stages the file locally and
-// drives useUploadPhoto directly on an explicit "Upload photo" press, because <PhotoUpload>'s
-// upload-on-pick contract is precisely what forced the attach target to be chosen first. The other
-// eight <PhotoUpload> call sites are unchanged and still use it. errorMode="surface" is preserved,
-// so the loud-error UX is the same.
+// Photo Library: browse all photos, upload standalone photos (event_id = null), and tag / un-tag
+// photos against projects, locations and plants. The photos Lambda GET returns view_url (signed S3
+// URL) and project_name inline; filter modes 'standalone' and 'untagged' are applied client-side.
+// The photos Lambda POST requires only storage_path, but the DB CHECK photos_must_have_parent needs
+// one of project/location/plant/event, so the upload form enforces one of project/space/planting.
+// Uploads are staged locally and sent on an explicit "Upload photo" press via useUploadPhoto, not
+// <PhotoUpload>, whose upload-on-pick contract would force the attach target to be chosen first.
+// errorMode="surface" keeps errors loud.
 
-// V4-FBSHARE-001 — Graph API caps a multi-photo Page post; the bar refuses past this rather than
-// letting the share sheet fail mid-post. Named because it is asserted in three places (the warning,
-// the disabled state, the cursor) and a literal that appears three times drifts in two of them.
+// Graph API caps a multi-photo Page post; the bar refuses past this rather than letting the share
+// sheet fail mid-post. Used by the warning, the disabled state and the cursor.
 const MAX_SHARE_PHOTOS = 10
 
-// V4-PHOTOREASSIGN-001 / W-PHOTODEL — which plantings have DESIGNATED this photo as their cover.
-//
-// `featured_is_explicit` is the whole predicate and it is not a nicety. Both the plants list and the
-// projects/spaces reads return an EFFECTIVE hero: COALESCE(explicit pointer, newest photo in the
-// gallery). Matching on featured_photo_id alone would therefore name a planting whose "cover" is
-// merely the most recent photo — deleting that one promotes the next photo and the user sees no
-// change at all, so the disclosure would be crying wolf on the common case and be ignored on the
-// real one. featured_is_explicit is true only when the stored pointer RESOLVED (alive + still a
-// member), which is exactly "this planting picked this photo on purpose" — the same thing
+// Which plantings have designated this photo as their cover.
+// `featured_is_explicit` is the whole predicate: the plants and projects/spaces reads return an
+// effective hero, COALESCE(explicit pointer, newest photo), so matching featured_photo_id alone would
+// name plantings whose "cover" is merely the newest photo, where deleting it changes nothing visible.
+// It is true only when the stored pointer resolved (alive and still a member), the same thing
 // eventPhotos.js's cover_for enumerates for the event-delete confirm.
-//
-// PARTIAL BY CONSTRUCTION, and the confirm's copy is written to be honest about that: this sees
-// PLANTINGS only, from the list this page already holds. Containers, zones, inventory items and
-// spaces each carry a featured_photo_id that no PhotoLibrary fetch returns, and GET /api/photos
-// carries no cover data of any kind. Widening it is a Lambda change. So a NAMED line here is always
-// true; the absence of one is never an all-clear (PhotoDeleteConfirm's generic arm covers that).
-// With PROJECTS_HIDDEN on — its live value — `plants` is every live planting in the household, so
-// the planting axis itself is complete; with the flag off it is project-scoped, which narrows the
-// derivation but cannot make it lie.
+// Partial by construction: it sees plantings only, from the list this page holds. Containers,
+// zones, inventory items and spaces carry a featured_photo_id no PhotoLibrary fetch returns, and GET
+// /api/photos has no cover data. So a named line is always true; its absence is never an all-clear
+// (PhotoDeleteConfirm's generic arm covers that).
 export function coverForPhoto(photoId, plants) {
   if (!photoId) return []
   return (plants ?? [])
@@ -104,25 +83,16 @@ export function coverForPhoto(photoId, plants) {
 }
 
 // Seed for the quick-tag carousel's shortcut row: the plantings a list of photos is already attached
-// to, most-recent first, capped. It means the first photo of a drain offers plausible targets instead
-// of an empty row; once the user has tagged two or three, their own MRU has displaced it entirely.
-//
-// BUG-QUICKTAGSCOPE-001, second half. This is the OTHER consumer of the badge's scoped/global split.
-// It used to read the page's `photos`, and leaving it that way after globalising the deck would have
-// MOVED the asymmetry rather than removed it: a global deck would offer shortcuts drawn only from the
-// filtered project, suggesting peppers while showing kale. Milder than the silent no-op the deck had
-// — the MRU displaces it in two or three taps — but the same mistake. So it is a plain function over
-// whichever list built the deck, at module scope because that list is one the component never holds
-// in state (see openQuickTag), and deck+seed are stored as ONE object so they cannot drift.
+// to, most recent first, capped, so the first photo of a drain offers plausible targets; the user's
+// own MRU displaces it within a few tags. It takes whichever list built the deck (see openQuickTag),
+// so a global deck never offers shortcuts drawn only from the filtered project; deck and seed are
+// stored as one object so they cannot drift.
 const SEED_CAP = 8
 function seedFromPhotos(source) {
   const seen = new Set()
   const out = []
-  // DELIBERATELY STILL created_at, and the one sort in this file V4-PHOTOTAKENAT-002 left alone.
-  // Every gallery sort moved to photoDate() because a gallery answers "when was this photographed".
-  // This deck answers a different question — "which plants has Dave been working with lately" — and
-  // that is about his recent ACTIVITY, not about the frames' place in the garden's history. The two
-  // keys pick the same plants in the common case anyway, because a bulk upload lands as one batch.
+  // created_at, not photoDate(): this answers "which plants has the user been working with lately",
+  // which is about recent activity, not when the frames were taken.
   const recent = (source ?? []).slice().sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))
   for (const p of recent) {
     if (!p.plant_id || seen.has(p.plant_id)) continue
@@ -138,53 +108,29 @@ export default function PhotoLibrary() {
 
   const [photos,        setPhotos]        = useState([])
   const [loading,       setLoading]       = useState(true)
-  const [error,         setError]         = useState(null)  // V3-PHOTODBG-001: visible load-failure state
+  const [error,         setError]         = useState(null)  // visible load-failure state
   const [projects,      setProjects]      = useState([])
   const [locations,     setLocations]     = useState([])
 
   const [filterProject,  setFilterProject]  = useState('')
-  const [filterLocation, setFilterLocation] = useState('')  // V4-PHOTOLOCFIND-001: space filter (server-side subtree)
+  const [filterLocation, setFilterLocation] = useState('')  // space filter (server-side subtree)
   const [filterMode,     setFilterMode]     = useState('all')
-  // V5-PHOTOFILTERPARITY-001 — the crop facet, Garden's lead group-by ("Type") arriving here as a
-  // FILTER. A Set, owned here, session-ephemeral: that is FilterChipRow's stated contract and it is
-  // the right one for a narrowing whose whole risk is being left on by accident. The zone filter
-  // persists because a zone is WHERE YOU ARE; a crop is what you were looking for five minutes ago.
+  // The crop facet, a Set owned here and session-ephemeral (FilterChipRow's contract): a narrowing
+  // whose risk is being left on by accident. The zone filter persists because a zone is where you are.
   const [cropSel, setCropSel] = useState(() => new Set())
-  // V5-PHOTOFILTERPARITY-001 — the page had NO sort control at all; the list was whatever order the
-  // wire happened to arrive in. Two directions only, because over a photo grid there is nothing else
-  // to sort BY: the list carries no name, no weight and no crop of its own (see photoFilters.js).
+  // Two directions only: the list carries no name, weight or crop of its own (see photoFilters.js).
   const [sortOrder, setSortOrder] = useState(DEFAULT_PHOTO_SORT)
 
-  // ── V5-PHOTOFILTERPARITY-001: the crop axis ──────────────────────────────────────────────────
-  // GET /api/photos returns plant_id and nothing else about the planting — no name, no variety, no
-  // crop (all five list templates select the same column set). So the crop comes from a JOIN, and
-  // the join side is the picker projection: ~101KB, zero presigned URLs, and already the app's
-  // warmest cached list (PlantingSelect, EventNew and SavedSeeds all read this exact path, so
-  // dataCache usually answers it without a round trip). The wide `/api/plants` this page already
-  // fetches for its two pickers would have been free-er still, but only under PROJECTS_HIDDEN — with
-  // the flag off that list is project-scoped and empty until a project is chosen, so the crop filter
-  // would silently not exist. One source that works in both flag states beats a cheaper one that
-  // half-works.
-  //
-  // Archived plantings are absent from this projection AND their photos are absent from the list
-  // (both photo templates exclude `gna.archived_at IS NOT NULL`), so the two sets agree — the join
-  // has no systematic hole.
-  //
-  // BOTH READS ARE GATED ON A PHOTO ACTUALLY NAMING A PLANTING — SavedSeeds' `anyLinked` idiom,
-  // paired with useCropTypes' own `enabled` flag, which was minted for exactly this. Not thrift:
-  // with no plant-attached photo in hand there is no crop to derive, so the facet cannot render and
-  // both requests would be pure latency on a page whose cold paint is already ~450KB of presigned
-  // thumbnails. It also keeps the Untagged view honest — nothing there has a planting, so the crop
-  // row correctly disappears rather than offering chips that can only match zero.
-  //
-  // A PLAIN EFFECT RATHER THAN useCachedFetch, and the reason is a hazard rather than a preference.
-  // SavedSeeds reads this same path through `useCachedFetch(anyLinked ? PICKER_PATH : null)` and
-  // that is the better shape on paper — dataCache is warm here, since PlantingSelect and EventNew
-  // read the identical key. But useCachedFetch calls `fetchRef.current(path).then(...)` unguarded
-  // (useCachedFetch.js:41 and :64), so a caller whose fetch returns undefined throws inside a passive
-  // effect and takes the whole page down. useCropTypes wraps the same call in `Promise.resolve()`
-  // and says why in its header; this does the same. Hardening useCachedFetch itself is the real fix
-  // and is a shared-hook change outside this row's scope — reported, not smuggled in here.
+  // The crop axis. GET /api/photos returns plant_id and nothing else about the planting, so the crop
+  // comes from a join against the picker projection: small, no presigned URLs, and usually warm in
+  // dataCache. The wide `/api/plants` is project-scoped with PROJECTS_HIDDEN off, so the crop filter
+  // would silently vanish; the picker path works in both flag states. Archived plantings are absent
+  // from both the projection and the photo list, so the join has no systematic hole.
+  // Both reads are gated on a photo actually naming a planting: otherwise there is no crop to derive,
+  // the requests are pure latency, and the Untagged view correctly shows no crop row.
+  // A plain effect rather than useCachedFetch: useCachedFetch calls `fetchRef.current(path).then(...)`
+  // unguarded, so a fetch that returns undefined throws inside a passive effect and takes the page
+  // down. useCropTypes wraps the call in `Promise.resolve()` for the same reason, and so does this.
   const anyPlantPhoto = useMemo(() => photos.some(p => p?.plant_id), [photos])
   const [plantsForCrop, setPlantsForCrop] = useState([])
   useEffect(() => {
@@ -196,49 +142,39 @@ export default function PhotoLibrary() {
     return () => { alive = false }
   }, [apiFetch, anyPlantPhoto])
   const cropByPlantId = useMemo(() => cropIndex(plantsForCrop), [plantsForCrop])
-  // Stable by useCallback because useCropFacetOptions takes it as a memo dep and this page can hold
-  // ~1,400 rows — an inline arrow would re-count the universe on every keystroke in the upload form.
+  // Stable because useCropFacetOptions takes it as a memo dep and this page can hold ~1,400 rows; an
+  // inline arrow would re-count them on every keystroke in the upload form.
   const cropSlugOf = useCallback(p => cropOfPhoto(p, cropByPlantId), [cropByPlantId])
-  // Universe from `photos` — the PRE-crop-filter list — so a chip tap can never collapse the row to
-  // the one crop already chosen (the self-collapse trap useHarvestFilterOptions.js documents).
+  // Universe from `photos`, the pre-crop-filter list, so a chip tap can never collapse the row to the
+  // one crop already chosen (the self-collapse trap useHarvestFilterOptions.js documents).
   const { options: cropOptions, pinned: cropPinned, labelBySlug: cropLabelBySlug } =
     useCropFacetOptions(photos, cropSlugOf, { enabled: anyPlantPhoto })
-  // The capability gate, SavedSeeds' rule: the row renders when it could actually change the answer
-  // and is absent otherwise. One crop across every photo means a chip row that can only be furniture.
+  // The row renders only when it could change the answer: one crop across every photo is furniture.
   const cropFacetEligible = cropOptions.length >= 2
   const toggleCrop = useCallback(slug => {
     setCropSel(prev => { const n = new Set(prev); n.has(slug) ? n.delete(slug) : n.add(slug); return n })
   }, [])
   const clearCrops = useCallback(() => setCropSel(prev => (prev.size ? new Set() : prev)), [])
-  // THE RENDERED LIST. Filter then sort, both non-mutating, both in src/lib so they are covered.
-  // Every read below that used to say `photos` now says this — the grid, the window, the "Show more"
-  // count, the selection derivation and the Select-mode gate — because a photo the chips have hidden
-  // must not be shareable, countable or scrollable-to.
+  // The rendered list: filter then sort, both non-mutating and in src/lib so they are covered. The
+  // grid, window, "Show more" count, selection derivation and Select-mode gate all read this, because
+  // a photo the chips have hidden must not be shareable, countable or scrollable-to.
   const visiblePhotos = useMemo(
     () => sortPhotos(filterByCrop(photos, cropSel, cropByPlantId), sortOrder),
     [photos, cropSel, cropByPlantId, sortOrder],
   )
 
-  // V4-AMBIENTZONE-001 — the zone filter REMEMBERS itself, deliberately in Log Many's idiom rather
-  // than a second one. This was the only zone control in the app the user had to re-pick on every
-  // visit (Log Many persists `quicklog.lastScope`, Garden persists its group-by and care lens); the
-  // ambient app-wide zone that would have covered it was rejected as a third competing memory of
-  // "which zone" layered over two that already work.
-  //
-  // NOT restored at first render, on purpose. A saved id is applied only AFTER it has been checked
-  // against the live location list below — a zone that has since been deleted or deactivated would
-  // otherwise fire `?location_id=<dead>`, and the server answers that with an empty set, so the user
-  // would land on an empty library with a filter chip they never chose. Validate first, then apply.
+  // The zone filter remembers itself, in Log Many's idiom (`quicklog.lastScope`).
+  // Not restored at first render: a saved id is applied only after it is checked against the live
+  // location list, because a deleted or deactivated zone would fire `?location_id=<dead>` and land the
+  // user on an empty library with a filter they never chose.
   const restoredFilterRef = useRef(false)
   const selectLocationFilter = useCallback(id => {
     setFilterLocation(id)
     try { localStorage.setItem(LOC_FILTER_KEY, id) } catch (e) {}
   }, [])
 
-  // ── V5-PHOTOFILTERPARITY-001: the active-filter breadcrumb's data + its two escapes ───────────
-  // Labels are resolved HERE, against the lists this page already holds, rather than inside the pure
-  // builder: a zone's name lives in `locations` and a project's in `projects`, and photoFilters.js
-  // must stay free of the page's fetches to remain unit-testable.
+  // The active-filter breadcrumb. Labels are resolved here against the lists this page holds, so
+  // photoFilters.js stays free of the page's fetches and unit-testable.
   const activePills = useMemo(() => activeFilterPills({
     mode: filterMode,
     cropSel,
@@ -249,8 +185,7 @@ export default function PhotoLibrary() {
     projectLabel: projects.find(p => String(p.id) === String(filterProject))?.name ?? '',
   }), [filterMode, cropSel, cropLabelBySlug, filterLocation, locations, filterProject, projects])
 
-  // Per-pill removal. Switching on `kind` rather than re-parsing the composite chip id: the builder
-  // stamps it, so a new axis added there gets a compile-visible gap here instead of a silent no-op.
+  // Per-pill removal, switching on the builder-stamped `kind` rather than re-parsing the chip id.
   const removeFilterPill = useCallback(tag => {
     if (tag?.kind === 'mode') setFilterMode('all')
     else if (tag?.kind === 'crop') setCropSel(prev => { const n = new Set(prev); n.delete(tag.slug); return n })
@@ -258,10 +193,8 @@ export default function PhotoLibrary() {
     else if (tag?.kind === 'project') setFilterProject('')
   }, [selectLocationFilter])
 
-  // The one-tap escape, Garden's "Show all" and Harvests' "Clear filters" in one control. It clears
-  // the PERSISTED zone too (through selectLocationFilter), because a Clear that left the sticky
-  // filter behind would re-narrow the library on the next visit — which is the stale-lens trap
-  // Garden's lens cue exists to prevent, arriving one mount later.
+  // The one-tap escape. It clears the persisted zone too (through selectLocationFilter), or the sticky
+  // filter would re-narrow the library on the next visit.
   const clearAllFilters = useCallback(() => {
     setFilterMode('all')
     setFilterProject('')
@@ -273,50 +206,30 @@ export default function PhotoLibrary() {
   const [uploadForm,     setUploadForm]     = useState({ project_id: '', location_id: '', plant_id: '', caption: '', is_public: true })
   const [plantsForUpload, setPlantsForUpload] = useState([])
   const [uploadErr,      setUploadErr]      = useState(null)
-  // BUG-PHOTOFIRST-001 (BD-001, Dave 2026-07-31) — PHOTO FIRST, attribute after.
-  // This form used to disable the picker until a project/zone/planting was already chosen, because
-  // <PhotoUpload> uploads immediately on pick and therefore needs an attach target up front. Dave
-  // named that constraint himself and overrode it: he usually does not know what a photo IS until he
-  // looks at it, and Log Event already works the other way round (pick photo -> then choose planting).
-  // The resolution is to STAGE the file locally and upload on an explicit action, which is exactly
-  // what EventNew does. Staging lives here rather than in <PhotoUpload> on purpose: that component
-  // has nine call sites whose contract is "uploads on pick", and widening it to a staging mode would
-  // put every one of them on a new code path to fix one page's ordering.
-  // V4-PHOTOBULK-001 — the scalar pair became a LIST: [{ id, file, url, status, error }] in pick
-  // order. `stagedItems[0]` is the old stagedFile/stagedPreview pair. Everything the staging model
-  // above says still holds; there are simply N of them now, which is the whole point — Dave photographs
-  // a plant several times in one pass and had to run this form once per photo.
-  //
-  // One list even with the flag off, for the reason EventNew's photoItems carries: a dual-shape state
-  // would fork all eleven read sites and hand the flag-off branch its own untested path.
+  // Photo first, attribute after: the user often does not know what a photo is until they look at it,
+  // so files are staged locally and uploaded on an explicit action, as EventNew does. Staging lives
+  // here, not in <PhotoUpload>, whose many call sites rely on upload-on-pick.
+  // [{ id, file, url, status, error }] in pick order. One list shape even with the flag off, so the
+  // read sites do not fork into an untested flag-off path.
   const [stagedItems,   setStagedItems]   = useState([])
   const [uploading,     setUploading]     = useState(false)
-  // Set only when a batch finished with at least one failure — the summary line above the button.
-  // Per-file errors live on the items themselves; this exists so the count is visible without
-  // scanning the strip, NOT as a replacement for them.
+  // Set only when a batch finished with at least one failure: the count above the button. Per-file
+  // errors live on the items themselves.
   const [batchSummary,  setBatchSummary]  = useState(null)
-  // BUG-PHOTOSTAGEDREAD-001: { done, total } while the picked files are being copied out of the
-  // picker's handles, else null. Picking is no longer instant — this is what stops a tap on twenty
-  // photos looking like a dead button.
+  // { done, total } while picked files are copied out of the picker's handles, else null. Picking is
+  // not instant, and this stops a tap on twenty photos looking like a dead button.
   const [stagedPreparing, setStagedPreparing] = useState(null)
-  // Photos with no parent, as of the last UNSCOPED list fetch. `null` means "not measured yet" and
-  // is DOCUMENTATION, not mechanism — the badge is suppressed by the `> 0` test at the render site,
-  // which is false for null and 0 alike, so seeding this with 0 would change nothing observable. A
-  // mutation run proved exactly that, so the distinction is recorded here rather than asserted in a
-  // test that cannot fail. The two states differ in meaning ("unknown" vs "measured, empty") and
-  // that matters the moment anything else reads this value.
+  // Photos with no parent, as of the last unscoped list fetch. `null` means "not measured yet"; the
+  // badge's `> 0` test treats null and 0 alike, so the distinction matters only to future readers.
   const [untaggedCount, setUntaggedCount] = useState(null)
 
-  // V4-PHOTOBULK-001 S6 — the drain deck, or null when the carousel is closed. Holds the PHOTOS,
-  // not a boolean: the carousel freezes its list at mount so the deck cannot shrink under the
-  // user's finger, and building it here keeps that snapshot honest about what was pending when they
-  // tapped rather than what is pending now.
+  // The drain deck, or null when the carousel is closed. Holds the photos, not a boolean: the carousel
+  // freezes its list at mount so the deck cannot shrink under the user's finger.
   const [quickTagDeck, setQuickTagDeck] = useState(null)
   const stagedInputRef = useRef(null)
   const stagedUploader = useUploadPhoto({ errorMode: 'surface' })
-  // A staged blob URL outlives the component unless revoked. Closing the form or leaving the page
-  // with a photo staged and unsent is the ordinary case now that picking comes first.
-  // Revokes N now, not one. Reads from the updater's `prev` so it can never revoke a stale list.
+  // A staged blob URL outlives the component unless revoked; leaving with photos staged and unsent is
+  // ordinary. Reads the updater's `prev` so it can never revoke a stale list.
   useEffect(() => () => {
     setStagedItems(prev => { for (const it of prev) URL.revokeObjectURL(it.url); return [] })
   }, [])
@@ -327,52 +240,36 @@ export default function PhotoLibrary() {
   const [tagging,        setTagging]        = useState(false)
   const [tagErr,         setTagErr]         = useState(null)
 
-  // V4-PHOTOREASSIGN-001 / W-PHOTODEL — the standalone photo delete. Held as the PHOTO, not a
-  // boolean: the confirm has to name and show the thing it is about to delete, and the tag modal
-  // stays open behind it so a Cancel returns the user exactly where they were.
+  // The standalone photo delete. Held as the photo, not a boolean: the confirm names and shows what it
+  // deletes, and the tag modal stays open behind it so Cancel returns the user where they were.
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting,     setDeleting]     = useState(false)
   const [deleteErr,    setDeleteErr]    = useState(null)
   const toast = useOptionalToast()
 
-  // V4-FBSHARE-001 — multi-select + Facebook Page share
+  // Multi-select + Facebook Page share.
   const [selectMode,  setSelectMode]  = useState(false)
   const [selected,    setSelected]    = useState(() => new Set())
   const [shareOpen,   setShareOpen]   = useState(false)
   const [sharePhotos, setSharePhotos] = useState([])
-  // The share sheet composes up to 5000 chars in its OWN state, so this page cannot see it. Reported
-  // out through onDirtyChange and folded into the reload gate below. The setter is passed straight
-  // through — it is referentially stable, so the sheet's effect only re-fires on a real flip.
+  // The share sheet composes text in its own state, so it reports dirtiness through onDirtyChange
+  // into the reload gate. The setter is referentially stable, so the sheet's effect fires only on a
+  // real flip.
   const [shareDirty,  setShareDirty]  = useState(false)
 
-  // BUG-PICKERCLIP-001 (V4-PICKERUX-001 P0 idiom, EventNew's sticky Save) — select-mode and the
-  // upload form are NOT mutually exclusive: enterSelectMode() closes the form, but the "+ Upload"
-  // button never leaves select mode, so the z150 fixed action bar below can be on screen while the
-  // form's PlantingSelect listbox (z30, in normal flow) is open. The bar wins on z AND on hit
-  // testing, so a tap aimed at a planting row lands on "Post to Facebook" or "Cancel" — a wrong
-  // action, not a cosmetic overlap. Sharing is never the next act while a planting is being chosen,
-  // so suppressing the bar costs nothing and makes the mis-tap structurally impossible.
+  // Select mode and the upload form can both be open (the "+ Upload" button never leaves select mode),
+  // and the z150 fixed action bar wins over the form's PlantingSelect listbox on z and hit testing, so
+  // a tap aimed at a planting row would hit "Post to Facebook" or "Cancel". The bar is suppressed while
+  // the picker is open.
   const [uploadPickerOpen, setUploadPickerOpen] = useState(false)
   const handleUploadPickerOpenChange = useCallback(open => setUploadPickerOpen(open), [])
 
-  // BUG-PHOTOTHUMB-001 — EXPLICIT windowing, because neither browser mechanism works here.
-  // Measured on the live page (2026-07-27): with loading="lazy", 0 of 120 images were ever
-  // REQUESTED — not slow, never fetched — which is why the tab sat blank and then filled all at
-  // once when something finally forced a layout recalc. Flipping the same elements to eager loaded
-  // them instantly, so the URLs and thumbs were always fine; native lazy simply never fires on this
-  // absolutely-positioned grid. Flipping ALL 120 to eager instead FROZE the renderer. So the count
-  // has to be bounded by us: render a window, grow it on scroll. Also gives the page the "more as
-  // you scroll" behavior it lacked when the server limit was cut to 30.
+  // Explicit windowing: native loading="lazy" never fires on this absolutely-positioned grid (images
+  // are never requested), and all-eager froze the renderer. So render a window and grow it on scroll.
   const PAGE = 24
-  // V4-SCROLLRESTORE-001: a restored offset is worthless against a document that came back one page
-  // tall — the browser clamps the scroll and the position is lost anyway. The window size is
-  // therefore restored WITH the offset, at first render, so the tiles that hold that height exist in
-  // the same commit that the photos land in. (The restore loop's clamped scrollTo would also grow
-  // the window via the listener below, one PAGE per frame; that converges for a shallow window and
-  // races the 20-frame budget for a deep one. Restoring it outright is exact.)
-  // Capped hard: a corrupt sessionStorage blob must not be able to mount 1,000 live <img> and
-  // re-freeze the renderer (BUG-PHOTOTHUMB-001). The honest value can only be a window the user
-  // already grew by scrolling, so the cap never binds in practice.
+  // The window size is restored with the scroll offset at first render, so the tiles that give the
+  // page its height exist in the same commit as the photos; otherwise the browser clamps the restored
+  // scroll. Capped so a corrupt sessionStorage value cannot mount 1,000 live <img>.
   const MAX_RESTORED_WINDOW = PAGE * 40
   const { restoredState, saveState } = useScrollRestore({ id: 'photos', ready: !loading })
   const [shown, setShown] = useState(() => {
@@ -380,24 +277,12 @@ export default function PhotoLibrary() {
     return Number.isFinite(w) ? Math.min(Math.max(w, PAGE), MAX_RESTORED_WINDOW) : PAGE
   })
   useEffect(() => { saveState(shown) }, [shown, saveState])
-  // BUG-PHOTOSELSTALE-001: a filter change REPLACES the photos array, so ids picked under the old
-  // filter may no longer resolve to a row. The selection is reset here, alongside the window, for
-  // the same reason the window is: both describe a view of a list that no longer exists.
-  // CLEAR, not intersect — justification at `selectedPhotos` below.
-  // Returning `prev` when already empty keeps the Set identity stable so mount and every
-  // already-cleared filter change bail out of a re-render instead of churning a fresh Set.
-  // V4-SCROLLRESTORE-001: the MOUNT run is skipped. It was always a no-op — `shown` initialised to
-  // PAGE and `selected` to an empty Set, and the setSelected branch already bails on an empty Set —
-  // but now that the window can be restored above PAGE at first render, an unskipped mount run would
-  // collapse it right back and destroy the height the restore needs. Every subsequent (real) filter
-  // change behaves exactly as before.
-  // Keyed on the filter TUPLE rather than a mount flag: StrictMode runs every effect twice on mount,
-  // and a bare "skip the first run" flag would let the second run collapse the restored window in dev.
-  // V5-PHOTOFILTERPARITY-001: the crop selection joins the tuple. It is a client-side narrowing
-  // rather than a refetch, but it changes the SET the window and the selection describe in exactly
-  // the way the other three do — an id picked before the chips went on may no longer be on screen.
-  // Sort is deliberately ABSENT: reordering the same set neither invalidates a selection nor
-  // justifies throwing away scroll depth the user built.
+  // A filter change replaces the set the window and selection describe, so both reset. Clear, not
+  // intersect (see `selectedPhotos`). Returning `prev` when empty keeps the Set identity stable.
+  // The mount run is skipped so a restored window is not collapsed. Keyed on the filter tuple rather
+  // than a mount flag: StrictMode runs effects twice on mount, and a bare skip-first flag would let the
+  // second run collapse it in dev. The crop selection is in the tuple (it changes the set); sort is
+  // not, because reordering neither invalidates a selection nor justifies discarding scroll depth.
   const lastFiltersRef = useRef(null)
   useEffect(() => {
     const sig = `${filterProject}|${filterLocation}|${filterMode}|${[...cropSel].sort().join(',')}`
@@ -409,8 +294,8 @@ export default function PhotoLibrary() {
     setSelected(prev => (prev.size ? new Set() : prev))
   }, [filterProject, filterLocation, filterMode, cropSel])
   useEffect(() => {
-    // Scroll listener rather than IntersectionObserver: IO is the same viewport-intersection
-    // machinery native lazy depends on, and that is precisely what is not firing on this layout.
+    // A scroll listener, not IntersectionObserver: IO is the same machinery native lazy depends on,
+    // which is what is not firing on this layout.
     function onScroll() {
       if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 800) {
         setShown(s => (s < visiblePhotos.length ? s + PAGE : s))
@@ -419,9 +304,8 @@ export default function PhotoLibrary() {
     window.addEventListener('scroll', onScroll, { passive: true })
     onScroll() // a short first page must still be able to grow without a scroll
     return () => window.removeEventListener('scroll', onScroll)
-    // V5-PHOTOFILTERPARITY-001: the RENDERED length, not the fetched one. Keyed on `photos.length`
-    // the window would keep growing past the end of a crop-filtered grid — reaching the bottom of
-    // eleven tomatoes would raise `shown` toward the four hundred photos that are not on screen.
+    // The rendered length, not the fetched one: keyed on `photos.length` the window would keep
+    // growing past the end of a crop-filtered grid.
   }, [visiblePhotos.length])
 
   // ---- Initial data load ----
@@ -433,21 +317,18 @@ export default function PhotoLibrary() {
       const live = (locs ?? []).filter(l => l.is_active)
       setProjects(proj ?? [])
       setLocations(live)
-      // V4-AMBIENTZONE-001 — restore the saved zone filter, but ONLY if it still names a live zone.
-      // `live` is the exact list the <select> renders, so a saved id that survives this check is
-      // guaranteed to have an <option>; one that does not is dropped silently and the user gets the
-      // unfiltered library, which is the correct degradation (see the setter above).
+      // Restore the saved zone filter only if it still names a live zone. `live` is the list the
+      // <select> renders, so a surviving id has an <option>; a dead one is dropped silently and the
+      // user gets the unfiltered library.
       try {
         const saved = localStorage.getItem(LOC_FILTER_KEY)
         if (!restoredFilterRef.current && saved && live.some(l => String(l.id) === saved)) {
-          // ONE-SHOT. This effect re-runs whenever `apiFetch` changes identity (and twice on mount
-          // under StrictMode); re-restoring would re-null the ref below without a matching state
-          // change, and the next REAL filter change would then wrongly read as the first one.
+          // One-shot: this effect re-runs when `apiFetch` changes identity (and twice under
+          // StrictMode); re-restoring would re-null the ref below without a state change, and the next
+          // real filter change would wrongly read as the first.
           restoredFilterRef.current = true
-          // Rewind the filter-change ref to its pre-mount value so the effect above classifies the
-          // restore as the page's FIRST filter state, not a change. Without this the restore runs
-          // `setShown(PAGE)` and collapses the window V4-SCROLLRESTORE-001 restored at first render
-          // — i.e. remembering the filter would have broken remembering the scroll position.
+          // Rewind the filter-change ref so the effect above treats the restore as the first filter
+          // state, not a change; otherwise it runs `setShown(PAGE)` and collapses the restored window.
           lastFiltersRef.current = null
           setFilterLocation(saved)
         }
@@ -455,27 +336,26 @@ export default function PhotoLibrary() {
     }).catch(() => {})
   }, [apiFetch])
 
-  // ---- Load plants when upload project changes (project-scoped mode — the default). ----
+  // ---- Load plants when the upload project changes (project-scoped mode, the default). ----
   useEffect(() => {
-    if (PROJECTS_HIDDEN) return // V4-PROJHIDE-001: unscoped fetch below
+    if (PROJECTS_HIDDEN) return // unscoped fetch below
     if (!uploadForm.project_id) { setPlantsForUpload([]); return }
     apiFetch('/api/plants?project_id=' + uploadForm.project_id)
       .then(data => setPlantsForUpload(data ?? []))
       .catch(() => setPlantsForUpload([]))
   }, [apiFetch, uploadForm.project_id])
 
-  // ---- Load plants when modal project changes (project-scoped mode — the default). ----
+  // ---- Load plants when the modal project changes (project-scoped mode, the default). ----
   useEffect(() => {
-    if (PROJECTS_HIDDEN) return // V4-PROJHIDE-001: unscoped fetch below
+    if (PROJECTS_HIDDEN) return // unscoped fetch below
     if (!tagForm.project_id) { setPlantsForModal([]); return }
     apiFetch('/api/plants?project_id=' + tagForm.project_id)
       .then(data => setPlantsForModal(data ?? []))
       .catch(() => setPlantsForModal([]))
   }, [apiFetch, tagForm.project_id])
 
-  // V4-PROJHIDE-001: with the project chooser hidden, both photo pickers (upload + tag modal) list
-  // EVERY live planting from the UNSCOPED source — there is no project step to scope them. project_id
-  // is then DERIVED from the chosen plant at onChange (see the pickers below). Fetched once; unarchived.
+  // With the project chooser hidden, both photo pickers (upload + tag modal) list every live planting
+  // from the unscoped source; project_id is derived from the chosen plant at onChange. Fetched once.
   useEffect(() => {
     if (!PROJECTS_HIDDEN) return
     apiFetch('/api/plants')
@@ -496,67 +376,30 @@ export default function PhotoLibrary() {
     try {
       let data = await apiFetch('/api/photos' + qs) ?? []
 
-      // V4-PHOTOBULK-001 — the untagged COUNT, taken from the response before any mode filter.
-      //
-      // WHY IT EXISTS. Bulk upload can now put a pile of photos into the inbox in one action, and
-      // the only route back to them is a filter chip that looks identical whether it holds zero
-      // photos or forty. A drain nobody can see is a drain nobody runs; the count is what turns
-      // "Untagged" from a filter into a to-do.
-      //
-      // ONLY FROM AN UNSCOPED FETCH. With ?project_id= or ?location_id= the response is a SUBSET, so
-      // counting it would answer a different question ("untagged within this project") while
-      // rendering in a chip that reads as global. Rather than show a number that is quietly about
-      // something else, the badge holds its last unscoped value and the count is simply not
-      // recomputed here — a stale-but-true global count beats a fresh-but-mislabelled local one.
-      // `isAttached` is photoModel's, so this and the filter below can never drift apart.
+      // The untagged count turns "Untagged" from a filter into a visible to-do after a bulk upload.
+      // Only from an unscoped fetch: a scoped response is a subset, and its count would render in a
+      // chip that reads as global. The badge keeps its last unscoped value instead. `isAttached` is
+      // photoModel's, so this and the filter below cannot drift apart.
       if (!filterProject && !filterLocation) {
         setUntaggedCount(data.filter(p => !toPhoto(p).isAttached).length)
       }
-      // V4-PHOTOTODAYFILTER-001. Keyed on created_at, NOT taken_at — and V4-PHOTOTAKENAT-002 KEPT it
-      // that way while moving every gallery sort to capture time, so the reason has to stand on its
-      // own rather than on the old one. The old one was "taken_at is NULL on every live row", which
-      // is no longer true and was never the real argument anyway.
-      // THE REAL ARGUMENT: this filter serves the tagging workflow, and it answers "what arrived
-      // today, that I have not dealt with yet". Keying it to capture time would make it actively
-      // harmful in the exact case that motivated the rest of this change — bulk-uploading a month of
-      // older photographs. Every one of them would be absent from "Today" on the day it was added,
-      // so the filter you would reach for to find your new photos is the one filter that cannot see
-      // them. Upload day is the right axis HERE precisely because capture day is the right axis
-      // everywhere else.
-      // "Today" is the garden day in HARVEST_TZ, not the browser's — the same boundary the harvest
-      // log groups by, so a photo and the pick it belongs to never land on different days.
-      // Client-side like its two siblings below, and complete rather than windowed: /api/photos
-      // returns the whole list in one response, so this is not filtering a partial page.
+      // "Today" is keyed on created_at, not capture time: it serves the tagging workflow ("what
+      // arrived today that I have not dealt with"), and after bulk-uploading older photos a
+      // capture-time filter could not see any of them. The day is the garden day in HARVEST_TZ, the
+      // boundary the harvest log groups by. Client-side and complete: /api/photos returns the whole
+      // list in one response.
       if (filterMode === 'today') {
         const todayKey = etDay(new Date(), HARVEST_TZ)
         data = data.filter(p => etDay(p.created_at, HARVEST_TZ) === todayKey)
       }
       if (filterMode === 'standalone') data = data.filter(p => !p.event_id)
-      // V4-PHOTOLOCFIND-001: a photo attached to ANY parent (event/project/zone/planting) is a
-      // finished photo — untagged means attached to nothing (V002 E2: valid untagged photos must
-      // not read as unfinished work; the old predicate flagged every deliberate location photo).
-      // V4-SPACEPHOTO-001: the space arm is UNCONDITIONAL, deliberately NOT behind
-      // SPACE_PHOTOS_ENABLED. space_id becomes non-null the moment the migration + Lambda land,
-      // which is independent of this client flag — and this is a PWA, so a stale cached bundle
-      // would keep flagging every deliberate space photo as unfinished work.
-      //
-      // ⚠ THE ORIGINAL INERTNESS CLAIM HERE WAS RIGHT ABOUT THE OUTCOME AND WRONG ABOUT THE
-      // MECHANISM, which made it dangerous. It said "provably inert: no photo row carries space_id
-      // today". The conjunct was inert for a different reason: the server did not RETURN the field.
-      // Only the ?space_id list branch selected p.space_id, so on every row this page ever saw it was
-      // `undefined` and `!p.space_id` was unconditionally true — the arm would have stayed inert
-      // FOREVER, including after rows started carrying a space_id, silently flagging every space
-      // photo as unfinished work (the exact V002-E2 defect the paragraph above exists to prevent).
-      // Fixed server-side 2026-08-02: the list decorates rows with space_id whenever the SERVER gate
-      // is open. This arm is now load-bearing rather than decorative — do not "simplify" it away, and
-      // do not re-derive its inertness from the row data without checking the wire.
-      //
-      // V4-PHOTOMODEL-001: the hand-written predicate here named FIVE parents and omitted
-      // inventory_item_id, so the 6 live inventory-attached photos (measured in prod 2026-08-07)
-      // were reported as unfinished work on every visit — the same six BUG-PHOTOPARENT-001 recorded
-      // as "no parent link at all". They are fully attached; the four/five-way predicate simply
-      // could not see the parent they have. `isAttached` counts all SIX FKs the live
-      // photos_must_have_parent CHECK counts, so a new parent kind cannot silently reopen this.
+      // Untagged means attached to no parent: a photo attached to any parent is finished work.
+      // `isAttached` counts all six FKs the photos_must_have_parent CHECK counts (inventory items
+      // included), so a new parent kind cannot silently reopen this. The space arm is unconditional,
+      // not behind SPACE_PHOTOS_ENABLED: space_id arrives when the server gate opens, independent of
+      // this client flag, and a stale cached bundle must not flag space photos as unfinished. The list
+      // decorates rows with space_id only when the server gate is open, so do not judge this arm's
+      // effect from the row data without checking the wire.
       if (filterMode === 'untagged')   data = data.filter(p => !toPhoto(p).isAttached)
       setPhotos(data)
     } catch (err) {
@@ -569,9 +412,6 @@ export default function PhotoLibrary() {
   useEffect(() => { loadPhotos() }, [loadPhotos])
 
   // ---- Upload handlers ----
-  // V2-PHOTO-F1 Session 2: 3-step engine moved into <PhotoUpload> + useUploadPhoto.
-  // We retain only the surface-level state: error gating before the picker fires
-  // (project_id required) and post-success cleanup (form reset + list reload).
   function clearStaged() {
     setStagedItems(prev => { for (const it of prev) URL.revokeObjectURL(it.url); return prev.length ? [] : prev })
     setBatchSummary(null)
@@ -595,29 +435,20 @@ export default function PhotoLibrary() {
     loadPhotos()
   }
 
-  // BUG-PHOTOFIRST-001: open the picker inside the tap. Same reason CaptureFlow and EventNew do it
-  // this way — a picker opened from a later effect has lost the trusted gesture and is suppressed.
-  // V4-HIDECAPTURE-001: no camera arm, so no capture toggle — straight to the picker.
+  // Open the picker inside the tap: a picker opened from a later effect has lost the trusted gesture
+  // and is suppressed. No camera arm.
   function openStagedPicker() {
     const el = stagedInputRef.current
     if (!el) return
     el.click()
   }
 
-  // BUG-PHOTOSTAGEDREAD-001 — the bytes are COPIED here, at pick time, not held as picker handles.
-  //
-  // Measured on Dave's Android against prod v4.80.0: he picked 10, one uploaded and nine failed with
-  // Chrome's "requested file could not be read ... permission problems that have occurred after a
-  // reference to a file was acquired". This function used to stage the raw `File` objects, and
-  // uploadStaged() below reads them one at a time on the Upload tap — by which point Android had
-  // reclaimed the temporary picker handles. Full mechanism in lib/fileSnapshot.js; the short version
-  // is that the first photo's decode is itself the memory pressure that reclaims the other nine, and
-  // the thumbnails keep rendering the whole time because an object URL is a pointer, not a copy.
-  //
-  // Now async, which is why the picker shows a "Preparing" line: this tap does real I/O now (one
-  // memcpy per photo). That cost buys the failure moving to where it can be acted on — an unreadable
-  // photo is reported while the user is still in the picker, instead of after they have chosen a
-  // planting and pressed Upload.
+  // Bytes are copied here at pick time, not held as picker handles. uploadStaged() reads files one at
+  // a time on the Upload tap, and by then Android may have reclaimed the temporary handles (Chrome's
+  // "requested file could not be read ... after a reference to a file was acquired"); the first
+  // photo's decode is itself the memory pressure. Thumbnails keep rendering because an object URL is
+  // a pointer, not a copy. Mechanism: lib/fileSnapshot.js. Picking is async (one copy per photo),
+  // hence the "Preparing" line, and an unreadable photo is reported while the user is still picking.
   async function onStagedPick(e) {
     const picked = Array.from(e.target.files ?? [])
     e.target.value = ''   // re-picking the same file must refire onChange
@@ -625,17 +456,17 @@ export default function PhotoLibrary() {
     setUploadErr(null)
     setBatchSummary(null)
 
-    // Room is computed twice on purpose. Here it bounds how much we bother COPYING; the updater
-    // below re-derives it from `prev` and is the authority on what is actually staged, because this
-    // function now awaits and `stagedItems` may be a render behind by the time it resumes.
+    // Room is computed twice on purpose. Here it bounds the copying; the updater below re-derives it
+    // from `prev` and is the authority, because this function awaits and `stagedItems` may be a render
+    // behind when it resumes.
     const roomNow = Math.max(0, MAX_STAGED - stagedItems.length)
     const candidates = picked.slice(0, roomNow)
     if (!candidates.length) return
 
     setStagedPreparing({ done: 0, total: candidates.length })
-    let ok = [], failed = []
+    let ok = [], failed = [], failedNames = []
     try {
-      ;({ ok, failed } = await snapshotFiles(
+      ;({ ok, failed, failedNames } = await snapshotPicked(
         candidates,
         (done, total) => setStagedPreparing({ done, total }),
       ))
@@ -643,48 +474,29 @@ export default function PhotoLibrary() {
       setStagedPreparing(null)
     }
 
-    if (failed.length) {
-      // Named, not counted: with nine failures the user needs to know WHICH photo to re-pick.
-      const names = failed.map(f => f.file?.name).filter(Boolean)
-      setUploadErr(
-        `${failed.length} of ${candidates.length} couldn't be read and ${failed.length === 1 ? 'was' : 'were'} not added` +
-        `${names.length ? ` (${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''})` : ''}` +
-        '. Re-pick from the gallery and try again.'
-      )
-    }
+    // Named, not counted: with nine failures the user needs to know which photo to re-pick.
+    if (failed.length) setUploadErr(unreadableNotice(failed.length, candidates.length, failedNames))
     if (!ok.length) return
 
     setStagedItems(prev => {
       const room = Math.max(0, MAX_STAGED - prev.length)
       const accepted = ok.slice(0, room)
       if (!accepted.length) return prev
-      // The object URL is minted from the SNAPSHOT, not the original. Pointing it at the handle we
-      // just replaced would leave the preview dying on exactly the schedule this fix exists to stop.
+      // The object URL comes from the snapshot: one pointing at the replaced handle dies with it.
       return prev.concat(accepted.map(({ file }) => ({
         id: nextStagedId(), file, url: URL.createObjectURL(file), status: 'staged', error: null,
       })))
     })
   }
 
-  // V4-PHOTOBULK-001 — one serial queue for both destinations.
-  //
-  // TWO DESTINATIONS, ONE PATH. With a target chosen, every photo is attached to it (the shipped
-  // behaviour, N times). With NO target and more than one photo staged, the batch goes to the INBOX:
-  // `intake_status='pending_tag'`, no parent — which `photos_must_have_parent` admits for exactly
-  // this status, and which POST /api/photos already validates and stores (lambda/photos/index.js
-  // :1161-1174, live in prod). Those rows then surface under this page's existing "Untagged" filter,
-  // whose predicate is "has no parent", and drain through the tag modal that is already here.
-  //
-  // WHY NOT POST /api/photos/batch, which exists in prod and was built for this. That route is
-  // presign-ONLY: taking it would bypass stripImageFile (V4-PHOTOEXIFSTRIP-001 — Dave's GPS is his
-  // home address), the 800px thumb the grid's payload budget depends on, and the relay-upload
-  // fallback for a dead S3 route. Driving useUploadPhoto once per file keeps all three. The batch
-  // route's real value is its `inbox/` key prefix and its 20-file presign round-trip, and neither is
-  // load-bearing for the INBOX as the schema defines it — the inbox is
-  // `photos WHERE intake_status='pending_tag'`, one table, one source of truth (design V100 §3 X5).
-  // Storage prefix is not the state; the column is.
-  //
-  // SERIAL. Same memory ceiling as everywhere else on this track: one decode at a time.
+  // One serial queue for both destinations. With a target chosen, every photo attaches to it. With no
+  // target and more than one photo, the batch goes to the inbox: `intake_status='pending_tag'` and no
+  // parent, which photos_must_have_parent admits for exactly this status and POST /api/photos stores.
+  // Those rows surface under "Untagged" and drain through the tag modal.
+  // Not POST /api/photos/batch: it is presign-only, so it would bypass stripImageFile (GPS removal),
+  // the 800px thumb the grid's payload depends on, and the relay-upload fallback. The inbox is
+  // defined by the intake_status column, not the storage prefix.
+  // Serial: one decode at a time keeps memory bounded.
   async function uploadStaged() {
     if (!stagedItems.length || uploading || (targetMissing && !canUploadUntagged)) return
     setUploading(true)
@@ -694,9 +506,8 @@ export default function PhotoLibrary() {
     const toInbox = targetMissing
     const linkage = toInbox ? { intake_status: 'pending_tag' } : photoLinkage
     let failed = 0
-    // The FIRST failure's own text. The shipped single-photo contract surfaces the real message
-    // ("Upload stalled — the connection stopped sending…"), which is the only part the user can act
-    // on; a generic "Upload failed." would be a regression even though it reads as tidier.
+    // The first failure's own text: it is the part the user can act on ("Upload stalled — …"); a
+    // generic "Upload failed." would lose it.
     let firstError = null
     const total = stagedItems.length
 
@@ -719,20 +530,20 @@ export default function PhotoLibrary() {
 
     setUploading(false)
 
-    // ALL failed — the shipped single-photo contract: surface, keep the form open, keep the file.
+    // All failed: surface, keep the form open, keep the files.
     if (failed === total) {
       handleUploadError(total === 1 ? firstError : `None of the ${total} photos uploaded — ${firstError}`)
       return
     }
-    // A partial failure must NOT close the form and discard the survivors' rows. Drop the ones that
-    // landed, keep the failures staged so the retry is one tap rather than a re-pick of everything.
+    // A partial failure keeps the form open: drop the ones that landed and keep the failures staged
+    // so the retry is one tap, not a re-pick.
     if (failed > 0) {
       setStagedItems(prev => {
         for (const s of prev) if (s.status === 'done') URL.revokeObjectURL(s.url)
         return prev.filter(s => s.status !== 'done')
       })
-      // Carries the REASON, not just the count. When one photo is left the strip collapses to the
-      // bare preview (see the render note), so this line is the only place the failure can speak.
+      // Carries the reason, not just the count: with one photo left the strip collapses to the bare
+      // preview, so this line is the only place the failure can speak.
       setBatchSummary(`${total - failed} of ${total} uploaded — the rest are still here to retry. ${firstError}`)
       loadPhotos()
       return
@@ -744,29 +555,13 @@ export default function PhotoLibrary() {
     setUploadErr(msg || 'Upload failed.')
   }
 
-  // ---- V4-PHOTOBULK-001 S6 — the one-at-a-time drain ----
+  // ---- The one-at-a-time drain ----
 
-  // Oldest first, ascending, so the drain replays a garden walk in the order it happened — which is
-  // what makes the shortcut MRU converge instead of thrashing. This used to say created_at "IS the
-  // capture order in practice" because taken_at was NULL on effectively every row. That premise
-  // expired: 315 of 1,584 live rows carry a real capture time as of 2026-09-09, and on 150 of them
-  // it falls on a different DAY than the upload. The sort below now uses photoDate(), so the walk it
-  // replays is the walk that happened rather than the order S3 acknowledged the files.
-  //
-  // BUG-QUICKTAGSCOPE-001 — THE DECK IS GLOBAL BECAUSE THE BADGE IS GLOBAL.
-  // `untaggedCount` is deliberately a global number: it is recomputed only from an UNSCOPED fetch and
-  // otherwise holds its last value (see loadPhotos). This function used to build its deck from
-  // `photos`, which under ?project_id= or ?location_id= is a SUBSET — so the badge asked a global
-  // question and the deck answered a scoped one. Worse than a mismatch: under a project filter every
-  // returned row HAS a project_id, so `isAttached` is true for all of them, `pending` was always
-  // empty, and the early return made tapping the count a SILENT NO-OP every time. Probe-proven in
-  // prod: chip reads 3, tap opens nothing.
-  //
-  // The general rule this cost us: when a value is deliberately global, every consumer of it must be
-  // global too. Guarding the recompute was necessary and not sufficient.
-  //
-  // So: fetch the unscoped list when — and only when — a scope filter is active. No filter means
-  // `photos` IS the unscoped list and the extra request would be pure latency on the common path.
+  // The deck is global because the badge is global: `untaggedCount` is recomputed only from an
+  // unscoped fetch. Under a project filter every row has a project_id, so a deck built from `photos`
+  // would be empty and the tap a silent no-op. So fetch the unscoped list when, and only when, a scope
+  // filter is active; with no filter `photos` already is that list. When a value is deliberately
+  // global, every consumer of it must be global too.
   const [quickTagOpening, setQuickTagOpening] = useState(false)
   const openQuickTag = useCallback(async () => {
     if (quickTagOpening) return          // the fetch below is a round trip; a second tap must not race it
@@ -777,39 +572,32 @@ export default function PhotoLibrary() {
       try {
         source = await apiFetch('/api/photos') ?? []
       } catch (err) {
-        // An unreachable list is NOT "nothing to tag". Returning quietly here would rebuild the exact
-        // defect this fix exists to remove — a tap that does nothing and says nothing.
+        // An unreachable list is not "nothing to tag": say so rather than a tap that does nothing.
         toast.show({ message: "Couldn't load the untagged photos — try again.", tone: 'error' })
         return
       } finally {
         setQuickTagOpening(false)
       }
     }
-    // OLDEST FIRST, and on photoDate() rather than created_at — CAPTURE order, which is the order
-    // this carousel was designed around. The P1 migration says so outright where it indexes
-    // (created_by, taken_at): the inbox walks "untagged photos in CAPTURE order (taken_at), which is
-    // what the carousel exploits (spatial memory from a garden walk)". That intent shipped with the
-    // column and then sat unused for want of the projection — a batch of photographs walked in one
-    // pass through the garden and uploaded weeks later arrived here in UPLOAD order, which is the
-    // order S3 happened to acknowledge them, and the walk's sequence was gone. V4-PHOTOTAKENAT-002.
+    // Oldest first by photoDate(), i.e. capture order: the carousel replays a garden walk in the
+    // order it happened (spatial memory), which is also what lets the shortcut MRU converge. Upload
+    // order is just the order S3 acknowledged the files.
     const pending = source
       .filter(p => !toPhoto(p).isAttached)
       .slice()
       .sort((a, b) => String(photoDate(a) ?? '').localeCompare(String(photoDate(b) ?? '')))
-    // We have just measured the global truth, so reconcile the held badge to it. This is what makes
-    // the empty case self-explanatory: the count the user tapped disappears instead of the tap
-    // appearing to fail. It also heals a count left stale by another device draining the inbox.
+    // Reconcile the held badge to the global truth just measured: in the empty case the tapped count
+    // disappears instead of the tap appearing to fail, and a count left stale by another device heals.
     setUntaggedCount(pending.length)
     if (!pending.length) return
-    // Deck and seed are ONE piece of state so they cannot drift apart — the seed is derived from
-    // whichever list built the deck, which under a scope filter is a list this component never held.
+    // Deck and seed are one piece of state so they cannot drift; the seed comes from whichever list
+    // built the deck, which under a scope filter this component never held.
     setQuickTagDeck({ photos: pending, seed: seedFromPhotos(source) })
   }, [photos, filterProject, filterLocation, apiFetch, quickTagOpening, toast])
 
 
   // One photo left the inbox. Update in place rather than refetching: a refetch mid-drain would
-  // re-sort the grid under a modal the user is still working in, and the carousel holds its own
-  // frozen deck anyway.
+  // re-sort the grid under the modal, and the carousel holds its own frozen deck.
   const handleQuickTagAssigned = useCallback((photoId, plantId, planting) => {
     setPhotos(ps => ps.map(p => (
       p.id === photoId
@@ -820,32 +608,23 @@ export default function PhotoLibrary() {
     invalidatePhotoLists('/api/photos')
   }, [])
 
-  // Build the linkage object the photo component forwards into POST /api/photos.
-  // Empty strings become null so the Lambda treats them as "unset" rather than ""
-  // (which would fail FK validation for non-uuid columns).
+  // The linkage forwarded into POST /api/photos. Empty strings become null so the Lambda treats them
+  // as unset rather than "" (which fails FK validation).
   const photoLinkage = {
     project_id:  uploadForm.project_id || null,
     location_id: uploadForm.location_id || null,
     plant_id:    uploadForm.plant_id    || null,
   }
   const photoCaption = uploadForm.caption.trim() || null
-  // V4-PHOTOLOCFIND-001: one-of target gate, matching the photos_must_have_parent CHECK and the
-  // handleTag predicate below. Project is no longer singularly required — a space alone is a valid
-  // home (the meta-photo case). plant_id is in the predicate for completeness though this form only
-  // offers plants after a project is picked.
+  // One-of target gate, matching the photos_must_have_parent CHECK and the handleTag predicate below.
+  // A space alone is a valid home.
   const targetMissing = !uploadForm.project_id && !uploadForm.location_id && !uploadForm.plant_id
 
-  // V4-PHOTOBULK-001 — the ONE place the no-target rule is relaxed, and it is deliberately narrow.
-  //
-  // A parentless photo is legal only as `intake_status='pending_tag'`, so "upload without choosing a
-  // target" is not a loophole in photos_must_have_parent — it is the other arm the CHECK already
-  // has. But it still means a photo whose home nobody has stated, so it is gated three ways: the
-  // flag, MORE THAN ONE staged photo, and an explicit second tap on a differently-labelled button.
-  //
-  // The >1 condition is the load-bearing one. A single untagged photo is almost always a slip — the
-  // user meant to pick a target and didn't — and the shipped rule catches that and should keep
-  // catching it. A DELIBERATE camera-roll drain is many photos at once, and for that the rule was
-  // the obstacle: it demanded one home for a batch whose whole point is that the homes differ.
+  // The one place the no-target rule is relaxed, deliberately narrowly. A parentless photo is legal
+  // only as `intake_status='pending_tag'` (the CHECK's other arm), but its home is still unstated, so
+  // it takes more than one staged photo and an explicit tap on a differently-labelled button. The >1
+  // condition is the load-bearing one: a single untagged photo is almost always a slip the rule should
+  // catch, while a deliberate camera-roll drain is many photos whose homes differ.
   const canUploadUntagged = stagedItems.length > 1
 
   // ---- Modal / tag handlers ----
@@ -855,55 +634,29 @@ export default function PhotoLibrary() {
       project_id:  photo.project_id  ?? '',
       location_id: photo.location_id ?? '',
       plant_id:    photo.plant_id    ?? '',
-      caption:     photo.caption     ?? '',   // V4-PHOTOCAPTION-001: editable post-upload
+      caption:     photo.caption     ?? '',   // editable post-upload
     })
     setTagErr(null)
   }
 
-  // ---- V4-DIRTYGUARDSWEEP-001 — the reload gate ----
-  //
-  // This page has three independent editable regions and they compose as a union, because they can
-  // hold content at once: enterSelectMode() collapses the upload form without clearing it, the tag
-  // modal opens over whatever the form is holding, and the share sheet opens over either.
-  //
-  // 1. UPLOAD FORM — `stagedFile` is the whole point of BUG-PHOTOFIRST-001: the file is picked
-  //    FIRST and sits in memory while the user works out where it goes, so the pick→send gap is a
-  //    deliberate, user-length window and a reload lands squarely in it. `caption` is free text
-  //    with nowhere else to live.
-  //    Deliberately NOT gated on `showUpload`. That term is right on ProjectTypes, where collapsing
-  //    hides the only copy of some text; here it would be actively wrong, because enterSelectMode()
-  //    sets showUpload=false as a SIDE EFFECT of tapping "Select" — so a `showUpload &&` predicate
-  //    would silently drop the hold on a live staged blob the user never dismissed and will see
-  //    again the moment they reopen the form.
-  //    Also NOT counting the three pickers: a project/space/planting is one tap to redo, and they
-  //    are only meaningful alongside a staged file, which already holds the gate on its own. That
-  //    is the false positive the sibling wiring on Locations' add form documents. `is_public` has
-  //    had no control since V4-PUBHIDE-001 — it is a constant here.
-  //    No `uploading` term: uploadStaged() clears `stagedFile` only in handleUploadComplete(), so
-  //    the staged term already spans the entire in-flight upload.
-  //
-  // 2. TAG MODAL — seeded from the photo by openModal() just above, so every field is pre-filled
-  //    and a truthiness test would report dirty for any photo that already has a caption or a
-  //    parent. Differs-from-the-row is the only honest question, and it releases on a revert.
-  //    The `modal` term IS load-bearing: closing sets modal=null and leaves tagForm populated, but
-  //    re-opening re-seeds from the next photo, so a dismissed edit is already unreachable and
-  //    holding a deploy for it would wedge updates (BUG-STALECLIENT-001's shape). No `tagging`
-  //    term — handleTag only clears the dirty state via setModal(null) on success.
-  //    Compared against `modal` directly rather than a snapshot (EventDetail's 20-field editor uses
-  //    a snapshot): four fields, one `?? ''` each, and `modal` is literally the row — the seed
-  //    below must keep mirroring openModal() above, which is four lines apart.
-  //
-  // 3. SHARE SHEET — V4-FBCAPTIONDIRTY-001. Up to 5000 chars of free text composed inside
-  //    FacebookShareSheet's own state, which nothing on this page can read, so it takes a reported
-  //    boolean. NOT `shareOpen`: a merely-opened sheet holds no content, and that false positive
-  //    would defer a deploy for anyone who tapped "Post to Facebook" to see what it does. The sheet
-  //    owns the predicate because it owns the caption — see its comment for why `open` is a term
-  //    there and `showUpload` is not one here.
-  //
-  // Excluded, on purpose: `selected` / `selectMode` (a selection is view state — the page itself
-  // throws it away on any filter change, so it is not treated as precious by its own author),
-  // `deleteTarget` / `deleting` (a confirm, not input), the filters and `shown` (view state, and
-  // `shown` is already restored from sessionStorage across a reload by useScrollRestore).
+  // ---- The reload gate ----
+  // Three editable regions that can hold content at once (enterSelectMode() collapses the upload
+  // form without clearing it, the tag modal opens over it, the share sheet over either), so the gate
+  // is their union.
+  // 1. Upload form: staged files sit in memory while the user decides where they go, so a reload
+  //    lands squarely in that window; `caption` is free text. Not gated on `showUpload`: "Select"
+  //    sets showUpload=false as a side effect, and that would drop the hold on staged files the user
+  //    will see again. The pickers are not counted (one tap to redo, and meaningful only with a
+  //    staged file, which holds the gate already). `is_public` has no control here. No `uploading`
+  //    term: staged items are cleared only in handleUploadComplete(), so they span the upload.
+  // 2. Tag modal: seeded from the photo by openModal(), so dirty means differs-from-the-row, which
+  //    releases on a revert. The `modal` term matters: closing leaves tagForm populated, but a reopen
+  //    re-seeds, so a dismissed edit is unreachable and holding a deploy for it would wedge updates.
+  //    Compared against `modal` directly; the comparison must keep mirroring openModal() above.
+  // 3. Share sheet: its free text lives in FacebookShareSheet's state, so it reports a boolean. Not
+  //    `shareOpen`: a merely opened sheet holds no content.
+  // Excluded: the selection (view state, cleared on any filter change), the delete confirm, the
+  // filters and `shown` (restored from sessionStorage by useScrollRestore).
   const modalDirty = !!(modal && (
     tagForm.project_id  !== (modal.project_id  ?? '') ||
     tagForm.location_id !== (modal.location_id ?? '') ||
@@ -915,8 +668,8 @@ export default function PhotoLibrary() {
 
   useReportOverlayDirty(hasUnsavedInput)
 
-  // /photos is not an overlayable route today, so the hook above is a strict no-op and the gate
-  // below is what protects this page. Per-instance key + BOOLEAN dep per EventNew.jsx:985-991.
+  // /photos is not an overlayable route, so the hook above is a no-op and this gate is what protects
+  // the page. Per-instance key and a boolean dep, as in EventNew.jsx's reload gate.
   const reloadGateKey = `photo-library:${useId()}`
   useEffect(() => {
     setReloadBlocked(reloadGateKey, hasUnsavedInput)
@@ -928,21 +681,13 @@ export default function PhotoLibrary() {
     const newProject  = tagForm.project_id  || null
     const newLocation = tagForm.location_id || null
     const newPlant    = tagForm.plant_id    || null
-    // V4-PHOTOCAPTION-001: caption now comes from the form (was modal.caption round-tripped
-    // unchanged — the PUT always accepted it; only the input was missing). Trimmed-empty → null.
+    // Trimmed-empty caption → null.
     const newCaption  = tagForm.caption.trim() || null
-    // V4-SPACECLIENTGAP-001: the one-of gate must name EVERY parent the 7-clause
-    // photos_must_have_parent CHECK counts, not the three it happened to be written against.
-    //   - `newPlant` was computed on the line above and then never consulted — a plant-only photo
-    //     (plant_id set, no project, no location, no event) failed this guard and could not be
-    //     caption-edited at all. That is a LIVE PROD BUG today, independent of the space work.
-    //   - `modal.space_id` is the space tier. It reads from the MODAL, not the form, because this
-    //     form has no space control by design: the general PUT below does not send space_id and the
-    //     Lambda's UPDATE does not SET it, so the attachment survives a re-tag untouched. The
-    //     attach/detach path is the dedicated PUT /api/photos/:id/space (see the batch picker on
-    //     /space). Reading the persisted value is therefore correct — it is what the row still has
-    //     after this request, which is exactly what the CHECK will see.
-    // `modal.event_id` keeps its existing meaning: an event-attached photo is always parented.
+    // The one-of gate names every parent the photos_must_have_parent CHECK counts, so a plant-only
+    // photo can be edited. `modal.space_id` reads from the modal, not the form: this form has no space
+    // control, the PUT below does not send space_id and the Lambda's UPDATE does not set it, so the
+    // persisted value is what the CHECK will see. Space attach/detach is PUT /api/photos/:id/space.
+    // An event-attached photo is always parented.
     if (!newProject && !newLocation && !newPlant && !modal.event_id && !modal.space_id) {
       setTagErr('A standalone photo needs at least a project, zone, or plant.')
       return
@@ -963,9 +708,8 @@ export default function PhotoLibrary() {
         }),
       })
 
-      // V4-IMGCACHE-001 D-1: a re-link moves the photo between location/project/plant buckets, so every
-      // cached photo list (?location_id=, ?attachedTo=, the wall) may be stale. PhotoLibrary itself is
-      // NOT cached (its grid is a bare <img>, per BUG-PHOTOBLANK-001), but the routed surfaces are.
+      // A re-link moves the photo between buckets, so every cached photo list may be stale.
+      // PhotoLibrary's own grid is not cached, but the routed surfaces are.
       invalidatePhotoLists('/api/photos')
 
       const updatedProjectName = projects.find(p => p.id === newProject)?.name ?? null
@@ -983,95 +727,65 @@ export default function PhotoLibrary() {
     }
   }
 
-  // ---- V4-PHOTOREASSIGN-001 / W-PHOTODEL: standalone photo delete ----
-  //
-  // THE ROUTE IS ALREADY RIGHT — this is a call site, not a new capability. DELETE /api/photos/:id
-  // (lambda/photos/photoDelete.js) soft-deletes: `deleted_at = now()`, every display pointer nulled
-  // in the SAME transaction, no row removed, no S3 object touched, and a restore that puts the photo
-  // back and re-promotes it into any hero slot still standing empty. Nothing here may bypass or
-  // duplicate that; the client's whole job is to ask, disclose, and re-sync.
-  //
-  // Path spelled inline exactly as handleTag's PUT spells it — one route, one literal shape, both
-  // proven by the same live matcher. (deletedPhotos.js holds the two paths that had NO existing
-  // spelling in a component; this one has had one since the tag modal shipped.)
+  // ---- Standalone photo delete ----
+  // DELETE /api/photos/:id (lambda/photos/photoDelete.js) soft-deletes: `deleted_at = now()`, display
+  // pointers nulled in the same transaction, no row removed, no S3 object touched, and restore
+  // re-promotes it into any empty hero slot. The client only asks, discloses and re-syncs; nothing
+  // here may bypass or duplicate that. The path is spelled exactly as handleTag's PUT spells it.
   async function confirmDelete() {
     if (!deleteTarget || deleting) return
     setDeleting(true)
     setDeleteErr(null)
     try {
       await apiFetch('/api/photos/' + deleteTarget.id, { method: 'DELETE' })
-      // Every cached photo list still contains this row. dataCache's only consumers are the photo
-      // lists (see its header), so this ONE prefix covers the routed surfaces; PhotoLibrary's own
-      // grid is uncached and is corrected by the local drop below.
+      // Every cached photo list still contains this row; dataCache's only consumers are photo lists,
+      // so this one prefix covers the routed surfaces. The local grid is corrected below.
       invalidatePhotoLists('/api/photos')
-      // Drop locally rather than refetching: the server answer IS the confirmation, and a refetch
-      // would re-presign the whole page to learn one thing already known. `selected` needs no
-      // parallel edit — selectedPhotos derives from `photos`, which is the BUG-PHOTOSELSTALE-001
-      // rule (one source of truth for "the selection", and it is not the id Set).
+      // Drop locally rather than refetching: the server answer is the confirmation. The selection
+      // needs no parallel edit because selectedPhotos derives from the photo list.
       setPhotos(ps => ps.filter(p => p.id !== deleteTarget.id))
       setDeleteTarget(null)
       setModal(null)
-      // Operational confirmation of a thing the user explicitly started — the Toast layer's
-      // documented carve-out, not a reward channel. It names Recently deleted because the recovery
-      // path is the reason this delete is allowed to be low-friction, and a user who has just
-      // deleted the wrong photo needs the destination, not congratulations. No undo action: a 5s
-      // window is convenience, and this project already learned once (V3-ARCHIVE-001) that shipping
-      // it AS the recovery model is how things become unrecoverable.
+      // Operational confirmation of a user-started action (the Toast layer's carve-out, not a reward
+      // channel). It names Recently deleted because that recovery path is what lets this delete be
+      // low-friction. No undo action: a 5s window is not a recovery model.
       toast.show({ message: 'Photo deleted — in Recently deleted' })
     } catch (err) {
-      // Keep the sheet OPEN and put the message in it. Closing over a failed write would leave the
-      // photo on screen with no explanation, which reads as "the delete silently did nothing".
+      // Keep the sheet open with the message: closing over a failed write leaves the photo on screen
+      // with no explanation.
       setDeleteErr(err?.message || 'Could not delete that photo.')
     }
     setDeleting(false)
   }
 
-  // ---- V4-FBSHARE-001 select-mode + share handlers ----
+  // ---- Select mode + share ----
   function enterSelectMode() { setSelectMode(true); setShowUpload(false) }
   function exitSelectMode() { setSelectMode(false); setSelected(new Set()) }
   function toggleSelect(id) {
     setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
   }
   function openShare(photoList) { setSharePhotos(photoList); setShareOpen(true) }
-  // BUG-PHOTOSELSTALE-001 — ONE source of truth for "the selection", and it is this, not `selected`.
-  // `selected` is a Set of ids and cannot know whether an id still resolves to a row after the list
-  // is refetched; `selectedPhotos` is literally what openShare() posts. So every affordance below —
-  // whether the bar exists at all, its count, and the max guard — derives from THIS. That divergence
-  // WAS the defect: the bar read `selected.size` ("12 selected", "Max 10") while the button posted
-  // `selectedPhotos` (5). Both symptoms Dave would see are the same bug from opposite ends — a
-  // silent under-post, and a block on a post that was never over the cap.
-  //
-  // Deriving here is belt AND braces with the clear above, not a duplicate of it: the clear only
-  // covers filter changes, but `photos` is also replaced by loadPhotos() after an upload completes,
-  // and that path has no business clearing a selection. Derivation covers every array replacement,
-  // including ones not yet written.
-  //
-  // CLEAR-not-intersect (the effect above). Intersecting looks like it preserves a selection across
-  // a filter round-trip, but it cannot: it is lossy in one direction only, so filtering away and
-  // back returns fewer photos than it left with. Worse, `photos` is a SERVER PAGE, so an id can be
-  // absent from the new page while still matching the new filter — intersect would drop it silently
-  // and arbitrarily, which is a harder bug to explain than "the selection reset". And the fail-safe
-  // direction matters more than usual for a control that posts PUBLICLY: clearing forces the user to
-  // re-pick against the list in front of them, instead of carrying an unreviewed selection across a
-  // context change. (Intersecting inside that effect would also be a no-op — `photos` is still the
-  // OLD array at that point; the refetch has not resolved. It would have to move into loadPhotos.)
-  // V5-PHOTOFILTERPARITY-001: derived from the RENDERED list, not the fetched one. Same argument the
-  // paragraph above makes for deriving at all — a photo the crop chips have hidden is not on screen,
-  // so it must not be counted, capped against MAX_SHARE_PHOTOS, or posted publicly. The filter-change
-  // effect already clears the Set, so this is belt-and-braces for the paths that replace `photos`
-  // without a filter change (an upload completing, a quick-tag assignment).
+  // The one source of truth for the selection is this, not the id Set: an id cannot tell whether it
+  // still resolves to a row, and this is what openShare() posts. The bar's existence, count and max
+  // guard all derive from it, so the count shown and the photos posted can never disagree.
+  // Derived from the rendered list: a photo hidden by the crop chips must not be counted, capped or
+  // posted publicly. Deriving covers every replacement of the list (an upload completing, a quick-tag
+  // assignment), not just the filter changes the clear effect handles.
+  // The filter-change effect clears rather than intersects: `photos` is a server page, so intersecting
+  // would drop ids silently and arbitrarily, and for a control that posts publicly the safe failure is
+  // making the user re-pick against the list in front of them.
   const selectedPhotos = visiblePhotos.filter(p => selected.has(p.id))
   const selectionCount = selectedPhotos.length
   const selectionOverMax = selectionCount > MAX_SHARE_PHOTOS
-  // Dormant-until-configured: the FB share UI only appears once VITE_API_FACEBOOK_SHARE is wired
-  // (set at go-live, after the lambda is deployed). Keeps a half-feature out of prod on any promote.
+  // The FB share UI appears only once VITE_API_FACEBOOK_SHARE is configured, keeping a half-feature
+  // out of prod on any promote.
   const fbShareEnabled = !!import.meta.env.VITE_API_FACEBOOK_SHARE
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 700, margin: '0 auto', padding: '28px 16px 60px' }}>
 
-        {/* ── Header ── */}
+        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: T.space.lg }}>
           <div>
             <div style={{ fontSize: T.type.sm, color: P.light, marginBottom: 8 }}>
@@ -1081,12 +795,9 @@ export default function PhotoLibrary() {
             <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
               Photos
             </h1>
-            {/* W-RESTORE — the ONLY entry point to Recently deleted, so it is unconditional. It does
-                NOT hide when the list is empty: a recovery surface the user cannot find until after
-                they need it is the same failure as not having one, and "where did my deleted photo
-                go?" is a question asked from HERE. Rendered under the title rather than beside
-                Select/+ Upload because at 390px that row is already two controls wide, and a
-                text link next to two filled buttons reads as a third button. */}
+            {/* The only entry point to Recently deleted, so it is unconditional, including when the list
+                is empty ("where did my deleted photo go?" is asked from here). Under the title because
+                at 390px the button row is full and a link there reads as a third button. */}
             <Link
               to="/photos/deleted"
               style={{
@@ -1124,7 +835,7 @@ export default function PhotoLibrary() {
           </div>
         </div>
 
-        {/* ── Upload form ── */}
+        {/* Upload form */}
         {showUpload && (
           <div style={{
             backgroundColor: P.white, border: `1px solid ${P.border}`,
@@ -1136,7 +847,7 @@ export default function PhotoLibrary() {
             {uploadErr && <ErrBanner msg={uploadErr} />}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} data-testid="photo-library-upload-form">
 
-              {/* ── BUG-PHOTOFIRST-001: the photo comes FIRST and is never gated. ── */}
+              {/* The photo comes first and is never gated. */}
               <input
                 ref={stagedInputRef}
                 type="file"
@@ -1146,7 +857,7 @@ export default function PhotoLibrary() {
                 style={{ display: 'none' }}
                 data-testid="pl-staged-input"
               />
-              {/* V4-HIDECAPTURE-001: the pl-stage-take arm is removed; Choose is the only entry. */}
+              {/* Choose is the only entry (no camera arm). */}
               {stagedItems.length === 0 ? (
                 <div style={{ display: 'flex', gap: T.space.sm }}>
                   <button type="button" data-testid="pl-stage-choose" onClick={openStagedPicker}
@@ -1156,36 +867,19 @@ export default function PhotoLibrary() {
                 </div>
               ) : (
                 <div>
-                  {/* ONE staged photo renders exactly as it shipped — the same full-width 260px
-                      preview. Several render as a tiled strip, because a column of 260px previews
-                      would push the target pickers below the fold, and picking the target is the
-                      step this form's whole ordering exists to protect. */}
-                  {/* ONE staged photo keeps the shipped full-width preview in EVERY state, failure
-                      included. An earlier pass fell to the strip whenever an item carried a status,
-                      to keep the error attached to its photo — but that shrank the single-photo
-                      preview from 260px to an 84px tile the moment an upload failed, and printed the
-                      reason twice (banner + row), which is what PhotoLibrary.test.jsx caught. With
-                      one photo there is nothing to disambiguate, so the reason belongs in the ONE
-                      aggregate line and the per-row copy is redundant; `batchSummary` carries it for
-                      the partial case and the banner for the all-failed case. Per-row errors earn
-                      their place only from two photos up, where "which one" is a real question. */}
+                  {/* One staged photo keeps the full-width 260px preview in every state, failure
+                      included: with one photo the reason belongs in the single aggregate line
+                      (`batchSummary` for partial, the banner for all-failed), not a per-row copy
+                      (PhotoLibrary.test.jsx pins this). Several render as a tiled strip, where
+                      per-row errors answer "which one". */}
                   {stagedItems.length === 1 ? (
                     <img src={stagedItems[0].url} alt="Upload preview" data-testid="pl-staged-preview"
                       style={{ width: '100%', maxHeight: 260, objectFit: 'cover', borderRadius: T.radiusCard, display: 'block' }} />
                   ) : (
-                    // HEIGHT-CAPPED, and the cap is the whole reason this reads oddly.
-                    //
-                    // MEASURED IN A REAL BROWSER AT 390x844 (tests/harness/photobulk.jsx, case 4):
-                    // twenty 84px tiles wrap to a 788px strip, which pushed the zone picker and the
-                    // Upload button 238px BELOW THE FOLD. That is not cosmetic — this form's entire
-                    // ordering is "see the photo first, THEN say where it goes" (BUG-PHOTOFIRST-001),
-                    // and a strip that buries the "where it goes" half defeats the ordering it was
-                    // built to serve. Every vitest assertion passed throughout; jsdom returns zero
-                    // for getBoundingClientRect, so nothing in src/__tests__ could have seen it.
-                    //
-                    // 216px is two rows plus the status line. Scrolling INSIDE the strip keeps every
-                    // thumbnail reachable while making the strip's cost to the page constant,
-                    // whether two photos are staged or twenty.
+                    // Height-capped: twenty 84px tiles wrap tall enough to push the zone picker and
+                    // Upload below the fold at 390x844, defeating the see-then-place ordering (measured
+                    // in tests/harness/photobulk.jsx; jsdom cannot see it). 216px is two rows plus the
+                    // status line; scrolling inside keeps every thumbnail reachable at constant cost.
                     <ul data-testid="pl-staged-strip"
                         style={{ display: 'flex', flexWrap: 'wrap', gap: T.space.sm, listStyle: 'none',
                                  padding: 0, margin: 0, maxHeight: 216, overflowY: 'auto' }}>
@@ -1231,16 +925,14 @@ export default function PhotoLibrary() {
                       {stagedItems.length > 1 ? 'Remove all' : 'Remove'}
                     </button>
                   </div>
-                  {/* Now — and only now — ask where it goes. This ordering IS the fix. */}
+                  {/* Only now ask where it goes; this ordering is the point of the form. */}
                   <p style={{ margin: '10px 0 0', fontSize: T.type.sm, color: P.mid }}>
                     {stagedItems.length > 1 ? `Where do these ${stagedItems.length} go?` : 'Where does this one go?'}
                   </p>
                 </div>
               )}
 
-              {/* V4-PROJHIDE-001: upload project chooser hidden when projects aren't user-facing. Flag
-                  OFF renders it exactly as before. (project_id stays '' when hidden — see report note re:
-                  the plant picker below, which is project-scoped.) */}
+              {/* Upload project chooser, hidden when projects are not user-facing. */}
               {!PROJECTS_HIDDEN && (
               <div>
                 <label style={fieldLabelStyle}>Project  ·  or pick a zone below</label>
@@ -1258,8 +950,8 @@ export default function PhotoLibrary() {
               {plantsForUpload.length > 0 && (
                 <div>
                   <label style={fieldLabelStyle} htmlFor="pl-upload-plant">Plant  ·  optional</label>
-                  {/* V4-PLANTPICKER-001: shared picker. emptyMeaning='project-level' — blank here is
-                      a DELIBERATE project-level attach, not an unset field (spec §6.5 tri-state). */}
+                  {/* emptyMeaning='project-level': blank is a deliberate project-level attach, not an
+                      unset field. */}
                   <PlantingSelect
                     id="pl-upload-plant"
                     plants={plantsForUpload}
@@ -1295,14 +987,10 @@ export default function PhotoLibrary() {
                 />
               </div>
 
-              {/* V4-PUBHIDE-001: is_public toggle removed. */}
-
-              {/* BUG-PHOTOFIRST-001: the one-of-target rule is unchanged (photos_must_have_parent),
-                  but it is no longer a PRECONDITION to picking — it is a condition on SENDING. Only
-                  say it once a photo is actually staged; before that it is a rule about nothing. */}
-              {/* The rule is unchanged for ONE photo and restated for a batch: the batch has a
-                  second legal destination, so telling the user only "you must pick a target" would
-                  now be false. Both branches say what will happen, not just what is forbidden. */}
+              {/* The one-of-target rule (photos_must_have_parent) is a condition on sending, not on
+                  picking, so it is stated only once a photo is staged. A batch has a second legal
+                  destination (Untagged), so each branch says what will happen, not only what is
+                  forbidden. */}
               {stagedItems.length > 0 && targetMissing && !canUploadUntagged && (
                 <p style={{ margin: 0, fontSize: '0.8rem', color: P.light }}>
                   A standalone photo needs at least a project or zone.
@@ -1319,8 +1007,7 @@ export default function PhotoLibrary() {
                   {batchSummary}
                 </p>
               )}
-              {/* BUG-PHOTOSTAGEDREAD-001: picking now copies the bytes, so a twenty-photo pick has a
-                  visible duration. role="status" for the same reason the summary above has it. */}
+              {/* Picking copies the bytes, so a twenty-photo pick has a visible duration. */}
               {stagedPreparing && (
                 <p role="status" data-testid="pl-staged-preparing" style={{ margin: 0, fontSize: '0.8rem', color: P.mid }}>
                   Preparing {stagedPreparing.done} of {stagedPreparing.total}…
@@ -1350,35 +1037,15 @@ export default function PhotoLibrary() {
           </div>
         )}
 
-        {/* ── Filters ── */}
-        {/* V5-PHOTOFILTERPARITY-001 — THE FILTERS NOW COMPOSE. Every control on this row used to
-            CLEAR the others: a mode chip reset the zone and the project, and either select reset the
-            mode to All. So "untagged photos in the greenhouse" and "today's tomato photos" were not
-            askable — the second tap always undid the first, silently, with no cue that it had.
-            Garden has had composing filters since V4-ASSIGNLENS-001 (the caretaker lens ANDs with
-            the group-by facet); this is that parity, and it is the change the crop chips below need
-            in order to be worth anything.
-            Mechanically the composition was always there: `mode` is applied client-side in
-            loadPhotos AFTER the ?project_id=/?location_id= response lands, so the two layers never
-            conflicted. The mutual exclusion was a UI decision, and only a UI decision is undone
-            here — no query shape moves. */}
+        {/* Filters. The mode chips, the crop chips and the scope select compose: `mode` and crop
+            are client-side layers applied after the ?project_id=/?location_id= response lands. */}
         <div style={{ display: 'flex', gap: 8, marginBottom: T.space.md, flexWrap: 'wrap', alignItems: 'center' }}>
           {PHOTO_FILTER_MODES.map(({ value: mode, label }) => {
-            // V4-PHOTOTODAYFILTER-001 put Today first, because it is the one people reach for: the
-            // IG crucible ranked it third of five and named why — findability over 1302 photos is
-            // this build's one real advantage over Business Suite, and the single filter that
-            // matters when you are about to post ("what did I shoot today") did not exist. The row's
-            // ORDER now lives in photoFilters.PHOTO_FILTER_MODES so the chips and the active-filter
-            // breadcrumb below cannot disagree about a label.
-            //
-            // No `&& !filterProject && !filterLocation` term any more: a mode chip is active when
-            // the mode is on, full stop. Under the old coupling that term was load-bearing (picking
-            // a zone silently reset the mode, and the chip had to stop claiming to be on); with the
-            // filters composing it would do the opposite job — hide a mode narrowing that IS applied.
+            // Chip order lives in photoFilters.PHOTO_FILTER_MODES so the chips and the breadcrumb
+            // agree on labels. A mode chip is active whenever its mode is on, whatever the scope.
             const active = filterMode === mode
-            // The count rides ONLY the Untagged chip, and only once measured and non-zero. A "0"
-            // badge is noise on a chip whose empty state is already its own answer, and rendering
-            // one before the first list lands would assert an empty inbox we have not checked.
+            // The count rides only the Untagged chip, and only once measured and non-zero: a "0" is
+            // noise, and a badge before the first list lands would assert an inbox not yet checked.
             const badge = mode === 'untagged' && untaggedCount > 0 ? untaggedCount : null
             const chipStyle = {
               padding: '6px 14px', borderRadius: T.radiusPill, fontSize: T.type.sm, fontWeight: 600,
@@ -1395,22 +1062,19 @@ export default function PhotoLibrary() {
                 style={badge == null ? chipStyle : {
                   ...chipStyle,
                   // Left half of a split pill: square off the seam so the two segments read as one
-                  // control with two jobs, rather than as two unrelated chips that happen to touch.
+                  // control with two jobs.
                   borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: 'none',
                 }}
               >
-                {/* The number is INSIDE the accessible name of the segment that owns it, never a
-                    decorative sibling — a screen reader that reads only "Untagged" gets the version
-                    of this control that the count was added to replace. */}
+                {/* The number belongs to the accessible name of the segment that owns it, never a
+                    decorative sibling. */}
                 {badge == null ? label : `${label}`}
               </button>
             )
             if (badge == null) return filterChip
-            // V4-PHOTOBULK-001 S6 (Dave, D4): "tapping the count opens the tagging view; tapping the
-            // word still filters". TWO BUTTONS, not one with two hit zones — a <button> inside a
-            // <button> is invalid HTML and a click-target split by coordinate inside one control is
-            // undiscoverable and untestable. Two segments in one pill says "two jobs" visually while
-            // staying two real controls, each with its own accessible name.
+            // Tapping the count opens the tagging view; tapping the word filters. Two buttons, not
+            // one with two hit zones: a <button> inside a <button> is invalid HTML, and a split by
+            // coordinate is undiscoverable and untestable.
             return (
               <span key={mode} style={{ display: 'inline-flex' }}>
                 {filterChip}
@@ -1419,10 +1083,8 @@ export default function PhotoLibrary() {
                   data-testid="pl-filter-untagged-count"
                   aria-label={`Tag ${badge} untagged ${badge === 1 ? 'photo' : 'photos'} one at a time`}
                   onClick={openQuickTag}
-                  // BUG-QUICKTAGSCOPE-001: under a scope filter the handler makes a round trip before
-                  // the deck can open, so the tap has a duration. Disabling marks it as in progress —
-                  // an undisabled button that does nothing for half a second is the same "did that
-                  // work?" the silent no-op created.
+                  // Under a scope filter the handler makes a round trip first, so the tap has a
+                  // duration; disabling shows it is in progress rather than looking dead.
                   disabled={quickTagOpening}
                   aria-busy={quickTagOpening || undefined}
                   style={{
@@ -1438,9 +1100,7 @@ export default function PhotoLibrary() {
               </span>
             )
           })}
-          {/* V4-PROJHIDE-001: project filter hidden when projects aren't user-facing (mode chips +
-              space filter remain; filterProject stays '' so no project filter applies). Flag OFF is
-              byte-identical. */}
+          {/* Project filter, hidden when projects are not user-facing (filterProject stays ''). */}
           {!PROJECTS_HIDDEN && (
           <select
             value={filterProject}
@@ -1457,14 +1117,12 @@ export default function PhotoLibrary() {
             <ProjectOptions projects={projects} />
           </select>
           )}
-          {/* V4-PHOTOLOCFIND-001: space chip — server-side subtree filter (a parent space shows its
-              descendants' photos). Mutually exclusive with the project filter, like the mode chips. */}
+          {/* Zone filter: server-side subtree (a parent space shows its descendants' photos). */}
           <select
             value={filterLocation}
-            // Zone and project still clear EACH OTHER, and that pair alone is not a UI choice: the
-            // query string is `?project_id=… : ?location_id=… : ''` (loadPhotos), so the server can
-            // only scope by one of them. The mode chips and the crop chips are client-side layers on
-            // top of whichever scope is in force, which is why those compose and this pair cannot.
+            // Zone and project clear each other because the server scopes by only one
+            // (`?project_id=… : ?location_id=… : ''` in loadPhotos). Mode and crop chips are
+            // client-side layers on top, which is why those compose and this pair cannot.
             onChange={e => { selectLocationFilter(e.target.value); setFilterProject('') }}
             style={{
               ...selectStyle,
@@ -1479,19 +1137,11 @@ export default function PhotoLibrary() {
           </select>
         </div>
 
-        {/* ── V5-PHOTOFILTERPARITY-001: the crop facet ──
-            Garden's LEAD group-by option is "Type" (crop_type from the cultivar join) and this page
-            had no crop axis of any kind — the biggest single gap in the parity audit. Same shared
-            primitive the planting chooser and the seed page use, same multi-select-OR grammar, same
-            pinned-two-plus-`More ▾` collapse, so this is one more consumer rather than a fourth
-            hand-rolled chip row.
-            WHAT A CHIP MEANS, and it is narrower than it looks: photos carry a plant_id, not a
-            subject. "Tomato" is "filed under a tomato planting", which is what the gardener was
-            doing that day — not a claim about what the lens was pointed at. A photo attached only to
-            an event, a zone or a project carries no planting at all and no chip can match it; the
-            breadcrumb below is what keeps that from being a silent disappearance.
-            `onClear` is FilterChipRow's own affordance and is passed deliberately even though the
-            breadcrumb also clears: the row is where the fingers already are. */}
+        {/* The crop facet: the shared FilterChipRow (multi-select OR, pinned two plus `More ▾`).
+            A chip means "filed under a planting of that crop", from plant_id, not what the photo
+            shows; photos attached only to an event, zone or project match no chip, and the
+            breadcrumb below keeps that from being a silent disappearance. `onClear` is passed even
+            though the breadcrumb also clears, because the row is where the fingers are. */}
         {cropFacetEligible && (
           <div style={{ marginBottom: T.space.md }}>
             <FilterChipRow
@@ -1507,15 +1157,9 @@ export default function PhotoLibrary() {
           </div>
         )}
 
-        {/* ── V5-PHOTOFILTERPARITY-001: sort ──
-            The page had NO sort; the grid was whatever order the wire arrived in, which is
-            created_at DESC and therefore correct but unstated and unchangeable. Oldest-first is the
-            one a drain actually wants — the untagged photo that has sat longest is the one to deal
-            with — which is the same argument SavedSeeds' by-stage ordering makes for its queue.
-            SegmentedControl is the frozen primitive for a 2-way mutually-exclusive VIEW toggle; a
-            chip row here would have said "these compose" about two things that cannot.
-            Rendered only over a populated grid, per Harvests' rule: above an empty state it would
-            offer to reorder nothing. */}
+        {/* Sort. Oldest-first is what a drain wants (the photo that has waited longest).
+            SegmentedControl, not chips: the two orders are mutually exclusive. Rendered only over a
+            populated grid; above an empty state it would offer to reorder nothing. */}
         {!loading && !error && visiblePhotos.length > 1 && (
           <div style={{ marginBottom: T.space.md, maxWidth: 260 }}>
             <SegmentedControl
@@ -1528,25 +1172,14 @@ export default function PhotoLibrary() {
           </div>
         )}
 
-        {/* ── V5-PHOTOFILTERPARITY-001: the active-filter breadcrumb ──
-            Garden answers "why am I seeing so few?" with its lens cue (label + hidden count + a
-            one-tap Show all); Harvests answers it with `filterActive` + Clear filters. This page
-            answered it with nothing, and with the filters now COMPOSING that gap gets worse rather
-            than better — four narrowings can be on at once and two of them (a collapsed crop tray, a
-            zone select scrolled off the top) are easy to miss.
-            TagFilterBar is the app's shipped primitive for exactly this and had ZERO production
-            consumers before this line — built, tested in facetPrimitives.test.jsx, and never wired
-            to anything (FROZEN.md records it as an active-filter REMOVAL bar occupying the
-            contracted name). Per-pill removal is strictly better than one Clear-all, so this is
-            reuse, not a mint.
-            The count is stated as what IS shown rather than what is hidden: the mode/zone narrowing
-            happens at fetch time, so this page cannot honestly say how many photos those two are
-            holding back. "N shown" is a number it can stand behind. */}
+        {/* The active-filter breadcrumb answers "why am I seeing so few?" when several narrowings
+            compose, some easy to miss (a collapsed crop tray, a zone select scrolled off). Uses the
+            shared TagFilterBar for per-pill removal. The count says what is shown, not what is
+            hidden: mode and zone narrow at fetch time, so the page cannot know what they hold back. */}
         {activePills.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: T.space.md }}>
-            {/* "Clear all", not "Clear": FilterChipRow above carries its own Clear, which wipes only
-                the crop chips. Two buttons reading the same word with different blast radii is a
-                control the user has to guess at. */}
+            {/* "Clear all", not "Clear": FilterChipRow's own Clear wipes only the crop chips, and two
+                buttons with the same word and different blast radii make the user guess. */}
             <TagFilterBar filters={activePills} onRemove={removeFilterPill} onClear={clearAllFilters} clearLabel="Clear all" />
             {!loading && !error && (
               <div role="status" aria-live="polite" data-testid="pl-filter-cue" style={{
@@ -1560,7 +1193,7 @@ export default function PhotoLibrary() {
           </div>
         )}
 
-        {/* ── Grid ── */}
+        {/* Grid */}
         {loading ? (
           <p style={{ color: P.light, fontSize: T.type.base }}>Loading…</p>
         ) : error ? (
@@ -1570,11 +1203,8 @@ export default function PhotoLibrary() {
             onRetry={loadPhotos}
           />
         ) : visiblePhotos.length === 0 ? (
-          // V5-PHOTOFILTERPARITY-001 — TWO emptinesses, told apart. "No photos yet / upload your
-          // first one" answers "how do I start", which is the wrong question for someone who has
-          // 1,400 photos and four filters on; it reads as data loss. Harvests draws exactly this
-          // line (`filterActive` → "No harvests match these filters" + Clear), and the crop chips
-          // make the filtered branch newly reachable with a full library behind it.
+          // Two emptinesses, told apart: "No photos yet" would read as data loss to someone with a
+          // full library and filters on.
           <div style={{ textAlign: 'center', padding: '48px 16px', color: P.light }}>
             <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📷</div>
             {activePills.length > 0 ? (
@@ -1596,9 +1226,8 @@ export default function PhotoLibrary() {
             )}
           </div>
         ) : (
-          // V3-PHOTODBG-001 (4/4): the grid render is wrapped in an ErrorBoundary so a render-time
-          // fault in any PhotoCard (malformed photo shape, bad view_url) degrades to a dismissable
-          // retry card instead of white-screening the whole Photos page. Mirrors the tag-modal net.
+          // A render-time fault in any PhotoCard degrades to a retry card instead of white-screening
+          // the page. Mirrors the tag-modal net.
           <ErrorBoundary
             scope="photo-grid"
             fallback={(err, retry) => <PhotoGridErrorFallback retry={() => { retry(); loadPhotos() }} />}
@@ -1627,11 +1256,8 @@ export default function PhotoLibrary() {
         )}
       </div>
 
-      {/* ── Modal ── */}
-      {/* V1.2a-3 Increment A (I1/I4): the tag modal is wrapped in an ErrorBoundary so a
-          render-time fault (bad photo shape, malformed linkage) degrades to a dismissable
-          card instead of white-screening the whole Photo Library. The 405-string bug
-          itself (I1) is fixed in the photos Lambda PUT route; this is the defensive net. */}
+      {/* Tag modal, wrapped in an ErrorBoundary so a render-time fault (bad photo shape, malformed
+          linkage) degrades to a dismissable card instead of white-screening the page. */}
       {modal && (
         <ErrorBoundary
           scope="photo-tag-modal"
@@ -1639,11 +1265,9 @@ export default function PhotoLibrary() {
             <PhotoModalErrorFallback error={err} retry={retry} onClose={() => setModal(null)} />
           )}
         >
-          {/* V4-DIRTYGUARDREST-001 — `dirty` is the SAME differs-from-the-row predicate the reload
-              gate above already computes, threaded down rather than recomputed. PhotoModal cannot
-              derive it: it holds neither the seed nor the form state, both of which live on this
-              page. One predicate, one definition of dirty for the deploy gate and the discard
-              confirm alike. */}
+          {/* `dirty` is the same differs-from-the-row predicate the reload gate computes, threaded
+              down: PhotoModal holds neither the seed nor the form state. One definition for the deploy
+              gate and the discard confirm. */}
           <PhotoModal
             photo={modal}
             tagForm={tagForm}
@@ -1662,14 +1286,11 @@ export default function PhotoLibrary() {
         </ErrorBoundary>
       )}
 
-      {/* W-PHOTODEL — rendered as a SIBLING of the modal, not inside it, and after it in document
-          order. Both paint at zIndex 200 (PhotoModal's overlay; Sheet's panel), both register
-          LAYER.SHEET, so the arbiter's insertion-order tiebreak and the paint order agree: the
-          confirm is topmost on both axes and one Escape closes the confirm only. Nesting it inside
-          PhotoModal would put it under that modal's ErrorBoundary and inside its scrollport, which
-          is how a fly-up ends up clipped (BUG-PICKERCLIP-001, same page, same cause).
-          The modal deliberately STAYS mounted behind it: Cancel must return the user to the photo
-          they were looking at, not to the grid. */}
+      {/* The delete confirm is a sibling of the modal, after it in document order. Both paint at
+          zIndex 200 and register LAYER.SHEET, so the arbiter's insertion-order tiebreak and the paint
+          order agree: the confirm is topmost and one Escape closes only it. Nested inside PhotoModal it
+          would sit in that modal's scrollport and get clipped. The modal stays mounted behind it so
+          Cancel returns the user to the photo. */}
       <PhotoDeleteConfirm
         open={!!deleteTarget}
         photo={deleteTarget}
@@ -1681,12 +1302,11 @@ export default function PhotoLibrary() {
         onConfirm={confirmDelete}
       />
 
-      {/* V4-FBSHARE-001 — selection action bar (only in select-mode) */}
+      {/* Selection action bar (select mode only) */}
       {selectMode && selectionCount > 0 && (
-        // BUG-PICKERCLIP-001: hidden — NOT unmounted — while the upload form's planting listbox is
-        // open. visibility+pointerEvents keeps the node so the picker's 150ms deferred blur-close
-        // cannot flicker an unmounting bar back under a finger mid-gesture. `visibility: hidden`
-        // already drops the subtree from the a11y tree and the tab order, so no aria-hidden.
+        // Hidden, not unmounted, while the upload form's planting listbox is open, so the picker's
+        // 150ms deferred blur-close cannot flicker an unmounting bar back under a finger.
+        // `visibility: hidden` already drops it from the a11y tree and tab order, so no aria-hidden.
         <div data-testid="pl-select-bar" style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 150, background: P.white, borderTop: `1px solid ${P.border}`, padding: '12px 16px calc(12px + env(safe-area-inset-bottom))', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, boxShadow: '0 -2px 10px rgba(0,0,0,0.08)', visibility: uploadPickerOpen ? 'hidden' : 'visible', pointerEvents: uploadPickerOpen ? 'none' : 'auto' }}>
           <span style={{ fontSize: T.type.base, fontWeight: 700, color: P.mid }}>{selectionCount} selected</span>
           <div style={{ display: 'flex', gap: T.space.sm, alignItems: 'center' }}>
@@ -1708,12 +1328,11 @@ export default function PhotoLibrary() {
         onDirtyChange={setShareDirty}
       />
 
-      {/* V4-PHOTOBULK-001 S6. Rendered LAST on purpose. It registers LAYER.SHEET and paints
-          Z.sheet (200) — the pair layerMatchesPaint.test.js exists to keep honest — and at EQUAL
-          layer the arbiter's tiebreak is insertion order, while paint order for same-z fixed
-          elements is DOM order. Both therefore favour whatever comes last, so this being last is
-          what makes Back/Escape resolve to the deck rather than to a surface underneath it. It is
-          full-bleed: anything drawn over it would be a control for a photo it is not showing. */}
+      {/* Rendered last on purpose. It registers LAYER.SHEET and paints Z.sheet (200), the pair
+          layerMatchesPaint.test.js keeps honest; at equal layer the arbiter's tiebreak is insertion
+          order and same-z fixed paint order is DOM order, so being last makes Back/Escape resolve to
+          the deck. It is full-bleed: anything drawn over it would be a control for a photo it is not
+          showing. */}
       {quickTagDeck && (
         <QuickTagCarousel
           photos={quickTagDeck.photos}
@@ -1729,18 +1348,16 @@ export default function PhotoLibrary() {
 }
 
 // ---- Photo card ----
-// Uses photo.view_url (signed S3 URL from Lambda) and photo.project_name (inline JOIN)
 function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
-  // V4-PROJHIDE-001: drop the project caption strip when projects aren't user-facing (null → the
-  // {project && (...)} strip below renders nothing). Flag OFF keeps photo.project_name.
+  // No project caption strip when projects are not user-facing.
   const project = PROJECTS_HIDDEN ? null : photo.project_name
 
   return (
     <button
       onClick={onClick}
       aria-pressed={selectMode ? selected : undefined}
-      // Test seam. The card's image goes through <PhotoView>, which resolves a presigned URL and so
-      // renders no addressable <img> under jsdom — leaving the grid with nothing a test could count.
+      // Test seam: <PhotoView> resolves a presigned URL, so under jsdom the grid has no addressable
+      // <img> to count.
       data-testid="pl-photo-card"
       style={{
         background: 'none',
@@ -1749,12 +1366,9 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
       }}
     >
       <div style={{ position: 'relative', paddingBottom: '100%', backgroundColor: P.photoPlaceholder }}>
-        {/* V4-PHOTOMODEL-001 — was a bare <img> with a hand-rolled thumb->full onError swap, the
-            last exception in noBareViewUrlImg.static.test.js. The thumb->full degrade is unchanged
-            in behavior (still zero-network, still one-shot) but now lives in the model; the bare
-            <img> is gone, so the grid also gains the 900s-presign self-heal it never had.
-            Still NO loading="lazy" — measured 0 of 120 requested on this grid; `shown` bounds the
-            card count instead. */}
+        {/* PhotoView, never a bare <img> (noBareViewUrlImg.static.test.js): it owns the one-shot
+            thumb->full degrade and the presign self-heal. No loading="lazy": it never fires on this
+            grid; `shown` bounds the card count instead. */}
         <PhotoView
           photo={photo}
           tier={TIER.THUMB}
@@ -1792,36 +1406,23 @@ function PhotoCard({ photo, onClick, selectMode = false, selected = false }) {
 }
 
 // ---- Photo modal ----
-// Uses photo.view_url for display
 function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClose, dirty = false, tagging, tagErr, projects, locations, onShare, onDelete }) {
   const hasEvent = !!photo.event_id
 
-  // V4-BACKNAV-001 Slice 2 follow-up — PHOTOMODAL_GAP closed. This was a fixed full-viewport overlay
-  // with NO role="dialog", NO aria-modal, NO Escape handler and NO focus restore: a backdrop tap was
-  // its only exit, and it was invisible to every machine-checkable definition of "modal" — including
-  // the freeze test's scan, which is why it had to be tracked by hand. `busy: tagging` keeps a
-  // save-in-flight from being dismissed out from under itself, matching the other write surfaces.
-  //
-  // V4-DIRTYGUARDREST-001 — `dirty` + `confirmOnDirty` are the half Slice 2 left off. `armsBack` was
-  // already here, so Escape AND Android Back both reached this surface and both discarded a
-  // half-edited tag form outright: re-tagging, re-picking a location and a retyped caption, gone on
-  // one gesture with no stash to recover from. The predicate is the page's `modalDirty` (see the
-  // reload-gate note above) — differs-from-the-row, never truthiness, because every field here is
-  // pre-seeded from the photo and a truthiness test would question every captioned photo the user
-  // merely looked at.
+  // A real dialog: role, aria-modal, Escape, Android Back and focus restore through the arbiter.
+  // `busy: tagging` keeps an in-flight save from being dismissed under itself. `dirty` is the page's
+  // `modalDirty` (differs-from-the-row, never truthiness, since every field is pre-seeded), and
+  // `confirmOnDirty` asks before Escape or Back discards a half-edited tag form.
   const { isTopmost, requestDismiss } = useDismissable({
     open: true, onDismiss: onClose, dirty, busy: !!tagging, layer: LAYER.SHEET, armsBack: true,
     confirmOnDirty: true,
     confirmTitle: 'Discard these changes?',
     confirmBody: 'Your edits to this photo have not been saved. They cannot be recovered.',
   })
-  // Close-in-place: onClose just clears the selected photo, it never navigates.
-
-  // The backdrop tap and the ✕ route through the arbiter for the reason Sheet's labelled Close does
-  // (DismissRegistry.jsx:138-143): they are the two most reachable exits here, and leaving either on
-  // the raw onClose would mean Escape and Back asking while a tap discarded silently — and would give
-  // a mutation test a second suppressor to hide behind. Inert unless dirty: requestDismiss falls back
-  // to onClose whenever the provider declines ownership.
+  // Close-in-place: onClose clears the selected photo and never navigates.
+  // The backdrop tap and the ✕ go through the arbiter too, like Sheet's labelled Close
+  // (DismissRegistry.jsx): otherwise Escape and Back would ask while a tap discarded silently.
+  // requestDismiss falls back to onClose whenever the provider declines ownership.
   return (
     <div
       role="dialog"
@@ -1836,32 +1437,13 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
         padding: 'env(safe-area-inset-top) 16px env(safe-area-inset-bottom) 16px',
       }}
     >
-      {/* V4-KBVIEWPORT-001: 90dvh re-resolves ~731px -> ~460px once interactive-widget shrinks the
-          layout viewport, and the tag form's "Plant · optional" field is a PlantingSelect text
-          input, so the keyboard IS up on this surface. Photo (300) + the optional caption line +
-          Project/Plant/Location + "Save tags" exceeds 460, so this card needs a scrollable path or
-          Save is clipped away unreachably.
-          NOTE the two conditions for reproducing that: the tag form renders only when the photo is
-          NOT attached to an event (the hasEvent branch replaces it with a pointer to the event
-          log), and the static caption line now renders only for event-attached photos — on the tag
-          form the caption is an editable input (V4-PHOTOCAPTION-001; was set-at-upload-only).
-
-          BUG-PICKERCLIP-001 — that scrollable path used to be a SECOND box: card `overflow: hidden`
-          (hard clip) wrapping a `flexShrink: 0` photo and an `overflowY: auto` body. The picker's
-          listbox is `position: absolute` inside that body, so the body was its nearest clipping
-          ancestor and the usable band was 90dvh MINUS the 300px pinned photo — ~114px with the
-          keyboard up. PlantingSelect measures its room against the VISUAL VIEWPORT (and
-          hasFixedAncestor() zeroes the chrome insets here, correctly, because this card paints over
-          the nav), so it sizes and flips for room this box does not have: flipped up it renders
-          `bottom: 100%` into the photo's area and the body clipped essentially all of it. No z-index
-          can reach that — the listbox was CLIPPED, not overpainted.
-          The fix is e771c94's own idiom taken one step further: ONE scrollport, not two. The card
-          is the scroll container (matching Sheet, the app's canonical overlay — `maxHeight` +
-          `overflowY: auto`, single scrollport) and the photo stays pinned via `position: sticky`
-          rather than by living outside a smaller box. The listbox's nearest clipping ancestor is
-          now the full 90dvh card instead of the leftover band, and a flipped listbox paints OVER
-          the sticky photo (z30 beats the header's z1) instead of being cut at the body's top edge.
-          Explicit white background on the header: content now scrolls UNDER it. */}
+      {/* One scrollport: the card is the scroll container (maxHeight 90dvh + overflowY auto, like
+          Sheet) and the photo stays pinned with `position: sticky`. With the keyboard up 90dvh
+          shrinks to ~460px, so the tag form needs a scrollable path or Save is unreachable. A second,
+          inner scroll box would become the PlantingSelect listbox's clipping ancestor and cut it off
+          (it sizes itself against the visual viewport, not this box); with one scrollport a flipped
+          listbox paints over the sticky photo (z30 beats the header's z1). The header has an explicit
+          white background because content scrolls under it. */}
       <div data-testid="pl-modal-card" style={{
         backgroundColor: P.white, borderRadius: T.radiusBadge,
         maxWidth: 480, width: '100%', maxHeight: '90dvh', overflowY: 'auto',
@@ -1886,11 +1468,10 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
           >✕</button>
         </div>
 
-        {/* BUG-PICKERCLIP-001: no overflow here. This div being a scroll container is exactly what
-            clipped the picker's listbox; the card above owns the single scrollport now. */}
+        {/* No overflow here: a scroll container at this level is what clipped the picker's listbox. */}
         <div data-testid="pl-modal-body" style={{ padding: '16px 20px 20px' }}>
-          {/* V4-PHOTOCAPTION-001: static caption only where there is no editable field (event-attached
-              photos have no tag form); on the form the input below owns the caption. */}
+          {/* Static caption only where there is no editable field (event-attached photos have no tag
+              form). */}
           {hasEvent && photo.caption && (
             <p style={{ margin: '0 0 12px', fontSize: T.type.sm2, color: P.mid }}>{photo.caption}</p>
           )}
@@ -1915,9 +1496,7 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
               </p>
               {tagErr && <ErrBanner msg={tagErr} />}
 
-              {/* V4-PROJHIDE-001: reassign project chooser hidden when projects aren't user-facing. Flag
-                  OFF renders it exactly as before. (project_id stays '' when hidden — the plant picker
-                  below is project-scoped; see report note.) */}
+              {/* Reassign project chooser, hidden when projects are not user-facing. */}
               {!PROJECTS_HIDDEN && (
               <div>
                 <label style={fieldLabelStyle}>Project</label>
@@ -1935,9 +1514,8 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
               {plantsForModal.length > 0 && (
                 <div>
                   <label style={fieldLabelStyle} htmlFor="pl-modal-plant">Plant  ·  optional</label>
-                  {/* V4-PLANTPICKER-001: shared picker. NOTE the create-vs-edit contract split (spec
-                      §6.5 trap): the upload form is target-gated, this modal is NOT — clearing here
-                      must stay possible (un-tagging a photo is legitimate). */}
+                  {/* Unlike the target-gated upload form, clearing here must stay possible:
+                      un-tagging a photo is legitimate. */}
                   <PlantingSelect
                     id="pl-modal-plant"
                     plants={plantsForModal}
@@ -1962,8 +1540,6 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
                 </select>
               </div>
 
-              {/* V4-PHOTOCAPTION-001: caption editable post-upload — PUT /api/photos/:id already
-                  accepted it; only this input was missing. */}
               <div>
                 <label style={fieldLabelStyle} htmlFor="pl-modal-caption">Caption  ·  optional</label>
                 <input
@@ -1981,18 +1557,11 @@ function PhotoModal({ photo, tagForm, setTagForm, plantsForModal, onSave, onClos
             </form>
           )}
 
-          {/* W-PHOTODEL — the standalone delete, OUTSIDE the hasEvent branch on purpose.
-              An event-attached photo is precisely the case this whole row exists for: before this
-              control, the only way to remove one was to delete the EVENT it hangs off, destroying a
-              real record of a real thing that happened in the garden in order to get rid of an
-              image. Putting the delete only on the tag-form arm would leave that exact photo
-              unreachable and close the row on paper only.
-
-              Placement is a safety decision, not a layout one: below a divider, at the END of the
-              body, so it is never adjacent to "Save tags" — and it is a plain text-weight control,
-              not a filled button, so the destructive action is never the most prominent thing in a
-              modal whose ordinary purpose is captioning. It only ARMS the confirm; nothing is
-              written from here. */}
+          {/* The standalone delete sits outside the hasEvent branch on purpose: otherwise removing an
+              event-attached photo would mean deleting the event it hangs off. Placement is a safety
+              decision: below a divider at the end of the body, never adjacent to "Save tags", and a
+              text-weight control so the destructive action is never the most prominent thing. It only
+              arms the confirm; nothing is written from here. */}
           {onDelete && (
             <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${P.border}` }}>
               <button
@@ -2032,11 +1601,7 @@ function ErrBanner({ msg }) {
   )
 }
 
-// ErrorBoundary fallback for the photo-tag modal. Modal-shaped so a render fault
-// still reads as "the modal broke" rather than dumping the user back to the grid
-// with no explanation. Friendly copy only — never the raw error string.
-// ErrorBoundary fallback for the photo GRID (V3-PHOTODBG-001 4/4). A render fault in the grid
-// degrades to a contained retry card matching the load-error styling — never a white screen.
+// ErrorBoundary fallback for the photo grid: a contained retry card matching the load-error styling.
 function PhotoGridErrorFallback({ retry }) {
   return (
     <AsyncRegion
@@ -2047,6 +1612,8 @@ function PhotoGridErrorFallback({ retry }) {
   )
 }
 
+// ErrorBoundary fallback for the tag modal. Modal-shaped so a render fault reads as "the modal broke"
+// rather than dropping the user back to the grid. Friendly copy only, never the raw error string.
 function PhotoModalErrorFallback({ retry, onClose }) {
   return (
     <div
@@ -2096,17 +1663,12 @@ const inputStyle = {
 const selectStyle = {
   ...inputStyle,
   appearance: 'none',
-  // Shared builder, not a hardcoded hex: this chevron used to pin `stroke='%23777'`
-  // literally, so V4-INKCONTRAST-001's repaint of P.light missed it and left this one
-  // select a shade lighter than every other in the app. BUG-PHOTOLIBCHEVRON-001.
+  // Shared builder, not a hardcoded hex, so the chevron follows P.light like every other select.
   backgroundImage: chevronDataUri(P.light),
   backgroundRepeat: 'no-repeat',
   backgroundPosition: 'right 12px center',
   paddingRight: 36, cursor: 'pointer',
 }
-
-// dropZoneStyle / clearBtnStyle removed in V2-PHOTO-F1 S2: <PhotoUpload> owns
-// the trigger affordance and preview lifecycle now.
 
 const primaryBtn = (disabled) => ({
   backgroundColor: disabled ? P.light : P.green,

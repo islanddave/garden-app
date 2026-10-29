@@ -70,7 +70,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js';
 import { P } from '../lib/constants.js';
 import { T } from './forms/formStyles.js';
-import { snapshotFiles } from '../lib/fileSnapshot.js';
+import { snapshotPicked } from '../lib/fileSnapshot.js';
 
 // In-context multi-attach is "the handful I just took of this plant", not a camera-roll drain —
 // that is Track A's bulk-select, which has its own cap (MAX_BATCH = 20, server-side). Ten keeps the
@@ -251,12 +251,11 @@ export function PhotoUpload({
       // pressure that reclaims the rest. Measured on prod v4.80.0 from the Photo Library's copy of
       // this same pattern: 1 of 10 uploaded, 9 failed with Chrome's "could not be read ... after a
       // reference to a file was acquired". Mechanism in lib/fileSnapshot.js.
-      const { ok, failed } = await snapshotFiles(accepted);
+      const { ok, failed, failedNames: names } = await snapshotPicked(accepted);
       if (failed.length) {
         // Folded into the existing notice rather than given its own slot — the cap message and this
         // one are both "what did not make it into the strip", and two stacked lines in a card footer
         // is the crowding the strip is already tight for.
-        const names = failed.map(f => f.file?.name).filter(Boolean);
         setStageNotice(prev => [
           prev,
           `${failed.length} couldn't be read and ${failed.length === 1 ? 'was' : 'were'} not added` +
