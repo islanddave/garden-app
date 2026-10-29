@@ -170,24 +170,6 @@ export const HARVEST_QUALITY_HIDDEN = true
 // value lives once, in TodayBand.hidden.test.jsx via importActual. Criteria-gated, never date-gated.
 export const TODAY_BAND_HIDDEN = true
 
-// V4-BACKNAV-001 Slice 1 (decision V200 §6) — the shared modal dismiss registry: ONE Escape
-// listener resolving the topmost registered surface, replacing per-instance document keydown
-// handlers that currently double-fire (a Sheet under an open Lightbox gets BOTH onCloses from one
-// Escape). Slice 1 is an ARBITRATION REPAIR, not a behaviour change: the only observable difference
-// is that the correct surface closes.
-//
-// FLAG-OFF IS A TRUE ROLLBACK. Every global mutation this slice makes sits INSIDE the
-// flag: with it false, useDismissable never registers, the provider binds no listener, and Sheet
-// and Lightbox fall back to their own per-instance handlers via `registered === false`. That same
-// fallback is what keeps ~380 existing tests — which render these components with no provider —
-// passing untouched.
-//
-// This slice is flagged despite shipping no Back behaviour BECAUSE it is the highest-blast-radius
-// change in the program: it touches Sheet.jsx, the primitive behind 8 non-route render sites plus
-// every route overlay through OverlayHost. Revert-only was judged insufficient for a 9-site
-// primitive whose worst failure mode (a stranded body-scroll lock) has no in-app recovery.
-export const DISMISS_REGISTRY_ENABLED = true
-
 // BUG-DETAILPAGESCARRYSCROLL-001 — ONE app-level page-scroll manager (src/hooks/usePageScrollManager.js,
 // decisions in src/lib/pageScroll.js). A page opened from a scrolled page opens at its top, and Back
 // returns to the exact place. Measured in real Chrome: 9 of 10 pages opened part-way down, because

@@ -23,11 +23,6 @@ import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const flags = { DISMISS_REGISTRY_ENABLED: true }
-vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
-}))
 
 import Sheet from '../components/forms/Sheet.jsx'
 import { DismissRegistryProvider, useDismissable } from '../context/DismissRegistry.jsx'
@@ -107,7 +102,6 @@ const PAST_THE_WINDOW_MS = RETURN_LANDS_WITHIN_MS + 50
 // entry below the floor and every traversal in this file actually traverses. SELF-TEST-3 proves it
 // rather than trusting it.
 beforeEach(() => {
-  flags.DISMISS_REGISTRY_ENABLED = true
   window.history.replaceState(BASE, '')
   window.history.pushState(SENTINEL, '')
 })

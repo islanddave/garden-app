@@ -6,19 +6,13 @@
 // ONE Escape fired BOTH onCloses. Reverting src/components/Lightbox.jsx and src/components/forms/
 // Sheet.jsx to their pre-slice form makes 'closes exactly ONE surface' fail with 2 calls.
 //
-// Also pins the rollback contract: with DISMISS_REGISTRY_ENABLED false, nothing registers, the
-// provider binds no listener, and both components fall back to their own per-instance handlers —
-// which is what keeps ~380 pre-existing tests (that render these components with NO provider)
-// passing untouched.
+// Also pins the no-provider contract: with no DismissRegistryProvider nothing registers and both
+// components fall back to their own per-instance handlers (`registered === false`) — which is what
+// keeps ~380 pre-existing tests (that render these components with NO provider) passing untouched.
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 
-const flags = { DISMISS_REGISTRY_ENABLED: true }
-vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
-}))
 
 // Lightbox renders PhotoImg, which calls useApiFetch -> Clerk's useAuth and throws outside a
 // ClerkProvider. Stubbed to a plain img: this file is about Escape arbitration, not image loading.
@@ -37,8 +31,6 @@ function esc() {
 }
 
 describe('DismissRegistry — Escape arbitration across Sheet and Lightbox', () => {
-  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = true })
-
   it('closes exactly ONE surface per Escape, and it is the visually topmost (Lightbox over Sheet)', () => {
     const onSheetClose = vi.fn()
     const onLightboxClose = vi.fn()
@@ -119,47 +111,27 @@ describe('DismissRegistry — Escape arbitration across Sheet and Lightbox', () 
   })
 })
 
-describe('DismissRegistry — flag OFF is a true rollback', () => {
-  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = false })
-
-  it('does not register, and each surface handles its own Escape as before the slice', () => {
-    const onSheetClose = vi.fn()
-    render(
-      <DismissRegistryProvider>
-        <Sheet open onClose={onSheetClose} title="Details"><button>inner</button></Sheet>
-      </DismissRegistryProvider>
-    )
-    esc()
-    expect(onSheetClose).toHaveBeenCalledTimes(1)   // legacy per-instance path still live
-  })
-
-  it('flag OFF restores the pre-slice unconditional aria-modal on every surface', () => {
-    render(
-      <DismissRegistryProvider>
-        <Sheet open onClose={() => {}} title="Details"><button>inner</button></Sheet>
-        <Lightbox open images={IMAGES} onClose={() => {}} />
-      </DismissRegistryProvider>
-    )
-    // Two modal claimants is the pre-slice (invalid-ARIA) state — pinning it proves the flag really
-    // does return the app to its old behaviour rather than half-applying the new one.
-    expect(document.querySelectorAll('[aria-modal="true"]').length).toBe(2)
-  })
-})
-
 describe('DismissRegistry — no provider (isolated unit tests / legacy render paths)', () => {
-  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = true })
-
   it('a Sheet rendered with NO provider still closes on Escape', () => {
     const onClose = vi.fn()
     render(<Sheet open onClose={onClose} title="Details"><button>inner</button></Sheet>)
     esc()
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+
+  it('with no provider every surface keeps the unconditional aria-modal', () => {
+    render(
+      <>
+        <Sheet open onClose={() => {}} title="Details"><button>inner</button></Sheet>
+        <Lightbox open images={IMAGES} onClose={() => {}} />
+      </>
+    )
+    // Two modal claimants is the unregistered state; with a provider exactly one claims it (above).
+    expect(document.querySelectorAll('[aria-modal="true"]').length).toBe(2)
+  })
 })
 
 describe('Sheet focus restore — detached-node guard (SC 2.4.3)', () => {
-  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = true })
-
   it('restores focus to the invoking control when it is still in the document', () => {
     function Harness() {
       const [open, setOpen] = useState(false)

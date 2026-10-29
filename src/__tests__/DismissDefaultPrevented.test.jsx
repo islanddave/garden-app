@@ -26,11 +26,6 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 
-const flags = { DISMISS_REGISTRY_ENABLED: true }
-vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
-}))
 
 import Sheet from '../components/forms/Sheet.jsx'
 import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
@@ -47,8 +42,6 @@ function StagedInput({ onStepBack }) {
 }
 
 describe('registry Escape respects a descendant that already handled the key', () => {
-  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = true })
-
   it('a descendant that preventDefaults Escape steps back WITHOUT closing the hosting Sheet', () => {
     const onSheetClose = vi.fn()
     const onStepBack = vi.fn()

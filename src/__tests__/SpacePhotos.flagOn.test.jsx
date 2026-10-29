@@ -15,7 +15,7 @@ const { navigateSpy, locationRef, prefsRef } = vi.hoisted(() => ({
 // Full flag surface, SPACE_PHOTOS_ENABLED flipped. The other values mirror the shipped defaults so
 // nothing else in App.jsx / BottomNav changes shape under this mock.
 // PARTIAL mock (importOriginal spread): the enumerated form broke on every new flag added
-// anywhere in featureFlags.js — most recently DISMISS_REGISTRY_ENABLED, which Sheet reads.
+// anywhere in featureFlags.js — most recently the dismiss-registry flag, which Sheet read.
 // Only SPACE_PHOTOS_ENABLED is actually under test here; the rest now track prod.
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),

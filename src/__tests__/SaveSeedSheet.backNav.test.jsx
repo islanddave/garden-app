@@ -22,11 +22,6 @@ import { render, screen, act, fireEvent, waitFor } from '@testing-library/react'
 
 const { navigateSpy } = vi.hoisted(() => ({ navigateSpy: vi.fn() }))
 
-const flags = { DISMISS_REGISTRY_ENABLED: true }
-vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
-}))
 vi.mock('react-router-dom', () => ({
   // A spy rather than a fresh vi.fn() per call since V5-SEEDSTAB-001: the ending's navigate is now
   // asserted here (the last describe), and the two arming tests never read it.
@@ -60,7 +55,6 @@ const mount = async (onClose = vi.fn(), { provider = true } = {}) => {
 }
 
 beforeEach(() => {
-  flags.DISMISS_REGISTRY_ENABLED = true
   navigateSpy.mockReset()
   window.history.replaceState({ __base: 1 }, '')
 })

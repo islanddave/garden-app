@@ -25,11 +25,6 @@ import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 
-const flags = { DISMISS_REGISTRY_ENABLED: true }
-vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
-}))
 
 const apiFetchSpy = vi.hoisted(() => vi.fn(() => Promise.resolve([])))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy }) }))
@@ -59,7 +54,6 @@ const armed = () => !!readMarker(window.history.state)
 const atFloor = () => !armed() && window.history.state?.__floor === 1
 
 beforeEach(() => {
-  flags.DISMISS_REGISTRY_ENABLED = true
   window.history.replaceState(SENTINEL, '')
 })
 afterEach(() => { document.body.style.overflow = ''; document.body.style.overscrollBehavior = '' })

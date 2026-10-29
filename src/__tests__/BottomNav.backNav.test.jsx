@@ -36,11 +36,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, within } from '@testing-library/react'
 import { BrowserRouter, useLocation } from 'react-router-dom'
 
-const flags = { DISMISS_REGISTRY_ENABLED: true }
-vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
-}))
 
 const { signOutSpy, prefsRef, saveSpy } = vi.hoisted(() => ({
   signOutSpy: vi.fn(() => Promise.resolve()),
@@ -146,7 +141,6 @@ const moreIsOpen = () => !!screen.queryByText('Sign out')
 const createIsOpen = () => !!screen.queryByText('Add a planting')
 
 beforeEach(() => {
-  flags.DISMISS_REGISTRY_ENABLED = true
   signOutSpy.mockReset()
   signOutSpy.mockResolvedValue(undefined)
   saveSpy.mockClear()

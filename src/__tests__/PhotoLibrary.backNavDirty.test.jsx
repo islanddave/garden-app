@@ -26,10 +26,7 @@
 // parent — turning a look-and-leave into a question on the app's most-browsed page. Two tests exist
 // solely to kill a constant-true `dirty`: the untouched-but-prefilled case, and the revert case.
 //
-// A REAL DismissRegistryProvider and REAL window.history, both load-bearing. Feature flags are
-// deliberately NOT mocked (unlike the sibling PhotoLibrary suites, which pin PROJECTS_HIDDEN for
-// their own reasons): DISMISS_REGISTRY_ENABLED is hard `true` in source, and if
-// it is flipped this guard genuinely stops working — red is the correct outcome.
+// A REAL DismissRegistryProvider and REAL window.history, both load-bearing.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'

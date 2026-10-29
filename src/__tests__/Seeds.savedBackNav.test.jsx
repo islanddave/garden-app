@@ -22,11 +22,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor, cleanup } from '@testing-library/react'
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 
-const flags = { DISMISS_REGISTRY_ENABLED: true }
-vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
-}))
 
 const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
 // isFromCache is required: Seeds' useSeedItems calls it on every load (the Seeds.test.jsx shape).
@@ -96,7 +91,6 @@ function renderSeeds({ provider = true } = {}) {
 }
 
 beforeEach(() => {
-  flags.DISMISS_REGISTRY_ENABLED = true
   fetchSpy.mockReset()
   fetchSpy.mockImplementation((p, opts) => {
     if (opts?.method) return Promise.resolve({ ok: true })

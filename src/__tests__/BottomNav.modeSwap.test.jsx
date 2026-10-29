@@ -31,7 +31,7 @@ vi.mock('../components/BottomNavDot.jsx', () => ({
 // PARTIAL mock (importOriginal spread), not an enumerated one. The old form listed every flag this
 // tree touches by hand, so each new export elsewhere in featureFlags.js broke this file with
 // "No X export is defined on the mock" — it broke on PROJECTS_HIDDEN, again on SPACE_PHOTOS_ENABLED,
-// and again on DISMISS_REGISTRY_ENABLED when Sheet joined the dismiss registry. Spreading the real
+// and again when Sheet joined the dismiss registry. Spreading the real
 // module means only the flags this file actually pins are overridden and the rest track prod.
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
