@@ -76,6 +76,7 @@ concurrency:
 jobs:
   plan:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     outputs:
       matrix: ${{ steps.mk.outputs.matrix }}
     steps:
@@ -101,6 +102,7 @@ jobs:
   verify:
     needs: plan
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     name: verify (${{ matrix.leg }})
     strategy:
       fail-fast: false

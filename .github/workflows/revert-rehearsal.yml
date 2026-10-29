@@ -47,9 +47,14 @@ env:
   # v0.0.0 snapshot's main_sha (pinned in snap-rehearsal.yml); the recreated tag must resolve here.
   TARGET_MAIN_SHA: "31e8673032bcb142e3accf6ae96fd45bd1830429"
 
+concurrency:
+  group: revert-rehearsal
+  cancel-in-progress: false
+
 jobs:
   rehearse:
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     environment: production
     steps:
       - name: Mint garden-bot installation token

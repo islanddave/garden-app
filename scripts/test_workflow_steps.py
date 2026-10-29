@@ -2190,13 +2190,14 @@ def test_every_snapshot_tooling_step_that_can_stall_has_its_own_short_time_limit
 
 # After the fast-forward the promote runs three called workflows and three jobs of its own. A job that `uses:` a
 # workflow cannot carry timeout-minutes (GitHub does not accept the key there), so each limit sits on the job that
-# has the steps. None is None on purpose: spa-withheld is one echo and an exit 1, and has no limit by decision.
+# has the steps. spa-withheld is one echo and an exit 1; it carries the same floor limit as every runner job
+# (scripts/test_job_timeouts.py).
 DEPLOY_JOB_LIMITS = {
     "deploy-lambda.yml": {"deploy": 10},
     "deploy.yml": {"deploy": 15},  # above its own smoke step's bounded worst case, about 826 s
     "verify-lambda-invariants.yml": {"verify": 10},
 }
-AFTER_PROMOTE_LIMITS = {"verify": 10, "spa-withheld": None, "snap-lambdas": 10}
+AFTER_PROMOTE_LIMITS = {"verify": 10, "spa-withheld": 10, "snap-lambdas": 10}
 CALLER_JOBS = {
     PROMOTE: {"deploy-lambdas", "deploy", "verify-lambda-invariants"},
     "deploy-lambda.yml": {"verify-daily-plan"},
