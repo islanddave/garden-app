@@ -7,7 +7,7 @@ Old headers that call the heavy style "the house pattern" are superseded; rewrit
 ## Comments
 - Write a comment only if it helps the next agent: why, a trap, an invariant, or the test that guards it.
 - A block over about 3 lines must be a trap, an invariant or a pointer to its guarding test.
-- History goes in the commit message or the ledger row, never in code. No dates, ticket ids, quotes from people, or "removed X because".
+- History goes in the commit message or the ledger row, never in code. No dates, quotes from people, or "removed X because". A ticket id is fine only as the shortest pointer to a needed why.
 - Directives are code, not noise; never delete or reflow them: shebangs, `eslint-`, `@ts-`, `@vite-`, `@vitest-`, `noqa`, `pragma`, `shellcheck`, `istanbul`/`v8`/`c8 ignore`.
 
 Bad: a narrative block (`src/pages/EventNew.jsx:750-753`, the first 4 of 12+ lines of history):
@@ -45,7 +45,12 @@ Never delete or rename as "unused": the rollback tooling and everything it calls
   - It exports `handleXRoute({ sql, rawPath, method, rawBody, userId, householdIds })`, returning `{ status, body }`, or `null` for "not mine" so index.js falls through (`lambda/preservation/jarRoutes.js:56`, called at `lambda/preservation/index.js:271`).
 
 ## Tests
-- Test new Lambda behaviour by calling the handler (stub drivers in `lambda/_test-stubs/`) or through the integration harness (`tests/integration/`). Never regex over `index.js`.
-- Source-text checks are only for whole-codebase invariants (a rule that must hold in every file).
-- Extend the nearest existing test file rather than adding a new one.
-- Removing a flag or mechanism removes its tests in the same change.
+Full policy: gardening-docs `project-state/_testpolicy-20261029/POLICY.md` (DEC-TESTPOLICY-001).
+- Add cases to the test files your brief names. If none fits, create one with `// new-file: <reason>` on line 1 (new subject, a different module-level mock, or a behaviour split of a file over ~800 lines) and say so first in your hand-back. Never name a file for a round, lane, phase or ticket.
+- Lambda handlers are importable (`lambda/_test-stubs`), but the stub never evaluates SQL. A filter, ownership or soft-delete property is proven only on real Postgres (`tests/integration`). Keep its source-text check; removing it follows the deletion rule below.
+- Read source text only for: a forbidden pattern, a complete list, two copies that must match, a script slice you execute, a gate input, or a required SQL predicate with no integration twin yet. Every scan asserts it matched at least one item. Before removing or converting a source read, grep `scripts/` and `.github/` for a reader of that file.
+- Column contracts: if the directory has a keyed `AUDIT_COLUMNS` file, add a key; if it has an `AUDIT_TABLES` file, add a new file and raise the ceiling (`scripts/count-ratchets.json`). Never both forms in one file: the auditor reads only the first.
+- Pages mount the real router (`src/__tests__/helpers/routerHarness`); no new `vi.mock('react-router-dom')`. Layout, geometry and tap targets go in `tests/harness` + layout-gate, never jsdom.
+- Prove it can fail: write the regression test first and log it red before the fix. For a new or changed guard on a safety, data-write, authz, deploy or food-safety path, log a mutation table (mutant diff, command, failing test id, quoted red line).
+- Never delete or weaken an assertion unless your brief lists it and you name the test that still goes red for its mutation, or the code it tests is deleted in the same change. Files with `// GUARD:` in their first 5 lines are merge-only.
+- A new test file's header is 5 lines or fewer: what it guards, the ruling or ticket id, the trap.
