@@ -116,6 +116,7 @@ const HANDLERS = {
   varieties: (await import('./varieties/index.js')).handler,
   appEvents: (await import('./app-events/index.js')).handler,
   inventory: (await import('./inventory-items/index.js')).handler,
+  ux: (await import('./ux-events/index.js')).handler,
 };
 
 // deny: every bucket refuses; deny-user / deny-global: only that actor's bucket; throw: the statement fails.
@@ -233,6 +234,18 @@ const ROWS = [
     body: { ...IMAGE, image_base64: 'A'.repeat(2_000_001) }, limiter: 'allow', status: 413, error: 'image_too_large',
     limiterActors: [], usage: null,
   }),
+  ...[
+    ['meta of exactly 2048 bytes -> 201', { k: 'a'.repeat(2040) }, 201],
+    ['meta of 2049 bytes -> 413, nothing written', { k: 'a'.repeat(2041) }, 413],
+    ['meta of 1029 chars but 2050 UTF-8 bytes -> 413 (bytes, not chars)', { k: 'é'.repeat(1021) }, 413],
+    ['no meta -> 201', undefined, 201],
+  ].map(([name, meta, status]) => ({
+    name: `ux-events: ${name}`, fn: 'ux', method: 'POST', path: '/api/ux-events',
+    body: { flow_id: 'log_watering', session_id: 's-1', ...(meta === undefined ? {} : { meta }) },
+    db: (text) => (text.includes('INSERT INTO ux_events') ? [{ id: 'ux-1' }] : []),
+    status, writes: { 'INSERT INTO ux_events': status === 201 },
+    ...(status === 413 ? { error: 'meta exceeds 2048 bytes' } : {}),
+  })),
 ];
 
 describe('SEC-13b request limits', () => {
@@ -273,6 +286,9 @@ describe('SEC-13b request limits', () => {
       expect(res.headers['Retry-After']).toBe(row.retryAfter);
     } else {
       expect(res.headers?.['Retry-After']).toBeUndefined();
+    }
+    for (const [statement, written] of Object.entries(row.writes ?? {})) {
+      expect(state.sqlCalls.some((c) => c.text.includes(statement)), statement).toBe(written);
     }
     if (row.fn !== 'inventory') return;
 

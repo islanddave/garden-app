@@ -62,6 +62,8 @@ export const ALLOWED_FLOWS = new Set([
   'voice_input',
 ]);
 
+const UX_META_MAX_BYTES = 2048;
+
 function resp(statusCode, body) {
   return {
     statusCode,
@@ -117,6 +119,11 @@ export const handler = async (event) => {
       const tapCount = Number.isInteger(body.tap_count) ? body.tap_count : null;
       const clientTs = body.client_ts != null ? String(body.client_ts) : null;
       const metaJson = body.meta != null ? JSON.stringify(body.meta) : null;
+      // SEC-13b: measured as the UTF-8 bytes of the exact string bound below, so 2048 passes and 2049 does not
+      // (lambda/rate-limit.test.js "ux-events:" rows). Today's senders stay under ~250 bytes.
+      if (metaJson != null && Buffer.byteLength(metaJson, 'utf8') > UX_META_MAX_BYTES) {
+        return resp(413, { error: `meta exceeds ${UX_META_MAX_BYTES} bytes` });
+      }
 
       const rows = await sql`
         INSERT INTO ux_events (clerk_sub, session_id, flow_id, step_index, step_name, tap_count, client_ts, meta)
