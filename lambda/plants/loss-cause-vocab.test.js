@@ -27,14 +27,12 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // A construct NAMED IN A COMMENT is not that construct — same decommenter the sibling vocabulary
 // guards use, so `// was: 'transplant_shock'` cannot satisfy a parity assertion.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 
 const LAMBDA_SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 // BUG-AUTHZLAMBDA-001: the two index.js literals (PUT, POST) were collapsed into ONE exported literal

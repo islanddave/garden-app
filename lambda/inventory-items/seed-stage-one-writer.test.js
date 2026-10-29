@@ -29,6 +29,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LAMBDA = resolve(__dirname, '..');
@@ -36,9 +37,6 @@ const { handler } = await import('./index.js');
 
 // A construct NAMED IN A COMMENT is not that construct: the notes in index.js that explain the two
 // omissions name the column, and must neither satisfy nor break this.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir)) {

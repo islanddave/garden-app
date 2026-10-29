@@ -20,13 +20,11 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NON_REWARD_EVENT_TYPES } from './eventTypes.generated.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // A predicate NAMED IN A COMMENT is not that predicate, and this one is named at length in the
 // rationale block sitting inside the very CTE being asserted.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 

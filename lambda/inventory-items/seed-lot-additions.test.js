@@ -28,11 +28,9 @@ import {
   LOT_USED_UP, ADDITION_KEY_CONFLICT, OWN_SOURCE_LOT, AMOUNT_TOO_LARGE, VARIETY_MISMATCH_NO_PARENTS, TOO_MANY_PARENTS,
 } from './seed-lot-additions.js';
 import { replaceSourcePlants } from './seed-lot-parents.js';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
 const ADD_SRC = decomment(readFileSync(resolve(__dirname, 'seed-lot-additions.js'), 'utf8'));
 const INDEX_SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 

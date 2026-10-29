@@ -14,18 +14,12 @@
 // second one looks like a smaller diff and silently degrades the planting-detail hero and the
 // lightbox to an 800px image, with nothing in the frontend able to tell.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { decommentSqlDashSpace, readHandlerSource } from '../_test-stubs/handlerSource.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 // A construct NAMED IN A COMMENT is not that construct — this file's own header names every string
 // it asserts on, so decommenting is what stops it finding its own epitaph and passing.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 
-const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+const SRC = readHandlerSource('plants', { decomment: decommentSqlDashSpace });
 
 describe('the thumb key is SERVER-DERIVED by the shared convention', () => {
   it('derives thumbs/<storage_path> — the same key lambda/photos signs', () => {

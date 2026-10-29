@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEventPhotos } from './eventPhotos.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const norm = (s) => s.replace(/\s+/g, ' ').trim();
@@ -90,9 +91,6 @@ describe('loadEventPhotos — executed against a recording fake sql', () => {
 
 // ── index.js wiring — static-source (L-072), decommented per the edit-metadata.test.js hazard: a
 // construct NAMED IN A COMMENT is not that construct. ────────────────────────────────────────────
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 
 // The GET arm of /api/events/:id, isolated: from its method test to its 200 response. Anchored on

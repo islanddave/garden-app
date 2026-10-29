@@ -25,13 +25,11 @@ import { REGIMES, parseOverwinterBody, setOverwinterCore } from './overwinterAtt
 // asymmetry is the whole reason REGIMES is duplicated, and this import is what keeps the duplicate
 // honest.
 import ow from '../daily-plan/overwinter.js'
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // A construct NAMED IN A COMMENT is not that construct — same decommenter every static guard in
 // this directory uses, so a deleted line left behind as `// was: …` cannot satisfy an assertion.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n')
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'))
 
 // ── mock sql ─────────────────────────────────────────────────────────────────────────────────────

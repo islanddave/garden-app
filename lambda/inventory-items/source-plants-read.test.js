@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { handler, validateUpdate } = await import('./index.js');
@@ -283,9 +284,6 @@ describe('wide PUT /api/inventory-items/:id — returns source_plants, and canno
   });
 
   it('names neither key anywhere in its UPDATE, and validateUpdate does not look at them', () => {
-    const decomment = (s) => s.split('\n')
-      .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-      .join('\n');
     const src = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
     const start = src.indexOf('UPDATE inventory_items SET');
     const statement = src.slice(start, src.indexOf('RETURNING *', start));

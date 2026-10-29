@@ -28,6 +28,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
 
 const { handler } = await import('./index.js');
 
@@ -185,9 +186,6 @@ describe('a failed read — sown_from degrades to null, germination still fails 
 // ── 2. THE PREDICATE IS THE PLANTS LAMBDA'S ─────────────────────────────────────────────────────────
 // Comments out, whitespace squashed, every template interpolation reduced to its expression, and the
 // plants Lambda's `gp` alias read as this handler's `p`.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-  .join('\n');
 const templates = (file) => [...decomment(readFileSync(resolve(__dirname, file), 'utf8'))
   .matchAll(/sql`([^`]*)`/g)].map((m) => m[1]);
 const norm = (s) => s.replace(/\s+/g, ' ').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').trim();

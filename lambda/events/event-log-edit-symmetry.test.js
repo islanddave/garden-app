@@ -17,18 +17,12 @@
 // Structural and cheap, the same posture as upsert-symmetry.test.js, and it catches the family (any
 // future column added to the INSERT and forgotten in the UPDATE) rather than this one instance.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { decommentSqlDashSpace, readHandlerSource } from '../_test-stubs/handlerSource.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 // A construct NAMED IN A COMMENT is not that construct — see upsert-symmetry.test.js for the full
 // account of why every raw-source guard here runs against decommented source.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 
-const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+const SRC = readHandlerSource('events', { decomment: decommentSqlDashSpace });
 
 // Columns the INSERT writes and the edit UPDATE legitimately never touches.
 //

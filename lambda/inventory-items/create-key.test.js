@@ -31,6 +31,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { handler, validateCreate } = await import('./index.js');
@@ -483,9 +484,6 @@ describe('the key is never sent back', () => {
 });
 
 // A construct named in a comment is not that construct (select-columns.test.js).
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 const SOURCES = readdirSync(__dirname).filter((f) => f.endsWith('.js') && !f.endsWith('.test.js')).sort();
 const statementsOf = (file) => decomment(readFileSync(resolve(__dirname, file), 'utf8')).match(/sql`[\s\S]*?`/g) ?? [];
 const naming = (re) => SOURCES.flatMap((file) => statementsOf(file).filter((s) => re.test(s)).map((s) => [file, s]));

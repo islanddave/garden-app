@@ -29,6 +29,7 @@ import {
   VARIETY_UNUSABLE, FILING_CROP_MISMATCH, normalizeFiling, judgeFiling, fileLot, readFiling, filingOf,
   filingRefusal, fileSeedLot,
 } from './seed-lot-filing.js';
+import { decommentSqlDashBare as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { handler } = await import('./index.js');
@@ -237,9 +238,6 @@ describe('fileLot — the ONE statement that re-files a lot', () => {
   });
 
   it('is the only statement in this directory that assigns variety_id outside the wide PUT and the INSERT', () => {
-    const decomment = (s) => s.split('\n')
-      .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
-      .join('\n');
     const assigning = ['index.js', 'seed-lot-parents.js', 'seed-lot-rules.js', 'seed-lot-filing.js'].flatMap((f) => {
       const src = decomment(readFileSync(resolve(__dirname, f), 'utf8'));
       return [...src.matchAll(/sql`[^`]*`/g)].map((m) => m[0])

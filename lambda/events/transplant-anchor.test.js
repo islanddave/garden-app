@@ -17,15 +17,13 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeEventDate } from './validators.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Same decomment contract as the sibling guards: a construct NAMED IN A COMMENT is not that
 // construct. This file's own source comments describe created_at and the container join at length,
 // so without this every "must not contain" assertion below would trip on prose.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 

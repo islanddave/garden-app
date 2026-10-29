@@ -33,14 +33,12 @@ import { fileURLToPath } from 'node:url';
 // V4-PICKERPAYLOAD-001's consumer-set assertion greps the client tree — the census the picker key
 // set is derived from is only true while that set is the two files it counted.
 import { execSync } from 'node:child_process';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // A construct NAMED IN A COMMENT is not that construct (the epitaph hazard this directory already
 // documents). Same decommenter as its neighbours: the `//` arm is URL-safe, the `--` arm needs a
 // following space so a JS decrement is never read as a SQL comment.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 
 // ── the parser ────────────────────────────────────────────────────────────────────────────────────
