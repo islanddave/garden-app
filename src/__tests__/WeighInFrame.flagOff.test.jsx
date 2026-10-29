@@ -56,15 +56,14 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
   }),
 }))
 
-// PROJECTS_HIDDEN false + PLANTING_REQUIRED_ENABLED false mirrors EventNew.harvestSession.test.jsx:
-// it lets a save go through on the Project select alone, so the fixture exercises the ledger
-// without dragging PlantingSelect's async plant list into a byte comparison.
+// PROJECTS_HIDDEN false keeps the Project select on screen. A harvest needs a planting, and the
+// picker clears after each save, so every save picks PLANT first (saveHarvest).
 // WEIGH_IN_FRAME_ENABLED is stated explicitly rather than left to the module default so this file
 // keeps testing the OFF arm on the day the default flips.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
+  PLANTING_REQUIRED_ENABLED: true,
   WEIGH_IN_FRAME_ENABLED: false,
 }))
 
@@ -80,6 +79,7 @@ import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1', quantity: 3, crop_type_slug: 'tomato' }
 
 function wireApiFetch() {
   apiFetchSpy.mockImplementation((path, options = {}) => {
@@ -95,6 +95,8 @@ function wireApiFetch() {
 }
 
 async function saveHarvest({ qty, weight }) {
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click(await screen.findByTestId(`ps-opt-${PLANT.id}`))
   fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: qty } })
   if (weight != null) fireEvent.change(screen.getByLabelText('Harvest weight'), { target: { value: weight } })
   await act(async () => { fireEvent.click(screen.getByText('Save')) })
@@ -106,7 +108,7 @@ beforeEach(() => {
   postCalls.length = 0
   dataRef.projects = [PROJECT]
   dataRef.locations = []
-  dataRef.plants = []
+  dataRef.plants = [PLANT]
   localStorage.clear()
   wireApiFetch()
 })
