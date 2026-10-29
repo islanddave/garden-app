@@ -364,6 +364,30 @@ def test_run_gates_pass_and_fail():
     assert [r["status"] for r in res] == ["PASS", "FAIL"]
 
 
+def test_receipt_missing_url_is_unknown_not_clean(tmp_path, monkeypatch, capsys):
+    """gate-invariants.yml: a missing secret exits 0 with status=unknown, which its `Surface findings` step fails as
+    UNKNOWN (exit 2). Without a $GITHUB_OUTPUT to write the receipt to, it refuses (2) instead of passing."""
+    gates, out = write(tmp_path, VALID), tmp_path / "out"
+    monkeypatch.delenv("NEON_STAGING_URL", raising=False)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    assert gr.main(["--migration", str(gates), "--env", "staging", "--phase", "post", "--receipt"]) == 0
+    assert out.read_text() == "status=unknown\n"
+    assert "::warning::NEON_STAGING_URL is not readable by this job" in capsys.readouterr().err
+    monkeypatch.delenv("GITHUB_OUTPUT")
+    assert gr.main(["--migration", str(gates), "--env", "staging", "--phase", "post", "--receipt"]) == 2
+
+
+def test_receipt_is_measured_only_after_the_gates_ran(tmp_path, monkeypatch):
+    gates, out = write(tmp_path, VALID), tmp_path / "out"
+    conn = FakeConn([[("text",)]])
+    conn.close = lambda: None
+    monkeypatch.setenv("NEON_DATABASE_URL", "postgresql://prod.invalid/db")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    monkeypatch.setattr(gr, "connect", lambda _url: conn)
+    assert gr.main(["--migration", str(gates), "--env", "prod", "--phase", "post", "--receipt"]) == 0
+    assert out.read_text() == "status=measured\n"
+
+
 def test_query_error_is_a_failure_status_not_an_exception():
     """A missing table is the regression these gates catch -- report, don't crash."""
     boom = RuntimeError("relation \"public.event_log_archive\" does not exist")

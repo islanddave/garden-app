@@ -620,6 +620,11 @@ def main(argv=None):
         "--validate-only", action="store_true",
         help="parse and schema-check every gate file; open no connection",
     )
+    ap.add_argument(
+        "--receipt", action="store_true",
+        help="write status=measured|unknown to $GITHUB_OUTPUT; a missing URL becomes a warning, "
+             "status=unknown and exit 0 instead of a fatal error (gate-invariants.yml)",
+    )
     args = ap.parse_args(argv)
 
     paths = discover(args.migration, args.all)
@@ -654,6 +659,22 @@ def main(argv=None):
         print(f"OK: {len(loaded)} gate file(s), {total} gate(s) parsed and schema-valid.")
         return 0
 
+    # The receipt is POSITIVE: `measured` is written only after the gates ran, so any early return
+    # reads as UNKNOWN in gate-invariants.yml's `Surface findings`. The soft missing-URL path is
+    # safe only because it writes `unknown`; with nowhere to write the receipt it refuses instead.
+    receipt = os.environ.get("GITHUB_OUTPUT") if args.receipt else None
+    if args.receipt and not receipt:
+        print("FATAL: --receipt needs $GITHUB_OUTPUT to write the status receipt to.", file=sys.stderr)
+        return 2
+    if receipt:
+        var = "NEON_DATABASE_URL" if args.env == "prod" else "NEON_STAGING_URL"
+        if not os.environ.get(var):
+            print(f"::warning::{var} is not readable by this job — {args.env} invariants UNKNOWN, "
+                  "not clean.", file=sys.stderr)
+            with open(receipt, "a") as fh:
+                fh.write("status=unknown\n")
+            return 0
+
     url, _var = resolve_url(args.env)
     conn = connect(url)
 
@@ -674,6 +695,9 @@ def main(argv=None):
         print(json.dumps(all_results, indent=2, default=str))
     else:
         render(all_results, args.env)
+    if receipt:
+        with open(receipt, "a") as fh:
+            fh.write("status=measured\n")
 
     if schema_errors:
         return 2

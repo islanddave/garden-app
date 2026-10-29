@@ -95,32 +95,13 @@ jobs:
         # than as a connection-shaped mystery. Hard-fails: exit 2.
         run: python3 scripts/gate_runner.py --all --env prod --validate-only
 
-      # THE `status` OUTPUT IS A MEASUREMENT RECEIPT, NOT A RESULT (added 2026-08-31,
-      # BUG-GATESTAGINGVACUOUS-001). These two steps have three outcomes, not two, and until
-      # this receipt existed the aggregate could only see two. An unreadable database takes the
-      # early return below, exits 0, and `Surface findings` reads `outcome == success` — so a
-      # leg that read NOTHING contributes a PASS, while the step's own warning text says the
-      # correct reading is UNKNOWN. That is worse than a missing check: it manufactures a
-      # positive result, and any later claim of "the migration gates are green" sourced from a
-      # run that took this path is unsupported.
-      #
-      # STRUCTURAL, NOT OBSERVED — and the difference was checked rather than assumed. The
-      # ledger row cites run 33434949499's STAGING leg as having logged the warning and exited
-      # 0. It did not: that text appears in the log only inside the `##[group]Run` block, which
-      # echoes the whole script verbatim. Both legs actually connected on that run (`SUMMARY
-      # (staging): ... PASS=588`) and the red was PROD's real finding. The path is reachable
-      # from any run where either secret is missing or unreadable, which is why it is closed
-      # here rather than left for the run that does take it to be believed.
-      #
-      # Deliberately a POSITIVE receipt (`status=measured` written only after the runner has
-      # actually returned) rather than a negative flag. A flag only covers the early return that
-      # exists today; a receipt makes any future `exit 0` path that skips the runner read as
-      # UNKNOWN by default, because it will not have written one. Fail-closed is the whole point.
-      #
-      # The early return still exits 0 on purpose. Exiting non-zero here would make the leg
-      # indistinguishable from a real finding, and `Surface findings` would then report
-      # "reported findings" about a database it never opened — trading a false pass for a false
-      # accusation. The receipt is what separates the two.
+      # THE `status` OUTPUT IS A MEASUREMENT RECEIPT, NOT A RESULT. These steps have three outcomes:
+      # findings (non-zero exit), measured, and UNKNOWN (secret unreadable: `gate_runner.py --receipt`
+      # warns, writes status=unknown and exits 0). The receipt is POSITIVE: gate_runner writes
+      # `measured` only after the gates ran, so any path that skips them reads as UNKNOWN in
+      # `Surface findings`, never as a pass. UNKNOWN exits 0 on purpose: non-zero would be reported
+      # as findings about a database that was never opened. Guarded by test_gate_runner.py
+      # test_receipt_*.
       - name: Post-gate invariants — PROD
         id: prod
         continue-on-error: true
@@ -128,14 +109,8 @@ jobs:
           NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
         run: |
           set -euo pipefail
-          if [[ -z "${NEON_DATABASE_URL:-}" ]]; then
-            echo "::warning::NEON_DATABASE_URL is not readable by this job — prod invariants UNKNOWN, not clean."
-            echo "status=unknown" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          python3 scripts/gate_runner.py --all --env prod --phase post --continuous-only \
+          python3 scripts/gate_runner.py --all --env prod --phase post --continuous-only --receipt \
             | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "status=measured" >> "$GITHUB_OUTPUT"
 
       - name: Post-gate invariants — STAGING
         id: staging
@@ -144,14 +119,8 @@ jobs:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
         run: |
           set -euo pipefail
-          if [[ -z "${NEON_STAGING_URL:-}" ]]; then
-            echo "::warning::NEON_STAGING_URL is not readable by this job — staging invariants UNKNOWN, not clean."
-            echo "status=unknown" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          python3 scripts/gate_runner.py --all --env staging --phase post --continuous-only \
+          python3 scripts/gate_runner.py --all --env staging --phase post --continuous-only --receipt \
             | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "status=measured" >> "$GITHUB_OUTPUT"
 
       - name: Surface findings
         # NOW BLOCKING — 2026-08-10. The backlog this job's header said to triage is triaged:

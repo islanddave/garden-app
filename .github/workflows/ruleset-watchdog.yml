@@ -1,50 +1,14 @@
 name: Ruleset Drift Watchdog
 
-# Defense-in-depth (repo-version-env-spec V100 §5 ADD): asserts the main capability-gate
-# ruleset is intact and alerts on drift. Runs from the DEFAULT branch (main) on a schedule,
-# so its own definition is capability-gated — an agent writing dev cannot unilaterally alter
-# it (dev->main is a Dave-approved gate). NOT load-bearing (the gate already blocks agent
-# writes to main); this catches accidental or manual ruleset tampering.
+# Defense-in-depth: asserts the main capability-gate ruleset (17227141) is intact and alerts on drift. Runs
+# from the DEFAULT branch (main) on a schedule, so its own definition is capability-gated: an agent writing dev
+# cannot alter it (dev->main is a Dave-approved gate). NOT load-bearing (the gate already blocks agent writes
+# to main); this catches accidental or manual ruleset tampering. Verdict logic and its traps:
+# scripts/ruleset-watchdog.py, tested by scripts/test_ruleset_watchdog.py.
 #
-# AUTH (rewired 2026-07-22): mints a garden-bot App token per run; it is the only credential.
-# A repo secret holding a token is a stored COPY and rots INDEPENDENTLY of the account's token
-# list; App tokens are minted per run and cannot rot. The stored-PAT fallback was removed
-# 2026-10-29 (SEC-12, OPS-SECREVIEW-001).
-# NOTE: garden-bot needs `administration: read` on the repo for the rulesets API.
-#
-# FAIL-SOFT ON AUTH, HARD ON DRIFT (added 2026-07-22, per L-288): auth/network/timeout map to
-# ::warning:: + exit 0 (visible, not a false drift alarm); only a SUCCESSFUL read that shows an
-# actually-wrong ruleset is ::error:: + exit 1.
-#
-# PARTIAL-READ FIX (added 2026-07-23, after this guard's FIRST scheduled run false-failed with
-# "bypass_actors drifted: []" while the live ruleset was verifiably intact — owner-token read
-# showed bypass_actors=[garden-bot App 3951762, Integration, always]). ROOT CAUSE: the prior
-# version handled a read that THREW (HTTPError -> Unverifiable -> warning) but NOT a read that
-# SUCCEEDED with a permission-emptied field. A GitHub App INSTALLATION token can read a
-# ruleset's enforcement/rules/conditions but gets bypass_actors=[] because that field is
-# admin-gated. Empirically (the false-failed run) ONLY bypass_actors was blank — enforcement,
-# rules and ref-scope all read correctly — so those stay HARD drift signals; bypass_actors gets
-# three-way handling:
-#   - non-empty & exactly the expected garden-bot Integration actor -> OK
-#   - non-empty & any OTHER/extra actor                             -> ::error:: DRIFT
-#        (this is the real attack surface: someone ADDING a rogue bypass actor is still caught)
-#   - empty while enforcement=active                                -> UNVERIFIED (::warning::),
-#        NOT drift. An empty list is a permission blind-spot, not proof the bypass was cleared
-#        (and clearing garden-bot's bypass would self-alarm by breaking the promote path, and is
-#        a lock-DOWN not an escalation).
-# MUTATION FINGERPRINT (added 2026-07-31, OPS-WATCHDOG-FINGERPRINT). `administration: read` was
-# granted to the garden-bot App and confirmed live on the installation, and the minted token
-# STILL reads bypass_actors as []. GitHub does not expose that field to App installation tokens at all.
-# The escalation below was consequently firing RED every day with no satisfiable remedy.
-# Fix: pin the ruleset's `updated_at` (EXPECT_UPDATED_AT). It is not admin-gated, so the App
-# token can read it, and ANY edit to the ruleset bumps it -- including a bypass_actors change
-# we cannot see directly. Unchanged fingerprint => the ruleset has not been mutated since it was
-# last verified intact by an admin read => bypass_actors cannot have drifted. The streak
-# escalation is retained ONLY for the case where the fingerprint is also unreadable.
-# ANTI-GREEN-BLINDNESS: a persistent UNVERIFIED state must not hide forever. The check reads its
-# own recent run annotations (stateless; needs only actions:read + checks:read on GITHUB_TOKEN)
-# and escalates ::warning:: -> ::error:: after STREAK_THRESHOLD consecutive unverified runs, so a
-# blind guard eventually forces the credential fix instead of staying quietly degraded.
+# AUTH: a garden-bot App token minted per run (needs `administration: read` on the repo for the rulesets API),
+# minted AFTER checkout and passed only to the script step. HISTORY_TOKEN (github.token, actions:read +
+# checks:read) reads this workflow's own run annotations for the blind-streak escalation.
 
 on:
   schedule:
@@ -61,6 +25,11 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
+      - name: Checkout garden-app
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
       - name: Mint garden-bot token
         id: bot
         continue-on-error: true
@@ -75,196 +44,11 @@ jobs:
           HISTORY_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          if [ -z "${BOT_TOKEN:-}" ]; then
-            echo "::warning::UNVERIFIED - no usable credential (the garden-bot token mint failed). The ruleset was NOT checked. Degraded guard, not a drift signal."
-            exit 0
-          fi
-          python3 - <<'PY'
-          import datetime, json, os, sys, urllib.error, urllib.request
-
-          REPO = os.environ["REPO"]
-          EXPECT_ID = 17227141
-          EXPECT_BOT = 3951762
-          STREAK_THRESHOLD = 3
-          MARKER = "WATCHDOG_BYPASS_UNVERIFIED"
-          # Mutation fingerprint (OPS-WATCHDOG-FINGERPRINT, 2026-07-31). updated_at at the time
-          # the ruleset was last verified intact by an admin-capable read. ANY edit to the ruleset
-          # -- including a bypass_actors change an App token cannot see -- bumps this. Update this
-          # pin ONLY together with a deliberate, reviewed ruleset change.
-          # Re-pinned 2026-10-02: the `update` (restrict updates) rule was added on Dave's decision
-          # (promote-path review D-G) so a pull-request merge can no longer move main; the ruleset was
-          # re-read with an admin token straight after (bypass = garden-bot 3951762 only, scope main).
-          EXPECT_UPDATED_AT = "2026-10-02T12:20:11.554-04:00"
-
-          def parse_ts(s):
-              # Compare INSTANTS, not strings: the same moment may render as '...-04:00' to one
-              # token and '...Z' to another, and sub-second precision varies. A naive string
-              # compare would fire a false DRIFT. Returns an aware datetime, or None if unparseable.
-              if not s or not isinstance(s, str):
-                  return None
-              try:
-                  return datetime.datetime.fromisoformat(s.strip().replace("Z", "+00:00"))
-              except ValueError:
-                  return None
-
-          EXPECT_TS = parse_ts(EXPECT_UPDATED_AT)
-
-          primary = os.environ.get("BOT_TOKEN") or ""
-          history_tok = os.environ.get("HISTORY_TOKEN") or primary
-          run_id = os.environ.get("RUN_ID") or ""
-
-          class Unverifiable(Exception):
-              """Could not reach or read the API. NOT evidence of drift."""
-
-          def api(path, tok):
-              req = urllib.request.Request(
-                  "https://api.github.com/repos/%s%s" % (REPO, path),
-                  headers={"Authorization": "token %s" % tok,
-                           "Accept": "application/vnd.github+json"})
-              try:
-                  return json.load(urllib.request.urlopen(req, timeout=30))
-              except urllib.error.HTTPError as e:
-                  raise Unverifiable("HTTP %s on %s" % (e.code, path))
-              except Exception as e:
-                  raise Unverifiable("%s on %s" % (type(e).__name__, path))
-
-          def check_ruleset(tok):
-              # Returns (structural_fail:list, bypass_status, mutation_status). enforcement/rules/
-              # scope are NOT permission-gated and are trusted as hard drift signals; bypass_status
-              # is one of 'ok' | 'drift' | 'empty' | 'missing'; mutation_status (the updated_at
-              # fingerprint) is one of 'ok' | 'drift' | 'unreadable'.
-              fail = []
-              ids = [r["id"] for r in api("/rulesets", tok)]
-              if EXPECT_ID not in ids:
-                  fail.append("ruleset %d MISSING (present: %s)" % (EXPECT_ID, ids))
-                  return fail, "missing", "unreadable"
-              d = api("/rulesets/%d" % EXPECT_ID, tok)
-              if d.get("enforcement") != "active":
-                  fail.append("enforcement=%s != active" % d.get("enforcement"))
-              rules = set(r["type"] for r in d.get("rules", []))
-              for need in ("pull_request", "non_fast_forward", "deletion", "update"):
-                  if need not in rules:
-                      fail.append("missing rule: %s" % need)
-              inc = d.get("conditions", {}).get("ref_name", {}).get("include", [])
-              if inc != ["refs/heads/main"]:
-                  fail.append("ref scope drifted: %s" % inc)
-              ba = d.get("bypass_actors", [])
-              if len(ba) == 0:
-                  bstatus = "empty"
-              elif (len(ba) == 1 and ba[0].get("actor_id") == EXPECT_BOT
-                    and ba[0].get("actor_type") == "Integration"):
-                  bstatus = "ok"
-              else:
-                  bstatus = "drift"
-                  fail.append("bypass_actors drifted (unexpected actor present): %s" % ba)
-              # Mutation fingerprint. updated_at is a plain scalar on the ruleset payload and is
-              # NOT admin-gated the way bypass_actors is, so an App installation token should read
-              # it. Fail SOFT if it is absent/unparseable (report 'unreadable', never a false RED).
-              raw_ts = d.get("updated_at")
-              got_ts = parse_ts(raw_ts)
-              if got_ts is None or EXPECT_TS is None:
-                  ustatus = "unreadable"
-                  print("NOTE: updated_at fingerprint unreadable (raw=%r)" % (raw_ts,))
-              elif got_ts == EXPECT_TS:
-                  ustatus = "ok"
-                  print("NOTE: updated_at fingerprint matches pin (%s)" % raw_ts)
-              else:
-                  ustatus = "drift"
-                  fail.append("ruleset MUTATED since pinned fingerprint: updated_at=%s, expected %s. "
-                              "Something edited main-capability-gate. If the edit was intentional, "
-                              "re-verify the ruleset with an admin-capable read and update "
-                              "EXPECT_UPDATED_AT in this workflow." % (raw_ts, EXPECT_UPDATED_AT))
-              return fail, bstatus, ustatus
-
-          def count_prior_unverified():
-              # Consecutive most-recent PRIOR completed runs of THIS workflow whose job carried the
-              # MARKER annotation. Stateless; any read failure returns 0 (never falsely escalate).
-              if not run_id:
-                  return 0
-              try:
-                  this_run = api("/actions/runs/%s" % run_id, history_tok)
-                  wf_id = this_run.get("workflow_id")
-                  if not wf_id:
-                      return 0
-                  runs = api("/actions/workflows/%d/runs?status=completed&per_page=%d"
-                             % (wf_id, STREAK_THRESHOLD + 2), history_tok).get("workflow_runs", [])
-              except Unverifiable:
-                  return 0
-              count = 0
-              for r in runs:
-                  if str(r.get("id")) == str(run_id):
-                      continue
-                  try:
-                      jobs = api("/actions/runs/%d/jobs" % r["id"], history_tok).get("jobs", [])
-                      if not jobs:
-                          break
-                      anns = api("/check-runs/%d/annotations" % jobs[0]["id"], history_tok)
-                  except Unverifiable:
-                      break
-                  if any(MARKER in (a.get("message") or "") for a in anns):
-                      count += 1
-                  else:
-                      break
-              return count
-
-          if not primary:
-              print("::warning::UNVERIFIED - no usable credential. Degraded guard, not a drift signal.")
-              sys.exit(0)
-
-          try:
-              fail, bstatus, ustatus = check_ruleset(primary)
-          except Unverifiable as u:
-              print("::warning::UNVERIFIED - could not read the ruleset (%s). The ruleset was NOT "
-                    "checked; this is NOT a drift signal. garden-bot needs administration:read on "
-                    "the repo." % u)
-              sys.exit(0)
-
-          if fail:
-              print("::error::main-capability-gate RULESET DRIFT detected:")
-              for f in fail:
-                  print("  - " + f)
-              sys.exit(1)
-
-          if bstatus == "ok":
-              print("OK: main-capability-gate ruleset intact (id %d, bypass=garden-bot %d)"
-                    % (EXPECT_ID, EXPECT_BOT))
-              sys.exit(0)
-
-          # bstatus == "empty": enforcement/rules/scope intact, bypass_actors unreadable.
-          #
-          # ESTABLISHED 2026-07-31 (devops sitting): a GitHub App INSTALLATION token cannot read
-          # bypass_actors even WITH `administration: read` granted -- the permission was added to
-          # islanddave-garden-bot and confirmed live on installation 137733123 ("Read access to
-          # administration and metadata"), and two dispatched runs still read []. So for this
-          # workflow's credential, "empty" is the PERMANENT steady state, not a transient gap.
-          # The old streak escalation therefore could never be satisfied without a PAT, and was
-          # simply turning the guard RED every single day -- which trains the operator to ignore
-          # it. That is the same green-blindness failure it was written to prevent, inverted.
-          #
-          # The fingerprint closes the gap WITHOUT a credential: if updated_at still matches the
-          # pin, the ruleset has not been modified since it was last verified intact by an admin
-          # read, so bypass_actors CANNOT have drifted -- an edit would have bumped updated_at.
-          # That is positive verification by immutability, not an assumption.
-          if ustatus == "ok":
-              print("OK: main-capability-gate intact (id %d). enforcement/rules/scope verified "
-                    "directly; bypass_actors is unreadable to an App token, but the updated_at "
-                    "fingerprint is unchanged since the pin, so the ruleset (incl. bypass_actors) "
-                    "has not been modified." % EXPECT_ID)
-              sys.exit(0)
-
-          # ustatus == "unreadable": no direct bypass read AND no fingerprint -- genuinely blind.
-          # Keep the original anti-green-blindness escalation for this case.
-          streak = 1 + count_prior_unverified()
-          if streak >= STREAK_THRESHOLD:
-              print("::error::%s for %d consecutive runs (threshold %d). enforcement/rules/scope "
-                    "are intact, but BOTH bypass_actors and the updated_at fingerprint were "
-                    "unreadable, so ruleset mutation cannot be ruled out by any available means."
-                    % (MARKER, streak, STREAK_THRESHOLD))
-              sys.exit(1)
-          print("::warning::%s - enforcement/rules/scope intact, but bypass_actors read empty AND "
-                "updated_at was unreadable. NOT a drift signal. Consecutive unverified: %d/%d."
-                % (MARKER, streak, STREAK_THRESHOLD))
-          sys.exit(0)
-          PY
+          RULESET_ID: '17227141'
+          BYPASS_APP_ID: '3951762'
+          REQUIRED_RULES: 'pull_request non_fast_forward deletion update'
+          # Mutation fingerprint: the ruleset's updated_at when an admin-capable read last verified it intact
+          # (bypass = garden-bot 3951762 only, scope main). ANY ruleset edit bumps it. Re-pin ONLY together
+          # with a deliberate, reviewed ruleset change; main reads DRIFT until a promote carries the new pin.
+          EXPECT_UPDATED_AT: '2026-10-02T12:20:11.554-04:00'
+        run: python3 scripts/ruleset-watchdog.py

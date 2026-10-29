@@ -129,12 +129,19 @@ def test_drift_step_fails_loud_when_the_checker_crashes(tmp_path, rc):
     assert "::error title=Staging drift UNVERIFIED::" in proc.stdout and f"exited {rc} " in proc.stdout
 
 
-def test_drift_step_missing_secret_fails_before_calling_the_checker(tmp_path):
-    proc, called, summary = _run_step(tmp_path, DRIFT, 0, NEON_DATABASE_URL="",
-                                      NEON_STAGING_URL=URLS["NEON_STAGING_URL"])
-    assert proc.returncode == 1 and called == ""
+def test_drift_step_with_the_real_checker_and_a_missing_secret_fails(tmp_path):
+    """A missing secret is a misconfiguration, so the step fails rather than taking the exit-2 warning path."""
+    _, step = _step(*DRIFT)
+    (tmp_path / "scripts").mkdir()
+    shutil.copy(os.path.join(HERE, "check-staging-drift.py"), tmp_path / "scripts")
+    summary = tmp_path / "summary"
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("NEON_", "PG"))}
+    env.update(NEON_DATABASE_URL="", NEON_STAGING_URL=URLS["NEON_STAGING_URL"], GITHUB_STEP_SUMMARY=str(summary))
+    proc = _run_as_runner(tmp_path, step["run"], env)
+    assert proc.returncode != 0
     assert "::error title=Staging drift UNVERIFIED::" in proc.stdout
-    assert "FAILED — staging drift check could not run" in summary
+    assert "::warning title=Staging drift UNKNOWN::" not in proc.stdout
+    assert "FAILED — staging drift check could not run" in summary.read_text()
 
 
 def test_drift_step_with_the_real_checker_and_no_reachable_database(tmp_path):
