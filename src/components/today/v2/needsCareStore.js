@@ -57,13 +57,6 @@ function writeLogged(key, set) {
   } catch { /* storage blocked: the refetch's done annotation still hides them, one round trip later */ }
 }
 
-export function addLogged(key, keys) {
-  const s = readLogged(key)
-  let added = false
-  for (const k of keys) if (!s.has(k)) { s.add(k); added = true }
-  if (added) { writeLogged(key, s); changed() }
-}
-
 export function removeLogged(key, keys) {
   const s = readLogged(key)
   let removed = false

@@ -186,9 +186,6 @@ export function projectKindOptions(includeCultivar = false) {
 // Task priorities
 export const TASK_PRIORITIES = ['low', 'normal', 'high']
 
-// Task statuses — matches schema check constraint on tasks.status
-export const TASK_STATUSES = ['pending', 'done', 'skipped']
-
 // Inventory enums moved to src/lib/inventoryEnums.js (V3-FORMSYS-001 §4). The prior
 // item-types / subcategories / categories exports here were STALE (claimed schema-match
 // but used dead 'equipment'/'fertilizer'/'hand_tools'/'misc' values not in the live
@@ -208,7 +205,6 @@ export const PROJECT_CATEGORIES = [
 export const POST_LOGIN_ROUTE = '/today'
 
 export const APP_NAME = 'Gardens at Mathews'
-export const PHOTO_BUCKET = 'garden-photos'
 
 // The BottomNav's real height, and the single source of truth for --bottom-nav-height. It LIVES
 // here rather than in BottomNav.jsx (which re-exports it for its existing importers) so a page can

@@ -25,9 +25,7 @@
 import React from 'react'
 import { prefersReducedMotion as detectReducedMotion } from '../lib/critterArt.js'
 
-// Family flower symbol ids (one bloom per plant family). DEFAULT_FLOWERS is the fallback mix.
-export const FLOWER_IDS = ['ga-tomflo', 'ga-pepflo', 'ga-cucflo', 'ga-alliflo', 'ga-herbflo',
-  'ga-marigold', 'ga-nastur', 'ga-strawflo', 'ga-brasflo', 'ga-dianthus', 'ga-beanflo']
+// Family flower symbol ids (one bloom per plant family): the fallback mix.
 const DEFAULT_FLOWERS = ['ga-tomflo', 'ga-cucflo', 'ga-alliflo', 'ga-herbflo',
   'ga-marigold', 'ga-pepflo', 'ga-nastur', 'ga-strawflo']
 

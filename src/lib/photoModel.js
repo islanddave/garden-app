@@ -70,12 +70,6 @@ export function photoDate(photo) {
   return photo.takenAt ?? photo.taken_at ?? photo.createdAt ?? photo.created_at ?? null
 }
 
-// Whether photoDate() came from the camera rather than the upload. Surfaces that print a date can
-// use it to say so; nothing is required to.
-export function photoDateIsCapture(photo) {
-  return Boolean(photo && (photo.takenAt ?? photo.taken_at))
-}
-
 // The six parent FKs the live CHECK actually counts, in the order the CHECK names them.
 export const PARENT_KINDS = Object.freeze(['event', 'project', 'location', 'plant', 'inventory', 'space'])
 

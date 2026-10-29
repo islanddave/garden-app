@@ -79,11 +79,6 @@ export function dayNum(key) {
   return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 864e5
 }
 
-export function dayKeyOf(n) {
-  const d = new Date(n * 864e5)
-  return d.toISOString().slice(0, 10)
-}
-
 // 'Jul 2'
 export function monthDay(key) {
   const m = DAY_RE.exec(String(key ?? ''))
