@@ -179,8 +179,10 @@ def check_function(name, expected, live):
         actual = (live.get("Concurrency") or {}).get("ReservedConcurrentExecutions")
         if actual != expected["reserved_concurrency"]:
             violations.append(
-                "%s: ReservedConcurrentExecutions is %s, manifest declares %s"
-                % (name, actual, expected["reserved_concurrency"])
+                "%s: ReservedConcurrentExecutions is %s, manifest declares %s. No deploy step sets it: "
+                "run `aws lambda put-function-concurrency --function-name %s --reserved-concurrent-executions %s` "
+                "(a new function needs this once), then re-run this check."
+                % (name, actual, expected["reserved_concurrency"], name, expected["reserved_concurrency"])
             )
 
     env_live = (live.get("Environment") or {}).get("Variables") or {}

@@ -18,8 +18,8 @@ name: Verify Lambda invariants
 # costs ~1 minute, a GAP is the failure this file exists to close. Two `if:` conditions that must stay
 # exact complements would be a gap waiting to open.
 #
-# EVERYTHING HERE IS READ-ONLY: get-function-configuration, get-function-url-config, describe-rule,
-# list-targets-by-rule. Safe to run twice, and safe to run with NO preceding deploy — every invariant
+# EVERYTHING HERE IS READ-ONLY: get-function-configuration, get-function, get-function-url-config,
+# get-policy, describe-rule, list-targets-by-rule. Safe to run twice, and safe to run with NO preceding deploy — every invariant
 # asserts live account state, not deploy output.
 #
 # The deploy matrix tolerates partial config failures (many of its env steps are continue-on-error);

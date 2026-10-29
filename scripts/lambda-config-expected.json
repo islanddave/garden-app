@@ -18,7 +18,7 @@
     "                  and deploy-staging.yml read it to move and to create a function, and check-lambda-current",
     "                  deploys any function not on it (OPS-LAMBDANODE22-001). A runtime rollback is an edit here.",
     "  reserved_concurrency  int  ReservedConcurrentExecutions, read from get-function's Concurrency block (absent",
-    "                  reads as null). Optional; omit to not assert. Set live 2026-10-29 (SEC-10); no deploy step writes it.",
+    "                  reads as null). Required on every function (test_check_lambda_config.py). Set live 2026-10-29 (SEC-10); no deploy step writes it, so a NEW function needs `aws lambda put-function-concurrency` by hand before verify-lambda-invariants runs.",
     "  env      obj    per-KEY expectation. NOT exhaustive \u2014 unlisted keys are ignored, which is",
     "                  deliberate: SECRET_REFRESH / FORCE_COLD_START are operational churn.",
     "",

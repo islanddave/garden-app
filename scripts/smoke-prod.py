@@ -394,7 +394,10 @@ def do_verify(args):
         _, _, headers = fetch('/', with_headers=True)
         fails = check_security_headers(headers)
         if fails:
-            raise CheckFailed('; '.join(fails))
+            raise CheckFailed('; '.join(fails) + ' (source: CloudFront response headers policy '
+                              'garden-app-security-headers-v1 on E3FAJTXAORQYDT, live CDN config, not this '
+                              'release; re-attach it, or change REQUIRED_* here in the same change as a '
+                              'deliberate policy edit)')
         return f"{headers.get('strict-transport-security')}, {len(REQUIRED_HEADERS) + 1} more required, " \
                f'{len(FORBIDDEN_HEADERS)} S3 headers absent'
 
