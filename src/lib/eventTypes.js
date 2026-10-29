@@ -506,7 +506,7 @@ export function accruesQtyLost(eventType) {
 // V4-LOSSUI-001 — THE GATE IS OPEN. This was `EVENT_TYPES.filter(t => !PLANT_REDUCTION_EVENT_TYPES
 // .includes(t))` while the two reduction types had a complete API write path and NO capture panel:
 // the API REQUIRES a quantity and a reason on them, so a picker entry would have been a visible
-// option that 400s every time — the CATCH_UP_EDITOR_SHIPPED failure shape (a badge linking to an
+// option that 400s every time — the old Catch-up badge's failure shape (a badge linking to an
 // editor nobody built). V4-LOSSEVENT-001 deliberately left the re-opening as this ONE line.
 //
 // The panel now exists: components/PlantReductionFields.jsx, rendered by EventNew as a REQUIRED

@@ -345,8 +345,8 @@ describe('BottomNav — More menu', () => {
     expect(screen.getByText('Desk')).toBeDefined()
   })
 
-  // V5-PLANTSTARTDATES-001 — CATCH_UP_EDITOR_SHIPPED is on, so the door is back, as a plain row.
-  // KILLING MUTATION: flip the flag false. RESULT: RED (no link).
+  // V5-PLANTSTARTDATES-001 — the start-date editor shipped, so the door is back, as a plain row.
+  // KILLING MUTATION: mark the catch-up row `enabled: false` in MORE_ROWS. RESULT: RED (no link).
   it('More menu shows the Catch up row as a plain link to /plants/catch-up', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('More navigation options'))

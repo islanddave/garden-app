@@ -28,7 +28,6 @@ vi.mock('../components/BottomNavDot.jsx', () => ({
   default: () => null,
 }))
 
-// Stub feature flag — keep CATCH_UP_EDITOR_SHIPPED stable for the test.
 // V4-OVERLAY-001 Slice 2: BottomNav's create-menu Log/Log-many rows are now <OverlayLink>s, which
 // read OVERLAY_ROUTES_ENABLED at render; the partial mock must export it (vitest throws on an
 // undefined mocked export). Prod value is true.
@@ -39,7 +38,6 @@ vi.mock('../components/BottomNavDot.jsx', () => ({
 // module means only the flags this file actually pins are overridden and the rest track prod.
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
-  CATCH_UP_EDITOR_SHIPPED: false,
   OVERLAY_ROUTES_ENABLED: true,
   PROJECTS_HIDDEN: false,
   SPACE_PHOTOS_ENABLED: false,

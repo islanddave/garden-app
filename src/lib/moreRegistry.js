@@ -18,7 +18,7 @@
 // could silently drop are fields, not JSX: the Seeds subtitle and its `more-seeds` testid, the Critters
 // subtitle (ambient — Reward UX V102 forbids a badge or count here), and each row's ambient dot
 // (`adornment`, see ADORNMENT_IN_MORE below).
-import { CATCH_UP_EDITOR_SHIPPED, SPACE_PHOTOS_ENABLED } from './featureFlags.js'
+import { SPACE_PHOTOS_ENABLED } from './featureFlags.js'
 import { SEEDS_PATH } from './seedsRoutes.js'
 import { TAB_REGISTRY, BAR_SLOT_ID_RE } from './navConfig.js'
 
@@ -67,7 +67,7 @@ export const MORE_ROWS = [
   // V5-PLANTSTARTDATES-001 — a plain link row now (it was a CatchUpBadge component row, so it was
   // unpinnable). NO count: a count nudging you to fill data is a badge Reward UX V102 forbids here.
   { id: 'catch-up',   to: '/plants/catch-up', label: 'Catch up', iconName: 'care.plantedOut', section: 'garden',
-    sub: 'Add missing start dates', enabled: CATCH_UP_EDITOR_SHIPPED },
+    sub: 'Add missing start dates' },
   // End of season — the ONLY door to /season-end. Last in Your garden so no existing row moves within
   // its section; the icon is the Ended status glyph, the status this page sets.
   { id: 'season-end', to: '/season-end', label: 'End of season', iconName: 'status.ended', section: 'garden',
