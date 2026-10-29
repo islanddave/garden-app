@@ -32,9 +32,8 @@
 // naming a freeze method still tells you the thing is frozen somewhere, and a freeze row that later
 // grows a pantry leg loses the exemption without anyone remembering to edit this file.
 //
-// TEXT ASSERTION, because lambda/preservation/index.js cannot be imported by vitest — Neon, Clerk and
-// AWS all run at module scope. Same constraint that let the classifyUseBy day-boundary bug ship
-// untested, and the same workaround every other test in this directory uses.
+// TEXT ASSERTION by choice: lambda/preservation/index.js and shelfLife.js are both importable
+// (lambda/_test-stubs); the next paragraph says why this file reads the text.
 //
 // RE-POINTED 2026-09-29 (Put-Up release 1a): the table moved verbatim into shelfLife.js, which IS
 // importable — shelfLife.test.js executes it and pins every cell. This file keeps reading the TEXT of

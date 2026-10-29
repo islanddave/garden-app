@@ -12,9 +12,8 @@
 // were leaking — dead tissue being asked for water. `harvested` (7 rows) is deliberately NOT excluded:
 // a harvested plant still needs water (Dave, 2026-06-22), and the sibling surfaces agree.
 //
-// Source-text guard: a lambda test must never import this handler's index.js — each Lambda is zipped
-// per-directory with its own package.json and CI installs the ROOT manifest only, so an import that
-// resolves on a dev machine CANNOT resolve in CI.
+// Source-text guard: index.js is importable through lambda/_test-stubs, but the stub never evaluates
+// SQL, so the exclusion predicate is checked as text.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

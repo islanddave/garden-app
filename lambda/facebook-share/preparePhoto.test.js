@@ -120,8 +120,8 @@ describe('index.js preparePhoto call site (SOURCE-TEXT guard — asserts shape, 
 });
 
 // ── BUG-FBSHAREBYTES-001 — LAYER 2: SOURCE-TEXT GUARD, not behaviour ────────────────────────────
-// Same caveat as the guards above and stated the same way so nobody reads it as more: index.js
-// cannot be imported here, so this asserts the SHAPE of the call site, never what it does. The
+// Same caveat as the guards above and stated the same way so nobody reads it as more: this file does
+// not import index.js, so this asserts the SHAPE of the call site, never what it does. The
 // batching itself has real execution coverage in batch.test.js — that is why it lives in its own
 // import-free module.
 describe('the prepare step is bounded, not unbounded (source shape)', () => {

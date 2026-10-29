@@ -17,8 +17,8 @@
 // referenced by BOTH search predicates. A handler that SELECTs a column prod lacks 500s every
 // request — and the search path has no other coverage that would notice.
 //
-// Static source inspection rather than import: index.js loads @neondatabase/serverless and
-// @clerk/backend at module scope and cannot be imported under `npm ci` in CI.
+// Static source inspection rather than import: index.js is importable through lambda/_test-stubs, but
+// the stub never evaluates SQL, so the columns a statement names are visible only in its source text.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

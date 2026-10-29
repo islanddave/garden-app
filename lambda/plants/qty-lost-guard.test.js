@@ -9,11 +9,9 @@
 // on a live route. Arming a CHECK is a deploy, not a migration: this guard ships FIRST.
 //
 // WHY IT IS SHAPED THIS WAY. validateQtyLost is a pure function in validate.js, so the behavioural
-// half below runs the REAL code rather than asserting on source text — index.js cannot be imported
-// under CI's root `npm ci` (it pulls @neondatabase/serverless and the AWS/Clerk SDKs, which are
-// installed per-Lambda-dir and absent from the root tree; validate.js's own header documents this).
-// The wiring half is therefore source-text, because that is the only reachable way to prove both
-// verbs call it — a validator nothing calls is the failure mode this pairing closes.
+// half below runs the REAL code rather than asserting on source text. The wiring half reads index.js
+// as text to prove both verbs call it — a validator nothing calls is the failure mode this pairing
+// closes.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

@@ -7,10 +7,11 @@
 // scripts/schema-audit-join-baseline.json. That count had zero slack when this was written, so a new
 // `FROM preservation_log` with no contract here stops the ship after the ship phrase is given.
 //
-// WHY A SEPARATE FILE: parse_test_file returns on the keyed AUDIT_COLUMNS form FIRST and never reaches
-// the AUDIT_TABLES collector, so a keyed block dropped into select-columns.test.js would silently
-// destroy that file's own coverage; and household-columns.test.js is held byte-identical across 19
-// directories (lambda/household-columns-sync.test.js). Always a new file.
+// A new relation this directory reads goes in as a key of one of its keyed AUDIT_COLUMNS files, not
+// a new file (scripts/count-ratchets.json). Never put both forms in one file: parse_test_file returns on
+// the keyed form first, so a keyed block in an AUDIT_TABLES file silently drops that file's tables.
+// household-columns.test.js is not that file: it is held byte-identical across 19 directories
+// (lambda/household-columns-sync.test.js).
 //
 // WHY IT HAS TO LIVE IN THIS DIRECTORY: Phase 4 credits a contract only to the handler's own directory
 // (it groups by Path(handler).parent), and only when the AUDIT_COLUMNS literal is in this file's own

@@ -1,10 +1,8 @@
 // V5-PUTUPMULTISOURCE-001 / L-081 — the relation sourceRoutes.js reads and writes.
 //
-// WHY A SEPARATE FILE AND NOT A BLOCK IN kitchen-columns.test.js: parse_test_file returns on the
-// keyed AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector
-// (scripts/dev-main-schema-audit.py:128-137), so dropping a keyed block into an existing contract
-// file SILENTLY DESTROYS that file's own coverage. kitchen-columns.test.js's header states the rule
-// in one line — "Always a new file" — and this is that new file.
+// A new relation this directory reads goes in as a key of one of its keyed AUDIT_COLUMNS files, not
+// a new file (scripts/count-ratchets.json). Never put both forms in one file: parse_test_file returns on
+// the keyed form first, so a keyed block in an AUDIT_TABLES file silently drops that file's tables.
 //
 // WHY IT EXISTS AT ALL. L-081: a new relation is its own contract, shipped in the same change as the
 // query. Without this file the Phase 4 ratchet (scripts/schema-audit-join-baseline.json,

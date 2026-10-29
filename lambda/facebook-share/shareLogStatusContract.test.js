@@ -12,9 +12,9 @@
 // NOT write for several hours, because the migration permitting it had not yet been applied.
 // Nothing but discipline was enforcing that gap. Now this is.
 //
-// WHY IT READS SOURCE AS TEXT. lambda/facebook-share/index.js cannot be imported by the root vitest
-// run: its AWS/Clerk/Neon deps live in this directory's own package.json. So the statuses it writes
-// are extracted from the source, which is exactly how the other static guards in this repo work.
+// WHY IT READS SOURCE AS TEXT. lambda/facebook-share/index.js is importable through lambda/_test-stubs
+// (the handler*.test.js files drive it), but the complete list of statuses it writes is only in its
+// source, so they are extracted from the source text.
 // The status vocabulary for the orphan path is additionally exported from orphans.js so the two
 // halves can be cross-checked rather than both being scraped.
 import { describe, it, expect } from 'vitest';

@@ -9,10 +9,9 @@
 //       against hero_plant_id; a key mismatch yields a payload where every hero_photo_id is null,
 //       which is indistinguishable from "no crop has a photo" — the same silent-merge class
 //       applyWeights carries its own test file for.
-// Both are pure functions here precisely so they can be CALLED. lambda/harvests/index.js imports
-// neon/clerk/aws at module load and cannot be imported under the root vitest run, so anything that
-// lived there could only ever be guarded by a regex over its own source text, and no regex checks a
-// Map key.
+// Both are pure functions here precisely so they can be CALLED. lambda/harvests/index.js is importable
+// through lambda/_test-stubs, but the stub never evaluates SQL, so a join inside its queries could
+// only be guarded by a regex over its source text, and no regex checks a Map key.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

@@ -7,18 +7,17 @@
 // declared by no contract in the handler's OWN directory pushes that count up and reds the
 // schema-audit workflow — so the contract ships in the same change as the query, not after it.
 //
-// WHY A SEPARATE FILE AND NOT A BLOCK IN select-columns.test.js: parse_test_file returns on the
-// keyed AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector
-// (scripts/dev-main-schema-audit.py:128-137), so dropping a keyed block into an existing contract
-// file SILENTLY DESTROYS that file's own coverage. Always a new file.
+// A new relation this directory reads goes in as a key of one of its keyed AUDIT_COLUMNS files, not
+// a new file (scripts/count-ratchets.json). Never put both forms in one file: parse_test_file returns on
+// the keyed form first, so a keyed block in an AUDIT_TABLES file silently drops that file's tables.
 //
 // WHY IT HAS TO LIVE IN THIS DIRECTORY: Phase 4 credits a contract only to the handler's OWN
 // directory — it groups by Path(handler).parent — and only when the AUDIT_COLUMNS literal is in this
 // file's own source text, because parse_test_file does read_text() then regex. lambda/varieties will
 // need its own copy for the /sources routes; a shared module would be invisible to both.
 //
-// Static source inspection rather than import: these handlers load @neondatabase/serverless and
-// @clerk/backend at module scope and cannot be imported in the unit suite.
+// Static source inspection rather than import: lambda/_test-stubs make the handlers importable, but
+// the stub never evaluates SQL, so the columns a statement names are visible only in its source text.
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

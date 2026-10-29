@@ -13,8 +13,8 @@
 // live prod columns with the identifiers actually appearing inside this handler's sql`` templates
 // (comments stripped first). Every entry was verified present in prod by running the audit.
 //
-// Static source inspection rather than import: lambda/inventory-items/index.js loads @neondatabase/serverless
-// and @clerk/backend at module scope, so it cannot be imported under `npm ci` in CI.
+// Static source inspection rather than import: index.js is importable through lambda/_test-stubs, but
+// the stub never evaluates SQL, so the columns a statement names are visible only in its source text.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

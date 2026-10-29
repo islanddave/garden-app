@@ -4,9 +4,8 @@
 // SQL is household-scoped against v_sow_candidates, that the 501 not-configured
 // branch exists, and that the Anthropic Messages endpoint appears exactly once.
 //
-// Why static (same rationale as lambda/plants/select-columns.test.js): index.js
-// imports @neondatabase/serverless + @clerk/backend + @aws-sdk/* at module load
-// time, so it cannot be imported by unit tests. extract.js logic is unit-tested
+// Why static: index.js is importable through lambda/_test-stubs, but the stub
+// never evaluates SQL. extract.js logic is unit-tested
 // directly in extract.test.js; this file guards the index.js wiring.
 //
 // Failure mode guarded: a future edit reorders the routes below the idMatch —
@@ -66,7 +65,7 @@ describe('inventory-items Lambda — SEEDINV literal sub-routes (static-source g
 });
 
 // V4-SOWARCHIVE-001 static-source guard — PATCH /api/inventory-items/:id/sow-archive.
-// Static for the same reason as the block above (index.js cannot be imported by unit tests).
+// Static for the same reason as the block above (the stub never evaluates SQL).
 //
 // Failure modes guarded here, all of which are silent in prod rather than loud:
 //   - the route drifts below idMatch and stops being reachable;
@@ -224,8 +223,8 @@ describe('inventory-items Lambda — SEEDLINK route shape (static-source guard)'
 });
 
 // ── The gate, executed ────────────────────────────────────────────────────────────────────────
-// index.js cannot be imported (module-scope @neondatabase/serverless + @clerk/backend + @aws-sdk/*),
-// which is why every other guard in this directory is a source scan. The ownership gate is small,
+// Every other guard in this directory is a source scan (the stub in lambda/_test-stubs never
+// evaluates SQL). The ownership gate is small,
 // self-contained and the one piece where "does it actually refuse?" is the question — so it is cut
 // out of the RAW source by brace matching and run with injected fakes. Nothing is retyped: a change
 // to the gate in index.js changes what these tests execute.

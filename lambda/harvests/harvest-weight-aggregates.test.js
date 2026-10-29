@@ -1,9 +1,8 @@
 // V4-HARVWEIGHTREAD-001 slice 2 — the harvests read model's WEIGHT wire contract.
 //
-// Static source assertions, matching the house style of the sibling lambda tests
-// (events/harvest-weight-preserve.test.js, batch-order.test.js): index.js imports neon/clerk/aws,
-// which are deliberately absent from the root package.json, so it cannot be imported under the root
-// vitest run at all — the falsifiable property is the SHAPE of the statements. Behavioural coverage
+// Static source assertions, like the sibling lambda tests (events/harvest-weight-preserve.test.js,
+// batch-order.test.js): index.js is importable through lambda/_test-stubs, but the stub never
+// evaluates SQL, so the falsifiable property here is the SHAPE of the statements. Behavioural coverage
 // of the sums belongs to tests/integration/harvests.int.test.js against real Postgres.
 //
 // Two classes of bug are pinned here, and the first one SHIPPED:
