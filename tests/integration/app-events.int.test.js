@@ -1,45 +1,184 @@
 // new-file: no integration test existed for app-events
-// TEMPORARY catalog probe: prints the constraints and columns the C6 pins need. Replaced by the real file.
-import { describe, it } from 'vitest'
-import { directSql } from './_harness.js'
+// Pins today's /api/app-events replies on real Postgres (OPS-CODEREVIEW-001 C6) so D1/D2/D2b changes are seen.
+// The 23514 and 23502 replies echo the constraint/column name (D2b replaces that); 23505/23503 are unreachable
+// (uuid PK, no FK). Trap: no empty-subject guard, so a subject-less token reaches checkRateLimit.
+import { describe, it, expect, afterAll, vi } from 'vitest'
+import { verifyToken } from '@clerk/backend'
+import { directSql, callHandler, makeEvent, setTestUserId, testRunId } from './_harness.js'
+import { handler } from '../../lambda/app-events/index.js'
 
-const TABLES = ['app_events', 'ux_events', 'weather_cue_impression', 'user_notification_prefs', 'critter_species_prefs',
-  'critter_state', 'daily_plan', 'user_achievements', 'achievements', 'rate_limit_buckets', 'user_stats', 'xp_events',
-  'weather_cold_range']
+const ORIGINS = ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']
+// Clerk refuses a token whose azp is not in authorizedParties; this models that check on the list the handler passes.
+const signedFrom = (azp, sub) => (_token, opts) => (opts.authorizedParties.includes(azp)
+  ? Promise.resolve({ sub, azp })
+  : Promise.reject(new Error(`Invalid JWT Authorized party claim (azp) "${azp}"`)))
+const raw = async (event) => {
+  const r = await handler(event)
+  return { status: r.statusCode, body: r.body ? JSON.parse(r.body) : null, raw: r }
+}
+const post = (body) => callHandler(handler, { method: 'POST', path: '/api/app-events', body })
+const rowsFor = (sub) => directSql`SELECT * FROM app_events WHERE user_clerk_sub = ${sub} ORDER BY created_at`
 
-describe('catalog probe', () => {
-  it('prints constraints, columns and seed counts', async () => {
-    const cons = await directSql`
-      SELECT c.conrelid::regclass::text AS tbl, c.conname, c.contype, pg_get_constraintdef(c.oid) AS def
-        FROM pg_constraint c
-       WHERE c.conrelid::regclass::text = ANY(${TABLES.map((t) => t)})
-          OR c.conrelid::regclass::text = ANY(${TABLES.map((t) => 'public.' + t)})
-       ORDER BY 1, 2`
-    console.log('C6PROBE constraints\n' + cons.map((r) => `${r.tbl}|${r.conname}|${r.contype}|${r.def}`).join('\n'))
-    const cols = await directSql`
-      SELECT table_name, column_name, data_type, is_nullable, column_default
-        FROM information_schema.columns
-       WHERE table_schema = 'public' AND table_name = ANY(${TABLES})
-       ORDER BY table_name, ordinal_position`
-    console.log('C6PROBE columns\n' + cols.map((r) => `${r.table_name}|${r.column_name}|${r.data_type}|${r.is_nullable}|${r.column_default}`).join('\n'))
-    const trg = await directSql`
-      SELECT event_object_table AS tbl, trigger_name, action_timing, event_manipulation
-        FROM information_schema.triggers
-       WHERE event_object_schema = 'public' AND event_object_table = ANY(${TABLES})
-       ORDER BY 1, 2`
-    console.log('C6PROBE triggers\n' + trg.map((r) => `${r.tbl}|${r.trigger_name}|${r.action_timing}|${r.event_manipulation}`).join('\n'))
-    const ach = await directSql`
-      SELECT is_active, is_secret, COUNT(*)::int AS n FROM achievements GROUP BY 1, 2 ORDER BY 1, 2`
-    console.log('C6PROBE achievements ' + JSON.stringify(ach))
-    const kinds = await directSql`
-      SELECT c.relname, c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE n.nspname = 'public' AND c.relname = ANY(${['garden_node', 'container', 'plants', 'plant_projects', 'tasks']})`
-    console.log('C6PROBE relkinds ' + JSON.stringify(kinds))
-    try {
-      await directSql`SELECT ${'a\u0000b'}::text AS x`
-      console.log('C6PROBE nul: accepted')
-    } catch (e) {
-      console.log('C6PROBE nul: ' + e.code + ' ' + e.message)
-    }
+const RUN = testRunId()
+const USER = `c6_appev_${RUN}`
+const LIMITED = `c6_appev_limited_${RUN}`
+const DENIED = `c6_appev_denied_${RUN}`
+// 256 characters, still carrying the fixture namespace so the global sweep reaches its rate-limit row.
+const LONG_SUB = `c6_appev_long_${RUN}_`.padEnd(256, 'x')
+
+afterAll(async () => {
+  await directSql`DELETE FROM app_events WHERE user_clerk_sub IN (${USER}, ${LIMITED}, ${DENIED}, ${LONG_SUB})`
+  await directSql`DELETE FROM rate_limit_buckets WHERE actor_clerk_sub IN (${USER}, ${LIMITED}, ${DENIED}, ${LONG_SUB})`
+})
+
+describe('app-events — normal requests', () => {
+  it('OPTIONS answers 204 with an empty body before sign-in', async () => {
+    const r = await raw({ ...makeEvent({ method: 'OPTIONS', path: '/api/app-events' }), headers: {} })
+    expect(r.raw).toEqual({ statusCode: 204, headers: {}, body: '' })
+  })
+
+  it('POST writes one row as the caller and answers 201 { id, created_at }', async () => {
+    setTestUserId(USER)
+    const { status, body, raw: res } = await post({
+      event_name: 'reward_seen', event_source: 'today', session_id: 's-1', metadata: { xp: 10 },
+    })
+    expect(status).toBe(201)
+    expect(res.headers).toEqual({ 'Content-Type': 'application/json' })
+    expect(Object.keys(body).sort()).toEqual(['created_at', 'id'])
+    const rows = await rowsFor(USER)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      id: body.id, event_name: 'reward_seen', event_source: 'today', session_id: 's-1', metadata: { xp: 10 },
+    })
+  })
+
+  it('optional fields land as NULL', async () => {
+    setTestUserId(USER)
+    const { status, body } = await post({ event_name: 'bare' })
+    expect(status).toBe(201)
+    const [row] = await directSql`SELECT event_source, session_id, metadata FROM app_events WHERE id = ${body.id}`
+    expect(row).toEqual({ event_source: null, session_id: null, metadata: null })
+  })
+
+  it('each accepted POST counts one against the hourly bucket', async () => {
+    const [b] = await directSql`
+      SELECT count FROM rate_limit_buckets
+       WHERE actor_clerk_sub = ${USER} AND bucket_key = 'app_events.write' AND window_start = date_trunc('hour', now())`
+    expect(b.count).toBe(2)
+  })
+
+  it('a non-POST method is 405 after sign-in', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, { method: 'GET', path: '/api/app-events' })
+    expect(status).toBe(405)
+    expect(body).toEqual({ error: 'Method not allowed — POST only' })
+  })
+
+  it('the 1001st POST in an hour is 429 and writes nothing', async () => {
+    await directSql`
+      INSERT INTO rate_limit_buckets (actor_clerk_sub, bucket_key, window_start, count)
+      VALUES (${LIMITED}, 'app_events.write', date_trunc('hour', now()), 1000)`
+    setTestUserId(LIMITED)
+    const { status, body } = await post({ event_name: 'over' })
+    expect(status).toBe(429)
+    expect(body).toEqual({ error: 'Rate limit exceeded — 1000/hour for app_events.write' })
+    expect(await rowsFor(LIMITED)).toEqual([])
+  })
+})
+
+describe('app-events — malformed and invalid bodies', () => {
+  it.each([
+    [{}, 'event_name is required'],
+    [{ event_name: 7 }, 'event_name is required'],
+    [{ event_name: 'x'.repeat(65) }, 'event_name must be 1-64 characters'],
+    [{ event_name: 'ok', event_source: 5 }, 'event_source must be a string'],
+    [{ event_name: 'ok', session_id: {} }, 'session_id must be a string'],
+    [{ event_name: 'ok', metadata: [1] }, 'metadata must be a JSON object'],
+    [{ event_name: 'ok', metadata: 'str' }, 'metadata must be a JSON object'],
+    [{ event_name: 'ok', metadata: { blob: 'y'.repeat(8200) } }, 'metadata exceeds 8KB limit (8211 bytes)'],
+  ])('%j -> 400 %s', async (body, error) => {
+    setTestUserId(DENIED)
+    const r = await post(body)
+    expect(r.status).toBe(400)
+    expect(r.body).toEqual({ error })
+  })
+
+  it('a JSON null body -> 400 body required', async () => {
+    setTestUserId(DENIED)
+    const r = await raw({ ...makeEvent({ method: 'POST', path: '/api/app-events' }), body: 'null' })
+    expect(r.status).toBe(400)
+    expect(r.body).toEqual({ error: 'body required' })
+  })
+
+  it('no body at all is read as {} -> 400 event_name is required', async () => {
+    setTestUserId(DENIED)
+    const r = await raw(makeEvent({ method: 'POST', path: '/api/app-events' }))
+    expect(r.status).toBe(400)
+    expect(r.body).toEqual({ error: 'event_name is required' })
+  })
+
+  it('TODAY: malformed JSON is a 500, not a 400', async () => {
+    setTestUserId(DENIED)
+    const r = await raw({ ...makeEvent({ method: 'POST', path: '/api/app-events' }), body: '{not json' })
+    expect(r.status).toBe(500)
+    expect(r.body).toEqual({ error: 'Internal server error' })
+  })
+
+  it('no refused body wrote a row or touched the bucket', async () => {
+    expect(await rowsFor(DENIED)).toEqual([])
+    expect(await directSql`SELECT 1 FROM rate_limit_buckets WHERE actor_clerk_sub = ${DENIED}`).toEqual([])
+  })
+})
+
+describe('app-events — sign-in and origin', () => {
+  it('a token Clerk rejects is 401 and writes nothing', async () => {
+    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.reject(new Error('JWT is expired')))
+    const r = await raw(makeEvent({ method: 'POST', path: '/api/app-events', body: { event_name: 'x' } }))
+    expect(r.status).toBe(401)
+    expect(r.body).toEqual({ error: 'Unauthorized' })
+  })
+
+  it('the handler hands Clerk exactly the two production origins', async () => {
+    setTestUserId(DENIED)
+    await post({})
+    expect(vi.mocked(verifyToken).mock.calls.at(-1)[1].authorizedParties).toEqual(ORIGINS)
+  })
+
+  it('a token minted for another origin is 401', async () => {
+    vi.mocked(verifyToken).mockImplementationOnce(signedFrom('https://evil.example', DENIED))
+    const r = await raw(makeEvent({ method: 'POST', path: '/api/app-events', body: { event_name: 'x' } }))
+    expect(r.status).toBe(401)
+    expect(r.body).toEqual({ error: 'Unauthorized' })
+    expect(await rowsFor(DENIED)).toEqual([])
+  })
+
+  it('a token minted for the CloudFront origin is accepted', async () => {
+    vi.mocked(verifyToken).mockImplementationOnce(signedFrom(ORIGINS[1], DENIED))
+    const r = await raw(makeEvent({ method: 'POST', path: '/api/app-events', body: {} }))
+    expect(r.status).toBe(400)
+  })
+})
+
+describe('app-events — database errors (the replies D2b changes)', () => {
+  it('23514: a subject over 255 chars -> 400 naming the CHECK constraint', async () => {
+    setTestUserId(LONG_SUB)
+    const r = await post({ event_name: 'long' })
+    expect(r.status).toBe(400)
+    expect(r.body).toEqual({ error: 'Constraint violation: chk_app_events_user_clerk_sub_len' })
+    expect(await rowsFor(LONG_SUB)).toEqual([])
+  })
+
+  it('23502: a token with no subject -> 400 naming the NOT NULL column of the rate-limit table', async () => {
+    vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({}))
+    const r = await raw(makeEvent({ method: 'POST', path: '/api/app-events', body: { event_name: 'nosub' } }))
+    expect(r.status).toBe(400)
+    expect(r.body).toEqual({ error: 'Required field missing: actor_clerk_sub' })
+  })
+
+  it('an unmapped error (22021, NUL in event_name) is a generic 500', async () => {
+    setTestUserId(USER)
+    const r = await post({ event_name: 'nul\u0000name' })
+    expect(r.status).toBe(500)
+    expect(r.body).toEqual({ error: 'Internal server error' })
   })
 })
