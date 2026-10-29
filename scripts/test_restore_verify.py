@@ -2,6 +2,7 @@
 """Mocked unit tests for restore-verify.py (spec §3 B3; Gate 0.2/0.3 rework:
 restore into an EMPTY container, structural inventory vs prod, scope probe,
 snap-bucket parameterization). All S3/psql/pg_restore I/O mocked."""
+import shlex
 import datetime as dt
 import importlib.util
 import io
@@ -1254,11 +1255,15 @@ def _backup_bodies(tmp_path):
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
 
-    def body(name):
-        return (steps[name]["run"]
-                .replace("${{ secrets.NEON_BACKUP_URL }}", "postgresql://stub")
+    def sub(text):
+        return (text.replace("${{ secrets.NEON_BACKUP_URL }}", "postgresql://stub")
                 .replace("${{ vars.BACKUP_BUCKET_NAME }}", "bkt")
                 .replace("/usr/lib/postgresql/17/bin", str(bindir)))
+
+    def body(name):
+        # A step's `env:` is part of its behaviour (secrets are passed there, not pasted into the script).
+        exports = "".join(f"export {k}={shlex.quote(sub(str(v)))}\n" for k, v in (steps[name].get("env") or {}).items())
+        return exports + sub(steps[name]["run"])
     return body, bindir
 
 
@@ -1390,7 +1395,8 @@ def test_daily_backup_reads_the_catalog_with_the_one_sql_text_and_the_pin(tmp_pa
     assert f'-c "{rv.CATALOG_LIST_SQL}"' in dump
     assert '-c "SET search_path TO pg_catalog"' in dump
     # read BEFORE pg_dump, like the table list
-    assert dump.index(rv.CATALOG_LIST_SQL) < dump.index('pg_dump "postgresql://stub"')
+    assert "export NEON_BACKUP_URL=postgresql://stub\n" in dump  # the dump reads the backup secret, not another URL
+    assert dump.index(rv.CATALOG_LIST_SQL) < dump.index('pg_dump "$NEON_BACKUP_URL"')
 
 
 def test_daily_backup_writes_a_catalog_list_the_reader_accepts(tmp_path):
