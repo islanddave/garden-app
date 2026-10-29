@@ -38,7 +38,6 @@ import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toG
 const POST_SAVE_STRIP_SPACER_PX = 86
 import { seasonTotalPhrase } from '../lib/harvestSummary.js'
 import { useUxFlow, FLOWS, sendUxEvent } from '../lib/uxEvents.js'
-import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 
 // V4-PHOTOBULK-001 S2. Matches PhotoUpload's DEFAULT_MAX_FILES — one number for "a handful you just
 // took", not the server's MAX_BATCH of 20, which governs Track A's camera-roll drain.
@@ -868,9 +867,9 @@ export default function EventNew({ harvestSession = false } = {}) {
   const [showPrivate,  setShowPrivate]  = useState(false)
   // BUG-POSTSAVEVALIDATION-001 — bumped by resetForNext() to mark the planting picker fresh again.
   const [pickerResetNonce, setPickerResetNonce] = useState(0)
-  // V3-EVENT-008 §8: "Add details" collapsible (Quantity / Visibility / Private notes).
-  // Default collapsed unless the feature flag flips it open. Fields stay reachable.
-  const [showAddDetails, setShowAddDetails] = useState(EVENTNEW_ADD_DETAILS_EXPANDED)
+  // V3-EVENT-008 §8: "Add details" collapsible (Quantity / Visibility / Private notes), starts
+  // collapsed. Fields stay reachable.
+  const [showAddDetails, setShowAddDetails] = useState(false)
   // V4-HARVFORMORDER-001 (S4): the harvest-only single disclosure holding Photo / Notes / Project /
   // Metadata / When. Unconditional hook (never rendered for a non-harvest type, but the state must
   // not be conditional). Collapsed by default — that IS the slice: the harvest fast path is
@@ -1684,7 +1683,7 @@ export default function EventNew({ harvestSession = false } = {}) {
     // would silently ride onto the NEXT planting. Exactly the treatment.* defect recorded above.
     setReduction({ qty: '', reason: '' }); setReductionError(null)
     clearPhoto()
-    setShowAddDetails(EVENTNEW_ADD_DETAILS_EXPANDED)
+    setShowAddDetails(false)
     setShowPrivate(false)
     setError(null)
     setSaving(false)
