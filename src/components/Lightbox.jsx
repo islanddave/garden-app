@@ -1,26 +1,22 @@
 // V4-THEME-001 (V200 Pass B) — full-screen photo Lightbox GALLERY primitive (Slice 1).
 //
-// Supersedes the single-image lightbox embedded in ZoomableImage.jsx. This is a multi-image
-// gallery: swipe/arrow paging, pinch + double-tap zoom (1x-4x), pan-when-zoomed, swipe-down-to-
+// A multi-image gallery: swipe/arrow paging, pinch + double-tap zoom (1x-4x), pan-when-zoomed, swipe-down-to-
 // close, a filmstrip scrubber, captions, and a fully keyboard/button-operable zoom+pan path
 // (WCAG SC 2.5.7 dragging-movements + 2.1.1 keyboard). Pointer Events + CSS transforms only -
 // NO external gesture libs, NO iOS gesturechange.
 //
-// Dialog/portal conventions match ZoomableImage (createPortal to document.body, role=dialog +
-// aria-modal + accessible name, focus-to-control, Escape/backdrop close). Focus-trap +
-// focus-RESTORE on close match forms/Sheet.jsx. Reduced-motion uses the repo helper pattern
-// (CritterAnnouncement) - test-safe (returns false when matchMedia is unavailable in jsdom).
+// Dialog/portal conventions: createPortal to document.body, role=dialog + aria-modal + accessible
+// name, focus-to-control, Escape/backdrop close. Focus-trap + focus-RESTORE on close match
+// forms/Sheet.jsx. Reduced-motion detection is test-safe (returns false when matchMedia is
+// unavailable in jsdom).
 //
 // Lives OUTSIDE src/components/forms/, so it is not in the no-hex ESLint scope; the literal
-// rgba black backdrop / #fff controls are intentional and mirror ZoomableImage.
+// rgba black backdrop / #fff controls are intentional.
 //
 // NOTE (corrected 2026-08-06): the "Ships DARK / not wired to any consumer" banner that stood here
 // was STALE by several slices. Lightbox is LIVE at two production render sites — PhotosWall.jsx:187
 // and PlantingDetail.jsx:730. It matters because a stale "dead code" header is exactly what makes a
 // live, un-arbitrated full-screen modal get skipped in a registry migration.
-// (Counting trap for whoever greps next: `rg "<Lightbox"` returns a third hit in ZoomableImage.jsx,
-// which renders a DIFFERENT, locally-declared Lightbox defined in that same file. A JSX tag name is
-// not a component identity — resolve the import binding before counting.)
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
@@ -92,7 +88,7 @@ export function pointerDistance(a, b) {
   return Math.hypot(dx, dy)
 }
 
-// Reduced-motion detection - repo helper pattern (CritterAnnouncement). Test-safe: returns
+// Reduced-motion detection. Test-safe: returns
 // false when window/matchMedia is absent (jsdom), so transitions render in tests without error.
 function prefersReducedMotion() {
   if (typeof window === 'undefined' || !window.matchMedia) return false
@@ -232,7 +228,7 @@ export default function Lightbox({
     if (!open) return
     if (typeof document === 'undefined') return
     restoreFocusRef.current = document.activeElement
-    // Move focus to the close control for keyboard + screen-reader users (ZoomableImage style).
+    // Move focus to the close control for keyboard + screen-reader users.
     closeBtnRef.current?.focus()
 
     function onKey(e) {
