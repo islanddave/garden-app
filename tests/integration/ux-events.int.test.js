@@ -4,8 +4,9 @@
 // can cause (22007 bad client_ts, 23502 missing subject) is a generic 500. Trap: no empty-subject guard, and
 // malformed JSON is a 500, not a 400.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { verifyToken } from '@clerk/backend'
 import { directSql, callHandler, makeEvent, setTestUserId, testRunId } from './_harness.js'
+// After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
+import { verifyToken } from '@clerk/backend'
 import { handler } from '../../lambda/ux-events/index.js'
 
 const ORIGINS = ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']

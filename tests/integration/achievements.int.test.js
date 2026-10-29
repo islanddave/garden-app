@@ -3,8 +3,9 @@
 // Read-only: no 23514/23505/23503 is reachable; the one database error a request can cause (a NUL byte in
 // the subject, 22021) pins the generic 500. Trap: this handler has NO empty-subject 401 guard today.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { verifyToken } from '@clerk/backend'
 import { directSql, callHandler, makeEvent, setTestUserId, testRunId } from './_harness.js'
+// After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
+import { verifyToken } from '@clerk/backend'
 import { handler } from '../../lambda/achievements/index.js'
 
 const ORIGINS = ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']

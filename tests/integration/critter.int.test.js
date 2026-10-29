@@ -5,8 +5,9 @@
 // malformed JSON while viewed and app-config answer 400.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
-import { verifyToken } from '@clerk/backend'
 import { directSql, callHandler, makeEvent, setTestUserId, testRunId } from './_harness.js'
+// After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
+import { verifyToken } from '@clerk/backend'
 import { handler, __resetTodaySectionsAbsence } from '../../lambda/critter/index.js'
 
 const ORIGINS = ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']

@@ -4,8 +4,9 @@
 // is absorbed by ON CONFLICT, other errors by its catch). 23514/23503 are unreachable: the beacon's
 // vocabularies mirror its CHECKs and nothing takes a request-supplied FK.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { verifyToken } from '@clerk/backend'
 import { directSql, callHandler, makeEvent, setTestUserId, testRunId, insertProject } from './_harness.js'
+// After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
+import { verifyToken } from '@clerk/backend'
 import { handler } from '../../lambda/daily-plan-read/index.js'
 
 const ORIGINS = ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']

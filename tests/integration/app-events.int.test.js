@@ -3,8 +3,9 @@
 // The 23514 and 23502 replies echo the constraint/column name (D2b replaces that); 23505/23503 are unreachable
 // (uuid PK, no FK). Trap: no empty-subject guard, so a subject-less token reaches checkRateLimit.
 import { describe, it, expect, afterAll, vi } from 'vitest'
-import { verifyToken } from '@clerk/backend'
 import { directSql, callHandler, makeEvent, setTestUserId, testRunId } from './_harness.js'
+// After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
+import { verifyToken } from '@clerk/backend'
 import { handler } from '../../lambda/app-events/index.js'
 
 const ORIGINS = ['https://garden.futureishere.net', 'https://dg6mmjhepoyt9.cloudfront.net']
