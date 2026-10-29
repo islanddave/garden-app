@@ -149,30 +149,12 @@ jobs:
           role-to-assume: arn:aws:iam::769788341849:role/garden-app-github-deploy-staging
           aws-region: us-east-1
 
+      # Byte-identical to deploy-lambda.yml's step (scripts/test_workflow_steps.py), so staging runs the zip prod gets.
+      # The script comes from the dev_sha checkout: a dev_sha older than the script's commit lacks it and fails here.
       - name: Build and zip ${{ matrix.function }}
-        if: matrix.function != 'photocdn-derivative'
-        run: |
-          cd lambda/${{ matrix.function }}
-          npm install --omit=dev
-          zip -r ../${{ matrix.function }}.zip .
-
-      # V4-PHOTOCDN-001 (mirrors deploy-lambda.yml): photocdn-derivative is nodejs22.x/arm64 and
-      # depends on `sharp` (native). The runner is x86_64, so a plain `npm install` packages the x64
-      # binary -> module-load 502 on the arm64 Lambda. Install the linux-arm64 binary explicitly and
-      # HARD-ASSERT it is in the zip. This assert is most of the reason the function belongs on
-      # staging at all: it is the one packaging failure that CI's static Lambda tests cannot see.
-      - name: Build and zip photocdn-derivative (arm64 sharp)
-        if: matrix.function == 'photocdn-derivative'
-        run: |
-          node -v && npm -v
-          cd lambda/photocdn-derivative
-          npm install --omit=dev --os=linux --cpu=arm64 --include=optional
-          zip -r ../photocdn-derivative.zip .
-          if ! unzip -l ../photocdn-derivative.zip | grep -q 'sharp-linux-arm64'; then
-            echo "FATAL: linux-arm64 sharp binary missing from zip — refusing to deploy an x64 build to an arm64 Lambda"; exit 1
-          fi
-          unzip -l ../photocdn-derivative.zip | grep -q 'node_modules/blurhash' || { echo "FATAL: blurhash dep missing from zip"; exit 1; }
-          echo "arm64 sharp + blurhash present in photocdn-derivative.zip"
+        env:
+          FN: ${{ matrix.function }}
+        run: bash scripts/package-lambda.sh "$FN"
 
       # OPS-LAMBDANODE22-001 (mirrors deploy-lambda.yml's "Ensure declared runtime", body byte-identical,
       # pinned by scripts/test_ensure_runtime_step.py): update-function-code never touches Runtime, so this

@@ -30,8 +30,8 @@ only when, for EVERY release function (lambda_fleet.release_functions(), pinned 
   1. the function exists, is not mid-update, and its Description is a well-formed marker;
   2. the marker's `code=` equals the function's live CodeSha256 — so nothing has replaced the code
      since the marker was written (a rollback or a console upload breaks this and forces a deploy);
-  3. the marker's Lambda inputs equal dev_sha's: the same seven identities promote-gate always
-     compared (tree of lambda/, blobs of the recipe/manifest/checker/event-type inputs, and the
+  3. the marker's Lambda inputs equal dev_sha's: the identities in PATHS (tree of lambda/, blobs of
+     the recipe, packaging script, manifest, checker and event-type inputs, and the
      root package.json digest that ignores `version`). The recipe blob is read at `recipe=`, every
      other input at `src=`, because that is where each one came from when the zip was built;
   4. its live Runtime is the `runtime` dev_sha's scripts/lambda-config-expected.json declares for it
@@ -86,11 +86,12 @@ CONFIG_WORKERS = 8
 
 CURRENT, NOT_CURRENT, UNKNOWN = 0, 1, 2
 
-# The seven Lambda inputs — the exact list the old main-vs-dev step in promote-gate.yml iterated, moved
-# here so there is one copy. If deploy-lambda.yml starts reading another file from outside lambda/, it
-# belongs here too; adding an input is one line.
+# The Lambda inputs, one copy (promote-gate.yml's old main-vs-dev step iterated the first seven). If
+# deploy-lambda.yml or the packaging script starts reading another file from outside lambda/, it belongs
+# here too; adding an input is one line.
 #   lambda                                the functions' source (a TREE sha: one exact identity per side)
-#   .github/workflows/deploy-lambda.yml   the recipe: build, zip and every config-ensure step
+#   .github/workflows/deploy-lambda.yml   the recipe: calls the packaging script, then every config-ensure step
+#   scripts/package-lambda.sh             builds every zip (staging's too); runs from the checkout, so read at src=
 #   scripts/lambda-config-expected.json   read BY the recipe (facebook-share timeout/memory) and asserted
 #   scripts/check-lambda-config.py          after it — OPS-LAMCHANGEDBLIND-001
 #   src/lib/eventTypes.js                 `npm run gen:event-types` generates lambda/events/
@@ -103,6 +104,7 @@ CURRENT, NOT_CURRENT, UNKNOWN = 0, 1, 2
 PATHS = (
     "lambda",
     ".github/workflows/deploy-lambda.yml",
+    "scripts/package-lambda.sh",
     "scripts/lambda-config-expected.json",
     "scripts/check-lambda-config.py",
     "src/lib/eventTypes.js",

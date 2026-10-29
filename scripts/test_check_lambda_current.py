@@ -9,6 +9,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import stat
 import subprocess
 import threading
@@ -127,6 +128,25 @@ def test_any_input_that_moved_forces_a_deploy(path):
     code, lines = cc.decide(DEV, FNS, all_marked(OLD), ident)
     assert code == cc.NOT_CURRENT
     assert path in lines[-1]
+
+
+def _packaging_script(workflow, job):
+    with open(os.path.join(HERE, "..", ".github", "workflows", workflow)) as fh:
+        steps = yaml.safe_load(fh)["jobs"][job]["steps"]
+    run = next(s["run"] for s in steps if s.get("name") == "Build and zip ${{ matrix.function }}")
+    return re.fullmatch(r'bash (\S+) "\$FN"', run).group(1)
+
+
+def test_a_change_to_only_the_packaging_script_forces_a_deploy():
+    # F6: the script both deploy workflows build with runs from the checkout, so it is read at src=, not recipe=.
+    script = _packaging_script("deploy-lambda.yml", "deploy")
+    assert _packaging_script("deploy-staging.yml", "deploy-lambdas") == script
+    assert script in cc.PATHS and script != cc.RECIPE_PATH
+    ident = Idents({(DEV, script): "changed"})
+    code, lines = cc.decide(DEV, FNS, all_marked(OLD, recipe=NEWER), ident)
+    assert code == cc.NOT_CURRENT
+    assert lines[-1] == f"VERDICT: NOT CURRENT — deploy (Lambda inputs differ from dev_sha: {script})"
+    assert (OLD, script) in ident.calls and (NEWER, script) not in ident.calls
 
 
 def test_the_recipe_is_read_where_the_workflow_came_from_and_the_rest_where_the_code_came_from():
