@@ -1,7 +1,7 @@
 // V4-LOGMANYUXREFRESH-001 S2 + S3 — the WHOLE Log Many page at Dave's geometry, in a real browser.
 //
-// WHY A SECOND LOG MANY ENTRY. `logmany.jsx` mounts ScopeChecklist ALONE, which is enough to measure
-// the review list but cannot answer either question this lane has to answer:
+// WHY THE WHOLE PAGE. ScopeChecklist alone is enough to measure the review list but cannot answer
+// either question this lane has to answer:
 //   S2 — raising four tap targets adds height to a PAGE. "Nothing here sits under a sticky band" is
 //        a claim about the page, so the page is what has to be rendered to check it, and the fourth
 //        control ("Reset to today") lives in LogMany.jsx and not in the component at all.

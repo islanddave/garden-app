@@ -4,7 +4,7 @@
 // a thumb, a name, a status badge, a "Last logged" line and a tick box fit a 426px row, or whether
 // the sticky bar actually sits ABOVE the tab bar. That bar is `position: fixed` at
 // `bottom: var(--bottom-nav-height)`, and that variable is written by BottomNav's own layout effect
-// — so the REAL BottomNav is mounted here (the navcustom.jsx chain: AuthProvider with Clerk stubbed
+// — so the REAL BottomNav is mounted here (the provider chain: AuthProvider with Clerk stubbed
 // by the harness config → PrefsProvider → NavPrefsProvider → BottomNav). A stand-in <nav> would not
 // write the variable and the bar would measure against 0px.
 //

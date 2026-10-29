@@ -44,7 +44,7 @@ const PLANTING = {
 }
 
 // Stub the wire, not the module: the sheet then runs its real fetch path, its real error handling and
-// its real VarietyPicker, and only the far side is faked. Same approach as harvestlog.jsx.
+// its real VarietyPicker, and only the far side is faked.
 window.fetch = async (url, opts = {}) => {
   const u = String(url)
   const ok = (json) => ({ ok: true, status: 200, json: async () => json })

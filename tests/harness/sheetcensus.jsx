@@ -10,9 +10,9 @@
 // (working tree vs HARNESS_BASELINE_SHA, or before/after an edit) and draws the conclusion.
 //
 // AuthContext IS imported here, unlike plantingphotosheet.jsx. That entry's ban is specific to it:
-// it never needed a provider, so not importing one was free. `editdeeplink.jsx` has mounted the real
-// AuthProvider on the harness Clerk stub since BUG-EDITDEEPLINKRACE-001, which is the standing proof
-// the dual-React trap is not reached through this alias set. The `editor` case needs it (PlantForm's
+// it never needed a provider, so not importing one was free. `heropill.jsx` mounts the real
+// AuthProvider on the harness Clerk stub too, which is the standing proof the dual-React trap is not
+// reached through this alias set. The `editor` case needs it (PlantForm's
 // FavoriteToggle-adjacent tree uses the strict useAuth), and that case is the TALLEST full-size
 // consumer in the census — the one where the cap actually binds.
 import React, { useEffect, useState } from 'react'
