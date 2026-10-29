@@ -82,8 +82,13 @@ def test_ctas_snapshot_tables_are_ignored():
     assert not mod._ignored('photos')
 
 
-def test_missing_url_returns_2_not_0(monkeypatch):
-    """An unreachable/unconfigured environment is UNKNOWN drift, never 'no drift'."""
+def test_missing_url_returns_3_not_0_or_2(monkeypatch, capsys, tmp_path):
+    """An unconfigured environment is UNKNOWN drift, never 'no drift'. It must also differ from 2 (unreachable),
+    which staging-drift.yml turns into a passing warning: a missing secret there is a misconfiguration and fails."""
+    summary = tmp_path / 'summary'
     monkeypatch.delenv('NEON_DATABASE_URL', raising=False)
-    monkeypatch.delenv('NEON_STAGING_URL', raising=False)
-    assert mod.main([]) == 2
+    monkeypatch.setenv('NEON_STAGING_URL', 'postgresql://staging.invalid/db')
+    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(summary))
+    assert mod.main([]) == 3
+    assert '::error title=Staging drift UNVERIFIED::' in capsys.readouterr().out
+    assert 'FAILED — staging drift check could not run' in summary.read_text()

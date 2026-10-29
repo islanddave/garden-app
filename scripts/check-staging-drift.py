@@ -42,8 +42,10 @@ exit 1 (intended for a manual pre-Lane-C style check, not for the default CI run
 EXIT CODES (house convention, cf. check-coverage-ratchet.py)
   0  ran successfully (drift may still be reported as a warning)
   1  --strict and prod-only drift was found
-  2  script/input error — a URL missing, or either database unreachable.
-     NEVER a silent pass: an unreachable prod is UNKNOWN, not "no drift".
+  2  either database unreachable (or psycopg absent). NEVER a silent pass: an
+     unreachable prod is UNKNOWN, not "no drift". staging-drift.yml warns and passes.
+  3  a URL missing. Distinct from 2 because both secrets are configured on the repo,
+     so in CI this is a misconfiguration and staging-drift.yml fails on it.
 
 USAGE
   python3 scripts/check-staging-drift.py [--strict]
@@ -160,8 +162,15 @@ def main(argv=None):
     if missing:
         print(f"\nFATAL: missing {', '.join(missing)} — schema drift is UNKNOWN, not absent.", file=sys.stderr)
         print("  Fix: provide both as environment variables (CI: repository secrets of the same name).", file=sys.stderr)
-        print(f"::error::staging-drift check could not run — missing {', '.join(missing)}")
-        return 2
+        print(f"::error title=Staging drift UNVERIFIED::{', '.join(missing)} missing; the comparison did NOT run. "
+              "Both secrets are configured on this repo, so this is a misconfiguration, not first-time setup.")
+        summary = os.environ.get('GITHUB_STEP_SUMMARY')
+        if summary:
+            with open(summary, 'a') as fh:
+                fh.write("### FAILED — staging drift check could not run\n"
+                         f"{', '.join(missing)} not readable by this job. Check for a rotation, rename,\n"
+                         "or an environment-scoped override shadowing the repo-scoped secret.\n")
+        return 3
 
     try:
         import psycopg
