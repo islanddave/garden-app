@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -26,9 +27,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // construct. The statement this file guards is preceded by ~45 lines of prose that quote
 // `germinated_at IS NULL`, `p.germinated_at`, NOW() and the two-arm predicate verbatim, so without
 // this every "must not contain" assertion below would trip on its own documentation.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 

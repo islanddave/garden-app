@@ -32,14 +32,12 @@ import {
   validateHarvestFields, validatePostBody, seedsWeightCalibration,
   ALLOWED_DISPOSITION, DISPOSITION_ERROR,
 } from './validators.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Same decommenter the sibling vocabulary guards use: a construct NAMED IN A COMMENT is not that
 // construct, and every comment in the two statements below discusses `disposition` at length.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 const BUNDLE = resolve(__dirname, '../../migrations/v4-losscapture-001');

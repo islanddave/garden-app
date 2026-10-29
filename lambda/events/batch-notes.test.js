@@ -22,14 +22,12 @@ import {
   validateBatchBody, validateNotes, normalizeNotes,
   MAX_NOTES_LEN, NOTES_TYPE_ERROR, NOTES_LENGTH_ERROR,
 } from './validators.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // A construct NAMED IN A COMMENT is not that construct — assertions run against decommented
 // source, or a deleted INSERT column would be found in its own epitaph. Same shape as
 // hs2-plant-filter.test.js / batch-order.test.js, the house pattern.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 
 const base = (over = {}) => ({ idempotency_key: 'key-1', event_type: 'watering', scope: { type: 'all' }, ...over });

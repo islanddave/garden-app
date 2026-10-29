@@ -18,15 +18,13 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // A construct NAMED IN A COMMENT is not that construct — deleting code and leaving `// was: <it>`
 // behind made earlier raw-source guards in this repo find their own epitaph and pass. Same
 // decommenter as undo-recompute.test.js: the `//` arm keeps `https://` intact, the `--` arm needs
 // surrounding space so a JS decrement is never read as a SQL comment.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 
 const RAW = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
 
