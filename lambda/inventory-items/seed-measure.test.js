@@ -17,15 +17,13 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { handler, validateUpdate, SEED_CONSTRAINT_MESSAGES } = await import('./index.js');
 
 // A construct NAMED IN A COMMENT is not that construct — this file's whole "stays out of the wide
 // PUT" claim would otherwise be satisfied by the very comment that explains why it stays out.
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 
 const USER = 'user_stub_owner';

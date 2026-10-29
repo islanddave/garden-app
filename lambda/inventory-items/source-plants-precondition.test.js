@@ -25,6 +25,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { handler } = await import('./index.js');
@@ -348,9 +349,6 @@ describe('the new keys are read by VALUE in index.js — not by the presence idi
   // wrong for these: `name` is a BARE assignment in the wide PUT, so a route that read an optional
   // `name` by that idiom here would force `name` into the strip list, and the harvest-year write
   // would then send no name at all (regression seat R2-09).
-  const decomment = (s) => s.split('\n')
-    .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-    .join('\n');
   const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
   const byPresence = [...new Set([...SRC.matchAll(/hasOwnProperty\.call\(body, '([^']+)'\)/g)].map((m) => m[1]))].sort();
 

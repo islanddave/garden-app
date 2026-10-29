@@ -21,13 +21,11 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
 import { etDay } from './seed-stage-date.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const { handler } = await import('./index.js');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const decomment = (s) => s.split('\n')
-  .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-  .join('\n');
 const INDEX_SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 const ARM = INDEX_SRC.slice(
   INDEX_SRC.indexOf('const seedStageMatch = rawPath.match'),

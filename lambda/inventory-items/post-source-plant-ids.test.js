@@ -27,6 +27,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
+import { decommentSqlDashSpace as decomment } from '../_test-stubs/handlerSource.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { handler, validateCreate } = await import('./index.js');
@@ -484,9 +485,6 @@ describe('POST with source_plant_ids — a planting that changed AFTER the gate 
 });
 
 describe('POST with source_plant_ids — one transaction (source shape; the stub has no transactions)', () => {
-  const decomment = (s) => s.split('\n')
-    .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
-    .join('\n');
   const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8')).replace(/\s+/g, ' ');
   const POST_ARM = SRC.slice(SRC.lastIndexOf("if (method === 'POST') {"));
 
