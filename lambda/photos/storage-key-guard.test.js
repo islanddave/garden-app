@@ -15,7 +15,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { isAllowedUploadKey, isAllowedStoragePath, SAFE_KEY_SEGMENT } from './uploadKeyPolicy.js';
+import { withRetryAfter } from '../rate-limit.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RAW = readFileSync(resolve(__dirname, 'index.js'), 'utf8');
@@ -140,9 +142,11 @@ function routeRunner(marker) {
   const block = balancedFrom(RAW, start);
   const names = ['rawPath', 'method', 'event', 'sql', 'householdIds', 'userId', 'isAllowedUploadKey',
     'SAFE_CONTENT_TYPE', 'RELAY_MAX_B64_CHARS', 'RELAY_THUMB_MAX_B64_CHARS', 'resp', 'warnRejectedFk',
-    'foreignStorageKey', 'PutObjectCommand', 'BUCKET', 'getSignedUrl', 's3'];
+    'foreignStorageKey', 'PutObjectCommand', 'BUCKET', 'getSignedUrl', 's3',
+    'uploadLimitRefusal', 'MAX_BATCH', 'SAFE_EXT', 'SAFE_KEY_SEGMENT', 'randomUUID'];
   const fn = new AsyncFunction(...names, `${block}\nreturn undefined;`);
-  return async ({ method, event, probeRows }) => {
+  // spend: false makes the SEC-13b upload limit refuse (uploadLimitRefusal answers its 429).
+  return async ({ method, event, probeRows, spend = true }) => {
     const deps = {
       rawPath: marker, method, event,
       sql: makeSql(probeRows), householdIds: HOUSEHOLD, userId: ME, isAllowedUploadKey,
@@ -155,6 +159,8 @@ function routeRunner(marker) {
       BUCKET: 'bucket',
       getSignedUrl: vi.fn(async () => 'https://signed.example/put'),
       s3: { send: vi.fn(async () => ({})) },
+      uploadLimitRefusal: vi.fn(async () => (spend ? null : REFUSAL)),
+      MAX_BATCH: constant('MAX_BATCH'), SAFE_EXT: constant('SAFE_EXT'), SAFE_KEY_SEGMENT, randomUUID,
     };
     const res = await fn(...names.map((n) => deps[n]));
     return { res, deps };
@@ -211,6 +217,69 @@ for (const r of ROUTES) {
     });
   });
 }
+
+// ── SEC-13b: per-object upload limits ───────────────────────────────────────────────────────────
+const REFUSAL = { statusCode: 429, body: { error: 'refused by the upload limit' } };
+const LIMIT_ROUTES = [
+  { ...ROUTES[0], objects: 1 },
+  { ...ROUTES[1], objects: 1 },
+  { ...ROUTES[2], name: 'relay-upload without a thumb', objects: 1 },
+  {
+    name: 'relay-upload with a thumb', marker: '/api/photos/relay-upload', method: 'POST',
+    event: { body: JSON.stringify({ key: KEY, data_b64: Buffer.from('jpegbytes').toString('base64'), thumb_b64: 'eA==' }) },
+    effect: (d) => d.s3.send, objects: 2,
+  },
+  {
+    name: 'batch of three files', marker: '/api/photos/batch', method: 'POST',
+    event: { body: JSON.stringify({ files: [{ ext: 'jpg' }, { ext: 'png' }, { ext: 'webp', content_type: 'image/webp' }] }) },
+    effect: (d) => d.getSignedUrl, objects: 3,
+  },
+];
+
+describe('SEC-13b: upload routes spend one unit per object, before anything is signed or PUT', () => {
+  it.each(LIMIT_ROUTES)('$name: refused -> its 429, nothing signed or PUT, one spend of $objects', async (r) => {
+    const { res, deps } = await routeRunner(r.marker)({ method: r.method, event: r.event, probeRows: [], spend: false });
+    expect(res).toBe(REFUSAL);
+    expect(r.effect(deps)).not.toHaveBeenCalled();
+    expect(deps.uploadLimitRefusal.mock.calls).toEqual([[deps.sql, ME, r.objects]]);
+  });
+  it.each(LIMIT_ROUTES)('$name: allowed -> 200 after one spend of $objects', async (r) => {
+    const { res, deps } = await routeRunner(r.marker)({ method: r.method, event: r.event, probeRows: [] });
+    expect(res.statusCode).toBe(200);
+    expect(r.effect(deps)).toHaveBeenCalled();
+    expect(deps.uploadLimitRefusal.mock.calls).toEqual([[deps.sql, ME, r.objects]]);
+  });
+  it.each(ROUTES)('$name: a foreign-registered key is refused (403) without spending', async (r) => {
+    const { res, deps } = await routeRunner(r.marker)({ method: r.method, event: r.event, probeRows: [{ x: 1 }] });
+    expect(res.statusCode).toBe(403);
+    expect(deps.uploadLimitRefusal).not.toHaveBeenCalled();
+  });
+  it('batch: a bad ext is the 400 it always was, before any spend or sign', async () => {
+    const event = { body: JSON.stringify({ files: [{ ext: 'jpg' }, { ext: '../x' }] }) };
+    const { res, deps } = await routeRunner('/api/photos/batch')({ method: 'POST', event, probeRows: [] });
+    expect(res).toEqual({ statusCode: 400, body: { error: 'invalid ext: ../x' } });
+    expect(deps.uploadLimitRefusal).not.toHaveBeenCalled();
+    expect(deps.getSignedUrl).not.toHaveBeenCalled();
+  });
+
+  // The helper itself, extracted like foreignStorageKey: what it spends and the 429 it answers.
+  const helperSrc = balancedFrom(RAW, RAW.indexOf('async function uploadLimitRefusal'));
+  const helper = () => new AsyncFunction('checkRateLimit', 'withRetryAfter', 'resp', 'UPLOAD_LIMIT_PER_HOUR',
+    'sql', 'userId', 'objects', helperSrc.slice(helperSrc.indexOf('{') + 1, -1));
+  const resp = (statusCode, body) => ({ statusCode, headers: { 'Content-Type': 'application/json' }, body });
+  it('uploadLimitRefusal spends `objects` on photos.upload; null when they fit, a 429 with Retry-After when not', async () => {
+    // PIN: the hourly object budget (design 9b: 4 x 2 x the 306-photo peak hour); changing it is a security-review call.
+    expect(constant('UPLOAD_LIMIT_PER_HOUR')).toBe(2500);
+    const sql = makeSql([]);
+    const allow = vi.fn(async () => true);
+    expect(await helper()(allow, withRetryAfter, resp, 2500, sql, ME, 3)).toBeNull();
+    expect(allow.mock.calls).toEqual([[sql, ME, 'photos.upload', 2500, 3]]);
+    const refused = await helper()(vi.fn(async () => false), withRetryAfter, resp, 2500, sql, ME, 1);
+    expect(refused.statusCode).toBe(429);
+    expect(refused.body).toEqual({ error: 'Rate limit exceeded — 2500/hour for photos.upload' });
+    expect(Number(refused.headers['Retry-After'])).toBeGreaterThanOrEqual(1);
+  });
+});
 
 // ── 3. POST /api/photos ordering + bodies ───────────────────────────────────────────────────────
 describe('POST /api/photos — storage_path gate (I34)', () => {

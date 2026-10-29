@@ -309,6 +309,37 @@ describe('POST /api/photos/batch — server-derived presign', () => {
     expect(keys[1]).toMatch(/\.png$/)
   })
 
+  // SEC-13b: a batch spends one unit per file, all or nothing. The next hour is seeded too, so a clock turn
+  // mid-case still starts from 2497.
+  it('SEC-13b: at 2497/2500 a batch of 4 is 429 and spends nothing; a batch of 3 is 200 and fills the hour', async () => {
+    const LIMITED = `user_int_photos_limited_${RUN}`
+    const bucket = async () => (await directSql`
+      SELECT count FROM rate_limit_buckets
+       WHERE actor_clerk_sub = ${LIMITED} AND bucket_key = 'photos.upload' AND window_start = date_trunc('hour', now())`)[0]?.count
+    await directSql`
+      INSERT INTO rate_limit_buckets (actor_clerk_sub, bucket_key, window_start, count)
+      VALUES (${LIMITED}, 'photos.upload', date_trunc('hour', now()), 2497),
+             (${LIMITED}, 'photos.upload', date_trunc('hour', now()) + interval '1 hour', 2497)`
+    const batch = (n) => callHandler(handler, {
+      method: 'POST', path: '/api/photos/batch', body: { files: Array.from({ length: n }, () => ({ ext: 'jpg' })) },
+    })
+    setTestUserId(LIMITED)
+    try {
+      const four = await batch(4)
+      expect(four.status).toBe(429)
+      expect(four.body).toEqual({ error: 'Rate limit exceeded — 2500/hour for photos.upload' })
+      expect(Number(four.raw.headers['Retry-After'])).toBeGreaterThanOrEqual(1)
+      expect(await bucket()).toBe(2497)
+      const three = await batch(3)
+      expect(three.status).toBe(200)
+      expect(three.body.uploads).toHaveLength(3)
+      expect(await bucket()).toBe(2500)
+    } finally {
+      setTestUserId(USER)
+      await directSql`DELETE FROM rate_limit_buckets WHERE actor_clerk_sub = ${LIMITED}`
+    }
+  })
+
   it('rejects a batch over the 20-file cap', async () => {
     const files = Array.from({ length: 21 }, () => ({ ext: 'jpg' }))
     const res = await callHandler(handler, { method: 'POST', path: '/api/photos/batch', body: { files } })

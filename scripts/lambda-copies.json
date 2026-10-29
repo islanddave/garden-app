@@ -56,6 +56,7 @@
     "lambda/rate-limit.js": [
       "lambda/app-events/rate-limit.js",
       "lambda/inventory-items/rate-limit.js",
+      "lambda/photos/rate-limit.js",
       "lambda/tags/rate-limit.js",
       "lambda/varieties/rate-limit.js"
     ]
