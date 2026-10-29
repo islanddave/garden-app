@@ -1,8 +1,7 @@
 // season-stats.js — V5-SEASONSTATS-001. GET /api/harvests/season-stats?season=YYYY[&sections=a,b]
 //
 // Layer B of the season stats engine (plan D1): a READ-ONLY route inside lambda/harvests, riding the
-// EXISTING /api/harvests prefix in src/lib/api.js exactly like watch-route.js and
-// ready-impression.js — no new Function URL, repo variable, staging URL or deploy matrix entry, and
+// EXISTING /api/harvests prefix in src/lib/api.js exactly like watch-route.js — no new Function URL, repo variable, staging URL or deploy matrix entry, and
 // GARDEN_HOUSEHOLD_IDS is already set on this Lambda.
 //
 // THE NUMBERS LIVE IN THE VIEWS. Every figure comes from a public.stat_* view

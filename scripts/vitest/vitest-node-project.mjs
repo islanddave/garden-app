@@ -58,7 +58,6 @@ export const LOADS_SRC = Object.freeze([
   'lambda/facebook-share/altText.test.js',
   'lambda/facebook-share/exif.trailer.test.js',
   'lambda/harvests/anchorDerive.test.js',
-  'lambda/harvests/ready-impression.test.js',
   'lambda/harvests/watch-impression.test.js',
   'lambda/inventory-items/delete-reference-guard.test.js',
   'lambda/inventory-items/saved-lot-pairing.test.js',

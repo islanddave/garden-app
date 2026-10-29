@@ -1,11 +1,9 @@
 // OPS-SCHEMAAUDITJOIN-001 — the public.plant_projects columns lambda/harvests reads.
 //
-// Five statements, every one through the `pj` alias, and the only directory here that reads
-// archived_at. Three are index.js label reads (`pj.name AS project_name`, :240 and :322); one is
-// ready-impression.js:175, whose ownership test is COALESCE(pj.created_by, p.created_by) — a
-// project-less planting is owned by its own created_by; and watch-route.js excludes archived and
-// soft-deleted containers from the ready-to-pick watch, which is where archived_at comes from. No
-// unaliased read: this directory never reaches the table without binding it.
+// Four statements, every one through the `pj` alias, and the only directory here that reads
+// archived_at. The index.js label reads (`pj.name AS project_name`); and watch-route.js excludes
+// archived and soft-deleted containers from the ready-to-pick watch, which is where archived_at
+// comes from. No unaliased read: this directory never reaches the table without binding it.
 //
 // WHY A SEPARATE FILE AND NOT A BLOCK IN select-columns.test.js: parse_test_file returns on the
 // keyed AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector
@@ -102,7 +100,7 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/harvests plant_projects column cont
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(5);
+    expect(STATEMENTS).toHaveLength(4);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['pj']);
   });

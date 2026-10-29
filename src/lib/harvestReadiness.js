@@ -98,8 +98,7 @@ export const MIN_STALE_DAYS = 18
 // runs CLIENT-side: unlike the watch band the server cannot reconstruct what was ranked, so the
 // browser build that made the claim is the honest provenance. BUMP IT whenever isReadyToPick,
 // rankHarvestReady or MAX_OVERDUE_RATIO changes behaviour — an impression joined across a
-// definition change is a rate computed over two different models. Mirrored (fallback only) in
-// lambda/harvests/ready-impression.js, pinned in lockstep by ready-impression.test.js.
+// definition change is a rate computed over two different models.
 // ready-v1 -> ready-v2 (BUG-STALECEILING-001, 2026-08-21): isReadyToPick's eligibility changed, so
 // impressions either side of this deploy are rates over two different models. Bumped now BECAUSE the
 // series is at its smallest — 46 rows across 21 plants over 3 days (2026-08-18..20) — and the cost of

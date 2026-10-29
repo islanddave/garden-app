@@ -340,8 +340,7 @@ const NOT_IN_SITES = [
   // the statement. ctx.userId is the JWT subject — index.js sets `userId = payload.sub` and returns
   // 401 before routing if it is falsy — so the value is the caller's own identity by construction.
   // shown_on is likewise stamped from the server's ET clock, never the body. Same class as
-  // harvests::user_id and ready-impression's write, which is the route this one deliberately
-  // mirrors. A caller can only ever log an impression AS THEMSELVES, so there is no
+  // harvests::user_id. A caller can only ever log an impression AS THEMSELVES, so there is no
   // cross-household write to gate.
   'daily-plan-read::user_id',
   // daily-plan::location_id and ::project_id — the rain event_log INSERT added by

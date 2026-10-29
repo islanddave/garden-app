@@ -1,12 +1,15 @@
 // Unit tests for the harvests read model's PURE helpers (lambda/harvests/aggregate.js). No DB, no
 // runtime deps — runs under the root vitest config. Real-Postgres coverage (household scope, keyset
 // pagination, season boundaries, orphan render) lives in tests/integration/harvests.int.test.js.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   parseTimeframe, encodeCursor, decodeCursor, isoWeekStart, projectEntry, computeAggregates,
 } from './aggregate.js';
+import { stubState, resetStubs } from '../_test-stubs/state.js';
+
+const { handler } = await import('./index.js');
 
 describe('parseTimeframe', () => {
   it('absent/empty -> all', () => {
@@ -243,5 +246,29 @@ describe('computeAggregates', () => {
       const top = agg.weekly.reduce((s, w) => s + w.count, 0);
       expect(perCrop).toBe(top - 1); // one unattributed row (event f)
     });
+  });
+});
+
+// The ready-impression beacon route is gone but the table stays; an installed app built before the
+// removal can still POST to it, and must get a plain 404 rather than a 405 or a write.
+describe('removed routes', () => {
+  beforeEach(() => {
+    resetStubs();
+    stubState.verifyTokenResult = { sub: 'user_stale_app' };
+  });
+
+  it('a stale app POST to /api/harvests/ready-impressions is a 404 and runs no SQL', async () => {
+    const res = await handler({
+      requestContext: { http: { method: 'POST' } },
+      rawPath: '/api/harvests/ready-impressions',
+      body: JSON.stringify({ impressions: [{ plant_id: '11111111-2222-4333-8444-555555555555', slot: 0 }] }),
+    });
+    expect(res.statusCode).toBe(404);
+    expect(stubState.sqlCalls).toHaveLength(0);
+  });
+
+  it('the read model path still answers a wrong verb with 405', async () => {
+    const res = await handler({ requestContext: { http: { method: 'POST' } }, rawPath: '/api/harvests' });
+    expect(res.statusCode).toBe(405);
   });
 });

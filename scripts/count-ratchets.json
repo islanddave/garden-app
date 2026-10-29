@@ -57,7 +57,7 @@
     "lambda/facebook-share": 6,
     "lambda/favorites": 1,
     "lambda/findings": 4,
-    "lambda/harvests": 9,
+    "lambda/harvests": 8,
     "lambda/inventory-items": 8,
     "lambda/locations": 2,
     "lambda/members": 2,
@@ -152,7 +152,6 @@
       "harvest-log-columns.test.js",
       "household-columns.test.js",
       "plant-projects-columns.test.js",
-      "plants-columns.test.js",
       "select-columns.test.js",
       "stat-views-columns.test.js"
     ],

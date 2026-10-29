@@ -10,7 +10,7 @@
 // entry, no api.js edit. That is the whole reason this route landed here rather than in a new
 // Lambda or in lambda/events (whose harvest-ready route is correctly evidence-only; see watch.js).
 //
-// THIS LAMBDA WAS READ-ONLY BEFORE THIS SLICE and index.js 405s anything that is not
+// THIS LAMBDA WAS READ-ONLY BEFORE THIS SLICE and index.js rejects anything that is not
 // GET /api/harvests. The dismissal write is the first mutation it has ever performed, so it is
 // deliberately narrow: one INSERT into one new standalone table, one UPDATE that sets undone_at on
 // a row the caller owns. It touches no existing relation. (V4-WATCHIMPRESSION-001 later added one

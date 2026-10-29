@@ -8,8 +8,7 @@
 // the last instrument of this shape and it was dropped with V4-WEIGHQUEUEKILL-001; the six days it
 // did survive produced the only real numbers anyone has about whether Dave acts on a surfaced cue.
 //
-// WHY THE CLIENT SENDS THE ROW AND THE SERVER DOES NOT DERIVE IT. Same structural reason as
-// ready-impression.js, for a different surface. The cue is COMPUTED server-side (engine.js
+// WHY THE CLIENT SENDS THE ROW AND THE SERVER DOES NOT DERIVE IT. The cue is COMPUTED server-side (engine.js
 // computeCallout, frozen into daily_plan.items), but whether it was RENDERED is a client fact: the
 // Today block that hosts it only mounts when there is a plan, and the check-form mapping in
 // src/lib/weatherCue.js can decline a cue whose engine copy no longer parses. A GET-side writer
@@ -19,7 +18,7 @@
 // request, because a skewed phone clock or a tab left open across midnight would otherwise corrupt
 // the dedupe grain the whole design rests on.
 //
-// SAME ROUTING TRICK AS ready-impression.js. /api/daily-plan/cue-impressions rides the EXISTING
+// ROUTING. /api/daily-plan/cue-impressions rides the EXISTING
 // /api/daily-plan prefix in src/lib/api.js (first-match PREFIX table), so it lands on this Lambda
 // with ZERO infra change: no new Function URL, no repo variable, no deploy-lambda.yml matrix entry,
 // no api.js edit. It lives in its OWN module rather than in index.js for two reasons: index.js
@@ -35,8 +34,7 @@ export const CUE_IMPRESSIONS_PATH = '/api/daily-plan/cue-impressions';
 export const ET_TZ = 'America/New_York';
 
 // MIRROR of src/lib/weatherCue.js WX_CUE_MODEL_VERSION, pinned in lockstep by cue-impression.test.js
-// (same mechanism as ready-impression.js READY_MODEL_VERSION — the Lambda and src/ are separate
-// module graphs and cannot share a constant). Used ONLY as the fallback when a request omits
+// (the Lambda and src/ are separate module graphs and cannot share a constant). Used ONLY as the fallback when a request omits
 // model_version: the client owns the model identity here, because the client owns the wording.
 export const WX_CUE_MODEL_VERSION = 'wxcue-v3';   // v3 (V5-CHILLBAND-001, 2026-10-13): the `cool` cue and "Cold night" wording
 
@@ -85,7 +83,7 @@ export function normalizeCueImpression(body) {
 export function matchCueImpressionRoute(method, rawPath) {
   if (rawPath !== CUE_IMPRESSIONS_PATH) return null;
   if (method === 'POST') return { kind: 'cue_impression_post' };
-  // A 405 rather than a fall-through, same reasoning as ready-impression.js: falling through hands
+  // A 405 rather than a fall-through: falling through hands
   // the request to the daily-plan read model, which answers with a plan for the wrong route.
   return { kind: 'method_not_allowed' };
 }
