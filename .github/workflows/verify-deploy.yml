@@ -1,9 +1,7 @@
 name: verify-deploy
 
-# OPS-VERIFY-001 — on-demand, read-only confirmation that a prod SHA actually
-# deployed (SPA deploy job success per L-161 + lambda not stranded/stale per L-141).
-# workflow_dispatch ONLY — never triggers on push/PR, so it cannot interfere with
-# the promote/deploy pipeline. Uses the default GITHUB_TOKEN (read-only).
+# On-demand, read-only check that a prod SHA deployed: the SPA deploy job succeeded and no Lambda is
+# stranded or stale (scripts/verify-deploy.py). Dispatch-only, so it never runs inside the promote pipeline.
 
 on:
   workflow_dispatch:
