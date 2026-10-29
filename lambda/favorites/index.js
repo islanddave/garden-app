@@ -15,6 +15,11 @@ async function getSecrets() {
 
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
+// SEC-13b: what a client may CREATE, exactly the types FavoriteToggle is mounted with in src/ (the DB CHECK also
+// admits 'location', which no client sends). GET and DELETE take any type, so a legacy row still lists and
+// un-favorites. Guard: lambda/rate-limit.test.js scans src/ for every <FavoriteToggle entityType>.
+const FAVORITE_ENTITY_TYPES = new Set(['plant', 'project', 'inventory_item']);
+
 function resp(statusCode, body) {
   return {
     statusCode,
@@ -80,6 +85,9 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.entity_type) return resp(400, { error: 'entity_type is required' });
       if (!body.entity_id)   return resp(400, { error: 'entity_id is required' });
+      if (!FAVORITE_ENTITY_TYPES.has(body.entity_type)) {
+        return resp(400, { error: `entity_type must be one of: ${[...FAVORITE_ENTITY_TYPES].join(', ')}` });
+      }
       const rows = await sql`
         INSERT INTO favorites (user_id, entity_type, entity_id)
         VALUES (${userId}, ${body.entity_type}, ${body.entity_id}::uuid)

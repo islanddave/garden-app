@@ -3,6 +3,9 @@
 // Trap: the stub never evaluates SQL, so the atomic count is proven on real Postgres in
 // tests/integration/app-events.int.test.js (parallel boundary) and photos-intake.int.test.js (per-object cost).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { stubState, resetStubs } from './_test-stubs/state.js';
 import { checkRateLimit, GLOBAL_ACTOR, retryAfterSeconds, withRetryAfter } from './rate-limit.js';
 
@@ -117,6 +120,7 @@ const HANDLERS = {
   appEvents: (await import('./app-events/index.js')).handler,
   inventory: (await import('./inventory-items/index.js')).handler,
   ux: (await import('./ux-events/index.js')).handler,
+  fav: (await import('./favorites/index.js')).handler,
 };
 
 // deny: every bucket refuses; deny-user / deny-global: only that actor's bucket; throw: the statement fails.
@@ -162,6 +166,17 @@ const extract = (name, more) => ({
   key: true, model: 0, ...more,
 });
 const CALLED = { upstream_status: 200, input_tokens: 1234, output_tokens: 56, stop_reason: 'end_turn' };
+
+// Every <FavoriteToggle> in src/ (non-test), the only client of POST /api/favorites (FavoriteToggle.jsx posts its
+// entityType prop). A complete list, so each one must carry a literal entityType.
+const SRC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../src');
+const TOGGLES = readdirSync(SRC_ROOT, { recursive: true })
+  .filter((p) => /\.jsx?$/.test(p) && !/__tests__|\.test\./.test(p))
+  .flatMap((p) => [...readFileSync(join(SRC_ROOT, p), 'utf8').matchAll(/<FavoriteToggle\b[^>]*>/g)]
+    .map((m) => ({ file: p, tag: m[0], type: m[0].match(/\bentityType="([a-z_]+)"/)?.[1] })));
+const CLIENT_TYPES = [...new Set(TOGGLES.map((t) => t.type))].sort();
+const LEGACY_FAVORITE = { id: u(8), entity_type: 'location', entity_id: u(9), created_at: '2026-01-01T00:00:00Z' };
+const favorite = (name, more) => ({ name: `favorites: ${name}`, fn: 'fav', path: '/api/favorites', ...more });
 
 const ROWS = [
   {
@@ -246,6 +261,20 @@ const ROWS = [
     status, writes: { 'INSERT INTO ux_events': status === 201 },
     ...(status === 413 ? { error: 'meta exceeds 2048 bytes' } : {}),
   })),
+  // Every entityType a client posts (scanned from src/ below) is created; anything else is refused on create only.
+  ...CLIENT_TYPES.map((type) => favorite(`client entity_type '${type}' is created (201)`, {
+    method: 'POST', body: { entity_type: type, entity_id: u(9) }, status: 201, writes: { 'INSERT INTO favorites': true },
+  })),
+  ...['location', 'garden', 'PLANT', 'plant ', 42].map((type) => favorite(`unlisted entity_type ${JSON.stringify(type)} -> 400, nothing written`, {
+    method: 'POST', body: { entity_type: type, entity_id: u(9) }, status: 400,
+    error: 'entity_type must be one of: plant, project, inventory_item', writes: { 'INSERT INTO favorites': false },
+  })),
+  favorite('a legacy location favorite can still be removed (DELETE 200)', {
+    method: 'DELETE', query: { entity_type: 'location', entity_id: u(9) }, status: 200, writes: { 'DELETE FROM favorites': true },
+  }),
+  favorite('a legacy location favorite is still listed (GET 200)', {
+    method: 'GET', db: (text) => (text.includes('FROM favorites') ? [LEGACY_FAVORITE] : []), status: 200, json: [LEGACY_FAVORITE],
+  }),
 ];
 
 describe('SEC-13b request limits', () => {
@@ -258,7 +287,12 @@ describe('SEC-13b request limits', () => {
     vi.unstubAllGlobals();
   });
 
-  it.each(ROWS)('$name', async (row) => {
+  it('the src/ scan found the FavoriteToggle sites, each with a literal entityType', () => {
+    expect(TOGGLES.length).toBeGreaterThan(0);
+    expect(TOGGLES.filter((t) => !t.type)).toEqual([]);
+  });
+
+  it.each(ROWS.map((row) => [row.name, row]))('%s', async (_name, row) => {
     const { handler, state } = await target(row);
     state.verifyTokenResult = { sub: USER };
     if (row.fn === 'inventory') state.secrets[SECRETS].ANTHROPIC_API_KEY = row.key ? 'sk-ant-stub' : undefined;
@@ -278,6 +312,7 @@ describe('SEC-13b request limits', () => {
 
     expect(res.statusCode, res.body).toBe(row.status);
     if (row.error !== undefined) expect(JSON.parse(res.body).error).toBe(row.error);
+    if (row.json !== undefined) expect(JSON.parse(res.body)).toEqual(row.json);
     if (row.retryAfter === true) {
       const secs = Number(res.headers['Retry-After']);
       expect(secs).toBeGreaterThanOrEqual(1);
