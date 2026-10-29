@@ -506,7 +506,7 @@ export function accruesQtyLost(eventType) {
 // V4-LOSSUI-001 — THE GATE IS OPEN. This was `EVENT_TYPES.filter(t => !PLANT_REDUCTION_EVENT_TYPES
 // .includes(t))` while the two reduction types had a complete API write path and NO capture panel:
 // the API REQUIRES a quantity and a reason on them, so a picker entry would have been a visible
-// option that 400s every time — the old Catch-up badge's failure shape (a badge linking to an
+// option that 400s every time — the CATCH_UP_EDITOR_SHIPPED failure shape (a badge linking to an
 // editor nobody built). V4-LOSSEVENT-001 deliberately left the re-opening as this ONE line.
 //
 // The panel now exists: components/PlantReductionFields.jsx, rendered by EventNew as a REQUIRED
@@ -577,8 +577,9 @@ export function buildSecondaryGroups(primaryValues, values = EVENT_TYPES) {
 // D2 "predication test" (spec v4-metaphoto-plantingtarget §3): REQUIRE a planting where the event
 // predicates on a specific plant; the rest take a space/garden target instead (never nothing). This
 // map is the CANONICAL home (spec §6.4) so the client and any future Lambda copy share ONE source —
-// do NOT re-list the partition anywhere else. Enforcement is CLIENT-side only; the server validator
-// is deliberately NOT made to require it — a PWA service-worker running a stale bundle would 400 every log mid-season (spec D7).
+// do NOT re-list the partition anywhere else. Enforcement is CLIENT-side and feature-flagged
+// (featureFlags.PLANTING_REQUIRED_ENABLED); the server validator is deliberately NOT flipped in
+// lockstep — a PWA service-worker running a stale bundle would 400 every log mid-season (spec D7).
 export const PLANTING_REQUIRED_TYPES = new Set([
   'sowing', 'seed_soak', 'germination', 'thinning', 'potting_up', 'transplant', 'hardening_off',
   'watering', 'moisture_check', 'fertilizing', 'pest_treatment', 'doctored', 'pruning',
