@@ -6,11 +6,10 @@ name: Ruleset Drift Watchdog
 # it (dev->main is a Dave-approved gate). NOT load-bearing (the gate already blocks agent
 # writes to main); this catches accidental or manual ruleset tampering.
 #
-# AUTH (rewired 2026-07-22): mints a garden-bot App token per run instead of reading the
-# long-lived `RULESET_READ_PAT` secret. WHY: that secret was set 2026-06-03 and holds a token
-# value that no longer exists in the account, so this workflow had been 401ing — while BOTH
-# live account PATs were perfectly healthy. A repo secret is a stored COPY of a token and rots
-# INDEPENDENTLY of the account's token list. App tokens are minted per run and cannot rot.
+# AUTH (rewired 2026-07-22): mints a garden-bot App token per run; it is the only credential.
+# A repo secret holding a token is a stored COPY and rots INDEPENDENTLY of the account's token
+# list; App tokens are minted per run and cannot rot. The stored-PAT fallback was removed
+# 2026-10-29 (SEC-12, OPS-SECREVIEW-001).
 # NOTE: garden-bot needs `administration: read` on the repo for the rulesets API.
 #
 # FAIL-SOFT ON AUTH, HARD ON DRIFT (added 2026-07-22, per L-288): auth/network/timeout map to
@@ -33,14 +32,9 @@ name: Ruleset Drift Watchdog
 #        NOT drift. An empty list is a permission blind-spot, not proof the bypass was cleared
 #        (and clearing garden-bot's bypass would self-alarm by breaking the promote path, and is
 #        a lock-DOWN not an escalation).
-# SELF-HEAL: on an empty read, the check retries with RULESET_READ_PAT when that secret is
-# present and distinct from the App token — a fine-grained user PAT with administration:read
-# DOES return bypass_actors. Provision a live token there and this check verifies for real with
-# no code change (RES-005: a provisioned secret, never a pasted PAT).
-# MUTATION FINGERPRINT (added 2026-07-31, OPS-WATCHDOG-FINGERPRINT). The SELF-HEAL note above
-# is now known to be UNREACHABLE without a PAT: `administration: read` was granted to the
-# garden-bot App and confirmed live on the installation, and the minted token STILL reads
-# bypass_actors as []. GitHub does not expose that field to App installation tokens at all.
+# MUTATION FINGERPRINT (added 2026-07-31, OPS-WATCHDOG-FINGERPRINT). `administration: read` was
+# granted to the garden-bot App and confirmed live on the installation, and the minted token
+# STILL reads bypass_actors as []. GitHub does not expose that field to App installation tokens at all.
 # The escalation below was consequently firing RED every day with no satisfiable remedy.
 # Fix: pin the ruleset's `updated_at` (EXPECT_UPDATED_AT). It is not admin-gated, so the App
 # token can read it, and ANY edit to the ruleset bumps it -- including a bypass_actors change
@@ -78,14 +72,13 @@ jobs:
       - name: Assert main-capability-gate ruleset intact
         env:
           BOT_TOKEN: ${{ steps.bot.outputs.token }}
-          FALLBACK_PAT: ${{ secrets.RULESET_READ_PAT }}
           HISTORY_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          if [ -z "${BOT_TOKEN:-}" ] && [ -z "${FALLBACK_PAT:-}" ]; then
-            echo "::warning::UNVERIFIED - no usable credential (garden-bot mint failed and RULESET_READ_PAT is unset). The ruleset was NOT checked. Degraded guard, not a drift signal."
+          if [ -z "${BOT_TOKEN:-}" ]; then
+            echo "::warning::UNVERIFIED - no usable credential (the garden-bot token mint failed). The ruleset was NOT checked. Degraded guard, not a drift signal."
             exit 0
           fi
           python3 - <<'PY'
@@ -118,9 +111,7 @@ jobs:
 
           EXPECT_TS = parse_ts(EXPECT_UPDATED_AT)
 
-          bot = os.environ.get("BOT_TOKEN") or ""
-          pat = os.environ.get("FALLBACK_PAT") or ""
-          primary = bot or pat
+          primary = os.environ.get("BOT_TOKEN") or ""
           history_tok = os.environ.get("HISTORY_TOKEN") or primary
           run_id = os.environ.get("RUN_ID") or ""
 
@@ -226,17 +217,9 @@ jobs:
               fail, bstatus, ustatus = check_ruleset(primary)
           except Unverifiable as u:
               print("::warning::UNVERIFIED - could not read the ruleset (%s). The ruleset was NOT "
-                    "checked; this is NOT a drift signal. If garden-bot is the credential, it needs "
-                    "administration:read on the repo." % u)
+                    "checked; this is NOT a drift signal. garden-bot needs administration:read on "
+                    "the repo." % u)
               sys.exit(0)
-
-          # An App token reads bypass_actors as []; a fine-grained admin-read PAT does not. If the
-          # primary read came back empty and a DISTINCT fallback PAT exists, re-read with it.
-          if bstatus == "empty" and pat and pat != primary:
-              try:
-                  fail, bstatus, ustatus = check_ruleset(pat)
-              except Unverifiable:
-                  pass
 
           if fail:
               print("::error::main-capability-gate RULESET DRIFT detected:")
