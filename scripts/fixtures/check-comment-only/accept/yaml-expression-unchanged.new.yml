@@ -1,0 +1,9 @@
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "${{ github.ref }}"
+          if [ "${{ matrix.os }}" = linux ]; then
+            echo linux
+          fi

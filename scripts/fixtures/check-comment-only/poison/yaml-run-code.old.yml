@@ -1,0 +1,7 @@
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          # build it
+          make build

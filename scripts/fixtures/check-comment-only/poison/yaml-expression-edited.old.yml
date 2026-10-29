@@ -1,0 +1,7 @@
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          # pick the ref
+          echo "${{ github.ref }}"
