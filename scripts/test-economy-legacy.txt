@@ -288,9 +288,7 @@ lambda/harvests/heat-bands-parity.test.js
 lambda/harvests/household-columns.test.js
 lambda/harvests/index.test.js
 lambda/harvests/plant-projects-columns.test.js
-lambda/harvests/plants-columns.test.js
 lambda/harvests/projectless-picks.test.js
-lambda/harvests/ready-impression.test.js
 lambda/harvests/season-stats-sections.test.js
 lambda/harvests/season-stats.test.js
 lambda/harvests/select-columns.test.js
@@ -581,11 +579,6 @@ migrations/v5-rekeystrand-001/placeholder-vocabulary.test.js
 migrations/v5-tenancykey-001/tenancykey.test.js
 migrations/v5-tenancyvalidate-001/validate.test.js
 scripts/check-comment-only.test.js
-scripts/ci-telemetry/a3-exit-fixture.test.js
-scripts/ci-telemetry/coverage-v8-two-forms.test.js
-scripts/ci-telemetry/vitest-projects.test.js
-scripts/ci-telemetry/vitest-side-configs.test.js
-scripts/ci-telemetry/vitest-test-ids-reporter.test.js
 scripts/layout-gate/exit-watchdog.test.mjs
 scripts/measure-anchor-coverage.basis.test.js
 scripts/photocdn-backfill.test.js
@@ -593,8 +586,6 @@ scripts/putup-postdeploy-refile.test.js
 scripts/seed-recipes.test.js
 scripts/space-harness/arm.test.mjs
 scripts/sql-text-rule.test.js
-scripts/test_a3_exit.py
-scripts/test_a3_exit_sh.py
 scripts/test_action_pins.py
 scripts/test_audit_gate.py
 scripts/test_check_coverage_ratchet.py
@@ -602,11 +593,10 @@ scripts/test_check_lambda_config.py
 scripts/test_check_lambda_current.py
 scripts/test_check_release_version.py
 scripts/test_check_staging_drift.py
-scripts/test_ci_next.py
+scripts/test_ci_legs.py
 scripts/test_ci_step_manifest.py
 scripts/test_ci_telemetry.py
 scripts/test_count_ratchets.py
-scripts/test_coverage_rows.py
 scripts/test_deploy_main_guard.py
 scripts/test_deploy_staging_env.py
 scripts/test_dev_prepush_check.py
@@ -626,7 +616,6 @@ scripts/test_meta_token_check.py
 scripts/test_neon_branch_select.py
 scripts/test_neon_safety_branch.py
 scripts/test_phase7_gate_map.py
-scripts/test_preflight_dual.py
 scripts/test_preflight_revert_iam.py
 scripts/test_promote_preflight.py
 scripts/test_putup_sitting_check.py
@@ -640,7 +629,6 @@ scripts/test_schema_audit_join_ratchet.py
 scripts/test_schema_audit_phase_suites.py
 scripts/test_secret_key_merge.py
 scripts/test_seed_label_ambiguity.py
-scripts/test_shadow_agree.py
 scripts/test_smoke_crop_type_slug.py
 scripts/test_smoke_mint_log.py
 scripts/test_smoke_prod.py
@@ -654,6 +642,10 @@ scripts/test_tenancykey_apply.py
 scripts/test_verify_deploy.py
 scripts/test_workflow_steps.py
 scripts/test_wx_writer_role.py
+scripts/vitest/coverage-v8-two-forms.test.js
+scripts/vitest/vitest-projects.test.js
+scripts/vitest/vitest-side-configs.test.js
+scripts/vitest/vitest-test-ids-reporter.test.js
 src/__tests__/AddSeeds.extractGate.test.jsx
 src/__tests__/AddSeeds.test.jsx
 src/__tests__/AdminConfig.refreshJoin.test.jsx
@@ -696,7 +688,6 @@ src/__tests__/Collection.test.jsx
 src/__tests__/ComposeHarvestBand.photos.test.jsx
 src/__tests__/ComposeHarvestBand.test.jsx
 src/__tests__/ContinuousVoiceProbe.test.jsx
-src/__tests__/CritterAnnouncement.test.jsx
 src/__tests__/CritterArrivalController.overlay.test.jsx
 src/__tests__/CritterArrivalController.test.jsx
 src/__tests__/CritterCoachmark.test.jsx
@@ -882,7 +873,6 @@ src/__tests__/InventoryDetailCTA.test.jsx
 src/__tests__/LeafWetnessLine.test.jsx
 src/__tests__/LegacySeedsRedirect.test.jsx
 src/__tests__/Lightbox.test.jsx
-src/__tests__/LiveRegion.test.jsx
 src/__tests__/LocationDetail.test.jsx
 src/__tests__/Locations.formGuard.test.jsx
 src/__tests__/Locations.heated.test.jsx
@@ -1210,7 +1200,6 @@ src/__tests__/StatusPicker.test.jsx
 src/__tests__/StorageDeadlineAlert.test.jsx
 src/__tests__/TallyDisplay.test.jsx
 src/__tests__/TapCaptureFallback.test.jsx
-src/__tests__/Tasks.formGuard.test.jsx
 src/__tests__/TileGrid.test.jsx
 src/__tests__/ToastContext.test.jsx
 src/__tests__/ToastStack.test.jsx
@@ -1269,7 +1258,6 @@ src/__tests__/WeighInFrame.flagOff.test.jsx
 src/__tests__/WeighInFrame.flagOn.test.jsx
 src/__tests__/WeighInQueueRemoved.test.jsx
 src/__tests__/WhereFromField.test.jsx
-src/__tests__/ZoomableImage.test.jsx
 src/__tests__/a11yGate.test.jsx
 src/__tests__/a11yLabelledFileInput.test.js
 src/__tests__/a11yProhibitedAttr.test.js
@@ -1382,7 +1370,6 @@ src/__tests__/growYear.test.js
 src/__tests__/handedness.test.js
 src/__tests__/haptics.test.js
 src/__tests__/harnessGlobalStyle.test.js
-src/__tests__/harvestAnnounce.test.js
 src/__tests__/harvestAttributesSync.test.js
 src/__tests__/harvestExport.test.js
 src/__tests__/harvestGrouping.test.js
