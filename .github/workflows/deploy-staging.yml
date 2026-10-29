@@ -575,11 +575,14 @@ jobs:
               --action lambda:InvokeFunctionUrl \
               --principal "*" \
               --function-url-auth-type NONE 2>/dev/null || true
+            # Since Oct 2025 a URL needs both grants. The InvokeFunction grant carries
+            # lambda:InvokedViaFunctionUrl=true, so it cannot be used to invoke the function directly (SEC-09).
             aws lambda add-permission \
               --function-name "$FN" \
-              --statement-id AllowPublicInvoke \
+              --statement-id AllowInvokeViaFunctionUrl \
               --action lambda:InvokeFunction \
-              --principal "*" 2>/dev/null || true
+              --principal "*" \
+              --invoked-via-function-url
           fi
           # Ship-then-wire: a net-new staging function's URL is not knowable until this step creates
           # it. Echo it so it can be pasted into the STAGING_API_* block at the top of this file

@@ -660,6 +660,8 @@ jobs:
             # AND InvokeFunction (handler-dispatch layer) — missing either returns 403
             # at the URL layer before the request reaches the handler.
             # Ref: error-log.md E-magical-nifty-franklin-pickup-002 (2026-05-08)
+            # Since Oct 2025 a URL needs both grants. The InvokeFunction grant carries
+            # lambda:InvokedViaFunctionUrl=true, so it cannot be used to invoke the function directly (SEC-09).
             aws lambda add-permission \
               --function-name "$FUNCTION_NAME" \
               --statement-id FunctionURLAllowPublicAccess \
@@ -668,9 +670,10 @@ jobs:
               --function-url-auth-type NONE 2>/dev/null || true
             aws lambda add-permission \
               --function-name "$FUNCTION_NAME" \
-              --statement-id AllowPublicInvoke \
+              --statement-id AllowInvokeViaFunctionUrl \
               --action lambda:InvokeFunction \
-              --principal "*" 2>/dev/null || true
+              --principal "*" \
+              --invoked-via-function-url
             echo "Function URL created for $FUNCTION_NAME"
           fi
 
