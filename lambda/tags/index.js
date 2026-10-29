@@ -17,6 +17,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { householdScope } from './household.js';
 import { assembleBulkEntities } from './bulk.js';
 import { applyDerive } from './crop-derive.js';
+import { checkRateLimit } from './rate-limit.js';
 import {
   slugify, validateTagCreate, validateTagPatch, validateEntityTagCreate, isAdmin, VALID_ENTITY_TYPES,
 } from './validate.js';
@@ -37,17 +38,6 @@ async function getSecrets() {
 const CORS = {}; // Lambda URL config owns CORS — handler must not duplicate.
 function resp(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json', ...CORS }, body: JSON.stringify(body) };
-}
-
-async function checkRateLimit(sql, actor, bucketKey, limit) {
-  const rows = await sql`
-    INSERT INTO public.rate_limit_buckets (actor_clerk_sub, bucket_key, window_start, count)
-    VALUES (${actor}, ${bucketKey}, date_trunc('hour', NOW()), 1)
-    ON CONFLICT (actor_clerk_sub, bucket_key, window_start)
-    DO UPDATE SET count = public.rate_limit_buckets.count + 1
-    WHERE public.rate_limit_buckets.count < ${limit}
-    RETURNING count`;
-  return rows.length > 0;
 }
 
 // Existence check for the polymorphic entity_tag target (D-ENTITY; entity_id has no FK). Literal per-type

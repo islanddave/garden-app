@@ -67,6 +67,7 @@ import {
   normalizeOriginText, touchesBreeding, breedingPairingError, fillsCultivarRank, CONSTRAINT_MESSAGES,
 } from './validate.js';
 import { applyDerive } from './crop-derive.js';
+import { checkRateLimit } from './rate-limit.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { loadOwnedProject } from './authz-parents.js';
 import { managedPrincipalPatterns, canEditSource, canEditVariety } from './authz.js';
@@ -147,20 +148,6 @@ const NEW_CULTIVAR_PROFILE = {
        + 'bundled fallback exactly as it did before. _basis:"unresearched" means NOBODY HAS DECIDED '
        + 'YET — the opposite of a deliberately watering-free row like Collards.',
 };
-
-// Atomic conditional INSERT/UPDATE for rate limiting (per design doc C-S1-C).
-// Returns true if request is allowed; false if limit exceeded.
-async function checkRateLimit(sql, actor, bucketKey, limit) {
-  const rows = await sql`
-    INSERT INTO public.rate_limit_buckets (actor_clerk_sub, bucket_key, window_start, count)
-    VALUES (${actor}, ${bucketKey}, date_trunc('hour', NOW()), 1)
-    ON CONFLICT (actor_clerk_sub, bucket_key, window_start)
-    DO UPDATE SET count = public.rate_limit_buckets.count + 1
-    WHERE public.rate_limit_buckets.count < ${limit}
-    RETURNING count
-  `;
-  return rows.length > 0;
-}
 
 // BUG-VARIETIESLIMIT500-001 — the list cap, shared by both GET list branches. It was LIMIT 500 against
 // 495 live cultivars (2026-09-18): the unsearched list is what VarietyPicker and header Search filter

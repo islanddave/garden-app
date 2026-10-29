@@ -14,6 +14,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { checkRateLimit } from './rate-limit.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -51,20 +52,6 @@ export function validateBody(body) {
     if (size > METADATA_BYTE_LIMIT) return `metadata exceeds 8KB limit (${size} bytes)`;
   }
   return null;
-}
-
-// Atomic conditional INSERT/UPDATE for rate limiting (per varieties Lambda pattern).
-// Returns true if request is allowed; false if limit exceeded.
-export async function checkRateLimit(sql, actor, bucketKey, limit) {
-  const rows = await sql`
-    INSERT INTO public.rate_limit_buckets (actor_clerk_sub, bucket_key, window_start, count)
-    VALUES (${actor}, ${bucketKey}, date_trunc('hour', NOW()), 1)
-    ON CONFLICT (actor_clerk_sub, bucket_key, window_start)
-    DO UPDATE SET count = public.rate_limit_buckets.count + 1
-    WHERE public.rate_limit_buckets.count < ${limit}
-    RETURNING count
-  `;
-  return rows.length > 0;
 }
 
 export const handler = async (event) => {

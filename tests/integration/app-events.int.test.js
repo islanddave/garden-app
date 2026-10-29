@@ -1,7 +1,7 @@
 // new-file: no integration test existed for app-events
 // Pins today's /api/app-events replies on real Postgres (OPS-CODEREVIEW-001 C6) so D1/D2/D2b changes are seen.
-// The 23514 and 23502 replies echo the constraint/column name (D2b replaces that); 23505/23503 are unreachable
-// (uuid PK, no FK). Trap: no empty-subject guard, so a subject-less token reaches checkRateLimit.
+// The 23514 reply echoes the constraint name (D2b replaces that); 23505/23503 are unreachable (uuid PK, no FK).
+// Trap: no empty-subject guard, so a subject-less token reaches checkRateLimit, which refuses it (429).
 import { describe, it, expect, afterAll, vi } from 'vitest'
 import { directSql, callHandler, makeEvent, setTestUserId, testRunId } from './_harness.js'
 // After _harness.js, whose vi.mock replaces this module with the stub; imported first it would be the real one.
@@ -24,12 +24,13 @@ const RUN = testRunId()
 const USER = `c6_appev_${RUN}`
 const LIMITED = `c6_appev_limited_${RUN}`
 const DENIED = `c6_appev_denied_${RUN}`
+const PARALLEL = `c6_appev_parallel_${RUN}`
 // 256 characters, still carrying the fixture namespace so the global sweep reaches its rate-limit row.
 const LONG_SUB = `c6_appev_long_${RUN}_`.padEnd(256, 'x')
 
 afterAll(async () => {
-  await directSql`DELETE FROM app_events WHERE user_clerk_sub IN (${USER}, ${LIMITED}, ${DENIED}, ${LONG_SUB})`
-  await directSql`DELETE FROM rate_limit_buckets WHERE actor_clerk_sub IN (${USER}, ${LIMITED}, ${DENIED}, ${LONG_SUB})`
+  await directSql`DELETE FROM app_events WHERE user_clerk_sub IN (${USER}, ${LIMITED}, ${DENIED}, ${LONG_SUB}, ${PARALLEL})`
+  await directSql`DELETE FROM rate_limit_buckets WHERE actor_clerk_sub IN (${USER}, ${LIMITED}, ${DENIED}, ${LONG_SUB}, ${PARALLEL})`
 })
 
 describe('app-events — normal requests', () => {
@@ -84,6 +85,24 @@ describe('app-events — normal requests', () => {
     expect(status).toBe(429)
     expect(body).toEqual({ error: 'Rate limit exceeded — 1000/hour for app_events.write' })
     expect(await rowsFor(LIMITED)).toEqual([])
+  })
+
+  // SEC-13b S1: the upsert is one statement, so parallel requests cannot push the count past the limit.
+  // The next hour is seeded too, so a clock turn mid-case still starts from 995.
+  it('SEC-13b: ten parallel POSTs at 995/1000 -> exactly five 201s, five 429s, count 1000', async () => {
+    await directSql`
+      INSERT INTO rate_limit_buckets (actor_clerk_sub, bucket_key, window_start, count)
+      VALUES (${PARALLEL}, 'app_events.write', date_trunc('hour', now()), 995),
+             (${PARALLEL}, 'app_events.write', date_trunc('hour', now()) + interval '1 hour', 995)`
+    setTestUserId(PARALLEL)
+    const results = await Promise.all(Array.from({ length: 10 }, () => post({ event_name: 'parallel' })))
+    const statuses = results.map((r) => r.status).sort()
+    expect(statuses).toEqual([201, 201, 201, 201, 201, 429, 429, 429, 429, 429])
+    const counts = await directSql`
+      SELECT count FROM rate_limit_buckets WHERE actor_clerk_sub = ${PARALLEL} AND bucket_key = 'app_events.write'`
+    expect(counts.map((c) => c.count)).toContain(1000)
+    expect(Math.max(...counts.map((c) => c.count))).toBe(1000)
+    expect(await rowsFor(PARALLEL)).toHaveLength(5)
   })
 })
 
@@ -169,11 +188,14 @@ describe('app-events — database errors (the replies D2b changes)', () => {
     expect(await rowsFor(LONG_SUB)).toEqual([])
   })
 
-  it('23502: a token with no subject -> 400 naming the NOT NULL column of the rate-limit table', async () => {
+  // SEC-13b S2: the limiter refuses a missing actor before any statement. SEC-60 later moves this to a 401.
+  it('SEC-13b: a token with no subject -> 429 from the limiter, and no row of any kind is written', async () => {
     vi.mocked(verifyToken).mockImplementationOnce(() => Promise.resolve({}))
     const r = await raw(makeEvent({ method: 'POST', path: '/api/app-events', body: { event_name: 'nosub' } }))
-    expect(r.status).toBe(400)
-    expect(r.body).toEqual({ error: 'Required field missing: actor_clerk_sub' })
+    expect(r.status).toBe(429)
+    expect(r.body).toEqual({ error: 'Rate limit exceeded — 1000/hour for app_events.write' })
+    expect(await directSql`SELECT 1 FROM app_events WHERE event_name = 'nosub' AND (user_clerk_sub IS NULL OR user_clerk_sub = '')`).toEqual([])
+    expect(await directSql`SELECT 1 FROM rate_limit_buckets WHERE actor_clerk_sub IS NULL OR actor_clerk_sub = ''`).toEqual([])
   })
 
   it('an unmapped error (22021, NUL in event_name) is a generic 500', async () => {

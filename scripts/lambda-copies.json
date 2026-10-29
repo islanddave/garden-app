@@ -52,6 +52,11 @@
     ],
     "lambda/plants/statusEvents.js": [
       "lambda/projects/statusEvents.js"
+    ],
+    "lambda/rate-limit.js": [
+      "lambda/app-events/rate-limit.js",
+      "lambda/tags/rate-limit.js",
+      "lambda/varieties/rate-limit.js"
     ]
   }
 }
