@@ -37,8 +37,8 @@
 // file's own source text. lambda/inventory-items declares the same relation for its own statements
 // and credits nothing to this directory.
 //
-// Static source inspection rather than import: these handlers load @neondatabase/serverless and
-// @clerk/backend at module scope and cannot be imported in the unit suite. So nothing here proves a
+// Static source inspection rather than import: lambda/_test-stubs make the handlers importable, but
+// the stub never evaluates SQL. So nothing here proves a
 // statement RUNS; that is tests/integration's job (seed-lots-reverse, plant-merge-surfaces).
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';

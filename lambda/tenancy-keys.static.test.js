@@ -1,3 +1,4 @@
+// GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 // The keys instruments (V5-SPACETENANCYKEY-001, multi-space plan V204 step 2.0e, §2.4 "Unique keys and upserts").
 //
 // WHY THIS EXISTS. Once a second Space exists, a unique key that does not carry the Space makes two Spaces collide:

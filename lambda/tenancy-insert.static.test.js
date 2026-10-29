@@ -1,3 +1,4 @@
+// GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 // The writer test (V5-SPACETENANCYKEY-001, multi-space plan V204 step 2.2, §2.4 "Writers").
 //
 // WHY THIS EXISTS. 2.1 gave 22 tables a workspace_id whose DEFAULT is the original Space, so every Lambda INSERT

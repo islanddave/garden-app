@@ -1,9 +1,8 @@
 // OPS-SCHEMAAUDITJOIN-001 / V5-INFLIGHTBATCH-001 — the relations kitchenRoutes.js reads and writes.
 //
-// WHY A SEPARATE FILE AND NOT A BLOCK IN select-columns.test.js: parse_test_file returns on the keyed
-// AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector
-// (scripts/dev-main-schema-audit.py:128-137), so dropping a keyed block into an existing contract file
-// SILENTLY DESTROYS that file's own coverage. Always a new file.
+// A new relation this directory reads goes in as a key of one of its keyed AUDIT_COLUMNS files, not
+// a new file (scripts/count-ratchets.json). Never put both forms in one file: parse_test_file returns on
+// the keyed form first, so a keyed block in an AUDIT_TABLES file silently drops that file's tables.
 //
 // WHY ALL FIVE IN ONE FILE: the keyed form binds columns to ONE relation each and does not
 // cross-product, so several relations can share a file without asserting each other's columns. Phase 4

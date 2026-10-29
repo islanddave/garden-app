@@ -1,3 +1,4 @@
+// GUARD: security (household isolation)
 // HOUSEHOLD-MODE static-source guard (dashboard handlers).
 // Informational builders compute householdIds and widen created_by to = ANY(${householdIds}).
 // ACTIONABLE surfaces (queryWaterDue, queryHeadsUp) are CARETAKER-scoped (assignee_user_id with

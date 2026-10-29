@@ -18,8 +18,8 @@
 // contract module is invisible to it, which is why a relation several Lambdas JOIN needs a
 // contract in each of their directories rather than one in a common place.
 //
-// Static source inspection rather than import: these handlers load @neondatabase/serverless and
-// @clerk/backend at module scope and cannot be imported in the unit suite.
+// Static source inspection rather than import: lambda/_test-stubs make the handlers importable, but
+// the stub never evaluates SQL, so the columns a statement names are visible only in its source text.
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

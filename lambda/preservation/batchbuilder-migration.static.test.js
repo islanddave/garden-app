@@ -1,3 +1,4 @@
+// GUARD: ruling (v5-batchbuilder-001 post_no_dead_pick_link)
 // V5-BATCHBUILDER-001 — static guard over migrations/v5-batchbuilder-001 and the Lambda half of
 // BUG-ARCHIVESOFTDELBATCH-001 (the README's option (c)).
 //

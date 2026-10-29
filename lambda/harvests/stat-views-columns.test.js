@@ -6,9 +6,9 @@
 // season-stats.js binds fourteen new relations; without this file the baseline would rise by
 // fourteen, and the L-081 ratchet only ever goes down.
 //
-// WHY A NEW FILE AND NOT A BLOCK IN select-columns.test.js: parse_test_file returns on the keyed
-// AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector, so a keyed block dropped
-// into an existing contract file SILENTLY DESTROYS that file's own coverage. Always a new file.
+// A new relation this directory reads goes in as a key of one of its keyed AUDIT_COLUMNS files, not
+// a new file (scripts/count-ratchets.json). Never put both forms in one file: parse_test_file returns on
+// the keyed form first, so a keyed block in an AUDIT_TABLES file silently drops that file's tables.
 //
 // WHAT PHASE 1 DOES WITH IT: every column below is checked against prod information_schema.columns,
 // which lists views. Until migrations/v5-seasonstats-001 is applied to prod these relations have zero

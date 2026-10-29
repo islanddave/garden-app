@@ -6,8 +6,8 @@
 // grow-year-2026 picks on prod 2026-09-29, found because Season stats (stat_pick, which falls back
 // to the event's created_by) counted all 1,761 and Harvests did not.
 //
-// Static, like archive-hide.test.js beside it: index.js imports its runtime deps at module load and
-// cannot be imported under `npm ci`. Every assertion is a COUNT of three, because a fix in two of the
+// Static, like archive-hide.test.js beside it: the stub in lambda/_test-stubs never evaluates
+// index.js's SQL. Every assertion is a COUNT of three, because a fix in two of the
 // three queries is the shape that makes a total disagree with the rows under it. The real-DB proof
 // is tests/integration/harvests.int.test.js ("project-less picks").
 import { describe, it, expect } from 'vitest';

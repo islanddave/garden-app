@@ -18,8 +18,8 @@
 // integration run. This file closes the specific hole; it is NOT wired into the prod auditor (which
 // discovers only `select-columns.test.js`), so treat it as a source-level guard, not as coverage.
 //
-// Static source inspection rather than import: index.js loads @neondatabase/serverless and
-// @clerk/backend at module scope and cannot be imported under `npm ci` in CI.
+// Static source inspection rather than import: index.js is importable through lambda/_test-stubs, but
+// the stub never evaluates SQL, so the columns a statement names are visible only in its source text.
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

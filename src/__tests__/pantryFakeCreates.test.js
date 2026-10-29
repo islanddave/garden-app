@@ -1,3 +1,4 @@
+// GUARD: fidelity (keeps the pantry fake's creates honest)
 // Put-Up R2a (prep) — src/__tests__/helpers/pantryFake.js, the additions every R2a lane is built against:
 //   · POST /api/preservation is judged by the Lambda's OWN validateCreate, and a body key that is not a column
 //     the create INSERT writes is refused too (validateCreate alone lets a misspelt key through: the server

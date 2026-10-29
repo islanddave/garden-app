@@ -1,3 +1,4 @@
+// GUARD: security (household isolation)
 // HOUSEHOLD-MODE static-source guard (locations Lambda).
 // Locations was GLOBAL pre-household (no created_by filter); this brings it into the
 // household-scoped model per the 2026-05-20 "locations IN" decision. Asserts: householdScope

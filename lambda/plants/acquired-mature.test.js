@@ -11,9 +11,9 @@
 //     changes what an alias-back means. The 0a and 0r column lists are diffed against each other,
 //     which is exactly the byte-for-byte property the migration header claims.
 //
-// Static-source, like select-columns.test.js and assignee.test.js: index.js imports
-// @neondatabase/serverless + @clerk/backend + @aws-sdk/* at module load, so it cannot be imported
-// under vitest. validate.js is dependency-free by design and IS imported.
+// Static-source, like select-columns.test.js and assignee.test.js: index.js is importable through
+// lambda/_test-stubs, but the stub never evaluates SQL. validate.js is dependency-free by design and
+// IS imported.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

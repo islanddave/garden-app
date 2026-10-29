@@ -5,9 +5,9 @@
 // did this planting's harvest go"), where dropping it silently rewrites history the day the last jar
 // is finished. This flag is the seam between them.
 //
-// WHAT THIS FILE CAN AND CANNOT DO. lambda/preservation/index.js imports @neondatabase/serverless and
-// @clerk/backend at module scope, so it cannot be imported under the root vitest run — these are text
-// assertions over its source, and they are pinned to the two things a careless edit loses:
+// WHAT THIS FILE CAN AND CANNOT DO. lambda/preservation/index.js is importable through
+// lambda/_test-stubs, but the stub never evaluates SQL — these are text assertions over its source,
+// and they are pinned to the two things a careless edit loses:
 //   (1) the flag is STRICTLY opt-in, so the Put-Up inventory page keeps excluding empty jars;
 //   (2) it reaches the whats-put-up query and NOTHING else — use-soon and the collection GET have
 //       their own filters and their own meanings, and widening either by accident would put empty

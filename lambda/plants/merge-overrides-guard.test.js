@@ -7,9 +7,8 @@
 // write plus a read leak through every surface that JOINs locations. A string or number `overrides`
 // also threw inside mergeCore's `col in overrides` (500).
 //
-// index.js cannot be imported under vitest (it pulls @neondatabase/serverless, @clerk/backend and
-// @aws-sdk/* at module load), so — like every other guard in this directory — this reads the
-// decommented source. The location gate is ALSO counted by lambda/authz-write-fk.test.js SITES
+// The stub in lambda/_test-stubs never evaluates index.js's SQL, so — like every other guard in this
+// directory — this reads the decommented source. The location gate is ALSO counted by lambda/authz-write-fk.test.js SITES
 // (plants/index.js location_id = 3); this file pins that the third gate is the MERGE one, and that
 // every guard sits before the mergeCore call.
 import { describe, it, expect } from 'vitest';

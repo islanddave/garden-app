@@ -1,3 +1,4 @@
+// GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 // The closed-world tenancy class file (V5-SPACETENANCYKEY-001, multi-space plan V204 step 2.0b, §2.1).
 //
 // WHY THIS EXISTS. Isolating Spaces needs one answer, for every relation, to "whose is this row?": the class

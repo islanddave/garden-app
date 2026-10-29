@@ -10,8 +10,8 @@
 // today (Dave 0, Jen 0) — this is a latent fix, and the point of it is that the latency ends the
 // moment the projects DELETE ships propagation or a user deletes a non-empty container.
 //
-// Static-source (L-072), DB-free — plants/index.js cannot be imported under vitest (neon/Clerk/
-// AWS SDK at module load), which is why every other guard in this directory is written this way.
+// Static-source (L-072), DB-free: the stub in lambda/_test-stubs never evaluates plants/index.js's
+// SQL.
 //
 // Every assertion is mutation-verified — mutation applied, RED observed, file restored
 // byte-identically (shasum-checked).

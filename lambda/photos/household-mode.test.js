@@ -1,3 +1,4 @@
+// GUARD: security (household isolation)
 // HOUSEHOLD-MODE static-source guard (photos Lambda) — uploaded_by -> created_by SWITCH.
 // Photos previously scoped by uploaded_by = ${userId}; Household Mode switches the SCOPE
 // FILTERS to created_by = ANY(${householdIds}) (created_by is canonical, populated).
@@ -92,9 +93,9 @@ describe('photos Lambda — Household Mode uploaded_by -> created_by switch', ()
 
 // BEHAVIOR-LEVEL guard (BUG-PHOTOLOCAUTHZ-001) — executes the REAL autoPromoteFeatured against a
 // recording fake of the Neon tagged-template `sql` (the lambda/events/critterAward.test.js pattern)
-// and asserts the SQL it actually EMITS, not just the source text. index.js cannot be imported here
-// (its @aws-sdk/@clerk/@neondatabase imports are per-Lambda deps, not installed at the repo root),
-// so the function source is extracted verbatim and instantiated — same executed code, zero deps.
+// and asserts the SQL it actually EMITS, not just the source text. index.js is importable through
+// lambda/_test-stubs, but autoPromoteFeatured is not exported, so the function source is extracted
+// verbatim and instantiated — same executed code, zero deps.
 // The true end-to-end check (row actually protected in Postgres) is Wave-4 staging smoke.
 function extractFunction(src, header) {
   const start = src.indexOf(header);

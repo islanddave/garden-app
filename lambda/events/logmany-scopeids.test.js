@@ -14,9 +14,9 @@
 //   - validateBatchBody / normalizeScopeIds are PURE, so they are exercised for real (called,
 //     with values, results asserted). That half is not a source-text guard and does not have the
 //     weaknesses of one.
-//   - the resolver arm and the 409 live inside a 3900-line handler that cannot be imported without
-//     a DB (auto-memory: the lambda unit suite proves no DB behaviour), so those are static-source
-//     assertions in the house style of logmany-cropslug / logmany-projectless / logmany-zone-scope.
+//   - the resolver arm and the 409 live inside a 3900-line handler whose SQL the import stub
+//     (lambda/_test-stubs) never evaluates, so those are static-source assertions, as in
+//     logmany-cropslug / logmany-projectless / logmany-zone-scope.
 //     What a real unresolvable id does against the real view belongs to the integration suite;
 //     what THIS file buys is a guard that runs on every push to dev.
 import { describe, it, expect } from 'vitest';

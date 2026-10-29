@@ -1,3 +1,4 @@
+// GUARD: ruling (DEC-TESTPOLICY-001: merge-only until tests/integration has a twin)
 // Regression guard for the plants-PUT variety clear-fix (happy-adoring-sagan Pending #1).
 // Static-source assertion — same rationale as select-columns.test.js: lambda/plants/index.js
 // imports @neondatabase/serverless + @clerk/backend + @aws-sdk/* at module load, so there is no

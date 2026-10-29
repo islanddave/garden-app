@@ -1,3 +1,4 @@
+// GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 // The prosrc census test (V5-SPACETENANCYKEY-001, multi-space plan V204 step 2.2, §2.4 "Writers", DSA-21, MF1).
 //
 // WHY THIS EXISTS. Database functions and triggers INSERT rows too, and a function INSERT into an S table that does

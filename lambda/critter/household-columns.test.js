@@ -1,3 +1,4 @@
+// GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 // OPS-SCHEMAAUDITJOIN-001 — the four relations household.js queries, and the columns each of its
 // write-FK ownership loaders touches.
 //

@@ -1,3 +1,4 @@
+// GUARD: security (household isolation)
 // HOUSEHOLD-MODE static-source guard (inventory-items Lambda).
 // Asserts widening of LIST/UPDATE/DELETE/trailing-LIST + uploaded_by->created_by switch,
 // INSERT integrity (user_id + created_by = userId), and the documented lost-update TODO.

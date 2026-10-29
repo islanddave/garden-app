@@ -9,11 +9,10 @@
 // whose project_id was NEVER populated. NULL-vs-set is not stranded-vs-following, and this suite
 // pins that distinction in the code rather than leaving it to a comment.
 //
-// WHY STATIC SOURCE. lambda/events/index.js imports @clerk/backend and three @aws-sdk packages that
-// live only in lambda/events/package.json, so it cannot be imported in the unit run and vi.mock
-// cannot help (Vite resolves before mocks). Same tier-2 approach as undo-cascade.test.js /
-// undo-recompute.test.js / event-photos.test.js, and it carries the same honest limit: it proves
-// the statement is WRITTEN, not that Postgres ran it. The executing proof is the EXPLAIN plan taken
+// WHY STATIC SOURCE. lambda/events/index.js is importable through lambda/_test-stubs, but the stub
+// never evaluates SQL. Same approach as undo-cascade.test.js / undo-recompute.test.js /
+// event-photos.test.js, with the same limit: it proves the statement is WRITTEN, not that Postgres
+// ran it. The executing proof is the EXPLAIN plan taken
 // against prod at authoring time and tests/integration.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';

@@ -1,3 +1,4 @@
+// GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 // Public-repo literals (V5-SITECONSTANTS-001, multi-space Phase 1 step 1.13).
 //
 // WHY THIS EXISTS. The repository is public. Multi-space work writes new migrations and a harness that handle real

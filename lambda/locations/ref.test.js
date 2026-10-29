@@ -1,9 +1,9 @@
 // BUG-LOCDELSLUG-001 — behavioural tests for the /api/locations/:id reference resolver.
 //
 // BEHAVIOURAL, not source-text, and that is the point of extracting ref.js at all. Every other
-// guard in this directory reads index.js as characters because the handler imports
-// @neondatabase/@clerk/@aws-sdk at module load and cannot be imported in CI (per-dir node_modules
-// do not exist there). ref.js imports NOTHING, so the rule that decides how many rows a DELETE may
+// guard in this directory reads index.js as characters: the handler is importable through
+// lambda/_test-stubs, but the stub never evaluates SQL. ref.js imports NOTHING, so the rule that
+// decides how many rows a DELETE may
 // touch is exercised for real instead of pattern-matched — a source-text guard would have passed
 // on the buggy version too, since the defect was never a missing string.
 //

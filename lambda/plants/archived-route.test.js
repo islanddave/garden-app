@@ -1,3 +1,4 @@
+// GUARD: ruling (DEC-TESTPOLICY-001: merge-only until tests/integration has a twin)
 // V4-ARCHIVEBROWSE-001 regression guard (plants). Static-source per L-072 house style (DB-free).
 //
 // Sibling of archive-route.test.js, which guards the WRITE half (the PATCH toggle) and the four

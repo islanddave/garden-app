@@ -10,9 +10,8 @@
 // BUG-LAMBDASYNTAX-001 silently truncated, so it has already demonstrated once that this Lambda can
 // ship structurally broken without a test noticing.
 //
-// Static source inspection, not import: lambda/locations/index.js loads @neondatabase/serverless and
-// @clerk/backend at module scope, so it cannot be imported under `npm ci` in CI without the
-// handler's runtime deps — same constraint and same solution as the sibling files.
+// Static source inspection rather than import: index.js is importable through lambda/_test-stubs, but
+// the stub never evaluates SQL, so the columns a statement names are visible only in its source text.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

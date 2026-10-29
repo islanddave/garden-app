@@ -12,9 +12,8 @@
 // lambda/harvests in Phase 1 so the audit has something to check, and pins the columns the compose
 // surface depends on.
 //
-// Static source inspection for the same reason as the sibling files: lambda/harvests/index.js imports
-// @neondatabase/serverless + @clerk/backend at module load, so it cannot be imported under `npm ci`
-// in CI without the handler's runtime deps.
+// Static source inspection rather than import: index.js is importable through lambda/_test-stubs, but
+// the stub never evaluates SQL, so the columns a statement names are visible only in its source text.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

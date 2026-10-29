@@ -10,8 +10,6 @@
 // Every reply is built from the contract's recorded examples (seedMix.fixture.js); the pure tables are
 // in seedAdditions.test.js. No jest-dom (L-182).
 import React from 'react'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 
@@ -52,6 +50,7 @@ import contract from '../../tests/contracts/seed-mix.json'
 import {
   additionReply, additionReplayReply, openLotsReply, openLotRow, plantSeedLot, blendReply, refusal, filingCases,
 } from './fixtures/seedMix.fixture.js'
+import { S_FIRST, S_SECOND, sameInputSaves, sameInputSteps, sameInputReply, sameInputSent } from './helpers/saveSeedSameInputs.js'
 
 const YEAR = todayLocalISO().slice(0, 4)
 const OWN = plantSeedLot()                       // drying, 130 approx., one other parent
@@ -98,83 +97,6 @@ const kind = ([url, opts = {}]) => {
 const calls = (k) => apiFetchSpy.mock.calls.filter((c) => kind(c) === k)
 const bodies = (k) => calls(k).map(([, opts]) => JSON.parse(opts.body))
 const counts = () => ({ add: calls('add').length, event: calls('event').length, open: calls('open').length })
-
-// SAME-INPUTS-BEGIN — this block is byte-identical in SaveSeedSheet.addToLot.test.jsx (both flags on) and
-// SaveSeedSheet.addToLot.flagOff.test.jsx (SEED_ADD_TO_LOT off); the flag-on file reads both and fails if
-// they differ. Three new-lot saves and every request each one makes, in order. The two files drive the
-// same taps and compare with this one list, so "flag off" and "flag on" cannot each pass on its own answer.
-const S_A = { id: 'v-a', name: 'Ace', crop_type_slug: 'pepper', breeding_system: 'open_pollinated', variety_rank: 'cultivar' }
-const S_B = { id: 'v-b', name: 'Jimmy Nardello', crop_type_slug: 'pepper', breeding_system: 'open_pollinated', variety_rank: 'cultivar' }
-const S_FIRST = { id: 'pl-first', name: 'Ace row', quantity: 1, variety_id: 'v-a', variety_ref: S_A }
-const S_SECOND = { id: 'pl-second', name: 'Jimmy row', quantity: 1, variety_id: 'v-b', variety_ref: S_B }
-const S_MIX = { id: 'v-mix', name: 'Ace + Jimmy Nardello mix' }
-const sLot = (name, varietyId, plantIds) => ({
-  url: '/api/inventory-items', method: 'POST',
-  body: { name, category: 'seeds', type: 'consumable', unit: 'packet', quantity_on_hand: 1, variety_id: varietyId, source_plant_id: plantIds[0], source_plant_ids: plantIds, idempotency_key: 'KEY' },
-})
-const sEvent = (plantId, name, stage = '') => ({
-  url: '/api/events', method: 'POST',
-  body: {
-    plant_id: plantId, event_type: 'seed_saved', event_date: 'TODAY',
-    notes: `Seed lot "${name}"${stage}. No count yet — recorded when it's marked stored.`,
-    metadata: { seed_lot_id: 'lot-new' },
-  },
-})
-const sameInputSaves = (year) => ({
-  'one planting, nothing typed': [
-    sLot(`Ace — saved ${year}`, 'v-a', ['pl-first']),
-    sEvent('pl-first', `Ace — saved ${year}`),
-  ],
-  'one planting, a count, a weight and a process': [
-    sLot(`Ace — saved ${year}`, 'v-a', ['pl-first']),
-    { url: '/api/inventory-items/lot-new/seed-measure', method: 'PUT', body: { seed_count: 40, seed_count_estimated: true, seed_weight_g: 2.5 } },
-    { url: '/api/inventory-items/lot-new/seed-stage', method: 'POST', body: { stage: 'drying', seed_process: 'dry' } },
-    sEvent('pl-first', `Ace — saved ${year}`, ', drying'),
-  ],
-  'two plantings of two varieties, a plant count': [
-    { url: '/api/varieties/blend', method: 'POST', body: { component_variety_ids: ['v-a', 'v-b'], create: true } },
-    sLot(`Ace + Jimmy Nardello mix — saved ${year}`, 'v-mix', ['pl-first', 'pl-second']),
-    { url: '/api/inventory-items/lot-new/seed-measure', method: 'PUT', body: { seed_parent_plant_count: 3 } },
-    sEvent('pl-first', `Ace + Jimmy Nardello mix — saved ${year}`),
-    sEvent('pl-second', `Ace + Jimmy Nardello mix — saved ${year}`),
-  ],
-})
-// How each is driven, given the file's own way of opening the sheet on S_FIRST and of tapping Save.
-const sameInputSteps = (open, save) => ({
-  'one planting, nothing typed': async () => { open(); await save() },
-  'one planting, a count, a weight and a process': async () => {
-    open()
-    fireEvent.change(screen.getByTestId('save-seed-count'), { target: { value: '40' } })
-    fireEvent.click(screen.getByTestId('save-seed-count-estimated'))
-    fireEvent.change(screen.getByTestId('save-seed-weight'), { target: { value: '2.5' } })
-    fireEvent.click(screen.getByTestId('save-seed-process-dry'))
-    await save()
-  },
-  'two plantings of two varieties, a plant count': async () => {
-    open()
-    fireEvent.click(screen.getByTestId('save-seed-add-plant'))
-    fireEvent.click(screen.getByTestId('offer-second'))
-    fireEvent.change(screen.getByTestId('save-seed-plant-count'), { target: { value: '3' } })
-    await save()
-  },
-})
-// The replies both files give those requests, and the list of what was sent, with today's date masked
-// and the create's key too (BUG-NEWLOTNOIDEMPOTENCYKEY-001): a key that is a uuid reads KEY, and a body
-// with none, or with anything else in its place, is listed as it was sent and fails the comparison.
-const sameInputReply = (url, opts = {}) => {
-  const u = String(url)
-  if (opts.method === 'POST' && u === '/api/varieties/blend') return S_MIX
-  if (opts.method === 'POST' && u === '/api/inventory-items') return { id: 'lot-new' }
-  if (opts.method === 'PUT' && u.endsWith('/seed-measure')) return { seed_parent_plant_count: JSON.parse(opts.body).seed_parent_plant_count ?? null }
-  return { id: 'x' }
-}
-const sameInputSent = (spy) => spy.mock.calls
-  .filter(([, o]) => o?.method)
-  .map(([url, o]) => ({ url: String(url), method: o.method, body: JSON.parse(o.body) }))
-  .map((r) => (r.url === '/api/events' ? { ...r, body: { ...r.body, event_date: 'TODAY' } } : r))
-  .map((r) => (r.url === '/api/inventory-items' && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(r.body.idempotency_key)
-    ? { ...r, body: { ...r.body, idempotency_key: 'KEY' } } : r))
-// SAME-INPUTS-END
 
 const onClose = vi.fn()
 const onSeedAdded = vi.fn()
@@ -1176,21 +1098,6 @@ describe('the key (row 20)', () => {
 })
 
 describe('a new lot is still a new lot (the flag-on half of contract T20)', () => {
-  const SELF = 'src/__tests__/SaveSeedSheet.addToLot.test.jsx'
-  const TWIN = 'src/__tests__/SaveSeedSheet.addToLot.flagOff.test.jsx'
-  const block = (file) => {
-    const src = readFileSync(resolve(process.cwd(), file), 'utf8')
-    const from = src.indexOf('// SAME-INPUTS-BEGIN')
-    const to = src.indexOf('// SAME-INPUTS-END')
-    expect(from, `${file} has no SAME-INPUTS block`).toBeGreaterThan(-1)
-    expect(to).toBeGreaterThan(from)
-    return src.slice(from, to)
-  }
-  it('this file and the flag-off file hold the same inputs and the same expected requests', () => {
-    expect(block(SELF).length).toBeGreaterThan(2000)
-    expect(block(TWIN)).toBe(block(SELF))
-  })
-
   const save = async () => {
     await act(async () => { fireEvent.click(screen.getByTestId('save-seed-submit')) })
     await waitFor(() => expect(onClose).toHaveBeenCalled())

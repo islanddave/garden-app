@@ -1,3 +1,4 @@
+// GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 // V4-APIGZIP-001 — each Lambda is zipped from its own dir, so http-response.js is copied per-dir and
 // imported as ./http-response.js. These copies MUST stay byte-identical to the canonical
 // lambda/http-response.js: a drifted copy silently diverges the content negotiation per surface,

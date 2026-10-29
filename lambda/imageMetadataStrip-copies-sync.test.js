@@ -1,3 +1,4 @@
+// GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 // BUG-FBSHAREDENYLIST-001 — the Facebook-share Lambda strips photo metadata with a byte-identical
 // copy of the canonical src/lib/imageMetadataStrip.js, because deploy-lambda.yml zips from inside
 // the function dir (`cd lambda/<fn> && zip -r ../<fn>.zip .`) and a `../../src/lib/...` import

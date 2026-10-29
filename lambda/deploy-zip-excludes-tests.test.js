@@ -1,3 +1,4 @@
+// GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 // OPS-LAMBDATESTZIP-001 — the deploy bundle must not contain test files.
 //
 // `zip -r ../<fn>.zip .` shipped every *.test.js in the function directory to production across all

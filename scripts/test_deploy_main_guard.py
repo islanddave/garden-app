@@ -1,3 +1,4 @@
+# GUARD: security (OPS-SECREVIEW-001 do-not-remove list)
 """The prod deploy jobs refuse unless main points at the commit they are about to deploy (OPS-MAINREFGUARD-001).
 
 Run: python3 -m pytest -q scripts/test_deploy_main_guard.py

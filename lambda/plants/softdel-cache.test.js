@@ -30,9 +30,8 @@
 //   correct household -> soft-deletes AND `DELETE 1`, cache row gone
 //   foreign household -> `DELETE 0`, cache row survives, planting still live
 //
-// Source-text rather than behavioural: this is the plants handler, not a pure builder, and it
-// cannot be imported in CI (per-dir node_modules do not exist there). The house convention for
-// handler assertions is to read index.js as text.
+// Source-text rather than behavioural: this is the plants handler, not a pure builder, and the stub
+// in lambda/_test-stubs never evaluates its SQL.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';

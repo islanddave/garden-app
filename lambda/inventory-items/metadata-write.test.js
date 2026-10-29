@@ -14,9 +14,9 @@
 // edit made through a form that does not round-trip it — and the richest metadata in the table
 // belongs to the bulk-loaded seed rows, which no UI renders and therefore no UI would send back.
 //
-// Static source inspection rather than import: lambda/inventory-items/index.js loads
-// @neondatabase/serverless and @clerk/backend at module scope, so it cannot be imported under
-// `npm ci` in CI. Same constraint and same approach as select-columns.test.js in this directory.
+// Static source inspection rather than import: lambda/inventory-items/index.js is importable through
+// lambda/_test-stubs, but the stub never evaluates SQL. Same approach as select-columns.test.js in
+// this directory.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';

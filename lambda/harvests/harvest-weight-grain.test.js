@@ -9,8 +9,8 @@
 // response that it happened.
 //
 // The sibling static file (harvest-weight-aggregates.test.js) pins the SQL's shape, which is all it
-// can do: lambda/harvests/index.js imports neon/clerk/aws and cannot be imported under the root
-// vitest run. A regex over source text cannot check a Map key. That is why applyWeights lives in
+// can do: lambda/harvests/index.js is importable through lambda/_test-stubs, but the stub never
+// evaluates SQL. A regex over source text cannot check a Map key. That is why applyWeights lives in
 // aggregate.js — so THIS file can hand it a rowset and read what comes back.
 //
 // The rowset fixtures are the real GROUPING SETS output shape: one row per grouping set, with the

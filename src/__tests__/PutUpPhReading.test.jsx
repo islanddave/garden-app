@@ -1,3 +1,4 @@
+// GUARD: food-safety (PH_CHECK_DAYS)
 // V5-PHRECORD-001 — recording a measured pH on the Going-now card, prompting for one, linking to how.
 //
 // ⚠ THE LINE EVERY ASSERTION IN THIS FILE SITS ON:

@@ -1,3 +1,4 @@
+// GUARD: security (household isolation)
 // HOUSEHOLD-MODE static-source guard (projects Lambda).
 // Asserts ownership READ/WRITE-guard sites widened to created_by = ANY(${householdIds}),
 // INSERT still stamps the real author (${userId}), householdScope is imported, and the

@@ -1,11 +1,11 @@
 // OPS-SCHEMAAUDITJOIN-001 / Put-Up release 2 (B′) — the pantry_item columns lambda/preservation reads and
 // writes, and the one column release 2 adds to kitchen_batch_input (V4 §5.6 "a *-columns.test.js contract").
 //
-// WHY A SEPARATE FILE AND NOT A BLOCK IN kitchen-columns.test.js / select-columns.test.js: parse_test_file
-// returns on the keyed AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector
-// (scripts/dev-main-schema-audit.py), so a keyed block dropped into another contract file SILENTLY
-// DESTROYS that file's own coverage. Always a new file. The keyed form binds columns to ONE relation each,
-// and two files naming kitchen_batch_input are a set union per directory (kitchen-columns.test.js says so).
+// A new relation this directory reads goes in as a key of one of its keyed AUDIT_COLUMNS files, not
+// a new file (scripts/count-ratchets.json). Never put both forms in one file: parse_test_file returns on
+// the keyed form first, so a keyed block in an AUDIT_TABLES file silently drops that file's tables.
+// The keyed form binds columns to ONE relation each, and two files naming kitchen_batch_input are a
+// set union per directory (kitchen-columns.test.js says so).
 //
 // WITHOUT THIS FILE the Phase 4 ratchet (scripts/schema-audit-join-baseline.json, may fall and never rise)
 // would count pantry_item as a new uncovered relation for this directory and refuse the promote.
