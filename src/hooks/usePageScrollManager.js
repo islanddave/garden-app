@@ -39,7 +39,7 @@
 // rest produces no click at all. The hook pages' own restore (useScrollRestore) and Garden's keep their
 // older rule — wheel, touchstart, keydown — for their ~20-frame loops; those are not this driver.
 import { createContext, createElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { SCROLL_MANAGER_ENABLED, OVERLAY_ROUTES_ENABLED } from '../lib/featureFlags.js'
+import { SCROLL_MANAGER_ENABLED } from '../lib/featureFlags.js'
 import { locationEntryKey, pageEntryKey } from '../lib/pageEntry.js'
 import { readAnyMarker } from '../lib/backNav.js'
 import { requestsInFlight } from '../lib/netActivity.js'
@@ -82,7 +82,7 @@ function isCovered(state) {
   if (!state || typeof state !== 'object') return false
   if (readAnyMarker(state)) return true
   const usr = state.usr && typeof state.usr === 'object' ? state.usr : null
-  const bg = OVERLAY_ROUTES_ENABLED && usr ? usr.background : null
+  const bg = usr ? usr.background : null
   return !!(bg && typeof bg === 'object' && typeof bg.pathname === 'string')
 }
 

@@ -28,7 +28,6 @@ import { describe, it, expect, vi } from 'vitest'
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   SPACE_PHOTOS_ENABLED: true,
-  OVERLAY_ROUTES_ENABLED: true,
   PROJECTS_HIDDEN: true,
 }))
 

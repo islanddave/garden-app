@@ -4,11 +4,9 @@
 // `background ?? location` and an OVERLAY tree at the REAL location when a background exists.
 // This context is the single source of the "effective page location" so App-level chrome
 // (TopChrome/TodayBand/BottomNav/CritterArrivalController) follows the BACKGROUND, not the
-// overlay URL (§2). Entirely inert when OVERLAY_ROUTES_ENABLED is false: no background is ever
-// set, the overlay tree never renders, and every helper degrades to plain navigate/Link.
+// overlay URL (§2).
 import React, { createContext, useContext, useMemo, useCallback, useEffect } from 'react'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
-import { OVERLAY_ROUTES_ENABLED } from '../lib/featureFlags.js'
 import { readAnyMarker } from '../lib/backNav.js'
 import { CONTINUES_ENTRY_KEY, locationEntryKey } from '../lib/pageEntry.js'
 
@@ -105,8 +103,7 @@ let closingFrom = null
 
 // Signals to route content that it is rendering INSIDE an overlay Sheet (vs full-page). OverlayHost
 // provides `true`; everywhere else it defaults false. Lets a route (e.g. Search) drop its full-page
-// 100dvh floor and defer initial focus to the Sheet when it is shown as a flyover (§6/§7). Inert
-// when the flag is off — OverlayHost never mounts, so this stays false.
+// 100dvh floor and defer initial focus to the Sheet when it is shown as a flyover (§6/§7).
 const OverlaySurfaceContext = createContext(false)
 export function OverlaySurfaceProvider({ children }) {
   return <OverlaySurfaceContext.Provider value={true}>{children}</OverlaySurfaceContext.Provider>
@@ -137,7 +134,7 @@ export function useReportOverlayDirty(dirty) {
   }, [report, dirty])
 }
 
-// A background is honored only if the flag is on AND it looks like a real location. Guards the
+// A background is honored only if it looks like a real location. Guards the
 // "stale background across reload/deploy" trap (§V102 failure mode b): an unparseable/legacy value
 // degrades to full-page (background=undefined) instead of rendering a broken overlay tree.
 function validBackground(bg) {
@@ -146,13 +143,13 @@ function validBackground(bg) {
 
 export function OverlayProvider({ children }) {
   const location = useLocation()
-  const background = OVERLAY_ROUTES_ENABLED ? validBackground(location.state?.background) : undefined
+  const background = validBackground(location.state?.background)
 
   useEffect(() => { closingFrom = null }, [location.key])
 
   const value = useMemo(
     () => ({
-      background, // undefined unless an overlay is open (flag on)
+      background, // undefined unless an overlay is open
       overlayLocation: location, // the REAL location — the overlay tree renders here
       pageLocation: background ?? location, // what chrome + the page tree render (§2, §3)
     }),
@@ -163,7 +160,7 @@ export function OverlayProvider({ children }) {
 }
 
 // Chrome hook: the EFFECTIVE page location. Drop-in for useLocation() in App-level chrome.
-// When no overlay is open (incl. flag off) this IS the real location — byte-identical to today.
+// When no overlay is open this IS the real location.
 // Falls back to the real location when rendered OUTSIDE a provider (e.g. isolated chrome tests),
 // so it is a safe drop-in that never throws.
 export function useOverlayLocation() {
@@ -180,25 +177,23 @@ export function useOverlay() {
 }
 
 // Open an overlay: navigate carrying the current location as `background`.
-// Flag off -> plain navigate -> full-page render, identical to today.
 export function useOverlayNavigate() {
   const navigate = useNavigate()
   const location = useLocation()
   return useCallback(
     (to, opts = {}) => {
-      if (!OVERLAY_ROUTES_ENABLED) { navigate(to, opts); return }
       navigate(to, { ...opts, state: { ...opts.state, background: withHistoryEntry(location, !!opts.replace) } })
     },
     [navigate, location]
   )
 }
 
-// Declarative equivalent of useOverlayNavigate. Flag off -> a plain <Link>, same DOM/props.
+// Declarative equivalent of useOverlayNavigate.
 export function OverlayLink({ to, state, children, ...rest }) {
   const location = useLocation()
   // Read at render, not at click: OverlayLink re-renders on every location change (useLocation), and the
   // only thing that moves history.state between those renders is a Back marker, which copies the idx.
-  const linkState = OVERLAY_ROUTES_ENABLED ? { ...state, background: withHistoryEntry(location, !!rest.replace) } : state
+  const linkState = { ...state, background: withHistoryEntry(location, !!rest.replace) }
   return (
     <Link to={to} state={linkState} {...rest}>
       {children}
@@ -211,7 +206,7 @@ export function OverlayLink({ to, state, children, ...rest }) {
 // BUG-OVERLAYDISMISSREKEY-001 above); otherwise replace to the background URL, else /today.
 // Resilient outside a provider (useContext, not useOverlay) so overlay route content (LogMany "Done")
 // can call it in isolated unit tests that render without a provider — there background is simply
-// undefined and it falls back to /today (same as flag-off / no overlay).
+// undefined and it falls back to /today (same as no overlay).
 export function useOverlayDismiss() {
   const navigate = useNavigate()
   const ctx = useContext(OverlayContext)
@@ -243,7 +238,7 @@ export function useOverlayDismiss() {
   }, [navigate, background])
 }
 
-// Slice 2 — safe read of the current background (undefined when no overlay / flag off / outside a
+// Slice 2 — safe read of the current background (undefined when no overlay / outside a
 // provider). Lets overlay content preserve `background` when it re-navigates to the SAME url with new
 // state (LogMany's post-batch critterCheck push, §4) without pulling in useLocation() — which the
 // bare-mock unit tests for these pages do not provide.
@@ -257,7 +252,7 @@ export function useOverlayBackground() {
 // useOverlayNavigate there would set background to the overlay's OWN url (/log or /log/many), which
 // would render a form as the page-tree "background" and dismiss to the wrong place. Instead we carry
 // the EXISTING background forward and `replace` (a content swap must not grow history). When no
-// overlay is open (full-page, or flag off) this is a plain push navigate — identical to the old
+// overlay is open (full-page) this is a plain push navigate — identical to the old
 // <Link>/navigate() the call site used before.
 export function useOverlaySwap() {
   const navigate = useNavigate()
@@ -265,7 +260,7 @@ export function useOverlaySwap() {
   const background = ctx ? ctx.background : undefined
   return useCallback(
     (to, opts = {}) => {
-      if (OVERLAY_ROUTES_ENABLED && background) {
+      if (background) {
         navigate(to, { replace: true, ...opts, state: { ...opts.state, background } })
       } else {
         navigate(to, opts)
@@ -279,7 +274,7 @@ export function useOverlaySwap() {
 export function OverlaySwapLink({ to, state, replace: replaceProp, children, ...rest }) {
   const ctx = useContext(OverlayContext)
   const background = ctx ? ctx.background : undefined
-  const inOverlay = OVERLAY_ROUTES_ENABLED && !!background
+  const inOverlay = !!background
   const linkState = inOverlay ? { ...state, background } : state
   return (
     <Link to={to} state={linkState} replace={inOverlay || !!replaceProp} {...rest}>

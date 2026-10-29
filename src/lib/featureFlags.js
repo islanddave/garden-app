@@ -40,14 +40,6 @@ export const CARE_RAIN_MAXDAYS_ENABLED = false
 // the two-minute revert path and flipping this constant is only the client-side trace.
 export const CARE_TODAY_AWARE_ENABLED = false
 
-// V4-OVERLAY-001 (design V102): route-backed overlays — forms/search open as flyovers over the
-// current tab instead of navigating away. Slice 1 = infra + /search consumer. When FALSE, every
-// overlay helper degrades to plain navigate/Link, no `background` is ever set, the overlay tree
-// never renders, and chrome reads the real location — behavior is byte-identical to pre-overlay.
-// Flip TRUE only after Slice-1 CI-green on pinned node 20.19.0. NOTE (design §9): this flag is a
-// true safety net for Slice 1 ONLY — Slices 2-3 mutate full-page rendering outside its guard.
-export const OVERLAY_ROUTES_ENABLED = true
-
 // V4-PLANTREQUIRED-001 (Lane 3, Ask 2): per-event-type required-planting gate on EventNew + the
 // ProjectDetail mini-logger. When FALSE (default) the D2 matrix is INERT — the planting field stays
 // optional exactly as today and no POST is blocked, so the existing suite is unaffected. When TRUE,
@@ -184,9 +176,7 @@ export const TODAY_BAND_HIDDEN = true
 // Escape). Slice 1 is an ARBITRATION REPAIR, not a behaviour change: the only observable difference
 // is that the correct surface closes.
 //
-// FLAG-OFF IS A TRUE ROLLBACK, and that is load-bearing here in a way it was not for
-// OVERLAY_ROUTES_ENABLED (whose own note concedes it stopped being a real lever once later slices
-// mutated rendering outside its guard). Every global mutation this slice makes sits INSIDE the
+// FLAG-OFF IS A TRUE ROLLBACK. Every global mutation this slice makes sits INSIDE the
 // flag: with it false, useDismissable never registers, the provider binds no listener, and Sheet
 // and Lightbox fall back to their own per-instance handlers via `registered === false`. That same
 // fallback is what keeps ~380 existing tests — which render these components with no provider —

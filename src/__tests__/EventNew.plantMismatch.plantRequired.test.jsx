@@ -11,7 +11,7 @@
 // user silently logs a watering against no planting; flag-ON the user is stopped and told to choose
 // one. Both satisfy "never write a mismatched pair." Only one of them loses the planting silently.
 //
-// importActual spread so every other flag (OVERLAY_ROUTES_ENABLED etc.) keeps its real value.
+// importActual spread so every other flag keeps its real value.
 // Harness mirrors EventNew.plantRequired.test.jsx. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'

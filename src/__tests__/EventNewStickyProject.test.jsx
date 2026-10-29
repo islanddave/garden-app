@@ -55,7 +55,7 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 // written to cover, rather than being rewritten to the flag-ON world. Flag-ON is covered by
 // EventNew.plantRequired.test.jsx, EventNew.plantMismatch.plantRequired.test.jsx and the
 // BUG-LOGTARGETREQ-001 duplicates in EventNew.projhide.test.jsx.
-// importActual spread so every other flag (OVERLAY_ROUTES_ENABLED etc.) keeps its real value.
+// importActual spread so every other flag keeps its real value.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,

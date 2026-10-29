@@ -30,7 +30,7 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 // (rollback = one-line revert). Mocked FALSE so every assertion below keeps covering what it was
 // written to cover, rather than being rewritten to the flag-ON world. Flag-ON is covered by
 // EventNew.plantRequired.test.jsx and EventNew.plantMismatch.plantRequired.test.jsx.
-// importActual spread so every other flag (OVERLAY_ROUTES_ENABLED etc.) keeps its real value.
+// importActual spread so every other flag keeps its real value.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,

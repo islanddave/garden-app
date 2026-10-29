@@ -4,8 +4,8 @@
 // behavior (planting optional) is covered by EventNew.test.jsx; this file exercises the flag-ON path.
 //
 // The flag is spread over the REAL module (importActual) so every other flag keeps its real value —
-// EventNew also reads OVERLAY_ROUTES_ENABLED, so a bare {PLANTING_REQUIRED_ENABLED:true} mock would
-// blank it and change unrelated behavior. Harness mirrors EventNew.test.jsx. No jest-dom (L-182).
+// EventNew also reads other flags, so a bare {PLANTING_REQUIRED_ENABLED:true} mock would
+// blank them and change unrelated behavior. Harness mirrors EventNew.test.jsx. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
@@ -34,7 +34,7 @@ vi.mock('react-router-dom', () => ({
   useSearchParams: () => [searchParamsRef.current, vi.fn()],
 }))
 
-// Flag ON — spread the real module so OVERLAY_ROUTES_ENABLED (and any future flag) keeps its value.
+// Flag ON — spread the real module so every other flag keeps its value.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PLANTING_REQUIRED_ENABLED: true,

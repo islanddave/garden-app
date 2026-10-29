@@ -20,7 +20,6 @@ const { navigateSpy, locationRef, prefsRef } = vi.hoisted(() => ({
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   SPACE_PHOTOS_ENABLED: true,
-  OVERLAY_ROUTES_ENABLED: true,
 }))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig()),

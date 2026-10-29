@@ -20,7 +20,6 @@
 //
 // These are identities, not positions: planOverlayClose's walk arithmetic reads router keys and idx and
 // must never see them.
-import { OVERLAY_ROUTES_ENABLED } from './featureFlags.js'
 
 export const CONTINUES_ENTRY_KEY = 'continuesEntry'
 
@@ -34,19 +33,19 @@ export function locationEntryKey(loc) {
 }
 
 // The overlay background the page tree shows for a history state ({usr, key, idx}), or null when it shows
-// the entry itself: OverlayProvider's own test, flag and shape (validBackground).
-export function overlayBackgroundOf(state, overlays = OVERLAY_ROUTES_ENABLED) {
+// the entry itself: OverlayProvider's own test and shape (validBackground).
+export function overlayBackgroundOf(state) {
   const usr = state && typeof state === 'object' && state.usr && typeof state.usr === 'object' ? state.usr : null
   const bg = usr && usr.background
-  return overlays && bg && typeof bg === 'object' && typeof bg.pathname === 'string' ? bg : null
+  return bg && typeof bg === 'object' && typeof bg.pathname === 'string' ? bg : null
 }
 
 // The entry the page tree shows for a history state: the overlay's background when one is honored, else
 // the entry this one continues, else the entry's own key. null for an entry react-router has not keyed
 // (its 'default').
-export function pageEntryKey(state, overlays = OVERLAY_ROUTES_ENABLED) {
+export function pageEntryKey(state) {
   if (!state || typeof state !== 'object') return null
-  const bg = overlayBackgroundOf(state, overlays)
+  const bg = overlayBackgroundOf(state)
   if (bg) return locationEntryKey(bg)
   const usr = state.usr && typeof state.usr === 'object' ? state.usr : null
   return keyOf(usr && usr[CONTINUES_ENTRY_KEY]) || keyOf(state.key)

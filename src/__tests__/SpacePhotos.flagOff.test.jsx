@@ -29,7 +29,6 @@ import { render, screen, fireEvent, act } from '@testing-library/react'
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   SPACE_PHOTOS_ENABLED: false,
-  OVERLAY_ROUTES_ENABLED: true,
 }))
 
 const { navigateSpy, locationRef, prefsRef, saveSpy } = vi.hoisted(() => ({

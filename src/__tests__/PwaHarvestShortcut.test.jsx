@@ -39,14 +39,11 @@ const { apiFetchSpy, dataRef } = vi.hoisted(() => ({
 }))
 
 // PLANTING_REQUIRED_ENABLED false mirrors EventNew.harvestSession.test.jsx: the gate under test is
-// the session gate, and dragging PlantingSelect into every mount tests something else. OVERLAY_ROUTES
-// pinned true because the posture case is meaningless with the overlay machinery off — App.routes.test.jsx
-// pins it the same way and for the same reason.
+// the session gate, and dragging PlantingSelect into every mount tests something else.
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   PROJECTS_HIDDEN: false,
   PLANTING_REQUIRED_ENABLED: false,
-  OVERLAY_ROUTES_ENABLED: true,
 }))
 
 // Spread the original: App.jsx imports AuthProvider from here too, and a bare factory would leave it
