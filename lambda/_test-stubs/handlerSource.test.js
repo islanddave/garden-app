@@ -90,18 +90,27 @@ describe('readHandlerSource', () => {
 
   it('is index.js decommented (V2) when index.js imports no *Routes.js', () => {
     const name = fn('solo', { 'index.js': 'export const handler = 1; // c\n--\n' });
-    expect(readHandlerSource(name, root)).toBe('export const handler = 1; \n\n');
+    expect(readHandlerSource(name, { root })).toBe('export const handler = 1; \n\n');
   });
 
   it('joins index.js and each imported *Routes.js, decommented separately, with the sentinel line', () => {
     const name = fn('split', { 'index.js': INDEX, 'fooRoutes.js': FOO, 'barRoutes.js': 'BAR', 'helper.js': 'HELPER' });
-    expect(readHandlerSource(name, root)).toBe(
+    expect(readHandlerSource(name, { root })).toBe(
       `${decommentSqlDashBare(INDEX)}\n${HANDLER_SOURCE_SENTINEL}\n${decommentSqlDashBare(FOO)}`,
     );
   });
 
+  it('decomments with the variant passed in: V1 keeps the bare `--` lines V2 strips', () => {
+    const name = fn('dash-space', { 'index.js': INDEX, 'fooRoutes.js': FOO });
+    expect(readHandlerSource(name, { decomment: decommentSqlDashSpace, root })).toBe(
+      `${decommentSqlDashSpace(INDEX)}\n${HANDLER_SOURCE_SENTINEL}\n${decommentSqlDashSpace(FOO)}`,
+    );
+    expect(readHandlerSource(name, { decomment: decommentSqlDashSpace, root }))
+      .not.toBe(readHandlerSource(name, { root }));
+  });
+
   it('throws when a source already contains the sentinel', () => {
     const name = fn('clash', { 'index.js': `x\n${HANDLER_SOURCE_SENTINEL}\n` });
-    expect(() => readHandlerSource(name, root)).toThrow(/sentinel/);
+    expect(() => readHandlerSource(name, { root })).toThrow(/sentinel/);
   });
 });

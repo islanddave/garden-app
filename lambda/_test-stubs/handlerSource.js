@@ -24,15 +24,17 @@ export const HANDLER_SOURCE_SENTINEL = '/*@@ handlerSource: next file @@*/';
 // Found in decommented index.js, so a commented-out import does not pull its file in.
 const ROUTE_IMPORT = /\b(?:from|import)\s*\(?\s*['"]\.\/([\w-]+Routes\.js)['"]/g;
 
-// A function's index.js plus every ./*Routes.js it imports, in import order, each decommented (V2) on
-// its own and joined by HANDLER_SOURCE_SENTINEL on its own line, so a whole-handler scan keeps working
-// after routes move out of index.js. Order and slice assertions must not use this: an anchor can land
-// in a different file after a split, so they read the single file that holds their anchors.
-export function readHandlerSource(fn, root = LAMBDA_DIR) {
+// A function's index.js plus every ./*Routes.js it imports, in import order, each decommented on its
+// own and joined by HANDLER_SOURCE_SENTINEL on its own line, so a whole-handler scan keeps working
+// after routes move out of index.js. `decomment` defaults to V2; a test that carried a V1 copy passes
+// decommentSqlDashSpace so it keeps seeing the same text (the variants differ on bare `--` lines).
+// Order and slice assertions must not use this: an anchor can land in a different file after a split,
+// so they read the single file that holds their anchors.
+export function readHandlerSource(fn, { decomment = decommentSqlDashBare, root = LAMBDA_DIR } = {}) {
   const dir = resolve(root, fn);
-  const index = decommentSqlDashBare(readFileSync(resolve(dir, 'index.js'), 'utf8'));
+  const index = decomment(readFileSync(resolve(dir, 'index.js'), 'utf8'));
   const routes = [...new Set([...index.matchAll(ROUTE_IMPORT)].map((m) => m[1]))];
-  const parts = [index, ...routes.map((r) => decommentSqlDashBare(readFileSync(resolve(dir, r), 'utf8')))];
+  const parts = [index, ...routes.map((r) => decomment(readFileSync(resolve(dir, r), 'utf8')))];
   if (parts.some((p) => p.includes(HANDLER_SOURCE_SENTINEL))) {
     throw new Error(`readHandlerSource(${fn}): a source already contains the sentinel line`);
   }
