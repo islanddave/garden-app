@@ -50,10 +50,10 @@ describe('sw.js image cache (V4-PHOTOCDN-001 P2)', () => {
   })
 
   it('the presign strip is gated on the request mode, never applied unconditionally', () => {
-    // The coupling between the two halves of PHOTO_CORS_CACHE_ENABLED is this line and nothing else:
-    // sw.js cannot import the flag, so it infers it from the request. Deleting the gate would make
-    // the SW half live against a client that never sets crossOrigin — the reachable half-state the
-    // flag design exists to prevent.
+    // The coupling between the two halves of the CORS photo cache is this line and nothing else:
+    // sw.js cannot see PhotoImg's crossOrigin, so it infers it from the request. Deleting the gate
+    // would make the SW half live against a client that never sets crossOrigin — the reachable
+    // half-state this coupling exists to prevent.
     expect(SRC).toMatch(/const cors = request\.mode === 'cors'/)
     expect(SRC).toMatch(/if \(corsMode\) \{/)
   })

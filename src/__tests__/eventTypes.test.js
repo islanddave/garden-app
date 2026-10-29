@@ -210,7 +210,7 @@ describe('V4-LOSSUI-001 — the reduction types are SELECTABLE now that the capt
   // V4-LOSSEVENT-001 asserted the opposite: `SELECTABLE_EVENT_TYPES omits exactly those two while
   // the capture panel is unbuilt`. That test was correct for its premise, and the premise has a
   // name — "no capture panel collects the required quantity + reason, so a picker entry would 400
-  // every time" (the CATCH_UP_EDITOR_SHIPPED shape). The panel now exists
+  // every time" (the old Catch-up badge shape). The panel now exists
   // (components/PlantReductionFields.jsx, wired into EventNew as a REQUIRED panel that gates Save),
   // so the premise is gone and the assertion has to move with it.
   //

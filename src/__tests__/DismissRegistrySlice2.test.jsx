@@ -13,11 +13,6 @@ import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 
-const flags = { DISMISS_REGISTRY_ENABLED: true }
-vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
-}))
 vi.mock('../components/PhotoImg.jsx', () => ({ default: ({ alt }) => <img alt={alt || ''} src="stub" /> }))
 // useShareToSocial drives FacebookShareSheet's `state`; drive it from the test instead. The pure
 // helpers are stubbed rather than imported for real — the module imports useApiFetch at module
@@ -56,7 +51,7 @@ const esc = () => act(() => { fireEvent.keyDown(document, { key: 'Escape' }) })
 const CRITTER = { id: 'c1', common_name: 'Ladybug', slug: 'ladybug' }
 
 describe('Slice 2 — non-Sheet dialogs arbitrate through the one registry', () => {
-  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = true; fbState.state = 'idle'; resetSpy2.mockClear() })
+  beforeEach(() => { fbState.state = 'idle'; resetSpy2.mockClear() })
 
   // CANARY for the effect loop described at the mock above. The sheet's fresh-composer effect must
   // run ONCE per open; if it re-runs on every render, this counts up. It is asserted here because
@@ -174,21 +169,20 @@ describe('Slice 2 — non-Sheet dialogs arbitrate through the one registry', () 
   })
 })
 
-describe('Slice 2 — flag OFF restores every legacy handler', () => {
-  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = false; fbState.state = 'idle' })
+describe('Slice 2 — no provider keeps every legacy handler', () => {
+  beforeEach(() => { fbState.state = 'idle' })
 
-  it('the popover handles its own Escape again, and double-fires as it did before', () => {
+  it('the popover handles its own Escape, and double-fires with the Sheet as it did before', () => {
     const onSheetClose = vi.fn()
     const onPopoverClose = vi.fn()
     render(
-      <DismissRegistryProvider>
+      <>
         <Sheet open onClose={onSheetClose} title="Details"><button>inner</button></Sheet>
         <CritterFactsPopover critter={CRITTER} theme={{}} content={{}} onClose={onPopoverClose} />
-      </DismissRegistryProvider>
+      </>
     )
     esc()
-    // Pinning the OLD behaviour on purpose: this is the defect the registry removes, and proving
-    // the flag brings it back is what proves the flag is a real rollback rather than a half-apply.
+    // The unregistered fallback (`registered === false`): each surface binds its own Escape.
     expect(onPopoverClose).toHaveBeenCalledTimes(1)
     expect(onSheetClose).toHaveBeenCalledTimes(1)
   })
@@ -196,8 +190,6 @@ describe('Slice 2 — flag OFF restores every legacy handler', () => {
 
 // Pre-promote regression pass (2026-08-06) findings, pinned so they cannot silently return.
 describe('Slice 2 — pre-promote regression fixes', () => {
-  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = true })
-
   // A duplicate aria-modal attribute shipped in the built bundle: the later literal won, so this
   // surface ALWAYS claimed modality and the single-modality invariant was broken on 1 of 10
   // surfaces. Nothing caught it — eslint has no react plugin, the build is happy with duplicate
@@ -231,8 +223,6 @@ describe('Slice 2 — pre-promote regression fixes', () => {
 })
 
 describe('Sheet backdrop — busy guard (pre-promote fix)', () => {
-  beforeEach(() => { flags.DISMISS_REGISTRY_ENABLED = true })
-
   // Moving TransplantDatePrompt from dirty={saving} to busy={saving} was semantically right but
   // silently dropped its backdrop protection: Sheet's no-op was gated on `dirty` alone. On mobile a
   // stray backdrop tap is far likelier than an Escape press, so that was a net regression on the

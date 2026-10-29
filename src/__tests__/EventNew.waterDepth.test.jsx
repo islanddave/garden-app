@@ -38,7 +38,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -51,6 +50,17 @@ import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
+
+// V4-PLANTREQUIRED-001: a plant-predicated type needs a planting to save, and choosing the project
+// clears it, so chooseProject picks the first planting offered straight after (PLANT unless the test
+// serves its own list).
+async function chooseProject(id) {
+  fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  if (screen.queryByTestId('evtnew-planting-chip')) return
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+}
 
 function wireApiFetch() {
   apiFetchSpy.mockImplementation((path, options = {}) => {
@@ -74,7 +84,7 @@ function renderEventNew(query = '') {
 beforeEach(() => {
   apiFetchSpy.mockReset(); navigateSpy.mockReset(); postCalls.length = 0
   searchParamsRef.current = new URLSearchParams()
-  dataRef.projects = [PROJECT]; dataRef.locations = []; dataRef.plants = []
+  dataRef.projects = [PROJECT]; dataRef.locations = []; dataRef.plants = [PLANT]
   dataRef.postResult = { id: 'evt-1', project_id: 'proj-1', plant_id: null }
   dataRef.postError = null
   try { localStorage.clear() } catch { /* noop */ }
@@ -131,7 +141,7 @@ describe('EventNew — water depth reaches the POST body', () => {
   it('the untouched default path posts normal/default — zero added taps', async () => {
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await save()
     expect(postCalls.length).toBe(1)
     expect(postCalls[0].metadata).toMatchObject({ water_depth: 'normal', water_depth_source: 'default' })
@@ -140,7 +150,7 @@ describe('EventNew — water depth reaches the POST body', () => {
   it('a tapped chip posts that class with source=user', async () => {
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.click(screen.getByTestId('water-depth-deep'))
     await save()
     expect(postCalls[0].metadata).toMatchObject({ water_depth: 'deep', water_depth_source: 'user' })
@@ -149,7 +159,7 @@ describe('EventNew — water depth reaches the POST body', () => {
   it('re-tapping Normal after Deep records the USER choice, not the default', async () => {
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.click(screen.getByTestId('water-depth-deep'))
     fireEvent.click(screen.getByTestId('water-depth-normal'))
     await save()
@@ -159,7 +169,7 @@ describe('EventNew — water depth reaches the POST body', () => {
   it('a non-watering event carries no water_depth keys at all', async () => {
     renderEventNew('event_type=observation')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await save()
     expect(postCalls[0].metadata?.water_depth).toBeUndefined()
     expect(postCalls[0].metadata?.water_depth_source).toBeUndefined()
@@ -169,13 +179,14 @@ describe('EventNew — water depth reaches the POST body', () => {
     dataRef.plants = [{ id: 'pl-1', name: 'Cayenne #1' }, { id: 'pl-2', name: 'Cayenne #2' }]
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.click(screen.getByTestId('water-depth-deep'))
     await save()
     expect(postCalls[0].metadata.water_depth).toBe('deep')
     // Same type kept (V4-EVENTSAVE-001 next-of-type). The class must NOT stick: a silently
     // carried-over Deep would record an amount the user never chose for the next planting.
     await waitFor(() => expect(screen.getByTestId('water-depth-normal').getAttribute('aria-pressed')).toBe('true'))
+    await chooseProject('proj-1')   // the save cleared the planting; the next entry needs one
     await save()
     expect(postCalls[1].metadata).toMatchObject({ water_depth: 'normal', water_depth_source: 'default' })
   })
@@ -185,7 +196,7 @@ describe('EventNew — the undo toast names the recorded class', () => {
   it('shows the class on the full-page undo toast', async () => {
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.click(screen.getByTestId('water-depth-deep'))
     await save()
     const status = await screen.findByRole('status')
@@ -198,7 +209,7 @@ describe('EventNew — the undo toast names the recorded class', () => {
   it('names the default class too, so the row is never silently classified', async () => {
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await save()
     const status = await screen.findByRole('status')
     expect(status.textContent).toMatch(/Normal/)
@@ -207,7 +218,7 @@ describe('EventNew — the undo toast names the recorded class', () => {
   it('a non-watering save carries no class line', async () => {
     renderEventNew('event_type=observation')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await save()
     const status = await screen.findByRole('status')
     expect(status.textContent).not.toMatch(/soaked to runoff/)

@@ -3,7 +3,7 @@
 // chosen planting (not the default project), a plant-predicated type is required-implied by the flag,
 // and an exempt type falls back to the default project_id. Flag-OFF behavior (project chooser present,
 // project-scoped planting list) is covered by EventNew.test.jsx + EventNewStickyProject.test.jsx.
-// importActual spread so every other flag (OVERLAY_ROUTES_ENABLED etc.) keeps its real value. No
+// importActual spread so every other flag keeps its real value. No
 // jest-dom (L-182). Harness mirrors EventNew.plantRequired.test.jsx.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'

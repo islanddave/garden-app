@@ -7,7 +7,7 @@
 // tell a wired panel from a dead one, so every test below mounts the form, taps what a user taps,
 // and reads the body that actually reached POST /api/events.
 //
-// Flags are pinned to the PROD values (PROJECTS_HIDDEN + PLANTING_REQUIRED_ENABLED both true, which
+// Flags are pinned to the PROD values (PROJECTS_HIDDEN true, which
 // is what featureFlags.js ships) rather than the more convenient false: the reduction types are in
 // PLANTING_REQUIRED_TYPES, and testing them with the planting gate disabled would exercise a
 // configuration Dave never runs.
@@ -45,9 +45,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: true,
-  PLANTING_REQUIRED_ENABLED: true,
-  DISMISS_REGISTRY_ENABLED: true,
-  BACKNAV_ENABLED: true,
 }))
 
 vi.mock('react-router-dom', () => ({

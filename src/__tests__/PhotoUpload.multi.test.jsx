@@ -3,19 +3,14 @@
 // Covers the multi-attach branch of <PhotoUpload> and, just as load-bearing, the proof that the
 // single branch did not move. The sibling PhotoUpload.test.jsx is the OTHER half of B2: it is the
 // pre-existing suite and it must pass UNMODIFIED, so nothing in this file may edit it.
-//
-// DUAL-BRANCH (§3 X1, house pattern = SpacePhotos.flagOn/flagOff): the flag is mocked explicitly in
-// each describe rather than read from source, so a future flip of PHOTO_MULTI_ATTACH_ENABLED cannot
-// silently delete either branch's coverage by making one of them unreachable.
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 
-const { uploadSpy, stateRef, flagRef } = vi.hoisted(() => ({
+const { uploadSpy, stateRef } = vi.hoisted(() => ({
   uploadSpy: vi.fn(),
   stateRef: { current: { isUploading: false, error: null, photo: null, preview: null } },
-  flagRef: { current: true },
 }));
 
 vi.mock('../hooks/useUploadPhoto.js', () => ({
@@ -31,13 +26,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
   }),
 }));
 
-// importActual spread so every OTHER flag keeps its real value — mocking the module wholesale would
-// silently zero PROJECTS_HIDDEN et al and change what this component renders for unrelated reasons.
-vi.mock('../lib/featureFlags.js', async (importActual) => {
-  const actual = await importActual();
-  return { ...actual, get PHOTO_MULTI_ATTACH_ENABLED() { return flagRef.current; } };
-});
-
 import { PhotoUpload } from '../components/PhotoUpload.jsx';
 
 const createdUrls = [];
@@ -48,7 +36,6 @@ let origRevoke;
 beforeEach(() => {
   uploadSpy.mockReset();
   stateRef.current = { isUploading: false, error: null, photo: null, preview: null };
-  flagRef.current = true;
   createdUrls.length = 0;
   revokedUrls.length = 0;
   origCreate = URL.createObjectURL;
@@ -76,7 +63,7 @@ async function pick(files) {
   await act(async () => { fireEvent.change(input); });
 }
 
-describe('PhotoUpload multi — flag ON', () => {
+describe('PhotoUpload multi', () => {
   it('B2: the single-mode DOM is unchanged — no `multiple` attribute without the prop', () => {
     render(<PhotoUpload />);
     expect(screen.getByTestId('photo-upload-input').hasAttribute('multiple')).toBe(false);
@@ -242,35 +229,5 @@ describe('PhotoUpload multi — flag ON', () => {
       expect(call[1].linkage).not.toHaveProperty('intake_status');
       expect(call[1].keyPrefix).not.toBe('inbox');
     }
-  });
-});
-
-describe('PhotoUpload multi — flag OFF (X1: byte-identical)', () => {
-  beforeEach(() => { flagRef.current = false; });
-
-  it('the `multiple` prop is INERT — no attribute, no strip', async () => {
-    uploadSpy.mockResolvedValue(ok('a.jpg'));
-    render(<PhotoUpload multiple />);
-    expect(screen.getByTestId('photo-upload-input').hasAttribute('multiple')).toBe(false);
-    await pick([file('a.jpg'), file('b.jpg'), file('c.jpg')]);
-    // Single semantics: files[0] only, one call, one photo object.
-    expect(uploadSpy).toHaveBeenCalledTimes(1);
-    expect(uploadSpy.mock.calls[0][0].name).toBe('a.jpg');
-    expect(screen.queryByTestId('photo-upload-staged')).toBeNull();
-  });
-
-  it('onUploadComplete still receives ONE photo object, not an array', async () => {
-    uploadSpy.mockResolvedValue(ok('a.jpg'));
-    const onComplete = vi.fn();
-    render(<PhotoUpload multiple onUploadComplete={onComplete} />);
-    await pick([file('a.jpg'), file('b.jpg')]);
-    expect(Array.isArray(onComplete.mock.calls[0][0])).toBe(false);
-    expect(onComplete.mock.calls[0][0].id).toBe('a.jpg');
-  });
-
-  it('the collapsed hook banner comes back, because it is the only report there is', () => {
-    stateRef.current.error = 'it failed';
-    render(<PhotoUpload multiple errorMode="surface" />);
-    expect(screen.getByTestId('photo-upload-error').textContent).toContain('it failed');
   });
 });

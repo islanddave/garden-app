@@ -16,7 +16,7 @@
 export const SHIPPED_TAB_HREFS = ['/today', '/garden', '/harvests', '/put-up']
 
 // In the sheet's shipped order (SPACE_PHOTOS_ENABLED on). '/plants/catch-up' was ADDED with
-// V5-PLANTSTARTDATES-001, when CATCH_UP_EDITOR_SHIPPED went true and that row became a door.
+// V5-PLANTSTARTDATES-001, when the start-date editor shipped and that row became a door.
 export const SHIPPED_MORE_HREFS = [
   '/dashboard', '/findings', '/photos', '/space', '/locations', '/inventory', '/seeds', '/achievements',
   '/plants/catch-up', '/season-end', '/season-stats',

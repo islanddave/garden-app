@@ -4,7 +4,6 @@
 // re-exports the hooks, so every other importer keeps its path.
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { LAYER } from '../lib/dismissLayers.js'
-import { DISMISS_REGISTRY_ENABLED } from '../lib/featureFlags.js'
 
 // TWO contexts, deliberately. The API context holds register/unregister/update, all of which are
 // useCallback([]) — so its identity is stable FOREVER. The value context holds topmostId, which
@@ -19,7 +18,7 @@ export const DismissApiContext = createContext(null)
 export const DismissTopContext = createContext(null)
 
 // Register a dismissable surface. Returns:
-//   registered — true only when the flag is ON *and* a provider is present. Consumers key their
+//   registered — true only when a provider is present. Consumers key their
 //                LEGACY per-instance Escape handler on `!registered`, so this hook is safe in
 //                isolated unit tests that render a Sheet with no provider (registered=false → the
 //                component behaves byte-identically to before this slice).
@@ -63,7 +62,7 @@ export function useDismissable({
 } = {}) {
   const api = useContext(DismissApiContext)
   const top = useContext(DismissTopContext)
-  const active = !!(DISMISS_REGISTRY_ENABLED && api && open)
+  const active = !!(api && open)
 
   const cbRef = useRef(onDismiss)
   useEffect(() => { cbRef.current = onDismiss }, [onDismiss])
@@ -104,7 +103,7 @@ export function useDismissable({
   // that bypassed the confirm, which is a data-loss hole rather than an inconsistency. Identity is
   // stable (it reads idRef/cbRef, never `id`/`onDismiss`), so it is safe in a consumer's deps.
   // Falls back to onDismiss whenever the provider declines ownership — so for the surfaces that
-  // never opt in, and for an unprovided/flag-off render, this is byte-identical to calling onDismiss.
+  // never opt in, and for an unprovided render, this is byte-identical to calling onDismiss.
   const requestDismiss = useCallback(() => {
     const cur = idRef.current
     if (cur && api?.requestDismiss?.(cur)) return

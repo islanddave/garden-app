@@ -41,16 +41,10 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
     isUploading: false, error: null, photo: null, stage: null, progress: null, preview: null, reset: vi.fn(),
   }),
 }))
-// V4-PLANTREQUIRED-001: the flag flipped TRUE in source on 2026-08-10. This suite predates the flip
-// and its assertions describe the planting-OPTIONAL behavior, which remains a live configuration
-// (rollback = one-line revert). Mocked FALSE so every assertion below keeps covering what it was
-// written to cover, rather than being rewritten to the flag-ON world. Flag-ON is covered by
-// EventNew.plantRequired.test.jsx and EventNew.plantMismatch.plantRequired.test.jsx.
-// importActual spread so every other flag (OVERLAY_ROUTES_ENABLED etc.) keeps its real value.
+// importActual spread so every other flag keeps its real value.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -63,6 +57,7 @@ import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 
 const PROJECT = { id: 'proj-1', name: 'Herb Plants', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Basil', project_id: 'proj-1' }
 
 beforeEach(() => {
   apiFetchSpy.mockReset(); navigateSpy.mockReset(); postCalls.length = 0
@@ -81,7 +76,7 @@ beforeEach(() => {
     }
     if (path === '/api/projects') return Promise.resolve([PROJECT])
     if (path === '/api/locations/with-path') return Promise.resolve([])
-    if (String(path).startsWith('/api/plants')) return Promise.resolve([])
+    if (String(path).startsWith('/api/plants')) return Promise.resolve([PLANT])
     return Promise.resolve(null)
   })
 })
@@ -105,7 +100,8 @@ describe('BUG-SNAPATTACH-001 — a photo event must carry a photo', () => {
   // The guard must be type-scoped. Every other event type is legitimately photo-less — a gate that
   // caught watering would be a far worse bug than the one it fixes.
   it('does not block other event types that have no photo', async () => {
-    await renderForm('event_type=watering&project=proj-1')
+    // A watering needs a planting (V4-PLANTREQUIRED-001), seeded here so only the photo rule is in play.
+    await renderForm('event_type=watering&project=proj-1&plant=plant-1')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(postCalls.length).toBe(1)
     expect(postCalls[0].event_type).toBe('watering')

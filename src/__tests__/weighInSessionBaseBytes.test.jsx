@@ -18,7 +18,7 @@
 //      the module default.
 //
 // Its sibling WeighInFrame.flagOff.test.jsx pins the same arm from the same base at a DIFFERENT
-// state: four saves, plants empty, PROJECTS_HIDDEN/PLANTING_REQUIRED_ENABLED forced off to reach
+// state: four saves, PROJECTS_HIDDEN forced off and a planting picked before each save, to reach
 // the ledger. This one pins the mount state with a real plant list and the shipped flag defaults
 // untouched, so PlantingSelect's rendered list is inside the comparison. Neither subsumes the other.
 //

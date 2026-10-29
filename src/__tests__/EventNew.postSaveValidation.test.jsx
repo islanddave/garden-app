@@ -14,12 +14,8 @@
 // LATENT BEFORE S5b, NOT INTRODUCED BY IT: the confirmation card used to replace the form body, so
 // the error sat behind the "Log another" tap. Keeping the form live is what exposed it.
 //
-// FLAG POSTURE MATTERS HERE. `required` is
-//     (PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(event_type)
-// so with both flags OFF the picker is never `required`, showBlankError can never be true, and this
-// bug is UNREPRODUCIBLE. Both flags are ON in prod as of v4.8.0, so this suite pins the SHIPPED
-// configuration — the sibling EventNew suites deliberately mock them off and could not have caught
-// this. A future flag-posture change to this file makes the test vacuous rather than failing.
+// `required` is requiresPlanting(event_type), so the picker is required for this suite's types and
+// showBlankError is reachable; an exempt type would make the test vacuous rather than failing.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
@@ -47,7 +43,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: true,
-  PLANTING_REQUIRED_ENABLED: true,
 }))
 
 vi.mock('react-router-dom', () => ({

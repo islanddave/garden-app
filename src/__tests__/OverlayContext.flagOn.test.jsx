@@ -1,13 +1,11 @@
-// V4-OVERLAY-001 Slice 1 — OverlayContext with OVERLAY_ROUTES_ENABLED mocked TRUE. Proves the
-// mechanism actually works when enabled: a valid background is honored (pageLocation follows it),
+// V4-OVERLAY-001 Slice 1 — OverlayContext. Proves the
+// mechanism actually works: a valid background is honored (pageLocation follows it),
 // junk is rejected (stale-background guard), navigate carries the current location as background,
 // and dismiss returns to the background URL. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
-
-vi.mock('../lib/featureFlags.js', () => ({ OVERLAY_ROUTES_ENABLED: true }))
 
 import { OverlayProvider, useOverlayLocation, useOverlayNavigate, useOverlayDismiss } from '../context/OverlayContext.jsx'
 

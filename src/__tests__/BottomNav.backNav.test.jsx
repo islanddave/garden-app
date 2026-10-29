@@ -36,12 +36,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, within } from '@testing-library/react'
 import { BrowserRouter, useLocation } from 'react-router-dom'
 
-const flags = { DISMISS_REGISTRY_ENABLED: true, BACKNAV_ENABLED: true }
-vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
-  get BACKNAV_ENABLED() { return flags.BACKNAV_ENABLED },
-}))
 
 const { signOutSpy, prefsRef, saveSpy } = vi.hoisted(() => ({
   signOutSpy: vi.fn(() => Promise.resolve()),
@@ -127,15 +121,16 @@ const path = () => screen.getByTestId('path').textContent
 const search = () => screen.getByTestId('path').getAttribute('data-search')
 
 // Provider nesting mirrors App.jsx: DismissRegistryProvider wraps OverlayProvider.
-function renderNav() {
+function renderNav({ provider = true } = {}) {
+  const tree = (
+    <OverlayProvider>
+      <BottomNav />
+      <Probe />
+    </OverlayProvider>
+  )
   return render(
     <BrowserRouter>
-      <DismissRegistryProvider>
-        <OverlayProvider>
-          <BottomNav />
-          <Probe />
-        </OverlayProvider>
-      </DismissRegistryProvider>
+      {provider ? <DismissRegistryProvider>{tree}</DismissRegistryProvider> : tree}
     </BrowserRouter>
   )
 }
@@ -146,8 +141,6 @@ const moreIsOpen = () => !!screen.queryByText('Sign out')
 const createIsOpen = () => !!screen.queryByText('Add a planting')
 
 beforeEach(() => {
-  flags.DISMISS_REGISTRY_ENABLED = true
-  flags.BACKNAV_ENABLED = true
   signOutSpy.mockReset()
   signOutSpy.mockResolvedValue(undefined)
   saveSpy.mockClear()
@@ -397,11 +390,10 @@ describe('BUG-SIGNOUTBACKRACE-001 — sign out consumes the armed entry, in EITH
     await expectLandedCleanly()
   })
 
-  it('flag OFF — nothing armed, so the consume gate is inert and the row behaves as shipped', async () => {
+  it('no provider — nothing armed, so the consume gate is inert and the row behaves as shipped', async () => {
     // The gate is `readMarker(history.state)`, the same predicate SheetRowLink uses: with no marker
     // it must not fire, leaving exactly one history write (the post-signOut replace).
-    flags.BACKNAV_ENABLED = false
-    renderNav()
+    renderNav({ provider: false })
     openMore()
     await flush()
     expect(armed()).toBe(false)
@@ -416,10 +408,9 @@ describe('BUG-SIGNOUTBACKRACE-001 — sign out consumes the armed entry, in EITH
   })
 })
 
-describe('ACCEPTANCE 4 — flag OFF keeps the pre-arming fallback, byte for byte', () => {
+describe('ACCEPTANCE 4 — no provider keeps the pre-arming fallback, byte for byte', () => {
   it('no marker is written; a row tap is a plain PUSH; Back walks it normally', async () => {
-    flags.BACKNAV_ENABLED = false
-    renderNav()
+    renderNav({ provider: false })
     openMore()
     await flush()
     expect(armed()).toBe(false)                  // nothing armed
@@ -439,8 +430,7 @@ describe('ACCEPTANCE 4 — flag OFF keeps the pre-arming fallback, byte for byte
   })
 
   it('Back with the sheet open falls through untouched (the pre-fix contract)', async () => {
-    flags.BACKNAV_ENABLED = false
-    renderNav()
+    renderNav({ provider: false })
     openMore()
     await flush()
     expect(armed()).toBe(false)

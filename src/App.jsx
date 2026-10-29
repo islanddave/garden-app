@@ -77,7 +77,7 @@ import Sheet from './components/forms/Sheet.jsx'
 import { OverlayProvider, OverlaySurfaceProvider, OverlayDirtyProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
 import { DismissRegistryProvider } from './context/DismissRegistry.jsx'
 import { usePageScrollManager, PageScrollProvider } from './hooks/usePageScrollManager.js'
-import { OVERLAY_ROUTES_ENABLED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED, CRITTERS_QUIET } from './lib/featureFlags.js'
+import { PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED, CRITTERS_QUIET } from './lib/featureFlags.js'
 import { loadCollectionChunk, peekCollectionChunk } from './lib/collectionChunk.js'
 import { seasonStatsChunk, sourceEditChunk } from './lib/routeChunks.js'
 
@@ -507,9 +507,9 @@ function AppShell({ user, loading, identity }) {
           </Routes>
         </div>
       </div>
-      {/* OVERLAY tree — mounts ONLY when a background exists (flag on + an overlay was opened).
+      {/* OVERLAY tree — mounts ONLY when a background exists (an overlay was opened).
           Renders at the REAL location so overlay content reads the true URL (reads/writes aligned). */}
-      {OVERLAY_ROUTES_ENABLED && background && (
+      {background && (
         <Routes location={overlayLocation}>
           {renderRoutes({ overlay: true, user, loading })}
         </Routes>

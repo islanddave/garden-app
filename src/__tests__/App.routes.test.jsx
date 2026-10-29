@@ -16,7 +16,7 @@ import { describe, it, expect, vi } from 'vitest'
 // Converted from an ENUMERATED literal to the partial importOriginal form (the shape the
 // SpacePhotos and *.projhide suites already use). The enumerated form re-broke this file on every
 // new featureFlags export — it did so for PROJECTS_HIDDEN, again for SPACE_PHOTOS_ENABLED
-// (BottomNav.modeSwap.test.jsx:42 records both), and would have again for EVENT_REANCHOR_ENABLED.
+// (BottomNav.modeSwap.test.jsx records both), and would have again for every later export.
 // The two flags this file actually pins are still stated explicitly; everything else now inherits
 // its shipped value instead of silently drifting from one.
 // PROJECTS_HIDDEN joined the explicit set 2026-09-09, for the reason stated above rather than a new
@@ -28,7 +28,6 @@ import { describe, it, expect, vi } from 'vitest'
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   SPACE_PHOTOS_ENABLED: true,
-  OVERLAY_ROUTES_ENABLED: true,
   PROJECTS_HIDDEN: true,
 }))
 

@@ -8,30 +8,17 @@
 // renders" — it is that correcting the anchor is a PUT to the SAME event id, with no DELETE and no
 // POST anywhere on the path (`moves it rather than deletes-and-recreates`, below).
 //
-// It also closes what EventDetail.editFields.test.jsx:165-171 named as deliberately-uncovered:
-// nothing in EventDetail wrote form.plant_id, so the emit branch had no reachable trigger and the
-// flag conjunct could not be falsified. It now has one.
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen, act, waitFor, fireEvent } from '@testing-library/react'
 import { settle } from './helpers/settle.js'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
-const { apiFetchSpy, navigateSpy, dataRef, flags } = vi.hoisted(() => ({
+const { apiFetchSpy, navigateSpy, dataRef } = vi.hoisted(() => ({
   apiFetchSpy: vi.fn(),
   navigateSpy: vi.fn(),
   dataRef: { event: null, project: { id: 'p1', name: 'Tomatoes 2026' } },
-  flags: { EVENT_REANCHOR_ENABLED: true },
 }))
-
-// Same getter harness as editFields: the control is flag-gated, so BOTH states have to be
-// reachable from one file or the "flag OFF leaves EventDetail byte-identical" claim is untestable.
-// Every other flag keeps its real value — PROJECTS_HIDDEN and WATER_DEPTH_EDIT_ENABLED also route
-// this page.
-vi.mock('../lib/featureFlags.js', async (importOriginal) => {
-  const actual = await importOriginal()
-  return { ...actual, get EVENT_REANCHOR_ENABLED() { return flags.EVENT_REANCHOR_ENABLED } }
-})
 
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy }) }))
 // useAuthOptional returns NO user deliberately: PlantingSelect self-fetches through useCachedFetch,
@@ -118,28 +105,15 @@ const putBody = () => {
   return JSON.parse(call[1].body)
 }
 
-beforeEach(() => { flags.EVENT_REANCHOR_ENABLED = true })
-
 describe('the re-anchor control', () => {
-  it('flag OFF — the control is not on screen at all', async () => {
-    // The byte-identical promise (featureFlags.js:123) as something checkable. Positive control
-    // first: absence only means anything on a form that actually opened.
-    flags.EVENT_REANCHOR_ENABLED = false
-    setup(); await clickEdit()
-    expect(screen.getByLabelText(/title/i)).toBeTruthy()
-    expect(screen.queryByTestId('evtdetail-planting')).toBeNull()
-    expect(screen.queryByTestId('evtdetail-planting-chip')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Change' })).toBeNull()
-  })
-
-  it('flag ON — the control renders SEEDED to the planting the event is already on', async () => {
+  it('the control renders SEEDED to the planting the event is already on', async () => {
     // Seeded, not blank: an unseeded picker would make "no change" impossible to express and every
     // save a potential move.
     setup(); await clickEdit()
     expect(screen.getByTestId('evtdetail-planting-chip').textContent).toContain('Cherry Rescue 1')
   })
 
-  it('flag ON, untouched form — saves with no anchor keys and asks nothing', async () => {
+  it('untouched form — saves with no anchor keys and asks nothing', async () => {
     setup(); await clickEdit()
     fireEvent.change(screen.getByLabelText(/title/i), { target: { value: 'first pick' } })
     save()

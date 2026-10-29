@@ -1,6 +1,6 @@
 // failPhotoLoad — "this <img> fails to load", for suites that are not ABOUT the CORS retry.
 //
-// WHY THIS EXISTS. With PHOTO_CORS_CACHE_ENABLED on, a cross-origin photo is first requested in CORS
+// WHY THIS EXISTS. A cross-origin photo is first requested in CORS
 // mode, and PhotoImg's handleError absorbs the first error to retry the SAME url with the attribute
 // removed (PhotoImg.jsx:234-241) — deliberately, so a refused CORS request is never mistaken for a
 // missing photo. A single `fireEvent.error` therefore no longer reaches the heal / degrade / terminal

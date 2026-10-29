@@ -3,16 +3,6 @@
 // until VARIETY-REF S4 lands the Cultivar-as-first-class flow. See V102 §5.2.
 export const VARIETY_REF_UI_SHIPPED = false // Flips true when VARIETY-REF S4 ships per V102 §5.2
 
-// 2.0.1 (gifted-busy-thompson): the Catch-up badge in the More menu linked to
-// /plants/catch-up, whose S1.1 editor was never built — it shipped into V2 as a
-// "coming soon" dead-end. Badge is hidden until the editor ships. Flip true when the
-// S1.1 catch-up editor lands (planned 2.1). See v2-increment-audit-2.0.1-to-2.1-V001.
-// FLIPPED TRUE with V5-PLANTSTARTDATES-001: /plants/catch-up is now the rough-start-date editor.
-// It returns as a plain More row with NO count — the old CatchUpBadge's count pill was a
-// fill-your-data nudge, which Reward UX V102 puts out of scope, so the badge was deleted, not
-// re-enabled. Rollback = flip false: the row is not drawn and the route stays reachable by URL.
-export const CATCH_UP_EDITOR_SHIPPED = true
-
 // MVP-Critter Session 4 (revision §3.24 + §6 deferred note): SYSTEM (push) notifications
 // option in Settings → Notifications tri-state toggle. Bi-state literal const — when
 // false, the SYSTEM radio option is hidden entirely (UI collapses to OFF / IN-APP ONLY).
@@ -50,29 +40,6 @@ export const CARE_RAIN_MAXDAYS_ENABLED = false
 // the two-minute revert path and flipping this constant is only the client-side trace.
 export const CARE_TODAY_AWARE_ENABLED = false
 
-// V4-OVERLAY-001 (design V102): route-backed overlays — forms/search open as flyovers over the
-// current tab instead of navigating away. Slice 1 = infra + /search consumer. When FALSE, every
-// overlay helper degrades to plain navigate/Link, no `background` is ever set, the overlay tree
-// never renders, and chrome reads the real location — behavior is byte-identical to pre-overlay.
-// Flip TRUE only after Slice-1 CI-green on pinned node 20.19.0. NOTE (design §9): this flag is a
-// true safety net for Slice 1 ONLY — Slices 2-3 mutate full-page rendering outside its guard.
-export const OVERLAY_ROUTES_ENABLED = true
-
-// V4-PLANTREQUIRED-001 (Lane 3, Ask 2): per-event-type required-planting gate on EventNew + the
-// ProjectDetail mini-logger. When FALSE (default) the D2 matrix is INERT — the planting field stays
-// optional exactly as today and no POST is blocked, so the existing suite is unaffected. When TRUE,
-// event types that predicate on a plant (PLANTING_REQUIRED_TYPES in eventTypes.js) require a plant_id
-// client-side before submit. CLIENT-side + flagged ONLY: the server validator (events/validators.js)
-// is deliberately NOT flipped in lockstep — this is a PWA with a service worker, so a one-step server
-// flip would 400 every log from stale cached bundles mid-season (spec D7). Flip TRUE only after
-// Lane 2 telemetry shows new orphans for REQUIRED types approach zero (D1 falsifier). Criteria-gated,
-// never date-gated. Rollback = flip back to false (one client revert, no data to unwind).
-// FLIPPED TRUE 2026-08-10 on Dave's approval. D1 falsifier MEASURED MET 2026-08-06: orphan rate for
-// REQUIRED types was 0.08% over 30d on 5,156 events — a 4x improvement on the 0.31% of the 31-90d
-// window. The server validator stays unflipped BY DESIGN (see the paragraph above) — do NOT "fix"
-// the asymmetry; a lockstep server flip would 400 every log from a stale cached PWA bundle.
-export const PLANTING_REQUIRED_ENABLED = true
-
 // V4-WATERMATH-001 F0 (2026-08-12): editing a logged watering's amount class (Light/Normal/Deep)
 // from event history. CAPTURE is unflagged and live — POST /api/events already stores whatever
 // `metadata` it is handed, and the batch path is covered by the events-Lambda merge. EDIT is NOT:
@@ -98,9 +65,8 @@ export const WATER_DEPTH_EDIT_ENABLED = true
 // become invisible plumbing). Mirrors the PUBHIDE "hide the concept, server keeps the data" pattern.
 // When FALSE (default) every gated surface renders exactly as today — the existing suite is
 // unaffected. When TRUE: Garden defaults to a type facet (project tree hidden); EventNew derives
-// project_id from the chosen planting (predicated types require a planting — implied HERE, NOT by
-// flipping the telemetry-gated PLANTING_REQUIRED_ENABLED above; exempt types fall back to a default
-// project_id); project routes stay reachable-but-unlinked; public /garden/:slug sharing is untouched.
+// project_id from the chosen planting (predicated types require a planting; exempt types fall back
+// to a default project_id); project routes stay reachable-but-unlinked; public /garden/:slug sharing is untouched.
 // Preview by flipping this const on dev. Criteria-gated, never date-gated. Rollback = flip back to
 // false (one client revert, no data to unwind).
 // FLIPPED TRUE 2026-08-10 on Dave's explicit approval, AFTER the three pre-flip gaps were closed:
@@ -113,38 +79,7 @@ export const WATER_DEPTH_EDIT_ENABLED = true
 //   3. the unscoped /api/plants fetch on every log-form mount — MEASURED on prod rather than left as
 //      a worry: 255 live plantings, 66 kB uncompressed for the columns the picker uses (~10-15 kB
 //      gzipped), vs a scoped median of 1 row. Real but immaterial; not a blocker.
-// Ordering mattered and was respected: PLANTING_REQUIRED_ENABLED was flipped and shipped FIRST,
-// because EventNew.jsx:716 reads (PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) — flipping this one
-// first would have activated the required-planting gate implicitly and contaminated that flag's own
-// D1 telemetry.
 export const PROJECTS_HIDDEN = true
-
-// BUG-EVENTEDITFIELDS-001 slice 4 — the "move this event to a different planting" control.
-// OFF by default. This is the one slice of the ticket that earns a flag: slices 1 and 3 are inert
-// server changes (no client sends the keys), but this one puts a control on screen whose failure
-// mode is SILENT DATA MOVEMENT, and it introduces genuine PROJECTS_HIDDEN control flow onto
-// EventDetail, which previously used that flag only for a breadcrumb and a post-delete nav target.
-// Flag OFF leaves EventDetail byte-identical, so the existing suites stay meaningful untouched.
-//
-// FLIPPED TRUE 2026-08-31 (V4-REANCHORFLAG-001) — with the control built, and NOT before. Flipping
-// this on its own was a provable no-op: nothing wrote form.plant_id, so the emit guard was always
-// false. Both original worries are smaller than when they were written. "SILENT DATA MOVEMENT":
-// trg_audit_event_log_upd is armed on prod and watches plant_id/project_id, the PUT sets the actor
-// GUC, and the control now confirms the move by name before issuing it — so a move is neither
-// silent to the database nor to the user. "PROJECTS_HIDDEN control flow": that flag went TRUE
-// 2026-08-10, so the picker only ever needs its planting branch and the two-mode form never had to
-// be built. What it buys: Dave was correcting a misfiled harvest by DELETING it and re-logging —
-// ~1/day over the audited window, 4 of 11 with the clear correction signature — which is exactly
-// what the Soft-Delete-Only Rule exists to prevent.
-export const EVENT_REANCHOR_ENABLED = true
-
-// V4-IMGCACHE-001 D-1 (design V102 §B / §5.4): the subscribable image-LIST SWR cache ("slow-tab win").
-// When TRUE (default), the photo-list read sites (PhotosWall / PlantingDetail attached-photos /
-// LocationDetail) render from a household-scoped in-heap cache and revalidate on every mount; when
-// FALSE, useCachedFetch degrades to a plain fetch-on-mount (no cache read/write) so those sites are
-// byte-identical to pre-D1. One-toggle rollback lever (module const → "rollback" = flip false +
-// redeploy). Heap-only: no service-worker change. Criteria-gated, never date-gated.
-export const IMAGE_LIST_CACHE_ENABLED = true
 
 // V4-SPACEPHOTO-001 Lane C (crucible plan V100 §3 / §12a): the Space tier's user-facing photo
 // surface — the /space route + page, the More-sheet nav rows, the space hero, and the space
@@ -215,56 +150,6 @@ export const HARVEST_QUALITY_HIDDEN = true
 // value lives once, in TodayBand.hidden.test.jsx via importActual. Criteria-gated, never date-gated.
 export const TODAY_BAND_HIDDEN = true
 
-// V4-BACKNAV-001 Slice 1 (decision V200 §6) — the shared modal dismiss registry: ONE Escape
-// listener resolving the topmost registered surface, replacing per-instance document keydown
-// handlers that currently double-fire (a Sheet under an open Lightbox gets BOTH onCloses from one
-// Escape). Slice 1 is an ARBITRATION REPAIR, not a behaviour change: the only observable difference
-// is that the correct surface closes.
-//
-// FLAG-OFF IS A TRUE ROLLBACK, and that is load-bearing here in a way it was not for
-// OVERLAY_ROUTES_ENABLED (whose own note concedes it stopped being a real lever once later slices
-// mutated rendering outside its guard). Every global mutation this slice makes sits INSIDE the
-// flag: with it false, useDismissable never registers, the provider binds no listener, and Sheet
-// and Lightbox fall back to their own per-instance handlers via `registered === false`. That same
-// fallback is what keeps ~380 existing tests — which render these components with no provider —
-// passing untouched.
-//
-// This slice is flagged despite shipping no Back behaviour BECAUSE it is the highest-blast-radius
-// change in the program: it touches Sheet.jsx, the primitive behind 8 non-route render sites plus
-// every route overlay through OverlayHost. Revert-only was judged insufficient for a 9-site
-// primitive whose worst failure mode (a stranded body-scroll lock) has no in-app recovery.
-export const DISMISS_REGISTRY_ENABLED = true
-
-// V4-BACKNAV-001 Slice 3a — the Android system Back is arbitrated by the dismiss registry, so Back
-// and Escape resolve to the SAME surface. One provider-owned marker per modal session (not one per
-// surface). Opted in via `armsBack` at, originally, 8 surfaces:
-// PlantingDetail Details, both Harvests pickers, Lightbox, CareNeeded bulk, TransplantDatePrompt,
-// AddSeeds row edit, SowNow sow sheet, PhotoModal — plus BottomNav's two sheets since v4.13.0
-// (next paragraph). `grep -rn armsBack src/` is the live list; this one is a summary.
-//
-// BottomNav's two sheets were EXCLUDED in Slice 3a and ARE INCLUDED AS OF v4.13.0
-// (BD-009 / BUG-BACKNAVMORE-001). The exclusion was real: every row in both sheets closes the sheet
-// AND navigates, so a plain push from an armed sheet strands the marker entry mid-stack — a
-// permanent dead Back on the app's most frequent path. Its cost was the shipped bug: Back over an
-// open sheet navigated the tab underneath instead of closing the sheet.
-// The orphaning is now solved on the NAVIGATION side rather than by refusing to arm: every
-// navigating row is a SheetRowLink (BottomNav.jsx), which replace-navigates when the session marker
-// is the current entry, collapsing that entry into the destination. Sign-out — the one row that is
-// not a SheetRowLink — applies the same gate at click time (BUG-SIGNOUTBACKRACE-001).
-// `armsBack` still DEFAULTS FALSE, so arming remains opt-in per render site; what changed is that
-// these two sheets now opt in. See src/lib/backNav.js for the rule and
-// src/__tests__/BottomNav.backNav.test.jsx for the pins.
-//
-// Scoped to an opaque history.state marker, NOT a URL. Needing a history entry is not the same as
-// needing a URL: a transient action menu must be poppable by Back but must never be deep-linkable
-// (a bookmarked "+LOG menu open" is incoherent). Conflating those two is what forces a false
-// route-promotion hybrid.
-//
-// Rollback is deleting the hook calls. Flag off ⇒ zero pushState calls, zero popstate listeners, and
-// history.length after boot identical to pre-change — pinned by the "flag OFF is provably inert"
-// suite in BackNav.history.test.jsx, which also carries the real-history harness self-test.
-export const BACKNAV_ENABLED = true
-
 // BUG-DETAILPAGESCARRYSCROLL-001 — ONE app-level page-scroll manager (src/hooks/usePageScrollManager.js,
 // decisions in src/lib/pageScroll.js). A page opened from a scrolled page opens at its top, and Back
 // returns to the exact place. Measured in real Chrome: 9 of 10 pages opened part-way down, because
@@ -288,7 +173,7 @@ export const BACKNAV_ENABLED = true
 // gate:seeds-scroll:flag-off serve this flag as false in memory (tests/harness/flagOffTransform.mjs). And after
 // ANY revert-gate past this release, for any reason: swipe the app away once (a fresh launch starts 'auto').
 // NOT covered by this flag: Garden's cached household (BUG-GARDENSPOTCREEP-001). Undoing it means reverting
-// src/hooks/useMembers.js — IMAGE_LIST_CACHE_ENABLED would also do it, but uncaches every list that uses the store.
+// src/hooks/useMembers.js.
 export const SCROLL_MANAGER_ENABLED = true
 
 // V4-SNAPDEST-001 (BD0806-08, Dave 2026-08-06): "hide Save to Device app-wide".
@@ -374,57 +259,6 @@ export const CRITTERS_QUIET = true
 // and both arms stay covered so the lever cannot rot.
 export const WEIGH_IN_FRAME_ENABLED = true
 
-// V4-PHOTOCORS-001 (2026-08-26): make photos actually cacheable by the service worker. Today the
-// IMAGE_CACHE holds ZERO photos and this is the largest measured perf item in the app — the Garden
-// list fires 176 image requests on paint and re-issues 175 of them on every Back, at a ~156 KB
-// median per thumb.
-//
-// WHY NOTHING IS CACHED, precisely: a photo <img> carries no crossOrigin, so it issues a NO-CORS
-// request; the response comes back opaque (status 0, headers stripped) and sw.js's isImageResponse()
-// refuses it, deliberately — an opaque body cannot be told apart from a captive-portal login page.
-// That refusal is a real security guard and this flag does NOT weaken it. It SATISFIES it: with
-// crossOrigin="anonymous" the browser issues a CORS request, S3 answers with
-// Access-Control-Allow-Origin, and the response is no longer opaque, so the SW can read its real
-// content-type and cache it on the merits.
-//
-// TWO HALVES, USELESS APART, so they are coupled MECHANICALLY rather than by two flags:
-//   (1) HERE — crossOrigin="anonymous" on PhotoImg's <img> when the src is cross-origin.
-//   (2) public/sw.js — normalizeImageUrl() must also strip the X-Amz-* presign params, or every
-//       900s re-mint is a fresh cache key and the cache still never hits.
-// sw.js is an unbundled classic script that cannot import this module, and a postMessage'd flag does
-// not survive SW termination, so half (2) gates on `request.mode === 'cors'` instead — which is TRUE
-// exactly when half (1) put the crossOrigin attribute there. A stale-SW/new-bundle skew (or the
-// reverse) therefore degrades to today's behaviour in both directions; no half-state is reachable.
-//
-// CORS IS PROVISIONED AND VERIFIED ON THE LIVE PATH (2026-08-26). Photos are S3 presigns, not CDN
-// URLs — the garden-photos Lambda has no PHOTO_CDN_ENABLED, so resolvePhotoViewUrl takes the presign
-// branch. A real presigned GET against garden-photos-prod with `Origin: https://garden.futureishere.net`
-// returns `Access-Control-Allow-Origin: https://garden.futureishere.net` + `Content-Type: image/jpeg`.
-// Staging's bucket allows the staging CloudFront origin. LOCALHOST IS NOT IN EITHER ALLOW-LIST, so a
-// `npm run dev` session with this flag on exercises the FALLBACK path, not the cached path.
-//
-// FAILURE MODE AND WHAT THE USER SEES. A CORS request that is refused does not degrade to a no-cors
-// fetch — the image does not load at all. PhotoImg therefore retries the SAME url with the attribute
-// removed BEFORE it reports an error upward (so PhotoView's tier chain is not advanced and the mint
-// budget is not spent), and a plain retry that SUCCEEDS where the CORS attempt failed latches
-// crossOrigin off for the rest of the page session. Worst case with CORS broken in prod: the first
-// screenful of photos each pay one extra failed request, then everything is byte-identical to today.
-// Photos never blank.
-//
-// Default FALSE. Do NOT flip without a real-browser measurement on the deployed origin.
-// FLIPPED TRUE 2026-08-29 on Dave's approval. What cleared the two preconditions:
-//   - The byte bound sw.js:38-41 required BEFORE a flip. Shipped v4.67.0 as a key-shape admission
-//     rule rather than a byte-aware trim — photos-v1 accepts `thumbs/` keys only and evicts
-//     already-cached originals on activate. Bounding entry SIZE converts the count cap into a byte
-//     cap: measured 2026-08-29, the 500 LARGEST objects under garden-photos-prod/thumbs/ total
-//     114.6 MB (max single object 370,167 B), against ~2.07 GB for the un-gated original path.
-//   - "A real-browser measurement on the deployed origin", above. Re-derived live 2026-08-29 against
-//     garden-photos-prod: a real presigned GET with `Origin: https://garden.futureishere.net` returns
-//     that origin in Access-Control-Allow-Origin, plus two negative controls (a foreign Origin and no
-//     Origin) that return NO Access-Control-* header at all — the exact failure shape the fallback
-//     below is built for.
-export const PHOTO_CORS_CACHE_ENABLED = true
-
 // BUG-HEICEXIFPASSTHRU-001 asked here whether an UPLOAD should be REFUSED when its metadata cannot
 // be stripped, behind PHOTO_STRIP_STRICT_UPLOAD (parked OFF, pending Dave). REMOVED 2026-08-21,
 // BUG-HEICREALSTRIP-001. Dave ruled against the question rather than answering it — verbatim: "I do
@@ -433,27 +267,6 @@ export const PHOTO_CORS_CACHE_ENABLED = true
 // AVIF are now strippable on both layers; the flag's only arm was the refusal he rejected, and a
 // flag whose TRUE branch is a rejected design is worse than no flag. Upload is unconditionally
 // lenient again, and there is nothing left for it to be lenient ABOUT on the formats a phone shoots.
-
-// V4-PHOTOBULK-001 Track B — in-context multi-attach. Pick several photos in ONE picker invocation
-// and attach them all to the thing already on screen. Closes Braindump#8, the ledger's only literal
-// ASAP, which had been carried inside a P3 wrapper since the PHOTOBULK ∪ MULTIUPLOAD merge
-// (photobulk-scope-union-design-V100-20260803.md §4 B1, §5-D3).
-//
-// SEPARATE FROM THE INBOX FLAG ON PURPOSE (§5-D3). Track A's photo-first inbox — bulk-select into
-// `inbox/`, `intake_status='pending_tag'`, the QuickTagCarousel — is a different capability with a
-// different risk profile, a Lambda deploy in its path, and a design-review gate. One flag would make
-// this ship wait on that one. When Track A lands it gets PHOTO_INBOX_ENABLED; the two never merge.
-//
-// WHAT THIS FLAG DOES NOT TOUCH. Attaching N photos in context is the OPPOSITE of deferring a tag:
-// every row written on this path carries a real parent and `intake_status` stays NULL (§3 B4). No
-// code under this flag may reach the `inbox/` key prefix or POST /api/photos/batch — those belong to
-// Track A, and a multi-attach that quietly routed through them would put untagged rows in a drain
-// nothing yet drains.
-//
-// OFF is byte-identical (§3 X1): `multiple` becomes inert on <PhotoUpload>, EventNew stages one File
-// exactly as it does today, and no new DOM renders on any photo surface. Both branches are tested —
-// PhotoUpload.multi.test.jsx and EventNew.multiPhoto.test.jsx each carry a flag-OFF case.
-export const PHOTO_MULTI_ATTACH_ENABLED = true
 
 // BUG-SEEDEXTRACTOR-001 (Dave 2026-09-03): the two BULK seed-intake modes on /inventory/add-seeds —
 // "Photo of packets" and "Paste an order" — have NEVER worked in production. Both POST

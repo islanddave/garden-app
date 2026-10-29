@@ -22,12 +22,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor, cleanup } from '@testing-library/react'
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 
-const flags = { DISMISS_REGISTRY_ENABLED: true, BACKNAV_ENABLED: true }
-vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
-  get BACKNAV_ENABLED() { return flags.BACKNAV_ENABLED },
-}))
 
 const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
 // isFromCache is required: Seeds' useSeedItems calls it on every load (the Seeds.test.jsx shape).
@@ -77,27 +71,26 @@ function Probe() {
 const path = () => screen.getByTestId('path').textContent
 const search = () => screen.getByTestId('path').getAttribute('data-search')
 
-function renderSeeds() {
+function renderSeeds({ provider = true } = {}) {
+  const tree = (
+    <ToastProvider>
+      <Routes>
+        <Route path="/seeds" element={<Seeds />} />
+        <Route path="/today" element={<div data-testid="today" />} />
+        <Route path="/inventory/add" element={<div data-testid="add-form" />} />
+        <Route path="/inventory/:id" element={<div data-testid="detail" />} />
+      </Routes>
+      <Probe />
+    </ToastProvider>
+  )
   return render(
     <BrowserRouter>
-      <DismissRegistryProvider>
-        <ToastProvider>
-          <Routes>
-            <Route path="/seeds" element={<Seeds />} />
-            <Route path="/today" element={<div data-testid="today" />} />
-            <Route path="/inventory/add" element={<div data-testid="add-form" />} />
-            <Route path="/inventory/:id" element={<div data-testid="detail" />} />
-          </Routes>
-          <Probe />
-        </ToastProvider>
-      </DismissRegistryProvider>
+      {provider ? <DismissRegistryProvider>{tree}</DismissRegistryProvider> : tree}
     </BrowserRouter>,
   )
 }
 
 beforeEach(() => {
-  flags.DISMISS_REGISTRY_ENABLED = true
-  flags.BACKNAV_ENABLED = true
   fetchSpy.mockReset()
   fetchSpy.mockImplementation((p, opts) => {
     if (opts?.method) return Promise.resolve({ ok: true })
@@ -116,8 +109,8 @@ afterEach(() => {
   document.body.style.overscrollBehavior = ''
 })
 
-async function onSavedSeeds() {
-  renderSeeds()
+async function onSavedSeeds(opts) {
+  renderSeeds(opts)
   await waitFor(() => expect(screen.getByTestId('saved-seeds-view')).toBeTruthy())
   await waitFor(() => expect(screen.getByTestId('track-a-lot')).toBeTruthy())
   expect(path() + search()).toBe(SAVED)
@@ -182,11 +175,10 @@ describe('Saved seeds — "Add the packet →" leaves the armed track sheet with
     expect(atFloor()).toBe(true)
   })
 
-  it('control: Back navigation off, so nothing is armed — the link is a plain push, still with seedsReturn', async () => {
+  it('control: no provider, so nothing is armed — the link is a plain push, still with seedsReturn', async () => {
     // Without this, a link that replaced unconditionally would pass the case above — and would
     // overwrite Saved seeds' own entry on every unarmed stack.
-    flags.BACKNAV_ENABLED = false
-    await onSavedSeeds()
+    await onSavedSeeds({ provider: false })
     await act(async () => { fireEvent.click(screen.getByTestId('track-a-lot')) })
     await settle()
     expect(armed()).toBe(false)

@@ -21,10 +21,6 @@ const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: fetchSpy, getToken: () => Promise.resolve('t') }),
 }))
-vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  PHOTO_CORS_CACHE_ENABLED: true,
-}))
 
 import PhotoImg, { __resetPhotoImgCache, __photoCorsBroken } from '../components/PhotoImg.jsx'
 import PhotoView from '../components/photo/PhotoView.jsx'
@@ -37,18 +33,6 @@ const MINT_A = `${S3}/thumbs/plants/P/a.jpg?X-Amz-Signature=aaaa`
 const MINT_B = `${S3}/thumbs/plants/P/a.jpg?X-Amz-Signature=bbbb`
 const img = (c) => c.querySelector('img')
 const xo = (c) => img(c)?.getAttribute('crossorigin')
-
-describe('PHOTO_CORS_CACHE_ENABLED — the shipped value', () => {
-  it('is TRUE on disk, taken via importActual so no mock can launder it', async () => {
-    // The single pin on the flag's shipped value. A future flip fails HERE, as one explicit decision
-    // to re-approve, rather than scattering red across suites that merely happen to render a photo.
-    // Flipped false -> true 2026-08-29 (V4-PHOTOCORS-001, Dave-approved); the pin flipped WITH it and
-    // stays an equality check, not a truthiness one, so the next change to this flag in EITHER
-    // direction still stops here exactly once.
-    const actual = await vi.importActual('../lib/featureFlags.js')
-    expect(actual.PHOTO_CORS_CACHE_ENABLED).toBe(true)
-  })
-})
 
 describe('the attribute', () => {
   it('a cross-origin photo is requested in CORS mode', () => {

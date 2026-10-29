@@ -10,7 +10,7 @@
 // `useAuthOptional().user?.id`. With no AuthProvider that is null and the hook degrades to PLAIN —
 // a plain fetch-on-mount that writes NO cache entry. Every OTHER EventNew test mounts
 // provider-less, so all ~30 of them exercise PLAIN while production
-// (IMAGE_LIST_CACHE_ENABLED === true) runs CACHED, and a chooser that silently stayed on PLAIN in
+// runs CACHED, and a chooser that silently stayed on PLAIN in
 // prod would look identical in every one of them. Hence the identity mock supplies `user`, not
 // `profile`; a `{ profile: { id: 'me' } }` shape yields sub=null and PLAIN, and is the exact trap
 // not to copy.
@@ -55,7 +55,7 @@ vi.mock('../context/AuthContext.jsx', () => ({
 import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import * as cache from '../lib/dataCache.js'
-import { IMAGE_LIST_CACHE_ENABLED, PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 
 const PICKER_PATH = '/api/plants?view=picker'
 const PLANT_A = { id: 'pl-1', name: 'Lemon Thyme', project_id: 'proj-1', project_name: 'Herbs', variety_ref: { name: 'Lemon Thyme' } }
@@ -99,8 +99,7 @@ beforeEach(() => {
 })
 
 describe('EventNew picker — reaches CACHED mode (not PLAIN)', () => {
-  it('the two flags under test are actually on, or every assertion below is vacuous', () => {
-    expect(IMAGE_LIST_CACHE_ENABLED).toBe(true)
+  it('the flag under test is actually on, or every assertion below is vacuous', () => {
     // PROJECTS_HIDDEN off would route the chooser through the SCOPED loader instead, and this whole
     // file would be measuring a code path the app does not run.
     expect(PROJECTS_HIDDEN).toBe(true)

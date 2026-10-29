@@ -156,7 +156,7 @@ export default function Lightbox({
   // with a Sheet open underneath (PlantingDetail renders both from independent state) ONE Escape
   // fired BOTH onCloses, and both focus traps ran on the same Tab press with the last focus() call
   // winning by listener-registration order. Registering at the DIALOG layer puts it above Sheet in
-  // paint order AND in arbitration order, so those now agree. Unregistered (flag off / no provider)
+  // paint order AND in arbitration order, so those now agree. Unregistered (no provider)
   // everything below is byte-identical to before.
   const { registered: dismissRegistered, isTopmost } = useDismissable({
     open, onDismiss: onClose, layer: LAYER.DIALOG, armsBack: true,

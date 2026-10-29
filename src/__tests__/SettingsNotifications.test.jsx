@@ -24,7 +24,6 @@ vi.mock('../lib/notificationPrefsClient.js', () => ({
 vi.mock('../lib/featureFlags.js', () => ({
   SYSTEM_NOTIFICATIONS_ENABLED: false,
   VARIETY_REF_UI_SHIPPED: false,
-  CATCH_UP_EDITOR_SHIPPED: false,
 }))
 
 import SettingsNotifications, { isPwaInstalled } from '../pages/SettingsNotifications.jsx'

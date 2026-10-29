@@ -26,9 +26,7 @@
 // A REAL DismissRegistryProvider and REAL window.history, both load-bearing: without the provider
 // `registered` is false, requestDismiss degrades to a bare onClose and the registry never sees this
 // surface at all — which is the configuration FacebookShareSheet.test.jsx runs in, and why its
-// close-button tests are green there and prove nothing about this. Feature flags are deliberately NOT
-// mocked: DISMISS_REGISTRY_ENABLED and BACKNAV_ENABLED are hard `true` in source, and if either is
-// flipped this guard genuinely stops working — red is the correct outcome.
+// close-button tests are green there and prove nothing about this.
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'

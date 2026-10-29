@@ -15,7 +15,6 @@ const { apiFetchSpy } = vi.hoisted(() => ({ apiFetchSpy: vi.fn() }))
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy, getToken: vi.fn() }) }))
 vi.mock('../hooks/useUploadPhoto.js', () => ({

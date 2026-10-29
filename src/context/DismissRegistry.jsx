@@ -35,7 +35,6 @@
 // Going through the owner's setter is what makes that unreachable.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { resolveTopmost, decideDismiss } from '../lib/dismissLayers.js'
-import { DISMISS_REGISTRY_ENABLED, BACKNAV_ENABLED } from '../lib/featureFlags.js'
 import {
   MARKER_KEY, MARKER_VERSION, readMarker, readAnyMarker,
   decideBack, hasArmable, MAX_CONSECUTIVE_BLOCKS,
@@ -160,7 +159,6 @@ export function DismissRegistryProvider({ children }) {
   // real history entry for that surface, so arming a second one would produce two adjacent entries
   // for the same URL and a Back that visibly does nothing.
   useEffect(() => {
-    if (!DISMISS_REGISTRY_ENABLED) return
     if (typeof document === 'undefined') return
     function onKey(e) {
       if (e.key !== 'Escape') return
@@ -282,7 +280,6 @@ export function DismissRegistryProvider({ children }) {
   // is eaten by a dead entry. Strip it with replaceState — never back(), which would walk the user
   // off the page they just loaded.
   useEffect(() => {
-    if (!BACKNAV_ENABLED || !DISMISS_REGISTRY_ENABLED) return
     if (typeof window === 'undefined' || !window.history) return
     const stale = readAnyMarker(window.history.state)
     if (!stale) return
@@ -291,7 +288,6 @@ export function DismissRegistryProvider({ children }) {
   }, [])
 
   useEffect(() => {
-    if (!BACKNAV_ENABLED || !DISMISS_REGISTRY_ENABLED) return
     if (!armable) return
     arm()
     return () => disarm()
@@ -306,7 +302,6 @@ export function DismissRegistryProvider({ children }) {
   // already committed its navigation by the time we run. Switching this to useLayoutEffect would
   // invert that and let us act on a tree the router has not yet updated.
   useEffect(() => {
-    if (!BACKNAV_ENABLED || !DISMISS_REGISTRY_ENABLED) return
     if (typeof window === 'undefined') return
     function onPop() {
       if (selfPopRef.current) { selfPopRef.current = false; return }

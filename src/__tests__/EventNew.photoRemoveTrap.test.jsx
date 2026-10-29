@@ -37,11 +37,11 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
   }),
 }))
 // Same two flags EventNew.multiPhoto.test.jsx pins, for the same reason — the save leg needs the
-// Project select present and the planting gate open. PHOTO_MULTI_ATTACH_ENABLED is deliberately
-// left ACTUAL: the strip is the shipped surface this bug is about.
+// Project select present and the planting gate open. The multi-photo strip is the shipped surface
+// this bug is about.
 vi.mock('../lib/featureFlags.js', async (importActual) => {
   const actual = await importActual()
-  return { ...actual, PROJECTS_HIDDEN: false, PLANTING_REQUIRED_ENABLED: false }
+  return { ...actual, PROJECTS_HIDDEN: false }
 })
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
@@ -53,6 +53,17 @@ import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 
 const PROJECT = { id: 'proj-1', name: 'Herb Plants', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
+
+// V4-PLANTREQUIRED-001: a plant-predicated type needs a planting to save, and choosing the project
+// clears it, so chooseProject picks the first planting offered straight after (PLANT unless the test
+// serves its own list).
+async function chooseProject(id) {
+  fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  if (screen.queryByTestId('evtnew-planting-chip')) return
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+}
 
 let createdUrls
 let revokedUrls
@@ -77,7 +88,7 @@ beforeEach(() => {
     }
     if (path === '/api/projects') return Promise.resolve([PROJECT])
     if (path === '/api/locations/with-path') return Promise.resolve([])
-    if (String(path).startsWith('/api/plants')) return Promise.resolve([])
+    if (String(path).startsWith('/api/plants')) return Promise.resolve([PLANT])
     return Promise.resolve(null)
   })
 })
@@ -111,7 +122,7 @@ const srcs = () => screen.getAllByTestId('eventnew-photo-item').map(d => d.query
 const timesRevoked = (u) => revokedUrls.filter(x => x === u).length
 
 async function save() {
-  fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+  await chooseProject('proj-1')
   const qty = screen.queryByLabelText('Harvest quantity')
   if (qty) fireEvent.change(qty, { target: { value: '5' } })
   await act(async () => { fireEvent.click(screen.getByText('Save')) })

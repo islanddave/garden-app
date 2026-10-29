@@ -20,9 +20,6 @@ vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   PROJECTS_HIDDEN: false,
   HARVEST_QUALITY_HIDDEN: false,
-  // V4-PLANTREQUIRED-001 flipped TRUE in source 2026-08-10; this suite asserts the
-  // planting-OPTIONAL submit path. Pinned FALSE so it keeps covering that.
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 
 const { apiFetchSpy, navigateSpy, postCalls, dataRef, searchParamsRef, harvestFetchSpy } = vi.hoisted(() => ({
@@ -58,6 +55,17 @@ import Harvests from '../pages/Harvests.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
+
+// V4-PLANTREQUIRED-001: a plant-predicated type needs a planting to save, and choosing the project
+// clears it, so chooseProject picks the first planting offered straight after (PLANT unless the test
+// serves its own list).
+async function chooseProject(id) {
+  fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  if (screen.queryByTestId('evtnew-planting-chip')) return
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+}
 
 const HARVEST_ROW = {
   event_id: 'e1', day_key: '2026-07-20', event_date: '2026-07-20T12:00:00Z',
@@ -74,7 +82,7 @@ function wireEventNew() {
     }
     if (path === '/api/projects') return Promise.resolve(dataRef.projects)
     if (path === '/api/locations/with-path') return Promise.resolve([])
-    if (String(path).startsWith('/api/plants')) return Promise.resolve([])
+    if (String(path).startsWith('/api/plants')) return Promise.resolve([PLANT])
     return Promise.resolve(null)
   })
 }
@@ -133,7 +141,7 @@ describe('V4-HIDEQUALITY-001 rollback lever — capture surface (EventNew)', () 
     wireEventNew()
     renderEventNew('event_type=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.change(screen.getByLabelText('Harvest unit'), { target: { value: 'lb' } })
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '2.5' } })
     fireEvent.click(screen.getByLabelText('4 = good'))

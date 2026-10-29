@@ -22,12 +22,6 @@ import { render, screen, act, fireEvent, waitFor } from '@testing-library/react'
 
 const { navigateSpy } = vi.hoisted(() => ({ navigateSpy: vi.fn() }))
 
-const flags = { DISMISS_REGISTRY_ENABLED: true, BACKNAV_ENABLED: true }
-vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  get DISMISS_REGISTRY_ENABLED() { return flags.DISMISS_REGISTRY_ENABLED },
-  get BACKNAV_ENABLED() { return flags.BACKNAV_ENABLED },
-}))
 vi.mock('react-router-dom', () => ({
   // A spy rather than a fresh vi.fn() per call since V5-SEEDSTAB-001: the ending's navigate is now
   // asserted here (the last describe), and the two arming tests never read it.
@@ -53,19 +47,14 @@ const PLANTING = {
 
 const armed = () => !!readMarker(window.history.state)
 
-const mount = async (onClose = vi.fn()) => {
-  const out = await act(async () => render(
-    <DismissRegistryProvider>
-      <SaveSeedSheet planting={PLANTING} onClose={onClose} />
-    </DismissRegistryProvider>,
-  ))
+const mount = async (onClose = vi.fn(), { provider = true } = {}) => {
+  const sheet = <SaveSeedSheet planting={PLANTING} onClose={onClose} />
+  const out = await act(async () => render(provider ? <DismissRegistryProvider>{sheet}</DismissRegistryProvider> : sheet))
   await act(async () => { await Promise.resolve() })
   return out
 }
 
 beforeEach(() => {
-  flags.DISMISS_REGISTRY_ENABLED = true
-  flags.BACKNAV_ENABLED = true
   navigateSpy.mockReset()
   window.history.replaceState({ __base: 1 }, '')
 })
@@ -76,15 +65,6 @@ describe('BUG-SEEDSHEETBACK-001 — the sheet takes the Back press', () => {
     await mount()
     expect(screen.getByTestId('save-seed-submit')).toBeTruthy()
     expect(armed(), 'the sheet did not arm Back — a system Back will unwind the page under it').toBe(true)
-  })
-
-  it('does not arm when Back navigation is disabled — the flag still governs', async () => {
-    // The opt-in must not become a way around the kill switch. If BACKNAV_ENABLED is off the whole
-    // mechanism is off, armsBack or not.
-    flags.BACKNAV_ENABLED = false
-    await mount()
-    expect(screen.getByTestId('save-seed-submit')).toBeTruthy()
-    expect(armed()).toBe(false)
   })
 })
 
@@ -108,10 +88,9 @@ describe('V5-SEEDSTAB-001 — an armed sheet ends with a replace', () => {
     expect(navigateSpy.mock.calls[0]).toEqual(['/inventory/lot-1', { replace: true }])
   })
 
-  it('Back navigation off, so nothing is armed: the plain one-argument push', async () => {
+  it('no provider, so nothing is armed: the plain one-argument push', async () => {
     // The control. Without it, a sheet that replaced unconditionally would pass the case above.
-    flags.BACKNAV_ENABLED = false
-    await mount()
+    await mount(undefined, { provider: false })
     expect(armed()).toBe(false)
     await saveUntracked()
     expect(navigateSpy.mock.calls[0]).toEqual(['/inventory/lot-1'])

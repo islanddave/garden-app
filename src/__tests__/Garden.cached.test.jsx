@@ -10,7 +10,7 @@
 // useCachedFetch picks its mode from `useAuthOptional().user?.id`. With no AuthProvider that is
 // null and the hook degrades to PLAIN — a plain fetch-on-mount that writes NO cache entry. Every
 // other Garden test mounts provider-less, so all of them exercise PLAIN while production
-// (IMAGE_LIST_CACHE_ENABLED === true) runs CACHED. A page that silently stayed on PLAIN in prod
+// runs CACHED. A page that silently stayed on PLAIN in prod
 // would look identical in all of them. Hence the identity mock below supplies `user`, not
 // `profile` — Garden.lens.test.jsx's `() => ({ profile: { id: 'me' } })` shape yields sub=null and
 // PLAIN, and is the exact trap to not copy.
@@ -57,7 +57,6 @@ vi.mock('../context/AuthContext.jsx', () => ({
 
 import Garden from '../pages/Garden.jsx'
 import * as cache from '../lib/dataCache.js'
-import { IMAGE_LIST_CACHE_ENABLED } from '../lib/featureFlags.js'
 
 const PLANTS_PATH = '/api/plants?view=grid'
 const PROJECTS = [{ id: 'proj-1', name: 'Spring 2026', status: 'active', parent_project_id: null }]
@@ -102,10 +101,6 @@ beforeEach(() => {
 })
 
 describe('Garden — reaches CACHED mode (not PLAIN)', () => {
-  it('the flag under test is actually on, or every assertion below is vacuous', () => {
-    expect(IMAGE_LIST_CACHE_ENABLED).toBe(true)
-  })
-
   it('writes a plants cache entry keyed by the CURRENT sub — impossible in PLAIN mode', async () => {
     prime()
     await renderGarden()

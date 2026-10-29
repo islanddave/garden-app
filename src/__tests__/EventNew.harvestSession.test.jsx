@@ -2,9 +2,8 @@
 // Covers: type pin + lock (picker replaced, stray ?event_type= overridden), the session ledger
 // strip (row append, running totals, kg rollover, weightless rows), per-row undo via the
 // sanctioned soft-delete, toast suppression in session mode, and the non-session control case
-// (?event_type=harvest alone keeps today's toast, no strip). Harness mirrors EventNew.test.jsx:
-// PLANTING_REQUIRED_ENABLED mocked false so plant-less project saves exercise the ledger without
-// dragging PlantingSelect into every case (flag-ON coverage lives in the plantRequired files).
+// (?event_type=harvest alone keeps today's toast, no strip). Harness mirrors EventNew.test.jsx; a
+// harvest needs a planting, so saveHarvest re-picks one whenever the last save cleared it.
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -55,7 +54,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
   WEIGH_IN_FRAME_ENABLED: false,
 }))
 
@@ -106,6 +104,11 @@ async function flushLoad() {
 }
 
 async function saveHarvest({ qty, weight }) {
+  // The picker clears after every save; re-pick so each save carries a planting.
+  if (!screen.queryByTestId('evtnew-planting-chip')) {
+    fireEvent.focus(screen.getByLabelText('Plant or group'))
+    fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+  }
   fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: qty } })
   if (weight != null) {
     fireEvent.change(screen.getByLabelText('Harvest weight'), { target: { value: weight } })
@@ -116,6 +119,17 @@ async function saveHarvest({ qty, weight }) {
 }
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
+
+// V4-PLANTREQUIRED-001: a plant-predicated type needs a planting to save, and choosing the project
+// clears it, so chooseProject picks the first planting offered straight after (PLANT unless the test
+// serves its own list).
+async function chooseProject(id) {
+  fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  if (screen.queryByTestId('evtnew-planting-chip')) return
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+}
 
 beforeEach(() => {
   apiFetchSpy.mockReset()
@@ -125,7 +139,7 @@ beforeEach(() => {
   searchParamsRef.current = new URLSearchParams()
   dataRef.projects = [PROJECT]
   dataRef.locations = []
-  dataRef.plants = []
+  dataRef.plants = [PLANT]
   dataRef.postError = null
   dataRef.deleteError = null
   dataRef.postAnswer = null
@@ -157,14 +171,14 @@ describe('EventNew — weigh-in session mode (V4-HARVSESSION-001)', () => {
   it('a save appends a ledger row with totals, resets the panel, and suppresses the toast', async () => {
     renderEventNew('session=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await saveHarvest({ qty: '12', weight: '340' })
 
     expect(postCalls.length).toBe(1)
     const strip = screen.getByTestId('harvest-session-strip')
     expect(strip.textContent).toContain('This session: 1 harvest')
     expect(strip.textContent).toContain('340 g')
-    expect(strip.textContent).toContain('Tomatoes 2026 — 12 count · 340 g')
+    expect(strip.textContent).toContain('Sungold — 12 count · 340 g')
     // Panel reset for the next pile…
     expect(screen.getByLabelText('Harvest quantity').value).toBe('')
     // …and no transient toast competing with the ledger.
@@ -174,7 +188,7 @@ describe('EventNew — weigh-in session mode (V4-HARVSESSION-001)', () => {
   it('accumulates rows and totals across saves, rolling grams into kg past 1000', async () => {
     renderEventNew('session=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await saveHarvest({ qty: '12', weight: '340' })
     await saveHarvest({ qty: '5', weight: '860' })
 
@@ -186,24 +200,24 @@ describe('EventNew — weigh-in session mode (V4-HARVSESSION-001)', () => {
   it('a weightless save lists the row with no gram suffix and no total', async () => {
     renderEventNew('session=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await saveHarvest({ qty: '3' })
 
     const strip = screen.getByTestId('harvest-session-strip')
     expect(strip.textContent).toContain('This session: 1 harvest')
-    expect(strip.textContent).toContain('Tomatoes 2026 — 3 count')
+    expect(strip.textContent).toContain('Sungold — 3 count')
     expect(strip.textContent).not.toContain(' g')
   })
 
   it('per-row Undo soft-deletes that row, strikes it from totals, and keeps it listed as removed', async () => {
     renderEventNew('session=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await saveHarvest({ qty: '12', weight: '340' })
     await saveHarvest({ qty: '5', weight: '160' })
 
     await act(async () => {
-      fireEvent.click(screen.getAllByRole('button', { name: /Undo Tomatoes 2026 harvest/ })[0])
+      fireEvent.click(screen.getAllByRole('button', { name: /Undo Sungold harvest/ })[0])
     })
 
     expect(deleteCalls).toEqual(['/api/events/evt-1'])
@@ -216,12 +230,12 @@ describe('EventNew — weigh-in session mode (V4-HARVSESSION-001)', () => {
   it('a failed undo surfaces a retryable error and does NOT strike the row', async () => {
     renderEventNew('session=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await saveHarvest({ qty: '12', weight: '340' })
 
     dataRef.deleteError = new Error('boom')
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Undo Tomatoes 2026 harvest/ }))
+      fireEvent.click(screen.getByRole('button', { name: /Undo Sungold harvest/ }))
     })
 
     const strip = screen.getByTestId('harvest-session-strip')
@@ -233,7 +247,7 @@ describe('EventNew — weigh-in session mode (V4-HARVSESSION-001)', () => {
   it('caps visible rows at 3 with an "+N earlier" note while the header counts the whole session', async () => {
     renderEventNew('session=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     for (const qty of ['1', '2', '3', '4', '5']) {
       await saveHarvest({ qty, weight: '100' })
     }
@@ -248,12 +262,12 @@ describe('EventNew — weigh-in session mode (V4-HARVSESSION-001)', () => {
   it('CONTROL: plain ?event_type=harvest keeps the shipped toast and renders no session strip', async () => {
     renderEventNew('event_type=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await saveHarvest({ qty: '2' })
 
     expect(postCalls.length).toBe(1)
     expect(screen.queryByTestId('harvest-session-strip')).toBeNull()
-    expect(screen.getByText('Logged event for Tomatoes 2026 — no planting attached')).toBeTruthy()
+    expect(screen.getByText('Logged event — Sungold')).toBeTruthy()
     // The picker (with its flag doorway) is present — the lock is session-only.
     expect(screen.queryByTestId('harvest-session-lock')).toBeNull()
   })
@@ -272,7 +286,7 @@ describe('EventNew — a session save the server kept once (BUG-EVENTSREPEATTAP-
   it('a repeated answer whose id the ledger already holds adds NO row, and says it was kept once', async () => {
     renderEventNew('session=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     dataRef.postAnswer = (n) => (n === 1 ? ok(1) : repeatOf('evt-1'))
     await saveHarvest({ qty: '1' })
     await saveHarvest({ qty: '1' })
@@ -280,14 +294,14 @@ describe('EventNew — a session save the server kept once (BUG-EVENTSREPEATTAP-
     expect(postCalls.length).toBe(2)
     const strip = screen.getByTestId('harvest-session-strip')
     expect(strip.textContent).toContain('This session: 1 harvest')
-    expect(screen.getAllByRole('button', { name: /Undo Tomatoes 2026 harvest/ })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /Undo Sungold harvest/ })).toHaveLength(1)
     expect(screen.getByText(KEPT)).toBeTruthy()
   })
 
   it('a repeated answer with an id the ledger does NOT hold (the first attempt failed here) adds its one row', async () => {
     renderEventNew('session=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     dataRef.postError = Object.assign(new Error('Request timed out'), { status: 0, timeout: true })
     await saveHarvest({ qty: '1' })
     expect(screen.queryByTestId('harvest-session-strip')).toBeNull()
@@ -304,7 +318,7 @@ describe('EventNew — a session save the server kept once (BUG-EVENTSREPEATTAP-
   it('CONTROL: ordinary saves (new ids) each add a row, and clear a kept-once notice left by an earlier one', async () => {
     renderEventNew('session=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     dataRef.postAnswer = (n) => (n === 2 ? repeatOf('evt-1') : ok(n))
     await saveHarvest({ qty: '1' })
     await saveHarvest({ qty: '1' })
@@ -313,7 +327,7 @@ describe('EventNew — a session save the server kept once (BUG-EVENTSREPEATTAP-
 
     expect(postCalls.length).toBe(3)
     expect(screen.getByTestId('harvest-session-strip').textContent).toContain('This session: 2 harvests')
-    expect(screen.getAllByRole('button', { name: /Undo Tomatoes 2026 harvest/ })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /Undo Sungold harvest/ })).toHaveLength(2)
     expect(screen.queryByText(KEPT)).toBeNull()
   })
 })

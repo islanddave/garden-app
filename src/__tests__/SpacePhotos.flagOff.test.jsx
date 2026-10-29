@@ -24,12 +24,11 @@ import { render, screen, fireEvent, act } from '@testing-library/react'
 
 // The lever, held OFF. Other values mirror the shipped defaults so nothing else changes shape.
 // PARTIAL mock (importOriginal spread): the enumerated form broke on every new flag added
-// anywhere in featureFlags.js — most recently DISMISS_REGISTRY_ENABLED, which Sheet reads.
+// anywhere in featureFlags.js — most recently the dismiss-registry flag, which Sheet read.
 // Only SPACE_PHOTOS_ENABLED is actually under test here; the rest now track prod.
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   SPACE_PHOTOS_ENABLED: false,
-  OVERLAY_ROUTES_ENABLED: true,
 }))
 
 const { navigateSpy, locationRef, prefsRef, saveSpy } = vi.hoisted(() => ({

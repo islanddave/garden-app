@@ -10,7 +10,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES, statusLabel } from '../lib/constants.js'
 import { EVENT_TYPE_META, requiresPlanting, isPlantReductionEventType, canonicalEventType } from '../lib/eventTypes.js'
-import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN, WEIGH_IN_FRAME_ENABLED } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN, WEIGH_IN_FRAME_ENABLED } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
 // POI-SEEDDOORMENU-001 — the create-a-lot sheet, shared with the planting page's Save seed button so
 // both doors run one flow. See its render site near the foot of this component.
@@ -38,7 +38,7 @@ import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toG
 const POST_SAVE_STRIP_SPACER_PX = 86
 import { seasonTotalPhrase } from '../lib/harvestSummary.js'
 import { useUxFlow, FLOWS, sendUxEvent } from '../lib/uxEvents.js'
-import { EVENTNEW_ADD_DETAILS_EXPANDED, PHOTO_MULTI_ATTACH_ENABLED } from '../lib/featureFlags.js'
+import { EVENTNEW_ADD_DETAILS_EXPANDED } from '../lib/featureFlags.js'
 
 // V4-PHOTOBULK-001 S2. Matches PhotoUpload's DEFAULT_MAX_FILES — one number for "a handful you just
 // took", not the server's MAX_BATCH of 20, which governs Track A's camera-roll drain.
@@ -846,12 +846,6 @@ export default function EventNew({ harvestSession = false } = {}) {
   // `photoItems` is [{ id, file, url }] in pick order; `photoItems[0]` is the old `photoFile` and the
   // whole array is what handleSubmit uploads. The two scalars this replaces were the ONLY reason
   // "I took four pictures of this one plant" meant four saves.
-  //
-  // ARRAY EVEN WHEN THE FLAG IS OFF. The flag gates what the PICKER accepts (one file vs many) and
-  // what the strip renders — not the shape of the state. A dual-shape state would fork every one of
-  // the ten read sites below and give the flag-off branch its own untested code path, which is the
-  // opposite of what X1's byte-identical requirement is for: flag-off must be the SAME code carrying
-  // exactly one item.
   const [photoItems, setPhotoItems] = useState([])
   // BUG-PHOTOREMOVETRAP-001 — removal is DEFERRED, not destructive. The shipped remove revoked the
   // object URL in the same tick, which put the blob beyond recovery IN PRINCIPLE: nothing in the app
@@ -890,8 +884,7 @@ export default function EventNew({ harvestSession = false } = {}) {
   const [plantsForProject, setPlantsForProject] = useState([])
   // BUG-PLANTFETCHSILENT-001 — both loaders below used to .catch into an empty list, which the
   // picker renders as "No plantings yet.": a network failure was indistinguishable from a project
-  // with nothing planted. Harmless while the field is optional, unfillable the moment
-  // PLANTING_REQUIRED_ENABLED flips. Reload key re-runs whichever loader is live without either
+  // with nothing planted, and the field is required for plant-predicated types. Reload key re-runs whichever loader is live without either
   // effect having to know the other exists.
   const [plantsLoadFailed, setPlantsLoadFailed] = useState(false)
   const [plantsReloadKey, setPlantsReloadKey] = useState(0)
@@ -899,9 +892,9 @@ export default function EventNew({ harvestSession = false } = {}) {
   // (The keyboard lift that used to hoist Save ~500px INTO that band is gone as of
   // V4-KBVIEWPORT-001 — the causal mechanism changed, the overlap did not become impossible.)
   // Save was painting over result rows 2-3 AND taking their
-  // taps — and because the planting gate at the top of handleSubmit is inert while
-  // PLANTING_REQUIRED_ENABLED and PROJECTS_HIDDEN are both false, that mis-tap SAVED the event with
-  // plant_id: null and then cleared LAST_PLANT_KEY. A wrong write, not a cosmetic overlap.
+  // taps — and for an exempt type, where the planting gate at the top of handleSubmit does not apply,
+  // that mis-tap SAVED the event with plant_id: null and then cleared LAST_PLANT_KEY. A wrong write,
+  // not a cosmetic overlap.
   // Save is never the next action while a picker is open, so hiding it costs the user nothing and
   // makes the mis-tap structurally impossible rather than merely unlikely.
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -1464,9 +1457,7 @@ export default function EventNew({ harvestSession = false } = {}) {
   }
 
   // §3 B1 — every file from ONE picker invocation, appended to whatever is already staged (a second
-  // trip to the picker adds rather than replaces). Flag-off takes the first file only, which is the
-  // shipped behaviour: the input carries no `multiple` attribute in that branch, so the FileList is
-  // one entry anyway and the slice is a belt-and-braces guard, not the mechanism.
+  // trip to the picker adds rather than replaces), up to MAX_EVENT_PHOTOS.
   // BUG-PHOTOSTAGEDREAD-001 — copy the bytes at pick time. These items are held until Save, which is
   // the longest gap between pick and read anywhere in the app: the user still has to choose a
   // planting, a kind and a date. Android reclaims picker handles well inside that window, and the
@@ -1480,7 +1471,7 @@ export default function EventNew({ harvestSession = false } = {}) {
 
     // Bounds the copying only; the updater below re-derives room from `prev` and is the authority,
     // since this function now awaits and `photoItems` can be a render behind when it resumes.
-    const roomNow = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_EVENT_PHOTOS - photoItems.length) : 1
+    const roomNow = Math.max(0, MAX_EVENT_PHOTOS - photoItems.length)
     const candidates = picked.slice(0, roomNow)
     if (!candidates.length) return
 
@@ -1510,14 +1501,11 @@ export default function EventNew({ harvestSession = false } = {}) {
     // here, an undoable removal can only exist against a list that is one item short of the cap.
     commitRemovedPhoto()
     setPhotoItems(prev => {
-      const room = PHOTO_MULTI_ATTACH_ENABLED ? Math.max(0, MAX_EVENT_PHOTOS - prev.length) : 1
+      const room = Math.max(0, MAX_EVENT_PHOTOS - prev.length)
       const accepted = ok.slice(0, room)
       if (!accepted.length) return prev
-      // Replace, not append, in single mode — re-picking has always swapped the staged file.
-      const next = PHOTO_MULTI_ATTACH_ENABLED ? prev : []
-      if (!PHOTO_MULTI_ATTACH_ENABLED) for (const it of prev) URL.revokeObjectURL(it.url)
       // Object URL from the SNAPSHOT — one taken from the replaced handle dies on the same schedule.
-      return next.concat(accepted.map(({ file }) => ({ id: nextPhotoId(), file, url: URL.createObjectURL(file) })))
+      return prev.concat(accepted.map(({ file }) => ({ id: nextPhotoId(), file, url: URL.createObjectURL(file) })))
     })
   }
 
@@ -1748,13 +1736,10 @@ export default function EventNew({ harvestSession = false } = {}) {
     // invariant at mount (a remembered plant only seeds alongside its remembered project).
     if (!form.project_id)  { setError('Select a project.'); return { ok: false, reason: 'no_project' } }
 
-    // V4-PLANTREQUIRED-001 (Lane 3, flag-gated): per-type required-planting gate (D2 matrix).
-    // Inert unless PLANTING_REQUIRED_ENABLED — the planting field is otherwise optional (Lane 2).
+    // V4-PLANTREQUIRED-001: per-type required-planting gate (D2 matrix). Client-side only; the server
+    // validator stays optional so a stale cached bundle cannot 400 (spec D7).
     // flag_issue keeps its own plant_id gate below and is not in the vocabulary, so it is unaffected.
-    // V4-PROJHIDE-001: when projects are hidden a predicated event has no project step to ride, so the
-    // planting is structurally required for those types — implied HERE, independent of the telemetry-
-    // gated PLANTING_REQUIRED_ENABLED (the two gates stay decoupled by design).
-    if ((PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) && !form.plant_id) {
+    if (requiresPlanting(form.event_type) && !form.plant_id) {
       setError('Choose a planting for this event.'); return { ok: false, reason: 'no_planting' }
     }
 
@@ -2344,9 +2329,8 @@ export default function EventNew({ harvestSession = false } = {}) {
                     </div>
                   )
                 })}
-                {/* "Add another" only exists in multi mode, and only while there is room. Its absence
-                    is what makes flag-off byte-identical: one photo, one remove, no second door. */}
-                {PHOTO_MULTI_ATTACH_ENABLED && photoItems.length < MAX_EVENT_PHOTOS && (
+                {/* "Add another" only while there is room. */}
+                {photoItems.length < MAX_EVENT_PHOTOS && (
                   <button
                     type="button"
                     onClick={openPhotoPicker}
@@ -2369,7 +2353,7 @@ export default function EventNew({ harvestSession = false } = {}) {
                   ref={photoInputRef}
                   type="file"
                   accept="image/*"
-                  multiple={PHOTO_MULTI_ATTACH_ENABLED ? true : undefined}
+                  multiple
                   onChange={handlePhotoChange}
                   style={{ display: 'none' }}
                 />
@@ -2407,7 +2391,7 @@ export default function EventNew({ harvestSession = false } = {}) {
                   ref={photoInputRef}
                   type="file"
                   accept="image/*"
-                  multiple={PHOTO_MULTI_ATTACH_ENABLED ? true : undefined}
+                  multiple
                   onChange={handlePhotoChange}
                   style={{ display: 'none' }}
                 />
@@ -2622,7 +2606,7 @@ export default function EventNew({ harvestSession = false } = {}) {
                 const derived = id ? (plantsForProject.find(p => p.id === id)?.project_id ?? f.project_id) : f.project_id
                 return { ...f, plant_id: id, project_id: derived }
               })}
-              required={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type)}
+              required={requiresPlanting(form.event_type)}
               // BUG-LOGTARGETREQ-001: remembered planting as RANKING, never value — read at
               // picker-open (see handlePickerOpenChange). Only this site passes it.
               recentPlantId={recentPlantId}
@@ -2648,7 +2632,7 @@ export default function EventNew({ harvestSession = false } = {}) {
           sessionFrame
             ? <div id={PLANTING_SECTION_ID}>{plantingField}</div>
             : (
-              <Section id={PLANTING_SECTION_ID} label={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) ? 'Planting *' : 'Planting'}>
+              <Section id={PLANTING_SECTION_ID} label={requiresPlanting(form.event_type) ? 'Planting *' : 'Planting'}>
                 {plantingField}
               </Section>
             )

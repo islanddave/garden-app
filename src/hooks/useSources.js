@@ -75,8 +75,7 @@ function failure(err, fallbackMessage) {
 // named useSources.js as the only place it could be fixed.
 //
 // Coalesced at the REQUEST rather than behind a store. useCachedFetch is the obvious candidate and
-// is the wrong tool here on two counts: it caches ONLY when IMAGE_LIST_CACHE_ENABLED is on AND a
-// Clerk sub exists, so it is a plain per-instance fetch in any provider-less unit test — the fix
+// is the wrong tool here on two counts: it caches ONLY when a Clerk sub exists, so it is a plain per-instance fetch in any provider-less unit test — the fix
 // could not be proven by the suite that would have to guard it — and adopting it moves `sources`
 // out of local state, taking the post-mint local insert (and its ORDER BY mirror) with it.
 //

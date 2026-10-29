@@ -27,7 +27,6 @@ vi.mock('../context/AuthContext.jsx', () => ({
 
 import { useMembers } from '../hooks/useMembers.js'
 import * as cache from '../lib/dataCache.js'
-import { IMAGE_LIST_CACHE_ENABLED } from '../lib/featureFlags.js'
 
 const PATH = '/api/members'
 const DAVE = { id: 'sub-A', display_name: 'Dave N' }
@@ -47,11 +46,7 @@ async function mountSettled() {
   return hook
 }
 
-describe('useMembers — CACHED (a signed-in sub, IMAGE_LIST_CACHE_ENABLED)', () => {
-  it('the flag under test is on, or every assertion in this block is vacuous', () => {
-    expect(IMAGE_LIST_CACHE_ENABLED).toBe(true)
-  })
-
+describe('useMembers — CACHED (a signed-in sub)', () => {
   it('a first mount: loading until the household lands, then members from the route\'s { members }', async () => {
     fetchSpy.mockResolvedValue({ members: [DAVE, JEN] })
     const hook = renderHook(() => useMembers())

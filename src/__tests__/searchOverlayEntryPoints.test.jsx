@@ -17,9 +17,8 @@
 // longer a claim these tests have to establish; it is structural. Kept driving root AND detail
 // paths anyway: uniformity being free today is not a reason to stop noticing if it stops being.
 //
-// The flag is deliberately NOT mocked here. OVERLAY_ROUTES_ENABLED's shipped value is what makes
-// search a flyover in prod; pinning the real wiring is the point. If the flag is ever intentionally
-// flipped off, this file SHOULD go red — search would have stopped being a flyover.
+// The real overlay wiring is what makes search a flyover in prod; pinning it is the point. If search
+// ever stops opening as an overlay, this file SHOULD go red.
 //
 // No jest-dom (L-182): attributes + toBe/toBeTruthy only.
 import React, { useEffect } from 'react'

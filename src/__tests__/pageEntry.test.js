@@ -41,8 +41,7 @@ describe('pageEntryKey — the entry the page tree shows', () => {
     expect(pageEntryKey(st({ background: continued }, 'kOverlay2', 3))).toBe('kPage')
   })
 
-  it('honors a background only as OverlayProvider does: flag on, and shaped like a location', () => {
-    expect(pageEntryKey(st({ background: bg() }), false)).toBe('kOverlay')
+  it('honors a background only as OverlayProvider does: shaped like a location', () => {
     expect(pageEntryKey(st({ background: 'nope' }))).toBe('kOverlay')
     expect(pageEntryKey(st({ background: { key: 'kPage' } }))).toBe('kOverlay')   // no pathname
     expect(pageEntryKey(st({ background: null }))).toBe('kOverlay')
@@ -87,8 +86,7 @@ describe('overlayBackgroundOf — the background the page tree shows, or null', 
     expect(overlayBackgroundOf(st({ [CONTINUES_ENTRY_KEY]: 'kPage' }, 'kReplaced', 2))).toBe(null)
   })
 
-  it('honors a background only as OverlayProvider does: flag on, and shaped like a location', () => {
-    expect(overlayBackgroundOf(st({ background: bg() }), false)).toBe(null)
+  it('honors a background only as OverlayProvider does: shaped like a location', () => {
     expect(overlayBackgroundOf(st({ background: 'nope' }))).toBe(null)
     expect(overlayBackgroundOf(st({ background: { key: 'kPage' } }))).toBe(null)   // no pathname
     expect(overlayBackgroundOf(st({ background: null }))).toBe(null)

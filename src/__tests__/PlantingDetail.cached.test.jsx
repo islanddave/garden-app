@@ -3,7 +3,7 @@
 // Why this file exists. `useCachedFetch` picks its mode from `useAuthOptional().user?.id`, and with
 // no AuthProvider that is null, so the hook degrades to PLAIN: a plain fetch-on-mount that writes no
 // cache entry. Every other PlantingDetail/PhotosWall test mounts provider-less, so all of them
-// exercise PLAIN while production — IMAGE_LIST_CACHE_ENABLED is true — runs CACHED. The hook's own
+// exercise PLAIN while production runs CACHED. The hook's own
 // suite covers CACHED thoroughly in isolation; what was untested is whether THIS PAGE actually
 // reaches it, i.e. whether the sub is threaded all the way to the key. A page that silently stayed
 // on PLAIN in production would look identical in every existing test.
@@ -41,7 +41,6 @@ vi.mock('../lib/harvestWindows.js', () => import('./helpers/harvestWindowsSyncSt
 
 import PlantingDetail from '../pages/PlantingDetail.jsx'
 import * as cache from '../lib/dataCache.js'
-import { IMAGE_LIST_CACHE_ENABLED } from '../lib/featureFlags.js'
 
 const PLANTING = {
   id: 'pl1', name: 'Megatron Jalapeno', project_id: 'proj1', project_name: 'Peppers 2026',
@@ -88,10 +87,6 @@ beforeEach(() => {
 })
 
 describe('PlantingDetail — reaches CACHED mode (not PLAIN) when an identity is present', () => {
-  it('the flag under test is actually on, or every assertion below is vacuous', () => {
-    expect(IMAGE_LIST_CACHE_ENABLED).toBe(true)
-  })
-
   it('writes a cache entry keyed by the CURRENT sub — impossible in PLAIN mode', async () => {
     renderPage()
     await findLoaded()

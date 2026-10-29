@@ -33,7 +33,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
   WEIGH_IN_FRAME_ENABLED: true,
 }))
 
@@ -48,6 +47,17 @@ import { ToastProvider } from '../context/ToastContext.jsx'
 import { SAVE_BAND_MIN_CLEARANCE_PX, FRAME_SAVE_HEIGHT_PX } from '../lib/saveBandLayout.js'
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
+
+// V4-PLANTREQUIRED-001: a plant-predicated type needs a planting to save, and choosing the project
+// clears it, so chooseProject picks the first planting offered straight after (PLANT unless the test
+// serves its own list).
+async function chooseProject(id) {
+  fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  if (screen.queryByTestId('evtnew-planting-chip')) return
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+}
 
 function wireApiFetch() {
   apiFetchSpy.mockImplementation((path, options = {}) => {
@@ -75,6 +85,11 @@ async function renderSession(query = 'session=harvest') {
 }
 
 async function saveHarvest({ qty, weight }) {
+  // The picker clears after every save; re-pick so each save carries a planting.
+  if (!screen.queryByTestId('evtnew-planting-chip')) {
+    fireEvent.focus(screen.getByLabelText('Plant or group'))
+    fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+  }
   fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: qty } })
   if (weight != null) fireEvent.change(screen.getByLabelText('Harvest weight'), { target: { value: weight } })
   await act(async () => { fireEvent.click(screen.getByText('Save')) })
@@ -87,7 +102,7 @@ beforeEach(() => {
   deleteCalls.length = 0
   dataRef.projects = [PROJECT]
   dataRef.locations = []
-  dataRef.plants = []
+  dataRef.plants = [PLANT]
   localStorage.clear()
   document.documentElement.style.removeProperty('--bottom-nav-height')
   wireApiFetch()
@@ -144,7 +159,9 @@ describe('V4-WEIGHFRAME-001 — the three-track frame', () => {
     proto.scrollIntoView = scrollIntoView
     try {
       await renderSession()
-      fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+      await chooseProject('proj-1')
+      // The planting pick may scroll its own option into view: that is the picker, not an anchor.
+      scrollIntoView.mockClear()
       fireEvent.focus(screen.getByLabelText('Harvest quantity'))
       expect(scrollIntoView).not.toHaveBeenCalled()
       await saveHarvest({ qty: '4', weight: '210' })
@@ -162,7 +179,7 @@ describe('V4-WEIGHFRAME-001 — the three-track frame', () => {
     vi.resetModules()
     vi.doMock('../lib/featureFlags.js', async (importActual) => ({
       ...(await importActual()),
-      PROJECTS_HIDDEN: false, PLANTING_REQUIRED_ENABLED: false, WEIGH_IN_FRAME_ENABLED: false,
+      PROJECTS_HIDDEN: false, WEIGH_IN_FRAME_ENABLED: false,
     }))
     const { default: EventNewOff } = await import('../pages/EventNew.jsx')
     // ToastProvider must come from the SAME fresh module graph: resetModules gives the re-imported
@@ -223,7 +240,7 @@ describe('V4-WEIGHFRAME-001 — the one-line ledger', () => {
     expect(t3.style.height).toBe('48px')
     expect(screen.getByTestId('weigh-frame-log-toggle').textContent).toBe('Weigh-in — nothing logged yet')
 
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await saveHarvest({ qty: '12', weight: '340' })
     await saveHarvest({ qty: '5', weight: '860' })
     await saveHarvest({ qty: '3', weight: '120' })
@@ -239,14 +256,14 @@ describe('V4-WEIGHFRAME-001 — the one-line ledger', () => {
   // the totals restored, since the last entry would still be present in the string.
   it('names the last entry — date, plant, count and weight — and carries NO session total', async () => {
     await renderSession()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await saveHarvest({ qty: '12', weight: '340' })
     await saveHarvest({ qty: '5', weight: '860' })
     const summary = screen.getByTestId('weigh-frame-log-toggle').textContent
     // The entry: which day it lands on, which planting, how many, how heavy. Count AND weight — the
     // shipped label showed weight OR count, dropping the number being read off the scale.
     expect(summary).toContain('Today')
-    expect(summary).toContain('Tomatoes 2026')
+    expect(summary).toContain('Sungold')
     expect(summary).toContain('5 count')
     expect(summary).toContain('860 g')
     // NOT the session count, and NOT the running total (12+5 rows; 340+860 = 1.2 kg).
@@ -257,14 +274,14 @@ describe('V4-WEIGHFRAME-001 — the one-line ledger', () => {
 
   it('undoes the most recent entry from a control that never moves, with a distinguishable name', async () => {
     await renderSession()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await saveHarvest({ qty: '12', weight: '340' })
     await saveHarvest({ qty: '5', weight: '860' })
     const undo = screen.getByTestId('weigh-frame-undo')
     // The shipped strip gives all three of its Undo buttons the identical accessible name. This one
     // names the row it will destroy — now including the date it was filed under, since with a sticky
     // date the row being destroyed may not belong to today.
-    expect(undo.getAttribute('aria-label')).toBe('Undo Today Tomatoes 2026 5 count  ·  860 g, most recent entry')
+    expect(undo.getAttribute('aria-label')).toBe('Undo Today Sungold 5 count  ·  860 g, most recent entry')
     await act(async () => { fireEvent.click(undo) })
     expect(deleteCalls).toEqual(['/api/events/evt-2'])
     // Undone rows leave the totals but stay in the record; the summary falls back to the row before.
@@ -273,7 +290,7 @@ describe('V4-WEIGHFRAME-001 — the one-line ledger', () => {
 
   it('the summary is the history disclosure — the first build in which that exists', async () => {
     await renderSession()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await saveHarvest({ qty: '12', weight: '340' })
     const toggle = screen.getByTestId('weigh-frame-log-toggle')
     expect(toggle.tagName).toBe('BUTTON')
@@ -283,7 +300,7 @@ describe('V4-WEIGHFRAME-001 — the one-line ledger', () => {
 
     fireEvent.click(toggle)
     const drawer = screen.getByTestId('weigh-frame-log')
-    expect(drawer.textContent).toContain('Tomatoes 2026 — 12 count · 340 g')
+    expect(drawer.textContent).toContain('Sungold — 12 count · 340 g')
     // Absolute, so it costs the standing layout zero px.
     expect(drawer.style.position).toBe('absolute')
     expect(screen.getByTestId('weigh-frame-log-toggle').getAttribute('aria-expanded')).toBe('true')
@@ -291,7 +308,7 @@ describe('V4-WEIGHFRAME-001 — the one-line ledger', () => {
 
   it('the drawer caps at the last 10 rows and its Undo buttons carry ordinals', async () => {
     await renderSession()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     for (let i = 1; i <= 12; i++) await saveHarvest({ qty: String(i), weight: '100' })
     fireEvent.click(screen.getByTestId('weigh-frame-log-toggle'))
     const drawer = screen.getByTestId('weigh-frame-log')
@@ -313,7 +330,7 @@ describe('V4-WEIGHFRAME-001 — handedness mirrors task controls, never chrome',
   async function ledgerOrder(hand) {
     localStorage.setItem('ui.handedness', hand)
     await renderSession()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await saveHarvest({ qty: '4', weight: '210' })
     const t3 = screen.getByTestId('weigh-frame-track3')
     // DOM order, which is also visual order — the mirror reorders the array rather than using
@@ -334,7 +351,7 @@ describe('V4-WEIGHFRAME-001 — handedness mirrors task controls, never chrome',
   it('an unset preference is right-handed, and a bad value is not adopted', async () => {
     localStorage.setItem('ui.handedness', 'sideways')
     await renderSession()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await saveHarvest({ qty: '4', weight: '210' })
     const t3 = screen.getByTestId('weigh-frame-track3')
     expect([...t3.querySelectorAll('button')].map(b => b.dataset.testid || (b.textContent || '').trim()).filter(Boolean))
@@ -453,7 +470,7 @@ describe('V4-WEIGHDATEREACH-001 — the date is reachable without scrolling', ()
 
   it('actually changes the date the harvest is FILED UNDER, not just the label', async () => {
     await renderSession()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.change(screen.getByTestId('weigh-frame-date'), { target: { value: ymdOffset(-1) } })
     await saveHarvest({ qty: '4', weight: '200' })
     // The POST body is the only thing that settles this — a control that repaints a chip and sends
@@ -463,7 +480,7 @@ describe('V4-WEIGHDATEREACH-001 — the date is reachable without scrolling', ()
 
   it('KEEPS the date across saves in a session — the sticky half of the directive', async () => {
     await renderSession()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.change(screen.getByTestId('weigh-frame-date'), { target: { value: ymdOffset(-1) } })
     await saveHarvest({ qty: '4', weight: '200' })
     await saveHarvest({ qty: '6', weight: '300' })
@@ -480,7 +497,7 @@ describe('V4-WEIGHDATEREACH-001 — the date is reachable without scrolling', ()
     await renderSession('event_type=harvest')       // no session=harvest -> not a weigh-in session
     expect(screen.queryByTestId('weigh-frame')).toBeNull()
     expect(screen.queryByTestId('weigh-frame-date')).toBeNull()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     // Off the frame the date is back where it has always been — inside the collapsed disclosure,
     // which is itself the thing Dave was complaining about and which is deliberately NOT changed
     // for the ordinary log form.
@@ -494,7 +511,7 @@ describe('V4-WEIGHDATEREACH-001 — the date is reachable without scrolling', ()
 
   it('the ledger names the day the row was filed under, not the day it was typed', async () => {
     await renderSession()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.change(screen.getByTestId('weigh-frame-date'), { target: { value: ymdOffset(-1) } })
     await saveHarvest({ qty: '4', weight: '200' })
     // A backdated row logged minutes ago must not read "Today" — that is the one case where the
@@ -536,7 +553,7 @@ describe('V4-WEIGHSESSIONCLOSE-001 — the session has a way out', () => {
   it('confirms before discarding a weight already typed, and stays put when refused', async () => {
     window.history.replaceState({ idx: 3 }, '')
     await renderSession()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '9' } })
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     try {

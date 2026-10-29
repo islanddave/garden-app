@@ -1081,8 +1081,7 @@ export default function PlantingSelect({
   // alongside the visible one would have TalkBack read the failure twice.
   const failureNotice = loadFailedEffective && !loading ? (
     <div style={noteRow} role="alert">
-      {/* The old copy was unconditional and became false the moment PLANTING_REQUIRED_ENABLED
-          flips: telling someone they can save without a planting, on a form that will refuse
+      {/* The old copy was unconditional and false once plantings became required: telling someone they can save without a planting, on a form that will refuse
           exactly that, is worse than saying nothing. Branch on the same prop that drives the
           requiredness so the two can never disagree. */}
       {required

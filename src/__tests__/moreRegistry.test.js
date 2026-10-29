@@ -330,8 +330,7 @@ describe('resolvePins — entry by entry, never throws', () => {
 describe('layoutMoreSheet — I1 at the data level: exactly one door per destination', () => {
   const idsOf = (layout) => [...layout.pinned, ...layout.sections.flatMap(s => s.rows)].map(r => r.id)
   const spaceOff = MORE_ROWS.map(r => (r.id === 'space' ? { ...r, enabled: false } : r))
-  // CATCH_UP_EDITOR_SHIPPED is on in MORE_ROWS since V5-PLANTSTARTDATES-001, so the third flag state
-  // enumerated is now its OFF arm (the rollback lever).
+  // A second flag-off row, so the enumeration covers two disabled rows in different sections.
   const catchUpOff = MORE_ROWS.map(r => (r.id === 'catch-up' ? { ...r, enabled: false } : r))
   const movedSets = [[], ['garden'], ['harvests'], ['put-up'], ['garden', 'harvests'], ['garden', 'put-up'],
     ['harvests', 'put-up'], ['garden', 'harvests', 'put-up']]

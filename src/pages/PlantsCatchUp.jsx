@@ -1,6 +1,6 @@
 // PlantsCatchUp — V5-PLANTSTARTDATES-001. Rough start dates for the plantings that have none.
 //
-// Replaces the V1.2a-4 "Catch up — coming soon" stub that sat behind CATCH_UP_EDITOR_SHIPPED. The
+// Replaces the V1.2a-4 "Catch up — coming soon" stub. The
 // rules (who is listed, which months, which day, the PUT body) live in lib/catchUp.js; this file is
 // the list and its per-row state.
 //

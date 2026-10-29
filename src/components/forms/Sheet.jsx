@@ -21,7 +21,7 @@
 // V4-BACKNAV-001 Slice 1: Escape arbitration and aria-modal ownership move to the shared
 // DismissRegistry when one is present (see context/DismissRegistry.jsx). openStack STAYS — it still
 // owns the refcounted body scroll-lock, which is a Sheet-visual concern the other eight modal
-// surfaces deliberately do not share. When `registered` is false (flag off, or an isolated test
+// surfaces deliberately do not share. When `registered` is false (an isolated test or legacy path
 // rendered with no provider) every behaviour below is byte-identical to before that slice.
 // New prop: busy — a write is in flight. RECORDED for the arbiter, not yet acted on; `dirty` keeps
 // its existing meaning (unsaved user input) and its existing backdrop-only effect.
@@ -246,7 +246,7 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
         // with aria-modal="true" is invalid ARIA — modality is undefined and screen readers resolve
         // it inconsistently. That state already occurs today: PlantingDetail renders its Details
         // Sheet and a Lightbox from independent state. Only the topmost claims modality; unregistered
-        // (flag off / no provider) keeps the old unconditional "true".
+        // (no provider) keeps the old unconditional "true".
         aria-modal={isTopmost ? 'true' : undefined}
         aria-label={title || ariaLabel}
         tabIndex={-1}
@@ -282,7 +282,7 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
               onClose directly would be the one exit that still discarded silently — and it is the
               MOST discoverable exit, so that hole would swallow more work than the two it fixed.
               requestDismiss falls back to onClose whenever the provider declines ownership (not
-              opted in, not dirty, flag off, or no provider), so every other render site is
+              opted in, not dirty, or no provider), so every other render site is
               unchanged. */}
           <button
             type="button"
