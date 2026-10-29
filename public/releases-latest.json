@@ -1,7 +1,7 @@
 {
-  "version": "5.3.18",
+  "version": "5.3.19",
   "date": "2026-10-29",
   "highlights": [
-    "Security hardening: browser security headers and tighter server permissions"
+    "Behind-the-scenes cleanup: retired finished test machinery and nine old feature switches. No visible change."
   ]
 }

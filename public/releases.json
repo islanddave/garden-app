@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.19",
+    "date": "2026-10-29",
+    "highlights": [
+      "Behind-the-scenes cleanup: retired finished test machinery and nine old feature switches. No visible change."
+    ]
+  },
+  {
     "version": "5.3.18",
     "date": "2026-10-29",
     "highlights": [
