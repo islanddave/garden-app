@@ -1198,7 +1198,7 @@ describe('a real coverage run of scripts/fixtures/coverage-two-forms in four sha
 // thresholds these cases miss, as a third of the suite misses vitest.config.ts's: a shard must pass and write no
 // report, and only because of its flags (the control shard, without the zeros, fails); the merge must write its report,
 // check the thresholds and fail. The verdict of the unit pass rests on all of that and on nothing in ci.yml's text, so a
-// vitest that changed what the flags mean reds here. scripts/test_ci_next.py holds this list to ci.yml's command.
+// vitest that changed what the flags mean reds here. scripts/test_ci_legs.py holds this list to ci.yml's command.
 const CI_SHARD_COVERAGE_FLAGS = ['--coverage.reporter=none', '--coverage.thresholds.lines=0',
   '--coverage.thresholds.functions=0', '--coverage.thresholds.branches=0', '--coverage.thresholds.statements=0']
 describe('ci.yml\'s coverage shard and merge commands, under thresholds a shard cannot meet', () => {
@@ -1351,17 +1351,5 @@ describe('where it is switched on (vitest.config.ts)', () => {
     expect(two).toMatch(/^ {2}\.\.\.one,$/m)
     expect(two.match(/name: '\w+', environment: '\w+'/g)).toEqual(["name: 'dom', environment: 'jsdom'", "name: 'node', environment: 'node'"])
     expect(two).not.toMatch(/provider|coverage/i)
-  })
-})
-
-describe('where else it is switched on (scripts/ci-telemetry/a3-exit.config.mjs)', () => {
-  it('is the provider of the A3 exit checks, named as vitest.config.ts names it', () => {
-    // That config writes a coverage block of its own and so inherits nothing from vitest.config.ts. Its E2 check
-    // compares what two environments covered in every module they load: on the stock provider it compared two
-    // draws of lambda/daily-plan/engine.js and read a difference or not by which were drawn.
-    const exit = readFileSync(resolve(process.cwd(), 'scripts/ci-telemetry/a3-exit.config.mjs'), 'utf8')
-    expect(exit.match(/^\s*provider: .*$/gm)).toEqual(["          provider: 'custom',"])
-    expect(exit.match(/^\s*customProviderModule: .*$/gm))
-      .toEqual(["          customProviderModule: './scripts/ci-telemetry/coverage-v8-two-forms.mjs',"])
   })
 })

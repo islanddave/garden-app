@@ -257,7 +257,7 @@ def test_green_legs_do_not_stand_in_for_the_aggregator(aggregator, why):
 def test_a_red_leg_under_a_green_aggregator_is_the_aggregators_call_not_this_scripts():
     """Recorded so nobody reads more into rule 6 than it holds: the script reads the run's conclusion and the one
     named job. A leg that failed fails the run (rule 5) unless the workflow itself excuses it; whether the
-    aggregator may go green over it is pinned in ci-next's static tests, not here."""
+    aggregator may go green over it is pinned in scripts/test_ci_legs.py, not here."""
     rows = [("static", "completed", "failure")] + SPLIT_LEGS[1:] + [GREEN_JOB]
     assert verdict(runs(run(1)), {1: jobs(*rows)})[0] == "pass"
     assert verdict(runs(run(1, conclusion="failure")), {1: jobs(*rows)})[0] == "refuse"

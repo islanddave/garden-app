@@ -1,7 +1,7 @@
 // The test-ID evidence reporter (vitest-test-ids-reporter.mjs): what it hashes, the one line it prints, and the
 // property the gate depends on: nothing it does can fail a run.
 //
-// It runs inside the gating unit steps of ci.yml and ci-next.yml (vitest.config.ts, under GITHUB_ACTIONS only), and
+// It runs inside the gating unit steps of ci.yml (vitest.config.ts, under GITHUB_ACTIONS only), and
 // vitest does not catch what a reporter throws. So "it cannot throw" is tested with inputs no vitest version sends
 // today: an upgrade that reshapes the reporter API must cost the evidence, never the gate.
 import { describe, it, expect } from 'vitest'

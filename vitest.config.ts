@@ -72,12 +72,8 @@ export default defineConfig({
   test: {
     globals: true,
     // TWO PROJECTS, in every run: `node` takes the server-side test files (twoProjects, above) and runs them with no
-    // jsdom and no setup file; `dom` takes every other file, with jsdom and src/__tests__/setup.ts. This began as
-    // THE A3 TRIAL (CI plan item A3), behind an env key that only ci-next.yml's unit legs set, so that the shadow
-    // compared it with jsdom-everything commit for commit by test ID; the owner declared the trial's exit and made
-    // this the gating shape (2026-10-11, DECISIONS.md rows `A3-exit` and `switch-unit-shape`), and the key went in
-    // OPS-A3TRIALKEYREMOVE-001, so a local run and both workflows run one shape. The trial's record is THE A3 TRIAL
-    // in .github/workflows/ci-next.yml; scripts/ci-telemetry/vitest-projects.test.js holds the projects to the tree.
+    // jsdom and no setup file; `dom` takes every other file, with jsdom and src/__tests__/setup.ts. A local run and
+    // ci.yml run this one shape; scripts/ci-telemetry/vitest-projects.test.js holds the projects to the tree.
     // `environment` and `setupFiles` live INSIDE the projects, never beside them. A project with `extends: true`
     // inherits this whole block and arrays concatenate, so a `setupFiles` out here would also load in the node
     // project, and src/__tests__/setup.ts reads `document` in an afterEach: measured, every test of the node project
@@ -88,9 +84,9 @@ export default defineConfig({
     // options), so `vitest run --dir src/__tests__` collects every file; name the files or a filter instead. The
     // configs that build on this one and take `--dir` hand it on: scripts/ci-telemetry/vitest-side-config.mjs.
     projects: twoProjects(),
-    // Test-ID evidence for the CI shadow comparison (scripts/ci-telemetry/vitest-test-ids-reporter.mjs): on a
-    // GitHub Actions runner each run ends with one ::notice carrying the sha256 of its sorted test-ID list, which
-    // scripts/ci-telemetry/shadow-agree.py compares between ci.yml and ci-next.yml. Nothing is added off the
+    // The test-ids notice (scripts/ci-telemetry/vitest-test-ids-reporter.mjs): on a GitHub Actions runner each run
+    // ends with one ::notice carrying digests of its sorted test files and test IDs. ci.yml's coverage merge reads it
+    // to prove the three shards ran the suite's files, each once, and reds with no notice. Nothing is added off the
     // runner. Setting `reporters` replaces vitest's own default, so the first two entries restate it: with none
     // configured vitest 4.1.11 uses 'default' plus 'github-actions' under GITHUB_ACTIONS (its resolveConfig).
     // Re-read that on a vitest upgrade. The reporter is imported above unconditionally so a broken one fails a
@@ -159,8 +155,7 @@ export default defineConfig({
         // dev 8c96e353, lines 94.76 / funcs 92.82 / branches 85.93 / stmts 91.64. Floor = 80 on the two that sat under it.
         // ci.yml's coverage shards (plan A4) set these four keys to 0 on the command line, so a third of the suite
         // checks nothing; the merge checks them. A key added here (a glob, perFile, 100, autoUpdate) would reach every
-        // shard: add its neutral form to the shards' command too (ci.yml, ci-next.yml, COV_PASS_RUN in
-        // scripts/test_ci_next.py).
+        // shard: add its neutral form to the shards' command too (ci.yml, and COV_PASS_RUN in scripts/test_ci_legs.py).
         lines:      82,
         functions:  80,
         branches:   80,

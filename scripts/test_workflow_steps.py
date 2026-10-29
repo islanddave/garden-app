@@ -890,7 +890,7 @@ def test_preflight_passes_when_both_workflows_are_green_and_records_both(tmp_pat
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert _errors(proc) == []
     (ci_line, ci), (int_line, integ) = _record(proc)
-    # The record format scripts/ci-telemetry/preflight-dual.py reads: the prefix, the fields, ` | <the script's line>`.
+    # The record format: the prefix, the fields, ` | <the script's line>`.
     assert ci_line.startswith(f"::notice::preflight-run-based build-and-test on {DEV_SHA}: run-based-exit=0 | pass: ")
     assert ci_line.endswith(f" | runs={CI_ID}:push@dev:a1:completed/success")
     assert int_line.startswith(f"::notice::preflight-run-based integration-tests on {DEV_SHA}: run-based-exit=0 "

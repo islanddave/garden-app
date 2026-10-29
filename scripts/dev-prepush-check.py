@@ -16,7 +16,7 @@ SAFE only when ALL of these hold:
   1. the staged-promote marker (annotated tag refs/tags/staged-promote on the remote) is absent, or its message
      records the caller as the stager: the "by" that `staged-promote.py stage --by` wrote equals --by, character for
      character. A marker with no readable "by" (hand-made, or a lightweight tag) is held by somebody else;
-  2. no run of ci.yml or ci-next.yml on branch dev is unfinished. Unfinished is any status but `completed`
+  2. no run of ci.yml on branch dev is unfinished. Unfinished is any status but `completed`
      (queued, in_progress, waiting, requested, pending, and any status this file has not heard of). A cancelled run
      is completed. A run named with --own-run is the caller's own known-red or known-running run and is not counted;
   3. with --expect-dev, dev is still at that SHA.
@@ -72,7 +72,7 @@ except Exception as _exc:  # staged-promote.py needs Python 3.10 (`float | None`
 SAFE, NOT_SAFE, UNKNOWN = "SAFE", "NOT SAFE", "UNKNOWN"
 EXIT = {SAFE: 0, NOT_SAFE: 1, UNKNOWN: 2}
 EXIT_USAGE = 64
-WORKFLOWS = ("ci.yml", "ci-next.yml")
+WORKFLOWS = ("ci.yml",)
 BRANCH = "dev"
 DEV_REF = "refs/heads/" + BRANCH
 TAG_REF = staged_promote.TAG_REF if staged_promote else "refs/tags/staged-promote"
@@ -218,7 +218,7 @@ def unfinished_runs(repo, workflow):
 
 
 def check_runs(repo, own_runs, now):
-    """(reason lines, unreadable lines, information lines) for the two workflows' runs on dev."""
+    """(reason lines, unreadable lines, information lines) for the runs of WORKFLOWS on dev."""
     reasons, unread, info = [], [], []
     for workflow in WORKFLOWS:
         try:
@@ -299,7 +299,7 @@ def build_parser():
                         help="who you are: the exact --by you gave `staged-promote.py stage`. A marker whose "
                              "recorded \"by\" equals it is yours; without --by any marker refuses")
     parser.add_argument("--own-run", action="append", default=[], type=int, metavar="RUN_ID",
-                        help="a ci.yml or ci-next.yml run on dev that is your own known-red or known-running run "
+                        help="a ci.yml run on dev that is your own known-red or known-running run "
                              "and is not to be counted (repeatable)")
     parser.add_argument("--expect-dev", metavar="SHA", type=pattern(r"[0-9a-f]{40}", "--expect-dev"),
                         help="refuse if dev is not at this full 40-hex SHA")

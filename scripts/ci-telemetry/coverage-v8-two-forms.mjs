@@ -78,11 +78,10 @@
 //     test file its own) an `if (await x)` left unawaited by one file could have its consequent counted in the
 //     next file's window, a negative count on a correct conversion.
 //
-// THE WORKER SIDE is the stock one, by two routes. The class keeps the stock `name`, 'v8', and in the one-project
-// shape (no trial key: every local run and ci.yml) vitest hands its workers the provider's resolved options, so
-// they load @vitest/coverage-v8 themselves and this module is evaluated once, in the main process. When the run
-// has projects (the trial key's two, in vitest.config.ts; ci-next.yml's unit legs) every worker evaluates THIS
-// module too, twice (measured on three test files: one evaluation without the key, seven in four processes with
+// THE WORKER SIDE is the stock one, by two routes. The class keeps the stock `name`, 'v8', and in a one-project
+// config vitest hands its workers the provider's resolved options, so they load @vitest/coverage-v8 themselves and
+// this module is evaluated once, in the main process. When the run has projects (vitest.config.ts's two, in every
+// local run and in ci.yml) every worker evaluates THIS module too, twice (measured on three test files: one evaluation without the key, seven in four processes with
 // it), a jsdom worker through vite's module runner. By reading vitest's cli-api, each project's config is built
 // from the root's coverage block before the provider's options replace it, so it keeps `provider: 'custom'`. That
 // is why the default export carries the stock startCoverage / takeCoverage / stopCoverage themselves: whichever
