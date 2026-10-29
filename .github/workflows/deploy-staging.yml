@@ -141,7 +141,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22.23.3'  # the Lambda runtime's major (OPS-LAMBDANODE22-001); the frontend job and CI name the same (OPS-CINODE22-001)
+          node-version-file: .nvmrc  # read from the checked-out tree; must name the Lambda runtime's major (lambda-config-expected.json)
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -657,7 +657,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22.23.3'
+          node-version-file: .nvmrc
           cache: 'npm'
 
       - name: Install dependencies
