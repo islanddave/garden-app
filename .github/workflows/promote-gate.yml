@@ -1,26 +1,22 @@
 name: promote-gate
 
-# Capability-gate promote (cutover spec V1.0, session ce88c0be; snap + deploy-coupling wired 2026-06-03 sleepy-gifted-maxwell).
-# main is ruleset-protected with garden-bot (App 3951762) as the sole bypass actor; this workflow runs AS garden-bot.
-# environment: production does NOT pause for human approval — CORRECTED 2026-08-06 (the previous claim here, that it
-# "pauses the promote job for Dave's approval BEFORE main is touched", was STALE and load-bearingly wrong). VERIFIED
-# LIVE against the environments API (also verified 2026-08-04, OPS-PROMOTEAPPROVAL-001): the `production` environment's
-# protection_rules contain a `branch_policy` entry ONLY — there is NO `required_reviewers` rule, because the required
-# reviewer was REMOVED 2026-06-22 at Dave's direction. That policy gates WHICH refs may deploy (branches dev and
-# main; its promote-v* tag rule was removed 2026-10-02) = MECHANISM, not AUTHORIZATION. Nothing in this workflow
-# waits for a human tap: once it starts, main is fast-forwarded and prod ships. The behavioral dev->main HARD GATE (promote ONLY on an explicit Dave
-# "ship it"/"promote to prod") is therefore the SOLE authorization control. For contrast, the `production-destructive`
-# environment used by revert-gate.yml DOES carry required_reviewers=[islanddave] — do not generalize from it to here.
-# Promote = fast-forward main -> the exact dev SHA (no squash). CI is enforced here (required-checks on main only gate PRs).
-# Just BEFORE the FF, a version-snap (scripts/snap.py) captures a revertible marker (git tag + Neon branch + durable
-# dump + photo/lambda version-ids + manifest) INSIDE the same promote job — so a green promote always has a snapshot,
-# and a snap failure reds the promote with main untouched (BUG-PROMOTEFFORDER-001, 2026-10-15; it ran after the FF
-# until then). After the FF the job prunes old snapshot branches (never fatal). The snap's Lambda versions are the
-# PREVIOUS release's code (phase "pre-deploy"); after a successful deploy-lambdas the `snap-lambdas` job re-records
-# them as the versions that shipped (OPS-SNAPCAPTUREORDER-001). Then the `deploy` job (workflow_call
-# into deploy.yml) builds + deploys the SPA
-# under that same approval-free production ref policy, making promote->deploy deterministic (no reliance on
-# push:main retriggering) — it is a second environment binding, NOT a second approval.
+# Promote: fast-forward main to the exact dev SHA (no squash), then deploy. main is ruleset-protected with
+# garden-bot (App 3951762) as the sole bypass actor; this workflow runs AS garden-bot. CI is enforced here
+# (required checks on main only gate PRs).
+#
+# AUTHORIZATION: `environment: production` does NOT pause for approval. It carries a branch policy only (dev,
+# main) and no required reviewers: MECHANISM, not authorization. Once this workflow starts, main is
+# fast-forwarded and prod ships, so the behavioural dev->main HARD GATE (promote only on Dave's explicit "ship
+# it") is the SOLE authorization control. production-destructive (revert-gate.yml) does carry a required
+# reviewer; do not generalize from it to here.
+#
+# The snap (scripts/snap.py: git tag, Neon branch, durable dump, photo and Lambda version ids, manifest) runs
+# inside the promote job BEFORE the FF, so a green promote always has a snapshot and a snap failure reds the
+# promote with main untouched. Its Lambda versions are the PREVIOUS release's code (phase "pre-deploy"). After
+# the promote job: deploy-lambdas (when the Lambdas changed), the SPA (deploy.yml via workflow_call: a second
+# environment binding, not a second approval), snap-lambdas (re-records the Lambda versions that shipped), the
+# live-AWS invariant audit and the advisory verify. Calling the deploys here, not from a push to main, makes
+# promote -> deploy deterministic.
 # Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY, NEON_API_KEY, NEON_PROJECT_ID, NEON_BACKUP_URL, NEON_DATABASE_URL.
 # Vars: SNAP_AWS_ROLE_ARN, SNAP_BUCKET, PHOTOS_BUCKET, SNAP_RETENTION.
 #
@@ -32,9 +28,9 @@ name: promote-gate
 #      (PREFLIGHT — RUN-BASED below); the same for integration-test.yml (require_integration, default true).
 #   2. Version/tag skew gate — snap_version == v<package.json at dev_sha>, and that tag not already consumed.
 #   3. Prod schema gate — the L-081 audit of the promoted tree against PROD (require_schema_audit, default true).
-#   4. Snapshot tooling — the pg17 client and scripts/snap.py's Python imports, restored or installed and proven usable (here
-#      since 2026-10-07; until then they were prepared AFTER the FF). Never a verdict on the promoted code: a red
-#      one is a runner, Actions cache or PyPI fault (the pg17 client is restored from the cache only: a miss refuses), and the remedy is to re-run the failed jobs.
+#   4. Snapshot tooling — the pg17 client and scripts/snap.py's Python imports, restored or installed and proven
+#      usable. Never a verdict on the promoted code: a red one is a runner, Actions cache or PyPI fault (the pg17
+#      client is restored from the cache only: a miss refuses), and the remedy is to re-run the failed jobs.
 #   5. Write-path staging smoke gate — deploy-staging on the exact dev SHA, smoke-tests = success.
 # Then the Lambda deploy decision, which fails CLOSED to "deploy", never to "skip". Then the snap (snap.py
 # --no-prune), a fresh bot token, and the FF. After the FF the job runs one step, the prune (never fatal).
@@ -42,13 +38,11 @@ name: promote-gate
 # unmoved, "Re-run failed jobs" finishes the promote. Once dev moves, vX is BURNT and never shipped (the tag can
 # never be moved or deleted): bump and promote the new SHA. revert-to.py refuses vX as a target ("never reached
 # main"); forward-undo.py's previous_release does not know about burnt tags and can pick one as vPREV.
-#
-# PROD SCHEMA GATE (OPS-PROMOTESCHEMAGATE-001, added 2026-09-24). Until then nothing on this path read PROD's
-# schema: integration-tests forks its Neon branch from STAGING and the staging smoke runs against staging. A
-# promote whose Lambdas name a column prod lacks passed every check, deploy-lambdas shipped it, every request on
-# that route 500'd in prod, and the SPA deploy still went ahead, because a zip upload succeeds (review B1 of
-# V5-NAVCUSTOM-001). The gate runs scripts/dev-main-schema-audit.py, the audit schema-audit.yml runs ADVISORY on
-# dev pushes, over the checked-out promoted tree (it refuses if HEAD != dev_sha) against secrets.NEON_DATABASE_URL.
+# PROD SCHEMA GATE. Nothing else on this path reads PROD's schema: integration-tests forks its Neon branch from
+# STAGING and the staging smoke runs against staging, while a zip upload succeeds even when its Lambdas name a
+# column prod lacks (every request on that route then 500s). The gate runs scripts/dev-main-schema-audit.py, the
+# audit schema-audit.yml runs ADVISORY on dev pushes, over the checked-out promoted tree (it refuses if HEAD !=
+# dev_sha) against secrets.NEON_DATABASE_URL.
 # That is a repo secret; the production environment carries no secret of its own to shadow it. Read-only:
 # information_schema SELECTs. First the promoted tree's own DB-free parser self-tests
 # (scripts/test-schema-audit-phase{1,2,4}.py), because a parser regression is silent downstream. Then the audit
@@ -73,73 +67,40 @@ name: promote-gate
 # INSERTs into is waived column by column (Phase 2). require_schema_audit=false is the dispatch-only escape hatch:
 # every refusal becomes a loud ::warning::, and the audit still runs report-only whenever it can: a failed or hung
 # self-test falls through to it; only a missing secret or a checkout that is not dev_sha stops it.
+# WRITE-PATH SMOKE GATE: before the FF, this job dispatches deploy-staging.yml for the exact dev SHA, polls the
+# run to completion, and requires its `smoke-tests` job (the tail of
+# deploy-lambdas->deploy-frontend->db-schema-check->smoke-tests, so its success implies the whole write-path
+# chain passed) to conclude success. The dispatch runs AS garden-bot (App tokens trigger workflows; GITHUB_TOKEN
+# does not). Fail-closed: a missing or non-success staging-smoke conclusion blocks the promotion.
 #
-# WRITE-PATH SMOKE GATE (PHASE2-CI-001 / L-145, added 2026-06-04): before the FF, this job dispatches
-# deploy-staging.yml for the exact dev SHA, polls the run to completion, and requires its `smoke-tests` job
-# (the tail of deploy-lambdas->deploy-frontend->db-schema-check->smoke-tests, so its success implies the whole
-# write-path chain passed) to conclude success. Closes the hole where deploy-staging had no push:[dev] trigger,
-# so the staging write-path smoke only ran on manual dispatch and 7 releases shipped ungated. The dispatch runs AS
-# garden-bot (App tokens reliably trigger workflows; GITHUB_TOKEN does not). Fail-closed: a missing/non-success
-# staging-smoke conclusion blocks the promotion.
+# PREFLIGHT — RUN-BASED. "CI green on dev_sha" is decided by ONE check, scripts/promote-preflight.py, run from
+# the promoted checkout: every push / workflow_dispatch run of ci.yml on dev_sha must be completed and
+# successful, none in flight, at least one present, ordered by run_started_at (a re-run keeps created_at), and
+# the newest one's `build-and-test` job must be success. pull_request runs never count, for or against. The
+# rules and exit codes are in that script's header. The same check is made of integration-test.yml /
+# `integration-tests`; with require_integration=false it is advisory and printed, never refusing. A pass is
+# exit 0 AND the script's own `pass: ` line; an exit 0 that says anything else is not a verdict (recorded as
+# exit 97, a refusal). The two Actions reads use github.token (this workflow's `actions` permission), not the
+# bot token. Each verdict is printed as one `::notice::preflight-run-based ...` line with the run ids, on every
+# promote, refused or not, before anything is refused. Never judge by check-run NAME: that listing is latest
+# per run, not per name, and an aggregator job has no check-run until its legs finish, so "first by name" can
+# be an older run's green while the current run is still going.
 #
-# PREFLIGHT — RUN-BASED (promote-path plan A2.1). "CI green on dev_sha" is decided by ONE check,
-# scripts/promote-preflight.py, run from the promoted checkout: every push / workflow_dispatch run of ci.yml on
-# dev_sha must be completed and successful, none in flight, at least one present, ordered by run_started_at (a
-# re-run keeps created_at), and the newest one's `build-and-test` job must be success. pull_request runs never
-# count, for or against. The rules and exit codes are in that script's header. The same check is made of
-# integration-test.yml / `integration-tests`; with require_integration=false it is advisory and printed, never
-# refusing. A pass is exit 0 AND the script's own `pass: ` line; an exit 0 that says anything else is not a verdict
-# (recorded as exit 97, a refusal). The two Actions reads use github.token (this workflow's `actions` permission),
-# not the bot token. Each verdict is printed as one `::notice::preflight-run-based ...` line with the run ids, on
-# every promote, refused or not, before anything is refused.
-# HISTORY. Until 2026-10-02 the only check was name-based: the first check-run named `build-and-test` (and
-# `integration-tests`) on the commit had to conclude success. That listing is latest per RUN, not per name, and a
-# job that `needs` other jobs has no check-run until they finish, so once ci.yml is split into parallel legs behind
-# an aggregator, "first by name" can be an OLDER run's green while the current run is still going. Push 1
-# (2026-10-02, on dev 2026-10-03 as 8b13e438) added the run-based check beside it and required BOTH, printing each
-# pair as a `::notice::preflight-dual ...` line, so that a defect in the new check could refuse a promote but not
-# admit one. Push 2 removed the name-based check, before the split, once scripts/ci-telemetry/preflight-dual.py
-# read that record as READY: at least 5 promotes on record and, over every dispatched run since push 1 landed, no
-# line reading name-based != success with run-based-exit=0. What push 2 changed for a dispatcher, all of it in one
-# direction: a promote the name-based check alone refused now proceeds. That is a check-runs reply the step could
-# not read (it was read once, with no retry), and a non-success or unfinished check-run of the same name from a run
-# the run-based check does not count (a pull_request run of ci.yml on the same commit) listed ahead of the push
-# run's. Runs of this workflow from before push 2 carry `preflight-dual` lines; from push 2 on,
-# `preflight-run-based` lines, and preflight-dual.py reports the dual record as CLOSED at the first of those.
-# NOT LIVE FOR A `ref: main` DISPATCH until a promote has carried this file to main: such a dispatch runs main's
-# copy of this workflow. Once main has a copy from 2026-10-02 or later, `resolve` refuses it (step 0 above).
+# INTEGRATION-TESTS GATE: require_integration defaults to true, so the check is fail-closed exactly like
+# build-and-test unless a dispatcher opts out. integration-test.yml runs on every dev push and its job id
+# `integration-tests` is what the preflight looks up, so the check exists on every dev HEAD a promote can
+# target. It catches what build-and-test cannot: real-handler regressions and staging/prod schema drift
+# (deploy-staging applies no migrations, so a promote carrying an unapplied new-column migration SHOULD block).
+# Known cost: integration-tests runs longer than build-and-test, so a promote dispatched right after a dev push
+# can find it in_progress ("run <id> is in_progress") and refuse; wait for the run and re-dispatch. Escape
+# hatch: require_integration=false deliberately promotes past a red or absent integration run.
 #
-# INTEGRATION-TESTS GATE — SOAK CLOSED, DEFAULT FLIPPED TO true 2026-08-06. integration-tests (M5, 2026-07-24) rode
-# advisory (require_integration default false) through its soak window; the dispatch default is now `true`, so the
-# check is fail-closed exactly like build-and-test unless a dispatcher explicitly opts out. Evidence for the flip:
-#   * integration-test.yml triggers on `push: branches: [dev]`, and its job id `integration-tests` IS the job the
-#     preflight looks up in that run (at the time of the flip: the check-run name) — so the check exists on every dev
-#     HEAD a promote can target.
-#   * 845 historical runs: 702 success / 31 failure / 112 cancelled. EVERY sampled failure was in the `Run integration
-#     tests` step — i.e. real test signal. The Neon-branch-create step (the only plausible infra flake, and it carries
-#     its own FATAL guard) has never been the failing step. This is not a flaky check.
-#   * It catches what build-and-test cannot. dev 29c50396 was build-and-test=SUCCESS + integration-tests=FAILURE on a
-#     genuine handler regression (events.int.test.js, BUG-HARVESTEDIT-001, "expected '1360.776' to be null"). That is
-#     the green-tests-broken-prod class this layer was built for, and advisory mode would have let it promote.
-#   * It also catches staging/prod schema drift (dev 90ee5850: `column pv.dtm_basis does not exist`). deploy-staging
-#     does NOT apply migrations, so a promote carrying a new-column migration SHOULD block until the schema is applied
-#     — shipping that code to prod unapplied is a guaranteed 500. Blocking is the correct outcome, not a false alarm.
-#   * No new failure mode vs today: on multi-commit pushes and concurrency-cancelled runs, integration-tests is
-#     MISSING/cancelled on exactly the same SHAs where build-and-test is MISSING/cancelled, and build-and-test is
-#     ALREADY fail-closed — so those promotes are blocked with or without this flag.
-# Known cost (accepted): integration-tests runs longer than build-and-test, so a promote dispatched immediately after
-# a dev push can find build-and-test=success while integration is still in_progress (the preflight prints
-# "run <id> is in_progress") and fail-closed. Remedy is to wait for the run and re-dispatch. Escape hatch is preserved: dispatch with
-# require_integration=false to deliberately promote past a red/absent integration run.
-#
-# TAG TRIGGER RETIRED 2026-10-02 (Dave decision, promote-path review D-G). Until then a pushed `promote-v*` tag also
-# started this workflow (OPS-SHIPTRIGGER-001, 2026-07-09, the route claude-ops/ship-garden.sh used), and that path
-# hardcoded require_integration=false: one tag push by any writer shipped prod past the integration gate. It is
-# closed in three places, and this file is only one of them: (1) the `release-tag-integrity` ruleset (20140435)
-# carries a `creation` rule, so only garden-bot can create a `promote-v*` or `v*` tag (snap.py still tags, as the
-# bot); (2) the `production` environment no longer admits the `promote-v*` tag ref; (3) the `push: tags` trigger and
-# the tag branch of `resolve` are gone, and `resolve` refuses any event but workflow_dispatch. Do not re-add a
-# trigger here without re-deciding all three with Dave. Last tag-path run: promote-v4.91.0, 2026-09-01.
+# NO TAG TRIGGER: workflow_dispatch is the only trigger, and `resolve` refuses any other event. A tag trigger
+# would let one tag push by any writer ship prod past the integration gate. It is closed in three places, and
+# this file is only one of them: (1) the `release-tag-integrity` ruleset (20140435) carries a `creation` rule,
+# so only garden-bot can create a `promote-v*` or `v*` tag (snap.py still tags, as the bot); (2) the
+# `production` environment does not admit the `promote-v*` tag ref; (3) this file has no `push: tags` trigger
+# and `resolve` no tag branch. Do not re-add a trigger here without re-deciding all three with Dave.
 
 # Names the version and commit in the run list, so a promote is findable without opening it. Nothing reads this
 # title (the staging smoke gate matches deploy-staging's display_title, not this one).
@@ -186,7 +147,7 @@ concurrency:
 
 jobs:
   # Validate and normalise the dispatch inputs once, so every downstream job reads one (dev_sha, snap_version)
-  # pair. workflow_dispatch is the only trigger (header, TAG TRIGGER RETIRED); any other event is refused.
+  # pair. workflow_dispatch is the only trigger (header, NO TAG TRIGGER); any other event is refused.
   # Fail-closed: dev_sha must be a 40-hex commit SHA and snap_version must match the snap regex.
   resolve:
     runs-on: ubuntu-26.04
@@ -255,37 +216,25 @@ jobs:
     needs: resolve
     runs-on: ubuntu-26.04
     environment: production
-    # OPS-PROMOTERACE-001: consumed by the deploy-lambdas job below to decide whether to run at all.
+    # Consumed by the deploy-lambdas job below to decide whether to run at all.
     outputs:
       lambda_changed: ${{ steps.lam.outputs.changed }}
-    # 60 (30 until 2026-07-23, then 50). Widened 2026-07-23 after two promotes fail-closed when a runner-queue backlog pushed the ~16min
-    # staging pipeline past the old window (staging was green both times). Worst case for a promote that reaches
-    # the FF: ~4 min before the smoke gate (token, checkout, a preflight that still PASSES at its slowest: ~3 min
-    # as summed with three curl reads at up to 15 s each (one since the name-based check went, so every sum here
-    # is 30 s generous) + four script reads that each ride out two 10 s timeouts and two 2 s
-    # pauses and then take up to 10 s themselves; its step limit is 5; the rest ~1 min as before 2026-10-02: skew,
-    # psycopg2 install, and a schema gate that PASSES in seconds) + up to 34.5 min in the staging smoke gate
-    # (5 locate + 27.5 poll + 2 jobs read) + ~10 min snap, FF and prune = ~48.5 min. The schema gate's hang bounds (install <=190 s, self-tests <=105 s, audit
-    # <=250 s, about 9 min together) end in a refusal BEFORE the FF, so they stack with snap only on a
-    # require_schema_audit=false dispatch. There, all of them at once on top of a maximal smoke wait come to ~57.5
-    # min, and 59.5 with the preflight at its 5-minute step limit (54.5 before the preflight's retries; the bot token minted in the first step lives 60, so do not raise
-    # this job's limit past it), which passed the old 50 and would have ended the job inside snap, after the FF (review MINOR 2) — main
-    # moved, nothing deployed. 60 (was 50, raised 2026-09-24 with the schema gate) covers that worst case.
-    #
-    # SNAPSHOT TOOLING (2026-10-07). The pg17 and python deps steps ran after the FF, inside the "~10 min FF and
-    # snap" above; they now run before the staging smoke. Same steps, same job, so no sum above changes: only
-    # the side of the FF their share falls on, about 3 s on a cache hit. They are bounded now, and a bound
-    # reached is a refusal before the FF. If the two limited ones (cache 2, deps 5 min; the fetch step went with OPS-SCHEMACHECKAPT-001) each ran
-    # to just under its limit and passed, the first sum becomes 48.5 + 7 = 55.5 min, still inside this limit
-    # (scripts/test_workflow_steps.py derives the 7 and the 34.5 from the steps and pins the sum: change a
-    # bound and that test together). The opted-out all-hang sums (57.5, 59.5) have no room for that as well;
-    # there the limit would end the job before the FF or inside snap, where the same durations used to end it
-    # after the FF every time. Since the snap moved above the FF (BUG-PROMOTEFFORDER-001, 2026-10-15) the job limit
-    # can strand main only by landing in the post-FF prune (seconds; step limit 2). Landing between the end of the
-    # snap and the FF leaves tag vX with main unmoved: re-run the failed jobs while dev is unmoved, else vX is burnt.
-    # After the smoke the job now spends the Lambda decision, a token, the snap (20-49 s over six promotes), the FF
-    # (bounded at about 2.5 min) and the prune: well inside the ~10 above. The token is minted before the snap, so
-    # only the FF itself sits between tag vX and the FF.
+    # Worst case for a promote that reaches the FF: ~4 min before the smoke gate (token, checkout, a preflight
+    # that still PASSES at its slowest, about 3 min; skew, psycopg2 install and a schema gate that passes in
+    # seconds) + up to 34.5 min in the staging smoke gate (5 locate + 27.5 poll + 2 jobs read) + ~10 min for the
+    # Lambda decision, a token, the snap, the FF (bounded at about 2.5 min) and the prune = ~48.5 min. If both
+    # limited snapshot-tooling steps (cache 2, deps 5 min) run to just under their limits and pass, that becomes
+    # 48.5 + 7 = 55.5, still inside this limit (scripts/test_workflow_steps.py derives the 7 and the 34.5 from the
+    # steps and pins the sum: change a bound and that test together).
+    # The schema gate's hang bounds (install <=190 s, self-tests <=105 s, audit <=250 s, about 9 min together)
+    # end in a refusal BEFORE the FF, so they stack with the rest only on a require_schema_audit=false dispatch:
+    # all of them at once on top of a maximal smoke wait come to ~57.5 min, 59.5 with the preflight at its
+    # 5-minute step limit, and there the limit would end the job before the FF or inside the snap.
+    # Do not raise this past 60: the bot token minted in the first step lives 60 minutes.
+    # With the snap above the FF, the job limit can strand main only by landing in the post-FF prune (seconds;
+    # step limit 2). Landing between the end of the snap and the FF leaves tag vX with main unmoved: re-run the
+    # failed jobs while dev is unmoved, else vX is burnt. The second token is minted before the snap, so only the
+    # FF itself sits between tag vX and the FF.
     timeout-minutes: 60
     steps:
       - name: Mint garden-bot installation token
@@ -295,10 +244,9 @@ jobs:
           app-id: ${{ secrets.GARDEN_BOT_APP_ID }}
           private-key: ${{ secrets.GARDEN_BOT_PRIVATE_KEY }}
 
-      # The promoted commit. First step after the token since 2026-10-02: the preflight below runs
-      # scripts/promote-preflight.py from it. `resolve` has already refused unless dev_sha is this run's own commit,
-      # so this checkout cannot fail on an unknown SHA. The prod schema gate audits THIS tree, and the Lambda decision
-      # script and snap.py still come from it.
+      # The promoted commit. `resolve` has already refused unless dev_sha is this run's own commit, so this
+      # checkout cannot fail on an unknown SHA. The preflight script, the prod schema gate's tree, the Lambda
+      # decision script and snap.py all come from it.
       - name: Checkout dev_sha (preflight + schema audit + scripts/check-lambda-current.py + scripts/snap.py)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -375,23 +323,14 @@ jobs:
           fi
 
       - name: Version/tag skew gate — snap_version must equal package.json@dev_sha
-        # THE KEYSTONE of the v3.81.0 tag-burn fix. 00558fe carried package.json
-        # 3.80.0 AND releases.json[0] 3.80.0 — internally consistent, so every
-        # check that runs INSIDE a CI job on dev (including the vitest
-        # releases.json[0]==package.json assertion and scripts/check-release-version.py)
-        # passed. The skew existed only between the promoted code and this
-        # workflow's human-typed snap_version, which is invisible from dev. Tag
-        # v3.81.0 was consumed on content calling itself 3.80.0, forcing a second
-        # promote as v3.81.1 — and the release-tag-integrity ruleset (id 20140435)
-        # now forbids deleting or re-pointing v* tags, so the burn is permanent.
+        # The skew this catches is invisible from dev: package.json and releases.json[0] can agree with each
+        # other (so every CI check, including scripts/check-release-version.py, passes) while this workflow's
+        # human-typed snap_version names another release. A tag consumed on mismatched content is burnt for
+        # good (release-tag-integrity forbids deleting or re-pointing v* tags).
         #
-        # PLACEMENT IS LOAD-BEARING: after Preflight, BEFORE the ~28-minute
-        # staging-smoke gate and BEFORE "Fast-forward main". Failing here costs
-        # nothing — main is untouched, no tag exists, no Neon branch, no dump.
-        # scripts/snap.py does enforce version uniqueness (its tag / manifest
-        # guards), but it runs at the end of the job, after the staging smoke
-        # (and until 2026-10-15 after the FF, where its abort redded a promote
-        # whose irreversible half had already happened).
+        # PLACEMENT IS LOAD-BEARING: after Preflight, BEFORE the staging-smoke gate and BEFORE "Fast-forward
+        # main". Failing here costs nothing: main is untouched, no tag exists, no Neon branch, no dump.
+        # scripts/snap.py enforces version uniqueness too, but only at the end of the job.
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           REPO: ${{ github.repository }}
@@ -466,7 +405,7 @@ jobs:
             || timeout -k 5 90 python3 -m pip install --quiet --break-system-packages psycopg2-binary \
             || echo "::warning::psycopg2-binary did not install; the prod schema gate below will be inconclusive (exit 2) and refuse the promote unless require_schema_audit=false"
 
-      # OPS-PROMOTESCHEMAGATE-001 — see PROD SCHEMA GATE in the header. PRE-FF and before the staging smoke, like
+      # See PROD SCHEMA GATE in the header. PRE-FF and before the staging smoke, like
       # the skew gate: a refusal here costs about a minute and no staging deploy, and main is untouched.
       #
       # ERREXIT — keep every `|| RC=$?`, `|| HEAD=""` and `|| refuse`. GitHub runs this step as `bash -e {0}`, so a
@@ -590,37 +529,29 @@ jobs:
             *) refuse "L-081 audit exit $RC at $DEV_SHA: $(remedy "$LOGS/audit.log" "$RC")" ;;
           esac
 
-      # SNAPSHOT TOOLING, BEFORE THE FAST-FORWARD (S1 pre-FF, Dave decision 2026-10-07; promote-path plan V003 §5).
-      # The five steps from here to "Install python deps" restore and prove everything scripts/snap.py needs that the
-      # checkout does not give it: the pg17 client (pg_dump and pg_dumpall; the runner image ships pg18 on ubuntu-26.04,
-      # whose archives the pg17 pg_restore of every restore path does not read, and pg16 on 24.04, which will not dump
-      # a server newer than itself) and its Python imports. Until this change they ran AFTER
-      # "Fast-forward main", so a failure or a stall in any of them left main advanced with no snapshot and nothing
-      # deployed: the fetch hung 46 minutes there on 2026-08-18. Since 2026-10-15 the snap runs before the FF too,
-      # and only the never-fatal prune follows it.
-      # scripts/test_workflow_steps.py fails if one of these goes back below the FF, or if a step that fetches
-      # tooling is added there.
+      # SNAPSHOT TOOLING, BEFORE THE FAST-FORWARD. The five steps from here to "Install python deps" restore and
+      # prove everything scripts/snap.py needs that the checkout does not give it: the pg17 client (pg_dump and
+      # pg_dumpall; the runner image ships pg18 on ubuntu-26.04, whose archives the pg17 pg_restore of every
+      # restore path does not read, and pg16 on 24.04, which will not dump a server newer than itself) and its
+      # Python imports. Below the FF, a failure or a stall in any of them would leave main advanced with no
+      # snapshot and nothing deployed. scripts/test_workflow_steps.py fails if one of these goes back below the
+      # FF, or if a step that fetches tooling is added there.
       #
       # A RED STEP HERE REFUSES THE PROMOTE WITH NOTHING MOVED: main, the tags and prod are untouched. It is never a
       # verdict on the promoted code (a runner, cache or PyPI fault), the remedy is always "re-run the failed jobs"
       # (after warming the cache, for a miss), and every run: step says so in its ::error. They sit before the
       # staging smoke, not just before the FF, so that such a refusal costs about a minute and no staging deploy.
+      # The restore is an action and prints no remedy of ours: a restore that errors is, by that action's design,
+      # its own annotation and a miss, so only its time limit can red it. The step after it turns every miss, and
+      # that timed-out restore too (`!cancelled()`), into a refusal with the remedy.
       #
-      # WHAT CAN RED HERE THAT COULD NOT BEFORE: only a stall, a cache miss, and two checks of what snap would have
-      # died on. New since 2026-10-07: the bounds below (a stall used to be waited out, and the 46-minute one was);
-      # pg_dumpall is run as well as pg_dump; the imports are tried by the python3 that will run snap.py. The
-      # restore is an action and prints no remedy of ours: a restore that errors is, by that action's design, its
-      # own annotation and a miss, so with its two fixed inputs only its time limit can red it. The step after it
-      # turns every miss, and that timed-out restore too (`!cancelled()`), into a refusal with the remedy.
-      #
-      # NO FETCH (OPS-SCHEMACHECKAPT-001, 2026-10-15). The promote no longer pulls postgres:17 from Docker Hub on a
-      # miss: the pg17 client comes from the Actions cache or the promote refuses, nothing moved. The entry is
+      # NO FETCH: the pg17 client comes from the Actions cache or the promote refuses, nothing moved. The entry is
       # filled by .github/workflows/pg17-cache-warm.yml (and by the daily backup.yml / restore-verify.yml on main).
       #
-      # BOUNDS. On a cache hit the five take about 3 s (six promotes to 2026-10-06: cache 0-2 s, deps 0-1 s).
-      # Cache restore: 2 min. Deps: two pip forms at 90 + 5 s and the import check at 30 + 5 s, 3.75 min together
-      # under a 5 min backstop. The three steps without a limit touch only the runner's own disk. Both limits at
-      # once are 7 min, which the promote job's timeout comment adds up and the test pins.
+      # BOUNDS. On a cache hit the five take about 3 s. Cache restore: 2 min. Deps: two pip forms at 90 + 5 s and
+      # the import check at 30 + 5 s, 3.75 min together under a 5 min backstop. The three steps without a limit
+      # touch only the runner's own disk. Both limits at once are 7 min, which the promote job's timeout comment
+      # adds up and the test pins.
       - name: Make /usr/lib/postgresql/17 writable (cache restore target)
         run: |
           set -uo pipefail
@@ -631,13 +562,13 @@ jobs:
           sudo mkdir -p /usr/lib/postgresql/17/bin || fail "sudo mkdir -p /usr/lib/postgresql/17/bin failed (exit $?)"
           sudo chown -R "$(id -u):$(id -g)" /usr/lib/postgresql/17 || fail "sudo chown of /usr/lib/postgresql/17 to the runner user failed (exit $?)"
 
-      # RESTORE ONLY: actions/cache/restore has no post step, so promote-gate never saves this entry any more (the
-      # old actions/cache saved it after a fetch on a miss). The entry is written by pg17-cache-warm.yml, and by
-      # backup.yml, restore-verify.yml, revert-gate.yml and the rehearsals, which still fetch on a miss. Key, path,
-      # action SHA and runs-on equal the warmer's: the cache version hashes the path, so any drift between the two
-      # is a miss here on every promote (scripts/test_workflow_steps.py pins them together). No
-      # fail-on-cache-miss: it would end the job in the action's own text, skipping the remedy below, and a restore
-      # the cache service cannot serve is a miss with cache-hit unset, not a failure.
+      # RESTORE ONLY: actions/cache/restore has no post step, so promote-gate never saves this entry. The entry is
+      # written by pg17-cache-warm.yml, and by backup.yml, restore-verify.yml, revert-gate.yml and the rehearsals,
+      # which still fetch on a miss. Key, path, action SHA and runs-on equal the warmer's: the cache version
+      # hashes the path, so any drift between the two is a miss here on every promote
+      # (scripts/test_workflow_steps.py pins them together). No fail-on-cache-miss: it would end the job in the
+      # action's own text, skipping the remedy below, and a restore the cache service cannot serve is a miss with
+      # cache-hit unset, not a failure.
       - name: pg17 client cache
         id: pg17-cache
         timeout-minutes: 2
@@ -646,12 +577,11 @@ jobs:
           path: /usr/lib/postgresql/17/bin
           key: pg17-client-postgres17-image-v1-runner-ubuntu-26.04
 
-      # OPS-SCHEMACHECKAPT-001: the promote path fetches no Postgres client from the internet. The old miss path
-      # pulled postgres:17 from Docker Hub here (and before that apt.postgresql.org, which hung 46 minutes after
-      # the FF on 2026-08-18); a miss is now a refusal with nothing moved. `!=`, never `== 'false'`: on a plain
-      # miss the action leaves cache-hit unset. `!cancelled()`, not the implicit success(): a restore that hit its
-      # time limit has failed, and this step still prints the remedy (and still exits 1). `outcome != 'skipped'`: after
-      # an earlier refusal the restore never ran, and this step must not add a false cache-miss error to it.
+      # The promote path fetches no Postgres client from the internet: a miss is a refusal with nothing moved.
+      # `!=`, never `== 'false'`: on a plain miss the action leaves cache-hit unset. `!cancelled()`, not the
+      # implicit success(): a restore that hit its time limit has failed, and this step still prints the remedy
+      # (and still exits 1). `outcome != 'skipped'`: after an earlier refusal the restore never ran, and this step
+      # must not add a false cache-miss error to it.
       - name: Refuse a pg17 client cache miss (the promote fetches nothing)
         if: ${{ !cancelled() && steps.pg17-cache.outcome != 'skipped' && steps.pg17-cache.outputs.cache-hit != 'true' }}
         run: |
@@ -672,11 +602,10 @@ jobs:
             fi
           done
 
-      # The import, by the python3 that will run scripts/snap.py, is the proof; pip's exit status was all the old
-      # step had. Either one failing refuses. The old step took 0-1 s on each of six promotes, so the runner image
-      # evidently carries both packages already and the install is normally a no-op. Bounded like the psycopg2
-      # install above: plain form first, then the PEP-668 form. scripts/test_workflow_steps.py pins the import
-      # list against snap.py's own imports.
+      # The import, by the python3 that will run scripts/snap.py, is the proof, not pip's exit status; either one
+      # failing refuses. The runner image normally carries both packages, so the install is a no-op. Bounded like
+      # the psycopg2 install above: plain form first, then the PEP-668 form. scripts/test_workflow_steps.py pins
+      # the import list against snap.py's own imports.
       - name: Install python deps
         timeout-minutes: 5
         run: |
@@ -828,52 +757,38 @@ jobs:
           fi
           echo "write-path staging smoke green for $DEV_SHA"
 
-      # Moved up from after the pg17 steps (2026-09-18, OPS-LAMSKIPVSMAIN-001; those steps were then below the
-      # fast-forward, and have been above the staging smoke since 2026-10-07): the Lambda decision
-      # below reads the running functions with this role, and it must run BEFORE the fast-forward (see
-      # there). Side effect, and a strict improvement: an OIDC or role failure now stops the promote with
-      # main untouched, instead of after the fast-forward with main advanced and no snapshot. snap.py
-      # still uses these credentials; the minute or two this adds to their age is far inside the 1h session.
+      # The Lambda decision below reads the running functions with this role, and it must run BEFORE the
+      # fast-forward, so an OIDC or role failure stops the promote with main untouched. snap.py uses these
+      # credentials too; the minutes this adds to their age are far inside the 1h session.
       - name: Configure AWS credentials (snap role, OIDC)
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
         with:
           role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      # (The dev_sha checkout the decision script and snap.py read is the job's first step after the token.)
 
-      # OPS-LAMSKIPVSMAIN-001 (2026-09-18) — decide whether the Lambdas need deploying by asking THE
-      # RUNNING FUNCTIONS, not `main`.
-      #
-      # Until now this step compared dev_sha's Lambda inputs with main's. main means APPROVED, not
-      # DEPLOYED: this workflow fast-forwards main BEFORE deploy-lambdas runs, so a failed leg, a promote
-      # that died after its FF (snap.py; the pg17 fetch too until 2026-10-07), a revert rollback or a console
-      # upload all leave
-      # main naming code that is not running. A plain re-dispatch after a failed leg was the sharp case:
-      # main == dev_sha, all seven inputs compared equal, the step skipped every Lambda and shipped the SPA
-      # onto the stale legs (reproduced by running the old step body with DEV_SHA=main: changed=false).
-      # verify-deploy.py then called that skip "the running Lambdas are current", which was false.
+      # Decides whether the Lambdas need deploying by asking THE RUNNING FUNCTIONS, never `main`. main means
+      # APPROVED, not DEPLOYED: this workflow fast-forwards main BEFORE deploy-lambdas runs, so a failed leg, a
+      # promote that died after its FF, a revert rollback or a console upload all leave main naming code that is
+      # not running, and a plain re-dispatch after a failed leg (main == dev_sha) would compare a commit with
+      # itself and skip every Lambda.
       #
       # scripts/check-lambda-current.py reads each release function's deploy marker (written by the last
       # step of every deploy-lambda.yml leg, and bound to the live CodeSha256) and proves CURRENT only when
       # every function runs a marked build whose Lambda inputs equal dev_sha's. Its docstring is the spec,
-      # and the seven compared inputs (formerly PATHS here) now live there, in one copy.
+      # and the compared inputs (PATHS) live there, in one copy.
       #
-      # FAILS CLOSED, and only exit 0 skips. No marker (every function, until the first deploy that writes
-      # them), a mismatch, an unreadable function or input, a crash: all deploy all 26 — the pre-v4.137
-      # behaviour, ~6 minutes, idempotent. force_lambda still short-circuits.
+      # FAILS CLOSED, and only exit 0 skips. No marker, a mismatch, an unreadable function or input, a crash:
+      # all deploy all 26 (about 6 minutes, idempotent). force_lambda still short-circuits.
       #
-      # ERREXIT — keep the `|| RC=$?`. GitHub runs a step with no `shell:` as `bash -e {0}`. The first
-      # version called the script bare and read `RC=$?` on the next line, so exit 1 or 2 (both DEPLOY
-      # answers) would have ended the step right there, before `changed=`, failing the promote pre-FF
-      # (B1 of the v4.138.0 pre-ship pass, caught before any promote ran it). Its tests passed because
-      # they ran this body with `bash -c`; they now run it as the runner does (`bash -e <file>`,
-      # scripts/test_check_lambda_current.py). Every exit code of the script now ends in `changed=`. If
-      # the step fails anyway, the promote job fails with main untouched and nothing ships to prod:
-      # deploy-lambdas' `!= 'false'` covers a missing output only when this job succeeded.
+      # ERREXIT — keep the `|| RC=$?`. GitHub runs a step with no `shell:` as `bash -e {0}`, so a bare call
+      # that exits 1 or 2 (both DEPLOY answers) would end the step before `changed=`, failing the promote pre-FF.
+      # scripts/test_check_lambda_current.py runs this body as the runner does (`bash -e <file>`). Every exit
+      # code of the script ends in `changed=`. If the step fails anyway, the promote job fails with main
+      # untouched and nothing ships to prod: deploy-lambdas' `!= 'false'` covers a missing output only when
+      # this job succeeded.
       #
-      # Still pre-FF on purpose. The answer no longer depends on main, but a defect in THIS step then stops
-      # the promote with main untouched rather than after the fast-forward.
+      # Pre-FF on purpose: a defect in THIS step then stops the promote with main untouched.
       #
       # verify-deploy.py keys on this step's NAME to tell a proven skip from the old main comparison
       # (LAMBDA_DECISION_STEP there; test_verify_deploy.py pins the two equal). Rename both together.
@@ -911,10 +826,9 @@ jobs:
           app-id: ${{ secrets.GARDEN_BOT_APP_ID }}
           private-key: ${{ secrets.GARDEN_BOT_PRIVATE_KEY }}
 
-      # THE SNAP RUNS BEFORE THE FAST-FORWARD (BUG-PROMOTEFFORDER-001, 2026-10-15). It needs no moved main: it
-      # tags MAIN_SHA = dev_sha through the API and snapshots prod, which does not depend on main. A snap failure
-      # therefore refuses the promote with main and prod untouched; until this change it left main advanced with
-      # nothing deployed. --no-prune: the retention prune deletes an old revert point, so it waits for the FF
+      # THE SNAP RUNS BEFORE THE FAST-FORWARD. It needs no moved main: it tags MAIN_SHA = dev_sha through the API
+      # and snapshots prod, which does not depend on main. A snap failure therefore refuses the promote with main
+      # and prod untouched. --no-prune: the retention prune deletes an old revert point, so it waits for the FF
       # (the last step). The tag is the one artifact that outlives a refusal (release-tag-integrity forbids
       # moving or deleting it); snap.py creates it last, just before its manifest, so only a failure from there
       # to the FF leaves tag vX for a commit main never reached. Re-run failed jobs while dev is unmoved; once
@@ -934,8 +848,7 @@ jobs:
           SNAP_RETENTION: ${{ vars.SNAP_RETENTION }}
           CF_DIST: E3FAJTXAORQYDT
           APP_VERSION: ${{ needs.resolve.outputs.snap_version }}
-          # snap.py's tempfile dumps land here, not in /tmp: on ubuntu-26.04 /tmp is a RAM-backed tmpfs capped at
-          # ~7.8G, $RUNNER_TEMP is the runner's work disk (OPS-UBUNTU26MOVE-001).
+          # snap.py's tempfile dumps land on the work disk: /tmp on ubuntu-26.04 is a ~7.8G RAM-backed tmpfs.
           TMPDIR: ${{ runner.temp }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
@@ -1007,19 +920,15 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: python3 scripts/snap.py --prune-only
 
-  # OPS-PROMOTERACE-001 — THE ORDERING EDGE. Lambdas ship BEFORE the SPA, by graph, not by luck.
+  # THE ORDERING EDGE: Lambdas ship BEFORE the SPA, by graph, not by luck, and strictly AFTER snap.py (a step of
+  # `promote`), so the revert manifest records a clean pre-deploy Lambda set and `snap-lambdas` below then
+  # records the set that shipped. deploy-lambda.yml has no push trigger of its own to race either.
   #
-  # Previously deploy-lambda.yml self-triggered on the `push: main` that the FF above produces, so it
-  # raced BOTH the SPA deploy and snap.py. Measured inversion: promote-gate 31657287769 served the new
-  # SPA 3m10s before the Lambdas finished. It is now an explicit predecessor, which also places it
-  # strictly AFTER snap.py (a step of `promote`), so the revert manifest records a clean pre-deploy
-  # Lambda set instead of a torn mix, and `snap-lambdas` below then records the set that shipped.
+  # Skipped entirely on an SPA-only promote: that is the common case and must stay cheap.
   #
-  # Skipped entirely on an SPA-only promote — that is the common case and must stay cheap.
-  #
-  # `!= 'false'`, not `== 'true'` (OPS-LAMSKIPVSMAIN-001): only an explicit "false" from the proven
-  # decision above skips. An ABSENT output now deploys instead of silently skipping, which also makes
-  # verify-deploy.py's reading of "promote succeeded + deploy-lambdas skipped" exact, not inferred.
+  # `!= 'false'`, not `== 'true'`: only an explicit "false" from the proven decision above skips. An ABSENT
+  # output deploys instead of silently skipping, which also makes verify-deploy.py's reading of "promote
+  # succeeded + deploy-lambdas skipped" exact, not inferred.
   deploy-lambdas:
     needs: [resolve, promote]
     if: ${{ needs.promote.outputs.lambda_changed != 'false' }}
@@ -1078,7 +987,7 @@ jobs:
           echo "::error::SPA deploy withheld — Lambda deploy failed. main is advanced; prod still serves the previous SPA. See the run summary."
           exit 1
 
-  # OPS-SNAPCAPTUREORDER-001 — THE LAMBDA VERSIONS THAT SHIPPED. The promote's snap runs before deploy-lambdas, so
+  # THE LAMBDA VERSIONS THAT SHIPPED. The promote's snap runs before deploy-lambdas, so
   # the versions it publishes are the PREVIOUS release's code, stamped lambda_versions_phase "pre-deploy". Once the
   # Lambda deploy has succeeded, this job re-publishes every release function (scripts/snap.py --lambdas-only) and
   # rewrites snapshots/<vX>.json: lambda_versions = what now runs, the old map kept as lambda_versions_pre_deploy,
@@ -1144,31 +1053,26 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: python3 scripts/snap.py --lambdas-only
 
-  # OPS-LAMCHANGEDBLIND-002 — THE SAFETY CHECK THAT SURVIVES THE SKIP. Unconditional by design.
-  #
-  # These assertions used to live ONLY inside deploy-lambda.yml (as `verify-daily-plan`), so the
-  # SPA-only skip above took them with it. They are the repo's only live-AWS check of state that drifts
-  # with NO repo change at all — a console edit, an AWS-side reset, or any of deploy-lambda.yml's many
-  # continue-on-error env steps failing silently. Losing them on the cheap common-case promote is what
-  # blocked activating the skip. Dave's call (2026-09-17) was "move the safety check out first, then
-  # enable"; this job is that move. deploy-lambda.yml still calls the SAME reusable workflow after its
-  # matrix, so a Lambda-carrying promote audits twice — read-only, about a minute, and deliberately
-  # preferred over two `if:` conditions that would have to stay exact complements forever.
+  # THE SAFETY CHECK THAT SURVIVES THE SKIP. Unconditional by design: these assertions are the repo's only
+  # live-AWS check of state that drifts with NO repo change at all (a console edit, an AWS-side reset, a
+  # deploy-lambda.yml continue-on-error env step failing silently), and the SPA-only skip above must not take
+  # them with it. deploy-lambda.yml still calls the SAME reusable workflow after its matrix, so a
+  # Lambda-carrying promote audits twice: read-only, about a minute, and deliberately preferred over two `if:`
+  # conditions that would have to stay exact complements forever.
   #
   # `always()` + an explicit predicate, for the same reason the `deploy` job above needs one: a bare
   # `needs:` would treat the SKIPPED deploy-lambdas job as unsatisfied and skip THIS job too, which is
-  # precisely the hole it exists to plug. The only precondition is that the promote itself succeeded —
+  # precisely the hole it exists to plug. The only precondition is that the promote itself succeeded:
   # if main never moved, there is nothing to audit.
   #
   # IT NEEDS `deploy` DELIBERATELY, i.e. it runs LAST, after the SPA:
-  #   * check-lambda-config.py reads `aws lambda get-function-url-config` and asserts Cors.AllowOrigins
-  #     for the 23 functions whose manifest entry declares cors_origins. deploy.yml's "Restore Lambda
-  #     Function URL CORS" step WRITES that same field for 13 of them on every SPA deploy. Running this
-  #     job beside `deploy` rather than after it would be reading CORS while deploy.yml rewrites it — a
+  #   * check-lambda-config.py asserts Cors.AllowOrigins from `aws lambda get-function-url-config` for every
+  #     function whose manifest entry declares cors_origins, and deploy.yml's "Restore Lambda Function URL
+  #     CORS" step WRITES that same field on every SPA deploy. Running beside `deploy` would be a
   #     measure-while-mutating race on a HARD GATE, i.e. an intermittently red promote.
   #   * Last is also strictly better coverage: the in-deploy-lambda copy runs BEFORE deploy.yml's CORS
   #     restore, so a restore that writes the WRONG origins is invisible to it until the next promote.
-  # It still cannot withhold the SPA — nothing `needs:` this job, and `deploy` does not depend on it.
+  # It still cannot withhold the SPA: nothing `needs:` this job, and `deploy` does not depend on it.
   # That preserves deploy-lambda.yml's deliberate choice to keep these assertions out of deploy_result.
   verify-lambda-invariants:
     needs: [resolve, promote, deploy-lambdas, deploy]
@@ -1177,20 +1081,13 @@ jobs:
     with:
       ref: ${{ needs.resolve.outputs.dev_sha }}
 
-  # OPS-VERIFY-001 (advisory REPORT-ONLY, per L-147/L-161/L-141) — runs AFTER deploy and
-  # gates NOTHING (no job needs it; FF + deploy already happened, so it cannot un-ship).
-  # It mechanizes the post-promote read of the SPA deploy JOB conclusion (L-161 — a green
-  # run can mask a failed deploy job) and of the Lambda legs. It NEVER fails the promote: exit code
-  # becomes an annotation (notice/warning/error) + a step-summary line, and the job always exits 0.
-  #
-  # OPS-VERIFYINRUNSTALE-001 (2026-09-18): it now passes --run-id, so verify-deploy.py reads THIS run's
-  # own jobs. It used to list only COMPLETED promote-gate runs, which can never include the in-progress
-  # run it sits in, so it fell back to the last standalone deploy-lambda.yml run (2026-08-13, c509fff4ae)
-  # and printed "STALE LAMBDA ... NOT VERIFIED" on every promote — including the three before this
-  # change, whose 26 legs all succeeded. By the time this job starts deploy-lambdas is final (`deploy`
-  # needs it and this job needs `deploy`), so this run's Lambda legs are settled. The older rationale
-  # here ("deploy-lambda.yml is a SEPARATE push:main workflow ... may still be mid-flight") has been
-  # false since OPS-PROMOTERACE-001 made it a nested job.
+  # Advisory REPORT-ONLY: runs AFTER deploy and gates NOTHING (no job needs it; the FF and the deploys already
+  # happened, so it cannot un-ship). It mechanizes the post-promote read of the SPA deploy JOB conclusion (a
+  # green run can mask a failed deploy job) and of the Lambda legs. It NEVER fails the promote: the exit code
+  # becomes an annotation and a step-summary line, and the job always exits 0. It passes --run-id, so
+  # verify-deploy.py reads THIS run's own jobs (a listing of completed promote-gate runs can never include the
+  # in-progress run it sits in). By the time this job starts deploy-lambdas is final (`deploy` needs it and
+  # this job needs `deploy`), so this run's Lambda legs are settled.
   verify:
     needs: [resolve, deploy]
     if: ${{ always() }}
