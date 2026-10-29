@@ -1,63 +1,27 @@
 name: L-081 Schema Audit (dev)
 
-# Verifies lambda code's column references are present in prod Neon's
-# information_schema.columns. Phase 1 = the columns declared in
-# lambda/**/*columns.test.js contracts; Phase 2 = INSERT column lists and
-# Phase 3 = soft-delete deleted_at targets, in every non-test lambda/**/*.js;
-# Phase 4 = every relation a handler queries exists in prod, plus the
-# joined-relation coverage ratchet (scripts/schema-audit-join-baseline.json).
-# Catches the L-081 bug class (local_3f62f153 2026-05-19 prod incident):
-# lambda code references columns that exist in staging but not prod, deploy
-# succeeds, every endpoint 500s.
+# Verifies that the column and relation references in lambda code exist in prod Neon's schema. Phase 1 =
+# the columns declared in lambda/**/*columns.test.js contracts; Phase 2 = INSERT column lists and Phase 3 =
+# soft-delete deleted_at targets, in every non-test lambda/**/*.js; Phase 4 = every relation a handler
+# queries exists in prod, plus the joined-relation coverage ratchet (scripts/schema-audit-join-baseline.json).
+# The bug class: a column exists in staging but not prod, the deploy succeeds, and every endpoint 500s.
 #
-# Trigger re-homed 2026-07-22 (OPS-GUARDINTEG-001): the original
-# `pull_request -> main` trigger became structurally unreachable when
-# OPS-GATE-001 (2026-06-03) retired PRs to main — main advances ONLY by
-# garden-bot fast-forward via promote-gate, so no PR to main can ever exist.
-# The workflow sat dead 7 weeks while looking configured. It now fires on
-# push to dev, path-filtered to exactly what the audit reads (the lambda
-# column sources), plus migrations/** as the schema-change signal and the
-# audit script + this workflow themselves.
+# This workflow is the early warning on each dev push. The blocking check is promote-gate.yml's "Prod
+# schema gate", which runs the same script with --gate on the promoted SHA before main moves.
+# A GREEN RUN HERE DOES NOT PREDICT THE GATE, in either direction: exit 2 (inconclusive), a missing secret
+# and an unreadable Phase-1 contract are green here (a warning) but refused at the gate; a STALE waiver reds
+# here but is only a warning at the gate (prod already has the column).
 #
-# Advisory HERE: a genuine FAIL (missing column) fails this workflow, but no
-# promote waits on this workflow's result. The fail-soft paths (missing secret,
-# inconclusive) no longer exit 0 silently — they emit a loud UNVERIFIED
-# warning + job summary.
-# ENFORCED AT PROMOTE (OPS-PROMOTESCHEMAGATE-001, added 2026-09-24):
-# promote-gate.yml's "Prod schema gate" step runs this same script, with
-# --gate, on the exact dev SHA being promoted, against prod, before main moves,
-# and refuses the promote on any non-zero exit and on a missing secret, unless
-# dispatched with require_schema_audit=false. This workflow stays the early
-# warning on each dev push (path-filtered, so a later commit can leave no run
-# at the promoted SHA); the promote gate is the one that blocks, and it runs
-# at every promoted SHA.
-# A GREEN RUN HERE DOES NOT PREDICT THE GATE, in either direction. Exit 2
-# (inconclusive) and a missing secret read GREEN here (a warning, exit 0) but
-# are refused at the gate, and so is a Phase-1 contract the parser cannot read
-# (only a stderr WARN here; exit 2 under --gate). The other way, a STALE waiver
-# reds this run but is only a warning at the gate: prod already has the column.
-#
-# Audit script: scripts/dev-main-schema-audit.py (canonical here in garden-app/).
-# A reference copy lives in claude-ops/scripts/ for local sandbox invocation. Keep in sync.
-#
-# Parser guard wired in 2026-09-08 (BUG-SCHEMAAUDITRED-001): scripts/test-schema-audit-phase1.py
-# existed since 2026-07-22 but was referenced nowhere in .github/, so it gated nothing and had
-# been RED unobserved on dev. It was red only because a frozen count pin (29) had gone stale
-# against a legitimate widening to 31 columns -- the parser was correct. Repaired to per-name
-# assertions and given a step below.
+# Audit script: scripts/dev-main-schema-audit.py. A reference copy lives in claude-ops/scripts/ for local
+# sandbox invocation; keep them in sync.
 
 on:
   push:
     branches: [dev]
     paths:
-      # Widened 2026-08-28. The filter had drifted BEHIND the audit twice, and a gate that
-      # does not run on the files it audits is the same shape of blind spot as one that
-      # cannot see them:
-      #   - Phase 2 was widened to every non-test lambda/**/*.js on 2026-08-19, but this
-      #     filter still watched only index.js -- so editing e.g. lambda/harvests/watch-route.js
-      #     (which carries INSERT column lists) never triggered the audit.
-      #   - Phase 1 discovery is now '*columns.test.js', so the garden_node joined-relation
-      #     guard would not have triggered a run either.
+      # The filter must cover everything the audit reads: a gate that does not run on the files it audits
+      # is as blind as one that cannot see them. Phase 2 reads every non-test lambda/**/*.js and Phase 1
+      # discovers '*columns.test.js', hence lambda/**/*.js rather than index.js only.
       - 'lambda/**/*.js'
       - 'migrations/**'
       - 'scripts/dev-main-schema-audit.py'
@@ -83,7 +47,6 @@ jobs:
       - name: Checkout garden-app
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # setup-python pinned to major version v5 — advisory workflow, not deploy-tier discipline.
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
@@ -97,17 +60,10 @@ jobs:
           test -s scripts/dev-main-schema-audit.py || { echo "::error::scripts/dev-main-schema-audit.py missing or empty"; exit 1; }
           head -1 scripts/dev-main-schema-audit.py | grep -q python3 || { echo "::error::audit script header malformed"; exit 1; }
 
-      # Runs BEFORE the audit and independently of it: the suite needs no DB and no
-      # psycopg2 (verified 2026-09-08 with the import blocked), so it is the only step
-      # here that still verifies something when NEON_DATABASE_URL is absent -- the case
-      # where every step below exits 0 having checked nothing.
-      #
-      # It guards the parser the audit depends on. That matters because a Phase-1
-      # regression is SILENT downstream: dropping a column group from one file leaves
-      # the table still covered, so the Phase-4 ratchet sees nothing and the audit
-      # reports "PASS: 2040 column refs" at exit 0 while 10 refs go unaudited
-      # (reproduced against prod Neon, 2026-09-08). Hard-fails: deterministic, no
-      # network, no secret.
+      # Runs BEFORE the audit and independently of it: the suite needs no DB and no psycopg2, so it is the
+      # only step here that still verifies something when NEON_DATABASE_URL is absent. It guards the parser:
+      # a Phase-1 regression is SILENT downstream (a dropped column group leaves the table covered, so the
+      # Phase-4 ratchet sees nothing and the audit still reports PASS). Hard-fails.
       - name: Phase 1 parser unit tests
         run: python3 scripts/test-schema-audit-phase1.py
 
@@ -123,11 +79,10 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          # ERREXIT — keep pipefail OFF for this pipeline. GitHub runs this step as `bash -e {0}`, so the
-          # audit's exit reaches AUDIT_EXIT only because the pipeline's status is tee's. With pipefail on
-          # (the `set -euo pipefail` prologue most steps here use), exit 1 or 2 would end the step on this
-          # line: no annotation, and an inconclusive run red instead of warned (OPS-STAGINGDRIFTERREXIT-001
-          # sweep). A no-op today; scripts/test_workflow_steps.py runs the body with that prologue.
+          # ERREXIT: keep pipefail OFF for this pipeline. GitHub runs this step as `bash -e {0}`, so the
+          # audit's exit reaches AUDIT_EXIT only because the pipeline's status is tee's. With pipefail on,
+          # exit 1 or 2 would end the step on this line: no annotation, and an inconclusive run red instead
+          # of warned. scripts/test_workflow_steps.py runs the body with the `set -euo pipefail` prologue.
           set +o pipefail
           python3 scripts/dev-main-schema-audit.py --repo-root . --verbose | tee audit-output.txt
           AUDIT_EXIT=${PIPESTATUS[0]}
