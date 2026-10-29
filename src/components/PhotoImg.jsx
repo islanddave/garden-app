@@ -389,7 +389,7 @@ export default function PhotoImg({
   // `key` on the element, not just the attribute: dropping crossOrigin in place relies on the
   // browser treating it as a relevant mutation that re-runs "update the image data", and the whole
   // point of the retry is that the second request definitely happens. Remounting says so outright.
-  // No flash — the CORS attempt painted nothing to lose. Inert while the flag is off: `useCors` is
+  // No flash — the CORS attempt painted nothing to lose. Inert for a same-origin src: `useCors` is
   // then constant false, the key never changes, and crossOrigin is undefined (React omits it).
   const img = (
     <img

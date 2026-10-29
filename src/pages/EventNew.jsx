@@ -846,12 +846,6 @@ export default function EventNew({ harvestSession = false } = {}) {
   // `photoItems` is [{ id, file, url }] in pick order; `photoItems[0]` is the old `photoFile` and the
   // whole array is what handleSubmit uploads. The two scalars this replaces were the ONLY reason
   // "I took four pictures of this one plant" meant four saves.
-  //
-  // ARRAY EVEN WHEN THE FLAG IS OFF. The flag gates what the PICKER accepts (one file vs many) and
-  // what the strip renders — not the shape of the state. A dual-shape state would fork every one of
-  // the ten read sites below and give the flag-off branch its own untested code path, which is the
-  // opposite of what X1's byte-identical requirement is for: flag-off must be the SAME code carrying
-  // exactly one item.
   const [photoItems, setPhotoItems] = useState([])
   // BUG-PHOTOREMOVETRAP-001 — removal is DEFERRED, not destructive. The shipped remove revoked the
   // object URL in the same tick, which put the blob beyond recovery IN PRINCIPLE: nothing in the app
@@ -1464,9 +1458,7 @@ export default function EventNew({ harvestSession = false } = {}) {
   }
 
   // §3 B1 — every file from ONE picker invocation, appended to whatever is already staged (a second
-  // trip to the picker adds rather than replaces). Flag-off takes the first file only, which is the
-  // shipped behaviour: the input carries no `multiple` attribute in that branch, so the FileList is
-  // one entry anyway and the slice is a belt-and-braces guard, not the mechanism.
+  // trip to the picker adds rather than replaces), up to MAX_EVENT_PHOTOS.
   // BUG-PHOTOSTAGEDREAD-001 — copy the bytes at pick time. These items are held until Save, which is
   // the longest gap between pick and read anywhere in the app: the user still has to choose a
   // planting, a kind and a date. Android reclaims picker handles well inside that window, and the

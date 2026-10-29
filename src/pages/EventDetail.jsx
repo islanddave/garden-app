@@ -490,8 +490,8 @@ export default function EventDetail() {
             treatment_amount:       form.treatment_amount.trim() || null,
             pest_target:            form.pest_target.trim() || null,
           } : {}),
-          // slice 4, flag-gated. Absent when the flag is off, so the server's re-anchor path is
-          // never entered and EventDetail's save is byte-identical to before.
+          // slice 4. Sent only on a real anchor change, so an ordinary edit never enters the
+          // server's re-anchor path.
           ...(reanchorPending
             ? { plant_id: form.plant_id, project_id: form.project_id }
             : {}),
@@ -535,8 +535,8 @@ export default function EventDetail() {
       // V4-REANCHORFLAG-001: the moved-to name, carried forward onto the response. The PUT's
       // RETURNING has no planting_name column, so a bare setEvent(updated) would leave the read
       // view with no Planting row at all — a move that reports success by DELETING the only thing
-      // that shows where the event now lives. Only the re-anchor arm is touched: with the flag off,
-      // or on an ordinary edit, this is the same setEvent(updated) as before.
+      // that shows where the event now lives. Only the re-anchor arm is touched: on an ordinary
+      // edit this is the same setEvent(updated) as before.
       setEvent(reanchorPending
         ? { ...updated, planting_name: moveTarget?.name ?? null }
         : updated)
