@@ -1,30 +1,20 @@
 name: Staging schema drift (advisory)
 
-# OPS-STAGINGDRIFT-001. Nothing keeps the staging Neon branch in sync with prod:
-# integration-test.yml creates an ephemeral branch off staging and runs the real
-# Lambda handlers against it WITHOUT applying migrations, so drift accumulates
-# silently. Measured 2026-07-31 while unblocking Lane C: 10 prod-only columns,
-# 3 prod-only constraints, and 1 staging-ONLY CHECK that made staging reject
-# container_type values prod accepts.
+# Nothing keeps the staging Neon branch in sync with prod: integration-test.yml forks staging and runs the
+# real Lambda handlers on it WITHOUT applying migrations, so drift accumulates silently and shows up as
+# integration failures unrelated to the change under test.
 #
-# The failure mode is not a broken deploy — it is integration tests failing for
-# reasons unrelated to the change under test, which trains everyone to read a red
-# integration run as noise.
+# ADVISORY BY DESIGN for drift itself: migrations are applied staging-first, so staging legitimately LEADS
+# prod between the two applies. The script reports prod-only drift (staging behind, the dangerous
+# direction) as a finding and staging-only columns/indexes as informational; a staging-only CHECK
+# constraint IS reported, because it rejects writes prod accepts.
 #
-# ADVISORY BY DESIGN — never fails the build. Migrations are applied staging-first,
-# so staging legitimately LEADS prod for the whole window between the two applies;
-# hard-failing would red the build for that entire window. The script reports
-# prod-only drift (staging behind — the dangerous direction) as a finding and
-# staging-only columns/indexes as informational. A staging-only CHECK constraint
-# IS reported, because an extra CHECK rejects writes prod accepts.
-#
-# Runs weekly rather than per-push: drift is a slow accumulation, not a per-commit
-# event, and each run costs two Neon connections. Also fires on any migrations/**
-# push, which is the one commit-shaped signal that the shapes may have moved.
+# Weekly rather than per-push (drift is slow; each run costs two Neon connections), plus any
+# migrations/** push.
 
 on:
   schedule:
-    # Mondays 13:00 UTC — early in the week, so a drift finding has the week to be acted on.
+    # Mondays 13:00 UTC, early in the week, so a finding has the week to be acted on.
     - cron: '0 13 * * 1'
   push:
     branches: [dev]
@@ -65,14 +55,10 @@ jobs:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
         run: |
           set -uo pipefail
-          # The drift REPORT stays advisory (staging legitimately leads prod between a staging apply and
-          # its prod apply). The only hard failures are "could not run": a missing secret (the script's
-          # exit 3, a misconfiguration since both secrets exist) and the checker crashing.
-          # ERREXIT — keep the `|| RC=$?`. GitHub runs a step with no `shell:` as `bash -e {0}`, so a
-          # bare call that exits non-zero ends the step on that line. The first version read `RC=$?`
-          # on the next line: an unreachable database (exit 2) went red with no annotation instead of
-          # the warning below (OPS-STAGINGDRIFTERREXIT-001; the same defect as B1 of the v4.138.0
-          # pre-ship pass, in promote-gate.yml's Lambda decision step). scripts/test_workflow_steps.py
+          # The drift REPORT stays advisory. The only hard failures are "could not run": a missing secret
+          # (the script's exit 3) and the checker crashing.
+          # ERREXIT: keep the `|| RC=$?`. GitHub runs a step with no `shell:` as `bash -e {0}`, so a bare call
+          # that exits non-zero ends the step on that line, with no annotation. scripts/test_workflow_steps.py
           # runs this body the runner's way.
           RC=0
           python3 scripts/check-staging-drift.py || RC=$?
