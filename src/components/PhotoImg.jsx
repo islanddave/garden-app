@@ -42,7 +42,6 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import { TIER } from '../lib/photoModel.js'
-import { PHOTO_CORS_CACHE_ENABLED } from '../lib/featureFlags.js'
 
 export const PRESIGN_TTL_MS = 900 * 1000            // == server view-url expiresIn:900
 const MAX_CONCURRENT_MINTS = 6
@@ -219,9 +218,11 @@ export default function PhotoImg({
   }
 
   // V4-PHOTOCORS-001 half (1). Ask for the photo in CORS mode so the response is not opaque and
-  // sw.js's isImageResponse() can cache it on its real content-type. Derived, never stored: flag off,
-  // latch tripped, same-origin src, or a src that already failed CORS here => render exactly as today.
-  const useCors = PHOTO_CORS_CACHE_ENABLED && !_corsBroken && corsFailedSrc !== src && _isCrossOrigin(src)
+  // sw.js's isImageResponse() can cache it on its real content-type. sw.js cannot import anything, so
+  // its half (presign-param stripping) gates on `request.mode === 'cors'`, which is true exactly when
+  // this attribute is set: the two halves cannot drift apart. Derived, never stored: latch tripped,
+  // same-origin src, or a src that already failed CORS here => render with no crossOrigin.
+  const useCors = !_corsBroken && corsFailedSrc !== src && _isCrossOrigin(src)
 
   useEffect(() => { _seed(photoId, initialUrl, !hasFallback, mintTier) }, [photoId, initialUrl, hasFallback, mintTier])
   // Set true on (re)mount — StrictMode runs mount→cleanup→remount, and a cleanup-only ref would leave
@@ -295,7 +296,7 @@ export default function PhotoImg({
   // same network, same presign — only the attribute differs. Wrapping onLoad rather than replacing
   // it; consumers that count loads still see every one.
   const handleLoad = useCallback((ev) => {
-    if (PHOTO_CORS_CACHE_ENABLED && corsFailedSrc && corsFailedSrc === src) _corsBroken = true
+    if (corsFailedSrc && corsFailedSrc === src) _corsBroken = true
     onLoad?.(ev)
   }, [corsFailedSrc, src, onLoad])
 

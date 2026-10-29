@@ -164,7 +164,7 @@ describe('photo cache — the two halves are coupled by request mode', () => {
 
 // BUG-PHOTOCACHEUNGATED-001 — the photo cache accepts thumbs/ keys ONLY.
 //
-// The bug: PHOTO_CORS_CACHE_ENABLED gates the <img> half only. sw.js cannot import it, so it reads
+// The bug: PhotoImg's crossOrigin attribute is the <img> half only. sw.js cannot see it, so it reads
 // `request.mode === 'cors'` instead — and the /today share composer's own fetch is a cors request
 // that no flag ever touched, carrying a TIER.FULL original. Every one of those was written to
 // photos-v1 in prod v4.57.0 with the flag OFF, at ~4.15 MB against a 500-entry COUNT cap.
