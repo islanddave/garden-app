@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -30,5 +31,17 @@ describe('crop-derive.js per-Lambda copies stay byte-identical', () => {
       .filter(d => existsSync(join(here, d, 'crop-derive.js')))
       .sort();
     expect(onDisk).toEqual([...DIRS].sort());
+  });
+});
+
+// Every helper in scripts/lambda-copies.json, not only crop-derive. A child process, because the generator
+// reads src/lib and an import would pull this file out of the node project (vitest-node-project.mjs LOADS_SRC).
+describe('scripts/gen-lambda-copies.mjs --check', () => {
+  it('OPS-CODEREVIEW-001 D1: every manifest copy is byte-identical to its master and no copy is unlisted', () => {
+    const gen = join(here, '..', 'scripts', 'gen-lambda-copies.mjs');
+    // execFileSync throws on a non-zero exit; its message carries the generator's stderr, which names each problem.
+    const out = execFileSync(process.execPath, [gen, '--check'], { encoding: 'utf8' });
+    const checked = Number(/checked (\d+) copies/.exec(out)?.[1]);
+    expect(checked).toBeGreaterThan(0);
   });
 });
