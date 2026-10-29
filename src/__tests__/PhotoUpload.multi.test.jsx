@@ -230,4 +230,19 @@ describe('PhotoUpload multi', () => {
       expect(call[1].keyPrefix).not.toBe('inbox');
     }
   });
+
+  it('OPS-CODEREVIEW-001 E1: unreadable picks join the cap notice in this component\'s own wording', async () => {
+    uploadSpy.mockImplementation(async (f) => ok(f.name));
+    const unreadable = (name) => {
+      const f = file(name);
+      f.arrayBuffer = () => Promise.reject(new Error('could not be read'));
+      return f;
+    };
+    render(<PhotoUpload multiple maxFiles={4} />);
+    await pick([file('a.jpg'), unreadable('b1.jpg'), unreadable('b2.jpg'), unreadable('b3.jpg'), file('e.jpg')]);
+    expect(screen.getByTestId('photo-upload-stage-notice').textContent).toBe(
+      "Only 4 photos at a time — 1 not added. 3 couldn't be read and were not added (b1.jpg, b2.jpg…).",
+    );
+    expect(uploadSpy).toHaveBeenCalledTimes(1);
+  });
 });

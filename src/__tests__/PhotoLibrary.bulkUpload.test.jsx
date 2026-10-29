@@ -259,6 +259,21 @@ describe('PhotoLibrary bulk upload — partial failure', () => {
     const banner = await screen.findByTestId('pl-err-banner')
     expect(banner.textContent).toBe('mock failure')      // exact: no "None of the 1 photos" wrapper
   })
+
+  it('OPS-CODEREVIEW-001 E1: unreadable picks are left out and named, three at most', async () => {
+    await openForm()
+    const unreadable = (name) => {
+      const f = jpg(name)
+      f.arrayBuffer = () => Promise.reject(new Error('could not be read'))
+      return f
+    }
+    const files = [jpg('a.jpg'), ...['b1.jpg', 'b2.jpg', 'b3.jpg', 'b4.jpg'].map(unreadable)]
+    await act(async () => { fireEvent.change(screen.getByTestId('pl-staged-input'), { target: { files } }) })
+    expect((await screen.findByTestId('pl-err-banner')).textContent).toBe(
+      "4 of 5 couldn't be read and were not added (b1.jpg, b2.jpg, b3.jpg…). Re-pick from the gallery and try again.",
+    )
+    expect(screen.getByTestId('pl-staged-preview')).toBeTruthy()
+  })
 })
 
 describe('PhotoLibrary bulk upload — object URLs', () => {

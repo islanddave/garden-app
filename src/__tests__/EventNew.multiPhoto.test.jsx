@@ -296,4 +296,21 @@ describe('EventNew multi-photo', () => {
     await renderForm('event_type=harvest&project=proj-1')
     expect(document.querySelector('input[type="file"]').hasAttribute('multiple')).toBe(true)
   })
+
+  it('OPS-CODEREVIEW-001 E1: unreadable picks are left out and named in the notice', async () => {
+    await renderForm('event_type=harvest&project=proj-1')
+    const unreadable = (name) => {
+      const f = jpg(name)
+      f.arrayBuffer = () => Promise.reject(new Error('could not be read'))
+      return f
+    }
+    const input = document.querySelector('input[type="file"]')
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [jpg('a.jpg'), unreadable('bad1.jpg'), jpg('b.jpg'), unreadable('bad2.jpg')] } })
+    })
+    await waitFor(() => expect(screen.getAllByTestId('eventnew-photo-item')).toHaveLength(2))
+    expect(screen.getByText(
+      "2 of 4 couldn't be read and were not added (bad1.jpg, bad2.jpg). Re-pick from the gallery and try again.",
+    )).toBeTruthy()
+  })
 })
