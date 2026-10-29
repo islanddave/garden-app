@@ -92,6 +92,7 @@ CURRENT, NOT_CURRENT, UNKNOWN = 0, 1, 2
 #   lambda                                the functions' source (a TREE sha: one exact identity per side)
 #   .github/workflows/deploy-lambda.yml   the recipe: calls the packaging script, then every config-ensure step
 #   scripts/package-lambda.sh             builds every zip (staging's too); runs from the checkout, so read at src=
+#   .nvmrc                                the Node version setup-node builds every zip with (node-version-file)
 #   scripts/lambda-config-expected.json   read BY the recipe (facebook-share timeout/memory) and asserted
 #   scripts/check-lambda-config.py          after it — OPS-LAMCHANGEDBLIND-001
 #   src/lib/eventTypes.js                 `npm run gen:event-types` generates lambda/events/
@@ -105,6 +106,7 @@ PATHS = (
     "lambda",
     ".github/workflows/deploy-lambda.yml",
     "scripts/package-lambda.sh",
+    ".nvmrc",
     "scripts/lambda-config-expected.json",
     "scripts/check-lambda-config.py",
     "src/lib/eventTypes.js",

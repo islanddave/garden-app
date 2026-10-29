@@ -149,6 +149,17 @@ def test_a_change_to_only_the_packaging_script_forces_a_deploy():
     assert (OLD, script) in ident.calls and (NEWER, script) not in ident.calls
 
 
+def test_the_node_version_file_both_deploy_workflows_build_with_is_an_input():
+    # F4: setup-node reads the Node version from the checked-out tree, so a version-only change must redeploy.
+    for workflow, job in (("deploy-lambda.yml", "deploy"), ("deploy-staging.yml", "deploy-lambdas")):
+        with open(os.path.join(HERE, "..", ".github", "workflows", workflow)) as fh:
+            steps = yaml.safe_load(fh)["jobs"][job]["steps"]
+        files = {s["with"]["node-version-file"] for s in steps
+                 if str(s.get("uses", "")).startswith("actions/setup-node") and "node-version-file" in s.get("with", {})}
+        assert files == {".nvmrc"}, (workflow, files)
+    assert ".nvmrc" in cc.PATHS and ".nvmrc" != cc.RECIPE_PATH
+
+
 def test_the_recipe_is_read_where_the_workflow_came_from_and_the_rest_where_the_code_came_from():
     # Built from dev_sha's tree by an OLDER recipe (a promote dispatched from main).
     ident = Idents({(OLD, cc.RECIPE_PATH): "old-recipe"})
