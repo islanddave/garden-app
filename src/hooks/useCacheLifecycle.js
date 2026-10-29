@@ -25,13 +25,9 @@
 // Deliberately NOT done here: threading the cache entry's real age into PhotoImg as an `initialUrlAt`
 // prop. That is the correct root fix but it reopens the frozen A1 prop contract across ~13 adopted
 // sites.
-//
-// Everything below is a no-op when IMAGE_LIST_CACHE_ENABLED is off — D-2 must degrade exactly like
-// D-1 does, back to plain per-mount fetches.
 import { useCallback, useEffect, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import * as cache from '../lib/dataCache.js'
-import { IMAGE_LIST_CACHE_ENABLED } from '../lib/featureFlags.js'
 import { onReconnect } from '../lib/reconnect.js'
 
 // Paths worth warming at boot. ONLY globally-knowable keys belong here: per-planting and per-location
@@ -60,7 +56,7 @@ export function useCacheLifecycle(sub) {
   // B3 — boot-warm, once per resolved identity. Gated on `sub` for the same reason useCachedFetch is:
   // nothing may be cached under an absent sub, or a later user could read the previous bucket.
   useEffect(() => {
-    if (!IMAGE_LIST_CACHE_ENABLED || !sub) return
+    if (!sub) return
     for (const path of BOOT_WARM_PATHS) {
       cache.warm(
         cache.keyFor(sub, path),
@@ -72,7 +68,6 @@ export function useCacheLifecycle(sub) {
   // B5 — revalidate watched keys on foreground / bfcache restore / Chromium resume. Same three
   // listeners PhotoImg uses, so the list refresh and the per-image proactive re-mint wake together.
   useEffect(() => {
-    if (!IMAGE_LIST_CACHE_ENABLED) return
     const onWake = () => {
       if (document.visibilityState === 'hidden') return
       cache.revalidateLive(RESUME_MIN_AGE_MS)
@@ -121,10 +116,7 @@ export function useCacheLifecycle(sub) {
   // bounds requests at 15s. If `online` fires while a request from the dying connection is still
   // hanging, that key is skipped and not retried until the next wake. Fixing it means cancelling
   // stalled in-flights, which is a dataCache change with its own blast radius.
-  useEffect(() => {
-    if (!IMAGE_LIST_CACHE_ENABLED) return
-    return onReconnect(() => cache.revalidateLive(0))
-  }, [])
+  useEffect(() => onReconnect(() => cache.revalidateLive(0)), [])
 }
 
 // B4 hook-point. Returns the number of watched keys refreshed. Still has no non-test callers.
@@ -163,5 +155,5 @@ export function useCacheLifecycle(sub) {
 // is a NEW refreshAllSettled() over promises that actually reject; do not change invalidate()'s
 // contract to get there (it reaches invalidatePrefix → useUploadPhoto + PhotoLibrary).
 export function useRefreshAll() {
-  return useCallback(() => (IMAGE_LIST_CACHE_ENABLED ? cache.refreshAll() : 0), [])
+  return useCallback(() => cache.refreshAll(), [])
 }

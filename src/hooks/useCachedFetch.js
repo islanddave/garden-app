@@ -1,11 +1,11 @@
-// src/hooks/useCachedFetch.js — V4-IMGCACHE-001 D-1. SWR read hook over dataCache, gated by
-// IMAGE_LIST_CACHE_ENABLED AND a live household identity.
+// src/hooks/useCachedFetch.js — V4-IMGCACHE-001 D-1. SWR read hook over dataCache, gated on a live
+// household identity.
 //
 // Three modes (rules-of-hooks: all hooks are called every render; the return selects the mode):
-//  • CACHED   (flag ON + a Clerk sub + a non-null path): identity-scoped key `${sub}|${path}`.
+//  • CACHED   (a Clerk sub + a non-null path): identity-scoped key `${sub}|${path}`.
 //    Subscribes to the store, serves cache on first paint, revalidates on EVERY mount, returns
 //    { data, loading, error, isValidating, refetch }. `loading` is true until data OR an error exists.
-//  • PLAIN    (flag OFF, OR flag ON but no sub yet — path present): a plain fetch-on-mount that writes
+//  • PLAIN    (no sub yet — path present): a plain fetch-on-mount that writes
 //    NO cache entry — byte-identical to the pre-D1 useState+useEffect sites. The no-sub branch is the
 //    security boundary: nothing is EVER cached under an absent sub, so user B can never read a
 //    `u:undefined|…` bucket (the request still goes out, uncached, exactly as today). It also means a
@@ -18,7 +18,6 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { useApiFetch } from '../lib/api.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
 import * as cache from '../lib/dataCache.js'
-import { IMAGE_LIST_CACHE_ENABLED } from '../lib/featureFlags.js'
 
 // `stale` (SW-STALEAPI-001): the last commit came from the service worker's offline cache rather
 // than the network. Carried through so a surface can say so; the correctness half — never
@@ -30,9 +29,8 @@ export function useCachedFetch(path) {
   const { fetch } = useApiFetch()
   const { user } = useAuthOptional()
   const sub = user?.id ?? null
-  const flagOn = IMAGE_LIST_CACHE_ENABLED
-  const cached = flagOn && !!path && !!sub
-  const usePlain = !cached && !!path            // flag OFF, or flag ON but no sub yet — plain fetch, no cache
+  const cached = !!path && !!sub
+  const usePlain = !cached && !!path            // no sub yet — plain fetch, no cache
   const key = cached ? cache.keyFor(sub, path) : null   // D-2: shared builder, or boot-warm misses
 
   // Latest fetch fn behind a ref so the fetcher identity stays stable across token refreshes.
@@ -57,7 +55,7 @@ export function useCachedFetch(path) {
     cache.revalidate(key)            // serve cache (already in snap) + revalidate on every mount and every eviction
   }, [key, fetcher, ep])
 
-  // ── PLAIN fallback (flag OFF only) ──
+  // ── PLAIN fallback (no sub yet) ──
   const [local, setLocal] = useState({ data: undefined, loading: usePlain, error: null })
   const [tick, setTick] = useState(0)
   useEffect(() => {

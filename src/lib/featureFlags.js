@@ -109,14 +109,6 @@ export const WATER_DEPTH_EDIT_ENABLED = true
 // D1 telemetry.
 export const PROJECTS_HIDDEN = true
 
-// V4-IMGCACHE-001 D-1 (design V102 §B / §5.4): the subscribable image-LIST SWR cache ("slow-tab win").
-// When TRUE (default), the photo-list read sites (PhotosWall / PlantingDetail attached-photos /
-// LocationDetail) render from a household-scoped in-heap cache and revalidate on every mount; when
-// FALSE, useCachedFetch degrades to a plain fetch-on-mount (no cache read/write) so those sites are
-// byte-identical to pre-D1. One-toggle rollback lever (module const → "rollback" = flip false +
-// redeploy). Heap-only: no service-worker change. Criteria-gated, never date-gated.
-export const IMAGE_LIST_CACHE_ENABLED = true
-
 // V4-SPACEPHOTO-001 Lane C (crucible plan V100 §3 / §12a): the Space tier's user-facing photo
 // surface — the /space route + page, the More-sheet nav rows, the space hero, and the space
 // gallery. The Space ("Gardens at Mathews Ridge") is the property itself, ABOVE the six level-0
@@ -259,7 +251,7 @@ export const BACKNAV_ENABLED = true
 // gate:seeds-scroll:flag-off serve this flag as false in memory (tests/harness/flagOffTransform.mjs). And after
 // ANY revert-gate past this release, for any reason: swipe the app away once (a fresh launch starts 'auto').
 // NOT covered by this flag: Garden's cached household (BUG-GARDENSPOTCREEP-001). Undoing it means reverting
-// src/hooks/useMembers.js — IMAGE_LIST_CACHE_ENABLED would also do it, but uncaches every list that uses the store.
+// src/hooks/useMembers.js.
 export const SCROLL_MANAGER_ENABLED = true
 
 // V4-SNAPDEST-001 (BD0806-08, Dave 2026-08-06): "hide Save to Device app-wide".

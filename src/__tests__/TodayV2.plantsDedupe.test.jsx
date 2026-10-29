@@ -51,7 +51,6 @@ vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () =
 
 import TodayV2 from '../pages/TodayV2.jsx'
 import { __resetDataCache, refreshAll } from '../lib/dataCache.js'
-import { IMAGE_LIST_CACHE_ENABLED } from '../lib/featureFlags.js'
 import { writeShowOthers } from '../lib/householdView.js'
 import * as store from '../components/today/v2/needsCareStore.js'
 
@@ -82,10 +81,6 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('Today — /api/plants is fetched once per paint, not once per section', () => {
-  it('the flag under test is on, or the list is never cached and this is the plain-fetch path', () => {
-    expect(IMAGE_LIST_CACHE_ENABLED).toBe(true)
-  })
-
   it('Needs care, Protect tonight and Heads-up, all on one page, issue ONE /api/plants request', async () => {
     await mount()
     // All three reached their data off the shared list...

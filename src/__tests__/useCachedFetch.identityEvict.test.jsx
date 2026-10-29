@@ -15,7 +15,6 @@ const { fetchSpy, authState } = vi.hoisted(() => ({
 }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy, getToken: () => Promise.resolve('t') }) }))
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => authState }))
-vi.mock('../lib/featureFlags.js', () => ({ IMAGE_LIST_CACHE_ENABLED: true }))
 
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { __resetDataCache, invalidateAll } from '../lib/dataCache.js'

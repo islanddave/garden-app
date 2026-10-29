@@ -7,19 +7,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, waitFor, act } from '@testing-library/react'
 import React from 'react'
 
-const { fetchSpy, authState, flagState } = vi.hoisted(() => ({
+const { fetchSpy, authState } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
   authState: { user: { id: 'userA' } },
-  flagState: { on: true },
 }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy, getToken: () => Promise.resolve('t') }) }))
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => authState }))
-vi.mock('../lib/featureFlags.js', () => ({ get IMAGE_LIST_CACHE_ENABLED() { return flagState.on } }))
 
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
 import { __resetDataCache, peek } from '../lib/dataCache.js'
 
-beforeEach(() => { fetchSpy.mockReset(); __resetDataCache(); authState.user = { id: 'userA' }; flagState.on = true })
+beforeEach(() => { fetchSpy.mockReset(); __resetDataCache(); authState.user = { id: 'userA' } })
 
 function Probe({ path }) {
   const { data, loading, error, isValidating } = useCachedFetch(path)
@@ -89,9 +87,9 @@ describe('useCachedFetch — identity security', () => {
   })
 })
 
-describe('useCachedFetch — flag OFF (rollback passthrough)', () => {
-  it('flag OFF: plain fetch every mount, no cache reuse, no cache entry written', async () => {
-    flagState.on = false
+describe('useCachedFetch — no sub (plain passthrough)', () => {
+  it('no sub: plain fetch every mount, no cache reuse, no cache entry written', async () => {
+    authState.user = null
     fetchSpy.mockResolvedValue([{ id: 'a' }])
     const first = render(<Probe path="/api/photos" />)
     await waitFor(() => expect(ids(first.container)).toBe('a'))
@@ -133,8 +131,8 @@ describe('SW-STALEAPI-001: stale reaches the consumer', () => {
     await waitFor(() => expect(staleOf(container)).toBe('true'))
   })
 
-  it('is false in the flag-OFF plain-fetch passthrough', async () => {
-    flagState.on = false
+  it('is false in the no-sub plain-fetch passthrough', async () => {
+    authState.user = null
     fetchSpy.mockResolvedValue([{ id: 'a' }])
     const { container } = render(<StaleProbe path="/api/photos" />)
     await waitFor(() => expect(container.querySelector('[data-testid="sloading"]').textContent).toBe('false'))
