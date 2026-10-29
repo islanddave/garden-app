@@ -684,7 +684,7 @@ export const handler = async (event) => {
           refused = 'limited_global';
         }
       } catch (err) {
-        console.error('extract-seeds limiter failed', err?.code ?? err?.message ?? String(err));
+        console.error('extract-seeds limiter failed', err?.code ?? 'limiter_error');
         logUsage('limiter_error');
         return withRetryAfter(resp(503, { error: 'extractor_limiter_unavailable' }), 60);
       }
