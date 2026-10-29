@@ -28,7 +28,7 @@ const GATES = readFileSync(join(MIGRATION, 'gates.yml'), 'utf8');
 const ATTR = JSON.parse(readFileSync(join(REPO, 'src', 'data', 'harvest-attributes-v1.json'), 'utf8'));
 const HABIT_GATES = readFileSync(join(REPO, 'migrations', 'v4-harvhabitgap-001', 'gates.yml'), 'utf8');
 // The SPA's copied not-tracked list, read as TEXT: a node-project test must not load SPA code
-// (scripts/ci-telemetry/vitest-projects.test.js). src/__tests__/harvestTracked.test.js runs the function.
+// (scripts/vitest/vitest-projects.test.js). src/__tests__/harvestTracked.test.js runs the function.
 const NOT_TRACKED_COPY = (() => {
   const src = readFileSync(join(REPO, 'src', 'lib', 'harvestTracked.js'), 'utf8');
   const m = src.match(/NOT_HARVEST_TRACKED_SLUGS = Object\.freeze\(\[([\s\S]*?)\]\)/);
