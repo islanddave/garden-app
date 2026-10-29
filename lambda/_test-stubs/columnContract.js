@@ -55,6 +55,8 @@ export function tableReads(where, table, { decomment = decommentSqlDashBare, ver
     .map((sql) => ({ file: f, sql })));
   return {
     handlers: files,
+    // A file in the directory, read and decommented the way the statements were.
+    source: read,
     statements,
     bindings,
     aliasesOf,

@@ -61,6 +61,12 @@ describe('tableReads', () => {
     expect(reads.refsTo('title')).toEqual([]);
   });
 
+  it('reads a directory file decommented, as the statements were', () => {
+    expect(reads.source('a.js')).toContain('SELECT * FROM container WHERE id = 1');
+    expect(reads.source('a.js')).not.toContain('SELECT z.title');
+    expect(reads.source('b.mjs')).toContain('SELECT m.secret');
+  });
+
   it('holds a pin only while it matches the decommented file', () => {
     expect(reads.pinHolds({ file: 'a.js', pin: /SELECT \* FROM container WHERE id = 1/ })).toBe(true);
     expect(reads.pinHolds({ file: 'a.js', pin: /SELECT z\.title FROM container z/ })).toBe(false);
