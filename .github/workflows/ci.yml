@@ -2,78 +2,41 @@ name: CI — Build and Unit Tests
 
 # Runs on every push to dev and on PRs targeting dev, staging or main.
 # The dev push's run is the one a promote reads: scripts/promote-preflight.py counts `push` and
-# `workflow_dispatch` runs on the SHA and never a `pull_request` run. (`push: [dev]` was taken out on 2026-05-01,
-# pipeline hardening sprint Step 1, and came back with the promote of 2026-06-03.)
+# `workflow_dispatch` runs on the SHA and never a `pull_request` run.
 #
-# THE SHAPE (plan A2.3, the switch: gardening-docs project-state/_promotepath-20261002/PLAN-V003.md §4). Twelve
-# legs and one aggregator job whose id is `build-and-test`. promote-gate.yml reads that job, by that id,
-# through scripts/promote-preflight.py; it is green only when every leg reported and every one succeeded. Until the
-# switch the same steps were one serial job of that name, and the legs ran beside it in ci-next.yml as a shadow.
-# The switch made eight legs; plan A4 (OPS-CICOVERAGESHARDS-001) split the UTC coverage pass into three shards and a
-# merge leg, and the America/New_York pass into two shards, because those two legs were the long poles.
-#   - NO workflow_dispatch here, ever. The preflight counts a dispatched run on any branch at the SHA, and a
-#     forced-red canary cannot be re-run green: one at dev's head would leave that commit unpromotable. The canary
-#     and the soak branch live in ci-next.yml, which holds these same legs and runs on no dev push.
-#   - A step added to, edited in or removed from a leg is changed the same way in ci-next.yml, and
-#     scripts/ci-step-manifest.json is regenerated (python3 scripts/gen-ci-step-manifest.py), in ONE commit.
-#     scripts/test_ci_next.py holds the two files to each other and this file to its shape, and
-#     scripts/test_ci_step_manifest.py holds this file to the manifest; both run in the `pytest` leg.
+# THE SHAPE (plan A2.3: gardening-docs project-state/_promotepath-20261002/PLAN-V003.md §4; plan A4,
+# OPS-CICOVERAGESHARDS-001). Twelve legs and one aggregator job whose id is `build-and-test`. promote-gate.yml reads
+# that job, by that id, through scripts/promote-preflight.py; it is green only when every leg reported and every one
+# succeeded. The UTC coverage pass is three shards and a merge leg, the America/New_York pass two shards.
+#   - NO workflow_dispatch here, ever. The preflight counts a dispatched run on any branch at the SHA, so a run
+#     dispatched red on purpose at dev's head would leave that commit unpromotable.
+#   - A step added to, edited in or removed from a leg regenerates scripts/ci-step-manifest.json
+#     (python3 scripts/gen-ci-step-manifest.py) in the same commit. scripts/test_ci_legs.py holds this file to its
+#     shape and scripts/test_ci_step_manifest.py holds it to the manifest; both run in the `pytest` leg.
 #   - NO continue-on-error, no `if:` on a leg or a step, no matrix, no job-level env: a leg that fails under
 #     continue-on-error reads `success` in `needs`, and a skipped leg is not a pass.
 #   - What a step hands to a later one stays inside its leg; each leg repeats the setup it needs (checkout,
-#     setup-node, npm ci, Chrome, the origin/main fetch). ci-next.yml's header lists the hand-offs. ONE exception:
-#     the three coverage shards hand their blobs to the merge leg `unit-utc-cov` as artifacts, and that leg is the
-#     only one with `needs` (no `if:`: a red shard makes it `skipped`, and the aggregator reads that as red).
-#   - The two unit steps run vitest.config.ts as it is: two projects, the server-side test files in `node` and
-#     the rest under jsdom, in every run. The owner's decision (2026-10-11, row `switch-unit-shape` of DECISIONS.md
-#     beside the plan) had two halves: that two-project shape is the gating one, and the A3 trial's env key is
-#     removed so there is one shape. The switch did the first half; OPS-A3TRIALKEYREMOVE-001 did the second, and
-#     scripts/test_ci_next.py holds the key out of both workflow files.
-# A lane's branch runs this file only on a pull request (a push runs it on dev alone), and GitHub takes a pull
-# request's workflow from the merge of the branch into its base (documented behaviour, not observed here): a lane
-# cut from a dev older than the switch gets these jobs once its base holds them. What such a lane keeps is its
-# own older ci-next.yml on workflow_dispatch. The preflight counts neither kind of run and passes either shape.
+#     setup-node, npm ci, Chrome, the origin/main fetch, shfmt), and HANDOFFS in scripts/test_ci_legs.py lists the
+#     hand-offs. ONE exception: the three coverage shards hand their blobs to the merge leg `unit-utc-cov` as
+#     artifacts, and that leg is the only one with `needs` (no `if:`: a red shard makes it `skipped`, and the
+#     aggregator reads that as red).
+#   - The unit steps run vitest.config.ts as it is: two projects, the server-side test files in `node` and the rest
+#     under jsdom, in every run.
+#   - That a red leg reds the aggregate is proven by running the aggregator's body against `needs` fixtures
+#     (test_aggregator_fails_when_any_leg_did_not_succeed in scripts/test_ci_legs.py); nothing forces a leg red here.
 #
 # READING A RED `build-and-test`. Read the RUN's conclusion and the legs before the aggregator.
 #   - The run concluded `cancelled`: a newer push superseded it. The aggregator runs under always(), reads its
-#     cancelled legs and shows `failure` where the serial job showed a grey cancelled. Nothing to chase.
+#     cancelled legs and shows `failure`. Nothing to chase.
 #   - A leg red at a test, a gate or a ratchet: a red of the PRODUCT. Fix forward or re-run; never a rollback.
 #   - Every leg green and `build-and-test` not: the aggregator got no runner (the job has no steps and reads
 #     `cancelled`; its 5-minute timeout counts only a running job). `gh run rerun <run id> --failed` re-runs it
-#     alone, then ask the preflight again. Seen once in the shadow (ci-next.yml run 37362246327, 2026-10-05).
+#     alone, then ask the preflight again.
 #
-# ROLLBACK, for a first dev push in this shape that is red for a reason of SHAPE (plan §4, "Rollback (core)").
-#   - Of shape: the aggregator red with every leg green in the API, TWICE (the plan's trigger; whether the
-#     shadow's one counts as the first is the owner's ruling and is not made here); a leg red in a step it only
-#     repeats (checkout, setup-node, `Install dependencies`, Chrome, the origin/main fetch), red again on a
-#     re-run; `Workflow lint` or the `pytest` leg's pins red on these two files; a leg red on pull_request only.
-#     One leg whose own content is red is fixed forward (about 17 minutes a cycle), not rolled back.
-#   - The rollback is a forward revert of the WHOLE switch commit and of the review-fix commit after it (subject
-#     `ci: close the switch review's findings`, which edits this header and so conflicts if left), newest first,
-#     on a lane at dev's head: `git revert <fix sha> <switch sha>`, then `python3 scripts/gen-ci-step-manifest.py
-#     --check` and `python3 -m pytest -q scripts/test_*.py`, then the push to dev, which is a gate-file push
-#     (regression-impact review first). All of the switch's ten files or none: the pins red a half-reverted tree.
-#   - What it costs. It takes effect on push, but the reverted SHA needs a full cycle of the serial job (54 to
-#     56 minutes measured, timeout 90) before anything is promotable, and ci-next.yml is on every dev push again
-#     as the shadow. Keep dev quiet until that first run is read.
-#   - It is clean only until the next commit that edits a step of either file or the manifest. After that the
-#     revert conflicts: fix forward.
-#   - It rolls back the job graph and NOT the run-based preflight, which stays and passes either shape. Do not
-#     revert the preflight's commit (31955d88ca) in its place: while this file is split that is not a rollback,
-#     because no single check-run named `build-and-test` comes from one job (gardening-deploy.md, "Items 2 and 3
-#     are decided by the workflow's runs").
-#   - A revert is a dev push like any other. It ships nothing and authorises no promote.
-#
-# ROLLBACK OF A4 (the shards), for a red of SHAPE: a shard or the merge leg red in a step it only repeats, or in the
-# artifact upload or download, red again on a re-run; or the merge's blob check red with all three shards green on a
-# run under 3 days old (older, the blobs have expired: re-run all jobs, which is no rollback). A4 is the one commit whose
-# subject starts `ci: shard the two unit passes` (the provider commit before it names the same ledger row and is NOT
-# it). It also bumped the version. Revert it forward keeping the release files: `git revert --no-commit <sha>`,
-# `git checkout HEAD -- package.json public/releases.json public/releases-latest.json`, then
-# `node scripts/add-release.mjs <next> "<note>"` with <next> one patch above dev's package.json version (never re-run
-# add-release on a version dev already carries and main does not: it replaces that version's notes; add a sentence to
-# them by hand instead), then the two checks and the gate-file review as above. It brings back the one-leg passes
-# (17.4 and 13.8 min medians before A4) and changes no test.
+# ROLLBACK. The A2.3 switch and A4 each edited files this tree no longer has (the retired trial workflow and its
+# tools), so neither reverts cleanly: a red of SHAPE (a leg red in a step it only repeats, red again on a re-run; the
+# aggregator red over green legs twice; a leg red on pull_request only) is fixed forward, as a gate-file push with the
+# regression-impact review first.
 
 on:
   push:
@@ -417,7 +380,7 @@ jobs:
   # project-state/_promotepath-20261002/A4-PROOF-20261018.md). As one leg it was the long pole: median 17.4 min over 15
   # dev pushes, 2026-10-15..18. Each shard runs a third of the test files (`--shard=i/3`: vitest's own split, by a hash
   # of each file's path, so every runner draws the same thirds) and writes a BLOB: its test results and its coverage
-  # map, in which the provider records how that run loaded each file (scripts/ci-telemetry/coverage-v8-two-forms.mjs,
+  # map, in which the provider records how that run loaded each file (scripts/vitest/coverage-v8-two-forms.mjs,
   # "A RUN IN SHARDS"). A shard is no verdict on coverage: its map is a third of the suite's. So it checks no threshold
   # (the four set to 0) and writes no report (`--coverage.reporter=none`: no partial table in its log for a reader to
   # take as the figure). Its tests still fail it, and so does the provider's own check of its map. The command-line
@@ -437,6 +400,25 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
+
+      - name: Install shfmt (pinned and checksum-verified)
+        # scripts/check-comment-only.test.js runs shfmt on its shell and YAML run: fixtures and fails without it. Every
+        # unit shard installs it: vitest's split decides which shard draws that file. Pinned to the Mac's Homebrew
+        # version so a local run and CI parse shell alike; the sha256 is the release asset's published digest,
+        # re-hashed locally. To bump, change the version AND its hash together.
+        env:
+          SHFMT_VERSION: 3.14.1
+          SHFMT_SHA256: 76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf
+        run: |
+          set -euo pipefail
+          D="$RUNNER_TEMP/shfmt"
+          mkdir -p "$D"
+          curl -sSfL --retry 3 --retry-connrefused --retry-all-errors -o "$D/shfmt" \
+            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+          echo "${SHFMT_SHA256}  $D/shfmt" | sha256sum -c -
+          chmod +x "$D/shfmt"
+          "$D/shfmt" --version
+          echo "$D" >> "$GITHUB_PATH"
 
       - name: Unit tests with coverage, shard 1 of 3 (no threshold, no report)
         run: |
@@ -469,6 +451,21 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Install shfmt (pinned and checksum-verified)
+        env:
+          SHFMT_VERSION: 3.14.1
+          SHFMT_SHA256: 76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf
+        run: |
+          set -euo pipefail
+          D="$RUNNER_TEMP/shfmt"
+          mkdir -p "$D"
+          curl -sSfL --retry 3 --retry-connrefused --retry-all-errors -o "$D/shfmt" \
+            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+          echo "${SHFMT_SHA256}  $D/shfmt" | sha256sum -c -
+          chmod +x "$D/shfmt"
+          "$D/shfmt" --version
+          echo "$D" >> "$GITHUB_PATH"
+
       - name: Unit tests with coverage, shard 2 of 3 (no threshold, no report)
         run: |
           npx vitest run --coverage --shard=2/3 --coverage.reporter=none \
@@ -500,6 +497,21 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Install shfmt (pinned and checksum-verified)
+        env:
+          SHFMT_VERSION: 3.14.1
+          SHFMT_SHA256: 76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf
+        run: |
+          set -euo pipefail
+          D="$RUNNER_TEMP/shfmt"
+          mkdir -p "$D"
+          curl -sSfL --retry 3 --retry-connrefused --retry-all-errors -o "$D/shfmt" \
+            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+          echo "${SHFMT_SHA256}  $D/shfmt" | sha256sum -c -
+          chmod +x "$D/shfmt"
+          "$D/shfmt" --version
+          echo "$D" >> "$GITHUB_PATH"
+
       - name: Unit tests with coverage, shard 3 of 3 (no threshold, no report)
         run: |
           npx vitest run --coverage --shard=3/3 --coverage.reporter=none \
@@ -520,8 +532,7 @@ jobs:
   # the single run's coverage, A4-PROOF-20261018.md), the thresholds in vitest.config.ts, and the two halves of the
   # coverage ratchet around it, as the one leg ran them: the measured floor reads the coverage/coverage-summary.json the
   # merge writes. The only leg with `needs`, and no `if:`, so a red shard leaves it `skipped`, which the aggregator reads
-  # as red. Its log carries the coverage table (scripts/ci-telemetry/coverage-rows.py reads this leg's log) and the
-  # pass's test-ids notice, over every test of the three shards.
+  # as red. Its log carries the coverage table and the pass's test-ids notice, over every test of the three shards.
   unit-utc-cov:
     needs: [unit-utc-cov-1, unit-utc-cov-2, unit-utc-cov-3]
     runs-on: ubuntu-26.04
@@ -607,6 +618,21 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Install shfmt (pinned and checksum-verified)
+        env:
+          SHFMT_VERSION: 3.14.1
+          SHFMT_SHA256: 76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf
+        run: |
+          set -euo pipefail
+          D="$RUNNER_TEMP/shfmt"
+          mkdir -p "$D"
+          curl -sSfL --retry 3 --retry-connrefused --retry-all-errors -o "$D/shfmt" \
+            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+          echo "${SHFMT_SHA256}  $D/shfmt" | sha256sum -c -
+          chmod +x "$D/shfmt"
+          "$D/shfmt" --version
+          echo "$D" >> "$GITHUB_PATH"
+
       - name: TZ sentinel — America/New_York resolves on this runner
         # The step below is only a date-fragility guard if TZ takes effect. An unknown or unreadable zone does not
         # fail: node falls back to UTC and the whole suite passes as a second UTC run. This asks node (the runtime
@@ -649,6 +675,21 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
+
+      - name: Install shfmt (pinned and checksum-verified)
+        env:
+          SHFMT_VERSION: 3.14.1
+          SHFMT_SHA256: 76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf
+        run: |
+          set -euo pipefail
+          D="$RUNNER_TEMP/shfmt"
+          mkdir -p "$D"
+          curl -sSfL --retry 3 --retry-connrefused --retry-all-errors -o "$D/shfmt" \
+            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+          echo "${SHFMT_SHA256}  $D/shfmt" | sha256sum -c -
+          chmod +x "$D/shfmt"
+          "$D/shfmt" --version
+          echo "$D" >> "$GITHUB_PATH"
 
       - name: TZ sentinel — America/New_York resolves on this runner
         env:

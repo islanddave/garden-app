@@ -1,6 +1,6 @@
 // exit-watchdog.test.mjs — OPS-GATETIMERGUARD-001 part 2. scripts/test_count_ratchets.py holds the gates to
 // IMPORTING the watchdog; this holds the watchdog to firing, and to not being the thing that keeps a gate alive.
-// Runs in vitest's `node` project (scripts/ci-telemetry/vitest-node-project.mjs walks scripts/ for *.test.*).
+// Runs in vitest's `node` project (scripts/vitest/vitest-node-project.mjs walks scripts/ for *.test.*).
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'

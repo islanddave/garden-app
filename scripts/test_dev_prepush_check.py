@@ -46,7 +46,7 @@ class Fake:
     """_run() for one test. marker_by=None is no marker; refs_fail / runs_fail / fetch_fail break that read."""
 
     def __init__(self, marker_by=None, marker_at="2026-10-13T09:00:00+00:00", lightweight=False, ci=None,
-                 ci_next=None, refs_fail=False, fetch_fail=False, runs_fail=None, gh_missing=False, dev=DEV,
+                 refs_fail=False, fetch_fail=False, runs_fail=None, gh_missing=False, dev=DEV,
                  refs_out=None, url="https://github.com/islanddave/garden-app.git"):
         self.__dict__.update(locals())
         self.calls = []
@@ -78,7 +78,7 @@ class Fake:
             workflow = cmd[-1].split("/workflows/", 1)[1].split("/", 1)[0]
             if self.runs_fail in (workflow, "all"):
                 return 1, '{"message":"Bad credentials"}', "gh: Bad credentials (HTTP 401)"
-            doc = {"ci.yml": self.ci, "ci-next.yml": self.ci_next}[workflow]
+            doc = {"ci.yml": self.ci}[workflow]
             return 0, doc if isinstance(doc, str) else json.dumps(listing() if doc is None else doc), ""
         raise AssertionError("unexpected command: %r" % (cmd,))
 
@@ -100,8 +100,7 @@ def test_no_marker_and_no_runs_is_safe_and_prints_dev(monkeypatch):
     assert sum(cmd[:2] == ["git", "ls-remote"] for cmd in fake.calls) == 1      # dev is read once
     assert fake.calls[0][-1] == dpc.TAG_REF + "^{}"                             # the peeled ref is asked for by name
     asked = [cmd[-1] for cmd in fake.calls if cmd[0] == "gh"]
-    assert asked == ["repos/islanddave/garden-app/actions/workflows/%s/runs?branch=dev&per_page=100" % w
-                     for w in ("ci.yml", "ci-next.yml")]
+    assert asked == ["repos/islanddave/garden-app/actions/workflows/ci.yml/runs?branch=dev&per_page=100"]
 
 
 def test_empty_listings_are_safe(monkeypatch):
@@ -165,18 +164,18 @@ def test_an_unfinished_ci_run_on_dev_is_not_safe(monkeypatch, status):
         assert must in out
 
 
-def test_an_unfinished_ci_next_run_on_dev_is_not_safe(monkeypatch):
-    fake = Fake(ci_next=listing(run_row(88, status="in_progress", event="workflow_dispatch")))
+def test_an_unfinished_dispatched_run_on_dev_is_not_safe(monkeypatch):
+    fake = Fake(ci=listing(run_row(88, status="in_progress", event="workflow_dispatch")))
     code, out = check(monkeypatch, fake, "--by", ME)
-    assert code == 1 and "ci-next.yml run 88" in out and "workflow_dispatch" in out
+    assert code == 1 and "ci.yml run 88" in out and "workflow_dispatch" in out
 
 
 def test_own_run_is_not_counted_but_another_still_is(monkeypatch):
-    fake = Fake(ci=listing(run_row(77, status="in_progress")), ci_next=listing(run_row(88, status="queued")))
+    fake = Fake(ci=listing(run_row(77, status="in_progress"), run_row(88, status="queued")))
     code, out = check(monkeypatch, fake, "--own-run", "77", "--own-run", "88")
     assert code == 0 and out.startswith("SAFE: ") and out.count("not counted (--own-run)") == 2
     code, out = check(monkeypatch, fake, "--own-run", "77")
-    assert code == 1 and "ci-next.yml run 88" in out and "not counted (--own-run): ci.yml run 77" in out
+    assert code == 1 and "ci.yml run 88" in out and "not counted (--own-run): ci.yml run 77" in out
 
 
 def test_cancelled_and_failed_runs_are_finished(monkeypatch):
@@ -193,7 +192,7 @@ def test_runs_off_dev_and_pull_request_runs_are_not_counted(monkeypatch):
     assert check(monkeypatch, fake)[0] == 0
 
 
-@pytest.mark.parametrize("which", ["ci.yml", "ci-next.yml", "all"])
+@pytest.mark.parametrize("which", ["ci.yml", "all"])
 def test_runs_read_fails_is_unknown(monkeypatch, which):
     code, out = check(monkeypatch, Fake(runs_fail=which), "--by", ME)
     assert code == 2 and out.startswith("UNKNOWN: ") and "gh auth status" in out

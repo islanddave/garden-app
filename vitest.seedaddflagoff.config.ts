@@ -8,7 +8,7 @@
 // applying fails the run instead of re-running the ON suite. `npm run test:flag-off:seed` is the third: release
 // 2b's flag off with this one as it ships (vitest.seedflagoff.config.ts).
 import base from './vitest.config'
-import { withCliDir } from './scripts/ci-telemetry/vitest-side-config.mjs'
+import { withCliDir } from './scripts/vitest/vitest-side-config.mjs'
 import { seedAddToLotOff, seedMultiParentOff } from './tests/harness/seedFlagTransform.mjs'
 
 const both = process.env.SEED_BOTH_FLAGS_OFF === '1'

@@ -2,7 +2,7 @@
 // Used only by hand; the two commands and how to read them are in src/__tests__/helpers/stressSetup.ts.
 import { defineConfig } from 'vitest/config';
 import base from './vitest.config.ts';
-import { withSetupReplaced } from './scripts/ci-telemetry/vitest-side-config.mjs';
+import { withSetupReplaced } from './scripts/vitest/vitest-side-config.mjs';
 
 // The stress setup takes the place of src/__tests__/setup.ts wherever that is listed, and imports it after delaying
 // setImmediate. That is the dom project of vitest.config.ts only: the node project has no DOM, no React scheduler and

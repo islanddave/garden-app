@@ -1,7 +1,7 @@
 'use strict'
 // The module the *.case.mjs files beside it load: through vite (an import), by Node (createRequire), and both
 // ways in one worker. CommonJS, like the modules of lambda/daily-plan that the two-form defect was found in.
-// scripts/ci-telemetry/coverage-v8-two-forms.test.js runs the cases under the real vitest.config.ts and holds every
+// scripts/vitest/coverage-v8-two-forms.test.js runs the cases under the real vitest.config.ts and holds every
 // hit count below to the calls the cases make. Editing this file changes those figures: change them together.
 //
 // Three shapes of the real modules are here on purpose. This comment is not ASCII (é, €, 😀): V8 counts a file in

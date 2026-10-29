@@ -1,34 +1,26 @@
-// Test-ID evidence for the CI shadow comparison (PLAN-V003 §4 A2.2: "vitest test-ID set (file + full name + state)
-// equal for both passes").
-//
-// ci.yml runs the unit suite twice in one serial job (UTC with coverage, then America/New_York); ci-next.yml runs the
-// same two passes in two parallel legs. This reporter lets the two workflows be compared on one SHA: at the end of a
-// run it prints ONE line, a GitHub notice annotation, carrying the sha256 of the sorted list
+// The test-ids notice. At the end of a run it prints ONE line, a GitHub notice annotation, carrying the sha256 of
+// the sorted list
 //
 //     file :: full test name :: state
 //
 // and the counts behind it, plus two coarser digests (of the file list alone, and of the names without their states)
 // so that two runs whose lists differ can be told apart by HOW: other files, other test names, or the same tests in
-// other states. The annotation lands on the job's check-run, where scripts/ci-telemetry/shadow-agree.py
-// reads it back (GET /check-runs/<job id>/annotations). Its title names the zone the pass ran under ("test-ids UTC",
-// "test-ids America/New_York"), so the two passes of the serial job cannot overwrite each other: nothing is stored
-// on disk, and each pass has its own title.
+// other states. Its title names the zone the pass ran under ("test-ids UTC", "test-ids America/New_York").
+// ci.yml's coverage merge reads files_sha256 and files from the merged UTC run's notice and holds them to
+// `vitest list --filesOnly` (the shards ran the suite's files, each once); that step reds when there is no notice.
 //
-// It is switched on in vitest.config.ts under GITHUB_ACTIONS only, so no workflow step changes and a local run
-// prints nothing.
+// It is switched on in vitest.config.ts under GITHUB_ACTIONS only, so a local run prints nothing.
 //
 // IT MUST NEVER FAIL A RUN. vitest calls reporters with Promise.all and does not catch what they throw, so every
-// hook here catches everything and says so in a ::warning instead. A pass with no notice reads as TEST-IDS-ABSENT
-// in shadow-agree, never as equal.
+// hook here catches everything and says so in a ::warning instead.
 //
 // ONE line, deliberately. The list itself (about 23,000 lines) is not printed: this runs inside the gating unit
 // step, and that step's log is what a session reads when the suite is red.
 import { createHash } from 'node:crypto'
 
 export const TITLE_PREFIX = 'test-ids '
-// 2: files_sha256 and names_sha256 added. shadow-agree.py compares two notices only when their versions match.
-// node_files joined the line without a new version: it is a count beside the digests, not part of what they hash,
-// and shadow-agree.py reads the tokens by name.
+// 2: files_sha256 and names_sha256 added. node_files joined the line without a new version: it is a count beside the
+// digests, not part of what they hash, and a reader takes the tokens by name.
 export const FORMAT_VERSION = 2
 const STATES = ['passed', 'failed', 'skipped', 'pending']
 
@@ -74,7 +66,7 @@ export function nameLines(testModules) {
 }
 
 /**
- * How many of the run's files ran in the vitest project named `node` (vitest.config.ts, the A3 trial): 0 in a
+ * How many of the run's files ran in the vitest project named `node` (vitest.config.ts): 0 in a
  * one-project run, where the root project has no such name. The digests cannot see which project ran a file, so
  * this count is what tells a two-project pass from a jsdom-everything one in the notice itself.
  */
@@ -82,7 +74,7 @@ export function nodeFiles(testModules) {
   return testModules.filter((mod) => mod.project && mod.project.name === 'node').length
 }
 
-/** The annotation's message: `key=value` tokens, so shadow-agree parses it without a format of its own. */
+/** The annotation's message: `key=value` tokens, so a reader parses it without a format of its own. */
 export function summary(testModules, reason) {
   const lines = testIdLines(testModules)
   const counts = Object.fromEntries(STATES.map((state) => [state, 0]))

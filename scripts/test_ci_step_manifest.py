@@ -9,7 +9,7 @@ every step's whole mapping, in order. It moves with CI: a commit that adds or ed
 Two things are asserted straight from ci.yml as well, independent of the manifest, because either would let a
 gate stop gating while every step is still present: no step carries `if:` or `continue-on-error`, and no job
 carries `continue-on-error`. (The aggregator's job-level `if: always()` is in the manifest, and
-scripts/test_ci_next.py holds it to exactly that.)
+scripts/test_ci_legs.py holds it to exactly that.)
 
 A job's `timeout-minutes` is recorded but not compared.
 """
