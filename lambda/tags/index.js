@@ -17,7 +17,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { householdScope } from './household.js';
 import { assembleBulkEntities } from './bulk.js';
 import { applyDerive } from './crop-derive.js';
-import { checkRateLimit } from './rate-limit.js';
+import { checkRateLimit, withRetryAfter } from './rate-limit.js';
 import {
   slugify, validateTagCreate, validateTagPatch, validateEntityTagCreate, isAdmin, VALID_ENTITY_TYPES,
 } from './validate.js';
@@ -119,7 +119,7 @@ export const handler = async (event) => {
       const intoId = body.into_id;
       if (!intoId) return resp(400, { error: 'into_id is required' });
       if (intoId === fromId) return resp(400, { error: 'cannot merge a tag into itself' });
-      if (!(await checkRateLimit(sql, userId, 'tag.merge', 30))) return resp(429, { error: 'Rate limit exceeded — 30/hour for tag.merge' });
+      if (!(await checkRateLimit(sql, userId, 'tag.merge', 30))) return withRetryAfter(resp(429, { error: 'Rate limit exceeded — 30/hour for tag.merge' }));
 
       const pair = await sql`
         SELECT id, facet, source FROM public.tag
@@ -196,7 +196,7 @@ export const handler = async (event) => {
         const body = JSON.parse(event.body ?? '{}');
         const verr = validateTagCreate(body);
         if (verr) return resp(400, { error: verr });
-        if (!(await checkRateLimit(sql, userId, 'tag.create', 60))) return resp(429, { error: 'Rate limit exceeded — 60/hour for tag.create' });
+        if (!(await checkRateLimit(sql, userId, 'tag.create', 60))) return withRetryAfter(resp(429, { error: 'Rate limit exceeded — 60/hour for tag.create' }));
         const facet = body.facet, slug = slugify(body.label), label = body.label.trim();
         const visibility = body.visibility ?? 'shared';
         // Revive-or-insert against uq_tag_facet_slug_owner WHERE deleted_at IS NULL (D-SQL2); idempotent on the natural key.
@@ -316,7 +316,7 @@ export const handler = async (event) => {
         const body = JSON.parse(event.body ?? '{}');
         const verr = validateEntityTagCreate(body);
         if (verr) return resp(400, { error: verr });
-        if (!(await checkRateLimit(sql, userId, 'entity_tag.attach', 600))) return resp(429, { error: 'Rate limit exceeded — 600/hour for entity_tag.attach' });
+        if (!(await checkRateLimit(sql, userId, 'entity_tag.attach', 600))) return withRetryAfter(resp(429, { error: 'Rate limit exceeded — 600/hour for entity_tag.attach' }));
         const tagRows = await sql`SELECT id, source, owner_id FROM public.tag WHERE id = ${body.tag_id} AND deleted_at IS NULL`;
         if (!tagRows.length) return resp(404, { error: 'tag not found' });
         if (tagRows[0].source !== 'user') return resp(403, { error: 'derived tags are system-managed and cannot be attached' });

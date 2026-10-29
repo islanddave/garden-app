@@ -2,7 +2,8 @@
 // SEC-13b (OPS-SECREVIEW-001): the checkRateLimit master, and the request limits that call it in one it.each table.
 // Trap: the stub never evaluates SQL, so the atomic count is proven on real Postgres in
 // tests/integration/app-events.int.test.js (parallel boundary) and photos-intake.int.test.js (per-object cost).
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { stubState, resetStubs } from './_test-stubs/state.js';
 import { checkRateLimit, GLOBAL_ACTOR, retryAfterSeconds, withRetryAfter } from './rate-limit.js';
 
 function fakeSql(answer = () => [{ count: 1 }]) {
@@ -85,5 +86,87 @@ describe('Retry-After', () => {
     const secs = Number(withRetryAfter(res).headers['Retry-After']);
     expect(secs).toBeGreaterThanOrEqual(1);
     expect(secs).toBeLessThanOrEqual(H / 1000);
+  });
+});
+
+// ── The SEC-13b request-limit table (security PLAN 8b: one it.each for the boundaries and the allow-list) ──
+const USER = 'user_sec13b_owner';
+const isLimiter = (t) => t.includes('INSERT INTO public.rate_limit_buckets');
+const u = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const leaf = (n, name) => ({
+  id: u(n), name, crop_type_slug: 'pepper', species: 'annuum', genus: 'Capsicum', variety_rank: null,
+  blend_key: null, deleted_at: null, created_by: 'user_other', created_at: '2026-01-01T00:00:00Z',
+});
+
+const HANDLERS = {
+  tags: (await import('./tags/index.js')).handler,
+  varieties: (await import('./varieties/index.js')).handler,
+  appEvents: (await import('./app-events/index.js')).handler,
+};
+
+// deny: every bucket refuses; throw: the limiter's statement fails.
+function limiterAnswer(mode) {
+  if (mode === 'throw') throw Object.assign(new Error('connection terminated'), { code: 'ECONNRESET' });
+  return mode === 'deny' ? [] : [{ count: 1 }];
+}
+
+const eventOf = (row) => ({
+  requestContext: { http: { method: row.method } },
+  rawPath: row.path,
+  headers: { authorization: 'Bearer stub-token' },
+  ...(row.query ? { queryStringParameters: row.query } : {}),
+  ...(row.body === undefined ? {} : { body: JSON.stringify(row.body) }),
+});
+
+const ROWS = [
+  {
+    name: 'tags: tag.create over its limit -> 429 with Retry-After',
+    fn: 'tags', method: 'POST', path: '/api/tags', body: { facet: 'group', label: 'Shade' },
+    limiter: 'deny', status: 429, error: 'Rate limit exceeded — 60/hour for tag.create', retryAfter: true,
+  },
+  {
+    name: 'varieties: crop_types.create over its limit -> 429 with Retry-After',
+    fn: 'varieties', method: 'POST', path: '/api/varieties/crop-types', body: { display_name: 'Tomatillo' },
+    limiter: 'deny', status: 429, error: 'Rate limit exceeded — 20/hour for crop_types.create', retryAfter: true,
+  },
+  {
+    name: 'varieties: blend create over plant_varieties.create -> 429 with Retry-After',
+    fn: 'varieties', method: 'POST', path: '/api/varieties/blend', body: { component_variety_ids: [u(1), u(2)], create: true },
+    db: (text, values) => (/FROM public\.cultivar\s+WHERE id = ANY\(\?::uuid\[\]\)/.test(text)
+      ? values[0].map((id) => [leaf(1, 'Carmen'), leaf(2, 'Jimmy Nardello')].find((l) => l.id === id)).filter(Boolean)
+      : []),
+    limiter: 'deny', status: 429, retryAfter: true,
+  },
+  {
+    name: 'app-events: app_events.write over its limit -> 429 with Retry-After',
+    fn: 'appEvents', method: 'POST', path: '/api/app-events', body: { event_name: 'reward_seen' },
+    limiter: 'deny', status: 429, error: 'Rate limit exceeded — 1000/hour for app_events.write', retryAfter: true,
+  },
+  {
+    name: 'app-events: under the limit -> 201 and no Retry-After',
+    fn: 'appEvents', method: 'POST', path: '/api/app-events', body: { event_name: 'reward_seen' },
+    db: (text) => (text.includes('INSERT INTO public.app_events') ? [{ id: 'e1', created_at: 'now' }] : []),
+    limiter: 'allow', status: 201,
+  },
+];
+
+describe('SEC-13b request limits', () => {
+  beforeEach(() => {
+    resetStubs();
+    stubState.verifyTokenResult = { sub: USER };
+  });
+
+  it.each(ROWS)('$name', async (row) => {
+    stubState.sqlHandler = (text, values) => (isLimiter(text) ? limiterAnswer(row.limiter, values) : (row.db?.(text, values) ?? []));
+    const res = await HANDLERS[row.fn](eventOf(row));
+    expect(res.statusCode, res.body).toBe(row.status);
+    if (row.error !== undefined) expect(JSON.parse(res.body).error).toBe(row.error);
+    if (row.retryAfter) {
+      const secs = Number(res.headers['Retry-After']);
+      expect(secs).toBeGreaterThanOrEqual(1);
+      expect(secs).toBeLessThanOrEqual(3600);
+    } else {
+      expect(res.headers?.['Retry-After']).toBeUndefined();
+    }
   });
 });
