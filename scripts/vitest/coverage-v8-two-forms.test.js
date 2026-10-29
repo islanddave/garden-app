@@ -24,11 +24,11 @@ import provider, {
 } from './coverage-v8-two-forms.mjs'
 
 const REREAD = 'coverage-v8-two-forms.mjs leans on the inside of @vitest/coverage-v8 and the installed one no longer ' +
-  'matches what it was written against. Re-read the header of scripts/ci-telemetry/coverage-v8-two-forms.mjs ' +
+  'matches what it was written against. Re-read the header of scripts/vitest/coverage-v8-two-forms.mjs ' +
   'against node_modules/@vitest/coverage-v8/dist/provider.js before trusting any coverage figure. '
 
 // From the working directory, as the tests beside this one find the repo: vite rewrites a URL built on import.meta.url.
-const HERE = resolve(process.cwd(), 'scripts/ci-telemetry/coverage-v8-two-forms.mjs')
+const HERE = resolve(process.cwd(), 'scripts/vitest/coverage-v8-two-forms.mjs')
 const FIXTURE = 'scripts/fixtures/coverage-two-forms'
 const WRAPPER = 209
 let dir
@@ -1338,7 +1338,7 @@ describe('where it is switched on (vitest.config.ts)', () => {
   it('is the one coverage provider, named as a custom module', () => {
     expect(config.match(/^\s*provider: .*$/gm)).toEqual(["      provider: 'custom',"])
     expect(config.match(/^\s*customProviderModule: .*$/gm))
-      .toEqual(["      customProviderModule: './scripts/ci-telemetry/coverage-v8-two-forms.mjs',"])
+      .toEqual(["      customProviderModule: './scripts/vitest/coverage-v8-two-forms.mjs',"])
   })
 
   it('is the config both fixture runs build on, and neither names a provider of its own', () => {

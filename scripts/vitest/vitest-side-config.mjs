@@ -2,7 +2,7 @@
 // vitest.stress.config.ts and the three flag-off configs. Which file runs in which project stays where it is, in
 // ./vitest-node-project.mjs by way of vitest.config.ts; nothing here names a test file. Both functions go by whether
 // `test.projects` is there (until OPS-A3TRIALKEYREMOVE-001 the A3 trial's env key decided that).
-// scripts/ci-telemetry/vitest-side-configs.test.js holds the four configs to the projects.
+// scripts/vitest/vitest-side-configs.test.js holds the four configs to the projects.
 //
 // Two things a spread of `base.test` gets wrong under projects, both measured on vitest 4.1.11:
 //   - `--dir` stops at the root project. vitest hands its projects a fixed list of command-line options

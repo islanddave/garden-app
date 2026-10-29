@@ -3,7 +3,7 @@
 // SCROLL_FLAG_OFF_REHEARSAL tells src/__tests__/scrollFlagOff.rehearsal.test.js to check the flag really was
 // served off, so a transform that silently stopped applying fails the run instead of re-running the ON suite.
 import base from './vitest.config'
-import { withCliDir } from './scripts/ci-telemetry/vitest-side-config.mjs'
+import { withCliDir } from './scripts/vitest/vitest-side-config.mjs'
 import { scrollManagerFlagOff } from './tests/harness/flagOffTransform.mjs'
 
 export default {

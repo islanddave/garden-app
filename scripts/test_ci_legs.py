@@ -689,10 +689,10 @@ def test_the_legs_hold_what_their_names_say():
 
 def test_the_shard_flags_are_the_ones_the_provider_test_runs():
     """What a shard's coverage flags DO (no threshold, no report) and what the merge does (the thresholds, the report)
-    is held by a real run in scripts/ci-telemetry/coverage-v8-two-forms.test.js, under CI_SHARD_COVERAGE_FLAGS. Those
+    is held by a real run in scripts/vitest/coverage-v8-two-forms.test.js, under CI_SHARD_COVERAGE_FLAGS. Those
     must be the flags ci.yml gives its shards, or that run proves something about another command."""
     flags = sorted(re.findall(r"--coverage\.[\w.]+=\S+", COV_PASS_RUN))
-    with open(os.path.join(HERE, "ci-telemetry", "coverage-v8-two-forms.test.js"), encoding="utf-8") as fh:
+    with open(os.path.join(HERE, "vitest", "coverage-v8-two-forms.test.js"), encoding="utf-8") as fh:
         found = re.findall(r"^const CI_SHARD_COVERAGE_FLAGS = \[(.*?)\]$", fh.read(), re.M | re.S)
     assert len(flags) == 5 and len(found) == 1, (flags, found)
     assert sorted(re.findall(r"'([^']+)'", found[0])) == flags
@@ -854,7 +854,7 @@ SUITE = ["lambda/a.test.js", "src/__tests__/b.test.jsx", "scripts/c.test.js"]
 
 
 def _notice(files, count=None):
-    """The merge's test-ids notice (scripts/ci-telemetry/vitest-test-ids-reporter.mjs) for a run of these files."""
+    """The merge's test-ids notice (scripts/vitest/vitest-test-ids-reporter.mjs) for a run of these files."""
     unique = sorted(set(files))
     digest = hashlib.sha256("".join("%s\n" % f for f in unique).encode()).hexdigest()
     return ("::notice title=test-ids UTC::sha256=%s files_sha256=%s names_sha256=%s tests=9 passed=9 failed=0 "

@@ -89,7 +89,7 @@ describe('the flag-off configs collect the files under their --dir', () => {
       const expected = dir === undefined ? unit : unit.filter((file) => file.startsWith(`${dir.replace(/\/$/, '')}/`))
       const why = dir === undefined ? 'with no --dir, the files the unit run collects'
         : `the files under --dir ${dir} that the unit run collects with the same filters: more means the --dir did ` +
-          'not reach a project, fewer that withCliDir (scripts/ci-telemetry/vitest-side-config.mjs) narrowed one'
+          'not reach a project, fewer that withCliDir (scripts/vitest/vitest-side-config.mjs) narrowed one'
       expect(files, why).toEqual(expected)
     }, 240000)
   }

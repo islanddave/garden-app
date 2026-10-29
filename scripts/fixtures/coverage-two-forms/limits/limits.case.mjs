@@ -1,5 +1,5 @@
 // The known limits of the provider's rule for taking vite's item maps, in a real run (vitest.limits.config.mjs,
-// run only by the test of scripts/ci-telemetry/coverage-v8-two-forms.mjs). The four order-*.js modules are loaded
+// run only by the test of scripts/vitest/coverage-v8-two-forms.mjs). The four order-*.js modules are loaded
 // BOTH WAYS in this one worker, so the provider compares their two conversions: each is correct and each is
 // refused. Of every other pair, Node alone loads the *.file.js and vite alone the *.vite.js, so the report holds
 // the file's list of the one and vite's list of the other, and the test hands the rule the two as one file's.

@@ -1,5 +1,5 @@
 // Which test files the `node` project of the A3 trial runs. vitest.config.ts builds both of its projects from
-// nodeProjectFiles(); scripts/ci-telemetry/vitest-projects.test.js holds this file to the tree.
+// nodeProjectFiles(); scripts/vitest/vitest-projects.test.js holds this file to the tree.
 //
 // THE RULE. A test file runs in `node` (no jsdom, no src/__tests__/setup.ts) when it lives under a node root AND
 // neither it nor anything it loads is under src/. Every other test file runs in `dom`, as the one-project run has it.

@@ -204,7 +204,7 @@ describe('where it is switched on (vitest.config.ts)', () => {
   const config = readFileSync(resolve(process.cwd(), 'vitest.config.ts'), 'utf8')
 
   it('is imported unconditionally, so a broken reporter fails a local run and not only CI', () => {
-    expect(config).toMatch(/^import TestIdsReporter from '\.\/scripts\/ci-telemetry\/vitest-test-ids-reporter\.mjs';$/m)
+    expect(config).toMatch(/^import TestIdsReporter from '\.\/scripts\/vitest\/vitest-test-ids-reporter\.mjs';$/m)
   })
 
   it('is added under GITHUB_ACTIONS only, behind vitest\'s own two default reporters', () => {

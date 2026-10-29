@@ -56,7 +56,7 @@ import { LOADS_SRC, NODE_ROOTS as ROOTS_OF_THE_CONFIG, NODE_TEST_NAMED, nodeProj
 const ROOT = process.cwd()
 const NODE_ROOTS = ['lambda/', 'scripts/', 'migrations/', 'tests/parity/']
 const ROOTS_SAID = 'lambda/, scripts/, migrations/ and tests/parity/'
-const LIST = 'LOADS_SRC in scripts/ci-telemetry/vitest-node-project.mjs'
+const LIST = 'LOADS_SRC in scripts/vitest/vitest-node-project.mjs'
 // An environment docblock, read on the line as written (a docblock is a comment, so comments are not taken off). Built
 // from parts, so that this file, which sits under a node root, does not match itself.
 const ENV_DOCBLOCK = new RegExp('@(?:vitest|jest)' + '-environment\\b')
@@ -226,7 +226,7 @@ describe('the projects of vitest.config.ts', () => {
   }, 300000)
 
   it('runs this file in the node project, with no DOM', ({ task }) => {
-    const here = 'scripts/ci-telemetry/vitest-projects.test.js'
+    const here = 'scripts/vitest/vitest-projects.test.js'
     expect(typeof document, `${here} has a DOM: the projects in vitest.config.ts are not there, or this file is no ` +
       'longer a node-project file, and every server-side test runs under jsdom. Restore `projects: twoProjects()` in ' +
       'vitest.config.ts.').toBe('undefined')
@@ -252,7 +252,7 @@ describe('the projects of vitest.config.ts', () => {
     expect(dom.setupFiles, where + 'the dom project loads the repo setup file and nothing else')
       .toEqual(['./src/__tests__/setup.ts'])
     expect(node.include, where + "the node project's `include` is nodeProjectFiles() of " +
-      'scripts/ci-telemetry/vitest-node-project.mjs, the files themselves').toEqual(nodeProjectFiles(ROOT))
+      'scripts/vitest/vitest-node-project.mjs, the files themselves').toEqual(nodeProjectFiles(ROOT))
     expect(dom.exclude, where + "the dom project's `exclude` is the node project's `include`, the same list: a " +
       'file in one and not the other runs in both projects or in neither').toEqual(node.include)
     // A project with `extends: true` inherits the root `test` block and arrays concatenate: a setupFiles beside the
@@ -288,7 +288,7 @@ describe('the projects, asked of the installed vitest', () => {
       const projects = projectsByFile.get(file) || []
       if (!walked.has(file)) {
         problems.push(`vitest projects: ${file} is collected, and the walk in ` +
-          'scripts/ci-telemetry/vitest-projects.test.js does not reach it: bring SKIPPED_DIRS / SKIPPED_PATHS there ' +
+          'scripts/vitest/vitest-projects.test.js does not reach it: bring SKIPPED_DIRS / SKIPPED_PATHS there ' +
           'in line with `exclude` in vitest.config.ts.')
       } else if (projects.length !== 1) {
         problems.push(`vitest projects: ${file} is collected by ${projects.length} project(s) ` +
@@ -304,8 +304,8 @@ describe('the projects, asked of the installed vitest', () => {
   })
 
   it(`makes the node project exactly the files under ${ROOTS_SAID} that are not in LOADS_SRC`, () => {
-    expect(ROOTS_OF_THE_CONFIG.map((root) => `${root}/`), 'NODE_ROOTS in scripts/ci-telemetry/vitest-node-project.mjs ' +
-      'and NODE_ROOTS in scripts/ci-telemetry/vitest-projects.test.js name the same roots: change both in one ' +
+    expect(ROOTS_OF_THE_CONFIG.map((root) => `${root}/`), 'NODE_ROOTS in scripts/vitest/vitest-node-project.mjs ' +
+      'and NODE_ROOTS in scripts/vitest/vitest-projects.test.js name the same roots: change both in one ' +
       'commit').toEqual(NODE_ROOTS)
     const kept = new Set(LOADS_SRC)
     const problems = on
@@ -314,8 +314,8 @@ describe('the projects, asked of the installed vitest', () => {
         `under ${ROOTS_SAID} that are not in ${LIST}, and no others; 'dom' takes the rest. A *.spec.* file under a ` +
         'node root is not picked by NODE_TEST_NAMED: rename the file. A name with a glob character in it ([, (, *) ' +
         'matches nothing when vitest reads the list: rename the file. Otherwise fix nodeProjectFiles() in ' +
-        'scripts/ci-telemetry/vitest-node-project.mjs, or move the file. If the roots themselves are meant to ' +
-        'change, change NODE_ROOTS there and in scripts/ci-telemetry/vitest-projects.test.js in the same commit.')
+        'scripts/vitest/vitest-node-project.mjs, or move the file. If the roots themselves are meant to ' +
+        'change, change NODE_ROOTS there and in scripts/vitest/vitest-projects.test.js in the same commit.')
     expect(problems, problems.join('\n')).toEqual([])
     for (const root of NODE_ROOTS) {
       const any = on.some(({ file, project }) => project === 'node' && file.startsWith(root))
@@ -356,7 +356,7 @@ describe('the projects, asked of the installed vitest', () => {
     }
     expect(problems, problems.join('\n')).toEqual([])
     const gaps = sorted(unfollowed)
-    expect(gaps, 'vitest projects: the import scan of scripts/ci-telemetry/vitest-projects.test.js cannot follow ' +
+    expect(gaps, 'vitest projects: the import scan of scripts/vitest/vitest-projects.test.js cannot follow ' +
       "these, so it cannot say whether the node project's files reach src/ through them:\n    " +
       gaps.join('\n    ') + '\n  If the line is a real import, teach `target` in that file how vite resolves it. ' +
       'If it is prose or a string that only looks like one, reword it or split the token.').toEqual([])

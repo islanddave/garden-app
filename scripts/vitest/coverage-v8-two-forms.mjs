@@ -151,7 +151,7 @@ export const ERROR_PREFIX = 'ERROR: coverage-v8-two-forms: '
 export const ANNOTATION = '::error title=coverage-v8-two-forms::'
 
 const ITEM_MAPS = ['statementMap', 'fnMap', 'branchMap']
-const HERE = 'scripts/ci-telemetry/coverage-v8-two-forms.mjs'
+const HERE = 'scripts/vitest/coverage-v8-two-forms.mjs'
 
 // The length, in the characters V8 counts, of the file a script URL names; -1 when it cannot be read.
 export function fileLength(url) {

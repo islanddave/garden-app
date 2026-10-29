@@ -1,13 +1,13 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig, configDefaults } from 'vitest/config';
 import react from '@vitejs/plugin-react';
-import TestIdsReporter from './scripts/ci-telemetry/vitest-test-ids-reporter.mjs';
-import { nodeProjectFiles } from './scripts/ci-telemetry/vitest-node-project.mjs';
+import TestIdsReporter from './scripts/vitest/vitest-test-ids-reporter.mjs';
+import { nodeProjectFiles } from './scripts/vitest/vitest-node-project.mjs';
 
 // The two projects of the unit run (see `test` below). `node` takes the test files whose code under test is
 // server-side: those under lambda/, scripts/, migrations/ and tests/parity/ that load nothing under src/. Which
 // files those are, and why they reach vitest as one list of files and not as globs, is
-// scripts/ci-telemetry/vitest-node-project.mjs. The list is the node project's `include` and the dom project's
+// scripts/vitest/vitest-node-project.mjs. The list is the node project's `include` and the dom project's
 // `exclude`, so dom takes every other file, wherever it lives. The walk runs on every load of this config, so the
 // directory is a path (fileURLToPath), not a URL's pathname, which would keep a space in the checkout path as %20.
 const twoProjects = () => {
@@ -73,7 +73,7 @@ export default defineConfig({
     globals: true,
     // TWO PROJECTS, in every run: `node` takes the server-side test files (twoProjects, above) and runs them with no
     // jsdom and no setup file; `dom` takes every other file, with jsdom and src/__tests__/setup.ts. A local run and
-    // ci.yml run this one shape; scripts/ci-telemetry/vitest-projects.test.js holds the projects to the tree.
+    // ci.yml run this one shape; scripts/vitest/vitest-projects.test.js holds the projects to the tree.
     // `environment` and `setupFiles` live INSIDE the projects, never beside them. A project with `extends: true`
     // inherits this whole block and arrays concatenate, so a `setupFiles` out here would also load in the node
     // project, and src/__tests__/setup.ts reads `document` in an afterEach: measured, every test of the node project
@@ -82,9 +82,9 @@ export default defineConfig({
     // Coverage is one merged report from this block's `coverage`.
     // `--dir` on the command line does not reach a project (vitest hands its projects a fixed list of command-line
     // options), so `vitest run --dir src/__tests__` collects every file; name the files or a filter instead. The
-    // configs that build on this one and take `--dir` hand it on: scripts/ci-telemetry/vitest-side-config.mjs.
+    // configs that build on this one and take `--dir` hand it on: scripts/vitest/vitest-side-config.mjs.
     projects: twoProjects(),
-    // The test-ids notice (scripts/ci-telemetry/vitest-test-ids-reporter.mjs): on a GitHub Actions runner each run
+    // The test-ids notice (scripts/vitest/vitest-test-ids-reporter.mjs): on a GitHub Actions runner each run
     // ends with one ::notice carrying digests of its sorted test files and test IDs. ci.yml's coverage merge reads it
     // to prove the three shards ran the suite's files, each once, and reds with no notice. Nothing is added off the
     // runner. Setting `reporters` replaces vitest's own default, so the first two entries restate it: with none
@@ -131,15 +131,14 @@ export default defineConfig({
       // that load it), read handler.js run() as never entered, and left negative hit counts behind. The module
       // converts each form against the text it was compiled from, and fails the run on a negative hit count or on
       // a file whose two conversions are not one list. It leans on vitest internals: its header lists them and
-      // scripts/ci-telemetry/coverage-v8-two-forms.test.js holds them to the installed package, version included.
+      // scripts/vitest/coverage-v8-two-forms.test.js holds them to the installed package, version included.
       // Re-read both on a vitest or @vitest/coverage-v8 upgrade. Not `provider: 'v8'` again without that module:
       // the totals this file's thresholds are set against would go back to moving by draw, that test fails (it
       // holds these two lines), and the stock provider reads about a point lower on branches (84.74% or 84.87%
       // by draw at v4.175.0), so a threshold or coverage-ratchet.json active_target raised above the stock figure
-      // makes taking the module out a red gate. Taking it out is a revert of its whole commit
-      // (scripts/ci-telemetry/README.md).
+      // makes taking the module out a red gate. How to take it out: scripts/vitest/README.md.
       provider: 'custom',
-      customProviderModule: './scripts/ci-telemetry/coverage-v8-two-forms.mjs',
+      customProviderModule: './scripts/vitest/coverage-v8-two-forms.mjs',
       reporter: ['text', 'json-summary', 'lcov', 'html'],
       reportsDirectory: './coverage',
       thresholds: {
