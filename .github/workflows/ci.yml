@@ -4,10 +4,9 @@ name: CI — Build and Unit Tests
 # The dev push's run is the one a promote reads: scripts/promote-preflight.py counts `push` and
 # `workflow_dispatch` runs on the SHA and never a `pull_request` run.
 #
-# THE SHAPE (plan A2.3: gardening-docs project-state/_promotepath-20261002/PLAN-V003.md §4; plan A4,
-# OPS-CICOVERAGESHARDS-001). Twelve legs and one aggregator job whose id is `build-and-test`. promote-gate.yml reads
-# that job, by that id, through scripts/promote-preflight.py; it is green only when every leg reported and every one
-# succeeded. The UTC coverage pass is three shards and a merge leg, the America/New_York pass two shards.
+# THE SHAPE. Twelve legs and one aggregator job whose id is `build-and-test`. promote-gate.yml reads that job, by
+# that id, through scripts/promote-preflight.py; it is green only when every leg reported and every one succeeded.
+# The UTC coverage pass is three shards and a merge leg, the America/New_York pass two shards.
 #   - NO workflow_dispatch here, ever. The preflight counts a dispatched run on any branch at the SHA, so a run
 #     dispatched red on purpose at dev's head would leave that commit unpromotable.
 #   - A step added to, edited in or removed from a leg regenerates scripts/ci-step-manifest.json
@@ -33,10 +32,9 @@ name: CI — Build and Unit Tests
 #     `cancelled`; its 5-minute timeout counts only a running job). `gh run rerun <run id> --failed` re-runs it
 #     alone, then ask the preflight again.
 #
-# ROLLBACK. The A2.3 switch and A4 each edited files this tree no longer has (the retired trial workflow and its
-# tools), so neither reverts cleanly: a red of SHAPE (a leg red in a step it only repeats, red again on a re-run; the
-# aggregator red over green legs twice; a leg red on pull_request only) is fixed forward, as a gate-file push with the
-# regression-impact review first.
+# ROLLBACK. The leg split does not revert cleanly (it edited files this tree no longer has), so a red of SHAPE (a leg
+# red in a step it only repeats, red again on a re-run; the aggregator red over green legs twice; a leg red on
+# pull_request only) is fixed forward, as a gate-file push with the regression-impact review first.
 
 on:
   push:
@@ -59,71 +57,48 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # --- Release-version guard (v3.81.0 tag-burn regression) ---------------
-      # Placed BEFORE setup-node/npm ci on purpose: it fails in seconds and
-      # needs no node toolchain. Cheap fail-fast on a cheap-to-detect defect.
+      # Release-version guard: BEFORE setup-node/npm ci on purpose, it fails in seconds and needs no node.
       - name: Fetch origin/main for the release-version guard
-        # The checkout above has no `with:` block, so it is fetch-depth:1 and
-        # single-branch — origin/main is otherwise unreachable. Do NOT switch it
-        # to fetch-depth: 0; 112 releases of history on every CI run is real cost
-        # for data this guard does not need. It reads exactly one blob
-        # (main:package.json) plus a tree diff, both of which a depth-1 fetch
-        # satisfies. Tag NAMES come from `git ls-remote` inside the script (one
-        # network call, no objects downloaded) rather than a --tags fetch.
-        # actions/checkout leaves a credential helper configured, so the job's
-        # GITHUB_TOKEN authenticates; `permissions: contents: read` suffices.
+        # The checkout above is fetch-depth 1 and single-branch, so origin/main is otherwise unreachable. Do NOT
+        # switch it to fetch-depth: 0: the guard reads one blob (main:package.json) plus a tree diff, and tag
+        # NAMES come from `git ls-remote` inside the script. The checkout's credential helper authenticates with
+        # the job's GITHUB_TOKEN; `contents: read` suffices.
         run: git fetch --depth=1 origin +refs/heads/main:refs/remotes/origin/main
 
       - name: Release-version guard
-        # Hard-fails (exit 1) on: non-semver package.json version, a version that
-        # promote-gate's snap_version regex would reject, releases.json that is
-        # malformed / mis-ordered / duplicated / head-mismatched, a version
-        # BELOW main, or a bump onto an already-consumed v* tag. Advisory-only
-        # (::warning::) when dev carries unreleased release-relevant work with no
-        # bump. Exit 2 = origin/main or the tag list was unreadable — never a
-        # silent pass. Waivers: scripts/release-version-allowlist.json.
-        # NOTE: the keystone check lives in promote-gate.yml (snap_version vs
-        # package.json@dev_sha) — this job cannot see the dispatch input.
+        # Exit 2 = origin/main or the tag list was unreadable, never a silent pass. Waivers:
+        # scripts/release-version-allowlist.json. The keystone check (snap_version vs package.json@dev_sha) is in
+        # promote-gate.yml: this job cannot see the dispatch input.
         run: python3 scripts/check-release-version.py
 
       - name: Workflow lint (actionlint + shellcheck, pinned and checksum-verified)
-        # OPS-VERIFYINRUNSTALE-001. Nothing checked .github/workflows before a promote EXECUTED it, and a
-        # workflow change governs the promote that ships it when dispatched from dev — so the first real
-        # run of an edited promote-gate.yml was the ship itself. This lints every workflow on every push:
+        # A workflow change governs the promote that ships it when dispatched from dev, so without this the first
+        # real run of an edited promote-gate.yml would be the ship itself. Lints every workflow on every push:
         # expressions, contexts, needs/outputs wiring, action inputs, and each run: block through shellcheck.
         #
-        # PINNED and CHECKSUM-VERIFIED, because this job is a required promote check: a floating
-        # "latest" could start redding promotes with no change in this repo. The two sha256 values were
-        # taken 2026-09-18 from each release's own published digest (GitHub release-asset API) and
-        # re-hashed locally; they agreed. To bump, change a version AND its hash together.
+        # PINNED and CHECKSUM-VERIFIED, because this is a required promote check: a floating "latest" could start
+        # redding promotes with no change in this repo. The hashes are each release's published digest; to bump,
+        # change a version AND its hash together.
         #
         # SHELLCHECK_OPTS --severity=warning: info/style findings (SC2086 quoting, SC2129 grouping) exist
-        # in backup.yml, deploy-staging.yml and verify-deploy.yml today and are not defects; warnings and
-        # errors — which include a script that does not parse — are what this is for. -pyflakes= disables
-        # the optional python checker so the result does not depend on what the runner image ships.
-        # False positives are ignored per file in .github/actionlint.yaml, each with its live evidence.
-        # Measured 2026-09-18 at 0d33e919 plus this change: exit 0 with this exact configuration.
+        # in several workflows and are not defects; warnings and
+        # errors, which include a script that does not parse, are what this is for. -pyflakes= disables the
+        # optional python checker so the result does not depend on the runner image. False positives are ignored
+        # per file in .github/actionlint.yaml, each with its evidence.
         #
-        # NON-VACUITY (OPS-WORKFLOWLINTCANARY-001). A clean run proves nothing unless this lint can fail here,
-        # and two ways for it to go quiet were measured with this actionlint + shellcheck pair: -shellcheck=
-        # naming a missing file makes actionlint DISABLE shellcheck and still exit 0 (only -verbose says so),
-        # and a blanket ignore in .github/actionlint.yaml silences every finding. (No workflow files at all is
-        # not one: actionlint exits 3.) So first the same binaries, flags and config must REJECT a known-bad
-        # fixture with one actionlint finding ([job-needs]) and one shellcheck finding at the configured
-        # severity (SC2034, a warning); then the real run must cover every workflow file on disk with
+        # NON-VACUITY. Two ways for this lint to go quiet: -shellcheck= naming a missing file makes actionlint
+        # DISABLE shellcheck and still exit 0 (only -verbose says so), and a blanket ignore in
+        # .github/actionlint.yaml silences every finding. So first the same binaries, flags and config must REJECT
+        # a known-bad fixture with one actionlint finding ([job-needs]) and one shellcheck warning (SC2034); then
+        # the real run must cover every workflow file on disk with
         # shellcheck enabled, and says how many.
         #
-        # BLIND SPOT, by construction: an exit status read after errexit already acted (`cmd` then `RC=$?`,
-        # B1 of the v4.138.0 pre-ship pass). shellcheck reports nothing on it at ANY severity, because the
-        # body carries no -e; the runner adds it. SC2181 (style) fires only on `[ $? ... ]`, not on `RC=$?`,
-        # has 0 hits here, and lowering the severity for it would red on 5 unrelated info/style findings.
+        # BLIND SPOT, by construction: an exit status read after errexit already acted (`cmd` then `RC=$?`). The
+        # linter reports nothing on it at ANY severity, because the body carries no -e (the runner adds it).
         # scripts/test_workflow_steps.py guards that class instead (a scan of every run: body).
         #
-        # DOWNLOAD RETRIES (OPS-PROMOTEGATEERREXIT2-001): --retry alone retries a timeout, a DNS failure and HTTP
-        # 408/429/5xx but NOT a refused connection, which failed this required check at once (curl exit 7, measured
-        # with curl 8.7); --retry-connrefused adds it. A reset or an empty reply (curl 56/52) was still not retried;
-        # --retry-all-errors (curl >= 7.71) now retries every failure, those and an HTTP error under -f included,
-        # still at most 3 times (OPS-PROMOTEGATEERREXIT3-001).
+        # DOWNLOAD RETRIES: --retry alone does not retry a refused connection, a reset or an empty reply (curl
+        # 7/56/52); --retry-connrefused and --retry-all-errors (curl >= 7.71) add them, still at most 3 times.
         # The sha256 checks below still decide what may run, so a retried download cannot weaken them.
         env:
           ACTIONLINT_VERSION: 1.7.12
@@ -181,27 +156,18 @@ jobs:
           echo "Workflow lint: $LINTED of $ONDISK workflow files clean under actionlint + shellcheck; the canary was rejected as required."
 
       - name: Install PyYAML for the migration gate validation
-        # scripts/gate_runner.py refuses to validate without PyYAML. The serial job got it from the pytest step,
-        # which ran just before the migration gate validation; that step is in the `pytest` leg now, so this leg
-        # installs the one package, in the same two forms (plain, then --break-system-packages for a PEP-668 image).
+        # scripts/gate_runner.py refuses to validate without PyYAML, and pytest (which installs it) runs in
+        # another leg. Plain install, then --break-system-packages for a PEP-668 image.
         run: |
           set -euo pipefail
           python3 -m pip install --quiet pyyaml \
             || python3 -m pip install --quiet --break-system-packages pyyaml
 
       - name: Migration gate schema validation (OPS-GATERUNNER-001)
-        # Every migrations/*/gates.yml must PARSE and satisfy the strict gate
-        # schema. No database is touched — this is a pure structural check, so it
-        # needs no secrets and runs on every push.
-        #
-        # WHY IT IS UNCONDITIONAL: for months these gate files were runbook prose
-        # that nothing executed, and V4-EVENTSOURCE-001's backfill shipped unrun
-        # with two post-gates that would have caught it instantly. A gate file the
-        # runner cannot parse is exactly as inert as those were — so an unparseable
-        # or mis-keyed gate file is a BUILD FAILURE (exit 2), never a skip.
-        # Observed drift this is designed to catch: two in-flight migrations
-        # authored on 2026-08-04 used `pre_gates:`/`post_gates:` and a `mid:`
-        # phase instead of the canonical pre/sweep/post.
+        # Every migrations/*/gates.yml must PARSE and satisfy the strict gate schema. No database is touched, so
+        # it needs no secrets and runs on every push. A gate file the runner cannot parse is as inert as no gate,
+        # so an unparseable or mis-keyed one (e.g. `pre_gates:` or a `mid:` phase instead of pre/sweep/post) is a
+        # BUILD FAILURE (exit 2), never a skip.
         run: python3 scripts/gate_runner.py --all --env prod --validate-only
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -210,99 +176,65 @@ jobs:
           cache: 'npm'
 
       - name: Dependency manifest re-resolves (strict peers)
-        # Placed BEFORE npm ci on purpose, same reasoning as the gate_runner step above:
-        # it fails in seconds, and node_modules must NOT exist yet or npm takes a
-        # satisfied-tree fast path and the check goes vacuous.
-        #
-        # WHY THIS EXISTS: `npm ci` replays package-lock.json and never re-solves, so a
-        # package.json that CANNOT resolve is invisible to every job in this repo. It was
-        # invisible for 77 days — efc7703 (2026-06-25) put @eslint/js@^10 against a pinned
-        # eslint@^9, so every `npm install` died ERESOLVE while `npm ci` stayed green
-        # through 1,917 commits. node_modules silently drifted from the manifest on dev
-        # machines; axe-core and @typescript-eslint/parser went absent locally. Fixed in
-        # ec07063 (2026-09-10).
-        #
-        # NO --legacy-peer-deps here. That flag is precisely the blindfold this step
-        # removes, and copying it from the npm ci line below would re-vacuate the check.
-        # --dry-run --package-lock-only writes nothing — it only re-solves the graph.
-        #
-        # NON-VACUITY (verified 2026-09-10, clean dir + real lockfile, the state CI runs in):
-        #   ec07063^ manifest+lock -> exit 1     ec07063 manifest+lock -> exit 0 in 0.26s
-        # If this ever needs --legacy-peer-deps to pass, the manifest is broken. Fix the
-        # manifest; do not add the flag.
+        # BEFORE npm ci on purpose: node_modules must NOT exist yet, or npm takes a satisfied-tree fast path and
+        # the check goes vacuous. `npm ci` replays package-lock.json and never re-solves, so a package.json that
+        # CANNOT resolve (every `npm install` dying ERESOLVE) is invisible to every other job.
+        # NO --legacy-peer-deps here: that flag is the blindfold this step removes. If this ever needs it to pass,
+        # the manifest is broken: fix the manifest, do not add the flag. --dry-run --package-lock-only writes
+        # nothing; it only re-solves the graph.
         run: npm install --dry-run --package-lock-only
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
       - name: Lint (frozen primitives)
-        # DESIGNSYS Pass A (V4-DESIGNSYS-001): scoped no-raw-design-tokens guard.
-        # Fails the build if a guarded primitive reintroduces a raw hex color, raw
-        # border-radius, raw padding/margin, raw font-size or a raw emoji glyph (must use
-        # lib/constants.js P / forms/formStyles.js T / lib/iconRegistry.js).
-        # Scope is a GLOB over components/forms/** plus the non-form primitives, so a new
-        # primitive is guarded by default; per-class deferrals are a dated register in
-        # eslint.config.js. Raw hex is not deferrable on any file.
+        # The scoped no-raw-design-tokens guard (eslint.config.js) plus madge's import-cycle check.
         run: npm run lint
 
       - name: Today-gate fixture privacy preflight (V5-TODAYSHAPE-001)
-        # The Today layout gate's fixtures are dumped from prod (npm run todaymeasure:dump writes
-        # UNSCRUBBED raw dumps next to them, gitignored) and this repo is public. The preflight refuses
-        # Clerk subs, live keys, JWTs, Postgres URLs, emails and real coordinates in the tracked
-        # fixtures; its self-test first proves every matcher fires on a known positive. No browser,
-        # no fonts, under a second. The gate itself runs with the real-Chrome gates below ("Today V2
-        # contract, instrument and self-test"), which runs this preflight again as its own step 0. Since
-        # V5-TODAYREDESIGN-001 S8c (L8) that is THE Today gate; the old page's gate retired with the page.
+        # The Today layout gate's fixtures are dumped from prod (npm run todaymeasure:dump writes UNSCRUBBED raw
+        # dumps next to them, gitignored) and this repo is public. The preflight refuses Clerk subs, live keys,
+        # JWTs, Postgres URLs, emails and real coordinates in the tracked fixtures; its self-test first proves
+        # every matcher fires on a known positive. The gate itself runs with the real-Chrome gates ("Today V2
+        # contract, instrument and self-test"), which runs this preflight again as its step 0.
         run: npm run gate:today-shape:preflight:self-test && npm run gate:today-shape:preflight
 
       - name: Garden-render golden (V4-GARDENIA-001 / DESIGNSYS §7)
-        # GroupByControl's regression oracle, per contract §3: the legacy by-project render
-        # (buildDisplayList + buildGardenTree — the `none` path) must still reproduce parity
-        # hash 8a3d78f098e55ff2 against the 61-project/171-planting prod fixture.
-        #
-        # Unwired until 2026-08-26 because it was unwirable: the harness and golden lived in
-        # the gardening-docs repo and the harness hardcoded a Cowork sandbox path, so this CI
-        # could not reach it — while projectTree.js carried a comment asserting the code
-        # "remain[s] golden-gated" to that hash. Now vendored into scripts/parity/ with a
-        # real check mode. Verified non-vacuous: reversing the alpha sort trips 3 drifts.
+        # GroupByControl's regression oracle: the legacy by-project render (buildDisplayList + buildGardenTree,
+        # the `none` path) must still reproduce parity hash 8a3d78f098e55ff2 against the prod fixture in
+        # scripts/parity/. projectTree.js relies on this gate.
         run: npm run parity:garden-render
 
       - name: Daily-plan parity goldens (G-PARITY)
-        # 21 frozen scenarios replayed through the current daily-plan rule engine and diffed
-        # against tests/parity/daily-plan/golden/*.json. The §13 G-PARITY exit gate for the
-        # system-of-record cutover: it is the baseline the refactor is measured against, so a
-        # silent engine change now would move the thing the cutover is diffed to.
-        # Defined in package.json since the P0 backbone work and invoked by nothing until now.
+        # Frozen scenarios replayed through the current daily-plan rule engine and diffed against
+        # tests/parity/daily-plan/golden/*.json: the baseline an engine refactor is measured against, so a silent
+        # engine change would move it.
         run: npm run parity:golden
 
       - name: Service-worker cache-key mirror
-        # public/sw.js is a hand-maintained MIRROR of src/lib/swCacheKeys.js — the service
-        # worker cannot import from src/. Fails if the two byte-diverge, which is the shape
-        # where the app and its offline cache disagree about what is cached under which key.
-        # Defined in package.json and invoked by nothing until now.
+        # public/sw.js is a hand-maintained MIRROR of src/lib/swCacheKeys.js (the service worker cannot import
+        # from src/). Fails if the two diverge: the app and its offline cache would disagree about which key
+        # holds what.
         run: npm run gate:sw-mirror
 
       - name: Icon optical-weight golden (V4-ICON-001)
-        # V101 §14 pre-flight gate: each migrated SVG glyph's live-area ink-coverage must
-        # stay within +/-tolerance of its approved baseline (scripts/icon-ci/icon-golden-baseline.json).
+        # Each migrated SVG glyph's live-area ink coverage must stay within tolerance of its approved baseline
+        # (scripts/icon-ci/icon-golden-baseline.json).
         run: npm run icon:golden
 
       - name: Icon region-seam (V4-ICON-001)
-        # V101 §14: color-candidate multi-region glyphs paint every region with no interior
-        # seam holes (backs the zero-geometry-redraw color-pass promise).
+        # Colour-candidate multi-region glyphs paint every region with no interior seam holes, so a colour pass
+        # needs no geometry redraw.
         run: npm run icon:seam
 
       - name: Icon pair distinctness (V4-GERMVSTRANSPLANT-001)
-        # Glyphs read SIDE BY SIDE must not collapse into each other. Both gates above measure a
-        # glyph alone, so neither could see that event.germination and event.transplant were one
-        # drawing at two scales. Masks are scale-normalised before comparison — raw pixel overlap
-        # scored the shipped defect (0.402) as MORE distinct than a known-good pair (0.367), because
-        # a size change moves pixels while reading as the same shape.
+        # Glyphs read SIDE BY SIDE must not collapse into each other; both gates above measure a glyph alone.
+        # Masks are scale-normalised before comparison: raw pixel overlap scores one drawing at two scales as
+        # distinct, because a size change moves pixels while reading as the same shape.
         run: npm run icon:distinct
 
       - name: Build (CI — placeholder env vars)
-        # VITE_ vars are inlined at build time as string literals.
-        # Placeholder values allow build to succeed without real infrastructure.
+        # VITE_ vars are inlined at build time; placeholders let the build succeed without real infrastructure.
         run: npm run build
         env:
           VITE_CLERK_PUBLISHABLE_KEY: pk_test_ci_placeholder
@@ -319,45 +251,30 @@ jobs:
           test -f dist/index.html || { echo 'ERROR: dist/index.html missing'; exit 1; }
 
       - name: Harvest-window chunk split (V4-RIPENESSCUES-001)
-        # THE ONLY DETECTOR for the inert-payload class, and until now it was wired to nothing.
-        # The colour-window feature shipped DEAD in v4.9.x — resolver imported, nothing called it,
-        # ~110KB gzip of JSON riding the entry bundle to every user, all tests green. vitest cannot
-        # catch this class at all: it asserts MODULES, and resolves the import itself at test time,
-        # so it never observes the real chunk graph. Only a build-artifact check can. A mutation
-        # that recreated the bug kept all 127 unit tests passing.
-        #
-        # Asserts against the artifact the step above just built (SKIP_BUILD=1 — verify THIS dist/,
-        # not a second differently-configured build): exactly one hashed chunk carries the dataset
-        # marker, and it is NOT the entry chunk. Fails the build (exit 1) if a static
-        # `import { resolveHarvestWindow }` is reintroduced at/above CropCard, if the dataset
-        # vanishes from the bundle entirely, or if the marker leaks into multiple chunks.
-        #
-        # Home is ci.yml on purpose: this is deterministic from source, so it reaches the same
-        # verdict here as it would in deploy.yml — but here it fails BEFORE the code lands on dev,
-        # rather than mid-deploy after main has already fast-forwarded.
+        # The ONLY detector for the inert-payload class (a dataset riding the entry bundle to every user). vitest
+        # cannot catch it: it asserts MODULES and resolves imports itself, so it never sees the real chunk graph.
+        # Asserts against the dist/ the step above built (SKIP_BUILD=1, not a second differently-configured
+        # build): exactly one hashed chunk carries the dataset marker, and it is NOT the entry chunk. Fails if a
+        # static `import { resolveHarvestWindow }` returns at/above CropCard, if the dataset vanishes from the
+        # bundle, or if the marker leaks into several chunks. Here rather than in deploy.yml so it fails BEFORE
+        # the code lands on dev, not mid-deploy after main has fast-forwarded.
         env:
           SKIP_BUILD: '1'
         run: bash scripts/verify-window-chunk.sh
 
       - name: Event-types drift guard
-        # V3-EVENT-008: fails the build if lambda/events/eventTypes.generated.js is
-        # stale vs the canonical src/lib/eventTypes.js (regenerate to temp + byte-diff).
-        # Required (not advisory): the deployed Lambda cannot import src/lib/ at runtime,
-        # so a stale generated copy would silently diverge the batch allowlist from the UI.
+        # Fails if lambda/events/eventTypes.generated.js is stale against the canonical src/lib/eventTypes.js
+        # (regenerate to temp + byte-diff). Required: the deployed Lambda cannot import src/lib/, so a stale copy
+        # would silently diverge the batch allowlist from the UI.
         run: npm run check:event-types
 
       - name: Dependency audit (blocking on moderate, WS-B M6)
-        # Fail the build on any prod-dependency MODERATE+ advisory EXCEPT documented, dated
-        # waivers in scripts/audit-allowlist.json (each a justified non-applicability note).
-        # Replaces the bare `npm audit --omit=dev --audit-level=moderate`. The js-cookie high
-        # (→ Clerk 6.12.7) and the old react-router moderates (→ react-router-dom 7.18.1) stay
-        # remediated. Currently WAIVED: GHSA-qwww-vcr4-c8h2 (react-router RSC-mode CSRF —
-        # non-applicable to this client SPA / no RSC; no react-router-dom fix line yet).
-        # Dave-approved 2026-07-24. Dev-only advisories stay excluded by --omit=dev.
+        # Fails on any prod-dependency MODERATE+ advisory except the documented waivers in
+        # scripts/audit-allowlist.json (each a justified non-applicability note; the waiver list lives there, not
+        # here). Dev-only advisories are excluded by --omit=dev.
         run: python3 scripts/audit-gate.py
 
-  # As in the serial job, where pytest ran before setup-node and npm ci: the image's own node, no node_modules.
-  # ~80 s.
+  # The image's own node and no node_modules: pytest runs before setup-node and npm ci.
   pytest:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
@@ -365,9 +282,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Python script tests (pytest)
-        # Retroactively covers the previously-unrun scripts/test_*.py suites
-        # (snap, revert-to, restore-verify, verify-deploy) as well as the guard's
-        # own tests. requests+boto3 are import-time deps of snap.py/revert-to.py.
+        # Every scripts/test_*.py. requests+boto3 are import-time deps of snap.py/revert-to.py.
         run: |
           set -euo pipefail
           # Plain form is proven on these runners (promote-gate.yml "Install python
@@ -376,10 +291,9 @@ jobs:
             || python3 -m pip install --quiet --break-system-packages pytest requests boto3 pyyaml
           python3 -m pytest -q scripts/test_*.py
 
-  # THE UTC PASS WITH COVERAGE: three shards and a merge (OPS-CICOVERAGESHARDS-001, plan A4; the proof is gardening-docs
-  # project-state/_promotepath-20261002/A4-PROOF-20261018.md). As one leg it was the long pole: median 17.4 min over 15
-  # dev pushes, 2026-10-15..18. Each shard runs a third of the test files (`--shard=i/3`: vitest's own split, by a hash
-  # of each file's path, so every runner draws the same thirds) and writes a BLOB: its test results and its coverage
+  # THE UTC PASS WITH COVERAGE: three shards and a merge, because as one leg it was the long pole. Each shard runs a
+  # third of the test files (`--shard=i/3`: vitest's own split, by a hash of each file's path, so every runner draws
+  # the same thirds) and writes a BLOB: its test results and its coverage
   # map, in which the provider records how that run loaded each file (scripts/vitest/coverage-v8-two-forms.mjs,
   # "A RUN IN SHARDS"). A shard is no verdict on coverage: its map is a third of the suite's. So it checks no threshold
   # (the four set to 0) and writes no report (`--coverage.reporter=none`: no partial table in its log for a reader to
@@ -529,7 +443,7 @@ jobs:
           overwrite: true
 
   # The UTC pass's VERDICT: the three blobs merged as one run (`vitest run --merge-reports --coverage`, which reproduces
-  # the single run's coverage, A4-PROOF-20261018.md), the thresholds in vitest.config.ts, and the two halves of the
+  # the single run's coverage), the thresholds in vitest.config.ts, and the two halves of the
   # coverage ratchet around it, as the one leg ran them: the measured floor reads the coverage/coverage-summary.json the
   # merge writes. The only leg with `needs`, and no `if:`, so a red shard leaves it `skipped`, which the aggregator reads
   # as red. Its log carries the coverage table and the pass's test-ids notice, over every test of the three shards.
@@ -549,9 +463,7 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Coverage ratchet enforcement
-        # Fails the build if vitest.config.ts thresholds fall below the
-        # calendar-due target in coverage-ratchet.json.
-        # B2 from pipeline-consolidation-plan-20260501.md (boss VP add).
+        # Fails if the lowest vitest.config.ts threshold is below coverage-ratchet.json active_target.
         run: python3 scripts/check-coverage-ratchet.py
 
       - name: Download the three shards' blobs
@@ -590,15 +502,13 @@ jobs:
           echo "Coverage merge: the three shards ran the suite's $LISTED test files, each once."
 
       - name: Coverage ratchet — measured floor (WS-B M4)
-        # The pre-test ratchet step above compares only the CONFIG thresholds to
-        # active_target. This reads ACTUAL measured coverage (coverage/coverage-summary.json,
-        # emitted by the json-summary reporter) and fails if it drops below active_target,
-        # wiring the ratchet to real coverage so advancing active_target (a Dave-gated
-        # milestone decision) immediately protects it. No-op while active_target is 0.
+        # The ratchet step above compares only the CONFIG thresholds to active_target. This reads ACTUAL measured
+        # coverage (coverage/coverage-summary.json, written by the merge's json-summary reporter) and fails if it
+        # drops below active_target, so advancing active_target protects real coverage at once.
         run: python3 scripts/check-coverage-ratchet.py --measured
 
-  # The same suite under the app's own timezone, behind a sentinel that the zone resolved, in two shards (plan A4: as
-  # one leg, median 13.8 min, the long pole once the coverage pass was sharded). No coverage, so no merge: each shard's
+  # The same suite under the app's own timezone, behind a sentinel that the zone resolved, in two shards (as one leg it
+  # was the long pole once the coverage pass was sharded). No coverage, so no merge: each shard's
   # tests are its verdict, the aggregator needs both, and `--shard=i/2` splits as the coverage shards do. Each shard
   # repeats the sentinel, and prints its own test-ids notice, for its half of the files: two digests cannot be put
   # together, so "the NY files are the UTC files" is now read from the counts (the two NY notices' files and tests add up
@@ -653,10 +563,9 @@ jobs:
           '
 
       - name: Unit tests under America/New_York TZ (date-fragility guard), shard 1 of 2
-        # Wave 0 / WS-B M2: the UTC pass (the coverage shards; UTC is the GHA default) hid a
-        # class of TZ-fragile date assertions that only fail in a UTC-negative zone like
-        # the app's own EDT/EST (plantingMaturity ageDays, Collection "Seen" caption).
-        # Re-run the suite under the app's real timezone so that class fails CI, not prod.
+        # The UTC pass (UTC is the runner default) hides TZ-fragile date assertions that fail only in a
+        # UTC-negative zone like the app's own EDT/EST. Re-running the suite under the app's real timezone makes
+        # that class fail CI, not prod.
         run: npx vitest run --no-coverage --shard=1/2
         env:
           TZ: America/New_York
@@ -712,7 +621,7 @@ jobs:
         env:
           TZ: America/New_York
 
-  # Real-Chrome gates, first group (~246 s of work measured after the idle-timer fix, run 37040756148).
+  # Real-Chrome gates, first group.
   gates-a:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
@@ -727,37 +636,14 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      # ── The real-Chrome layout gates (OPS-LAYOUTGATESUNWIRED-001) ───────────────────────
-      # The WebSocket blocker that kept these unwired is FIXED, not worked around. The gates
-      # attached over a bare global WebSocket, which this job's then-pinned node-version '20.19.0'
-      # did not have (measured: `npx node@20.19.0 -e "typeof WebSocket"` -> undefined, and the
-      # gate exited 1 with "WebSocket is not defined"). scripts/layout-gate/cdp-socket.mjs now
-      # prefers the global and falls back to `ws`, which is a DECLARED devDependency rather than
-      # the jsdom transitive it used to be reachable as. Both gates were then re-run under a real
-      # Node 20.19.0 and PASS with measurements identical to the Node 26 run.
-      #
-      # The CI Node version was deliberately NOT bumped to get a global WebSocket: package.json
-      # declared "engines": { "node": "20.x" }, so a bump would have run the whole suite and the build
-      # outside the declared engine range to fix a two-line transport problem. (Since OPS-CINODE22-001
-      # CI, .nvmrc and engines are on Node 22, the Lambdas' runtime; 22 has a global WebSocket, and
-      # cdp-socket.mjs still prefers it and falls back to `ws`.)
-      #
-      # NO continue-on-error on either step, by policy. This repo already carries deploy steps
-      # that report success when they fail; a pseudo-gate here would be worse than the honest gap
-      # it replaces, because gate:save-band's absence from CI is precisely why a weigh-in keypad
-      # row that silently committed a harvest shipped and survived two releases.
-      #
-      # gate:save-band-stability is now WIRED too (below). The note that stood here recorded scope,
-      # not a decision — "it is one import and one step away" — so it was a gap, not an answer, and
-      # it has been closed with exactly that one import. It is last because it was the slowest step
-      # in this job at ~3 minutes when it was wired; ~170 s of that was its uncleared 180 s CDP
-      # timeout idling after PASS, not the four full harvest entries it drives, and it is ~13 s now.
+      # The real-Chrome layout gates. They attach over CDP through scripts/layout-gate/cdp-socket.mjs, which
+      # prefers node's global WebSocket and falls back to `ws` (a declared devDependency).
+      # NO continue-on-error on any gate, by policy: a gate that reports success when it fails is worse than
+      # no gate.
       - name: Resolve Chrome for the layout gates
-        # The gates drive REAL Chrome over CDP and honour CHROME_PATH, defaulting to a macOS path
-        # that does not exist here. This RESOLVES the runner's browser rather than assuming it: if
-        # the image ever stops shipping Chrome, this step FAILS the build. It must never degrade to
-        # "no browser, so nothing to check" — a layout gate that silently skips is the vacuous
-        # guard this whole directory exists to be the opposite of.
+        # The gates honour CHROME_PATH, defaulting to a macOS path that does not exist here. This RESOLVES the
+        # runner's browser rather than assuming it: if the image stops shipping Chrome, this step FAILS the
+        # build. It must never degrade to "no browser, so nothing to check".
         run: |
           BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium || true)"
           if [ -z "$BIN" ]; then
@@ -771,47 +657,28 @@ jobs:
       - name: Weigh-in Save-band clearance (BUG-FRAMEPADOCCLUDE-001)
         # Real Chrome at a TRUE 390x500, four consecutive weigh-in entries. Asserts every bottom-row
         # weight key clears Save by SAVE_BAND_MIN_CLEARANCE_PX and that each key hit-tests to itself,
-        # on whichever arm rendered (frame or the legacy sticky band) — an arm it cannot identify
-        # FAILS. This is the gate whose absence let a keypad row commit the harvest under the thumb.
-        # Verified non-vacuous: tightening framePadGapPx by 8px drops the gap to 13px and the gate
-        # fails 20+ named key/entry pairs with exit 1.
+        # on whichever arm rendered (frame or the legacy sticky band); an arm it cannot identify FAILS.
+        # Without it a keypad row can commit the harvest under the thumb.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:save-band
 
       - name: Log-chooser clearance and tap floor (BUG-LOGBANDOCCLUDE-001)
-        # Real Chrome at 390x844 and 390x667 (phone at rest, and with the keyboard up — the tighter
-        # one). Asserts the plant chooser clears the sticky Save band, that probes across its width
-        # actually hit the chooser rather than the band, and — as a census, not a named list —
-        # that no visible interactive control on /log is under the T.tapMinHeight tap floor.
-        # Verified non-vacuous: dropping inputChrome's minHeight to 30 makes it fail on the named
-        # control ("Event date" is 41px tall) at both viewports with exit 1.
+        # Real Chrome at 390x844 and 390x667 (keyboard up). Asserts the plant chooser clears the sticky Save
+        # band, that probes across its width hit the chooser rather than the band, and, as a census rather than
+        # a named list, that no visible interactive control on /log is under the T.tapMinHeight tap floor.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:log-chooser
 
       - name: Photo-tier payload budget (BUG-TIERLESSPHOTOS-001)
-        # THE ONLY THING IN THIS REPO THAT PRODUCES A REAL PAYLOAD NUMBER, and until now it was
-        # wired to nothing — `rg "phototier-bytes"` returned only the file's own self-references.
-        # vitest can prove which URL a surface ASKED for and can never prove a byte moved, because
-        # jsdom never loads an image. This drives real Chrome at Dave's 390x844 @ dpr 2.625 and reads
-        # CDP Network.loadingFinished encodedDataLength — the transferred size on the wire.
-        #
-        # It could not simply be added as it stood: it opened its CDP session with a bare global
-        # WebSocket, which node-version '20.19.0' does not have, so it would have thrown at attach()
-        # after paying for a Vite boot and a Chrome launch. Same blocker, same one-line fix
-        # (cdp-socket.mjs) as the two gates above.
-        #
-        # A BUDGET, NOT A REPORT. Without --max-bytes the script prints a number and fails only on
-        # instrument faults, which would be a step that cannot fail on the thing it measures — the
-        # `gate:` script passes the ceiling. Verified non-vacuous by running the BEFORE arm
-        # (`npm run phototier-bytes:before`, --tier none, byte-for-byte what the pre-fix code
-        # requested): 82,957,060 B against the 4,000,000 B ceiling, exit 1, naming 20 of 20 requests
-        # as full originals. The passing arm measured 3,542,820 B. NO continue-on-error, per the
-        # policy note above.
-        #
-        # Pillow is the fixture generator's only dependency and is not on the runner image. Plain
-        # form first, --break-system-packages for a PEP-668 image — same shape as the pytest step.
+        # The only real payload number in this repo: vitest can prove which URL a surface ASKED for but never
+        # that a byte moved (jsdom loads no image). Drives real Chrome at 390x844 @ dpr 2.625 and reads CDP
+        # Network.loadingFinished encodedDataLength, the transferred size on the wire.
+        # A BUDGET, NOT A REPORT: without --max-bytes the script only prints a number, so the `gate:` script
+        # passes the ceiling. Non-vacuity twin: `npm run phototier-bytes:before` (--tier none) exceeds it.
+        # Pillow is the fixture generator's only dependency and is not on the runner image (plain install, then
+        # --break-system-packages for a PEP-668 image).
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: |
@@ -821,274 +688,106 @@ jobs:
           npm run gate:phototier-bytes
 
       - name: Inventory list tap floor and row integrity (HG-4.2)
-        # Real Chrome at 390x844. The repo's ONLY gate on SC 2.5.8: every control the redesign owns
-        # must render >=44x44 AS RENDERED, not merely be authored that way — and 44 is not a number
-        # anyone here chose, it is T.tapMinHeight and the success criterion. Also asserts each control
-        # hit-tests to itself (a control probed as occluded fails, and one never probed fails too:
-        # "not measured" is not "not occluded"), that no row wraps or overflows right at the fixture's
-        # worst-case 44-char name, and that the document does not scroll sideways. A non-vacuity floor
-        # of 5 rows / 5 sections / >=11 controls is asserted before any of it (8 / 6 / >=12 until
-        # V5-SEEDSTAB-001 took seed off this list; the fixture's 3 seed rows must now be counted on the
-        # Seeds pointer row and listed nowhere, and the pointer row is itself in the measured census).
-        #
-        # It sits at ZERO margin: the smallest measured side is exactly 44px against a 44px floor, so
-        # any shrink at all reds it. Verified non-vacuous: T.tapMinHeight 44 -> 40 fails with exit 1
-        # naming ten controls ("+ Add" 69.7x40, the three 102.7x40 filter selects, the five 350x40
-        # section headers and "1 need restock" 132.8x40). The Seeds pointer's 64px minHeight is not
-        # T.tapMinHeight, so clamping it to height:40 was proved separately (exit 1, named alone).
-        # Three shallower mutations SURVIVED and are worth knowing about —
-        # an inline height:40 on the selects is backstopped by selectChrome's own minHeight, and the
-        # quantity steppers are in the probe's selector list but are not rendered by this fixture, so
-        # a regression confined to them would not be caught here.
-        #
-        # Both CI blockers fixed with this step: the bare global WebSocket (node 20.19.0 has none —
-        # cdp-socket.mjs, same one-line fix as its siblings; measured here by running it with the
-        # global deleted, which reds the still-unfixed iconwire3 with "WebSocket is not defined" and
-        # passes this one with identical numbers), and the absolute /Users/davenichols/... --out
-        # default that would have thrown in mkdirSync after every assertion had already passed.
+        # Real Chrome at 390x844. Every control the inventory list owns must render >= T.tapMinHeight (44) on
+        # both axes AS RENDERED, and hit-test to itself (one never probed fails too: "not measured" is not "not
+        # occluded"); no row wraps or overflows at the fixture's 44-char name; no sideways scroll. A non-vacuity
+        # floor of rows / sections / controls is asserted first. The fixture's seed rows are counted on the
+        # Seeds pointer row and listed nowhere.
+        # ZERO margin: the smallest side is exactly 44px, so any shrink reds it. Blind spots: an inline height
+        # on the selects is backstopped by selectChrome's own minHeight, and the quantity steppers are in the
+        # probe's selector list but not rendered by this fixture.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:inventory-list
 
       - name: Saved-seeds layout and action clearance (V4-SEEDSAVEFLOW-001)
-        # The first observable /seeds/saved has ever had. The harness (tests/harness/seedssaved.*)
-        # shipped with the page in v4.90.0 and was wired to NOTHING — `rg "seedssaved|seeds-saved"`
-        # over .github/, package.json and scripts/ returned no output — so the page's stated defect
-        # had no instrument and no redesign of it could be shown to have fixed anything.
-        #
-        # Real Chrome at 390x844, plus 390x667 (keyboard up) for the two sheet states, across all
-        # four states the harness renders: empty / populated list / candidate picker / advance sheet.
-        # Asserts, as a census rather than a named list, that no visible button or form control is
-        # under T.tapMinHeight; that no seed-lot card overflows its box or clips its text column
-        # beside the advance button at the fixture's worst-case 44-char variety name; that the
-        # document does not scroll sideways; and that the sheet's primary action hit-tests to itself,
-        # fits the viewport, and is reachable rather than clipped out of a panel that cannot scroll.
-        # Hit-testing is asserted on the TOP layer only — a control behind an open modal correctly
-        # fails to hit-test, and asserting there would red this on the backdrop working as designed.
-        # Link heights are printed but NOT asserted: WCAG 2.5.8 exempts a link inline in a block of
-        # text, and freezing a number there would be this lane making a design call that is not its.
-        #
-        # Verified non-vacuous TWICE, because a layout gate that measures nothing scores a perfect
-        # pass and this repo has been bitten by exactly that:
-        #   1. `npm run gate:seeds-saved:probe-nothing` points every selector at a testid nothing
-        #      renders. Exit 0 -> 1, failing all six case/viewport pairs by name ("cards 0 != 4",
-        #      "0 candidates offered", "no stage-save control"). A selector that matched nothing is
-        #      a FAILURE here, never the quiet pass it is in a naive census.
-        #   2. Forcing every getBoundingClientRect() to zero — what an unrendered document, or a
-        #      jsdom-shaped one, actually looks like — reds it with "every one of 14 measured boxes
-        #      is 0px tall", on top of the tap floor. Element counts alone would have passed.
-        # It also caught a live fixture defect on its first run: the harness rows carried no
-        # `status`, which the candidate filter requires, so the picker rendered zero rows and would
-        # have measured an empty sheet. NO continue-on-error, per the policy note above.
-        #
-        # ~96 s locally when wired: six page loads (four states, two of them at both viewports) behind
-        # one Vite boot. Placed here rather than last because gate:save-band-stability was the slow one.
-        #
-        # V5-SEEDSTAB-001 REPOINT (2026-09-18): the harness now mounts the real Seeds page at
-        # /seeds?view=saved (Saved seeds `embedded`, with the shell's header, view switch and frame)
-        # instead of the standalone page no user sees, and the instrument check refuses any other
-        # surface. Every state also runs at 360x640 — ten page loads then, ~9 s measured; fourteen since
-        # release 2b ran every state at 426x836 as well (V5-SEEDMULTIPARENT-001). It was ~99 s while
-        # PASS at ~9 s was followed by node idling on its armed 90 s CDP timeouts (the same was true
-        # of the six-load run: 1:38); each timeout is cleared on reply now. ONE named
-        # tap-floor exemption: the view switch is the frozen SegmentedControl, drawn at 40px, held to
-        # that floor and printed on every run (scripts/layout-gate/segmented-control-exemption.mjs).
-        # Re-proved non-vacuous: --probe-nothing exits 1 on all fourteen case/viewport pairs.
+        # The real Seeds page at /seeds?view=saved (tests/harness/seedssaved.*; the instrument check refuses any
+        # other surface), in real Chrome at 360x640, 390x844, 426x836 and 390x667 (keyboard up) across the
+        # harness's states: empty, populated list, candidate picker, advance sheet. Asserts, as a census, that
+        # no visible button or form control is under T.tapMinHeight; that no seed-lot card overflows or clips its
+        # text beside the advance button at the 44-char variety name; no sideways scroll; and that the sheet's
+        # primary action hit-tests to itself, fits the viewport and is reachable.
+        # Hit-testing is on the TOP layer only: a control behind an open modal correctly fails to hit-test.
+        # Link heights are printed, NOT asserted (WCAG 2.5.8 exempts a link inline in text). ONE named tap-floor
+        # exemption: the frozen SegmentedControl view switch at 40px
+        # (scripts/layout-gate/segmented-control-exemption.mjs), printed on every run.
+        # Non-vacuity twin: `npm run gate:seeds-saved:probe-nothing` points every selector at a testid nothing
+        # renders and exits 1 on every case/viewport pair: a selector that matched nothing is a FAILURE here.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-saved
 
       - name: Save seed sheet layout and Save clearance (V5-SEEDMULTIPARENT-001)
-        # The first layout gate the Save seed sheet has had (release 2b, QA B4). Release 2b put a
-        # "From" block above the sheet's fields: one row per parent planting with a remove control,
-        # an adder, a plant-count field and a mix name, all above Save in a panel capped at 85vh.
-        # The only harness that mounted the sheet (tests/harness/seedwarning.*) was driven by no
-        # script, alias or workflow, and jsdom returns 0 for every rect.
-        #
-        # Real Chrome at 360x640, 390x844 and 426x836 across the five states
-        # tests/harness/saveseedsheet.jsx builds by TAPPING the real adder and the real picker: one,
-        # two and four parent plantings, the longest mix name the client can generate (90 chars),
-        # and a refused mix call with its sentence on screen. Asserts, as a census rather than a
-        # named list, that no visible button or form control is under T.tapMinHeight (the icon-only
-        # remove control sideways too); that every control, scrolled into view, hit-tests to itself;
-        # that Save is inside the panel or the panel scrolls to it, and once scrolled to hit-tests
-        # to itself at its centre and four corners with nothing sharing its box; that the notice and
-        # the refusal sentence sit above it; and that neither the document nor the panel scrolls
-        # sideways. The Lot name field (a single-line input) and the sheet's gutter are printed,
-        # not asserted. Fifteen page loads.
-        #
-        # Non-vacuous: `npm run gate:save-seed-sheet:probe-nothing` points every selector at a
-        # testid nothing renders and exits 1 on all fifteen case/viewport pairs. CI runs the gate,
-        # not the twin, as for every clearance gate.
+        # The Save seed sheet's "From" block (one row per parent planting, an adder, a plant count and a mix
+        # name) sits above Save in a panel capped at 85vh. Real Chrome at 360x640, 390x844 and 426x836 across the
+        # states tests/harness/saveseedsheet.jsx builds by TAPPING the real adder and picker. Asserts, as a
+        # census, that no visible button or form control is under T.tapMinHeight (the icon-only remove control
+        # sideways too); that every control, scrolled into view, hit-tests to itself; that Save is reachable and
+        # hit-tests to itself at its centre and four corners; that the notice and refusal sentence sit above it;
+        # no sideways scroll in the document or the panel.
+        # Non-vacuity twin: `npm run gate:save-seed-sheet:probe-nothing` exits 1 on every case/viewport pair.
+        # CI runs the gate, not the twin, as for every clearance gate.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:save-seed-sheet
 
       - name: Seeds page layout, all three views (V5-SEEDSTAB-001)
-        # The whole Seeds page — title and per-view actions, the SegmentedControl view switch, the
-        # ferment line, and ONE view body — on ?view=mine, ?view=saved and ?view=sow at a TRUE 360x640
-        # and 390x844, mounted by tests/harness/seeds.{html,jsx} with the app's 52px top bar and 56px
-        # bottom nav in place (their heights are read from TopChrome.jsx and constants.js and checked).
-        # Fixture: 32 seed rows over 8 crops, the 44-char "Money Plant (self-saved, variety
-        # unrecorded)" as a lot fermenting 5 days AND archived (two chips; the ferment line names it),
-        # registry suppliers that hit the colour palette plus one it does not know, pepper heat (sweet,
-        # ranges, one bound, none, a saved lot's estimate), 13 packet photos on three small committed
-        # PNGs with distinct per-photo URLs (one broken), an order-reference `source`, a used-up packet,
-        # an identical pair, two lots saved off F1 plants (the F2 chip), and two rows that force line 2's
-        # shrink order (UX spec §1.3, as amended 2026-09-24 by BUG-MYSEEDSF2HIDESSHU-001): a drying lot
-        # whose chip and measured amount leave no room for its heat on line 2, so the line wraps and the
-        # heat moves to the next line, whole; and an archived packet whose heat keeps its place on line 2
-        # only because its neutral chip gives way first.
-        # Asserts: (a) the view switch is one line; (b) the header's title and actions share one line
-        # and nothing overflows it; (c) no sideways scroll; (d) every visible button, link, radio,
-        # field and role=button (the folding crop headers) is >= T.tapMinHeight, except the frozen
-        # SegmentedControl's 40px radios — ONE named exemption, shared with gate:seeds-saved.
-        # My seeds opens FOLDED (V5-SEEDCARDS-001), so it is measured in three states, each reached by a
-        # real hit-tested tap: (e) the folded first screen — the search line and both chip rows fully
-        # between the bars and each chip row one line, every header folded, no row in the band, the
-        # pinned crops first, and at 360x640 >= 3 headers fully in the band; (e2) the Pepper header
-        # tapped — it does not move (+-1px), its first row is fully in the band and its second row
-        # starts in it; then Expand all and one row opened, over every row: (f) line 1 is ONE line, the
-        # 44-char name ellipsising, and line 2 wraps only where it must — a row that fits stays one line,
-        # an item starts a later line only when the line above had no room left for it, no line starts
-        # with a painted "·", the tail never leads a line, and each flex line is one band of text —
-        # counting only text that shows, none of it sliced by a line's edge; (g) the amount, (i) the
-        # identical-pair ordinal (line 1), (j) the supplier chip and (n) a lot-in-process state chip each
-        # show whole, inside the line on both axes; (k) EVERY heat is shown whole, never sliced and never
-        # dropped: a row whose line 2 cannot hold everything wraps, and its heat moves to the next line,
-        # whole — so on the two shrink-order rows one heat moves to the next line and the other keeps its
-        # place because its neutral chip gives way first; (p) the F2 chip is on exactly the two lots
-        # saved off F1 plants and on no bought F1 packet, whole, and never costs the heat — at least one
-        # F2 row carries its heat on a later line; (l) every thumbnail box is
-        # 40x40 at one x, with a supplier stripe or without, measured with the packet-image requests
-        # HELD at the network layer and again after every image loaded or failed — the broken photo's
-        # thumb and original both tried, then its row ("Fish") showing the no-photo row's sprout box
-        # byte for byte (V5-SEEDSPOLISH-001); (d) and (c) again.
-        # (h) every open Sow now card keeps its name column at least SowNow.jsx's TITLE_COL_MIN_PX.
-        # (o) on its own load (?bulk=64: 64 more photo rows in Pepper), Pepper tapped open and scrolled
-        # to mid-group, far above the document's bottom: every row on screen has its packet image
-        # loaded, nothing mounts past the first image page plus the rows within useNearViewport's
-        # reach, and nothing past the first page mounts more than two screens below the viewport.
-        # It refuses to measure a view whose innerWidth or innerHeight is not the one requested, that
-        # is not at scrollTop 0, or where a tap did not take.
-        #
-        # Verified non-vacuous: `npm run gate:seeds-page:probe-nothing` exits 1 on all six
-        # view/viewport pairs; and GATE_MUTATE_CSS (CSS injected before measuring, src/** untouched)
-        # reds each assertion by name — (a) switch forced to wrap, (b) actions stacked, (c) page / the
-        # opened rows forced to 480px, (d) Save seed, the headers, the supplier chips, Expand all and
-        # an expanded row's link forced short, (e) the controls pushed under the nav, a chip row
-        # narrowed until it wraps, Tomato moved below Bean, headers made 90px, (e2) the header padded
-        # on open, row 1 made taller than the band, row 2 pushed out, (f) line 1 wraps, (g) the amount,
-        # (i) the ordinal, (j) the supplier chip, (n) a live chip — each ellipsised or moved off its
-        # line — (l) the box sized by its image or the stripeless rows shifted 3px, (h) the Sow now card
-        # kept from wrapping. The line-2 contract of 2026-09-24 ((f), (k), (p); BUG-MYSEEDSF2HIDESSHU-001)
-        # was re-proved on the integration tree (20b47537): on the tree before it
-        # (HARNESS_BASELINE_SHA=c016dcde) the gate exits 1 on (k) — the heats of Hot Paper Lantern,
-        # Ristra Cayenne II and Thai Dragon DROPPED — and on (k)'s and (p)'s non-vacuity, at 360 and 390;
-        # and GATE_MUTATE_CSS at 360 reds (f) on a heat forced onto a line of its own while it had room,
-        # the line's clip removed (a line starts with "·"), the tail made rigid (it leads a line) and text
-        # wrapped inside the amount (more bands than flex lines), and (k) on the line set back to nowrap,
-        # the heat ellipsised, half below its line, or pushed past its end. GATE_MUTATE_JS (a page
-        # script) covers what no stylesheet reaches: a group opened on the first screen reds (e)'s
-        # folded and no-row checks, disabling the page's own open-scroll isolates (e2)'s row checks,
-        # stripping the chips' data-tone reds (n)'s live-chip count, and swallowing scroll events reds
-        # (o)'s rows on screen. (o) also reds on the pre-fix window (rows 30-40 on screen, 0 images),
-        # on every row mounting at once, and — the ceiling alone — on a reach of 100000px.
-        # NO continue-on-error, per the policy note above. ~20 s locally (the (o) load included).
+        # The whole Seeds page (header, SegmentedControl view switch, ferment line, ONE view body) on ?view=mine,
+        # ?view=saved and ?view=sow at a TRUE 360x640 and 390x844, mounted by tests/harness/seeds.{html,jsx} with
+        # the app's top bar and bottom nav in place (heights read from TopChrome.jsx and constants.js and
+        # checked). The assertion list, (a) to (p), and the fixture rows each one needs are in the gate script.
+        # They cover the switch and header on one line, no sideways scroll, the tap floor (ONE named exemption,
+        # the 40px SegmentedControl radios, shared with gate:seeds-saved), My seeds folded and opened by real
+        # hit-tested taps, line 1 and line 2 of each row (every heat shown whole, never sliced or dropped; the
+        # F2 chip never costs the heat), thumbnails measured with image requests HELD and again after load, and
+        # (o) lazy mounting within useNearViewport's reach.
+        # It refuses to measure a view whose innerWidth or innerHeight is not the one requested, that is not at
+        # scrollTop 0, or where a tap did not take.
+        # Non-vacuity: `npm run gate:seeds-page:probe-nothing` exits 1 on every view/viewport pair, and
+        # GATE_MUTATE_CSS (CSS injected before measuring) and GATE_MUTATE_JS (a page script, for what no
+        # stylesheet reaches) red each assertion by name.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-page
 
       - name: Seed detail page layout — packet, after a sow, F2 lot (V5-SEEDSTAB-001)
-        # The seed's own page (/inventory/:id) had no layout gate while the Seeds release gave it Sow this,
-        # the "Sown ✓ · See the planting" line, Edit sow details, the "Sown from this packet" card and the
-        # F2 breeding fact (pre-ship QA, IMPORTANT #1). tests/harness/seeddetail.{html,jsx} mounts the real
-        # InventoryDetail under the 52px top bar and 56px bottom nav stand-ins (heights read and checked)
-        # at a TRUE 360x640, 390x844 and 426x836 (Dave's handset), in three states: a bought packet with
-        # two plantings in sown_from; the same page after a REAL sow (Sow this, then the sheet's Add
-        # planting, each a hit-tested tap); and a lot saved off an F1 plant, still drying, 175 counted;
-        # plus a fourth, the packet's Remove refused by the Lambda's 409 sentence, and a fifth, "175-"
-        # typed into the saved lot's Seed count and Save tapped.
-        # Asserts: (a) no sideways scroll; (b) every visible link, button and form control >=
-        # T.tapMinHeight and inside the viewport, hit-testing to itself on the first screen, with two
-        # NAMED exemptions printed on every run (the two inline links; the pickers' clear ✕, the Favorite
-        # heart and Remove item left the list with BUG-SEEDPAGETAPFLOORS-001); (c) the Sown-from card
-        # carries exactly the fixture's rows, each a full-width 44px+ link to its planting, inside the
-        # card and the viewport, not overflowing, and WHOLE (every text run painted inside the row), with
-        # a wrapped name at 360; (d) Sow this present on the packet, ABSENT on the in-process lot; (e) one
-        # create POST carrying the packet, the sheet closed, "Sown ✓" linking the new planting; (f) the
-        # F2 lot's Breeding reads "F2 — won't come true (parent F1 hybrid)" whole inside its card, and
-        # "Change stage in Saved seeds →" is there; (g) each seed control scrolled into the visible band
-        # hit-tests to itself; (h) the packet's germination per-sowing list stays inside the page with
-        # a long planting name wrapping (BUG-GERMLISTWIDENS-001); (i) the heart's and the ✕'s grown hit
-        # areas leave the host's layout where it was (BUG-SEEDPAGETAPFLOORS-001); (j) a refused Remove
-        # keeps the dialog open with the reason inside it, above its buttons
-        # (BUG-INVDELETEERROROFFSCREEN-001); (k) the saved lot's packet card leads with "Seed count:
-        # 175 seeds" on the opening screen, and only the saved lot carries the seed fields; (l) the typo
-        # is refused beside the field and NOTHING is written (a type="number" box read "175-" as blank
-        # and saved the count away — review BLOCKING-1, 2026-09-25), and after the Save tap the refusal
-        # is inside the visible band with the Seed count box focused (it sat 455-680px above the band).
+        # The seed's own page (/inventory/:id): tests/harness/seeddetail.{html,jsx} mounts the real
+        # InventoryDetail under top bar and bottom nav stand-ins (heights read and checked) at a TRUE 360x640,
+        # 390x844 and 426x836, across a bought packet, the same page after a REAL sow (hit-tested taps), a lot
+        # saved off an F1 plant, a Remove refused by the Lambda's 409, and a typo in the Seed count. The
+        # assertion list, (a) to (l), is in the gate script: tap floor (two NAMED exemptions, printed every
+        # run), the Sown-from card whole, Sow this only where it belongs, the F2 breeding fact, a refused Remove
+        # keeping its reason inside the dialog, and a typed "175-" refused with NOTHING written (a
+        # type="number" box reads it as blank).
         # It refuses a page whose viewport, surface, chrome or fixture counts are not the ones promised.
-        # Verified non-vacuous: `npm run gate:seed-detail:probe-nothing` exits 1 on all twenty-seven
-        # pairs (the seven states and the two walks, each at three viewports); and seven real
-        # regressions in src/** each red it by name — the 44px
-        # floor dropped from the Sown-from rows (row 1 renders 43px), floor and padding dropped (31px), a
-        # long planting name made nowrap (sideways scroll at 360, row not whole at 390), See the planting's
-        # floor dropped (16px), Sow this shown on a drying lot, the F2 fact reverted to "F1 hybrid", and
-        # the row made inline-flex (195px in a 294px card). NO continue-on-error, per the policy note
-        # above. ~30 s locally.
+        # Non-vacuity twin: `npm run gate:seed-detail:probe-nothing` exits 1 on every state/viewport pair.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seed-detail
 
       - name: Seeds Back and lot-page arrival (BUG-SAVEDSEEDSBACKTOP-001, BUG-SEEDLOTOPENSATFORM-001)
-        # The two v4.148.0 scroll fixes live in behaviour jsdom cannot produce, so until this step a
-        # regression of either passed CI (qa-v4148 IMPORTANT 1). (1) useScrollRestore's unmount save read
-        # a scrollY that Chrome had already CLAMPED to the next page's one-screen loading shell, so Back
-        # from a lot page or a planting landed near the top of the list. (2) Nothing reset scroll on a
-        # push, and Chrome's SCROLL ANCHORING re-applied the list's offset once the lot landed, on the
-        # edit form. The unit suites pin both with models (a clamp in a layout effect, a scrollTo spy),
-        # and gate:seed-detail mounts the lot page alone in a MemoryRouter.
-        # tests/harness/seedsscroll.{html,jsx} mounts the real Seeds page and InventoryDetail under
-        # BrowserRouter (react-router's per-entry history keys, a real popstate Back) in App.jsx's shell,
-        # with the 52px top bar and 56px nav stand-ins (heights read and checked) and a network that
-        # answers after a loading phase, framed by viewport.html (the iframe host) at 426x836 and 360x640.
-        # Each flow runs in a fresh tab with real taps (hit-tested in place, never scrolled into view),
-        # real wheel scrolling and history.back():
-        #   (a) Saved seeds scrolled deep, a card's title tapped: the lot page lands at scrollY 0 with its
-        #       h1 in the visible band; Back: scrollY exactly as before the tap, the card's top unchanged;
-        #   (b) Saved seeds deep, the card's "Saved from <planting> →", then Back: as (a);
-        #   (c) My seeds, a row opened, its "Open details →": the lot page lands at 0; Back: the same
-        #       scrollY and row top, and the row still open.
-        # Flows (d) to (g) close an overlay over Seeds (BUG-OVERLAYDISMISSREKEY-001: header Search, the
-        # +LOG door, a double-tapped X) and (h) to (k) re-mount Seeds UNDER a re-opened Search
-        # (BUG-OVERLAYRELOADKEY-001: a result and Back, an app reload with Search open, My seeds' view
-        # state, the system Back as the close). Flows (l) to (p) take a page a Seeds view pushed (the
-        # lot page, the add form) through the same re-mount under Search and then its own Cancel, or the
-        # lot page's Remove (o), with the system Back as the close in (p)
-        # (BUG-SEEDSRETURNUNDEROVERLAY-001: Back onto Seeds' own entry after a walk-close, never Back
-        # after a replace-close). The script's header lists all sixteen and their non-vacuity
-        # records (Projects/Gardening/_seedstab11_20260925/ and _seedstab12_20260925/).
-        # It refuses a frame whose viewport or chrome is not the one asked for, a list less than 300px
-        # down (a clobbered offset could equal it), a tap that pushed no new history entry, and a Back
-        # onto any entry but the list's own.
-        # Verified non-vacuous 2026-09-24 on the integration tree (20b47537). On the pre-fix tree
-        # (HARNESS_BASELINE_SHA=c016dcde) it exits 1 with 20 failures: the lot page lands at 1742 (426)
-        # and 1973 (360) with its h1 off screen, the list's stored offset is clobbered to 108 (56 behind
-        # a planting), and Back lands there with the card off screen. With ONLY the hook reverted, it
-        # fails the 12 Back checks and nothing else; with ONLY the lot page reverted, the 8 lot-page
-        # checks and nothing else. A My seeds that forgets its open row fails (c)'s "row still open"
-        # alone, and `npm run gate:seeds-scroll:probe-nothing` exits 1 on every flow. It passes
-        # under node 20.19.0, with every font forced to Verdana (a wide-font proxy for this runner) and
-        # with its tabs' CPU throttled 6x (GATE_CPU_THROTTLE, a slow-runner rehearsal), with the same
-        # numbers; the pre-fix tree fails the same 20 checks at 6x too. A frame that reloads mid-flow
-        # (Vite re-optimizing a dependency) is named as such rather than measured.
-        # NO continue-on-error, per the policy note above. ~2.8 min locally (sixteen flows, two viewports).
+        # Scroll behaviour jsdom cannot produce: Back must restore the list's scrollY (Chrome CLAMPS scrollY to
+        # the next page's one-screen loading shell before an unmount save can read it), and a push must land
+        # at the top (Chrome's SCROLL ANCHORING re-applies the old offset). The unit suites pin both only with
+        # models. tests/harness/seedsscroll.{html,jsx} mounts the real Seeds page and InventoryDetail under
+        # BrowserRouter (real history keys, a real popstate Back) in App.jsx's shell, with a network that
+        # answers after a loading phase, at 426x836 and 360x640. Each flow runs in a fresh tab with real taps
+        # (hit-tested in place), real wheel scrolling and history.back(). The script's header lists all
+        # sixteen flows: list -> lot page -> Back, and overlays (Search, +LOG) closed or re-mounted over Seeds.
+        # It refuses a frame whose viewport or chrome is not the one asked for, a list less than 300px down (a
+        # clobbered offset could equal it), a tap that pushed no new history entry, and a Back onto any entry but
+        # the list's own. A frame that reloads mid-flow (Vite re-optimizing a dependency) is named as such
+        # rather than measured. Non-vacuity twin: `npm run gate:seeds-scroll:probe-nothing` exits 1 on every flow.
+        # Non-vacuity, measured (the record scripts/layout-gate/seeds-scroll.mjs points to): the pre-fix tree
+        # (HARNESS_BASELINE_SHA=c016dcde) reds it by name; with ONLY the scroll-restore hook reverted
+        # (GATE_HARNESS_CONFIG) it fails the Back checks and nothing else, with ONLY the lot page reverted the
+        # lot-page checks and nothing else; a My seeds that forgets its open row fails "row still open" alone.
+        # Same numbers with every font forced to Verdana and with the tabs' CPU throttled 6x (GATE_CPU_THROTTLE).
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-scroll
 
-  # Real-Chrome gates, second group (~181 s of work, same run).
+  # Real-Chrome gates, second group.
   gates-b:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
@@ -1115,157 +814,75 @@ jobs:
           "$BIN" --version
 
       - name: Kitchen-batch close-out layout and band clearance (V5-KBCLOSE-001)
-        # RE-WIRED 2026-09-07 after its first CI run went red and the finding was triaged to TWO
-        # false positives in the pre-scroll census, both fixed in the gate rather than worked around:
-        # a control whose centre landed exactly ON the viewport edge (elementFromPoint returns null
-        # there — nothing to probe, not something on top), and a control sitting behind the fixed
-        # bottom nav at scrollTop 0, which is what a scrollable page under fixed chrome looks like
-        # and is owned by (d) at the end of the scroll. Both depend on row heights and therefore on
-        # FONT METRICS, which is why they fired on CI and never locally. Verified clean at 800/844/
-        # 860/870/900 and mutation-proved still able to catch a genuine overlay.
-        # The first observable the close-out has ever had. It shipped to prod in v4.115.0 with its
-        # layout REASONED ABOUT and never measured — the batch's own promote handoff flagged exactly
-        # that, and named gate:seeds-saved as the model to copy. This step is that copy.
-        #
-        # Real Chrome at 390x844, plus 390x667 (keyboard up) for the two step-2 sheet states, across
-        # all six states tests/harness/putupclose.jsx renders: empty archive / populated archive /
-        # batch detail / close sheet step 1 / step 2 after Yes / step 2 after No. It mounts the REAL
-        # PutUp page behind its `?state=closed` and `?batch=` mode flags and TAPS the real controls,
-        # so "is the close-out reachable" is answered before "does it fit".
-        #
-        # Asserts, as a census rather than a named list, that no visible button or form control is
-        # under T.tapMinHeight; that no closed-batch row overflows its box or clips its title column
-        # beside the Reopen button at the fixture's worst-case 51-char label; that the document does
-        # not scroll sideways; that the sheet's "Record it" hit-tests to itself, fits the viewport and
-        # is reachable rather than clipped out of a panel that cannot scroll; and — the half its model
-        # has no reason to check — that with the page SCROLLED TO ITS END no control's box intersects
-        # the 56px fixed BottomNav that App.jsx renders on every signed-in route. That last one is
-        # measured at the end of the scroll because at scrollTop 0 nothing near the bottom is ever
-        # probed and "no control is occluded" is a statement about an empty set.
-        #
-        # Verified non-vacuous THREE ways, because a layout gate that measures nothing scores a
-        # perfect pass and this repo has been bitten by exactly that:
-        #   1. `npm run gate:putup:probe-nothing` points every selector at a testid nothing renders.
-        #      Exit 0 -> 1, failing all 8 case/viewport pairs on the instrument check ("closed batch
-        #      rows 0 != 9", "no [role=dialog]", "batch-close-open door false"). A selector that
-        #      matched nothing is a FAILURE here, never the quiet pass it is in a naive census.
-        #   2. T.buttonMinHeight 48 -> 40 (the floor stays 44) reds it with exit 1 naming 14 controls
-        #      at 354x40 — both kept chips and all six outcome chips across both viewports.
-        #   3. PutUp's container bottom padding 80px -> 20px reds it with exit 1 naming one control:
-        #      "Reopen Cider vinegar, first go" (y753-801) under the nav (y788-844) by 13px. Both
-        #      mutations were reverted and the green re-confirmed at exit 0.
-        # Today it passes at 47px of clear air above the bar and at ZERO margin on the tap floor —
-        # the shortest control on every one of the six states measures exactly 44px against a 44px
-        # floor, so any shrink at all reds it.
-        #
-        # ~44 s locally, measured: eight page loads (six states, two at both viewports) behind one Vite
-        # boot, plus a second measurement pass at the end of the scroll on the three non-sheet states.
-        # NO continue-on-error, per the policy note above.
+        # Real Chrome at 390x844, plus 390x667 (keyboard up) for the step-2 sheet states, across the states
+        # tests/harness/putupclose.jsx renders. It mounts the REAL PutUp page behind its `?state=closed` and
+        # `?batch=` flags and TAPS the real controls, so "is the close-out reachable" is answered before "does it
+        # fit". Asserts, as a census, that no visible button or form control is under T.tapMinHeight; that no
+        # closed-batch row overflows or clips beside Reopen at the fixture's 51-char label; no sideways scroll;
+        # that the sheet's "Record it" hit-tests to itself and is reachable; and that with the page SCROLLED TO
+        # ITS END no control intersects the fixed BottomNav (at scrollTop 0 nothing near the bottom is probed,
+        # so "no control is occluded" would be about an empty set).
+        # FONT-METRIC trap: a control whose centre lands exactly ON the viewport edge (elementFromPoint returns
+        # null: nothing to probe) and one behind the nav at scrollTop 0 are not findings; both depend on row
+        # heights, so they fire on CI fonts and never locally.
+        # ZERO margin on the tap floor: the shortest control measures exactly 44px, so any shrink reds it.
+        # Non-vacuity twin: `npm run gate:putup:probe-nothing` exits 1 on every case/viewport pair.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:putup
 
       - name: Put-Up ferment walks, Start to finish and after (release F, 06-ferment-path §5 L3)
-        # Five walks through the REAL /put-up page in real Chrome, at Dave's 426x836 and with the keyboard
-        # up at 426x492: Petri Dish and Settlers of Cayenne (hot-ones-2026/recipes-v3.md), a kraut, a kimchi
-        # (a rinsed soak and a paste salt, gochugaru's heat) and 06 §5.3's Appendix C. Each taps what a cook
-        # taps — Start a batch, the line search (plantings, a pick, weighed and counted draws, typed lines,
-        # Water), the Salt block, Jar & heat and Work it out, Check on it, Put it up and finish — then edits
-        # Made g and a line after finishing (the kimchi also moves its check-in's date). The far side of the
-        # wire is tests/harness/fermentFake.js: stateful, and judging every body with the Lambda's own
-        # validators and planners (validateBatchCreate/Update, validateStage, linesError, linePatchError,
-        # stagePatchError, drawPlan, validatePutUp + planPutUp, validateJarPatch, shuEstimate), so a body
-        # the Lambda would refuse fails the walk. It proves nothing about SQL; that is the integration lane.
-        #
-        # Asserts, besides getting through: every tap lands on its control (nothing painted over its
-        # centre); every focused field sits inside the viewport and clear of a pinned footer or bar; no
-        # sideways scroll; every visible control at least T.tapMinHeight (min of width and height for a
-        # button); an open sheet's primary action on screen at its first AND last scroll position; with the
-        # salt % focused, the %, the live line and "I put in" on screen together; and 06 §5.3's golden
-        # values in the DOM and in what was written ("aimed 3.5% · put in 13.5 g = 3.0% of 448 g", "est.
-        # 950–3.0k SHU", "est. 16–23k SHU", 20.0 g, 18.7 g, the 200 g soak, the 800 g base, "about 92 g left
-        # after"). Text is laid out in Roboto (tests/harness/robotoPin.js), the face Dave's Android renders,
-        # and a run whose pin did not load is refused.
-        #
-        # Verified non-vacuous: `npm run gate:putup-ferment:probe-nothing` points every selector at a testid
-        # nothing renders and exits 1 on all 10 walk/viewport pairs ("the walk did almost nothing (taps 0 <
-        # 20, ...)"). Before the fixes that landed with it the gate was red on four real defects: the re-read
-        # remount that wiped "Saved · Undo", "I put in" under the keyboard at 426x492, Put it up's ~676px
-        # scroll-anchoring jump that put pH under a sticky header, and a 39px-wide Save. Each fix reverted
-        # reds it again (W1-W3), as do a changed salt card (W4) and a refusal drawn as a figure (W5).
-        #
-        # ~81 s locally, measured: ten page loads behind one Vite boot; each walk takes 4-10 s.
-        # NO continue-on-error, per the policy note above.
+        # Five walks through the REAL /put-up page in real Chrome at 426x836 and keyboard-up 426x492, each
+        # tapping what a cook taps from Start a batch to finishing, then editing after. The far side of the wire
+        # is tests/harness/fermentFake.js: stateful, judging every body with the Lambda's own validators and
+        # planners, so a body the Lambda would refuse fails the walk. It proves nothing about SQL (that is the
+        # integration suite). Asserts, besides getting through: every tap lands on its control; every focused
+        # field sits inside the viewport and clear of pinned chrome; no sideways scroll; the tap floor; an open
+        # sheet's primary action on screen at its first AND last scroll position; and the golden values in the
+        # DOM and in what was written (listed in the gate script). Text is laid out in Roboto
+        # (tests/harness/robotoPin.js), the phone's face, and a run whose pin did not load is refused.
+        # Non-vacuity twin: `npm run gate:putup-ferment:probe-nothing` exits 1 on every walk/viewport pair.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:putup-ferment
 
       - name: Icon wiring slice 4 — five rewired surfaces (V4-ICON-001)
-        # Real Chrome at 390x844 across overwinter / inventory-type / water-depth / life-story /
-        # notify. Asserts ZERO pictographic characters survive inside the rewired subtree, and that
-        # every mark renders non-zero, checkVisibility()s true, fits the 390px viewport, is CONTAINED
-        # by the card/chip/row it labels, and has text in an ancestor so nothing reads by mark alone.
-        # `emoji.length === 0` needs no calibration: zero is the only correct value for this lane, so
-        # unlike a chosen ceiling it cannot drift into vacuity. A per-surface minIcons floor (4/2/12/
-        # 5/3) is asserted BEFORE any of it, because "every mark passes" is true of a page with none.
-        #
-        # It could not simply be added as it stood. Its WebSocket blocker was already fixed, but it
-        # defaulted its --outdir to /Users/davenichols/... and then mkdirSync'd it; /Users does not
-        # exist on this runner and cannot be created at /, so it threw INSIDE the try and surfaced as
-        # fail('gate could not complete') -> exit 1, AFTER the Vite boot, the Chrome launch and all
-        # five surfaces had already passed. A false red on the by-product path. The npm script now
-        # passes a repo-relative --outdir (gitignored).
-        #
-        # Verified non-vacuous: putting one 🌱 back into WaterDepthChips' depth labels reds it with
-        # exit 1 on water-depth, naming the character. NO continue-on-error, per the policy note above.
+        # Real Chrome at 390x844 across overwinter / inventory-type / water-depth / life-story / notify.
+        # Asserts ZERO pictographic characters survive inside the rewired subtree, and that every mark renders
+        # non-zero, is visible, fits the viewport, is CONTAINED by the card/chip/row it labels, and has text in
+        # an ancestor so nothing reads by mark alone. A per-surface minIcons floor is asserted first, because
+        # "every mark passes" is true of a page with none. The npm script passes a repo-relative --outdir: an
+        # absolute home path cannot be created on the runner and reds the gate after every check passed.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:iconwire4
 
       - name: Undo toast tap targets, glyph and stack (BUG-UNDOTOASTTAPTARGET-001)
-        # The shared UndoToast (src/context/ToastContext.jsx), behind every "Logged … · Undo" message,
-        # in real Chrome at 426x836 @ DPR 3 (tests/harness/undotap.{html,jsx}: the real ToastProvider
-        # under a 56px nav stand-in; until S8c of V5-TODAYREDESIGN-001 the old Today's care list too).
-        # For every production caller's message shape and on a stack of three at the cap: Undo takes a
-        # tap across a full 48x48 square (hit-tested on a 5x5 grid) while its painted pill stays under
-        # 48px and the toast does not grow to buy it; × is 48px tall, reaches the toast's edge, sits
-        # >= 8px clear of Undo, and keeps its glyph out of the toast's right padding; three toasts do
-        # not overlap and end above the nav; a fourth takes the low-priority toast's slot, not a log's.
-        # CI's toast unit tests pin style declarations only: mutant U1
-        # (× loses the padding that holds its glyph, which slides 14px to the edge) failed 0 of 35.
-        # Verified non-vacuous 2026-09-25: U1 exits 1 on all 13 toasts, and the pre-fix code (dev
-        # 3c83e8b02877bcec3744c441f514010fd14fbffc via --baseline) exits 1 with 65 failures. Same
-        # Roboto pin and font census as the step above. NO continue-on-error, per the policy note
-        # above. ~6 s locally.
+        # The shared UndoToast (src/context/ToastContext.jsx), behind every "Logged … · Undo" message, in real
+        # Chrome at 426x836 @ DPR 3 (tests/harness/undotap.{html,jsx}: the real ToastProvider under a nav
+        # stand-in). For every production caller's message shape and on a stack of three at the cap: Undo takes
+        # a tap across a full 48x48 square while its painted pill stays under 48px and the toast does not grow;
+        # × is 48px tall, reaches the toast's edge, sits >= 8px clear of Undo and keeps its glyph out of the
+        # right padding; three toasts do not overlap and end above the nav; a fourth takes the low-priority
+        # toast's slot. The toast unit tests pin style declarations only, so this is the one that sees a glyph
+        # slide. Same Roboto pin as the put-up walks.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:undo-toast
 
       - name: Weigh-in Save-band stability (V4-HARVESTFRAME-001)
-        # The "it doesn't jump around" invariant, and the only gate here that drives a FULL four-entry
-        # harvest session rather than a single render. Real Chrome at 390x500 with the keyboard up.
-        # On the shipped frame arm the travel budget is ZERO — entries 2-4 must move the weight pad
-        # not one pixel (entry 1 gets a documented 12px descent allowance; it measures 8px) — and
-        # track 3's height must read [49,49,49,49,49] across the session, which is the ledger's whole
-        # claim. It also refuses to pass vacuously in several named ways: a surface it cannot identify
-        # FAILS, a zero-height or non-visible or pointer-events:none band FAILS, a step that never came
-        # to rest FAILS rather than being averaged away, and on the frame arm a travel of 0 is only
-        # accepted while the document genuinely cannot scroll.
-        #
-        # Last of the layout gates because it was the slowest when wired, at ~3 min locally (measured
-        # 184 s). ~170 s of that was its uncleared 180 s CDP timeout idling after PASS; ~13 s now.
-        #
-        # Its ONLY blocker was the bare global WebSocket that kept its siblings out — node 20.19.0 has
-        # none. Fixed with the same one-line cdp-socket.mjs import, then MEASURED under that condition
-        # rather than assumed: run with globalThis.WebSocket deleted it still PASSes, same arm, same
-        # 8px, exit 0. Verified non-vacuous: FRAME_LEDGER_PX 48 -> 64 reds it with exit 1 on
-        # "Track 3 height progression is [65,65,65,65,65], expected [49,49,49,49,49]".
+        # The "it doesn't jump around" invariant, and the only gate that drives a FULL four-entry harvest
+        # session rather than a single render. Real Chrome at 390x500 with the keyboard up. On the frame arm the
+        # travel budget is ZERO: entries 2-4 must not move the weight pad one pixel (entry 1 has a documented
+        # 12px descent allowance), and track 3's height must stay [49,49,49,49,49] across the session
+        # (FRAME_LEDGER_PX). It refuses to pass vacuously: an unidentified surface, a zero-height, non-visible
+        # or pointer-events:none band, or a step that never came to rest FAILS, and on the frame arm a travel of
+        # 0 is accepted only while the document genuinely cannot scroll.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:save-band-stability
 
-  # Page scroll alone: at ~539 s in that run (42 flows, 78 flow-runs today: ~570 s locally) it is longer
-  # than either group above, and it is the gate that grows.
+  # Page scroll alone: it is longer than either group above, and it is the gate that grows.
   gates-c:
     runs-on: ubuntu-26.04
     timeout-minutes: 25
@@ -1293,96 +910,51 @@ jobs:
 
       - name: Page scroll — a page opens at its top, Back returns to the place (BUG-DETAILPAGESCARRYSCROLL-001)
         # BrowserRouter never resets scroll on a push: the arriving page paints a one-screen loading shell,
-        # Chrome clamps the old offset to it and SCROLL ANCHORING re-applies it once the content lands, so 9
-        # of 10 measured pages opened part-way down, most at their bottom. Today's "Back keeps my place" on
-        # those pages rides the same carry, so a reset alone breaks Back. The fix is ONE app-level manager
-        # (src/hooks/usePageScrollManager.js, decisions in src/lib/pageScroll.js, flag SCROLL_MANAGER_ENABLED):
-        # a reset when the page tree reaches a different page, a restore on POP that re-applies until the
-        # target holds, history.scrollRestoration 'manual'. jsdom has no clamp, no anchoring and no traversal
-        # timing; the unit suites pin the decisions (pageScroll.test.js) and the wiring
-        # (usePageScrollManager.test.jsx) with models.
-        # tests/harness/pagescroll.{html,jsx} mounts the real pages (a planting and its Event log, Zones and a
-        # zone, Garden, Put-Up, Seeds, a seed lot and the variety editor, Harvests, Achievements) under
-        # BrowserRouter in App.jsx's shell, with the REAL manager and main.jsx's real boot mode (the drift
-        # guard fails if either stops matching App.jsx), BottomNav's armed + and More sheets, header Search as
-        # a real OverlayLink with Search.jsx's peek, a network that answers after a loading phase, a Clerk
-        # token that can be slow to come (a cold cache) and a user that can be held unresolved (Protected's
-        # skeleton), framed by viewport.html at 426x836 and 360x640. Real taps (hit-tested in place), real
-        # wheel scrolling, real touch input (a resting thumb, a drag, a finger's tap), real typing,
-        # history.back(). Every page a flow pushes onto must land at scrollY 0 (within 1px — a browser-side
-        # sub-pixel nudge seen on zone pages and on this runner, counted in the log) with its title in the
-        # visible band, and every Back must land on the exact offset
-        # the page was left at, the tapped element at the same viewport top:
-        #   the Event log (two-stage load; 3 s per stage; past "Show more", where the place is out of reach
-        #   and the restore must stop at the page's end once the page has settled, and give way to a tap on
-        #   "Show more"), Zones from a mid-list row plain / 5 s slow / every request waiting 1.5 s for its
-        #   token / left mid-restore / reloaded / reloaded behind a 3 s skeleton, a seed lot after a refused
-        #   Save (the refused field in view and focused, then Back to it on the pixel), a wheel and a moving
-        #   finger inside the restore's hold (the user wins; a
-        #   thumb resting through the load does not take over), Back onto a list and onto Put-Up left at their
-        #   top, the More and Search doors and Search's peek, Garden (Back from a planting, tab away and back
-        #   at 1x and 4x CPU, "Add a planting" on the same page; and three Today round trips with no scrolling
-        #   between — plain, with the household growing on the first return, with a planting added above the
-        #   spot by the return's revalidate, and that one's unchanged control — checked in CONTENT terms: the
-        #   planting left on screen, followed by name, comes back where it was left and does not move once on
-        #   screen; the harness answers /api/members as prod's household of two, so Garden's caretaker row is
-        #   above the list, and every Garden flow checks it is: BUG-GARDENSPOTCREEP-001; and, with the person's
-        #   prefs row served on Lifecycle — ?prefs=, the only flows in which Garden reads prefs — Type picked and
-        #   kept through three returns, its save landing or every save lost to a dead zone:
-        #   BUG-GARDENGROUPBYRESET-001), Put-Up's batch, the
-        #   Seeds view switch and a list's sort (no jump), Harvests' tab re-tapped then Back, Saved seeds opened
-        #   at a lot then Back (no
-        #   second jump to the lot), Back into Saved seeds and into Harvests at the top, a list blanked behind
-        #   Search / a Back marker and still short at the close, the variety-editor round trip, 25 pages deep.
-        #   The six slow flows run at 426x836 only (they measure time, not layout).
-        # FLAG-AWARE, for the rollback: it reads SCROLL_MANAGER_ENABLED as the harness serves it. With the flag
-        # off it prints "manager OFF" and asserts today's contract only (mode 'auto', same-page writes and
-        # overlays never moving the page, Garden's and the hook pages' own restores, the pages that reset
-        # themselves, Back to a page left at its top), printing the manager's own checks instead of asserting
-        # them, so a forward flag-off build passes this step. Roll back that way, never with a revert. Rehearse
-        # it from any checkout: npm run test:flag-off, gate:page-scroll:flag-off, gate:seeds-scroll:flag-off
-        # (the flag served false in memory, tests/harness/flagOffTransform.mjs).
-        # It refuses a frame whose viewport, chrome, latency, skeleton or restore mode is not the one asked
-        # for, a source less than 300px down, a tap that pushed no entry, a Back onto any entry but the one the
-        # offset was taken on, and a takeover flow whose restore had already finished before the user acted;
-        # the script's header lists each flow.
-        # Verified non-vacuous 2026-09-25 (Projects/Gardening/_seedstab12_20260925/scrollmgr-nonvacuity-review-
-        # *.txt in the gardening-docs repo; mutants served through GATE_HARNESS_CONFIG), each red at every
-        # viewport it runs at: the manager deciding nothing with the flag on reds 51 of 59 flow-runs (pages land
-        # at 56, 188, 3000, 52 or deeper; Backs lose the place) and leaves green only the must-not-change guards
-        # (Search's peek, "Add a planting", Put-Up, the Seeds switch); row 4's zero removed reds top-back
-        # (3000 of 0); row 6's reds putup-top (56 of 0); no scroll takeover reds takeover and takeover-touch (the
-        # restore pulls the page back); a touch pointerdown taking over reds takeover-touch (the resting thumb
-        # loses the place); no click takeover reds eventlog-more-tap (the page jumps to the old place); no
-        # out-of-reach stop reds eventlog-more (still pulling 8 s after Back); claims per page instead of per
-        # entry reds retap-back (0 of 1138); the ?lot= hint on a return reds lot-back (the page jumps back to
-        # the lot); time counted under the skeleton reds reload-skeleton; a 4 s budget reds eventlog-slow (2070
-        # of 4658) and zones-slow; stopping on the height alone (no in-flight check) reds eventlog-slow,
-        # zones-slow and leave-during-load; the pathname rule removed reds garden-add, seeds-switch,
-        # same-replace and retap-back (a same-page write jumps to 0); the snapshot removed, or filing while
-        # covered, reds the three blanked-list closes; writes left open while armed reds leave-during-load; row
-        # 5's zero removed reds hook-top. Confirmation round (…/scrollmgr-nonvacuity-confirm-*.txt): with src
-        # served from 2622a8e (a request counted only once its token was in hand) zones-slowtoken is red at both
-        # viewports (56 of 960 / 1104); with the driver back on 4 px lot-refuse comes back at 972 for 968 in 6
-        # of 9 runs at 426x836 (a timing-dependent drift; the driver's unit tests are the deterministic pin).
-        # BUG-GARDENSPOTCREEP-001 (…/gardencreep-v2-mut-*.txt, mutants served in memory, both viewports): the
-        # household uncached (useMembers as 4.156.0) reds garden-cycles — the planting comes back 64/128/192px up
-        # the screen; a restore that holds the raw offset until the network is quiet (the fix first built,
-        # withdrawn after QA) reds garden-plantsgrow — the planting dropped a full tile row, 252.8px; /api/members
-        # answering [] is refused by the roster check, and without that check garden-cycles PASSES on 4.156.0 —
-        # the vacuity that let the creep ship.
-        # Served with the flag OFF (the rollback) it PASSES, printing "manager
-        # OFF". The "entry still current" write rule has no flow (its window is timing-dependent under
-        # 'manual') and is pinned by usePageScrollManager.test.jsx; the reload flow proves one of the hidden and
-        # pagehide flushes (location.reload() fires both), and the discard path (hidden only) is unit-pinned.
-        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~9.5 min locally (42 flows, 78
-        # flow-runs: the six slow ones at 426x836 only).
-        # NO continue-on-error, per the policy note above.
+        # Chrome clamps the old offset to it and SCROLL ANCHORING re-applies it once the content lands, so pages
+        # open part-way down; and "Back keeps my place" rides the same carry, so a reset alone breaks Back. The
+        # fix is ONE app-level manager (src/hooks/usePageScrollManager.js, decisions in src/lib/pageScroll.js,
+        # flag SCROLL_MANAGER_ENABLED). jsdom has no clamp, no anchoring and no traversal timing; the unit suites
+        # pin the decisions (pageScroll.test.js) and the wiring (usePageScrollManager.test.jsx) with models.
+        # tests/harness/pagescroll.{html,jsx} mounts the real pages under BrowserRouter in App.jsx's shell, with
+        # the REAL manager and main.jsx's real boot mode (a drift guard fails if either stops matching App.jsx),
+        # a network that answers after a loading phase, a Clerk token that can be slow and a user that can be
+        # held unresolved, at 426x836 and 360x640. Real taps, wheel, touch, typing and history.back(). Every page
+        # a flow pushes onto must land at scrollY 0 (within 1px: a browser-side sub-pixel nudge, counted in the
+        # log) with its title in view, and every Back must land on the exact offset the page was left at. The
+        # script's header lists each flow; the slow flows run at 426x836 only (they measure time, not layout).
+        # FLAG-AWARE, for the rollback: with SCROLL_MANAGER_ENABLED off it prints "manager OFF" and asserts only
+        # the flag-off contract, so a forward flag-off build passes this step. Roll back that way, never with a
+        # revert. Rehearse from any checkout: npm run test:flag-off, gate:page-scroll:flag-off,
+        # gate:seeds-scroll:flag-off (the flag served false in memory, tests/harness/flagOffTransform.mjs).
+        # It refuses a frame whose viewport, chrome, latency, skeleton or restore mode is not the one asked for, a
+        # source less than 300px down, a tap that pushed no entry, a Back onto any entry but the one the offset
+        # was taken on, a takeover flow whose restore had already finished before the user acted, and an
+        # /api/members roster that is not the household of two (without that check the Garden flows pass on a
+        # build that creeps).
+        # Non-vacuity (the record scripts/layout-gate/page-scroll.mjs points to; mutants served through
+        # GATE_HARNESS_CONFIG, each red at every viewport it runs at), mutant: flows it reds.
+        #   manager deciding nothing, flag on: every flow but the must-not-change guards (Search's peek,
+        #     "Add a planting", Put-Up, the Seeds switch); row 4's zero removed: top-back; row 5's: hook-top;
+        #     row 6's: putup-top
+        #   no scroll takeover: takeover, takeover-touch; a touch pointerdown taking over: takeover-touch; no
+        #     click takeover: eventlog-more-tap; no out-of-reach stop: eventlog-more
+        #   claims per page instead of per entry: retap-back; the ?lot= hint on a return: lot-back; time counted
+        #     under the skeleton: reload-skeleton; a 4 s budget: eventlog-slow, zones-slow
+        #   stopping on the height alone: eventlog-slow, zones-slow, leave-during-load; writes left open while
+        #     armed: leave-during-load
+        #   the pathname rule removed: garden-add, seeds-switch, same-replace, retap-back; the snapshot removed or
+        #     filing while covered: the three blanked-list closes
+        #   a request counted before its token was in hand: zones-slowtoken; the household uncached:
+        #     garden-cycles; a restore holding the raw offset until the network is quiet: garden-plantsgrow
+        # Not covered by a flow: the "entry still current" write rule (timing-dependent under 'manual') and the
+        # hidden-only discard path, both pinned by usePageScrollManager.test.jsx. The lot-refuse flow's driver
+        # can drift by a few px with timing; the driver's unit tests are the deterministic pin.
+        # Non-vacuity twin: `npm run gate:page-scroll:probe-nothing` exits 1 on every flow.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:page-scroll
 
-  # The two Today V2 steps, which run their gate and then its probe-nothing and self-test proofs (~251 s).
+  # The two Today V2 steps, which run their gate and then its probe-nothing and self-test proofs.
   gate-probes:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
@@ -1409,19 +981,16 @@ jobs:
           "$BIN" --version
 
       - name: Today V2 contract, instrument and self-test (V5-TODAYREDESIGN-001)
-        # THE Today gate since S8c (L8) of the redesign (plan-v2 §9.1): the old page, its gate (the "Today
-        # page shape at 426x836" step that ran beside this one) and its budget are gone. It drives the real
-        # TodayV2 (tests/harness/todaymeasure.jsx, on tests/harness/vite.harness.v2.mjs) over the 22 contract
-        # states in tests/harness/_todaymeasure/today-v2-contract.mjs. Every slice has landed, so a check
-        # still PENDING fails the run; the instrument (viewport, clock, font pin, stubbed weather, no live
-        # request, fixture ledger, the state's seeds, the prefs GET) holds on every state. Then two proofs
-        # the contract can fail, both of which must hold:
+        # THE Today gate. It drives the real TodayV2 (tests/harness/todaymeasure.jsx, on
+        # tests/harness/vite.harness.v2.mjs) over the contract states in
+        # tests/harness/_todaymeasure/today-v2-contract.mjs. A check still PENDING fails the run; the instrument
+        # (viewport, clock, font pin, stubbed weather, no live request, fixture ledger, the state's seeds, the
+        # prefs GET) holds on every state. Then two proofs the contract can fail, both of which must hold:
         # --probe-nothing blinds every v2 anchor and MUST exit 1, and --self-test arms every check against
         # an EMPTY V2 stub and passes only if the census reds every state while the instrument holds.
         # The probe is inverted with an explicit `if`, NOT a bare `! cmd`: steps run `bash -e`, and errexit
         # ignores a `!`-inverted command, so a probe that wrongly exited 0 mid-block would be swallowed.
         # The v2 mutation matrix stays out of CI (npm run mutate:today-shape:v2).
-        # NO continue-on-error, per the policy note above.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: |
@@ -1437,9 +1006,7 @@ jobs:
         # called as AppShell calls it: the shell itself (measured page band = 836 - 52 - 56, TopChrome
         # sticky at y=0, scrollRestoration manual, a production-shaped /api/members roster, the prefs GET),
         # a drift guard against App.jsx (TodayV2 mounted at /today from a static import) and main.jsx, and
-        # sticky, jump landing and the Back round trip. Zero PENDING since S8c.
-        # --probe-nothing MUST exit 1 (explicit `if`, as above).
-        # NO continue-on-error.
+        # sticky, jump landing and the Back round trip. --probe-nothing MUST exit 1 (explicit `if`, as above).
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: |
@@ -1449,10 +1016,10 @@ jobs:
             exit 1
           fi
 
-  # The verdict. It has no check-run and no job record until every leg has finished (RESULTS.md E5). `always()`
+  # The verdict. It has no check-run and no job record until every leg has finished. `always()`
   # because without it a failed leg makes this job `skipped`, which reads as "no verdict" rather than red. The
   # step uses no action and no network: it reads the legs' results from `needs` and nothing else. A leg that
-  # timed out reads `cancelled` here, not `failure` (RESULTS.md E4, E9), so the test is "every result is
+  # timed out reads `cancelled` here, not `failure`, so the test is "every result is
   # success", never "no result is failure". The pinned list is what makes a leg dropped from `needs` (or a new
   # leg nobody listed) a red rather than a quieter green. No `name:` on this job: its id is the check-run name,
   # and `build-and-test` is the name promote-gate.yml asks scripts/promote-preflight.py for.
