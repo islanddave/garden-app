@@ -1,7 +1,7 @@
 // Unit tests for the Today weather-cue IMPRESSION LOG (OPS-CUEINSTRUMENT-001) — the POST handler in
 // lambda/daily-plan-read/cue-impression.js.
 //
-// Same discipline as ready-impression.test.js / watch-impression.test.js: these EXECUTE the handler
+// Same discipline as watch-impression.test.js: these EXECUTE the handler
 // against a recording tagged-template `sql` stub and assert on the parameters actually bound — never
 // a regex over the module source. What a stub cannot prove (that ON CONFLICT really arbitrates on
 // uq_weather_cue_impression_day, that the CHECKs reject an out-of-vocabulary value) belongs in

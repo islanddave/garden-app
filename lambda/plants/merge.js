@@ -313,8 +313,8 @@ export async function mergeCore(sql, {
   //
   //    BUG-MERGEREPLAYSCOPE-001: scoped to the caller's household (merged_by, the only actor column
   //    merge_event has) AND to this winner. This read runs before the group ownership load below, so
-  //    unscoped it handed any authenticated caller who knew (or guessed — merge-run uses
-  //    `merge-run-g<n>`) an op_id another household's merge record: winner, losers and counts. A
+  //    unscoped it handed any authenticated caller who knew (or guessed — op_ids can be
+  //    patterned) an op_id another household's merge record: winner, losers and counts. A
   //    foreign op_id now finds nothing here, runs the caller's own merge, and is refused by
   //    merge_event_op_uniq at the INSERT (the generic 409 in the catch below). The winner term stops
   //    a household replay under a different path id from returning another group's outcome.

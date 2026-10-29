@@ -64,7 +64,6 @@ function scan() {
 const DIALOG_SURFACES = {
   'components/forms/Sheet.jsx':        { registered: true },
   'components/Lightbox.jsx':           { registered: true },
-  'components/ZoomableImage.jsx':      { registered: true },
   'components/SpaceAttachPicker.jsx':  { registered: true, busy: 'saving' },
   'components/FacebookShareSheet.jsx': { registered: true, busy: 'posting — non-idempotent' },
   'components/CritterFactsPopover.jsx':{ registered: true },

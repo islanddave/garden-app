@@ -44,7 +44,6 @@ const DUMP_PLACEHOLDER_LATLNG = [
   'a51acbe2313bdfba201fe356699731122e272828893a373da17ffff8a324e4f8',
   'c60e5e9bf6f91308e34462771766a9f61aaa8b3fec9615f98235badf8fc8ea0d',
 ]
-const FAKE_MAC = '261900fb1113aa4db748173e13abd88ae0faf7536891ee956fea94d58673cbdb'
 const HARVEST_AVERAGES = [
   '08774eb02e5d53863cc07831517282b5509cb8631d770d0951dd1956d7533afa',
   '2693973ce44440e2f9287470140dc6d02458985f4dd304d348a11991c2b9bb7a',
@@ -68,8 +67,6 @@ const KNOWN_AT_BASE = {
     latlng: ['6418cb4858d8b6a376a1d99f2078b73074ba57707ca16305ed2c49953f83e0bb', DUMP_PLACEHOLDER_LATLNG[1]],
     reason: 'the README describes the dumps\' placeholder coordinates',
   },
-  'tests/harness/wxbanner.jsx': { mac: [FAKE_MAC], reason: 'obviously fake MAC (all AA..FF)' },
-  'tests/harness/wxoutage.jsx': { mac: [FAKE_MAC], reason: 'obviously fake MAC (all AA..FF)' },
   'tests/harness/_todaymeasure/harvests.json': { latlng: HARVEST_AVERAGES, reason: HARVEST_FP },
   'tests/harness/_todaymeasure/harvests.batchwindow.json': { latlng: HARVEST_AVERAGES, reason: HARVEST_FP },
 }

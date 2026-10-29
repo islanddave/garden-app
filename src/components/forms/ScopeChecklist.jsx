@@ -394,7 +394,7 @@ export default function ScopeChecklist({
   const [mode, setMode] = useState(() => (initialSelection?.mode === 'pick' ? 'pick' : 'bulk'))
   const [frameOpen, setFrameOpen] = useState(false)
   // V4-BACKNAV-001 — register the frame at the layer it PAINTS (DIALOG = 1000, the same pairing
-  // Lightbox / ZoomableImage / CritterFactsPopover use). Without this, Escape over an open frame is
+  // Lightbox / CritterFactsPopover use). Without this, Escape over an open frame is
   // arbitrated to the hosting Sheet and dismisses the WHOLE Log Many overlay from underneath a
   // picker the user is mid-way through, because the registry would not know anything is above it.
   // `armsBack` is deliberately NOT set: it defaults false, so Android Back still falls through to
@@ -1036,7 +1036,7 @@ export default function ScopeChecklist({
           `interactive-widget=resizes-content`, so the Android IME shrinks the LAYOUT viewport and
           track 3 rides up with the keyboard instead of hiding behind it — the same property the
           weigh frame depends on.
-          zIndex 1000 is the house full-screen-layer value (Lightbox, ZoomableImage,
+          zIndex 1000 is the house full-screen-layer value (Lightbox,
           CritterFactsPopover); it clears Sheet's panel at 200 and stays under ConfirmSheet/Toast
           at 1190/1200, which must still be able to interrupt. */}
       {frameOpen && (

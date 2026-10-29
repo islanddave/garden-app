@@ -51,7 +51,6 @@ const DAVE_CONSTANTS = {
   'lambda/daily-plan/householdScope.js': { GARDEN_HOUSEHOLD_IDS: 1 },
   'lambda/events/critterAward.js': { literal: 1, SENTINEL_WORKSPACE: 2 },
   'lambda/shared-state/index.js': { literal: 1, SENTINEL_WORKSPACE: 5, GARDEN_HOUSEHOLD_IDS: 1 },
-  'scripts/merge-run.mjs': { GARDEN_HOUSEHOLD_IDS: 1 },
   'scripts/seed-recipes.mjs': { GARDEN_HOUSEHOLD_IDS: 1 },
   'scripts/weather-observability.sh': {
     literal: 1,

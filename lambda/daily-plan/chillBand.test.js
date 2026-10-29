@@ -13,7 +13,7 @@
 // the engine returned icon `cool` and the client could not render it, so Today went silent on such a
 // night. src/__tests__/weatherCue.test.js drives the REAL client reader and the REAL server vocabulary
 // with the engine's own output, so that failure reds a test. (It lives there, not here: a test under
-// lambda/ that loads src/ has to run in the dom project, scripts/ci-telemetry/vitest-node-project.mjs.)
+// lambda/ that loads src/ has to run in the dom project, scripts/vitest/vitest-node-project.mjs.)
 
 import { describe, it, expect } from 'vitest';
 import engine from './engine.js';

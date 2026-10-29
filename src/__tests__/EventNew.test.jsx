@@ -167,7 +167,7 @@ describe('EventNew — harvest panel rendering', () => {
     // reveals it. Assert it is reachable (the field + its state/payload wiring intact).
     renderEventNew('event_type=watering')
     await flushLoad()
-    // Collapsed by default (EVENTNEW_ADD_DETAILS_EXPANDED=false): not yet in the DOM.
+    // Collapsed by default: not yet in the DOM.
     expect(screen.queryByLabelText('Quantity')).toBeNull()
     // The expander label lives in its own <span> ("Add details  ·  optional"); match on
     // a stable substring so the leading toggle-arrow span doesn't break the matcher.

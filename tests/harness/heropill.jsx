@@ -33,7 +33,7 @@ import { createRoot } from 'react-dom/client'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import PlantingDetail from '../../src/pages/PlantingDetail.jsx'
 import { DismissRegistryProvider } from '../../src/context/DismissRegistry.jsx'
-// FavoriteToggle uses the strict useAuth, which throws without this provider (see editdeeplink.jsx).
+// FavoriteToggle uses the strict useAuth, which throws without this provider.
 import { AuthProvider } from '../../src/context/AuthContext.jsx'
 import { selectKeyFact, selectCropType } from '../../src/lib/keyFact.js'
 import { P } from '../../src/lib/constants.js'

@@ -137,8 +137,8 @@ export default function PlantCareRow({ row, testid = 'care-row', reason, urgent,
 
 // ── styles (tokens P / T; design-visual-system §3 "Per-plant row") ──────────────────────────────────────────────
 // A hairline row inside a card (Protect's own rows restyle it into a row card): 48 tall, padding 4/6/4/10. The main
-// action keeps the 48px tap height of the cell it replaced — gate:today-shape:v2's rain-wait-floors and
-// rain-hold-view.mjs read "each row's Water ≥ 48" — but paints the mockup's 44px pill, level with the outline beside
+// action keeps the 48px tap height of the cell it replaced — gate:today-shape:v2's rain-wait-floors reads
+// "each row's Water ≥ 48" — but paints the mockup's 44px pill, level with the outline beside
 // it: a 2px transparent rule above and below is part of the target and not of the fill (background-clip). The outline
 // and Retry are the 44 floor (T.tapMinHeight). Button padding is 8 (not outlineBtn's 12) so three buttons leave the
 // name its ≈106 px at 426 (finish plan §3.1).

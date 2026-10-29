@@ -15,7 +15,7 @@
 // pH, derives a readiness, or words a date as anything but a date with where it came from.
 import * as engine from '../../../lambda/preservation/shelfLife.js'
 import {
-  parseYmd, toYmd, shortDay, putUpDateWords, basisWords, KIND_WORDS, ESTIMATED_PRECISIONS, countedSize,
+  parseYmd, toYmd, shortDay, putUpDateWords, basisWords, ESTIMATED_PRECISIONS, countedSize,
 } from './jarWords.js'
 import { parseRating } from './fermentMath.js'
 
@@ -441,5 +441,3 @@ export function sittingRows(jars) {
     place: j?.storage_label ? { label: String(j.storage_label) } : null,
   }))
 }
-
-export function placeWords(kind) { return KIND_WORDS[kind] ?? null }

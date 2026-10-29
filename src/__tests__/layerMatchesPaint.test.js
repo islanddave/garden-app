@@ -103,9 +103,6 @@ describe('registered LAYER agrees with painted zIndex', () => {
       }
     }
     walk(SRC)
-    // ZoomableImage is dead code (its only importer is its own test) but still registers; it is
-    // deliberately excluded rather than inventoried, so the list describes live surfaces only.
-    const live = found.filter((f) => !f.endsWith('ZoomableImage.jsx'))
-    expect([...live].sort()).toEqual([...listed].sort())
+    expect([...found].sort()).toEqual([...listed].sort())
   })
 })

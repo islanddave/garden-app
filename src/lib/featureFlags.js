@@ -12,34 +12,6 @@ export const VARIETY_REF_UI_SHIPPED = false // Flips true when VARIETY-REF S4 sh
 // navigator.standalone) — installation is a separate prereq from the bi-state flag.
 export const SYSTEM_NOTIFICATIONS_ENABLED = false
 
-// V3-EVENT-008 §8 (Dave 2026-06-03): EventNew's three low-frequency fields —
-// Quantity·optional, Visibility card, Private-notes card — moved into a collapsible
-// "Add details" section to declutter the common logging path (ADHD focus). They are
-// NOT removed: the section stays reachable, all state/payload wiring is intact, and
-// the horticulture data (season-narrative notes + propagation/germination counts) is
-// preserved. When this flag is FALSE the section starts COLLAPSED (the common path);
-// flip TRUE to have it render EXPANDED by default. Either way the fields are reachable.
-export const EVENTNEW_ADD_DETAILS_EXPANDED = false
-
-// DRG-WXWATER-001 coarse-v1 (Dave 2026-07-08): mirrors the server CARE_RAIN_CREDIT_ENABLED env flag for any UI
-// that surfaces the "watering skipped — recent rain" substrate-tier trace. Default OFF; flip TRUE in lockstep
-// with the server env var AFTER shadow-soak. These are SEPARATE mechanisms — the CJS daily-plan Lambda cannot
-// import this ESM module, so the server reads process.env.CARE_RAIN_CREDIT_ENABLED and this is the client copy.
-export const CARE_RAIN_CREDIT_ENABLED = false
-
-// DRG-WXFLAGSPLIT-001 F1 (2026-07-31): client mirror of the server CARE_RAIN_MAXDAYS_ENABLED env flag, split
-// out of CARE_RAIN_CREDIT_ENABLED so the tiered rain CREDIT and the max-days interval CEILING can be flipped
-// independently. Default OFF and inert. Same separate-mechanism caveat as above: flip this in lockstep with
-// the Lambda env var, or the client rain trace diverges from the plan the server actually computed.
-export const CARE_RAIN_MAXDAYS_ENABLED = false
-
-// BUG-TODAYWATER-001 (2026-08-03): client mirror of the server CARE_TODAY_AWARE_ENABLED env flag. Lets the
-// engine suppress watering on rain forecast for TODAY, not just rain already fallen or rain due tomorrow.
-// Default OFF and inert. Same lockstep caveat as above — and note the flag is also the rollback lever here:
-// this Lambda has no staging surface and its deploy redeploys all 26 functions, so flipping the env var is
-// the two-minute revert path and flipping this constant is only the client-side trace.
-export const CARE_TODAY_AWARE_ENABLED = false
-
 // V4-WATERMATH-001 F0 (2026-08-12): editing a logged watering's amount class (Light/Normal/Deep)
 // from event history. CAPTURE is unflagged and live — POST /api/events already stores whatever
 // `metadata` it is handed, and the batch path is covered by the events-Lambda merge. EDIT is NOT:

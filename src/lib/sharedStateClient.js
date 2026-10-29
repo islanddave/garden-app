@@ -48,10 +48,3 @@ export function getTally({ getToken, key } = {}) {
   if (!key) return Promise.resolve(null)
   return authedFetch(`/api/shared-state/tally/${encodeURIComponent(key)}`, { getToken })
 }
-
-// POST tally/{key}/increment { by? } -> { natural_key, counter } | null   (D2-ready; unused by D1)
-export function incrementTally({ getToken, key, by = 1 } = {}) {
-  if (!key) return Promise.resolve(null)
-  const body = Number.isInteger(by) && by > 0 ? { by } : {}
-  return authedFetch(`/api/shared-state/tally/${encodeURIComponent(key)}/increment`, { getToken, method: 'POST', body })
-}

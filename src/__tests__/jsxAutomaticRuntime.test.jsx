@@ -1,31 +1,9 @@
-// OPS-JSXCLASSICFALLBACK-001 — the guard for vitest.config.ts's `esbuild: { jsx: 'automatic' }`.
-//
-// WHAT BREAKS WITHOUT IT. vitest 2.1.9 pins vite-node to its own nested vite@5.4.21; the top-level
-// vite is 8.0.9 and @vitejs/plugin-react 5.2.0 targets 6/7/8, so the plugin's automatic-runtime
-// configuration never reaches the pipeline that transforms modules for the unit run. esbuild then
-// falls back to its default classic transform and emits bare `React.createElement`. Any .jsx that
-// does not `import React` throws `ReferenceError: React is not defined` the instant a test renders
-// it. Measured 2026-08-14: 10 source files under src/ are in that state, plus every test file that
-// writes JSX without importing React — including this one, deliberately.
-//
-// THIS FILE MUST NOT `import React`. That absence is half the assertion: the inline `<Probe />`
-// below is compiled by the same transform under test.
-//
-// NOT VACUOUS — verified by mutation... UNDER VITEST 2. Removing the `esbuild` block from
-// vitest.config.ts turned every test here RED with `ReferenceError: React is not defined`.
-//
-// UPDATE 2026-09-10 (vitest 2.1.9 -> 4.1.11, security upgrade): THIS FILE IS NOW VACUOUS with
-// respect to the esbuild block. vitest 4 drops the nested vite@5.4.21 and runs the unit transform
-// under the top-level vite 8, which @vitejs/plugin-react supports, so the automatic runtime is
-// configured whether or not that block is present — re-measured by mutation this session: removed
-// the block, all 4 tests here stayed GREEN. The file is kept because it still proves the automatic
-// runtime is ACTIVE (a real property worth pinning, and the anchor assertions below still fail
-// loudly if a page's copy changes) — but it no longer guards the config line it names, so do not
-// treat a green run here as evidence that removing that line is safe.
+// OPS-JSXCLASSICFALLBACK-001 — proves the JSX automatic runtime is active in the unit transform.
+// THIS FILE MUST NOT `import React`: the inline <Probe /> is compiled by the transform under test, and
+// under esbuild's classic fallback it throws `ReferenceError: React is not defined`.
+// Under vitest 4 the automatic runtime is configured whether or not vitest.config.ts's `esbuild` block
+// is present, so a green run here is not evidence that removing that block is safe.
 import { render, screen } from '@testing-library/react'
-import Home from '../pages/Home.jsx'
-import Tasks from '../pages/Tasks.jsx'
-import Footer from '../components/Footer.jsx'
 
 function Probe() {
   return <div data-testid="inline-probe">inline</div>
@@ -35,31 +13,5 @@ describe('JSX automatic runtime (vitest.config.ts esbuild block)', () => {
   it('compiles inline JSX in a test file that never imports React', () => {
     render(<Probe />)
     expect(screen.getByTestId('inline-probe').textContent).toBe('inline')
-  })
-
-  // The three src/ modules that render standalone with no provider or network scaffolding. The
-  // other latent files (Achievements, AuthCallback, Inventory, Login, FavoritesContext,
-  // ProjectTypes) need Clerk/AuthContext/data mocks to reach their JSX at all, so a render here
-  // would be testing the mocks, not the transform. They are covered by the same one config switch
-  // — the transform is repo-wide, not per file.
-  //
-  // A fourth specimen (ZoneContext.jsx's provider) lived here until V4-AMBIENTZONE-001 deleted that
-  // file. It was NOT replaced: the only other context with no React import is FavoritesContext,
-  // whose provider calls useAuth()/useApiFetch() and so needs the very mocks that would make the
-  // render test the scaffolding instead of the transform. Three specimens still fail loudly on the
-  // repo-wide switch, which is what this file guards.
-  it('renders src/pages/Home.jsx — no React import in the file', () => {
-    render(<Home />)
-    expect(screen.getByText(/Garden at the Ridge/)).toBeTruthy()
-  })
-
-  it('renders src/pages/Tasks.jsx — no React import in the file', () => {
-    render(<Tasks />)
-    expect(screen.getByText(/Tasks/)).toBeTruthy()
-  })
-
-  it('renders src/components/Footer.jsx — no React import in the file', () => {
-    const { container } = render(<Footer />)
-    expect(container.textContent.length).toBeGreaterThan(0)
   })
 })

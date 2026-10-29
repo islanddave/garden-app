@@ -87,7 +87,6 @@ const _viewUrl = (photoId, tier) => `/api/photos/view-url/${photoId}${tier === T
 // CORS mode alone trips this. It is deliberately one-way and per page load: a latched session never
 // re-probes (nothing changes mid-session that would fix CORS), and a reload re-probes for free.
 let _corsBroken = false
-export function __resetPhotoCorsLatch() { _corsBroken = false }
 export function __photoCorsBroken() { return _corsBroken }
 
 // crossOrigin is only meaningful for a cross-origin src, and only photos are cross-origin here.

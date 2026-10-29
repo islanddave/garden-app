@@ -5,7 +5,7 @@
 // BOTH cue reads, and the two labels it binds. The mock is not Postgres, so this cannot prove the
 // lateral picks the right row — it proves the statement says what the derivation needs it to say.
 //
-// THE PARITY HALF. The Lambda may not import from src/ (scripts/ci-telemetry/vitest-projects.test.js),
+// THE PARITY HALF. The Lambda may not import from src/ (scripts/vitest/vitest-projects.test.js),
 // so the two labels are copied into kitchenRoutes.js. The client writes them into cue_observed and this
 // derivation matches them back; a one-character drift on either side silences the card's question for
 // good with nothing red. This reads goingNow.js AS TEXT and holds the two copies together.

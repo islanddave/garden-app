@@ -13,7 +13,7 @@
 // frost-facts.test.js and ingroundsliver.test.js import it (`import h from './handler.js'`). Not run(): the
 // population filter and the decision are both inside frostForSpace, so no pg or SNS stub is needed.
 // (b) is source text, comment-stripped, the frost-dormant.test.js pattern. It READS the three client files; it
-// does not import them, so this file stays out of scripts/ci-telemetry/vitest-node-project.mjs LOADS_SRC.
+// does not import them, so this file stays out of scripts/vitest/vitest-node-project.mjs LOADS_SRC.
 //
 // The two env-read mutations below are spelled "env var NAME", never in the dotted process-env form:
 // scripts/test_check_lambda_config.py greps every .js under this directory, comments and tests included, for

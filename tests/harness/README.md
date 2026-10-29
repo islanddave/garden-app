@@ -353,7 +353,7 @@ Reuses `plantingphotosheet.viewport.html` via its `?page=`. `__h.sheet()` report
 the COMPUTED `max-height` and `box-sizing`, and `visibleContentPx` vs `naturalContentPx` — the pair
 that says whether the cap is the active constraint on a given consumer or is inert there. It makes no
 assertions; the report compares two runs. Unlike `plantingphotosheet.jsx` it DOES mount the real
-`AuthProvider` (on the harness Clerk stub, as `editdeeplink.jsx` has since BUG-EDITDEEPLINKRACE-001),
+`AuthProvider` (on the harness Clerk stub),
 which is what lets the `editor` case measure the tallest full-size consumer in the census.
 
 Launch entry `sheetcensus-harness` (port 5326 — 5325 is the photo-sheet entry, and two harness
@@ -385,9 +385,9 @@ before a change; `--measure-only` prints without asserting.
 
 `/season-end` at 426x836, driven through the states jsdom cannot lay out. Its sticky bar is
 `position: fixed` at `bottom: var(--bottom-nav-height)`, so the entry mounts the **real** `BottomNav`
-through the `navcustom.jsx` provider chain (a stand-in `<nav>` would not write the variable and the bar
+through its provider chain (a stand-in `<nav>` would not write the variable and the bar
 would measure against 0px), a 52px TopChrome stand-in, and App.jsx's column wrapper. Start the server
-with `VITE_API_CRITTERS=https://critter.invalid` as for `navcustom.*`; the fetch stub answers it.
+with `VITE_API_CRITTERS=https://critter.invalid`; the fetch stub answers it.
 
 ```
 http://localhost:5311/tests/harness/seasonend.viewport.html?step=list
@@ -448,6 +448,6 @@ where it can still act on someone — in `PlantingTile.jsx`'s comment at the cal
 
 Note for whoever adds the next entry: `photostrips` wrapped the card in the real `AuthProvider`
 (FavoriteToggle needs it) and, in a fresh worktree, that path hit a dual-React "Invalid hook call"
-that survived clearing `node_modules/.vite`. `quicktag.jsx` in the same worktree, which imports no
-auth context, is unaffected. If you need an auth-wrapped entry, budget for that rather than
+that survived clearing `node_modules/.vite`. An entry in the same worktree that imports no auth
+context was unaffected. If you need an auth-wrapped entry, budget for that rather than
 discovering it mid-measurement.

@@ -52,9 +52,6 @@ import { parseTimeframe, encodeCursor, decodeCursor, projectEntry, computeAggreg
 import {
   matchWatchRoute, handleWatchGet, handleDismissToggle, handleDismissalPost, handleDismissalUndo,
 } from './watch-route.js';
-// V4-READYTRAYIMPRESSION-001 — the weigh-in tray's impression beacon. Same prefix trick, same
-// pure/DB split; separate module because it serves a different surface with a different model.
-import { matchReadyImpressionRoute, handleReadyImpressionPost } from './ready-impression.js';
 // V5-SEASONSTATS-001 — Season stats read route, same prefix seam; numbers live in the stat_* views.
 import { matchSeasonStatsRoute, handleSeasonStatsGet } from './season-stats.js';
 export { parseTimeframe, encodeCursor, decodeCursor, isoWeekStart, projectEntry, computeAggregates, shapeWeightRow, applyWeights, applyCropHeroPhotos } from './aggregate.js';
@@ -128,12 +125,10 @@ export const handler = async (event) => {
   // V4-HARVSURFACE-001 — the Today watch list rides this Lambda's EXISTING /api/harvests prefix.
   // src/lib/api.js routes by first-match PREFIX, so /api/harvests/watch resolves here with no new
   // Function URL, no repo variable, no deploy-lambda.yml matrix entry and no api.js edit. Matched
-  // BEFORE the /api/harvests exact-path guard below, which would otherwise 405 every watch request.
-  // V4-READYTRAYIMPRESSION-001 rides the same seam: its path is disjoint from every watch path, so
-  // the two matchers can be tried in either order, and both feed the SAME ctx/JSON-body block below
-  // rather than a second copy of it.
-  const watchRoute = matchWatchRoute(method, rawPath) ?? matchReadyImpressionRoute(method, rawPath)
-    ?? matchSeasonStatsRoute(method, rawPath);
+  // BEFORE the /api/harvests exact-path guard below, which would otherwise 404 every watch request.
+  // Season stats rides the same seam: its path is disjoint from every watch path, so the matchers
+  // can be tried in either order, and both feed the SAME ctx/JSON-body block below.
+  const watchRoute = matchWatchRoute(method, rawPath) ?? matchSeasonStatsRoute(method, rawPath);
   if (watchRoute) {
     if (watchRoute.kind === 'method_not_allowed') return resp(405, { error: 'Method not allowed' });
     let body = {};
@@ -157,7 +152,6 @@ export const handler = async (event) => {
       if (watchRoute.kind === 'watch_get') out = await handleWatchGet(ctx);
       else if (watchRoute.kind === 'dismiss_toggle') out = await handleDismissToggle(ctx);
       else if (watchRoute.kind === 'dismissal_post') out = await handleDismissalPost(ctx);
-      else if (watchRoute.kind === 'ready_impression_post') out = await handleReadyImpressionPost(ctx);
       else if (watchRoute.kind === 'season_stats_get') out = await handleSeasonStatsGet(ctx);
       else out = await handleDismissalUndo(ctx, watchRoute.id);
       return resp(out.statusCode, out.body);
@@ -167,9 +161,11 @@ export const handler = async (event) => {
     }
   }
 
-  if (method !== 'GET' || rawPath !== '/api/harvests') {
-    return resp(405, { error: 'Method not allowed' });
-  }
+  // An unknown path is a 404, not a 405: an installed app older than a route's removal still calls
+  // it (POST /api/harvests/ready-impressions), and must be told the route is gone. Guarded in
+  // index.test.js.
+  if (rawPath !== '/api/harvests') return resp(404, { error: 'Not found' });
+  if (method !== 'GET') return resp(405, { error: 'Method not allowed' });
 
   const qp = event.queryStringParameters ?? {};
   const tf = parseTimeframe(qp.timeframe);

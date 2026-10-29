@@ -31,10 +31,6 @@ export const HARVEST_DISPOSITION_CHIPS = [
   { value: 'damaged', label: 'Damaged', anchor: 'pest or blemish' },
 ]
 
-export const HARVEST_DISPOSITION_LABELS = Object.fromEntries(
-  HARVEST_DISPOSITION_CHIPS.map(c => [c.value, c.label]),
-)
-
 export function isHarvestDisposition(v) {
   return HARVEST_DISPOSITION_VALUES.includes(v)
 }

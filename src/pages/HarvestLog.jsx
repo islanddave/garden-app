@@ -43,11 +43,6 @@ export const HARVEST_MODES = [
   { value: 'manual', label: 'Manual' },
 ]
 
-// Exported so the redirect in App.jsx and the tests name the same strings this page reads, rather
-// than each spelling '/log/harvest?mode=manual' separately and drifting.
-export const HARVEST_LOG_PATH = '/log/harvest'
-export const HARVEST_LOG_MANUAL = '/log/harvest?mode=manual'
-
 // An unknown ?mode= resolves to the default rather than rendering nothing. A typo in a shortcut, or
 // a stale launcher URL from a future rename, must still land on a working harvest page.
 export function resolveMode (raw) {

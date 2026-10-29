@@ -10,7 +10,6 @@
 import { shortDay } from './jarWords.js'
 
 export const FROM_JARS_PATH = '/api/kitchen-batches/from-jars'
-export const HOW_IT_WAS_MADE_LABEL = 'How it was made →'
 
 // A jar can say how it was made only when it has no batch yet and did not come straight from one pick
 // (chk_preservation_log_one_provenance: a batch OR one harvest, never both).

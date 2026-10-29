@@ -29,7 +29,6 @@ import { mintKey } from '../kitchen/idempotencyKey.js'
 export { RECIPE_STORAGE_KINDS, RECIPE_NAME_MAX, RECIPE_TYPE_LABEL_MAX, KITCHEN_UNITS }
 
 // ── words ────────────────────────────────────────────────────────────────────────────────────────
-export const RECIPES_SEGMENT_LABEL = 'Recipes'
 export const NEW_RECIPE_CTA = 'New recipe'
 export const MAKE_THIS_CTA = 'Make this'
 // Put-Up UX pass R1: the button says what it will do, and its confirm says where nothing goes. "Kept some?"
