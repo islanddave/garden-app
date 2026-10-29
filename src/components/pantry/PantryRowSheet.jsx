@@ -37,7 +37,7 @@ import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import { describeRefusal } from '../../lib/putUpErrors.js'
 import RefusalLine, { refusalOf, refusalText } from './RefusalLine.jsx'
-import { useJar, patchPantryItem, deletePantryItem, ensurePlaceId } from '../../lib/pantryApi.js'
+import { recordUse, patchPantryItem, deletePantryItem, ensurePlaceId } from '../../lib/pantryApi.js'
 import Sheet from '../forms/Sheet.jsx'
 import Button from '../forms/Button.jsx'
 import { labelChrome, inputChrome } from '../forms/formStyles.js'
@@ -135,12 +135,12 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
 
   // `key`: the intent's own idempotency key, when the caller holds one (else pantryApi mints one per
   // call). `part`: a Went bad of fewer than all that is left — its uncoded refusal is said in plain words.
-  async function use(action, body, { key = null, part = false } = {}) {
+  async function recordJarUse(action, body, { key = null, part = false } = {}) {
     if (writingRef.current) return
     writingRef.current = true
     setBusy(true); setErr(null)
     try {
-      const r = await useJar(fetch, { preservation_log_id: row.stock_id, ...body, ...(key ? { idempotency_key: key } : {}) })
+      const r = await recordUse(fetch, { preservation_log_id: row.stock_id, ...body, ...(key ? { idempotency_key: key } : {}) })
       writingRef.current = false
       setBusy(false)
       onUsed?.({ row, action, use: r?.use ?? null, jar: r?.jar ?? null })
@@ -155,12 +155,12 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
 
   function wentBadAtOnce() {
     if (!wentBadKeyRef.current) wentBadKeyRef.current = mintKey()
-    use('went_bad', { all_remaining: true, fate: 'discarded' }, { key: wentBadKeyRef.current })
+    recordJarUse('went_bad', { all_remaining: true, fate: 'discarded' }, { key: wentBadKeyRef.current })
   }
   // The panel's confirm: all that is left is "what is left right now"; fewer is a count.
   function wentBadCount(n, all, key) {
-    if (n >= all) use('went_bad', { all_remaining: true, fate: 'discarded' }, { key })
-    else use('went_bad', { count_used: n, fate: 'discarded' }, { key, part: true })
+    if (n >= all) recordJarUse('went_bad', { all_remaining: true, fate: 'discarded' }, { key })
+    else recordJarUse('went_bad', { count_used: n, fate: 'discarded' }, { key, part: true })
   }
   const openPanel = (p) => { setErr(null); setPanel(p) }
   const closePanel = () => { setErr(null); setPanel(null) }
@@ -251,7 +251,7 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
         {panel === 'give' && (
           <CountPanel row={row} busy={busy} idPrefix="give" start="one" question="How many did you give away?"
             label="How many given away" cta="Gave it away" onCancel={closePanel}
-            onConfirm={(n, _all, key) => use('gave_away', { count_used: n, fate: 'given_away' }, { key })} />
+            onConfirm={(n, _all, key) => recordJarUse('gave_away', { count_used: n, fate: 'given_away' }, { key })} />
         )}
         {panel === 'went-bad' && (
           <CountPanel row={row} busy={busy} idPrefix="went-bad" start="all" question={WENT_BAD_QUESTION}

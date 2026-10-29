@@ -609,7 +609,7 @@ const LANE_SOURCES = [
   ['src/components/pantry/PantryView.jsx', 'export function PantryRow'],
   ['src/components/pantry/PantryRowSheet.jsx', 'export function jarRecordWords'],
   ['src/components/pantry/DoorParts.jsx', 'export function DiscardChoice'],
-  ['src/lib/pantryApi.js', 'export async function useJar'],
+  ['src/lib/pantryApi.js', 'export async function recordUse'],
   // Put-Up UX pass R1, the prep commit (every lane adds its files): the three new files the lanes build on.
   // The origin a mode's Back names, the landing a sheet hands over through, and the tint of a discard line.
   ['src/components/putup/origin.js', 'export function withFrom'],

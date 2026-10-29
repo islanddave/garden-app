@@ -34,15 +34,6 @@ import React from 'react'
 import { labelChrome, requiredMarkChrome, optionalMarkChrome, helpChrome, errorChrome } from './formStyles.js'
 import { contractError } from './_contract.js'
 
-let _seq = 0
-function useFallbackId() {
-  // React.useId when available (React 18); deterministic fallback otherwise.
-  if (typeof React.useId === 'function') return React.useId()
-  const ref = React.useRef(null)
-  if (ref.current == null) ref.current = `field-${++_seq}`
-  return ref.current
-}
-
 export default function Field({
   label,
   htmlFor,
@@ -56,7 +47,7 @@ export default function Field({
   style,
   ...rest
 }) {
-  const auto = useFallbackId()
+  const auto = React.useId()
   const fieldId = id ?? htmlFor ?? auto
   const errId = errorId ?? `${fieldId}-error`
   const helpId = `${fieldId}-help`

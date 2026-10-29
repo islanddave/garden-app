@@ -28,13 +28,12 @@
 // locker risks the stranded-lock failure DismissRegistry.jsx:31-35 calls "the worst failure mode in
 // the program". ConfirmSheet never touches openStack.
 //
-// The import cycle with DismissRegistry.jsx is real and safe: both this default export and
-// useDismissable are hoisted function declarations, so whichever module is evaluated first, the
-// binding the other needs is already initialised. Keep them declarations, not const arrows.
+// Imports useDismissable from dismissContext.js, never from DismissRegistry.jsx: the provider
+// renders this sheet, so importing it back would be a cycle (madge fails the lint on one).
 import React, { useEffect, useRef } from 'react'
 import { P } from '../lib/constants.js'
 import Button from './forms/Button.jsx'
-import { useDismissable } from '../context/DismissRegistry.jsx'
+import { useDismissable } from '../context/dismissContext.js'
 import { LAYER } from '../lib/dismissLayers.js'
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'

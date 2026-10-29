@@ -32,7 +32,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
-import { listPantry, listBatchNames, listPlaces, undoUse, patchPantryItem, useJar } from '../../lib/pantryApi.js'
+import { listPantry, listBatchNames, listPlaces, undoUse, patchPantryItem, recordUse } from '../../lib/pantryApi.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import { usePageScrollYield } from '../../hooks/usePageScrollManager.js'
 import SegmentedControl from '../forms/SegmentedControl.jsx'
@@ -333,7 +333,7 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
         onRecord({ row, action: USED_UP, use: null, jar: null })
       } else {
         if (useKeyRef.current?.action !== action) useKeyRef.current = { action, key: mintKey() }
-        const r = await useJar(fetch, action === USED_ONE
+        const r = await recordUse(fetch, action === USED_ONE
           ? { preservation_log_id: row.stock_id, count_used: 1, idempotency_key: useKeyRef.current.key }
           : { preservation_log_id: row.stock_id, all_remaining: true, idempotency_key: useKeyRef.current.key })
         useKeyRef.current = null

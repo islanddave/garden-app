@@ -44,8 +44,10 @@ vi.mock('../components/BottomNavDot.jsx', () => ({ default: () => null }))
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: () => Promise.resolve(null), getToken: () => Promise.resolve('t') }),
 }))
-vi.mock('../lib/mode.js', () => ({
+vi.mock('../context/ModeContext.jsx', () => ({
   useMode: () => ({ mode: modeRef.isField ? 'field' : 'desk', isField: modeRef.isField, isDesk: !modeRef.isField, setMode: vi.fn(), toggleMode: vi.fn() }),
+}))
+vi.mock('../lib/mode.js', () => ({
   MODE: { FIELD: 'field', DESK: 'desk' },
 }))
 

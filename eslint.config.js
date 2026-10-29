@@ -12,6 +12,7 @@
 import js from '@eslint/js'
 import tsParser from '@typescript-eslint/parser'
 import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
 import { relative, sep } from 'node:path'
 
 // Repo root, resolved from this file rather than from process.cwd() — see the DEFER_CAPS lookup.
@@ -246,6 +247,24 @@ const noRawDesignTokens = {
 
 const designsysPlugin = { rules: { 'no-raw-design-tokens': noRawDesignTokens } }
 
+// Core `no-unused-vars` does not see `<Foo />` as a use of `Foo`, so without this every
+// component imported only for JSX is reported. Same logic as eslint-plugin-react's
+// jsx-uses-vars, kept local to avoid a dependency for ten lines. Never reports.
+const jsxUsesVars = {
+  create(context) {
+    return {
+      JSXOpeningElement(node) {
+        let root = node.name
+        if (root.type === 'JSXNamespacedName') return
+        while (root.type === 'JSXMemberExpression') root = root.object
+        if (/^[a-z]/.test(root.name)) return
+        context.sourceCode.markVariableAsUsed(root.name, node)
+      },
+    }
+  },
+}
+const jsxPlugin = { rules: { 'uses-vars': jsxUsesVars } }
+
 // ── DEFERRAL CEILINGS (OPS-DEFERCEILING-001) ─────────────────────────────────────────────
 // Every file in the debt register below carries its violation count for each class it defers.
 // Exceeding the number is an ESLint error; omitting the entry is also an ESLint error.
@@ -299,18 +318,10 @@ const DEFER_CAPS = {
   'src/components/forms/TagChip.jsx': { emoji: 1 },
 }
 
-// Stub react-hooks plugin: the app carries inline `// eslint-disable-...
-// react-hooks/exhaustive-deps` directives. Pass A does NOT introduce the
-// eslint-plugin-react-hooks dependency (out of scope), but ESLint errors on a
-// disable directive that references an unregistered rule. Registering no-op rules
-// lets those directives resolve harmlessly. These rules never report — they are
-// placeholders, not an enforcement of hooks linting.
-const noop = { create() { return {} } }
-const reactHooksStub = { rules: { 'exhaustive-deps': noop, 'rules-of-hooks': noop } }
-
 export default [
   // Base: permissive for the whole app so `eslint .` exits 0 (Pass A does not lint
-  // pre-existing literals app-wide). No recommended ruleset enabled globally.
+  // pre-existing literals app-wide). No recommended ruleset enabled globally. The plugin is
+  // registered here so disable directives resolve in every file.
   {
     files: ['**/*.{js,jsx,mjs,cjs}'],
     languageOptions: {
@@ -319,8 +330,36 @@ export default [
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
     linterOptions: { reportUnusedDisableDirectives: 'off' },
-    plugins: { 'react-hooks': reactHooksStub },
+    plugins: { 'react-hooks': reactHooks, jsx: jsxPlugin },
     rules: {},
+  },
+  // Hooks exist only in the browser app, so these rules cover app source only. The two hooks
+  // rules are named individually because the plugin's `recommended` set also carries the
+  // React Compiler rules, which this app is not written against. Lambda and
+  // integration tests have functions named `use*` that are not hooks, and test mocks define
+  // components inline (`default: () => { React.useEffect(...) }`) that the rule cannot name.
+  // `no-unused-vars` and `no-undef` warn rather than error so existing findings do not block
+  // the build while the count is worked down.
+  {
+    files: ['src/**/*.{js,jsx,mjs}'],
+    ignores: ['src/**/__tests__/**', 'src/**/*.test.{js,jsx,mjs}'],
+    languageOptions: {
+      // __APP_VERSION__ is a Vite `define` (vite.config.js), not a real global.
+      globals: { ...globals.browser, ...globals.es2021, __APP_VERSION__: 'readonly' },
+    },
+    rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
+      'no-unused-vars': ['warn', {
+        args: 'after-used',
+        ignoreRestSiblings: true,
+        varsIgnorePattern: '^_',
+        argsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
+      'no-undef': 'warn',
+      'jsx/uses-vars': 'error',
+    },
   },
   // ── Scoped guard: the frozen primitives ───────────────────────────────────────────────
   // A GLOB over the primitive barrel, not a hand-maintained file list. The list this

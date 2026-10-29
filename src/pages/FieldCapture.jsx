@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useId, useState } from 'react'
 import { Navigate } from 'react-router-dom'
-import { useMode, MODE } from '../lib/mode.js'
+import { MODE } from '../lib/mode.js'
+import { useMode } from '../context/ModeContext.jsx'
 import { P } from '../lib/constants.js'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { setReloadBlocked } from '../lib/reloadGate.js'

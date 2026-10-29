@@ -56,8 +56,10 @@ vi.mock('../lib/api.js', () => ({
   // App.jsx pulls in the upload stack transitively; useUploadPhoto reads apiFetch at module scope.
   apiFetch: () => Promise.resolve(null),
 }))
-vi.mock('../lib/mode.js', () => ({
+vi.mock('../context/ModeContext.jsx', () => ({
   useMode: () => ({ mode: 'desk', isField: false, isDesk: true, setMode: vi.fn(), toggleMode: vi.fn() }),
+}))
+vi.mock('../lib/mode.js', () => ({
   MODE: { FIELD: 'field', DESK: 'desk' },
 }))
 // V5-NAVCUSTOM-001 — the network edge of the prefs read and the pin save, for the pinned-Space case.

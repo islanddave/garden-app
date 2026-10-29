@@ -61,8 +61,10 @@ vi.mock('../components/BottomNavDot.jsx', () => ({ default: () => null }))
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: () => Promise.resolve(null), getToken: () => Promise.resolve(null) }),
 }))
-vi.mock('../lib/mode.js', () => ({
+vi.mock('../context/ModeContext.jsx', () => ({
   useMode: () => ({ mode: 'desk', isField: false, isDesk: true, setMode: vi.fn(), toggleMode: vi.fn() }),
+}))
+vi.mock('../lib/mode.js', () => ({
   MODE: { FIELD: 'field', DESK: 'desk' },
 }))
 // The network edge of the prefs read and the pin save, for the I7/I11 cases that render through the
