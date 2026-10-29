@@ -1,21 +1,15 @@
-# Daily Meta credential health check — OPS-FBDATAACCESSEXPIRY-001.
+# Daily Meta credential health check.
 #
 # The prod Facebook Page token never expires (expires_at=0) but the app's DATA ACCESS to the owning
 # user's data does, 90 days after that user's last authorization. When it lapses Meta reduces the
-# grant's scopes rather than invalidating the token, so is_valid stays true and every existing
-# instrument reports healthy: the Lambda Errors metric is blind (failure paths return, they do not
-# throw), Garden/Share ShareFailed only moves if somebody attempts a post, and there is no webhook,
-# no developer-notification category and no documented pre-expiry email from Meta. Polling is the
-# only signal that exists.
+# grant's scopes rather than invalidating the token, so is_valid stays true and every other instrument
+# reports healthy: the Lambda Errors metric is blind (failure paths return, they do not throw), ShareFailed
+# moves only if somebody posts, and Meta sends no webhook or pre-expiry notice. Polling is the only signal.
+# The deadline MOVES (it is keyed to the app<->user grant, not the token, and prod and staging share one
+# clock), so this is a poller, not a reminder.
 #
-# The deadline MOVES — it is keyed to the app<->user grant, not the token, and prod and staging share
-# one clock. Measured 2026-08-30 it read 2026-11-19; measured 2026-08-31, with nothing rotated, it
-# read 2026-11-28. So this is a poller, not a reminder.
-#
-# Scheduled workflows only fire from the DEFAULT BRANCH (main), so this begins running daily at the
-# next prod promote. Until then, and any time you want an on-demand reading:
-#   gh workflow run meta-token-expiry.yml --ref dev
-# The OIDC role trusts refs/heads/main and refs/heads/dev for exactly that reason.
+# Scheduled runs fire only from main. On demand: gh workflow run meta-token-expiry.yml --ref dev
+# (the OIDC role trusts refs/heads/main and refs/heads/dev for that reason).
 name: Meta credential expiry check
 
 on:
@@ -74,10 +68,8 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # 90-day retention deliberately spans the 2026-11-28 window. Meta has never published whether
-      # Page publishing survives a data-access lapse and no empirical report exists in either
-      # direction, so this daily record of the scope set is what turns that ambiguity into a
-      # measured fact when the date arrives.
+      # 90-day retention: a daily record of the scope set is what shows whether Page publishing survives
+      # a data-access lapse, which Meta does not document.
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
