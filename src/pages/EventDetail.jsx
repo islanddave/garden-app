@@ -33,7 +33,7 @@ import { lotHref } from '../components/seed/seedLots.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect, Sheet } from '../components/forms'
 // The same label chrome <Field> renders, for the one control on this form that cannot BE a Field.
 import { labelChrome } from '../components/forms/formStyles.js'
-import { PROJECTS_HIDDEN, EVENT_REANCHOR_ENABLED, WATER_DEPTH_EDIT_ENABLED } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN, WATER_DEPTH_EDIT_ENABLED } from '../lib/featureFlags.js'
 // V4-WATERMATH-001 F0 — the amount class is correctable from history (flag-gated; see featureFlags).
 import WaterDepthChips from '../components/WaterDepthChips.jsx'
 import {
@@ -410,8 +410,7 @@ export default function EventDetail() {
   // expression the payload spread below is conditioned on, read once and reused, so the control,
   // the confirm and the wire can never disagree about whether a move is happening. `form` is null
   // outside the editor, hence the optional read.
-  const reanchorPending = EVENT_REANCHOR_ENABLED && !!form &&
-    form.plant_id !== (event?.plant_id ?? null)
+  const reanchorPending = !!form && form.plant_id !== (event?.plant_id ?? null)
 
   // The un-anchor trap. `newPlantId = body.plant_id ?? oldPlantId` (lambda/events/index.js:1595)
   // means a null plant_id is a server-side NO-OP: clearing the picker on an event that has a
@@ -711,9 +710,8 @@ export default function EventDetail() {
             />
           </Field>
 
-          {/* V4-REANCHORFLAG-001 — move this event to a different planting. THE control the flag
-              was waiting on: nothing else in this file ever wrote form.plant_id, so the emit below
-              was unreachable and flipping EVENT_REANCHOR_ENABLED was a provable no-op.
+          {/* V4-REANCHORFLAG-001 — move this event to a different planting. The only writer of
+              form.plant_id in this file; without it the re-anchor emit below is unreachable.
 
               THE SHARED picker, self-fetching — EventDetail holds no plants list, and the
               destination is routinely in a different project from the event's own, so a scoped
@@ -730,38 +728,36 @@ export default function EventDetail() {
               server cannot un-anchor an event (see blockedByBlankAnchor), so on a row that has a
               planting the field genuinely is required — but a project-only event is ALREADY blank,
               and marking that state an error would flag the row for being what it is. */}
-          {EVENT_REANCHOR_ENABLED && (
-            <div style={{ marginBottom: 14 }}>
-              {/* labelChrome, not the uppercase style WaterDepthChips uses below: that one reads as
-                  a SECTION heading, and this control sits in the run of ordinary <Field> inputs
-                  (Type / Date / Title / Quantity), so it has to look like one of them. Rendered as a
-                  bare label rather than through <Field> because Field's htmlFor would point at an
-                  input that does not exist whenever the picker is collapsed to its chip — which is
-                  its state on arrival, since the event already has an anchor. */}
-              <label style={labelChrome}>Logged against</label>
-              <PlantingSelect
-                value={form.plant_id ?? ''}
-                onChange={(id, planting) => {
-                  // '' on clear (PlantingSelect's contract) normalised to null, so the change
-                  // predicate compares like with like against event.plant_id ?? null.
-                  setMoveTarget(id ? { id, name: planting?.name ?? null } : null)
-                  setForm(f => ({
-                    ...f,
-                    plant_id: id || null,
-                    // The planting decides the project. Sent for completeness; the server derives
-                    // it from the planting row regardless (deriveEventProjectId, :1605-1615), so
-                    // a stale value here cannot write a self-contradicting row.
-                    project_id: planting?.project_id ?? f.project_id,
-                  }))
-                }}
-                required={event.plant_id != null}
-                emptyMeaning="unset"
-                placeholder="— Choose a planting —"
-                aria-label="Logged against"
-                data-testid="evtdetail-planting"
-              />
-            </div>
-          )}
+          <div style={{ marginBottom: 14 }}>
+            {/* labelChrome, not the uppercase style WaterDepthChips uses below: that one reads as
+                a SECTION heading, and this control sits in the run of ordinary <Field> inputs
+                (Type / Date / Title / Quantity), so it has to look like one of them. Rendered as a
+                bare label rather than through <Field> because Field's htmlFor would point at an
+                input that does not exist whenever the picker is collapsed to its chip — which is
+                its state on arrival, since the event already has an anchor. */}
+            <label style={labelChrome}>Logged against</label>
+            <PlantingSelect
+              value={form.plant_id ?? ''}
+              onChange={(id, planting) => {
+                // '' on clear (PlantingSelect's contract) normalised to null, so the change
+                // predicate compares like with like against event.plant_id ?? null.
+                setMoveTarget(id ? { id, name: planting?.name ?? null } : null)
+                setForm(f => ({
+                  ...f,
+                  plant_id: id || null,
+                  // The planting decides the project. Sent for completeness; the server derives
+                  // it from the planting row regardless (deriveEventProjectId, :1605-1615), so
+                  // a stale value here cannot write a self-contradicting row.
+                  project_id: planting?.project_id ?? f.project_id,
+                }))
+              }}
+              required={event.plant_id != null}
+              emptyMeaning="unset"
+              placeholder="— Choose a planting —"
+              aria-label="Logged against"
+              data-testid="evtdetail-planting"
+            />
+          </div>
 
           {/* V4-WATERMATH-001 F0 — correct the amount class of an already-logged watering.
               Keyed off the form's CURRENT type (unlike the harvest panel, which keys off the
