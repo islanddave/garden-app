@@ -49,6 +49,9 @@
     "src/lib/critterSpecies.js": [
       "lambda/critter/critterSpecies.js",
       "lambda/events/critterSpecies.js"
+    ],
+    "lambda/plants/statusEvents.js": [
+      "lambda/projects/statusEvents.js"
     ]
   }
 }
