@@ -1,5 +1,12 @@
 [
   {
+    "version": "5.3.21",
+    "date": "2026-10-29",
+    "highlights": [
+      "Behind-the-scenes cleanup: limits on photo uploads and app activity logging, and simpler code with no visible change."
+    ]
+  },
+  {
     "version": "5.3.20",
     "date": "2026-10-29",
     "highlights": [
