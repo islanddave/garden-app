@@ -36,7 +36,6 @@ const decomment = (s) => s.split('\n')
   .join('\n');
 
 const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
-const REF = decomment(readFileSync(resolve(__dirname, 'ref.js'), 'utf8'));
 
 // Bounded to the DELETE's own arm so a match cannot be satisfied from the PUT above it, which
 // legitimately carries both a resolve step and a 404 gate. Anchored on the JS guard rather than on
@@ -52,7 +51,9 @@ describe('BUG-DELNOOPOK-001 — locations DELETE is RETURNING-gated on the slug-
   });
 
   // MUTATION: drop `RETURNING id` or the 404 line -> RED. That is the unconditional {ok:true}
-  // returning, and with it the reason authz-matrix cannot use DELETE as its write axis.
+  // returning, and with it the reason authz-matrix cannot use DELETE as its write axis. The
+  // `!rows.length` 404 is reachable only by a delete racing the pre-resolve, so no integration case
+  // can red on it: this is its only guard.
   it('404s when nothing matched', () => {
     expect(branch).toMatch(/RETURNING id/);
     expect(branch).toMatch(/if \(!rows\.length\) return resp\(404, \{ error: 'Not found' \}\)/);
@@ -63,42 +64,10 @@ describe('BUG-DELNOOPOK-001 — locations DELETE is RETURNING-gated on the slug-
     expect(gateIdx, 'the 404 gate must precede the 200').toBeLessThan(okIdx);
   });
 
-  // MUTATION: narrow back to `WHERE id = ${locId}` -> RED. Measured: that form 22P02s on a slug.
-  //
-  // BUG-LOCDELSLUG-001 moved WHERE the slug-or-uuid arm lives without changing WHETHER the verb
-  // accepts a slug. The arm is now inside loadLocationRef (ref.js), which resolves to exactly one
-  // id; the statement keys on that id. Asserting the raw predicate here would now pin the very
-  // shape that soft-deleted N rows for one request, so this asserts the property the old assertion
-  // was reaching for — the verb accepts a slug, and it does so through the shared resolver.
-  it('resolves slug OR uuid through the shared resolver, exactly as GET and PUT do', () => {
-    expect(branch).toMatch(/await loadLocationRef\(sql, locId, householdIds\)/);
-    expect(branch).not.toMatch(/WHERE id = \$\{locId\}/);
-    // The slug arm still exists, in exactly one place, and it is the place the verb calls.
-    expect(REF).toMatch(/\(slug = \$\{ref\} OR id::text = \$\{ref\}\)/);
-  });
-
-  // MUTATION: change `WHERE id = ${picked.row.id}` back to the inline slug-or-uuid predicate -> RED.
-  // That IS the multi-row soft-delete: a predicate that can match N rows, on a statement whose only
-  // gate distinguishes zero from non-zero.
-  it('the destructive statement keys on the RESOLVED id, never on the raw path segment', () => {
-    expect(branch).toMatch(/UPDATE locations\s*SET deleted_at = NOW\(\)\s*WHERE id = \$\{picked\.row\.id\}/);
-    expect(branch, 'the not-single-valued predicate is back on the UPDATE')
-      .not.toMatch(/SET deleted_at = NOW\(\)[\s\S]*\(slug = \$\{locId\}/);
-  });
-
-  // MUTATION: delete either gate line -> RED. 404 and 409 are different facts: 404 is "no such
-  // location you can see", 409 is "you named several". Collapsing 409 into 404 would send the
-  // caller to a not-found page for a location that exists twice; collapsing it into a silent pick
-  // restores the original defect with a resolver in front of it.
-  it('answers an ambiguous reference with a typed 409, distinct from the 404', () => {
-    expect(branch).toMatch(/if \(picked\.ambiguous\) return resp\(AMBIGUOUS_REF_STATUS, AMBIGUOUS_REF_BODY\)/);
-    expect(branch).toMatch(/if \(!picked\.row\) return resp\(404, \{ error: 'Not found' \}\)/);
-    expect(REF).toMatch(/AMBIGUOUS_REF_STATUS = 409/);
-    expect(REF).toMatch(/location_ref_ambiguous/);
-  });
-
-  // MUTATION: drop the household predicate -> RED. The 404 makes denial visible; it must still BE
-  // a denial. storage-location-authz's DELETE block asserts the same property at runtime.
+  // MUTATION: drop either predicate from the UPDATE -> RED here and nowhere else. loadLocationRef
+  // (ref.js) applies both first, so locations.int.test.js "DELETE another user's location" reds only
+  // if ref.js loses its copy too, and household-mode.test.js counts file-wide, so one lost copy stays
+  // above its floor. This pin is the only guard of the UPDATE's own copy.
   it('still carries the household ownership predicate and the soft-delete guard', () => {
     expect(branch).toMatch(/created_by = ANY\(\$\{householdIds\}\)/);
     expect(branch).toMatch(/deleted_at IS NULL/);
@@ -120,6 +89,8 @@ describe('BUG-DELNOOPOK-001 — locations DELETE is RETURNING-gated on the slug-
 
   // The rule itself is arithmetic on rows, so it is tested BEHAVIOURALLY in ref.test.js rather than
   // as source text. This only pins that the handler has not grown a second, divergent copy of it.
+  // The zero count is also the guard against re-inlining the predicate on the DELETE's UPDATE in
+  // place of `id = ${picked.row.id}`: the multi-row soft-delete.
   it('carries no second copy of the slug-or-uuid predicate outside the resolver', () => {
     const arms = SRC.match(/slug = \$\{locId\} OR id::text = \$\{locId\}/g) ?? [];
     expect(arms.length, 'the mutating verbs must not re-derive the key space inline').toBe(0);
