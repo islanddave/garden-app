@@ -31,15 +31,13 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-26.04
-    # Bounds a deploy that hangs once it is RUNNING (a stuck npm ci, s3 sync, CORS restore or smoke curl); the
-    # slowest healthy run on record is 111 s. 15, not 10: the post-deploy HTTP smoke is itself bounded at about
-    # 742 s when every probe times out twice (14 checks x 53 s), and its FAIL lines and final verdict must print
-    # before the limit can cut the job. It does NOT bound a job still waiting for a runner: that is
-    # scripts/run-status.py STUCK, then cancel and re-run the failed jobs. A fired limit reads `cancelled`, not
-    # `failure`. The first step (the main guard) adds nothing when main reads as expected and at most 170 s
-    # when every read of main fails (6 x 20 s + 5 x 10 s; 230 s if mismatches and failures interleave), so
-    # only a GitHub API outage at job start AND an all-timeouts smoke together can reach the limit. Pinned by
-    # scripts/test_workflow_steps.py.
+    # Bounds a deploy that hangs once RUNNING (a stuck npm ci, s3 sync, CORS restore or smoke curl); the
+    # slowest healthy run on record is under 2 minutes. 15, not 10: the post-deploy HTTP smoke is itself bounded at about 742 s when
+    # every probe times out twice (14 checks x 53 s), and its FAIL lines and verdict must print before the
+    # limit cuts the job. The main guard adds at most 170 s when every read of main fails (230 s if mismatches
+    # and failures interleave). It does NOT bound a job still waiting for a runner: that is
+    # scripts/run-status.py STUCK, then cancel and re-run the failed jobs. A fired limit reads `cancelled`,
+    # not `failure`. Pinned by scripts/test_workflow_steps.py.
     timeout-minutes: 15
     environment: production
     steps:
@@ -120,7 +118,7 @@ jobs:
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22.23.3'
+          node-version-file: .nvmrc
           cache: 'npm'
 
       - name: Install dependencies
@@ -136,9 +134,8 @@ jobs:
           echo "Auto-bump disabled; preserving package.json version (release-tag-driven)."
 
       - name: Cache-bust service worker
-        # SW staleness fix (2.1.1): public/sw.js CACHE_VERSION must change every deploy, or the
-        # browser never sees new SW bytes -> never re-activates -> old caches never purge -> a stale
-        # shell/bundle (e.g. footer version) is served. Tie it to version + short SHA for uniqueness.
+        # public/sw.js CACHE_VERSION must change every deploy, or the browser never sees new SW bytes, never
+        # re-activates, never purges old caches, and serves a stale shell. Version + short SHA makes it unique.
         # Runs after Bump (NEW_VERSION set) and before Build (vite copies public/ verbatim to dist/).
         run: |
           # SHORT_SHA must label the BUILT commit, not github.sha. Under workflow_call from
@@ -211,19 +208,13 @@ jobs:
           VITE_API_CRITTERS:          ${{ vars.VITE_API_CRITTERS }}
           VITE_API_UX_EVENTS:         ${{ vars.VITE_API_UX_EVENTS }}
           VITE_API_SHARED_STATE:      ${{ vars.VITE_API_SHARED_STATE }}
-          # V4-HARVESTCENTER-001 (Put-Up). Ship-then-wire like critters/tags: the Lambdas are created
-          # by the first deploy, Dave/Claude then set vars.VITE_API_* to the new Function URLs and the
-          # NEXT build bakes them. Empty until wired — Put-Up is simply unreachable, nothing else breaks.
+          # Empty until the var is wired to the Function URL: Put-Up is then unreachable, nothing else breaks.
           VITE_API_PRESERVATION:      ${{ vars.VITE_API_PRESERVATION }}
           VITE_API_STORAGE_LOCATIONS: ${{ vars.VITE_API_STORAGE_LOCATIONS }}
           VITE_API_HARVESTS:          ${{ vars.VITE_API_HARVESTS }}
-          # V4-IGSHARE-001 — MUST be in THIS block, same reason, and the reason it is here at all:
-          # setting vars.VITE_API_FACEBOOK_SHARE alone did NOTHING. Prod v4.78.0 shipped with the
-          # repo var correctly set and both share paths still bound to EMPTY STRINGS, because the
-          # var was never mapped into a build env block. So "Facebook is one repo-var edit from
-          # public", as the ledger and two handoffs claimed, was FALSE — it needed this line too.
-          # ONE VAR, BOTH TARGETS: api.js routes /api/share/facebook AND /api/share/instagram
-          # through this single value, so wiring it arms Facebook (live since 2026-08-21) as well.
+          # Every VITE_API_* var must be mapped in THIS env block: vite bakes import.meta.env at build time,
+          # so a repo var absent here is an empty string in the bundle whatever vars.* holds. One var, both
+          # targets: api.js routes /api/share/facebook AND /api/share/instagram through it.
           VITE_API_FACEBOOK_SHARE:    ${{ vars.VITE_API_FACEBOOK_SHARE }}
 
       - name: Build
@@ -248,20 +239,12 @@ jobs:
           VITE_API_CRITTERS:          ${{ vars.VITE_API_CRITTERS }}
           VITE_API_UX_EVENTS:         ${{ vars.VITE_API_UX_EVENTS }}
           VITE_API_SHARED_STATE:      ${{ vars.VITE_API_SHARED_STATE }}
-          # V4-HARVESTCENTER-001 (Put-Up) — MUST be in THIS block: vite bakes import.meta.env at build
-          # time, so a repo var absent here is silently empty in the bundle no matter what vars.* holds.
+          # MUST be in THIS block: vite bakes import.meta.env at build time, so a repo var absent here is
+          # silently empty in the bundle no matter what vars.* holds.
           VITE_API_PRESERVATION:      ${{ vars.VITE_API_PRESERVATION }}
           VITE_API_STORAGE_LOCATIONS: ${{ vars.VITE_API_STORAGE_LOCATIONS }}
-          # V4-HARVESTVIEW-001 — MUST be in THIS block: vite bakes import.meta.env at build time, so a
-          # repo var absent here is silently empty in the bundle no matter what vars.* holds.
           VITE_API_HARVESTS:          ${{ vars.VITE_API_HARVESTS }}
-          # V4-IGSHARE-001 — MUST be in THIS block, same reason, and the reason it is here at all:
-          # setting vars.VITE_API_FACEBOOK_SHARE alone did NOTHING. Prod v4.78.0 shipped with the
-          # repo var correctly set and both share paths still bound to EMPTY STRINGS, because the
-          # var was never mapped into a build env block. So "Facebook is one repo-var edit from
-          # public", as the ledger and two handoffs claimed, was FALSE — it needed this line too.
-          # ONE VAR, BOTH TARGETS: api.js routes /api/share/facebook AND /api/share/instagram
-          # through this single value, so wiring it arms Facebook (live since 2026-08-21) as well.
+          # One var, both targets: api.js routes /api/share/facebook AND /api/share/instagram through it.
           VITE_API_FACEBOOK_SHARE:    ${{ vars.VITE_API_FACEBOOK_SHARE }}
 
       - name: Verify build output
@@ -281,9 +264,8 @@ jobs:
           aws-region: us-east-1
 
       - name: Verify S3 versioning enabled [Boss condition 2]
-        # Hard gate: S3 versioning must be enabled before any deploy.
-        # Versioning is required for the S3 rollback leg of the three-unit rollback strategy.
-        # If this fails: aws s3api put-bucket-versioning --bucket <bucket> --versioning-configuration Status=Enabled
+        # Hard gate: versioning is the S3 leg of rollback. If this fails:
+        #   aws s3api put-bucket-versioning --bucket <bucket> --versioning-configuration Status=Enabled
         run: |
           STATUS=$(aws s3api get-bucket-versioning \
             --bucket ${{ vars.S3_BUCKET_NAME }} \
@@ -324,10 +306,9 @@ jobs:
           [ "$ok" = "1" ] || { echo "::error::CloudFront invalidation failed after retries"; exit 1; }
 
       - name: Restore Lambda Function URL CORS
-        # OPTIONS excluded from AllowMethods (>6 chars fails validation); AWS handles preflight automatically.
-        # First-deploy resilience: skip Lambdas that don't exist yet (e.g., a new Lambda added in the same
-        # commit that creates it via deploy-lambda.yml — SPA deploy.yml may run first and find the function
-        # not yet provisioned). Fixed 2026-05-12 (3f27c817 V1.2a-1 Session 2 first-deploy of garden-app-events).
+        # OPTIONS is excluded from AllowMethods (>6 chars fails validation); AWS handles preflight itself.
+        # Skips Lambdas that do not exist yet: a function added in the same commit may not be provisioned
+        # when this job runs ahead of deploy-lambda.yml.
         run: |
           CORS='{"AllowCredentials":false,"AllowHeaders":["authorization","content-type"],"AllowMethods":["GET","POST","PUT","DELETE","PATCH"],"AllowOrigins":["https://garden.futureishere.net"],"ExposeHeaders":[],"MaxAge":300}'
           for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties garden-app-events garden-achievements garden-preservation garden-storage-location; do
@@ -344,11 +325,8 @@ jobs:
           done
 
       - name: Post-deploy Lambda health check
-        # Confirms all 13 prod Lambda functions are Active after deploy.
-        # garden-preservation + garden-storage-location added 2026-07-21 (V4-PUTUPLINK-001): they
-        # shipped with Put-Up but were never added to either list, so a CORS drift on them would
-        # have gone unrestored and unnoticed. Both are origin-locked to the same prod domain.
-        # Catches: broken zip, failed update, function in Pending/Failed state.
+        # Catches a broken zip, a failed update, or a function in Pending/Failed state. Every function with a
+        # Function URL must be in this list and the CORS list above, or drift on it goes unrestored.
         run: |
           HEALTH_FAIL=0
           for fn in garden-dashboard garden-events garden-favorites garden-inventory-items garden-locations garden-photos garden-plants garden-projects garden-varieties garden-app-events garden-achievements garden-preservation garden-storage-location; do
@@ -369,34 +347,20 @@ jobs:
           [[ "$HEALTH_FAIL" -eq 0 ]] || { echo "FATAL: $HEALTH_FAIL Lambda(s) not Active post-deploy"; exit 1; }
 
       - name: Post-deploy HTTP smoke (prod, read-only)
-        # Data-plane verification — complements the control-plane "Lambda health check" above.
-        # A Lambda can report State=Active yet 502 on invoke, and the health check never touches
-        # CloudFront/SPA. This step hits the live prod surface over HTTPS with NO auth and NO writes
-        # (zero prod-DB mutation; L-108 authed write→read-back asserts stay on staging only):
-        #   - each Function URL /api/{entity} GET, unauthed -> must be 401 (auth gate live = healthy;
-        #     catches 5xx bad-zip/module-load, 000 DNS/TLS, 404 routing break, 200 auth-disabled regression)
-        #   - SPA https://garden.futureishere.net/ -> 200 + body contains id="root" (real index, not error page)
-        # Verified ground truth 2026-05-25 (modest-funny-allen): all 11 endpoints 401, SPA 200 w/ id="root".
-        # Required vars must be set + 401; optional (varieties/app-events/achievements) loud-skip if unset (L-109).
-        # One retry per check (sleep 3) absorbs Lambda cold-start / CF cold-edge flake. Read-only, so a
-        # false-fail yields a red run but never a broken prod (S3+CF already updated by the steps above).
+        # Data-plane check, complementing the control-plane health check above: a Lambda can be Active yet
+        # 502 on invoke, and the health check never touches CloudFront or the SPA. NO auth and NO writes:
+        #   - each Function URL /api/{entity} GET must answer 401 (auth gate live; catches 5xx bad zip or
+        #     module load, 000 DNS/TLS, 404 routing break, 200 auth-disabled regression)
+        #   - the SPA root must answer 200 with id="root" in the body (the real index, not an error page)
+        # Required vars must be set and answer 401; optional ones loud-skip if unset. One retry per check
+        # (sleep 3) absorbs cold starts. Read-only, so a false fail reds the run but never breaks prod.
         #
-        # CANARY HYGIENE (2026-08-26, BUG-TOKENLESS401-001). These probes originally sent NO
-        # Authorization header. That makes verifyToken log "Invalid JWT form", which is the exact
-        # pattern of the `tokenless-request-401` metric filter behind the `garden-tokenless-requests`
-        # alarm (Sum > 5 per 15min). TEN of the thirteen probes below land in that alarm's 19 log
-        # groups, so EVERY prod deploy tripped it — three pages on 2026-08-26 alone, none of them a
-        # real user. The canary could not be read at all: its own description claimed "every datapoint
-        # is a real user request", and excluding warmOrigins' four targets was necessary but not
-        # sufficient, because nobody enumerated this step as the second synthetic tokenless source.
-        # Fix: send a well-formed-but-garbage bearer token instead. Prod still answers 401 (verified
-        # live against garden-plants: "verifyToken failed: Unexpected end of data"), so every
-        # assertion above is unchanged, and the alarm stops counting our own deploys. Deliberately
-        # choose parts that do NOT base64-decode to valid JSON — the header parse then fails BEFORE
-        # any Clerk JWKS lookup, so this stays as fast and as network-free as the empty-token path.
-        # The three probes that are already OUTSIDE the alarm's log groups (plants / locations /
-        # inventory-items are warmOrigins targets) keep the header-less form, so the no-header -> 401
-        # path is still asserted on every deploy at zero canary cost.
+        # CANARY HYGIENE: a probe with NO Authorization header logs "Invalid JWT form", the pattern the
+        # `garden-tokenless-requests` alarm counts, so header-less probes would page on every deploy. Probes
+        # in the alarm's log groups send a well-formed-but-garbage bearer token instead: prod still answers
+        # 401, and parts that do NOT base64-decode to JSON fail the header parse BEFORE any Clerk JWKS lookup.
+        # The probes outside those log groups (plants / locations / inventory-items, warmOrigins targets)
+        # keep the header-less form, so the no-header -> 401 path is still asserted on every deploy.
         env:
           VITE_API_PROJECTS:     ${{ vars.VITE_API_PROJECTS }}
           VITE_API_PLANTS:       ${{ vars.VITE_API_PLANTS }}
@@ -414,13 +378,7 @@ jobs:
           VITE_API_MEMBERS:          ${{ vars.VITE_API_MEMBERS }}
           VITE_API_TAGS:              ${{ vars.VITE_API_TAGS }}
           VITE_API_HARVESTS:          ${{ vars.VITE_API_HARVESTS }}
-          # V4-IGSHARE-001 — MUST be in THIS block, same reason, and the reason it is here at all:
-          # setting vars.VITE_API_FACEBOOK_SHARE alone did NOTHING. Prod v4.78.0 shipped with the
-          # repo var correctly set and both share paths still bound to EMPTY STRINGS, because the
-          # var was never mapped into a build env block. So "Facebook is one repo-var edit from
-          # public", as the ledger and two handoffs claimed, was FALSE — it needed this line too.
-          # ONE VAR, BOTH TARGETS: api.js routes /api/share/facebook AND /api/share/instagram
-          # through this single value, so wiring it arms Facebook (live since 2026-08-21) as well.
+          # One var, both targets: api.js routes /api/share/facebook AND /api/share/instagram through it.
           VITE_API_FACEBOOK_SHARE:    ${{ vars.VITE_API_FACEBOOK_SHARE }}
         run: |
           set -uo pipefail
@@ -490,8 +448,7 @@ jobs:
       - name: Commit version bump to dev
         if: env.NEW_VERSION != ''
         # Writes the bumped package.json back to dev so future builds start from the new version.
-        # Uses GITHUB_TOKEN (contents: write). If dev branch protection blocks it, set GH_PAT_GARDEN
-        # secret (fine-grained, contents:write on garden-app) and swap token below.
+        # Uses GITHUB_TOKEN (contents: write).
         run: |
           SHA=$(curl -s \
             -H "Authorization: Bearer ${{ github.token }}" \

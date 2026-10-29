@@ -1,44 +1,21 @@
 name: harvest-weight-ratchet (V4-HARVRATCHET-001)
 
-# Propagates improved per-cultivar weight factors into stored harvest weights — the missing third of
-# Dave's ratchet. 0f-autocapture already turns dual count+weight harvests into calibration samples
-# automatically; 0c-backfill-basis is explicitly re-runnable and says so in its own header; nothing
-# ever ran it again, so the samples accumulated and the stored estimates never moved. This is that
-# re-run, with the two guards a blind re-run would have needed (see scripts/harvest-weight-ratchet.sh).
+# Propagates improved per-cultivar weight factors into stored harvest weights: a guarded re-run of
+# 0c-backfill-basis over the calibration samples 0f-autocapture accumulates (the guards are in
+# scripts/harvest-weight-ratchet.sh). Scheduled workflows fire only from main.
 #
-# ACTIVATION (honest, same as integrity-weekly.yml): on.schedule fires ONLY from the default branch,
-# so this workflow is INERT until it rides a promote (dev -> promote-gate -> main FF).
-# workflow_dispatch works once the file reaches main.
+# WEEKLY, and after integrity-weekly: the input changes only when Dave weighs something, and a weekly
+# move of a number he reads is one he can tie to an event.
 #
-# WEEKLY, NOT DAILY, AND DELIBERATELY. The input only changes when Dave weighs something, and the
-# output is a number he looks at. A daily job that silently nudges his season total is worse than a
-# weekly one he can associate with an event. Runs Mondays AFTER integrity-weekly so the two findings
-# streams do not compete for the same morning's attention.
+# REPORT-ONLY ON SCHEDULE. Writing is an explicit workflow_dispatch with apply=true: an application moves
+# stored totals Dave reads, so it is his decision, not something that happens on a Monday.
 #
-# DRY-RUN ON SCHEDULE BY DEFAULT. The scheduled run REPORTS; it does not write. Writing is an
-# explicit workflow_dispatch with apply=true. Rationale: the first application moves ~146 of 367
-# stored rows, which is a visible change to numbers Dave reads — it should be a decision he makes
-# once, not something that happens to him on a Monday. After he has seen a few clean reports, flip
-# the default here if he wants it unattended.
+# ALERT SINK: a blocked run exits 1 (conclusion=failure), and the report artifact uses integrity-weekly.yml's
+# report shape ({status, alerts[], warnings[], ...}) so the morning-brief collector can surface .alerts[].
 #
-# Secrets consumed: secrets.NEON_DATABASE_URL (already present; schema-audit.yml and
-# integrity-weekly.yml both consume it with green history). No AWS, no OIDC, no environment gate —
-# this job must run unattended.
-#
-# ALERT SINK: a blocked run exits 1 -> conclusion=failure, the same signal integrity-weekly.yml
-# already established for the morning brief. The report artifact carries the reason — in that
-# workflow's OWN report shape ({status, alerts[], warnings[], ...}) as of OPS-RATCHETREPORTDARK-001,
-# because until then this job copied only the exit-code half of the contract. A collector built to
-# the documented hookup (download the artifact, surface report.alerts[] verbatim) would have read
-# this artifact and found nothing to say.
-#
-# REPORTING IS SPLIT FROM ENFORCEMENT (OPS-RATCHETREPORTDARK-001). The runs of 2026-08-24, 08-31 and
-# 09-07 all blocked correctly and all produced a full report, and nobody noticed for three weeks: a
-# fail-closed guard whose verdict is the job's only escaping signal makes "a factor needs your
-# judgement" indistinguishable from "the job is broken", and both from silence. So the report step
-# cannot fail the job — it produces and publishes — and a terminal `Enforce` step owns the red. The
-# job's conclusion is unchanged (failure when blocked); what changed is that the Actions UI now names
-# which of the two happened, and publication no longer depends on `if: always()` surviving an edit.
+# REPORTING IS SPLIT FROM ENFORCEMENT: the report step never fails the job, and a terminal `Enforce` step
+# owns the red. A fail-closed guard whose verdict is the job's only signal makes "a factor needs your
+# judgement" look like "the job is broken", and publication must not depend on `if: always()` surviving an edit.
 
 on:
   schedule:
@@ -68,15 +45,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Produce the weekly report
-        # OPS-SCHEMACHECKAPT-001: no psql install step. The ubuntu runner image ships a
-        # postgresql client on PATH (16.14 on ubuntu-24.04, 18.4 on 26.04), and this job
-        # only ever runs psql — which, unlike pg_dump/pg_restore, has no major-version
-        # match requirement against the PG 17 Neon server. Fetching one from apt was a
-        # ship-time network dependency for a binary already on the box.
+        # No psql install step: the runner image ships a client on PATH (16 or 18), and psql, unlike
+        # pg_dump/pg_restore, needs no major-version match with Neon's PG 17.
         #
-        # THIS STEP NEVER FAILS THE JOB. It records the script's exit code and hands it to the
-        # Enforce step at the bottom. Reporting that can be cut short by its own findings is the
-        # defect OPS-RATCHETREPORTDARK-001 fixed.
+        # THIS STEP NEVER FAILS THE JOB. It records the script's exit code for the Enforce step at the bottom.
         id: report
         env:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
@@ -103,8 +75,7 @@ jobs:
             echo "### V4-HARVRATCHET-001 — harvest weight ratchet"
             echo
             if [ -f harvest-ratchet-report.json ]; then
-              # Lead with the verdict and the alert lines. A raw JSON blob is what a reader skips,
-              # and skipping is how three blocked runs went unread.
+              # Lead with the verdict and the alert lines: a raw JSON blob is what a reader skips.
               python3 scripts/harvest_ratchet_verdict.py --markdown harvest-ratchet-report.json
               echo
               echo '```json'
@@ -129,11 +100,9 @@ jobs:
           retention-days: 90
 
       - name: Enforce the ratchet guards
-        # The red lives here, AFTER the report has been summarised and uploaded, and it says which
-        # of the two failures happened. Exit 1 (BLOCKED, a decision is waiting) and exit 2 (ERROR,
-        # the job could not measure anything) both flatten to conclusion=failure — GitHub has no
-        # richer verdict — so the distinction is carried by an ::error:: annotation, which shows on
-        # the run page without opening a log or downloading an artifact.
+        # The red lives here, AFTER the report has been summarised and uploaded. Exit 1 (BLOCKED, a decision
+        # is waiting) and exit 2 (ERROR, nothing measured) both flatten to conclusion=failure, so the
+        # ::error:: title carries the distinction onto the run page.
         if: always()
         env:
           RC: ${{ steps.report.outputs.rc }}

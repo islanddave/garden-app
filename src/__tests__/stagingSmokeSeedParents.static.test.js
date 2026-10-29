@@ -501,7 +501,7 @@ describe('the L-058 sweep takes a smoke mix apart in one transaction: its compon
     const text = readFileSync(resolve(process.cwd(), '.github/workflows/deploy-staging.yml'), 'utf8')
     expect(text).toContain('# NOT SWEPT, on purpose: xp_events.')
     expect(run).not.toContain('xp_events')
-    expect(text).toContain('# WHY ONE TRANSACTION (2026-10-06, gate-file review finding S1).')
+    expect(text).toContain('# WHY ONE TRANSACTION:')
   })
 
   // Review finding S2: inverted, this test makes the step a no-op that reports success on every run.

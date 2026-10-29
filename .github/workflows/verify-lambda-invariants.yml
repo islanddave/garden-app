@@ -1,59 +1,42 @@
 name: Verify Lambda invariants
 
-# A0.3 — live-account invariant audit for the Lambda fleet (HARD GATE; deliberately NOT continue-on-error).
-#
-# EXTRACTED 2026-09-17 (OPS-LAMCHANGEDBLIND-002) from deploy-lambda.yml's `verify-daily-plan` job. The
-# steps below are BYTE-IDENTICAL to the ones that lived there; only their home changed. The reason:
-# promote-gate skips the whole of deploy-lambda.yml on an SPA-only promote, and these assertions went
-# with it. They are the repo's ONLY live-AWS check of state that drifts with NO repo change at all, so
-# losing them on the cheap common-case promote is the hazard that blocked activating that skip.
+# Live-account invariant audit for the Lambda fleet. A HARD GATE: deliberately not continue-on-error.
+# It is the repo's only live-AWS check of state that drifts with no repo change at all.
 #
 # TWO CALLERS, ONE COPY:
 #   * deploy-lambda.yml calls it after its deploy matrix (`needs: deploy`), which keeps it on the
-#     standalone workflow_dispatch path and on scripts/revert-to.py's incident path — revert-to.py
-#     dispatches deploy-lambda.yml directly, so deleting the job there would strip the gate from a
-#     revert, which is exactly when you want it most.
-#   * promote-gate.yml calls it unconditionally as the LAST job of every promote.
+#     standalone workflow_dispatch path and on scripts/revert-to.py's incident path (revert-to.py
+#     dispatches deploy-lambda.yml directly, and a revert is when the gate matters most).
+#   * promote-gate.yml calls it unconditionally as the LAST job of every promote, because an SPA-only
+#     promote skips deploy-lambda.yml entirely.
 # On a Lambda-carrying promote it therefore runs twice. That is deliberate: a duplicate read-only audit
-# costs ~1 minute, a GAP is the failure this file exists to close. Two `if:` conditions that must stay
-# exact complements would be a gap waiting to open.
+# costs about a minute, while two `if:` conditions that must stay exact complements are a gap waiting to open.
 #
 # EVERYTHING HERE IS READ-ONLY: get-function-configuration, get-function, get-function-url-config,
-# get-policy, describe-rule, list-targets-by-rule. Safe to run twice, and safe to run with NO preceding deploy — every invariant
-# asserts live account state, not deploy output.
+# get-policy, describe-rule, list-targets-by-rule. Safe to run twice, and with no preceding deploy: every
+# invariant asserts live account state, not deploy output.
 #
-# The deploy matrix tolerates partial config failures (many of its env steps are continue-on-error);
-# this is the backstop that fails loudly when the safety invariants do not hold in the LIVE account:
+# The deploy matrix tolerates partial config failures (many of its env steps are continue-on-error); this
+# is the backstop that fails loudly when the safety invariants do not hold in the LIVE account:
 #   (1) garden-daily-plan env contains ALL of DRY_RUN / SYSTEM_CLERK_SUB / AWN_STATIONS_JSON /
-#       GARDEN_HOUSEHOLD_IDS — guards the set-not-merge wipe hazard, where a transient read failure in any
+#       GARDEN_HOUSEHOLD_IDS: guards the set-not-merge wipe hazard, where a transient read failure in any
 #       env-merge step replaces the entire Variables map with a partial one;
-#   (1b) AWN_STATIONS_JSON SHAPE, not just presence — station.js ships an EMPTY default on purpose
-#       (public repo: the record is the gauge MAC and the house coordinate), so a wiped env does NOT
-#       fall back to a working config. It silently unbinds the rain gauge and drops the engine to
-#       forecast-only hydrology. This assertion is the only thing that catches that;
-#   (2) DRY_RUN == "false" — a wiped/reset value silently re-darkens the nightly engine (L-186 class);
+#   (1b) AWN_STATIONS_JSON SHAPE, not just presence: station.js ships an EMPTY default on purpose (public
+#       repo), so a wiped env silently unbinds the rain gauge and drops the engine to forecast-only hydrology;
+#   (2) DRY_RUN == "false": a wiped or reset value silently re-darkens the nightly engine;
 #   (3) EventBridge rule garden-daily-plan-hourly is ENABLED with exactly one target, and
-#       (3b) the three rules it supersedes — nightly, intraday-am, intraday-pm — are ABSENT. 3b exists
-#       because retire_rule swallows its own errors and check-lambda-config.py only iterates DECLARED
-#       rules, so "hourly created but the old ones still firing" is otherwise a green deploy;
-#   (4) OPS-LAMBDACONFIG-001 — live memory/timeout/env across ALL 26 functions matches
-#       scripts/lambda-config-expected.json, including flags declared deliberately ABSENT. (1)-(3) stay
-#       hand-written because they cover EventBridge and cross-key relationships the manifest's per-key
-#       model cannot express; (4) covers the breadth.
+#       (3b) the three rules it supersedes (nightly, intraday-am, intraday-pm) are ABSENT: retire_rule
+#       swallows its own errors and check-lambda-config.py only iterates DECLARED rules;
+#   (4) live memory/timeout/env across ALL 26 functions matches scripts/lambda-config-expected.json,
+#       including flags declared deliberately ABSENT. (1)-(3) stay hand-written because they cover
+#       EventBridge and cross-key relationships the manifest's per-key model cannot express.
 #
-# READ THE CHECKOUT COMMENT BELOW WITH THIS CAVEAT: it says the ref is "the commit whose Lambdas just
-# shipped". On an SPA-only promote NONE shipped. The ref is still the promoted SHA, which is the commit
-# whose manifest is authoritative — the assertion is then purely a drift check of live AWS against a
-# manifest that did not move, which is precisely the gap this extraction exists to cover.
+# The checkout ref is the promoted SHA even on an SPA-only promote, when no Lambda shipped: its manifest is
+# authoritative, and the run is then a pure drift check of live AWS against it.
 #
-# environment:production is REQUIRED — the OIDC trust for AWS_DEPLOY_ROLE_ARN is scoped to the
-# env:production subject. It does NOT pause. VERIFIED against the environments API 2026-09-17: the
-# `production` environment's protection_rules carry a `branch_policy` entry ONLY, and NO
-# required_reviewers (the reviewer was removed 2026-06-22). That branch policy admits `dev` and `main`
-# (its `promote-v*` tag rule was removed 2026-10-02 with the tag trigger). The older claims in
-# deploy-lambda.yml that each such job adds "a second/third approval prompt" are STALE; do not reinstate
-# them. For contrast, `production-destructive` (revert-gate.yml) DOES carry required_reviewers=[islanddave]
-# — do not generalize from it to here.
+# environment:production is REQUIRED because the OIDC trust for AWS_DEPLOY_ROLE_ARN is scoped to the
+# env:production subject. It does NOT pause: that environment has a branch policy (dev, main) and no
+# required reviewers. Do not generalize from production-destructive (revert-gate.yml), which does.
 #
 # No secrets are used or needed: vars.AWS_DEPLOY_ROLE_ARN is a repo VARIABLE, and the Lambdas fetch their
 # own runtime secrets from Secrets Manager. Callers deliberately do NOT pass `secrets: inherit`.
@@ -73,15 +56,14 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-26.04
-    # Bounds a verify that hangs once it is RUNNING (a stuck AWS read); the slowest healthy run on record is 73 s.
-    # One limit covers both callers (promote-gate.yml and deploy-lambda.yml), whose `uses:` jobs cannot carry one.
-    # It does NOT bound a job still waiting for a runner: that is scripts/run-status.py STUCK, then cancel and
-    # re-run the failed jobs. Pinned by scripts/test_workflow_steps.py.
+    # Bounds a verify that hangs once RUNNING (a stuck AWS read); healthy runs take about a minute or less.
+    # One limit covers both callers, whose `uses:` jobs cannot carry one. It does NOT bound a job still
+    # waiting for a runner: that is scripts/run-status.py STUCK, then cancel and re-run the failed jobs.
+    # Pinned by scripts/test_workflow_steps.py.
     timeout-minutes: 10
     environment: production
     steps:
-      # Needed by the config-manifest step below. Pinned to the ref being deployed, NOT the branch
-      # head: the manifest must be the one belonging to the commit whose Lambdas just shipped.
+      # Pinned to the ref being verified, NOT the branch head: the manifest must belong to that commit.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ inputs.ref || github.sha }}
@@ -159,22 +141,10 @@ jobs:
           fi
           echo "A0.3 verify OK: env keys present, DRY_RUN=false, $RULE ENABLED with exactly 1 target, all 3 superseded rules absent."
 
-      # OPS-LAMBDACONFIG-001 — the generalization of the step above, across all 26 functions.
-      #
-      # The A0.3 invariants are hand-written and daily-plan-only, so they could not have caught what
-      # 2026-08-17 found: CARE_WATER_LEDGER_ENABLED and CARE_RAIN_MAXDAYS_ENABLED ABSENT (not false)
-      # from garden-daily-plan, leaving the RAIN_DEPTH subsystem — ~140 lines, fully unit-tested —
-      # unreachable in prod with a green suite either way; and garden-plants running at 1024MB
-      # against a repo that declared 256. Neither was a regression. Both were states nobody had
-      # written down, so the only way to learn them was to go and look at the live account.
-      #
-      # scripts/lambda-config-expected.json is now that written-down state, and this step is what
-      # makes disagreeing with it a red deploy. It also backstops the many `continue-on-error: true`
-      # env-ensure steps in the deploy job above: today one of those can fail silently and leave,
-      # say, garden-harvests with no GARDEN_HOUSEHOLD_IDS — a per-user data partition, green build.
-      #
-      # Deliberately in THIS job rather than a new one: a third `environment: production` job would
-      # add a third approval prompt to every promote. Also deliberately NOT in `deploy_result`, so
-      # a config-drift failure reds the run loudly without withholding a good frontend.
+      # The generalization of the step above across all 26 functions. scripts/lambda-config-expected.json
+      # is the written-down state of the live account, and this step makes disagreeing with it a red run.
+      # It also backstops the `continue-on-error: true` env-ensure steps in deploy-lambda.yml, any of which
+      # can fail silently and leave a function without, say, GARDEN_HOUSEHOLD_IDS. Deliberately NOT in
+      # `deploy_result`, so a config-drift failure reds the run loudly without withholding a good frontend.
       - name: Assert live Lambda config matches the declared manifest (hard fail)
         run: python3 scripts/check-lambda-config.py --region us-east-1

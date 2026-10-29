@@ -1,37 +1,27 @@
 name: revert rehearsal (staging)
 
-# One-off REHEARSAL of scripts/revert-to.py against STAGING (spec §3 B2 rehearsal).
-# Unlike snap (which only CREATES and so could be pointed at staging by env alone),
-# revert-to's CODE leg mutates refs -> it CANNOT be pointed at staging by env.
-# REHEARSAL_MODE=1 redirects the code legs to throwaway revert-rehearsal-* branches,
-# resets the STAGING Neon branch (br-polished-art-am12o4ue) from the v0.0.0 snapshot,
-# and SKIPS the prod Lambda/CF legs (revert-to.rehearsal_guard fails closed otherwise).
-# It does NOT touch dev, main, prod DB, prod Lambda, or prod CF.
+# Rehearsal of scripts/revert-to.py against STAGING. Unlike snap (which only creates, so env alone can
+# point it at staging), revert-to's CODE leg mutates refs. REHEARSAL_MODE=1 redirects the code legs to
+# throwaway revert-rehearsal-* branches, resets the STAGING Neon branch (br-polished-art-am12o4ue) from the
+# target snapshot, and SKIPS the prod Lambda/CF legs (revert-to.rehearsal_guard fails closed otherwise). It
+# does not touch dev, main, the prod DB, prod Lambdas or prod CloudFront.
 #
-# Triggered by touching ops/revert-rehearsal.trigger on dev (push), mirroring snap-rehearsal:
-# workflow_dispatch cannot be used because this workflow lives only on dev (dispatch requires
-# the workflow on the default branch). Runs in environment: production ONLY because the snap
-# role's OIDC trust is scoped to environment:production — that is an OIDC SUBJECT-CLAIM dependency,
-# NOT an approval gate. Corrected 2026-08-05: the parenthetical here used to read "(Dave approves each
-# run there)", which has been false since 2026-06-22 when the production environment's required
-# reviewer was removed; it now carries a branch ref policy only (dev, main). This workflow is deliberately NOT
-# moved to environment:production-destructive — it is staging-only (REHEARSAL_MODE=1 skips every prod
-# leg), so it needs no destructive gate, and moving it would break the OIDC subject match above.
+# Triggered by touching ops/revert-rehearsal.trigger on dev: workflow_dispatch needs the file on main, and
+# this one lives on dev only. `environment: production` is an OIDC subject-claim dependency (the snap role
+# trusts environment:production), NOT an approval gate: that environment has no required reviewers. Do not
+# move this to production-destructive; it needs no destructive gate and the subject would no longer match.
 #
-# AUTH (rewired 2026-10-02): GitHub calls run as the garden-bot App, minted per run exactly as
-# promote-gate.yml mints it. Until then they ran as secrets.RULESET_READ_PAT, a stored copy of a
-# token that no longer exists (see ruleset-watchdog.yml; run 34507891849 died on it). A fresh PAT
-# would not have revived this either: ruleset release-tag-integrity (20140435) restricts creation,
-# update and deletion of refs/tags/v* to garden-bot, and this workflow deletes and recreates
-# TARGET_VERSION, while revert-to.py tags PREREVERT_VERSION.
+# AUTH: GitHub calls run as the garden-bot App, minted per run as promote-gate.yml mints it. No user token
+# can do this: ruleset release-tag-integrity (20140435) restricts creating, updating and deleting
+# refs/tags/v* to garden-bot, and this workflow recreates TARGET_VERSION while revert-to.py tags
+# PREREVERT_VERSION.
 #
 # The trigger file selects the run via shell-style lines (all optional, defaults shown):
 #   MODE=dump_path            # dump_path | fast_path | abort
 #   TARGET_VERSION=v0.0.0     # snapshot to revert TO (must exist in SNAP_BUCKET)
 #   PREREVERT_VERSION=v0.0.1  # fresh version for the pre-revert snap of CURRENT staging
-# Setup creates the two rehearsal refs + recreates tag TARGET_VERSION (snap-rehearsal deleted
-# it); teardown (always) deletes all rehearsal artifacts (refs, tags, pre-revert + stage Neon
-# branches).
+# Setup creates the two rehearsal refs and recreates tag TARGET_VERSION (snap-rehearsal deletes it);
+# teardown (always) deletes all rehearsal artifacts (refs, tags, pre-revert and stage Neon branches).
 
 on:
   push:
@@ -85,13 +75,10 @@ jobs:
           DEVB="revert-rehearsal-dev-$RID"
           MAINB="revert-rehearsal-main-$RID"
           API="https://api.github.com/repos/$REPO"
-          # DIAGNOSTICS (2026-09-10). Every call below captures the HTTP status AND
-          # the body and reports both through scripts/gh_api_check.py. The previous
-          # `curl | python3 -c "...['object']['sha']"` threw the body away, so 401,
-          # 403 and 404 all surfaced as an identical `KeyError: 'object'` with no
-          # message -- which is why run 34507891849 was undiagnosable. Failure
-          # disposition per call site is UNCHANGED: only --fatal calls can end the
-          # step, and the tolerated calls stay tolerated (they annotate and continue).
+          # Every call captures the HTTP status AND the body and reports both through
+          # scripts/gh_api_check.py: a bare `curl | python3 -c` read drops the body, which makes
+          # 401, 403 and 404 indistinguishable (scripts/test_gh_api_check.py forbids that shape).
+          # Only --fatal calls can end the step; tolerated calls annotate and continue.
           CHK="python3 scripts/gh_api_check.py"
           ghcurl() {
             curl -sS -o /tmp/gh-body.json -w "%{http_code}" \
@@ -113,30 +100,24 @@ jobs:
           for B in "$DEVB" "$MAINB"; do
             CODE=$(ghcurl -X POST -d "{\"ref\":\"refs/heads/$B\",\"sha\":\"$BASE\"}" "$API/git/refs")
             # 201 = created; 422 = already exists on a re-fire (both expected).
-            # Anything else is annotated and then still falls through to the
-            # force-update below, exactly as it did before.
+            # Anything else is annotated and still falls through to the force-update below.
             $CHK status --endpoint "$API/git/refs" --method POST --status "$CODE" \
               --body-file /tmp/gh-body.json --ok 201 --ok 422 --severity warning
             if [ "$CODE" != "201" ]; then
               CODE=$(ghcurl -X PATCH -d "{\"sha\":\"$BASE\",\"force\":true}" "$API/git/refs/heads/$B")
-              # Was `>/dev/null` with no status check: a refused force-update left
-              # the rehearsal branch missing and the step still green, so the real
-              # failure landed later, somewhere else. Now it is named. Non-fatal
-              # (no --fatal) to keep this step's control flow identical.
+              # Status-checked so a refused force-update is named here, not as a missing branch
+              # later. Non-fatal, like the create above.
               $CHK status --endpoint "$API/git/refs/heads/$B" --method PATCH \
                 --status "$CODE" --body-file /tmp/gh-body.json --ok 200
             fi
           done
-          # The tag DELETE stays tolerant: the tag is normally absent, so it warns
-          # and continues -- as `|| true` did.
+          # The tag DELETE is tolerant: the tag is normally absent, so it warns and continues.
           CODE=$(ghcurl -X DELETE "$API/git/refs/tags/$TV")
           $CHK status --endpoint "$API/git/refs/tags/$TV" --method DELETE --status "$CODE" \
             --body-file /tmp/gh-body.json --ok 204 --ok 404 --severity warning
-          # The tag CREATE is not tolerant, and only 201 passes. It used to accept
-          # 422 as "already exists" -- but a 422 is also how a ruleset refusal
-          # arrives, and after the DELETE above a tag that still exists was never
-          # removed and may point anywhere. Either way revert-to.py has no usable
-          # target, so stop HERE with the response body, not later inside it.
+          # The tag CREATE is not tolerant, and only 201 passes: a 422 is also how a ruleset refusal
+          # arrives, and after the DELETE above a tag that still exists may point anywhere. Either way
+          # revert-to.py has no usable target, so stop HERE with the response body.
           CODE=$(ghcurl -X POST -d "{\"ref\":\"refs/tags/$TV\",\"sha\":\"$TARGET_MAIN_SHA\"}" "$API/git/refs")
           $CHK status --endpoint "$API/git/refs" --method POST --status "$CODE" \
             --body-file /tmp/gh-body.json --ok 201 --fatal
@@ -162,10 +143,8 @@ jobs:
           key: pg17-client-postgres17-image-v1-runner-ubuntu-26.04
 
       - name: Fetch pg17 client from the postgres:17 image (cache miss only)
-        # OPS-SCHEMACHECKAPT-001: no more apt.postgresql.org (PGDG) -- see backup.yml
-        # for the full incident writeup. This is the rehearsal of the incident-recovery
-        # path (revert-gate.yml) -- it needs the same fix, for the same reason: an
-        # incident revert cannot depend on a package mirror.
+        # Not apt.postgresql.org (see backup.yml): the rehearsal of the incident-recovery path needs
+        # the same independence from a package mirror as revert-gate.yml.
         if: steps.pg17-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -237,10 +216,8 @@ jobs:
             curl -sS -o /tmp/gh-body.json -w "%{http_code}" \
               -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"
           }
-          # Teardown stays best-effort and never fails the job (set +e, --severity
-          # warning, no --fatal). The only change is that a refused delete now says
-          # WHICH ref, WHICH status and WHY instead of vanishing into /dev/null --
-          # a leaked rehearsal ref used to be completely silent.
+          # Teardown is best-effort and never fails the job (set +e, --severity warning, no --fatal),
+          # but a refused delete still names the ref, the status and the reason.
           for B in "$DEVB" "$MAINB"; do
             [ -n "$B" ] || continue
             CODE=$(ghcurl -X DELETE "$API/git/refs/heads/$B")

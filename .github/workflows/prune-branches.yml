@@ -1,19 +1,12 @@
 name: prune-branches (dry-run)
 
-# Gate 3 §10 — "what would K=6 delete?" answerable WITHOUT shipping anything.
-# Read-only, dispatch-only. Selection logic lives in
-# scripts/neon_branch_select.py (SHARED with integrity-weekly's hygiene step
-# and covered by scripts/test_neon_branch_select.py) and mirrors the shipped
-# snap.py pruner's guards: name {SNAP_BRANCH_PREFIX}* AND parented to the prod
-# branch, deny-list respected, age floor (default 24h), keep newest K — plus a
-# HAS-CHILDREN annotation for candidates the pruner would 422-skip. SNAP_DRY_RUN
-# is hard-wired '1' and the script refuses to run without it — this workflow
-# has NO deletion capability by construction; actual pruning stays in snap.py's
-# in-pipeline retention prune.
-#
-# Dispatchability requires this file on the default branch (main); once there,
-# pick ref=dev in the Actions UI to run the dev version. Secrets consumed:
-# NEON_API_KEY, NEON_PROJECT_ID (same as restore-verify/snap workflows).
+# Read-only report of what snap.py's retention prune would delete at keep-newest-K. Selection is
+# scripts/neon_branch_select.py (shared with integrity-weekly's hygiene step, tested by
+# scripts/test_neon_branch_select.py) and mirrors the pruner's guards: name {SNAP_BRANCH_PREFIX}* AND
+# parented to the prod branch, deny-list respected, age floor (default 24h), keep newest K, plus a
+# HAS-CHILDREN annotation for candidates the pruner would 422-skip. SNAP_DRY_RUN is hard-wired '1' and the
+# script refuses to run without it, so this workflow cannot delete anything.
+# Dispatch needs this file on main; pick ref=dev in the Actions UI to run dev's copy.
 
 on:
   workflow_dispatch:

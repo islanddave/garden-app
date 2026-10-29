@@ -1,48 +1,23 @@
 name: Deploy Lambda Functions
 
-# OPS-PROMOTERACE-001 (2026-08-14) — the `push: main` trigger is GONE, deliberately.
+# No `push: main` trigger, deliberately. promote-gate calls this workflow as a `needs:` predecessor of the
+# SPA deploy and strictly after snap.py, so the ordering is a graph edge: the new frontend never serves
+# against old Lambdas, and the revertibility manifest never records a torn mix of Lambda versions.
+# deploy-staging.yml has the same topology (`deploy-frontend: needs: deploy-lambdas`). main is
+# capability-gated to the garden-bot App (3951762) and promote-gate's fast-forward is its only writer.
 #
-# It made this a SEPARATE workflow run kicked off by promote-gate's fast-forward, racing the SPA
-# deploy that promote-gate calls in the same breath. Nothing sequenced them. Measured on promote-gate
-# run 31657287769: this workflow ran 01:24:45->01:30:45 while the SPA deploy finished 01:27:35 — the
-# new frontend served against old Lambdas for 3m10s. The ~30s margin on a typical promote is
-# accidental (a vite build happens to take about as long as a 26-function matrix), not designed.
-#
-# It also raced `snap.py` inside the promote job, so the revertibility manifest recorded a TORN mix
-# of pre- and post-deploy Lambda package versions — see snap.py's L-221 note. (`revert-to.py` no longer
-# restores a target's Lambdas from its manifest: it rebuilds them from the target's tree through this
-# workflow, and restores snapshot versions only on rollback, from its own pre-revert snap.)
-#
-# promote-gate now calls this workflow explicitly as a `needs:` predecessor of the SPA deploy, which
-# makes the ordering a graph edge instead of a coincidence, and puts it strictly AFTER snap.py.
-# `deploy-staging.yml:273` has always had the right topology (`deploy-frontend: needs: deploy-lambdas`);
-# prod was the outlier.
-#
-# Removing `push: main` is safe because `main` is capability-gated to the garden-bot App (3951762) and
-# promote-gate's fast-forward is the ONLY writer. This is also the only `push: main` workflow in the
-# repo, so nothing else changes shape.
-#
-# ⚠️ DISPATCH-REF TRAP (OPS-WFSELFFIXORDER-001, proven 2026-09-15). A CHANGE TO THIS FILE CANNOT TAKE
-# EFFECT ON THE PROMOTE THAT SHIPS IT, IF THAT PROMOTE IS DISPATCHED FROM `main`.
-#
-# promote-gate calls this workflow with `uses: ./.github/workflows/deploy-lambda.yml`. A *local*
-# `uses: ./…` reference is resolved from the CALLER RUN'S OWN COMMIT (`github.sha`), NOT from the
-# `ref:` input below. `ref:` only feeds the `actions/checkout` inside this workflow. So a promote runs
-# NEW SOURCE CODE UNDER OLD STEP DEFINITIONS whenever the caller's commit is behind the SHA it promotes.
-#
-# Dispatching promote-gate against `main` does exactly that: main is fast-forwarded DURING the run, but
-# the workflow definitions were pinned at dispatch time — so this file is always exactly one promote
-# behind. Proven on promote run 34979965132: dispatched branch=main head_sha=1474c2db (15 commits
-# behind the dev SHA it promoted), and the executed step name was the PRE-change
-# "Ensure EventBridge cron rules for daily-plan (nightly + intraday)". The hourly migration in that very
-# promote was never attempted, and the run was green end to end — it correctly did what the old recipe
-# said. Live AWS still had all three retired rules afterwards, which is what a correct run of the OLD
-# recipe produces; nothing was drifted or half-applied.
+# ⚠️ DISPATCH-REF TRAP. A CHANGE TO THIS FILE CANNOT TAKE EFFECT ON THE PROMOTE THAT SHIPS IT, IF THAT
+# PROMOTE IS DISPATCHED FROM `main`. promote-gate calls this workflow with
+# `uses: ./.github/workflows/deploy-lambda.yml`, and a *local* `uses: ./…` reference is resolved from the
+# CALLER RUN'S OWN COMMIT (`github.sha`), NOT from the `ref:` input below, which only feeds the checkout. A
+# promote dispatched on main pins the definitions before main is fast-forwarded, so it runs NEW SOURCE CODE
+# UNDER OLD STEP DEFINITIONS, and is green because it correctly did what the old recipe said. The reverse
+# also bites: a recipe that builds with scripts/package-lambda.sh cannot build a tree without that script,
+# so promote such a tree from dev.
 #
 # RULE: dispatch promote-gate from `dev` (or from an explicit SHA that carries the intended recipe)
-# whenever the promote includes a change to this file or to promote-gate.yml. Verify the fix landed by
-# reading LIVE AWS (`aws events list-rules --name-prefix garden-daily-plan`), never by the run's colour —
-# a green promote is compatible with the change having never executed.
+# whenever the promote includes a change to this file or to promote-gate.yml. Verify the change landed by
+# reading LIVE AWS, never by the run's colour: a green promote is compatible with it never having executed.
 on:
   workflow_call:
     inputs:
@@ -53,16 +28,10 @@ on:
         type: string
     outputs:
       deploy_result:
-        # The SPA gate keys on THIS, not on the called workflow's aggregate result.
-        #
-        # `verify-daily-plan` below is a post-deploy safety-invariant check on garden-daily-plan; it
-        # hard-fails by design and is unrelated to the frontend. Under the old `push: main` topology it
-        # could not block the SPA (separate run); gating the SPA on the aggregate would newly let an
-        # unrelated invariant failure withhold a good frontend. It still reds the run — it just does
-        # not hold the SPA hostage.
-        #
-        # `deploy` is a fail-fast:false matrix over all 26 functions, so its own result already
-        # aggregates every leg: any failed function => this is not 'success' => the SPA is withheld.
+        # The SPA gate keys on THIS, not on the called workflow's aggregate result: `verify-daily-plan`
+        # below hard-fails by design on invariants unrelated to the frontend, and reds the run without
+        # holding a good SPA hostage. `deploy` is a fail-fast:false matrix over all 26 functions, so its
+        # own result already aggregates every leg: any failed function => not 'success' => SPA withheld.
         description: 'Result of the 26-function deploy matrix only (excludes the post-deploy daily-plan invariant check).'
         value: ${{ jobs.deploy.result }}
   workflow_dispatch:
@@ -83,14 +52,13 @@ jobs:
     # leg still waiting for a runner: that is scripts/run-status.py STUCK, then cancel and re-run the failed jobs.
     # Pinned by scripts/test_workflow_steps.py; the caller job in promote-gate.yml cannot carry a limit (`uses:`).
     timeout-minutes: 10
-    environment: production  # claim env:production OIDC subject for garden-app-github-deploy trust (scoped 2026-05-05)
+    environment: production  # the env:production OIDC subject is what garden-app-github-deploy trusts
     strategy:
       matrix:
         # One job per Lambda function directory under lambda/
         function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, achievements, ux-events, xp-reconcile, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, daily-plan, tags, storage-location, preservation, harvests, facebook-share, photocdn-derivative]
-      # No max-parallel cap: all functions dispatch in one wave so the
-      # environment:production approval gate prompts ONCE (not 3 batches of 4).
-      # Re-add `max-parallel: N` here only if Lambda control-plane rate limits appear.
+      # No max-parallel cap: every function deploys in one wave. Add `max-parallel: N` only if Lambda
+      # control-plane rate limits appear.
       fail-fast: false
 
     steps:
@@ -165,16 +133,15 @@ jobs:
           fi
           echo "main is at $MAIN, the commit this job deploys: proceeding"
 
-      # Coupled-deploy determinism: promote-gate passes the promoted dev SHA so the Lambda code and
-      # the SPA build come from ONE commit, matching what `deploy.yml` already does with its own
-      # `ref` input. Empty (workflow_dispatch) => default checkout, i.e. the branch head, unchanged.
+      # promote-gate passes the promoted dev SHA so the Lambda code and the SPA build come from ONE commit
+      # (deploy.yml takes the same `ref`). Empty (workflow_dispatch) => github.sha, the dispatched head.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ inputs.ref || github.sha }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22.23.3'  # the Lambda runtime's major (OPS-LAMBDANODE22-001); CI and .nvmrc name the same (OPS-CINODE22-001)
+          node-version-file: .nvmrc  # read from the checked-out tree; must name the Lambda runtime's major (lambda-config-expected.json)
           # no root-level lockfile — caching disabled for lambda subdirs
 
       - name: Configure AWS credentials (OIDC)
@@ -191,19 +158,16 @@ jobs:
           FN: ${{ matrix.function }}
         run: bash scripts/package-lambda.sh "$FN"
 
-      # OPS-LAMBDANODE22-001: update-function-code never touches Runtime, so the create branch's runtime
-      # alone moves no existing function. This step moves an existing one to the runtime declared in
-      # scripts/lambda-config-expected.json and is a no-op once it is there. It sends Runtime only, never
-      # an env map, so nothing else in the configuration can be overwritten. It runs BEFORE the code
-      # update so the leg never needs AWS to accept a code update on a deprecated runtime; the previous
-      # code runs on the new runtime for the seconds until the update lands. The promote's staging gate runs
-      # this body too, but only its no-op branch once staging is already on the target, so the move branch is
-      # proven on staging by putting one function back first (OPS-LAMBDANODE22-001 S2b). continue-on-error like the other config-ensure steps: verify-lambda-invariants
-      # asserts `runtime` from the same manifest after every promote, so a failure here reds the run
-      # without withholding the SPA; it also withholds the deploy marker (the marker step's `if:`), and
-      # check-lambda-current reads a runtime that is not the declared one as NOT CURRENT, so the next
-      # promote redeploys and retries. The body is byte-identical to deploy-staging.yml's copy
-      # (scripts/test_ensure_runtime_step.py).
+      # update-function-code never touches Runtime, so this step moves an existing function to the runtime
+      # declared in scripts/lambda-config-expected.json (a no-op once it is there). It sends Runtime only,
+      # never an env map, so nothing else in the configuration can be overwritten. It runs BEFORE the code
+      # update so AWS never has to accept a code update on a deprecated runtime; the previous code runs on
+      # the new runtime for the seconds until the update lands. The promote's staging gate runs this body
+      # too, but usually only its no-op branch. continue-on-error like the other config-ensure steps:
+      # verify-lambda-invariants asserts `runtime` after every promote, so a failure reds the run without
+      # withholding the SPA; it also withholds the deploy marker (the marker step's `if:`), and
+      # check-lambda-current reads an undeclared runtime as NOT CURRENT, so the next promote redeploys and
+      # retries. The body is byte-identical to deploy-staging.yml's copy (scripts/test_ensure_runtime_step.py).
       - name: Ensure declared runtime on garden-${{ matrix.function }}
         id: ensure_runtime
         continue-on-error: true
@@ -266,25 +230,14 @@ jobs:
             --function-name "garden-${{ matrix.function }}"
           echo "garden-${{ matrix.function }} is active"
 
-      # B1 (V4-HARVESTVIEW-001): garden-harvests is HOUSEHOLD-SCOPED (householdScope reads
-      # GARDEN_HOUSEHOLD_IDS). The create-function branch above sets ZERO env vars, so on the FIRST
-      # prod deploy this net-new Lambda would have NO GARDEN_HOUSEHOLD_IDS -> householdScope silently
-      # collapses to [userId] and Dave/Jen would see DISJOINT harvest lists (a silent per-user data
-      # partition). There is no pre-existing GARDEN_HOUSEHOLD_IDS ensure step in this workflow — the
-      # value was set manually on the older household lambdas — so we SOURCE it from a sibling that
-      # already carries it (garden-events, canonical live) and READ-MERGE it onto garden-harvests.
-      # READ-MERGE (get-function-configuration -> jq '. + {...}') is MANDATORY: the Lambda
-      # --environment update is SET-not-MERGE, so a naive set would wipe every other env var.
-      # 0A.6: garden-members joined — the roster is now filtered by householdScope; without the
-      # env it fail-closes to [caller] and the AssigneePicker silently loses the other household
-      # member. Same read-merge mechanics as the original harvests step.
-      # BUG-TAGENTOWN-001 (v3.75.0): garden-tags joined — entityExists now carries a household
-      # ownership predicate; without the env it fail-closes to [caller] and every cross-member
-      # tag attach 404s (pre-promote impact pass found the live fn had no GARDEN_HOUSEHOLD_IDS).
-      # BUG-AUTHZLAMBDA-001: garden-shared-state (membership gate; without the env it 403s Dave and
-      # Jen and the Garden sightings card vanishes) and garden-daily-plan (household(Space)) joined.
-      # This step runs AFTER the code update, so it is the BACKSTOP: the key is meant to be set live
-      # on both before the code ships. scripts/lambda-config-expected.json asserts it post-deploy.
+      # Household-scoped functions read GARDEN_HOUSEHOLD_IDS; without it householdScope silently collapses
+      # to [caller] (disjoint harvest lists, a roster missing the other member, cross-member tag attaches
+      # that 404, a shared-state gate that 403s, a plan missing the other member's plantings). The
+      # create-function branch sets ZERO env vars, so the value is SOURCED from a sibling that carries it
+      # (garden-events) and READ-MERGED on. Read-merge (get-function-configuration -> jq '. + {...}') is
+      # MANDATORY: `--environment` is SET-not-MERGE, so a naive set wipes every other env var. This step
+      # runs AFTER the code update, so it is the BACKSTOP: the key is meant to be set live before the code
+      # ships. scripts/lambda-config-expected.json asserts it post-deploy.
       - name: Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped fns (read-merge)
         if: matrix.function == 'harvests' || matrix.function == 'members' || matrix.function == 'tags' || matrix.function == 'shared-state' || matrix.function == 'daily-plan'
         continue-on-error: true  # requires lambda:GetFunctionConfiguration + lambda:UpdateFunctionConfiguration on deploy role
@@ -324,15 +277,11 @@ jobs:
             echo "GARDEN_HOUSEHOLD_IDS set on $FN"
           fi
 
-      # V4-FBSHARE-001: garden-facebook-share is admin-only + household-scoped and byte-uploads photos
-      # to the Graph API. Net-new, so create-function sets ZERO env — read-merge its config here.
-      # FB_SHARE_ENABLED is set to "1" on the LIVE function as of 2026-08-21 — Facebook posting went
-      # live once garden-app/facebook-page-token was provisioned. This step does NOT set or unset it;
-      # it read-merges, so the live value survives. That is deliberate: the kill switch is operated
-      # from the console, and scripts/lambda-config-expected.json is where its expected state is
-      # declared. (Before go-live this comment read "deliberately NOT set" — kept in sync now because
-      # a stale comment here is what made the drift look like an accident.)
-      # timeout/memory are NOT hardcoded below — they are read from that same manifest.
+      # garden-facebook-share is admin-only and household-scoped, and byte-uploads photos to the Graph API.
+      # create-function sets ZERO env, so its config is read-merged here. This step never sets or unsets
+      # FB_SHARE_ENABLED: the read-merge keeps the live value, the kill switch is operated from the console,
+      # and scripts/lambda-config-expected.json declares its expected state. timeout/memory are read from
+      # that same manifest, not hardcoded below.
       - name: Ensure facebook-share config (household + admin + bucket + secret; read-merge)
         if: matrix.function == 'facebook-share'
         continue-on-error: true  # requires lambda:Get/UpdateFunctionConfiguration on deploy role
@@ -378,12 +327,9 @@ jobs:
           echo "facebook-share config ensured (household=$HH; admin; bucket; secret; ${MEM}MB/${TMO}s from $CFG)"
 
       - name: Ensure S3_PHOTOS_BUCKET env for ${{ matrix.function }}
-        # Idempotent: only updates if value differs. Required for photo-enriching
-        # Lambdas that sign S3 GET URLs for featured_photo_view_url. Historical gap:
-        # create-function below sets ZERO env vars, so a net-new photo-aware Lambda
-        # would silently return view_url=null for every featured photo. Bug landed
-        # in V2-PHOTO F1 S2 (2026-05-13, PR #36) and was patched manually 2026-05-15;
-        # this step makes it self-healing for future deploys.
+        # Idempotent: only updates if the value differs. The photo-enriching Lambdas sign S3 GET URLs for
+        # featured_photo_view_url, and create-function sets ZERO env vars, so without this a net-new
+        # photo-aware Lambda silently returns view_url=null for every featured photo.
         if: contains(fromJSON('["plants","projects","locations","inventory-items","photos"]'), matrix.function)
         run: |
           FN="garden-${{ matrix.function }}"
@@ -414,11 +360,10 @@ jobs:
           fi
 
       - name: Ensure PHOTO_CDN_* config env for ${{ matrix.function }}
-        # V4-PHOTOCDN-001 P1: CDN issuance config for the 5 photo signers. Idempotent; merges into
-        # existing env. PHOTO_CDN_ENABLED is intentionally NOT set here (unset => OFF => legacy S3
-        # presign path); the CDN flip happens in a later phase by setting PHOTO_CDN_ENABLED=true.
-        # The signing private key stays in Secrets Manager (garden-app/photocdn-signing) — only the
-        # secret NAME + public-key id + distro domain are passed as env (no key material in config).
+        # CDN issuance config for the 5 photo signers. Idempotent; merges into existing env.
+        # PHOTO_CDN_ENABLED is intentionally NOT set here (unset => OFF => legacy S3 presign path). The
+        # signing private key stays in Secrets Manager (garden-app/photocdn-signing): only the secret NAME,
+        # public-key id and distro domain are passed as env, never key material.
         if: contains(fromJSON('["plants","projects","locations","inventory-items","photos"]'), matrix.function)
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
         run: |
@@ -445,10 +390,9 @@ jobs:
           fi
 
       - name: Ensure inventory-items config
-        # V4-SEEDINV-001: POST /api/inventory-items/extract-seeds proxies the Anthropic
-        # Messages API (image OCR runs >30s; base64 image bodies need memory headroom),
-        # so this one function needs timeout=120s / memory=512MB instead of the
-        # create-function defaults (30s/256MB). Idempotent: only updates when values differ.
+        # POST /api/inventory-items/extract-seeds proxies the Anthropic Messages API (image OCR runs >30s;
+        # base64 image bodies need memory headroom), so this function needs timeout=120s / memory=512MB
+        # instead of the create-function defaults (30s/256MB). Idempotent: only updates when values differ.
         if: matrix.function == 'inventory-items'
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
         run: |
@@ -468,16 +412,11 @@ jobs:
           fi
 
       - name: Ensure plants config
-        # OPS-PLANTSLAMBDACPU-001: garden-plants mints ~446 HMAC CloudFront presigns on a single
-        # list request. At the create-function default of 256MB it gets 0.145 vCPU, and that signing
-        # loop — not the query — was the wall-clock cost. Bumped to 1024MB live on 2026-08-17 with
-        # Dave's approval; vCPU scales with memory, so this is a CPU purchase, not headroom.
-        #
-        # The bump SURVIVES deploys today (the existing-function path calls update-function-code,
-        # which does not touch memory), so this step is not fixing a revert — it is ending UNDECLARED
-        # DRIFT. The repo said 256 and prod ran 1024, and the only way to know was to go and look.
-        # Idempotent compare-then-update, cloned from "Ensure inventory-items config" above.
-        # Timeout is deliberately not asserted here: 30s is the create default and correct.
+        # garden-plants mints hundreds of HMAC CloudFront presigns on one list request; at 256MB it gets
+        # 0.145 vCPU and that signing loop is the wall-clock cost. vCPU scales with memory, so 1024MB is a
+        # CPU purchase, not headroom. update-function-code never touches memory, so this step declares the
+        # live value rather than restoring it. Idempotent compare-then-update. Timeout is deliberately not
+        # asserted: 30s is the create default and correct.
         if: matrix.function == 'plants'
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
         run: |
@@ -697,52 +636,28 @@ jobs:
             echo "DRY_RUN=true set on $FN"
           fi
 
-      # BUG-TODAYWATER-001 — INTRADAY REGENERATION.
-      # The nightly plan is a frozen ~02:00 ET snapshot. On 2026-08-03 it was generated with a 0.98"
-      # forecast for a day that delivered 3.8" observed, so Today listed 200 plantings for watering in the
-      # rain; a manual re-run at 08:37 with the real figure took that to 18. Fixing the engine's gates does
-      # NOT fix this — a plan computed at 02:00 is only ever as good as the 02:00 forecast. The input has to
-      # be refreshed while the day is happening.
+      # The nightly plan alone is a frozen snapshot: a plan computed at 02:00 is only as good as the 02:00
+      # forecast, and rain does not consult the schedule (a morning downpour left Today listing 150+
+      # plantings to water). So daily-plan regenerates hourly 05:00-21:00 ET plus two overnight runs. This is
+      # also the precondition for forecast-aware watering deferral: deferring on a forecast is defensible
+      # only if a busted forecast is noticed and undone within the hour.
       #
-      # OPS-PLANHOURLY-001 (2026-09-13) — SUPERSEDES the three-run schedule described above. Dave's
-      # ruling: hourly 05:00-21:00 ET plus a couple of overnight runs.
-      #
-      # What forced it: on 2026-09-13 the gauge read 0.79" by midday while Today still listed 153
-      # plantings to water. Nothing was broken — the 05:30 snapshot was correct for 05:30, when the
-      # gauge held 0.07"; the rain fell 06:40-08:40 and the next run was not until 15:30. Two refreshes
-      # tied to "real decision moments" still leave a ~10-hour blind window, and rain does not consult
-      # the schedule. It is also the precondition for forecast-aware watering deferral: deferring on a
-      # forecast is only defensible if a busted forecast can be noticed and undone within the hour
-      # (cf. 2026-08-08, 0.97" predicted at 28% PoP, 0.04" fell, 32 plantings lost a watering for the day).
-      #
-      #   cron(0 0-1,3,5,9-23 * * ? *) — 19 runs. UTC 09-23 + 00-01 is 05:00-21:00 ET hourly; UTC 03
-      #   is 23:00 ET and UTC 05 is 01:00 ET (the two overnight runs). Fixed-UTC as before, so the whole
-      #   thing shifts an hour earlier in EST (04:00-20:00 + 22:00 + 00:00 ET) — which is why the two
-      #   application-side hour windows are written WIDE and still hold in both offsets:
+      #   cron(0 0-1,3,5,9-23 * * ? *) = 19 runs. UTC 09-23 + 00-01 is 05:00-21:00 ET hourly; UTC 03 is
+      #   23:00 ET and UTC 05 is 01:00 ET. Fixed UTC, so it all shifts an hour earlier in EST, which is why
+      #   the two application-side hour windows are written WIDE and hold in both offsets:
       #     rain autolog  00:00-05:59 ET  — keeps 2 runs in either offset (01:00+05:00 EDT / 00:00+04:00+05:00 EST)
-      #     frost eval    14:00-17:59 ET  — 3-4 runs; see the escalation gate note below.
+      #     frost eval    14:00-17:59 ET  — 3-4 runs; frostEval publishes only when the assessment is
+      #                                     strictly WORSE than what was already sent
       #
-      # Cost, measured rather than assumed (2026-09-13): Lambda p50 9.8s at 256MB => ~+$0.02/month.
-      # Both Neon endpoints carry the 5-minute default autosuspend, and 60-minute spacing is far wider
-      # than that, so the compute still sleeps between runs — no pinned-awake bill. Outbound calls go
-      # ~21/day -> ~133/day; the AWN 1-req/sec limit is enforced in index.js and is a PER-SECOND bound,
-      # unaffected by run frequency.
+      # Cost is negligible (~+$0.02/month of Lambda); 60-minute spacing is far wider than Neon's 5-minute
+      # autosuspend, so the compute still sleeps between runs. The AWN 1-req/sec limit is enforced in
+      # index.js and is a per-second bound, unaffected by run frequency.
       #
       # Safe to run repeatedly by construction: writes stay gated on the Lambda's own env DRY_RUN (an event
-      # can never force a live run), per-plant done state is computed at READ time from event_log
-      # (V3-TODAYDONE-001) so regeneration cannot clobber check-offs, and the row carries items.prior_runs
-      # so an earlier generation is auditable rather than destroyed.
-      #
-      # THREE THINGS HAD TO CHANGE WITH THE SCHEDULE, because each was correct only at 3 runs/day:
-      #   1. handler.js PRIOR_RUNS_MAX — was `.slice(0, 3)`, which keeps the OLDEST three. From run #4
-      #      the audit trail would have frozen on runs 1-3 and recorded nothing further. Now keeps the
-      #      day baseline + the recent window.
-      #   2. frostEval escalation gate — the 14:00-17:59 ET window held ONE evaluation; it now holds 3-4,
-      #      and ordinary afternoon forecast wobble mints a new dedup key (hence an email) each time.
-      #      Alerts now publish only when the assessment is strictly WORSE than what was already sent.
-      #   3. useDailyPlan wake revalidation — the client fetched the plan once per Today mount and never
-      #      again (`refresh` was exported and called by nobody), so the extra runs would have been
-      #      invisible on Dave's phone. Now revalidates on focus/visibilitychange.
+      # can never force a live run), per-plant done state is computed at READ time from event_log so
+      # regeneration cannot clobber check-offs, and the row carries items.prior_runs (handler.js
+      # PRIOR_RUNS_MAX keeps the day baseline + the recent window) so an earlier generation stays auditable.
+      # The client revalidates the plan on focus/visibilitychange, so the extra runs reach the phone.
       - name: Ensure EventBridge cron rules for daily-plan (hourly + overnight)
         if: matrix.function == 'daily-plan'
         continue-on-error: true  # requires events:PutRule + events:PutTargets + lambda:AddPermission on deploy role
@@ -816,13 +731,11 @@ jobs:
           echo "EventBridge rule $RULE_NAME wired to garden-xp-reconcile (cron 0 4 * * ? *)"
 
       - name: Ensure daily-plan config
-        # DRG-NIGHTLYTIMEOUT-001: the nightly first attempt stacks a Neon scale-to-zero cold-resume
-        # stall (~21-26s on the first pool.query at 2am ET) on 6-9s of real work, blowing the 30s
-        # create-function default on 24/30 nights (the async retry succeeds only because the dead
-        # first attempt already woke the DB). timeout=120s absorbs the stall; memory INTENTIONALLY
-        # untouched at 256MB (diagnosis proved I/O wait, not CPU). Idempotent compare-then-update,
-        # cloned from "Ensure inventory-items config". NEVER pass --environment here (set-not-merge
-        # wipe hazard — see verify-daily-plan invariant 1).
+        # The nightly first attempt stacks a Neon scale-to-zero cold-resume stall (~21-26s on the first
+        # pool.query) on 6-9s of real work, which blows the 30s create-function default. timeout=120s
+        # absorbs the stall; memory is INTENTIONALLY left at 256MB (the wait is I/O, not CPU). Idempotent
+        # compare-then-update. NEVER pass --environment here (set-not-merge wipe hazard; see
+        # verify-lambda-invariants.yml invariant 1).
         if: matrix.function == 'daily-plan'
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on deploy role
         run: |
@@ -839,11 +752,9 @@ jobs:
             echo "timeout=120 set on $FN"
           fi
 
-      # V5-SITECONSTANTS-001 (release A): this step no longer re-adds the retired single-owner fallback
-      # key. The handler stopped reading it in BUG-AUTHZLAMBDA-001 (unassigned rows go to each Space's
-      # own owner), so re-adding it only kept a hardcoded owner id alive on every daily-plan deploy. The
-      # merge below still PRESERVES whatever is live; removing the key from the live map is a separate,
-      # one-key lambda-env-set.sh --unset, never done here.
+      # The retired single-owner fallback key is not re-added (the handler no longer reads it; unassigned
+      # rows go to each Space's own owner). The merge below still PRESERVES whatever is live; removing the
+      # key from the live map is a separate, one-key lambda-env-set.sh --unset, never done here.
       - name: Set daily-plan DRY_RUN + RAIN_AUTOLOG_ENABLED env
         if: matrix.function == 'daily-plan'
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration; idempotent
@@ -879,49 +790,39 @@ jobs:
           aws lambda wait function-updated --function-name "$FN"
           echo "env ensured on $FN"
 
-      # REMOVED 2026-09-15 (OPS-WFSELFFIXORDER-001). This step used to sit here and re-create
-      # garden-daily-plan-nightly with `cron(0 6 * * ? *)`, 88 lines AFTER the step at ~616 retires it.
-      # Both carried `if: matrix.function == 'daily-plan'`, so both ran in the same matrix leg in file
-      # order: A retired the rule, B resurrected it. The hourly migration (OPS-PLANHOURLY-001) would
-      # therefore have half-applied on any run that loaded the new recipe — hourly created, nightly
-      # never actually gone. It never got the chance: the 2026-09-15 promote loaded the PRE-hourly
-      # recipe entirely (see the dispatch-ref note at the top of this file), so this duplicate was
-      # latent, not causal. Do not reinstate. The single source of truth for daily-plan scheduling is
-      # the `ensure_rule`/`retire_rule` step above.
+      # Daily-plan scheduling has ONE source of truth: the `ensure_rule`/`retire_rule` step above. A second
+      # step that creates a daily-plan rule, running later in the same leg, would resurrect a rule that
+      # step retires.
 
-      # OPS-LAMSKIPVSMAIN-001 (2026-09-18) — THE LAST STEP OF EVERY LEG: stamp the function with what it
-      # now runs, in its Description:
+      # THE LAST STEP OF EVERY LEG: stamp the function with what it now runs, in its Description:
       #   garden-app lambda-deploy v1 src=<commit built> recipe=<commit this file came from>
       #                               code=<CodeSha256 of the zip built above> run=<run id>.<attempt>
       #
       # promote-gate's `lam` step reads these (scripts/check-lambda-current.py) to decide whether a promote
-      # may skip this workflow. It used to compare the promoted SHA with `main`, but main means APPROVED,
-      # not DEPLOYED: a failed leg, a promote that died after its fast-forward, a revert rollback or a
-      # console upload leaves main naming code that is not running, and a plain re-dispatch (main ==
-      # dev_sha) compared a commit with itself and skipped every Lambda.
+      # may skip this workflow. `main` cannot answer that: main means APPROVED, not DEPLOYED (a failed leg,
+      # a promote that died after its fast-forward, a revert rollback or a console upload leaves main naming
+      # code that is not running).
       #
       # Written ONLY when the live CodeSha256 equals the sha256 of this leg's zip, i.e. once the running
       # code is provably these bytes; and only if no earlier step of the leg failed outright (default
-      # success(); a failed continue-on-error env step does not stop it — verify-lambda-invariants is what
-      # asserts config, on every promote).
-      # Any later code change from elsewhere moves CodeSha256 off `code=`, and the reader then refuses the
-      # marker — so a stale marker can only cause an unnecessary deploy, never a skip.
+      # success(); a failed continue-on-error env step does not stop it: verify-lambda-invariants is what
+      # asserts config, on every promote). Any later code change from elsewhere moves CodeSha256 off
+      # `code=`, and the reader then refuses the marker, so a stale marker can only cause an unnecessary
+      # deploy, never a skip.
       #
       # continue-on-error, and every failure path warns and exits 0: no marker means the next promote
-      # redeploys all 26, the pre-v4.137 behaviour. It must never red a leg or withhold the SPA.
+      # redeploys all 26. It must never red a leg or withhold the SPA.
       #
-      # It REPLACES the Description on purpose. Until this step first ran, every prod function carried
-      # 'clerk-key-rotated 2026-08-04T19:2xZ' there — an ad-hoc cold-start nudge that nothing reads. To
-      # force cold starts in future, set the env key FORCE_COLD_START (check-lambda-config.py ignores it);
-      # writing the Description instead only costs one full redeploy.
+      # It REPLACES the Description on purpose. To force cold starts, set the env key FORCE_COLD_START
+      # (check-lambda-config.py ignores it); writing the Description instead costs one full redeploy.
       #
-      # RECIPE_SHA is github.sha, which inside a called workflow is the CALLER's commit — the one this file
+      # RECIPE_SHA is github.sha, which inside a called workflow is the CALLER's commit, the one this file
       # was loaded from. It differs from the checked-out SRC when promote-gate is dispatched from main.
       #
-      # Withheld when "Ensure declared runtime" failed (OPS-LAMBDANODE22-001), so this leg never certifies a
-      # function whose runtime move failed: the marker left from the previous deploy names other code or an
-      # older recipe in the cases that matter (new code, or this recipe's first run), and the next promote
-      # redeploys the function and retries the move. verify-lambda-invariants reds on the runtime either way.
+      # Withheld when "Ensure declared runtime" failed, so this leg never certifies a function whose runtime
+      # move failed: the marker left from the previous deploy names other code or an older recipe in the
+      # cases that matter (new code, or this recipe's first run), and the next promote redeploys the
+      # function and retries the move. verify-lambda-invariants reds on the runtime either way.
       - name: Record deployed source on garden-${{ matrix.function }} (deploy marker read by promote-gate)
         if: success() && steps.ensure_runtime.outcome != 'failure'
         continue-on-error: true
@@ -945,36 +846,25 @@ jobs:
             || echo "::warning::$FN: marker written but the function had not settled when this step ended"
           echo "deploy marker on $FN: $DESC"
 
-  # A0.3 — post-deploy verification (HARD GATE; deliberately NOT continue-on-error).
+  # Post-deploy verification: a HARD GATE (deliberately NOT continue-on-error), carried by
+  # verify-lambda-invariants.yml, the single source of these assertions. `needs: deploy` runs it only when
+  # the matrix succeeded, and it is EXCLUDED from the `deploy_result` output above, so a config-drift
+  # failure reds the run without withholding a good frontend. promote-gate.yml also calls it, as the last
+  # job of every promote; THIS call covers the two paths promote-gate never reaches: a manual
+  # workflow_dispatch of this file, and scripts/revert-to.py, which dispatches this workflow directly.
   #
-  # MOVED 2026-09-17 (OPS-LAMCHANGEDBLIND-002) to .github/workflows/verify-lambda-invariants.yml, which
-  # now carries the assertions VERBATIM and is their single source of truth. Nothing about this deploy's
-  # behaviour changes: `needs: deploy` still means it runs only when the 26-function matrix succeeded, it
-  # is still a hard gate, and it is still deliberately EXCLUDED from the `deploy_result` output above, so
-  # a config-drift failure reds the run without withholding a good frontend.
+  # The job's API name is `verify-daily-plan / verify` (nested reusable workflow). revert-to.py's
+  # `_is_lambda_leg` selects matrix legs POSITIVELY (`name == "deploy"` or `name.startswith("deploy (")`),
+  # and verify-deploy.py's `_lambda_job_state` matches the `deploy-lambdas /` prefix; keep both true if
+  # either job is renamed.
   #
-  # WHY IT MOVED: promote-gate skips this entire workflow on an SPA-only promote and took these
-  # assertions with it — and they are the repo's only live-AWS check of state that drifts with no repo
-  # change at all. promote-gate.yml now calls the same reusable workflow unconditionally, as the last job
-  # of every promote. THIS call is KEPT so the gate still covers the two paths promote-gate never
-  # reaches: a manual workflow_dispatch of this file, and scripts/revert-to.py, which dispatches this
-  # workflow directly during a revert. Running it twice on a Lambda-carrying promote is ~1 minute of
-  # read-only AWS calls and is the deliberate trade against leaving a gap.
-  #
-  # The job's API name becomes `verify-daily-plan / verify` (nested reusable workflow). Both readers of
-  # these job names were checked: revert-to.py's `_is_lambda_leg` selects matrix legs POSITIVELY
-  # (`name == "deploy"` or `name.startswith("deploy (")`), so it excludes this job under either name; and
-  # verify-deploy.py's `_lambda_job_state` matches the `deploy-lambdas /` prefix, which the extra
-  # nesting level preserves.
-  #
-  # No `secrets: inherit` — the called workflow uses none (vars.AWS_DEPLOY_ROLE_ARN is a repo variable).
+  # No `secrets: inherit`: the called workflow uses none (vars.AWS_DEPLOY_ROLE_ARN is a repo variable).
   verify-daily-plan:
     needs: deploy
     uses: ./.github/workflows/verify-lambda-invariants.yml
     with:
       ref: ${{ inputs.ref || github.sha }}
 
-# Note: Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager
-# at runtime (path: garden-app/neon-database-url and garden-app/clerk-secret-key).
-# These are NOT injected as GitHub Actions env vars — no DB credentials touch GitHub.
-# Lambda execution role requires secretsmanager:GetSecretValue on arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:garden-app/*
+# Lambda functions pull NEON_DATABASE_URL and CLERK_SECRET_KEY from AWS Secrets Manager at runtime
+# (garden-app/neon-database-url, garden-app/clerk-secret-key), so no DB credentials touch GitHub. The
+# execution role needs secretsmanager:GetSecretValue on arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:garden-app/*

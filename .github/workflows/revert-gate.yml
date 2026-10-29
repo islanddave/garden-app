@@ -1,105 +1,65 @@
 name: revert-gate
 
-# B2 production revert (spec repo-version-env-spec-V100 §3 B2). Reverts prod to a previously-snapped
-# version vX as a SINGLE transaction gated on environment:production-destructive, restoring code + DB +
-# Lambda versions as a coherent pair via scripts/revert-to.py. Runs AS garden-bot (App 3951762) — the sole
-# actor permitted to advance main (the code leg FF-promotes a forward revert-commit). The revert is itself
-# revertible: revert-to.py takes a PRE-REVERT snap of CURRENT prod first, so a bad revert can be rolled back.
+# Production revert: reverts prod to a previously snapped version vX as one transaction, restoring code, DB
+# and Lambdas as a coherent pair via scripts/revert-to.py. Runs AS garden-bot (App 3951762), the only actor
+# that may advance main (the code leg fast-forwards a forward revert commit). The revert is itself revertible:
+# revert-to.py snaps CURRENT prod first. revert-rehearsal.yml runs the same script against STAGING with
+# REHEARSAL_MODE=1; here REHEARSAL_MODE is off, the code legs target real dev/main, and CONFIRM_DATA_LOSS
+# must be "yes".
 #
-# Relationship to revert-rehearsal.yml: that workflow exercises the SAME script against STAGING with
-# REHEARSAL_MODE=1 (throwaway refs; the prod Lambda/SPA redeploy and Lambda-restore legs skipped). THIS
-# workflow is the real thing — REHEARSAL_MODE is OFF, the code legs target real dev/main, and
-# CONFIRM_DATA_LOSS must be "yes".
+# PAGE-SCROLL MANAGER: do NOT use this workflow to roll it back; use a forward flag-off build
+# (SCROLL_MANAGER_ENABLED = false in src/lib/featureFlags.js, then promote). A bundle from before it never
+# writes history.scrollRestoration back to 'auto', so Back loses the place on most pages until the app is
+# closed. After ANY run that lands on a version before the manager: swipe the app away once.
 #
-# PAGE-SCROLL MANAGER (BUG-DETAILPAGESCARRYSCROLL-001, rimpact-scrollmanager-built N2). Do NOT use this
-# workflow to roll back the page-scroll manager: roll it back with a forward flag-off build
-# (SCROLL_MANAGER_ENABLED = false in src/lib/featureFlags.js, then promote). A bundle from before that release
-# never writes history.scrollRestoration back to 'auto', and Chrome keeps each open entry's 'manual' mode across
-# the update reload, so Back loses the place on most pages until the app is closed. After ANY run of this
-# workflow that lands on a version before the manager, for whatever reason: swipe the app away once.
+# DISPATCH runs main's copy of this file: edits here take effect only once a promote carries them to main.
+# "Checkout dev" means revert-to.py, snap.py and preflight-revert-iam.py changes govern a revert as soon as
+# they land on dev.
 #
-# Dispatchability: workflow_dispatch requires the workflow on the default branch (main). It IS on main —
-# see STATUS below. Edits made here on dev do not take effect for a dispatch until the next promote-gate
-# ship carries them to main; the Actions UI keeps running main's copy in the meantime.
+# APPROVAL GATE: `environment: production-destructive` has a required reviewer (islanddave), so the run
+# pauses until approved. It is an identity gate that ALLOWS self-approval (prevent_self_review=false,
+# can_admins_bypass=true; the only reviewer is also the only dispatcher), not a two-person rule. Whether the
+# environment is restricted to main: `gh api repos/islanddave/garden-app/environments/production-destructive`
+# (deployment_branch_policy). Do NOT point this at `environment: production`: it has a branch policy only and
+# no required reviewers, so it is not an approval stop of any kind.
 #
-# APPROVAL GATE (2026-08-05, OPS-REVERTGATE-001; corrected 2026-09-11, OPS-REVERTRESTORE-001 R2). This job runs
-# under `environment: production-destructive`, which carries a REQUIRED REVIEWER (islanddave): the run pauses at
-# the environment gate until that review is granted. What that enforces is an IDENTITY gate that ALLOWS
-# SELF-APPROVAL, not a two-person rule: prevent_self_review=false and can_admins_bypass=true, and islanddave is
-# both the only reviewer and the only dispatcher, so the dispatcher approves his own run (and anything holding
-# his token could do both). Earlier versions of this header said "the dispatcher cannot also be the sole
-# approver"; that was never true of the live configuration.
-#   - Self-approval accepted by Dave, 2026-09-11 (SEC I3).
-#   - Environment restricted to the main branch, 2026-09-11: Dave's decision; he applies the deployment branch
-#     policy himself. Until it is applied the environment admits any ref — check with
-#     `gh api repos/islanddave/garden-app/environments/production-destructive` (deployment_branch_policy).
-# Do NOT point this at `environment: production`: that environment carries a branch ref policy ONLY (dev, main) and has
-# had ZERO required reviewers since 2026-06-22, so it is not an approval stop of any kind. Prior versions of this
-# header claimed a "Dave-approved" gate that did not exist in infrastructure; the `confirm_data_loss` dropdown
-# was the only guard and it is selected by whoever is already dispatching.
+# IAM TRUST: the snap OIDC role (SNAP_AWS_ROLE_ARN, garden-app-github-snap) trusts an exact-match list of two
+# subjects, repo:islanddave/garden-app:environment:production and :environment:production-destructive. Keep
+# it an exact list; never a StringLike wildcard. So the credential step succeeds and is NOT a safety net; the
+# step that fails safe is the IAM preflight below.
 #
-# STATUS — LIVE AND DISPATCHABLE (verified 2026-09-10). `state: active`, and this file is present on the
-# default branch (main), so it is dispatchable from the Actions UI right now. An earlier version of this
-# header said it had been disabled via `gh workflow disable` on 2026-08-05 and needed `gh workflow enable`
-# once it reached main; that stopped being true when it reached main. Do NOT plan an incident response
-# around this workflow being inert.
+# PERMISSION PREFLIGHT: revert-to.py resets the prod DB first and redeploys after, so a revert that could not
+# also be ROLLED BACK must refuse to begin. The preflight simulates every action the snap role performs (the
+# pre-revert snap's lambda:PublishVersion + GetFunctionConfiguration and the rollback's
+# lambda:UpdateFunctionCode + GetFunction on the qualified ARN function:<fn>:<version>, on every release
+# function in scripts/lambda_fleet.py, plus the two snapshot reads) and aborts before anything is touched
+# unless every pair is `allowed`. It fails until snap-ops Stage 1 and Stage 2 are applied
+# (Projects/Gardening/iam-trust-rollback). There is no bypass flag and no warn-only mode; do not add one. The
+# rehearsal skips every prod Lambda and SPA leg, so only the preflight proves these permissions.
 #
-# IAM trust policy — SATISFIED, no longer a prereq (verified 2026-09-10). The snap OIDC role
-# (SNAP_AWS_ROLE_ARN = arn:aws:iam::769788341849:role/garden-app-github-snap) trusts BOTH subjects as an
-# exact-match list:
-#   repo:islanddave/garden-app:environment:production
-#   repo:islanddave/garden-app:environment:production-destructive
-# so sts:AssumeRoleWithWebIdentity SUCCEEDS for this job and the AWS legs do get credentials. This block
-# previously read "BLOCKING PREREQ ... trusts EXACTLY ONE subject"; it is done. Keep it an exact-match list
-# of two literal subjects — do NOT relax it to a StringLike wildcard. Corollary for anyone triaging
-# mid-incident: the credential step is NOT a safety net, it will succeed. The step that fails safe is the
-# IAM preflight below.
+# RESTORE LEGS: after the DB reset and the main fast-forward, revert-to.py REBUILDS the target from its own
+# tree: it dispatches deploy-lambda.yml, then deploy.yml, on main (= the revert commit) with the garden-bot
+# token and polls each to success inside its checkpoint, Lambdas first and the SPA only once every Lambda leg
+# is green. Those run under the DEPLOY role; this job's snap role changes no Lambda code and no CloudFront
+# state on the forward path. The target manifest's lambda_versions are NOT restored. On any failure the
+# rollback restores every release function from the PRE-REVERT snap (what prod was running minutes earlier)
+# and rebuilds the SPA from the restored tree.
 #
-# PERMISSION PREFLIGHT — THIS WORKFLOW CURRENTLY ABORTS, BY DESIGN (OPS-REVERTPREFLIGHT 2026-09-10, widened
-# by OPS-REVERTRESTORE-001 2026-09-11). scripts/revert-to.py resets the prod DB first and redeploys after, so
-# a revert that could not also be ROLLED BACK must refuse to begin. The preflight step below simulates every
-# action the snap role performs — the pre-revert snap's lambda:PublishVersion + GetFunctionConfiguration and
-# the rollback's lambda:UpdateFunctionCode + GetFunction on the QUALIFIED ARN function:<fn>:<version>, on
-# EVERY release function (scripts/lambda_fleet.py: the 26 deploy-lambda.yml builds), plus the two snapshot
-# reads — and aborts before anything is touched unless all 106 pairs are `allowed`. Measured live 2026-09-11:
-# 82 of 106 denied. It keeps failing until snap-ops Stage 1 AND Stage 2 are applied (Projects/Gardening/
-# iam-trust-rollback, README section 2026-09-11). That is correct — a rollback that cannot complete must
-# refuse to begin. There is no bypass flag and no warn-only mode; do not add one. The rehearsal SKIPS every
-# prod Lambda and SPA leg, so it can never prove these permissions; the preflight does.
+# JOB BUDGET: timeout-minutes is sized for forward + rollback worst case, because a job killed mid-rollback
+# leaves prod split. The first step writes the job's start to REVERT_JOB_STARTED_AT, and the revert step
+# passes timeout-minutes again as REVERT_JOB_BUDGET_MIN (the two must be equal; scripts/test_revert_to.py
+# parses this file and checks). revert-to.py refuses before the pre-revert snap unless that budget covers
+# post_checkpoint_worst_case_s() + JOB_START_ALLOWANCE_S, and again at the checkpoint, before the first
+# mutation, unless that much time is still left. A copy of this file WITHOUT the marker makes every revert refuse.
 #
-# RESTORE LEGS (OPS-REVERTRESTORE-001). After the DB reset and the main fast-forward, revert-to.py REBUILDS the
-# target from its own tree: it dispatches deploy-lambda.yml, then deploy.yml, on main (= the revert commit)
-# with the garden-bot token and polls each to success inside its checkpoint — Lambdas first, the SPA only once
-# every Lambda leg is green, the promote's own order. Those run under the DEPLOY role; this job's snap role
-# changes no Lambda code and no CloudFront state on the forward path. The target manifest's lambda_versions are
-# NOT restored. Until 2026-10-15 a promote's manifest held the PREVIOUS release's Lambda code (it snaps before its
-# own Lambda deploy); since OPS-SNAPCAPTUREORDER-001 it records the shipped set (phase post-deploy) or, on an
-# SPA-only promote, the running set. The forward path still rebuilds from the tree. On any failure the rollback restores every release function from the PRE-REVERT snap (taken
-# minutes earlier, so it is what prod was running) and rebuilds the SPA from the restored tree.
-# timeout-minutes below is sized for forward + rollback worst case: a job killed mid-rollback leaves prod split,
-# which is worse than any failure the script can report. JOB BUDGET (R2): the first step writes the job's start to
-# REVERT_JOB_STARTED_AT, and the revert step passes timeout-minutes again as REVERT_JOB_BUDGET_MIN (the two must be
-# equal; scripts/test_revert_to.py parses this file and checks). revert-to.py refuses before the pre-revert snap
-# unless that budget covers post_checkpoint_worst_case_s() + JOB_START_ALLOWANCE_S (164 min on 2026-09-11, every
-# poll loop and GitHub read counted at its ceiling), and again at the checkpoint, before the first mutation, unless
-# that much time is still left. A copy of this file WITHOUT the marker — main's, until a promote carries this one —
-# makes every revert refuse, so arming IAM Stage 2 early cannot run a revert under the old 45-minute job.
-#
-# SUPPORTED TARGETS (OPS-REVERTRESTORE-001 R2, 2026-09-11). Not every snapshot can be reverted to. Before the
-# pre-revert snap, revert-to.py reads the TARGET's own .github/workflows at its tagged commit and refuses it when
-# (a) any workflow runs on a push to main: the revert's fast-forward would start it, and the rollback could neither
-# see nor stop it; (b) deploy-lambda.yml merges Lambda env onto a live `|| echo "{}"` base: one failed read on the
-# forward leg would wipe that function's environment and nothing would put it back; or (c) a redeploy workflow is
-# missing, lacks workflow_dispatch, or deploy.yml lacks the skip_version_bump input, so the target cannot rebuild
-# itself. The supported range is whatever those checks admit — target_workflow_hazards() in revert-to.py, not a
-# version list. Measured with that function over all 260 snapped targets (2026-09-11): 48 revertible, v4.45.0
-# through v4.128.0, one contiguous run; the 212 from v2.5.4 through v4.43.0 are refused ((a) 193, (b) all 212).
-# A read or parse failure refuses too.
-# REVERT FLOOR (OPS-REVERTRESTORE-001 A1, 2026-09-28): before all of that, revert-to.py refuses any target below
-# the floor in force in scripts/revert-floors.json (dev's copy; v4.156.0 while prod runs v4.156.0 or later: the
-# page-scroll manager). Undo such a release with a forward release instead: scripts/forward-undo.py.
-# NOTE: "Checkout dev" means revert-to.py, snap.py and preflight-revert-iam.py changes govern a revert as soon
-# as they land on dev; changes to THIS file govern a dispatch only once a promote carries them to main.
+# SUPPORTED TARGETS: before the pre-revert snap, revert-to.py refuses any target below the floor in
+# scripts/revert-floors.json (dev's copy; undo such a release forward with scripts/forward-undo.py), then
+# reads the target's own .github/workflows at its tagged commit and refuses it when (a) any workflow runs on
+# a push to main (the revert's fast-forward would start it, unseen by the rollback); (b) deploy-lambda.yml
+# merges Lambda env onto a live `|| echo "{}"` base (one failed read would wipe that function's environment);
+# or (c) a redeploy workflow is missing, lacks workflow_dispatch, or deploy.yml lacks the skip_version_bump
+# input, so the target cannot rebuild itself. target_workflow_hazards() in revert-to.py defines the range;
+# a read or parse failure refuses too.
 #
 # Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY, NEON_API_KEY, NEON_PROJECT_ID, NEON_BACKUP_URL.
 # Vars: SNAP_AWS_ROLE_ARN, SNAP_BUCKET, PHOTOS_BUCKET, SNAP_RETENTION.
@@ -176,12 +136,8 @@ jobs:
           key: pg17-client-postgres17-image-v1-runner-ubuntu-26.04
 
       - name: Fetch pg17 client from the postgres:17 image (cache miss only)
-        # OPS-SCHEMACHECKAPT-001: no more apt.postgresql.org (PGDG) -- see backup.yml
-        # for the full incident writeup (this pattern is identical across every
-        # OPS-SCHEMACHECKAPT-001 site). This is the incident-recovery path itself: a
-        # prod revert cannot be left hostage to the same third-party mirror that
-        # stranded main fast-forwarded to 437164e on 2026-08-18 while stuck installing
-        # this exact package inside promote-gate.
+        # Not apt.postgresql.org (see backup.yml): a prod revert is the incident-recovery path and cannot
+        # depend on the package mirror that has hung inside promote-gate.
         if: steps.pg17-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -198,29 +154,27 @@ jobs:
           role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      # FAIL-CLOSED GATE — must stay between the credential step and revert-to.py.
-      # Every ARN lives in env, never inline in run:, so no quoted colon can reach
-      # GitHub's workflow parser (PyYAML accepts those; GHA silently rejects them).
-      # Stdlib + the preinstalled aws CLI only (scripts/lambda_fleet.py is stdlib too),
-      # so it runs before the pip install and aborts as early as possible. It asserts
-      # the snap role's pre-revert-snap and rollback grants on every release function,
-      # and no CloudFront action (the revert makes no CloudFront call any more).
-      # Expected to FAIL until snap-ops Stage 2 is applied — see the header.
+      # FAIL-CLOSED GATE: must stay between the credential step and revert-to.py.
+      # Every ARN lives in env, never inline in run:, so no quoted colon can reach GitHub's workflow
+      # parser (PyYAML accepts those; GHA silently rejects them). Stdlib + the preinstalled aws CLI only,
+      # so it runs before the pip install and aborts as early as possible. It asserts the snap role's
+      # pre-revert-snap and rollback grants on every release function, and no CloudFront action.
+      # Expected to FAIL until snap-ops Stage 2 is applied (see the header).
       - name: Preflight — assert the snap role can complete the WHOLE revert
         env:
           SNAP_AWS_ROLE_ARN: ${{ vars.SNAP_AWS_ROLE_ARN }}
           SNAP_BUCKET: ${{ vars.SNAP_BUCKET }}
           TARGET_VERSION: ${{ inputs.target_version }}
-          # Kept for ONE release (R2): today's preflight ignores it, but if OPS-REVERTRESTORE-001 is git-reverted
-          # on dev after a promote has carried this file to main, dev's OLD preflight runs here again and refuses
-          # every revert with "CF_DIST is empty" without it. Drop it in the release after the one that ships this.
+          # Unused by today's preflight. If revert-to.py's restore legs are git-reverted on dev while main
+          # carries this file, dev's older preflight runs here and refuses every revert with "CF_DIST is
+          # empty" without it.
           CF_DIST: E3FAJTXAORQYDT
         run: python3 scripts/preflight-revert-iam.py
 
       - name: Install python deps
-        # pyyaml: revert-to.py parses the target's own workflow files (SUPPORTED TARGETS above); without
-        # it the revert refuses rather than skipping that check. 6.0.3, not 6.0.2: 6.0.2 has no wheel for
-        # ubuntu-26.04's Python 3.14, so it would build from source at revert time (OPS-UBUNTU26MOVE-001).
+        # pyyaml: revert-to.py parses the target's own workflow files (SUPPORTED TARGETS above); without it
+        # the revert refuses rather than skipping that check. 6.0.3: 6.0.2 has no wheel for ubuntu-26.04's
+        # Python 3.14 and would build from source at revert time.
         run: pip install boto3 requests pyyaml==6.0.3 --quiet
 
       - name: Run revert-to (PROD — real code + DB + Lambda cutover)
@@ -239,8 +193,7 @@ jobs:
           SNAP_RETENTION: ${{ vars.SNAP_RETENTION }}
           CF_DIST: E3FAJTXAORQYDT
           REVERT_JOB_BUDGET_MIN: "180"  # MUST equal timeout-minutes above (JOB BUDGET in the header)
-          # revert-to.py's tempfile dumps land here, not in /tmp: on ubuntu-26.04 /tmp is a RAM-backed tmpfs
-          # capped at ~7.8G, $RUNNER_TEMP is the runner's work disk (OPS-UBUNTU26MOVE-001).
+          # revert-to.py's tempfile dumps land on the work disk: /tmp on ubuntu-26.04 is a ~7.8G RAM-backed tmpfs.
           TMPDIR: ${{ runner.temp }}
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"

@@ -1,49 +1,27 @@
 name: integrity-weekly (P0)
 
-# P0 weekly data-integrity job (data-audit plan V100 §P0; authored W3.D 2026-07-28, fourthread V102).
-# Repo home when it ships: garden-app/.github/workflows/integrity-weekly.yml
+# Weekly data-integrity checks: scripts/integrity-weekly-check.sh, delta against the committed baseline
+# scripts/integrity-baselines.json. Refresh the baseline only in the same commit as the repair that
+# legitimately moves a number. Run snapshots persist as workflow artifacts (90 days), never as new tables.
 #
-# ACTIVATION (honest): on.schedule fires ONLY from the repo default branch (main), so this
-# workflow is INERT until it rides a promote (dev -> promote-gate -> main FF). It ships to dev
-# with scripts/integrity-weekly-check.sh + scripts/integrity-baselines.json in one commit.
-# workflow_dispatch allows a manual proving run once the file reaches main (or via ref=dev
-# once it exists on main). No environment: production gate — this job must run unattended;
-# it therefore CANNOT use SNAP_AWS_ROLE_ARN (whose OIDC trust is scoped to that environment).
+# Scheduled workflows fire only from main; dispatch needs the file on main (then pick ref=dev to run dev's
+# copy). No `environment:`: the job must run unattended, so it cannot use SNAP_AWS_ROLE_ARN (whose OIDC
+# trust is scoped to environment:production). If the backup role lacks s3:ListBucket on the photos bucket,
+# the S3<->DB class degrades to UNVERIFIED (a warning, never a false alert).
 #
-# Secrets/vars consumed (all pre-existing in this repo except the possible IAM grant):
-#   secrets.NEON_DATABASE_URL  — already present (schema-audit.yml consumes it, green history)
-#   vars.PHOTOS_BUCKET         — already present (snap-rehearsal/promote-gate consume it)
-#   vars.AWS_BACKUP_ROLE_ARN   — already present (backup.yml assumes it unattended daily).
-#     If this role lacks s3:ListBucket on the photos bucket, the S3<->DB class degrades to
-#     UNVERIFIED (loud warning, never a false alert). Console-hour fix: add one read-only
-#     statement (s3:ListBucket on the photos bucket) to the backup role policy.
+# ALERT SINK: an alert exits 1 (conclusion=failure). The morning-brief collector reads the latest run's
+# conclusion and, on failure, surfaces report.alerts[] from the integrity-report artifact verbatim
+# (shape: {status, alerts[], improvements[], warnings[], metrics{}}).
 #
-# Run snapshots persist as workflow ARTIFACTS (90-day retention) — NO new tables (plan rule).
-# Baseline is the committed scripts/integrity-baselines.json; refresh it only in the same
-# commit as the repair that legitimately moves a number.
-#
-# ALERT SINK (morning-brief surface): an alert exits 1 -> run conclusion=failure. The
-# morning-brief collector needs ONE hookup step (documented in w3d/runtime-decision.md):
-#   gh run list --repo islanddave/garden-app --workflow integrity-weekly.yml -L1 \
-#     --json conclusion,updatedAt,databaseId
-# conclusion=failure -> download artifact integrity-report and surface report.alerts[] lines
-# verbatim in the brief (shape: {status, alerts[], improvements[], warnings[], metrics{}}).
-#
-# NEON BRANCH HYGIENE (Gate 2 §7, added 2026-08-03): OUT-OF-BAND check that the branch
-# fleet is under control — an in-pipeline pruner cannot detect its own non-execution, so
-# this must live outside promote/snap. Reds when: branch count > cap (DERIVED as
-# SNAP_RETENTION+4 unless NEON_MAX_BRANCHES overrides — auto-adapts to retention changes);
-# any branch outside {production, staging, newest-K prod-parented snap-*} is older than
-# STRAY_MAX_AGE_DAYS; or an over-K snap-* branch persists across 2 consecutive runs
-# (prune skipped twice). EXPIRY (2026-10-05): a temporary branch that carries a Neon
-# expires_at at most 14 days out removes itself, so it is NOT counted against the cap
-# (more than 6 of those at once reds instead); one with no expiry is counted, and reds
-# once it is a day old. Pre-migration copies of prod are made WITH an expiry by
-# scripts/neon_safety_branch.py. Selection logic is scripts/neon_branch_select.py, shared with
-# prune-branches.yml and covered by scripts/test_neon_branch_select.py.
-# Prior-run state persists as the neon-branch-state artifact (90d). Alerts merge into
-# integrity-report.json so the morning brief surfaces them through the existing hookup.
-# Uses the branches API only — the consumption-history API is Scale-plan-only (403 on Launch).
+# NEON BRANCH HYGIENE: an out-of-band check that the branch fleet is under control (an in-pipeline pruner
+# cannot detect its own non-execution). Reds when the branch count exceeds the cap; when a branch outside
+# {production, staging, newest-K prod-parented snap-*} is older than STRAY_MAX_AGE_DAYS; or when an over-K
+# snap-* branch persists across 2 consecutive runs (prune skipped twice). A temporary branch carrying a Neon
+# expires_at at most 14 days out removes itself and is not counted against the cap (more than 6 at once
+# reds instead); one with no expiry is counted and reds once a day old. Pre-migration copies of prod are
+# made with an expiry by scripts/neon_safety_branch.py. Prior-run state persists as the neon-branch-state
+# artifact; alerts merge into integrity-report.json. Uses the branches API only (the consumption-history
+# API is Scale-plan-only).
 
 on:
   schedule:
@@ -86,13 +64,11 @@ jobs:
 
       - name: Neon branch hygiene (out-of-band, Gate 2 §7)
         if: ${{ always() }}
-        # Logic lives in scripts/neon_branch_select.py (shared with
-        # prune-branches.yml so the dry-run report and this check cannot
-        # diverge; tested by scripts/test_neon_branch_select.py). Cap is
-        # DERIVED as SNAP_KEEP+4 (production + staging + K snaps + 2 headroom
-        # for in-flight branches with no expiry, e.g. a running integration
-        # test's ci-*) — set NEON_MAX_BRANCHES to override explicitly (RIA-1).
-        # Branches carrying an expiry are not counted (see the header).
+        # Logic is scripts/neon_branch_select.py, shared with prune-branches.yml so the dry-run report and
+        # this check cannot diverge (tested by scripts/test_neon_branch_select.py). The cap is SNAP_KEEP+4
+        # (production + staging + K snaps + 2 headroom for in-flight branches with no expiry, such as a
+        # running integration test's ci-*) unless NEON_MAX_BRANCHES overrides it. Branches carrying an
+        # expiry are not counted.
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
@@ -125,8 +101,6 @@ jobs:
 
       - name: Upload run snapshot artifact
         if: ${{ always() }}
-        # upload-artifact major-pinned — advisory-tier workflow, not deploy-tier discipline
-        # (same posture as setup-python@v5 in schema-audit.yml).
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: integrity-report
@@ -153,12 +127,9 @@ jobs:
           fi
 
       - name: Publish alert to SNS (garden-ops-alerts — OPS-ALERTSINK-001 first producer)
-        # Sink slice (roadmap-addition-V101 §3-8). Publishes ONLY on status=alert or a
-        # missing report; OK / OK_WITH_UNVERIFIED stay silent (warn-tier, not page-tier).
-        # Uses the backup-role creds from the aws step (sns:Publish granted via the
-        # additive SnsPublishGardenOpsAlerts inline policy, 2026-08-03). continue-on-error
-        # so the sink can never mask the run's own result; topic ARN pinned like
-        # NEON_PROD_BRANCH_ID above (not a secret).
+        # Publishes ONLY on status=alert or a missing report; OK / OK_WITH_UNVERIFIED stay silent. Uses the
+        # backup-role credentials from the aws step (sns:Publish). continue-on-error so the sink can never
+        # mask the run's own result; the topic ARN is not a secret.
         if: ${{ always() }}
         continue-on-error: true
         env:

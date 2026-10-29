@@ -1,13 +1,9 @@
 name: Build and Deploy — Staging + Regression Suite
 
-# The run title carries the SHA this run actually BUILT, which is inputs.dev_sha — not the dispatch
-# ref's HEAD. promote-gate's write-path smoke gate locates its dispatched run by this title.
-#
-# It cannot use head_sha for that: a workflow_dispatch run's head_sha is the HEAD of the REF it was
-# dispatched on (dev), while the code checked out below is inputs.dev_sha. Those are equal only when
-# dev has not moved since the promoted SHA was chosen. On 2026-08-03 a concurrent session pushed to
-# dev mid-promote, the gate searched for the promoted SHA among head_shas, found nothing, and
-# fail-closed after 5 minutes — even though this run had built exactly the right commit and passed.
+# The run title carries the SHA this run BUILT (inputs.dev_sha), not the dispatch ref's HEAD:
+# promote-gate's write-path smoke gate finds its dispatched run by this title. head_sha cannot serve,
+# because a workflow_dispatch run's head_sha is the head of the ref it was dispatched on (dev), which
+# differs from inputs.dev_sha whenever dev moves mid-promote.
 run-name: staging ${{ inputs.dev_sha || github.sha }}
 
 on:
@@ -38,50 +34,31 @@ env:
   STAGING_API_PHOTOS:    https://sj6y3awedsfxqttuascvateeoy0tohji.lambda-url.us-east-1.on.aws/
   STAGING_API_DASHBOARD: https://rsooajzuwmmyldgrpx7ebp2doa0gttpn.lambda-url.us-east-1.on.aws/
   STAGING_API_INVENTORY: https://yjp6wsb2gkckork57shkxwqlzu0shwcm.lambda-url.us-east-1.on.aws/
-  # VARIETY-REF Session 2: provisioned 2026-05-12 (V1.2a-1 Session 2 staging promote).
   STAGING_API_VARIETIES: https://dlhj5pjej6alk6ynyih2ktbxca0uiorl.lambda-url.us-east-1.on.aws/
-  # V1.2a-1 Session 2: provisioned 2026-05-12.
   STAGING_API_APP_EVENTS: https://m3lvka5lzswyqkl6uzpkof24y40hoqki.lambda-url.us-east-1.on.aws/
   # ux-events: placeholder until first staging deploy creates the Function URL (then this is updated to the real URL).
   STAGING_API_UX_EVENTS: https://ggrsrryarrkw2y5eaxm6r26cc40czzje.lambda-url.us-east-1.on.aws/
-  # critter: placeholder until first staging deploy creates the Function URL (then this is updated to the real URL).
-  # Per mvp-critter-pre-build-revision-V001-20260528 §2.6: smoke gracefully skips while placeholder is in place
-  # (first-deploy bootstrap); HARD-FAILs once Lambda is deployed and Dave updates this to the real URL.
+  # critter: smoke skips gracefully while this is a placeholder and HARD-FAILs once it is the real URL.
   STAGING_API_CRITTERS: https://nqq6b5kkf76mtvjmtqybk5jene0efzuk.lambda-url.us-east-1.on.aws/
-  # shared-state: placeholder until the first staging deploy creates the Function URL; Dave updates this to the real URL.
-  # V3-REWARDSTATE-001 substrate (featured-of-day + sighting-tally). No smoke assert added until the URL is real.
+  # shared-state: no smoke assert until this is the real URL.
   STAGING_API_SHARED_STATE: https://nhkygabmmjfcksqlahk2n2t5di0webau.lambda-url.us-east-1.on.aws/
-  # No staging tags Lambda is provisioned. Declared empty so the reference below is explicit
-  # (was `vars.STAGING_API_TAGS`, an undefined repo var that silently baked VITE_API_TAGS="" into
-  # every staging build). WARN-tier in the Validate step; wire a real URL when staging tags exists.
+  # No staging tags Lambda exists. Declared empty so the reference below is explicit: an undefined repo
+  # var silently bakes VITE_API_TAGS="" into every staging build. WARN-tier in the Validate step.
   STAGING_API_TAGS: ""
-  # Put-Up (V4-HARVESTCENTER-001). Both staging Lambdas were provisioned but never wired here, so
-  # every staging build baked VITE_API_PRESERVATION="" / VITE_API_STORAGE_LOCATIONS="" and the whole
-  # Put-Up surface was dead on staging while working in prod. URLs read from
-  # `aws lambda get-function-url-config` for garden-preservation-staging /
-  # garden-storage-location-staging and probed 2026-07-21: both return 401 (alive + auth-gated).
+  # Every staging Lambda must be wired here, in both VITE_ mappings and in a validate list: a missing one
+  # bakes VITE_API_*="" into every staging build, the app falls back to a relative /api/... path that
+  # CloudFront answers with index.html ("Unexpected token '<'"), and the surface is dead on staging while
+  # working in prod. URLs come from `aws lambda get-function-url-config` and answer 401 (alive, auth-gated).
   STAGING_API_PRESERVATION:      https://gmcwnewzjykdlnd7nllagvyrlm0vgrjn.lambda-url.us-east-1.on.aws/
   STAGING_API_STORAGE_LOCATIONS: https://4arsh5rxe6f5f5bgbyeyueftee0qquwa.lambda-url.us-east-1.on.aws/
-  # Harvests page (V4-HARVESTVIEW-001). WIRED 2026-08-10: garden-harvests-staging now exists, so the
-  # ship-then-wire placeholder is retired. Probed 401 (alive + auth-gated).
   STAGING_API_HARVESTS:      https://c2xqhj5fktciet2efz3hjkayxe0zunda.lambda-url.us-east-1.on.aws/
-  # WIRED 2026-08-10 (OPS-STAGINGAPIGAP-001). These three Lambdas existed but were never referenced
-  # here at all — not in the env block, not in either VITE_ mapping, and not in EITHER validate list.
-  # So they were invisible to the ship-then-wire guard: the app fell back to a relative /api/... path,
-  # CloudFront answered it with index.html, and the client died on "Unexpected token '<'". That broke
-  # /today outright (daily-plan) and made the harvest flow unsmokeable on staging. All probed 401.
   STAGING_API_MEMBERS:         https://zhkvqgtlh3jwsdvoeak5hhro4y0ujbxq.lambda-url.us-east-1.on.aws/
   STAGING_API_FINDINGS:        https://xadazkudo5dyzaz67nmud2wsh40mbepo.lambda-url.us-east-1.on.aws/
   STAGING_API_DAILY_PLAN_READ: https://5fblg7acway22fxx5svtqsc4ta0ipgpl.lambda-url.us-east-1.on.aws/
-  # Declared EMPTY on purpose so the env reference is not an undefined-var silent-empty (the
-  # STAGING_API_TAGS lesson) and so the Validate step can WARN on it instead of ignoring it.
-  # Genuinely absent: garden-achievements-staging does not exist and achievements is still prod-only
-  # in the matrix below.
+  # Declared EMPTY on purpose, so the reference is not an undefined-var silent empty and the Validate step
+  # WARNs on it: garden-achievements-staging does not exist and achievements is prod-only in the matrix below.
   STAGING_API_ACHIEVEMENTS: ""
-  # facebook-share joined the deploy matrix in OPS-STAGINGMATRIX-001, and that matrix's first run
-  # created garden-facebook-share-staging and its Function URL. WIRED 2026-10-22
-  # (OPS-STAGINGSURFACEGAP-001): URL read from `aws lambda get-function-url-config`, probed 401
-  # (alive + auth-gated). It lights up /share on staging and the smoke's facebook-share reachability.
+  # It lights up /share on staging and the smoke's facebook-share reachability.
   STAGING_API_FACEBOOK_SHARE: https://hzswsu5vcmef7uivk2ctvmy7ry0pkapr.lambda-url.us-east-1.on.aws/
   # Staging infra
   STAGING_S3_BUCKET:   garden-app-staging
@@ -89,13 +66,12 @@ env:
   STAGING_CF_ORIGIN:   https://dg6mmjhepoyt9.cloudfront.net
 
 jobs:
-  # ── Refuse a dispatch from the wrong ref (OPS-STAGINGSURFACEGAP-001) ─────
-  # The `staging` environment's branch policy rejects a run on any other ref, and a hand
-  # `gh workflow run deploy-staging.yml` without --ref dispatches on the repository's default branch,
-  # so that run died at deploy-lambdas on a policy refusal that did not name the fix. This job carries
-  # no `environment:`, so it runs first and names it; every job that declares `environment: staging`
-  # sits behind it (deploy-lambdas directly, deploy-frontend through it). promote-gate dispatches
-  # with "ref":"dev" and passes.
+  # Refuses a dispatch from the wrong ref. The `staging` environment's branch policy rejects a run on any
+  # other ref, and a hand `gh workflow run deploy-staging.yml` without --ref dispatches on the default
+  # branch, so the run would die at deploy-lambdas on a policy refusal that does not name the fix. This job
+  # carries no `environment:`, so it runs first and names it; every job that declares `environment: staging`
+  # sits behind it (deploy-lambdas directly, deploy-frontend through it). promote-gate dispatches with
+  # "ref":"dev" and passes.
   ref-guard:
     runs-on: ubuntu-26.04
     timeout-minutes: 2
@@ -114,7 +90,6 @@ jobs:
               ;;
           esac
 
-  # ── Deploy staging Lambda functions ──────────────────────────────────────
   deploy-lambdas:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
@@ -122,15 +97,13 @@ jobs:
     needs: ref-guard
     strategy:
       matrix:
-        # OPS-STAGINGMATRIX-001: facebook-share + photocdn-derivative joined 2026-08-16. Both were
-        # shipping to prod having never run on staging, so the L-108 smoke gate was structurally
-        # blind to them. Four functions in deploy-lambda.yml's 26-wide matrix are STILL prod-only,
-        # deliberately: achievements + tags (no staging Lambda, and their STAGING_API_* URLs are
-        # declared empty above), xp-reconcile + daily-plan (EventBridge-driven writers — whether
-        # staging gets its own cron, and at what DRY_RUN, is an open decision, not an omission).
+        # Four functions in deploy-lambda.yml's 26-wide matrix are prod-only, deliberately: achievements +
+        # tags (no staging Lambda; their STAGING_API_* URLs are declared empty above), xp-reconcile +
+        # daily-plan (EventBridge-driven writers: whether staging gets its own cron, and at what DRY_RUN, is
+        # an open decision, not an omission). Every other function runs here, so the smoke gate sees it.
         function: [projects, plants, locations, events, favorites, photos, dashboard, inventory-items, varieties, app-events, ux-events, critter, shared-state, findings, daily-plan-read, members, evidence-ingest, storage-location, preservation, harvests, facebook-share, photocdn-derivative]
-      # 8 since 2026-10-02 (was 4): 22 legs took six waves. Prod's matrix (deploy-lambda.yml) runs all 26 in one
-      # wave with no cap and has met no Lambda control-plane limit, so the cap here is only pacing.
+      # Prod's matrix (deploy-lambda.yml) runs all 26 in one wave with no cap and has met no Lambda
+      # control-plane limit, so the cap here is only pacing.
       max-parallel: 8
       fail-fast: false
 
@@ -141,7 +114,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22.23.3'  # the Lambda runtime's major (OPS-LAMBDANODE22-001); the frontend job and CI name the same (OPS-CINODE22-001)
+          node-version-file: .nvmrc  # read from the checked-out tree; must name the Lambda runtime's major (lambda-config-expected.json)
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
@@ -156,12 +129,12 @@ jobs:
           FN: ${{ matrix.function }}
         run: bash scripts/package-lambda.sh "$FN"
 
-      # OPS-LAMBDANODE22-001 (mirrors deploy-lambda.yml's "Ensure declared runtime", body byte-identical,
-      # pinned by scripts/test_ensure_runtime_step.py): update-function-code never touches Runtime, so this
-      # moves an existing staging function to the runtime the prod manifest declares for its prod twin
-      # (KEY). Runtime only, no env map; before the code update. Hard-fails on purpose (prod's copy is
-      # continue-on-error): nothing asserts staging config afterwards, and staging is where the runtime is
-      # proven, so a red leg here correctly stops the promote's staging gate.
+      # Mirrors deploy-lambda.yml's "Ensure declared runtime" (body byte-identical, pinned by
+      # scripts/test_ensure_runtime_step.py): update-function-code never touches Runtime, so this moves an
+      # existing staging function to the runtime the prod manifest declares for its prod twin (KEY). Runtime
+      # only, no env map; before the code update. Hard-fails on purpose (prod's copy is continue-on-error):
+      # nothing asserts staging config afterwards, and staging is where the runtime is proven, so a red leg
+      # here correctly stops the promote's staging gate.
       - name: Ensure declared runtime on ${{ matrix.function }}-staging
         env:
           FN: garden-${{ matrix.function }}-staging
@@ -188,12 +161,10 @@ jobs:
           echo "$FN runtime $WANT"
 
       - name: Deploy or create ${{ matrix.function }}-staging
-        # First-deploy support per VARIETY-REF Session 2 — mirrors deploy-lambda.yml
-        # create-or-update pattern (closes Pending D1 from carry-forward backlog).
-        # Existing functions update; missing functions are created with default config.
-        # OPS-LAMBDAROLESPLIT-001: staging functions run as garden-app-lambda-exec-staging (staging secrets,
-        # garden-photos-staging, staging log groups), never the prod exec role, which reads prod's secrets bundle.
-        # The update path never sets Role; the existing functions were moved by hand when the role was split.
+        # Mirrors deploy-lambda.yml's create-or-update: existing functions update; missing ones are created
+        # with default config. Staging functions run as garden-app-lambda-exec-staging (staging secrets,
+        # garden-photos-staging, staging log groups), never the prod exec role, which reads prod's secrets
+        # bundle. The update path never sets Role.
         if: matrix.function != 'photocdn-derivative'
         run: |
           FN="garden-${{ matrix.function }}-staging"
@@ -253,12 +224,10 @@ jobs:
           fi
 
       - name: Wait for ${{ matrix.function }}-staging
-        # OPS-STAGINGFIRSTCREATE-001: function-updated keys off LastUpdateStatus, which is not the
-        # gate after a CREATE — State is, and State is exactly what the health check below asserts.
-        # So wait on both. Update path (every pre-existing function): a code/env change never moves
-        # State off Active on these non-VPC functions, so function-active matches on its first poll
-        # and adds no delay, and the function-updated wait that follows is unchanged. Net-new leg:
-        # function-active is the wait that actually matters, closing the Pending -> step-6 race.
+        # function-updated keys off LastUpdateStatus, which is not the gate after a CREATE: State is, and
+        # State is what the health check below asserts, so wait on both. On the update path State never
+        # leaves Active on these non-VPC functions, so function-active matches on its first poll and adds no
+        # delay. On a net-new leg function-active is the wait that matters (the Pending -> health-check race).
         run: |
           FN="garden-${{ matrix.function }}-staging"
           aws lambda wait function-active --function-name "$FN"
@@ -275,7 +244,7 @@ jobs:
           echo "✅ $FN is $STATE"
 
       - name: Assert staging exec role on ${{ matrix.function }}-staging
-        # OPS-LAMBDAROLESPLIT-001: a staging function on the prod exec role can read prod's secrets bundle.
+        # A staging function on the prod exec role can read prod's secrets bundle.
         # Read-only. Reds the leg on drift; repair is by hand (this deploy role cannot pass the prod role).
         run: |
           set -euo pipefail
@@ -286,12 +255,9 @@ jobs:
           echo "$FN role ok"
 
       - name: Ensure S3_PHOTOS_BUCKET env for ${{ matrix.function }}-staging
-        # Idempotent: only updates if value differs. Mirrors deploy-lambda.yml step.
-        # Required for photo-enriching Lambdas that sign S3 GET URLs for
-        # featured_photo_view_url. Historical gap: create-function above sets only
-        # SECRET_NAME, so a net-new photo-aware staging Lambda would silently return
-        # view_url=null for every featured photo. Patched manually 2026-05-15;
-        # this step makes it self-healing for future deploys.
+        # Idempotent: only updates if the value differs. Mirrors deploy-lambda.yml. The photo-enriching
+        # Lambdas sign S3 GET URLs for featured_photo_view_url, and create-function above sets only
+        # SECRET_NAME, so without this a net-new staging Lambda returns view_url=null for every photo.
         if: contains(fromJSON('["plants","projects","locations","inventory-items","photos"]'), matrix.function)
         run: |
           FN="garden-${{ matrix.function }}-staging"
@@ -358,7 +324,7 @@ jobs:
           fi
 
       - name: Ensure ADMIN_CLERK_SUBS env for varieties-staging
-        # V4-CROPTYPERETIRE-001: the crop-type retire, restore and admin-listing routes fail closed
+        # The crop-type retire, restore and admin-listing routes fail closed
         # without it. Carries the smoke's CLERK_TEST_USER_ID alongside Dave (the ux-events-staging
         # convention above), so the smoke's block V can walk retire -> read back -> restore.
         if: matrix.function == 'varieties'
@@ -385,12 +351,10 @@ jobs:
           fi
 
       - name: Ensure GARDEN_HOUSEHOLD_IDS env for household-scoped staging fns (read-merge)
-        # B1 (staging side): garden-harvests-staging is household-scoped; create-function above sets
-        # ONLY SECRET_NAME, so without this it collapses to per-user scope and the both-household
-        # staging smoke would show divergent lists. Read-merge (NOT set — set wipes SECRET_NAME) the
-        # value from the sibling garden-events-staging (canonical live source).
-        # 0A.6: garden-members-staging joined — roster filtered by householdScope; without the env
-        # the Wave-4 staging smoke would see the AssigneePicker roster collapse to the caller alone.
+        # garden-harvests-staging and garden-members-staging are household-scoped; create-function above
+        # sets ONLY SECRET_NAME, so without this they collapse to per-user scope (divergent harvest lists, a
+        # roster of the caller alone). Read-merge (NOT set: set wipes SECRET_NAME) the value from the sibling
+        # garden-events-staging.
         if: matrix.function == 'harvests' || matrix.function == 'members'
         continue-on-error: true  # requires lambda:UpdateFunctionConfiguration on staging deploy role
         run: |
@@ -419,7 +383,7 @@ jobs:
           echo "GARDEN_HOUSEHOLD_IDS ensured on $FN"
 
       - name: Ensure GARDEN_HOUSEHOLD_IDS env for shared-state-staging
-        # BUG-AUTHZLAMBDA-001: shared-state admits only members of a list of at least two, and fails
+        # shared-state admits only members of a list of at least two, and fails
         # closed, so without this both shared-state smoke blocks 403. NOT sourced from
         # garden-events-staging like the step above: that function has no such key on staging, and
         # giving it one would switch events/harvests/members staging into household mode. Carries the
@@ -523,7 +487,7 @@ jobs:
         # First-deploy support: mirror deploy-lambda.yml Function URL creation step.
         # Existing URLs unchanged; missing URLs created with public access (handler owns CORS).
         # photocdn-derivative is excluded here and from the CORS step below: it is INTERNAL-INVOKE
-        # ONLY (spec-B2 / infra/photocdn.yaml — no public AuthType-NONE URL), same as in prod.
+        # ONLY (infra/photocdn.yaml: no public AuthType-NONE URL), same as in prod.
         if: matrix.function != 'photocdn-derivative'
         continue-on-error: true  # requires lambda:CreateFunctionUrlConfig + AddPermission on staging deploy role
         run: |
@@ -576,13 +540,10 @@ jobs:
 
       - name: Restore staging Lambda CORS
         if: matrix.function != 'photocdn-derivative'  # no Function URL to configure
-        # OPS-STAGINGFIRSTCREATE-001: this step is hard-failing while the step that creates the
-        # Function URL above is continue-on-error, so on a net-new leg anything swallowed up there
-        # came back down here as a bare ResourceNotFoundException — the promote gate dying at the
-        # wrong step with the wrong error. Now the two cases are separated by URL_WAS_NET_NEW, which
-        # only the create branch above ever sets: a never-created URL is loud but non-blocking (the
-        # function had no URL before this run either, and that step's own declared intent is that an
-        # IAM gap must not red the gate), while a pre-existing URL going missing still hard-stops.
+        # This step hard-fails while the URL-creating step above is continue-on-error, so the two cases are
+        # told apart by URL_WAS_NET_NEW, which only that step's create branch sets: a never-created URL is
+        # loud but non-blocking (the function had no URL before this run either, and an IAM gap there must
+        # not red the gate), while a pre-existing URL going missing still hard-stops.
         run: |
           FN="garden-${{ matrix.function }}-staging"
           if ! aws lambda get-function-url-config --function-name "$FN" >/dev/null 2>/tmp/url-probe-err; then
@@ -638,7 +599,6 @@ jobs:
           fi
           echo "verified: no Function URL on garden-photocdn-derivative-staging"
 
-  # ── Build and deploy staging frontend ────────────────────────────────────
   deploy-frontend:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
@@ -657,7 +617,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22.23.3'
+          node-version-file: .nvmrc
           cache: 'npm'
 
       - name: Install dependencies
@@ -840,9 +800,8 @@ jobs:
             fi
           fi
 
-  # ── DB schema integrity check ─────────────────────────────────────────────
-  # Runs AFTER frontend deploy so Lambda and DB changes are both live.
-  # Uses isolated staging Neon branch — never touches prod DB.
+  # Runs AFTER the frontend deploy so Lambda and DB changes are both live. Uses the isolated staging Neon
+  # branch, never the prod DB.
   db-schema-check:
     runs-on: ubuntu-26.04
     needs: deploy-frontend
@@ -854,21 +813,17 @@ jobs:
           ref: ${{ inputs.dev_sha || github.sha }}
 
       - name: Run schema integrity check
-        # OPS-SCHEMACHECKAPT-001: no postgresql-client install step. ubuntu-26.04 (pinned
-        # above, so the version cannot drift under us) ships psql 18 on PATH (16 on 24.04), and
-        # check-schema.sh only ever runs psql — which, unlike pg_dump/pg_restore, has no
-        # major-version match requirement against the PG 17 staging Neon branch. The apt
-        # fetch was a ship-time network dependency for a binary already on the runner.
+        # No postgresql-client install: the runner ships psql on PATH (18 on ubuntu-26.04), and psql,
+        # unlike pg_dump/pg_restore, needs no major-version match with the PG 17 staging branch.
         run: bash tests/schema/check-schema.sh
         env:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
 
-  # ── Smoke tests ───────────────────────────────────────────────────────────
-  # Phase 1: Lambda reachability (no auth required — 4xx is fine, 5xx is not).
-  # Phase 2: Authenticated CRUD (requires CLERK_SECRET_KEY_STAGING + CLERK_TEST_USER_ID secrets).
+  # Phase 1: Lambda reachability (no auth; 4xx is fine, 5xx is not).
+  # Phase 2: authenticated CRUD (needs CLERK_SECRET_KEY_STAGING + CLERK_TEST_USER_ID).
   smoke-tests:
     runs-on: ubuntu-26.04
-    # OPS-STAGINGSMOKESHA-001: deploy-frontend is listed for its OUTPUTS, not for ordering — it is
+    # deploy-frontend is listed for its OUTPUTS, not for ordering: it is
     # already a transitive ancestor (deploy-frontend -> db-schema-check -> here), so this edge adds
     # no wait and no new skip path, but WITHOUT it `needs.deploy-frontend` is not in this job's
     # needs context and COMMIT_SHA below silently resolved to "". Same pattern promote-gate.yml
@@ -892,7 +847,7 @@ jobs:
           STAGING_API_FAVORITES: ${{ env.STAGING_API_FAVORITES }}
           STAGING_API_PHOTOS:    ${{ env.STAGING_API_PHOTOS }}
           STAGING_API_DASHBOARD: ${{ env.STAGING_API_DASHBOARD }}
-          # DRG-WATERRECON-002 bar==Today equality smoke: staging daily-plan-read Function URL.
+          # bar==Today equality smoke: staging daily-plan-read Function URL.
           # Set repo variable STAGING_API_DAILY_PLAN_READ to activate; unset -> graceful WARN-skip.
           STAGING_API_DAILY_PLAN: ${{ vars.STAGING_API_DAILY_PLAN_READ }}
           STAGING_API_SHARED_STATE: ${{ env.STAGING_API_SHARED_STATE }}
@@ -903,12 +858,12 @@ jobs:
           STAGING_API_PRESERVATION: ${{ env.STAGING_API_PRESERVATION }}
           STAGING_API_STORAGE_LOCATIONS: ${{ env.STAGING_API_STORAGE_LOCATIONS }}
           STAGING_API_HARVESTS: ${{ env.STAGING_API_HARVESTS }}
-          # OPS-STAGINGSURFACEGAP-001: Phase 1's check_reachable for facebook-share. Its handler
+          # Phase 1's check_reachable for facebook-share. Its handler
           # answers 401 for an unauthenticated request (auth is evaluated before the FB_SHARE_ENABLED
           # kill switch), which check_reachable counts as up.
           STAGING_API_FACEBOOK_SHARE: ${{ env.STAGING_API_FACEBOOK_SHARE }}
           COMMIT_SHA:            ${{ needs.deploy-frontend.outputs.commit-sha }}
-          # OPS-STAGINGSURFACEGAP-001: the exact short SHA the Build step stamped into sw.js
+          # The exact short SHA the Build step stamped into sw.js
           # (CACHE_VERSION = 'vstg-<this>'). Phase 1 re-reads $STAGING_CF_ORIGIN/sw.js and fails unless
           # it carries that stamp: proof of the SPA build only, not of the Lambda code.
           STAGING_BUILD_SHORT_SHA: ${{ needs.deploy-frontend.outputs.sw-short-sha }}
@@ -918,187 +873,80 @@ jobs:
           # CLERK_TEST_USER_ID       = user_...    (existing user in dev Clerk instance)
           CLERK_SECRET_KEY_STAGING: ${{ secrets.CLERK_SECRET_KEY_STAGING }}
           CLERK_TEST_USER_ID:       ${{ secrets.CLERK_TEST_USER_ID }}
-          # WS-B M3: this is the ship-gate smoke — Phase 2 (authed write-path) MUST run.
+          # The ship-gate smoke: Phase 2 (authed write-path) MUST run.
           # With this set, a missing Clerk secret or a failed session mint FAILS the job
           # (fail-closed) instead of vacuously passing on Phase-1 reachability alone.
           SMOKE_REQUIRE_AUTH: "1"
-          # OPS-SMOKECAREPROFILE-001: the same staging DSN the L-058 sweep below uses. Block D reads back,
+          # The same staging DSN the L-058 sweep below uses. Block D reads back,
           # through SQL, the cultivar care_profile that POST /api/varieties writes, because no API route
           # returns that row. Under SMOKE_REQUIRE_AUTH a missing value FAILS that assert, never skips it.
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
 
       - name: L-058 smoke-test row hygiene cleanup
-        # Hard-delete any rows matching '%smoke%' in staging plant_projects.
-        # Per CLAUDE.md Migration Authoring Rule "Smoke-test row hygiene":
-        # smoke-test rows MUST be hard-deleted (not soft-deleted) after tests
-        # pass. Naming convention is a hint, not enforcement — VALIDATE will
-        # trip on soft-deleted rows regardless (L-058).
-        # The smoke script inserts 'smoke-test-{UUID}' rows via API. Its trap-based
-        # cleanup does API DELETEs which are soft-deletes (set deleted_at) — that IS
-        # the residue source. This step is the hard-delete safety net. Runs with
-        # if: always() so residue is cleaned even when smoke-tests fail (root cause of
-        # 2026-05-18 anomaly #B: prior smoke runs left 4 soft-deleted rows in staging).
+        # Hard-deletes the smoke's staging rows (L-058): the smoke's own cleanup goes through API DELETEs,
+        # which are soft deletes, and VALIDATE trips on soft-deleted residue. if: always(), so residue is
+        # cleaned even when the smoke fails. Every statement runs under ON_ERROR_STOP and a 23503 stops the
+        # step with everything before it committed (and every later run fails on the same row), so ORDER IS
+        # THE INVARIANT: children before parents, each RESTRICT or no-action key forcing a step:
+        #   * Put-Up first: preservation_log (the jar) before storage_location (its place) and everything
+        #     below, because preservation_log.storage_location_id, variety_id and photo_id have no ON DELETE
+        #     action. Both match ONLY block N's markers ('smoke-test-putup-<run>', 'smoke-test-place-<run>'):
+        #     a prefix, not '%smoke%', which would take a real "smoked paprika" jar or a place called
+        #     "Smokehouse". preservation_source is written only by the /sources route, which the smoke never calls.
+        #   * photos before event_log, plants and locations (photos.event_id, plant_id and location_id are
+        #     RESTRICT), by every shape the event_log sweeps use. featured_photo_id / featured_image_id
+        #     back-pointers are SET NULL, so no pre-nulling pass is needed.
+        #   * harvest_log -> event_log (by project AND by plant: an event anchored only by plant_id would
+        #     block the plants delete) -> entity_memory -> favorites -> plants -> inventory_items ->
+        #     plant_varieties -> locations -> plant_projects. favorites.entity_id and event_batches.scope_json
+        #     have no FK and are swept by smoke-project id.
+        #   * care_profile before plant_varieties: scope_id has NO foreign key, so the variety delete would
+        #     just orphan the smoke's cultivar profile, which v5-rekeystrand-001's guard counts.
+        #   * Seed lots: plants go before inventory_items, yet a lot's parents point back at plants (through
+        #     inventory_items.source_plant_id and seed_lot_parent_planting, both RESTRICT). So, ahead of the
+        #     plants delete: the link rows of a smoke lot OR a smoke planting go first, in their own psql call;
+        #     a lot NOT named smoke whose source_plant_id is a planting about to go has that pointer moved to
+        #     its earliest remaining live parent (created_at, then id: the handler's rule) or to NULL, printed
+        #     with RETURNING because it changes a row it does not delete (otherwise the lot keeps a live link
+        #     row beside a NULL pointer, a row of the standing gate post_nonempty_set_has_a_cache); and the
+        #     main chain clears source_plant_id on every smoke lot and every lot pointing at a doomed planting.
+        #   * seed_lot_addition (a picking) before the link row it hangs on (parent_link_id is RESTRICT), by
+        #     the link delete's own predicate.
+        #   * seed_lot_stage_log before its lot (no ON DELETE action; POST /seed-stage adds a row on every
+        #     call and the smoke's API delete is soft), by the lot delete's own predicate, so any staged smoke
+        #     lot is covered.
+        #   * MIXES: a blend's NAME is generated and can be renamed, so before any delete the ids of every mix
+        #     with a component row touching a smoke-named variety (either side) are captured and appended to
+        #     SMOKE_VARIETY_IDS. The cultivar entity, entity_tag and care_profile deletes take them too; the
+        #     component rows and the mix rows are then deleted by id, after plants and inventory_items (both
+        #     point at plant_varieties). The by-id arms are the only deletes here that can reach a variety NOT
+        #     named smoke, so the captured ids are echoed first and the delete prints each row (RETURNING id, name).
+        # WHY ONE TRANSACTION: the component delete and the mix delete share ONE psql -c string, which runs as
+        # one transaction, so a mix loses its component rows and its own row together or not at all. Split, a
+        # stop in between leaves a keyed mix with no live component (a row of the standing gate
+        # post_blend_key_equals_live_components, reddening another workflow under the wrong name), and a mix
+        # without components is never captured again.
         #
-        # 2026-05-25 (exciting-charming-newton): the smoke's Phase-2 write-path asserts
-        # now also create an event, a throwaway variety, and a plant under the same
-        # project. The event has NO API DELETE route, so the sweep must clean those
-        # tables at the DB level. Deletes run FK-safe (children before parents):
-        # harvest_log → event_log → entity_memory → favorites → plants → inventory_items
-        # → plant_varieties → locations → plant_projects. RESTRICT edges that force this order:
-        # plants.variety_id→plant_varieties, plants.source_inventory_item_id→inventory_items,
-        # harvest_log.event_id→event_log, inventory_items.location_id/event_log.location_id→locations.
-        # favorites.entity_id + event_batches.scope_json have no FK — swept by smoke-project id. FK-safe order
-        # validated live against the staging Neon branch 2026-05-25 (extended for E/F/G surfaces).
+        # OPTIONAL TABLES: this file is read from dev, and staging can lack seed_lot_parent_planting,
+        # variety_blend_component and seed_lot_addition (their migrations reach staging by hand, and a
+        # rehearsed rollback removes them). Each one's presence is read once with to_regclass (NULL for a
+        # missing relation, where a cast would raise 42P01), and its deletes and residue term run only when it
+        # is there: plain SQL behind a shell test, not a DO block, so each statement prints its own row count.
+        # Without the mix table the captured list is empty, and '{}'::uuid[] matches nothing. seed_lot_stage_log
+        # has NO such test: the inventory list read joins it on every request, so a database without it fails
+        # the smoke long before this step.
         #
-        # 2026-08-04 (V4-EVTANCHORDEL-001): event_log.plant_id, photos.plant_id and photos.location_id
-        # became ON DELETE RESTRICT (they were SET NULL, which contradicted the anchor CHECKs on those
-        # tables — see migrations/v4-evtanchordel-001). This sweep is one of the two non-app callers
-        # that hard-delete plantings, so it had to be widened BEFORE that migration is applied:
-        #   • event_log was swept by project_id ONLY, which misses any event anchored solely by
-        #     plant_id — under RESTRICT such a row now BLOCKS "DELETE FROM plants" instead of being
-        #     silently detached. Added a plant_id-scoped sweep (preceded by its harvest_log children,
-        #     whose FK into event_log is RESTRICT).
-        #   • photos were NEVER swept at all. Under SET NULL a smoke photo on a smoke plant was
-        #     quietly orphaned; under RESTRICT it blocks both "DELETE FROM plants" and
-        #     "DELETE FROM locations". Added a photos sweep before plants.
-        # Both additions are no-ops against staging today (0 matching rows, verified 2026-08-04) —
-        # they exist so the sweep stays correct the first time smoke creates such a row.
-        # Every *.featured_photo_id / *.featured_image_id back-pointer into photos is SET NULL, so
-        # deleting photos needs no pre-nulling pass. preservation_log.photo_id is NO ACTION and would
-        # block, but smoke creates no preservation rows.
+        # RESIDUE: the closing check counts by the ids captured BEFORE the sweep (smoke variety, lot, planting
+        # and mix ids), never by name: after the sweep no smoke row is left to join through. A global orphan
+        # count is unusable (staging carries seeded orphan cultivar profiles that are not smoke rows). New
+        # terms go LAST in the sum, so every earlier term reads as it always has.
         #
-        # 2026-08-12 (V4-SOFTDELCASCADE-001): photos.event_id becomes ON DELETE RESTRICT when that
-        # migration's 0c lands, so the photos sweep MUST run BEFORE the event_log sweeps and MUST
-        # also cover event_id (a smoke photo hanging off a smoke event would otherwise refuse the
-        # event delete and red the deploy under ON_ERROR_STOP=1). Photos moved above event_log and
-        # widened with an event_id-scoped predicate matching both event_log sweep shapes. 0-row
-        # no-op against staging today (zero smoke photos carry an event_id, verified in the
-        # pre-apply audit) — latent-correctness edit, same class as the 2026-08-04 additions.
+        # NOT SWEPT, on purpose: xp_events. A seed_saved event that names a lot is paid by a row whose
+        # source_id is the LOT id; source_id has no foreign key, this sweep has never deleted the event-keyed
+        # rows every other smoke event leaves, and deleting only these would hand the smoke user back part of
+        # its daily allowance, which block U's comment says the smoke must not lean on.
         #
-        # 2026-08-20 (OPS-SCHEMACHECKAPT-001): the two apt-get lines that used to open this
-        # sweep are gone. ubuntu-26.04 (pinned on this job) ships psql 18 on PATH (16 on 24.04) and the
-        # sweep is psql-only, so there is nothing to install — psql, unlike pg_dump/pg_restore,
-        # carries no major-version match requirement against the PG 17 staging branch. They
-        # were also `>/dev/null 2>&1`-silenced, so an apt flake failed this step with no output.
-        #
-        # 2026-09-18 (OPS-SMOKECAREPROFILE-001): since v4.137 (BUG-CULTIVARNOPROFILE-001) the smoke's
-        # variety POST also writes a cultivar-scope care_profile in the same transaction. care_profile.scope_id
-        # has NO foreign key, so the plant_varieties delete neither cascades nor blocks. It just orphans the
-        # profile, and an orphan keyed to block D's re-keyed variety is exactly what v5-rekeystrand-001's
-        # guard counts. The care_profile delete therefore runs BEFORE plant_varieties: afterwards the smoke name
-        # no longer links a profile to anything. For the same reason the residue check cannot find a leftover
-        # profile by name. It checks the smoke variety ids captured before the sweep instead; a name-joined
-        # term would read 0 with every profile left behind. A global orphan count is not usable either: staging
-        # carries 145 orphan cultivar profiles from care-cadence-001-seed.sql (`_seeded: true`, 2026-06-18). Their
-        # scope_ids match no plant_varieties row and no audited delete (measured 2026-09-18). Those are not
-        # smoke rows, and a global count would red on its first run.
-        #
-        # 2026-09-29 (Put-Up release 1a, run-smoke.sh block N): the smoke now writes one storage_location (a place)
-        # and one preservation_log row (a jar in it) per run, and the sweep opens with their two deletes. They match
-        # ONLY the markers block N writes: preservation_log.notes 'smoke-test-putup-<run>' and storage_location.label
-        # 'smoke-test-place-<run>'. A prefix, not this sweep's usual '%smoke%', which would also take a real
-        # "smoked paprika" put-up or a place called "Smokehouse". The jar goes first, before its place and before
-        # everything below: preservation_log.storage_location_id, variety_id and photo_id have no ON DELETE action,
-        # so a jar still pointing at a smoke place, variety or photo would refuse that row's delete. The jar arm also
-        # takes any row filed in a smoke place. Nothing is left pointing at a smoke jar: preservation_source (ON
-        # DELETE RESTRICT) is written only by the /sources route, which the smoke never calls. The 2026-08-04 note
-        # above that "smoke creates no preservation rows" is no longer true; its conclusion holds, because the smoke
-        # jar carries no photo_id.
-        #
-        # 2026-10-05 (V5-SEEDMULTIPARENT-001, run-smoke.sh block U): the smoke now saves one seed lot that names two
-        # smoke plantings as its parents. That closes a cycle this sweep's order never had to face: plants go before
-        # inventory_items (plants.source_inventory_item_id is RESTRICT), yet a lot's parents point the other way, at
-        # plants, through inventory_items.source_plant_id AND through the new table seed_lot_parent_planting (both
-        # RESTRICT, the table's link to inventory_items too). Run as it stood against such a lot, "DELETE FROM
-        # plants" raised 23503 and stopped the sweep with fifteen statements already committed (rehearsed on a local
-        # PG 17 before this landed; record: gardening-docs project-state/_seedmultiparent-20261005/lane-T2-report.md).
-        # Three additions, all ahead of the plants delete:
-        #   * the link rows of a smoke lot OR of a smoke planting are deleted first, in their own psql call;
-        #   * straight after it, a lot that is NOT named smoke but whose source_plant_id is a planting about to be
-        #     deleted has that pointer moved to the earliest of its remaining live seed_parent rows (created_at, then
-        #     id: the handler's own rule), or to NULL when none is left. RETURNING prints each lot touched: this is
-        #     the one statement here that changes a row it does not delete. Without it the next addition left such a
-        #     lot with a live link row beside a NULL pointer, which is a row of the standing gate
-        #     post_nonempty_set_has_a_cache (gate-file review, finding M1; rehearsed, both row-level gates then read 0);
-        #   * in the main chain, source_plant_id is cleared on every row that is a smoke lot or still points at a
-        #     planting the next statement deletes. Where the table exists the second arm now finds nothing. It stays
-        #     because it is all a database WITHOUT the table gets.
-        # The second addition and that second arm match nothing the smoke writes. They are there so a lot a person
-        # saved on staging from a planting named like smoke, or sitting in a smoke project, can neither red this step
-        # nor be left inconsistent by it.
-        # THE TABLE MAY NOT EXIST. This file is read from dev, and staging gets migrations/v5-seedmultiparent-001 by
-        # hand (and loses the table again when its rollback is rehearsed). So the table's presence is read once with
-        # to_regclass, which answers NULL for a missing relation where a cast would raise 42P01 (the reason
-        # v4-seedsaveflow-001's gates give), and both the delete and the residue term run only when it is there.
-        # Plain SQL behind a shell test, not a DO block: each statement stays one line that prints its own row
-        # count, and nothing here needs \$\$ quoting inside a double-quoted -c.
-        # The residue term counts link rows by the smoke lot and planting ids captured BEFORE the sweep, as
-        # care_profile's does: after the sweep no smoke row is left to join through. With both foreign keys
-        # RESTRICT it can only read above 0 if one of them is ever dropped or relaxed.
-        #
-        # 2026-10-06 (V5-VARIETYBLEND-001, release 2a; run-smoke.sh block U, U11): the smoke now makes a MIX of two
-        # smoke varieties: one plant_varieties row of rank 'blend' and one variety_blend_component row per component.
-        # Both of that table's keys to plant_varieties are RESTRICT, so "DELETE FROM plant_varieties" as it stood
-        # raised 23503 against such a mix and stopped the sweep with every statement above it already committed
-        # (rehearsed on a local PG 17 before this landed; record: gardening-docs
-        # project-state/_seedmultiparent-20261005/r2/lane-T2-report.log). A mix's NAME is generated from its
-        # components' names and can be renamed, so the name is not what finds it. Four additions:
-        #   * BEFORE anything is deleted, the ids of every mix with a component row touching a smoke-named variety (on
-        #     either side) are captured, and appended to SMOKE_VARIETY_IDS, which the care_profile residue term reads;
-        #   * in the main chain the cultivar entity, entity_tag and care_profile deletes also take the captured mix ids.
-        #     The chain now ENDS at the care_profile delete;
-        #   * straight after it, ONE psql -c string holds two statements: the delete of the component rows of every
-        #     captured id, then the delete of the mix rows themselves by id. Several statements in one -c string are
-        #     sent as one query and so run as ONE transaction: a mix loses its component rows and its own row together
-        #     or not at all. It sits after plants and inventory_items: both point at plant_varieties (RESTRICT), and
-        #     the smoke's own lot is filed under its mix. A second chain follows, from the delete by name to the end;
-        #   * the residue sum counts component rows and mix rows by the captured ids.
-        # WHY ONE TRANSACTION (2026-10-06, gate-file review finding S1). As first written the component rows went in
-        # the step's first delete and the mix row 22 statements and three psql calls later. In between, and for good
-        # whenever the chain stopped on the way, staging held a keyed mix with no live component row: a row of the
-        # standing gate post_blend_key_equals_live_components, so a second workflow went red naming the wrong cause.
-        # A renamed or hand-made mix was then never captured again, because the capture reads component rows. Now a
-        # stop anywhere before the transaction leaves every mix whole (key and components), and a 23503 on a mix row
-        # puts its component rows back (both rehearsed on a local PG 17; record:
-        # project-state/_seedmultiparent-20261005/r2/lane-T2b-report.log).
-        # The by-id arms are the first statements here that hard-delete a plant_varieties row NOT named smoke, so the
-        # log shows them: the captured ids are echoed before any delete, and the by-id delete prints each row it
-        # removes (RETURNING id, name), the rule the pointer move above set for a statement that reaches a non-smoke row.
-        # The smoke's own mix carries 'smoke-test-' in its name, so on a normal run the by-id arms repeat what the
-        # by-name ones do. They are for a mix that was renamed, or made by hand on staging over a smoke variety.
-        # THE TABLE MAY NOT EXIST, for the reason given above for seed_lot_parent_planting, and it is handled the same
-        # way: to_regclass once, and the capture, the delete and the residue term only when it is there. Without it
-        # the captured list is empty, and '{}'::uuid[] matches nothing in the main chain.
-        # RELEASE 3 (V5-SEEDLOTADDITION-001): A PICKING ROW GOES BEFORE THE LINK ROW IT HANGS ON. seed_lot_addition has
-        # one foreign key, parent_link_id -> seed_lot_parent_planting(id), ON DELETE RESTRICT. One picking row under a
-        # smoke lot's link row that this step did not delete first would stop the link delete below with 23503; under
-        # ON_ERROR_STOP the step fails there, the row stays, and every later run by every session fails the same way
-        # until staging is cleaned by hand. So, inside the arm that knows the link table exists and BEFORE its delete:
-        # every picking whose link row that delete is about to remove, by that delete's own predicate. Its presence is
-        # read once with to_regclass, like the two tables above, and without it nothing names it. Its residue term is
-        # keyed on the ids captured before any delete (a picking that survived kept its link row alive, so the join
-        # still finds it) and is the LAST term of the sum, so every term before it reads as it always has.
-        # NOT SWEPT, on purpose: xp_events. A seed_saved event that names a lot is paid once per person per jar, by a
-        # row whose source_id is the LOT id, so one such row can outlive each run's smoke lot. xp_events.source_id has
-        # no foreign key, each run's lot id is new, and this sweep has never deleted the event-keyed rows every other
-        # smoke event leaves either. Deleting only these would also hand the smoke user back part of its daily
-        # allowance, which block U's comment says the smoke must not lean on.
-        # RELEASE 3, pre-promote review (regression B2): A LOT'S STAGE ROWS GO BEFORE THE LOT. seed_lot_stage_log names
-        # inventory_items with NO ON DELETE action (migrations/v4-seedsaveflow-001/0a-ddl.sql; the standing gate in
-        # v5-invrefstrand-001 pins it 'a'), and POST /seed-stage, its one writer, adds a row on every call. Block U's
-        # U24 is the smoke's first call of that route (it gives the gift lot a stage), and the API DELETE that follows
-        # is a soft delete, so the row is still there when this step runs. As the step stood, "DELETE FROM
-        # inventory_items" then raised 23503, the step failed with the lot and its row left behind, and every later
-        # run failed on the same row (rehearsed on a local PG 17: the step as it stood stops there, this one ends at 0;
-        # record: gardening-docs project-state/_seedmultiparent-20261005/r3/lane-F-report.log). So, in the main chain
-        # and directly ahead of the lot delete: the stage rows of every lot that delete is about to remove, by that
-        # delete's own predicate. It is keyed on the lot, not on U24, so a later step that stages any smoke-named lot,
-        # and a smoke-named lot someone staged by hand, are covered without another edit here.
-        # NO to_regclass TEST, unlike the three tables above: this one is not optional. The inventory handler's list
-        # read joins it on every request (GET /api/inventory-items), so a database without it answers 500 to the
-        # smoke's own reads long before this step runs.
-        # Its residue term counts by the lot ids captured before any delete and is the LAST term of the sum. With the
-        # key in place it can only read above 0 if a lot survived (the inventory_items term then counts it too).
+        # No apt install: the runner's psql (18 on ubuntu-26.04) needs no major-version match with PG 17.
         if: always()
         env:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
