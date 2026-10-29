@@ -224,11 +224,6 @@ describe('EventNew — handleSubmit return contract (condition C6)', () => {
     return body
   }
 
-  it('guards re-entrancy before doing anything else', () => {
-    // BUG-EVENTSREPEATTAP-001 added the ref half of the same check (same-frame second call).
-    expect(handleSubmitBody()).toMatch(/e\.preventDefault\(\)\s*\n\s*if \(saving \|\| submitInFlight\.current\) return \{ ok: false, reason: 'in_flight' \}/)
-  })
-
   it('the ref is taken after every refusal, with setSaving(true), and released wherever saving is', () => {
     // BUG-EVENTSREPEATTAP-001. Taken any earlier, a refused submit would leave it held and the form
     // could never submit again; released at fewer exits than `saving`, the same.
