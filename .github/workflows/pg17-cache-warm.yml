@@ -1,11 +1,12 @@
 name: pg17 client cache warm
 
-# OPS-SCHEMACHECKAPT-001. promote-gate.yml takes the pg17 client (pg_dump, pg_dumpall) for scripts/snap.py from the
-# Actions cache entry pg17-client-postgres17-image-v1-runner-ubuntu-26.04 and fetches nothing: on a miss it refuses
-# before the fast-forward, nothing moved. It never saves the entry either (actions/cache/restore has no save). This
-# workflow fills that entry and proves it: restore; on a hit run both binaries; on a miss copy them out of the
-# digest-pinned postgres:17 image, run them, save, then look the entry up again and fail if it is not there.
-# backup.yml and restore-verify.yml (daily, on main) still save the same key from the floating tag on their own miss.
+# promote-gate.yml takes the pg17 client (pg_dump, pg_dumpall) for scripts/snap.py from the Actions cache
+# entry pg17-client-postgres17-image-v1-runner-ubuntu-26.04 and fetches nothing: on a miss it refuses
+# before the fast-forward, nothing moved. It never saves the entry either (actions/cache/restore has no
+# save). This workflow fills that entry and proves it: restore; on a hit run both binaries; on a miss copy
+# them out of the digest-pinned postgres:17 image, run them, save, then look the entry up again and fail
+# if it is not there. backup.yml and restore-verify.yml (daily, on main) still save the same key from the
+# floating tag on their own miss.
 #
 # KEY, PATH, ACTION SHA AND RUNS-ON equal promote-gate's (and backup.yml's key and path). The cache version hashes the
 # path, and the key carries the runner label, so an entry written here with any of them different is one the promote
@@ -88,14 +89,14 @@ jobs:
             fi
           done
 
-      # promote-gate's old miss path, moved here, from a digest-pinned image. Each docker call runs inside
-      # `timeout` (124 = timed out, 137 = had to be KILLed): pull 120 + 10 s, copy 30 + 5 s, remove 10 + 5 s.
+      # From a digest-pinned image. Each docker call runs inside `timeout` (124 = timed out, 137 = had to
+      # be KILLed): pull 120 + 10 s, copy 30 + 5 s, remove 10 + 5 s.
       - name: Fetch pg17 client from the postgres:17 image (miss, or force_refetch)
         id: fetch
         if: steps.pg17-cache.outputs.cache-hit != 'true' || inputs.force_refetch
         timeout-minutes: 4
         env:
-          # postgres:17 manifest list (linux/amd64: PG 17.11, image created 2026-10-06), read 2026-10-15.
+          # postgres:17 manifest list (linux/amd64: PG 17.11).
           PG17_IMAGE: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
         run: |
           set -uo pipefail
