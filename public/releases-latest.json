@@ -1,7 +1,7 @@
 {
-  "version": "5.3.19",
+  "version": "5.3.20",
   "date": "2026-10-29",
   "highlights": [
-    "Behind-the-scenes cleanup: retired finished test machinery and nine old feature switches. No visible change."
+    "Behind-the-scenes cleanup: staging now tests the same server packages as the live app, new tests pin today's behaviour, and unused code is gone. No visible change."
   ]
 }
