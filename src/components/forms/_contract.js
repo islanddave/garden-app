@@ -8,6 +8,7 @@
 function currentMode() {
   return (
     (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.MODE) ||
+    // eslint-disable-next-line no-undef -- `process` is typeof-guarded; the browser bundle has none
     (typeof process !== 'undefined' && process.env && process.env.NODE_ENV) ||
     'development'
   )
