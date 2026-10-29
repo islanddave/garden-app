@@ -646,3 +646,43 @@ def test_main_exits_2_when_the_policy_read_fails(monkeypatch, tmp_path):
     def boom(n, r):
         raise RuntimeError("live policy read failed for garden-x: AccessDenied")
     assert _main_with_policy(monkeypatch, tmp_path, boom) == 2
+
+
+# --- reserved concurrency (SEC-10) ---------------------------------------------
+
+@pytest.mark.parametrize("live_cfg,want,bad", [
+    (dict(live(), Concurrency={"ReservedConcurrentExecutions": 30}), 30, False),
+    (dict(live(), Concurrency={"ReservedConcurrentExecutions": 10}), 30, True),
+    (live(), 30, True),
+    (dict(live(), Concurrency={}), 5, True),
+], ids=["match", "drift", "no-concurrency-block-is-none", "empty-concurrency-block-is-none"])
+def test_reserved_concurrency_is_asserted_when_declared(live_cfg, want, bad):
+    v = clc.check_function("garden-photos", {"reserved_concurrency": want}, live_cfg)
+    assert v == [] if not bad else (len(v) == 1 and "ReservedConcurrentExecutions" in v[0]
+                                    and "declares %d" % want in v[0])
+
+
+def test_unstated_reserved_concurrency_is_not_asserted():
+    assert clc.check_function("x", {"env": {}}, dict(live(), Concurrency={"ReservedConcurrentExecutions": 999})) == []
+    assert clc.check_function("x", {"env": {}}, live()) == []
+
+
+def test_every_declared_function_declares_an_int_reserved_concurrency():
+    m = clc.load_manifest()
+    bad = sorted(fn for fn, spec in m.items()
+                 if not isinstance(spec.get("reserved_concurrency"), int) or spec["reserved_concurrency"] < 1)
+    assert m and not bad, bad
+
+
+@pytest.mark.parametrize("doc,want", [
+    ({"Configuration": {"MemorySize": 256}, "Concurrency": {"ReservedConcurrentExecutions": 8}},
+     {"MemorySize": 256, "Concurrency": {"ReservedConcurrentExecutions": 8}}),
+    ({"Configuration": {"MemorySize": 256}}, {"MemorySize": 256}),
+], ids=["concurrency-block-kept", "no-concurrency-block"])
+def test_fetch_live_reads_get_function_and_keeps_its_concurrency_block(monkeypatch, doc, want):
+    """The deploy role has GetFunction but not GetFunctionConcurrency, so the value comes from get-function."""
+    seen = {}
+    monkeypatch.setattr(clc.subprocess, "run",
+                        lambda cmd, **kw: seen.setdefault("cmd", cmd) and _Proc(0, json.dumps(doc)))
+    assert clc.fetch_live("garden-x", "us-east-1") == want
+    assert seen["cmd"][:3] == ["aws", "lambda", "get-function"]

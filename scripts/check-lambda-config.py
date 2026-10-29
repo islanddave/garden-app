@@ -174,6 +174,15 @@ def check_function(name, expected, live):
                 "%s: Runtime is %s, manifest declares %s" % (name, actual, expected["runtime"])
             )
 
+    # SEC-10: a cap set live on 2026-10-29. No deploy step writes it, so a lost cap is silent drift.
+    if "reserved_concurrency" in expected:
+        actual = (live.get("Concurrency") or {}).get("ReservedConcurrentExecutions")
+        if actual != expected["reserved_concurrency"]:
+            violations.append(
+                "%s: ReservedConcurrentExecutions is %s, manifest declares %s"
+                % (name, actual, expected["reserved_concurrency"])
+            )
+
     env_live = (live.get("Environment") or {}).get("Variables") or {}
     for key, want in (expected.get("env") or {}).items():
         got = env_live.get(key, ABSENT)
@@ -346,9 +355,13 @@ def fetch_live(name, region):
 
     Raises RuntimeError on any other failure — a throttled or unauthorized read must never be
     mistaken for "no drift" (this is the same trap as deploy-lambda.yml's `|| echo '{}'` reads).
+
+    Reads get-function rather than get-function-configuration: its Configuration is the same shape,
+    and it also carries the Concurrency block (absent when no cap is set). The deploy role has
+    GetFunction but not GetFunctionConcurrency (SEC-10).
     """
     proc = subprocess.run(
-        ["aws", "lambda", "get-function-configuration", "--function-name", name,
+        ["aws", "lambda", "get-function", "--function-name", name,
          "--region", region, "--output", "json"],
         capture_output=True, text=True,
     )
@@ -357,7 +370,13 @@ def fetch_live(name, region):
         if "ResourceNotFoundException" in stderr:
             return None
         raise RuntimeError("live read failed for %s: %s" % (name, stderr or "rc=%d" % proc.returncode))
-    return json.loads(proc.stdout)
+    doc = json.loads(proc.stdout)
+    if not isinstance(doc.get("Configuration"), dict):
+        raise ValueError("live read for %s returned no Configuration" % name)
+    cfg = dict(doc["Configuration"])
+    if "Concurrency" in doc:
+        cfg["Concurrency"] = doc["Concurrency"]
+    return cfg
 
 
 def fetch_live_url(name, region):
