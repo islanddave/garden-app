@@ -706,14 +706,13 @@ describe('V5-SEEDQTY-001 — PUT /:id/seed-measure (seed count + weight)', () =>
 
 // BUG-SEEDYEARNOOP-001 — year_harvested against REAL Postgres.
 //
-// This block exists because every other guard on this column reads SOURCE TEXT.
-// put-year-harvested.test.js asserts the SET list contains the CASE and not a bare assignment;
-// InventoryDetail.yearHarvested.test.jsx asserts what the client puts on the wire. Neither
-// EXECUTES the statement, so neither can see a driver-level failure — and the presence guard binds
-// a parameter inside a CASE, which is exactly the shape where @neondatabase/serverless has bitten
-// this repo before (it cannot type a standalone null; here the CASE's ELSE branch supplies the
-// integer type). "The SQL says the right thing" and "Postgres does the right thing" are different
-// claims, and only this file can make the second one.
+// This block is the only server-side guard of this column: put-year-harvested.test.js pins only that
+// lot_number stays unwritten, and InventoryDetail.yearHarvested.test.jsx asserts what the client puts
+// on the wire. Neither EXECUTES the statement, so neither can see a driver-level failure — and the
+// presence guard binds a parameter inside a CASE, which is exactly the shape where
+// @neondatabase/serverless has bitten this repo before (it cannot type a standalone null; here the
+// CASE's ELSE branch supplies the integer type). "The SQL says the right thing" and "Postgres does
+// the right thing" are different claims, and only this file can make the second one.
 //
 // The middle test is the one that matters. Four prod rows carry an irreplaceable year — the Hopi
 // Black Dye Sunflower's 2025 exists structurally in this column and nowhere else — and they

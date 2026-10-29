@@ -1,8 +1,8 @@
 // BUG-SEEDYEARNOOP-001 — what InventoryDetail puts on the wire for a seed lot's harvest year.
 //
-// The Lambda half is proved in lambda/inventory-items/put-year-harvested.test.js: the SET list now
-// assigns year_harvested, and assigns it through an explicit-presence CASE rather than a bare
-// assignment. This file answers the client half, and it answers it by MEASUREMENT rather than by
+// The Lambda half is proved on real Postgres in tests/integration/inventory-items.int.test.js: the PUT
+// assigns year_harvested, keeps it when the key is omitted, and clears it on an explicit null. This
+// file answers the client half, and it answers it by MEASUREMENT rather than by
 // reading buildChanges(): useInventory.updateItem() does not send buildChanges() output directly, it
 // merges `{...currentListRow, ...changes}` whenever the row is in its own list. That merge is
 // exactly what made the original defect invisible in ordinary use, so a test that mocked it away
