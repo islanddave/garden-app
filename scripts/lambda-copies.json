@@ -45,6 +45,10 @@
     ],
     "src/lib/imageMetadataStrip.js": [
       "lambda/facebook-share/imageMetadataStrip.js"
+    ],
+    "src/lib/critterSpecies.js": [
+      "lambda/critter/critterSpecies.js",
+      "lambda/events/critterSpecies.js"
     ]
   }
 }
