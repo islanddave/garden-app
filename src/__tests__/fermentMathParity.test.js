@@ -1,11 +1,7 @@
-// Put-Up release F — the client mirrors in src/components/putup/fermentMath.js bound to the Lambda's own
-// modules (lambda/preservation/kitchenBatch.js's F constants and saltMath.js, lane L2b). The app has
-// shipped one bug where two hand-maintained copies of one vocabulary disagreed; this is the binding.
-//
-// ⚠ UNTIL L2b's MODULES ARE ON THIS BRANCH the comparing arms are SKIPPED — reported as skipped by the
-// runner, never passed. The presence arm below says which state the branch is in, so a merge that
-// brings the modules in turns every comparing arm on with no edit here. The golden-table pins in
-// fermentMath.test.js hold meanwhile: both lanes pin the same literals independently.
+// The client mirrors in src/components/putup/fermentMath.js bound to the Lambda's own modules
+// (lambda/preservation/kitchenBatch.js's F constants and saltMath.js): two hand-maintained copies of one
+// vocabulary have disagreed before. The presence arm fails if a move or rename hides either module from
+// the glob, so the parity arms can never silently stop comparing.
 import { describe, it, expect } from 'vitest'
 import * as client from '../components/putup/fermentMath.js'
 
@@ -14,13 +10,13 @@ const salt = Object.values(import.meta.glob('../../lambda/preservation/saltMath.
 const HAVE_F = !!kb.MASS_G && !!salt
 
 describe('the F lambda modules on this branch', () => {
-  it(`are ${HAVE_F ? 'present — the parity arms below run' : 'NOT present yet (L2b unmerged) — the parity arms below are skipped'}`, () => {
+  it('are present, so the parity arms below compare', () => {
     expect(typeof kb.parseKitchenRoute).toBe('function')     // green control: the glob does reach the Lambda
-    expect(HAVE_F).toBe(!!kb.MASS_G && !!salt)
+    expect(HAVE_F).toBe(true)
   })
 })
 
-describe.skipIf(!HAVE_F)('fermentMath mirrors the Lambda', () => {
+describe('fermentMath mirrors the Lambda', () => {
   it('the unit tables and vocabularies are the same', () => {
     expect(client.MASS_G).toEqual(kb.MASS_G)
     expect(client.WATER_G).toEqual(kb.WATER_G)
