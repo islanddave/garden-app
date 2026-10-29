@@ -1,23 +1,17 @@
 name: snap rehearsal (staging)
 
-# One-off REHEARSAL of scripts/snap.py against STAGING data (spec §3 B3 / runbook Step 5).
-# Triggered by touching ops/snap-rehearsal.trigger on dev (so it does not need to live on main).
-# Runs in environment: production ONLY because the snap role's OIDC trust is scoped to
-# environment:production — it does NOT deploy, does NOT write main, does NOT mutate prod DB.
-# It snapshots the STAGING Neon branch + dumps STAGING. Side effects: tag v0.0.0, Neon branch
-# rehearsal-snap-v0.0.0 (from staging), snap-v0.0.0.* objects in garden-snapshots-prod, +1
-# published version on each garden-* Lambda (additive). Rehearsal artifacts are cleaned up
-# afterward. SNAP_BRANCH_PREFIX keeps rehearsal branches namespace-separate from production
-# snap-* branches; snap.py's pruner additionally scopes candidates to children of
-# NEON_PROD_BRANCH_ID (here: staging), so a rehearsal prune can never touch prod snapshots.
+# Rehearsal of scripts/snap.py against STAGING data, triggered by touching ops/snap-rehearsal.trigger on dev
+# (so it need not live on main). `environment: production` only because the snap role's OIDC trust is
+# scoped to it; this does not deploy, write main or mutate the prod DB. It snapshots the STAGING Neon branch
+# and dumps STAGING. Side effects: tag SNAP_VERSION, Neon branch rehearsal-snap-<version> (from staging),
+# snap-<version>.* objects in the snapshot bucket, and +1 published version on each garden-* Lambda
+# (additive). SNAP_BRANCH_PREFIX keeps rehearsal branches apart from production snap-* branches, and
+# snap.py's pruner only considers children of NEON_PROD_BRANCH_ID (here staging), so a rehearsal prune can
+# never touch prod snapshots.
 #
-# AUTH (rewired 2026-10-02): GitHub calls run as the garden-bot App, minted per run exactly as
-# promote-gate.yml mints it. Until then they ran as secrets.RULESET_READ_PAT, a stored copy of a
-# token that no longer exists (see ruleset-watchdog.yml). A fresh PAT would not have revived this
-# either: since 2026-10-02 ruleset release-tag-integrity (20140435) carries `creation` on
-# refs/tags/v* with garden-bot as its only bypass actor, so no user token can create v0.0.0.
-# The same rule lets only garden-bot DELETE that tag, so nobody can remove it by hand afterwards:
-# the last step deletes it, as the bot.
+# AUTH: GitHub calls run as the garden-bot App, minted per run as promote-gate.yml mints it. Ruleset
+# release-tag-integrity (20140435) lets only garden-bot create or delete refs/tags/v*, so no user token can
+# create the rehearsal tag, and nobody can delete it by hand: the last step deletes it, as the bot.
 
 on:
   push:
@@ -40,13 +34,9 @@ jobs:
     env:
       GITHUB_REPOSITORY: ${{ github.repository }}
       MAIN_SHA: "31e8673032bcb142e3accf6ae96fd45bd1830429"
-      # v0.0.900 since 2026-10-09: the v0.0.0 set is a mismatched pair (a 2026-06-03 dump of a then prod-size
-      # staging under a 2026-10-02 manifest of today's small staging; snap.py skips objects that exist), and
-      # revert-to's validate rightly refused it (run 37946810153). A fresh version makes a matching set without
-      # deleting anything from the snapshot bucket. The stale v0.0.0 objects are left in place, unused.
-      # v0.0.926 since 2026-10-14: the first rehearsal on ubuntu-26.04 must really dump (snap.py skips objects that
-      # exist, so re-running v0.0.900 would prove nothing about pg_dump 17 on 26, TMPDIR or the upload). v0.0.900
-      # stays in the bucket, unused (OPS-UBUNTU26MOVE-001; Dave first-hand 10-14: "Yes, run all four").
+      # snap.py skips objects that already exist, so a rehearsal that must really dump (a new runner image,
+      # a new pg_dump) needs a version never used before. Old rehearsal versions stay in the bucket, unused;
+      # never reuse one whose dump and manifest came from different runs (revert-to's validate refuses it).
       SNAP_VERSION: v0.0.926
       NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
       NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
@@ -70,21 +60,12 @@ jobs:
         with:
           ref: dev
 
-      # DIAGNOSTICS (2026-09-10). The rehearsal itself makes no curl calls --
-      # its GitHub API traffic is inside scripts/snap.py, which already reports
-      # `{status}: {body}` on every failure. What it lacked was any signal about
-      # the CREDENTIAL itself: a dead secret made revert-rehearsal die with a bare
-      # `KeyError: 'object'` (run 34507891849), and a dead or under-scoped token
-      # here used to surface ~4 minutes in, after the pg17 fetch, the OIDC assume
-      # and pip. This probe is the same endpoint and the same reporter, in ~1s,
-      # up front. It changes no rehearsal behaviour: a credential that fails here
-      # would have failed the run anyway, just later and less legibly.
-      # A step output cannot be read from job-level env, so each step that talks
-      # to GitHub names the token itself. scripts/test_gh_api_check.py holds them
-      # to ONE source (steps.bot.outputs.token): a probe that passed against one
-      # credential while snap.py ran on another would prove nothing.
-      # What this probe does NOT prove: that the token may CREATE refs/tags/v*.
-      # Only the tag create inside snap.py exercises that bypass.
+      # Probes the CREDENTIAL up front (~1 s) instead of ~4 minutes in, after the pg17 fetch, the OIDC assume
+      # and pip. snap.py already reports `{status}: {body}` on its own API failures; this changes no
+      # rehearsal behaviour. A step output cannot be read from job-level env, so each step that talks to
+      # GitHub names the token itself, and scripts/test_gh_api_check.py holds them to ONE source
+      # (steps.bot.outputs.token): a probe that passed on one credential while snap.py ran on another would
+      # prove nothing. It does NOT prove the token may CREATE refs/tags/v*; only snap.py's tag create does.
       - name: Preflight - GH_TOKEN can read git refs
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
@@ -115,9 +96,7 @@ jobs:
           key: pg17-client-postgres17-image-v1-runner-ubuntu-26.04
 
       - name: Fetch pg17 client from the postgres:17 image (cache miss only)
-        # OPS-SCHEMACHECKAPT-001: no more apt.postgresql.org (PGDG) -- see backup.yml
-        # for the full incident writeup (this pattern is identical across every
-        # OPS-SCHEMACHECKAPT-001 site).
+        # Not apt.postgresql.org (see backup.yml).
         if: steps.pg17-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -155,15 +134,12 @@ jobs:
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/snap.py
 
-      # Only garden-bot may delete refs/tags/v* (release-tag-integrity), so a
-      # rehearsal tag left here could not be removed by hand. Runs on failure
-      # too: snap.py tags just before its manifest (since 2026-10-15; until then
-      # the tag was its first write), so a run that failed late may have made it.
-      # The name guard keeps this step off every real release tag whatever
-      # SNAP_VERSION is set to. What it answers for is the OUTCOME: the DELETE
-      # only warns (an absent tag is not a failure), then the tag is looked up
-      # and anything but "not there" fails the step. revert-rehearsal.yml
-      # recreates the tag itself, so nothing depends on it surviving.
+      # Only garden-bot may delete refs/tags/v* (release-tag-integrity), so a rehearsal tag left here could
+      # not be removed by hand. Runs on failure too: snap.py tags just before its manifest, so a run that
+      # failed late may have made it. The name guard keeps this step off every real release tag whatever
+      # SNAP_VERSION is set to. The DELETE only warns (an absent tag is not a failure); then the tag is
+      # looked up and anything but "not there" fails the step. revert-rehearsal.yml recreates the tag
+      # itself, so nothing depends on it surviving.
       - name: Teardown - delete the rehearsal tag
         if: always()
         env:
