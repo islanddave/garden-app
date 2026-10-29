@@ -20,42 +20,17 @@ const twoProjects = () => {
 
 export default defineConfig({
   plugins: [react()],
-  // OPS-JSXCLASSICFALLBACK-001. The unit run transforms JSX with esbuild, NOT with the plugin above.
-  // `@vitejs/plugin-react` 5.2.0 targets vite 6/7/8 (the top-level vite here is 8.0.9), but vitest
-  // 2.1.9 pins `vite-node` to its own nested vite@5.4.21 and that is the pipeline that transforms
-  // test-run modules — so the plugin's automatic-runtime configuration never reaches it and esbuild
-  // falls back to its DEFAULT `jsx: 'transform'` (classic), emitting bare `React.createElement`.
-  // Every .jsx in the repo that does not `import React` then throws `ReferenceError: React is not
-  // defined` the moment a test renders it — measured on src/pages/Home.jsx, 2026-08-14.
-  // It stayed invisible because until now no unit test had rendered any of the 10 such files.
-  // Setting the automatic runtime here is the systemic fix; the alternative (an `import React` in
-  // each affected file) treats the symptom and re-arms with every new component.
-  // This file governs the UNIT RUN ONLY — the production bundle is built from vite.config.js, where
-  // plugin-react runs under a vite it supports and is unaffected by this block.
-  // Guarded by src/__tests__/jsxAutomaticRuntime.test.jsx.
-  //
-  // UPDATE 2026-09-10 (vitest 2.1.9 -> 4.1.11, security upgrade). The MECHANISM described above is
-  // no longer current: vitest 4 drops the nested vite@5.4.21 and transforms unit-run modules under
-  // the top-level vite 8, which @vitejs/plugin-react DOES support, so its automatic-runtime config
-  // now reaches the pipeline on its own. Verified by mutation this session — deleting this line
-  // leaves jsxAutomaticRuntime.test.jsx GREEN, where under vitest 2 it turned every test in that
-  // file red. The line is KEPT because it is still correct and costs nothing, but it is now
-  // belt-and-braces rather than the load-bearing fix, and its guard is correspondingly vacuous (see
-  // the matching note there). Do NOT cite the vite@5.4.21 story above as present-tense fact.
+  // Belt-and-braces, not load-bearing: under vitest 4 the unit run transforms modules under the top-level vite,
+  // which the plugin above supports, so the automatic JSX runtime reaches it either way and
+  // src/__tests__/jsxAutomaticRuntime.test.jsx stays green without this line. If a vitest upgrade ever transforms
+  // under a vite the plugin does not support, esbuild falls back to the classic runtime and every .jsx that does
+  // not `import React` throws `React is not defined` when a test renders it; this line is then the fix.
+  // Unit run only: the production bundle is built from vite.config.js.
   esbuild: { jsx: 'automatic', jsxImportSource: 'react' },
-  // Lambda runtime deps, aliased to stubs so handlers can be IMPORTED and executed by the unit run.
-  //
-  // Each Lambda declares its own AWS/Clerk/Neon deps in its own package.json; none are installed at
-  // the repo root. A handler therefore could not be imported here at all, and the consequence was
-  // that lambda/facebook-share/index.js — 433 lines whose job is publishing to a public Facebook
-  // Page — had ZERO execution coverage. Its auth gate, admin gate and kill switch, the three
-  // controls standing in front of that endpoint, were never once executed by a test.
-  //
-  // This is safe precisely BECAUSE these specifiers resolve to nothing today: no src/ file imports
-  // any of them (the three that mention them do so only in comments), so aliasing cannot change the
-  // behaviour of any existing test. The integration suite is unaffected — it runs under
-  // vitest.integration.config.ts with its own include, and uses the REAL driver against real Neon.
-  // Adding a Lambda dep to the ROOT package.json in future would shadow this; don't.
+  // Lambda runtime deps, aliased to the stubs in lambda/_test-stubs so the unit run can import and execute
+  // handlers: each Lambda declares its AWS/Clerk/Neon deps in its own package.json and none is installed at the
+  // repo root. Safe because no src/ file imports any of these specifiers. Never add a Lambda dep to the ROOT
+  // package.json: it would shadow this. The integration suite (vitest.integration.config.ts) uses the real driver.
   resolve: {
     alias: {
       '@clerk/backend': new URL('./lambda/_test-stubs/clerk-backend.js', import.meta.url).pathname,
@@ -63,50 +38,43 @@ export default defineConfig({
       '@aws-sdk/client-secrets-manager': new URL('./lambda/_test-stubs/aws-secrets.js', import.meta.url).pathname,
       '@aws-sdk/client-s3': new URL('./lambda/_test-stubs/aws-s3.js', import.meta.url).pathname,
       '@aws-sdk/s3-request-presigner': new URL('./lambda/_test-stubs/s3-presigner.js', import.meta.url).pathname,
-      // Reached only through a dynamic `await import()` in photo-access.js, which does NOT exempt it:
-      // vite resolves dynamic specifiers at transform time, so without this line every handler that
-      // imports photo-access.js — inventory-items, plants, photos — still fails to collect.
+      // Reached only through a dynamic `await import()` in photo-access.js, which does NOT exempt it: vite
+      // resolves dynamic specifiers at transform time, so without this every handler importing photo-access.js
+      // fails to collect.
       '@aws-sdk/cloudfront-signer': new URL('./lambda/_test-stubs/cloudfront-signer.js', import.meta.url).pathname,
     },
   },
   test: {
     globals: true,
-    // TWO PROJECTS, in every run: `node` takes the server-side test files (twoProjects, above) and runs them with no
-    // jsdom and no setup file; `dom` takes every other file, with jsdom and src/__tests__/setup.ts. A local run and
-    // ci.yml run this one shape; scripts/vitest/vitest-projects.test.js holds the projects to the tree.
-    // `environment` and `setupFiles` live INSIDE the projects, never beside them. A project with `extends: true`
+    // TWO PROJECTS in every run (twoProjects, above). A local run and ci.yml run this one shape;
+    // scripts/vitest/vitest-projects.test.js holds the projects to the tree.
+    // `environment` and `setupFiles` live INSIDE the projects, never beside them: a project with `extends: true`
     // inherits this whole block and arrays concatenate, so a `setupFiles` out here would also load in the node
-    // project, and src/__tests__/setup.ts reads `document` in an afterEach: measured, every test of the node project
-    // failed. The same concatenation is what makes the dom project's `exclude` ADD to the list further down.
-    // Everything else stays out here and reaches both projects: globals, the reporters, testTimeout, exclude, env.
-    // Coverage is one merged report from this block's `coverage`.
-    // `--dir` on the command line does not reach a project (vitest hands its projects a fixed list of command-line
-    // options), so `vitest run --dir src/__tests__` collects every file; name the files or a filter instead. The
-    // configs that build on this one and take `--dir` hand it on: scripts/vitest/vitest-side-config.mjs.
+    // project, where src/__tests__/setup.ts reads `document` in an afterEach and every test fails. The same
+    // concatenation makes the dom project's `exclude` ADD to the list further down. Everything else stays out
+    // here and reaches both projects. Coverage is one merged report from this block's `coverage`.
+    // `--dir` on the command line does not reach a project, so `vitest run --dir src/__tests__` collects every
+    // file; name the files or a filter instead. Configs that build on this one hand `--dir` on:
+    // scripts/vitest/vitest-side-config.mjs.
     projects: twoProjects(),
-    // The test-ids notice (scripts/vitest/vitest-test-ids-reporter.mjs): on a GitHub Actions runner each run
-    // ends with one ::notice carrying digests of its sorted test files and test IDs. ci.yml's coverage merge reads it
-    // to prove the three shards ran the suite's files, each once, and reds with no notice. Nothing is added off the
-    // runner. Setting `reporters` replaces vitest's own default, so the first two entries restate it: with none
-    // configured vitest 4.1.11 uses 'default' plus 'github-actions' under GITHUB_ACTIONS (its resolveConfig).
-    // Re-read that on a vitest upgrade. The reporter is imported above unconditionally so a broken one fails a
-    // local run too, not only CI.
+    // The test-ids notice (scripts/vitest/vitest-test-ids-reporter.mjs): on a GitHub Actions runner each run ends
+    // with one ::notice carrying digests of its sorted test files and test IDs. ci.yml's coverage merge reads it
+    // to prove the three shards ran the suite's files, each once, and reds with no notice. Setting `reporters`
+    // replaces vitest's own default, so the first two entries restate it; vitest-test-ids-reporter.test.js asks
+    // the installed vitest for that default and reds when they differ. The reporter is imported above
+    // unconditionally so a broken one fails a local run too, not only CI.
     ...(process.env.GITHUB_ACTIONS === 'true'
       ? { reporters: ['default', 'github-actions', new TestIdsReporter()] }
       : {}),
-    // OPS-FLAKEFAMILYWIDER-001. Must stay ABOVE the asyncUtilTimeout set in setup.ts (5000): if the
-    // per-test budget is not larger, vitest kills the test before waitFor can report WHICH element
-    // it could not find, and a diagnosable failure degrades into a bare "Test timed out in 5000ms".
-    // The headroom is deliberate — a test may run several sequential waitFors. Like that setting,
-    // this is a ceiling and not a duration: a passing test finishes when it finishes.
+    // Must stay ABOVE the asyncUtilTimeout set in setup.ts (5000): otherwise vitest kills the test before waitFor
+    // can report WHICH element it could not find. The headroom is for several sequential waitFors. A ceiling,
+    // not a duration: a passing test finishes when it finishes.
     testTimeout: 20000,
     // Integration tests (tests/integration/**) run in the integration-tests workflow via
     // vitest.integration.config.ts (real Neon driver + DB). Exclude them from the unit run
     // so `npm test` doesn't try to resolve @neondatabase/serverless.
-    // '**/.claude/**': agent worktrees under .claude/worktrees/ hold full copies of the repo —
-    // a bare `vitest run` swept 3 of them into 2,145 test files with ~96 phantom-failed files
-    // and zero failing tests, twice (2026-08-12 and -13). Local-DX only; CI runners never have
-    // these directories.
+    // '**/.claude/**': agent worktrees under .claude/worktrees/ hold full copies of the repo, which a bare
+    // `vitest run` would otherwise collect. CI runners never have these directories.
     exclude: [...configDefaults.exclude, 'tests/integration/**', '**/.claude/**'],
     // Stub VITE_ env vars for tests — real values not needed in unit tests
     env: {
@@ -122,36 +90,27 @@ export default defineConfig({
       VITE_API_VARIETIES:         'https://test-placeholder.lambda-url.us-east-1.on.aws/',
     },
     coverage: {
-      // BUG-ENGINECOVERAGETWOREADINGS-001. Still v8 coverage, read by the installed @vitest/coverage-v8: the module
-      // named here subclasses that provider and changes one thing. A module under lambda/daily-plan/ reaches V8 in
-      // two forms under one URL: vite's text of it, in a test file that imports it, and the file's own text,
-      // wherever handler.js or a createRequire loads it. The stock provider keeps one start offset per URL (from
-      // whichever per-test-file result it happened to read last) and converts both forms against vite's text, so
-      // one tree read engine.js as 1,214 or 1,257 covered items by draw where 1,325 were covered (the 59 test files
-      // that load it), read handler.js run() as never entered, and left negative hit counts behind. The module
-      // converts each form against the text it was compiled from, and fails the run on a negative hit count or on
-      // a file whose two conversions are not one list. It leans on vitest internals: its header lists them and
-      // scripts/vitest/coverage-v8-two-forms.test.js holds them to the installed package, version included.
-      // Re-read both on a vitest or @vitest/coverage-v8 upgrade. Not `provider: 'v8'` again without that module:
-      // the totals this file's thresholds are set against would go back to moving by draw, that test fails (it
-      // holds these two lines), and the stock provider reads about a point lower on branches (84.74% or 84.87%
-      // by draw at v4.175.0), so a threshold or coverage-ratchet.json active_target raised above the stock figure
-      // makes taking the module out a red gate. How to take it out: scripts/vitest/README.md.
+      // Still v8 coverage: the module named here subclasses the installed @vitest/coverage-v8 and changes one
+      // thing. A module under lambda/daily-plan/ reaches V8 in two forms under one URL: vite's text of it, in a
+      // test file that imports it, and the file's own text, wherever handler.js or a createRequire loads it. The
+      // stock provider keeps one start offset per URL and converts both forms against vite's text, so its totals
+      // move from run to run and it can leave negative hit counts. The module converts each form against the text
+      // it was compiled from, and fails the run on a negative hit count or on a file whose two conversions are
+      // not one list. It leans on vitest internals: its header lists them and
+      // scripts/vitest/coverage-v8-two-forms.test.js holds them to the installed package (and holds these two
+      // lines). Re-read both on a vitest or @vitest/coverage-v8 upgrade. The stock provider reads about a point
+      // lower on branches, so a threshold or active_target set above its figure makes taking the module out a red
+      // gate. How to take it out: scripts/vitest/README.md.
       provider: 'custom',
       customProviderModule: './scripts/vitest/coverage-v8-two-forms.mjs',
       reporter: ['text', 'json-summary', 'lcov', 'html'],
       reportsDirectory: './coverage',
       thresholds: {
-        // Anti-regression floor (Wave 0 / WS-B) — set ~8pts below current MEASURED coverage of
-        // the `include` set below, so normal churn passes but a re-skin that guts the tests reds
-        // CI. Enforced two ways: vitest fails `npm test` if measured < these, AND
-        // scripts/check-coverage-ratchet.py --measured (WS-B M4) fails if the lowest measured
-        // metric drops below coverage-ratchet.json active_target.
-        // Measured 2026-07-23 (dev 451fd56): lines 90.97 / funcs 83.21 / branches 81.32 / stmts 90.97.
-        // Advancing the floor is a milestone decision (No-Date-Gating, gardening.md) — raise these
-        // in lockstep with active_target and add tests to clear the new bar.
-        // Raised 2026-10-09 (Dave: "Raise to 80"), once the two-forms provider made the reading true: measured on
-        // dev 8c96e353, lines 94.76 / funcs 92.82 / branches 85.93 / stmts 91.64. Floor = 80 on the two that sat under it.
+        // Anti-regression floor, set below the measured coverage of the `include` set so normal churn passes
+        // but gutting the tests reds CI. Enforced two ways: vitest fails `npm test` below these, and
+        // scripts/check-coverage-ratchet.py reads these four lines (each key starts its own line) and fails
+        // when they, or the lowest measured metric, sit below coverage-ratchet.json active_target. Raising the
+        // floor is a milestone decision: raise these in lockstep with active_target.
         // ci.yml's coverage shards (plan A4) set these four keys to 0 on the command line, so a third of the suite
         // checks nothing; the merge checks them. A key added here (a glob, perFile, 100, autoUpdate) would reach every
         // shard: add its neutral form to the shards' command too (ci.yml, and COV_PASS_RUN in scripts/test_ci_legs.py).
@@ -165,38 +124,14 @@ export default defineConfig({
         'src/hooks/**',
         'src/components/**',
         'src/context/**',
-        // A0.4: instrument the daily-plan Lambda (engine/handler/station are heavily unit-tested but
-        // lambda/** was entirely absent from coverage; index.js is the AWS entrypoint, currently 0%).
-        // The ratchet (active_target 80 today) does not move — this only adds measurement, no new gate.
+        // The entries below add measurement, not a gate: a file outside this list can lose its tests without
+        // moving a CI number. Adding one never moves the floor or active_target.
         'lambda/daily-plan/**',
-        // V4-COMPOSEPOST-002: instrument the harvests read model. The compose surface reads its wire
-        // shape, and the 2026-08-10 audit found aggregate.js's projector was outside every coverage
-        // measurement while the L-081 schema audit was simultaneously blind to its SELECT columns —
-        // so nothing measured it from either direction. The ratchet does not move (80 today), same as
-        // the daily-plan precedent: this adds measurement, not a new gate.
         'lambda/harvests/**',
-        // V5-SHAREHARDENING-001: instrument the social publish path. Until 2026-08-28 index.js could
-        // not be IMPORTED by this run at all (its deps live in the Lambda's own package.json), so
-        // 433 lines that publish to a public Facebook Page had zero coverage AND were invisible to
-        // every coverage measurement — unmeasured and unmeasurable at once. The alias block above
-        // fixed the first half; this fixes the second, so deleting those tests now shows up as a
-        // coverage drop instead of silently restoring the old state.
-        // MEASURED with this line present, full suite: statements 94.17 / branches 85.16 /
-        // functions 91.03 / lines 94.17 — every one comfortably clear of the floors below, so this
-        // adds measurement without moving a gate. Within the directory: index.js 94.06 stmts /
-        // 92 funcs, orphans.js and exif.js 100. The laggard is household.js (14.28 funcs), a shared
-        // module whose unused exports this path does not reach; it is included honestly rather than
-        // excluded to flatter the number.
-        // Ratchet untouched (active_target 80 today) — advancing it is a milestone decision needing
-        // Dave, per No-Date-Based-Gating.
+        // Executable here only through the stub aliases above. household.js reads low on functions (a shared
+        // module whose other exports this path does not reach); keep it in rather than exclude it for the figure.
         'lambda/facebook-share/**',
-        // OPS-VOICEHARVESTCOVERAGE-001: instrument the voice harvest page. src/pages/** is outside this
-        // list, so the ten VoiceHarvest.*.test.jsx files could be deleted without moving a CI number.
-        // One file, not the directory: measurement for the page that has the tests, no new gate.
-        // MEASURED 2026-10-11 on dev be4593a5, full suite, without / with this line: statements 91.72 / 91.81,
-        // branches 86.01 / 86.08, functions 92.89 / 93.00, lines 94.79 / 94.81. The file itself: statements
-        // 94.49 / branches 88.65 / functions 97.46 / lines 95.22, so it lifts every global figure and moves
-        // no floor. Ratchet untouched at active_target 80.
+        // One page, not src/pages/**: the page whose VoiceHarvest.*.test.jsx files this measures.
         'src/pages/VoiceHarvest.jsx',
       ],
       exclude: [
