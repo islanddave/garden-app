@@ -1,0 +1,9 @@
+# Workflow header
+name: ci # name
+on: push
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      # checkout first
+      - uses: actions/checkout@v4

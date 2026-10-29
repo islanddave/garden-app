@@ -1,0 +1,7 @@
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          # shellcheck disable=SC2086
+          echo $X

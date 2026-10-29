@@ -1,0 +1,7 @@
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - shell: python
+        run: |
+          print(1)

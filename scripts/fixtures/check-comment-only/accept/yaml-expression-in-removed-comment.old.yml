@@ -1,0 +1,7 @@
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          # uses ${{ github.ref }} below
+          echo hi
