@@ -49,17 +49,10 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
   }),
 }))
 
-// V4-PLANTREQUIRED-001: the flag flipped TRUE in source on 2026-08-10. This suite predates the flip
-// and its assertions describe the planting-OPTIONAL behavior, which remains a live configuration
-// (rollback = one-line revert). Mocked FALSE so every assertion below keeps covering what it was
-// written to cover, rather than being rewritten to the flag-ON world. Flag-ON is covered by
-// EventNew.plantRequired.test.jsx, EventNew.plantMismatch.plantRequired.test.jsx and the
-// BUG-LOGTARGETREQ-001 duplicates in EventNew.projhide.test.jsx.
 // importActual spread so every other flag keeps its real value.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -223,7 +216,8 @@ describe('EventNew — sticky planting demoted to ranking (BUG-LOGTARGETREQ-001,
   it('a save without a planting clears logone.lastPlant — remembered is always the LAST save', async () => {
     localStorage.setItem('logone.lastProject', 'proj-1')
     localStorage.setItem('logone.lastPlant', 'pl-A')
-    renderEventNew('event_type=watering')
+    // An observation is exempt from the planting requirement, so a planting-less save is possible.
+    renderEventNew('event_type=observation')
     await flushLoad()
     await pickPlanting('pl-A')
     await waitFor(() => expect(plantingChip().textContent).toContain('Sungold #1'))

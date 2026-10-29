@@ -10,7 +10,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES, statusLabel } from '../lib/constants.js'
 import { EVENT_TYPE_META, requiresPlanting, isPlantReductionEventType, canonicalEventType } from '../lib/eventTypes.js'
-import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN, WEIGH_IN_FRAME_ENABLED } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN, WEIGH_IN_FRAME_ENABLED } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
 // POI-SEEDDOORMENU-001 — the create-a-lot sheet, shared with the planting page's Save seed button so
 // both doors run one flow. See its render site near the foot of this component.
@@ -884,8 +884,7 @@ export default function EventNew({ harvestSession = false } = {}) {
   const [plantsForProject, setPlantsForProject] = useState([])
   // BUG-PLANTFETCHSILENT-001 — both loaders below used to .catch into an empty list, which the
   // picker renders as "No plantings yet.": a network failure was indistinguishable from a project
-  // with nothing planted. Harmless while the field is optional, unfillable the moment
-  // PLANTING_REQUIRED_ENABLED flips. Reload key re-runs whichever loader is live without either
+  // with nothing planted, and the field is required for plant-predicated types. Reload key re-runs whichever loader is live without either
   // effect having to know the other exists.
   const [plantsLoadFailed, setPlantsLoadFailed] = useState(false)
   const [plantsReloadKey, setPlantsReloadKey] = useState(0)
@@ -893,9 +892,9 @@ export default function EventNew({ harvestSession = false } = {}) {
   // (The keyboard lift that used to hoist Save ~500px INTO that band is gone as of
   // V4-KBVIEWPORT-001 — the causal mechanism changed, the overlap did not become impossible.)
   // Save was painting over result rows 2-3 AND taking their
-  // taps — and because the planting gate at the top of handleSubmit is inert while
-  // PLANTING_REQUIRED_ENABLED and PROJECTS_HIDDEN are both false, that mis-tap SAVED the event with
-  // plant_id: null and then cleared LAST_PLANT_KEY. A wrong write, not a cosmetic overlap.
+  // taps — and for an exempt type, where the planting gate at the top of handleSubmit does not apply,
+  // that mis-tap SAVED the event with plant_id: null and then cleared LAST_PLANT_KEY. A wrong write,
+  // not a cosmetic overlap.
   // Save is never the next action while a picker is open, so hiding it costs the user nothing and
   // makes the mis-tap structurally impossible rather than merely unlikely.
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -1737,13 +1736,10 @@ export default function EventNew({ harvestSession = false } = {}) {
     // invariant at mount (a remembered plant only seeds alongside its remembered project).
     if (!form.project_id)  { setError('Select a project.'); return { ok: false, reason: 'no_project' } }
 
-    // V4-PLANTREQUIRED-001 (Lane 3, flag-gated): per-type required-planting gate (D2 matrix).
-    // Inert unless PLANTING_REQUIRED_ENABLED — the planting field is otherwise optional (Lane 2).
+    // V4-PLANTREQUIRED-001: per-type required-planting gate (D2 matrix). Client-side only; the server
+    // validator stays optional so a stale cached bundle cannot 400 (spec D7).
     // flag_issue keeps its own plant_id gate below and is not in the vocabulary, so it is unaffected.
-    // V4-PROJHIDE-001: when projects are hidden a predicated event has no project step to ride, so the
-    // planting is structurally required for those types — implied HERE, independent of the telemetry-
-    // gated PLANTING_REQUIRED_ENABLED (the two gates stay decoupled by design).
-    if ((PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) && !form.plant_id) {
+    if (requiresPlanting(form.event_type) && !form.plant_id) {
       setError('Choose a planting for this event.'); return { ok: false, reason: 'no_planting' }
     }
 
@@ -2610,7 +2606,7 @@ export default function EventNew({ harvestSession = false } = {}) {
                 const derived = id ? (plantsForProject.find(p => p.id === id)?.project_id ?? f.project_id) : f.project_id
                 return { ...f, plant_id: id, project_id: derived }
               })}
-              required={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type)}
+              required={requiresPlanting(form.event_type)}
               // BUG-LOGTARGETREQ-001: remembered planting as RANKING, never value — read at
               // picker-open (see handlePickerOpenChange). Only this site passes it.
               recentPlantId={recentPlantId}
@@ -2636,7 +2632,7 @@ export default function EventNew({ harvestSession = false } = {}) {
           sessionFrame
             ? <div id={PLANTING_SECTION_ID}>{plantingField}</div>
             : (
-              <Section id={PLANTING_SECTION_ID} label={(PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) && requiresPlanting(form.event_type) ? 'Planting *' : 'Planting'}>
+              <Section id={PLANTING_SECTION_ID} label={requiresPlanting(form.event_type) ? 'Planting *' : 'Planting'}>
                 {plantingField}
               </Section>
             )

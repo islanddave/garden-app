@@ -32,7 +32,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,

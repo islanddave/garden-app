@@ -45,7 +45,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -59,6 +58,17 @@ import { ToastProvider } from '../context/ToastContext.jsx'
 import { OverlaySurfaceProvider } from '../context/OverlayContext.jsx'
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
+
+// V4-PLANTREQUIRED-001: a plant-predicated type needs a planting to save, and choosing the project
+// clears it, so chooseProject picks the first planting offered straight after (PLANT unless the test
+// serves its own list).
+async function chooseProject(id) {
+  fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  if (screen.queryByTestId('evtnew-planting-chip')) return
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+}
 const PRESERVE_PROMPT = 'Putting any of this up for later?'
 
 function wireApiFetch() {
@@ -113,7 +123,7 @@ async function stagePhoto(container) {
 beforeEach(() => {
   apiFetchSpy.mockReset(); navigateSpy.mockReset(); postCalls.length = 0
   searchParamsRef.current = new URLSearchParams()
-  dataRef.projects = [PROJECT]; dataRef.locations = []; dataRef.plants = []
+  dataRef.projects = [PROJECT]; dataRef.locations = []; dataRef.plants = [PLANT]
   dataRef.postResult = { id: 'evt-1', project_id: 'proj-1' }
   dataRef.postError = null; dataRef.deleteError = null; dataRef.harvestsAgg = null
   uploadRef.result = { photo: { id: 'p1' } }
@@ -187,7 +197,7 @@ describe('V4-PRESERVEOFFERKILL-001 — a harvest save raises NO put-up offer, on
   it('(c) a non-harvest save is unchanged — it never offered, and still does not', async () => {
     renderInOverlay('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(screen.getByRole('status').textContent).toMatch(/Logged/)
     expect(screen.queryByText(PRESERVE_PROMPT)).toBeNull()
@@ -226,27 +236,6 @@ describe('S5a characterization — client-state capture happens BEFORE resetForN
     expect(screen.getByLabelText('Plant or group').value).toBe('')
     expect(screen.getByLabelText('Project').value).toBe('proj-1')  // project is deliberately kept
   })
-
-  it('no client-side planting → no aggregates GET and no season line (the same capture, empty)', async () => {
-    dataRef.postResult = { id: 'evt-9', project_id: 'proj-1' }
-    dataRef.harvestsAgg = { aggregates: { crops: [{ crop_name: 'Tomato', units: [{ unit: 'lb', total: 12 }] }] } }
-    renderInOverlay('event_type=harvest')
-    await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
-    // V4-HARVFAB-001 re-anchor (design §5.3 — an inserted STEP, never a weakened assertion).
-    // `event_type=harvest` with no ?plant= and no draft now auto-opens the planting picker, and
-    // V4-PICKERUX-001 hides the ENTIRE sticky band (Save + the post-save strip) while a listbox is
-    // open — so role=status is correctly inaccessible until the picker is dismissed. The sibling
-    // case above needs no such step because pickPlanting() closes the picker by selecting. Escape
-    // is the user's own dismissal, not a test-only backdoor. Every assertion below is unchanged.
-    fireEvent.keyDown(screen.getByLabelText('Plant or group'), { key: 'Escape' })
-    fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '3' } })
-    await act(async () => { fireEvent.click(screen.getByText('Save')) })
-
-    expect(screen.getByRole('status').textContent).toMatch(/Logged/)
-    expect(apiFetchSpy.mock.calls.some(c => String(c[0]).startsWith('/api/harvests'))).toBe(false)
-    expect(screen.queryByText(/^Season: /)).toBeNull()
-  })
 })
 
 // ── 3. photoError propagates into BOTH arms ──────────────────────────────────────────────────
@@ -258,7 +247,7 @@ describe('S5a characterization — photoError reaches both the strip and the toa
     uploadRef.result = { error: 'S3 rejected the upload' }
     const { container } = renderInOverlay('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await stagePhoto(container)
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
 
@@ -283,13 +272,13 @@ describe('S5a characterization — photoError reaches both the strip and the toa
     uploadRef.result = { error: 'S3 rejected the upload' }
     const { container } = renderFullPage('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await stagePhoto(container)
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
 
     expect(postCalls.length).toBe(1)
     const toast = screen.getByRole('status')
-    expect(toast.textContent).toMatch(/Logged event for Tomatoes 2026/)
+    expect(toast.textContent).toMatch(/Logged event — Sungold/)
     expect(toast.textContent).toMatch(/but the photo didn't upload/)
   })
 
@@ -301,7 +290,7 @@ describe('S5a characterization — photoError reaches both the strip and the toa
     dataRef.deleteError = new Error('boom')
     const { container } = renderInOverlay('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await stagePhoto(container)
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /undo/i })) })
@@ -315,7 +304,7 @@ describe('S5a characterization — photoError reaches both the strip and the toa
   it('a clean photo upload adds no failure text to either arm', async () => {
     const { container } = renderInOverlay('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await stagePhoto(container)
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(screen.getByRole('status').textContent).toMatch(/Logged/)

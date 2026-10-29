@@ -16,8 +16,8 @@
 // tests and fell out immediately on a 390px render. Those claims need an on-device or harness
 // artifact and are deliberately NOT asserted here. What this file pins is the state machine.
 //
-// Flag note: PLANTING_REQUIRED_ENABLED is TRUE in source as of 2026-08-10, and `harvest` is a
-// plant-predicated type — so every save here picks a planting first. That is the real prod path.
+// `harvest` is a plant-predicated type (V4-PLANTREQUIRED-001), so every save here picks a planting
+// first. That is the real prod path.
 // No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'

@@ -41,7 +41,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -54,6 +53,17 @@ import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
+
+// V4-PLANTREQUIRED-001: a plant-predicated type needs a planting to save, and choosing the project
+// clears it, so chooseProject picks the first planting offered straight after (PLANT unless the test
+// serves its own list).
+async function chooseProject(id) {
+  fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  if (screen.queryByTestId('evtnew-planting-chip')) return
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+}
 
 function wireApiFetch() {
   apiFetchSpy.mockImplementation((path, options = {}) => {
@@ -77,7 +87,7 @@ function renderEventNew(query = '') {
 beforeEach(() => {
   apiFetchSpy.mockReset(); navigateSpy.mockReset(); postCalls.length = 0
   searchParamsRef.current = new URLSearchParams()
-  dataRef.projects = [PROJECT]; dataRef.locations = []; dataRef.plants = []
+  dataRef.projects = [PROJECT]; dataRef.locations = []; dataRef.plants = [PLANT]
   dataRef.postResult = { id: 'evt-1', project_id: 'proj-1', plant_id: null }
   dataRef.postError = null
   try { localStorage.clear() } catch { /* noop */ }
@@ -109,7 +119,7 @@ describe('EventNew — fertilizing product capture (BUG-TREATMENTPRODUCT-001)', 
   it('sends the typed product as treatment_product_text', async () => {
     renderEventNew('event_type=fertilizing')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.change(screen.getByLabelText(/^Product/i), { target: { value: "Jack's 20-20-20" } })
     await save()
     expect(postCalls.length).toBe(1)
@@ -119,7 +129,7 @@ describe('EventNew — fertilizing product capture (BUG-TREATMENTPRODUCT-001)', 
   it('stays optional — a blank product still saves, posting null rather than blocking', async () => {
     renderEventNew('event_type=fertilizing')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await save()
     expect(postCalls.length).toBe(1)
     expect(postCalls[0].treatment_product_text).toBeNull()
@@ -128,7 +138,7 @@ describe('EventNew — fertilizing product capture (BUG-TREATMENTPRODUCT-001)', 
   it('does not send treatment_category / treatment_amount / pest_target — pest-treatment-only columns', async () => {
     renderEventNew('event_type=fertilizing')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.change(screen.getByLabelText(/^Product/i), { target: { value: 'Fish emulsion' } })
     await save()
     expect(postCalls[0].treatment_category).toBeUndefined()
@@ -146,7 +156,7 @@ describe('EventNew — pest_treatment / doctored still send treatment_product_te
     it(`${type}: the free-typed product still reaches the POST body`, async () => {
       renderEventNew(`event_type=${type}`)
       await flushLoad()
-      fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+      await chooseProject('proj-1')
       fireEvent.change(screen.getByPlaceholderText(/Not in inventory/i), { target: { value: 'Neem oil' } })
       await save()
       expect(postCalls[0].treatment_product_text).toBe('Neem oil')

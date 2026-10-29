@@ -37,7 +37,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
   WEIGH_IN_FRAME_ENABLED: false,
 }))
 vi.mock('react-router-dom', () => ({
@@ -50,6 +49,7 @@ import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
 
 function wireApiFetch() {
   apiFetchSpy.mockImplementation((path, options = {}) => {
@@ -81,12 +81,16 @@ async function flushLoad() {
 // PROJECTS_HIDDEN is mocked false here on purpose: the flag-ON path routes the same submit through
 // an implied-project seam, and the re-entrancy hole this file is about is in handleSubmit itself,
 // which both paths share. Pinning the visible-project arm keeps the fixture the simpler of the two.
-function chooseProject(id = 'proj-1') {
+// A harvest needs a planting, and choosing the project clears it, so PLANT is picked straight after.
+async function chooseProject(id = 'proj-1') {
   fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  if (screen.queryByTestId('evtnew-planting-chip')) return   // a failed save keeps it
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click(await screen.findByTestId(`ps-opt-${PLANT.id}`))
 }
 
 async function fillAndEnter({ qty = '3', weight = '231' } = {}) {
-  chooseProject()
+  await chooseProject()
   fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: qty } })
   const w = screen.getByLabelText('Harvest weight')
   fireEvent.change(w, { target: { value: weight } })
@@ -100,7 +104,7 @@ beforeEach(() => {
   searchParamsRef.current = new URLSearchParams()
   dataRef.projects = [PROJECT]
   dataRef.locations = []
-  dataRef.plants = []
+  dataRef.plants = [PLANT]
   dataRef.postHangs = false
   localStorage.clear()
   wireApiFetch()
@@ -173,7 +177,7 @@ describe('EventNew — two submits before a re-render post once (BUG-EVENTSREPEA
     dataRef.postHangs = true
     renderEventNew()
     await flushLoad()
-    chooseProject()
+    await chooseProject()
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '3' } })
     const w = screen.getByLabelText('Harvest weight')
     fireEvent.change(w, { target: { value: '231' } })
@@ -188,7 +192,7 @@ describe('EventNew — two submits before a re-render post once (BUG-EVENTSREPEA
     dataRef.postHangs = true
     renderEventNew()
     await flushLoad()
-    chooseProject()
+    await chooseProject()
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '3' } })
     const save = screen.getByRole('button', { name: 'Save' })
     await act(async () => {

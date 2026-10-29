@@ -1,11 +1,6 @@
-// V4-PLANTREQUIRED-001 (Lane 3) — EventNew required-planting gate with PLANTING_REQUIRED_ENABLED
-// mocked TRUE. Proves the D2 gate actually BLOCKS a plant-predicated event logged with no planting,
-// lets it through once a planting is chosen, and leaves an EXEMPT type unblocked. The default-off
-// behavior (planting optional) is covered by EventNew.test.jsx; this file exercises the flag-ON path.
-//
-// The flag is spread over the REAL module (importActual) so every other flag keeps its real value —
-// EventNew also reads other flags, so a bare {PLANTING_REQUIRED_ENABLED:true} mock would
-// blank them and change unrelated behavior. Harness mirrors EventNew.test.jsx. No jest-dom (L-182).
+// V4-PLANTREQUIRED-001 (Lane 3) — EventNew required-planting gate. Proves the D2 gate actually
+// BLOCKS a plant-predicated event logged with no planting, lets it through once a planting is
+// chosen, and leaves an EXEMPT type unblocked. Harness mirrors EventNew.test.jsx. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
@@ -32,12 +27,6 @@ vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => (<a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>),
   useNavigate: () => navigateSpy,
   useSearchParams: () => [searchParamsRef.current, vi.fn()],
-}))
-
-// Flag ON — spread the real module so every other flag keeps its value.
-vi.mock('../lib/featureFlags.js', async (importActual) => ({
-  ...(await importActual()),
-  PLANTING_REQUIRED_ENABLED: true,
 }))
 
 import EventNew from '../pages/EventNew.jsx'
@@ -89,7 +78,7 @@ beforeEach(() => {
   wireApiFetch()
 })
 
-describe('EventNew — V4-PLANTREQUIRED-001 gate (flag ON)', () => {
+describe('EventNew — V4-PLANTREQUIRED-001 gate', () => {
   it('BLOCKS a plant-predicated type (watering) submitted with no planting — no POST, inline error', async () => {
     renderEventNew('event_type=watering&project=proj-1')
     await flushLoad()

@@ -40,21 +40,6 @@ export const CARE_RAIN_MAXDAYS_ENABLED = false
 // the two-minute revert path and flipping this constant is only the client-side trace.
 export const CARE_TODAY_AWARE_ENABLED = false
 
-// V4-PLANTREQUIRED-001 (Lane 3, Ask 2): per-event-type required-planting gate on EventNew + the
-// ProjectDetail mini-logger. When FALSE (default) the D2 matrix is INERT — the planting field stays
-// optional exactly as today and no POST is blocked, so the existing suite is unaffected. When TRUE,
-// event types that predicate on a plant (PLANTING_REQUIRED_TYPES in eventTypes.js) require a plant_id
-// client-side before submit. CLIENT-side + flagged ONLY: the server validator (events/validators.js)
-// is deliberately NOT flipped in lockstep — this is a PWA with a service worker, so a one-step server
-// flip would 400 every log from stale cached bundles mid-season (spec D7). Flip TRUE only after
-// Lane 2 telemetry shows new orphans for REQUIRED types approach zero (D1 falsifier). Criteria-gated,
-// never date-gated. Rollback = flip back to false (one client revert, no data to unwind).
-// FLIPPED TRUE 2026-08-10 on Dave's approval. D1 falsifier MEASURED MET 2026-08-06: orphan rate for
-// REQUIRED types was 0.08% over 30d on 5,156 events — a 4x improvement on the 0.31% of the 31-90d
-// window. The server validator stays unflipped BY DESIGN (see the paragraph above) — do NOT "fix"
-// the asymmetry; a lockstep server flip would 400 every log from a stale cached PWA bundle.
-export const PLANTING_REQUIRED_ENABLED = true
-
 // V4-WATERMATH-001 F0 (2026-08-12): editing a logged watering's amount class (Light/Normal/Deep)
 // from event history. CAPTURE is unflagged and live — POST /api/events already stores whatever
 // `metadata` it is handed, and the batch path is covered by the events-Lambda merge. EDIT is NOT:
@@ -80,9 +65,8 @@ export const WATER_DEPTH_EDIT_ENABLED = true
 // become invisible plumbing). Mirrors the PUBHIDE "hide the concept, server keeps the data" pattern.
 // When FALSE (default) every gated surface renders exactly as today — the existing suite is
 // unaffected. When TRUE: Garden defaults to a type facet (project tree hidden); EventNew derives
-// project_id from the chosen planting (predicated types require a planting — implied HERE, NOT by
-// flipping the telemetry-gated PLANTING_REQUIRED_ENABLED above; exempt types fall back to a default
-// project_id); project routes stay reachable-but-unlinked; public /garden/:slug sharing is untouched.
+// project_id from the chosen planting (predicated types require a planting; exempt types fall back
+// to a default project_id); project routes stay reachable-but-unlinked; public /garden/:slug sharing is untouched.
 // Preview by flipping this const on dev. Criteria-gated, never date-gated. Rollback = flip back to
 // false (one client revert, no data to unwind).
 // FLIPPED TRUE 2026-08-10 on Dave's explicit approval, AFTER the three pre-flip gaps were closed:
@@ -95,10 +79,6 @@ export const WATER_DEPTH_EDIT_ENABLED = true
 //   3. the unscoped /api/plants fetch on every log-form mount — MEASURED on prod rather than left as
 //      a worry: 255 live plantings, 66 kB uncompressed for the columns the picker uses (~10-15 kB
 //      gzipped), vs a scoped median of 1 row. Real but immaterial; not a blocker.
-// Ordering mattered and was respected: PLANTING_REQUIRED_ENABLED was flipped and shipped FIRST,
-// because EventNew.jsx:716 reads (PLANTING_REQUIRED_ENABLED || PROJECTS_HIDDEN) — flipping this one
-// first would have activated the required-planting gate implicitly and contaminated that flag's own
-// D1 telemetry.
 export const PROJECTS_HIDDEN = true
 
 // V4-SPACEPHOTO-001 Lane C (crucible plan V100 §3 / §12a): the Space tier's user-facing photo

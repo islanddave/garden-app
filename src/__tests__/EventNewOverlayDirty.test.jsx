@@ -24,16 +24,10 @@ vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy }) })
 vi.mock('../hooks/useUploadPhoto.js', () => ({
   useUploadPhoto: () => ({ upload: vi.fn().mockResolvedValue({ photo: { id: 'p1' } }), isUploading: false, error: null, photo: null, stage: null, progress: null, preview: null, reset: vi.fn() }),
 }))
-// V4-PLANTREQUIRED-001: the flag flipped TRUE in source on 2026-08-10. This suite predates the flip
-// and its assertions describe the planting-OPTIONAL behavior, which remains a live configuration
-// (rollback = one-line revert). Mocked FALSE so every assertion below keeps covering what it was
-// written to cover, rather than being rewritten to the flag-ON world. Flag-ON is covered by
-// EventNew.plantRequired.test.jsx and EventNew.plantMismatch.plantRequired.test.jsx.
 // importActual spread so every other flag keeps its real value.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -47,6 +41,17 @@ import { ToastProvider } from '../context/ToastContext.jsx'
 import { OverlaySurfaceProvider, OverlayDirtyProvider } from '../context/OverlayContext.jsx'
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
+
+// V4-PLANTREQUIRED-001: a plant-predicated type needs a planting to save, and choosing the project
+// clears it, so chooseProject picks the first planting offered straight after (PLANT unless the test
+// serves its own list).
+async function chooseProject(id) {
+  fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  if (screen.queryByTestId('evtnew-planting-chip')) return
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+}
 const PLANT_A = { id: 'pl-A', name: 'Sungold #1', project_id: 'proj-1' }
 
 const reported = { current: null }
@@ -87,7 +92,7 @@ async function flushLoad() {
 beforeEach(() => {
   apiFetchSpy.mockReset(); navigateSpy.mockReset(); postCalls.length = 0
   searchParamsRef.current = new URLSearchParams()
-  dataRef.projects = [PROJECT]; dataRef.locations = []; dataRef.plants = []
+  dataRef.projects = [PROJECT]; dataRef.locations = []; dataRef.plants = [PLANT]
   dataRef.postResult = { id: 'evt-1', project_id: 'proj-1' }; dataRef.postError = null
   reported.current = null
   sessionStorage.clear()
@@ -151,7 +156,7 @@ describe('EventNew — dirty report to the hosting Sheet (V4-DRAFTFULLPAGE-001 b
     fireEvent.click(screen.getByTestId('notes-disclosure'))
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'watered deeply' } })
     expect(reported.current).toBe(true)
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(postCalls.length).toBe(1)
     expect(screen.getByRole('status')).toBeTruthy() // confirmation card is up

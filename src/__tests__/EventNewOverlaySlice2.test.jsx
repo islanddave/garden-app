@@ -33,16 +33,10 @@ vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetchSpy }) })
 vi.mock('../hooks/useUploadPhoto.js', () => ({
   useUploadPhoto: () => ({ upload: vi.fn().mockResolvedValue({ photo: { id: 'p1' } }), isUploading: false, error: null, photo: null, preview: null, reset: vi.fn() }),
 }))
-// V4-PLANTREQUIRED-001: the flag flipped TRUE in source on 2026-08-10. This suite predates the flip
-// and its assertions describe the planting-OPTIONAL behavior, which remains a live configuration
-// (rollback = one-line revert). Mocked FALSE so every assertion below keeps covering what it was
-// written to cover, rather than being rewritten to the flag-ON world. Flag-ON is covered by
-// EventNew.plantRequired.test.jsx and EventNew.plantMismatch.plantRequired.test.jsx.
 // importActual spread so every other flag keeps its real value.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -56,6 +50,17 @@ import { ToastProvider } from '../context/ToastContext.jsx'
 import { OverlaySurfaceProvider } from '../context/OverlayContext.jsx'
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
+
+// V4-PLANTREQUIRED-001: a plant-predicated type needs a planting to save, and choosing the project
+// clears it, so chooseProject picks the first planting offered straight after (PLANT unless the test
+// serves its own list). Microtask flushes, not findBy: several cases fake timers before saving.
+async function chooseProject(id) {
+  fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  await act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve() })
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click(screen.getAllByTestId(/^ps-opt-/)[0])
+}
 
 function wireApiFetch() {
   apiFetchSpy.mockImplementation((path, options = {}) => {
@@ -97,14 +102,14 @@ async function pickPlanting(id) {
 }
 
 async function saveOnce() {
-  fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+  await chooseProject('proj-1')
   await act(async () => { fireEvent.click(screen.getByText('Save')) })
 }
 
 beforeEach(() => {
   apiFetchSpy.mockReset(); navigateSpy.mockReset(); postCalls.length = 0
   searchParamsRef.current = new URLSearchParams()
-  dataRef.projects = [PROJECT]; dataRef.locations = []; dataRef.plants = []
+  dataRef.projects = [PROJECT]; dataRef.locations = []; dataRef.plants = [PLANT]
   dataRef.postResult = { id: 'evt-1', project_id: 'proj-1' }; dataRef.postError = null; dataRef.deleteError = null; dataRef.harvestsAgg = null
   sessionStorage.clear()
   // S5b: added for ISOLATION, not to change any assertion. V4-STICKY-001 persists the last
@@ -411,7 +416,7 @@ describe('EventNew — V4-LOGCONF-001 durable confirmation (C1/C2) + S5b non-blo
     expect(screen.getByText('Save')).toBeTruthy()
     expect(screen.queryByRole('link', { name: 'View event' })).toBeNull()
     // the global operational toast announces with its existing 5s lifetime
-    expect(screen.getByRole('status').textContent).toMatch(/Logged event for Tomatoes 2026/)
+    expect(screen.getByRole('status').textContent).toMatch(/Logged event — Sungold/)
     act(() => { vi.advanceTimersByTime(5001) })
     expect(screen.queryByRole('status')).toBeNull()
   })

@@ -40,13 +40,22 @@ vi.mock('react-router-dom', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 
 import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
+
+// V4-PLANTREQUIRED-001: a plant-predicated type needs a planting to save, and choosing the project
+// clears it, so chooseProject picks the first planting offered straight after (PLANT unless the test
+// serves its own list).
+async function chooseProject(id) {
+  fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  if (screen.queryByTestId('evtnew-planting-chip')) return
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+}
 const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
 
 function wireApiFetch() {
@@ -110,7 +119,7 @@ describe('V4-HARVFORMORDER-001 — Project stays reachable when PROJECTS_HIDDEN 
     renderEventNew('event_type=harvest')
     await flushLoad()
 
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.click(screen.getByTestId('qty-chip-2'))
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
 

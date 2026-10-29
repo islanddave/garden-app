@@ -51,12 +51,9 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
   }),
 }))
 
-// Planting-optional arm, matching the sibling EventNew suites: these cases are about the unit
-// control, and the required-planting flag only changes whether Save is reachable.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 
 vi.mock('react-router-dom', () => ({

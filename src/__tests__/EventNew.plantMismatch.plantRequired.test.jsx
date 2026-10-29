@@ -1,15 +1,8 @@
-// BUG-PLANTMISMATCH-001 under V4-PLANTREQUIRED-001 flag ON — the interaction the flip actually changes.
+// BUG-PLANTMISMATCH-001 with plantings required (V4-PLANTREQUIRED-001).
 //
-// WHY THIS FILE EXISTS. EventNew.test.jsx's mismatch block pins the invariant "a project switch must
-// drop the planting, and the POST must never carry a mismatched (project_id, plant_id) pair." It
-// proves that by asserting the POST fires with plant_id null. With PLANTING_REQUIRED_ENABLED flipped
-// TRUE (2026-08-10), a plant-predicated type can no longer POST with a null planting at all — so the
-// REMEDY changed shape even though the invariant did not. The old assertions still hold flag-OFF
-// (that suite now pins the flag false); this file pins the flag-ON shape of the same invariant.
-//
-// The distinction that matters, and the reason this is not just a rewritten assertion: flag-OFF the
-// user silently logs a watering against no planting; flag-ON the user is stopped and told to choose
-// one. Both satisfy "never write a mismatched pair." Only one of them loses the planting silently.
+// The invariant: a project switch must drop the planting, and the POST must never carry a mismatched
+// (project_id, plant_id) pair. A plant-predicated type cannot POST with a null planting, so the user
+// is stopped and told to choose one rather than silently logging against no planting.
 //
 // importActual spread so every other flag keeps its real value.
 // Harness mirrors EventNew.plantRequired.test.jsx. No jest-dom (L-182).
@@ -44,7 +37,6 @@ vi.mock('react-router-dom', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: true,
 }))
 
 import EventNew from '../pages/EventNew.jsx'
@@ -100,7 +92,7 @@ beforeEach(() => {
   try { localStorage.clear() } catch { /* noop */ }
 })
 
-describe('BUG-PLANTMISMATCH-001 × V4-PLANTREQUIRED-001 (flag ON)', () => {
+describe('BUG-PLANTMISMATCH-001 × V4-PLANTREQUIRED-001', () => {
   it('a project switch that drops the planting now BLOCKS the save instead of posting a null planting', async () => {
     wireTwoProjects()
     renderEventNew('project=proj-a&plant=plant-a&event_type=watering')
@@ -112,8 +104,7 @@ describe('BUG-PLANTMISMATCH-001 × V4-PLANTREQUIRED-001 (flag ON)', () => {
     fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'x' } })
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
     await act(async () => { await Promise.resolve() })
-    // The invariant is unchanged — no mismatched pair reaches the wire. The remedy changed:
-    // flag-OFF this posted {proj-b, null}; flag-ON nothing is written and the user is told why.
+    // No mismatched pair reaches the wire: nothing is written and the user is told why.
     expect(postCalls.length).toBe(0)
     expect(screen.getByText(/Choose a planting for this event/i)).toBeTruthy()
   })

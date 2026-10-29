@@ -6,9 +6,8 @@
 // NOT tapping it sends no key at all, because 703 of the 707 live harvests are ordinary picks and
 // the create body for those must stay byte-identical to before the feature existed.
 //
-// Harness copied from EventNew.harvestQtyChips.test.jsx. PLANTING_REQUIRED_ENABLED is TRUE in
-// source, and `harvest` is a plant-predicated type, so every save here picks a planting first —
-// that is the real prod path. No jest-dom (L-182).
+// Harness copied from EventNew.harvestQtyChips.test.jsx. `harvest` is a plant-predicated type, so
+// every save here picks a planting first — that is the real prod path. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'

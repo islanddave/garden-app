@@ -63,7 +63,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: true,
   WEIGH_IN_FRAME_ENABLED: false,
 }))
 

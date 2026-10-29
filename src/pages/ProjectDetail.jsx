@@ -8,7 +8,6 @@ import { P, PROJECT_STATUSES, APP_URL } from '../lib/constants.js'
 import { T } from '../lib/tokens.js'
 import { EVENT_TYPE_META, requiresPlanting, creatableEventTypes } from '../lib/eventTypes.js'
 import { eventTitle, eventTypeText } from '../lib/eventDisplay.js'
-import { PLANTING_REQUIRED_ENABLED } from '../lib/featureFlags.js'
 import Icon from '../components/Icon.jsx'
 import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
 import { formatQty } from '../lib/format.js'
@@ -481,9 +480,9 @@ export default function ProjectDetail() {
 
   async function handleLogEvent(e) {
     e.preventDefault()
-    // V4-PLANTREQUIRED-001 (Lane 3, flag-gated, O4): the mini-logger was the app's biggest orphan
-    // source — a project-level POST with no plant_id. Inert unless PLANTING_REQUIRED_ENABLED.
-    if (PLANTING_REQUIRED_ENABLED && requiresPlanting(eventForm.event_type) && !eventForm.plant_id) {
+    // V4-PLANTREQUIRED-001 (O4): the mini-logger was the app's biggest orphan source — a
+    // project-level POST with no plant_id.
+    if (requiresPlanting(eventForm.event_type) && !eventForm.plant_id) {
       setLogErr('Choose a planting for this event.'); return
     }
     setLoggingEvent(true)
@@ -1337,17 +1336,16 @@ export default function ProjectDetail() {
             </div>
 
             {/* V4-PLANTREQUIRED-001 (O4): the mini-logger gains a planting picker so a project-page
-                log can carry a planting. Optional by default; required only when the flag is on and
-                the type predicates on a plant (D2). Controlled by the already-loaded project plants. */}
+                log can carry a planting. Required only when the type predicates on a plant (D2). Controlled by the already-loaded project plants. */}
             <Field
-              label={PLANTING_REQUIRED_ENABLED && requiresPlanting(eventForm.event_type) ? 'Planting *' : 'Planting (optional)'}
+              label={requiresPlanting(eventForm.event_type) ? 'Planting *' : 'Planting (optional)'}
               style={{ marginBottom: 14 }}
             >
               <PlantingSelect
                 plants={plants}
                 value={eventForm.plant_id}
                 onChange={pid => setEventForm(f => ({ ...f, plant_id: pid }))}
-                required={PLANTING_REQUIRED_ENABLED && requiresPlanting(eventForm.event_type)}
+                required={requiresPlanting(eventForm.event_type)}
                 placeholder="— Choose a planting —"
                 aria-label="Planting"
                 data-testid="projdetail-mini-planting"

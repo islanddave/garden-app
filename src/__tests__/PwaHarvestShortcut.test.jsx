@@ -38,12 +38,9 @@ const { apiFetchSpy, dataRef } = vi.hoisted(() => ({
   dataRef: { projects: [], plants: [] },
 }))
 
-// PLANTING_REQUIRED_ENABLED false mirrors EventNew.harvestSession.test.jsx: the gate under test is
-// the session gate, and dragging PlantingSelect into every mount tests something else.
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   ...(await importOriginal()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 
 // Spread the original: App.jsx imports AuthProvider from here too, and a bare factory would leave it

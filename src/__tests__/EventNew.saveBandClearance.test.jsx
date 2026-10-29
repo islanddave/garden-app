@@ -40,7 +40,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
   WEIGH_IN_FRAME_ENABLED: false,
 }))
 
@@ -149,7 +148,7 @@ describe('EventNew — the shipped frame does NOT scroll for a band it does not 
     vi.resetModules()
     vi.doMock('../lib/featureFlags.js', async (importActual) => ({
       ...(await importActual()),
-      PROJECTS_HIDDEN: false, PLANTING_REQUIRED_ENABLED: false, WEIGH_IN_FRAME_ENABLED: true,
+      PROJECTS_HIDDEN: false, WEIGH_IN_FRAME_ENABLED: true,
     }))
     // clearSpy must survive resetModules, so re-register the saveBandLayout mock on the fresh graph.
     vi.doMock('../lib/saveBandLayout.js', async (importActual) => ({

@@ -53,16 +53,10 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 }))
 
 
-// V4-PLANTREQUIRED-001: the flag flipped TRUE in source on 2026-08-10. This suite predates the flip
-// and its assertions describe the planting-OPTIONAL behavior, which remains a live configuration
-// (rollback = one-line revert). Mocked FALSE so every assertion below keeps covering what it was
-// written to cover, rather than being rewritten to the flag-ON world. Flag-ON is covered by
-// EventNew.plantRequired.test.jsx and EventNew.plantMismatch.plantRequired.test.jsx.
 // importActual spread so every other flag keeps its real value.
 vi.mock('../lib/featureFlags.js', async (importActual) => ({
   ...(await importActual()),
   PROJECTS_HIDDEN: false,
-  PLANTING_REQUIRED_ENABLED: false,
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -99,6 +93,17 @@ function renderEventNew(query = '') {
 }
 
 const PROJECT = { id: 'proj-1', name: 'Tomatoes 2026', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
+
+// V4-PLANTREQUIRED-001: a plant-predicated type needs a planting to save, and choosing the project
+// clears it, so chooseProject picks the first planting offered straight after (PLANT unless the test
+// serves its own list).
+async function chooseProject(id) {
+  fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  if (screen.queryByTestId('evtnew-planting-chip')) return
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+}
 
 beforeEach(() => {
   apiFetchSpy.mockReset()
@@ -107,7 +112,7 @@ beforeEach(() => {
   searchParamsRef.current = new URLSearchParams()
   dataRef.projects = [PROJECT]
   dataRef.locations = []
-  dataRef.plants = []
+  dataRef.plants = [PLANT]
   dataRef.postResult = { id: 'evt-1', updated_streak: 1, xp_gained: 10, newly_earned_achievements: [] }
   dataRef.postError = null
   uploadResultRef.current = null
@@ -209,7 +214,7 @@ describe('EventNew — harvest client-side validation', () => {
     renderEventNew('event_type=harvest')
     await flushLoad()
     // select the project so the project gate passes
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
   }
 
   it('blocks POST with an inline error when quantity is empty', async () => {
@@ -258,7 +263,7 @@ describe('EventNew — valid harvest submit', () => {
   it('fires a POST with harvest:{quantity,unit,quality_rating} and writes lastHarvestUnit', async () => {
     renderEventNew('event_type=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.change(screen.getByLabelText('Harvest unit'), { target: { value: 'lb' } })
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '2.5' } })
     // V4-HIDEQUALITY-001: no rating is picked because there is no control to pick one with. The KEY
@@ -281,7 +286,7 @@ describe('EventNew — valid harvest submit', () => {
   it('sends quality_rating: null when no quality picked', async () => {
     renderEventNew('event_type=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '3' } })
     await act(async () => {
       fireEvent.click(screen.getByText('Save'))
@@ -320,7 +325,7 @@ describe('EventNew — friendlyError on server failure', () => {
     )
     renderEventNew('event_type=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '3' } })
     await act(async () => {
       fireEvent.click(screen.getByText('Save'))
@@ -334,7 +339,7 @@ describe('EventNew — friendlyError on server failure', () => {
     dataRef.postError = Object.assign(new Error('Internal Server Error'), { status: 500 })
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await act(async () => {
       fireEvent.click(screen.getByText('Save'))
     })
@@ -345,7 +350,7 @@ describe('EventNew — friendlyError on server failure', () => {
     dataRef.postError = Object.assign(new Error('Bad Request'), { status: 422 })
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await act(async () => {
       fireEvent.click(screen.getByText('Save'))
     })
@@ -357,7 +362,7 @@ describe('EventNew — non-harvest POST unchanged', () => {
   it('a plain watering submit has no harvest or flag fields', async () => {
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await act(async () => {
       fireEvent.click(screen.getByText('Save'))
     })
@@ -414,7 +419,7 @@ describe('EventNew — V4-EVENTSAVE-001 single Save = next-of-type', () => {
   it('Save fires the POST and does NOT navigate', async () => {
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(postCalls.length).toBe(1)
     expect(postCalls[0].event_type).toBe('watering')
@@ -456,7 +461,7 @@ describe('EventNew — V4-EVENTSAVE-001 single Save = next-of-type', () => {
   it('has no save-and-leave button and never navigates on save', async () => {
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     expect(screen.queryByText('+ Log event')).toBeNull()
     expect(screen.getAllByText('Save').length).toBe(1)
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
@@ -466,7 +471,7 @@ describe('EventNew — V4-EVENTSAVE-001 single Save = next-of-type', () => {
   it('global undo toast: clicking Undo soft-deletes the just-logged event', async () => {
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     await waitFor(() => screen.getByText('Undo'))
     await act(async () => { fireEvent.click(screen.getByText('Undo')) })
@@ -482,7 +487,7 @@ describe('EventNew — photo failure surfacing', () => {
     globalThis.URL.revokeObjectURL = vi.fn()
   }
   async function attachPhotoAndSave() {
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     const fileInput = document.querySelector('input[type="file"]')
     await act(async () => {
       fireEvent.change(fileInput, { target: { files: [new File(['x'], 'begonia.jpg', { type: 'image/jpeg' })] } })
@@ -516,7 +521,7 @@ describe('EventNew — Save button photo-stage labels', () => {
   async function attachPhotoAndSubmit() {
     globalThis.URL.createObjectURL = vi.fn(() => 'blob:mock')
     globalThis.URL.revokeObjectURL = vi.fn()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     const fileInput = document.querySelector('input[type="file"]')
     await act(async () => {
       fireEvent.change(fileInput, { target: { files: [new File(['x'], 'begonia.jpg', { type: 'image/jpeg' })] } })
@@ -543,7 +548,7 @@ describe('EventNew — Save button photo-stage labels', () => {
   it('plain event save (no photo) still reads "Saving…" mid-flight and completes', async () => {
     renderEventNew('event_type=watering')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     expect(postCalls.length).toBe(1)
   })
@@ -556,7 +561,7 @@ describe('EventNew — optional harvest weight', () => {
   async function setupHarvest() {
     renderEventNew('event_type=harvest')
     await flushLoad()
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+    await chooseProject('proj-1')
     fireEvent.change(screen.getByLabelText('Harvest quantity'), { target: { value: '5' } })
   }
   const save = async () => { await act(async () => { fireEvent.click(screen.getByText('Save')) }) }
@@ -715,21 +720,6 @@ describe('EventNew — project switch clears the planting (BUG-PLANTMISMATCH-001
     await act(async () => { await Promise.resolve() })
   }
 
-  it('a hand-picked planting does not survive a switch to another project', async () => {
-    wireTwoProjects()
-    renderEventNew('project=proj-a&plant=plant-a&event_type=watering'); await flushLoad()
-    await act(async () => { await Promise.resolve() })
-    await switchTo('proj-b')
-    // The POST is the assertion that matters: the pair, not the widget state.
-    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
-    fireEvent.click(screen.getByTestId('notes-disclosure'))
-    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'x' } })
-    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
-    await waitFor(() => expect(postCalls.length).toBe(1))
-    expect(postCalls[0].project_id).toBe('proj-b')
-    expect(postCalls[0].plant_id).toBeNull()
-  })
-
   it('re-selecting the SAME project is not a silent reset', async () => {
     wireTwoProjects()
     renderEventNew('project=proj-a&plant=plant-a&event_type=watering'); await flushLoad()
@@ -741,29 +731,5 @@ describe('EventNew — project switch clears the planting (BUG-PLANTMISMATCH-001
     fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
     await waitFor(() => expect(postCalls.length).toBe(1))
     expect(postCalls[0].plant_id).toBe('plant-a')
-  })
-
-  it('the load-effect stale-guard is no longer scoped to the deep-link / remembered ids', async () => {
-    // Regression pin for the actual defect: the two prior guards compared plant_id against
-    // preselectedPlantId / rememberedPlantId by identity, so ANY other id passed through.
-    apiFetchSpy.mockImplementation((path, options = {}) => {
-      if (options.method === 'POST' && path === '/api/events') {
-        postCalls.push(JSON.parse(options.body)); return Promise.resolve(dataRef.postResult)
-      }
-      if (path === '/api/projects') return Promise.resolve([PROJ_A, PROJ_B])
-      if (path === '/api/locations/with-path') return Promise.resolve([])
-      // proj-b never contains plant-a, whatever route selected it.
-      if (path.startsWith('/api/plants?') && path.includes('project_id=proj-b')) return Promise.resolve([PLANT_B])
-      if (path.startsWith('/api/plants')) return Promise.resolve([PLANT_A])
-      return Promise.resolve(null)
-    })
-    renderEventNew('project=proj-b&plant=plant-a&event_type=watering'); await flushLoad()
-    await act(async () => { await Promise.resolve() })
-    // V4-NOTESCOLLAPSE-001: Notes is a collapsed disclosure at the foot of the form — open it first.
-    fireEvent.click(screen.getByTestId('notes-disclosure'))
-    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'x' } })
-    fireEvent.click(screen.getByRole('button', { name: /^Save$/ }))
-    await waitFor(() => expect(postCalls.length).toBe(1))
-    expect(postCalls[0].plant_id).toBeNull()
   })
 })

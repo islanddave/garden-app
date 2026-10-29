@@ -42,7 +42,6 @@ vi.mock('../lib/featureFlags.js', async (importActual) => {
   return {
     ...actual,
     PROJECTS_HIDDEN: false,
-    PLANTING_REQUIRED_ENABLED: false,
   }
 })
 vi.mock('react-router-dom', () => ({
@@ -55,6 +54,17 @@ import EventNew from '../pages/EventNew.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 
 const PROJECT = { id: 'proj-1', name: 'Herb Plants', status: 'growing' }
+const PLANT = { id: 'plant-1', name: 'Sungold', project_id: 'proj-1' }
+
+// V4-PLANTREQUIRED-001: a plant-predicated type needs a planting to save, and choosing the project
+// clears it, so chooseProject picks the first planting offered straight after (PLANT unless the test
+// serves its own list).
+async function chooseProject(id) {
+  fireEvent.change(screen.getByLabelText('Project'), { target: { value: id } })
+  if (screen.queryByTestId('evtnew-planting-chip')) return
+  fireEvent.focus(screen.getByLabelText('Plant or group'))
+  fireEvent.click((await screen.findAllByTestId(/^ps-opt-/))[0])
+}
 
 let createdUrls
 let revokedUrls
@@ -82,7 +92,7 @@ beforeEach(() => {
     }
     if (path === '/api/projects') return Promise.resolve([PROJECT])
     if (path === '/api/locations/with-path') return Promise.resolve([])
-    if (String(path).startsWith('/api/plants')) return Promise.resolve([])
+    if (String(path).startsWith('/api/plants')) return Promise.resolve([PLANT])
     return Promise.resolve(null)
   })
 })
@@ -116,7 +126,7 @@ async function pickPhotos(names) {
 }
 
 async function save() {
-  fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'proj-1' } })
+  await chooseProject('proj-1')
   // The harvest form has its own required-quantity gate ahead of the photo leg. Satisfy it rather
   // than moving these tests to a gate-free event type — B1 names the HARVEST form, and a photo
   // criterion asserted on the watering form would not be the criterion.

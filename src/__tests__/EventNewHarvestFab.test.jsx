@@ -10,7 +10,7 @@
 // answered the question (HarvestReadyBand seeds it), a stashed draft means resuming rather than
 // starting, and every non-harvest arrival is untouched.
 //
-// Flags are REAL here — prod config, PROJECTS_HIDDEN and PLANTING_REQUIRED_ENABLED both on. This is
+// Flags are REAL here — prod config, PROJECTS_HIDDEN on. This is
 // the arm the FAB actually ships into, and it is also the arm where the planting field is required,
 // which is what makes auto-opening the picker the right default rather than a nag.
 import React from 'react'

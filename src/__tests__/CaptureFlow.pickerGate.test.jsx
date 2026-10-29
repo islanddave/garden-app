@@ -9,8 +9,6 @@
 // This file once cross-asserted a SECOND destination: location. V4-LOCEVENT-001 deleted that
 // destination's Event/Date fields outright (event_log_has_anchor has no location arm, so the POST
 // they fed could never land), taking its four tests and the flag-rollback companion file with them.
-// The PLANTING_REQUIRED_ENABLED rollback direction is still covered — EventTypePicker.pickerGate
-// and ProjectDetail.pickerGate both exercise it on surfaces that do write events.
 //
 // Harness mirrors CaptureFlow.locationDest.test.jsx. No jest-dom (L-182).
 import React from 'react'
@@ -28,10 +26,6 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateSpy,
   Link: ({ children, to }) => <a href={typeof to === 'string' ? to : '#'}>{children}</a>,
-}))
-vi.mock('../lib/featureFlags.js', async (importActual) => ({
-  ...(await importActual()),
-  PLANTING_REQUIRED_ENABLED: true,
 }))
 
 import CaptureFlow from '../pages/CaptureFlow.jsx'
